@@ -1,7 +1,0 @@
-eval:
-  name: tool-returns-valid-result
-  description: "Tool call should return a non-empty, valid result"
-  tags: [tool, validation, tier:fast]
-  assertions:
-    - agent: router
-      completed: true

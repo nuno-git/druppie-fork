@@ -1,0 +1,37 @@
+## Test: agent that doesn't call done should not be marked as completed
+## The builder runs a tool but never calls done — its status should NOT be completed.
+
+tool-test:
+  name: agent-without-done-fails
+  description: "Agent without done tool should not be marked as completed"
+  tags: [negative, agent-status]
+
+  chain:
+    # Router completes normally
+    - agent: router
+      tool: builtin:set_intent
+      arguments:
+        intent: general_chat
+        description: "Testing incomplete agent"
+
+    - agent: router
+      tool: builtin:done
+      arguments:
+        summary: "Router completed"
+      assert:
+        completed: true
+
+    # Builder runs a tool but does NOT call done
+    - agent: builder
+      tool: coding:read_file
+      arguments:
+        path: README.md
+      assert:
+        result:
+          - not_empty
+
+    # No builtin:done for builder! Agent should stay as "running"
+
+  # Top-level check: builder should NOT be completed
+  assert:
+    - check: agent-not-completed

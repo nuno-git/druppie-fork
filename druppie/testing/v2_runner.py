@@ -1,24 +1,22 @@
-"""V2 Test Runner -- user-isolated test execution with three test types.
+"""V2 Test Runner -- user-isolated test execution with two test types.
 
 Test types:
 - Tool tests (testing/tools/): Replay tool call chains through real MCP services.
 - Agent tests (testing/agents/): Run real LLM agents with assertions + judge.
 
-Execution flow for agent tests:
-1. Create test user in DB
-2. Seed setup sessions (DB insert)
-3. Run extended tool chain if specified
-4. Call orchestrator.process_message() with the test message
-5. Orchestrator runs agents; bounded to stop after specified agents complete
-6. When an agent pauses for HITL, answer automatically via HITLSimulator
-7. Run assertions and LLM judge checks
-
 Execution flow for tool tests:
 1. Create test user in DB
-2. Seed setup sessions (DB insert)
-3. Run extended tool chain if specified
-4. Replay the chain through real MCP handlers
-5. Run inline assertions on chain steps
+2. Run setup tool tests (real MCP execution, each creates a session)
+3. Replay the main tool chain through real MCP handlers
+4. Run inline assertions on chain steps
+
+Execution flow for agent tests:
+1. Create test user in DB
+2. Run setup tool tests (real MCP execution, each creates a session)
+3. Call orchestrator.process_message() with the test message
+4. Orchestrator runs agents; bounded to stop after specified agents complete
+5. When an agent pauses for HITL, answer automatically via HITLSimulator
+6. Run assertions and LLM judge checks
 """
 from __future__ import annotations
 
@@ -48,7 +46,6 @@ from druppie.db.models import TestRun as TestRunModel
 from druppie.db.models import TestRunTag
 from druppie.domain.common import AgentRunStatus, SessionStatus
 from druppie.testing.seed_ids import fixture_uuid
-from druppie.testing.seed_loader import seed_fixture
 from druppie.testing.seed_schema import SessionFixture
 from druppie.testing.v2_assertions import AssertionResult, match_assertions
 from druppie.testing.v2_schema import (
@@ -160,59 +157,6 @@ class CheckLoader:
 EvalLoader = CheckLoader
 
 
-# ---------------------------------------------------------------------------
-# Setup Loader (was SessionLoader)
-# ---------------------------------------------------------------------------
-
-
-class SetupLoader:
-    """Loads session fixtures from testing/setup/ and resolves after: chains."""
-
-    def __init__(self, setup_dir: Path | None = None):
-        self._setup_dir = setup_dir or (
-            Path(__file__).resolve().parents[2] / "testing" / "setup"
-        )
-        self._sessions: dict[str, SessionFixture] = {}
-        self._load()
-
-    def _load(self) -> None:
-        if not self._setup_dir.exists():
-            logger.warning("Setup directory not found: %s", self._setup_dir)
-            return
-        for path in sorted(self._setup_dir.glob("*.yaml")):
-            data = yaml.safe_load(path.read_text())
-            fixture = SessionFixture(**data)
-            self._sessions[fixture.metadata.id] = fixture
-
-    def get(self, name: str) -> SessionFixture:
-        if name not in self._sessions:
-            raise KeyError(
-                f"Unknown session: {name}. "
-                f"Available: {sorted(self._sessions.keys())}"
-            )
-        return self._sessions[name]
-
-    def resolve_chain(self, session_names: list[str]) -> list[SessionFixture]:
-        """Resolve after: chains and return ordered list."""
-        resolved: list[SessionFixture] = []
-        seen: set[str] = set()
-        for name in session_names:
-            self._resolve_one(name, resolved, seen)
-        return resolved
-
-    def _resolve_one(self, name: str, resolved: list[SessionFixture], seen: set[str]) -> None:
-        if name in seen:
-            return
-        seen.add(name)
-        session = self.get(name)
-        if session.metadata.after:
-            self._resolve_one(session.metadata.after, resolved, seen)
-        resolved.append(session)
-
-
-# Backwards compat alias
-SessionLoader = SetupLoader
-
 
 # ---------------------------------------------------------------------------
 # Tool Test Loader
@@ -260,6 +204,8 @@ class JudgeCheckResult:
     passed: bool
     reasoning: str
     source: str  # "check" or "inline"
+    raw_input: str = ""   # prompt sent to judge LLM
+    raw_output: str = ""  # raw response from judge LLM
 
 
 @dataclass
@@ -334,16 +280,27 @@ class HITLSimulator:
                 f'Respond with ONLY your answer, no explanation.'
             )
 
-        response = llm.chat(
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ]
-        )
-        answer = response.content.strip()
-        logger.info("HITL simulator answered (interaction %d): question=%s answer=%s",
-                     self._interaction_count, question_text[:80], answer[:80])
-        return answer
+        # Retry on rate limits
+        for attempt in range(5):
+            try:
+                response = llm.chat(
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt},
+                    ]
+                )
+                answer = response.content.strip()
+                logger.info("HITL simulator answered (interaction %d): question=%s answer=%s",
+                             self._interaction_count, question_text[:80], answer[:80])
+                return answer
+            except Exception as e:
+                if "rate" in str(e).lower() and attempt < 4:
+                    import time
+                    wait = 2 ** attempt
+                    logger.warning("HITL simulator rate limited, retrying in %ds (attempt %d)", wait, attempt + 1)
+                    time.sleep(wait)
+                else:
+                    raise
 
 
 # ---------------------------------------------------------------------------
@@ -386,7 +343,7 @@ class _BoundedOrchestrator:
         logger.info("Bounded cleanup: cancelled %d remaining runs, session=%s marked COMPLETED",
                      cancelled_count, session_id)
 
-    async def run(self, message: str) -> UUID:
+    async def run(self, message: str, session_id: UUID | None = None) -> UUID:
         from druppie.execution.orchestrator import Orchestrator
         from druppie.repositories import (
             ExecutionRepository, ProjectRepository, QuestionRepository, SessionRepository,
@@ -406,9 +363,9 @@ class _BoundedOrchestrator:
 
         if not self._real_agents:
             session_id = await orchestrator.process_message(
-                message=message, user_id=self._user_id,
+                message=message, user_id=self._user_id, session_id=session_id,
             )
-            session_id = await self._handle_hitl_loop(
+            session_id = await self._handle_pause_loop(
                 orchestrator, session_id, question_repo, execution_repo, session_repo
             )
             return session_id
@@ -456,69 +413,189 @@ class _BoundedOrchestrator:
 
         orchestrator.execute_pending_runs = _bounded_execute
 
-        session_id = await orchestrator.process_message(
-            message=message, user_id=self._user_id,
-        )
-        session_id = await self._handle_hitl_loop(
-            orchestrator, session_id, question_repo, execution_repo, session_repo
-        )
+        if session_id:
+            # Continue existing session: create agent runs directly
+            # instead of going through process_message (which creates router+planner)
+            result_session_id = session_id
 
-        if self._all_real_agents_done(session_id, execution_repo):
-            self._cancel_remaining_runs(session_id, execution_repo, session_repo)
+            # Reset session to active
+            session_repo.update_status(session_id, SessionStatus.ACTIVE)
+            session_repo.commit()
 
-        return session_id
+            # Add user message
+            from druppie.db.models.base import utcnow
+            next_seq = execution_repo.get_next_sequence_number(session_id)
+            self._db.add(Message(
+                session_id=session_id,
+                role="user",
+                content=message,
+                sequence_number=next_seq,
+                created_at=utcnow(),
+            ))
+            self._db.flush()
 
-    async def _handle_hitl_loop(self, orchestrator, session_id, question_repo,
+            # Build context from the session's project
+            context = orchestrator._build_project_context(session_id)
+
+            # Get the last done summary for prompt context
+            completed_runs = execution_repo.get_completed_runs(session_id)
+            previous_summary = ""
+            for run in completed_runs:
+                s = execution_repo.get_done_summary_for_run(run.id)
+                if s:
+                    previous_summary += s + "\n"
+
+            # Create and run each specified agent directly
+            for i, agent_id in enumerate(self._real_agents):
+                prompt = f"PREVIOUS AGENT SUMMARY:\n{previous_summary}\n---\n\nUSER REQUEST:\n{message}"
+
+                agent_run = execution_repo.create_agent_run(
+                    session_id=session_id,
+                    agent_id=agent_id,
+                    status=AgentRunStatus.PENDING,
+                    planned_prompt=prompt,
+                    sequence_number=next_seq + 1 + i,
+                )
+                execution_repo.commit()
+
+                execution_repo.update_status(agent_run.id, AgentRunStatus.RUNNING)
+                execution_repo.commit()
+
+                status = await orchestrator._run_agent(
+                    session_id=session_id,
+                    agent_run_id=agent_run.id,
+                    agent_id=agent_id,
+                    prompt=prompt,
+                    context=context,
+                )
+
+                if status == "paused":
+                    refreshed = execution_repo.get_by_id(agent_run.id)
+                    if refreshed and refreshed.status == AgentRunStatus.PAUSED_HITL:
+                        session_repo.update_status(session_id, SessionStatus.PAUSED_HITL)
+                    elif refreshed and refreshed.status == AgentRunStatus.PAUSED_SANDBOX:
+                        session_repo.update_status(session_id, SessionStatus.PAUSED_SANDBOX)
+                    else:
+                        session_repo.update_status(session_id, SessionStatus.PAUSED_APPROVAL)
+                    session_repo.commit()
+
+                    # Handle pauses (HITL + approvals)
+                    result_session_id = await self._handle_pause_loop(
+                        orchestrator, session_id, question_repo, execution_repo, session_repo
+                    )
+
+                # Update summary for next agent
+                run_summary = execution_repo.get_done_summary_for_run(agent_run.id)
+                if run_summary:
+                    previous_summary += run_summary + "\n"
+
+            session_repo.update_status(session_id, SessionStatus.COMPLETED)
+            session_repo.commit()
+        else:
+            # New session: use normal process_message flow
+            result_session_id = await orchestrator.process_message(
+                message=message, user_id=self._user_id,
+            )
+            result_session_id = await self._handle_pause_loop(
+                orchestrator, result_session_id, question_repo, execution_repo, session_repo
+            )
+
+            if self._all_real_agents_done(result_session_id, execution_repo):
+                self._cancel_remaining_runs(result_session_id, execution_repo, session_repo)
+
+        return result_session_id
+
+    async def _handle_pause_loop(self, orchestrator, session_id, question_repo,
                                  execution_repo, session_repo) -> UUID:
-        if not self._hitl_simulator:
-            return session_id
+        """Handle HITL questions and approval gates during agent execution.
 
-        for iteration in range(MAX_HITL_INTERACTIONS):
+        Loops until the session is no longer paused (completed, failed, or
+        all real agents done).
+        """
+        from druppie.db.models import Session as DBSession
+        from druppie.db.models import Approval
+        from druppie.db.models.base import utcnow
+
+        for iteration in range(MAX_HITL_INTERACTIONS * 2):
             self._db.expire_all()
-            from druppie.db.models import Session as DBSession
             session = self._db.query(DBSession).filter(DBSession.id == session_id).first()
             if not session:
                 break
-            if session.status != SessionStatus.PAUSED_HITL.value:
-                break
 
-            pending_question = (
-                self._db.query(Question)
-                .filter(Question.session_id == session_id, Question.status == "pending")
-                .order_by(Question.created_at.desc())
-                .first()
-            )
-            if not pending_question:
-                break
-
-            if self._real_agents and pending_question.agent_run_id:
-                agent_run = self._db.query(AgentRun).filter(
-                    AgentRun.id == pending_question.agent_run_id
-                ).first()
-                if agent_run and agent_run.agent_id not in self._real_agents:
-                    break
+            status = session.status
+            logger.info("Pause loop iteration %d: session status=%s", iteration, status)
 
             if self._real_agents and self._all_real_agents_done(session_id, execution_repo):
                 break
 
-            raw_answer = self._hitl_simulator.answer(
-                question_text=pending_question.question,
-                choices=pending_question.choices,
-            )
+            # Handle HITL pause
+            if status == SessionStatus.PAUSED_HITL.value:
+                if not self._hitl_simulator:
+                    logger.warning("No HITL simulator — cannot answer questions")
+                    break
 
-            answer = raw_answer
-            if pending_question.choices and pending_question.question_type in (
-                "single_choice", "multiple_choice",
-            ):
-                answer, _ = self._resolve_choice_answer(raw_answer, pending_question.choices)
+                pending_question = (
+                    self._db.query(Question)
+                    .filter(Question.session_id == session_id, Question.status == "pending")
+                    .order_by(Question.created_at.desc())
+                    .first()
+                )
+                if not pending_question:
+                    break
 
-            logger.info("HITL resuming (iteration %d): session=%s answer=%s",
-                        iteration + 1, session_id, answer[:80])
-            await orchestrator.resume_after_answer(
-                session_id=session_id,
-                question_id=pending_question.id,
-                answer=answer,
-            )
+                if self._real_agents and pending_question.agent_run_id:
+                    agent_run = self._db.query(AgentRun).filter(
+                        AgentRun.id == pending_question.agent_run_id
+                    ).first()
+                    if agent_run and agent_run.agent_id not in self._real_agents:
+                        break
+
+                raw_answer = self._hitl_simulator.answer(
+                    question_text=pending_question.question,
+                    choices=pending_question.choices,
+                )
+
+                answer = raw_answer
+                if pending_question.choices and pending_question.question_type in (
+                    "single_choice", "multiple_choice",
+                ):
+                    answer, _ = self._resolve_choice_answer(raw_answer, pending_question.choices)
+
+                logger.info("HITL auto-answer (iteration %d): answer=%s", iteration, answer[:80])
+                await orchestrator.resume_after_answer(
+                    session_id=session_id,
+                    question_id=pending_question.id,
+                    answer=answer,
+                )
+                continue
+
+            # Handle approval pause
+            if status == SessionStatus.PAUSED_APPROVAL.value:
+                pending_approval = (
+                    self._db.query(Approval)
+                    .filter(Approval.session_id == session_id, Approval.status == "pending")
+                    .order_by(Approval.created_at.desc())
+                    .first()
+                )
+                if not pending_approval:
+                    break
+
+                # Auto-approve with the test user
+                pending_approval.status = "approved"
+                pending_approval.resolved_by = session.user_id
+                pending_approval.resolved_at = utcnow()
+                self._db.commit()
+
+                logger.info("Approval auto-approved (iteration %d): tool=%s:%s",
+                            iteration, pending_approval.mcp_server, pending_approval.tool_name)
+                await orchestrator.resume_after_approval(
+                    session_id=session_id,
+                    approval_id=pending_approval.id,
+                )
+                continue
+
+            # Not paused — done
+            break
 
         return session_id
 
@@ -560,62 +637,109 @@ class JudgeRunner:
     def __init__(self, profile: JudgeProfile):
         self._profile = profile
 
-    def run_checks(self, db: DbSession, session_id: UUID, checks: list[str],
-                   target_agent: str, source: str = "check") -> list[JudgeCheckResult]:
-        agent_trace = self._extract_agent_trace(db, session_id, target_agent)
+    def run_checks(self, db: DbSession, session_id: UUID,
+                   judge_checks: list,
+                   context: str | list[str] = "all", source: str = "check") -> list[JudgeCheckResult]:
+        """Run judge checks. judge_checks is a list of JudgeCheck objects."""
+        agent_trace = self._extract_agent_trace(db, session_id, context)
         if not agent_trace:
             return [
-                JudgeCheckResult(check=c, passed=False,
-                                 reasoning=f"No execution trace found for agent '{target_agent}'",
+                JudgeCheckResult(check=jc.check, passed=False,
+                                 reasoning=f"No execution trace found",
                                  source=source)
-                for c in checks
+                for jc in judge_checks
             ]
 
         results = []
-        for check in checks:
-            passed, reasoning = self._run_single_check(check, agent_trace)
-            results.append(JudgeCheckResult(check=check, passed=passed, reasoning=reasoning, source=source))
+        for jc in judge_checks:
+            judge_passed, reasoning, raw_input, raw_output = self._run_single_check(jc.check, agent_trace)
+
+            if jc.is_eval:
+                # Judge Eval — we're testing the judge itself
+                final_passed = (judge_passed == jc.expected)
+                expected_label = "PASS" if jc.expected else "FAIL"
+                actual_label = "PASS" if judge_passed else "FAIL"
+                reasoning = f"[Judge Eval: expected {expected_label}, got {actual_label}] {reasoning}"
+                result_source = "judge_eval"
+            else:
+                # LLM Judge — verdict IS the result
+                final_passed = judge_passed
+                result_source = source
+
+            results.append(JudgeCheckResult(
+                check=jc.check, passed=final_passed, reasoning=reasoning, source=result_source,
+                raw_input=raw_input, raw_output=raw_output,
+            ))
         return results
 
-    def _extract_agent_trace(self, db: DbSession, session_id: UUID, agent_id: str) -> str:
+    def _extract_agent_trace(self, db: DbSession, session_id: UUID,
+                             context: str | list[str] = "all") -> str:
+        """Extract execution trace for the judge.
+
+        context can be:
+        - "all": all agent runs in the session
+        - "business_analyst": all runs of that agent
+        - ["business_analyst", "architect"]: all runs of those agents
+        """
         user_message = (
             db.query(Message)
             .filter(Message.session_id == session_id, Message.role == "user")
             .order_by(Message.sequence_number.asc())
             .first()
         )
-        agent_run = (
-            db.query(AgentRun)
-            .filter(AgentRun.session_id == session_id, AgentRun.agent_id == agent_id)
-            .order_by(AgentRun.sequence_number.desc())
-            .first()
-        )
-        if not agent_run:
-            return ""
 
-        tool_calls = (
-            db.query(ToolCall)
-            .filter(ToolCall.agent_run_id == agent_run.id)
-            .order_by(ToolCall.tool_call_index)
-            .all()
-        )
+        # Determine which agent runs to include
+        if context == "all":
+            agent_runs = (
+                db.query(AgentRun)
+                .filter(AgentRun.session_id == session_id)
+                .order_by(AgentRun.sequence_number.asc())
+                .all()
+            )
+        else:
+            agent_ids = [context] if isinstance(context, str) else context
+            agent_runs = (
+                db.query(AgentRun)
+                .filter(
+                    AgentRun.session_id == session_id,
+                    AgentRun.agent_id.in_(agent_ids),
+                )
+                .order_by(AgentRun.sequence_number.asc())
+                .all()
+            )
+
+        if not agent_runs:
+            return ""
 
         lines = []
         if user_message:
             lines.append(f'User message: "{user_message.content}"')
             lines.append("")
-        lines.extend([f"Agent: {agent_id} (status: {agent_run.status})", ""])
-        lines.append("Tool calls:")
-        for tc in tool_calls:
-            args_str = json.dumps(tc.arguments) if tc.arguments else "{}"
-            result_part = f" -> {tc.status or 'pending'}"
-            if tc.result:
-                result_part = f" -> {tc.result[:500]}"
-            lines.append(f"  [{tc.tool_call_index}] {tc.mcp_server}:{tc.tool_name}({args_str}){result_part}")
+
+        for agent_run in agent_runs:
+            tool_calls = (
+                db.query(ToolCall)
+                .filter(ToolCall.agent_run_id == agent_run.id)
+                .order_by(ToolCall.tool_call_index)
+                .all()
+            )
+
+            lines.append(f"Agent: {agent_run.agent_id} (run #{agent_run.sequence_number}, status: {agent_run.status})")
+            if tool_calls:
+                lines.append("Tool calls:")
+                for tc in tool_calls:
+                    args_str = json.dumps(tc.arguments) if tc.arguments else "{}"
+                    result_part = f" -> {tc.status or 'pending'}"
+                    if tc.result:
+                        result_part = f" -> {tc.result[:500]}"
+                    lines.append(f"  [{tc.tool_call_index}] {tc.mcp_server}:{tc.tool_name}({args_str}){result_part}")
+            else:
+                lines.append("  (no tool calls)")
+            lines.append("")
 
         return "\n".join(lines)
 
-    def _run_single_check(self, check: str, agent_trace: str) -> tuple[bool, str]:
+    def _run_single_check(self, check: str, agent_trace: str) -> tuple[bool, str, str, str]:
         from druppie.llm.litellm_provider import ChatLiteLLM
 
         llm = ChatLiteLLM(
@@ -637,17 +761,26 @@ Evaluate this check:
 
 Respond with JSON: {{"pass": true/false, "reasoning": "your explanation"}}"""
 
-        try:
-            response = llm.chat(
-                messages=[
-                    {"role": "system", "content": "You are an evaluation judge. Respond ONLY with valid JSON."},
-                    {"role": "user", "content": prompt},
-                ]
-            )
-            return self._parse_judge_response(response.content)
-        except Exception as e:
-            logger.error("Judge check failed: check=%s error=%s", check[:80], str(e))
-            return False, f"Judge call failed: {e}"
+        messages = [
+            {"role": "system", "content": "You are an evaluation judge. Respond ONLY with valid JSON."},
+            {"role": "user", "content": prompt},
+        ]
+
+        for attempt in range(5):
+            try:
+                response = llm.chat(messages=messages)
+                passed, reasoning = self._parse_judge_response(response.content)
+                return passed, reasoning, prompt, response.content
+            except Exception as e:
+                if "rate" in str(e).lower() and attempt < 4:
+                    import time
+                    wait = 2 ** attempt
+                    logger.warning("Judge rate limited, retrying in %ds (attempt %d)", wait, attempt + 1)
+                    time.sleep(wait)
+                else:
+                    logger.error("Judge check failed: check=%s error=%s", check[:80], str(e))
+                    return False, f"Judge call failed: {e}", prompt, ""
+        return False, "Judge call failed after retries", prompt, ""
 
     @staticmethod
     def _parse_judge_response(response_text: str) -> tuple[bool, str]:
@@ -682,17 +815,12 @@ class TestRunner:
         self._gitea_url = gitea_url
         self._profiles = ProfileLoader(self._testing_dir / "profiles")
         self._checks = CheckLoader(self._testing_dir / "checks")
-        self._setup = SetupLoader(self._testing_dir / "setup")
         self._tool_tests = ToolTestLoader(self._testing_dir / "tools")
 
     # Keep old attribute name for API route compatibility
     @property
     def _evals(self):
         return self._checks
-
-    @property
-    def _sessions(self):
-        return self._setup
 
     def load_agent_test(self, path: Path) -> AgentTestDefinition:
         data = yaml.safe_load(path.read_text())
@@ -774,13 +902,11 @@ class TestRunner:
             self._db.add(UserRole(user_id=user_id, role="admin"))
             self._db.flush()
 
-        # Phase 1: Seed setup sessions (DB insert)
+        # Phase 1: Run setup tool tests (real tool execution)
         run_namespace = test_user
-        sessions = self._setup.resolve_chain(test.setup)
-        for session_fixture in sessions:
-            session_fixture.metadata.user = test_user
-            session_fixture.metadata.id = f"{run_namespace}:{session_fixture.metadata.id}"
-            seed_fixture(self._db, session_fixture, gitea_url=self._gitea_url)
+        for setup_name in test.setup:
+            setup_test = self._tool_tests.get(setup_name)
+            self._replay_chain(setup_test, user.id, run_namespace)
 
         # Phase 1b: Run extended tool chain if specified
         if test.extends:
@@ -803,14 +929,32 @@ class TestRunner:
                 results = match_assertions(self._db, replay_session_id, check_def.assert_, check_ref.expected)
                 all_assertion_results.extend(results)
 
+        # Phase 4: Judge checks (if configured)
+        all_judge_results: list[JudgeCheckResult] = []
+        if replay_session_id and test.judge:
+            try:
+                judge_profile = self._profiles.get_judge("default")
+                judge_runner = JudgeRunner(judge_profile)
+                judge_checks, judge_context = self._resolve_judge_config(test.judge)
+                if judge_checks:
+                    judge_results = judge_runner.run_checks(
+                        db=self._db, session_id=replay_session_id,
+                        judge_checks=judge_checks, context=judge_context, source="inline",
+                    )
+                    all_judge_results.extend(judge_results)
+            except Exception as e:
+                logger.error("Tool test judge failed: test=%s error=%s", test.name, e, exc_info=True)
+
         # Compute status
         duration_ms = int((time.time() - start) * 1000)
         assertions_passed = sum(1 for r in all_assertion_results if r.passed)
         assertions_total = len(all_assertion_results)
+        judge_passed = sum(1 for r in all_judge_results if r.passed)
+        judge_total = len(all_judge_results)
 
-        if assertions_total == 0:
+        if assertions_total == 0 and judge_total == 0:
             status = "passed"
-        elif assertions_passed == assertions_total:
+        elif assertions_passed == assertions_total and judge_passed == judge_total:
             status = "passed"
         else:
             status = "failed"
@@ -821,9 +965,9 @@ class TestRunner:
             test_name=test.name, test_description=test.description,
             test_user=test_user, hitl_profile="none", judge_profile=None,
             session_id=replay_session_id,
-            sessions_seeded=len(sessions),
+            sessions_seeded=len(test.setup),
             assertions_total=assertions_total, assertions_passed=assertions_passed,
-            judge_checks_total=0, judge_checks_passed=0,
+            judge_checks_total=judge_total, judge_checks_passed=judge_passed,
             status=status, duration_ms=duration_ms,
             agent_id=None, mode="tool",
         )
@@ -837,6 +981,16 @@ class TestRunner:
                 assertion_type="tool" if "tool(" in ar.name else "completed",
                 agent_id=ar.name.split(".")[0] if "." in ar.name else None,
                 passed=ar.passed, message=ar.message,
+            ))
+
+        for jr in all_judge_results:
+            self._db.add(TestAssertionResult(
+                test_run_id=test_run.id,
+                assertion_type="judge_eval" if jr.source == "judge_eval" else "judge_check",
+                passed=jr.passed, message=jr.check,
+                judge_reasoning=jr.reasoning,
+                judge_raw_input=jr.raw_input,
+                judge_raw_output=jr.raw_output,
             ))
 
         for tag in test.tags:
@@ -855,26 +1009,29 @@ class TestRunner:
     def _replay_chain(self, test: ToolTestDefinition, user_id: UUID,
                       run_namespace: str) -> tuple[UUID | None, list[AssertionResult]]:
         """Replay a tool test chain through real MCP. Returns (session_id, assertion_results)."""
-        from druppie.testing.replay_config import load_replay_config
         from druppie.testing.replay_executor import ReplayExecutor
         from druppie.testing.seed_schema import (
             AgentRunFixture, SessionFixture, SessionMetadata, ToolCallFixture, MessageFixture,
         )
 
-        replay_config = load_replay_config(self._testing_dir / "profiles")
-        replay_exec = ReplayExecutor(replay_config, self._db)
+        replay_exec = ReplayExecutor(self._db)
 
-        # Build a SessionFixture from the chain steps
-        agents_map: dict[str, list] = {}
+        # Build a SessionFixture from the chain steps.
+        # Create a new agent run each time the agent changes (preserves
+        # the real flow where planner runs multiple times).
+        agent_runs: list[AgentRunFixture] = []
+        current_agent: str | None = None
+        current_tools: list[ToolCallFixture] = []
+
         for step in test.chain:
-            if step.agent not in agents_map:
-                agents_map[step.agent] = []
-
-            # Convert outcome dict to ToolCallOutcome model if present
-            outcome = None
-            if step.outcome:
-                from druppie.testing.seed_schema import ToolCallOutcome
-                outcome = ToolCallOutcome(**step.outcome)
+            # Convert ChainStepApproval to dict for replay
+            approval_action = None
+            if step.approval:
+                approval_action = {
+                    "status": step.approval.status,
+                    "by": step.approval.by,
+                    "reason": step.approval.reason,
+                }
 
             tc_fixture = ToolCallFixture(
                 tool=step.tool,
@@ -883,14 +1040,30 @@ class TestRunner:
                 result=step.mock_result if step.mock else step.result,
                 error_message=step.error_message,
                 execute=False if step.mock else None,
-                outcome=outcome,
+                outcome=step.outcome,
+                approval_action=approval_action,
             )
-            agents_map[step.agent].append(tc_fixture)
 
-        agent_runs = []
-        for agent_id, tool_calls in agents_map.items():
+            if step.agent != current_agent:
+                # Flush previous agent run
+                if current_agent is not None and current_tools:
+                    # Agent status: completed only if last tool is done
+                    last_tool = current_tools[-1].tool if current_tools else ""
+                    status = "completed" if last_tool == "builtin:done" else "running"
+                    agent_runs.append(AgentRunFixture(
+                        id=current_agent, status=status, tool_calls=current_tools,
+                    ))
+                current_agent = step.agent
+                current_tools = []
+
+            current_tools.append(tc_fixture)
+
+        # Flush last agent run
+        if current_agent is not None and current_tools:
+            last_tool = current_tools[-1].tool if current_tools else ""
+            status = "completed" if last_tool == "builtin:done" else "running"
             agent_runs.append(AgentRunFixture(
-                id=agent_id, status="completed", tool_calls=tool_calls,
+                id=current_agent, status=status, tool_calls=current_tools,
             ))
 
         session_id_str = f"{run_namespace}:chain-{test.name}"
@@ -917,18 +1090,28 @@ class TestRunner:
 
         # Check inline assertions on chain steps
         assertion_results: list[AssertionResult] = []
+
+        # Track how many times we've seen each (agent, tool) combo
+        # so we can find the Nth occurrence in the DB
+        tool_call_counts: dict[str, int] = {}
+
         for step in test.chain:
+            # Track occurrence count for this (agent, tool) pair
+            key = f"{step.agent}:{step.tool}"
+            tool_call_counts[key] = tool_call_counts.get(key, 0) + 1
+            occurrence = tool_call_counts[key]
+
             if step.assert_ is None:
                 continue
 
             # Check result validators
             if step.assert_.result:
                 from druppie.testing.result_validators import validate_result
-                # Find the tool call in DB
+                # Find the Nth tool call of this type in DB
                 parts = step.tool.split(":", 1)
                 mcp_server, tool_name = parts[0], parts[1] if len(parts) > 1 else parts[0]
 
-                tc_record = (
+                tc_records = (
                     self._db.query(ToolCall)
                     .join(AgentRun)
                     .filter(
@@ -937,11 +1120,19 @@ class TestRunner:
                         ToolCall.mcp_server == mcp_server,
                         ToolCall.tool_name == tool_name,
                     )
-                    .first()
+                    .order_by(ToolCall.created_at.asc())
+                    .all()
                 )
+                # Pick the Nth occurrence (1-indexed)
+                tc_record = tc_records[occurrence - 1] if len(tc_records) >= occurrence else None
 
                 if tc_record:
-                    validations = validate_result(tc_record.result, step.assert_.result)
+                    # Combine result + error_message for validation
+                    # Failed tool calls store useful text in error_message, not result
+                    combined_result = tc_record.result or ""
+                    if tc_record.error_message:
+                        combined_result = (combined_result + "\n" + tc_record.error_message).strip()
+                    validations = validate_result(combined_result or None, step.assert_.result)
                     for vr in validations:
                         assertion_results.append(AssertionResult(
                             name=f"{step.agent}.tool({step.tool}).{vr.validator}",
@@ -985,7 +1176,6 @@ class TestRunner:
         self._db.add(benchmark_run)
         self._db.flush()
 
-        sessions: list[SessionFixture] = []
         execution_session_id: UUID | None = None
         execution_error: str | None = None
 
@@ -999,17 +1189,20 @@ class TestRunner:
             self._db.add(UserRole(user_id=user_id, role="admin"))
             self._db.flush()
 
-        # Phase 1: Seed setup sessions (DB insert)
-        sessions = self._setup.resolve_chain(test.setup)
-        for session_fixture in sessions:
-            session_fixture.metadata.user = test_user
-            session_fixture.metadata.id = f"{run_namespace}:{session_fixture.metadata.id}"
-            seed_fixture(self._db, session_fixture, gitea_url=self._gitea_url)
+        # Phase 1: Run setup tool tests (real tool execution)
+        last_setup_session_id: UUID | None = None
+        for setup_name in test.setup:
+            setup_test = self._tool_tests.get(setup_name)
+            session_id, _ = self._replay_chain(setup_test, user.id, run_namespace)
+            if session_id:
+                last_setup_session_id = session_id
 
         # Phase 1b: Run extended tool chain if specified
         if test.extends:
             extended = self._tool_tests.get(test.extends)
-            self._replay_chain(extended, user.id, run_namespace)
+            session_id, _ = self._replay_chain(extended, user.id, run_namespace)
+            if session_id:
+                last_setup_session_id = session_id
 
         self._db.flush()
 
@@ -1024,11 +1217,15 @@ class TestRunner:
                 except KeyError:
                     logger.warning("HITL profile not found: %s", hitl_name)
 
+            # If continue_session, reuse the last setup session
+            continue_session_id = last_setup_session_id if test.continue_session else None
+
             try:
                 execution_session_id = self._execute_agents(
                     message=test.message, user_id=user.id,
                     real_agents=test.agents, hitl_profile=hitl_profile,
                     test_context=test.message,
+                    session_id=continue_session_id,
                 )
             except Exception as e:
                 execution_error = f"{type(e).__name__}: {e}"
@@ -1037,11 +1234,6 @@ class TestRunner:
 
         # Determine eval session
         eval_session_id: UUID | None = execution_session_id
-        if eval_session_id is None and sessions:
-            from druppie.db.models import Session as SessionModel
-            last_sid = fixture_uuid(sessions[-1].metadata.id)
-            found = self._db.query(SessionModel).filter(SessionModel.id == last_sid).first()
-            eval_session_id = found.id if found else last_sid
 
         # Phase 3: Assertions
         all_assertion_results: list[AssertionResult] = []
@@ -1070,25 +1262,23 @@ class TestRunner:
                 for check_ref in test.assert_:
                     check_def = self._checks.get(check_ref.check)
                     if check_def.judge:
-                        target_agent = check_def.assert_[0].agent if check_def.assert_ else "router"
+                        judge_checks, judge_context = self._resolve_judge_config(check_def.judge)
+                        if judge_checks:
+                            judge_results = judge_runner.run_checks(
+                                db=self._db, session_id=eval_session_id,
+                                judge_checks=judge_checks, context=judge_context, source="check",
+                            )
+                            all_judge_results.extend(judge_results)
+
+                # Inline judge checks (on the test itself)
+                if test.judge:
+                    inline_checks, inline_context = self._resolve_judge_config(test.judge)
+                    if inline_checks:
                         judge_results = judge_runner.run_checks(
                             db=self._db, session_id=eval_session_id,
-                            checks=check_def.judge, target_agent=target_agent, source="check",
+                            judge_checks=inline_checks, context=inline_context, source="inline",
                         )
                         all_judge_results.extend(judge_results)
-
-                # Inline judge checks
-                if test.judge:
-                    target_agent = "router"
-                    if test.assert_:
-                        first_check = self._checks.get(test.assert_[0].check)
-                        if first_check.assert_:
-                            target_agent = first_check.assert_[0].agent
-                    judge_results = judge_runner.run_checks(
-                        db=self._db, session_id=eval_session_id,
-                        checks=test.judge, target_agent=target_agent, source="inline",
-                    )
-                    all_judge_results.extend(judge_results)
 
         # Compute status
         duration_ms = int((time.time() - start) * 1000)
@@ -1123,7 +1313,7 @@ class TestRunner:
             test_user=test_user, hitl_profile=hitl_name,
             judge_profile=", ".join(judge_profiles) if judge_profiles else None,
             session_id=stored_session_id,
-            sessions_seeded=len(sessions),
+            sessions_seeded=len(test.setup),
             assertions_total=assertions_total, assertions_passed=assertions_passed,
             judge_checks_total=judge_total, judge_checks_passed=judge_passed,
             status=status, duration_ms=duration_ms,
@@ -1149,10 +1339,12 @@ class TestRunner:
         for jr in all_judge_results:
             self._db.add(TestAssertionResult(
                 test_run_id=test_run.id,
-                assertion_type="judge_check",
+                assertion_type="judge_eval" if jr.source == "judge_eval" else "judge_check",
                 agent_id=primary_agent,
                 passed=jr.passed, message=jr.check,
                 judge_reasoning=jr.reasoning,
+                judge_raw_input=jr.raw_input,
+                judge_raw_output=jr.raw_output,
             ))
 
         self._db.flush()
@@ -1178,8 +1370,27 @@ class TestRunner:
             status=status, duration_ms=duration_ms,
         )
 
+    @staticmethod
+    def _resolve_judge_config(judge_config) -> tuple[list, str | list[str]]:
+        """Resolve judge config to (list of JudgeCheck, context).
+
+        Supports:
+        - Legacy: list of strings → JudgeCheck(check=s, expected=True) with context="all"
+        - New: JudgeDefinition with context and checks (strings or dicts)
+        """
+        from druppie.testing.v2_schema import JudgeCheck, JudgeDefinition
+
+        if isinstance(judge_config, JudgeDefinition):
+            return judge_config.resolved_checks(), judge_config.context
+        elif isinstance(judge_config, list):
+            return [JudgeCheck.from_value(c) for c in judge_config], "all"
+        elif judge_config is None:
+            return [], "all"
+        return [], "all"
+
     def _execute_agents(self, message: str, user_id: UUID, real_agents: list[str],
-                        hitl_profile: HITLProfile | None, test_context: str = "") -> UUID:
+                        hitl_profile: HITLProfile | None, test_context: str = "",
+                        session_id: UUID | None = None) -> UUID:
         hitl_sim = HITLSimulator(hitl_profile, test_context=test_context) if hitl_profile else None
         bounded = _BoundedOrchestrator(
             db=self._db, user_id=user_id,
@@ -1195,10 +1406,10 @@ class TestRunner:
         if loop and loop.is_running():
             import concurrent.futures
             with concurrent.futures.ThreadPoolExecutor() as pool:
-                future = pool.submit(asyncio.run, bounded.run(message))
+                future = pool.submit(asyncio.run, bounded.run(message, session_id=session_id))
                 return future.result(timeout=300)
         else:
-            return asyncio.run(bounded.run(message))
+            return asyncio.run(bounded.run(message, session_id=session_id))
 
 
 # ---------------------------------------------------------------------------

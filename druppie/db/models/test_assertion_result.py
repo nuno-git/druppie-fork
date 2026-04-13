@@ -37,6 +37,8 @@ class TestAssertionResult(Base):
     passed = Column(Boolean, nullable=False)
     message = Column(Text, nullable=True)
     judge_reasoning = Column(Text, nullable=True)
+    judge_raw_input = Column(Text, nullable=True)
+    judge_raw_output = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), default=utcnow)
 
     # Relationships
@@ -61,5 +63,7 @@ class TestAssertionResult(Base):
             "passed": self.passed,
             "message": self.message,
             "judge_reasoning": self.judge_reasoning,
+            "judge_raw_input": self.judge_raw_input,
+            "judge_raw_output": self.judge_raw_output,
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }

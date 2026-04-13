@@ -32,8 +32,7 @@ import {
 } from 'lucide-react'
 import {
   getAvailableTests,
-  getAvailableSetups,
-  seedSessions,
+  getActiveRun,
   getTestBatches,
   getTestRun,
   getTestRunAssertions,
@@ -468,6 +467,7 @@ const BatchResultsList = ({ refreshKey, onSelectRun, isRunning, runResult, setRu
   const [tags, setTags] = useState([])
   const [selectedTag, setSelectedTag] = useState(null)
   const [expandedBatches, setExpandedBatches] = useState(new Set())
+  const [initialExpanded, setInitialExpanded] = useState(false)
 
   const fetchTags = async () => {
     try {
@@ -485,6 +485,12 @@ const BatchResultsList = ({ refreshKey, onSelectRun, isRunning, runResult, setRu
       const data = await getTestBatches(page, 10, selectedTag)
       setBatches(data.items || [])
       setTotalPages(data.total_pages || 1)
+
+      // Auto-expand the most recent batch on first load
+      if (!initialExpanded && data.items?.length > 0) {
+        setExpandedBatches(new Set([data.items[0].batch_id]))
+        setInitialExpanded(true)
+      }
     } catch (err) {
       setError(err.message)
     } finally {
@@ -731,6 +737,81 @@ const BatchResultsList = ({ refreshKey, onSelectRun, isRunning, runResult, setRu
 
 // ---- Test Run Detail View ----
 
+const JudgeChecksSection = ({ judgeChecks }) => {
+  const [expandedRaw, setExpandedRaw] = useState(new Set())
+
+  const toggleRaw = (i) => {
+    const next = new Set(expandedRaw)
+    if (next.has(i)) next.delete(i)
+    else next.add(i)
+    setExpandedRaw(next)
+  }
+
+  return (
+    <div className="bg-white rounded-lg border overflow-hidden">
+      <div className="px-4 py-3 border-b border-gray-100 bg-yellow-50">
+        <h3 className="font-semibold text-sm">LLM Judge Checks ({judgeChecks.filter(j => j.passed).length}/{judgeChecks.length} passed)</h3>
+      </div>
+      <div className="divide-y">
+        {judgeChecks.map((jr, i) => (
+          <div key={i} className="px-4 py-3">
+            <div className="flex items-start gap-3">
+              {jr.passed ? (
+                <CheckCircle2 className="w-5 h-5 text-green-500 mt-0.5 shrink-0" />
+              ) : (
+                <XCircle className="w-5 h-5 text-red-500 mt-0.5 shrink-0" />
+              )}
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2">
+                  <span className="px-1.5 py-0.5 rounded text-xs font-mono bg-yellow-50 text-yellow-700">
+                    judge
+                  </span>
+                  {jr.agent_id && (
+                    <span className="text-sm font-medium text-gray-700">{jr.agent_id}</span>
+                  )}
+                </div>
+                {jr.message && (
+                  <p className="text-sm text-gray-700 mt-1">{jr.message}</p>
+                )}
+                {jr.judge_reasoning && (
+                  <div className="mt-2 p-2 bg-gray-50 rounded text-sm">
+                    <span className="font-medium text-gray-600">Reasoning: </span>
+                    <span className="text-gray-500">{jr.judge_reasoning}</span>
+                  </div>
+                )}
+                {(jr.judge_raw_input || jr.judge_raw_output) && (
+                  <button
+                    onClick={() => toggleRaw(i)}
+                    className="mt-2 text-xs text-indigo-600 hover:text-indigo-800 hover:underline"
+                  >
+                    {expandedRaw.has(i) ? 'Hide' : 'Show'} raw LLM call
+                  </button>
+                )}
+              </div>
+            </div>
+            {expandedRaw.has(i) && (jr.judge_raw_input || jr.judge_raw_output) && (
+              <div className="mt-3 ml-8 space-y-2">
+                {jr.judge_raw_input && (
+                  <div>
+                    <div className="text-xs font-medium text-gray-500 mb-1">Prompt sent to judge:</div>
+                    <pre className="text-xs bg-gray-900 text-green-400 p-3 rounded overflow-x-auto max-h-96 overflow-y-auto whitespace-pre-wrap">{jr.judge_raw_input}</pre>
+                  </div>
+                )}
+                {jr.judge_raw_output && (
+                  <div>
+                    <div className="text-xs font-medium text-gray-500 mb-1">Judge response:</div>
+                    <pre className="text-xs bg-gray-900 text-yellow-400 p-3 rounded overflow-x-auto max-h-48 overflow-y-auto whitespace-pre-wrap">{jr.judge_raw_output}</pre>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 const TestRunDetail = ({ testRunId, onBack }) => {
   const [run, setRun] = useState(null)
   const [assertionResults, setAssertionResults] = useState([])
@@ -883,38 +964,7 @@ const TestRunDetail = ({ testRunId, onBack }) => {
 
       {/* Judge Checks */}
       {judgeChecks.length > 0 && (
-        <div className="bg-white rounded-lg border overflow-hidden">
-          <div className="px-4 py-3 border-b border-gray-100 bg-gray-50">
-            <h3 className="font-semibold text-sm">Judge Checks ({judgeChecks.filter(j => j.passed).length}/{judgeChecks.length} passed)</h3>
-          </div>
-          <div className="divide-y">
-            {judgeChecks.map((jr, i) => (
-              <div key={i} className="px-4 py-3 flex items-start gap-3">
-                {jr.passed ? (
-                  <CheckCircle2 className="w-5 h-5 text-green-500 mt-0.5 shrink-0" />
-                ) : (
-                  <XCircle className="w-5 h-5 text-red-500 mt-0.5 shrink-0" />
-                )}
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    <span className="px-1.5 py-0.5 rounded text-xs font-mono bg-yellow-50 text-yellow-700">
-                      judge
-                    </span>
-                    {jr.agent_id && (
-                      <span className="text-sm font-medium text-gray-700">{jr.agent_id}</span>
-                    )}
-                  </div>
-                  {jr.message && (
-                    <p className="text-sm text-gray-700 mt-1">{jr.message}</p>
-                  )}
-                  {jr.judge_reasoning && (
-                    <p className="text-sm text-gray-400 mt-1 italic">{jr.judge_reasoning}</p>
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
+        <JudgeChecksSection judgeChecks={judgeChecks} />
       )}
 
       {/* Metadata */}
@@ -1340,14 +1390,29 @@ export default function Evaluations() {
   // Effective selected count for display
   const effectiveCount = selectAll ? availableTests.length : selectedTests.size
 
-  // Load available tests
+  // Load available tests + check for active run on mount
   useEffect(() => {
     const fetch = async () => {
       setTestsLoading(true)
       setTestsError(null)
       try {
-        const data = await getAvailableTests()
+        const [data, activeRun] = await Promise.all([
+          getAvailableTests(),
+          getActiveRun().catch(() => ({ active: false })),
+        ])
         setAvailableTests(data || [])
+
+        // Restore running state if a test is in progress
+        if (activeRun.active && activeRun.run_id) {
+          setIsRunning(true)
+          setRunMessage(activeRun.message || 'Running tests...')
+          setRunProgress({
+            current_test: activeRun.current_test,
+            completed_tests: activeRun.completed_tests || [],
+            total_tests: activeRun.total_tests || 0,
+          })
+          pollRunStatus(activeRun.run_id)
+        }
       } catch (err) {
         setTestsError(err.message)
       } finally {
@@ -1361,6 +1426,7 @@ export default function Evaluations() {
 
   // Poll for background test run completion
   const pollRunStatus = (runId) => {
+    let notFoundCount = 0
     const pollInterval = setInterval(async () => {
       try {
         const status = await getRunStatus(runId)
@@ -1376,8 +1442,21 @@ export default function Evaluations() {
           setIsRunning(false)
           setRunMessage(null)
           setRunProgress(null)
-          alert('Test run failed: ' + status.message)
+          setRunResult({ error: true, message: status.message })
+          setRefreshKey((k) => k + 1)
+        } else if (status.status === 'not_found') {
+          // Backend might have restarted — wait a few polls before giving up
+          notFoundCount++
+          if (notFoundCount >= 3) {
+            clearInterval(pollInterval)
+            setIsRunning(false)
+            setRunMessage(null)
+            setRunProgress(null)
+            setRunResult({ error: true, message: 'Test run lost — the backend may have restarted. Check Test Results for partial results.' })
+            setRefreshKey((k) => k + 1)
+          }
         } else {
+          notFoundCount = 0
           setRunMessage(status.message || 'Running tests...')
           setRunProgress({
             current_test: status.current_test,
@@ -1390,9 +1469,9 @@ export default function Evaluations() {
         setIsRunning(false)
         setRunMessage(null)
         setRunProgress(null)
-        alert('Failed to check test run status')
+        setRunResult({ error: true, message: 'Failed to check test run status' })
       }
-    }, 1500)
+    }, 2000)
   }
 
   const handleRun = async () => {

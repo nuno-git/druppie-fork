@@ -1,7 +1,0 @@
-check:
-  name: tool-result-valid
-  description: "Tool call should return a non-empty, valid result"
-  tags: [tool, validation, tier:fast]
-  assert:
-    - agent: router
-      completed: true

@@ -1,14 +1,14 @@
-"""Consolidated testing framework: seeds and evaluations.
+"""Consolidated testing framework.
 
 Submodules:
-    seed_ids, seed_schema, seed_loader  -- DB seeding from YAML fixtures
+    seed_ids, seed_schema  -- Fixture schemas and deterministic UUIDs
+    replay_executor  -- Real MCP tool execution from YAML
     eval_schema, eval_context, eval_judge, eval_config, eval_live  -- LLM-as-Judge evaluation
     v2_schema, v2_runner, v2_assertions  -- V2 test runner
 """
 
-# Seeding
+# Fixture helpers (used by replay_executor and v2_runner)
 from druppie.testing.seed_ids import fixture_uuid
-from druppie.testing.seed_loader import load_fixtures, seed_all, seed_fixture
 from druppie.testing.seed_schema import SessionFixture
 
 # Evaluation
@@ -17,11 +17,8 @@ from druppie.testing.eval_judge import JudgeEngine
 from druppie.testing.eval_live import run_live_evaluation
 
 __all__ = [
-    # Seeding
+    # Fixture helpers
     "fixture_uuid",
-    "load_fixtures",
-    "seed_all",
-    "seed_fixture",
     "SessionFixture",
     # Evaluation
     "get_evaluation_config",

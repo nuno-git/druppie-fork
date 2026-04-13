@@ -28,6 +28,35 @@ class CheckAssertion(BaseModel):
     error_matches: str | None = None
 
 
+class JudgeCheck(BaseModel):
+    """A single judge check with optional expected outcome."""
+
+    check: str  # natural language check description
+    expected: bool | None = None  # None = LLM Judge (verdict is result), bool = Judge Eval (testing the judge)
+
+    @property
+    def is_eval(self) -> bool:
+        """True when we're evaluating the judge itself (expected was explicitly set)."""
+        return self.expected is not None
+
+    @classmethod
+    def from_value(cls, v):
+        if isinstance(v, str):
+            return cls(check=v, expected=None)  # LLM Judge — no expected
+        return cls(**v)  # Judge Eval — has expected
+
+
+class JudgeDefinition(BaseModel):
+    """Judge configuration — what context the LLM judge sees and what to check."""
+
+    context: str | list[str] = "all"  # "all", "business_analyst", or ["business_analyst", "architect"]
+    checks: list[str | dict] = Field(default_factory=list)
+
+    def resolved_checks(self) -> list[JudgeCheck]:
+        """Resolve checks to JudgeCheck objects (handles string shorthand)."""
+        return [JudgeCheck.from_value(c) for c in self.checks]
+
+
 class CheckDefinition(BaseModel):
     """A check definition -- what to check, not what the correct answer is."""
 
@@ -35,7 +64,7 @@ class CheckDefinition(BaseModel):
     description: str = ""
     tags: list[str] = Field(default_factory=list)
     assert_: list[CheckAssertion] = Field(default_factory=list, alias="assert")
-    judge: list[str] = Field(default_factory=list)
+    judge: JudgeDefinition | list[str] | None = None  # new format or legacy list
 
 
 class CheckFile(BaseModel):
@@ -113,6 +142,15 @@ class ChainStepAssert(BaseModel):
     result: list[str | dict] | None = None  # result validators
 
 
+class ChainStepApproval(BaseModel):
+    """How to handle approval for a tool call that requires it."""
+
+    __test__ = False
+    status: str = "approved"  # "approved" or "rejected"
+    by: str | None = None  # username of approver (defaults to test user)
+    reason: str | None = None  # rejection reason
+
+
 class ChainStep(BaseModel):
     """A single tool call in a tool test chain."""
 
@@ -125,6 +163,7 @@ class ChainStep(BaseModel):
     mock: bool = False  # force mock even if not blocklisted
     mock_result: str | None = None
     outcome: dict | None = None  # for execute_coding_task file creation
+    approval: ChainStepApproval | None = None  # how to handle approval gate
     assert_: ChainStepAssert | None = Field(default=None, alias="assert")
 
 
@@ -143,6 +182,9 @@ class ToolTestDefinition(BaseModel):
     # Top-level assertions (in addition to inline assert on chain steps)
     assert_: list[CheckRef] | None = Field(default=None, alias="assert")
     verify: list[VerifyCheck] | None = None
+
+    # Judge checks — LLM evaluates quality
+    judge: JudgeDefinition | list[str] | None = None
 
 
 class ToolTestFile(BaseModel):
@@ -178,8 +220,12 @@ class AgentTestDefinition(BaseModel):
     # Manual input
     inputs: list[TestInput] = Field(default_factory=list)
 
-    # Setup: session IDs to seed (DB insert)
+    # Setup: tool test names to run first (each creates a session)
     setup: list[str] = Field(default_factory=list)
+
+    # Continue the last setup session instead of creating a new one
+    # When true, the message is sent as a continuation of the setup session
+    continue_session: bool = False
 
     # Extend a tool test chain (runs before agent execution)
     extends: str | None = None
@@ -200,8 +246,8 @@ class AgentTestDefinition(BaseModel):
     # Verify checks (Gitea side-effects)
     verify: list[VerifyCheck] | None = None
 
-    # Inline judge checks (natural language, test-specific)
-    judge: list[str] = Field(default_factory=list)
+    # Inline judge checks — new format (JudgeDefinition) or legacy (list of strings)
+    judge: JudgeDefinition | list[str] | None = None
 
     @property
     def is_manual(self) -> bool:

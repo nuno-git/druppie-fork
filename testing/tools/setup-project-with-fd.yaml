@@ -1,0 +1,128 @@
+## Setup: create a project with functional design ready for architect review
+## Used as setup for agent tests that need a project with FD already written.
+
+tool-test:
+  name: setup-project-with-fd
+  description: "Creates a project with FD — ready for architect review"
+  tags: [setup]
+
+  chain:
+    # --- Router ---
+    - agent: router
+      tool: builtin:set_intent
+      arguments:
+        intent: create_project
+        project_name: recipe-sharing-app
+        description: "A recipe sharing platform where users can share and rate recipes"
+      assert:
+        result:
+          - not_empty
+
+    - agent: router
+      tool: builtin:done
+      arguments:
+        summary: "Classified as create_project for recipe-sharing-app"
+
+    # --- Planner ---
+    - agent: planner
+      tool: builtin:make_plan
+      mock: true
+      arguments:
+        steps:
+          - agent_id: business_analyst
+            prompt: "Gather requirements and create functional design"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Planned business_analyst"
+
+    # --- Business Analyst ---
+    - agent: business_analyst
+      tool: builtin:hitl_ask_multiple_choice_question
+      mock: true
+      mock_result: "Home cooks sharing recipes with friends and family"
+      arguments:
+        question: "Who is the target audience?"
+        choices:
+          - "Home cooks sharing recipes with friends and family"
+          - "Professional chefs and restaurants"
+          - "Food bloggers and content creators"
+
+    - agent: business_analyst
+      tool: coding:make_design
+      approval:
+        status: approved
+        by: analyst
+      arguments:
+        path: docs/functional-design.md
+        content: |
+          # Functioneel Ontwerp: Recipe Sharing App
+
+          ## 1. Huidige vs Gewenste Situatie
+          Gebruikers willen recepten delen en beoordelen binnen een
+          vrienden- en familiekring. Er is geen bestaande oplossing.
+
+          ## 2. Functionele Vereisten
+          - FR-01: Gebruiker kan een recept aanmaken met titel, ingrediënten,
+            bereidingswijze en foto
+          - FR-02: Gebruiker kan recepten van anderen bekijken
+          - FR-03: Gebruiker kan recepten beoordelen (1-5 sterren)
+          - FR-04: Gebruiker kan commentaar geven op recepten
+          - FR-05: Gebruiker kan recepten zoeken op ingrediënt of naam
+          - FR-06: Gebruiker kan favoriete recepten opslaan
+
+          ## 3. Niet-Functionele Vereisten
+          - NFR-01: Applicatie laadt binnen 2 seconden
+          - NFR-02: Ondersteunt minimaal 100 gelijktijdige gebruikers
+          - NFR-03: Gegevens worden veilig opgeslagen
+
+          ## 4. Gebruikersrollen
+          - Thuiskok: kan recepten aanmaken, bekijken, beoordelen
+          - Beheerder: kan gebruikers en content modereren
+
+          ## 5. Gebruikersinteractie
+          - Homepage met nieuwste en best beoordeelde recepten
+          - Recept-detailpagina met ingrediënten, stappen, beoordelingen
+          - Profielpagina met eigen recepten en favorieten
+          - Zoekfunctie met filters
+
+      assert:
+        result:
+          - { contains: "functional-design.md" }
+
+    - agent: business_analyst
+      tool: coding:run_git
+      arguments:
+        command: "add docs/functional-design.md"
+
+    - agent: business_analyst
+      tool: coding:run_git
+      arguments:
+        command: "commit -m 'Functioneel ontwerp recipe sharing app'"
+
+    - agent: business_analyst
+      tool: coding:run_git
+      arguments:
+        command: "push"
+
+    - agent: business_analyst
+      tool: builtin:done
+      arguments:
+        summary: "DESIGN_APPROVED"
+      assert:
+        completed: true
+
+    # --- Planner (routes to architect) ---
+    - agent: planner
+      tool: builtin:make_plan
+      mock: true
+      arguments:
+        steps:
+          - agent_id: architect
+            prompt: "Review the functional design and create the technical design"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "BA approved, planned architect"

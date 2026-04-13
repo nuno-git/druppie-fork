@@ -403,6 +403,24 @@ export const getAnalyticsBatchDetail = (batchId) =>
 export const getTestRunAssertions = (testRunId) =>
   request(`/api/evaluations/test-runs/${testRunId}/assertions`)
 
+export const getBatchAssertions = (batchId, filters = {}) => {
+  const params = new URLSearchParams()
+  if (filters.assertion_type) params.append('assertion_type', filters.assertion_type)
+  if (filters.agent_id) params.append('agent_id', filters.agent_id)
+  if (filters.check_text) params.append('check_text', filters.check_text)
+  const qs = params.toString()
+  return request(`/api/evaluations/batch/${batchId}/assertions${qs ? '?' + qs : ''}`)
+}
+
+export const getBatchFilters = (batchId) =>
+  request(`/api/evaluations/batch/${batchId}/filters`)
+
+export const getActiveRun = () =>
+  request('/api/evaluations/active-run')
+
+// Kept for backwards compat - used by Evaluations.jsx TestRunDetail
+export const getTestRunAssertionsList = getTestRunAssertions
+
 // ============ Cache ============
 export const getCachedPackages = () => request('/api/cache/packages')
 export const getAllProjectDependencies = () => request('/api/cache/dependencies')

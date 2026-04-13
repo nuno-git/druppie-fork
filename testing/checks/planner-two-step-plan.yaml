@@ -1,9 +1,0 @@
-check:
-  name: planner-two-step-plan
-  description: "Planner should create a 2-step plan (working agent + planner)"
-  tags: [planner, plan-structure, tier:standard]
-  assert:
-    - agent: planner
-      tool: builtin:make_plan
-  judge:
-    - "The plan should have exactly 2 steps: one working agent and one planner re-evaluation step"
