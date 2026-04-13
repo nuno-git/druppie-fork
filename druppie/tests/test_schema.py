@@ -3,7 +3,7 @@
 import pytest
 from pydantic import ValidationError
 
-from druppie.testing.v2_schema import (
+from druppie.testing.schema import (
     CheckAssertion,
     CheckDefinition,
     CheckFile,

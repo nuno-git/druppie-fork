@@ -16,7 +16,7 @@ from uuid import UUID
 from sqlalchemy.orm import Session as DbSession
 
 from druppie.db.models import AgentRun, ToolCall
-from druppie.testing.v2_schema import EvalAssertion
+from druppie.testing.schema import EvalAssertion
 
 logger = logging.getLogger(__name__)
 

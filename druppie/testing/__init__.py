@@ -4,10 +4,10 @@ Submodules:
     seed_ids, seed_schema  -- Fixture schemas and deterministic UUIDs
     replay_executor  -- Real MCP tool execution from YAML
     eval_schema, eval_context, eval_judge, eval_config, eval_live  -- LLM-as-Judge evaluation
-    v2_schema, v2_runner, v2_assertions  -- V2 test runner
+    schema, runner, assertions  -- Test runner
 """
 
-# Fixture helpers (used by replay_executor and v2_runner)
+# Fixture helpers (used by replay_executor and runner)
 from druppie.testing.seed_ids import fixture_uuid
 from druppie.testing.seed_schema import SessionFixture
 

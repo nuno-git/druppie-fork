@@ -179,7 +179,7 @@ class EvaluationService:
         Returns:
             Dict with total/passed/failed counts and per-test result details.
         """
-        from ..testing.v2_runner import TestRunner
+        from ..testing.runner import TestRunner
 
         runner = TestRunner(db=self.eval_repo.db)
         results = []

@@ -11,8 +11,8 @@ import pytest
 from sqlalchemy import String, TypeDecorator, create_engine
 from sqlalchemy.orm import Session as DbSession, sessionmaker
 
-from druppie.testing.v2_assertions import AssertionResult, match_assertions
-from druppie.testing.v2_schema import EvalAssertion
+from druppie.testing.assertions import AssertionResult, match_assertions
+from druppie.testing.schema import EvalAssertion
 from druppie.db.models import AgentRun, Base, Project, Session, ToolCall, User
 
 # ---------------------------------------------------------------------------
