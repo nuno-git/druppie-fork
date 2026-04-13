@@ -829,64 +829,65 @@ async def done(
         accumulated_preview=accumulated_summary[:200],
     )
 
-    # Direct routing: if next_agent is specified, create pending runs for it
-    # (bypassing the Planner). Cancel any existing pending runs first so the
-    # directly-routed agent takes priority.
+    # Direct routing: if next_agent is specified, validate it against the
+    # calling agent's allowed_next_agents list and insert it as the next
+    # pending run. Does NOT cancel existing pending runs — just inserts
+    # before them. The planner still runs after (already planned).
     if next_agent:
-        # Validate that the agent exists
         from druppie.agents.definition_loader import AgentDefinitionLoader
-        loader = AgentDefinitionLoader()
-        try:
-            loader.load(next_agent)
-        except Exception:
-            logger.warning(
-                "next_agent_invalid_fallback_to_planner",
-                next_agent=next_agent,
-                session_id=str(session_id),
-            )
-            next_agent = None  # Fall back to normal Planner routing
-
-    if next_agent:
         from druppie.domain.common import AgentRunStatus
 
-        cancelled = execution_repo.cancel_pending_runs(session_id)
-        if cancelled > 0:
-            logger.info(
-                "next_agent_cancelled_pending",
+        # Get the calling agent's definition to check allowed_next_agents
+        current_agent_run = execution_repo.get_by_id(agent_run_id)
+        current_agent_id = current_agent_run.agent_id if current_agent_run else None
+
+        loader = AgentDefinitionLoader()
+        allowed = False
+        try:
+            if current_agent_id:
+                caller_def = loader.load(current_agent_id)
+                if next_agent in caller_def.allowed_next_agents:
+                    # Also verify the target agent exists
+                    loader.load(next_agent)
+                    allowed = True
+                else:
+                    logger.warning(
+                        "next_agent_not_allowed",
+                        caller=current_agent_id,
+                        next_agent=next_agent,
+                        allowed=caller_def.allowed_next_agents,
+                        session_id=str(session_id),
+                    )
+        except Exception as e:
+            logger.warning(
+                "next_agent_validation_failed",
+                next_agent=next_agent,
+                error=str(e),
                 session_id=str(session_id),
-                cancelled=cancelled,
             )
 
-        start_seq = execution_repo.get_next_sequence_number(session_id)
+        if allowed:
+            # Insert the target agent as the next pending run
+            # (before any existing pending runs like planner)
+            start_seq = execution_repo.get_next_sequence_number(session_id)
 
-        # Create the target agent run
-        execution_repo.create_agent_run(
-            session_id=session_id,
-            agent_id=next_agent,
-            status=AgentRunStatus.PENDING,
-            planned_prompt="",  # Will be filled by relay below
-            sequence_number=start_seq,
-        )
+            execution_repo.create_agent_run(
+                session_id=session_id,
+                agent_id=next_agent,
+                status=AgentRunStatus.PENDING,
+                planned_prompt="",  # Will be filled by relay below
+                sequence_number=start_seq,
+            )
+            execution_repo.flush()
 
-        # Create a planner run after the target agent (safety net)
-        execution_repo.create_agent_run(
-            session_id=session_id,
-            agent_id="planner",
-            status=AgentRunStatus.PENDING,
-            planned_prompt=(
-                f"Agent {next_agent} completed (directly routed via next_agent). "
-                f"Evaluate output and decide next step."
-            ),
-            sequence_number=start_seq + 1,
-        )
-        execution_repo.flush()
-
-        logger.info(
-            "next_agent_direct_route",
-            session_id=str(session_id),
-            from_agent_run=str(agent_run_id),
-            next_agent=next_agent,
-        )
+            logger.info(
+                "next_agent_direct_route",
+                session_id=str(session_id),
+                from_agent=current_agent_id,
+                next_agent=next_agent,
+            )
+        else:
+            next_agent = None  # Ignored — planner will decide as usual
 
     # Relay accumulated summary to next pending agent
     next_run = execution_repo.get_next_pending(session_id)
