@@ -720,19 +720,21 @@ class JudgeRunner:
             tool_calls = (
                 db.query(ToolCall)
                 .filter(ToolCall.agent_run_id == agent_run.id)
-                .order_by(ToolCall.tool_call_index)
+                .order_by(ToolCall.created_at.asc())
                 .all()
             )
 
             lines.append(f"Agent: {agent_run.agent_id} (run #{agent_run.sequence_number}, status: {agent_run.status})")
             if tool_calls:
-                lines.append("Tool calls:")
-                for tc in tool_calls:
+                lines.append("Tool calls (in execution order):")
+                for idx, tc in enumerate(tool_calls):
                     args_str = json.dumps(tc.arguments) if tc.arguments else "{}"
                     result_part = f" -> {tc.status or 'pending'}"
                     if tc.result:
                         result_part = f" -> {tc.result[:500]}"
-                    lines.append(f"  [{tc.tool_call_index}] {tc.mcp_server}:{tc.tool_name}({args_str}){result_part}")
+                    if tc.error_message:
+                        result_part += f" [error: {tc.error_message[:200]}]"
+                    lines.append(f"  [{idx}] {tc.mcp_server}:{tc.tool_name}({args_str}){result_part}")
             else:
                 lines.append("  (no tool calls)")
             lines.append("")
