@@ -233,7 +233,7 @@ class APISettings(BaseSettings):
         description="API server port",
     )
     cors_origins: str = Field(
-        default="http://localhost:5173,http://localhost:5273,http://localhost:5374,http://localhost:8100,http://localhost:3000",
+        default="http://localhost:5173,http://localhost:5273,http://localhost:8100,http://localhost:3000",
         alias="CORS_ORIGINS",
         description="Comma-separated list of allowed CORS origins",
     )
