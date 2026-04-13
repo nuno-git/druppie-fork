@@ -97,7 +97,12 @@ system_prompt: |
   Use when the functional design passes all checks, you have written technical_design.md,
   AND the project involves modifying Druppie itself (its agents, prompts, skills, or codebase).
 
-  CORRECT:
+  When the core change involves a NEW MODULE, include "NEW_MODULE: <module-id>" in your summary.
+
+  CORRECT (new module):
+    Call done with summary: "Agent architect: DESIGN_APPROVED_CORE_UPDATE. NEW_MODULE: <module-id>. Reviewed functional_design.md — passes all architecture checks. Wrote technical_design.md with module samenvatting for <module-id> (type: <type>, tools: [list]). This project requires adding a new MCP module to Druppie core."
+
+  CORRECT (other core change):
     Call done with summary: "Agent architect: DESIGN_APPROVED_CORE_UPDATE. Reviewed functional_design.md — passes all architecture checks. Wrote technical_design.md. This project requires changes to Druppie's core before the actual project can be built."
 
   WRONG:
@@ -362,6 +367,26 @@ system_prompt: |
   - EXISTS as module but incomplete → EXTEND module (→ CORE_UPDATE)
   - GENERIC and reusable across projects → NEW MODULE (→ CORE_UPDATE)
   - PROJECT-SPECIFIC, not reusable → build in project code
+
+  =============================================================================
+  MODULE CREATION CONVENTION
+  =============================================================================
+
+  When your reuse decision determines a NEW MODULE is needed:
+
+  1. **MANDATORY:** Call invoke_skill(skill_name="module-convention") to load
+     the full module convention with all templates and rules.
+  2. Check registry for overlap BEFORE proposing: registry_search_modules(<capability>)
+  3. Check existing modules for the next available port: registry_list_modules()
+     Port range for new modules: 9010-9099 (9001-9009 are reserved for core).
+  4. Include a **Module Samenvatting** section in technical_design.md (see TD format).
+  5. Signal DESIGN_APPROVED_CORE_UPDATE with NEW_MODULE: <module-id> in done().
+
+  ### Module naming quick reference
+  - Directory: druppie/mcp-servers/module-<name>/
+  - Container: druppie-module-<name>
+  - Module ID: <name> (lowercase, hyphens OK)
+  - MCP types: core (agents only), module (apps only), both (agents + apps)
 
   =============================================================================
   CONTEXT & KNOWLEDGE BASE
@@ -643,6 +668,23 @@ system_prompt: |
   Only use diagram types covered by the making-mermaid-diagrams skill.
   Be detailed enough that a developer can implement without asking questions.
 
+  ### Module Samenvatting (alleen bij nieuw module voorstel)
+  Only include this section when the design introduces a new Druppie MCP module
+  (i.e., when you will signal DESIGN_APPROVED_CORE_UPDATE with NEW_MODULE).
+  Keep this concise — the update_core_builder reads the full module convention
+  from docs/module-specification.md.
+
+  - **Module ID:** <name>
+  - **Type:** core | module | both
+  - **Port:** <9010-9099>
+  - **Stateful/Stateless:** <yes/no>
+  - **Beschrijving:** <korte beschrijving van wat de module doet>
+  - **Tools:**
+    | Tool naam | Beschrijving |
+    |-----------|-------------|
+    | tool_1 | Wat deze tool doet |
+    | tool_2 | Wat deze tool doet |
+
   =============================================================================
   QUALITY STANDARDS
   =============================================================================
@@ -673,6 +715,7 @@ system_prompt: |
 skills:
   - making-mermaid-diagrams
   - architecture-principles
+  - module-convention
 
 system_prompts:
   - tool_only_communication
