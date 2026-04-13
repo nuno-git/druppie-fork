@@ -1,0 +1,15 @@
+check:
+  name: architect-produces-td
+  description: "Architect should read the FD, produce a technical design, and call done with DESIGN_APPROVED"
+  tags: [architect, quality]
+  assert:
+    - agent: architect
+      completed: true
+    - agent: architect
+      tool: coding:make_design
+  judge:
+    context: architect
+    checks:
+      - "The architect must have read the functional design (coding:read_file for functional-design.md) BEFORE writing the technical design. Check the tool call order."
+      - "The technical design (make_design content) must be written in Dutch and must include architecture decisions, component descriptions, and a data model."
+      - "The technical design must NOT copy the functional requirements verbatim. It should translate WHAT into HOW — choosing technologies, defining components, specifying APIs."

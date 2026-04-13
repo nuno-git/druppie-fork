@@ -1,0 +1,224 @@
+## End-to-end: create a weather dashboard
+## Flow: router → planner → BA (HITL + FD) → planner → architect (TD) → planner → builder (mock)
+
+tool-test:
+  name: create-weather-dashboard
+  description: "Full create_project flow for a weather dashboard with API integration"
+  tags: [e2e, create-project]
+
+  chain:
+    # --- Router ---
+    - agent: router
+      tool: builtin:set_intent
+      arguments:
+        intent: create_project
+        project_name: weather-dashboard
+        description: "A real-time weather dashboard showing rainfall and temperature"
+
+    - agent: router
+      tool: builtin:done
+      arguments:
+        summary: "Classified as create_project for weather-dashboard"
+
+    # --- Planner (initial) ---
+    - agent: planner
+      tool: builtin:make_plan
+      mock: true
+      arguments:
+        steps:
+          - agent_id: business_analyst
+            prompt: "Gather requirements for the weather dashboard"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Planned business_analyst as next step"
+
+    # --- Business Analyst ---
+    - agent: business_analyst
+      tool: builtin:hitl_ask_question
+      arguments:
+        question: "Which weather data sources should we integrate? (e.g. OpenWeatherMap, KNMI)"
+      mock: true
+      mock_result: "Use OpenWeatherMap for international and KNMI for Netherlands"
+
+    - agent: business_analyst
+      tool: builtin:hitl_ask_multiple_choice_question
+      arguments:
+        question: "How should alerts be delivered?"
+        choices:
+          - "In-app notifications only"
+          - "Email alerts"
+          - "Both in-app and email"
+      mock: true
+      mock_result: "In-app notifications only"
+
+    - agent: business_analyst
+      tool: coding:make_design
+      approval:
+        status: approved
+        by: analyst
+      arguments:
+        path: docs/functional-design.md
+        content: |
+          # Functioneel Ontwerp: Weather Dashboard
+
+          ## Vereisten
+          - FR-01: Toon actuele neerslagdata per regio
+          - FR-02: Toon temperatuurtrends over 7 dagen
+          - FR-03: Waarschuw wanneer neerslag drempelwaarde overschrijdt
+          - FR-04: Integratie met OpenWeatherMap en KNMI
+          - NFR-01: Dashboard laadt binnen 2 seconden
+
+          ## Databronnen
+          - OpenWeatherMap API voor internationaal weer
+          - KNMI API voor Nederlandse weerdata
+
+          ## Gebruikersinterface
+          - Kaartweergave met kleurgecodeerde neerslag
+          - Grafiek voor temperatuurtrends
+          - Waarschuwingsbanner bij hoge neerslag
+
+    - agent: business_analyst
+      tool: coding:run_git
+      arguments:
+        command: "add docs/functional-design.md"
+
+    - agent: business_analyst
+      tool: coding:run_git
+      arguments:
+        command: "commit -m 'Functioneel ontwerp weer dashboard'"
+
+    - agent: business_analyst
+      tool: coding:run_git
+      arguments:
+        command: "push"
+
+    - agent: business_analyst
+      tool: builtin:done
+      arguments:
+        summary: "DESIGN_APPROVED"
+
+    # --- Planner (after BA) ---
+    - agent: planner
+      tool: builtin:make_plan
+      mock: true
+      arguments:
+        steps:
+          - agent_id: architect
+            prompt: "Review functional design and create technical design"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "BA approved, planned architect"
+
+    # --- Architect ---
+    - agent: architect
+      tool: coding:run_git
+      arguments:
+        command: "pull"
+
+    - agent: architect
+      tool: coding:read_file
+      arguments:
+        path: docs/functional-design.md
+
+    - agent: architect
+      tool: coding:make_design
+      approval:
+        status: approved
+        by: architect
+      arguments:
+        path: docs/technical-design.md
+        content: |
+          # Technisch Ontwerp: Weather Dashboard
+
+          ## Architectuur
+          React frontend met FastAPI backend.
+
+          ## Componenten
+          - WeatherCard: toont sensordata per regio
+          - AlertBanner: drempelwaarschuwingen
+          - TrendChart: temperatuurgrafieken (recharts)
+          - RainfallMap: kaartoverzicht neerslag
+
+          ## Backend
+          - /api/weather/current: huidige weerdata
+          - /api/weather/forecast: 7-daagse voorspelling
+          - /api/alerts: actieve waarschuwingen
+
+          ## Externe APIs
+          - OpenWeatherMap: Current Weather + 5 Day Forecast
+          - KNMI Data Platform: actuele waarnemingen
+
+    - agent: architect
+      tool: coding:run_git
+      arguments:
+        command: "add docs/technical-design.md"
+
+    - agent: architect
+      tool: coding:run_git
+      arguments:
+        command: "commit -m 'Technisch ontwerp weer dashboard'"
+
+    - agent: architect
+      tool: coding:run_git
+      arguments:
+        command: "push"
+
+    - agent: architect
+      tool: builtin:done
+      arguments:
+        summary: "DESIGN_APPROVED"
+
+    # --- Planner (after architect) ---
+    - agent: planner
+      tool: builtin:make_plan
+      mock: true
+      arguments:
+        steps:
+          - agent_id: builder
+            prompt: "Build the weather dashboard"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Architect approved, planned builder"
+
+    # --- Builder (mocked) ---
+    - agent: builder
+      tool: coding:execute_coding_task
+      arguments:
+        task: "Build the weather dashboard frontend and backend"
+      mock: true
+      mock_result: "All files created successfully"
+      outcome:
+        files:
+          - path: src/App.jsx
+            content: |
+              import React from 'react';
+              import WeatherCard from './components/WeatherCard';
+              import AlertBanner from './components/AlertBanner';
+              export default function App() {
+                return (
+                  <div>
+                    <h1>Weather Dashboard</h1>
+                    <AlertBanner />
+                    <WeatherCard />
+                  </div>
+                );
+              }
+          - path: backend/main.py
+            content: |
+              from fastapi import FastAPI
+              app = FastAPI()
+
+              @app.get("/api/weather/current")
+              async def current_weather():
+                  return {"temperature": 18.5, "rainfall": 2.3, "region": "Amsterdam"}
+
+    - agent: builder
+      tool: builtin:done
+      arguments:
+        summary: "BUILD_COMPLETE - Weather dashboard built"

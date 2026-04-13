@@ -1,9 +1,0 @@
-check:
-  name: hitl-question-quality
-  description: "HITL questions should be clear and well-formed"
-  tags: [hitl, quality, tier:standard]
-  assert:
-    - agent: router
-      completed: true
-  judge:
-    - "The HITL question should be clear, concise, and relevant to the task at hand"

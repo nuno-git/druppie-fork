@@ -147,13 +147,18 @@ def _check_completed(
             False,
             f"No agent run found for '{assertion.agent}'",
         )
-    expected_status = "completed" if assertion.completed else "failed"
     actual = agent_run.status
-    passed = actual == expected_status
+    if assertion.completed:
+        passed = actual == "completed"
+        expected_label = "completed"
+    else:
+        # completed: false → agent should NOT be completed (any other status is fine)
+        passed = actual != "completed"
+        expected_label = "not completed"
     return AssertionResult(
         f"{assertion.agent}.completed",
         passed,
-        f"Expected {expected_status}, got {actual}",
+        f"Expected {expected_label}, got {actual}",
     )
 
 

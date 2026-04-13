@@ -1,9 +1,0 @@
-check:
-  name: ba-asks-questions
-  description: "Business analyst should ask clarifying questions via HITL"
-  tags: [ba, hitl, tier:full]
-  assert:
-    - agent: business_analyst
-      completed: true
-  judge:
-    - "The BA should ask relevant clarifying questions about the user's requirements"

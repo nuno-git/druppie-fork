@@ -1,0 +1,525 @@
+## End-to-end: create a to-do app (mock deploy)
+## Full pipeline with mocked sandbox and deploy
+
+tool-test:
+  name: create-todo-app-mock-deploy
+  description: "Full pipeline with mocked deploy"
+  tags: [e2e, create-project, mock-deploy]
+
+  chain:
+    # --- Router ---
+    - agent: router
+      tool: builtin:set_intent
+      arguments:
+        intent: create_project
+        project_name: todo-app
+        description: "A simple to-do list application"
+      assert:
+        result:
+          - not_empty
+          - { contains: "todo-app" }
+
+    - agent: router
+      tool: builtin:done
+      arguments:
+        summary: "Classified as create_project for todo-app"
+      assert:
+        completed: true
+
+    # --- Planner (initial) ---
+    - agent: planner
+      tool: builtin:make_plan
+      mock: true
+      arguments:
+        steps:
+          - agent_id: business_analyst
+            prompt: "Gather requirements for the to-do app and create functional design"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Planned business_analyst as next step"
+
+    # --- Business Analyst ---
+    - agent: business_analyst
+      tool: builtin:hitl_ask_multiple_choice_question
+      arguments:
+        question: "What task management features do you need?"
+        choices:
+          - "Basic: add, complete, delete tasks"
+          - "Advanced: priorities, due dates, categories"
+          - "Full: subtasks, recurring tasks, collaboration"
+      mock: true
+      mock_result: "Basic: add, complete, delete tasks"
+
+    - agent: business_analyst
+      tool: coding:make_design
+      approval:
+        status: approved
+        by: analyst
+      arguments:
+        path: docs/functional-design.md
+        content: |
+          # Functioneel Ontwerp: Todo App
+
+          ## Vereisten
+          - FR-01: Gebruiker kan taken toevoegen met een titel
+          - FR-02: Gebruiker kan taken als voltooid markeren
+          - FR-03: Gebruiker kan taken verwijderen
+          - FR-04: Takenlijst wordt persistent opgeslagen
+
+          ## Gebruikersinterface
+          - Invoerveld bovenaan voor nieuwe taken
+          - Lijst met taken, elk met checkbox en verwijderknop
+          - Filter: alle / actief / voltooid
+      assert:
+        result:
+          - not_empty
+          - { contains: "functional-design.md" }
+
+    - agent: business_analyst
+      tool: coding:run_git
+      arguments:
+        command: "add docs/functional-design.md"
+
+    - agent: business_analyst
+      tool: coding:run_git
+      arguments:
+        command: "commit -m 'Functioneel ontwerp toegevoegd'"
+
+    - agent: business_analyst
+      tool: coding:run_git
+      arguments:
+        command: "push"
+
+    - agent: business_analyst
+      tool: builtin:done
+      arguments:
+        summary: "DESIGN_APPROVED"
+
+    # --- Planner (after BA) ---
+    - agent: planner
+      tool: builtin:make_plan
+      mock: true
+      arguments:
+        steps:
+          - agent_id: architect
+            prompt: "Review functional design and create technical design for the todo app"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "BA approved, planned architect as next step"
+
+    # --- Architect ---
+    - agent: architect
+      tool: coding:run_git
+      arguments:
+        command: "pull"
+
+    - agent: architect
+      tool: coding:read_file
+      arguments:
+        path: docs/functional-design.md
+      assert:
+        result:
+          - not_empty
+          - { contains: "Functioneel Ontwerp" }
+
+    - agent: architect
+      tool: coding:make_design
+      approval:
+        status: approved
+        by: architect
+      arguments:
+        path: docs/technical-design.md
+        content: |
+          # Technisch Ontwerp: Todo App
+
+          ## Stack
+          - Frontend: React met Vite
+          - State: localStorage voor persistentie
+          - Styling: CSS modules
+
+          ## Componenten
+          - App: hoofdcomponent, beheert state
+          - TodoInput: invoerveld voor nieuwe taken
+          - TodoList: lijst van TodoItem componenten
+          - TodoItem: enkele taak met checkbox en verwijderknop
+          - FilterBar: alle / actief / voltooid
+
+          ## Datamodel
+          ```
+          interface Todo {
+            id: string
+            title: string
+            completed: boolean
+            createdAt: string
+          }
+          ```
+      assert:
+        result:
+          - { contains: "technical-design.md" }
+
+    - agent: architect
+      tool: coding:run_git
+      arguments:
+        command: "add docs/technical-design.md"
+
+    - agent: architect
+      tool: coding:run_git
+      arguments:
+        command: "commit -m 'Technisch ontwerp toegevoegd'"
+
+    - agent: architect
+      tool: coding:run_git
+      arguments:
+        command: "push"
+
+    - agent: architect
+      tool: builtin:done
+      arguments:
+        summary: "DESIGN_APPROVED"
+
+    # --- Planner (after architect → builder_planner) ---
+    - agent: planner
+      tool: builtin:make_plan
+      mock: true
+      arguments:
+        steps:
+          - agent_id: builder_planner
+            prompt: "Create a builder plan for the todo app"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Architect approved, planned builder_planner"
+
+    # --- Builder Planner ---
+    - agent: builder_planner
+      tool: coding:run_git
+      arguments:
+        command: "pull"
+
+    - agent: builder_planner
+      tool: coding:read_file
+      arguments:
+        path: docs/functional-design.md
+
+    - agent: builder_planner
+      tool: coding:read_file
+      arguments:
+        path: docs/technical-design.md
+
+    - agent: builder_planner
+      tool: coding:write_file
+      arguments:
+        path: docs/builder-plan.md
+        content: |
+          # Builder Plan: Todo App
+
+          ## Solution Strategy
+          React SPA with localStorage persistence.
+
+          ## Code Standards
+          - ESM imports, functional components
+          - CSS modules for styling
+
+          ## Test Framework
+          Vitest + React Testing Library
+
+          ## Files to Create
+          - src/App.jsx (main component)
+          - src/components/TodoInput.jsx
+          - src/components/TodoList.jsx
+          - src/components/TodoItem.jsx
+          - src/components/FilterBar.jsx
+          - src/index.css
+
+    - agent: builder_planner
+      tool: coding:run_git
+      arguments:
+        command: "add docs/builder-plan.md"
+
+    - agent: builder_planner
+      tool: coding:run_git
+      arguments:
+        command: "commit -m 'Add builder plan'"
+
+    - agent: builder_planner
+      tool: coding:run_git
+      arguments:
+        command: "push"
+
+    - agent: builder_planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent builder_planner: Created builder-plan.md with solution strategy, code standards, and file list."
+
+    # --- Planner (after builder_planner → test_builder) ---
+    - agent: planner
+      tool: builtin:make_plan
+      mock: true
+      arguments:
+        steps:
+          - agent_id: test_builder
+            prompt: "Write tests for the todo app based on the builder plan"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Planned test_builder"
+
+    # --- Test Builder ---
+    - agent: test_builder
+      tool: coding:run_git
+      arguments:
+        command: "pull"
+
+    - agent: test_builder
+      tool: coding:read_file
+      arguments:
+        path: docs/builder-plan.md
+
+    - agent: test_builder
+      tool: coding:get_test_framework
+      mock: true
+      mock_result: '{"framework": "vitest", "config_file": "vitest.config.js"}'
+
+    - agent: test_builder
+      tool: coding:write_file
+      arguments:
+        path: src/__tests__/App.test.jsx
+        content: |
+          import { describe, it, expect } from 'vitest';
+
+          describe('Todo App', () => {
+            it('should add a todo', () => {
+              expect(true).toBe(true);
+            });
+
+            it('should toggle a todo', () => {
+              expect(true).toBe(true);
+            });
+
+            it('should delete a todo', () => {
+              expect(true).toBe(true);
+            });
+
+            it('should filter todos', () => {
+              expect(true).toBe(true);
+            });
+          });
+
+    - agent: test_builder
+      tool: coding:run_git
+      arguments:
+        command: "add src/__tests__/App.test.jsx"
+
+    - agent: test_builder
+      tool: coding:run_git
+      arguments:
+        command: "commit -m 'Add todo app tests (Red phase)'"
+
+    - agent: test_builder
+      tool: coding:run_git
+      arguments:
+        command: "push"
+
+    - agent: test_builder
+      tool: builtin:done
+      arguments:
+        summary: "Agent test_builder: Wrote 4 tests in src/__tests__/App.test.jsx (vitest)."
+
+    # --- Planner (after test_builder → builder) ---
+    - agent: planner
+      tool: builtin:make_plan
+      mock: true
+      arguments:
+        steps:
+          - agent_id: builder
+            prompt: "Implement the todo app to pass the tests"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Planned builder"
+
+    # --- Builder (mocked — no sandbox) ---
+    - agent: builder
+      tool: coding:execute_coding_task
+      arguments:
+        task: "Build the todo app to pass the tests"
+      mock: true
+      mock_result: "All files created successfully"
+      outcome:
+        files:
+          - path: src/App.jsx
+            content: |
+              import React, { useState, useEffect } from 'react';
+              import TodoInput from './components/TodoInput';
+              import TodoList from './components/TodoList';
+              import FilterBar from './components/FilterBar';
+
+              export default function App() {
+                const [todos, setTodos] = useState(() => {
+                  const saved = localStorage.getItem('todos');
+                  return saved ? JSON.parse(saved) : [];
+                });
+                const [filter, setFilter] = useState('all');
+
+                useEffect(() => {
+                  localStorage.setItem('todos', JSON.stringify(todos));
+                }, [todos]);
+
+                const addTodo = (title) => {
+                  setTodos([...todos, { id: Date.now().toString(), title, completed: false }]);
+                };
+                const toggleTodo = (id) => {
+                  setTodos(todos.map(t => t.id === id ? { ...t, completed: !t.completed } : t));
+                };
+                const deleteTodo = (id) => {
+                  setTodos(todos.filter(t => t.id !== id));
+                };
+                const filtered = todos.filter(t => {
+                  if (filter === 'active') return !t.completed;
+                  if (filter === 'completed') return t.completed;
+                  return true;
+                });
+
+                return (
+                  <div className="app">
+                    <h1>Todo App</h1>
+                    <TodoInput onAdd={addTodo} />
+                    <FilterBar filter={filter} onFilterChange={setFilter} />
+                    <TodoList todos={filtered} onToggle={toggleTodo} onDelete={deleteTodo} />
+                  </div>
+                );
+              }
+          - path: src/index.css
+            content: |
+              body { font-family: system-ui; max-width: 600px; margin: 0 auto; padding: 2rem; }
+              .app h1 { margin-bottom: 1rem; }
+
+    - agent: builder
+      tool: builtin:done
+      arguments:
+        summary: "Agent builder: Implemented todo app with 5 components on branch main."
+
+    # --- Planner (after builder → test_executor) ---
+    - agent: planner
+      tool: builtin:make_plan
+      mock: true
+      arguments:
+        steps:
+          - agent_id: test_executor
+            prompt: "Run all tests with coverage"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Planned test_executor"
+
+    # --- Test Executor (mocked — no real tests to run) ---
+    - agent: test_executor
+      tool: coding:run_tests
+      mock: true
+      mock_result: '{"success": true, "output": "4 passed, 0 failed", "exit_code": 0}'
+
+    - agent: test_executor
+      tool: coding:get_coverage_report
+      mock: true
+      mock_result: '{"coverage": 87, "lines_covered": 174, "lines_total": 200}'
+
+    - agent: test_executor
+      tool: builtin:test_report
+      mock: true
+      mock_result: '{"status": "ok"}'
+      arguments:
+        total: 4
+        passed: 4
+        failed: 0
+        coverage: 87
+        summary: "All 4 tests passed with 87% coverage"
+
+    - agent: test_executor
+      tool: builtin:done
+      arguments:
+        summary: "Agent test_executor: TEST RESULT: PASS — 4/4 tests passed, 87% coverage."
+
+    # --- Planner (after test_executor → deployer) ---
+    - agent: planner
+      tool: builtin:make_plan
+      mock: true
+      arguments:
+        steps:
+          - agent_id: deployer
+            prompt: "Deploy the todo app from main branch"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Tests passed, planned deployer"
+
+    # --- Deployer ---
+    - agent: deployer
+      tool: docker:list_containers
+      mock: true
+      mock_result: '{"containers": []}'
+
+    - agent: deployer
+      tool: docker:compose_up
+      mock: true
+      mock_result: '{"success": true, "containers": ["todo-app-1"], "url": "http://localhost:9101", "compose_project_name": "todo-app"}'
+      arguments:
+        compose_project_name: todo-app
+        branch: main
+
+    - agent: deployer
+      tool: builtin:done
+      arguments:
+        summary: "Agent deployer: Deployed todo-app from main at http://localhost:9101 (container: todo-app-1)."
+
+    # --- Planner (after deployer → summarizer) ---
+    - agent: planner
+      tool: builtin:make_plan
+      mock: true
+      arguments:
+        steps:
+          - agent_id: summarizer
+            prompt: "Summarize what was accomplished for the user"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Planned summarizer"
+
+    # --- Summarizer ---
+    - agent: summarizer
+      tool: builtin:create_message
+      arguments:
+        content: |
+          Your todo app has been built and deployed!
+
+          **What was created:**
+          - React app with add, complete, delete, and filter functionality
+          - localStorage persistence
+          - 4 tests, all passing (87% coverage)
+
+          **Deployed at:** http://localhost:9101
+
+    - agent: summarizer
+      tool: builtin:done
+      arguments:
+        summary: "Agent summarizer: Presented completion summary to user."
+      assert:
+        completed: true
+
+  # Verify side-effects in Gitea
+  verify:
+    - gitea_repo_exists: true
+    - file_exists: docs/functional-design.md
+    - file_exists: docs/technical-design.md
+    - file_exists: docs/builder-plan.md
+    - file_not_empty: docs/functional-design.md
+    - file_not_empty: docs/technical-design.md

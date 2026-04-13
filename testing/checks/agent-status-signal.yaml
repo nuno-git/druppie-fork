@@ -1,9 +1,0 @@
-check:
-  name: agent-status-signal
-  description: "Agent done() summary should contain a valid status signal"
-  tags: [agent, common, tier:standard]
-  assert:
-    - agent: router
-      tool: builtin:done
-  judge:
-    - "The agent's done() summary should contain a clear status signal appropriate for its role"

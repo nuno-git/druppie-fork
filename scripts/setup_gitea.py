@@ -319,9 +319,76 @@ def create_access_token() -> str | None:
         return None
 
 
+def create_keycloak_users_in_gitea():
+    """Create Gitea accounts for all Keycloak users from iac/users.yaml.
+
+    This ensures OAuth auto-linking works: when a Keycloak user logs into
+    Gitea for the first time, their account is automatically linked by email.
+    Also allows the seed system to create repos under real users.
+    """
+    print("\n[STEP 6] Creating Gitea accounts for Keycloak users...")
+
+    users_file = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "iac", "users.yaml")
+    if not os.path.exists(users_file):
+        print(f"  [SKIP] {users_file} not found")
+        return
+
+    import yaml
+    with open(users_file) as f:
+        config = yaml.safe_load(f) or {}
+
+    users = config.get("users", [])
+    if not users:
+        print("  [SKIP] No users defined in iac/users.yaml")
+        return
+
+    session = requests.Session()
+    session.auth = (GITEA_ADMIN_USER, GITEA_ADMIN_PASSWORD)
+    session.headers.update({"Content-Type": "application/json"})
+
+    created = 0
+    for user in users:
+        username = user["username"]
+        email = user.get("email", f"{username}@druppie.local")
+        password = user.get("password", "ChangeMe123!")
+
+        # Check if user already exists
+        try:
+            r = session.get(f"{GITEA_URL}/api/v1/users/{username}", timeout=10)
+            if r.status_code == 200:
+                print(f"  [OK] User '{username}' already exists")
+                continue
+        except Exception:
+            pass
+
+        # Create the user via admin API
+        user_data = {
+            "username": username,
+            "email": email,
+            "password": password,
+            "must_change_password": False,
+            "login_name": username,
+            "source_id": 0,
+        }
+
+        try:
+            r = session.post(f"{GITEA_URL}/api/v1/admin/users", json=user_data, timeout=10)
+            if r.status_code == 201:
+                print(f"  [OK] Created Gitea user '{username}'")
+                created += 1
+            elif r.status_code in (409, 422):
+                print(f"  [OK] User '{username}' already exists")
+            else:
+                print(f"  [WARN] Could not create user '{username}': {r.status_code} - {r.text[:100]}")
+        except Exception as e:
+            print(f"  [WARN] Could not create user '{username}': {e}")
+
+    print(f"  [DONE] {created} new Gitea users created")
+
+
 def create_sample_repo():
     """Create sample repository."""
-    print("\n[STEP 6] Creating sample repository...")
+    print("\n[STEP 7] Creating sample repository...")
 
     # Use a session for proper auth handling
     session = requests.Session()
@@ -380,6 +447,7 @@ def main():
     configure_oauth2(client_secret)
     create_organization()
     token = create_access_token()
+    create_keycloak_users_in_gitea()
     create_sample_repo()
 
     print("\n" + "=" * 60)

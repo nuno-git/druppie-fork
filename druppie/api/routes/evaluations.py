@@ -34,8 +34,11 @@ logger = structlog.get_logger()
 
 router = APIRouter()
 
-# In-memory store for background test run status (no DB needed for this)
+# In-memory store for background test run status.
+# Persisted to DB via batch_id — the in-memory dict is for live progress updates.
+# On restart, active-run endpoint checks DB for incomplete batches.
 _test_run_status: dict[str, dict] = {}
+_active_run_id: str | None = None  # currently running batch_id
 
 
 # =============================================================================
@@ -74,12 +77,6 @@ class RunTestsRequest(BaseModel):
     # Manual input values: {input_name: value} for manual tests
     input_values: dict[str, str] | None = None
 
-
-class SeedRequest(BaseModel):
-    """Request body for seeding setup sessions."""
-
-    session_names: list[str]  # Setup session IDs to seed
-    user: str = "admin"  # Which user to seed as ("__random__" for a new random user)
 
 
 class AgentSummaryResponse(BaseModel):
@@ -385,135 +382,6 @@ async def list_available_tests(
     return tests
 
 
-@router.get("/evaluations/available-setups")
-async def list_available_setups(
-    user: dict = Depends(require_admin),
-):
-    """List all setup session fixtures available for seeding.
-
-    Admin only. Returns session metadata from testing/setup/*.yaml.
-    """
-    from pathlib import Path
-
-    import yaml as _yaml
-
-    from druppie.testing.seed_schema import SessionFixture
-
-    base_dir = Path(__file__).resolve().parents[3] / "testing" / "setup"
-    setups = []
-
-    if not base_dir.exists():
-        return setups
-
-    for path in sorted(base_dir.glob("*.yaml")):
-        try:
-            data = _yaml.safe_load(path.read_text())
-            fixture = SessionFixture(**data)
-            m = fixture.metadata
-            setups.append({
-                "id": m.id,
-                "title": m.title,
-                "status": m.status,
-                "user": m.user,
-                "intent": m.intent,
-                "project_name": m.project_name,
-                "language": m.language,
-                "num_agents": len(fixture.agents),
-                "num_messages": len(fixture.messages),
-            })
-        except Exception as e:
-            logger.warning("Failed to load setup %s: %s", path, e)
-
-    return setups
-
-
-@router.post("/evaluations/seed")
-def seed_sessions_endpoint(
-    body: SeedRequest,
-    user: dict = Depends(require_admin),
-):
-    """Seed setup sessions into the database for manual testing.
-
-    Admin only. Seeds the specified sessions as the given user,
-    so you can then interact with them in the UI manually.
-    Uses def (not async def) so synchronous DB calls run in a thread pool.
-    """
-    import hashlib
-    from pathlib import Path
-
-    import yaml as _yaml
-
-    from druppie.db.database import SessionLocal
-    from druppie.db.models import User, UserRole
-    from druppie.testing.seed_loader import seed_fixture
-    from druppie.testing.seed_schema import SessionFixture
-
-    base_dir = Path(__file__).resolve().parents[3] / "testing" / "setup"
-    db = SessionLocal()
-
-    # Handle random user creation
-    seed_user = body.user
-    if seed_user == "__random__":
-        short_hash = hashlib.md5(
-            f"seed-{uuid_mod.uuid4()}".encode()
-        ).hexdigest()[:8]
-        seed_user = f"s-{short_hash}"
-
-        new_user = User(
-            id=uuid_mod.uuid4(),
-            username=seed_user,
-            email=f"{seed_user}@druppie.local",
-            display_name=f"Seed User {short_hash}",
-        )
-        db.add(new_user)
-        db.add(UserRole(user_id=new_user.id, role="admin"))
-        db.flush()
-
-    results = []
-    try:
-        # Load all session fixtures
-        fixtures: dict[str, SessionFixture] = {}
-        for path in sorted(base_dir.glob("*.yaml")):
-            data = _yaml.safe_load(path.read_text())
-            fixture = SessionFixture(**data)
-            fixtures[fixture.metadata.id] = fixture
-
-        for name in body.session_names:
-            if name not in fixtures:
-                results.append({"session": name, "status": "not_found"})
-                continue
-
-            import copy
-            fixture = copy.deepcopy(fixtures[name])
-            fixture.metadata.user = seed_user
-
-            try:
-                seed_fixture(db, fixture, gitea_url=None)
-                results.append({
-                    "session": name,
-                    "status": "seeded",
-                    "title": fixture.metadata.title,
-                    "project_name": fixture.metadata.project_name,
-                })
-            except Exception as e:
-                # Rollback the failed transaction so we can continue
-                db.rollback()
-                results.append({"session": name, "status": "error", "error": str(e)})
-                logger.error("Seed failed for %s: %s", name, e, exc_info=True)
-
-        try:
-            db.commit()
-        except Exception as e:
-            db.rollback()
-            logger.error("Seed commit failed: %s", e, exc_info=True)
-    except Exception as e:
-        db.rollback()
-        logger.error("Seed endpoint error: %s", e, exc_info=True)
-        return {"seeded": results, "user": seed_user, "error": str(e)}
-    finally:
-        db.close()
-
-    return {"seeded": results, "user": seed_user}
 
 
 @router.post("/evaluations/run-tests")
@@ -529,15 +397,21 @@ async def run_tests(
     Returns 409 if a test run is already in progress.
     """
     # Prevent concurrent runs
+    global _active_run_id
     from fastapi.responses import JSONResponse
-    for existing in _test_run_status.values():
-        if existing.get("status") == "running":
+    if _active_run_id and _active_run_id in _test_run_status:
+        if _test_run_status[_active_run_id].get("status") == "running":
             return JSONResponse(
                 status_code=409,
-                content={"error": "A test run is already in progress", "status": "busy"},
+                content={
+                    "error": "A test run is already in progress",
+                    "status": "busy",
+                    "run_id": _active_run_id,
+                },
             )
 
     run_id = str(uuid_mod.uuid4())
+    _active_run_id = run_id
     _test_run_status[run_id] = {
         "status": "running",
         "message": "Loading tests...",
@@ -562,9 +436,11 @@ async def run_tests(
         from druppie.repositories.evaluation_repository import EvaluationRepository
         from druppie.testing.v2_runner import TestRunner
 
+        import os
         db = SessionLocal()
         try:
-            runner = TestRunner(db=db)
+            gitea_url = os.getenv("GITEA_INTERNAL_URL", os.getenv("GITEA_URL", "http://gitea:3000"))
+            runner = TestRunner(db=db, gitea_url=gitea_url)
             phase_flags = dict(execute=execute, judge=judge, batch_id=run_id)
 
             def _find_test(name):
@@ -697,6 +573,8 @@ async def run_tests(
             except Exception:
                 pass
         finally:
+            global _active_run_id
+            _active_run_id = None
             db.close()
 
     thread = threading.Thread(target=_run, daemon=True, name=f"test-run-{run_id}")
@@ -725,6 +603,22 @@ async def get_run_status(
     if not status:
         return {"status": "not_found"}
     return status
+
+
+@router.get("/evaluations/active-run")
+async def get_active_run(
+    user: dict = Depends(require_admin),
+):
+    """Check if a test run is currently active.
+
+    Returns the active run status (from memory) or indicates no run is active.
+    The frontend should call this on page load to restore the running state.
+    """
+    if _active_run_id and _active_run_id in _test_run_status:
+        status = _test_run_status[_active_run_id]
+        if status.get("status") == "running":
+            return {"active": True, "run_id": _active_run_id, **status}
+    return {"active": False}
 
 
 @router.get("/evaluations/test-runs")
@@ -1350,3 +1244,160 @@ async def get_test_run_assertions(
         .all()
     )
     return [r.to_dict() for r in results]
+
+
+@router.get("/evaluations/batch/{batch_id}/assertions")
+async def get_batch_assertions(
+    batch_id: str,
+    assertion_type: str | None = Query(None, description="Filter: assertions, judge_check, judge_eval"),
+    agent_id: str | None = Query(None, description="Filter by agent"),
+    check_text: str | None = Query(None, description="Filter by exact check message text"),
+    user: dict = Depends(require_admin),
+    service: EvaluationService = Depends(get_evaluation_service),
+):
+    """Get all assertion results for a batch, optionally filtered.
+
+    Returns assertions grouped by test run.
+    """
+    from druppie.db.models import TestAssertionResult, ToolCall, AgentRun
+    from druppie.db.models import TestRun as TestRunModel
+
+    db = service.eval_repo.db
+
+    # Get all test runs in this batch
+    runs = (
+        db.query(TestRunModel)
+        .filter(TestRunModel.batch_id == batch_id)
+        .order_by(TestRunModel.created_at)
+        .all()
+    )
+
+    result = {
+        "batch_id": batch_id,
+        "summary": {"assertions": 0, "assertions_passed": 0,
+                     "judge": 0, "judge_passed": 0,
+                     "judge_eval": 0, "judge_eval_passed": 0},
+        "runs": [],
+    }
+
+    for run in runs:
+        query = db.query(TestAssertionResult).filter(TestAssertionResult.test_run_id == run.id)
+        if assertion_type:
+            if assertion_type == "assertions":
+                query = query.filter(TestAssertionResult.assertion_type.in_(["completed", "tool"]))
+            else:
+                query = query.filter(TestAssertionResult.assertion_type == assertion_type)
+        if agent_id:
+            query = query.filter(TestAssertionResult.agent_id == agent_id)
+        if check_text:
+            query = query.filter(TestAssertionResult.message == check_text)
+        assertions = query.order_by(TestAssertionResult.created_at).all()
+
+        run_assertions = []
+        for ar in assertions:
+            d = ar.to_dict()
+
+            # Count by type
+            if ar.assertion_type in ("completed", "tool"):
+                result["summary"]["assertions"] += 1
+                if ar.passed:
+                    result["summary"]["assertions_passed"] += 1
+            elif ar.assertion_type == "judge_check":
+                result["summary"]["judge"] += 1
+                if ar.passed:
+                    result["summary"]["judge_passed"] += 1
+            elif ar.assertion_type == "judge_eval":
+                result["summary"]["judge_eval"] += 1
+                if ar.passed:
+                    result["summary"]["judge_eval_passed"] += 1
+
+            run_assertions.append(d)
+
+        result["runs"].append({
+            "test_run_id": str(run.id),
+            "test_name": run.test_name,
+            "test_description": run.test_description,
+            "status": run.status,
+            "mode": run.mode,
+            "duration_ms": run.duration_ms,
+            "session_id": str(run.session_id) if run.session_id else None,
+            "assertions": run_assertions,
+        })
+
+    return result
+
+
+@router.get("/evaluations/batch/{batch_id}/filters")
+async def get_batch_filters(
+    batch_id: str,
+    user: dict = Depends(require_admin),
+    service: EvaluationService = Depends(get_evaluation_service),
+):
+    """Get all unique filterable values for a batch.
+
+    Returns unique check texts, agents, assertion types, and tool names
+    so the frontend can build filter dropdowns.
+    """
+    from druppie.db.models import TestAssertionResult
+    from druppie.db.models import TestRun as TestRunModel
+
+    db = service.eval_repo.db
+
+    run_ids = [
+        r.id for r in db.query(TestRunModel.id)
+        .filter(TestRunModel.batch_id == batch_id).all()
+    ]
+    if not run_ids:
+        return {"checks": [], "agents": [], "tools": [], "types": []}
+
+    all_assertions = (
+        db.query(TestAssertionResult)
+        .filter(TestAssertionResult.test_run_id.in_(run_ids))
+        .all()
+    )
+
+    checks = {}  # message text → {passed, failed, type, agents, sessions}
+    agents = set()
+    types = set()
+
+    for ar in all_assertions:
+        if ar.agent_id:
+            agents.add(ar.agent_id)
+        types.add(ar.assertion_type)
+
+        # Group by message text (the check description)
+        msg = ar.message or ""
+        if msg not in checks:
+            checks[msg] = {
+                "text": msg,
+                "type": ar.assertion_type,
+                "passed": 0,
+                "failed": 0,
+                "agents": set(),
+                "test_runs": set(),
+            }
+        if ar.passed:
+            checks[msg]["passed"] += 1
+        else:
+            checks[msg]["failed"] += 1
+        if ar.agent_id:
+            checks[msg]["agents"].add(ar.agent_id)
+        checks[msg]["test_runs"].add(str(ar.test_run_id))
+
+    # Serialize sets to lists
+    check_list = []
+    for c in checks.values():
+        c["agents"] = sorted(c["agents"])
+        c["test_runs"] = sorted(c["test_runs"])
+        c["total"] = c["passed"] + c["failed"]
+        check_list.append(c)
+
+    # Sort: judges first, then by text
+    type_order = {"judge_check": 0, "judge_eval": 1, "completed": 2, "tool": 3}
+    check_list.sort(key=lambda c: (type_order.get(c["type"], 9), c["text"]))
+
+    return {
+        "checks": check_list,
+        "agents": sorted(agents),
+        "types": sorted(types),
+    }

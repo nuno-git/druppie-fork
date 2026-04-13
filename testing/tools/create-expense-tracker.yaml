@@ -1,0 +1,216 @@
+## End-to-end: create an expense tracker
+## Flow: router → planner → BA (HITL + FD) → planner → architect (TD) → planner → builder (mock)
+
+tool-test:
+  name: create-expense-tracker
+  description: "Full create_project flow for an expense tracking app with categories"
+  tags: [e2e, create-project]
+
+  chain:
+    # --- Router ---
+    - agent: router
+      tool: builtin:set_intent
+      arguments:
+        intent: create_project
+        project_name: expense-tracker
+        description: "An expense tracking application with categories and monthly reports"
+
+    - agent: router
+      tool: builtin:done
+      arguments:
+        summary: "Classified as create_project for expense-tracker"
+
+    # --- Planner ---
+    - agent: planner
+      tool: builtin:make_plan
+      mock: true
+      arguments:
+        steps:
+          - agent_id: business_analyst
+            prompt: "Gather requirements for the expense tracker"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Planned business_analyst"
+
+    # --- Business Analyst ---
+    - agent: business_analyst
+      tool: builtin:hitl_ask_multiple_choice_question
+      arguments:
+        question: "Welke rapportage heeft u nodig?"
+        choices:
+          - "Alleen maandoverzicht"
+          - "Maand + categorie breakdown"
+          - "Volledig: maand, categorie, trends, export"
+      mock: true
+      mock_result: "Maand + categorie breakdown"
+
+    - agent: business_analyst
+      tool: coding:make_design
+      approval:
+        status: approved
+        by: analyst
+      arguments:
+        path: docs/functional-design.md
+        content: |
+          # Functioneel Ontwerp: Expense Tracker
+
+          ## Vereisten
+          - FR-01: Gebruiker kan uitgaven toevoegen (bedrag, beschrijving, categorie, datum)
+          - FR-02: Categorieën: Eten, Transport, Entertainment, Wonen, Overig
+          - FR-03: Maandoverzicht met totaal per categorie
+          - FR-04: Cirkeldiagram voor categorie-verdeling
+          - FR-05: Uitgaven bewerken en verwijderen
+
+          ## Gebruikersinterface
+          - Dashboard met maandtotaal en top-categorieën
+          - Formulier voor nieuwe uitgave
+          - Tabel met alle uitgaven, sorteerbaar
+          - Cirkeldiagram categorie-verdeling
+
+    - agent: business_analyst
+      tool: coding:run_git
+      arguments:
+        command: "add docs/functional-design.md"
+
+    - agent: business_analyst
+      tool: coding:run_git
+      arguments:
+        command: "commit -m 'Functioneel ontwerp expense tracker'"
+
+    - agent: business_analyst
+      tool: coding:run_git
+      arguments:
+        command: "push"
+
+    - agent: business_analyst
+      tool: builtin:done
+      arguments:
+        summary: "DESIGN_APPROVED"
+
+    # --- Planner ---
+    - agent: planner
+      tool: builtin:make_plan
+      mock: true
+      arguments:
+        steps:
+          - agent_id: architect
+            prompt: "Create technical design for the expense tracker"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "BA approved, planned architect"
+
+    # --- Architect ---
+    - agent: architect
+      tool: coding:run_git
+      arguments:
+        command: "pull"
+
+    - agent: architect
+      tool: coding:read_file
+      arguments:
+        path: docs/functional-design.md
+
+    - agent: architect
+      tool: coding:make_design
+      approval:
+        status: approved
+        by: architect
+      arguments:
+        path: docs/technical-design.md
+        content: |
+          # Technisch Ontwerp: Expense Tracker
+
+          ## Stack
+          - Frontend: React + Vite
+          - Grafieken: recharts
+          - Opslag: localStorage (later migreerbaar naar API)
+
+          ## Componenten
+          - Dashboard: maandtotaal, categorie-verdeling
+          - ExpenseForm: invoer nieuwe uitgave
+          - ExpenseTable: sorteerbare lijst
+          - CategoryChart: cirkeldiagram (recharts PieChart)
+
+          ## Datamodel
+          ```
+          interface Expense {
+            id: string
+            amount: number
+            description: string
+            category: 'food' | 'transport' | 'entertainment' | 'housing' | 'other'
+            date: string
+          }
+          ```
+
+    - agent: architect
+      tool: coding:run_git
+      arguments:
+        command: "add docs/technical-design.md"
+
+    - agent: architect
+      tool: coding:run_git
+      arguments:
+        command: "commit -m 'Technisch ontwerp expense tracker'"
+
+    - agent: architect
+      tool: coding:run_git
+      arguments:
+        command: "push"
+
+    - agent: architect
+      tool: builtin:done
+      arguments:
+        summary: "DESIGN_APPROVED"
+
+    # --- Planner ---
+    - agent: planner
+      tool: builtin:make_plan
+      mock: true
+      arguments:
+        steps:
+          - agent_id: builder
+            prompt: "Build the expense tracker"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Architect approved, planned builder"
+
+    # --- Builder (mocked) ---
+    - agent: builder
+      tool: coding:execute_coding_task
+      arguments:
+        task: "Build the expense tracker with React"
+      mock: true
+      mock_result: "All files created successfully"
+      outcome:
+        files:
+          - path: src/App.jsx
+            content: |
+              import React, { useState } from 'react';
+              import ExpenseForm from './ExpenseForm';
+              import ExpenseTable from './ExpenseTable';
+
+              export default function App() {
+                const [expenses, setExpenses] = useState([]);
+                const addExpense = (expense) => setExpenses([...expenses, { ...expense, id: Date.now().toString() }]);
+                const total = expenses.reduce((sum, e) => sum + e.amount, 0);
+
+                return (
+                  <div>
+                    <h1>Expense Tracker</h1>
+                    <p>Total: €{total.toFixed(2)}</p>
+                    <ExpenseForm onAdd={addExpense} />
+                    <ExpenseTable expenses={expenses} />
+                  </div>
+                );
+              }
+
+    - agent: builder
+      tool: builtin:done
+      arguments:
+        summary: "BUILD_COMPLETE - Expense tracker built"

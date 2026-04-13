@@ -1,0 +1,59 @@
+## Test: reading files — nonexistent should fail, existing should succeed
+## Verifies read_file error handling and happy path.
+
+tool-test:
+  name: read-nonexistent-file
+  description: "Reading a nonexistent file fails, writing then reading succeeds"
+  tags: [coding, failure, negative]
+
+  chain:
+    - agent: router
+      tool: builtin:set_intent
+      arguments:
+        intent: create_project
+        project_name: read-fail-test
+        description: "Test project for file read errors"
+
+    - agent: router
+      tool: builtin:done
+      arguments:
+        summary: "Project created"
+
+    # Read a file that doesn't exist — should fail with "not found" in error
+    - agent: architect
+      tool: coding:read_file
+      arguments:
+        path: this/does/not/exist.md
+      assert:
+        result:
+          - { contains: "not found" }
+
+    # Write a file then read it — should succeed
+    - agent: architect
+      tool: coding:make_design
+      approval:
+        status: approved
+        by: architect
+      arguments:
+        path: docs/test-doc.md
+        content: "# Test Document\nThis is a test."
+      assert:
+        result:
+          - { contains: "test-doc.md" }
+
+    # Now read it — should work and return the content
+    - agent: architect
+      tool: coding:read_file
+      arguments:
+        path: docs/test-doc.md
+      assert:
+        result:
+          - not_empty
+          - { contains: "Test Document" }
+
+    - agent: architect
+      tool: builtin:done
+      arguments:
+        summary: "Verified file read behavior"
+      assert:
+        completed: true
