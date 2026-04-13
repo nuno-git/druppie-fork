@@ -110,9 +110,6 @@ docker compose --profile nuke run --rm nuke
 
 # Nuke without restarting (tear down only)
 START_AFTER=false docker compose --profile nuke run --rm nuke
-
-# Or run directly on the host (Linux/Mac/WSL)
-./scripts/nuke.sh
 ```
 
 **Soft reset keeps:** User accounts, Keycloak config, Gitea repos

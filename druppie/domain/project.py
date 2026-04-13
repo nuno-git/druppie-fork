@@ -40,7 +40,6 @@ class ProjectSummary(BaseModel):
     name: str
     description: str | None
     repo_url: str | None
-    username: str | None = None
     created_at: datetime
 
 
