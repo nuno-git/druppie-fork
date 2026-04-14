@@ -60,7 +60,7 @@ class BenchmarkRunDetail(BenchmarkRunSummary):
 
 
 # ---------------------------------------------------------------------------
-# Test run domain models (v2 testing framework)
+# Test run domain models (testing framework)
 # ---------------------------------------------------------------------------
 
 

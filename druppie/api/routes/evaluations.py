@@ -1,7 +1,7 @@
 """Evaluations API routes.
 
 Admin-only endpoints for viewing benchmark runs, evaluation results,
-and running v2 tests.
+and running tests.
 
 Architecture:
     Route (this file)
@@ -94,7 +94,7 @@ class PaginatedEvaluationResults(BaseModel):
 
 
 class RunTestsRequest(BaseModel):
-    """Request body for running v2 tests."""
+    """Request body for running tests."""
 
     test_name: str | None = None  # Run a specific test by name
     test_names: list[str] | None = None  # Run multiple tests by name
@@ -653,7 +653,7 @@ async def list_test_runs(
     service: EvaluationService = Depends(get_evaluation_service),
     user: dict = Depends(require_admin),
 ):
-    """List v2 test runs, optionally filtered by tag.
+    """List test runs, optionally filtered by tag.
 
     Admin only. Returns paginated list of test runs with tags, assertions,
     HITL/judge profile info.

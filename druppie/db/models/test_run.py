@@ -1,4 +1,4 @@
-"""Test run database model for v2 testing framework."""
+"""Test run database model for testing framework."""
 
 from typing import Any
 from uuid import uuid4

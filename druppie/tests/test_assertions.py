@@ -1,4 +1,4 @@
-"""Tests for the v2 assertion matcher.
+"""Tests for the assertion matcher.
 
 Uses an in-memory SQLite database with a UUID compatibility shim (same pattern
 as test_bench_assertions.py) to verify assertion logic without PostgreSQL.
@@ -12,7 +12,7 @@ from sqlalchemy import String, TypeDecorator, create_engine
 from sqlalchemy.orm import Session as DbSession, sessionmaker
 
 from druppie.testing.assertions import AssertionResult, match_assertions
-from druppie.testing.schema import EvalAssertion
+from druppie.testing.schema import CheckAssertion
 from druppie.db.models import AgentRun, Base, Project, Session, ToolCall, User
 
 # ---------------------------------------------------------------------------
@@ -133,9 +133,9 @@ def _seed_tool_call(
     return tc
 
 
-def _assertion(**kwargs) -> EvalAssertion:
-    """Build an EvalAssertion."""
-    return EvalAssertion(**kwargs)
+def _assertion(**kwargs) -> CheckAssertion:
+    """Build an CheckAssertion."""
+    return CheckAssertion(**kwargs)
 
 
 # ===========================================================================

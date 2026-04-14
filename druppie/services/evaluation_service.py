@@ -1,4 +1,4 @@
-"""Evaluation service for benchmark runs, evaluation results, and v2 tests."""
+"""Evaluation service for benchmark runs, evaluation results, and tests."""
 
 from uuid import UUID
 
@@ -114,7 +114,7 @@ class EvaluationService:
         return self.eval_repo.get_agent_summary(agent_id)
 
     # =========================================================================
-    # TEST RUNS (v2 testing framework)
+    # TEST RUNS (testing framework)
     # =========================================================================
 
     def list_test_runs(
@@ -330,6 +330,11 @@ class EvaluationService:
                     if key in failure_details:
                         t["reason"] = failure_details[key]
 
+            # Truncate raw output to avoid leaking sensitive paths/env vars
+            max_output = 10_000
+            safe_output = result.stdout[:max_output] if result.stdout else ""
+            safe_errors = result.stderr[:max_output] if result.returncode != 0 and result.stderr else ""
+
             return {
                 "status": "passed" if result.returncode == 0 else "failed",
                 "summary": summary,
@@ -338,8 +343,8 @@ class EvaluationService:
                 "failed": sum(1 for t in tests if t["status"] == "failed"),
                 "skipped": sum(1 for t in tests if t["status"] == "skipped"),
                 "tests": tests,
-                "output": result.stdout,
-                "errors": result.stderr if result.returncode != 0 else "",
+                "output": safe_output,
+                "errors": safe_errors,
                 "duration_seconds": duration_seconds,
             }
         except subprocess.TimeoutExpired:

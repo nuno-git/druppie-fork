@@ -213,7 +213,19 @@ class TestRunner:
                 results = match_assertions(self._db, replay_session_id, check_def.assert_, check_ref.expected)
                 all_assertion_results.extend(results)
 
-        # Phase 4: Judge checks (if configured)
+        # Phase 4: Verify checks (side-effect verification)
+        if replay_session_id and test.verify:
+            from druppie.testing.verifiers import run_verifiers
+            verify_results = run_verifiers(
+                test.verify, replay_session_id, self._db, self._gitea_url,
+            )
+            for vr in verify_results:
+                all_assertion_results.append(AssertionResult(
+                    name=f"verify.{vr.verifier}",
+                    passed=vr.passed, message=vr.message,
+                ))
+
+        # Phase 5: Judge checks (if configured)
         all_judge_results: list[JudgeCheckResult] = []
         if replay_session_id and test.judge:
             try:
@@ -294,12 +306,16 @@ class TestRunner:
     def _replay_chain(self, test: ToolTestDefinition, user_id: UUID,
                       run_namespace: str) -> tuple[UUID | None, list[AssertionResult]]:
         """Replay a tool test chain through real MCP. Returns (session_id, assertion_results)."""
-        from druppie.testing.replay_executor import ReplayExecutor
+        from druppie.testing.replay_executor import ReplayExecutor, _gitea_singleton_lock
         from druppie.testing.seed_schema import (
             AgentRunFixture, SessionFixture, SessionMetadata, ToolCallFixture, MessageFixture,
         )
 
         replay_exec = ReplayExecutor(self._db)
+        # Acquire the Gitea singleton lock for the entire replay so that
+        # the freshly-created client isn't reset by a concurrent thread
+        # before we finish using it.
+        _gitea_lock = _gitea_singleton_lock
 
         # Build a SessionFixture from the chain steps.
         # Create a new agent run each time the agent changes (preserves
@@ -364,10 +380,12 @@ class TestRunner:
         )
 
         loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
         try:
-            result = loop.run_until_complete(
-                replay_exec.replay_session(fixture, user_id, self._gitea_url)
-            )
+            with _gitea_lock:
+                result = loop.run_until_complete(
+                    replay_exec.replay_session(fixture, user_id, self._gitea_url)
+                )
         finally:
             loop.close()
 
@@ -531,6 +549,18 @@ class TestRunner:
                 check_def = self._checks.get(check_ref.check)
                 results = match_assertions(self._db, eval_session_id, check_def.assert_, check_ref.expected)
                 all_assertion_results.extend(results)
+
+        # Phase 3b: Verify checks (side-effect verification)
+        if eval_session_id is not None and test.verify:
+            from druppie.testing.verifiers import run_verifiers
+            verify_results = run_verifiers(
+                test.verify, eval_session_id, self._db, self._gitea_url,
+            )
+            for vr in verify_results:
+                all_assertion_results.append(AssertionResult(
+                    name=f"verify.{vr.verifier}",
+                    passed=vr.passed, message=vr.message,
+                ))
 
         # Phase 4: Judge checks (agent tests only)
         all_judge_results: list[JudgeCheckResult] = []

@@ -1,5 +1,6 @@
 """Live background evaluation of completed agent runs."""
 
+import asyncio
 import logging
 import subprocess
 from datetime import datetime, timezone
@@ -12,16 +13,12 @@ from druppie.testing.eval_judge import JudgeEngine
 logger = logging.getLogger(__name__)
 
 
-async def run_live_evaluation(
+def _run_live_evaluation_sync(
     session_id: UUID,
     agent_run_id: UUID,
     agent_id: str,
 ) -> None:
-    """Evaluate a completed agent run in the background.
-
-    Creates its own DB session. All exceptions are caught and logged
-    — this must never affect agent execution.
-    """
+    """Synchronous core of live evaluation — runs in a thread."""
     from druppie.db.database import SessionLocal
 
     config = get_evaluation_config()
@@ -81,6 +78,22 @@ async def run_live_evaluation(
             pass
     finally:
         db.close()
+
+
+async def run_live_evaluation(
+    session_id: UUID,
+    agent_run_id: UUID,
+    agent_id: str,
+) -> None:
+    """Evaluate a completed agent run in the background.
+
+    Runs the synchronous judge calls in a thread to avoid blocking
+    the event loop.  All exceptions are caught and logged — this
+    must never affect agent execution.
+    """
+    await asyncio.to_thread(
+        _run_live_evaluation_sync, session_id, agent_run_id, agent_id,
+    )
 
 
 def _git_info() -> tuple[str | None, str | None]:

@@ -230,13 +230,12 @@ class ReplayExecutor:
 
         The session view will show every tool call and its result.
         """
-        # Create a fresh Gitea client for this test session to avoid
-        # corrupting the shared singleton's AsyncClient (which may be
-        # bound to a different event loop).  Use a lock so concurrent
-        # test runs don't corrupt each other's client.
+        # Reset the Gitea singleton so this session gets a fresh client
+        # bound to the current event loop.  The caller (_replay_chain)
+        # holds _gitea_singleton_lock for the entire replay so concurrent
+        # test runs don't reset the client mid-operation.
         import druppie.core.gitea as _gitea_mod
-        with _gitea_singleton_lock:
-            _gitea_mod._gitea_client = None  # Reset singleton so next call creates fresh client
+        _gitea_mod._gitea_client = None
 
         meta = fixture.metadata
         session_id = fixture_uuid(meta.id)

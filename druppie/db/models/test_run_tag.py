@@ -1,4 +1,4 @@
-"""Test run tag database model for v2 testing framework."""
+"""Test run tag database model for testing framework."""
 
 from uuid import uuid4
 
