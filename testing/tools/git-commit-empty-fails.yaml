@@ -20,6 +20,21 @@ tool-test:
       arguments:
         summary: "Agent router: Project created"
 
+    # Planner creates builder via make_plan (matches production flow)
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: builder
+            prompt: "Verify git edge cases"
+          - agent_id: planner
+            prompt: "Re-evaluate after builder completes"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: Planned builder"
+
     # Try to commit with nothing staged — should fail with error message
     - agent: builder
       tool: coding:run_git
