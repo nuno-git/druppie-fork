@@ -27,11 +27,11 @@ class EvaluationResultSummary(BaseModel):
 class EvaluationResultDetail(EvaluationResultSummary):
     """Full evaluation result with judge details."""
 
-    benchmark_run_id: UUID
-    session_id: UUID
-    agent_run_id: UUID
-    judge_model: str
-    judge_prompt: str
+    benchmark_run_id: UUID | None = None
+    session_id: UUID | None = None
+    agent_run_id: UUID | None = None
+    judge_model: str | None = None
+    judge_prompt: str | None = None
     judge_response: str | None = None
     judge_reasoning: str | None = None
     llm_model: str | None = None

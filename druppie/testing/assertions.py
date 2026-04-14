@@ -231,24 +231,34 @@ def _check_tool(
     # Check error message matches regex pattern
     if assertion.error_matches:
         error_msg = tc.error_message or tc.result or ""
-        if not re.search(assertion.error_matches, error_msg):
+        try:
+            if not re.search(assertion.error_matches, error_msg):
+                return AssertionResult(
+                    f"{assertion.agent}.tool({assertion.tool}).error_matches",
+                    False,
+                    f"Error does not match pattern '{assertion.error_matches}': {error_msg[:200]}",
+                )
+        except re.error as exc:
             return AssertionResult(
                 f"{assertion.agent}.tool({assertion.tool}).error_matches",
                 False,
-                f"Error does not match pattern '{assertion.error_matches}': {error_msg[:200]}",
+                f"Invalid regex pattern '{assertion.error_matches}': {exc}",
             )
 
-    # Match expected arguments
+    # Match expected arguments — report all mismatches, not just the first
     if expected:
         actual_args = tc.arguments or {}
+        mismatches = []
         for key, expected_val in expected.items():
             actual_val = actual_args.get(key)
             if not _match_value(expected_val, actual_val):
-                return AssertionResult(
-                    f"{assertion.agent}.tool({assertion.tool}).{key}",
-                    False,
-                    f"Argument '{key}': expected {expected_val}, got {actual_val}",
-                )
+                mismatches.append(f"'{key}': expected {expected_val}, got {actual_val}")
+        if mismatches:
+            return AssertionResult(
+                f"{assertion.agent}.tool({assertion.tool}).args",
+                False,
+                f"Argument mismatches: {'; '.join(mismatches)}",
+            )
 
     return AssertionResult(
         f"{assertion.agent}.tool({assertion.tool})",

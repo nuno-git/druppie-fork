@@ -60,8 +60,17 @@ export default function Evaluations() {
   const [deletingUsers, setDeletingUsers] = useState(false)
   const [runProgress, setRunProgress] = useState(null) // {current_test, completed_tests, total_tests}
 
-  // Effective selected count for display
-  const effectiveCount = selectAll ? availableTests.length : selectedTests.size
+  // Effective selected count for display (respects mode filter when selectAll)
+  const effectiveCount = selectAll
+    ? (modeFilter === 'all'
+        ? availableTests.length
+        : availableTests.filter((t) => {
+            if (modeFilter === 'manual') return t.manual_input
+            if (modeFilter === 'tool') return t.type === 'tool'
+            if (modeFilter === 'agent') return t.type === 'agent' && !t.manual_input
+            return t.type === modeFilter && !t.manual_input
+          }).length)
+    : selectedTests.size
 
   // Polling hook
   const { pollRunStatus } = useTestPolling({
@@ -115,8 +124,17 @@ export default function Evaluations() {
     try {
       const options = { execute: true, judge: judgeEnabled }
 
-      if (selectAll) {
+      if (selectAll && modeFilter === 'all') {
         options.run_all = true
+      } else if (selectAll) {
+        // selectAll with a mode filter — resolve to specific test names
+        const filtered = availableTests.filter((t) => {
+          if (modeFilter === 'manual') return t.manual_input
+          if (modeFilter === 'tool') return t.type === 'tool'
+          if (modeFilter === 'agent') return t.type === 'agent' && !t.manual_input
+          return t.type === modeFilter && !t.manual_input
+        })
+        options.test_names = filtered.map((t) => t.name)
       } else if (selectedTests.size === 1) {
         options.test_name = [...selectedTests][0]
       } else {

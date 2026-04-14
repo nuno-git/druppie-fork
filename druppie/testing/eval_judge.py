@@ -193,9 +193,10 @@ class JudgeEngine:
             return bool(passed), None, None, reasoning
         else:
             raw_score = data.get("score", 0)
+            max_score = float(data.get("max_score", 5.0))
             try:
                 score = float(raw_score)
             except (TypeError, ValueError):
                 logger.warning("Judge score is not numeric: %s", raw_score)
-                return None, 0.0, 5.0, f"Invalid score value '{raw_score}': {reasoning}"
-            return None, score, 5.0, reasoning
+                return None, 0.0, max_score, f"Invalid score value '{raw_score}': {reasoning}"
+            return None, score, max_score, reasoning

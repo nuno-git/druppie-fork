@@ -32,6 +32,7 @@ const TestResults = ({ refreshKey, onSelectRun, isRunning, runResult, setRunResu
   const [selectedTag, setSelectedTag] = useState(null)
   const [expandedBatches, setExpandedBatches] = useState(new Set())
   const [initialExpanded, setInitialExpanded] = useState(false)
+  const [retryKey, setRetryKey] = useState(0)
 
   const fetchTags = async () => {
     try {
@@ -64,7 +65,7 @@ const TestResults = ({ refreshKey, onSelectRun, isRunning, runResult, setRunResu
       .catch(err => { if (!cancelled) setError(err.message) })
       .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
-  }, [page, selectedTag, refreshKey])
+  }, [page, selectedTag, refreshKey, retryKey])
 
   const toggleBatch = (batchId) => {
     const next = new Set(expandedBatches)
@@ -124,7 +125,7 @@ const TestResults = ({ refreshKey, onSelectRun, isRunning, runResult, setRunResu
         <div className="p-8 text-center text-red-500">
           <AlertCircle className="w-8 h-8 mx-auto mb-2" />
           <p>{error}</p>
-          <button onClick={fetchBatches} className="mt-2 px-4 py-2 bg-blue-500 text-white rounded text-sm">
+          <button onClick={() => setRetryKey((k) => k + 1)} className="mt-2 px-4 py-2 bg-blue-500 text-white rounded text-sm">
             Retry
           </button>
         </div>
@@ -148,15 +149,18 @@ const TestResults = ({ refreshKey, onSelectRun, isRunning, runResult, setRunResu
               return (
                 <div key={batch.batch_id} className={`bg-white rounded-lg border ${borderColor} overflow-hidden`}>
                   {/* Batch header */}
-                  <button
+                  <div
+                    role="button"
+                    tabIndex={0}
                     onClick={() => toggleBatch(batch.batch_id)}
-                    className={`w-full flex items-center justify-between px-4 py-3 ${headerBg} hover:opacity-90 transition-colors`}
+                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') toggleBatch(batch.batch_id) }}
+                    className={`w-full flex items-center justify-between px-4 py-3 ${headerBg} hover:opacity-90 transition-colors cursor-pointer`}
                   >
                     <div className="flex items-center gap-3">
                       <Icon className={`w-5 h-5 ${allPassed ? 'text-green-600' : 'text-red-600'}`} />
                       <span className="font-medium text-sm">
                         {batch.test_count === 1
-                          ? batch.runs[0]?.test_name || 'Test Run'
+                          ? batch.runs?.[0]?.test_name || 'Test Run'
                           : `${batch.test_count} tests`
                         }
                       </span>
@@ -186,7 +190,7 @@ const TestResults = ({ refreshKey, onSelectRun, isRunning, runResult, setRunResu
                         <ChevronDown className="w-4 h-4 text-gray-400" />
                       )}
                     </div>
-                  </button>
+                  </div>
 
                   {/* Expanded: individual test runs */}
                   {expanded && (

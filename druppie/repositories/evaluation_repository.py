@@ -3,7 +3,7 @@
 from uuid import UUID
 
 from sqlalchemy import func
-from sqlalchemy.orm import joinedload
+from sqlalchemy.orm import joinedload, subqueryload
 
 from ..db.models import BenchmarkRun, EvaluationResult, TestRun, TestRunTag
 from ..db.models.test_assertion_result import TestAssertionResult
@@ -180,7 +180,7 @@ class EvaluationRepository(BaseRepository):
 
         total = query.count()
         items = (
-            query.options(joinedload(TestRun.tags))
+            query.options(subqueryload(TestRun.tags))
             .order_by(TestRun.created_at.desc())
             .offset(offset)
             .limit(limit)
@@ -297,27 +297,30 @@ class EvaluationRepository(BaseRepository):
             total += unbatched_count
 
         # Include unbatched runs (batch_id is NULL) as individual batches on page 1
+        # Limit to remaining capacity so page 1 doesn't exceed `limit`
         if page == 1 and not tag:
-            unbatched = (
-                self.db.query(TestRun)
-                .options(joinedload(TestRun.tags))
-                .filter(TestRun.batch_id.is_(None))
-                .order_by(TestRun.created_at.desc())
-                .limit(limit)
-                .all()
-            )
-            for run in unbatched:
-                run._tags = [t.tag for t in run.tags]
-                d = self._run_to_summary_dict(run)
-                batches.append({
-                    "batch_id": str(run.id),
-                    "started_at": run.created_at.isoformat() if run.created_at else None,
-                    "test_count": 1,
-                    "passed": 1 if run.status == "passed" else 0,
-                    "failed": 0 if run.status == "passed" else 1,
-                    "total_duration_ms": run.duration_ms,
-                    "runs": [d],
-                })
+            remaining = max(0, limit - len(batches))
+            if remaining > 0:
+                unbatched = (
+                    self.db.query(TestRun)
+                    .options(subqueryload(TestRun.tags))
+                    .filter(TestRun.batch_id.is_(None))
+                    .order_by(TestRun.created_at.desc())
+                    .limit(remaining)
+                    .all()
+                )
+                for run in unbatched:
+                    run._tags = [t.tag for t in run.tags]
+                    d = self._run_to_summary_dict(run)
+                    batches.append({
+                        "batch_id": str(run.id),
+                        "started_at": run.created_at.isoformat() if run.created_at else None,
+                        "test_count": 1,
+                        "passed": 1 if run.status == "passed" else 0,
+                        "failed": 0 if run.status == "passed" else 1,
+                        "total_duration_ms": run.duration_ms,
+                        "runs": [d],
+                    })
 
         return batches, total
 
@@ -603,8 +606,11 @@ class EvaluationRepository(BaseRepository):
         type_order = {"judge_check": 0, "judge_eval": 1, "completed": 2, "tool": 3}
         check_list.sort(key=lambda c: (type_order.get(c["type"], 9), c["text"]))
 
+        tools = {ar.tool_name for ar in all_assertions if ar.tool_name}
+
         return {
             "checks": check_list,
             "agents": sorted(agents),
+            "tools": sorted(tools),
             "types": sorted(types),
         }

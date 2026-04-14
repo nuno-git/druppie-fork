@@ -22,7 +22,6 @@ class CheckAssertion(BaseModel):
     agent: str
     completed: bool | None = None
     tool: str | None = None  # e.g. "builtin:set_intent"
-    result_valid: list[str] | None = None
     status: str | None = None
     error_contains: str | None = None
     error_matches: str | None = None
@@ -273,8 +272,9 @@ class AgentTestDefinition(BaseModel):
         resolved.message = _replace(resolved.message)
         resolved.description = _replace(resolved.description)
 
-        # Check for unresolved placeholders
+        # Check for unresolved placeholders in both message and description
         unresolved = set(re.findall(r"\{\{(\w+)\}\}", resolved.message))
+        unresolved |= set(re.findall(r"\{\{(\w+)\}\}", resolved.description))
         if unresolved:
             raise ValueError(
                 f"Unresolved placeholders in test '{self.name}': {', '.join(sorted(unresolved))}. "

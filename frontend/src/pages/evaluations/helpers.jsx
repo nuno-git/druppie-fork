@@ -12,8 +12,11 @@ export const formatDate = (dateStr) => {
 export const formatDuration = (ms) => {
   if (ms === null || ms === undefined) return '-'
   if (ms < 1000) return `${ms}ms`
-  const secs = (ms / 1000).toFixed(1)
-  return `${secs}s`
+  const totalSecs = ms / 1000
+  if (totalSecs < 60) return `${totalSecs.toFixed(1)}s`
+  const mins = Math.floor(totalSecs / 60)
+  const secs = Math.round(totalSecs % 60)
+  return secs > 0 ? `${mins}m ${secs}s` : `${mins}m`
 }
 
 export const StatusBadge = ({ value }) => {

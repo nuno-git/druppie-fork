@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from uuid import UUID
 
 from sqlalchemy.orm import Session as DbSession
@@ -76,7 +77,8 @@ class BoundedOrchestrator:
             return session_id
 
         async def _bounded_execute(session_id):
-            while True:
+            deadline = time.monotonic() + 600  # 10 minute wall-clock timeout
+            while time.monotonic() < deadline:
                 session_repo.db.expire_all()
                 session = session_repo.get_by_id(session_id)
                 if session and session.status == SessionStatus.PAUSED.value:
@@ -318,7 +320,15 @@ class BoundedOrchestrator:
                 )
                 continue
 
-            # Not paused — done
+            # Not paused — check for unexpected states
+            if status not in (
+                SessionStatus.ACTIVE.value,
+                SessionStatus.COMPLETED.value,
+            ):
+                logger.warning(
+                    "Pause loop: unexpected session status=%s, stopping: session=%s",
+                    status, session_id,
+                )
             break
 
         return session_id

@@ -69,26 +69,26 @@ def _run_single_verify(check, session_id: UUID, db: DbSession, gitea_url: str | 
     """Run a single verify check."""
     # Each check object has one non-None field that determines the verifier type
 
-    if check.file_exists:
+    if check.file_exists is not None:
         return _verify_file_exists(check.file_exists, session_id, db, gitea_url)
 
-    if check.file_not_empty:
+    if check.file_not_empty is not None:
         return _verify_file_not_empty(check.file_not_empty, session_id, db, gitea_url)
 
-    if check.file_contains:
+    if check.file_contains is not None:
         path = check.file_contains.get("path", "")
         content = check.file_contains.get("content", "")
         return _verify_file_contains(path, content, session_id, db, gitea_url)
 
-    if check.file_matches:
+    if check.file_matches is not None:
         path = check.file_matches.get("path", "")
         pattern = check.file_matches.get("pattern", "")
         return _verify_file_matches(path, pattern, session_id, db, gitea_url)
 
-    if check.mermaid_valid:
+    if check.mermaid_valid is not None:
         return _verify_mermaid_valid(check.mermaid_valid, session_id, db, gitea_url)
 
-    if check.git_branch_exists:
+    if check.git_branch_exists is not None:
         return _verify_git_branch_exists(check.git_branch_exists, session_id, db, gitea_url)
 
     if check.gitea_repo_exists is not None:
@@ -165,9 +165,12 @@ def _verify_file_matches(path: str, pattern: str, session_id: UUID, db: DbSessio
     exists, content = _gitea_get_file(path, owner, repo, gitea_url)
     if not exists:
         return VerifyResult(f"file_matches:{path}", False, f"File {path} not found")
-    if re.search(pattern, content):
-        return VerifyResult(f"file_matches:{path}", True, f"File matches pattern '{pattern}'")
-    return VerifyResult(f"file_matches:{path}", False, f"File does not match pattern '{pattern}'")
+    try:
+        if re.search(pattern, content):
+            return VerifyResult(f"file_matches:{path}", True, f"File matches pattern '{pattern}'")
+        return VerifyResult(f"file_matches:{path}", False, f"File does not match pattern '{pattern}'")
+    except re.error as exc:
+        return VerifyResult(f"file_matches:{path}", False, f"Invalid regex pattern '{pattern}': {exc}")
 
 
 def _verify_mermaid_valid(path: str, session_id: UUID, db: DbSession, gitea_url: str | None) -> VerifyResult:

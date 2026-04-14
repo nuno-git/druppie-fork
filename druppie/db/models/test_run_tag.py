@@ -2,7 +2,7 @@
 
 from uuid import uuid4
 
-from sqlalchemy import Column, ForeignKey, Index, String
+from sqlalchemy import Column, ForeignKey, Index, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 
@@ -18,12 +18,14 @@ class TestRunTag(Base):
     test_run_id = Column(
         UUID(as_uuid=True),
         ForeignKey("test_runs.id", ondelete="CASCADE"),
+        nullable=False,
     )
     tag = Column(String(100), nullable=False)
 
-    # Indexes
+    # Indexes and constraints
     __table_args__ = (
         Index("idx_test_run_tags_tag", "tag"),
+        UniqueConstraint("test_run_id", "tag", name="uq_test_run_tags_run_tag"),
     )
 
     # Relationships
