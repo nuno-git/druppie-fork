@@ -51,6 +51,40 @@ def _recover_zombie_sessions() -> None:
         db.close()
 
 
+def _recover_orphaned_batch_runs() -> None:
+    """Mark orphaned test batch runs as error on startup.
+
+    If the server was killed mid-test, the batch run stays "running" in the
+    DB forever, blocking all future test runs.  On startup we know no test
+    thread is alive, so any "running" batch is an orphan.
+    """
+    from druppie.db.database import SessionLocal
+    from druppie.db.models import TestBatchRun
+    from druppie.db.models.base import utcnow
+
+    db = SessionLocal()
+    try:
+        orphans = db.query(TestBatchRun).filter(TestBatchRun.status == "running").all()
+        for batch in orphans:
+            batch.status = "error"
+            batch.message = "Server restarted while test was running"
+            batch.completed_at = utcnow()
+        if orphans:
+            db.commit()
+            logger.warning(
+                "orphaned_batch_runs_recovered",
+                count=len(orphans),
+                batch_ids=[b.id for b in orphans],
+            )
+        else:
+            logger.info("no_orphaned_batch_runs")
+    except Exception as e:
+        logger.error("orphaned_batch_recovery_failed", error=str(e), exc_info=True)
+        db.rollback()
+    finally:
+        db.close()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan handler."""
@@ -64,6 +98,9 @@ async def lifespan(app: FastAPI):
     # Recover zombie sessions (active sessions with running agent runs
     # that were interrupted by server shutdown/crash)
     _recover_zombie_sessions()
+
+    # Recover orphaned test batch runs left in "running" state by a crash/restart
+    _recover_orphaned_batch_runs()
 
     # Clean up orphaned sandbox Gitea users from previous runs
     from druppie.opencode.gitea_cleanup import cleanup_orphaned_sandbox_users

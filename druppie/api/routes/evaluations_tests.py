@@ -7,6 +7,7 @@ and there's no lock/eviction complexity.
 
 import threading
 import uuid as uuid_mod
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from datetime import datetime, timezone
 from uuid import UUID
 
@@ -213,14 +214,27 @@ async def run_tests(
             db.commit()
 
             all_results = []
+            test_timeout = int(os.getenv("TEST_TIMEOUT_SECONDS", "600"))  # 10 min default
             for idx, (name, test_def) in enumerate(tests_to_run):
                 repo.update_batch_run(run_id, current_test=name,
                                       message=f"Running {idx + 1}/{total}: {name}")
                 db.commit()
 
                 try:
-                    test_results = runner.run_test(test_def, **phase_flags)
+                    # Run each test with a timeout to prevent stuck MCP calls
+                    # from blocking all future test runs
+                    with ThreadPoolExecutor(max_workers=1) as pool:
+                        future = pool.submit(runner.run_test, test_def, **phase_flags)
+                        test_results = future.result(timeout=test_timeout)
                     all_results.extend(test_results)
+                except FuturesTimeoutError:
+                    logger.error("test_timed_out", test=name, timeout=test_timeout)
+                    from druppie.testing.runner import TestRunResult
+                    all_results.append(TestRunResult(
+                        test_name=name, test_user="timeout", test_type="tool",
+                        assertion_results=[], status="error",
+                        duration_ms=test_timeout * 1000,
+                    ))
                 except Exception as test_err:
                     logger.error("test_failed", test=name, error=str(test_err), exc_info=True)
 
