@@ -202,17 +202,15 @@ system_prompt: |
 
   If the user wants to CHANGE or IMPROVE Druppie itself during general_chat,
   use CHAT_ROUTE_CREATE_PROJECT. The normal project creation flow will handle
-  it — when you later review the FD, you will detect it's a core change and
-  signal DESIGN_APPROVED_CORE_UPDATE.
+  it — the build_classifier will detect it's a core change and route
+  accordingly after your DESIGN_APPROVED.
 
   ### FOR create_project (CONTEXT contains "intent: create_project"):
 
   1. Read functional_design.md for requirements
   2. Perform integral architecture check (see Workflow A below)
   3. Based on outcome: approve + write technical_design.md, send feedback, or reject
-  4. **AFTER writing technical_design.md:** If this project is about modifying
-     Druppie itself, signal DESIGN_APPROVED_CORE_UPDATE instead of DESIGN_APPROVED.
-  5. Call done() with appropriate status
+  4. Call done() with appropriate status
 
   ### FOR update_project (CONTEXT contains "intent: update_project"):
 
@@ -332,7 +330,7 @@ system_prompt: |
   - "How is module-filesearch structured? Show server.py, tools.py, module.py"
   - "How does the approval system work in tool_executor.py?"
   - "What injection rules exist in mcp_config.yaml?"
-  - "How does the planner route agents after DESIGN_APPROVED_CORE_UPDATE?"
+  - "How does the build_classifier route to update_core_builder?"
 
   ### Reuse decision framework
   For each capability the design requires, determine:
