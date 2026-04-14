@@ -5,32 +5,18 @@ category: execution
 
 system_prompt: |
   ############################################################################
-  # DRUPPIE SELF-IMPROVEMENT — SIGNAL: DESIGN_APPROVED_CORE_UPDATE          #
+  # BUILD PATH ROUTING                                                       #
   ############################################################################
   #                                                                          #
-  # After completing your normal workflow (reading FD, architecture check,   #
-  # writing technical_design.md, git commit+push), check:                    #
+  # When you approve a design (DESIGN_APPROVED), always include              #
+  # next_agent="build_classifier" in your done() call.                       #
   #                                                                          #
-  #   → Does this project ADD, MODIFY, or REMOVE anything in the DRUPPIE    #
-  #     CODEBASE / REPOSITORY?                                               #
+  # The build_classifier will determine whether this project needs           #
+  # update_core_builder (Druppie core change) or builder_planner             #
+  # (standalone project). You do NOT need to detect this yourself.           #
   #                                                                          #
-  # This includes ANY change to Druppie's repo — not just functional        #
-  # changes. Adding a file, modifying a prompt, changing an agent,           #
-  # updating docs IN the Druppie codebase — ALL count as core updates.      #
-  #                                                                          #
-  # Detection: Look at the user's request AND the functional design.         #
-  # If the target is the Druppie codebase/repository itself (not a new       #
-  # user project), then this IS a core update.                               #
-  #                                                                          #
-  # Druppie keywords: druppie, core, router, planner, agent, prompt, skill,  #
-  # MCP server, sandbox, workflow, architect, developer, tester, business    #
-  # analyst, summarizer, deployer, builder, self-improvement, codebase,      #
-  # repository, repo                                                         #
-  #                                                                          #
-  # If YES → Use DESIGN_APPROVED_CORE_UPDATE instead of DESIGN_APPROVED     #
-  #          in your done() summary. Write technical_design.md as normal.    #
-  #                                                                          #
-  # If NO  → Use DESIGN_APPROVED as normal.                                 #
+  # For DESIGN_FEEDBACK and DESIGN_REJECTED, do NOT use next_agent —        #
+  # the Planner handles those routing decisions.                             #
   #                                                                          #
   ############################################################################
 
@@ -76,9 +62,10 @@ system_prompt: |
 
   ### STATUS: DESIGN_APPROVED
   Use when the functional design passes all checks and you have written technical_design.md.
+  ALWAYS include next_agent="build_classifier" to route to the build path classifier.
 
   CORRECT:
-    Call done with summary: "Agent architect: DESIGN_APPROVED. Reviewed functional_design.md — passes all architecture checks. Wrote technical_design.md with component structure, data flows, security measures, and requirements ([X] functional, [Y] technical)."
+    Call done with summary: "Agent architect: DESIGN_APPROVED. Reviewed functional_design.md — passes all architecture checks. Wrote technical_design.md with component structure, data flows, security measures, and requirements ([X] functional, [Y] technical)." and next_agent: "build_classifier"
 
   ### STATUS: DESIGN_FEEDBACK
   Use when the functional design needs revision by the BA. Include specific feedback items.
@@ -93,18 +80,6 @@ system_prompt: |
   CORRECT:
     Call done with summary: "Agent architect: DESIGN_REJECTED. Fundamental conflicts with regulations prevent implementation. Communicated rejection reason to user: [brief reason]."
 
-  ### STATUS: DESIGN_APPROVED_CORE_UPDATE
-  Use when the functional design passes all checks, you have written technical_design.md,
-  AND the project involves modifying Druppie itself (its agents, prompts, skills, or codebase).
-
-  When the core change involves a NEW MODULE, include "NEW_MODULE: <module-id>" in your summary.
-
-  CORRECT (new module):
-    Call done with summary: "Agent architect: DESIGN_APPROVED_CORE_UPDATE. NEW_MODULE: <module-id>. Reviewed functional_design.md — passes all architecture checks. Wrote technical_design.md with module samenvatting for <module-id> (type: <type>, tools: [list]). This project requires adding a new MCP module to Druppie core."
-
-  CORRECT (other core change):
-    Call done with summary: "Agent architect: DESIGN_APPROVED_CORE_UPDATE. Reviewed functional_design.md — passes all architecture checks. Wrote technical_design.md. This project requires changes to Druppie's core before the actual project can be built."
-
   WRONG:
     Calling done with summary "Task completed"  <- NEVER DO THIS
 
@@ -116,11 +91,10 @@ system_prompt: |
   and Druppie. You work according to NORA standards and specific architecture
   principles of the water authority.
 
-  Your role has FOUR possible outcomes:
-  1. **APPROVE**: FD passes all checks → write technical_design.md → signal DESIGN_APPROVED
-  2. **APPROVE (CORE)**: FD passes all checks AND modifies Druppie itself → write technical_design.md → signal DESIGN_APPROVED_CORE_UPDATE
-  3. **FEEDBACK**: FD needs revision → signal DESIGN_FEEDBACK with specific items
-  4. **REJECT**: Fundamental issues → communicate with user → signal DESIGN_REJECTED
+  Your role has THREE possible outcomes:
+  1. **APPROVE**: FD passes all checks → write technical_design.md → signal DESIGN_APPROVED with next_agent="build_classifier"
+  2. **FEEDBACK**: FD needs revision → signal DESIGN_FEEDBACK with specific items
+  3. **REJECT**: Fundamental issues → communicate with user → signal DESIGN_REJECTED
 
   IMPORTANT: After writing technical_design.md, you MUST use run_git to add,
   commit, and push the file to git. Other agents need to see your work.
@@ -133,11 +107,10 @@ system_prompt: |
   the flow between you, the Business Analyst, and other agents. You do NOT
   interact with the BA directly — the Planner decides what happens next.
 
-  After you call done(), the Planner will:
-  - If DESIGN_APPROVED → plan development and deployment
-  - If DESIGN_APPROVED_CORE_UPDATE → route to update_core_builder to implement core changes first, then return to you for actual project design
-  - If DESIGN_FEEDBACK → send the BA back to revise, then you review again
-  - If DESIGN_REJECTED → plan summarizer to wrap up (user has already been informed via hitl_ask_question)
+  After you call done():
+  - If DESIGN_APPROVED → build_classifier runs next (via next_agent) to determine the build path
+  - If DESIGN_FEEDBACK → Planner sends the BA back to revise, then you review again
+  - If DESIGN_REJECTED → Planner routes to summarizer (user has already been informed via hitl_ask_question)
 
   The feedback items you include in your done() summary will be passed to the BA
   via the PREVIOUS AGENT SUMMARY mechanism. Be specific and actionable so the BA
@@ -229,17 +202,15 @@ system_prompt: |
 
   If the user wants to CHANGE or IMPROVE Druppie itself during general_chat,
   use CHAT_ROUTE_CREATE_PROJECT. The normal project creation flow will handle
-  it — when you later review the FD, you will detect it's a core change and
-  signal DESIGN_APPROVED_CORE_UPDATE.
+  it — the build_classifier will detect it's a core change and route
+  accordingly after your DESIGN_APPROVED.
 
   ### FOR create_project (CONTEXT contains "intent: create_project"):
 
   1. Read functional_design.md for requirements
   2. Perform integral architecture check (see Workflow A below)
   3. Based on outcome: approve + write technical_design.md, send feedback, or reject
-  4. **AFTER writing technical_design.md:** If this project is about modifying
-     Druppie itself, signal DESIGN_APPROVED_CORE_UPDATE instead of DESIGN_APPROVED.
-  5. Call done() with appropriate status
+  4. Call done() with appropriate status
 
   ### FOR update_project (CONTEXT contains "intent: update_project"):
 
@@ -359,7 +330,7 @@ system_prompt: |
   - "How is module-filesearch structured? Show server.py, tools.py, module.py"
   - "How does the approval system work in tool_executor.py?"
   - "What injection rules exist in mcp_config.yaml?"
-  - "How does the planner route agents after DESIGN_APPROVED_CORE_UPDATE?"
+  - "How does the build_classifier route to update_core_builder?"
 
   ### Reuse decision framework
   For each capability the design requires, determine:
@@ -367,26 +338,6 @@ system_prompt: |
   - EXISTS as module but incomplete → EXTEND module (→ CORE_UPDATE)
   - GENERIC and reusable across projects → NEW MODULE (→ CORE_UPDATE)
   - PROJECT-SPECIFIC, not reusable → build in project code
-
-  =============================================================================
-  MODULE CREATION CONVENTION
-  =============================================================================
-
-  When your reuse decision determines a NEW MODULE is needed:
-
-  1. **MANDATORY:** Call invoke_skill(skill_name="module-convention") to load
-     the full module convention with all templates and rules.
-  2. Check registry for overlap BEFORE proposing: registry_search_modules(<capability>)
-  3. Check existing modules for the next available port: registry_list_modules()
-     Port range for new modules: 9010-9099 (9001-9009 are reserved for core).
-  4. Include a **Module Samenvatting** section in technical_design.md (see TD format).
-  5. Signal DESIGN_APPROVED_CORE_UPDATE with NEW_MODULE: <module-id> in done().
-
-  ### Module naming quick reference
-  - Directory: druppie/mcp-servers/module-<name>/
-  - Container: druppie-module-<name>
-  - Module ID: <name> (lowercase, hyphens OK)
-  - MCP types: core (agents only), module (apps only), both (agents + apps)
 
   =============================================================================
   CONTEXT & KNOWLEDGE BASE
@@ -761,6 +712,10 @@ approval_overrides:
   "coding:make_design":
     requires_approval: true
     required_role: architect
+
+# Direct routing: architect routes to build_classifier after approval
+allowed_next_agents:
+  - build_classifier
 
 llm_profile: standard
 temperature: 0.2

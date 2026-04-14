@@ -50,6 +50,10 @@ class AgentDefinition(BaseModel):
     # System prompt fragments to include (from system_prompts/*.yaml)
     system_prompts: list[str] = Field(default_factory=list)
 
+    # Direct routing: which agents this agent can route to via done(next_agent=...)
+    # Empty list means no direct routing allowed (default — planner decides)
+    allowed_next_agents: list[str] = Field(default_factory=list)
+
     # LLM settings
     llm_profile: str = "standard"
     temperature: float = 0.1
