@@ -33,8 +33,7 @@ already set up and working — extend it, don't replace it:
 - `app/models.py` — add your SQLAlchemy models here (imports are pre-wired)
 - `app/config.py` — settings from environment variables
 - `app/routes.py` — Flask Blueprint at `/api/*` with AI endpoints built-in
-- `app/ai.py` — DeepInfra AI helper (see AI section below)
-- `requirements.txt` — base dependencies (flask, sqlalchemy, openai, gunicorn)
+- `requirements.txt` — base dependencies (flask, sqlalchemy, gunicorn)
 
 ### Frontend (Vite + React + shadcn/ui)
 
@@ -65,69 +64,68 @@ already set up and working — extend it, don't replace it:
 - **Frontend uses `@/` alias** — import components as `@/components/ui/button`, `@/lib/utils`, etc.
 - **shadcn components** — add new ones by creating files in `frontend/src/components/ui/`. Follow the pattern in `button.tsx` and `card.tsx`. Do NOT run `npx shadcn` — write the component files directly.
 
-## AI Integration (DeepInfra)
+## AI Integration (Druppie SDK)
 
-This project has DeepInfra AI built in. The API key is injected at deploy time
-via the `DEEPINFRA_API_KEY` environment variable — you never hardcode it.
+AI capabilities are provided by the Druppie SDK (`druppie_sdk`), which is
+pre-installed in every deployed app. The SDK calls platform modules (LLM, OCR,
+etc.) — API keys are managed centrally, never in individual apps.
 
 ### CRITICAL — Common AI Mistakes to Avoid
 
 These mistakes have caused production failures. Read carefully:
 
-1. **ALWAYS import from `app.ai`** — never write your own OpenAI client, never
-   use `httpx`/`requests` to call DeepInfra directly. The helper functions
-   handle the API key, base URL, and error handling for you.
+1. **ALWAYS use the Druppie SDK** — never write your own OpenAI client, never
+   use `httpx`/`requests` to call LLM providers directly.
    ```python
    # CORRECT:
-   from app.ai import ai_chat, ocr_extract
-   answer = ai_chat("Hello")
+   from druppie_sdk import DruppieClient
+   druppie = DruppieClient()
+   result = druppie.call("llm", "chat", {"prompt": "Hello"})
 
    # WRONG — will fail (no API key, wrong endpoint):
-   import httpx
-   response = httpx.post("https://api.deepinfra.com/v1/inference/...")
+   from openai import OpenAI
+   client = OpenAI(api_key="...")
    ```
 
-2. **DeepInfra uses the OpenAI-compatible endpoint** — the base URL is
-   `https://api.deepinfra.com/v1/openai` (already configured in `app/ai.py`).
-   Do NOT use `https://api.deepinfra.com/v1/inference/` — those are legacy
-   endpoints that don't exist for most models.
+2. **Do NOT hardcode API keys** (`DEEPINFRA_API_KEY`, `OPENAI_API_KEY`, etc.)
+   anywhere in the app. The SDK handles authentication with the platform modules.
 
-3. **Use the models defined in `app/ai.py`** — do NOT invent model names.
-   The available models are `AI_MODEL` and `OCR_MODEL`. If you need a different
-   model, change the constant in `app/ai.py`, don't hardcode a model name
-   elsewhere.
+3. **Do NOT add `openai` to requirements.txt** — the SDK replaces direct
+   provider calls entirely.
 
-4. **Every route that calls AI MUST import from `app.ai`** — if you add a new
-   endpoint that uses AI, the import line must be:
-   ```python
-   from app.ai import ai_chat  # or ocr_extract, or both
-   ```
-   Forgetting this import is the #1 cause of `NameError` in production.
+4. **There is no `app/ai.py`** — the SDK replaces it. Do NOT create an `ai.py`
+   helper file.
 
-### Backend (Python) — `app/ai.py`
-
-Two ready-to-use functions:
+### Backend (Python) — Druppie SDK
 
 ```python
-from app.ai import ai_chat, ocr_extract
+from druppie_sdk import DruppieClient
+
+druppie = DruppieClient()
 
 # LLM chat completion
-answer = ai_chat("What is the capital of France?")
-answer = ai_chat("Summarize this...", system="You are a summarizer.")
+result = druppie.call("llm", "chat", {"prompt": "What is the capital of France?"})
+answer = result["answer"]
 
-# OCR: extract text from an image URL
-text = ocr_extract("https://example.com/receipt.png")
+# Chat with custom system prompt
+result = druppie.call("llm", "chat", {
+    "prompt": "Summarize this...",
+    "system": "You are a summarizer.",
+})
+
+# Vision / OCR: extract text from an image URL
+result = druppie.call("llm", "vision", {"image_url": "https://example.com/receipt.png"})
+text = result["text"]
+
+# Discover available modules
+modules = druppie.list_modules()
 ```
-
-Models (defined in `app/ai.py`, change as needed):
-- `AI_MODEL` = `meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8` — general LLM
-- `OCR_MODEL` = `PaddlePaddle/PaddleOCR-VL-0.9B` — OCR vision model
 
 ### Backend API endpoints (already in `app/routes.py`)
 
 ```
-POST /api/ai/chat   {"prompt": "...", "system": "..."}  → {"answer": "..."}
-POST /api/ai/ocr    {"image_url": "https://..."}        → {"text": "..."}
+POST /api/ai/chat   {"prompt": "...", "system": "..."}  -> {"answer": "..."}
+POST /api/ai/ocr    {"image_url": "https://..."}        -> {"text": "..."}
 ```
 
 These endpoints are already implemented. If you need a custom AI endpoint (e.g.
@@ -137,46 +135,17 @@ pattern:
 ```python
 @api.route("/ai/classify", methods=["POST"])
 def ai_classify_endpoint():
-    from app.ai import ai_chat  # MANDATORY import
-
     data = request.get_json()
-    result = ai_chat(data["text"], system="Classify this text into categories...")
-    return jsonify(result=result)
+    result = druppie.call("llm", "chat", {
+        "prompt": data["text"],
+        "system": "Classify this text into categories...",
+    })
+    return jsonify(result=result["answer"])
 ```
 
-### Frontend (TypeScript) — Vercel AI SDK + helper
+### Frontend (TypeScript)
 
-For server-side calls (API routes, server actions) you can install and use the
-Vercel AI SDK (`npm install ai @ai-sdk/deepinfra`):
-
-```typescript
-import { createDeepInfra } from "@ai-sdk/deepinfra";
-import { generateText } from "ai";
-
-const deepinfra = createDeepInfra({
-  // Key comes from backend — don't use in frontend directly
-  apiKey: "from-env",
-});
-
-// Chat with LLM
-const { text } = await generateText({
-  model: deepinfra("meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8"),
-  messages: [{ role: "user", content: "Hello!" }],
-});
-
-// OCR from image URL
-const { text: ocrText } = await generateText({
-  maxOutputTokens: 4092,
-  model: deepinfra("PaddlePaddle/PaddleOCR-VL-0.9B"),
-  messages: [{
-    role: "user",
-    content: [{ type: "image", image: "https://example.com/receipt.png" }],
-  }],
-});
-```
-
-For frontend components, call the backend proxy endpoints instead (key stays
-server-side):
+Call the backend proxy endpoints (AI stays server-side):
 
 ```typescript
 import { aiChat, aiOcr } from "@/lib/ai";
@@ -190,11 +159,11 @@ const text = await aiOcr("https://example.com/receipt.png");
 
 ### When to use AI
 
-- If the user's app needs chat, Q&A, summarization → use `ai_chat()` / `aiChat()`
-- If the user's app needs OCR, document scanning, receipt reading → use `ocr_extract()` / `aiOcr()`
-- Always call AI through the backend API endpoints (keeps the key server-side)
+- If the user's app needs chat, Q&A, summarization -> use `druppie.call("llm", "chat", ...)`
+- If the user's app needs OCR, document scanning, receipt reading -> use `druppie.call("llm", "vision", ...)`
+- Always call AI through the backend API endpoints (keeps keys server-side)
 - Do NOT hardcode API keys anywhere
-- Do NOT create your own OpenAI/httpx client — use the existing `app/ai.py` functions
+- Do NOT add `openai` to requirements.txt or create an `app/ai.py` file
 
 ## Test Compliance
 
