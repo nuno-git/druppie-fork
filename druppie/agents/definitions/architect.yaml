@@ -753,6 +753,16 @@ mcps:
 extra_builtin_tools:
   - execute_coding_task
 
+# Restrict sandbox usage to exploration only — the architect must use
+# coding_make_design (which has an approval gate) to write technical_design.md.
+# Without this, the LLM can bypass approval by using execute_coding_task
+# with a builder agent to write and push files directly.
+sandbox_constraints:
+  allowed_agents:
+    - explore
+  allowed_repo_targets:
+    - druppie_core
+
 # LAYERED APPROVAL SYSTEM:
 # Override the default (no approval) for make_design when used by architect.
 # When architect calls make_design (e.g., to create technical_design.md),

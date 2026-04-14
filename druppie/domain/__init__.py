@@ -23,7 +23,7 @@ Naming convention:
 
 # Enums
 # Agent definition (YAML config)
-from .agent_definition import AgentDefinition, ApprovalOverride
+from .agent_definition import AgentDefinition, ApprovalOverride, SandboxConstraints
 
 # Agent run models
 from .agent_run import (
@@ -127,6 +127,7 @@ __all__ = [
     # Agent definition
     "AgentDefinition",
     "ApprovalOverride",
+    "SandboxConstraints",
     # Skill
     "SkillSummary",
     "SkillDetail",
