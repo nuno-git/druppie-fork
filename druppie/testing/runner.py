@@ -200,6 +200,7 @@ class TestRunner:
                 description=test.description,
                 tags=test.tags,
                 chain=list(extended.chain) + list(test.chain),
+                session_status=test.session_status,
             )
         try:
             replay_session_id, chain_results = self._replay_chain(merged_test, user.id, run_namespace)
@@ -344,6 +345,7 @@ class TestRunner:
         agent_runs: list[AgentRunFixture] = []
         current_agent: str | None = None
         current_tools: list[ToolCallFixture] = []
+        current_planned_prompt: str | None = None
 
         for step in test.chain:
             # Convert ChainStepApproval to dict for replay
@@ -374,9 +376,13 @@ class TestRunner:
                     status = "completed" if last_tool == "builtin:done" else "running"
                     agent_runs.append(AgentRunFixture(
                         id=current_agent, status=status, tool_calls=current_tools,
+                        planned_prompt=current_planned_prompt,
                     ))
                 current_agent = step.agent
                 current_tools = []
+                current_planned_prompt = step.planned_prompt
+            elif step.planned_prompt and not current_planned_prompt:
+                current_planned_prompt = step.planned_prompt
 
             current_tools.append(tc_fixture)
 
@@ -386,14 +392,24 @@ class TestRunner:
             status = "completed" if last_tool == "builtin:done" else "running"
             agent_runs.append(AgentRunFixture(
                 id=current_agent, status=status, tool_calls=current_tools,
+                planned_prompt=current_planned_prompt,
             ))
+
+        # If session_status is "paused", mark the last non-completed
+        # agent run as "paused_user" so resume_paused_session() finds it.
+        final_session_status = test.session_status or "completed"
+        if final_session_status == "paused" and agent_runs:
+            for ar in reversed(agent_runs):
+                if ar.status != "completed":
+                    ar.status = "paused_user"
+                    break
 
         session_id_str = f"{run_namespace}:chain-{test.name}"
         fixture = SessionFixture(
             metadata=SessionMetadata(
                 id=session_id_str,
                 title=f"Tool test: {test.name}",
-                status="completed",
+                status=final_session_status,
                 user=run_namespace,
             ),
             agents=agent_runs,
