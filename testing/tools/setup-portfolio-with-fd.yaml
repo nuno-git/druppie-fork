@@ -24,6 +24,8 @@ tool-test:
         steps:
           - agent_id: business_analyst
             prompt: "Gather requirements and create functional design"
+          - agent_id: planner
+            prompt: "Re-evaluate after business_analyst completes"
 
     - agent: planner
       tool: builtin:done
@@ -105,6 +107,8 @@ tool-test:
         steps:
           - agent_id: architect
             prompt: "Review the functional design and create the technical design"
+          - agent_id: planner
+            prompt: "Re-evaluate after architect completes"
 
     - agent: planner
       tool: builtin:done

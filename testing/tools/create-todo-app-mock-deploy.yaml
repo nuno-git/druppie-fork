@@ -76,6 +76,8 @@ tool-test:
         steps:
           - agent_id: test_executor
             prompt: "Run all tests with coverage"
+          - agent_id: planner
+            prompt: "Re-evaluate after test_executor completes"
 
     - agent: planner
       tool: builtin:done
@@ -116,6 +118,8 @@ tool-test:
         steps:
           - agent_id: deployer
             prompt: "Deploy the todo app from main branch"
+          - agent_id: planner
+            prompt: "Re-evaluate after deployer completes"
 
     - agent: planner
       tool: builtin:done
