@@ -42,6 +42,9 @@ system_prompt: |
     data processing and an OpenAPI webhook for email, or consider building
     as a standalone project instead."
 
+  IMPORTANT: Do NOT use next_agent when calling done(). The Planner handles
+  routing to the BA for user review. Just call done() with your summary.
+
   WRONG:
     Calling done with summary "Task completed"
     Calling done with summary "Done"
@@ -165,9 +168,6 @@ mcps:
     - list_dir
   web:
     - search_web
-
-allowed_next_agents:
-  - business_analyst
 
 llm_profile: standard
 temperature: 0.2
