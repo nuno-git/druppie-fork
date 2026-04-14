@@ -255,7 +255,12 @@ async def run_tests(
                         test_db = SessionLocal()
                         try:
                             test_runner = runner.with_db(test_db)
-                            return test_runner.run_test(test_def, **phase_flags)
+                            results = test_runner.run_test(test_def, **phase_flags)
+                            test_db.commit()  # Persist TestRun + assertions
+                            return results
+                        except Exception:
+                            test_db.rollback()
+                            raise
                         finally:
                             test_db.close()
 
