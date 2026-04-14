@@ -443,6 +443,7 @@ class EvaluationRepository(BaseRepository):
         self, batch_id: str,
         assertion_type: str | None = None,
         agent_id: str | None = None,
+        tool_name: str | None = None,
         check_text: str | None = None,
     ) -> dict:
         """Get all assertion results for a batch, optionally filtered."""
@@ -458,6 +459,7 @@ class EvaluationRepository(BaseRepository):
         result = {
             "batch_id": batch_id,
             "summary": {"assertions": 0, "assertions_passed": 0,
+                         "verify": 0, "verify_passed": 0,
                          "judge": 0, "judge_passed": 0,
                          "judge_eval": 0, "judge_eval_passed": 0},
             "runs": [],
@@ -473,10 +475,14 @@ class EvaluationRepository(BaseRepository):
         if assertion_type:
             if assertion_type == "assertions":
                 query = query.filter(TestAssertionResult.assertion_type.in_(["completed", "tool"]))
+            elif assertion_type == "verify":
+                query = query.filter(TestAssertionResult.assertion_type == "verify")
             else:
                 query = query.filter(TestAssertionResult.assertion_type == assertion_type)
         if agent_id:
             query = query.filter(TestAssertionResult.agent_id == agent_id)
+        if tool_name:
+            query = query.filter(TestAssertionResult.tool_name == tool_name)
         if check_text:
             query = query.filter(TestAssertionResult.message == check_text)
         all_assertions = query.order_by(TestAssertionResult.created_at).all()
@@ -494,6 +500,10 @@ class EvaluationRepository(BaseRepository):
                     result["summary"]["assertions"] += 1
                     if ar.passed:
                         result["summary"]["assertions_passed"] += 1
+                elif ar.assertion_type == "verify":
+                    result["summary"]["verify"] += 1
+                    if ar.passed:
+                        result["summary"]["verify_passed"] += 1
                 elif ar.assertion_type == "judge_check":
                     result["summary"]["judge"] += 1
                     if ar.passed:

@@ -210,7 +210,7 @@ const TestRunDetail = ({ testRunId, onBack }) => {
         ) : (
           <div className="divide-y">
             {assertions.map((ar, i) => (
-              <div key={i} className="px-4 py-3 flex items-start gap-3">
+              <div key={i} className={`px-4 py-3 flex items-start gap-3 ${!ar.passed ? 'bg-red-50/50' : ''}`}>
                 {ar.passed ? (
                   <CheckCircle2 className="w-5 h-5 text-green-500 mt-0.5 shrink-0" />
                 ) : (
@@ -220,7 +220,7 @@ const TestRunDetail = ({ testRunId, onBack }) => {
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className={`px-1.5 py-0.5 rounded text-xs font-mono ${
                       ar.assertion_type === 'completed' ? 'bg-blue-50 text-blue-700' :
-                      ar.assertion_type === 'tool_called' ? 'bg-purple-50 text-purple-700' :
+                      ar.assertion_type === 'tool' ? 'bg-purple-50 text-purple-700' :
                       ar.assertion_type === 'verify' ? 'bg-amber-50 text-amber-700' :
                       ar.assertion_type === 'result_valid' ? 'bg-cyan-50 text-cyan-700' :
                       'bg-gray-50 text-gray-700'
@@ -228,17 +228,17 @@ const TestRunDetail = ({ testRunId, onBack }) => {
                       {ar.assertion_type}
                     </span>
                     {ar.agent_id && (
-                      <span className="text-sm font-medium text-gray-700">{ar.agent_id}</span>
+                      <span className="px-1.5 py-0.5 bg-gray-100 rounded text-xs font-medium text-gray-700">{ar.agent_id}</span>
                     )}
                     {ar.tool_name && (
-                      <span className="text-sm font-mono text-gray-500">{ar.tool_name}</span>
+                      <span className="px-1.5 py-0.5 bg-indigo-50 rounded text-xs font-mono text-indigo-700">{ar.tool_name}</span>
                     )}
                     {ar.eval_name && (
                       <span className="text-xs text-gray-400">[{ar.eval_name}]</span>
                     )}
                   </div>
                   {ar.message && (
-                    <p className="text-sm text-gray-500 mt-1">{ar.message}</p>
+                    <p className={`text-sm mt-1 ${ar.passed ? 'text-gray-500' : 'text-red-700 font-medium'}`}>{ar.message}</p>
                   )}
                 </div>
               </div>

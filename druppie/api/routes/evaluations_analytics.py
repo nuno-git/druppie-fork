@@ -95,12 +95,13 @@ async def get_batch_assertions(
     batch_id: str,
     assertion_type: str | None = Query(None),
     agent_id: str | None = Query(None),
+    tool_name: str | None = Query(None),
     check_text: str | None = Query(None),
     user: dict = Depends(require_admin),
     service: EvaluationService = Depends(get_evaluation_service),
 ):
     """Get all assertion results for a batch, optionally filtered."""
-    return service.get_batch_assertions(batch_id, assertion_type, agent_id, check_text)
+    return service.get_batch_assertions(batch_id, assertion_type, agent_id, tool_name, check_text)
 
 
 @router.get("/evaluations/batch/{batch_id}/filters")

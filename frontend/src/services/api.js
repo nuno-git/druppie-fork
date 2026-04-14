@@ -405,6 +405,7 @@ export const getBatchAssertions = (batchId, filters = {}) => {
   const params = new URLSearchParams()
   if (filters.assertion_type) params.append('assertion_type', filters.assertion_type)
   if (filters.agent_id) params.append('agent_id', filters.agent_id)
+  if (filters.tool_name) params.append('tool_name', filters.tool_name)
   if (filters.check_text) params.append('check_text', filters.check_text)
   const qs = params.toString()
   return request(`/api/evaluations/batch/${batchId}/assertions${qs ? '?' + qs : ''}`)

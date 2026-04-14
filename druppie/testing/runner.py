@@ -277,10 +277,18 @@ class TestRunner:
 
         from druppie.db.models import TestAssertionResult
         for ar in all_assertion_results:
+            ar_agent = ar.name.split(".")[0] if "." in ar.name else None
+            ar_tool = None
+            ar_type = "completed"
+            if "tool(" in ar.name:
+                ar_tool = ar.name.split("tool(")[1].split(")")[0]
+                ar_type = "tool"
+            elif ar.name.startswith("verify."):
+                ar_type = "verify"
             self._db.add(TestAssertionResult(
                 test_run_id=test_run.id,
-                assertion_type="tool" if "tool(" in ar.name else "completed",
-                agent_id=ar.name.split(".")[0] if "." in ar.name else None,
+                assertion_type=ar_type,
+                agent_id=ar_agent, tool_name=ar_tool,
                 passed=ar.passed, message=ar.message,
             ))
 
