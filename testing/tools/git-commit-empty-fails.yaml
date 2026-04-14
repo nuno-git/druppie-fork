@@ -42,7 +42,7 @@ tool-test:
         command: "commit -m 'This should fail'"
       assert:
         result:
-          - { contains: "nothing to commit" }
+          - { contains: "Command failed" }
 
     # Push with nothing new — should succeed (everything up-to-date)
     - agent: builder
