@@ -203,12 +203,20 @@ class EvaluationService:
         elif tag:
             all_tests = runner.load_all_tests()
             for _path, test_def in all_tests:
-                # Check if any eval references an eval with this tag
-                for eval_ref in test_def.evals:
-                    eval_def = runner._evals.get(eval_ref.eval)
-                    if eval_def and tag in eval_def.tags:
-                        results.extend(runner.run_test(test_def, **phase_flags))
-                        break
+                # Check tags on the test and its referenced checks
+                test_tags = getattr(test_def, "tags", [])
+                if tag in test_tags:
+                    results.extend(runner.run_test(test_def, **phase_flags))
+                    continue
+                for check_ref in getattr(test_def, "assert_", []) or []:
+                    if hasattr(check_ref, "check"):
+                        try:
+                            check_def = runner._checks.get(check_ref.check)
+                            if check_def and tag in check_def.tags:
+                                results.extend(runner.run_test(test_def, **phase_flags))
+                                break
+                        except KeyError:
+                            pass
         elif run_all:
             all_tests = runner.load_all_tests()
             for _path, test_def in all_tests:
@@ -233,6 +241,160 @@ class EvaluationService:
                 for r in results
             ],
         }
+
+    @staticmethod
+    def run_unit_tests() -> dict:
+        """Run pytest unit tests and return parsed results."""
+        import re
+        import subprocess
+
+        try:
+            result = subprocess.run(
+                ["python", "-m", "pytest", "druppie/tests/", "-v", "--tb=short", "-rs"],
+                capture_output=True,
+                text=True,
+                timeout=120,
+                cwd="/app",
+            )
+
+            lines = result.stdout.strip().split("\n")
+            tests = []
+            test_line_re = re.compile(
+                r"^([\w/\\.]+\.py)"
+                r"::"
+                r"([\w:]+)"
+                r"\s+"
+                r"(PASSED|FAILED|SKIPPED|ERROR)"
+                r"(.*)?$"
+            )
+
+            for line in lines:
+                m = test_line_re.search(line.strip())
+                if not m:
+                    continue
+                file_path = m.group(1)
+                name_part = m.group(2)
+                status = m.group(3).lower()
+                tail = (m.group(4) or "").strip()
+
+                if "::" in name_part:
+                    cls_name, method_name = name_part.split("::", 1)
+                else:
+                    cls_name = None
+                    method_name = name_part
+
+                file_name = file_path.rsplit("/", 1)[-1] if "/" in file_path else file_path
+
+                reason = None
+                if tail:
+                    reason_match = re.search(r"\((.+)\)", tail)
+                    if reason_match:
+                        reason = reason_match.group(1)
+
+                tests.append({
+                    "file": file_name,
+                    "class": cls_name,
+                    "name": method_name,
+                    "status": status,
+                    "reason": reason,
+                })
+
+            summary = ""
+            duration_seconds = None
+            for line in reversed(lines):
+                if "passed" in line or "failed" in line:
+                    summary = line.strip().strip("=").strip()
+                    dur_match = re.search(r"in\s+([\d.]+)s", line)
+                    if dur_match:
+                        duration_seconds = float(dur_match.group(1))
+                    break
+
+            failure_details: dict[str, str] = {}
+            for line in lines:
+                if line.startswith("FAILED "):
+                    parts = line.split(" - ", 1)
+                    key = parts[0].replace("FAILED ", "").strip()
+                    msg = parts[1].strip() if len(parts) > 1 else ""
+                    failure_details[key] = msg
+
+            for t in tests:
+                if t["status"] == "failed":
+                    if t["class"]:
+                        key = f"druppie/tests/{t['file']}::{t['class']}::{t['name']}"
+                    else:
+                        key = f"druppie/tests/{t['file']}::{t['name']}"
+                    if key in failure_details:
+                        t["reason"] = failure_details[key]
+
+            return {
+                "status": "passed" if result.returncode == 0 else "failed",
+                "summary": summary,
+                "total": len(tests),
+                "passed": sum(1 for t in tests if t["status"] == "passed"),
+                "failed": sum(1 for t in tests if t["status"] == "failed"),
+                "skipped": sum(1 for t in tests if t["status"] == "skipped"),
+                "tests": tests,
+                "output": result.stdout,
+                "errors": result.stderr if result.returncode != 0 else "",
+                "duration_seconds": duration_seconds,
+            }
+        except subprocess.TimeoutExpired:
+            return {
+                "status": "error",
+                "summary": "Timeout after 120 seconds",
+                "total": 0, "passed": 0, "failed": 0, "skipped": 0,
+                "tests": [], "output": "", "errors": "Timeout",
+                "duration_seconds": None,
+            }
+        except Exception as e:
+            return {
+                "status": "error",
+                "summary": str(e),
+                "total": 0, "passed": 0, "failed": 0, "skipped": 0,
+                "tests": [], "output": "", "errors": str(e),
+                "duration_seconds": None,
+            }
+
+    # =========================================================================
+    # ANALYTICS
+    # =========================================================================
+
+    def get_analytics_summary(self, days: int = 30) -> dict:
+        return self.eval_repo.get_analytics_summary(days)
+
+    def get_analytics_trends(self, days: int = 30) -> list[dict]:
+        return self.eval_repo.get_analytics_trends(days)
+
+    def get_analytics_by_agent(self, batch_id: str | None = None) -> list[dict]:
+        return self.eval_repo.get_analytics_by_agent(batch_id)
+
+    def get_analytics_by_eval(self, batch_id: str | None = None) -> list[dict]:
+        return self.eval_repo.get_analytics_by_eval(batch_id)
+
+    def get_analytics_by_tool(self, batch_id: str | None = None) -> list[dict]:
+        return self.eval_repo.get_analytics_by_tool(batch_id)
+
+    def get_analytics_by_test(self, batch_id: str | None = None) -> list[dict]:
+        return self.eval_repo.get_analytics_by_test(batch_id)
+
+    def get_analytics_batch_detail(self, batch_id: str) -> dict:
+        return self.eval_repo.get_analytics_batch_detail(batch_id)
+
+    def get_test_run_assertions(self, test_run_id) -> list[dict]:
+        return self.eval_repo.get_test_run_assertions(test_run_id)
+
+    def get_batch_assertions(
+        self, batch_id: str,
+        assertion_type: str | None = None,
+        agent_id: str | None = None,
+        check_text: str | None = None,
+    ) -> dict:
+        return self.eval_repo.get_batch_assertions(
+            batch_id, assertion_type, agent_id, check_text,
+        )
+
+    def get_batch_filters(self, batch_id: str) -> dict:
+        return self.eval_repo.get_batch_filters(batch_id)
 
     def delete_test_users(self) -> int:
         """Delete all test users and their data.

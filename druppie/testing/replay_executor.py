@@ -208,30 +208,8 @@ class ReplayExecutor:
             return result, status, True
 
         except Exception as e:
-            if self.config.on_error == "fail":
-                raise
-            elif self.config.on_error == "skip":
-                logger.warning("Replay skip: %s error: %s", tool_call.tool, e)
-                return "", "skipped", False
-            else:  # "mock"
-                logger.warning("Replay mock (on_error): %s failed: %s", tool_call.tool, e)
-                mock_result = self.get_mock_result(tool_call)
-                # Still create a DB record
-                tc_record = ToolCall(
-                    id=uuid4(),
-                    session_id=session_id,
-                    agent_run_id=agent_run_id,
-                    mcp_server=tool_call.mcp_server,
-                    tool_name=tool_call.tool_name,
-                    arguments=tool_call.arguments,
-                    status="failed",
-                    result=mock_result,
-                    error_message=str(e),
-                    created_at=utcnow(),
-                )
-                self._db.add(tc_record)
-                self._db.flush()
-                return mock_result, "failed", False
+            logger.error("Replay failed: %s error: %s", tool_call.tool, e, exc_info=True)
+            raise
 
     async def replay_session(
         self,
@@ -247,11 +225,11 @@ class ReplayExecutor:
 
         The session view will show every tool call and its result.
         """
-        # Force the Gitea singleton to create a fresh AsyncClient bound to
-        # the current event loop (test thread uses its own loop)
+        # Create a fresh Gitea client for this test session to avoid
+        # corrupting the shared singleton's AsyncClient (which may be
+        # bound to a different event loop)
         import druppie.core.gitea as _gitea_mod
-        gitea_client = _gitea_mod.get_gitea_client()
-        gitea_client._client = None
+        _gitea_mod._gitea_client = None  # Reset singleton so next call creates fresh client
 
         meta = fixture.metadata
         session_id = fixture_uuid(meta.id)
