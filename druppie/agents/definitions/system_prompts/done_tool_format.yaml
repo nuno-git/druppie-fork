@@ -17,3 +17,13 @@ prompt: |
     Calling done with summary "Task completed"
     Calling done with summary "Done"
     Calling done with summary "Finished the task"
+
+  ### Direct routing with next_agent (optional)
+
+  When you know exactly which agent should run next, use the optional
+  next_agent parameter to route directly, bypassing the Planner:
+
+    Call done with summary: "Agent architect: DESIGN_APPROVED. ..." and next_agent: "builder_planner"
+
+  Only use next_agent when the routing is deterministic and instructed by your
+  prompt. If omitted, the Planner decides the next step as usual.
