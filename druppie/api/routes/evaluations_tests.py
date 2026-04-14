@@ -136,15 +136,31 @@ async def run_tests(
     judge = body.judge
     input_values = body.input_values or {}
 
+    def _update_batch(status=None, current_test=None, message=None,
+                      total_tests=None, completed_at=None):
+        """Update batch run status with a short-lived DB session."""
+        _db = SessionLocal()
+        try:
+            _repo = EvaluationRepository(_db)
+            _repo.update_batch_run(
+                run_id, status=status, current_test=current_test,
+                message=message, total_tests=total_tests,
+                completed_at=completed_at,
+            )
+            _db.commit()
+        finally:
+            _db.close()
+
     def _run():
         import os
         from druppie.testing.runner import TestRunner
 
-        db = SessionLocal()
+        # Use a short-lived session just for loading test definitions.
+        # Each individual test gets its own session via runner.with_db().
+        setup_db = SessionLocal()
         try:
-            repo = EvaluationRepository(db)
             gitea_url = os.getenv("GITEA_INTERNAL_URL", os.getenv("GITEA_URL", "http://gitea:3000"))
-            runner = TestRunner(db=db, gitea_url=gitea_url)
+            runner = TestRunner(db=setup_db, gitea_url=gitea_url)
             phase_flags = dict(execute=execute, judge=judge, batch_id=run_id)
 
             def _find_test(name):
@@ -208,23 +224,33 @@ async def run_tests(
             elif run_all:
                 all_tests = runner.load_all_tests()
                 tests_to_run = [(td.name, td) for _p, td in all_tests]
+        finally:
+            setup_db.close()
 
-            total = len(tests_to_run)
-            repo.update_batch_run(run_id, total_tests=total, message=f"Running 0/{total} tests...")
-            db.commit()
+        total = len(tests_to_run)
+        _update_batch(total_tests=total, message=f"Running 0/{total} tests...")
 
-            all_results = []
-            test_timeout = int(os.getenv("TEST_TIMEOUT_SECONDS", "600"))  # 10 min default
+        all_results = []
+        test_timeout = int(os.getenv("TEST_TIMEOUT_SECONDS", "600"))  # 10 min default
+
+        try:
             for idx, (name, test_def) in enumerate(tests_to_run):
-                repo.update_batch_run(run_id, current_test=name,
-                                      message=f"Running {idx + 1}/{total}: {name}")
-                db.commit()
+                _update_batch(current_test=name,
+                              message=f"Running {idx + 1}/{total}: {name}")
 
                 try:
-                    # Run each test with a timeout to prevent stuck MCP calls
-                    # from blocking all future test runs
+                    # Each test gets its own DB session — created and closed
+                    # within the worker thread so no cross-thread sharing.
+                    def _run_single_test():
+                        test_db = SessionLocal()
+                        try:
+                            test_runner = runner.with_db(test_db)
+                            return test_runner.run_test(test_def, **phase_flags)
+                        finally:
+                            test_db.close()
+
                     with ThreadPoolExecutor(max_workers=1) as pool:
-                        future = pool.submit(runner.run_test, test_def, **phase_flags)
+                        future = pool.submit(_run_single_test)
                         test_results = future.result(timeout=test_timeout)
                     all_results.extend(test_results)
                 except FuturesTimeoutError:
@@ -238,29 +264,22 @@ async def run_tests(
                 except Exception as test_err:
                     logger.error("test_failed", test=name, error=str(test_err), exc_info=True)
 
-            db.commit()
-
             passed = sum(1 for r in all_results if r.status == "passed")
-            repo.update_batch_run(
-                run_id, status="completed", current_test=None,
+            _update_batch(
+                status="completed", current_test=None,
                 message=f"{passed}/{len(all_results)} passed",
                 completed_at=datetime.now(timezone.utc),
             )
-            db.commit()
 
         except Exception as e:
             logger.error("tests_run_error", run_id=run_id, error=str(e), exc_info=True)
             try:
-                db.rollback()
-                repo.update_batch_run(
-                    run_id, status="error", current_test=None,
+                _update_batch(
+                    status="error", current_test=None,
                     message=str(e), completed_at=datetime.now(timezone.utc),
                 )
-                db.commit()
             except Exception:
                 pass
-        finally:
-            db.close()
 
     thread = threading.Thread(target=_run, daemon=True, name=f"test-run-{run_id}")
     thread.start()
@@ -298,7 +317,7 @@ async def get_run_status(
                 "passed": sum(1 for t in completed_tests if t["status"] == "passed"),
                 "failed": sum(1 for t in completed_tests if t["status"] != "passed"),
                 "results": completed_tests,
-            } if batch.status == "completed" else None,
+            },
         }
     finally:
         db.close()
