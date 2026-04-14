@@ -14,6 +14,11 @@ import {
   Trash2,
   Bot,
   Rocket,
+  FileCode,
+  Download,
+  X,
+  Copy,
+  CheckCircle,
 } from 'lucide-react'
 import {
   getCustomAgent,
@@ -21,6 +26,7 @@ import {
   updateCustomAgent,
   getAgentMetadata,
   deployCustomAgent,
+  getCustomAgentYaml,
 } from '../services/api'
 
 const SectionCard = ({ title, children }) => (
@@ -603,11 +609,95 @@ const AgentEditor = () => {
             Cancel
           </button>
           {isEdit && (
-            <DeployButton agentId={agentId} />
+            <>
+              <YamlViewerButton agentId={agentId} />
+              <DeployButton agentId={agentId} />
+            </>
           )}
         </div>
       </form>
     </div>
+  )
+}
+
+const YamlViewerButton = ({ agentId }) => {
+  const [open, setOpen] = useState(false)
+  const [yaml, setYaml] = useState(null)
+  const [loading, setLoading] = useState(false)
+  const [copied, setCopied] = useState(false)
+
+  const handleOpen = async () => {
+    setOpen(true)
+    setLoading(true)
+    try {
+      const result = await getCustomAgentYaml(agentId)
+      setYaml(result.yaml)
+    } catch {
+      setYaml('# Failed to load YAML')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleDownload = () => {
+    if (!yaml) return
+    const blob = new Blob([yaml], { type: 'application/x-yaml' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${agentId}.yaml`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  const handleCopy = () => {
+    if (!yaml) return
+    navigator.clipboard.writeText(yaml)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+  }
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={handleOpen}
+        className="inline-flex items-center gap-2 px-5 py-2.5 text-sm font-medium text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
+      >
+        <FileCode className="w-4 h-4" />
+        View YAML
+      </button>
+
+      {open && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setOpen(false)}>
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-3xl max-h-[80vh] flex flex-col m-4" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-6 py-4 border-b">
+              <h3 className="text-sm font-medium text-gray-900">Agent Definition — {agentId}.yaml</h3>
+              <div className="flex items-center gap-2">
+                <button onClick={handleCopy} className="p-1.5 text-gray-400 hover:text-blue-600 rounded transition-colors" title="Copy">
+                  {copied ? <CheckCircle className="w-4 h-4 text-green-500" /> : <Copy className="w-4 h-4" />}
+                </button>
+                <button onClick={handleDownload} className="p-1.5 text-gray-400 hover:text-blue-600 rounded transition-colors" title="Download">
+                  <Download className="w-4 h-4" />
+                </button>
+                <button onClick={() => setOpen(false)} className="p-1.5 text-gray-400 hover:text-gray-600 rounded transition-colors">
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+            <div className="flex-1 overflow-auto p-6">
+              {loading ? (
+                <div className="flex items-center justify-center py-12">
+                  <Loader2 className="w-5 h-5 animate-spin text-gray-400" />
+                </div>
+              ) : (
+                <pre className="text-sm font-mono text-gray-800 whitespace-pre-wrap">{yaml}</pre>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   )
 }
 

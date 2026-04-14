@@ -9,6 +9,7 @@ import {
   Bot,
   Plus,
   Trash2,
+  Download,
   Search,
   Cpu,
   ChevronDown,
@@ -18,7 +19,7 @@ import {
   CheckCircle,
   XCircle,
 } from 'lucide-react'
-import { getAgents, getCustomAgents, deleteCustomAgent } from '../services/api'
+import { getAgents, getCustomAgents, deleteCustomAgent, getCustomAgentYaml } from '../services/api'
 import PageHeader from '../components/shared/PageHeader'
 
 const CATEGORY_COLORS = {
@@ -103,8 +104,8 @@ const BuiltinAgentRow = ({ agent }) => {
   )
 }
 
-// Custom agent card (clickable, with delete)
-const CustomAgentCard = ({ agent, onEdit, onDelete, isDeleting }) => (
+// Custom agent card (clickable, with download + delete)
+const CustomAgentCard = ({ agent, onEdit, onDelete, onDownloadYaml, isDeleting }) => (
   <div
     onClick={() => onEdit(agent.agent_id)}
     className="bg-gray-50/70 rounded-lg p-4 border border-gray-100 hover:border-gray-200 hover:bg-gray-50 transition-colors cursor-pointer"
@@ -137,21 +138,34 @@ const CustomAgentCard = ({ agent, onEdit, onDelete, isDeleting }) => (
           <p className="text-xs text-gray-500 mt-2 line-clamp-2">{agent.description}</p>
         )}
       </div>
-      <button
-        onClick={(e) => {
-          e.stopPropagation()
-          onDelete(agent.agent_id)
-        }}
-        disabled={isDeleting}
-        className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors ml-3"
-        aria-label="Delete agent"
-      >
-        {isDeleting ? (
-          <Loader2 className="w-4 h-4 animate-spin" />
-        ) : (
-          <Trash2 className="w-4 h-4" />
-        )}
-      </button>
+      <div className="flex items-center gap-1 ml-3">
+        <button
+          onClick={(e) => {
+            e.stopPropagation()
+            onDownloadYaml(agent.agent_id, agent.name)
+          }}
+          className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors"
+          aria-label="Download YAML"
+          title="Download YAML"
+        >
+          <Download className="w-4 h-4" />
+        </button>
+        <button
+          onClick={(e) => {
+            e.stopPropagation()
+            onDelete(agent.agent_id)
+          }}
+          disabled={isDeleting}
+          className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors"
+          aria-label="Delete agent"
+        >
+          {isDeleting ? (
+            <Loader2 className="w-4 h-4 animate-spin" />
+          ) : (
+            <Trash2 className="w-4 h-4" />
+          )}
+        </button>
+      </div>
     </div>
   </div>
 )
@@ -199,6 +213,21 @@ const Agents = () => {
   const handleDelete = (agentId) => {
     if (window.confirm(`Delete custom agent "${agentId}"? This cannot be undone.`)) {
       deleteMutation.mutate(agentId)
+    }
+  }
+
+  const handleDownloadYaml = async (agentId, agentName) => {
+    try {
+      const result = await getCustomAgentYaml(agentId)
+      const blob = new Blob([result.yaml], { type: 'application/x-yaml' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `${agentId}.yaml`
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch {
+      alert(`Failed to download YAML for ${agentName}`)
     }
   }
 
@@ -324,6 +353,7 @@ const Agents = () => {
                 agent={agent}
                 onEdit={(id) => navigate(`/agents/${id}/edit`)}
                 onDelete={handleDelete}
+                onDownloadYaml={handleDownloadYaml}
                 isDeleting={deletingId === agent.agent_id}
               />
             ))}
