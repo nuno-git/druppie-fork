@@ -136,17 +136,27 @@ async def run_tests(
     judge = body.judge
     input_values = body.input_values or {}
 
-    def _update_batch(status=None, current_test=None, message=None,
-                      total_tests=None, completed_at=None):
-        """Update batch run status with a short-lived DB session."""
+    _UNSET = object()
+
+    def _update_batch(status=_UNSET, current_test=_UNSET, message=_UNSET,
+                      total_tests=_UNSET, completed_at=_UNSET):
+        """Update batch run status with a short-lived DB session.
+
+        Only explicitly passed values are forwarded (None is a valid
+        value, e.g. current_test=None to clear the field).
+        """
+        updates = {}
+        for key, val in [("status", status), ("current_test", current_test),
+                         ("message", message), ("total_tests", total_tests),
+                         ("completed_at", completed_at)]:
+            if val is not _UNSET:
+                updates[key] = val
+        if not updates:
+            return
         _db = SessionLocal()
         try:
             _repo = EvaluationRepository(_db)
-            _repo.update_batch_run(
-                run_id, status=status, current_test=current_test,
-                message=message, total_tests=total_tests,
-                completed_at=completed_at,
-            )
+            _repo.update_batch_run(run_id, **updates)
             _db.commit()
         finally:
             _db.close()
