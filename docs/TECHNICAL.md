@@ -190,8 +190,7 @@ druppie/
     module-filesearch/   # Port 9004 — local file search
     module-web/          # Port 9005 — web browsing/search
     module-archimate/    # Port 9006 — ArchiMate model ops
-    module-hitl/         # HITL helpers
-    module-registry/     # Tool registry/discovery helpers
+    module-registry/     # Port 9007 — platform catalog/discovery
 ```
 
 ---
@@ -555,11 +554,10 @@ druppie-backend     FastAPI           :8100   Backend API
 druppie-frontend    Vite/React        :5273   Frontend
 module-coding       FastMCP           :9001   File/git operations
 module-docker       FastMCP           :9002   Docker operations
-module-hitl         FastMCP           :9003   Human-in-the-loop
 module-filesearch   FastMCP           :9004   File search
 module-web          FastMCP           :9005   Web browsing
 module-archimate    FastMCP           :9006   ArchiMate models
-module-registry     FastMCP           :9007   Tool registry
+module-registry     FastMCP           :9007   Platform catalog/discovery
 adminer             Adminer           :8081   DB admin UI
 sandbox-control-plane  Node.js        :8787   Sandbox session/event management
 sandbox-manager     Node.js           :8000   Sandbox container lifecycle
@@ -581,6 +579,7 @@ All containers share a single bridge network: `druppie-new-network`. Internal co
 | `druppie_new_workspace` | `/app/workspace` (backend), `/workspaces` (MCP) | Shared workspace for agent file operations |
 | `sandbox_data` | `/data` (control plane) | Sandbox session data (SQLite) |
 | `sandbox_snapshots` | `/data/snapshots` (manager) | Sandbox container snapshots |
+| `sandbox_dep_cache` | `/cache` (sandbox containers) | Shared dependency cache for npm/pnpm/bun/pip/uv |
 | Docker socket | `/var/run/docker.sock` | Allows backend and MCP Docker to manage containers |
 
 ### 7.4 Health Checks
@@ -620,7 +619,34 @@ docker compose --profile dev --profile prod --profile infra down
 docker compose ps
 ```
 
-### 7.6 Database Reset
+### 7.6 Sandbox Security Architecture
+
+Sandbox containers are hardened with multiple isolation layers:
+
+**Capability reduction:** All Linux capabilities are dropped (`--cap-drop=ALL`), then only 3 are re-added: `CHOWN` and `FOWNER` (shared cache file ownership), `NET_RAW` (health checks). Combined with `--security-opt=no-new-privileges` to block setuid/setgid escalation. See `docker_manager.py`.
+
+**Non-root execution:** Sandboxes run as `sandbox:1000` (non-root user created in `Dockerfile.sandbox:83-84`).
+
+**Network isolation:** Sandboxes join `druppie-sandbox-network`, an isolated bridge network. Only the control plane bridges both networks — sandboxes cannot reach the database, Keycloak, Gitea, or backend directly.
+
+**Resource limits:** CPU, memory, and PID limits are configured via environment variables (`SANDBOX_MEMORY_LIMIT`, `SANDBOX_CPU_LIMIT`).
+
+### 7.7 Shared Dependency Cache
+
+A named Docker volume (`druppie_sandbox_dep_cache`) is mounted at `/cache` inside every sandbox container. Environment variables in `Dockerfile.sandbox` point each package manager to a subdirectory (`/cache/npm`, `/cache/pnpm`, `/cache/bun`, `/cache/uv`, `/cache/pip`).
+
+**Supply-chain hardening:**
+- Package manager configs (`.npmrc`, `.pnpmrc`, `pip.conf`) enforce HTTPS-only registries with `strict-ssl=true`
+- `UV_INDEX_URL` is set to `https://pypi.org/simple/`
+- npm lockfile enforcement: `package-lock=true`
+
+**Cache scanner:** A `cache-scanner` service (`Dockerfile.cache-scanner`) runs the [OSV scanner](https://github.com/google/osv-scanner) (v2.3.3, SHA256-verified binary) against all cached packages. It discovers npm/pnpm `package.json` files and pip `METADATA`/`PKG-INFO` files, then runs a recursive vulnerability scan. Usage: `docker compose --profile scan-cache run --rm cache-scanner`.
+
+**Emergency purge:** The `reset-cache` profile service stops all sandbox containers, removes the cache volume, and recreates it empty. Usage: `docker compose --profile reset-cache run --rm reset-cache`.
+
+**Cache entry logging:** The sandbox entrypoint (`entrypoint.py`) diffs cache snapshots before and after execution, emitting structured `cache.new_entries` JSON log events per package manager.
+
+### 7.8 Database Reset
 
 Two reset options are available:
 
@@ -634,7 +660,7 @@ docker compose --profile reset-hard up
 
 The soft reset is useful during development when you want to clear session/project data without re-running Keycloak/Gitea setup. The hard reset is a full wipe that requires re-initialization.
 
-### 7.7 Profiles
+### 7.9 Profiles
 
 | Profile | Purpose |
 |---------|---------|
@@ -644,8 +670,10 @@ The soft reset is useful during development when you want to clear session/proje
 | `init` | One-time Keycloak and Gitea setup (creates realm, users, OAuth apps) |
 | `reset-db` | Soft reset: drops application tables, keeps users |
 | `reset-hard` | Hard reset: wipes all volumes, reinitializes everything |
+| `reset-cache` | Purge sandbox dependency cache (stops sandboxes, removes + recreates volume) |
+| `scan-cache` | Scan cached dependencies for vulnerabilities (OSV scanner) |
 
-### 7.8 Cross-Platform Support
+### 7.10 Cross-Platform Support
 
 The Docker Compose setup works on Windows, macOS, and Linux. Shell scripts use LF line endings (enforced via `.gitattributes`) and Dockerfiles include `sed` commands to strip any CRLF characters that may be introduced on Windows.
 

@@ -5,14 +5,11 @@ Cross-platform alternative to KataContainerManager. Works on Linux, Windows,
 and macOS wherever Docker (or Docker Desktop) is installed.
 
 Security hardening:
-  - --cap-drop=ALL + targeted cap-add   (principle of least privilege)
-  - SYS_ADMIN + MKNOD for DinD          (builder verification)
-  - --cgroupns=host for DinD on cgroup v2
-  - no-new-privileges removed            (incompatible with DinD containerd-shim)
-  - --memory limit                       (prevents OOM on host)
-  - --pids-limit                         (prevents fork bombs)
-  - Default seccomp + AppArmor           (Docker builtin profiles)
-  - Network isolation                    (sandbox-only network)
+  - --security-opt=no-new-privileges  (blocks setuid/setgid escalation)
+  - --cap-drop=ALL + minimal cap-add  (principle of least privilege)
+  - --memory limit                    (prevents OOM on host)
+  - --pids-limit                      (prevents fork bombs)
+  - Default seccomp + AppArmor        (Docker builtin profiles)
   - No --privileged
 """
 
@@ -75,27 +72,16 @@ class DockerContainerManager:
         for k, v in env_vars.items():
             env_flags.extend(["-e", f"{k}={v}"])
 
-        # Security and resource flags
-        # Note: DinD requires SYS_ADMIN + MKNOD and is incompatible with
-        # no-new-privileges (containerd-shim needs privilege escalation).
-        # Compensating controls: cap-drop=ALL, network isolation, resource limits.
+        # Security and resource flags (non-root container — minimal capabilities)
         security_flags = [
-            # Drop ALL capabilities, add back only essentials + DinD
+            # Prevent setuid/setgid privilege escalation
+            "--security-opt=no-new-privileges",
+            # Drop ALL capabilities, add back only essentials for non-root
             "--cap-drop=ALL",
-            "--cap-add=CHOWN",         # chown files (npm, git)
-            "--cap-add=DAC_OVERRIDE",  # bypass file permission checks (root in container)
-            "--cap-add=FOWNER",        # change file ownership
-            "--cap-add=SETGID",        # set group ID (su, sudo)
-            "--cap-add=SETUID",        # set user ID (su, sudo)
             "--cap-add=NET_RAW",       # raw sockets (ping, health checks)
-            "--cap-add=NET_BIND_SERVICE",  # bind ports < 1024
-            "--cap-add=SYS_CHROOT",    # chroot (some build tools)
-            "--cap-add=SYS_ADMIN",     # Docker-in-Docker (cgroups/namespaces)
-            "--cap-add=MKNOD",         # Device nodes (DinD)
-            "--cgroupns=host",         # Share host cgroup namespace (required for DinD on cgroup v2)
             # Resource limits
             f"--memory={config.DOCKER_MEMORY_LIMIT}",
-            f"--cpus={config.DOCKER_CPU_LIMIT}",
+            *([] if config.DOCKER_CPU_LIMIT == "0" else [f"--cpus={config.DOCKER_CPU_LIMIT}"]),
             f"--pids-limit={config.DOCKER_PIDS_LIMIT}",
             # Tmpfs for /tmp (faster I/O, auto-cleaned)
             "--tmpfs=/tmp:rw,exec,size=2g",
@@ -112,11 +98,18 @@ class DockerContainerManager:
             if platform.system() == "Linux":
                 security_flags.append("--network=host")
 
+        # Optional shared dependency cache volume
+        volume_flags: list[str] = []
+        cache_volume = config.SANDBOX_CACHE_VOLUME
+        if cache_volume:
+            volume_flags.extend(["-v", f"{cache_volume}:/cache:rw"])
+
         cmd = [
             "docker", "run",
             "-d",  # detach
             "--name", container_name,
             *security_flags,
+            *volume_flags,
             *env_flags,
             "-w", "/workspace",
             image,
