@@ -23,7 +23,7 @@ tool-test:
     - agent: router
       tool: builtin:done
       arguments:
-        summary: "Classified as create_project for todo-app"
+        summary: "Agent router: Classified as create_project for todo-app"
       assert:
         completed: true
 
@@ -40,7 +40,7 @@ tool-test:
     - agent: planner
       tool: builtin:done
       arguments:
-        summary: "Planned business_analyst as next step"
+        summary: "Agent planner: Planned business_analyst as next step"
 
     # --- Business Analyst ---
     - agent: business_analyst
@@ -97,7 +97,7 @@ tool-test:
     - agent: business_analyst
       tool: builtin:done
       arguments:
-        summary: "DESIGN_APPROVED"
+        summary: "Agent business_analyst: DESIGN_APPROVED"
 
     # --- Planner (after BA) ---
     - agent: planner
@@ -112,7 +112,7 @@ tool-test:
     - agent: planner
       tool: builtin:done
       arguments:
-        summary: "BA approved, planned architect as next step"
+        summary: "Agent planner: BA approved, planned architect as next step"
 
     # --- Architect ---
     - agent: architect
@@ -182,7 +182,7 @@ tool-test:
     - agent: architect
       tool: builtin:done
       arguments:
-        summary: "DESIGN_APPROVED"
+        summary: "Agent architect: DESIGN_APPROVED"
 
     # --- Planner (after architect → builder_planner) ---
     - agent: planner
@@ -197,7 +197,7 @@ tool-test:
     - agent: planner
       tool: builtin:done
       arguments:
-        summary: "Architect approved, planned builder_planner"
+        summary: "Agent planner: Architect approved, planned builder_planner"
 
     # --- Builder Planner ---
     - agent: builder_planner
@@ -273,7 +273,7 @@ tool-test:
     - agent: planner
       tool: builtin:done
       arguments:
-        summary: "Planned test_builder"
+        summary: "Agent planner: Planned test_builder"
 
     # --- Test Builder ---
     - agent: test_builder
@@ -349,4 +349,4 @@ tool-test:
     - agent: planner
       tool: builtin:done
       arguments:
-        summary: "Planned builder"
+        summary: "Agent planner: Planned builder"

@@ -17,7 +17,7 @@ tool-test:
     - agent: router
       tool: builtin:done
       arguments:
-        summary: "Router completed"
+        summary: "Agent router: Router completed"
       assert:
         completed: true
 

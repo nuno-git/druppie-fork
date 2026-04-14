@@ -21,7 +21,7 @@ tool-test:
     - agent: router
       tool: builtin:done
       arguments:
-        summary: "Classified as create_project for recipe-sharing-app"
+        summary: "Agent router: Classified as create_project for recipe-sharing-app"
 
     # --- Planner ---
     - agent: planner
@@ -36,7 +36,7 @@ tool-test:
     - agent: planner
       tool: builtin:done
       arguments:
-        summary: "Planned business_analyst"
+        summary: "Agent planner: Planned business_analyst to gather requirements and create functional design"
 
     # --- Business Analyst ---
     - agent: business_analyst
@@ -110,7 +110,7 @@ tool-test:
     - agent: business_analyst
       tool: builtin:done
       arguments:
-        summary: "DESIGN_APPROVED"
+        summary: "Agent business_analyst: DESIGN_APPROVED. Gathered requirements and wrote functional_design.md with 6 functional requirements and 3 non-functional requirements."
       assert:
         completed: true
 
@@ -127,4 +127,4 @@ tool-test:
     - agent: planner
       tool: builtin:done
       arguments:
-        summary: "BA approved, planned architect"
+        summary: "Agent planner: BA approved design, planned architect to review FD and create technical design"

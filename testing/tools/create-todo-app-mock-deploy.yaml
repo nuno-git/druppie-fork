@@ -82,7 +82,7 @@ tool-test:
     - agent: planner
       tool: builtin:done
       arguments:
-        summary: "Planned test_executor"
+        summary: "Agent planner: Planned test_executor"
 
     # --- Test Executor (mocked — no real tests to run) ---
     - agent: test_executor
@@ -104,7 +104,7 @@ tool-test:
         passed: 4
         failed: 0
         coverage: 87
-        summary: "All 4 tests passed with 87% coverage"
+        summary: "Agent test_executor: All 4 tests passed with 87% coverage"
 
     - agent: test_executor
       tool: builtin:done
@@ -124,7 +124,7 @@ tool-test:
     - agent: planner
       tool: builtin:done
       arguments:
-        summary: "Tests passed, planned deployer"
+        summary: "Agent planner: Tests passed, planned deployer"
 
     # --- Deployer (mocked) ---
     - agent: deployer
@@ -156,7 +156,7 @@ tool-test:
     - agent: planner
       tool: builtin:done
       arguments:
-        summary: "Planned summarizer"
+        summary: "Agent planner: Planned summarizer"
 
     # --- Summarizer ---
     - agent: summarizer

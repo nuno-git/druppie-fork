@@ -17,7 +17,7 @@ tool-test:
     - agent: router
       tool: builtin:done
       arguments:
-        summary: "Project created"
+        summary: "Agent router: Project created"
 
     # Read a file that doesn't exist — should fail with "not found" in error
     - agent: architect
@@ -54,6 +54,6 @@ tool-test:
     - agent: architect
       tool: builtin:done
       arguments:
-        summary: "Verified file read behavior"
+        summary: "Agent architect: Verified file read behavior"
       assert:
         completed: true

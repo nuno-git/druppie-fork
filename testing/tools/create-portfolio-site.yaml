@@ -40,4 +40,4 @@ tool-test:
     - agent: builder
       tool: builtin:done
       arguments:
-        summary: "BUILD_COMPLETE - Portfolio built with HTML and CSS"
+        summary: "Agent builder: BUILD_COMPLETE - Portfolio built with HTML and CSS"

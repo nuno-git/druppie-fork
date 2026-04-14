@@ -21,7 +21,7 @@ tool-test:
     - agent: router
       tool: builtin:done
       arguments:
-        summary: "Classified as create_project"
+        summary: "Agent router: Classified as create_project"
 
     # --- Planner → BA ---
     - agent: planner
@@ -36,7 +36,7 @@ tool-test:
     - agent: planner
       tool: builtin:done
       arguments:
-        summary: "Planned business_analyst"
+        summary: "Agent planner: Planned business_analyst"
 
     # --- Business Analyst ---
     - agent: business_analyst
@@ -88,7 +88,7 @@ tool-test:
     - agent: business_analyst
       tool: builtin:done
       arguments:
-        summary: "DESIGN_APPROVED"
+        summary: "Agent business_analyst: DESIGN_APPROVED"
 
     # --- Planner → Architect ---
     - agent: planner
@@ -103,7 +103,7 @@ tool-test:
     - agent: planner
       tool: builtin:done
       arguments:
-        summary: "BA approved, planned architect"
+        summary: "Agent planner: BA approved, planned architect"
 
     # --- Architect ---
     - agent: architect
@@ -154,7 +154,7 @@ tool-test:
     - agent: architect
       tool: builtin:done
       arguments:
-        summary: "DESIGN_APPROVED"
+        summary: "Agent architect: DESIGN_APPROVED"
 
     # --- Planner → Builder ---
     - agent: planner
@@ -169,4 +169,4 @@ tool-test:
     - agent: planner
       tool: builtin:done
       arguments:
-        summary: "Architect approved, planned builder"
+        summary: "Agent planner: Architect approved, planned builder"

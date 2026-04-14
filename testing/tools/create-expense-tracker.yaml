@@ -41,4 +41,4 @@ tool-test:
     - agent: builder
       tool: builtin:done
       arguments:
-        summary: "BUILD_COMPLETE - Expense tracker built"
+        summary: "Agent builder: BUILD_COMPLETE - Expense tracker built"
