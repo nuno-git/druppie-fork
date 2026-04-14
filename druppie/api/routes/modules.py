@@ -29,13 +29,13 @@ async def list_modules():
 async def get_module_endpoint(module_id: str):
     """Get the URL for a specific module. 404 if unknown or core-only."""
     config = get_mcp_config()
-    server_type = config.get_server_type(module_id)
 
     # Check if module exists in config
     if module_id not in config.get_servers():
         raise HTTPException(status_code=404, detail=f"Module '{module_id}' not found")
 
     # Only expose modules with type 'module' or 'both'
+    server_type = config.get_server_type(module_id)
     if server_type not in ("module", "both"):
         raise HTTPException(status_code=404, detail=f"Module '{module_id}' is not available to apps")
 

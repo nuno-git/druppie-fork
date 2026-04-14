@@ -1,8 +1,11 @@
 """DruppieClient — discover and call Druppie platform modules via MCP JSON-RPC."""
 
 import os
+import time
 
 import httpx
+
+_CACHE_TTL = 300  # seconds
 
 
 class DruppieClient:
@@ -20,19 +23,20 @@ class DruppieClient:
     def __init__(self, base_url: str | None = None, timeout: float = 60.0):
         self._base_url = (base_url or os.environ.get("DRUPPIE_URL", "http://druppie-backend:8000")).rstrip("/")
         self._timeout = timeout
-        self._endpoint_cache: dict[str, str] = {}
+        self._endpoint_cache: dict[str, tuple[str, float]] = {}
         self._client = httpx.Client(timeout=self._timeout)
         self._call_id = 0
 
     def _discover(self, module_id: str) -> str:
-        """Discover module URL via backend, cache result."""
-        if module_id in self._endpoint_cache:
-            return self._endpoint_cache[module_id]
+        """Discover module URL via backend, cache result with TTL."""
+        cached = self._endpoint_cache.get(module_id)
+        if cached and (time.monotonic() - cached[1]) < _CACHE_TTL:
+            return cached[0]
 
         resp = self._client.get(f"{self._base_url}/api/modules/{module_id}/endpoint")
         resp.raise_for_status()
         url = resp.json()["url"]
-        self._endpoint_cache[module_id] = url
+        self._endpoint_cache[module_id] = (url, time.monotonic())
         return url
 
     def call(self, module: str, tool: str, arguments: dict | None = None, *, version: str | None = None) -> dict:
