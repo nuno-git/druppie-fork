@@ -222,10 +222,12 @@ const TestRunDetail = ({ testRunId, onBack }) => {
                       ar.assertion_type === 'completed' ? 'bg-blue-50 text-blue-700' :
                       ar.assertion_type === 'tool' ? 'bg-purple-50 text-purple-700' :
                       ar.assertion_type === 'verify' ? 'bg-amber-50 text-amber-700' :
-                      ar.assertion_type === 'result_valid' ? 'bg-cyan-50 text-cyan-700' :
                       'bg-gray-50 text-gray-700'
                     }`}>
-                      {ar.assertion_type}
+                      {ar.assertion_type === 'completed' ? 'Agent Status' :
+                       ar.assertion_type === 'tool' ? 'Tool Call' :
+                       ar.assertion_type === 'verify' ? 'Side Effect' :
+                       ar.assertion_type}
                     </span>
                     {ar.agent_id && (
                       <span className="px-1.5 py-0.5 bg-gray-100 rounded text-xs font-medium text-gray-700">{ar.agent_id}</span>

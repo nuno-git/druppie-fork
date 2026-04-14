@@ -473,10 +473,10 @@ class EvaluationRepository(BaseRepository):
             TestAssertionResult.test_run_id.in_(run_ids)
         )
         if assertion_type:
-            if assertion_type == "assertions":
+            if assertion_type == "all_assertions":
+                query = query.filter(TestAssertionResult.assertion_type.in_(["completed", "tool", "verify"]))
+            elif assertion_type == "assertions":
                 query = query.filter(TestAssertionResult.assertion_type.in_(["completed", "tool"]))
-            elif assertion_type == "verify":
-                query = query.filter(TestAssertionResult.assertion_type == "verify")
             else:
                 query = query.filter(TestAssertionResult.assertion_type == assertion_type)
         if agent_id:

@@ -59,7 +59,23 @@ Key features:
 - `approval:` — auto-resolve approval gates
 - `outcome:` — create files in Gitea for mocked execute_coding_task
 - `assert:` — inline assertions on tool results
+- `verify:` — side-effect checks (Gitea repo/file existence)
+- `extends:` — inherit chain from another tool test (runs in the same session)
 - `judge:` — LLM judge evaluates quality
+
+### Extends Mechanism
+
+Tests can extend a base pipeline with `extends: <test-name>`. The base chain and the test's own chain run in the **same session**, so side effects (project creation, Gitea repos) from the base are visible to the extending test's assertions and verify checks.
+
+```yaml
+tool-test:
+  name: create-expense-tracker
+  extends: setup-create-project-pipeline   # runs router→BA→architect first
+  chain:
+    - agent: builder                        # then appends builder steps
+      tool: coding:execute_coding_task
+      ...
+```
 
 ### Agent Tests
 
@@ -88,13 +104,46 @@ Two modes:
 - **New session** (default): setup creates sessions, message starts a fresh one
 - **Continue session**: architect runs directly in the last setup session
 
-### Three Evaluation Types
+## Assertion Types
 
-| Type | YAML syntax | What it does |
-|------|-------------|-------------|
-| **Assertions** | `assert: { result: [{contains: "text"}] }` | Code checks on tool call results |
-| **LLM Judge** | `judge: { checks: ["FD should be in Dutch"] }` | LLM evaluates quality — verdict IS the result |
-| **Judge Eval** | `judge: { checks: [{check: "...", expected: false}] }` | Tests the judge itself — checks if verdict matches expected |
+Every test produces assertions that are stored and displayed in the analytics UI. There are three categories of assertions plus two judge evaluation types:
+
+### Assertions (code checks)
+
+| Type | UI Label | What it checks | Example |
+|------|----------|----------------|---------|
+| `completed` | **Agent Status** | Did the agent finish by calling `done()`? | `summarizer.completed` → "Expected completed, got completed" |
+| `tool` | **Tool Call** | Was a specific tool called with expected args/result? | `architect.tool(coding:make_design)` → checks tool was called |
+| `verify` | **Side Effect** | Does a file/repo actually exist in Gitea? | `file_exists: docs/functional-design.md` → hits Gitea API |
+
+### LLM Judge (quality evaluation)
+
+| Type | UI Label | What it checks |
+|------|----------|----------------|
+| `judge_check` | **LLM Judge** | LLM evaluates output quality against a natural-language criterion |
+| `judge_eval` | **Judge Eval** | Tests the judge itself — checks if verdict matches expected outcome |
+
+### YAML Syntax
+
+```yaml
+# Inline assertions on chain steps
+- agent: router
+  tool: builtin:set_intent
+  assert:
+    result: [not_empty, { contains: "todo-app" }]  # Tool Call assertion
+    completed: true                                   # Agent Status assertion
+
+# Side-effect verification (top-level)
+verify:
+  - gitea_repo_exists: true
+  - file_exists: docs/functional-design.md
+  - file_not_empty: docs/technical-design.md
+
+# LLM judge checks (top-level)
+judge:
+  checks:
+    - "The functional design should be in Dutch"
+```
 
 ## Running Tests
 
@@ -110,10 +159,10 @@ POST /api/evaluations/run-tests {"tag": "architect"}
 ## Analytics
 
 The Analytics page (`/admin/analytics`) shows per-batch results with:
-- Summary cards: Tests, Assertions, LLM Judge, Judge Eval, Duration
-- Check Explorer: filter by specific check across all tests
+- Summary cards: Tests, Assertions (all types combined), LLM Judge, Duration
+- Check Explorer: filter by specific check across all tests, grouped by Agent Status / Tool Call / Side Effect / LLM Judge
 - Drill-down per test run with raw LLM I/O for judge checks
-- Cross-test filtering by agent, type, and check text
+- Filtering by type (Agent Status, Tool Call, Side Effect), agent, tool, and check text
 
 ## Configuration
 

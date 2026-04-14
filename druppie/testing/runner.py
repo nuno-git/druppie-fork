@@ -182,18 +182,27 @@ class TestRunner:
             self._replay_chain(setup_test, user.id, run_namespace)
             self._db.commit()  # Commit each setup replay so subsequent steps can see the data
 
-        # Phase 1b: Run extended tool chain if specified
-        if test.extends:
-            extended = self._tool_tests.get(test.extends)
-            self._replay_chain(extended, user.id, run_namespace)
-            self._db.commit()
-
         # Phase 2: Replay the tool call chain
+        # If the test extends another, merge the chains so they run in the
+        # SAME session.  This is critical: the extended chain creates the
+        # project (via set_intent) and verifiers later look up that project
+        # on the session.  Two separate sessions would leave the test's
+        # session without a project_id.
         all_assertion_results: list[AssertionResult] = []
         replay_session_id = None
         chain_error: str | None = None
+        merged_test = test
+        if test.extends:
+            extended = self._tool_tests.get(test.extends)
+            from druppie.testing.schema import ToolTestDefinition
+            merged_test = ToolTestDefinition(
+                name=test.name,
+                description=test.description,
+                tags=test.tags,
+                chain=list(extended.chain) + list(test.chain),
+            )
         try:
-            replay_session_id, chain_results = self._replay_chain(test, user.id, run_namespace)
+            replay_session_id, chain_results = self._replay_chain(merged_test, user.id, run_namespace)
             self._db.commit()  # Commit the full replay so assertions can query committed data
             all_assertion_results.extend(chain_results)
         except Exception as e:
