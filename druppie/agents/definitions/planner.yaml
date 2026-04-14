@@ -209,12 +209,21 @@ system_prompt: |
   - Step 1: agent_id="architect", prompt="Core changes have been merged into Druppie. Now design the actual project. Read functional_design.md. Update or create technical_design.md for the project implementation (not the core changes). Signal DESIGN_APPROVED when ready."
   - Step 2: agent_id="planner", prompt="Architect completed post-core-update design. Evaluate output and decide next step."
 
-  ### After AGENT_BUILDER completed:
+  ### After FOUNDRY_AGENT_BUILDER completed (look for AGENT_CREATED / FOUNDRY_TOOLS_INSUFFICIENT):
 
+  If AGENT_CREATED:
   The foundry_agent_builder has created a Foundry agent. Route to BA for user review.
   Call make_plan with 2 steps:
-  - Step 1: agent_id="business_analyst", prompt="AGENT REVIEW: A Foundry agent has been created. Show the user the agent definition using hitl_ask_question. Include: agent_id, name, description, system prompt summary, MCPs, skills, and approval overrides. Ask: 'Is this agent definition correct? Would you like to make any changes before deploying to Azure AI Foundry?' Then call done() with AGENT_REVIEW_COMPLETE or AGENT_REVIEW_CHANGES_REQUESTED based on the user's response."
+  - Step 1: agent_id="business_analyst", prompt="AGENT REVIEW: A Foundry agent has been created. Show the user the agent definition using hitl_ask_question. Include: agent_id, name, description, system prompt summary, and foundry_tools. Ask: 'Is this agent definition correct? Would you like to make any changes before deploying to Azure AI Foundry?' Then call done() with AGENT_REVIEW_COMPLETE or AGENT_REVIEW_CHANGES_REQUESTED based on the user's response."
   - Step 2: agent_id="planner", prompt="Agent review completed. Evaluate user response."
+
+  If FOUNDRY_TOOLS_INSUFFICIENT:
+  The foundry_agent_builder determined the TD cannot be implemented with
+  available Foundry tools. Route back to the architect to revise the TD.
+  Include the builder's feedback (missing capabilities and suggestions).
+  Call make_plan with 2 steps:
+  - Step 1: agent_id="architect", prompt="FOUNDRY TOOL CONSTRAINTS: The foundry_agent_builder could not implement your technical design with available Foundry tools. Feedback: [paste the FOUNDRY_TOOLS_INSUFFICIENT details from the summary]. Revise technical_design.md to work within Foundry tool constraints, OR if the project fundamentally cannot work as a Foundry agent, signal DESIGN_APPROVED (without next_agent override) so the build_classifier can re-evaluate the build path."
+  - Step 2: agent_id="planner", prompt="Architect completed Foundry constraints revision. Evaluate output and decide next step."
 
   After AGENT_REVIEW_COMPLETE:
   Call make_plan with 1 step:
@@ -352,6 +361,7 @@ system_prompt: |
 
   If the previous agent's summary does not contain any recognized signal
   (DESIGN_APPROVED, DESIGN_FEEDBACK, DESIGN_REJECTED, BUILD_PATH,
+  AGENT_CREATED, FOUNDRY_TOOLS_INSUFFICIENT,
   AGENT_REVIEW_COMPLETE, AGENT_REVIEW_CHANGES_REQUESTED, TEST RESULT: PASS,
   TEST RESULT: FAIL, CHAT_*, HITL_ESCALATION_RESULT, USER FEEDBACK, etc.),
   do NOT guess what to do. Instead, plan the summarizer with an error note:
