@@ -170,6 +170,12 @@ class ChainStep(BaseModel):
     planned_prompt: str | None = None
 
 
+class PendingAgent(BaseModel):
+    """An agent run to create as pending (no tool calls, no LlmCalls)."""
+    id: str  # agent_id, e.g. "planner"
+    planned_prompt: str | None = None
+
+
 class ToolTestDefinition(BaseModel):
     """A tool test -- chain of tool calls replayed through real MCP."""
 
@@ -186,6 +192,12 @@ class ToolTestDefinition(BaseModel):
     # Use "paused" to leave the session mid-run so it can be resumed
     # via the UI.  The last non-done agent run becomes "paused_user".
     session_status: str | None = None
+
+    # Agent runs to create as "pending" after the chain.
+    # Used with session_status: paused to queue agents that should
+    # run after the paused agent completes and execute_pending_runs()
+    # picks them up.
+    pending_agents: list[PendingAgent] = Field(default_factory=list)
 
     # Top-level assertions (in addition to inline assert on chain steps)
     assert_: list[CheckRef] | None = Field(default=None, alias="assert")
