@@ -55,7 +55,7 @@ from druppie.testing.schema import (
     ToolTestFile,
 )
 from druppie.testing.seed_ids import fixture_uuid
-from druppie.testing.utils import git_info as _git_info
+from druppie.testing.utils import git_info
 
 logger = logging.getLogger(__name__)
 
@@ -158,7 +158,7 @@ class TestRunner:
         short_hash = hashlib.md5(f"{test.name}-tool-{uuid4()}".encode()).hexdigest()[:8]
         test_user = f"t-{short_hash}"
 
-        git_commit, git_branch = _git_info()
+        git_commit, git_branch = git_info()
         benchmark_run = BenchmarkRun(
             name=f"tool-{test.name}", run_type="test",
             git_commit=git_commit, git_branch=git_branch,
@@ -467,7 +467,7 @@ class TestRunner:
         test_user = f"t-{short_hash}"
         run_namespace = test_user
 
-        git_commit, git_branch = _git_info()
+        git_commit, git_branch = git_info()
         benchmark_run = BenchmarkRun(
             name=f"test-{test.name}", run_type="test",
             git_commit=git_commit, git_branch=git_branch,

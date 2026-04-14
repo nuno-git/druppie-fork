@@ -5,7 +5,6 @@ calls a judge LLM, parses scores, and stores results.
 """
 
 import logging
-import time
 from pathlib import Path
 from uuid import UUID
 
@@ -39,8 +38,8 @@ class JudgeEngine:
             try:
                 parsed = EvaluationFile(**data)
                 self._definitions[parsed.evaluation.name] = parsed.evaluation
-            except Exception:
-                logger.warning("Failed to parse eval file: %s", path, exc_info=True)
+            except Exception as exc:
+                logger.warning("Failed to parse eval file %s: %s", path, exc, exc_info=True)
 
     @property
     def available_evaluations(self) -> list[str]:
@@ -161,28 +160,15 @@ class JudgeEngine:
         self, prompt: str, judge_model: str
     ) -> tuple[str, int, int]:
         """Call judge LLM. Returns (response_text, duration_ms, tokens_used)."""
-        # Import here to avoid requiring LLM deps in tests
         import os
 
-        from druppie.llm.litellm_provider import ChatLiteLLM
+        from druppie.testing.utils import call_judge_llm
 
-        llm = ChatLiteLLM(
-            provider=os.getenv("LLM_PROVIDER", "zai"),
+        return call_judge_llm(
+            prompt=prompt,
             model=judge_model,
-            temperature=0.0,
+            provider=os.getenv("LLM_PROVIDER", "zai"),
         )
-        messages = [
-            {
-                "role": "system",
-                "content": "You are an evaluation judge. Respond ONLY with valid JSON.",
-            },
-            {"role": "user", "content": prompt},
-        ]
-        start = time.time()
-        response = llm.chat(messages=messages)
-        duration_ms = int((time.time() - start) * 1000)
-        tokens = response.total_tokens or 0
-        return response.content, duration_ms, tokens
 
     def _parse_score(self, response: str, scoring: str) -> tuple:
         """Parse judge JSON response into score fields.

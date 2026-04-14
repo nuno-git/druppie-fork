@@ -16,6 +16,7 @@ There is no global blocklist — each test decides what to mock.
 from __future__ import annotations
 
 import logging
+import posixpath
 import threading
 from uuid import UUID, uuid4
 
@@ -402,6 +403,12 @@ class ReplayExecutor:
                 path = f.get("path", "")
                 content = f.get("content", "")
                 if not path or not content:
+                    continue
+
+                # Guard against path traversal (e.g. "../../etc/passwd")
+                normalised = posixpath.normpath(path)
+                if normalised.startswith("/") or normalised.startswith(".."):
+                    logger.warning("Path traversal blocked: %s", path)
                     continue
 
                 encoded = base64.b64encode(content.encode()).decode()

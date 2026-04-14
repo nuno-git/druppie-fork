@@ -17,14 +17,14 @@ import requests
 # Configuration
 GITEA_URL = os.getenv("GITEA_URL", "http://localhost:3000")
 GITEA_ADMIN_USER = os.getenv("GITEA_ADMIN_USER", "gitea_admin")
-GITEA_ADMIN_PASSWORD = os.getenv("GITEA_ADMIN_PASSWORD", "GiteaAdmin123")
+GITEA_ADMIN_PASSWORD = os.environ["GITEA_ADMIN_PASSWORD"]  # required — no hardcoded default
 GITEA_ADMIN_EMAIL = os.getenv("GITEA_ADMIN_EMAIL", "gitea@druppie.local")
 
 KEYCLOAK_URL = os.getenv("KEYCLOAK_URL", "http://localhost:8080")
 KEYCLOAK_INTERNAL_URL = os.getenv("KEYCLOAK_INTERNAL_URL", "http://keycloak:8080")
 KEYCLOAK_REALM = os.getenv("KEYCLOAK_REALM", "druppie")
 KEYCLOAK_ADMIN = os.getenv("KEYCLOAK_ADMIN", "admin")
-KEYCLOAK_ADMIN_PASSWORD = os.getenv("KEYCLOAK_ADMIN_PASSWORD", "admin_password")
+KEYCLOAK_ADMIN_PASSWORD = os.environ["KEYCLOAK_ADMIN_PASSWORD"]  # required — no hardcoded default
 
 EXTERNAL_HOST = os.getenv("EXTERNAL_HOST", "localhost")
 
@@ -248,6 +248,15 @@ def create_organization():
 
 def update_env_token(token: str):
     """Update GITEA_TOKEN in the .env file, or append it if missing."""
+    # Safety: warn if .env could leak into version control
+    gitignore_path = os.path.join(os.path.dirname(ENV_FILE), ".gitignore")
+    if os.path.exists(gitignore_path):
+        with open(gitignore_path) as gi:
+            if ".env" not in gi.read():
+                print(f"  [WARN] .env is NOT in .gitignore — token may be committed to git!")
+    else:
+        print(f"  [WARN] No .gitignore found — ensure {ENV_FILE} is not committed to git!")
+
     if not os.path.exists(ENV_FILE):
         with open(ENV_FILE, "a") as f:
             f.write(f"\n# Gitea Token for MCP services (git push)\nGITEA_TOKEN={token}\n")
@@ -350,7 +359,10 @@ def create_keycloak_users_in_gitea():
     for user in users:
         username = user["username"]
         email = user.get("email", f"{username}@druppie.local")
-        password = user.get("password", "ChangeMe123!")
+        password = user.get("password")
+        if not password:
+            print(f"  [SKIP] User '{username}' has no password in users.yaml — skipping")
+            continue
 
         # Check if user already exists
         try:
@@ -453,7 +465,7 @@ def main():
     print("\n" + "=" * 60)
     print("[DONE] Gitea setup complete!")
     print(f"  URL: {GITEA_URL}")
-    print(f"  Admin: {GITEA_ADMIN_USER} / {GITEA_ADMIN_PASSWORD}")
+    print(f"  Admin: {GITEA_ADMIN_USER}")
     print("")
     if token:
         print(f"  GITEA_TOKEN written to {ENV_FILE}")

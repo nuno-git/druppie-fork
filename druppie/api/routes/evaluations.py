@@ -51,11 +51,25 @@ def _update_run_status(run_id: str, **updates: object) -> None:
 
 
 def _set_run_status(run_id: str, status: dict) -> None:
-    """Thread-safe full replacement of run status."""
+    """Thread-safe full replacement of run status.
+
+    ``started_at`` MUST be stored as a ``datetime`` object (not a string)
+    so that eviction ordering is always correct.
+    """
     with _run_lock:
+        # Normalise started_at to datetime if the caller passed a string
+        sa = status.get("started_at")
+        if isinstance(sa, str):
+            status["started_at"] = datetime.fromisoformat(sa)
+        elif sa is None:
+            status["started_at"] = datetime.now(timezone.utc)
         _test_run_status[run_id] = status
         # Evict old completed/errored entries to prevent unbounded memory growth
         _evict_old_entries_locked()
+
+
+# Sentinel used as a sort key when started_at is unexpectedly missing.
+_EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
 
 
 def _evict_old_entries_locked() -> None:
@@ -68,8 +82,8 @@ def _evict_old_entries_locked() -> None:
         (k, v) for k, v in _test_run_status.items()
         if v.get("status") in ("completed", "error")
     ]
-    # Sort by started_at (oldest first) and remove excess
-    completed.sort(key=lambda x: x[1].get("started_at", ""))
+    # Sort by started_at (oldest first) — always a datetime
+    completed.sort(key=lambda x: x[1].get("started_at") or _EPOCH)
     to_remove = len(_test_run_status) - MAX_ENTRIES
     for k, _ in completed[:to_remove]:
         del _test_run_status[k]
