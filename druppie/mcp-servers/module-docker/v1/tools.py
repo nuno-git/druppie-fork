@@ -583,6 +583,13 @@ async def compose_up(
             shutil.rmtree(clone_path, ignore_errors=True)
             return {"success": False, "error": "No docker-compose.yaml found in repository"}
 
+        # Step 2b: Inject Druppie SDK (if mounted)
+        sdk_source = Path("/druppie-sdk")
+        if sdk_source.is_dir():
+            sdk_dest = clone_path / "druppie-sdk"
+            shutil.copytree(sdk_source, sdk_dest)
+            logger.info("compose_up: injected druppie-sdk into build context")
+
         # All remaining steps wrapped in try/finally to guarantee clone_path cleanup
         host_port = None
         project_name = None
@@ -637,7 +644,11 @@ async def compose_up(
 
             # Step 6: Run docker compose up
             logger.info("compose_up: starting project %s on port %d", project_name, host_port)
-            env = {**os.environ, "APP_PORT": str(host_port)}
+            env = {
+                **os.environ,
+                "APP_PORT": str(host_port),
+                "DRUPPIE_URL": os.environ.get("DRUPPIE_URL", "http://druppie-backend:8000"),
+            }
             compose_result = await asyncio.to_thread(
                 subprocess.run,
                 ["docker", "compose", "-p", project_name, "up", "-d", "--build"],
