@@ -19,6 +19,6 @@ tool-test:
     - agent: router
       tool: builtin:done
       arguments:
-        summary: "General chat - no project action needed"
+        summary: "Agent router: General chat - no project action needed"
       assert:
         completed: true

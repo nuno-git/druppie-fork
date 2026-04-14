@@ -18,7 +18,7 @@ tool-test:
     - agent: router
       tool: builtin:done
       arguments:
-        summary: "Project created"
+        summary: "Agent router: Project created"
 
     # Try to commit with nothing staged — should fail with error message
     - agent: builder
@@ -42,6 +42,6 @@ tool-test:
     - agent: builder
       tool: builtin:done
       arguments:
-        summary: "Verified git edge cases"
+        summary: "Agent builder: Verified git edge cases"
       assert:
         completed: true

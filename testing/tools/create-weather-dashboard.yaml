@@ -43,4 +43,4 @@ tool-test:
     - agent: builder
       tool: builtin:done
       arguments:
-        summary: "BUILD_COMPLETE - Weather dashboard built"
+        summary: "Agent builder: BUILD_COMPLETE - Weather dashboard built"

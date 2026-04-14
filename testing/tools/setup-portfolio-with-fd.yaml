@@ -16,7 +16,7 @@ tool-test:
     - agent: router
       tool: builtin:done
       arguments:
-        summary: "Classified as create_project for portfolio-website"
+        summary: "Agent router: Classified as create_project for portfolio-website"
 
     - agent: planner
       tool: builtin:make_plan
@@ -30,7 +30,7 @@ tool-test:
     - agent: planner
       tool: builtin:done
       arguments:
-        summary: "Planned business_analyst"
+        summary: "Agent planner: Planned business_analyst"
 
     - agent: business_analyst
       tool: builtin:hitl_ask_multiple_choice_question
@@ -97,7 +97,7 @@ tool-test:
     - agent: business_analyst
       tool: builtin:done
       arguments:
-        summary: "DESIGN_APPROVED"
+        summary: "Agent business_analyst: DESIGN_APPROVED"
       assert:
         completed: true
 
@@ -113,4 +113,4 @@ tool-test:
     - agent: planner
       tool: builtin:done
       arguments:
-        summary: "BA approved, planned architect"
+        summary: "Agent planner: BA approved, planned architect"
