@@ -26,6 +26,7 @@ from uuid import UUID
 
 import structlog
 
+from druppie.agents.builtin_tools import BUILTIN_TOOL_DEFS
 from druppie.core.mcp_config import MCPConfig
 from druppie.execution.mcp_http import MCPHttp, MCPHttpError
 
@@ -46,18 +47,8 @@ class ToolCallStatus:
     FAILED = "failed"
 
 
-# Builtin tool names (no MCP server needed)
-BUILTIN_TOOLS = {
-    "done",
-    "make_plan",
-    "set_intent",
-    "hitl_ask_question",
-    "hitl_ask_multiple_choice_question",
-    "create_message",
-    "invoke_skill",
-    "execute_coding_task",
-    "test_report",
-}
+# Builtin tool names (no MCP server needed) — derived from the single source of truth
+BUILTIN_TOOLS = set(BUILTIN_TOOL_DEFS.keys())
 
 # HITL tools require user answer (create Question record)
 HITL_TOOLS = {

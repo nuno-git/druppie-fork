@@ -1593,17 +1593,7 @@ async def execute_builtin(
 
 def is_builtin_tool(tool_name: str) -> bool:
     """Check if a tool name is a built-in tool."""
-    return tool_name in (
-        "hitl_ask_question",
-        "hitl_ask_multiple_choice_question",
-        "done",
-        "make_plan",
-        "set_intent",
-        "create_message",
-        "invoke_skill",
-        "execute_coding_task",
-        "test_report",
-    )
+    return tool_name in BUILTIN_TOOL_DEFS
 
 
 def is_hitl_tool(tool_name: str) -> bool:
