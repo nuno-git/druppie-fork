@@ -1,0 +1,9 @@
+check:
+  name: router-correct-intent
+  description: "Router should call set_intent with the correct intent and project"
+  tags: [router]
+  assert:
+    - agent: router
+      completed: true
+    - agent: router
+      tool: builtin:set_intent

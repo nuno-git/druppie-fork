@@ -33,6 +33,9 @@ from .models import (
     Question,
     # LLM Tracking
     LlmCall,
+    # Benchmark and Evaluation
+    BenchmarkRun,
+    EvaluationResult,
 )
 
 __all__ = [
@@ -55,4 +58,6 @@ __all__ = [
     "Approval",
     "Question",
     "LlmCall",
+    "BenchmarkRun",
+    "EvaluationResult",
 ]

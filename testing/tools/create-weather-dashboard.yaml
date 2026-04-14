@@ -1,0 +1,46 @@
+## End-to-end: create a weather dashboard
+## Flow: router → planner → BA (HITL + FD) → planner → architect (TD) → planner → builder (mock)
+
+tool-test:
+  name: create-weather-dashboard
+  description: "Full create_project flow for a weather dashboard with API integration"
+  tags: [e2e, create-project]
+  extends: setup-create-project-pipeline
+
+  chain:
+    # --- Builder (mocked) ---
+    - agent: builder
+      tool: coding:execute_coding_task
+      arguments:
+        task: "Build the weather dashboard frontend and backend"
+      mock: true
+      mock_result: "All files created successfully"
+      outcome:
+        files:
+          - path: src/App.jsx
+            content: |
+              import React from 'react';
+              import WeatherCard from './components/WeatherCard';
+              import AlertBanner from './components/AlertBanner';
+              export default function App() {
+                return (
+                  <div>
+                    <h1>Weather Dashboard</h1>
+                    <AlertBanner />
+                    <WeatherCard />
+                  </div>
+                );
+              }
+          - path: backend/main.py
+            content: |
+              from fastapi import FastAPI
+              app = FastAPI()
+
+              @app.get("/api/weather/current")
+              async def current_weather():
+                  return {"temperature": 18.5, "rainfall": 2.3, "region": "Amsterdam"}
+
+    - agent: builder
+      tool: builtin:done
+      arguments:
+        summary: "Agent builder: BUILD_COMPLETE - Weather dashboard built"

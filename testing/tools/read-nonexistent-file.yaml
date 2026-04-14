@@ -1,0 +1,74 @@
+## Test: reading files — nonexistent should fail, existing should succeed
+## Verifies read_file error handling and happy path.
+
+tool-test:
+  name: read-nonexistent-file
+  description: "Reading a nonexistent file fails, writing then reading succeeds"
+  tags: [coding, failure, negative]
+
+  chain:
+    - agent: router
+      tool: builtin:set_intent
+      arguments:
+        intent: create_project
+        project_name: read-fail-test
+        description: "Test project for file read errors"
+
+    - agent: router
+      tool: builtin:done
+      arguments:
+        summary: "Agent router: Project created"
+
+    # Planner creates architect via make_plan (matches production flow)
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: architect
+            prompt: "Verify file read behavior"
+          - agent_id: planner
+            prompt: "Re-evaluate after architect completes"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: Planned architect"
+
+    # Read a file that doesn't exist — should fail with "not found" in error
+    - agent: architect
+      tool: coding:read_file
+      arguments:
+        path: this/does/not/exist.md
+      assert:
+        result:
+          - { contains: "not found" }
+
+    # Write a file then read it — should succeed
+    - agent: architect
+      tool: coding:make_design
+      approval:
+        status: approved
+        by: architect
+      arguments:
+        path: docs/test-doc.md
+        content: "# Test Document\nThis is a test."
+      assert:
+        result:
+          - { contains: "test-doc.md" }
+
+    # Now read it — should work and return the content
+    - agent: architect
+      tool: coding:read_file
+      arguments:
+        path: docs/test-doc.md
+      assert:
+        result:
+          - not_empty
+          - { contains: "Test Document" }
+
+    - agent: architect
+      tool: builtin:done
+      arguments:
+        summary: "Agent architect: Verified file read behavior"
+      assert:
+        completed: true

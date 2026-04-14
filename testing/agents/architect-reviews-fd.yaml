@@ -1,0 +1,31 @@
+## Agent test: real architect reviews a functional design
+##
+## Setup: tool test creates a project with FD already written
+##   (router → planner → BA → FD written and pushed to Gitea)
+##
+## continue_session: true → continues the LAST setup session.
+##   The architect runs directly in that session (no router/planner restart).
+##   It can read the FD from the workspace because it's the same session.
+##
+## Judge: evaluates TD quality (in Dutch, proper architecture, not just copied FD)
+
+agent-test:
+  name: architect-reviews-fd
+  description: "Real architect reviews FD and produces technical design — judge evaluates quality"
+  tags: [architect, quality, judge, e2e]
+
+  setup:
+    - setup-project-with-fd        # creates session with router → planner → BA → FD
+  continue_session: true           # architect runs in the SAME session (last setup)
+
+  message: "Review the functional design and create the technical design for this project"
+  agents: [architect]              # only architect runs (directly, no router/planner)
+  hitl: non-technical-pm
+
+  assert:
+    - check: architect-produces-td
+
+  judge:
+    context: [architect]
+    checks:
+      - "The architect should have approved the design (done summary should contain DESIGN_APPROVED), OR given feedback (DESIGN_FEEDBACK). Either is acceptable — but the architect must make a clear decision."

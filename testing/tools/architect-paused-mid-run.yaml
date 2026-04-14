@@ -1,0 +1,161 @@
+## Paused session: architect mid-run, ready for manual resume
+## Extends setup-project-with-fd (BA completed, FD in place).
+## Architect has read the FD, loaded principles, and written the TD.
+## Paused before git commit + done.
+## Click "Continue" in the UI to resume — the architect should just
+## git add/commit/push the TD and call done().
+
+tool-test:
+  name: architect-paused-mid-run
+  description: "Architect mid-run (TD written), paused — resume to git commit + done"
+  tags: [seed, paused, architect]
+  extends: setup-project-with-fd
+  session_status: paused
+
+  chain:
+    # --- Architect starts work ---
+    # planned_prompt is set naturally by make_plan in setup-project-with-fd
+    - agent: architect
+      tool: coding:read_file
+      mock: true
+      mock_result: |
+        # Functioneel Ontwerp: Recipe Sharing App
+
+        ## 1. Huidige vs Gewenste Situatie
+        Gebruikers willen recepten delen en beoordelen binnen een
+        vrienden- en familiekring. Er is geen bestaande oplossing.
+
+        ## 2. Functionele Vereisten
+        - FR-01: Gebruiker kan een recept aanmaken met titel, ingrediënten,
+          bereidingswijze en foto
+        - FR-02: Gebruiker kan recepten van anderen bekijken
+        - FR-03: Gebruiker kan recepten beoordelen (1-5 sterren)
+        - FR-04: Gebruiker kan commentaar geven op recepten
+        - FR-05: Gebruiker kan recepten zoeken op ingrediënt of naam
+        - FR-06: Gebruiker kan favoriete recepten opslaan
+
+        ## 3. Niet-Functionele Vereisten
+        - NFR-01: Applicatie laadt binnen 2 seconden
+        - NFR-02: Ondersteunt minimaal 100 gelijktijdige gebruikers
+        - NFR-03: Gegevens worden veilig opgeslagen
+
+        ## 4. Gebruikersrollen
+        - Thuiskok: kan recepten aanmaken, bekijken, beoordelen
+        - Beheerder: kan gebruikers en content modereren
+
+        ## 5. Gebruikersinteractie
+        - Homepage met nieuwste en best beoordeelde recepten
+        - Recept-detailpagina met ingrediënten, stappen, beoordelingen
+        - Profielpagina met eigen recepten en favorieten
+        - Zoekfunctie met filters
+      arguments:
+        path: docs/functional-design.md
+
+    - agent: architect
+      tool: builtin:invoke_skill
+      mock: true
+      mock_result: "Architecture principles loaded successfully"
+      arguments:
+        skill_name: architecture-principles
+
+    # Architect writes the technical design (with HITL approval)
+    - agent: architect
+      tool: coding:make_design
+      approval:
+        status: approved
+        by: architect
+      arguments:
+        path: docs/technical-design.md
+        content: |
+          # Technisch Ontwerp: Recipe Sharing App
+
+          ## Introductie
+
+          ### Onderwerp
+          Een platform voor het delen en beoordelen van recepten binnen
+          een vrienden- en familiekring.
+
+          ### Probleemomschrijving
+          Er is geen bestaande oplossing voor thuiskoks om recepten te
+          delen en te beoordelen in een besloten omgeving.
+
+          ### Functionele Vraag
+          Hoe kunnen gebruikers recepten delen, bekijken en beoordelen
+          binnen een veilige en gebruiksvriendelijke applicatie?
+
+          ## Oplossing
+
+          ### Toegepaste Principes (per NORA-laag)
+          * **Grondslagen:** AVG-wetgeving voor persoonsgegevens
+          * **Organisatie:** Waterschapscontext — interne tooling
+          * **Informatie:** Receptgegevens met gebruikersbeoordelingen
+          * **Applicatie:** React frontend + FastAPI backend
+          * **Netwerk:** HTTPS, containerised deployment
+          * **Beveiliging & Privacy:** OAuth2/OIDC authenticatie, RBAC
+
+          ### Vereisten
+          | ID | Bron | Vereiste | Verificatie |
+          |----|------|----------|-------------|
+          | FR-01 | BA | Recept aanmaken met titel, ingrediënten, bereidingswijze en foto | Functionele test |
+          | FR-02 | BA | Recepten van anderen bekijken | Functionele test |
+          | FR-03 | BA | Recepten beoordelen (1-5 sterren) | Functionele test |
+          | FR-04 | BA | Commentaar geven op recepten | Functionele test |
+          | FR-05 | BA | Recepten zoeken op ingrediënt of naam | Functionele test |
+          | FR-06 | BA | Favoriete recepten opslaan | Functionele test |
+          | NFR-01 | BA | Applicatie laadt binnen 2 seconden | Prestatietest |
+          | NFR-02 | BA | Minimaal 100 gelijktijdige gebruikers | Belastingstest |
+          | NFR-03 | BA | Gegevens veilig opgeslagen | Beveiligingsaudit |
+          | TR-01 | AR | PostgreSQL voor gestructureerde data | Code-inspectie |
+          | TR-02 | AR | Docker-containerisatie | Configuratiecheck |
+          | TR-03 | AR | API rate limiting (100 req/min) | Integratietest |
+
+          ### Architectuuroplossing
+
+          #### 1. Componentstructuur
+          * Frontend: React + Vite + shadcn/ui
+          * Backend: FastAPI + SQLAlchemy
+          * Database: PostgreSQL
+          * Bestandsopslag: MinIO (receptfoto's)
+          * Authenticatie: Keycloak (OAuth2/OIDC)
+
+          #### 2. Data-architectuur & Integratie
+          * REST API met JSON
+          * Endpoints: /recipes, /recipes/{id}, /ratings, /comments
+          * Zoek-endpoint met filters op ingrediënt en naam
+
+          #### 3. Infrastructuur & Deployment
+          * Docker Compose voor lokale ontwikkeling
+          * Nginx reverse proxy
+          * PostgreSQL persistent volume
+
+          ### Beveiliging by Design
+          | Aspect | Maatregel | Toelichting |
+          |--------|-----------|-------------|
+          | Authenticatie | Keycloak OIDC | SSO met bestaande accounts |
+          | Autorisatie | RBAC | Thuiskok vs. Beheerder rollen |
+          | Gegevensbescherming | TLS + encrypted at rest | AVG-compliant |
+          | Logging | Structured logging | Audit trail |
+
+          ### Compliance by Design
+          | Vereiste | Implementatie | Status |
+          |----------|---------------|--------|
+          | AVG Rechtsgrond | Toestemming gebruiker | ✓ |
+          | Bewaartermijn | 5 jaar na laatste login | ✓ |
+          | DPIA Vereist | Nee (laag risico) | ✓ |
+          | BIO Classificatie | Basis | ✓ |
+
+          ### Visualisatie
+          ```mermaid
+          flowchart TD
+            U["Gebruiker"] --> FE["React Frontend"]
+            FE --> API["FastAPI Backend"]
+            API --> DB["PostgreSQL"]
+            API --> S3["MinIO Storage"]
+            API --> KC["Keycloak"]
+          ```
+
+    # Architect has written the TD. Session is now paused.
+    # On resume, the architect sees its full tool history and should
+    # just git add/commit/push the TD and call done().
+    # The planner is already pending (created by make_plan in
+    # setup-project-with-fd) and will pick up after the architect.
