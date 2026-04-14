@@ -2,7 +2,7 @@
  * Agents Page - View built-in agents and manage custom agents
  */
 
-import React, { useState } from 'react'
+import React, { useState, useCallback } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import {
@@ -18,8 +18,13 @@ import {
   AlertCircle,
   CheckCircle,
   XCircle,
+  Rocket,
+  FileCode,
+  X,
+  Copy,
+  Save,
 } from 'lucide-react'
-import { getAgents, getCustomAgents, deleteCustomAgent, getCustomAgentYaml } from '../services/api'
+import { getAgents, getCustomAgents, deleteCustomAgent, getCustomAgentYaml, deployCustomAgent, updateCustomAgent } from '../services/api'
 import PageHeader from '../components/shared/PageHeader'
 
 const CATEGORY_COLORS = {
@@ -104,8 +109,8 @@ const BuiltinAgentRow = ({ agent }) => {
   )
 }
 
-// Custom agent card (clickable, with download + delete)
-const CustomAgentCard = ({ agent, onEdit, onDelete, onDownloadYaml, isDeleting }) => (
+// Custom agent card with deploy, YAML edit, download, delete, active toggle
+const CustomAgentCard = ({ agent, onEdit, onDelete, onDownloadYaml, onDeploy, onViewYaml, onToggleActive, isDeleting, isDeploying }) => (
   <div
     onClick={() => onEdit(agent.agent_id)}
     className="bg-gray-50/70 rounded-lg p-4 border border-gray-100 hover:border-gray-200 hover:bg-gray-50 transition-colors cursor-pointer"
@@ -115,18 +120,28 @@ const CustomAgentCard = ({ agent, onEdit, onDelete, onDownloadYaml, isDeleting }
         <div className="flex items-center gap-2">
           <span className="font-medium text-gray-900 text-sm">{agent.name}</span>
           <CategoryBadge category={agent.category} />
-          {agent.active !== undefined && (
+          <button
+            onClick={(e) => { e.stopPropagation(); onToggleActive(agent.agent_id, !agent.is_active) }}
+            className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full transition-colors ${
+              agent.is_active
+                ? 'bg-green-100 text-green-700 hover:bg-green-200'
+                : 'bg-gray-100 text-gray-400 hover:bg-gray-200'
+            }`}
+            title={agent.is_active ? 'Click to deactivate' : 'Click to activate'}
+          >
+            {agent.is_active ? <CheckCircle className="w-3 h-3" /> : <XCircle className="w-3 h-3" />}
+            {agent.is_active ? 'Active' : 'Inactive'}
+          </button>
+          {agent.deployment_status && (
             <span
               className={`inline-flex items-center gap-1 text-xs ${
-                agent.active ? 'text-green-600' : 'text-gray-400'
+                agent.deployment_status === 'deployed' ? 'text-green-600' :
+                agent.deployment_status === 'failed' ? 'text-red-500' : 'text-gray-400'
               }`}
             >
-              {agent.active ? (
-                <CheckCircle className="w-3 h-3" />
-              ) : (
-                <XCircle className="w-3 h-3" />
-              )}
-              {agent.active ? 'Active' : 'Inactive'}
+              {agent.deployment_status === 'deployed' ? <CheckCircle className="w-3 h-3" /> :
+               agent.deployment_status === 'failed' ? <XCircle className="w-3 h-3" /> : null}
+              {agent.deployment_status}
             </span>
           )}
         </div>
@@ -140,41 +155,177 @@ const CustomAgentCard = ({ agent, onEdit, onDelete, onDownloadYaml, isDeleting }
       </div>
       <div className="flex items-center gap-1 ml-3">
         <button
-          onClick={(e) => {
-            e.stopPropagation()
-            onDownloadYaml(agent.agent_id, agent.name)
-          }}
+          onClick={(e) => { e.stopPropagation(); onDeploy(agent.agent_id) }}
+          disabled={isDeploying}
+          className="p-1.5 text-gray-400 hover:text-purple-600 hover:bg-purple-50 rounded transition-colors"
+          title="Deploy to Foundry"
+        >
+          {isDeploying ? <Loader2 className="w-4 h-4 animate-spin" /> : <Rocket className="w-4 h-4" />}
+        </button>
+        <button
+          onClick={(e) => { e.stopPropagation(); onViewYaml(agent.agent_id) }}
           className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors"
-          aria-label="Download YAML"
+          title="Edit YAML"
+        >
+          <FileCode className="w-4 h-4" />
+        </button>
+        <button
+          onClick={(e) => { e.stopPropagation(); onDownloadYaml(agent.agent_id, agent.name) }}
+          className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors"
           title="Download YAML"
         >
           <Download className="w-4 h-4" />
         </button>
         <button
-          onClick={(e) => {
-            e.stopPropagation()
-            onDelete(agent.agent_id)
-          }}
+          onClick={(e) => { e.stopPropagation(); onDelete(agent.agent_id) }}
           disabled={isDeleting}
           className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors"
-          aria-label="Delete agent"
+          title="Delete agent"
         >
-          {isDeleting ? (
-            <Loader2 className="w-4 h-4 animate-spin" />
-          ) : (
-            <Trash2 className="w-4 h-4" />
-          )}
+          {isDeleting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
         </button>
       </div>
     </div>
   </div>
 )
 
+// YAML editor modal
+const YamlEditorModal = ({ agentId, onClose, onSaved }) => {
+  const [yaml, setYaml] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [copied, setCopied] = useState(false)
+  const [error, setError] = useState(null)
+  const [dirty, setDirty] = useState(false)
+
+  const loadYaml = useCallback(async () => {
+    try {
+      const result = await getCustomAgentYaml(agentId)
+      setYaml(result.yaml)
+    } catch {
+      setYaml('# Failed to load YAML')
+    } finally {
+      setLoading(false)
+    }
+  }, [agentId])
+
+  useState(() => { loadYaml() })
+
+  const handleSave = async () => {
+    setSaving(true)
+    setError(null)
+    try {
+      // Parse YAML to JSON and send as update
+      const lines = yaml.split('\n')
+      const parsed = {}
+      let currentKey = null
+      let multiline = []
+
+      // Simple YAML parser for flat + multiline string fields
+      for (const line of lines) {
+        if (line.startsWith('#') || line.trim() === '') continue
+        const match = line.match(/^(\w+):\s*(.*)$/)
+        if (match) {
+          if (currentKey && multiline.length > 0) {
+            parsed[currentKey] = multiline.join('\n')
+            multiline = []
+          }
+          currentKey = match[1]
+          const val = match[2]
+          if (val === '|' || val === '>') {
+            multiline = []
+          } else {
+            parsed[currentKey] = val
+            currentKey = null
+          }
+        } else if (currentKey) {
+          multiline.push(line.replace(/^ {2}/, ''))
+        }
+      }
+      if (currentKey && multiline.length > 0) {
+        parsed[currentKey] = multiline.join('\n')
+      }
+
+      await updateCustomAgent(agentId, parsed)
+      setDirty(false)
+      onSaved?.()
+    } catch (err) {
+      setError(err.message || 'Failed to save')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleCopy = () => {
+    if (!yaml) return
+    navigator.clipboard.writeText(yaml)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+  }
+
+  const handleDownload = () => {
+    if (!yaml) return
+    const blob = new Blob([yaml], { type: 'application/x-yaml' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${agentId}.yaml`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={onClose}>
+      <div className="bg-white rounded-xl shadow-xl w-full max-w-4xl max-h-[85vh] flex flex-col m-4" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-6 py-4 border-b">
+          <h3 className="text-sm font-medium text-gray-900">{agentId}.yaml {dirty && <span className="text-yellow-500 ml-1">(unsaved)</span>}</h3>
+          <div className="flex items-center gap-2">
+            <button onClick={handleSave} disabled={saving || !dirty} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors" title="Save">
+              {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+              Save
+            </button>
+            <button onClick={handleCopy} className="p-1.5 text-gray-400 hover:text-blue-600 rounded transition-colors" title="Copy">
+              {copied ? <CheckCircle className="w-4 h-4 text-green-500" /> : <Copy className="w-4 h-4" />}
+            </button>
+            <button onClick={handleDownload} className="p-1.5 text-gray-400 hover:text-blue-600 rounded transition-colors" title="Download">
+              <Download className="w-4 h-4" />
+            </button>
+            <button onClick={onClose} className="p-1.5 text-gray-400 hover:text-gray-600 rounded transition-colors">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+        {error && (
+          <div className="mx-6 mt-3 bg-red-50 border border-red-200 rounded-lg p-2">
+            <p className="text-sm text-red-700">{error}</p>
+          </div>
+        )}
+        <div className="flex-1 overflow-auto p-0">
+          {loading ? (
+            <div className="flex items-center justify-center py-12">
+              <Loader2 className="w-5 h-5 animate-spin text-gray-400" />
+            </div>
+          ) : (
+            <textarea
+              value={yaml}
+              onChange={(e) => { setYaml(e.target.value); setDirty(true) }}
+              className="w-full h-full min-h-[60vh] p-6 font-mono text-sm text-gray-800 border-none outline-none resize-none"
+              spellCheck={false}
+            />
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 const Agents = () => {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const [filter, setFilter] = useState('')
   const [deletingId, setDeletingId] = useState(null)
+  const [deployingId, setDeployingId] = useState(null)
+  const [yamlEditorId, setYamlEditorId] = useState(null)
 
   const {
     data: builtinAgents = [],
@@ -228,6 +379,27 @@ const Agents = () => {
       URL.revokeObjectURL(url)
     } catch {
       alert(`Failed to download YAML for ${agentName}`)
+    }
+  }
+
+  const handleToggleActive = async (agentId, isActive) => {
+    try {
+      await updateCustomAgent(agentId, { is_active: isActive })
+      queryClient.invalidateQueries({ queryKey: ['custom-agents'] })
+    } catch (err) {
+      alert(`Failed to update: ${err.message || 'Unknown error'}`)
+    }
+  }
+
+  const handleDeploy = async (agentId) => {
+    setDeployingId(agentId)
+    try {
+      await deployCustomAgent(agentId)
+      queryClient.invalidateQueries({ queryKey: ['custom-agents'] })
+    } catch (err) {
+      alert(`Deploy failed: ${err.message || 'Unknown error'}`)
+    } finally {
+      setDeployingId(null)
     }
   }
 
@@ -354,12 +526,24 @@ const Agents = () => {
                 onEdit={(id) => navigate(`/agents/${id}/edit`)}
                 onDelete={handleDelete}
                 onDownloadYaml={handleDownloadYaml}
+                onDeploy={handleDeploy}
+                onViewYaml={(id) => setYamlEditorId(id)}
+                onToggleActive={handleToggleActive}
                 isDeleting={deletingId === agent.agent_id}
+                isDeploying={deployingId === agent.agent_id}
               />
             ))}
           </div>
         )}
       </SectionCard>
+
+      {yamlEditorId && (
+        <YamlEditorModal
+          agentId={yamlEditorId}
+          onClose={() => setYamlEditorId(null)}
+          onSaved={() => queryClient.invalidateQueries({ queryKey: ['custom-agents'] })}
+        />
+      )}
     </div>
   )
 }
