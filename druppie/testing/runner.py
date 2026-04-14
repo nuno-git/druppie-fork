@@ -218,6 +218,7 @@ class TestRunner:
                 tags=test.tags,
                 chain=list(extended.chain) + list(test.chain),
                 session_status=test.session_status,
+                pending_agents=test.pending_agents,
             )
         try:
             replay_session_id, chain_results = self._replay_chain(merged_test, user.id, run_namespace)
@@ -420,6 +421,16 @@ class TestRunner:
                 if ar.status != "completed":
                     ar.status = "paused_user"
                     break
+
+        # Append pending agent runs (no tool calls, no LlmCalls).
+        # These will be picked up by execute_pending_runs() after the
+        # paused agent completes.
+        for pa in test.pending_agents:
+            agent_runs.append(AgentRunFixture(
+                id=pa.id,
+                status="pending",
+                planned_prompt=pa.planned_prompt,
+            ))
 
         session_id_str = f"{run_namespace}:chain-{test.name}"
         fixture = SessionFixture(

@@ -158,3 +158,9 @@ tool-test:
     # Architect has written the TD. Session is now paused.
     # On resume, the architect sees its full tool history and should
     # just git add/commit/push the TD and call done().
+
+  # After the architect completes, the planner should pick up and
+  # plan the next steps (builder, test_executor, etc.)
+  pending_agents:
+    - id: planner
+      planned_prompt: "Architect approved the design. Plan the next steps."
