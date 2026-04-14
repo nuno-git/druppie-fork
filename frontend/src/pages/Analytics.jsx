@@ -183,6 +183,7 @@ export default function Analytics() {
   // Load batches
   useEffect(() => {
     let cancelled = false
+    setError(null)
     getTestBatches(1, 50)
       .then(data => { if (!cancelled) { setBatches(data.items || []); if (data.items?.length) setSelectedBatchId(data.items[0].batch_id) } })
       .catch(err => { if (!cancelled) setError(err.message) })
@@ -195,6 +196,7 @@ export default function Analytics() {
     if (!selectedBatchId) return
     let cancelled = false
     setBatchLoading(true)
+    setError(null)
     const filters = {}
     if (filterType) filters.assertion_type = filterType
     if (filterAgent) filters.agent_id = filterAgent
@@ -224,7 +226,10 @@ export default function Analytics() {
           <button onClick={() => navigate('/admin/evaluations')} className="p-2 hover:bg-gray-100 rounded"><ArrowLeft className="w-5 h-5" /></button>
           <h1 className="text-2xl font-bold">Test Analytics</h1>
         </div>
-        <div className="text-center text-gray-400 py-16">No test batches yet.</div>
+        {error
+          ? <div className="text-red-500 flex items-center justify-center gap-2 py-16"><AlertCircle className="w-5 h-5" />{error}</div>
+          : <div className="text-center text-gray-400 py-16">No test batches yet.</div>
+        }
       </div>
     )
   }

@@ -4,7 +4,6 @@ Loads evaluation definitions from YAML, extracts context from DB,
 calls a judge LLM, parses scores, and stores results.
 """
 
-import json
 import logging
 import time
 from pathlib import Path
@@ -190,27 +189,16 @@ class JudgeEngine:
 
         Returns: (score_binary, score_graded, max_score, reasoning)
         """
-        try:
-            # Handle potential markdown code blocks in response
-            text = response.strip()
-            if text.startswith("```"):
-                text = text.split("\n", 1)[1] if "\n" in text else text
-                text = text.rsplit("```", 1)[0]
-            data = json.loads(text)
-        except (json.JSONDecodeError, ValueError):
-            logger.warning(
-                "Failed to parse judge response as JSON: %s", response[:200]
-            )
+        from druppie.testing.utils import parse_json_from_llm
+
+        data = parse_json_from_llm(response)
+        if data is None:
             return (
                 None,
                 None,
                 None,
                 f"Failed to parse judge response: {response[:200]}",
             )
-
-        if not isinstance(data, dict):
-            logger.warning("Judge response is not a JSON object: %s", response[:200])
-            return (None, None, None, f"Judge response is not a JSON object: {response[:200]}")
 
         reasoning = str(data.get("reasoning", ""))
 

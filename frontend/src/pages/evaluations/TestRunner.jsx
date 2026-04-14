@@ -10,7 +10,6 @@ import {
   FlaskConical,
   Loader2,
   AlertCircle,
-  Trash2,
   Play,
   CheckCircle2,
   XCircle,

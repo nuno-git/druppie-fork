@@ -42,32 +42,28 @@ const TestResults = ({ refreshKey, onSelectRun, isRunning, runResult, setRunResu
     }
   }
 
-  const fetchBatches = async () => {
-    setLoading(true)
-    setError(null)
-    try {
-      const data = await getTestBatches(page, 10, selectedTag)
-      setBatches(data.items || [])
-      setTotalPages(data.total_pages || 1)
-
-      // Auto-expand the most recent batch on first load
-      if (!initialExpanded && data.items?.length > 0) {
-        setExpandedBatches(new Set([data.items[0].batch_id]))
-        setInitialExpanded(true)
-      }
-    } catch (err) {
-      setError(err.message)
-    } finally {
-      setLoading(false)
-    }
-  }
-
   useEffect(() => {
     fetchTags()
   }, [refreshKey])
 
   useEffect(() => {
-    fetchBatches()
+    let cancelled = false
+    setLoading(true)
+    setError(null)
+    getTestBatches(page, 10, selectedTag)
+      .then(data => {
+        if (cancelled) return
+        setBatches(data.items || [])
+        setTotalPages(data.total_pages || 1)
+        // Auto-expand the most recent batch on first load
+        if (!initialExpanded && data.items?.length > 0) {
+          setExpandedBatches(new Set([data.items[0].batch_id]))
+          setInitialExpanded(true)
+        }
+      })
+      .catch(err => { if (!cancelled) setError(err.message) })
+      .finally(() => { if (!cancelled) setLoading(false) })
+    return () => { cancelled = true }
   }, [page, selectedTag, refreshKey])
 
   const toggleBatch = (batchId) => {

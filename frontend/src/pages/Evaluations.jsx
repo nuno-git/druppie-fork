@@ -124,13 +124,11 @@ export default function Evaluations() {
       }
 
       // Collect manual input values for selected tests
+      // Keys are "test-name:input-name" — keep the full key to avoid collisions
+      // when multiple tests have inputs with the same name
       const resolvedInputs = {}
       for (const [key, val] of Object.entries(inputValues)) {
-        // Key format: "test-name:input-name" — extract just input-name
-        const parts = key.split(':')
-        if (parts.length === 2) {
-          resolvedInputs[parts[1]] = val
-        }
+        resolvedInputs[key] = val
       }
       if (Object.keys(resolvedInputs).length > 0) {
         options.input_values = resolvedInputs

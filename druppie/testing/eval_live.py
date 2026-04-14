@@ -2,13 +2,13 @@
 
 import asyncio
 import logging
-import subprocess
 from datetime import datetime, timezone
 from uuid import UUID
 
 from druppie.db.models import BenchmarkRun
 from druppie.testing.eval_config import get_evaluation_config
 from druppie.testing.eval_judge import JudgeEngine
+from druppie.testing.utils import git_info as _git_info
 
 logger = logging.getLogger(__name__)
 
@@ -96,16 +96,3 @@ async def run_live_evaluation(
     )
 
 
-def _git_info() -> tuple[str | None, str | None]:
-    try:
-        commit = subprocess.check_output(
-            ["git", "rev-parse", "HEAD"], text=True, stderr=subprocess.DEVNULL
-        ).strip()[:40]
-        branch = subprocess.check_output(
-            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-            text=True,
-            stderr=subprocess.DEVNULL,
-        ).strip()
-        return commit, branch
-    except Exception:
-        return None, None
