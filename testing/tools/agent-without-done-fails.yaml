@@ -21,6 +21,21 @@ tool-test:
       assert:
         completed: true
 
+    # Planner creates builder via make_plan (matches production flow)
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: builder
+            prompt: "Read a file to test incomplete agent behavior"
+          - agent_id: planner
+            prompt: "Re-evaluate after builder completes"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: Planned builder"
+
     # Builder runs a tool but does NOT call done
     - agent: builder
       tool: coding:read_file
