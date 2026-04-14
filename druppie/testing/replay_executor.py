@@ -16,6 +16,7 @@ There is no global blocklist — each test decides what to mock.
 from __future__ import annotations
 
 import logging
+import threading
 from uuid import UUID, uuid4
 
 from sqlalchemy.orm import Session as DbSession
@@ -27,6 +28,11 @@ from druppie.testing.seed_schema import SessionFixture, ToolCallFixture
 from druppie.testing.verifiers import _gitea_auth
 
 logger = logging.getLogger(__name__)
+
+# Lock to protect the global Gitea client singleton reset.
+# Without this, concurrent test runs can corrupt each other's client
+# (e.g., thread A resets the singleton while thread B is mid-operation).
+_gitea_singleton_lock = threading.Lock()
 
 
 class ReplayExecutor:
@@ -136,7 +142,6 @@ class ReplayExecutor:
             approval.rejection_reason = action.get("reason", "Rejected by test")
             approval.resolved_at = utcnow()
             self._db.flush()
-            self._db.commit()
 
             # Let executor handle the rejection
             executor = self._get_executor()
@@ -159,7 +164,6 @@ class ReplayExecutor:
             approval.status = "approved"
             approval.resolved_at = utcnow()
             self._db.flush()
-            self._db.commit()
 
             # Continue execution after approval
             executor = self._get_executor()
@@ -228,9 +232,11 @@ class ReplayExecutor:
         """
         # Create a fresh Gitea client for this test session to avoid
         # corrupting the shared singleton's AsyncClient (which may be
-        # bound to a different event loop)
+        # bound to a different event loop).  Use a lock so concurrent
+        # test runs don't corrupt each other's client.
         import druppie.core.gitea as _gitea_mod
-        _gitea_mod._gitea_client = None  # Reset singleton so next call creates fresh client
+        with _gitea_singleton_lock:
+            _gitea_mod._gitea_client = None  # Reset singleton so next call creates fresh client
 
         meta = fixture.metadata
         session_id = fixture_uuid(meta.id)
@@ -246,7 +252,7 @@ class ReplayExecutor:
             created_at=utcnow(),
         )
         self._db.add(session)
-        self._db.commit()
+        self._db.flush()
 
         msg_seq = 0
 
@@ -262,7 +268,7 @@ class ReplayExecutor:
                 created_at=utcnow(),
             ))
             msg_seq += 1
-        self._db.commit()
+        self._db.flush()
 
         # Replay each agent's tool calls in order
         for seq, agent_fix in enumerate(fixture.agents):
@@ -321,9 +327,9 @@ class ReplayExecutor:
                     tc_records[0].llm_call_id = llm_call.id
                     tc_records[0].tool_call_index = tc_idx
 
-                # Commit after each tool call to release DB locks
-                # so API requests aren't blocked during the test
-                self._db.commit()
+                # Flush (not commit) — the caller controls the transaction
+                # boundary so the entire replay can be rolled back on failure
+                self._db.flush()
 
                 # Handle outcome blocks (file creation in Gitea for execute_coding_task)
                 if tc.outcome and gitea_url:
@@ -331,11 +337,11 @@ class ReplayExecutor:
 
             # Update agent run status
             agent_run.status = agent_fix.status
-            self._db.commit()
+            self._db.flush()
 
         # Update session status to match fixture
         session.status = meta.status
-        self._db.commit()
+        self._db.flush()
 
         # Get project_id if one was created by set_intent
         self._db.refresh(session)
