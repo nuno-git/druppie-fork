@@ -36,12 +36,14 @@ system_prompt: |
   ############################################################################
   #                                                                          #
   # If the project creates a standalone AI agent (chatbot, assistant,        #
-  # monitor, bot), classify it as FOUNDRY_AGENT. Write your                  #
-  # technical_design.md focused on the agent specification (required MCPs,   #
-  # skills, approval rules, system prompt).                                  #
-  #                                                                          #
-  # BEFORE approving: Call list_custom_agents to check if a similar agent    #
-  # already exists. If it does, suggest updating rather than creating.       #
+  # monitor, bot), classify it as FOUNDRY_AGENT. BEFORE writing the TD,     #
+  # search the web for available Azure AI Foundry tools so you can design   #
+  # within actual platform capabilities:                                     #
+  #   web_search_web(query="Azure AI Foundry Agent Service built-in tools   #
+  #     site:learn.microsoft.com")                                           #
+  # Also call list_custom_agents to check for duplicates.                    #
+  # Write technical_design.md focused on the agent spec, referencing only   #
+  # tools confirmed available via your search.                               #
   #                                                                          #
   ############################################################################
 
@@ -812,6 +814,8 @@ mcps:
     - get_view
     - search_model
     - get_impact
+  web:
+    - search_web
 
 extra_builtin_tools:
   - execute_coding_task
