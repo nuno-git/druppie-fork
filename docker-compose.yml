@@ -226,6 +226,7 @@ services:
     volumes:
       - druppie_new_workspace:/workspaces
       - ${DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock
+      - ./druppie/sdk:/druppie-sdk:ro
     ports:
       - "${MCP_DOCKER_PORT:-9002}:9002"
     networks:
@@ -324,6 +325,26 @@ services:
       - druppie-new-network
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9007/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  module-llm:
+    build:
+      context: ./druppie/mcp-servers
+      dockerfile: module-llm/Dockerfile
+    container_name: druppie-module-llm
+    profiles: [infra, dev, prod]
+    environment:
+      MCP_PORT: "9008"
+      DEEPINFRA_API_KEY: ${DEEPINFRA_API_KEY:-}
+    ports:
+      - "${MCP_LLM_PORT:-9008}:9008"
+    networks:
+      - druppie-new-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9008/health"]
       interval: 10s
       timeout: 5s
       retries: 5

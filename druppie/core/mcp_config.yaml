@@ -237,6 +237,15 @@ mcps:
       - name: get_impact
         requires_approval: false
 
+  llm:
+    url: ${MCP_LLM_URL:-http://module-llm:9008}
+    type: both
+    tools:
+      - name: chat
+        requires_approval: false
+      - name: vision
+        requires_approval: false
+
   registry:
     url: ${MCP_REGISTRY_URL:-http://module-registry:9007}
     type: core

@@ -2,7 +2,7 @@
 
 Define your API endpoints here. All routes are prefixed with /api.
 
-Built-in AI endpoints:
+Built-in AI endpoints (via Druppie SDK → module-llm):
     POST /api/ai/chat  — LLM chat completion  (body: {prompt, system?})
     POST /api/ai/ocr   — OCR text extraction   (body: {image_url})
 
@@ -16,8 +16,11 @@ Example adding your own:
 """
 
 from flask import Blueprint, jsonify, request
+from druppie_sdk import DruppieClient
 
 api = Blueprint("api", __name__)
+
+druppie = DruppieClient()
 
 
 @api.route("/info")
@@ -28,29 +31,28 @@ def info():
 
 
 # ---------------------------------------------------------------------------
-# AI endpoints — proxy to DeepInfra (key stays server-side)
+# AI endpoints — via Druppie SDK (calls module-llm on the platform)
 # ---------------------------------------------------------------------------
 
 
 @api.route("/ai/chat", methods=["POST"])
 def ai_chat_endpoint():
     """LLM chat completion. Body: {"prompt": "...", "system": "..."}"""
-    from app.ai import ai_chat
-
     data = request.get_json(silent=True)
     if not data or "prompt" not in data:
         return jsonify(error="Missing required field: prompt"), 400
-    answer = ai_chat(data["prompt"], data.get("system", "You are a helpful assistant."))
-    return jsonify(answer=answer)
+    result = druppie.call("llm", "chat", {
+        "prompt": data["prompt"],
+        "system": data.get("system", "You are a helpful assistant."),
+    })
+    return jsonify(answer=result.get("answer", ""))
 
 
 @api.route("/ai/ocr", methods=["POST"])
 def ai_ocr_endpoint():
     """OCR text extraction. Body: {"image_url": "https://..."}"""
-    from app.ai import ocr_extract
-
     data = request.get_json(silent=True)
     if not data or "image_url" not in data:
         return jsonify(error="Missing required field: image_url"), 400
-    text = ocr_extract(data["image_url"])
-    return jsonify(text=text)
+    result = druppie.call("llm", "vision", {"image_url": data["image_url"]})
+    return jsonify(text=result.get("text", ""))
