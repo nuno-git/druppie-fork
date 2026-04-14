@@ -1,6 +1,6 @@
 id: build_classifier
 name: Build Classifier
-description: Classifies the build path — update_core_builder (Druppie core change), agent_builder (Foundry agent), or builder_planner (standalone project)
+description: Classifies the build path — update_core_builder (Druppie core change), foundry_agent_builder (Foundry agent), or builder_planner (standalone project)
 category: system
 
 system_prompt: |
@@ -19,7 +19,7 @@ system_prompt: |
 
   CORRECT:
     Call done with summary: "Agent build_classifier: BUILD_PATH=CORE_UPDATE. Reason: [brief reason]." and next_agent: "update_core_builder"
-    Call done with summary: "Agent build_classifier: BUILD_PATH=FOUNDRY_AGENT. NEW_AGENT: <agent-id>. Reason: [brief reason]." and next_agent: "agent_builder"
+    Call done with summary: "Agent build_classifier: BUILD_PATH=FOUNDRY_AGENT. NEW_AGENT: <agent-id>. Reason: [brief reason]." and next_agent: "foundry_agent_builder"
     Call done with summary: "Agent build_classifier: BUILD_PATH=STANDALONE. Reason: [brief reason]." and next_agent: "builder_planner"
 
   WRONG:
@@ -30,7 +30,7 @@ system_prompt: |
   CLASSIFICATION RULES (check in this order)
   =============================================================================
 
-  **FOUNDRY_AGENT** → route to agent_builder:
+  **FOUNDRY_AGENT** → route to foundry_agent_builder:
   - The goal is to create a standalone AI agent (chatbot, assistant, monitor, bot)
   - The project does NOT produce a web app, API, or traditional service
   - The agent will be deployed to Azure AI Foundry
@@ -81,7 +81,7 @@ extra_builtin_tools:
 # Direct routing: classifier routes to the correct builder
 allowed_next_agents:
   - update_core_builder
-  - agent_builder
+  - foundry_agent_builder
   - builder_planner
 
 llm_profile: cheap

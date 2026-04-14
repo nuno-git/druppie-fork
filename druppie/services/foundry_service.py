@@ -68,15 +68,11 @@ class FoundryService:
     def deploy_agent(self, agent_detail) -> dict:
         """Deploy a custom agent definition to Azure AI Foundry.
 
-        The DB stores a full agent definition (MCPs, skills, builtin tools,
-        approval overrides) which governs behavior inside Druppie's own
-        orchestration. When deploying to Foundry, only the Foundry-compatible
-        subset is sent: model, instructions (system_prompt), and temperature.
+        Sends the agent definition including Foundry-native tools
+        (code_interpreter, file_search, bing_grounding).
 
-        Future: MCP tool schemas could be mapped to Foundry FunctionTool
-        definitions, allowing Foundry-deployed agents to access external
-        tools natively. This requires fetching tool JSON schemas from the
-        registry and converting them to Foundry's function format.
+        Future: Druppie MCP tools could be bridged to Foundry via
+        FunctionTool definitions backed by an API gateway.
 
         Args:
             agent_detail: CustomAgentDetail with the agent configuration.
@@ -88,16 +84,13 @@ class FoundryService:
         from azure.ai.projects.models import PromptAgentDefinition
 
         model = PROFILE_MODEL_MAP.get(agent_detail.llm_profile, "gpt-4.1-mini")
+        tools = self._build_foundry_tools(agent_detail.foundry_tools)
 
-        # Currently sends: model, instructions, temperature.
-        # Fields stored but not yet sent to Foundry:
-        #   - mcps/skills/builtin_tools: Druppie-runtime concepts
-        #   - approval_overrides: Druppie's internal approval workflow
-        #   - max_tokens/max_iterations: Druppie agent loop settings
         definition = PromptAgentDefinition(
             model=model,
             instructions=agent_detail.system_prompt,
             temperature=agent_detail.temperature,
+            tools=tools if tools else None,
         )
 
         logger.info(
@@ -139,6 +132,54 @@ class FoundryService:
         except Exception as e:
             logger.warning("foundry_get_agent_failed", agent_name=agent_name, error=str(e))
             return None
+
+    @staticmethod
+    def _build_foundry_tools(foundry_tools: list[str]) -> list:
+        """Map foundry_tools strings to Azure SDK tool objects.
+
+        Some tools (bing_grounding, azure_ai_search, microsoft_fabric)
+        require connection resources configured in the Foundry portal.
+        They are included here for completeness but will fail at runtime
+        if the connection is not set up. Zero-config tools
+        (code_interpreter, file_search, browser_automation, deep_research)
+        work out of the box.
+        """
+        if not foundry_tools:
+            return []
+
+        from azure.ai.projects.models import (
+            CodeInterpreterTool,
+            FileSearchTool,
+            BingGroundingTool,
+        )
+
+        # Zero-config tools — instantiate directly
+        zero_config_map = {
+            "code_interpreter": CodeInterpreterTool,
+            "file_search": FileSearchTool,
+            # browser_automation and deep_research may need newer SDK
+            # versions — they are stored in DB but skipped if SDK doesn't
+            # support them yet.
+        }
+
+        # Tools requiring connection — instantiate without connection_id;
+        # Foundry portal config provides the connection at runtime.
+        connection_map = {
+            "bing_grounding": BingGroundingTool,
+        }
+
+        tools = []
+        for tool_type in foundry_tools:
+            tool_cls = zero_config_map.get(tool_type) or connection_map.get(tool_type)
+            if tool_cls:
+                tools.append(tool_cls())
+            elif tool_type in ("browser_automation", "deep_research", "bing_custom_search", "azure_ai_search", "microsoft_fabric"):
+                # Known tool types not yet mapped in SDK — stored in DB
+                # for future use, logged but not sent.
+                logger.info("foundry_tool_not_yet_mapped", tool_type=tool_type)
+            else:
+                logger.warning("foundry_unknown_tool_type", tool_type=tool_type)
+        return tools
 
     def is_configured(self) -> bool:
         """Check if Foundry is configured."""

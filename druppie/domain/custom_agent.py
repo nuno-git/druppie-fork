@@ -32,6 +32,7 @@ class CustomAgentDetail(CustomAgentSummary):
     mcps: list[str] | dict[str, list[str]]
     approval_overrides: dict[str, dict]  # tool_key -> {requires_approval, required_role}
     skills: list[str]
+    foundry_tools: list[str]  # Foundry-native tools: code_interpreter, file_search, bing_grounding
     temperature: float
     max_tokens: int
     max_iterations: int
@@ -53,6 +54,7 @@ class CustomAgentCreate(BaseModel):
     mcps: list[str] | dict[str, list[str]] = []
     approval_overrides: dict[str, dict] = {}
     skills: list[str] = []
+    foundry_tools: list[str] = []
     llm_profile: str = "standard"
     temperature: float = 0.1
     max_tokens: int = 4096
@@ -81,6 +83,7 @@ class CustomAgentUpdate(BaseModel):
     mcps: list[str] | dict[str, list[str]] | None = None
     approval_overrides: dict[str, dict] | None = None
     skills: list[str] | None = None
+    foundry_tools: list[str] | None = None
     llm_profile: str | None = None
     temperature: float | None = None
     max_tokens: int | None = None

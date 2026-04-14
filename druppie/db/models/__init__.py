@@ -35,6 +35,7 @@ from .custom_agent import (
     CustomAgent,
     CustomAgentApprovalOverride,
     CustomAgentBuiltinTool,
+    CustomAgentFoundryTool,
     CustomAgentMcp,
     CustomAgentMcpTool,
     CustomAgentSkill,

@@ -37,6 +37,7 @@ class CustomAgent(Base):
     system_prompts = relationship("CustomAgentSystemPrompt", back_populates="custom_agent", cascade="all, delete-orphan")
     builtin_tools = relationship("CustomAgentBuiltinTool", back_populates="custom_agent", cascade="all, delete-orphan")
     approval_overrides = relationship("CustomAgentApprovalOverride", back_populates="custom_agent", cascade="all, delete-orphan")
+    foundry_tools = relationship("CustomAgentFoundryTool", back_populates="custom_agent", cascade="all, delete-orphan")
 
 
 class CustomAgentMcp(Base):
@@ -118,3 +119,16 @@ class CustomAgentApprovalOverride(Base):
 
     # Relationships
     custom_agent = relationship("CustomAgent", back_populates="approval_overrides")
+
+
+class CustomAgentFoundryTool(Base):
+    """Foundry-native tool enabled for a custom agent (e.g. code_interpreter, file_search, bing_grounding)."""
+
+    __tablename__ = "custom_agent_foundry_tools"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    custom_agent_id = Column(UUID(as_uuid=True), ForeignKey("custom_agents.id", ondelete="CASCADE"), nullable=False)
+    tool_type = Column(String(100), nullable=False)  # e.g. "code_interpreter", "file_search", "bing_grounding"
+
+    # Relationships
+    custom_agent = relationship("CustomAgent", back_populates="foundry_tools")

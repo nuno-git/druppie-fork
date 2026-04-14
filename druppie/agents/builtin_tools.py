@@ -274,31 +274,10 @@ BUILTIN_TOOL_DEFS: dict[str, dict] = {
                         "type": "number",
                         "description": "Sampling temperature (0.0-1.0). Default: 0.1.",
                     },
-                    "mcps": {
-                        "type": "object",
-                        "description": "MCP servers and their tool whitelists. Keys are MCP server names, values are arrays of tool names. Example: {\"coding\": [\"read_file\", \"list_dir\"], \"web\": [\"search_web\"]}",
-                        "additionalProperties": {"type": "array", "items": {"type": "string"}},
-                    },
-                    "skills": {
+                    "foundry_tools": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "Skills the agent can invoke (e.g. ['code-review', 'data-analysis']).",
-                    },
-                    "extra_builtin_tools": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "Builtin tools beyond defaults (done, hitl). Example: ['execute_coding_task'].",
-                    },
-                    "approval_overrides": {
-                        "type": "object",
-                        "description": "Per-tool approval overrides. Keys are 'mcp:tool' strings, values have requires_approval (bool) and required_role (string). Example: {\"coding:write_file\": {\"requires_approval\": true, \"required_role\": \"developer\"}}",
-                        "additionalProperties": {
-                            "type": "object",
-                            "properties": {
-                                "requires_approval": {"type": "boolean"},
-                                "required_role": {"type": "string"},
-                            },
-                        },
+                        "description": "Foundry-native tools to enable. Zero-config: 'code_interpreter', 'file_search', 'browser_automation', 'deep_research'. Require portal config: 'bing_grounding', 'bing_custom_search', 'azure_ai_search', 'microsoft_fabric'. Example: ['code_interpreter', 'bing_grounding'].",
                     },
                     "max_tokens": {
                         "type": "integer",
@@ -319,7 +298,7 @@ BUILTIN_TOOL_DEFS: dict[str, dict] = {
             "name": "update_foundry_agent",
             "description": (
                 "Update an existing Foundry agent definition. Use this to modify an agent's "
-                "configuration (instructions, MCPs, skills, approval overrides, etc.)."
+                "configuration (instructions, foundry_tools, etc.)."
             ),
             "parameters": {
                 "type": "object",
@@ -348,31 +327,10 @@ BUILTIN_TOOL_DEFS: dict[str, dict] = {
                         "type": "number",
                         "description": "Sampling temperature (0.0-1.0).",
                     },
-                    "mcps": {
-                        "type": "object",
-                        "description": "MCP servers and their tool whitelists.",
-                        "additionalProperties": {"type": "array", "items": {"type": "string"}},
-                    },
-                    "skills": {
+                    "foundry_tools": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "Skills the agent can invoke.",
-                    },
-                    "extra_builtin_tools": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "Builtin tools beyond defaults.",
-                    },
-                    "approval_overrides": {
-                        "type": "object",
-                        "description": "Per-tool approval overrides.",
-                        "additionalProperties": {
-                            "type": "object",
-                            "properties": {
-                                "requires_approval": {"type": "boolean"},
-                                "required_role": {"type": "string"},
-                            },
-                        },
+                        "description": "Foundry-native tools to enable. See create_foundry_agent for available options.",
                     },
                     "max_tokens": {
                         "type": "integer",
@@ -1353,16 +1311,13 @@ async def create_foundry_agent(
     temperature: float,
     session_id: UUID,
     execution_repo: "ExecutionRepository",
-    mcps: dict | None = None,
-    skills: list | None = None,
-    extra_builtin_tools: list | None = None,
-    approval_overrides: dict | None = None,
+    foundry_tools: list | None = None,
     max_tokens: int = 4096,
     max_iterations: int = 10,
 ) -> dict:
     """Create a Foundry agent definition in the database.
 
-    Called by the agent_builder after the architect approves a Foundry agent design.
+    Called by the foundry_agent_builder after the build_classifier routes to it.
     The agent can later be deployed to Azure AI Foundry from the Agents page.
     """
     from druppie.db.database import SessionLocal
@@ -1392,11 +1347,7 @@ async def create_foundry_agent(
             max_tokens=max_tokens,
             max_iterations=max_iterations,
             owner_id=owner_id,
-            mcps=mcps or {},
-            skills=skills or [],
-            system_prompts_list=[],
-            builtin_tools=extra_builtin_tools or [],
-            approval_overrides=approval_overrides or {},
+            foundry_tools=foundry_tools or [],
         )
         db.commit()
 
@@ -1412,10 +1363,7 @@ async def create_foundry_agent(
             "agent_id": agent_id,
             "name": name,
             "description": description,
-            "mcps": mcps or {},
-            "skills": skills or [],
-            "extra_builtin_tools": extra_builtin_tools or [],
-            "approval_overrides": approval_overrides or {},
+            "foundry_tools": foundry_tools or [],
             "message": f"Agent '{name}' created successfully. It can be deployed to Azure AI Foundry from the Agents page.",
         }
     except Exception as e:
@@ -1434,10 +1382,7 @@ async def update_foundry_agent(
     instructions: str | None = None,
     model: str | None = None,
     temperature: float | None = None,
-    mcps: dict | None = None,
-    skills: list | None = None,
-    extra_builtin_tools: list | None = None,
-    approval_overrides: dict | None = None,
+    foundry_tools: list | None = None,
     max_tokens: int | None = None,
     max_iterations: int | None = None,
 ) -> dict:
@@ -1467,14 +1412,8 @@ async def update_foundry_agent(
             update_kwargs["max_tokens"] = max_tokens
         if max_iterations is not None:
             update_kwargs["max_iterations"] = max_iterations
-        if mcps is not None:
-            update_kwargs["mcps"] = mcps
-        if skills is not None:
-            update_kwargs["skills"] = skills
-        if extra_builtin_tools is not None:
-            update_kwargs["builtin_tools"] = extra_builtin_tools
-        if approval_overrides is not None:
-            update_kwargs["approval_overrides"] = approval_overrides
+        if foundry_tools is not None:
+            update_kwargs["foundry_tools"] = foundry_tools
 
         agent = repo.update(agent_id, **update_kwargs)
         db.commit()
@@ -1627,10 +1566,7 @@ async def execute_builtin(
             temperature=args.get("temperature", 0.1),
             session_id=session_id,
             execution_repo=execution_repo,
-            mcps=args.get("mcps"),
-            skills=args.get("skills"),
-            extra_builtin_tools=args.get("extra_builtin_tools"),
-            approval_overrides=args.get("approval_overrides"),
+            foundry_tools=args.get("foundry_tools"),
             max_tokens=args.get("max_tokens", 4096),
             max_iterations=args.get("max_iterations", 10),
         )
@@ -1644,10 +1580,7 @@ async def execute_builtin(
             instructions=args.get("instructions"),
             model=args.get("model"),
             temperature=args.get("temperature"),
-            mcps=args.get("mcps"),
-            skills=args.get("skills"),
-            extra_builtin_tools=args.get("extra_builtin_tools"),
-            approval_overrides=args.get("approval_overrides"),
+            foundry_tools=args.get("foundry_tools"),
             max_tokens=args.get("max_tokens"),
             max_iterations=args.get("max_iterations"),
         )

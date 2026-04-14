@@ -48,9 +48,9 @@ system_prompt: |
   - builder: TDD code implementer - builds initial implementation based on tests. Reads tests, implements code to pass them.
   - test_executor: Runs tests and reports structured PASS/FAIL results (TDD Green Phase). Does NOT fix code — only runs tests, classifies failures, and reports. On FAIL, the planner routes back to the builder with the test report.
   - developer: Branching, merging PRs, and improvement tasks (user feedback changes). NOT for TDD implementation
-  - build_classifier: Classifies the build path — update_core_builder, agent_builder, or builder_planner. Runs after architect approval (routed via next_agent, not planned by you).
+  - build_classifier: Classifies the build path — update_core_builder, foundry_agent_builder, or builder_planner. Runs after architect approval (routed via next_agent, not planned by you).
   - update_core_builder: Implements changes to Druppie's own codebase. Creates a PR for developer review. Routed by build_classifier.
-  - agent_builder: Creates Foundry agent definitions. Reads design docs, discovers platform capabilities via registry, and calls create_foundry_agent with a complete specification. Routed by build_classifier.
+  - foundry_agent_builder: Creates Foundry agent definitions. Reads design docs, discovers platform capabilities via registry, and calls create_foundry_agent with a complete specification. Routed by build_classifier.
   - deployer: Handles Docker build, deployment, and asks user for preview feedback
   - summarizer: Creates a user-friendly completion message (ALWAYS use as FINAL step when done)
 
@@ -177,7 +177,7 @@ system_prompt: |
 
   NOTE: When the architect signals DESIGN_APPROVED, it routes directly to
   build_classifier via next_agent. The build_classifier then routes to
-  update_core_builder, agent_builder, or builder_planner. You will normally
+  update_core_builder, foundry_agent_builder, or builder_planner. You will normally
   NOT see DESIGN_APPROVED — you will see the build_classifier's output instead.
 
   If DESIGN_REJECTED:
@@ -211,7 +211,7 @@ system_prompt: |
 
   ### After AGENT_BUILDER completed:
 
-  The agent_builder has created a Foundry agent. Route to BA for user review.
+  The foundry_agent_builder has created a Foundry agent. Route to BA for user review.
   Call make_plan with 2 steps:
   - Step 1: agent_id="business_analyst", prompt="AGENT REVIEW: A Foundry agent has been created. Show the user the agent definition using hitl_ask_question. Include: agent_id, name, description, system prompt summary, MCPs, skills, and approval overrides. Ask: 'Is this agent definition correct? Would you like to make any changes before deploying to Azure AI Foundry?' Then call done() with AGENT_REVIEW_COMPLETE or AGENT_REVIEW_CHANGES_REQUESTED based on the user's response."
   - Step 2: agent_id="planner", prompt="Agent review completed. Evaluate user response."
@@ -222,7 +222,7 @@ system_prompt: |
 
   After AGENT_REVIEW_CHANGES_REQUESTED:
   Call make_plan with 2 steps:
-  - Step 1: agent_id="agent_builder", prompt="AGENT UPDATE: The user requested changes to the agent. Read the user's feedback from the previous summary. Use list_custom_agents and registry tools as needed. Update the agent definition accordingly, then call done()."
+  - Step 1: agent_id="foundry_agent_builder", prompt="AGENT UPDATE: The user requested changes to the agent. Read the user's feedback from the previous summary. Use list_custom_agents and registry tools as needed. Update the agent definition accordingly, then call done()."
   - Step 2: agent_id="planner", prompt="Agent updated. Route back to BA for another review."
 
   ### After BUILDER_PLANNER completed (wrote builder_plan.md):
@@ -373,8 +373,8 @@ system_prompt: |
   **CORE UPDATE variant** (build_classifier routes to update_core_builder):
   ... → architect (DESIGN_APPROVED) → build_classifier → update_core_builder → architect (run 2, DESIGN_APPROVED) → normal flow continues
 
-  **FOUNDRY AGENT variant** (build_classifier routes to agent_builder):
-  ... → architect (DESIGN_APPROVED) → build_classifier → agent_builder → business_analyst (review) → summarizer
+  **FOUNDRY AGENT variant** (build_classifier routes to foundry_agent_builder):
+  ... → architect (DESIGN_APPROVED) → build_classifier → foundry_agent_builder → business_analyst (review) → summarizer
 
   **GENERAL_CHAT:** No fixed sequence — route to the most suitable agent.
 

@@ -100,6 +100,7 @@ class CustomAgentService:
             system_prompts_list=data.system_prompts or None,
             builtin_tools=data.extra_builtin_tools or None,
             approval_overrides=data.approval_overrides or None,
+            foundry_tools=data.foundry_tools or None,
         )
         self.repo.commit()
 
@@ -164,6 +165,8 @@ class CustomAgentService:
             kwargs["builtin_tools"] = data.extra_builtin_tools
         if data.approval_overrides is not None:
             kwargs["approval_overrides"] = data.approval_overrides
+        if data.foundry_tools is not None:
+            kwargs["foundry_tools"] = data.foundry_tools
 
         agent = self.repo.update(agent_id, **kwargs)
         self.repo.commit()
@@ -367,6 +370,7 @@ class CustomAgentService:
             mcps=mcps,
             approval_overrides=approval_overrides,
             skills=[s.skill_name for s in agent.skills],
+            foundry_tools=[ft.tool_type for ft in agent.foundry_tools],
             temperature=agent.temperature or 0.1,
             max_tokens=agent.max_tokens or 4096,
             max_iterations=agent.max_iterations or 10,

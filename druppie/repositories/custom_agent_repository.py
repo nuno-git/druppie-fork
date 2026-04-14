@@ -12,6 +12,7 @@ from ..db.models.custom_agent import (
     CustomAgentSystemPrompt,
     CustomAgentBuiltinTool,
     CustomAgentApprovalOverride,
+    CustomAgentFoundryTool,
 )
 
 
@@ -47,6 +48,7 @@ class CustomAgentRepository(BaseRepository):
         system_prompts_list: list[str] | None = None,
         builtin_tools: list[str] | None = None,
         approval_overrides: dict[str, dict] | None = None,
+        foundry_tools: list[str] | None = None,
     ) -> CustomAgent:
         """Create a custom agent with all child rows."""
         agent = CustomAgent(
@@ -64,7 +66,7 @@ class CustomAgentRepository(BaseRepository):
         self.db.add(agent)
         self.db.flush()
 
-        self._create_child_rows(agent, mcps, skills, system_prompts_list, builtin_tools, approval_overrides)
+        self._create_child_rows(agent, mcps, skills, system_prompts_list, builtin_tools, approval_overrides, foundry_tools)
         self.db.flush()
         return agent
 
@@ -80,6 +82,7 @@ class CustomAgentRepository(BaseRepository):
         system_prompts_list = kwargs.pop("system_prompts_list", None)
         builtin_tools = kwargs.pop("builtin_tools", None)
         approval_overrides = kwargs.pop("approval_overrides", None)
+        foundry_tools = kwargs.pop("foundry_tools", None)
 
         # Update scalar fields
         for key, value in kwargs.items():
@@ -117,7 +120,13 @@ class CustomAgentRepository(BaseRepository):
             self.db.flush()
             agent.approval_overrides = []
 
-        self._create_child_rows(agent, mcps, skills, system_prompts_list, builtin_tools, approval_overrides)
+        if foundry_tools is not None:
+            for ft in agent.foundry_tools:
+                self.db.delete(ft)
+            self.db.flush()
+            agent.foundry_tools = []
+
+        self._create_child_rows(agent, mcps, skills, system_prompts_list, builtin_tools, approval_overrides, foundry_tools)
         self.db.flush()
         return agent
 
@@ -182,6 +191,7 @@ class CustomAgentRepository(BaseRepository):
         system_prompts_list: list[str] | None,
         builtin_tools: list[str] | None,
         approval_overrides: dict[str, dict] | None,
+        foundry_tools: list[str] | None = None,
     ) -> None:
         """Create child rows for a custom agent."""
         if mcps is not None:
@@ -215,4 +225,11 @@ class CustomAgentRepository(BaseRepository):
                     tool_key=tool_key,
                     requires_approval=override.get("requires_approval", True),
                     required_role=override.get("required_role"),
+                ))
+
+        if foundry_tools is not None:
+            for tool_type in foundry_tools:
+                self.db.add(CustomAgentFoundryTool(
+                    custom_agent_id=agent.id,
+                    tool_type=tool_type,
                 ))

@@ -132,25 +132,27 @@ The session intent stays `create_project` or `update_project` throughout — the
 
 ### Foundry Agent Creation
 
-When a project involves creating a standalone AI agent (chatbot, assistant, monitor), the Architect signals `DESIGN_APPROVED_FOUNDRY_AGENT` instead of `DESIGN_APPROVED`. The Planner routes to the `agent_builder` agent, which creates a complete agent definition in the database. The agent can then be deployed to Azure AI Foundry from the Agents page.
+When a project involves creating a standalone AI agent (chatbot, assistant, monitor), the `build_classifier` detects this and routes to `foundry_agent_builder` via `BUILD_PATH=FOUNDRY_AGENT`. The agent definition is stored in the database and can be deployed to Azure AI Foundry from the Agents page.
 
-The session intent stays `create_project` throughout — there is no separate `create_agent` intent. The Architect decides whether the project is a Foundry agent based on the functional design, not the Router.
+The session intent stays `create_project` throughout — there is no separate `create_agent` intent. The `build_classifier` determines whether the project is a Foundry agent after the Architect approves the design.
 
 **Pipeline:**
 
 1. **Router** classifies intent as `create_project` (a project record and Gitea repo are created as usual)
 2. **Business Analyst** gathers requirements, writes `functional_design.md`
-3. **Architect** reviews the design, calls `list_custom_agents` to check for duplicates, writes `technical_design.md`, signals `DESIGN_APPROVED_FOUNDRY_AGENT` with `NEW_AGENT: <agent-id>`
-4. **Agent Builder** reads design documents, discovers platform capabilities via registry MCP tools, reasons about which MCPs/skills/approval overrides the agent needs, calls `create_foundry_agent` with a complete specification
-5. **Business Analyst** (review) shows the agent definition to the user, asks for confirmation
+3. **Architect** reviews the design, writes `technical_design.md`, signals `DESIGN_APPROVED` with `next_agent="build_classifier"`
+4. **Build Classifier** reads design docs, determines `BUILD_PATH=FOUNDRY_AGENT`, routes to `foundry_agent_builder`
+5. **Foundry Agent Builder** reads design documents, selects Foundry-native tools (code_interpreter, file_search, bing_grounding, etc.), calls `create_foundry_agent` with a complete specification
+6. **Business Analyst** (review) shows the agent definition to the user, asks for confirmation
    - If approved: Planner routes to Summarizer
-   - If changes requested: Planner routes back to Agent Builder, then BA review again
-6. **Summarizer** creates the final user-facing summary
+   - If changes requested: Planner routes back to Foundry Agent Builder, then BA review again
+7. **Summarizer** creates the final user-facing summary
 
 **Key characteristics:**
-- The Architect (not the Router) decides whether a project becomes a Foundry agent — the Architect has full context from the functional design and existing agent registry
-- The Agent Builder is a specialized agent that reasons about agent design (MCPs, skills, approval rules) rather than just passing basic parameters
-- `create_foundry_agent` accepts a full specification: agent_id, name, description, instructions, model, temperature, MCPs, skills, builtin tools, and approval overrides
+- The `build_classifier` (not the Architect) decides the build path — it reads the functional and technical design to determine if the project is a Foundry agent, core update, or standalone project
+- The Foundry Agent Builder selects from Foundry-native tools only (code_interpreter, file_search, bing_grounding, browser_automation, deep_research)
+- Druppie's own MCPs are not available in Foundry agents (future: a bridge may expose them)
+- `create_foundry_agent` accepts: agent_id, name, description, instructions, model, temperature, foundry_tools
 - Agents are stored in the database and can be refined/deployed via the Agents page UI
 - Foundry deployment uses DefaultAzureCredential (az login, managed identity) or FOUNDRY_API_KEY
 

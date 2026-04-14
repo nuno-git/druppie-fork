@@ -30,7 +30,7 @@ system_prompt: |
   #                                                                          #
   # You do NOT need to detect this yourself — after you signal               #
   # DESIGN_APPROVED, the build_classifier determines the build path          #
-  # (including routing to agent_builder for Foundry agents).                 #
+  # (including routing to foundry_agent_builder for Foundry agents).                 #
   #                                                                          #
   # BEFORE approving: Call list_custom_agents to check if a similar agent    #
   # already exists. If it does, suggest updating rather than creating.       #
