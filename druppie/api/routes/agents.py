@@ -273,8 +273,8 @@ async def deploy_custom_agent(
     settings = get_settings()
 
     foundry = FoundryService(
-        endpoint=settings.foundry_project_endpoint,
-        api_key=settings.foundry_api_key or None,
+        endpoint=settings.llm.foundry_project_endpoint,
+        api_key=settings.llm.foundry_api_key or None,
     )
 
     if not foundry.is_configured():
@@ -325,8 +325,8 @@ async def undeploy_custom_agent(
     settings = get_settings()
 
     foundry = FoundryService(
-        endpoint=settings.foundry_project_endpoint,
-        api_key=settings.foundry_api_key or None,
+        endpoint=settings.llm.foundry_project_endpoint,
+        api_key=settings.llm.foundry_api_key or None,
     )
 
     if foundry.is_configured():

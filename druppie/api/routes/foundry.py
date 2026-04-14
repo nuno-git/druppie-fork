@@ -24,7 +24,7 @@ async def get_foundry_status(
 
     settings = get_settings()
     foundry = FoundryService(
-        endpoint=settings.foundry_project_endpoint,
-        api_key=settings.foundry_api_key or None,
+        endpoint=settings.llm.foundry_project_endpoint,
+        api_key=settings.llm.foundry_api_key or None,
     )
     return foundry.check_connection()
