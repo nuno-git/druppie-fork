@@ -100,6 +100,23 @@ class TestRunner:
         self._checks = CheckLoader(self._testing_dir / "checks")
         self._tool_tests = ToolTestLoader(self._testing_dir / "tools")
 
+    def with_db(self, db: DbSession) -> "TestRunner":
+        """Return a shallow copy using a different DB session.
+
+        Shares read-only loaders (profiles, checks, tool_tests) but uses
+        the given *db* for all DB operations.  This lets each test run
+        with its own short-lived session instead of sharing one for the
+        entire suite.
+        """
+        clone = object.__new__(TestRunner)
+        clone._db = db
+        clone._testing_dir = self._testing_dir
+        clone._gitea_url = self._gitea_url
+        clone._profiles = self._profiles
+        clone._checks = self._checks
+        clone._tool_tests = self._tool_tests
+        return clone
+
     def load_agent_test(self, path: Path) -> AgentTestDefinition:
         data = yaml.safe_load(path.read_text())
         return AgentTestFile(**data).agent_test
