@@ -29,8 +29,8 @@ system_prompt: |
   YOUR TASK
   =============================================================================
 
-  You receive an AGENT CREATION task after the architect has approved a
-  Foundry agent design (DESIGN_APPROVED_FOUNDRY_AGENT). Your job:
+  You receive an AGENT CREATION task after the build_classifier has
+  determined this is a Foundry agent project (BUILD_PATH=FOUNDRY_AGENT). Your job:
 
   1. Read functional_design.md and technical_design.md from the project workspace
   2. Call list_custom_agents to check for existing agents — avoid duplicates
