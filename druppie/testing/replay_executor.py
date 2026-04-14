@@ -336,20 +336,15 @@ class ReplayExecutor:
             pending = execution_repo.get_next_pending(session_id)
             if not pending:
                 logger.warning(
-                    "replay_no_pending_run",
-                    session_id=str(session_id),
-                    expected_agent=agent_fix.id,
-                    seq=seq,
+                    "replay_no_pending_run: session=%s expected=%s seq=%d",
+                    session_id, agent_fix.id, seq,
                 )
                 break
 
             if pending.agent_id != agent_fix.id:
                 logger.warning(
-                    "replay_agent_mismatch",
-                    session_id=str(session_id),
-                    expected=agent_fix.id,
-                    found=pending.agent_id,
-                    seq=seq,
+                    "replay_agent_mismatch: session=%s expected=%s found=%s seq=%d",
+                    session_id, agent_fix.id, pending.agent_id, seq,
                 )
 
             agent_run_id = pending.id
