@@ -44,6 +44,9 @@ from .evaluation import (
     BenchmarkRunSummary,
     EvaluationResultDetail,
     EvaluationResultSummary,
+    TestAssertionResultSummary,
+    TestRunDetail,
+    TestRunSummary,
 )
 
 # Common models
@@ -147,6 +150,10 @@ __all__ = [
     "EvaluationResultDetail",
     "BenchmarkRunSummary",
     "BenchmarkRunDetail",
+    # Test runs
+    "TestRunSummary",
+    "TestRunDetail",
+    "TestAssertionResultSummary",
 ]
 
 # Rebuild models to resolve forward references (circular imports between session/project)

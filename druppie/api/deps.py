@@ -127,9 +127,11 @@ def get_project_service(
 
 def get_evaluation_service(
     eval_repo: EvaluationRepository = Depends(get_evaluation_repository),
+    db: Session = Depends(get_db),
 ) -> EvaluationService:
     """Get EvaluationService with repositories injected."""
-    return EvaluationService(eval_repo)
+    from druppie.repositories.analytics_repository import AnalyticsRepository
+    return EvaluationService(eval_repo, AnalyticsRepository(db))
 
 
 def get_execution_repository(db: Session = Depends(get_db)) -> "ExecutionRepository":

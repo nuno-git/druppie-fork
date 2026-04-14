@@ -1,4 +1,4 @@
-import { useRef, useCallback } from 'react'
+import { useRef, useCallback, useEffect } from 'react'
 import { getRunStatus } from '../../services/api'
 
 /**
@@ -76,6 +76,16 @@ export default function useTestPolling({
 
     intervalRef.current = pollInterval
   }, [setIsRunning, setRunMessage, setRunProgress, setRunResult, setRefreshKey])
+
+  // Clean up interval on unmount to prevent setState on unmounted component
+  useEffect(() => {
+    return () => {
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current)
+        intervalRef.current = null
+      }
+    }
+  }, [])
 
   return { pollRunStatus }
 }

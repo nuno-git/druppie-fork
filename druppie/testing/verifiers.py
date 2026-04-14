@@ -20,11 +20,17 @@ logger = logging.getLogger(__name__)
 
 
 def _gitea_auth() -> tuple[str, str]:
-    """Get Gitea admin credentials from environment."""
-    return (
-        os.getenv("GITEA_ADMIN_USER", "gitea_admin"),
-        os.getenv("GITEA_ADMIN_PASSWORD", "GiteaAdmin123"),
-    )
+    """Get Gitea admin credentials from environment.
+
+    Raises ValueError if credentials are not configured.
+    """
+    user = os.getenv("GITEA_ADMIN_USER")
+    password = os.getenv("GITEA_ADMIN_PASSWORD")
+    if not user or not password:
+        raise ValueError(
+            "GITEA_ADMIN_USER and GITEA_ADMIN_PASSWORD environment variables must be set"
+        )
+    return (user, password)
 
 
 @dataclass

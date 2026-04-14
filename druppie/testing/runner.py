@@ -201,6 +201,8 @@ class TestRunner:
             logger.error("Tool chain replay failed: test=%s error=%s", test.name, e, exc_info=True)
 
         # Phase 3: Run top-level check assertions
+        if replay_session_id:
+            self._db.expire_all()  # Clear stale ORM cache before querying assertions
         if replay_session_id and test.assert_:
             for check_ref in test.assert_:
                 check_def = self._checks.get(check_ref.check)
@@ -493,7 +495,9 @@ class TestRunner:
                 try:
                     hitl_profile = self._profiles.get_hitl(hitl_name)
                 except KeyError:
-                    logger.warning("HITL profile not found: %s", hitl_name)
+                    raise ValueError(
+                        f"HITL profile '{hitl_name}' not found in {self._testing_dir / 'profiles'}"
+                    )
 
             # If continue_session, reuse the last setup session
             continue_session_id = last_setup_session_id if test.continue_session else None
@@ -516,6 +520,7 @@ class TestRunner:
         # Phase 3: Assertions
         all_assertion_results: list[AssertionResult] = []
         if eval_session_id is not None:
+            self._db.expire_all()  # Clear stale ORM cache before querying assertions
             for check_ref in test.assert_:
                 check_def = self._checks.get(check_ref.check)
                 results = match_assertions(self._db, eval_session_id, check_def.assert_, check_ref.expected)
@@ -668,10 +673,6 @@ class TestRunner:
                         hitl_profile: HITLProfile | None, test_context: str = "",
                         session_id: UUID | None = None) -> UUID:
         hitl_sim = HITLSimulator(hitl_profile, test_context=test_context) if hitl_profile else None
-        bounded = BoundedOrchestrator(
-            db=self._db, user_id=user_id,
-            real_agents=real_agents, hitl_simulator=hitl_sim,
-        )
 
         loop = None
         try:
@@ -680,11 +681,39 @@ class TestRunner:
             pass
 
         if loop and loop.is_running():
+            # Running inside an existing event loop (e.g., from background thread).
+            # Create a new DB session for the new thread to avoid cross-thread
+            # SQLAlchemy session usage, which is not thread-safe.
             import concurrent.futures
+            from druppie.db.database import SessionLocal
+
+            def _run_in_thread():
+                thread_db = SessionLocal()
+                try:
+                    bounded = BoundedOrchestrator(
+                        db=thread_db, user_id=user_id,
+                        real_agents=real_agents, hitl_simulator=hitl_sim,
+                    )
+                    result = asyncio.run(bounded.run(message, session_id=session_id))
+                    thread_db.commit()
+                    return result
+                except Exception:
+                    thread_db.rollback()
+                    raise
+                finally:
+                    thread_db.close()
+
             with concurrent.futures.ThreadPoolExecutor() as pool:
-                future = pool.submit(asyncio.run, bounded.run(message, session_id=session_id))
-                return future.result(timeout=300)
+                future = pool.submit(_run_in_thread)
+                result_id = future.result(timeout=300)
+            # Refresh the main session to see records created in the thread
+            self._db.expire_all()
+            return result_id
         else:
+            bounded = BoundedOrchestrator(
+                db=self._db, user_id=user_id,
+                real_agents=real_agents, hitl_simulator=hitl_sim,
+            )
             return asyncio.run(bounded.run(message, session_id=session_id))
 
 

@@ -11,6 +11,9 @@ from ..domain.evaluation import (
     BenchmarkRunSummary,
     EvaluationResultDetail,
     EvaluationResultSummary,
+    TestAssertionResultSummary,
+    TestRunDetail,
+    TestRunSummary,
 )
 from ..repositories import EvaluationRepository
 
@@ -20,8 +23,9 @@ logger = structlog.get_logger()
 class EvaluationService:
     """Business logic for benchmark runs and evaluation results."""
 
-    def __init__(self, eval_repo: EvaluationRepository):
+    def __init__(self, eval_repo: EvaluationRepository, analytics_repo=None):
         self.eval_repo = eval_repo
+        self._analytics_repo = analytics_repo
 
     # =========================================================================
     # BENCHMARK RUNS
@@ -124,7 +128,7 @@ class EvaluationService:
         runs, total = self.eval_repo.list_test_runs(
             limit=limit, offset=offset, tag=tag
         )
-        return [self._test_run_to_dict(r) for r in runs], total
+        return [self._test_run_to_summary(r).model_dump(mode="json") for r in runs], total
 
     def get_test_run_detail(self, test_run_id: UUID) -> dict:
         """Get a single test run with details.
@@ -135,7 +139,7 @@ class EvaluationService:
         run = self.eval_repo.get_test_run(test_run_id)
         if not run:
             raise NotFoundError("test_run", str(test_run_id))
-        return self._test_run_to_dict(run)
+        return self._test_run_to_detail(run).model_dump(mode="json")
 
     def list_test_batches(
         self,
@@ -360,25 +364,25 @@ class EvaluationService:
     # =========================================================================
 
     def get_analytics_summary(self, days: int = 30) -> dict:
-        return self.eval_repo.get_analytics_summary(days)
+        return self._analytics_repo.get_summary(days)
 
     def get_analytics_trends(self, days: int = 30) -> list[dict]:
-        return self.eval_repo.get_analytics_trends(days)
+        return self._analytics_repo.get_trends(days)
 
     def get_analytics_by_agent(self, batch_id: str | None = None) -> list[dict]:
-        return self.eval_repo.get_analytics_by_agent(batch_id)
+        return self._analytics_repo.get_by_agent(batch_id)
 
     def get_analytics_by_eval(self, batch_id: str | None = None) -> list[dict]:
-        return self.eval_repo.get_analytics_by_eval(batch_id)
+        return self._analytics_repo.get_by_eval(batch_id)
 
     def get_analytics_by_tool(self, batch_id: str | None = None) -> list[dict]:
-        return self.eval_repo.get_analytics_by_tool(batch_id)
+        return self._analytics_repo.get_by_tool(batch_id)
 
     def get_analytics_by_test(self, batch_id: str | None = None) -> list[dict]:
-        return self.eval_repo.get_analytics_by_test(batch_id)
+        return self._analytics_repo.get_by_test(batch_id)
 
     def get_analytics_batch_detail(self, batch_id: str) -> dict:
-        return self.eval_repo.get_analytics_batch_detail(batch_id)
+        return self._analytics_repo.get_batch_detail(batch_id)
 
     def get_test_run_assertions(self, test_run_id) -> list[dict]:
         return self.eval_repo.get_test_run_assertions(test_run_id)
@@ -408,11 +412,56 @@ class EvaluationService:
         return count
 
     @staticmethod
-    def _test_run_to_dict(run: TestRun) -> dict:
-        """Convert a TestRun DB model to a dict for API response."""
-        d = run.to_dict()
-        d["tags"] = getattr(run, "_tags", [])
-        return d
+    def _test_run_to_summary(run: TestRun) -> TestRunSummary:
+        """Convert a TestRun DB model to a TestRunSummary domain model."""
+        return TestRunSummary(
+            id=run.id,
+            benchmark_run_id=run.benchmark_run_id,
+            batch_id=run.batch_id,
+            test_name=run.test_name,
+            test_description=run.test_description,
+            test_user=run.test_user,
+            hitl_profile=run.hitl_profile,
+            judge_profile=run.judge_profile,
+            session_id=run.session_id,
+            sessions_seeded=run.sessions_seeded,
+            assertions_total=run.assertions_total,
+            assertions_passed=run.assertions_passed,
+            judge_checks_total=run.judge_checks_total,
+            judge_checks_passed=run.judge_checks_passed,
+            status=run.status,
+            duration_ms=run.duration_ms,
+            agent_id=run.agent_id,
+            mode=run.mode,
+            created_at=run.created_at,
+            tags=getattr(run, "_tags", []),
+        )
+
+    @classmethod
+    def _test_run_to_detail(cls, run: TestRun) -> TestRunDetail:
+        """Convert a TestRun DB model to a TestRunDetail domain model."""
+        summary = cls._test_run_to_summary(run)
+        assertion_results = [
+            TestAssertionResultSummary(
+                id=ar.id,
+                test_run_id=ar.test_run_id,
+                assertion_type=ar.assertion_type,
+                agent_id=ar.agent_id,
+                tool_name=ar.tool_name,
+                eval_name=ar.eval_name,
+                passed=ar.passed,
+                message=ar.message,
+                judge_reasoning=ar.judge_reasoning,
+                judge_raw_input=ar.judge_raw_input,
+                judge_raw_output=ar.judge_raw_output,
+                created_at=ar.created_at,
+            )
+            for ar in (run.assertion_results or [])
+        ]
+        return TestRunDetail(
+            **summary.model_dump(),
+            assertion_results=assertion_results,
+        )
 
     # =========================================================================
     # CONVERSION HELPERS
