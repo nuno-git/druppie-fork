@@ -8,7 +8,7 @@ from druppie.testing.schema import HITLProfile
 
 logger = logging.getLogger(__name__)
 
-MAX_HITL_INTERACTIONS = 20
+MAX_HITL_INTERACTIONS = 100
 
 
 class HITLSimulator:

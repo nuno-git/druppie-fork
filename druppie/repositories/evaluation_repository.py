@@ -1,9 +1,8 @@
 """Evaluation repository for benchmark runs and evaluation results."""
 
-from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
-from sqlalchemy import case, func
+from sqlalchemy import func
 from sqlalchemy.orm import joinedload
 
 from ..db.models import BenchmarkRun, EvaluationResult, TestRun, TestRunTag
@@ -273,9 +272,7 @@ class EvaluationRepository(BaseRepository):
             run_dicts = []
             for run in runs:
                 run._tags = [t.tag for t in run.tags]
-                d = run.to_dict()
-                d["tags"] = run._tags
-                run_dicts.append(d)
+                run_dicts.append(self._run_to_summary_dict(run))
 
             passed = sum(1 for r in runs if r.status == "passed")
             total_tests = len(runs)
@@ -302,8 +299,7 @@ class EvaluationRepository(BaseRepository):
             )
             for run in unbatched:
                 run._tags = [t.tag for t in run.tags]
-                d = run.to_dict()
-                d["tags"] = run._tags
+                d = self._run_to_summary_dict(run)
                 batches.append({
                     "batch_id": str(run.id),
                     "started_at": run.created_at.isoformat() if run.created_at else None,
@@ -357,6 +353,36 @@ class EvaluationRepository(BaseRepository):
             self.db.delete(user)
 
         return count
+
+    # =========================================================================
+    # CONVERSION HELPERS
+    # =========================================================================
+
+    @staticmethod
+    def _run_to_summary_dict(run: TestRun) -> dict:
+        """Convert a TestRun to a summary dict using domain model fields."""
+        return {
+            "id": str(run.id),
+            "benchmark_run_id": str(run.benchmark_run_id) if run.benchmark_run_id else None,
+            "batch_id": run.batch_id,
+            "test_name": run.test_name,
+            "test_description": run.test_description,
+            "test_user": run.test_user,
+            "hitl_profile": run.hitl_profile,
+            "judge_profile": run.judge_profile,
+            "session_id": str(run.session_id) if run.session_id else None,
+            "sessions_seeded": run.sessions_seeded,
+            "assertions_total": run.assertions_total,
+            "assertions_passed": run.assertions_passed,
+            "judge_checks_total": run.judge_checks_total,
+            "judge_checks_passed": run.judge_checks_passed,
+            "status": run.status,
+            "duration_ms": run.duration_ms,
+            "agent_id": run.agent_id,
+            "mode": run.mode,
+            "created_at": run.created_at.isoformat() if run.created_at else None,
+            "tags": getattr(run, "_tags", []),
+        }
 
     # =========================================================================
     # AGGREGATION METHODS
@@ -416,204 +442,6 @@ class EvaluationRepository(BaseRepository):
             "graded_avg": graded_avg,
         }
 
-    # =========================================================================
-    # ANALYTICS METHODS
-    # =========================================================================
-
-    def get_analytics_summary(self, days: int = 30) -> dict:
-        """Global analytics summary using SQL aggregation."""
-        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
-        row = (
-            self.db.query(
-                func.count(TestRun.id).label("total"),
-                func.sum(case((TestRun.status == "passed", 1), else_=0)).label("passed"),
-                func.avg(TestRun.duration_ms).label("avg_duration"),
-            )
-            .filter(TestRun.created_at >= cutoff)
-            .first()
-        )
-        total = row.total or 0
-        passed = row.passed or 0
-        return {
-            "total_runs": total,
-            "total_passed": passed,
-            "total_failed": total - passed,
-            "pass_rate": round(passed / total * 100, 1) if total else 0,
-            "avg_duration_ms": int(row.avg_duration or 0),
-        }
-
-    def get_analytics_trends(self, days: int = 30) -> list[dict]:
-        """Pass rate trends grouped by day using SQL aggregation."""
-        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
-        rows = (
-            self.db.query(
-                func.date(TestRun.created_at).label("day"),
-                func.count(TestRun.id).label("total"),
-                func.sum(case((TestRun.status == "passed", 1), else_=0)).label("passed"),
-            )
-            .filter(TestRun.created_at >= cutoff)
-            .group_by(func.date(TestRun.created_at))
-            .order_by(func.date(TestRun.created_at))
-            .all()
-        )
-        return [
-            {
-                "date": str(r.day),
-                "total": r.total,
-                "passed": r.passed,
-                "failed": r.total - r.passed,
-                "pass_rate": round(r.passed / r.total * 100, 1) if r.total else 0,
-            }
-            for r in rows
-        ]
-
-    def get_analytics_by_agent(self, batch_id: str | None = None) -> list[dict]:
-        """Assertion results grouped by agent using SQL aggregation."""
-        query = self.db.query(
-            TestAssertionResult.agent_id,
-            func.count(TestAssertionResult.id).label("total"),
-            func.sum(case((TestAssertionResult.passed == True, 1), else_=0)).label("passed"),  # noqa: E712
-        ).filter(TestAssertionResult.agent_id.isnot(None))
-        if batch_id:
-            query = query.join(TestRun).filter(TestRun.batch_id == batch_id)
-        rows = query.group_by(TestAssertionResult.agent_id).order_by(TestAssertionResult.agent_id).all()
-        return [
-            {
-                "agent": r.agent_id,
-                "total": r.total,
-                "passed": r.passed,
-                "failed": r.total - r.passed,
-                "pass_rate": round(r.passed / r.total * 100, 1) if r.total else 0,
-            }
-            for r in rows
-        ]
-
-    def get_analytics_by_eval(self, batch_id: str | None = None) -> list[dict]:
-        """Assertion results grouped by eval name using SQL aggregation."""
-        query = self.db.query(
-            TestAssertionResult.eval_name,
-            func.count(TestAssertionResult.id).label("total"),
-            func.sum(case((TestAssertionResult.passed == True, 1), else_=0)).label("passed"),  # noqa: E712
-        ).filter(TestAssertionResult.eval_name.isnot(None))
-        if batch_id:
-            query = query.join(TestRun).filter(TestRun.batch_id == batch_id)
-        rows = query.group_by(TestAssertionResult.eval_name).order_by(TestAssertionResult.eval_name).all()
-        return [
-            {
-                "eval_name": r.eval_name,
-                "total": r.total,
-                "passed": r.passed,
-                "failed": r.total - r.passed,
-                "pass_rate": round(r.passed / r.total * 100, 1) if r.total else 0,
-            }
-            for r in rows
-        ]
-
-    def get_analytics_by_tool(self, batch_id: str | None = None) -> list[dict]:
-        """Assertion results grouped by tool name using SQL aggregation."""
-        query = self.db.query(
-            TestAssertionResult.tool_name,
-            func.count(TestAssertionResult.id).label("total"),
-            func.sum(case((TestAssertionResult.passed == True, 1), else_=0)).label("passed"),  # noqa: E712
-        ).filter(TestAssertionResult.tool_name.isnot(None))
-        if batch_id:
-            query = query.join(TestRun).filter(TestRun.batch_id == batch_id)
-        rows = query.group_by(TestAssertionResult.tool_name).order_by(TestAssertionResult.tool_name).all()
-        return [
-            {
-                "tool": r.tool_name,
-                "total": r.total,
-                "passed": r.passed,
-                "failed": r.total - r.passed,
-                "pass_rate": round(r.passed / r.total * 100, 1) if r.total else 0,
-            }
-            for r in rows
-        ]
-
-    def get_analytics_by_test(self, batch_id: str | None = None) -> list[dict]:
-        """Test runs grouped by test name using SQL aggregation."""
-        query = self.db.query(
-            TestRun.test_name,
-            func.count(TestRun.id).label("total"),
-            func.sum(case((TestRun.status == "passed", 1), else_=0)).label("passed"),
-            func.avg(TestRun.duration_ms).label("avg_duration"),
-        )
-        if batch_id:
-            query = query.filter(TestRun.batch_id == batch_id)
-        rows = query.group_by(TestRun.test_name).order_by(TestRun.test_name).all()
-        return [
-            {
-                "test_name": r.test_name,
-                "total": r.total,
-                "passed": r.passed,
-                "failed": r.total - r.passed,
-                "pass_rate": round(r.passed / r.total * 100, 1) if r.total else 0,
-                "avg_duration_ms": int(r.avg_duration or 0),
-            }
-            for r in rows
-        ]
-
-    def get_analytics_batch_detail(self, batch_id: str) -> dict:
-        """Detailed analytics for a single batch."""
-        runs = (
-            self.db.query(TestRun)
-            .filter(TestRun.batch_id == batch_id)
-            .all()
-        )
-        if not runs:
-            return {"batch_id": batch_id, "total": 0, "passed": 0, "failed": 0}
-
-        total = len(runs)
-        passed = sum(1 for r in runs if r.status == "passed")
-        durations = [r.duration_ms for r in runs if r.duration_ms is not None]
-        total_duration = sum(durations) if durations else 0
-        created_at = min(r.created_at for r in runs if r.created_at) if runs else None
-
-        run_ids = [r.id for r in runs]
-
-        # Agent breakdown via SQL
-        by_agent = self.get_analytics_by_agent(batch_id)
-
-        # Eval breakdown via SQL
-        by_eval = self.get_analytics_by_eval(batch_id)
-
-        # Per-test details (need assertion results per run)
-        assertion_results = (
-            self.db.query(TestAssertionResult)
-            .filter(TestAssertionResult.test_run_id.in_(run_ids))
-            .all()
-        )
-        ar_by_run: dict = {}
-        for ar in assertion_results:
-            ar_by_run.setdefault(ar.test_run_id, []).append(ar)
-
-        return {
-            "batch_id": batch_id,
-            "created_at": created_at.isoformat() if created_at else None,
-            "total": total,
-            "passed": passed,
-            "failed": total - passed,
-            "pass_rate": round(passed / total * 100, 1) if total else 0,
-            "duration_ms": total_duration,
-            "by_agent": by_agent,
-            "by_eval": [{"eval_name": e.pop("eval_name"), **e} for e in by_eval],
-            "by_test": [
-                {
-                    "test_name": r.test_name,
-                    "status": r.status,
-                    "duration_ms": r.duration_ms,
-                    "hitl_profile": r.hitl_profile,
-                    "judge_profile": r.judge_profile,
-                    "assertions_total": r.assertions_total,
-                    "assertions_passed": r.assertions_passed,
-                    "judge_checks_total": r.judge_checks_total,
-                    "judge_checks_passed": r.judge_checks_passed,
-                    "assertion_results": [ar.to_dict() for ar in ar_by_run.get(r.id, [])],
-                }
-                for r in runs
-            ],
-        }
-
     def get_test_run_assertions(self, test_run_id: UUID) -> list[dict]:
         """Get assertion results for a test run."""
         results = (
@@ -631,14 +459,14 @@ class EvaluationRepository(BaseRepository):
         check_text: str | None = None,
     ) -> dict:
         """Get all assertion results for a batch, optionally filtered."""
-        from ..db.models import ToolCall, AgentRun
-
         runs = (
             self.db.query(TestRun)
             .filter(TestRun.batch_id == batch_id)
             .order_by(TestRun.created_at)
             .all()
         )
+
+        run_ids = [r.id for r in runs]
 
         result = {
             "batch_id": batch_id,
@@ -648,23 +476,32 @@ class EvaluationRepository(BaseRepository):
             "runs": [],
         }
 
-        for run in runs:
-            query = self.db.query(TestAssertionResult).filter(
-                TestAssertionResult.test_run_id == run.id
-            )
-            if assertion_type:
-                if assertion_type == "assertions":
-                    query = query.filter(TestAssertionResult.assertion_type.in_(["completed", "tool"]))
-                else:
-                    query = query.filter(TestAssertionResult.assertion_type == assertion_type)
-            if agent_id:
-                query = query.filter(TestAssertionResult.agent_id == agent_id)
-            if check_text:
-                query = query.filter(TestAssertionResult.message == check_text)
-            assertions = query.order_by(TestAssertionResult.created_at).all()
+        if not run_ids:
+            return result
 
+        # Single batch query for all assertions instead of per-run N+1
+        query = self.db.query(TestAssertionResult).filter(
+            TestAssertionResult.test_run_id.in_(run_ids)
+        )
+        if assertion_type:
+            if assertion_type == "assertions":
+                query = query.filter(TestAssertionResult.assertion_type.in_(["completed", "tool"]))
+            else:
+                query = query.filter(TestAssertionResult.assertion_type == assertion_type)
+        if agent_id:
+            query = query.filter(TestAssertionResult.agent_id == agent_id)
+        if check_text:
+            query = query.filter(TestAssertionResult.message == check_text)
+        all_assertions = query.order_by(TestAssertionResult.created_at).all()
+
+        # Group by test_run_id
+        assertions_by_run: dict = {}
+        for ar in all_assertions:
+            assertions_by_run.setdefault(ar.test_run_id, []).append(ar)
+
+        for run in runs:
             run_assertions = []
-            for ar in assertions:
+            for ar in assertions_by_run.get(run.id, []):
                 d = ar.to_dict()
                 if ar.assertion_type in ("completed", "tool"):
                     result["summary"]["assertions"] += 1

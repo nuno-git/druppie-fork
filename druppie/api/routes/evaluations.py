@@ -37,9 +37,37 @@ router = APIRouter()
 # In-memory store for background test run status.
 # Persisted to DB via batch_id — the in-memory dict is for live progress updates.
 # On restart, active-run endpoint checks DB for incomplete batches.
+# _run_lock protects ALL reads and writes to _test_run_status and _active_run_id.
 _run_lock = threading.Lock()
 _test_run_status: dict[str, dict] = {}
 _active_run_id: str | None = None  # currently running batch_id
+
+
+def _update_run_status(run_id: str, **updates: object) -> None:
+    """Thread-safe update of run status fields."""
+    with _run_lock:
+        if run_id in _test_run_status:
+            _test_run_status[run_id].update(updates)
+
+
+def _set_run_status(run_id: str, status: dict) -> None:
+    """Thread-safe full replacement of run status."""
+    with _run_lock:
+        _test_run_status[run_id] = status
+
+
+def _get_run_status_snapshot(run_id: str) -> dict | None:
+    """Thread-safe read of run status."""
+    with _run_lock:
+        status = _test_run_status.get(run_id)
+        return dict(status) if status else None
+
+
+def _append_completed_test(run_id: str, test_info: dict) -> None:
+    """Thread-safe append to completed_tests list."""
+    with _run_lock:
+        if run_id in _test_run_status:
+            _test_run_status[run_id]["completed_tests"].append(test_info)
 
 
 # =============================================================================
@@ -436,6 +464,10 @@ async def run_tests(
 
             def _find_test(name):
                 """Find test YAML in tools/, agents/, or agents/manual/."""
+                # Reject path traversal attempts
+                if "/" in name or "\\" in name or ".." in name:
+                    logger.warning("Rejected test name with path characters: %s", name)
+                    return None
                 for subdir in ["tools", "agents", "agents/manual"]:
                     p = runner._testing_dir / subdir / f"{name}.yaml"
                     if p.exists():
@@ -489,14 +521,12 @@ async def run_tests(
                 tests_to_run = [(td.name, td) for _p, td in all_tests]
 
             total = len(tests_to_run)
-            _test_run_status[run_id]["total_tests"] = total
-            _test_run_status[run_id]["message"] = f"Running 0/{total} tests..."
+            _update_run_status(run_id, total_tests=total, message=f"Running 0/{total} tests...")
 
             all_results = []
             for idx, (name, test_def) in enumerate(tests_to_run):
                 # Update status: which test is running now
-                _test_run_status[run_id]["current_test"] = name
-                _test_run_status[run_id]["message"] = f"Running {idx + 1}/{total}: {name}"
+                _update_run_status(run_id, current_test=name, message=f"Running {idx + 1}/{total}: {name}")
 
                 try:
                     test_results = runner.run_test(test_def, **phase_flags)
@@ -504,14 +534,14 @@ async def run_tests(
 
                     # Update completed list
                     for r in test_results:
-                        _test_run_status[run_id]["completed_tests"].append({
+                        _append_completed_test(run_id, {
                             "test_name": r.test_name,
                             "status": r.status,
                             "duration_ms": r.duration_ms,
                         })
                 except Exception as test_err:
                     logger.error("test_failed", test=name, error=str(test_err), exc_info=True)
-                    _test_run_status[run_id]["completed_tests"].append({
+                    _append_completed_test(run_id, {
                         "test_name": name,
                         "status": "error",
                         "duration_ms": 0,
@@ -536,24 +566,30 @@ async def run_tests(
                 ],
             }
 
-            _test_run_status[run_id] = {
+            with _run_lock:
+                completed = _test_run_status[run_id]["completed_tests"]
+            _set_run_status(run_id, {
                 "status": "completed",
                 "message": f"{passed}/{result['total']} passed",
                 "results": result,
                 "current_test": None,
-                "completed_tests": _test_run_status[run_id]["completed_tests"],
+                "completed_tests": completed,
                 "total_tests": total,
-            }
+            })
         except Exception as e:
             logger.error("tests_run_error", run_id=run_id, error=str(e), exc_info=True)
-            _test_run_status[run_id] = {
+            with _run_lock:
+                prev = _test_run_status.get(run_id, {})
+                completed = prev.get("completed_tests", [])
+                total_tests = prev.get("total_tests", 0)
+            _set_run_status(run_id, {
                 "status": "error",
                 "message": str(e),
                 "results": None,
                 "current_test": None,
-                "completed_tests": _test_run_status[run_id].get("completed_tests", []),
-                "total_tests": _test_run_status[run_id].get("total_tests", 0),
-            }
+                "completed_tests": completed,
+                "total_tests": total_tests,
+            })
             try:
                 db.rollback()
             except Exception:
@@ -586,7 +622,7 @@ async def get_run_status(
     Returns:
         Status object with status, message, and results (when completed)
     """
-    status = _test_run_status.get(run_id)
+    status = _get_run_status_snapshot(run_id)
     if not status:
         return {"status": "not_found"}
     return status
@@ -601,10 +637,11 @@ async def get_active_run(
     Returns the active run status (from memory) or indicates no run is active.
     The frontend should call this on page load to restore the running state.
     """
-    if _active_run_id and _active_run_id in _test_run_status:
-        status = _test_run_status[_active_run_id]
-        if status.get("status") == "running":
-            return {"active": True, "run_id": _active_run_id, **status}
+    with _run_lock:
+        active_id = _active_run_id
+        status = dict(_test_run_status[active_id]) if active_id and active_id in _test_run_status else None
+    if status and status.get("status") == "running":
+        return {"active": True, "run_id": active_id, **status}
     return {"active": False}
 
 

@@ -24,6 +24,7 @@ from druppie.db.models import AgentRun, LlmCall, Message, Session, ToolCall
 from druppie.db.models.base import utcnow
 from druppie.testing.seed_ids import fixture_uuid
 from druppie.testing.seed_schema import SessionFixture, ToolCallFixture
+from druppie.testing.verifiers import _gitea_auth
 
 logger = logging.getLogger(__name__)
 
@@ -384,10 +385,7 @@ class ReplayExecutor:
 
         client = httpx.Client(
             base_url=gitea_url,
-            auth=(
-                os.getenv("GITEA_ADMIN_USER", "gitea_admin"),
-                os.getenv("GITEA_ADMIN_PASSWORD", "GiteaAdmin123"),
-            ),
+            auth=_gitea_auth(),
             timeout=30,
         )
 
