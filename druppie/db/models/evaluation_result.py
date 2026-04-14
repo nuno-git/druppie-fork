@@ -1,6 +1,8 @@
 """Evaluation result database model."""
 
-from typing import Any
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Index, Integer, String, Text
@@ -56,26 +58,9 @@ class EvaluationResult(Base):
     # Relationships
     benchmark_run = relationship("BenchmarkRun", back_populates="results")
 
+    def to_domain(self) -> "EvaluationResultSummary":
+        from druppie.domain.evaluation import EvaluationResultSummary
+        return EvaluationResultSummary.model_validate(self, from_attributes=True)
+
     def to_dict(self) -> dict[str, Any]:
-        return {
-            "id": str(self.id),
-            "benchmark_run_id": str(self.benchmark_run_id) if self.benchmark_run_id else None,
-            "session_id": str(self.session_id) if self.session_id else None,
-            "agent_run_id": str(self.agent_run_id) if self.agent_run_id else None,
-            "agent_id": self.agent_id,
-            "evaluation_name": self.evaluation_name,
-            "rubric_name": self.rubric_name,
-            "score_type": self.score_type,
-            "score_binary": self.score_binary,
-            "score_graded": self.score_graded,
-            "max_score": self.max_score,
-            "judge_model": self.judge_model,
-            "judge_prompt": self.judge_prompt,
-            "judge_response": self.judge_response,
-            "judge_reasoning": self.judge_reasoning,
-            "llm_model": self.llm_model,
-            "llm_provider": self.llm_provider,
-            "judge_duration_ms": self.judge_duration_ms,
-            "judge_tokens_used": self.judge_tokens_used,
-            "created_at": self.created_at.isoformat() if self.created_at else None,
-        }
+        return self.to_domain().model_dump(mode="json")

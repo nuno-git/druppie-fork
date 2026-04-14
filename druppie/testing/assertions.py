@@ -275,5 +275,13 @@ def _match_value(expected: object, actual: object) -> bool:
         return actual in expected or str(actual) in [str(v) for v in expected]
     if type(expected) == type(actual):
         return expected == actual
-    # Fall back to string comparison for cross-type (YAML str vs DB int etc.)
-    return str(expected) == str(actual)
+    # Allow numeric cross-type (YAML may parse "1" as int, DB may return str)
+    if isinstance(expected, (int, float)) and isinstance(actual, (int, float)):
+        return expected == actual
+    # Allow bool/str cross-type (YAML "true" vs DB True)
+    if isinstance(expected, bool) and isinstance(actual, str):
+        return str(expected).lower() == actual.lower()
+    if isinstance(actual, bool) and isinstance(expected, str):
+        return str(actual).lower() == expected.lower()
+    # Strict: no implicit str() coercion — mismatched types fail
+    return False
