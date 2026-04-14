@@ -40,6 +40,7 @@ from .evaluation_result import EvaluationResult
 
 # Test run models (testing framework)
 from .test_assertion_result import TestAssertionResult
+from .test_batch_run import TestBatchRun
 from .test_run import TestRun
 from .test_run_tag import TestRunTag
 from .llm_call import LlmCall
@@ -94,6 +95,7 @@ __all__ = [
     "BenchmarkRun",
     "EvaluationResult",
     # Test runs (testing framework)
+    "TestBatchRun",
     "TestRun",
     "TestRunTag",
     "TestAssertionResult",

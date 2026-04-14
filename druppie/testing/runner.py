@@ -314,16 +314,12 @@ class TestRunner:
             logger.warning("Empty chain in test '%s' — skipping replay", test.name)
             return None, []
 
-        from druppie.testing.replay_executor import ReplayExecutor, _gitea_singleton_lock
+        from druppie.testing.replay_executor import ReplayExecutor
         from druppie.testing.seed_schema import (
             AgentRunFixture, SessionFixture, SessionMetadata, ToolCallFixture, MessageFixture,
         )
 
         replay_exec = ReplayExecutor(self._db)
-        # Acquire the Gitea singleton lock for the entire replay so that
-        # the freshly-created client isn't reset by a concurrent thread
-        # before we finish using it.
-        _gitea_lock = _gitea_singleton_lock
 
         # Build a SessionFixture from the chain steps.
         # Create a new agent run each time the agent changes (preserves
@@ -387,10 +383,7 @@ class TestRunner:
             messages=[MessageFixture(role="user", content=f"Tool test: {test.name}")],
         )
 
-        with _gitea_lock:
-            result = asyncio.run(
-                replay_exec.replay_session(fixture, user_id, self._gitea_url)
-            )
+        result = replay_exec.replay_session_sync(fixture, user_id, self._gitea_url)
 
         session_id = UUID(result["session_id"])
 
