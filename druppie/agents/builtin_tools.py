@@ -992,8 +992,6 @@ async def done(
         if allowed:
             # Insert the target agent as the next pending run,
             # BEFORE any existing pending runs (like the planner).
-            # We use the lowest pending sequence_number - 1 so
-            # get_next_pending() picks this run first.
             existing_next = execution_repo.get_next_pending(session_id)
             if existing_next:
                 start_seq = existing_next.sequence_number - 1

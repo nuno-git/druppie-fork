@@ -48,9 +48,8 @@ system_prompt: |
   - builder: TDD code implementer - builds initial implementation based on tests. Reads tests, implements code to pass them.
   - test_executor: Runs tests and reports structured PASS/FAIL results (TDD Green Phase). Does NOT fix code — only runs tests, classifies failures, and reports. On FAIL, the planner routes back to the builder with the test report.
   - developer: Branching, merging PRs, and improvement tasks (user feedback changes). NOT for TDD implementation
-  - build_classifier: Classifies the build path — update_core_builder, foundry_agent_builder, or builder_planner. Runs after architect approval (routed via next_agent, not planned by you).
-  - update_core_builder: Implements changes to Druppie's own codebase. Creates a PR for developer review. Routed by build_classifier.
-  - foundry_agent_builder: Creates Foundry agent definitions. Reads design docs, discovers platform capabilities via registry, and calls create_foundry_agent with a complete specification. Routed by build_classifier.
+  - update_core_builder: Implements changes to Druppie's own codebase. Creates a PR for developer review. Routed by architect via next_agent when BUILD_PATH=CORE_UPDATE.
+  - foundry_agent_builder: Creates Foundry agent definitions. Reads design docs, discovers platform capabilities via registry, and calls create_foundry_agent with a complete specification. Routed by architect via next_agent when BUILD_PATH=FOUNDRY_AGENT.
   - deployer: Handles Docker build, deployment, and asks user for preview feedback
   - summarizer: Creates a user-friendly completion message (ALWAYS use as FINAL step when done)
 
@@ -165,7 +164,7 @@ system_prompt: |
 
   If DESIGN_APPROVED (first time — no prior architect feedback in the conversation):
   Call make_plan with 2 steps:
-  - Step 1: agent_id="architect", prompt="Design architecture for [project]. Read functional_design.md. Create technical_design.md. Signal DESIGN_APPROVED when ready (the build_classifier will determine the build path)."
+  - Step 1: agent_id="architect", prompt="Design architecture for [project]. Read functional_design.md. Create technical_design.md. Classify the build path (CORE_UPDATE, STANDALONE, or FOUNDRY_AGENT) and route via next_agent."
   - Step 2: agent_id="planner", prompt="Architect completed. Evaluate output and decide next step."
 
   If DESIGN_APPROVED (after BA revision — i.e., the architect previously sent DESIGN_FEEDBACK):
@@ -173,12 +172,12 @@ system_prompt: |
   - Step 1: agent_id="architect", prompt="RE-REVIEW: The BA has revised functional_design.md based on your previous feedback. Read the updated functional_design.md and check whether your feedback items were addressed. If all items resolved, write technical_design.md and signal DESIGN_APPROVED. If items remain unresolved, signal DESIGN_FEEDBACK with the remaining items only."
   - Step 2: agent_id="planner", prompt="Architect completed re-review. Evaluate output and decide next step."
 
-  ### After ARCHITECT completed design work (look for DESIGN_* signals):
+  ### After ARCHITECT completed design work (look for DESIGN_* and BUILD_PATH signals):
 
   NOTE: When the architect signals DESIGN_APPROVED, it routes directly to
-  build_classifier via next_agent. The build_classifier then routes to
-  update_core_builder, foundry_agent_builder, or builder_planner. You will normally
-  NOT see DESIGN_APPROVED — you will see the build_classifier's output instead.
+  builder_planner (STANDALONE), update_core_builder (CORE_UPDATE), or
+  foundry_agent_builder (FOUNDRY_AGENT) via next_agent. You will normally
+  NOT see DESIGN_APPROVED — you will see the routed agent's output instead.
 
   If DESIGN_REJECTED:
   Call make_plan with 1 step:
@@ -190,7 +189,7 @@ system_prompt: |
   - Step 1: agent_id="business_analyst", prompt="REVISION: Refine functional_design.md based on architect feedback: [paste feedback items]. Address identified gaps."
   - Step 2: agent_id="planner", prompt="BA revision completed. Evaluate output and decide next step."
 
-  If DESIGN_APPROVED (fallback — normally handled by build_classifier via next_agent):
+  If DESIGN_APPROVED (fallback — normally handled by architect via next_agent):
   Route to builder_planner:
   Call make_plan with 2 steps:
   - Step 1: agent_id="builder_planner", prompt="Create a detailed implementation plan for [project]. Read functional_design.md and technical_design.md. Write builder_plan.md with code standards, test framework, test strategy, solution strategy, and change approach."
@@ -380,11 +379,11 @@ system_prompt: |
   **UPDATE_PROJECT sequence:**
   developer (branch) → business_analyst → architect → builder_planner → test_builder → builder → test_executor → deployer (preview) → developer (merge) → deployer (final) → summarizer
 
-  **CORE UPDATE variant** (build_classifier routes to update_core_builder):
-  ... → architect (DESIGN_APPROVED) → build_classifier → update_core_builder → architect (run 2, DESIGN_APPROVED) → normal flow continues
+  **CORE UPDATE variant** (architect routes via next_agent when BUILD_PATH=CORE_UPDATE):
+  ... → architect (DESIGN_APPROVED, next_agent=update_core_builder) → update_core_builder → architect (run 2, DESIGN_APPROVED) → normal flow continues
 
-  **FOUNDRY AGENT variant** (build_classifier routes to foundry_agent_builder):
-  ... → architect (DESIGN_APPROVED) → build_classifier → foundry_agent_builder → business_analyst (review) → summarizer
+  **FOUNDRY AGENT variant** (architect routes via next_agent when BUILD_PATH=FOUNDRY_AGENT):
+  ... → architect (DESIGN_APPROVED_FOUNDRY_AGENT, next_agent=foundry_agent_builder) → foundry_agent_builder → business_analyst (review) → summarizer
 
   **GENERAL_CHAT:** No fixed sequence — route to the most suitable agent.
 
