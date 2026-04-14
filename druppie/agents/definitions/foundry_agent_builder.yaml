@@ -166,6 +166,9 @@ mcps:
   web:
     - search_web
 
+allowed_next_agents:
+  - business_analyst
+
 llm_profile: standard
 temperature: 0.2
 max_tokens: 16384
