@@ -30,6 +30,8 @@ tool-test:
         steps:
           - agent_id: business_analyst
             prompt: "Write functional design"
+          - agent_id: planner
+            prompt: "Re-evaluate after business_analyst completes"
 
     - agent: planner
       tool: builtin:done

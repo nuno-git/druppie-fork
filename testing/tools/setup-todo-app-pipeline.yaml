@@ -34,6 +34,8 @@ tool-test:
         steps:
           - agent_id: business_analyst
             prompt: "Gather requirements for the to-do app and create functional design"
+          - agent_id: planner
+            prompt: "Re-evaluate after business_analyst completes"
 
     - agent: planner
       tool: builtin:done
@@ -104,6 +106,8 @@ tool-test:
         steps:
           - agent_id: architect
             prompt: "Review functional design and create technical design for the todo app"
+          - agent_id: planner
+            prompt: "Re-evaluate after architect completes"
 
     - agent: planner
       tool: builtin:done
@@ -187,6 +191,8 @@ tool-test:
         steps:
           - agent_id: builder_planner
             prompt: "Create a builder plan for the todo app"
+          - agent_id: planner
+            prompt: "Re-evaluate after builder_planner completes"
 
     - agent: planner
       tool: builtin:done
@@ -261,6 +267,8 @@ tool-test:
         steps:
           - agent_id: test_builder
             prompt: "Write tests for the todo app based on the builder plan"
+          - agent_id: planner
+            prompt: "Re-evaluate after test_builder completes"
 
     - agent: planner
       tool: builtin:done
@@ -335,6 +343,8 @@ tool-test:
         steps:
           - agent_id: builder
             prompt: "Implement the todo app to pass the tests"
+          - agent_id: planner
+            prompt: "Re-evaluate after builder completes"
 
     - agent: planner
       tool: builtin:done
