@@ -295,8 +295,12 @@ class ReplayExecutor:
                 total_tokens=0,
                 duration_ms=0,
                 response_tool_calls=[
-                    {"name": tc.tool, "arguments": tc.arguments}
-                    for tc in agent_fix.tool_calls
+                    {
+                        "id": f"replay_{seq}_{i}",
+                        "name": tc.tool.replace(":", "_") if ":" in tc.tool else tc.tool,
+                        "args": tc.arguments,
+                    }
+                    for i, tc in enumerate(agent_fix.tool_calls)
                 ],
                 created_at=utcnow(),
             )

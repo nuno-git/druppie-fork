@@ -165,6 +165,9 @@ class ChainStep(BaseModel):
     outcome: dict | None = None  # for execute_coding_task file creation
     approval: ChainStepApproval | None = None  # how to handle approval gate
     assert_: ChainStepAssert | None = Field(default=None, alias="assert")
+    # Set on the FIRST step of an agent run to store planned_prompt on the
+    # AgentRun record.  Used by continue_run() when resuming paused sessions.
+    planned_prompt: str | None = None
 
 
 class ToolTestDefinition(BaseModel):
@@ -178,6 +181,11 @@ class ToolTestDefinition(BaseModel):
     setup: list[str] = Field(default_factory=list)  # session IDs to seed (DB insert)
     extends: str | None = None  # another tool-test name to run first
     chain: list[ChainStep] = Field(default_factory=list)
+
+    # Override the final session status (default: "completed").
+    # Use "paused" to leave the session mid-run so it can be resumed
+    # via the UI.  The last non-done agent run becomes "paused_user".
+    session_status: str | None = None
 
     # Top-level assertions (in addition to inline assert on chain steps)
     assert_: list[CheckRef] | None = Field(default=None, alias="assert")

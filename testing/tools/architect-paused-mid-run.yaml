@@ -1,0 +1,66 @@
+## Paused session: architect mid-run, ready for manual resume
+## Extends setup-project-with-fd (BA completed, FD in place).
+## Architect has started (read FD, loaded principles) but is paused
+## before writing the technical design.
+## Click "Continue" in the UI to resume — the architect will pick up
+## with a real LLM call and create the TD.
+
+tool-test:
+  name: architect-paused-mid-run
+  description: "Architect mid-run, paused — resume to continue with real LLM"
+  tags: [seed, paused, architect]
+  extends: setup-project-with-fd
+  session_status: paused
+
+  chain:
+    # --- Architect starts work ---
+    # First step sets the planned_prompt so continue_run() knows what to do
+    - agent: architect
+      planned_prompt: "Review the functional design and create the technical design"
+      tool: coding:read_file
+      mock: true
+      mock_result: |
+        # Functioneel Ontwerp: Recipe Sharing App
+
+        ## 1. Huidige vs Gewenste Situatie
+        Gebruikers willen recepten delen en beoordelen binnen een
+        vrienden- en familiekring. Er is geen bestaande oplossing.
+
+        ## 2. Functionele Vereisten
+        - FR-01: Gebruiker kan een recept aanmaken met titel, ingrediënten,
+          bereidingswijze en foto
+        - FR-02: Gebruiker kan recepten van anderen bekijken
+        - FR-03: Gebruiker kan recepten beoordelen (1-5 sterren)
+        - FR-04: Gebruiker kan commentaar geven op recepten
+        - FR-05: Gebruiker kan recepten zoeken op ingrediënt of naam
+        - FR-06: Gebruiker kan favoriete recepten opslaan
+
+        ## 3. Niet-Functionele Vereisten
+        - NFR-01: Applicatie laadt binnen 2 seconden
+        - NFR-02: Ondersteunt minimaal 100 gelijktijdige gebruikers
+        - NFR-03: Gegevens worden veilig opgeslagen
+
+        ## 4. Gebruikersrollen
+        - Thuiskok: kan recepten aanmaken, bekijken, beoordelen
+        - Beheerder: kan gebruikers en content modereren
+
+        ## 5. Gebruikersinteractie
+        - Homepage met nieuwste en best beoordeelde recepten
+        - Recept-detailpagina met ingrediënten, stappen, beoordelingen
+        - Profielpagina met eigen recepten en favorieten
+        - Zoekfunctie met filters
+      arguments:
+        path: docs/functional-design.md
+
+    - agent: architect
+      tool: builtin:invoke_skill
+      mock: true
+      mock_result: "Architecture principles loaded successfully"
+      arguments:
+        skill_name: architecture-principles
+
+    # Architect has read the FD and loaded principles.
+    # Session is now paused (session_status: paused above).
+    # The last non-done agent run (architect) becomes paused_user.
+    # On resume, continue_run() starts fresh with the planned_prompt
+    # and full project context — the architect creates the TD.
