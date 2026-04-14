@@ -82,6 +82,7 @@ class HITLProfile(BaseModel):
     model: str
     provider: str = "zai"
     prompt: str
+    temperature: float = 0.3
 
 
 class JudgeProfile(BaseModel):
@@ -254,8 +255,12 @@ class AgentTestDefinition(BaseModel):
         return len(self.inputs) > 0
 
     def resolve_inputs(self, values: dict[str, str]) -> "AgentTestDefinition":
-        """Return a copy with {{placeholder}} replaced by provided values."""
+        """Return a copy with {{placeholder}} replaced by provided values.
+
+        Raises ValueError if any required placeholders remain unresolved.
+        """
         import copy
+        import re
 
         def _replace(text: str) -> str:
             if not text:
@@ -267,6 +272,15 @@ class AgentTestDefinition(BaseModel):
         resolved = copy.deepcopy(self)
         resolved.message = _replace(resolved.message)
         resolved.description = _replace(resolved.description)
+
+        # Check for unresolved placeholders
+        unresolved = set(re.findall(r"\{\{(\w+)\}\}", resolved.message))
+        if unresolved:
+            raise ValueError(
+                f"Unresolved placeholders in test '{self.name}': {', '.join(sorted(unresolved))}. "
+                f"Provide values for: {', '.join(sorted(unresolved))}"
+            )
+
         return resolved
 
     def get_hitl_profiles(self) -> list[str]:

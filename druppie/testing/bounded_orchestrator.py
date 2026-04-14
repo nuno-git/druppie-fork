@@ -314,13 +314,27 @@ class BoundedOrchestrator:
             choice_texts.append(ct)
 
         text_lower = text.lower()
+
+        # 1. Exact match (case-insensitive)
         for idx, ct in enumerate(choice_texts):
             if ct.lower() == text_lower:
                 return ct, [idx]
+
+        # 2. Partial match — only if exactly one choice matches
+        partial_matches = []
         for idx, ct in enumerate(choice_texts):
             if ct.lower() in text_lower or text_lower in ct.lower():
-                return ct, [idx]
+                partial_matches.append((idx, ct))
+        if len(partial_matches) == 1:
+            idx, ct = partial_matches[0]
+            return ct, [idx]
+        elif len(partial_matches) > 1:
+            logger.warning(
+                "Ambiguous choice match: answer=%r matched %d choices: %s",
+                text, len(partial_matches), [ct for _, ct in partial_matches],
+            )
 
+        # 3. Numeric index
         try:
             choice_num = int(text)
         except ValueError:

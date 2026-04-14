@@ -29,7 +29,7 @@ class HITLSimulator:
         llm = ChatLiteLLM(
             provider=self._profile.provider,
             model=self._profile.model,
-            temperature=0.7,
+            temperature=self._profile.temperature,
         )
 
         system_parts = [self._profile.prompt.strip()]

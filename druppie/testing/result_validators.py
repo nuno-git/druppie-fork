@@ -114,10 +114,19 @@ def _looks_like_error(text: str) -> bool:
     """Check if text looks like an error message.
 
     Excludes common false positives like "No errors found" or "0 tests failed".
+    Only suppresses a false positive if ALL error-pattern matches are covered
+    by a success phrase (prevents real errors being masked by unrelated success phrases).
     """
-    if not _ERROR_RE.search(text):
+    error_matches = list(_ERROR_RE.finditer(text))
+    if not error_matches:
         return False
-    # If the match is within a known success phrase, it's not an error
-    if _FALSE_POSITIVE_RE.search(text):
-        return False
-    return True
+    # Check each error match — if ANY is not covered by a false-positive phrase, it's a real error
+    fp_matches = list(_FALSE_POSITIVE_RE.finditer(text))
+    for em in error_matches:
+        covered = any(
+            fp.start() <= em.start() and em.end() <= fp.end()
+            for fp in fp_matches
+        )
+        if not covered:
+            return True
+    return False

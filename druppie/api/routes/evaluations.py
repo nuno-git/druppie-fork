@@ -471,6 +471,11 @@ async def run_tests(
                 for subdir in ["tools", "agents", "agents/manual"]:
                     p = runner._testing_dir / subdir / f"{name}.yaml"
                     if p.exists():
+                        # Ensure resolved path is still under testing dir
+                        resolved = p.resolve()
+                        if not str(resolved).startswith(str(runner._testing_dir.resolve())):
+                            logger.warning("Rejected test outside testing dir: %s -> %s", name, resolved)
+                            return None
                         return p
                 return None
 
@@ -567,29 +572,29 @@ async def run_tests(
             }
 
             with _run_lock:
-                completed = _test_run_status[run_id]["completed_tests"]
-            _set_run_status(run_id, {
-                "status": "completed",
-                "message": f"{passed}/{result['total']} passed",
-                "results": result,
-                "current_test": None,
-                "completed_tests": completed,
-                "total_tests": total,
-            })
+                completed = list(_test_run_status[run_id]["completed_tests"])
+                _test_run_status[run_id] = {
+                    "status": "completed",
+                    "message": f"{passed}/{result['total']} passed",
+                    "results": result,
+                    "current_test": None,
+                    "completed_tests": completed,
+                    "total_tests": total,
+                }
         except Exception as e:
             logger.error("tests_run_error", run_id=run_id, error=str(e), exc_info=True)
             with _run_lock:
                 prev = _test_run_status.get(run_id, {})
-                completed = prev.get("completed_tests", [])
+                completed = list(prev.get("completed_tests", []))
                 total_tests = prev.get("total_tests", 0)
-            _set_run_status(run_id, {
-                "status": "error",
-                "message": str(e),
-                "results": None,
-                "current_test": None,
-                "completed_tests": completed,
-                "total_tests": total_tests,
-            })
+                _test_run_status[run_id] = {
+                    "status": "error",
+                    "message": str(e),
+                    "results": None,
+                    "current_test": None,
+                    "completed_tests": completed,
+                    "total_tests": total_tests,
+                }
             try:
                 db.rollback()
             except Exception:
@@ -634,8 +639,8 @@ async def get_active_run(
 ):
     """Check if a test run is currently active.
 
-    Returns the active run status (from memory) or indicates no run is active.
-    The frontend should call this on page load to restore the running state.
+    First checks in-memory state (for runs started in this process).
+    Falls back to checking the DB for incomplete batches (crash recovery).
     """
     with _run_lock:
         active_id = _active_run_id
