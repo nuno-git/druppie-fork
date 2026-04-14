@@ -19,27 +19,51 @@ const Badge = ({ p, t, color }) => {
   return <span className={`font-mono text-xs font-semibold ${p === t ? color : 'text-red-600'}`}>{p}/{t}</span>
 }
 
-const TypeBadge = ({ type }) => {
-  const styles = {
-    judge_check: 'bg-yellow-50 text-yellow-700',
-    judge_eval: 'bg-orange-50 text-orange-700',
-    completed: 'bg-blue-50 text-blue-700',
-    tool: 'bg-purple-50 text-purple-700',
-    verify: 'bg-amber-50 text-amber-700',
-  }
-  const labels = { judge_check: 'judge', judge_eval: 'judge eval', completed: 'assertion', tool: 'tool', verify: 'verify' }
-  return <span className={`px-1 py-0.5 rounded font-mono text-xs ${styles[type] || 'bg-gray-50 text-gray-600'}`}>{labels[type] || type}</span>
+// Maps backend assertion_type to human-readable labels
+const TYPE_LABELS = {
+  completed: 'Agent Status',
+  tool: 'Tool Call',
+  verify: 'Side Effect',
+  judge_check: 'LLM Judge',
+  judge_eval: 'Judge Eval',
 }
+const TYPE_STYLES = {
+  completed: 'bg-blue-50 text-blue-700',
+  tool: 'bg-purple-50 text-purple-700',
+  verify: 'bg-amber-50 text-amber-700',
+  judge_check: 'bg-yellow-50 text-yellow-700',
+  judge_eval: 'bg-orange-50 text-orange-700',
+}
+
+const TypeBadge = ({ type }) => (
+  <span className={`px-1 py-0.5 rounded font-mono text-xs ${TYPE_STYLES[type] || 'bg-gray-50 text-gray-600'}`}>
+    {TYPE_LABELS[type] || type}
+  </span>
+)
+
+// Helper: is this an assertion type (not judge)?
+const isAssertionType = (t) => t === 'completed' || t === 'tool' || t === 'verify'
 
 // ---- Check Filter Panel ----
 const CheckFilterPanel = ({ filters, activeCheck, onSelectCheck, onClear }) => {
   const [expanded, setExpanded] = useState(false)
   const checks = filters?.checks || []
   const judges = checks.filter(c => c.type === 'judge_check' || c.type === 'judge_eval')
-  const assertions = checks.filter(c => c.type === 'completed' || c.type === 'tool')
-  const verifyChecks = checks.filter(c => c.type === 'verify')
+  const agentStatus = checks.filter(c => c.type === 'completed')
+  const toolCalls = checks.filter(c => c.type === 'tool')
+  const sideEffects = checks.filter(c => c.type === 'verify')
 
   if (!checks.length) return null
+
+  const CheckRow = ({ c, keyPrefix, i }) => (
+    <button key={`${keyPrefix}${i}`} onClick={() => onSelectCheck(c.text)}
+      className={`w-full px-4 py-2 text-left text-xs hover:bg-gray-50 flex items-center gap-2 ${activeCheck === c.text ? 'bg-indigo-50' : ''}`}>
+      <TypeBadge type={c.type} />
+      {c.agents.length > 0 && <span className="font-medium text-gray-600">{c.agents.join(', ')}</span>}
+      <span className="flex-1 truncate">{c.text.slice(0, 60)}{c.text.length > 60 ? '...' : ''}</span>
+      <Badge p={c.passed} t={c.total} color="text-green-600" />
+    </button>
+  )
 
   return (
     <div className="bg-white rounded-lg border">
@@ -57,9 +81,27 @@ const CheckFilterPanel = ({ filters, activeCheck, onSelectCheck, onClear }) => {
               <X className="w-3 h-3" /> Clear filter
             </button>
           )}
+          {agentStatus.length > 0 && (
+            <div>
+              <div className="px-4 py-1.5 bg-blue-50 text-xs font-semibold text-blue-700">Agent Status ({agentStatus.length})</div>
+              {agentStatus.map((c, i) => <CheckRow key={i} c={c} keyPrefix="as" i={i} />)}
+            </div>
+          )}
+          {toolCalls.length > 0 && (
+            <div>
+              <div className="px-4 py-1.5 bg-purple-50 text-xs font-semibold text-purple-700">Tool Call ({toolCalls.length})</div>
+              {toolCalls.map((c, i) => <CheckRow key={i} c={c} keyPrefix="tc" i={i} />)}
+            </div>
+          )}
+          {sideEffects.length > 0 && (
+            <div>
+              <div className="px-4 py-1.5 bg-amber-50 text-xs font-semibold text-amber-700">Side Effect ({sideEffects.length})</div>
+              {sideEffects.map((c, i) => <CheckRow key={i} c={c} keyPrefix="se" i={i} />)}
+            </div>
+          )}
           {judges.length > 0 && (
             <div>
-              <div className="px-4 py-1.5 bg-yellow-50 text-xs font-semibold text-yellow-700">LLM Judge & Judge Eval ({judges.length})</div>
+              <div className="px-4 py-1.5 bg-yellow-50 text-xs font-semibold text-yellow-700">LLM Judge ({judges.length})</div>
               {judges.map((c, i) => (
                 <button key={`j${i}`} onClick={() => onSelectCheck(c.text)}
                   className={`w-full px-4 py-2 text-left text-xs hover:bg-gray-50 flex items-center gap-2 ${activeCheck === c.text ? 'bg-indigo-50' : ''}`}>
@@ -67,34 +109,6 @@ const CheckFilterPanel = ({ filters, activeCheck, onSelectCheck, onClear }) => {
                   <span className="flex-1 truncate">{c.text.slice(0, 80)}{c.text.length > 80 ? '...' : ''}</span>
                   <Badge p={c.passed} t={c.total} color="text-green-600" />
                   <span className="text-gray-400 text-xs">{c.test_runs.length} test{c.test_runs.length > 1 ? 's' : ''}</span>
-                </button>
-              ))}
-            </div>
-          )}
-          {assertions.length > 0 && (
-            <div>
-              <div className="px-4 py-1.5 bg-blue-50 text-xs font-semibold text-blue-700">Assertions ({assertions.length})</div>
-              {assertions.map((c, i) => (
-                <button key={`a${i}`} onClick={() => onSelectCheck(c.text)}
-                  className={`w-full px-4 py-2 text-left text-xs hover:bg-gray-50 flex items-center gap-2 ${activeCheck === c.text ? 'bg-indigo-50' : ''}`}>
-                  <TypeBadge type={c.type} />
-                  {c.agents.length > 0 && <span className="font-medium text-gray-600">{c.agents.join(', ')}</span>}
-                  <span className="flex-1 truncate">{c.text.slice(0, 60)}{c.text.length > 60 ? '...' : ''}</span>
-                  <Badge p={c.passed} t={c.total} color="text-green-600" />
-                </button>
-              ))}
-            </div>
-          )}
-          {verifyChecks.length > 0 && (
-            <div>
-              <div className="px-4 py-1.5 bg-amber-50 text-xs font-semibold text-amber-700">Verify ({verifyChecks.length})</div>
-              {verifyChecks.map((c, i) => (
-                <button key={`v${i}`} onClick={() => onSelectCheck(c.text)}
-                  className={`w-full px-4 py-2 text-left text-xs hover:bg-gray-50 flex items-center gap-2 ${activeCheck === c.text ? 'bg-indigo-50' : ''}`}>
-                  <TypeBadge type={c.type} />
-                  {c.agents.length > 0 && <span className="font-medium text-gray-600">{c.agents.join(', ')}</span>}
-                  <span className="flex-1 truncate">{c.text.slice(0, 60)}{c.text.length > 60 ? '...' : ''}</span>
-                  <Badge p={c.passed} t={c.total} color="text-green-600" />
                 </button>
               ))}
             </div>
@@ -146,13 +160,15 @@ const TestRunDrillDown = ({ run }) => {
   const [expanded, setExpanded] = useState(new Set())
   const toggle = (k) => { const n = new Set(expanded); n.has(k) ? n.delete(k) : n.add(k); setExpanded(n) }
   const assertions = run.assertions || []
-  const code = assertions.filter(a => a.assertion_type === 'completed' || a.assertion_type === 'tool')
-  const verify = assertions.filter(a => a.assertion_type === 'verify')
+  const agentStatus = assertions.filter(a => a.assertion_type === 'completed')
+  const toolCalls = assertions.filter(a => a.assertion_type === 'tool')
+  const sideEffects = assertions.filter(a => a.assertion_type === 'verify')
   const judge = assertions.filter(a => a.assertion_type === 'judge_check')
   const eval_ = assertions.filter(a => a.assertion_type === 'judge_eval')
   const sections = [
-    { items: code, label: 'Assertions', color: 'bg-blue-50 text-blue-700', prefix: 'c' },
-    { items: verify, label: 'Verify', color: 'bg-amber-50 text-amber-700', prefix: 'v' },
+    { items: agentStatus, label: 'Agent Status', color: 'bg-blue-50 text-blue-700', prefix: 'as' },
+    { items: toolCalls, label: 'Tool Call', color: 'bg-purple-50 text-purple-700', prefix: 'tc' },
+    { items: sideEffects, label: 'Side Effect', color: 'bg-amber-50 text-amber-700', prefix: 'se' },
     { items: judge, label: 'LLM Judge', color: 'bg-yellow-50 text-yellow-700', prefix: 'j' },
     { items: eval_, label: 'Judge Eval', color: 'bg-orange-50 text-orange-700', prefix: 'e' },
   ].filter(s => s.items.length > 0)
@@ -239,6 +255,10 @@ export default function Analytics() {
   const allTools = batchFilters?.tools || []
   const hasActiveFilter = filterType || filterAgent || filterTool || filterCheck
 
+  // Combined assertion totals (agent status + tool call + side effect)
+  const totalAssertions = (summary.assertions || 0) + (summary.verify || 0)
+  const passedAssertions = (summary.assertions_passed || 0) + (summary.verify_passed || 0)
+
   const clearFilters = () => { setFilterType(null); setFilterAgent(null); setFilterTool(null); setFilterCheck(null); setExpandedRun(null) }
 
   if (!loading && batches.length === 0) {
@@ -280,30 +300,20 @@ export default function Analytics() {
       {!loading && !batchLoading && selectedBatch && batchData && (
         <>
           {/* Summary Cards */}
-          <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             <div className="bg-white rounded-lg border p-3 flex items-center gap-3">
               <BarChart3 className={`w-6 h-6 ${selectedBatch.passed === selectedBatch.test_count ? 'text-green-600' : 'text-red-600'}`} />
               <div><div className="text-xs text-gray-500">Tests</div><div className="text-lg font-bold">{selectedBatch.passed}/{selectedBatch.test_count}</div></div>
             </div>
-            <button onClick={() => { setFilterType(filterType === 'assertions' ? null : 'assertions'); setFilterCheck(null) }}
-              className={`bg-white rounded-lg border p-3 flex items-center gap-3 hover:bg-blue-50 text-left ${filterType === 'assertions' ? 'ring-2 ring-blue-400' : ''}`}>
+            <button onClick={() => { setFilterType(filterType === 'all_assertions' ? null : 'all_assertions'); setFilterCheck(null) }}
+              className={`bg-white rounded-lg border p-3 flex items-center gap-3 hover:bg-blue-50 text-left ${filterType === 'all_assertions' ? 'ring-2 ring-blue-400' : ''}`}>
               <CheckCircle2 className="w-6 h-6 text-blue-600" />
-              <div><div className="text-xs text-gray-500">Assertions</div><div className="text-lg font-bold text-blue-600"><Badge p={summary.assertions_passed} t={summary.assertions} color="text-blue-600" /></div></div>
-            </button>
-            <button onClick={() => { setFilterType(filterType === 'verify' ? null : 'verify'); setFilterCheck(null) }}
-              className={`bg-white rounded-lg border p-3 flex items-center gap-3 hover:bg-amber-50 text-left ${filterType === 'verify' ? 'ring-2 ring-amber-400' : ''}`}>
-              <AlertCircle className="w-6 h-6 text-amber-600" />
-              <div><div className="text-xs text-gray-500">Verify</div><div className="text-lg font-bold text-amber-600"><Badge p={summary.verify_passed} t={summary.verify} color="text-amber-600" /></div></div>
+              <div><div className="text-xs text-gray-500">Assertions</div><div className="text-lg font-bold text-blue-600"><Badge p={passedAssertions} t={totalAssertions} color="text-blue-600" /></div></div>
             </button>
             <button onClick={() => { setFilterType(filterType === 'judge_check' ? null : 'judge_check'); setFilterCheck(null) }}
               className={`bg-white rounded-lg border p-3 flex items-center gap-3 hover:bg-yellow-50 text-left ${filterType === 'judge_check' ? 'ring-2 ring-yellow-400' : ''}`}>
               <TrendingUp className="w-6 h-6 text-yellow-600" />
               <div><div className="text-xs text-gray-500">LLM Judge</div><div className="text-lg font-bold text-yellow-600"><Badge p={summary.judge_passed} t={summary.judge} color="text-yellow-600" /></div></div>
-            </button>
-            <button onClick={() => { setFilterType(filterType === 'judge_eval' ? null : 'judge_eval'); setFilterCheck(null) }}
-              className={`bg-white rounded-lg border p-3 flex items-center gap-3 hover:bg-orange-50 text-left ${filterType === 'judge_eval' ? 'ring-2 ring-orange-400' : ''}`}>
-              <Eye className="w-6 h-6 text-orange-600" />
-              <div><div className="text-xs text-gray-500">Judge Eval</div><div className="text-lg font-bold text-orange-600"><Badge p={summary.judge_eval_passed} t={summary.judge_eval} color="text-orange-600" /></div></div>
             </button>
             <div className="bg-white rounded-lg border p-3 flex items-center gap-3">
               <Clock className="w-6 h-6 text-gray-500" />
@@ -325,8 +335,10 @@ export default function Analytics() {
             <select value={filterType || ''} onChange={e => { setFilterType(e.target.value || null); setFilterCheck(null); setExpandedRun(null) }}
               className="px-2 py-1 border rounded text-xs bg-white">
               <option value="">All types</option>
-              <option value="assertions">Assertions</option>
-              <option value="verify">Verify</option>
+              <option value="all_assertions">All Assertions</option>
+              <option value="completed">Agent Status</option>
+              <option value="tool">Tool Call</option>
+              <option value="verify">Side Effect</option>
               <option value="judge_check">LLM Judge</option>
               <option value="judge_eval">Judge Eval</option>
             </select>
@@ -368,9 +380,8 @@ export default function Analytics() {
             {batchRuns.map(run => {
               const isExpanded = expandedRun === run.test_run_id
               const assertions = run.assertions || []
-              if (hasActiveFilter && assertions.length === 0) return null  // hide empty when filtered
-              const code = assertions.filter(a => a.assertion_type === 'completed' || a.assertion_type === 'tool')
-              const verifyArr = assertions.filter(a => a.assertion_type === 'verify')
+              if (hasActiveFilter && assertions.length === 0) return null
+              const assertionItems = assertions.filter(a => isAssertionType(a.assertion_type))
               const judge = assertions.filter(a => a.assertion_type === 'judge_check')
               const eval_ = assertions.filter(a => a.assertion_type === 'judge_eval')
 
@@ -385,8 +396,7 @@ export default function Analytics() {
                     <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${run.mode === 'agent' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'}`}>
                       {run.mode === 'agent' ? 'Agent' : 'Tool'}
                     </span>
-                    {code.length > 0 && <Badge p={code.filter(a => a.passed).length} t={code.length} color="text-blue-600" />}
-                    {verifyArr.length > 0 && <Badge p={verifyArr.filter(a => a.passed).length} t={verifyArr.length} color="text-amber-600" />}
+                    {assertionItems.length > 0 && <Badge p={assertionItems.filter(a => a.passed).length} t={assertionItems.length} color="text-blue-600" />}
                     {judge.length > 0 && <Badge p={judge.filter(a => a.passed).length} t={judge.length} color="text-yellow-600" />}
                     {eval_.length > 0 && <Badge p={eval_.filter(a => a.passed).length} t={eval_.length} color="text-orange-600" />}
                     <span className="text-xs text-gray-400 w-14 text-right">{fmt(run.duration_ms)}</span>
