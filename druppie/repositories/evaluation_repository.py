@@ -612,12 +612,28 @@ class EvaluationRepository(BaseRepository):
         return self.db.query(TestBatchRun).filter(TestBatchRun.id == batch_id).first()
 
     def get_active_batch_run(self) -> TestBatchRun | None:
-        return (
+        """Get the active batch run, auto-expiring stale ones.
+
+        If a batch has been "running" for more than 30 minutes, it's
+        likely an orphan from a crash — mark it as error and skip it.
+        """
+        from datetime import datetime, timedelta, timezone
+
+        batch = (
             self.db.query(TestBatchRun)
             .filter(TestBatchRun.status == "running")
             .order_by(TestBatchRun.started_at.desc())
             .first()
         )
+        if batch and batch.started_at:
+            age = datetime.now(timezone.utc) - batch.started_at.replace(tzinfo=timezone.utc)
+            if age > timedelta(minutes=30):
+                batch.status = "error"
+                batch.message = "Timed out after 30 minutes"
+                batch.completed_at = datetime.now(timezone.utc)
+                self.db.flush()
+                return None
+        return batch
 
     def get_completed_test_runs(self, batch_id: str) -> list[dict]:
         runs = (
