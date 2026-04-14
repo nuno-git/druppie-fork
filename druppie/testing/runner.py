@@ -183,11 +183,13 @@ class TestRunner:
         for setup_name in test.setup:
             setup_test = self._tool_tests.get(setup_name)
             self._replay_chain(setup_test, user.id, run_namespace)
+            self._db.commit()  # Commit each setup replay so subsequent steps can see the data
 
         # Phase 1b: Run extended tool chain if specified
         if test.extends:
             extended = self._tool_tests.get(test.extends)
             self._replay_chain(extended, user.id, run_namespace)
+            self._db.commit()
 
         # Phase 2: Replay the tool call chain
         all_assertion_results: list[AssertionResult] = []
@@ -195,8 +197,10 @@ class TestRunner:
         chain_error: str | None = None
         try:
             replay_session_id, chain_results = self._replay_chain(test, user.id, run_namespace)
+            self._db.commit()  # Commit the full replay so assertions can query committed data
             all_assertion_results.extend(chain_results)
         except Exception as e:
+            self._db.rollback()  # Roll back partial replay state on failure
             chain_error = f"{type(e).__name__}: {e}"
             logger.error("Tool chain replay failed: test=%s error=%s", test.name, e, exc_info=True)
 
@@ -474,6 +478,7 @@ class TestRunner:
         for setup_name in test.setup:
             setup_test = self._tool_tests.get(setup_name)
             session_id, _ = self._replay_chain(setup_test, user.id, run_namespace)
+            self._db.commit()  # Commit each setup replay so subsequent steps can see the data
             if session_id:
                 last_setup_session_id = session_id
 
@@ -481,6 +486,7 @@ class TestRunner:
         if test.extends:
             extended = self._tool_tests.get(test.extends)
             session_id, _ = self._replay_chain(extended, user.id, run_namespace)
+            self._db.commit()
             if session_id:
                 last_setup_session_id = session_id
 
