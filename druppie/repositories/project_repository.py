@@ -12,6 +12,7 @@ from ..domain import (
     SessionStatus,
 )
 from ..db.models import Project, Session as SessionModel
+from ..db.models.user import User as UserModel
 
 
 class ProjectRepository(BaseRepository):
@@ -137,11 +138,18 @@ class ProjectRepository(BaseRepository):
 
     def _to_summary(self, project: Project) -> ProjectSummary:
         """Convert project model to summary domain object."""
+        # Look up username from users table
+        username = None
+        if project.owner_id:
+            user = self.db.query(UserModel).filter_by(id=project.owner_id).first()
+            if user:
+                username = user.username
         return ProjectSummary(
             id=project.id,
             name=project.name,
             description=project.description,
             repo_url=project.repo_url,
+            username=username,
             created_at=project.created_at,
         )
 
@@ -158,11 +166,18 @@ class ProjectRepository(BaseRepository):
 
     def _session_to_summary(self, session: SessionModel) -> SessionSummary:
         """Convert session model to summary."""
+        # Look up username from users table
+        username = None
+        if session.user_id:
+            user = self.db.query(UserModel).filter_by(id=session.user_id).first()
+            if user:
+                username = user.username
         return SessionSummary(
             id=session.id,
             title=session.title or "Untitled",
             status=SessionStatus(session.status),
             project_id=session.project_id,
+            username=username,
             token_usage=TokenUsage(
                 prompt_tokens=session.prompt_tokens or 0,
                 completion_tokens=session.completion_tokens or 0,

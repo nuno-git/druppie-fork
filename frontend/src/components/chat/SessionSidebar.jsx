@@ -156,6 +156,13 @@ const SessionSidebar = ({ activeSessionId, onSelectSession, onNewChat, onCollaps
                     </span>
                   </div>
                   <div className={`flex items-center gap-2 mt-0.5 ${isActive || isFailed || isCrashed ? 'ml-3.5' : ''}`}>
+                    {s.username && (
+                      <span className={`text-xs font-medium truncate ${
+                        s.username.startsWith('t-') ? 'text-orange-500' : 'text-blue-400'
+                      }`}>
+                        {s.username}
+                      </span>
+                    )}
                     {s.project_name && (
                       <span className="text-xs text-gray-400 truncate">
                         {s.project_name}

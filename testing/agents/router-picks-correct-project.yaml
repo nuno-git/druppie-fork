@@ -1,0 +1,28 @@
+## Agent test: router selects the correct project from multiple existing ones
+##
+## Setup: 3 projects created via tool tests — each creates its own session.
+##   The test user ends up with 3 projects visible to the router.
+##
+## No continue_session → starts a NEW session via the orchestrator.
+##   Router sees the 3 projects and must pick the right one.
+
+agent-test:
+  name: router-picks-correct-project
+  description: "Router selects weather-dashboard when user says 'update the weather dashboard' with 3 projects"
+  tags: [router, project-selection]
+
+  setup:                             # each creates a separate session + project
+    - create-weather-dashboard
+    - create-todo-app
+    - create-expense-tracker
+                                     # no continue_session → new session for the router
+
+  message: "update the weather dashboard to add dark mode"
+  agents: [router]
+  hitl: non-technical-pm
+
+  assert:
+    - check: router-correct-intent
+      expected:
+        intent: update_project
+        project_id: "@project:weather-dashboard"

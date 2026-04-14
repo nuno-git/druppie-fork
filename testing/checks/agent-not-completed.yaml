@@ -1,0 +1,7 @@
+check:
+  name: agent-not-completed
+  description: "Agent should NOT be completed (no done call)"
+  tags: [agent-status]
+  assert:
+    - agent: builder
+      completed: false
