@@ -16,19 +16,17 @@ PROFILE_MODEL_MAP = {
 class FoundryService:
     """Deploys agent definitions to Azure AI Foundry."""
 
-    def __init__(self, endpoint: str | None = None, api_key: str | None = None, azure_token: str | None = None):
+    def __init__(self, endpoint: str | None = None, api_key: str | None = None):
         self.endpoint = endpoint
         self.api_key = api_key
-        self.azure_token = azure_token
         self._client = None
 
     def _get_client(self):
         """Lazy-initialize the Foundry client.
 
         Credential priority:
-        1. Azure token from DB (user logged in via device code flow)
-        2. API key (set in .env as FOUNDRY_API_KEY)
-        3. DefaultAzureCredential (fallback - uses az login, managed identity, etc.)
+        1. API key (set in .env as FOUNDRY_API_KEY)
+        2. DefaultAzureCredential (az login, managed identity, env vars, etc.)
         """
         if self._client is not None:
             return self._client
@@ -37,24 +35,7 @@ class FoundryService:
         try:
             from azure.ai.projects import AIProjectClient
 
-            if self.azure_token:
-                from azure.core.credentials import AccessToken
-
-                class _StaticTokenCredential:
-                    """Credential that returns a pre-fetched token."""
-                    def __init__(self, token: str):
-                        self._token = token
-
-                    def get_token(self, *scopes, **kwargs) -> AccessToken:
-                        import time
-                        # Token validity is managed externally; set a far-future expiry
-                        return AccessToken(self._token, int(time.time()) + 3600)
-
-                self._client = AIProjectClient(
-                    endpoint=self.endpoint,
-                    credential=_StaticTokenCredential(self.azure_token),
-                )
-            elif self.api_key:
+            if self.api_key:
                 from azure.core.credentials import AzureKeyCredential
                 self._client = AIProjectClient(
                     endpoint=self.endpoint,
@@ -71,6 +52,18 @@ class FoundryService:
             raise FoundryNotConfiguredError(
                 "azure-ai-projects package not installed. Run: pip install azure-ai-projects azure-identity"
             )
+
+    def check_connection(self) -> dict:
+        """Check if Foundry credentials are available and valid."""
+        if not self.endpoint:
+            return {"status": "not_configured", "detail": "FOUNDRY_PROJECT_ENDPOINT is not set"}
+        try:
+            self._get_client()
+            return {"status": "configured", "endpoint": self.endpoint}
+        except FoundryNotConfiguredError as e:
+            return {"status": "not_configured", "detail": str(e)}
+        except Exception as e:
+            return {"status": "error", "detail": str(e)}
 
     def deploy_agent(self, agent_detail) -> dict:
         """Deploy a custom agent definition to Azure AI Foundry.

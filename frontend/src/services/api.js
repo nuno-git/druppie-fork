@@ -293,10 +293,8 @@ export const getPackageProjects = (manager, name) =>
 export const getProjectDependencies = (projectId) =>
   request(`/api/projects/${projectId}/dependencies`)
 
-// ============ Azure Auth ============
-export const startAzureLogin = () => request('/api/auth/azure/login')
-export const getAzureAuthStatus = () => request('/api/auth/azure/status')
-export const disconnectAzure = () => request('/api/auth/azure/disconnect', { method: 'POST' })
+// ============ Foundry ============
+export const getFoundryStatus = () => request('/api/foundry/status')
 
 // ============ Custom Agents ============
 export const getCustomAgents = () => request('/api/agents/custom')

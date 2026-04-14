@@ -272,19 +272,9 @@ async def deploy_custom_agent(
 
     settings = get_settings()
 
-    # Check if user has a stored Azure token from device code flow
-    azure_token = None
-    user_id = user.get("sub")
-    if user_id:
-        from druppie.db.models.user import UserToken
-        token_record = db.query(UserToken).filter_by(user_id=user_id, service="azure").first()
-        if token_record:
-            azure_token = token_record.access_token
-
     foundry = FoundryService(
         endpoint=settings.foundry_project_endpoint,
         api_key=settings.foundry_api_key or None,
-        azure_token=azure_token,
     )
 
     if not foundry.is_configured():

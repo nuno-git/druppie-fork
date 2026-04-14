@@ -4,8 +4,8 @@
 
 import React, { useState, useEffect, useCallback } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { User, Server, Bot, Info, Shield, CheckCircle, XCircle, RefreshCw, Cpu, ChevronDown, ChevronRight, Cloud, LogOut } from 'lucide-react'
-import { getMCPServers, getMCPTools, getStatus, getAgents, startAzureLogin, getAzureAuthStatus, disconnectAzure } from '../services/api'
+import { User, Server, Bot, Info, Shield, CheckCircle, XCircle, RefreshCw, Cpu, ChevronDown, ChevronRight, Cloud } from 'lucide-react'
+import { getMCPServers, getMCPTools, getStatus, getAgents, getFoundryStatus } from '../services/api'
 import { useAuth } from '../App'
 import PageHeader from '../components/shared/PageHeader'
 import { SkeletonSettingsSection } from '../components/shared/Skeleton'
@@ -115,114 +115,59 @@ const AgentRow = ({ agent }) => {
   )
 }
 
-const AzureAuthSection = () => {
-  const [azureStatus, setAzureStatus] = useState('loading')
-  const [isConfigured, setIsConfigured] = useState(true)
-  const [redirecting, setRedirecting] = useState(false)
-  const [error, setError] = useState(null)
+const FoundryStatusSection = () => {
+  const [status, setStatus] = useState('loading')
+  const [detail, setDetail] = useState(null)
+  const [endpoint, setEndpoint] = useState(null)
 
   const checkStatus = useCallback(async () => {
     try {
-      const result = await getAzureAuthStatus()
-      setAzureStatus(result.status)
-      if (result.is_configured !== undefined) setIsConfigured(result.is_configured)
-    } catch (err) {
-      setAzureStatus('not_started')
+      const result = await getFoundryStatus()
+      setStatus(result.status)
+      setDetail(result.detail || null)
+      setEndpoint(result.endpoint || null)
+    } catch {
+      setStatus('error')
+      setDetail('Could not reach backend')
     }
   }, [])
 
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search)
-    const azureResult = params.get('azure')
-    if (azureResult === 'success') {
-      setAzureStatus('authenticated')
-      window.history.replaceState({}, '', '/settings')
-    } else if (azureResult === 'error') {
-      setAzureStatus('not_started')
-      setError(params.get('message') || 'Azure authentication failed')
-      window.history.replaceState({}, '', '/settings')
-    } else {
-      checkStatus()
-    }
-  }, [checkStatus])
-
-  const handleLogin = async () => {
-    setError(null)
-    setRedirecting(true)
-    try {
-      const result = await startAzureLogin()
-      window.location.href = result.auth_url
-    } catch (err) {
-      setRedirecting(false)
-      setError(err.message || 'Failed to start login flow')
-    }
-  }
-
-  const handleDisconnect = async () => {
-    try {
-      await disconnectAzure()
-      setAzureStatus('not_started')
-      setError(null)
-    } catch (err) {
-      setError(err.message || 'Failed to disconnect')
-    }
-  }
+  useEffect(() => { checkStatus() }, [checkStatus])
 
   return (
     <SectionCard title="Azure AI Foundry" icon={Cloud}>
       <div className="space-y-4">
         <div className="flex items-center justify-between">
-          <span className="text-sm text-gray-500">Authentication Status</span>
-          {azureStatus === 'loading' ? (
+          <span className="text-sm text-gray-500">Connection Status</span>
+          {status === 'loading' ? (
             <span className="text-xs text-gray-400">Checking...</span>
-          ) : azureStatus === 'authenticated' ? (
+          ) : status === 'configured' ? (
             <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-700">
               <CheckCircle className="w-3 h-3 mr-1" />
-              Connected
+              Configured
             </span>
           ) : (
             <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-500">
               <XCircle className="w-3 h-3 mr-1" />
-              Not connected
+              Not configured
             </span>
           )}
         </div>
 
-        {error && (
-          <div className="bg-red-50 border border-red-200 rounded-lg p-3">
-            <p className="text-sm text-red-700">{error}</p>
+        {endpoint && (
+          <div className="text-xs text-gray-500 truncate">
+            Endpoint: <span className="font-mono">{endpoint}</span>
           </div>
         )}
 
-        <div className="border-t pt-4">
-          {azureStatus === 'authenticated' ? (
-            <button
-              onClick={handleDisconnect}
-              className="inline-flex items-center px-3 py-2 text-sm font-medium text-red-600 bg-red-50 hover:bg-red-100 rounded-lg transition-colors"
-            >
-              <LogOut className="w-4 h-4 mr-2" />
-              Disconnect Azure
-            </button>
-          ) : azureStatus !== 'loading' && isConfigured ? (
-            <button
-              onClick={handleLogin}
-              disabled={redirecting}
-              className="inline-flex items-center px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 rounded-lg transition-colors"
-            >
-              {redirecting ? (
-                <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
-              ) : (
-                <Cloud className="w-4 h-4 mr-2" />
-              )}
-              {redirecting ? 'Redirecting...' : 'Login with Azure'}
-            </button>
-          ) : azureStatus !== 'loading' && !isConfigured ? (
-            <p className="text-sm text-gray-500">Azure SSO is not configured. Contact your administrator.</p>
-          ) : null}
-        </div>
+        {detail && status !== 'configured' && (
+          <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3">
+            <p className="text-sm text-yellow-700">{detail}</p>
+          </div>
+        )}
 
         <p className="text-xs text-gray-400">
-          Authenticate with your Azure account to deploy agents to Azure AI Foundry.
+          Agent deployment uses DefaultAzureCredential (az login, managed identity) or FOUNDRY_API_KEY.
         </p>
       </div>
     </SectionCard>
@@ -432,7 +377,7 @@ const Settings = () => {
 
       {/* Azure AI Foundry Authentication */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <AzureAuthSection />
+        <FoundryStatusSection />
       </div>
     </div>
   )

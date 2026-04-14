@@ -44,4 +44,3 @@ pytest-cov>=4.1.0
 # Azure AI Foundry (optional - for agent deployment to Azure)
 azure-ai-projects>=2.0.0
 azure-identity>=1.15.0
-msal>=1.28.0

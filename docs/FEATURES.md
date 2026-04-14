@@ -152,7 +152,7 @@ The session intent stays `create_project` throughout — there is no separate `c
 - The Agent Builder is a specialized agent that reasons about agent design (MCPs, skills, approval rules) rather than just passing basic parameters
 - `create_foundry_agent` accepts a full specification: agent_id, name, description, instructions, model, temperature, MCPs, skills, builtin tools, and approval overrides
 - Agents are stored in the database and can be refined/deployed via the Agents page UI
-- Azure device code auth flow allows users to authenticate for Foundry deployment
+- Foundry deployment uses DefaultAzureCredential (az login, managed identity) or FOUNDRY_API_KEY
 
 ### general_chat
 
