@@ -1,6 +1,8 @@
 """Per-assertion result storage for testing framework analytics."""
 
-from typing import Any
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Index, String, Text
@@ -52,18 +54,9 @@ class TestAssertionResult(Base):
         Index("idx_tar_assertion_type", "assertion_type"),
     )
 
+    def to_domain(self) -> "TestAssertionResultSummary":
+        from druppie.domain.evaluation import TestAssertionResultSummary
+        return TestAssertionResultSummary.model_validate(self, from_attributes=True)
+
     def to_dict(self) -> dict[str, Any]:
-        return {
-            "id": str(self.id),
-            "test_run_id": str(self.test_run_id),
-            "assertion_type": self.assertion_type,
-            "agent_id": self.agent_id,
-            "tool_name": self.tool_name,
-            "eval_name": self.eval_name,
-            "passed": self.passed,
-            "message": self.message,
-            "judge_reasoning": self.judge_reasoning,
-            "judge_raw_input": self.judge_raw_input,
-            "judge_raw_output": self.judge_raw_output,
-            "created_at": self.created_at.isoformat() if self.created_at else None,
-        }
+        return self.to_domain().model_dump(mode="json")

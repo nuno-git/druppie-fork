@@ -1,6 +1,8 @@
 """Benchmark run database model."""
 
-from typing import Any
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from sqlalchemy import Column, DateTime, String, Text
@@ -38,16 +40,9 @@ class BenchmarkRun(Base):
         cascade="all, delete-orphan",
     )
 
+    def to_domain(self) -> "BenchmarkRunSummary":
+        from druppie.domain.evaluation import BenchmarkRunSummary
+        return BenchmarkRunSummary.model_validate(self, from_attributes=True)
+
     def to_dict(self) -> dict[str, Any]:
-        return {
-            "id": str(self.id),
-            "name": self.name,
-            "run_type": self.run_type,
-            "git_commit": self.git_commit,
-            "git_branch": self.git_branch,
-            "judge_model": self.judge_model,
-            "config_summary": self.config_summary,
-            "started_at": self.started_at.isoformat() if self.started_at else None,
-            "completed_at": self.completed_at.isoformat() if self.completed_at else None,
-            "created_at": self.created_at.isoformat() if self.created_at else None,
-        }
+        return self.to_domain().model_dump(mode="json")

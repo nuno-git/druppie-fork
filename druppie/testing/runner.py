@@ -248,8 +248,15 @@ class TestRunner:
         judge_passed = sum(1 for r in all_judge_results if r.passed)
         judge_total = len(all_judge_results)
 
+        # A test that defines assertions/judges but produced none is broken, not passing
+        expects_assertions = bool(test.assert_) or bool(test.verify)
+        expects_judges = bool(test.judge)
+        ran_nothing = assertions_total == 0 and judge_total == 0
+
         if chain_error:
             status = "error"
+        elif ran_nothing and (expects_assertions or expects_judges):
+            status = "error"  # Expected checks didn't run — likely a crash
         elif assertions_passed == assertions_total and judge_passed == judge_total:
             status = "passed"
         else:
@@ -604,8 +611,15 @@ class TestRunner:
         judge_passed = sum(1 for r in all_judge_results if r.passed)
         judge_total = len(all_judge_results)
 
+        # A test that defines assertions/judges but produced none is broken, not passing
+        expects_assertions = bool(test.assert_)
+        expects_judges = bool(test.judge)
+        ran_nothing = assertions_total == 0 and judge_total == 0
+
         if execution_error:
             status = "error"
+        elif ran_nothing and (expects_assertions or expects_judges):
+            status = "error"  # Expected checks didn't run — likely a crash
         elif assertions_passed == assertions_total and judge_passed == judge_total:
             status = "passed"
         else:

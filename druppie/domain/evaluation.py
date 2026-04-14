@@ -5,21 +5,23 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 
 class EvaluationResultSummary(BaseModel):
     """Lightweight evaluation result for lists."""
 
+    model_config = ConfigDict(from_attributes=True)
+
     id: UUID
-    agent_id: str
-    evaluation_name: str
-    rubric_name: str
-    score_type: str
+    agent_id: str | None = None
+    evaluation_name: str | None = None
+    rubric_name: str | None = None
+    score_type: str | None = None
     score_binary: bool | None = None
     score_graded: float | None = None
     max_score: float | None = None
-    created_at: datetime
+    created_at: datetime | None = None
 
 
 class EvaluationResultDetail(EvaluationResultSummary):
@@ -40,6 +42,8 @@ class EvaluationResultDetail(EvaluationResultSummary):
 
 class BenchmarkRunSummary(BaseModel):
     """Lightweight benchmark run for lists."""
+
+    model_config = ConfigDict(from_attributes=True)
 
     id: UUID
     name: str
@@ -67,6 +71,8 @@ class BenchmarkRunDetail(BenchmarkRunSummary):
 class TestAssertionResultSummary(BaseModel):
     """Individual assertion/judge result within a test run."""
 
+    model_config = ConfigDict(from_attributes=True)
+
     id: UUID
     test_run_id: UUID
     assertion_type: str
@@ -83,6 +89,8 @@ class TestAssertionResultSummary(BaseModel):
 
 class TestRunSummary(BaseModel):
     """Lightweight test run for lists and batch views."""
+
+    model_config = ConfigDict(from_attributes=True)
 
     id: UUID
     benchmark_run_id: UUID | None = None

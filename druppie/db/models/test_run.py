@@ -1,6 +1,8 @@
 """Test run database model for testing framework."""
 
-from typing import Any
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from sqlalchemy import Column, DateTime, ForeignKey, Index, Integer, String, Text
@@ -61,26 +63,22 @@ class TestRun(Base):
         Index("idx_test_runs_agent_id", "agent_id"),
     )
 
+    def to_domain(self, include_assertions: bool = True) -> "TestRunDetail | TestRunSummary":
+        from druppie.domain.evaluation import TestRunDetail, TestRunSummary
+        tags = [t.tag for t in self.tags] if self.tags else []
+        if include_assertions:
+            assertion_results = [
+                ar.to_domain() for ar in self.assertion_results
+            ] if self.assertion_results else []
+            return TestRunDetail(
+                **{k: getattr(self, k) for k in TestRunSummary.model_fields if k != "tags"},
+                tags=tags,
+                assertion_results=assertion_results,
+            )
+        return TestRunSummary(
+            **{k: getattr(self, k) for k in TestRunSummary.model_fields if k != "tags"},
+            tags=tags,
+        )
+
     def to_dict(self) -> dict[str, Any]:
-        return {
-            "id": str(self.id),
-            "benchmark_run_id": str(self.benchmark_run_id) if self.benchmark_run_id else None,
-            "batch_id": self.batch_id,
-            "test_name": self.test_name,
-            "test_description": self.test_description,
-            "test_user": self.test_user,
-            "hitl_profile": self.hitl_profile,
-            "judge_profile": self.judge_profile,
-            "session_id": str(self.session_id) if self.session_id else None,
-            "sessions_seeded": self.sessions_seeded,
-            "assertions_total": self.assertions_total,
-            "assertions_passed": self.assertions_passed,
-            "judge_checks_total": self.judge_checks_total,
-            "judge_checks_passed": self.judge_checks_passed,
-            "status": self.status,
-            "duration_ms": self.duration_ms,
-            "agent_id": self.agent_id,
-            "mode": self.mode,
-            "created_at": self.created_at.isoformat() if self.created_at else None,
-            "assertion_results": [r.to_dict() for r in self.assertion_results] if self.assertion_results else [],
-        }
+        return self.to_domain().model_dump(mode="json")
