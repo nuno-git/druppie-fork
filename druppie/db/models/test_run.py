@@ -40,9 +40,8 @@ class TestRun(Base):
     batch_id = Column(String(36), nullable=True, index=True)  # Groups tests from same Run click
     created_at = Column(DateTime(timezone=True), default=utcnow)
 
-    # v3 fields
     agent_id = Column(String(100), nullable=True)  # Primary agent tested
-    mode = Column(String(20), nullable=True)  # record_only, replay, live
+    mode = Column(String(20), nullable=True)  # tool, agent
 
     # Relationships
     tags = relationship(

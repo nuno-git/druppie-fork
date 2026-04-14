@@ -1,4 +1,4 @@
-"""V2 Test Runner -- user-isolated test execution with two test types.
+"""Test Runner -- user-isolated test execution with two test types.
 
 Test types:
 - Tool tests (testing/tools/): Replay tool call chains through real MCP services.
@@ -21,7 +21,7 @@ Execution flow for agent tests:
 from __future__ import annotations
 
 import asyncio
-import json
+import hashlib
 import logging
 import subprocess
 import time
@@ -36,176 +36,33 @@ from sqlalchemy.orm import Session as DbSession
 from druppie.db.models import (
     AgentRun,
     BenchmarkRun,
-    Message,
-    Question,
     ToolCall,
     User,
     UserRole,
 )
 from druppie.db.models import TestRun as TestRunModel
 from druppie.db.models import TestRunTag
-from druppie.domain.common import AgentRunStatus, SessionStatus
-from druppie.testing.seed_ids import fixture_uuid
-from druppie.testing.seed_schema import SessionFixture
 from druppie.testing.assertions import AssertionResult, match_assertions
+from druppie.testing.bounded_orchestrator import BoundedOrchestrator
+from druppie.testing.hitl_simulator import HITLSimulator
+from druppie.testing.judge_runner import JudgeCheckResult, JudgeRunner
+from druppie.testing.loaders import CheckLoader, ProfileLoader, ToolTestLoader
 from druppie.testing.schema import (
     AgentTestDefinition,
     AgentTestFile,
     CheckAssertion,
-    CheckDefinition,
-    CheckFile,
     HITLProfile,
-    HITLProfilesFile,
-    JudgeProfile,
-    JudgeProfilesFile,
     ToolTestDefinition,
     ToolTestFile,
 )
+from druppie.testing.seed_ids import fixture_uuid
 
 logger = logging.getLogger(__name__)
-
-MAX_HITL_INTERACTIONS = 20
-
-
-# ---------------------------------------------------------------------------
-# Profile Loader
-# ---------------------------------------------------------------------------
-
-
-class ProfileLoader:
-    """Loads HITL and judge profiles from YAML files."""
-
-    def __init__(self, profiles_dir: Path | None = None):
-        self._profiles_dir = profiles_dir or (
-            Path(__file__).resolve().parents[2] / "testing" / "profiles"
-        )
-        self._hitl: dict[str, HITLProfile] = {}
-        self._judges: dict[str, JudgeProfile] = {}
-        self._load()
-
-    def _load(self) -> None:
-        hitl_path = self._profiles_dir / "hitl.yaml"
-        if hitl_path.exists():
-            data = yaml.safe_load(hitl_path.read_text())
-            parsed = HITLProfilesFile(**data)
-            self._hitl = dict(parsed.profiles)
-
-        judges_path = self._profiles_dir / "judges.yaml"
-        if judges_path.exists():
-            data = yaml.safe_load(judges_path.read_text())
-            parsed = JudgeProfilesFile(**data)
-            self._judges = dict(parsed.profiles)
-
-    def get_hitl(self, name: str) -> HITLProfile:
-        if name == "default":
-            return HITLProfile(
-                model="glm-5",
-                provider="zai",
-                prompt="You are a helpful user who gives clear, concise answers.",
-            )
-        if name not in self._hitl:
-            raise KeyError(
-                f"Unknown HITL profile: {name}. "
-                f"Available: {sorted(self._hitl.keys())}"
-            )
-        return self._hitl[name]
-
-    def get_judge(self, name: str) -> JudgeProfile:
-        if name == "default":
-            return JudgeProfile(model="glm-5", provider="zai")
-        if name not in self._judges:
-            raise KeyError(
-                f"Unknown judge profile: {name}. "
-                f"Available: {sorted(self._judges.keys())}"
-            )
-        return self._judges[name]
-
-
-# ---------------------------------------------------------------------------
-# Check Loader (was EvalLoader)
-# ---------------------------------------------------------------------------
-
-
-class CheckLoader:
-    """Loads check definitions from YAML files."""
-
-    def __init__(self, checks_dir: Path | None = None):
-        self._checks_dir = checks_dir or (
-            Path(__file__).resolve().parents[2] / "testing" / "checks"
-        )
-        self._checks: dict[str, CheckDefinition] = {}
-        self._load()
-
-    def _load(self) -> None:
-        if not self._checks_dir.exists():
-            logger.warning("Checks directory not found: %s", self._checks_dir)
-            return
-        for path in sorted(self._checks_dir.glob("*.yaml")):
-            data = yaml.safe_load(path.read_text())
-            parsed = CheckFile(**data)
-            self._checks[parsed.check.name] = parsed.check
-
-    def get(self, name: str) -> CheckDefinition:
-        if name not in self._checks:
-            raise KeyError(
-                f"Unknown check: {name}. Available: {sorted(self._checks.keys())}"
-            )
-        return self._checks[name]
-
-
-# Backwards compat alias
-EvalLoader = CheckLoader
-
-
-
-# ---------------------------------------------------------------------------
-# Tool Test Loader
-# ---------------------------------------------------------------------------
-
-
-class ToolTestLoader:
-    """Loads tool test definitions from YAML files."""
-
-    def __init__(self, tools_dir: Path | None = None):
-        self._tools_dir = tools_dir or (
-            Path(__file__).resolve().parents[2] / "testing" / "tools"
-        )
-        self._tests: dict[str, ToolTestDefinition] = {}
-        self._load()
-
-    def _load(self) -> None:
-        if not self._tools_dir.exists():
-            logger.warning("Tools directory not found: %s", self._tools_dir)
-            return
-        for path in sorted(self._tools_dir.glob("*.yaml")):
-            data = yaml.safe_load(path.read_text())
-            parsed = ToolTestFile(**data)
-            self._tests[parsed.tool_test.name] = parsed.tool_test
-
-    def get(self, name: str) -> ToolTestDefinition:
-        if name not in self._tests:
-            raise KeyError(
-                f"Unknown tool test: {name}. Available: {sorted(self._tests.keys())}"
-            )
-        return self._tests[name]
-
-    def all(self) -> list[ToolTestDefinition]:
-        return list(self._tests.values())
 
 
 # ---------------------------------------------------------------------------
 # Result types
 # ---------------------------------------------------------------------------
-
-
-@dataclass
-class JudgeCheckResult:
-    check: str
-    passed: bool
-    reasoning: str
-    source: str  # "check" or "inline"
-    raw_input: str = ""   # prompt sent to judge LLM
-    raw_output: str = ""  # raw response from judge LLM
 
 
 @dataclass
@@ -226,587 +83,12 @@ class TestRunResult:
 
 
 # ---------------------------------------------------------------------------
-# HITL Simulator
-# ---------------------------------------------------------------------------
-
-
-class HITLSimulator:
-    """Simulates human-in-the-loop answers using an LLM with a profile prompt."""
-
-    def __init__(self, profile: HITLProfile, test_context: str = ""):
-        self._profile = profile
-        self._test_context = test_context
-        self._interaction_count = 0
-
-    def answer(self, question_text: str, choices: list[dict] | None = None) -> str:
-        from druppie.llm.litellm_provider import ChatLiteLLM
-
-        self._interaction_count += 1
-        if self._interaction_count > MAX_HITL_INTERACTIONS:
-            raise RuntimeError(f"Exceeded max HITL interactions ({MAX_HITL_INTERACTIONS})")
-
-        llm = ChatLiteLLM(
-            provider=self._profile.provider,
-            model=self._profile.model,
-            temperature=0.7,
-        )
-
-        system_parts = [self._profile.prompt.strip()]
-        if self._test_context:
-            system_parts.append(f'\nContext: The user originally requested: "{self._test_context}"')
-        system_parts.append(
-            "\nWhen asked multiple choice questions, respond with the FULL TEXT of your chosen option, NOT a number."
-            "\nWhen asked open-ended questions, give a clear 1-2 sentence answer."
-        )
-        system_prompt = "\n".join(system_parts)
-
-        is_choice_question = bool(choices)
-        if is_choice_question:
-            choice_lines = []
-            for i, c in enumerate(choices):
-                text = c.get("text", c) if isinstance(c, dict) else str(c)
-                choice_lines.append(f"{i + 1}. {text}")
-            user_prompt = (
-                f'The agent asks you a multiple choice question:\n\n'
-                f'"{question_text}"\n\n'
-                f'Options:\n'
-                + "\n".join(choice_lines)
-                + "\n\nRespond with the FULL TEXT of your chosen option, NOT a number."
-            )
-        else:
-            user_prompt = (
-                f'The agent asks you:\n\n'
-                f'"{question_text}"\n\n'
-                f'Respond with ONLY your answer, no explanation.'
-            )
-
-        # Retry on rate limits
-        for attempt in range(5):
-            try:
-                response = llm.chat(
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt},
-                    ]
-                )
-                answer = response.content.strip()
-                logger.info("HITL simulator answered (interaction %d): question=%s answer=%s",
-                             self._interaction_count, question_text[:80], answer[:80])
-                return answer
-            except Exception as e:
-                if "rate" in str(e).lower() and attempt < 4:
-                    import time
-                    wait = 2 ** attempt
-                    logger.warning("HITL simulator rate limited, retrying in %ds (attempt %d)", wait, attempt + 1)
-                    time.sleep(wait)
-                else:
-                    raise
-
-
-# ---------------------------------------------------------------------------
-# Bounded Orchestrator
-# ---------------------------------------------------------------------------
-
-
-class _BoundedOrchestrator:
-    """Wraps the real Orchestrator to stop after the last real_agent completes."""
-
-    def __init__(self, db: DbSession, user_id: UUID, real_agents: list[str],
-                 hitl_simulator: HITLSimulator | None):
-        self._db = db
-        self._user_id = user_id
-        self._real_agents = real_agents
-        self._hitl_simulator = hitl_simulator
-
-    def _all_real_agents_done(self, session_id: UUID, execution_repo) -> bool:
-        if not self._real_agents:
-            return False
-        self._db.expire_all()
-        completed_runs = execution_repo.get_completed_runs(session_id)
-        completed_ids = {r.agent_id for r in completed_runs}
-        done = all(a in completed_ids for a in self._real_agents)
-        if done:
-            logger.info("All real_agents completed: real=%s completed=%s",
-                        self._real_agents, sorted(completed_ids))
-        return done
-
-    def _cancel_remaining_runs(self, session_id: UUID, execution_repo, session_repo) -> None:
-        cancelled_count = execution_repo.cancel_pending_runs(session_id)
-        execution_repo.commit()
-        running = execution_repo.get_running_run(session_id)
-        if running:
-            execution_repo.update_status(running.id, AgentRunStatus.CANCELLED)
-            execution_repo.commit()
-            cancelled_count += 1
-        session_repo.update_status(session_id, SessionStatus.COMPLETED)
-        session_repo.commit()
-        logger.info("Bounded cleanup: cancelled %d remaining runs, session=%s marked COMPLETED",
-                     cancelled_count, session_id)
-
-    async def run(self, message: str, session_id: UUID | None = None) -> UUID:
-        from druppie.execution.orchestrator import Orchestrator
-        from druppie.repositories import (
-            ExecutionRepository, ProjectRepository, QuestionRepository, SessionRepository,
-        )
-
-        session_repo = SessionRepository(self._db)
-        execution_repo = ExecutionRepository(self._db)
-        project_repo = ProjectRepository(self._db)
-        question_repo = QuestionRepository(self._db)
-
-        orchestrator = Orchestrator(
-            session_repo=session_repo,
-            execution_repo=execution_repo,
-            project_repo=project_repo,
-            question_repo=question_repo,
-        )
-
-        if not self._real_agents:
-            session_id = await orchestrator.process_message(
-                message=message, user_id=self._user_id, session_id=session_id,
-            )
-            session_id = await self._handle_pause_loop(
-                orchestrator, session_id, question_repo, execution_repo, session_repo
-            )
-            return session_id
-
-        async def _bounded_execute(session_id):
-            while True:
-                session_repo.db.expire_all()
-                session = session_repo.get_by_id(session_id)
-                if session and session.status == SessionStatus.PAUSED.value:
-                    return
-
-                next_run = execution_repo.get_next_pending(session_id)
-                if not next_run:
-                    session_repo.update_status(session_id, SessionStatus.COMPLETED)
-                    session_repo.commit()
-                    return
-
-                if next_run.agent_id not in self._real_agents:
-                    if self._all_real_agents_done(session_id, execution_repo):
-                        self._cancel_remaining_runs(session_id, execution_repo, session_repo)
-                        return
-
-                context = orchestrator._build_project_context(session_id)
-                execution_repo.update_status(next_run.id, AgentRunStatus.RUNNING)
-                execution_repo.commit()
-
-                status = await orchestrator._run_agent(
-                    session_id=session_id,
-                    agent_run_id=next_run.id,
-                    agent_id=next_run.agent_id,
-                    prompt=next_run.planned_prompt or "",
-                    context=context,
-                )
-
-                if status == "paused":
-                    refreshed = execution_repo.get_by_id(next_run.id)
-                    if refreshed and refreshed.status == AgentRunStatus.PAUSED_HITL:
-                        session_repo.update_status(session_id, SessionStatus.PAUSED_HITL)
-                    elif refreshed and refreshed.status == AgentRunStatus.PAUSED_SANDBOX:
-                        session_repo.update_status(session_id, SessionStatus.PAUSED_SANDBOX)
-                    else:
-                        session_repo.update_status(session_id, SessionStatus.PAUSED_APPROVAL)
-                    session_repo.commit()
-                    return
-
-        orchestrator.execute_pending_runs = _bounded_execute
-
-        if session_id:
-            # Continue existing session: create agent runs directly
-            # instead of going through process_message (which creates router+planner)
-            result_session_id = session_id
-
-            # Reset session to active
-            session_repo.update_status(session_id, SessionStatus.ACTIVE)
-            session_repo.commit()
-
-            # Add user message
-            from druppie.db.models.base import utcnow
-            next_seq = execution_repo.get_next_sequence_number(session_id)
-            self._db.add(Message(
-                session_id=session_id,
-                role="user",
-                content=message,
-                sequence_number=next_seq,
-                created_at=utcnow(),
-            ))
-            self._db.flush()
-
-            # Build context from the session's project
-            context = orchestrator._build_project_context(session_id)
-
-            # Get the last done summary for prompt context
-            completed_runs = execution_repo.get_completed_runs(session_id)
-            previous_summary = ""
-            for run in completed_runs:
-                s = execution_repo.get_done_summary_for_run(run.id)
-                if s:
-                    previous_summary += s + "\n"
-
-            # Create and run each specified agent directly
-            for i, agent_id in enumerate(self._real_agents):
-                prompt = f"PREVIOUS AGENT SUMMARY:\n{previous_summary}\n---\n\nUSER REQUEST:\n{message}"
-
-                agent_run = execution_repo.create_agent_run(
-                    session_id=session_id,
-                    agent_id=agent_id,
-                    status=AgentRunStatus.PENDING,
-                    planned_prompt=prompt,
-                    sequence_number=next_seq + 1 + i,
-                )
-                execution_repo.commit()
-
-                execution_repo.update_status(agent_run.id, AgentRunStatus.RUNNING)
-                execution_repo.commit()
-
-                status = await orchestrator._run_agent(
-                    session_id=session_id,
-                    agent_run_id=agent_run.id,
-                    agent_id=agent_id,
-                    prompt=prompt,
-                    context=context,
-                )
-
-                if status == "paused":
-                    refreshed = execution_repo.get_by_id(agent_run.id)
-                    if refreshed and refreshed.status == AgentRunStatus.PAUSED_HITL:
-                        session_repo.update_status(session_id, SessionStatus.PAUSED_HITL)
-                    elif refreshed and refreshed.status == AgentRunStatus.PAUSED_SANDBOX:
-                        session_repo.update_status(session_id, SessionStatus.PAUSED_SANDBOX)
-                    else:
-                        session_repo.update_status(session_id, SessionStatus.PAUSED_APPROVAL)
-                    session_repo.commit()
-
-                    # Handle pauses (HITL + approvals)
-                    result_session_id = await self._handle_pause_loop(
-                        orchestrator, session_id, question_repo, execution_repo, session_repo
-                    )
-
-                # Update summary for next agent
-                run_summary = execution_repo.get_done_summary_for_run(agent_run.id)
-                if run_summary:
-                    previous_summary += run_summary + "\n"
-
-            session_repo.update_status(session_id, SessionStatus.COMPLETED)
-            session_repo.commit()
-        else:
-            # New session: use normal process_message flow
-            result_session_id = await orchestrator.process_message(
-                message=message, user_id=self._user_id,
-            )
-            result_session_id = await self._handle_pause_loop(
-                orchestrator, result_session_id, question_repo, execution_repo, session_repo
-            )
-
-            if self._all_real_agents_done(result_session_id, execution_repo):
-                self._cancel_remaining_runs(result_session_id, execution_repo, session_repo)
-
-        return result_session_id
-
-    async def _handle_pause_loop(self, orchestrator, session_id, question_repo,
-                                 execution_repo, session_repo) -> UUID:
-        """Handle HITL questions and approval gates during agent execution.
-
-        Loops until the session is no longer paused (completed, failed, or
-        all real agents done).
-        """
-        from druppie.db.models import Session as DBSession
-        from druppie.db.models import Approval
-        from druppie.db.models.base import utcnow
-
-        for iteration in range(MAX_HITL_INTERACTIONS * 2):
-            self._db.expire_all()
-            session = self._db.query(DBSession).filter(DBSession.id == session_id).first()
-            if not session:
-                break
-
-            status = session.status
-            logger.info("Pause loop iteration %d: session status=%s", iteration, status)
-
-            if self._real_agents and self._all_real_agents_done(session_id, execution_repo):
-                break
-
-            # Handle HITL pause
-            if status == SessionStatus.PAUSED_HITL.value:
-                if not self._hitl_simulator:
-                    logger.warning("No HITL simulator — cannot answer questions")
-                    break
-
-                pending_question = (
-                    self._db.query(Question)
-                    .filter(Question.session_id == session_id, Question.status == "pending")
-                    .order_by(Question.created_at.desc())
-                    .first()
-                )
-                if not pending_question:
-                    break
-
-                if self._real_agents and pending_question.agent_run_id:
-                    agent_run = self._db.query(AgentRun).filter(
-                        AgentRun.id == pending_question.agent_run_id
-                    ).first()
-                    if agent_run and agent_run.agent_id not in self._real_agents:
-                        break
-
-                raw_answer = self._hitl_simulator.answer(
-                    question_text=pending_question.question,
-                    choices=pending_question.choices,
-                )
-
-                answer = raw_answer
-                if pending_question.choices and pending_question.question_type in (
-                    "single_choice", "multiple_choice",
-                ):
-                    answer, _ = self._resolve_choice_answer(raw_answer, pending_question.choices)
-
-                logger.info("HITL auto-answer (iteration %d): answer=%s", iteration, answer[:80])
-                await orchestrator.resume_after_answer(
-                    session_id=session_id,
-                    question_id=pending_question.id,
-                    answer=answer,
-                )
-                continue
-
-            # Handle approval pause
-            if status == SessionStatus.PAUSED_APPROVAL.value:
-                pending_approval = (
-                    self._db.query(Approval)
-                    .filter(Approval.session_id == session_id, Approval.status == "pending")
-                    .order_by(Approval.created_at.desc())
-                    .first()
-                )
-                if not pending_approval:
-                    break
-
-                # Auto-approve with the test user
-                pending_approval.status = "approved"
-                pending_approval.resolved_by = session.user_id
-                pending_approval.resolved_at = utcnow()
-                self._db.commit()
-
-                logger.info("Approval auto-approved (iteration %d): tool=%s:%s",
-                            iteration, pending_approval.mcp_server, pending_approval.tool_name)
-                await orchestrator.resume_after_approval(
-                    session_id=session_id,
-                    approval_id=pending_approval.id,
-                )
-                continue
-
-            # Not paused — done
-            break
-
-        return session_id
-
-    @staticmethod
-    def _resolve_choice_answer(raw_answer: str, choices: list[dict]) -> tuple[str, list[int] | None]:
-        text = raw_answer.strip().rstrip(".")
-        choice_texts = []
-        for c in choices:
-            ct = c.get("text", str(c)) if isinstance(c, dict) else str(c)
-            choice_texts.append(ct)
-
-        text_lower = text.lower()
-        for idx, ct in enumerate(choice_texts):
-            if ct.lower() == text_lower:
-                return ct, [idx]
-        for idx, ct in enumerate(choice_texts):
-            if ct.lower() in text_lower or text_lower in ct.lower():
-                return ct, [idx]
-
-        try:
-            choice_num = int(text)
-        except ValueError:
-            return raw_answer, None
-
-        idx = choice_num - 1
-        if 0 <= idx < len(choices):
-            return choice_texts[idx], [idx]
-        return raw_answer, None
-
-
-# ---------------------------------------------------------------------------
-# Judge Runner
-# ---------------------------------------------------------------------------
-
-
-class JudgeRunner:
-    """Runs LLM judge checks against agent execution traces."""
-
-    def __init__(self, profile: JudgeProfile):
-        self._profile = profile
-
-    def run_checks(self, db: DbSession, session_id: UUID,
-                   judge_checks: list,
-                   context: str | list[str] = "all", source: str = "check") -> list[JudgeCheckResult]:
-        """Run judge checks. judge_checks is a list of JudgeCheck objects."""
-        agent_trace = self._extract_agent_trace(db, session_id, context)
-        if not agent_trace:
-            return [
-                JudgeCheckResult(check=jc.check, passed=False,
-                                 reasoning=f"No execution trace found",
-                                 source=source)
-                for jc in judge_checks
-            ]
-
-        results = []
-        for jc in judge_checks:
-            judge_passed, reasoning, raw_input, raw_output = self._run_single_check(jc.check, agent_trace)
-
-            if jc.is_eval:
-                # Judge Eval — we're testing the judge itself
-                final_passed = (judge_passed == jc.expected)
-                expected_label = "PASS" if jc.expected else "FAIL"
-                actual_label = "PASS" if judge_passed else "FAIL"
-                reasoning = f"[Judge Eval: expected {expected_label}, got {actual_label}] {reasoning}"
-                result_source = "judge_eval"
-            else:
-                # LLM Judge — verdict IS the result
-                final_passed = judge_passed
-                result_source = source
-
-            results.append(JudgeCheckResult(
-                check=jc.check, passed=final_passed, reasoning=reasoning, source=result_source,
-                raw_input=raw_input, raw_output=raw_output,
-            ))
-        return results
-
-    def _extract_agent_trace(self, db: DbSession, session_id: UUID,
-                             context: str | list[str] = "all") -> str:
-        """Extract execution trace for the judge.
-
-        context can be:
-        - "all": all agent runs in the session
-        - "business_analyst": all runs of that agent
-        - ["business_analyst", "architect"]: all runs of those agents
-        """
-        user_message = (
-            db.query(Message)
-            .filter(Message.session_id == session_id, Message.role == "user")
-            .order_by(Message.sequence_number.asc())
-            .first()
-        )
-
-        # Determine which agent runs to include
-        if context == "all":
-            agent_runs = (
-                db.query(AgentRun)
-                .filter(AgentRun.session_id == session_id)
-                .order_by(AgentRun.sequence_number.asc())
-                .all()
-            )
-        else:
-            agent_ids = [context] if isinstance(context, str) else context
-            agent_runs = (
-                db.query(AgentRun)
-                .filter(
-                    AgentRun.session_id == session_id,
-                    AgentRun.agent_id.in_(agent_ids),
-                )
-                .order_by(AgentRun.sequence_number.asc())
-                .all()
-            )
-
-        if not agent_runs:
-            return ""
-
-        lines = []
-        if user_message:
-            lines.append(f'User message: "{user_message.content}"')
-            lines.append("")
-
-        for agent_run in agent_runs:
-            tool_calls = (
-                db.query(ToolCall)
-                .filter(ToolCall.agent_run_id == agent_run.id)
-                .order_by(ToolCall.created_at.asc())
-                .all()
-            )
-
-            lines.append(f"Agent: {agent_run.agent_id} (run #{agent_run.sequence_number}, status: {agent_run.status})")
-            if tool_calls:
-                lines.append("Tool calls (in execution order):")
-                for idx, tc in enumerate(tool_calls):
-                    args_str = json.dumps(tc.arguments) if tc.arguments else "{}"
-                    result_part = f" -> {tc.status or 'pending'}"
-                    if tc.result:
-                        result_part = f" -> {tc.result[:500]}"
-                    if tc.error_message:
-                        result_part += f" [error: {tc.error_message[:200]}]"
-                    lines.append(f"  [{idx}] {tc.mcp_server}:{tc.tool_name}({args_str}){result_part}")
-            else:
-                lines.append("  (no tool calls)")
-            lines.append("")
-
-        return "\n".join(lines)
-
-    def _run_single_check(self, check: str, agent_trace: str) -> tuple[bool, str, str, str]:
-        from druppie.llm.litellm_provider import ChatLiteLLM
-
-        llm = ChatLiteLLM(
-            provider=self._profile.provider,
-            model=self._profile.model,
-            temperature=0.0,
-        )
-
-        prompt = f"""You are evaluating an AI agent's behavior.
-
-The following trace shows the user's original message and the agent's execution (tool calls and results):
-
----
-{agent_trace}
----
-
-Evaluate this check:
-{check}
-
-Respond with JSON: {{"pass": true/false, "reasoning": "your explanation"}}"""
-
-        messages = [
-            {"role": "system", "content": "You are an evaluation judge. Respond ONLY with valid JSON."},
-            {"role": "user", "content": prompt},
-        ]
-
-        for attempt in range(5):
-            try:
-                response = llm.chat(messages=messages)
-                passed, reasoning = self._parse_judge_response(response.content)
-                return passed, reasoning, prompt, response.content
-            except Exception as e:
-                if "rate" in str(e).lower() and attempt < 4:
-                    import time
-                    wait = 2 ** attempt
-                    logger.warning("Judge rate limited, retrying in %ds (attempt %d)", wait, attempt + 1)
-                    time.sleep(wait)
-                else:
-                    logger.error("Judge check failed: check=%s error=%s", check[:80], str(e))
-                    return False, f"Judge call failed: {e}", prompt, ""
-        return False, "Judge call failed after retries", prompt, ""
-
-    @staticmethod
-    def _parse_judge_response(response_text: str) -> tuple[bool, str]:
-        try:
-            text = response_text.strip()
-            if text.startswith("```"):
-                text = text.split("\n", 1)[1] if "\n" in text else text
-                text = text.rsplit("```", 1)[0]
-            data = json.loads(text)
-            passed = bool(data.get("pass", False))
-            reasoning = data.get("reasoning", "")
-            return passed, reasoning
-        except (json.JSONDecodeError, ValueError):
-            logger.warning("Judge response parse failed: response=%s", response_text[:200])
-            return False, f"Failed to parse judge response: {response_text[:200]}"
-
-
-# ---------------------------------------------------------------------------
 # Test Runner
 # ---------------------------------------------------------------------------
 
 
 class TestRunner:
-    """Main v2 test orchestrator.
+    """Main test orchestrator.
 
     Handles both tool tests and agent tests with user isolation.
     """
@@ -818,11 +100,6 @@ class TestRunner:
         self._profiles = ProfileLoader(self._testing_dir / "profiles")
         self._checks = CheckLoader(self._testing_dir / "checks")
         self._tool_tests = ToolTestLoader(self._testing_dir / "tools")
-
-    # Keep old attribute name for API route compatibility
-    @property
-    def _evals(self):
-        return self._checks
 
     def load_agent_test(self, path: Path) -> AgentTestDefinition:
         data = yaml.safe_load(path.read_text())
@@ -840,9 +117,7 @@ class TestRunner:
         elif "agent-test" in data:
             return AgentTestFile(**data).agent_test
         else:
-            # Backwards compat: old format with test: root key
-            from druppie.testing.schema import TestFile
-            return TestFile(**data).test
+            raise ValueError(f"Unknown test format in {path}: expected 'tool-test' or 'agent-test' key")
 
     def load_all_tests(self, tests_dir: Path | None = None) -> list[tuple[Path, AgentTestDefinition | ToolTestDefinition]]:
         """Load all test definitions from tools/, agents/, and agents/manual/."""
@@ -881,7 +156,6 @@ class TestRunner:
         start = time.time()
         timestamp = int(start)
 
-        import hashlib
         short_hash = hashlib.md5(f"{test.name}-tool-{timestamp}".encode()).hexdigest()[:8]
         test_user = f"t-{short_hash}"
 
@@ -918,10 +192,12 @@ class TestRunner:
         # Phase 2: Replay the tool call chain
         all_assertion_results: list[AssertionResult] = []
         replay_session_id = None
+        chain_error: str | None = None
         try:
             replay_session_id, chain_results = self._replay_chain(test, user.id, run_namespace)
             all_assertion_results.extend(chain_results)
         except Exception as e:
+            chain_error = f"{type(e).__name__}: {e}"
             logger.error("Tool chain replay failed: test=%s error=%s", test.name, e, exc_info=True)
 
         # Phase 3: Run top-level check assertions
@@ -945,6 +221,7 @@ class TestRunner:
                     )
                     all_judge_results.extend(judge_results)
             except Exception as e:
+                chain_error = chain_error or f"Judge failed: {type(e).__name__}: {e}"
                 logger.error("Tool test judge failed: test=%s error=%s", test.name, e, exc_info=True)
 
         # Compute status
@@ -954,8 +231,8 @@ class TestRunner:
         judge_passed = sum(1 for r in all_judge_results if r.passed)
         judge_total = len(all_judge_results)
 
-        if assertions_total == 0 and judge_total == 0:
-            status = "passed"
+        if chain_error:
+            status = "error"
         elif assertions_passed == assertions_total and judge_passed == judge_total:
             status = "passed"
         else:
@@ -1164,7 +441,6 @@ class TestRunner:
         start = time.time()
         timestamp = int(start)
 
-        import hashlib
         short_hash = hashlib.md5(f"{test.name}-{hitl_name}-{timestamp}".encode()).hexdigest()[:8]
         test_user = f"t-{short_hash}"
         run_namespace = test_user
@@ -1291,8 +567,6 @@ class TestRunner:
 
         if execution_error:
             status = "error"
-        elif assertions_total == 0 and judge_total == 0:
-            status = "passed"
         elif assertions_passed == assertions_total and judge_passed == judge_total:
             status = "passed"
         else:
@@ -1377,7 +651,7 @@ class TestRunner:
         """Resolve judge config to (list of JudgeCheck, context).
 
         Supports:
-        - Legacy: list of strings → JudgeCheck(check=s, expected=True) with context="all"
+        - Legacy: list of strings -> JudgeCheck(check=s, expected=True) with context="all"
         - New: JudgeDefinition with context and checks (strings or dicts)
         """
         from druppie.testing.schema import JudgeCheck, JudgeDefinition
@@ -1394,7 +668,7 @@ class TestRunner:
                         hitl_profile: HITLProfile | None, test_context: str = "",
                         session_id: UUID | None = None) -> UUID:
         hitl_sim = HITLSimulator(hitl_profile, test_context=test_context) if hitl_profile else None
-        bounded = _BoundedOrchestrator(
+        bounded = BoundedOrchestrator(
             db=self._db, user_id=user_id,
             real_agents=real_agents, hitl_simulator=hitl_sim,
         )

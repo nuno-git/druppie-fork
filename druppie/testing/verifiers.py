@@ -6,6 +6,7 @@ files in Gitea repos, git branches, mermaid syntax validity, etc.
 from __future__ import annotations
 
 import logging
+import os
 import re
 from dataclasses import dataclass
 from uuid import UUID
@@ -16,6 +17,14 @@ from sqlalchemy.orm import Session as DbSession
 from druppie.db.models import Project, Session as SessionModel
 
 logger = logging.getLogger(__name__)
+
+
+def _gitea_auth() -> tuple[str, str]:
+    """Get Gitea admin credentials from environment."""
+    return (
+        os.getenv("GITEA_ADMIN_USER", "gitea_admin"),
+        os.getenv("GITEA_ADMIN_PASSWORD", "GiteaAdmin123"),
+    )
 
 
 @dataclass
@@ -87,7 +96,7 @@ def _gitea_get_file(path: str, owner: str, repo: str, gitea_url: str) -> tuple[b
     try:
         r = httpx.get(
             f"{gitea_url}/api/v1/repos/{owner}/{repo}/contents/{path}",
-            auth=("gitea_admin", "GiteaAdmin123"),
+            auth=_gitea_auth(),
             timeout=10,
         )
         if r.status_code == 404:
@@ -197,7 +206,7 @@ def _verify_git_branch_exists(branch: str, session_id: UUID, db: DbSession, gite
     try:
         r = httpx.get(
             f"{gitea_url}/api/v1/repos/{owner}/{repo}/branches/{branch}",
-            auth=("gitea_admin", "GiteaAdmin123"),
+            auth=_gitea_auth(),
             timeout=10,
         )
         if r.status_code == 200:
@@ -216,7 +225,7 @@ def _verify_gitea_repo_exists(session_id: UUID, db: DbSession, gitea_url: str | 
     try:
         r = httpx.get(
             f"{gitea_url}/api/v1/repos/{owner}/{repo}",
-            auth=("gitea_admin", "GiteaAdmin123"),
+            auth=_gitea_auth(),
             timeout=10,
         )
         if r.status_code == 200:

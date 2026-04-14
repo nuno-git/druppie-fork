@@ -247,9 +247,22 @@ def _check_tool(
 
 
 def _match_value(expected: object, actual: object) -> bool:
-    """Match a value with three modes: exact, wildcard, any-of list."""
+    """Match a value with three modes: exact, wildcard, any-of list.
+
+    Comparison is type-aware: values must match both type and content,
+    except UUIDs are compared as strings since YAML loads them as strings.
+    """
     if expected == "*":
         return actual is not None
+    # Normalize UUIDs to strings for comparison
+    from uuid import UUID
+    if isinstance(actual, UUID):
+        actual = str(actual)
+    if isinstance(expected, UUID):
+        expected = str(expected)
     if isinstance(expected, list):
-        return str(actual) in [str(v) for v in expected]
+        return actual in expected or str(actual) in [str(v) for v in expected]
+    if type(expected) == type(actual):
+        return expected == actual
+    # Fall back to string comparison for cross-type (YAML str vs DB int etc.)
     return str(expected) == str(actual)
