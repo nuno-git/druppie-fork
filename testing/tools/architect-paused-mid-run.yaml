@@ -163,4 +163,3 @@ tool-test:
   # plan the next steps (builder, test_executor, etc.)
   pending_agents:
     - id: planner
-      planned_prompt: "Architect approved the design. Plan the next steps."
