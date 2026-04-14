@@ -16,28 +16,48 @@ export default function useTestPolling({
   setRefreshKey,
 }) {
   const intervalRef = useRef(null)
+  // Track which run we're polling so late responses from a previous run
+  // don't clobber state for the current one.
+  const activeRunRef = useRef(null)
 
   const pollRunStatus = useCallback((runId) => {
-    // Clear any previous interval
+    // Clear any previous interval before starting a new one
     if (intervalRef.current) {
       clearInterval(intervalRef.current)
+      intervalRef.current = null
     }
 
+    activeRunRef.current = runId
     let notFoundCount = 0
-    const pollInterval = setInterval(async () => {
+
+    // Save the interval ID to the ref IMMEDIATELY — before the first
+    // tick fires — so cleanup always has a handle to clear.
+    const id = setInterval(async () => {
+      // Guard: if we've been superseded by a newer poll, bail out
+      if (activeRunRef.current !== runId) {
+        clearInterval(id)
+        return
+      }
+
       try {
         const status = await getRunStatus(runId)
+
+        // Double-check we're still the active run after the await
+        if (activeRunRef.current !== runId) return
+
         if (status.status === 'completed') {
-          clearInterval(pollInterval)
+          clearInterval(id)
           intervalRef.current = null
+          activeRunRef.current = null
           setIsRunning(false)
           setRunMessage(null)
           setRunProgress(null)
           setRunResult(status.results)
           setRefreshKey((k) => k + 1)
         } else if (status.status === 'error') {
-          clearInterval(pollInterval)
+          clearInterval(id)
           intervalRef.current = null
+          activeRunRef.current = null
           setIsRunning(false)
           setRunMessage(null)
           setRunProgress(null)
@@ -47,8 +67,9 @@ export default function useTestPolling({
           // Backend might have restarted — wait a few polls before giving up
           notFoundCount++
           if (notFoundCount >= 3) {
-            clearInterval(pollInterval)
+            clearInterval(id)
             intervalRef.current = null
+            activeRunRef.current = null
             setIsRunning(false)
             setRunMessage(null)
             setRunProgress(null)
@@ -65,8 +86,9 @@ export default function useTestPolling({
           })
         }
       } catch {
-        clearInterval(pollInterval)
+        clearInterval(id)
         intervalRef.current = null
+        activeRunRef.current = null
         setIsRunning(false)
         setRunMessage(null)
         setRunProgress(null)
@@ -74,7 +96,7 @@ export default function useTestPolling({
       }
     }, 2000)
 
-    intervalRef.current = pollInterval
+    intervalRef.current = id
   }, [setIsRunning, setRunMessage, setRunProgress, setRunResult, setRefreshKey])
 
   // Clean up interval on unmount to prevent setState on unmounted component
@@ -84,6 +106,7 @@ export default function useTestPolling({
         clearInterval(intervalRef.current)
         intervalRef.current = null
       }
+      activeRunRef.current = null
     }
   }, [])
 

@@ -52,6 +52,12 @@ def _run_live_evaluation_sync(
                     benchmark_run_id=benchmark_run.id,
                     judge_model_override=config.judge_model,
                 )
+            except KeyError:
+                logger.warning(
+                    "Evaluation '%s' not found — skipping for agent %s",
+                    eval_name,
+                    agent_id,
+                )
             except Exception:
                 logger.exception(
                     "Live evaluation rubric failed: %s for agent %s",

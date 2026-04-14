@@ -32,6 +32,11 @@ class BenchmarkRun(Base):
         back_populates="benchmark_run",
         cascade="all, delete-orphan",
     )
+    test_runs = relationship(
+        "TestRun",
+        back_populates="benchmark_run",
+        cascade="all, delete-orphan",
+    )
 
     def to_dict(self) -> dict[str, Any]:
         return {

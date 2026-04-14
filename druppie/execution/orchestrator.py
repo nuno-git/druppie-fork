@@ -305,7 +305,7 @@ class Orchestrator:
 
             # Rebuild context before each agent so it reflects changes
             # from previous agents (e.g., set_intent creates project/repo)
-            context = self._build_project_context(session_id)
+            context = self.build_project_context(session_id)
 
             logger.info(
                 "executing_agent_run",
@@ -320,7 +320,7 @@ class Orchestrator:
             self.execution_repo.commit()
 
             # Run the agent with project context
-            status = await self._run_agent(
+            status = await self.run_agent(
                 session_id=session_id,
                 agent_run_id=next_run.id,
                 agent_id=next_run.agent_id,
@@ -350,7 +350,7 @@ class Orchestrator:
 
             # Otherwise "completed" — loop continues to next pending run
 
-    def _build_project_context(self, session_id: UUID) -> dict | None:
+    def build_project_context(self, session_id: UUID) -> dict | None:
         """Build project context for agents.
 
         Retrieves project info (repo_name, repo_owner, etc.) from the session
@@ -418,7 +418,7 @@ class Orchestrator:
 
         return context
 
-    async def _run_agent(
+    async def run_agent(
         self,
         session_id: UUID,
         agent_run_id: UUID,
@@ -653,7 +653,7 @@ class Orchestrator:
         self.execution_repo.commit()
 
         # Step 5: Build fresh context and continue the agent
-        context = self._build_project_context(session_id)
+        context = self.build_project_context(session_id)
         agent = Agent(agent_run.agent_id, db=db)
         result = await agent.continue_run(
             session_id=session_id,
@@ -754,7 +754,7 @@ class Orchestrator:
         self.execution_repo.commit()
 
         # Step 5: Build fresh context and continue the agent
-        context = self._build_project_context(session_id)
+        context = self.build_project_context(session_id)
         agent = Agent(agent_run.agent_id, db=db)
         result = await agent.continue_run(
             session_id=session_id,
@@ -827,7 +827,7 @@ class Orchestrator:
 
                 # Already RUNNING — just continue it
                 db = self.execution_repo.db
-                context = self._build_project_context(session_id)
+                context = self.build_project_context(session_id)
                 agent = Agent(orphan_run.agent_id, db=db)
                 try:
                     result = await agent.continue_run(
@@ -877,7 +877,7 @@ class Orchestrator:
 
         # Build fresh context and continue the agent
         db = self.execution_repo.db
-        context = self._build_project_context(session_id)
+        context = self.build_project_context(session_id)
         agent = Agent(paused_run.agent_id, db=db)
         try:
             result = await agent.continue_run(
@@ -996,7 +996,7 @@ class Orchestrator:
 
         # Build fresh context and continue the agent
         db = self.execution_repo.db
-        context = self._build_project_context(session_id)
+        context = self.build_project_context(session_id)
         agent = Agent(agent_run.agent_id, db=db)
         try:
             result = await agent.continue_run(

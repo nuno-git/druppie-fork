@@ -93,11 +93,11 @@ class BoundedOrchestrator:
                         self._cancel_remaining_runs(session_id, execution_repo, session_repo)
                         return
 
-                context = orchestrator._build_project_context(session_id)
+                context = orchestrator.build_project_context(session_id)
                 execution_repo.update_status(next_run.id, AgentRunStatus.RUNNING)
                 execution_repo.commit()
 
-                status = await orchestrator._run_agent(
+                status = await orchestrator.run_agent(
                     session_id=session_id,
                     agent_run_id=next_run.id,
                     agent_id=next_run.agent_id,
@@ -141,7 +141,7 @@ class BoundedOrchestrator:
             self._db.flush()
 
             # Build context from the session's project
-            context = orchestrator._build_project_context(session_id)
+            context = orchestrator.build_project_context(session_id)
 
             # Get the last done summary for prompt context
             completed_runs = execution_repo.get_completed_runs(session_id)
@@ -168,7 +168,7 @@ class BoundedOrchestrator:
                 execution_repo.update_status(agent_run.id, AgentRunStatus.RUNNING)
                 execution_repo.commit()
 
-                status = await orchestrator._run_agent(
+                status = await orchestrator.run_agent(
                     session_id=session_id,
                     agent_run_id=agent_run.id,
                     agent_id=agent_id,
@@ -348,9 +348,10 @@ class BoundedOrchestrator:
             return ct, [idx]
         elif len(partial_matches) > 1:
             logger.warning(
-                "Ambiguous choice match: answer=%r matched %d choices: %s",
+                "Ambiguous choice match: answer=%r matched %d choices: %s — returning unresolved",
                 text, len(partial_matches), [ct for _, ct in partial_matches],
             )
+            return raw_answer, None
 
         # 3. Numeric index
         try:

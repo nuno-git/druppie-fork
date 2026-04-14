@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import json
 import logging
-import time
 from dataclasses import dataclass
 from uuid import UUID
 
@@ -136,13 +135,7 @@ class JudgeRunner:
         return "\n".join(lines)
 
     def _run_single_check(self, check: str, agent_trace: str) -> tuple[bool, str, str, str]:
-        from druppie.llm.litellm_provider import ChatLiteLLM
-
-        llm = ChatLiteLLM(
-            provider=self._profile.provider,
-            model=self._profile.model,
-            temperature=0.0,
-        )
+        from druppie.testing.utils import call_judge_llm
 
         prompt = f"""You are evaluating an AI agent's behavior.
 
@@ -157,25 +150,17 @@ Evaluate this check:
 
 Respond with JSON: {{"pass": true/false, "reasoning": "your explanation"}}"""
 
-        messages = [
-            {"role": "system", "content": "You are an evaluation judge. Respond ONLY with valid JSON."},
-            {"role": "user", "content": prompt},
-        ]
-
-        for attempt in range(5):
-            try:
-                response = llm.chat(messages=messages)
-                passed, reasoning = self._parse_judge_response(response.content)
-                return passed, reasoning, prompt, response.content
-            except Exception as e:
-                if "rate" in str(e).lower() and attempt < 4:
-                    wait = 2 ** attempt
-                    logger.warning("Judge rate limited, retrying in %ds (attempt %d)", wait, attempt + 1)
-                    time.sleep(wait)
-                else:
-                    logger.error("Judge check failed: check=%s error=%s", check[:80], str(e))
-                    return False, f"Judge call failed: {e}", prompt, ""
-        return False, "Judge call failed after retries", prompt, ""
+        try:
+            response_text, _, _ = call_judge_llm(
+                prompt=prompt,
+                model=self._profile.model,
+                provider=self._profile.provider,
+            )
+            passed, reasoning = self._parse_judge_response(response_text)
+            return passed, reasoning, prompt, response_text
+        except Exception as e:
+            logger.error("Judge check failed: check=%s error=%s", check[:80], str(e))
+            return False, f"Judge call failed: {e}", prompt, ""
 
     @staticmethod
     def _parse_judge_response(response_text: str) -> tuple[bool, str]:

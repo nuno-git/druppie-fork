@@ -44,6 +44,7 @@ class TestRun(Base):
     mode = Column(String(20), nullable=True)  # tool, agent
 
     # Relationships
+    benchmark_run = relationship("BenchmarkRun", back_populates="test_runs")
     tags = relationship(
         "TestRunTag",
         back_populates="test_run",
