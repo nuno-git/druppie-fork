@@ -81,11 +81,7 @@ class DockerContainerManager:
             "--cap-add=NET_RAW",       # raw sockets (ping, health checks)
             # Resource limits
             f"--memory={config.DOCKER_MEMORY_LIMIT}",
-            *(
-                [f"--cpus={config.DOCKER_CPU_LIMIT}"]
-                if config.DOCKER_CPU_LIMIT and config.DOCKER_CPU_LIMIT != "0"
-                else []
-            ),
+            *([] if config.DOCKER_CPU_LIMIT == "0" else [f"--cpus={config.DOCKER_CPU_LIMIT}"]),
             f"--pids-limit={config.DOCKER_PIDS_LIMIT}",
             # Tmpfs for /tmp (faster I/O, auto-cleaned)
             "--tmpfs=/tmp:rw,exec,size=2g",
