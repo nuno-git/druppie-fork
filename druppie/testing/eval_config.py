@@ -1,7 +1,7 @@
 """Live evaluation configuration loader."""
 
 import random
-from functools import lru_cache
+import time
 from pathlib import Path
 
 import yaml
@@ -43,17 +43,32 @@ class EvaluationConfigFile(BaseModel):
     )
 
 
-@lru_cache(maxsize=1)
+_cached_config: LiveEvaluationConfig | None = None
+_cached_at: float = 0
+_CACHE_TTL = 60  # seconds
+
+
 def get_evaluation_config() -> LiveEvaluationConfig:
-    """Load and cache the live evaluation configuration from YAML.
+    """Load the live evaluation configuration from YAML.
+
+    Caches for 60 seconds to avoid re-reading on every call while still
+    picking up changes without a full process restart.
 
     Looks for ``evaluation_config.yaml`` two levels up from this file
     (i.e. the project root).  Returns a default (disabled) config when
     the file is absent.
     """
+    global _cached_config, _cached_at
+    now = time.monotonic()
+    if _cached_config is not None and (now - _cached_at) < _CACHE_TTL:
+        return _cached_config
+
     config_path = Path(__file__).resolve().parents[2] / "evaluation_config.yaml"
     if not config_path.exists():
-        return LiveEvaluationConfig()
-    data = yaml.safe_load(config_path.read_text())
-    parsed = EvaluationConfigFile(**data)
-    return parsed.live_evaluation
+        _cached_config = LiveEvaluationConfig()
+    else:
+        data = yaml.safe_load(config_path.read_text())
+        parsed = EvaluationConfigFile(**data)
+        _cached_config = parsed.live_evaluation
+    _cached_at = now
+    return _cached_config

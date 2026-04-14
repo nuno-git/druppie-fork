@@ -29,6 +29,7 @@ export default function useTestPolling({
 
     activeRunRef.current = runId
     let notFoundCount = 0
+    let networkErrorCount = 0
 
     // Save the interval ID to the ref IMMEDIATELY — before the first
     // tick fires — so cleanup always has a handle to clear.
@@ -78,6 +79,7 @@ export default function useTestPolling({
           }
         } else {
           notFoundCount = 0
+          networkErrorCount = 0
           setRunMessage(status.message || 'Running tests...')
           setRunProgress({
             current_test: status.current_test,
@@ -86,13 +88,17 @@ export default function useTestPolling({
           })
         }
       } catch {
-        clearInterval(id)
-        intervalRef.current = null
-        activeRunRef.current = null
-        setIsRunning(false)
-        setRunMessage(null)
-        setRunProgress(null)
-        setRunResult({ error: true, message: 'Failed to check test run status' })
+        // Tolerate brief network blips — give up after 3 consecutive failures
+        networkErrorCount++
+        if (networkErrorCount >= 3) {
+          clearInterval(id)
+          intervalRef.current = null
+          activeRunRef.current = null
+          setIsRunning(false)
+          setRunMessage(null)
+          setRunProgress(null)
+          setRunResult({ error: true, message: 'Failed to check test run status after multiple retries' })
+        }
       }
     }, 2000)
 

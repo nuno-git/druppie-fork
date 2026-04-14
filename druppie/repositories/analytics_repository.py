@@ -188,7 +188,7 @@ class AnalyticsRepository(BaseRepository):
             "pass_rate": round(passed / total * 100, 1) if total else 0,
             "duration_ms": total_duration,
             "by_agent": by_agent,
-            "by_eval": [{"eval_name": e.pop("eval_name"), **e} for e in by_eval],
+            "by_eval": by_eval,
             "by_test": [
                 {
                     "test_name": r.test_name,

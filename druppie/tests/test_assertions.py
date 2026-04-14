@@ -559,7 +559,7 @@ class TestProjectReference:
         )
         assert len(results) == 1
         assert results[0].passed is False
-        assert "project_id" in results[0].name
+        assert "project_id" in results[0].message
 
     def test_project_reference_not_found(self, db_session: DbSession):
         """@project:nonexistent leaves value as-is and fails."""

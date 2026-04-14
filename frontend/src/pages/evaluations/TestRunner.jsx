@@ -73,6 +73,7 @@ export const TestSelectorModal = ({
     if (selectAll) {
       setSelectAll(false)
       setSelectedTests(new Set())
+      setInputValues({})
     } else {
       setSelectAll(true)
       setSelectedTests(new Set())

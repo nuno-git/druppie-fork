@@ -340,8 +340,10 @@ export default function Analytics() {
 
               return (
                 <div key={run.test_run_id} className="border-b last:border-0">
-                  <button onClick={() => setExpandedRun(isExpanded ? null : run.test_run_id)}
-                    className="w-full px-4 py-3 flex items-center gap-3 text-left hover:bg-gray-50 transition-colors">
+                  <div role="button" tabIndex={0}
+                    onClick={() => setExpandedRun(isExpanded ? null : run.test_run_id)}
+                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') setExpandedRun(isExpanded ? null : run.test_run_id) }}
+                    className="w-full px-4 py-3 flex items-center gap-3 text-left hover:bg-gray-50 transition-colors cursor-pointer">
                     {run.status === 'passed' ? <CheckCircle2 className="w-4 h-4 text-green-500 shrink-0" /> : <XCircle className="w-4 h-4 text-red-500 shrink-0" />}
                     <span className="font-medium text-sm flex-1">{run.test_name}</span>
                     <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${run.mode === 'agent' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'}`}>
@@ -353,7 +355,7 @@ export default function Analytics() {
                     <span className="text-xs text-gray-400 w-14 text-right">{fmt(run.duration_ms)}</span>
                     {run.session_id && <Link to={`/session/${run.session_id}`} onClick={e => e.stopPropagation()} className="text-xs text-indigo-500 hover:underline">Session</Link>}
                     {isExpanded ? <ChevronUp className="w-4 h-4 text-gray-400" /> : <ChevronDown className="w-4 h-4 text-gray-400" />}
-                  </button>
+                  </div>
                   {isExpanded && <TestRunDrillDown run={run} />}
                 </div>
               )

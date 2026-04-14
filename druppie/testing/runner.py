@@ -21,7 +21,6 @@ Execution flow for agent tests:
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import logging
 import time
 from dataclasses import dataclass, field
@@ -155,8 +154,7 @@ class TestRunner:
     def _run_tool_test(self, test: ToolTestDefinition, batch_id: str | None = None) -> TestRunResult:
         start = time.time()
 
-        short_hash = hashlib.md5(f"{test.name}-tool-{uuid4()}".encode()).hexdigest()[:8]
-        test_user = f"t-{short_hash}"
+        test_user = f"t-{uuid4().hex[:12]}"
 
         git_commit, git_branch = git_info()
         benchmark_run = BenchmarkRun(
@@ -312,6 +310,10 @@ class TestRunner:
     def _replay_chain(self, test: ToolTestDefinition, user_id: UUID,
                       run_namespace: str) -> tuple[UUID | None, list[AssertionResult]]:
         """Replay a tool test chain through real MCP. Returns (session_id, assertion_results)."""
+        if not test.chain:
+            logger.warning("Empty chain in test '%s' — skipping replay", test.name)
+            return None, []
+
         from druppie.testing.replay_executor import ReplayExecutor, _gitea_singleton_lock
         from druppie.testing.seed_schema import (
             AgentRunFixture, SessionFixture, SessionMetadata, ToolCallFixture, MessageFixture,
@@ -385,15 +387,10 @@ class TestRunner:
             messages=[MessageFixture(role="user", content=f"Tool test: {test.name}")],
         )
 
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            with _gitea_lock:
-                result = loop.run_until_complete(
-                    replay_exec.replay_session(fixture, user_id, self._gitea_url)
-                )
-        finally:
-            loop.close()
+        with _gitea_lock:
+            result = asyncio.run(
+                replay_exec.replay_session(fixture, user_id, self._gitea_url)
+            )
 
         session_id = UUID(result["session_id"])
 
@@ -470,8 +467,7 @@ class TestRunner:
                         batch_id: str | None = None) -> TestRunResult:
         start = time.time()
 
-        short_hash = hashlib.md5(f"{test.name}-{hitl_name}-{uuid4()}".encode()).hexdigest()[:8]
-        test_user = f"t-{short_hash}"
+        test_user = f"t-{uuid4().hex[:12]}"
         run_namespace = test_user
 
         git_commit, git_branch = git_info()

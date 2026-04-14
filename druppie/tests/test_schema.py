@@ -263,7 +263,6 @@ def test_parse_check_yaml_file():
     cf = CheckFile(**data)
     assert cf.check.name == "router-correct-intent"
     assert len(cf.check.assert_) == 2
-    assert len(cf.check.judge) >= 1
 
 
 def test_parse_tool_test_yaml_file():

@@ -281,26 +281,31 @@ class EvaluationService:
     # ANALYTICS
     # =========================================================================
 
+    def _require_analytics_repo(self):
+        if self._analytics_repo is None:
+            raise RuntimeError("AnalyticsRepository not configured for this EvaluationService instance")
+        return self._analytics_repo
+
     def get_analytics_summary(self, days: int = 30) -> dict:
-        return self._analytics_repo.get_summary(days)
+        return self._require_analytics_repo().get_summary(days)
 
     def get_analytics_trends(self, days: int = 30) -> list[dict]:
-        return self._analytics_repo.get_trends(days)
+        return self._require_analytics_repo().get_trends(days)
 
     def get_analytics_by_agent(self, batch_id: str | None = None) -> list[dict]:
-        return self._analytics_repo.get_by_agent(batch_id)
+        return self._require_analytics_repo().get_by_agent(batch_id)
 
     def get_analytics_by_eval(self, batch_id: str | None = None) -> list[dict]:
-        return self._analytics_repo.get_by_eval(batch_id)
+        return self._require_analytics_repo().get_by_eval(batch_id)
 
     def get_analytics_by_tool(self, batch_id: str | None = None) -> list[dict]:
-        return self._analytics_repo.get_by_tool(batch_id)
+        return self._require_analytics_repo().get_by_tool(batch_id)
 
     def get_analytics_by_test(self, batch_id: str | None = None) -> list[dict]:
-        return self._analytics_repo.get_by_test(batch_id)
+        return self._require_analytics_repo().get_by_test(batch_id)
 
     def get_analytics_batch_detail(self, batch_id: str) -> dict:
-        return self._analytics_repo.get_batch_detail(batch_id)
+        return self._require_analytics_repo().get_batch_detail(batch_id)
 
     def get_test_run_assertions(self, test_run_id) -> list[dict]:
         return self.eval_repo.get_test_run_assertions(test_run_id)

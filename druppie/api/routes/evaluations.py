@@ -464,15 +464,15 @@ async def run_tests(
 
         run_id = str(uuid_mod.uuid4())
         _active_run_id = run_id
-        _test_run_status[run_id] = {
+        _set_run_status(run_id, {
             "status": "running",
             "message": "Loading tests...",
-            "started_at": datetime.now(timezone.utc).isoformat(),
+            "started_at": datetime.now(timezone.utc),
             "results": None,
             "current_test": None,
             "completed_tests": [],
             "total_tests": 0,
-        }
+        })
 
     test_name = body.test_name
     test_names = body.test_names
@@ -617,10 +617,13 @@ async def run_tests(
             }
 
             with _run_lock:
-                completed = list(_test_run_status[run_id]["completed_tests"])
+                prev = _test_run_status.get(run_id, {})
+                completed = list(prev.get("completed_tests", []))
+                started_at = prev.get("started_at")
                 _test_run_status[run_id] = {
                     "status": "completed",
                     "message": f"{passed}/{result['total']} passed",
+                    "started_at": started_at,
                     "results": result,
                     "current_test": None,
                     "completed_tests": completed,
@@ -632,9 +635,11 @@ async def run_tests(
                 prev = _test_run_status.get(run_id, {})
                 completed = list(prev.get("completed_tests", []))
                 total_tests = prev.get("total_tests", 0)
+                started_at = prev.get("started_at")
                 _test_run_status[run_id] = {
                     "status": "error",
                     "message": str(e),
+                    "started_at": started_at,
                     "results": None,
                     "current_test": None,
                     "completed_tests": completed,
@@ -647,7 +652,9 @@ async def run_tests(
         finally:
             global _active_run_id
             with _run_lock:
-                _active_run_id = None
+                # Only clear if we're still the active run (avoid race with a new run)
+                if _active_run_id == run_id:
+                    _active_run_id = None
             db.close()
 
     thread = threading.Thread(target=_run, daemon=True, name=f"test-run-{run_id}")
