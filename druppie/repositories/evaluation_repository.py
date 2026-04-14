@@ -154,7 +154,7 @@ class EvaluationRepository(BaseRepository):
     # =========================================================================
 
     # =========================================================================
-    # TEST RUN METHODS (v2 testing framework)
+    # TEST RUN METHODS (testing framework)
     # =========================================================================
 
     def list_test_runs(

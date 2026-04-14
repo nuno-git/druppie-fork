@@ -1,4 +1,4 @@
-"""Pydantic schemas for v2 testing framework.
+"""Pydantic schemas for testing framework.
 
 Five concepts:
 - Setup: session fixtures for world state (uses existing seed_schema.SessionFixture)
@@ -293,18 +293,3 @@ class AgentTestFile(BaseModel):
     agent_test: AgentTestDefinition = Field(alias="agent-test")
 
 
-# --- Backwards compat: keep old names as aliases for imports ---
-# These will be removed once all callers are updated.
-
-# Backwards compat aliases
-EvalAssertion = CheckAssertion
-EvalDefinition = CheckDefinition
-EvalJudge = None  # removed, judge is now list[str] on CheckDefinition
-EvalFile = CheckFile
-TestDefinition = AgentTestDefinition
-TestFile = AgentTestFile
-TestEvalRef = CheckRef
-SeedSessionRef = None  # removed, use setup list instead
-TestRun = None  # removed, use message + agents directly
-TestInlineEvaluate = None  # removed, use assert + judge + verify directly
-TestInlineJudge = None  # removed

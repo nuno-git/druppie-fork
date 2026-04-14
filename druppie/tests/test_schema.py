@@ -1,4 +1,4 @@
-"""Tests for v2 testing framework Pydantic schemas."""
+"""Tests for testing framework Pydantic schemas."""
 
 import pytest
 from pydantic import ValidationError
@@ -32,7 +32,7 @@ def test_parse_minimal_check():
     assert cd.description == ""
     assert cd.tags == []
     assert cd.assert_ == []
-    assert cd.judge == []
+    assert cd.judge is None
 
 
 def test_parse_full_check():
@@ -146,7 +146,7 @@ def test_parse_minimal_agent_test():
     assert at.agents == []
     assert at.setup == []
     assert at.assert_ == []
-    assert at.judge == []
+    assert at.judge is None
     assert at.hitl is None
     assert at.is_manual is False
 

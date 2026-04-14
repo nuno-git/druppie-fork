@@ -1,4 +1,4 @@
-"""Per-assertion result storage for v3 testing framework analytics."""
+"""Per-assertion result storage for testing framework analytics."""
 
 from typing import Any
 from uuid import uuid4

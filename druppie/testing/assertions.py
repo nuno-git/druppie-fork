@@ -1,4 +1,4 @@
-"""Assertion matching for v2 tests.
+"""Assertion matching for tests.
 
 Matches eval assertions against DB state with expected values from tests.
 Three matching modes: exact, wildcard (*), any-of list.
@@ -16,7 +16,7 @@ from uuid import UUID
 from sqlalchemy.orm import Session as DbSession
 
 from druppie.db.models import AgentRun, ToolCall
-from druppie.testing.schema import EvalAssertion
+from druppie.testing.schema import CheckAssertion
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +31,7 @@ class AssertionResult:
 def match_assertions(
     db: DbSession,
     session_id: UUID,
-    assertions: list[EvalAssertion],
+    assertions: list[CheckAssertion],
     expected: dict[str, object],
 ) -> list[AssertionResult]:
     """Match eval assertions against DB state with expected values from test.
@@ -129,7 +129,7 @@ def _resolve_references(
 def _check_completed(
     db: DbSession,
     session_id: UUID,
-    assertion: EvalAssertion,
+    assertion: CheckAssertion,
 ) -> AssertionResult:
     """Check whether an agent completed or failed."""
     agent_run = (
@@ -165,7 +165,7 @@ def _check_completed(
 def _check_tool(
     db: DbSession,
     session_id: UUID,
-    assertion: EvalAssertion,
+    assertion: CheckAssertion,
     expected: dict[str, object],
 ) -> AssertionResult:
     """Check whether a specific tool was called, with optional argument matching."""

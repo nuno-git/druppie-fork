@@ -96,7 +96,28 @@ _ERROR_PATTERNS = [
 ]
 _ERROR_RE = re.compile("|".join(_ERROR_PATTERNS), re.IGNORECASE)
 
+# Phrases that contain error-like words but indicate success
+_FALSE_POSITIVE_PATTERNS = [
+    r"\bno\s+errors?\b",
+    r"\b0\s+(tests?\s+)?failed\b",
+    r"\bwithout\s+errors?\b",
+    r"\berror.?free\b",
+    r"\bno\s+failures?\b",
+    r"\b0\s+failures?\b",
+    r"\berror\s*handl",
+    r"\bexception\s*handl",
+]
+_FALSE_POSITIVE_RE = re.compile("|".join(_FALSE_POSITIVE_PATTERNS), re.IGNORECASE)
+
 
 def _looks_like_error(text: str) -> bool:
-    """Check if text looks like an error message."""
-    return bool(_ERROR_RE.search(text))
+    """Check if text looks like an error message.
+
+    Excludes common false positives like "No errors found" or "0 tests failed".
+    """
+    if not _ERROR_RE.search(text):
+        return False
+    # If the match is within a known success phrase, it's not an error
+    if _FALSE_POSITIVE_RE.search(text):
+        return False
+    return True

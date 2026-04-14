@@ -36,9 +36,7 @@ const request = async (endpoint, options = {}) => {
 
     if (!response.ok) {
       const error = await response.json().catch(() => ({ detail: 'Unknown error' }))
-      console.error('❌ Error Response:', { status: response.status, error })
-      console.timeEnd('Duration')
-      console.groupEnd()
+      console.error('API Error:', { status: response.status, error })
       const msg = [error.message, error.detail, error.error].find(v => typeof v === 'string' && v)
         || `Request failed: ${response.status}`
       const err = new Error(msg)
