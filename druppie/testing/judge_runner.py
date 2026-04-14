@@ -185,8 +185,10 @@ Respond with JSON: {{"pass": true/false, "reasoning": "your explanation"}}"""
                 text = text.split("\n", 1)[1] if "\n" in text else text
                 text = text.rsplit("```", 1)[0]
             data = json.loads(text)
+            if not isinstance(data, dict):
+                return False, f"Judge response is not a JSON object: {response_text[:200]}"
             passed = bool(data.get("pass", False))
-            reasoning = data.get("reasoning", "")
+            reasoning = str(data.get("reasoning", ""))
             return passed, reasoning
         except (json.JSONDecodeError, ValueError):
             logger.warning("Judge response parse failed: response=%s", response_text[:200])

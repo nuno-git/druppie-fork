@@ -154,9 +154,8 @@ class TestRunner:
 
     def _run_tool_test(self, test: ToolTestDefinition, batch_id: str | None = None) -> TestRunResult:
         start = time.time()
-        timestamp = int(start)
 
-        short_hash = hashlib.md5(f"{test.name}-tool-{timestamp}".encode()).hexdigest()[:8]
+        short_hash = hashlib.md5(f"{test.name}-tool-{uuid4()}".encode()).hexdigest()[:8]
         test_user = f"t-{short_hash}"
 
         git_commit, git_branch = _git_info()
@@ -463,9 +462,8 @@ class TestRunner:
                         execute: bool = True, judge: bool = True,
                         batch_id: str | None = None) -> TestRunResult:
         start = time.time()
-        timestamp = int(start)
 
-        short_hash = hashlib.md5(f"{test.name}-{hitl_name}-{timestamp}".encode()).hexdigest()[:8]
+        short_hash = hashlib.md5(f"{test.name}-{hitl_name}-{uuid4()}".encode()).hexdigest()[:8]
         test_user = f"t-{short_hash}"
         run_namespace = test_user
 
