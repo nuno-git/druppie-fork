@@ -309,3 +309,5 @@ export const getCustomAgentYaml = (agentId) => request(`/api/agents/custom/${age
 export const getAgentMetadata = () => request('/api/agents/metadata')
 export const deployCustomAgent = (agentId) =>
   request(`/api/agents/custom/${agentId}/deploy`, { method: 'POST' })
+export const undeployCustomAgent = (agentId) =>
+  request(`/api/agents/custom/${agentId}/undeploy`, { method: 'POST' })

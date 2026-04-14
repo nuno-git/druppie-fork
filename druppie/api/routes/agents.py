@@ -312,6 +312,37 @@ async def deploy_custom_agent(
         raise HTTPException(status_code=500, detail=f"Deployment failed: {str(e)}")
 
 
+@router.post("/agents/custom/{agent_id}/undeploy")
+async def undeploy_custom_agent(
+    agent_id: str,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """Remove a custom agent from Azure AI Foundry."""
+    from druppie.services.foundry_service import FoundryService
+    from druppie.core.config import get_settings
+
+    settings = get_settings()
+
+    foundry = FoundryService(
+        endpoint=settings.foundry_project_endpoint,
+        api_key=settings.foundry_api_key or None,
+    )
+
+    if foundry.is_configured():
+        foundry.delete_agent(agent_id)
+
+    from druppie.repositories import CustomAgentRepository
+    repo = CustomAgentRepository(db)
+    agent = repo.get_by_agent_id(agent_id)
+    if agent:
+        agent.deployment_status = None
+        agent.deployed_at = None
+        db.commit()
+
+    return {"status": "undeployed", "agent_id": agent_id}
+
+
 # =============================================================================
 # SINGLE AGENT LOOKUP (must be after /agents/custom and /agents/metadata)
 # =============================================================================

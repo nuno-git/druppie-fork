@@ -118,6 +118,17 @@ class FoundryService:
             "deployed_at": datetime.now(timezone.utc).isoformat(),
         }
 
+    def delete_agent(self, agent_name: str) -> bool:
+        """Delete a deployed agent from Foundry."""
+        try:
+            client = self._get_client()
+            client.agents.delete(agent_name=agent_name)
+            logger.info("foundry_agent_deleted", agent_name=agent_name)
+            return True
+        except Exception as e:
+            logger.warning("foundry_delete_agent_failed", agent_name=agent_name, error=str(e))
+            return False
+
     def get_agent_info(self, agent_name: str) -> dict | None:
         """Get info about a deployed agent from Foundry."""
         try:

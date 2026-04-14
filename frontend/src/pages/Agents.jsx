@@ -24,7 +24,7 @@ import {
   Copy,
   Save,
 } from 'lucide-react'
-import { getAgents, getCustomAgents, deleteCustomAgent, getCustomAgentYaml, deployCustomAgent, updateCustomAgent } from '../services/api'
+import { getAgents, getCustomAgents, deleteCustomAgent, getCustomAgentYaml, deployCustomAgent, undeployCustomAgent, updateCustomAgent } from '../services/api'
 import PageHeader from '../components/shared/PageHeader'
 
 const CATEGORY_COLORS = {
@@ -109,85 +109,78 @@ const BuiltinAgentRow = ({ agent }) => {
   )
 }
 
-// Custom agent card with deploy, YAML edit, download, delete, active toggle
-const CustomAgentCard = ({ agent, onEdit, onDelete, onDownloadYaml, onDeploy, onViewYaml, onToggleActive, isDeleting, isDeploying }) => (
-  <div
-    onClick={() => onEdit(agent.agent_id)}
-    className="bg-gray-50/70 rounded-lg p-4 border border-gray-100 hover:border-gray-200 hover:bg-gray-50 transition-colors cursor-pointer"
-  >
-    <div className="flex items-start justify-between">
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2">
-          <span className="font-medium text-gray-900 text-sm">{agent.name}</span>
-          <CategoryBadge category={agent.category} />
-          <button
-            onClick={(e) => { e.stopPropagation(); onToggleActive(agent.agent_id, !agent.is_active) }}
-            className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full transition-colors ${
-              agent.is_active
-                ? 'bg-green-100 text-green-700 hover:bg-green-200'
-                : 'bg-gray-100 text-gray-400 hover:bg-gray-200'
-            }`}
-            title={agent.is_active ? 'Click to deactivate' : 'Click to activate'}
-          >
-            {agent.is_active ? <CheckCircle className="w-3 h-3" /> : <XCircle className="w-3 h-3" />}
-            {agent.is_active ? 'Active' : 'Inactive'}
-          </button>
-          {agent.deployment_status && (
-            <span
-              className={`inline-flex items-center gap-1 text-xs ${
-                agent.deployment_status === 'deployed' ? 'text-green-600' :
-                agent.deployment_status === 'failed' ? 'text-red-500' : 'text-gray-400'
+// Custom agent card with deploy toggle, YAML edit, download, delete
+const CustomAgentCard = ({ agent, onEdit, onDelete, onDownloadYaml, onToggleDeploy, onViewYaml, isDeleting, isDeploying }) => {
+  const isDeployed = agent.deployment_status === 'deployed'
+
+  return (
+    <div
+      onClick={() => onEdit(agent.agent_id)}
+      className="bg-gray-50/70 rounded-lg p-4 border border-gray-100 hover:border-gray-200 hover:bg-gray-50 transition-colors cursor-pointer"
+    >
+      <div className="flex items-start justify-between">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <span className="font-medium text-gray-900 text-sm">{agent.name}</span>
+            <CategoryBadge category={agent.category} />
+            <button
+              onClick={(e) => { e.stopPropagation(); onToggleDeploy(agent.agent_id, isDeployed) }}
+              disabled={isDeploying}
+              className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full transition-colors ${
+                isDeploying ? 'bg-yellow-100 text-yellow-700' :
+                isDeployed
+                  ? 'bg-green-100 text-green-700 hover:bg-red-100 hover:text-red-700'
+                  : 'bg-gray-100 text-gray-400 hover:bg-purple-100 hover:text-purple-700'
               }`}
+              title={isDeploying ? 'Processing...' : isDeployed ? 'Click to undeploy from Foundry' : 'Click to deploy to Foundry'}
             >
-              {agent.deployment_status === 'deployed' ? <CheckCircle className="w-3 h-3" /> :
-               agent.deployment_status === 'failed' ? <XCircle className="w-3 h-3" /> : null}
-              {agent.deployment_status}
-            </span>
+              {isDeploying ? <Loader2 className="w-3 h-3 animate-spin" /> :
+               isDeployed ? <Rocket className="w-3 h-3" /> : <XCircle className="w-3 h-3" />}
+              {isDeploying ? 'Processing...' : isDeployed ? 'Deployed' : 'Not deployed'}
+            </button>
+            {agent.deployment_status === 'failed' && (
+              <span className="inline-flex items-center gap-1 text-xs text-red-500">
+                <AlertCircle className="w-3 h-3" />
+                Deploy failed
+              </span>
+            )}
+          </div>
+          <p className="text-xs text-gray-500 mt-1 font-mono">{agent.agent_id}</p>
+          {agent.llm_profile && (
+            <p className="text-xs text-gray-400 mt-1">Profile: {agent.llm_profile}</p>
+          )}
+          {agent.description && (
+            <p className="text-xs text-gray-500 mt-2 line-clamp-2">{agent.description}</p>
           )}
         </div>
-        <p className="text-xs text-gray-500 mt-1 font-mono">{agent.agent_id}</p>
-        {agent.llm_profile && (
-          <p className="text-xs text-gray-400 mt-1">Profile: {agent.llm_profile}</p>
-        )}
-        {agent.description && (
-          <p className="text-xs text-gray-500 mt-2 line-clamp-2">{agent.description}</p>
-        )}
-      </div>
-      <div className="flex items-center gap-1 ml-3">
-        <button
-          onClick={(e) => { e.stopPropagation(); onDeploy(agent.agent_id) }}
-          disabled={isDeploying}
-          className="p-1.5 text-gray-400 hover:text-purple-600 hover:bg-purple-50 rounded transition-colors"
-          title="Deploy to Foundry"
-        >
-          {isDeploying ? <Loader2 className="w-4 h-4 animate-spin" /> : <Rocket className="w-4 h-4" />}
-        </button>
-        <button
-          onClick={(e) => { e.stopPropagation(); onViewYaml(agent.agent_id) }}
-          className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors"
-          title="Edit YAML"
-        >
-          <FileCode className="w-4 h-4" />
-        </button>
-        <button
-          onClick={(e) => { e.stopPropagation(); onDownloadYaml(agent.agent_id, agent.name) }}
-          className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors"
-          title="Download YAML"
-        >
-          <Download className="w-4 h-4" />
-        </button>
-        <button
-          onClick={(e) => { e.stopPropagation(); onDelete(agent.agent_id) }}
-          disabled={isDeleting}
-          className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors"
-          title="Delete agent"
-        >
-          {isDeleting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
-        </button>
+        <div className="flex items-center gap-1 ml-3">
+          <button
+            onClick={(e) => { e.stopPropagation(); onViewYaml(agent.agent_id) }}
+            className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors"
+            title="Edit YAML"
+          >
+            <FileCode className="w-4 h-4" />
+          </button>
+          <button
+            onClick={(e) => { e.stopPropagation(); onDownloadYaml(agent.agent_id, agent.name) }}
+            className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors"
+            title="Download YAML"
+          >
+            <Download className="w-4 h-4" />
+          </button>
+          <button
+            onClick={(e) => { e.stopPropagation(); onDelete(agent.agent_id) }}
+            disabled={isDeleting}
+            className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors"
+            title="Delete agent"
+          >
+            {isDeleting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+          </button>
+        </div>
       </div>
     </div>
-  </div>
-)
+  )
+}
 
 // YAML editor modal
 const YamlEditorModal = ({ agentId, onClose, onSaved }) => {
@@ -382,22 +375,17 @@ const Agents = () => {
     }
   }
 
-  const handleToggleActive = async (agentId, isActive) => {
-    try {
-      await updateCustomAgent(agentId, { is_active: isActive })
-      queryClient.invalidateQueries({ queryKey: ['custom-agents'] })
-    } catch (err) {
-      alert(`Failed to update: ${err.message || 'Unknown error'}`)
-    }
-  }
-
-  const handleDeploy = async (agentId) => {
+  const handleToggleDeploy = async (agentId, isCurrentlyDeployed) => {
     setDeployingId(agentId)
     try {
-      await deployCustomAgent(agentId)
+      if (isCurrentlyDeployed) {
+        await undeployCustomAgent(agentId)
+      } else {
+        await deployCustomAgent(agentId)
+      }
       queryClient.invalidateQueries({ queryKey: ['custom-agents'] })
     } catch (err) {
-      alert(`Deploy failed: ${err.message || 'Unknown error'}`)
+      alert(`${isCurrentlyDeployed ? 'Undeploy' : 'Deploy'} failed: ${err.message || 'Unknown error'}`)
     } finally {
       setDeployingId(null)
     }
@@ -526,9 +514,8 @@ const Agents = () => {
                 onEdit={(id) => navigate(`/agents/${id}/edit`)}
                 onDelete={handleDelete}
                 onDownloadYaml={handleDownloadYaml}
-                onDeploy={handleDeploy}
+                onToggleDeploy={handleToggleDeploy}
                 onViewYaml={(id) => setYamlEditorId(id)}
-                onToggleActive={handleToggleActive}
                 isDeleting={deletingId === agent.agent_id}
                 isDeploying={deployingId === agent.agent_id}
               />
