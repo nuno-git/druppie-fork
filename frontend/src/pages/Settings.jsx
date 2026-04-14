@@ -2,10 +2,10 @@
  * Settings Page - Admin Configuration
  */
 
-import React, { useState, useEffect, useRef, useCallback } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { User, Server, Bot, Info, Shield, CheckCircle, XCircle, RefreshCw, Cpu, Thermometer, Zap, ChevronDown, ChevronRight, Cloud, LogOut, ExternalLink, Copy, Loader2 } from 'lucide-react'
-import { getMCPServers, getMCPTools, getStatus, getAgents, startAzureDeviceCode, getAzureAuthStatus, disconnectAzure } from '../services/api'
+import { User, Server, Bot, Info, Shield, CheckCircle, XCircle, RefreshCw, Cpu, ChevronDown, ChevronRight, Cloud, LogOut } from 'lucide-react'
+import { getMCPServers, getMCPTools, getStatus, getAgents, startAzureLogin, getAzureAuthStatus, disconnectAzure } from '../services/api'
 import { useAuth } from '../App'
 import PageHeader from '../components/shared/PageHeader'
 import { SkeletonSettingsSection } from '../components/shared/Skeleton'
@@ -116,50 +116,44 @@ const AgentRow = ({ agent }) => {
 }
 
 const AzureAuthSection = () => {
-  const [azureStatus, setAzureStatus] = useState('loading') // loading, not_started, pending, authenticated, error, expired
-  const [deviceCode, setDeviceCode] = useState(null)
+  const [azureStatus, setAzureStatus] = useState('loading')
+  const [isConfigured, setIsConfigured] = useState(true)
+  const [redirecting, setRedirecting] = useState(false)
   const [error, setError] = useState(null)
-  const [copied, setCopied] = useState(false)
-  const pollRef = useRef(null)
 
   const checkStatus = useCallback(async () => {
     try {
       const result = await getAzureAuthStatus()
       setAzureStatus(result.status)
-      if (result.status === 'authenticated' || result.status === 'error' || result.status === 'expired') {
-        // Stop polling
-        if (pollRef.current) {
-          clearInterval(pollRef.current)
-          pollRef.current = null
-        }
-        setDeviceCode(null)
-        if (result.status === 'error') {
-          setError(result.error || 'Authentication failed')
-        }
-      }
+      if (result.is_configured !== undefined) setIsConfigured(result.is_configured)
     } catch (err) {
       setAzureStatus('not_started')
     }
   }, [])
 
   useEffect(() => {
-    checkStatus()
-    return () => {
-      if (pollRef.current) clearInterval(pollRef.current)
+    const params = new URLSearchParams(window.location.search)
+    const azureResult = params.get('azure')
+    if (azureResult === 'success') {
+      setAzureStatus('authenticated')
+      window.history.replaceState({}, '', '/settings')
+    } else if (azureResult === 'error') {
+      setAzureStatus('not_started')
+      setError(params.get('message') || 'Azure authentication failed')
+      window.history.replaceState({}, '', '/settings')
+    } else {
+      checkStatus()
     }
   }, [checkStatus])
 
   const handleLogin = async () => {
     setError(null)
+    setRedirecting(true)
     try {
-      const result = await startAzureDeviceCode()
-      setDeviceCode(result)
-      setAzureStatus('pending')
-      // Open the verification URL in a new tab
-      window.open(result.verification_uri, '_blank')
-      // Start polling
-      pollRef.current = setInterval(checkStatus, 3000)
+      const result = await startAzureLogin()
+      window.location.href = result.auth_url
     } catch (err) {
+      setRedirecting(false)
       setError(err.message || 'Failed to start login flow')
     }
   }
@@ -168,25 +162,15 @@ const AzureAuthSection = () => {
     try {
       await disconnectAzure()
       setAzureStatus('not_started')
-      setDeviceCode(null)
       setError(null)
     } catch (err) {
       setError(err.message || 'Failed to disconnect')
     }
   }
 
-  const handleCopyCode = () => {
-    if (deviceCode?.user_code) {
-      navigator.clipboard.writeText(deviceCode.user_code)
-      setCopied(true)
-      setTimeout(() => setCopied(false), 2000)
-    }
-  }
-
   return (
     <SectionCard title="Azure AI Foundry" icon={Cloud}>
       <div className="space-y-4">
-        {/* Status */}
         <div className="flex items-center justify-between">
           <span className="text-sm text-gray-500">Authentication Status</span>
           {azureStatus === 'loading' ? (
@@ -196,11 +180,6 @@ const AzureAuthSection = () => {
               <CheckCircle className="w-3 h-3 mr-1" />
               Connected
             </span>
-          ) : azureStatus === 'pending' ? (
-            <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-yellow-100 text-yellow-700">
-              <Loader2 className="w-3 h-3 mr-1 animate-spin" />
-              Waiting for login...
-            </span>
           ) : (
             <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-500">
               <XCircle className="w-3 h-3 mr-1" />
@@ -209,54 +188,12 @@ const AzureAuthSection = () => {
           )}
         </div>
 
-        {/* Device code display */}
-        {azureStatus === 'pending' && deviceCode && (
-          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 space-y-3">
-            <p className="text-sm text-blue-800">
-              Enter this code at{' '}
-              <a
-                href={deviceCode.verification_uri}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="font-medium underline inline-flex items-center"
-              >
-                microsoft.com/devicelogin
-                <ExternalLink className="w-3 h-3 ml-1" />
-              </a>
-            </p>
-            <div className="flex items-center gap-2">
-              <code className="text-2xl font-mono font-bold text-blue-900 tracking-wider bg-white px-4 py-2 rounded border border-blue-200">
-                {deviceCode.user_code}
-              </code>
-              <button
-                onClick={handleCopyCode}
-                className="p-2 text-blue-600 hover:text-blue-800 hover:bg-blue-100 rounded transition-colors"
-                title="Copy code"
-              >
-                {copied ? <CheckCircle className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
-              </button>
-            </div>
-            <p className="text-xs text-blue-600">
-              A browser tab has been opened. Complete the sign-in there, then return here.
-            </p>
-          </div>
-        )}
-
-        {/* Expired flow */}
-        {azureStatus === 'expired' && (
-          <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3">
-            <p className="text-sm text-yellow-800">The device code has expired. Please try again.</p>
-          </div>
-        )}
-
-        {/* Error */}
         {error && (
           <div className="bg-red-50 border border-red-200 rounded-lg p-3">
             <p className="text-sm text-red-700">{error}</p>
           </div>
         )}
 
-        {/* Actions */}
         <div className="border-t pt-4">
           {azureStatus === 'authenticated' ? (
             <button
@@ -266,14 +203,21 @@ const AzureAuthSection = () => {
               <LogOut className="w-4 h-4 mr-2" />
               Disconnect Azure
             </button>
-          ) : azureStatus !== 'pending' ? (
+          ) : azureStatus !== 'loading' && isConfigured ? (
             <button
               onClick={handleLogin}
-              className="inline-flex items-center px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors"
+              disabled={redirecting}
+              className="inline-flex items-center px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 rounded-lg transition-colors"
             >
-              <Cloud className="w-4 h-4 mr-2" />
-              Login with Azure
+              {redirecting ? (
+                <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+              ) : (
+                <Cloud className="w-4 h-4 mr-2" />
+              )}
+              {redirecting ? 'Redirecting...' : 'Login with Azure'}
             </button>
+          ) : azureStatus !== 'loading' && !isConfigured ? (
+            <p className="text-sm text-gray-500">Azure SSO is not configured. Contact your administrator.</p>
           ) : null}
         </div>
 

@@ -183,6 +183,28 @@ class GitHubAppSettings(BaseSettings):
         return bool(self.id and self.private_key_path and self.installation_id)
 
 
+class AzureSettings(BaseSettings):
+    """Azure AD SSO configuration for Foundry authentication."""
+
+    model_config = SettingsConfigDict(env_prefix="AZURE_")
+
+    client_id: str = Field(default="", description="Azure AD app client ID")
+    client_secret: str = Field(default="", description="Azure AD app client secret")
+    tenant_id: str = Field(default="common", description="Azure AD tenant ID")
+    redirect_uri: str = Field(
+        default="http://localhost:8000/api/auth/azure/callback",
+        description="OAuth redirect URI",
+    )
+    frontend_url: str = Field(
+        default="http://localhost:5273",
+        description="Frontend URL for post-auth redirect",
+    )
+
+    @property
+    def is_configured(self) -> bool:
+        return bool(self.client_id and self.client_secret)
+
+
 class MCPSettings(BaseSettings):
     """MCP microservice configuration."""
 
@@ -268,6 +290,7 @@ class Settings(BaseSettings):
     keycloak: KeycloakSettings = Field(default_factory=KeycloakSettings)
     gitea: GiteaSettings = Field(default_factory=GiteaSettings)
     github_app: GitHubAppSettings = Field(default_factory=GitHubAppSettings)
+    azure: AzureSettings = Field(default_factory=AzureSettings)
     llm: LLMSettings = Field(default_factory=LLMSettings)
     mcp: MCPSettings = Field(default_factory=MCPSettings)
     workspace: WorkspaceSettings = Field(default_factory=WorkspaceSettings)
