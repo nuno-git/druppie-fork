@@ -232,9 +232,7 @@ class ReplayExecutor:
         The session view will show every tool call and its result.
         """
         # Reset the Gitea singleton so this session gets a fresh client
-        # bound to the current event loop.  The caller (_replay_chain)
-        # holds _gitea_singleton_lock for the entire replay so concurrent
-        # test runs don't reset the client mid-operation.
+        # bound to the current event loop.
         import druppie.core.gitea as _gitea_mod
         _gitea_mod._gitea_client = None
 
@@ -351,6 +349,23 @@ class ReplayExecutor:
             "session_id": str(session_id),
             "project_id": str(project_id) if project_id else None,
         }
+
+    def replay_session_sync(
+        self,
+        fixture: SessionFixture,
+        user_id: UUID,
+        gitea_url: str | None = None,
+    ) -> dict:
+        """Synchronous wrapper that acquires the Gitea singleton lock and runs replay.
+
+        The lock ensures the Gitea client singleton isn't reset by a concurrent
+        thread mid-operation. This method owns both the lock and the reset,
+        so callers don't need to know about the implementation detail.
+        """
+        import asyncio
+
+        with _gitea_singleton_lock:
+            return asyncio.run(self.replay_session(fixture, user_id, gitea_url))
 
     def _create_outcome_files(
         self,

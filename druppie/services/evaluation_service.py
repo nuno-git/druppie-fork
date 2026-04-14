@@ -11,7 +11,6 @@ from ..domain.evaluation import (
     BenchmarkRunSummary,
     EvaluationResultDetail,
     EvaluationResultSummary,
-    TestAssertionResultSummary,
     TestRunDetail,
     TestRunSummary,
 )
@@ -337,54 +336,12 @@ class EvaluationService:
     @staticmethod
     def _test_run_to_summary(run: TestRun) -> TestRunSummary:
         """Convert a TestRun DB model to a TestRunSummary domain model."""
-        return TestRunSummary(
-            id=run.id,
-            benchmark_run_id=run.benchmark_run_id,
-            batch_id=run.batch_id,
-            test_name=run.test_name,
-            test_description=run.test_description,
-            test_user=run.test_user,
-            hitl_profile=run.hitl_profile,
-            judge_profile=run.judge_profile,
-            session_id=run.session_id,
-            sessions_seeded=run.sessions_seeded,
-            assertions_total=run.assertions_total,
-            assertions_passed=run.assertions_passed,
-            judge_checks_total=run.judge_checks_total,
-            judge_checks_passed=run.judge_checks_passed,
-            status=run.status,
-            duration_ms=run.duration_ms,
-            agent_id=run.agent_id,
-            mode=run.mode,
-            created_at=run.created_at,
-            tags=getattr(run, "_tags", []),
-        )
+        return run.to_domain(include_assertions=False)
 
-    @classmethod
-    def _test_run_to_detail(cls, run: TestRun) -> TestRunDetail:
+    @staticmethod
+    def _test_run_to_detail(run: TestRun) -> TestRunDetail:
         """Convert a TestRun DB model to a TestRunDetail domain model."""
-        summary = cls._test_run_to_summary(run)
-        assertion_results = [
-            TestAssertionResultSummary(
-                id=ar.id,
-                test_run_id=ar.test_run_id,
-                assertion_type=ar.assertion_type,
-                agent_id=ar.agent_id,
-                tool_name=ar.tool_name,
-                eval_name=ar.eval_name,
-                passed=ar.passed,
-                message=ar.message,
-                judge_reasoning=ar.judge_reasoning,
-                judge_raw_input=ar.judge_raw_input,
-                judge_raw_output=ar.judge_raw_output,
-                created_at=ar.created_at,
-            )
-            for ar in (run.assertion_results or [])
-        ]
-        return TestRunDetail(
-            **summary.model_dump(),
-            assertion_results=assertion_results,
-        )
+        return run.to_domain(include_assertions=True)
 
     # =========================================================================
     # CONVERSION HELPERS

@@ -5,7 +5,7 @@ from uuid import UUID
 from sqlalchemy import func
 from sqlalchemy.orm import joinedload, subqueryload
 
-from ..db.models import BenchmarkRun, EvaluationResult, TestRun, TestRunTag
+from ..db.models import BenchmarkRun, EvaluationResult, TestBatchRun, TestRun, TestRunTag
 from ..db.models.test_assertion_result import TestAssertionResult
 from .base import BaseRepository
 
@@ -171,7 +171,7 @@ class EvaluationRepository(BaseRepository):
             tag: Optional tag filter.
 
         Returns:
-            Tuple of (test_runs, total_count). Each test run has a _tags attribute.
+            Tuple of (test_runs, total_count).
         """
         query = self.db.query(TestRun)
 
@@ -187,10 +187,6 @@ class EvaluationRepository(BaseRepository):
             .all()
         )
 
-        # Attach tags from eagerly-loaded relationship
-        for item in items:
-            item._tags = [t.tag for t in item.tags]
-
         return items, total
 
     def get_test_run(self, test_run_id: UUID) -> TestRun | None:
@@ -200,7 +196,7 @@ class EvaluationRepository(BaseRepository):
             test_run_id: Test run UUID.
 
         Returns:
-            TestRun with _tags attribute, or None if not found.
+            TestRun or None if not found.
         """
         run = (
             self.db.query(TestRun)
@@ -208,8 +204,6 @@ class EvaluationRepository(BaseRepository):
             .filter(TestRun.id == test_run_id)
             .first()
         )
-        if run:
-            run._tags = [t.tag for t in run.tags]
         return run
 
     def list_test_batches(
@@ -269,10 +263,10 @@ class EvaluationRepository(BaseRepository):
             batch_id = row.batch_id
             runs = runs_by_batch.get(batch_id, [])
 
-            run_dicts = []
-            for run in runs:
-                run._tags = [t.tag for t in run.tags]
-                run_dicts.append(self._run_to_summary_dict(run))
+            run_dicts = [
+                run.to_domain(include_assertions=False).model_dump(mode="json")
+                for run in runs
+            ]
 
             passed = sum(1 for r in runs if r.status == "passed")
             total_tests = len(runs)
@@ -310,8 +304,7 @@ class EvaluationRepository(BaseRepository):
                     .all()
                 )
                 for run in unbatched:
-                    run._tags = [t.tag for t in run.tags]
-                    d = self._run_to_summary_dict(run)
+                    d = run.to_domain(include_assertions=False).model_dump(mode="json")
                     batches.append({
                         "batch_id": str(run.id),
                         "started_at": run.created_at.isoformat() if run.created_at else None,
@@ -377,36 +370,6 @@ class EvaluationRepository(BaseRepository):
             self.db.delete(user)
 
         return count
-
-    # =========================================================================
-    # CONVERSION HELPERS
-    # =========================================================================
-
-    @staticmethod
-    def _run_to_summary_dict(run: TestRun) -> dict:
-        """Convert a TestRun to a summary dict using domain model fields."""
-        return {
-            "id": str(run.id),
-            "benchmark_run_id": str(run.benchmark_run_id) if run.benchmark_run_id else None,
-            "batch_id": run.batch_id,
-            "test_name": run.test_name,
-            "test_description": run.test_description,
-            "test_user": run.test_user,
-            "hitl_profile": run.hitl_profile,
-            "judge_profile": run.judge_profile,
-            "session_id": str(run.session_id) if run.session_id else None,
-            "sessions_seeded": run.sessions_seeded,
-            "assertions_total": run.assertions_total,
-            "assertions_passed": run.assertions_passed,
-            "judge_checks_total": run.judge_checks_total,
-            "judge_checks_passed": run.judge_checks_passed,
-            "status": run.status,
-            "duration_ms": run.duration_ms,
-            "agent_id": run.agent_id,
-            "mode": run.mode,
-            "created_at": run.created_at.isoformat() if run.created_at else None,
-            "tags": getattr(run, "_tags", []),
-        }
 
     # =========================================================================
     # AGGREGATION METHODS
@@ -614,3 +577,46 @@ class EvaluationRepository(BaseRepository):
             "tools": sorted(tools),
             "types": sorted(types),
         }
+
+    # =========================================================================
+    # BATCH RUN STATUS (replaces in-memory _test_run_status dict)
+    # =========================================================================
+
+    def create_batch_run(self, batch_id: str, total_tests: int = 0) -> TestBatchRun:
+        batch = TestBatchRun(
+            id=batch_id, status="running",
+            message="Loading tests...", total_tests=total_tests,
+        )
+        self.db.add(batch)
+        self.db.flush()
+        return batch
+
+    def update_batch_run(self, batch_id: str, **kwargs) -> None:
+        batch = self.db.query(TestBatchRun).filter(TestBatchRun.id == batch_id).first()
+        if batch:
+            for key, val in kwargs.items():
+                setattr(batch, key, val)
+            self.db.flush()
+
+    def get_batch_run(self, batch_id: str) -> TestBatchRun | None:
+        return self.db.query(TestBatchRun).filter(TestBatchRun.id == batch_id).first()
+
+    def get_active_batch_run(self) -> TestBatchRun | None:
+        return (
+            self.db.query(TestBatchRun)
+            .filter(TestBatchRun.status == "running")
+            .order_by(TestBatchRun.started_at.desc())
+            .first()
+        )
+
+    def get_completed_test_runs(self, batch_id: str) -> list[dict]:
+        runs = (
+            self.db.query(TestRun)
+            .filter(TestRun.batch_id == batch_id)
+            .order_by(TestRun.created_at.asc())
+            .all()
+        )
+        return [
+            {"test_name": r.test_name, "status": r.status, "duration_ms": r.duration_ms}
+            for r in runs
+        ]
