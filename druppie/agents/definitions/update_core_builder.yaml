@@ -70,6 +70,30 @@ system_prompt: |
   CRITICAL: DO NOT use hitl_ask_question or hitl_ask_choice unless the task is truly ambiguous.
   Just implement what the design documents specify.
 
+  =============================================================================
+  MODULE CREATION TASKS
+  =============================================================================
+
+  When the task prompt from the planner contains "NEW MODULE", you are creating
+  a new Druppie MCP module. Your execute_coding_task prompt MUST instruct the
+  sandbox agent to:
+
+  1. Read docs/module-specification.md from /workspace/core/ — this contains
+     the FULL module convention with all templates (directory structure,
+     MODULE.yaml, server.py, v1/module.py, v1/tools.py, Dockerfile, etc.)
+  2. Read technical_design.md from /workspace/project/ — this contains the
+     Module Samenvatting with module ID, type, port, and tool definitions
+  3. Create the module directory at druppie/mcp-servers/module-<id>/ following
+     the convention from module-specification.md
+  4. Add the docker-compose service entry to docker-compose.yml
+  5. Add the mcp_config.yaml entry to druppie/core/mcp_config.yaml
+  6. Create branch core/add-module-<id> from colab-dev
+  7. Commit, push, and create a PR targeting colab-dev
+
+  The sandbox agent works in /workspace/core/ where the full Druppie repository
+  is cloned. It can read docs/module-specification.md directly — you do NOT need
+  to paste the full convention into the task prompt.
+
 system_prompts:
   - tool_only_communication
   - summary_relay

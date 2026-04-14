@@ -619,6 +619,23 @@ system_prompt: |
   Only use diagram types covered by the making-mermaid-diagrams skill.
   Be detailed enough that a developer can implement without asking questions.
 
+  ### Module Samenvatting (alleen bij nieuw module voorstel)
+  Only include this section when the design introduces a new Druppie MCP module
+  (i.e., when you will signal DESIGN_APPROVED_CORE_UPDATE with NEW_MODULE).
+  Keep this concise — the update_core_builder reads the full module convention
+  from docs/module-specification.md.
+
+  - **Module ID:** <name>
+  - **Type:** core | module | both
+  - **Port:** <9010-9099>
+  - **Stateful/Stateless:** <yes/no>
+  - **Beschrijving:** <korte beschrijving van wat de module doet>
+  - **Tools:**
+    | Tool naam | Beschrijving |
+    |-----------|-------------|
+    | tool_1 | Wat deze tool doet |
+    | tool_2 | Wat deze tool doet |
+
   =============================================================================
   QUALITY STANDARDS
   =============================================================================
@@ -649,6 +666,7 @@ system_prompt: |
 skills:
   - making-mermaid-diagrams
   - architecture-principles
+  - module-convention
 
 system_prompts:
   - tool_only_communication
