@@ -287,7 +287,16 @@ class EvaluationRepository(BaseRepository):
                 "runs": run_dicts,
             })
 
-        # Also include unbatched runs (batch_id is NULL) as individual batches
+        # Count unbatched runs separately for consistent pagination total
+        if not tag:
+            unbatched_count = (
+                self.db.query(func.count(TestRun.id))
+                .filter(TestRun.batch_id.is_(None))
+                .scalar()
+            ) or 0
+            total += unbatched_count
+
+        # Include unbatched runs (batch_id is NULL) as individual batches on page 1
         if page == 1 and not tag:
             unbatched = (
                 self.db.query(TestRun)
@@ -309,7 +318,6 @@ class EvaluationRepository(BaseRepository):
                     "total_duration_ms": run.duration_ms,
                     "runs": [d],
                 })
-            total += len(unbatched)
 
         return batches, total
 
@@ -330,6 +338,9 @@ class EvaluationRepository(BaseRepository):
     def delete_test_users(self) -> int:
         """Delete all test users (matching test-* pattern) and cascade their data.
 
+        Uses ORM-level delete (db.delete) instead of bulk Query.delete() to ensure
+        ORM cascade relationships are properly triggered for child records.
+
         Returns:
             Number of test users deleted.
         """
@@ -342,14 +353,24 @@ class EvaluationRepository(BaseRepository):
         )
         count = len(test_users)
         for user in test_users:
-            # Delete sessions (cascades to agent_runs, tool_calls, etc.)
-            self.db.query(SessionModel).filter(
-                SessionModel.user_id == user.id
-            ).delete()
-            # Delete projects owned by test user
-            self.db.query(Project).filter(
-                Project.owner_id == user.id
-            ).delete()
+            # Delete sessions via ORM to trigger cascade to agent_runs, tool_calls, etc.
+            sessions = (
+                self.db.query(SessionModel)
+                .filter(SessionModel.user_id == user.id)
+                .all()
+            )
+            for session in sessions:
+                self.db.delete(session)
+
+            # Delete projects via ORM to trigger cascade
+            projects = (
+                self.db.query(Project)
+                .filter(Project.owner_id == user.id)
+                .all()
+            )
+            for project in projects:
+                self.db.delete(project)
+
             self.db.delete(user)
 
         return count

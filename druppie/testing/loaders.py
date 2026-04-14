@@ -52,7 +52,7 @@ class ProfileLoader:
     def get_hitl(self, name: str) -> HITLProfile:
         if name == "default":
             return HITLProfile(
-                model="glm-5",
+                model="glm-4.5-air",
                 provider="zai",
                 prompt="You are a helpful user who gives clear, concise answers.",
             )
@@ -65,7 +65,7 @@ class ProfileLoader:
 
     def get_judge(self, name: str) -> JudgeProfile:
         if name == "default":
-            return JudgeProfile(model="glm-5", provider="zai")
+            return JudgeProfile(model="glm-4.5-air", provider="zai")
         if name not in self._judges:
             raise KeyError(
                 f"Unknown judge profile: {name}. "

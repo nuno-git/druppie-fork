@@ -79,7 +79,11 @@ def _run_parameterized_validator(name: str, param: str, result: str | None) -> V
     elif name == "matches":
         if not result:
             return ValidationResult(f"matches:{param}", False, "Result is empty")
-        if re.search(param, result):
+        try:
+            compiled = re.compile(param, re.DOTALL)
+        except re.error as e:
+            return ValidationResult(f"matches:{param}", False, f"Invalid regex pattern: {e}")
+        if compiled.search(result):
             return ValidationResult(f"matches:{param}", True, f"Result matches pattern '{param}'")
         return ValidationResult(f"matches:{param}", False, f"Result does not match pattern '{param}'")
 

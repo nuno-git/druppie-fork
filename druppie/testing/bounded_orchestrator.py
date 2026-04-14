@@ -152,6 +152,7 @@ class BoundedOrchestrator:
                     previous_summary += s + "\n"
 
             # Create and run each specified agent directly
+            all_agents_completed = True
             for i, agent_id in enumerate(self._real_agents):
                 prompt = f"PREVIOUS AGENT SUMMARY:\n{previous_summary}\n---\n\nUSER REQUEST:\n{message}"
 
@@ -190,13 +191,30 @@ class BoundedOrchestrator:
                         orchestrator, session_id, question_repo, execution_repo, session_repo
                     )
 
+                    # Check if pause loop broke early (no simulator, non-real agent question)
+                    self._db.expire_all()
+                    session = session_repo.get_by_id(session_id)
+                    if session and session.status in (
+                        SessionStatus.PAUSED_HITL.value,
+                        SessionStatus.PAUSED_APPROVAL.value,
+                        SessionStatus.PAUSED_SANDBOX.value,
+                    ):
+                        all_agents_completed = False
+                        logger.warning(
+                            "Session still paused after pause loop, skipping remaining agents: session=%s status=%s",
+                            session_id, session.status,
+                        )
+                        break
+
                 # Update summary for next agent
                 run_summary = execution_repo.get_done_summary_for_run(agent_run.id)
                 if run_summary:
                     previous_summary += run_summary + "\n"
 
-            session_repo.update_status(session_id, SessionStatus.COMPLETED)
-            session_repo.commit()
+            # Only mark COMPLETED if all agents actually ran to completion
+            if all_agents_completed:
+                session_repo.update_status(session_id, SessionStatus.COMPLETED)
+                session_repo.commit()
         else:
             # New session: use normal process_message flow
             result_session_id = await orchestrator.process_message(

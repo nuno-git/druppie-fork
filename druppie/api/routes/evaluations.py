@@ -54,6 +54,25 @@ def _set_run_status(run_id: str, status: dict) -> None:
     """Thread-safe full replacement of run status."""
     with _run_lock:
         _test_run_status[run_id] = status
+        # Evict old completed/errored entries to prevent unbounded memory growth
+        _evict_old_entries_locked()
+
+
+def _evict_old_entries_locked() -> None:
+    """Remove old completed/errored entries. Must be called with _run_lock held."""
+    MAX_ENTRIES = 50
+    if len(_test_run_status) <= MAX_ENTRIES:
+        return
+    # Keep running entries and the most recent completed ones
+    completed = [
+        (k, v) for k, v in _test_run_status.items()
+        if v.get("status") in ("completed", "error")
+    ]
+    # Sort by started_at (oldest first) and remove excess
+    completed.sort(key=lambda x: x[1].get("started_at", ""))
+    to_remove = len(_test_run_status) - MAX_ENTRIES
+    for k, _ in completed[:to_remove]:
+        del _test_run_status[k]
 
 
 def _get_run_status_snapshot(run_id: str) -> dict | None:
@@ -480,15 +499,27 @@ async def run_tests(
                 return None
 
             def _load_and_resolve(name):
-                """Load test and resolve manual inputs."""
+                """Load test and resolve manual inputs.
+
+                Input values arrive keyed as "test-name:input-name" to avoid
+                collisions when multiple tests share an input name. Extract
+                only the inputs for this test and pass just the input-name part.
+                """
                 path = _find_test(name)
                 if not path:
                     return None
                 test_def = runner.load_test(path)
                 if hasattr(test_def, "is_manual") and test_def.is_manual and input_values:
-                    test_def = test_def.resolve_inputs(input_values)
-                elif hasattr(test_def, "manual_input") and test_def.manual_input and input_values:
-                    test_def = test_def.resolve_inputs(input_values)
+                    # Extract inputs for this specific test
+                    test_inputs = {}
+                    prefix = f"{name}:"
+                    for key, val in input_values.items():
+                        if key.startswith(prefix):
+                            test_inputs[key[len(prefix):]] = val
+                        elif ":" not in key:
+                            # Backwards compat: plain input-name keys
+                            test_inputs[key] = val
+                    test_def = test_def.resolve_inputs(test_inputs)
                 return test_def
 
             # Resolve which tests to run
@@ -627,9 +658,11 @@ async def get_run_status(
     Returns:
         Status object with status, message, and results (when completed)
     """
+    from fastapi.responses import JSONResponse
+
     status = _get_run_status_snapshot(run_id)
     if not status:
-        return {"status": "not_found"}
+        return JSONResponse(status_code=404, content={"status": "not_found"})
     return status
 
 

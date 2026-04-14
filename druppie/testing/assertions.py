@@ -10,6 +10,7 @@ Dynamic references:
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from uuid import UUID
 
@@ -225,6 +226,16 @@ def _check_tool(
                 f"{assertion.agent}.tool({assertion.tool}).error",
                 False,
                 f"Error does not contain '{assertion.error_contains}': {error_msg[:200]}",
+            )
+
+    # Check error message matches regex pattern
+    if assertion.error_matches:
+        error_msg = tc.error_message or tc.result or ""
+        if not re.search(assertion.error_matches, error_msg):
+            return AssertionResult(
+                f"{assertion.agent}.tool({assertion.tool}).error_matches",
+                False,
+                f"Error does not match pattern '{assertion.error_matches}': {error_msg[:200]}",
             )
 
     # Match expected arguments

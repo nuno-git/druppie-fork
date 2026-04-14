@@ -23,7 +23,6 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
-import subprocess
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -56,6 +55,7 @@ from druppie.testing.schema import (
     ToolTestFile,
 )
 from druppie.testing.seed_ids import fixture_uuid
+from druppie.testing.utils import git_info as _git_info
 
 logger = logging.getLogger(__name__)
 
@@ -751,19 +751,3 @@ class TestRunner:
             return asyncio.run(bounded.run(message, session_id=session_id))
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-def _git_info() -> tuple[str | None, str | None]:
-    try:
-        commit = subprocess.check_output(
-            ["git", "rev-parse", "HEAD"], text=True, stderr=subprocess.DEVNULL,
-        ).strip()[:40]
-        branch = subprocess.check_output(
-            ["git", "rev-parse", "--abbrev-ref", "HEAD"], text=True, stderr=subprocess.DEVNULL,
-        ).strip()
-        return commit, branch
-    except Exception:
-        return None, None

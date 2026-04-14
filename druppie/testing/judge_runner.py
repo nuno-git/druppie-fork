@@ -179,17 +179,11 @@ Respond with JSON: {{"pass": true/false, "reasoning": "your explanation"}}"""
 
     @staticmethod
     def _parse_judge_response(response_text: str) -> tuple[bool, str]:
-        try:
-            text = response_text.strip()
-            if text.startswith("```"):
-                text = text.split("\n", 1)[1] if "\n" in text else text
-                text = text.rsplit("```", 1)[0]
-            data = json.loads(text)
-            if not isinstance(data, dict):
-                return False, f"Judge response is not a JSON object: {response_text[:200]}"
-            passed = bool(data.get("pass", False))
-            reasoning = str(data.get("reasoning", ""))
-            return passed, reasoning
-        except (json.JSONDecodeError, ValueError):
-            logger.warning("Judge response parse failed: response=%s", response_text[:200])
+        from druppie.testing.utils import parse_json_from_llm
+
+        data = parse_json_from_llm(response_text)
+        if data is None:
             return False, f"Failed to parse judge response: {response_text[:200]}"
+        passed = bool(data.get("pass", False))
+        reasoning = str(data.get("reasoning", ""))
+        return passed, reasoning
