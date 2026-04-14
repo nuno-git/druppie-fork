@@ -127,7 +127,7 @@ BUILTIN_TOOL_DEFS: dict[str, dict] = {
                 "properties": {
                     "intent": {
                         "type": "string",
-                        "enum": ["create_project", "update_project", "create_agent", "general_chat"],
+                        "enum": ["create_project", "update_project", "general_chat"],
                         "description": "The type of user intent",
                     },
                     "project_id": {
@@ -270,8 +270,132 @@ BUILTIN_TOOL_DEFS: dict[str, dict] = {
                         "type": "number",
                         "description": "Sampling temperature (0.0-1.0). Default: 0.1.",
                     },
+                    "mcps": {
+                        "type": "object",
+                        "description": "MCP servers and their tool whitelists. Keys are MCP server names, values are arrays of tool names. Example: {\"coding\": [\"read_file\", \"list_dir\"], \"web\": [\"search_web\"]}",
+                        "additionalProperties": {"type": "array", "items": {"type": "string"}},
+                    },
+                    "skills": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Skills the agent can invoke (e.g. ['code-review', 'data-analysis']).",
+                    },
+                    "extra_builtin_tools": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Builtin tools beyond defaults (done, hitl). Example: ['execute_coding_task'].",
+                    },
+                    "approval_overrides": {
+                        "type": "object",
+                        "description": "Per-tool approval overrides. Keys are 'mcp:tool' strings, values have requires_approval (bool) and required_role (string). Example: {\"coding:write_file\": {\"requires_approval\": true, \"required_role\": \"developer\"}}",
+                        "additionalProperties": {
+                            "type": "object",
+                            "properties": {
+                                "requires_approval": {"type": "boolean"},
+                                "required_role": {"type": "string"},
+                            },
+                        },
+                    },
+                    "max_tokens": {
+                        "type": "integer",
+                        "description": "Max tokens per LLM response. Default: 4096.",
+                    },
+                    "max_iterations": {
+                        "type": "integer",
+                        "description": "Max tool-call iterations. Default: 10.",
+                    },
                 },
                 "required": ["agent_id", "name", "description", "instructions"],
+            },
+        },
+    },
+    "update_foundry_agent": {
+        "type": "function",
+        "function": {
+            "name": "update_foundry_agent",
+            "description": (
+                "Update an existing Foundry agent definition. Use this to modify an agent's "
+                "configuration (instructions, MCPs, skills, approval overrides, etc.)."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "agent_id": {
+                        "type": "string",
+                        "description": "The agent_id of the existing agent to update.",
+                    },
+                    "name": {
+                        "type": "string",
+                        "description": "Updated human-readable name.",
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "Updated description.",
+                    },
+                    "instructions": {
+                        "type": "string",
+                        "description": "Updated system prompt / instructions.",
+                    },
+                    "model": {
+                        "type": "string",
+                        "description": "LLM profile: 'standard' or 'cheap'.",
+                    },
+                    "temperature": {
+                        "type": "number",
+                        "description": "Sampling temperature (0.0-1.0).",
+                    },
+                    "mcps": {
+                        "type": "object",
+                        "description": "MCP servers and their tool whitelists.",
+                        "additionalProperties": {"type": "array", "items": {"type": "string"}},
+                    },
+                    "skills": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Skills the agent can invoke.",
+                    },
+                    "extra_builtin_tools": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Builtin tools beyond defaults.",
+                    },
+                    "approval_overrides": {
+                        "type": "object",
+                        "description": "Per-tool approval overrides.",
+                        "additionalProperties": {
+                            "type": "object",
+                            "properties": {
+                                "requires_approval": {"type": "boolean"},
+                                "required_role": {"type": "string"},
+                            },
+                        },
+                    },
+                    "max_tokens": {
+                        "type": "integer",
+                        "description": "Max tokens per LLM response.",
+                    },
+                    "max_iterations": {
+                        "type": "integer",
+                        "description": "Max tool-call iterations.",
+                    },
+                },
+                "required": ["agent_id"],
+            },
+        },
+    },
+    "list_custom_agents": {
+        "type": "function",
+        "function": {
+            "name": "list_custom_agents",
+            "description": (
+                "List all existing custom/Foundry agents with their IDs, names, descriptions, "
+                "and deployment status. Use this to check what agents already exist before "
+                "creating new ones or to avoid duplicates."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": [],
             },
         },
     },
@@ -387,7 +511,7 @@ async def set_intent(
         project_name=project_name,
     )
 
-    valid_intents = ("create_project", "update_project", "create_agent", "general_chat")
+    valid_intents = ("create_project", "update_project", "general_chat")
     if intent not in valid_intents:
         return {
             "success": False,
@@ -545,17 +669,6 @@ async def set_intent(
                 "success": False,
                 "error": f"Invalid project_id format: {project_id}",
             }
-
-    elif intent == "create_agent":
-        # Create a lightweight project record to track the agent creation session
-        if not project_name:
-            project_name = "new-agent"
-        new_project = project_repo.create(name=project_name, user_id=session.user_id)
-        session_repo.update_project(session_id, new_project.id)
-        final_project_id = new_project.id
-        result["project_id"] = str(new_project.id)
-        result["project_name"] = project_name
-        result["message"] = f"Creating Foundry agent: {project_name}"
 
     else:  # general_chat
         result["message"] = "Intent set to general_chat"
@@ -1161,10 +1274,16 @@ async def create_foundry_agent(
     temperature: float,
     session_id: UUID,
     execution_repo: "ExecutionRepository",
+    mcps: dict | None = None,
+    skills: list | None = None,
+    extra_builtin_tools: list | None = None,
+    approval_overrides: dict | None = None,
+    max_tokens: int = 4096,
+    max_iterations: int = 10,
 ) -> dict:
     """Create a Foundry agent definition in the database.
 
-    Called by the architect/builder when the intent is create_agent.
+    Called by the agent_builder after the architect approves a Foundry agent design.
     The agent can later be deployed to Azure AI Foundry from the Agents page.
     """
     from druppie.db.database import SessionLocal
@@ -1191,14 +1310,14 @@ async def create_foundry_agent(
             system_prompt=instructions,
             llm_profile=model if model in ("standard", "cheap") else "standard",
             temperature=temperature,
-            max_tokens=4096,
-            max_iterations=10,
+            max_tokens=max_tokens,
+            max_iterations=max_iterations,
             owner_id=owner_id,
-            mcps=[],
-            skills=[],
+            mcps=mcps or {},
+            skills=skills or [],
             system_prompts_list=[],
-            builtin_tools=[],
-            approval_overrides={},
+            builtin_tools=extra_builtin_tools or [],
+            approval_overrides=approval_overrides or {},
         )
         db.commit()
 
@@ -1214,10 +1333,117 @@ async def create_foundry_agent(
             "agent_id": agent_id,
             "name": name,
             "description": description,
+            "mcps": mcps or {},
+            "skills": skills or [],
+            "extra_builtin_tools": extra_builtin_tools or [],
+            "approval_overrides": approval_overrides or {},
             "message": f"Agent '{name}' created successfully. It can be deployed to Azure AI Foundry from the Agents page.",
         }
     except Exception as e:
         logger.error("foundry_agent_creation_failed", error=str(e), agent_id=agent_id)
+        return {"success": False, "error": str(e)}
+    finally:
+        db.close()
+
+
+async def update_foundry_agent(
+    agent_id: str,
+    session_id: UUID,
+    execution_repo: "ExecutionRepository",
+    name: str | None = None,
+    description: str | None = None,
+    instructions: str | None = None,
+    model: str | None = None,
+    temperature: float | None = None,
+    mcps: dict | None = None,
+    skills: list | None = None,
+    extra_builtin_tools: list | None = None,
+    approval_overrides: dict | None = None,
+    max_tokens: int | None = None,
+    max_iterations: int | None = None,
+) -> dict:
+    """Update an existing Foundry agent definition in the database."""
+    from druppie.db.database import SessionLocal
+    from druppie.repositories.custom_agent_repository import CustomAgentRepository
+
+    db = SessionLocal()
+    try:
+        repo = CustomAgentRepository(db)
+
+        if not repo.agent_id_exists(agent_id):
+            return {"success": False, "error": f"Agent '{agent_id}' not found"}
+
+        update_kwargs = {}
+        if name is not None:
+            update_kwargs["name"] = name
+        if description is not None:
+            update_kwargs["description"] = description
+        if instructions is not None:
+            update_kwargs["system_prompt"] = instructions
+        if model is not None:
+            update_kwargs["llm_profile"] = model if model in ("standard", "cheap") else "standard"
+        if temperature is not None:
+            update_kwargs["temperature"] = temperature
+        if max_tokens is not None:
+            update_kwargs["max_tokens"] = max_tokens
+        if max_iterations is not None:
+            update_kwargs["max_iterations"] = max_iterations
+        if mcps is not None:
+            update_kwargs["mcps"] = mcps
+        if skills is not None:
+            update_kwargs["skills"] = skills
+        if extra_builtin_tools is not None:
+            update_kwargs["builtin_tools"] = extra_builtin_tools
+        if approval_overrides is not None:
+            update_kwargs["approval_overrides"] = approval_overrides
+
+        agent = repo.update(agent_id, **update_kwargs)
+        db.commit()
+
+        logger.info(
+            "foundry_agent_updated",
+            agent_id=agent_id,
+            updated_fields=list(update_kwargs.keys()),
+            session_id=str(session_id),
+        )
+
+        return {
+            "success": True,
+            "agent_id": agent_id,
+            "updated_fields": list(update_kwargs.keys()),
+            "message": f"Agent '{agent_id}' updated successfully.",
+        }
+    except Exception as e:
+        logger.error("foundry_agent_update_failed", error=str(e), agent_id=agent_id)
+        return {"success": False, "error": str(e)}
+    finally:
+        db.close()
+
+
+async def list_custom_agents() -> dict:
+    """List all existing custom/Foundry agents."""
+    from druppie.db.database import SessionLocal
+    from druppie.repositories.custom_agent_repository import CustomAgentRepository
+
+    db = SessionLocal()
+    try:
+        repo = CustomAgentRepository(db)
+        agents = repo.list_all()
+        return {
+            "success": True,
+            "agents": [
+                {
+                    "agent_id": a.agent_id,
+                    "name": a.name,
+                    "description": a.description,
+                    "deployment_status": a.deployment_status,
+                }
+                for a in agents
+            ],
+            "count": len(agents),
+        }
+    except Exception as e:
+        logger.error("list_custom_agents_failed", error=str(e))
         return {"success": False, "error": str(e)}
     finally:
         db.close()
@@ -1309,6 +1535,8 @@ async def execute_builtin(
             error_classification=args.get("error_classification"),
             strategy=args.get("strategy"),
         )
+    elif tool_name == "list_custom_agents":
+        return await list_custom_agents()
     elif tool_name == "create_foundry_agent":
         return await create_foundry_agent(
             agent_id=args.get("agent_id", ""),
@@ -1319,6 +1547,29 @@ async def execute_builtin(
             temperature=args.get("temperature", 0.1),
             session_id=session_id,
             execution_repo=execution_repo,
+            mcps=args.get("mcps"),
+            skills=args.get("skills"),
+            extra_builtin_tools=args.get("extra_builtin_tools"),
+            approval_overrides=args.get("approval_overrides"),
+            max_tokens=args.get("max_tokens", 4096),
+            max_iterations=args.get("max_iterations", 10),
+        )
+    elif tool_name == "update_foundry_agent":
+        return await update_foundry_agent(
+            agent_id=args.get("agent_id", ""),
+            session_id=session_id,
+            execution_repo=execution_repo,
+            name=args.get("name"),
+            description=args.get("description"),
+            instructions=args.get("instructions"),
+            model=args.get("model"),
+            temperature=args.get("temperature"),
+            mcps=args.get("mcps"),
+            skills=args.get("skills"),
+            extra_builtin_tools=args.get("extra_builtin_tools"),
+            approval_overrides=args.get("approval_overrides"),
+            max_tokens=args.get("max_tokens"),
+            max_iterations=args.get("max_iterations"),
         )
     else:
         return {

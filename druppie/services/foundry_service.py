@@ -75,6 +75,16 @@ class FoundryService:
     def deploy_agent(self, agent_detail) -> dict:
         """Deploy a custom agent definition to Azure AI Foundry.
 
+        The DB stores a full agent definition (MCPs, skills, builtin tools,
+        approval overrides) which governs behavior inside Druppie's own
+        orchestration. When deploying to Foundry, only the Foundry-compatible
+        subset is sent: model, instructions (system_prompt), and temperature.
+
+        Future: MCP tool schemas could be mapped to Foundry FunctionTool
+        definitions, allowing Foundry-deployed agents to access external
+        tools natively. This requires fetching tool JSON schemas from the
+        registry and converting them to Foundry's function format.
+
         Args:
             agent_detail: CustomAgentDetail with the agent configuration.
 
@@ -86,6 +96,11 @@ class FoundryService:
 
         model = PROFILE_MODEL_MAP.get(agent_detail.llm_profile, "gpt-4.1-mini")
 
+        # Currently sends: model, instructions, temperature.
+        # Fields stored but not yet sent to Foundry:
+        #   - mcps/skills/builtin_tools: Druppie-runtime concepts
+        #   - approval_overrides: Druppie's internal approval workflow
+        #   - max_tokens/max_iterations: Druppie agent loop settings
         definition = PromptAgentDefinition(
             model=model,
             instructions=agent_detail.system_prompt,
