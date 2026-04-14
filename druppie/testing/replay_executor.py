@@ -282,38 +282,40 @@ class ReplayExecutor:
             self._db.add(agent_run)
             self._db.flush()
 
-            # Create a fake LlmCall so tool calls show in inspect view
-            # (the frontend expects ToolCalls nested under LlmCalls)
-            llm_call = LlmCall(
-                id=fixture_uuid(meta.id, "run", seq, "llm"),
-                session_id=session_id,
-                agent_run_id=agent_run.id,
-                provider="replay",
-                model="replay",
-                prompt_tokens=0,
-                completion_tokens=0,
-                total_tokens=0,
-                duration_ms=0,
-                response_tool_calls=[
-                    {
-                        "id": f"replay_{seq}_{i}",
-                        "name": tc.tool.replace(":", "_") if ":" in tc.tool else tc.tool,
-                        "args": tc.arguments,
-                    }
-                    for i, tc in enumerate(agent_fix.tool_calls)
-                ],
-                created_at=utcnow(),
-            )
-            self._db.add(llm_call)
-            self._db.flush()
-
+            # Create one LlmCall per tool call (matches real agent behavior
+            # where each LLM iteration produces one tool call, sees the
+            # result, then makes the next call).  This ensures
+            # reconstruct_from_db() rebuilds the full conversation history.
             for tc_idx, tc in enumerate(agent_fix.tool_calls):
+                tool_call_id = f"replay_{seq}_{tc_idx}"
+                func_name = tc.tool.replace(":", "_") if ":" in tc.tool else tc.tool
+
+                llm_call = LlmCall(
+                    id=fixture_uuid(meta.id, "run", seq, "llm", tc_idx),
+                    session_id=session_id,
+                    agent_run_id=agent_run.id,
+                    provider="replay",
+                    model="replay",
+                    prompt_tokens=0,
+                    completion_tokens=0,
+                    total_tokens=0,
+                    duration_ms=0,
+                    response_tool_calls=[{
+                        "id": tool_call_id,
+                        "name": func_name,
+                        "args": tc.arguments,
+                    }],
+                    created_at=utcnow(),
+                )
+                self._db.add(llm_call)
+                self._db.flush()
+
                 result, status, was_real = await self.execute_tool_call(
                     tc, session_id, agent_run.id,
                     approval_action=tc.approval_action,
                 )
 
-                # Link the ToolCall record to the fake LlmCall
+                # Link the ToolCall record to this LlmCall
                 # (ToolExecutor creates the record; we update it after)
                 tc_records = (
                     self._db.query(ToolCall)
@@ -327,7 +329,7 @@ class ReplayExecutor:
                 )
                 if tc_records:
                     tc_records[0].llm_call_id = llm_call.id
-                    tc_records[0].tool_call_index = tc_idx
+                    tc_records[0].tool_call_index = 0  # Always index 0 (one tool per LlmCall)
 
                 # Flush (not commit) — the caller controls the transaction
                 # boundary so the entire replay can be rolled back on failure
