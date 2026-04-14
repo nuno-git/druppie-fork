@@ -295,32 +295,16 @@ class ReplayExecutor:
                 "project_id": None,
             }
 
-        # Determine initial agents: the first two are created upfront
-        # (matching process_message's router + planner pattern).
-        # Any agent whose runs are created by make_plan should NOT be
-        # pre-created here.
-        initial_agents = []
-        make_plan_created = set()  # agent_ids that make_plan will create
-        for agent_fix in agents_with_tools:
-            for tc in agent_fix.tool_calls:
-                if tc.tool == "builtin:make_plan" and not self._is_mocked(tc):
-                    # This make_plan will execute for real and create runs
-                    for step in tc.arguments.get("steps", []):
-                        make_plan_created.add(step.get("agent_id"))
-
-        for agent_fix in agents_with_tools:
-            if agent_fix.id not in make_plan_created:
-                initial_agents.append(agent_fix.id)
-            else:
-                break  # Stop at the first agent that make_plan creates
-
-        # Create initial pending runs
+        # Create initial pending runs: router + planner, matching
+        # process_message().  All subsequent runs are created by
+        # make_plan() during execution — just like production.
         user_msg = fixture.messages[0].content if fixture.messages else ""
-        for i, agent_id in enumerate(initial_agents):
-            agent_fix = agents_with_tools[i]
-            prompt = agent_fix.planned_prompt or (
-                f"USER REQUEST:\n{user_msg}" if agent_id in ("router", "planner") else ""
-            )
+        initial_ids = ["router", "planner"]
+        for i, agent_id in enumerate(initial_ids):
+            # Find the matching fixture agent for planned_prompt (if any)
+            fix_match = next((a for a in agents_with_tools if a.id == agent_id), None)
+            prompt = (fix_match.planned_prompt if fix_match and fix_match.planned_prompt
+                      else f"USER REQUEST:\n{user_msg}")
             execution_repo.create_agent_run(
                 session_id=session_id,
                 agent_id=agent_id,
