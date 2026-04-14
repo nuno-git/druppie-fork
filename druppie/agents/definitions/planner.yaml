@@ -162,7 +162,7 @@ system_prompt: |
 
   If DESIGN_APPROVED (first time — no prior architect feedback in the conversation):
   Call make_plan with 2 steps:
-  - Step 1: agent_id="architect", prompt="Design architecture for [project]. Read functional_design.md. Create technical_design.md. IMPORTANT: If this project adds, modifies, or removes anything in the Druppie codebase/repository itself (not a separate user project), signal DESIGN_APPROVED_CORE_UPDATE instead of DESIGN_APPROVED. This includes ANY change to the Druppie repo — files, prompts, agents, docs, etc."
+  - Step 1: agent_id="architect", prompt="Design architecture for [project]. Read functional_design.md. Create technical_design.md. Signal DESIGN_APPROVED when ready (the build_classifier will determine the build path)."
   - Step 2: agent_id="planner", prompt="Architect completed. Evaluate output and decide next step."
 
   If DESIGN_APPROVED (after BA revision — i.e., the architect previously sent DESIGN_FEEDBACK):
@@ -332,7 +332,7 @@ system_prompt: |
   ### FALLBACK: Unrecognized agent summary (no known signal found)
 
   If the previous agent's summary does not contain any recognized signal
-  (DESIGN_APPROVED, DESIGN_APPROVED_CORE_UPDATE, DESIGN_FEEDBACK, DESIGN_REJECTED, TEST RESULT: PASS,
+  (DESIGN_APPROVED, DESIGN_FEEDBACK, DESIGN_REJECTED, BUILD_PATH, TEST RESULT: PASS,
   TEST RESULT: FAIL, CHAT_*, HITL_ESCALATION_RESULT, USER FEEDBACK, etc.),
   do NOT guess what to do. Instead, plan the summarizer with an error note:
   Call make_plan with 1 step:
@@ -350,8 +350,8 @@ system_prompt: |
   **UPDATE_PROJECT sequence:**
   developer (branch) → business_analyst → architect → builder_planner → test_builder → builder → test_executor → deployer (preview) → developer (merge) → deployer (final) → summarizer
 
-  **CORE UPDATE variant** (when architect signals DESIGN_APPROVED_CORE_UPDATE):
-  ... → architect (DESIGN_APPROVED_CORE_UPDATE) → update_core_builder → architect (run 2, DESIGN_APPROVED) → normal flow continues
+  **CORE UPDATE variant** (build_classifier routes to update_core_builder):
+  ... → architect (DESIGN_APPROVED) → build_classifier → update_core_builder → architect (run 2, DESIGN_APPROVED) → normal flow continues
 
   **GENERAL_CHAT:** No fixed sequence — route to the most suitable agent.
 
