@@ -1,0 +1,169 @@
+## Shared base: generic create_project pipeline up to builder planning
+## Router → Planner → BA (HITL + FD + git) → Planner → Architect (TD + git) → Planner
+## Extending tests append: Builder (mock) + done
+##
+## Used by: create-expense-tracker, create-portfolio-site, create-weather-dashboard
+
+tool-test:
+  name: setup-create-project-pipeline
+  description: "Shared pipeline prefix for create-project e2e tests"
+  tags: [setup, create-project]
+
+  chain:
+    # --- Router ---
+    - agent: router
+      tool: builtin:set_intent
+      arguments:
+        intent: create_project
+        project_name: new-project
+        description: "A new project to be created"
+
+    - agent: router
+      tool: builtin:done
+      arguments:
+        summary: "Classified as create_project"
+
+    # --- Planner → BA ---
+    - agent: planner
+      tool: builtin:make_plan
+      mock: true
+      arguments:
+        steps:
+          - agent_id: business_analyst
+            prompt: "Gather requirements and create functional design"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Planned business_analyst"
+
+    # --- Business Analyst ---
+    - agent: business_analyst
+      tool: builtin:hitl_ask_multiple_choice_question
+      arguments:
+        question: "Welke variant heeft uw voorkeur?"
+        choices:
+          - "Basis"
+          - "Uitgebreid"
+          - "Volledig"
+      mock: true
+      mock_result: "Uitgebreid"
+
+    - agent: business_analyst
+      tool: coding:make_design
+      approval:
+        status: approved
+        by: analyst
+      arguments:
+        path: docs/functional-design.md
+        content: |
+          # Functioneel Ontwerp
+
+          ## Vereisten
+          - FR-01: Kernfunctionaliteit implementeren
+          - FR-02: Gebruiksvriendelijke interface
+          - FR-03: Data persistent opslaan
+
+          ## Gebruikersinterface
+          - Dashboard met overzicht
+          - Formulier voor invoer
+          - Tabel met resultaten
+
+    - agent: business_analyst
+      tool: coding:run_git
+      arguments:
+        command: "add docs/functional-design.md"
+
+    - agent: business_analyst
+      tool: coding:run_git
+      arguments:
+        command: "commit -m 'Functioneel ontwerp toegevoegd'"
+
+    - agent: business_analyst
+      tool: coding:run_git
+      arguments:
+        command: "push"
+
+    - agent: business_analyst
+      tool: builtin:done
+      arguments:
+        summary: "DESIGN_APPROVED"
+
+    # --- Planner → Architect ---
+    - agent: planner
+      tool: builtin:make_plan
+      mock: true
+      arguments:
+        steps:
+          - agent_id: architect
+            prompt: "Create technical design"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "BA approved, planned architect"
+
+    # --- Architect ---
+    - agent: architect
+      tool: coding:run_git
+      arguments:
+        command: "pull"
+
+    - agent: architect
+      tool: coding:read_file
+      arguments:
+        path: docs/functional-design.md
+
+    - agent: architect
+      tool: coding:make_design
+      approval:
+        status: approved
+        by: architect
+      arguments:
+        path: docs/technical-design.md
+        content: |
+          # Technisch Ontwerp
+
+          ## Stack
+          - Frontend: React met Vite
+          - Opslag: localStorage
+
+          ## Componenten
+          - App: hoofdcomponent
+          - Form: invoerformulier
+          - List: overzichtslijst
+          - Chart: visualisatie
+
+    - agent: architect
+      tool: coding:run_git
+      arguments:
+        command: "add docs/technical-design.md"
+
+    - agent: architect
+      tool: coding:run_git
+      arguments:
+        command: "commit -m 'Technisch ontwerp toegevoegd'"
+
+    - agent: architect
+      tool: coding:run_git
+      arguments:
+        command: "push"
+
+    - agent: architect
+      tool: builtin:done
+      arguments:
+        summary: "DESIGN_APPROVED"
+
+    # --- Planner → Builder ---
+    - agent: planner
+      tool: builtin:make_plan
+      mock: true
+      arguments:
+        steps:
+          - agent_id: builder
+            prompt: "Build the project"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Architect approved, planned builder"

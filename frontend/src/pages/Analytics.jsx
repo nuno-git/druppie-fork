@@ -24,9 +24,10 @@ const TypeBadge = ({ type }) => {
     judge_check: 'bg-yellow-50 text-yellow-700',
     judge_eval: 'bg-orange-50 text-orange-700',
     completed: 'bg-blue-50 text-blue-700',
-    tool: 'bg-blue-50 text-blue-700',
+    tool: 'bg-purple-50 text-purple-700',
+    verify: 'bg-amber-50 text-amber-700',
   }
-  const labels = { judge_check: 'judge', judge_eval: 'judge eval', completed: 'assertion', tool: 'assertion' }
+  const labels = { judge_check: 'judge', judge_eval: 'judge eval', completed: 'assertion', tool: 'tool', verify: 'verify' }
   return <span className={`px-1 py-0.5 rounded font-mono text-xs ${styles[type] || 'bg-gray-50 text-gray-600'}`}>{labels[type] || type}</span>
 }
 
@@ -36,6 +37,7 @@ const CheckFilterPanel = ({ filters, activeCheck, onSelectCheck, onClear }) => {
   const checks = filters?.checks || []
   const judges = checks.filter(c => c.type === 'judge_check' || c.type === 'judge_eval')
   const assertions = checks.filter(c => c.type === 'completed' || c.type === 'tool')
+  const verifyChecks = checks.filter(c => c.type === 'verify')
 
   if (!checks.length) return null
 
@@ -83,6 +85,20 @@ const CheckFilterPanel = ({ filters, activeCheck, onSelectCheck, onClear }) => {
               ))}
             </div>
           )}
+          {verifyChecks.length > 0 && (
+            <div>
+              <div className="px-4 py-1.5 bg-amber-50 text-xs font-semibold text-amber-700">Verify ({verifyChecks.length})</div>
+              {verifyChecks.map((c, i) => (
+                <button key={`v${i}`} onClick={() => onSelectCheck(c.text)}
+                  className={`w-full px-4 py-2 text-left text-xs hover:bg-gray-50 flex items-center gap-2 ${activeCheck === c.text ? 'bg-indigo-50' : ''}`}>
+                  <TypeBadge type={c.type} />
+                  {c.agents.length > 0 && <span className="font-medium text-gray-600">{c.agents.join(', ')}</span>}
+                  <span className="flex-1 truncate">{c.text.slice(0, 60)}{c.text.length > 60 ? '...' : ''}</span>
+                  <Badge p={c.passed} t={c.total} color="text-green-600" />
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -91,12 +107,13 @@ const CheckFilterPanel = ({ filters, activeCheck, onSelectCheck, onClear }) => {
 
 // ---- Assertion Row ----
 const AssertionRow = ({ ar, isExpanded, onToggle }) => (
-  <div className="border-b last:border-0">
+  <div className={`border-b last:border-0 ${!ar.passed ? 'bg-red-50/40' : ''}`}>
     <button onClick={onToggle} className="w-full px-3 py-2 flex items-center gap-2 text-left hover:bg-gray-50 text-xs">
       {ar.passed ? <CheckCircle2 className="w-3.5 h-3.5 text-green-500 shrink-0" /> : <XCircle className="w-3.5 h-3.5 text-red-500 shrink-0" />}
       <TypeBadge type={ar.assertion_type} />
       {ar.agent_id && <span className="font-medium text-gray-700">{ar.agent_id}</span>}
-      <span className="flex-1 text-gray-500 truncate">{ar.message}</span>
+      {ar.tool_name && <span className="px-1 py-0.5 bg-indigo-50 rounded font-mono text-indigo-700">{ar.tool_name}</span>}
+      <span className={`flex-1 truncate ${ar.passed ? 'text-gray-500' : 'text-red-700 font-medium'}`}>{ar.message}</span>
       {isExpanded ? <ChevronUp className="w-3 h-3 text-gray-400" /> : <ChevronDown className="w-3 h-3 text-gray-400" />}
     </button>
     {isExpanded && (
@@ -130,10 +147,12 @@ const TestRunDrillDown = ({ run }) => {
   const toggle = (k) => { const n = new Set(expanded); n.has(k) ? n.delete(k) : n.add(k); setExpanded(n) }
   const assertions = run.assertions || []
   const code = assertions.filter(a => a.assertion_type === 'completed' || a.assertion_type === 'tool')
+  const verify = assertions.filter(a => a.assertion_type === 'verify')
   const judge = assertions.filter(a => a.assertion_type === 'judge_check')
   const eval_ = assertions.filter(a => a.assertion_type === 'judge_eval')
   const sections = [
     { items: code, label: 'Assertions', color: 'bg-blue-50 text-blue-700', prefix: 'c' },
+    { items: verify, label: 'Verify', color: 'bg-amber-50 text-amber-700', prefix: 'v' },
     { items: judge, label: 'LLM Judge', color: 'bg-yellow-50 text-yellow-700', prefix: 'j' },
     { items: eval_, label: 'Judge Eval', color: 'bg-orange-50 text-orange-700', prefix: 'e' },
   ].filter(s => s.items.length > 0)
@@ -178,6 +197,7 @@ export default function Analytics() {
   // Filters
   const [filterType, setFilterType] = useState(null)
   const [filterAgent, setFilterAgent] = useState(null)
+  const [filterTool, setFilterTool] = useState(null)
   const [filterCheck, setFilterCheck] = useState(null)
 
   // Load batches
@@ -200,6 +220,7 @@ export default function Analytics() {
     const filters = {}
     if (filterType) filters.assertion_type = filterType
     if (filterAgent) filters.agent_id = filterAgent
+    if (filterTool) filters.tool_name = filterTool
     if (filterCheck) filters.check_text = filterCheck
     Promise.all([
       getBatchAssertions(selectedBatchId, filters),
@@ -209,15 +230,16 @@ export default function Analytics() {
       .catch(err => { if (!cancelled) setError(err.message) })
       .finally(() => { if (!cancelled) setBatchLoading(false) })
     return () => { cancelled = true }
-  }, [selectedBatchId, filterType, filterAgent, filterCheck])
+  }, [selectedBatchId, filterType, filterAgent, filterTool, filterCheck])
 
   const selectedBatch = batches.find(b => b.batch_id === selectedBatchId)
   const summary = batchData?.summary || {}
   const batchRuns = batchData?.runs || []
   const allAgents = batchFilters?.agents || []
-  const hasActiveFilter = filterType || filterAgent || filterCheck
+  const allTools = batchFilters?.tools || []
+  const hasActiveFilter = filterType || filterAgent || filterTool || filterCheck
 
-  const clearFilters = () => { setFilterType(null); setFilterAgent(null); setFilterCheck(null); setExpandedRun(null) }
+  const clearFilters = () => { setFilterType(null); setFilterAgent(null); setFilterTool(null); setFilterCheck(null); setExpandedRun(null) }
 
   if (!loading && batches.length === 0) {
     return (
@@ -258,7 +280,7 @@ export default function Analytics() {
       {!loading && !batchLoading && selectedBatch && batchData && (
         <>
           {/* Summary Cards */}
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+          <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
             <div className="bg-white rounded-lg border p-3 flex items-center gap-3">
               <BarChart3 className={`w-6 h-6 ${selectedBatch.passed === selectedBatch.test_count ? 'text-green-600' : 'text-red-600'}`} />
               <div><div className="text-xs text-gray-500">Tests</div><div className="text-lg font-bold">{selectedBatch.passed}/{selectedBatch.test_count}</div></div>
@@ -267,6 +289,11 @@ export default function Analytics() {
               className={`bg-white rounded-lg border p-3 flex items-center gap-3 hover:bg-blue-50 text-left ${filterType === 'assertions' ? 'ring-2 ring-blue-400' : ''}`}>
               <CheckCircle2 className="w-6 h-6 text-blue-600" />
               <div><div className="text-xs text-gray-500">Assertions</div><div className="text-lg font-bold text-blue-600"><Badge p={summary.assertions_passed} t={summary.assertions} color="text-blue-600" /></div></div>
+            </button>
+            <button onClick={() => { setFilterType(filterType === 'verify' ? null : 'verify'); setFilterCheck(null) }}
+              className={`bg-white rounded-lg border p-3 flex items-center gap-3 hover:bg-amber-50 text-left ${filterType === 'verify' ? 'ring-2 ring-amber-400' : ''}`}>
+              <AlertCircle className="w-6 h-6 text-amber-600" />
+              <div><div className="text-xs text-gray-500">Verify</div><div className="text-lg font-bold text-amber-600"><Badge p={summary.verify_passed} t={summary.verify} color="text-amber-600" /></div></div>
             </button>
             <button onClick={() => { setFilterType(filterType === 'judge_check' ? null : 'judge_check'); setFilterCheck(null) }}
               className={`bg-white rounded-lg border p-3 flex items-center gap-3 hover:bg-yellow-50 text-left ${filterType === 'judge_check' ? 'ring-2 ring-yellow-400' : ''}`}>
@@ -299,6 +326,7 @@ export default function Analytics() {
               className="px-2 py-1 border rounded text-xs bg-white">
               <option value="">All types</option>
               <option value="assertions">Assertions</option>
+              <option value="verify">Verify</option>
               <option value="judge_check">LLM Judge</option>
               <option value="judge_eval">Judge Eval</option>
             </select>
@@ -307,6 +335,13 @@ export default function Analytics() {
                 className="px-2 py-1 border rounded text-xs bg-white">
                 <option value="">All agents</option>
                 {allAgents.map(a => <option key={a} value={a}>{a}</option>)}
+              </select>
+            )}
+            {allTools.length > 0 && (
+              <select value={filterTool || ''} onChange={e => { setFilterTool(e.target.value || null); setExpandedRun(null) }}
+                className="px-2 py-1 border rounded text-xs bg-white">
+                <option value="">All tools</option>
+                {allTools.map(t => <option key={t} value={t}>{t}</option>)}
               </select>
             )}
             {hasActiveFilter && (
@@ -335,6 +370,7 @@ export default function Analytics() {
               const assertions = run.assertions || []
               if (hasActiveFilter && assertions.length === 0) return null  // hide empty when filtered
               const code = assertions.filter(a => a.assertion_type === 'completed' || a.assertion_type === 'tool')
+              const verifyArr = assertions.filter(a => a.assertion_type === 'verify')
               const judge = assertions.filter(a => a.assertion_type === 'judge_check')
               const eval_ = assertions.filter(a => a.assertion_type === 'judge_eval')
 
@@ -350,6 +386,7 @@ export default function Analytics() {
                       {run.mode === 'agent' ? 'Agent' : 'Tool'}
                     </span>
                     {code.length > 0 && <Badge p={code.filter(a => a.passed).length} t={code.length} color="text-blue-600" />}
+                    {verifyArr.length > 0 && <Badge p={verifyArr.filter(a => a.passed).length} t={verifyArr.length} color="text-amber-600" />}
                     {judge.length > 0 && <Badge p={judge.filter(a => a.passed).length} t={judge.length} color="text-yellow-600" />}
                     {eval_.length > 0 && <Badge p={eval_.filter(a => a.passed).length} t={eval_.length} color="text-orange-600" />}
                     <span className="text-xs text-gray-400 w-14 text-right">{fmt(run.duration_ms)}</span>

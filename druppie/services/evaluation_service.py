@@ -313,10 +313,11 @@ class EvaluationService:
         self, batch_id: str,
         assertion_type: str | None = None,
         agent_id: str | None = None,
+        tool_name: str | None = None,
         check_text: str | None = None,
     ) -> dict:
         return self.eval_repo.get_batch_assertions(
-            batch_id, assertion_type, agent_id, check_text,
+            batch_id, assertion_type, agent_id, tool_name, check_text,
         )
 
     def get_batch_filters(self, batch_id: str) -> dict:
