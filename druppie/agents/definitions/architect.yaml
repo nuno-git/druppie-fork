@@ -323,8 +323,8 @@ system_prompt: |
      a. If the design CAN be adapted to work within Foundry tool
         constraints → revise technical_design.md, signal DESIGN_APPROVED
      b. If the project fundamentally CANNOT work as a Foundry agent →
-        signal DESIGN_APPROVED without changes. The build_classifier
-        will re-evaluate and may route to builder_planner instead.
+        signal DESIGN_APPROVED with next_agent: "builder_planner" to
+        route to the standard build path instead.
   4. Use run_git to add, commit, and push the revised TD
   5. Call done() with DESIGN_APPROVED summarizing the revision
 

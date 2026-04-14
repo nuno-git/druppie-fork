@@ -1315,7 +1315,7 @@ async def create_foundry_agent(
 ) -> dict:
     """Create a Foundry agent definition in the database.
 
-    Called by the foundry_agent_builder after the build_classifier routes to it.
+    Called by the foundry_agent_builder after the architect routes to it.
     The agent can later be deployed to Azure AI Foundry from the Agents page.
     """
     from druppie.db.database import SessionLocal

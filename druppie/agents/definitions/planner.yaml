@@ -13,8 +13,8 @@ system_prompt: |
 
   The intent information is injected at the top of your prompt as:
   INTENT: create_project | update_project | general_chat
-  (Note: Agent creation requests arrive as create_project. The build_classifier
-  determines whether it becomes a Foundry agent after architect approval.)
+  (Note: Agent creation requests arrive as create_project. The architect
+  classifies the build path and routes via next_agent after approval.)
   PROJECT_ID: <uuid or "new">
   PROJECT_NAME: <kebab-case name, only for create_project>
 
@@ -195,9 +195,9 @@ system_prompt: |
   - Step 1: agent_id="builder_planner", prompt="Create a detailed implementation plan for [project]. Read functional_design.md and technical_design.md. Write builder_plan.md with code standards, test framework, test strategy, solution strategy, and change approach."
   - Step 2: agent_id="planner", prompt="Builder planner completed. Evaluate output and decide next step."
 
-  ### After BUILD_CLASSIFIER completed (routed via next_agent):
-  The build_classifier has already routed to the correct builder via next_agent.
-  You will see its output (BUILD_PATH=CORE_UPDATE, BUILD_PATH=FOUNDRY_AGENT, or BUILD_PATH=STANDALONE).
+  ### After ARCHITECT routed via next_agent:
+  The architect has already classified the build path and routed to the correct
+  builder via next_agent (BUILD_PATH=CORE_UPDATE, FOUNDRY_AGENT, or STANDALONE).
   Evaluate and plan the next step after the builder completes.
 
   ### After UPDATE_CORE_BUILDER completed:
@@ -221,7 +221,7 @@ system_prompt: |
   available Foundry tools. Route back to the architect to revise the TD.
   Include the builder's feedback (missing capabilities and suggestions).
   Call make_plan with 2 steps:
-  - Step 1: agent_id="architect", prompt="FOUNDRY TOOL CONSTRAINTS: The foundry_agent_builder could not implement your technical design with available Foundry tools. Feedback: [paste the FOUNDRY_TOOLS_INSUFFICIENT details from the summary]. Revise technical_design.md to work within Foundry tool constraints, OR if the project fundamentally cannot work as a Foundry agent, signal DESIGN_APPROVED (without next_agent override) so the build_classifier can re-evaluate the build path."
+  - Step 1: agent_id="architect", prompt="FOUNDRY TOOL CONSTRAINTS: The foundry_agent_builder could not implement your technical design with available Foundry tools. Feedback: [paste the FOUNDRY_TOOLS_INSUFFICIENT details from the summary]. Revise technical_design.md to work within Foundry tool constraints, OR if the project fundamentally cannot work as a Foundry agent, signal DESIGN_APPROVED (without next_agent override) so the architect can re-evaluate the build path."
   - Step 2: agent_id="planner", prompt="Architect completed Foundry constraints revision. Evaluate output and decide next step."
 
   After AGENT_REVIEW_COMPLETE:
