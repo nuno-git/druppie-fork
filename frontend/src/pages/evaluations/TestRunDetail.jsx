@@ -101,6 +101,7 @@ const TestRunDetail = ({ testRunId, onBack }) => {
   const [error, setError] = useState(null)
 
   useEffect(() => {
+    let cancelled = false
     const fetchData = async () => {
       setLoading(true)
       setError(null)
@@ -109,15 +110,18 @@ const TestRunDetail = ({ testRunId, onBack }) => {
           getTestRun(testRunId),
           getTestRunAssertions(testRunId).catch(() => []),
         ])
-        setRun(data)
-        setAssertionResults(assertions || [])
+        if (!cancelled) {
+          setRun(data)
+          setAssertionResults(assertions || [])
+        }
       } catch (err) {
-        setError(err.message)
+        if (!cancelled) setError(err.message)
       } finally {
-        setLoading(false)
+        if (!cancelled) setLoading(false)
       }
     }
     fetchData()
+    return () => { cancelled = true }
   }, [testRunId])
 
   if (loading) {

@@ -114,18 +114,20 @@ export default function BatchDetail() {
   const [batch, setBatch] = useState(null)
 
   useEffect(() => {
+    let cancelled = false
     const load = async () => {
       setLoading(true)
       try {
         const data = await getAnalyticsBatchDetail(batchId)
-        setBatch(data)
+        if (!cancelled) setBatch(data)
       } catch (err) {
-        setError(err.message || 'Failed to load batch')
+        if (!cancelled) setError(err.message || 'Failed to load batch')
       } finally {
-        setLoading(false)
+        if (!cancelled) setLoading(false)
       }
     }
     load()
+    return () => { cancelled = true }
   }, [batchId])
 
   if (loading) {

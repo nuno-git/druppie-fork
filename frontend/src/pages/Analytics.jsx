@@ -182,15 +182,18 @@ export default function Analytics() {
 
   // Load batches
   useEffect(() => {
+    let cancelled = false
     getTestBatches(1, 50)
-      .then(data => { setBatches(data.items || []); if (data.items?.length) setSelectedBatchId(data.items[0].batch_id) })
-      .catch(err => setError(err.message))
-      .finally(() => setLoading(false))
+      .then(data => { if (!cancelled) { setBatches(data.items || []); if (data.items?.length) setSelectedBatchId(data.items[0].batch_id) } })
+      .catch(err => { if (!cancelled) setError(err.message) })
+      .finally(() => { if (!cancelled) setLoading(false) })
+    return () => { cancelled = true }
   }, [])
 
   // Load batch data when batch or filters change
   useEffect(() => {
     if (!selectedBatchId) return
+    let cancelled = false
     setBatchLoading(true)
     const filters = {}
     if (filterType) filters.assertion_type = filterType
@@ -200,9 +203,10 @@ export default function Analytics() {
       getBatchAssertions(selectedBatchId, filters),
       getBatchFilters(selectedBatchId),
     ])
-      .then(([data, f]) => { setBatchData(data); setBatchFilters(f) })
-      .catch(err => setError(err.message))
-      .finally(() => setBatchLoading(false))
+      .then(([data, f]) => { if (!cancelled) { setBatchData(data); setBatchFilters(f) } })
+      .catch(err => { if (!cancelled) setError(err.message) })
+      .finally(() => { if (!cancelled) setBatchLoading(false) })
+    return () => { cancelled = true }
   }, [selectedBatchId, filterType, filterAgent, filterCheck])
 
   const selectedBatch = batches.find(b => b.batch_id === selectedBatchId)

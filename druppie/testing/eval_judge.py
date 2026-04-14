@@ -208,11 +208,20 @@ class JudgeEngine:
                 f"Failed to parse judge response: {response[:200]}",
             )
 
-        reasoning = data.get("reasoning", "")
+        if not isinstance(data, dict):
+            logger.warning("Judge response is not a JSON object: %s", response[:200])
+            return (None, None, None, f"Judge response is not a JSON object: {response[:200]}")
+
+        reasoning = str(data.get("reasoning", ""))
 
         if scoring == "binary":
             passed = data.get("pass", False)
             return bool(passed), None, None, reasoning
         else:
-            score = float(data.get("score", 0))
+            raw_score = data.get("score", 0)
+            try:
+                score = float(raw_score)
+            except (TypeError, ValueError):
+                logger.warning("Judge score is not numeric: %s", raw_score)
+                return None, 0.0, 5.0, f"Invalid score value '{raw_score}': {reasoning}"
             return None, score, 5.0, reasoning
