@@ -292,3 +292,11 @@ export const getPackageProjects = (manager, name) =>
   request(`/api/cache/packages/${encodeURIComponent(manager)}/${encodeURIComponent(name)}/projects`)
 export const getProjectDependencies = (projectId) =>
   request(`/api/projects/${projectId}/dependencies`)
+
+// Architecture
+export const getArchitectureAgents = () => request('/api/architecture/agents')
+export const getArchitecturePermissions = () => request('/api/architecture/permissions')
+export const getArchitectureDocs = () => request('/api/architecture/docs')
+export const getArchitectureDoc = (docId) => request(`/api/architecture/docs/${docId}`)
+export const refreshArchitecture = () => request('/api/architecture/refresh', { method: 'POST' })
+export const getArchitectureWorkflow = () => request('/api/architecture/workflow')

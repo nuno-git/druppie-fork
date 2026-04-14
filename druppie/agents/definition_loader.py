@@ -33,6 +33,14 @@ class AgentDefinitionLoader:
         cls._system_prompt_mtime.clear()
 
     @classmethod
+    def clear_cache(cls) -> None:
+        """Clear all cached definitions, forcing a re-read from disk."""
+        cls._cache.clear()
+        cls._cache_mtime.clear()
+        cls._system_prompt_cache.clear()
+        cls._system_prompt_mtime.clear()
+
+    @classmethod
     def _get_definitions_path(cls) -> str:
         """Get the path to agent definitions directory."""
         if cls._definitions_path:

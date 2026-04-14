@@ -876,6 +876,7 @@ class Orchestrator:
 
         return session_id
 
+
     def _sync_workspace(self, session_id: UUID) -> None:
         """Git pull in the workspace so it picks up sandbox commits.
 

@@ -1,0 +1,86 @@
+# Agent workflow connections.
+#
+# These define how agents hand off work to each other in the orchestration
+# pipeline. The planner decides routing at runtime via prompts — this file
+# documents the known patterns so the architecture page can visualize them.
+#
+# Add new connections here when the flow changes.
+
+connections:
+  # Intake
+  - from: router
+    to: planner
+    label: intent
+    color: "#3b82f6"
+
+  # Design loop
+  - from: planner
+    to: business_analyst
+    label: requirements
+    color: "#3b82f6"
+
+  - from: business_analyst
+    to: architect
+    label: functional_design.md
+    color: "#22c55e"
+
+  - from: architect
+    to: business_analyst
+    label: feedback loop
+    color: "#f59e0b"
+    dashed: true
+
+  # Post-design
+  - from: architect
+    to: builder_planner
+    label: DESIGN_APPROVED
+    color: "#22c55e"
+
+  - from: architect
+    to: update_core_builder
+    label: CORE_UPDATE
+    color: "#e11d48"
+
+  - from: update_core_builder
+    to: architect
+    label: "PR merged → re-design"
+    color: "#e11d48"
+    dashed: true
+
+  # TDD loop
+  - from: builder_planner
+    to: test_builder
+    label: builder_plan.md
+    color: "#22c55e"
+
+  - from: test_builder
+    to: builder
+    label: "tests → code"
+    color: "#f59e0b"
+
+  - from: builder
+    to: test_executor
+    label: run tests
+    color: "#f59e0b"
+
+  - from: test_executor
+    to: builder
+    label: "retry (max 3x)"
+    color: "#ef4444"
+    dashed: true
+
+  # Deployment & finish
+  - from: planner
+    to: deployer
+    label: deploy
+    color: "#8b5cf6"
+
+  - from: planner
+    to: developer
+    label: ""
+    color: "#3b82f6"
+
+  - from: planner
+    to: summarizer
+    label: afsluiting
+    color: "#8b5cf6"

@@ -22,6 +22,7 @@ import ProjectDetail from './pages/ProjectDetail'
 import Settings from './pages/Settings'
 import AdminDatabase from './pages/AdminDatabase'
 import CachedDependencies from './pages/CachedDependencies'
+import Architecture from './pages/Architecture'
 
 // Auth context
 const AuthContext = React.createContext(null)
@@ -199,6 +200,14 @@ function App() {
                             element={
                               <ProtectedRoute>
                                 <CachedDependencies />
+                              </ProtectedRoute>
+                            }
+                          />
+                          <Route
+                            path="/tools/architecture"
+                            element={
+                              <ProtectedRoute>
+                                <Architecture />
                               </ProtectedRoute>
                             }
                           />
