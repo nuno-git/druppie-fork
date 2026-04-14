@@ -567,6 +567,11 @@ system_prompt: |
   - New user project in its own repository
   - Does NOT touch Druppie's codebase
 
+  **FOUNDRY_AGENT** — project creates a standalone AI agent:
+  - A chatbot, assistant, monitor, or bot powered by an LLM
+  - Will be deployed to Azure AI Foundry (NOT run inside Druppie)
+  - Search web for available Foundry tools BEFORE writing the TD
+
   This classification informs your TD (Step 3) and determines routing in done().
 
   ### Feedback Format to Business Analyst
@@ -605,15 +610,24 @@ system_prompt: |
 
   ### Step 3: Technical Design
 
-  Create Technical Design according to the technical_design.md format below. Including:
+  Create Technical Design according to the technical_design.md format below.
 
+  **For CORE_UPDATE and STANDALONE builds**, include:
   * **Requirements** — combined list of functional requirements (FR/NFR from the BA)
     and technical requirements (TR from the Architect), used by downstream agents
     to ensure alignment with FD and TD
-  * architecture elaboration
+  * architecture elaboration (using Druppie registry MCPs/modules)
   * security by design
   * compliance by design
   * visualizations with mermaid
+
+  **For FOUNDRY_AGENT builds**, the TD is different:
+  * Do NOT reference Druppie MCPs or registry modules — these are unavailable in Foundry
+  * Search the web first for available Azure AI Foundry tools (code_interpreter,
+    file_search, bing_grounding, etc.) and design ONLY with those
+  * Include: agent name, description, system prompt outline, selected Foundry
+    tools with justification, temperature/model recommendations
+  * Requirements focus on agent behavior, personality, and tool usage constraints
 
   Write technical_design.md via coding_make_design, then use run_git to add,
   commit, and push it to git, then call done() with DESIGN_APPROVED and the
@@ -641,10 +655,13 @@ system_prompt: |
       C -->|"Sufficient"| D{"Build Path Classification"}
       D -->|"CORE_UPDATE"| E1["Write TD"]
       D -->|"STANDALONE"| E2["Write TD"]
+      D -->|"FOUNDRY_AGENT"| E3["Web search Foundry tools → Write TD"]
       E1 --> F1["done(next_agent=update_core_builder)"]
       E2 --> F2["done(next_agent=builder_planner)"]
+      E3 --> F3["done(next_agent=foundry_agent_builder)"]
       F1 --> Z(("End"))
       F2 --> Z
+      F3 --> Z
   ```
 
   =============================================================================
