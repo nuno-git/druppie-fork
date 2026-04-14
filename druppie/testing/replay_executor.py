@@ -61,6 +61,10 @@ class ReplayExecutor:
             return tool_call.execute
         return True
 
+    def _is_mocked(self, tool_call: ToolCallFixture) -> bool:
+        """Check if a tool call will be mocked (inverse of should_execute)."""
+        return not self.should_execute(tool_call)
+
     def get_mock_result(self, tool_call: ToolCallFixture) -> str:
         """Get mock result from YAML."""
         if tool_call.result:
@@ -225,12 +229,21 @@ class ReplayExecutor:
     ) -> dict:
         """Replay all tool calls in a session fixture.
 
-        Creates a bare session, then executes each tool call through the real
-        pipeline. Side effects (project creation, Gitea repos, file writes)
-        happen naturally through the tool calls — just like a real workflow.
+        Mirrors the production lifecycle:
+        1. Creates session + initial pending runs (router + planner)
+        2. For each agent group in the fixture, finds the pending run
+           (created by process_message or by a previous make_plan call)
+        3. Executes tool calls — builtin tools (done, make_plan, set_intent)
+           run for real, creating the same DB side effects as production
+        4. done() relays summaries to the next pending run naturally
+        5. make_plan() creates subsequent pending runs naturally
 
-        The session view will show every tool call and its result.
+        The YAML controls WHICH tool calls happen (instead of the LLM),
+        but the agent run lifecycle is identical to production.
         """
+        from druppie.repositories import ExecutionRepository
+        from druppie.domain.common import AgentRunStatus
+
         # Reset the Gitea singleton so this session gets a fresh client
         # bound to the current event loop.
         import druppie.core.gitea as _gitea_mod
@@ -238,6 +251,7 @@ class ReplayExecutor:
 
         meta = fixture.metadata
         session_id = fixture_uuid(meta.id)
+        execution_repo = ExecutionRepository(self._db)
 
         # Create bare session — NO project, NO intent pre-set
         # These will be created by the tool calls (e.g. set_intent creates the project)
@@ -268,18 +282,80 @@ class ReplayExecutor:
             msg_seq += 1
         self._db.flush()
 
-        # Replay each agent's tool calls in order
-        for seq, agent_fix in enumerate(fixture.agents):
-            agent_run = AgentRun(
-                id=fixture_uuid(meta.id, "run", seq),
-                session_id=session_id,
-                agent_id=agent_fix.id,
-                status="running",
-                sequence_number=seq,
-                planned_prompt=agent_fix.planned_prompt,
-                created_at=utcnow(),
+        # --- Production-like agent run lifecycle ---
+        # Create initial pending runs (router + planner) like process_message().
+        # Subsequent runs are created by make_plan() during execution.
+        agents_with_tools = [a for a in fixture.agents if a.tool_calls]
+        if not agents_with_tools:
+            # Nothing to replay
+            session.status = meta.status
+            self._db.flush()
+            return {
+                "session_id": str(session_id),
+                "project_id": None,
+            }
+
+        # Determine initial agents: the first two are created upfront
+        # (matching process_message's router + planner pattern).
+        # Any agent whose runs are created by make_plan should NOT be
+        # pre-created here.
+        initial_agents = []
+        make_plan_created = set()  # agent_ids that make_plan will create
+        for agent_fix in agents_with_tools:
+            for tc in agent_fix.tool_calls:
+                if tc.tool == "builtin:make_plan" and not self._is_mocked(tc):
+                    # This make_plan will execute for real and create runs
+                    for step in tc.arguments.get("steps", []):
+                        make_plan_created.add(step.get("agent_id"))
+
+        for agent_fix in agents_with_tools:
+            if agent_fix.id not in make_plan_created:
+                initial_agents.append(agent_fix.id)
+            else:
+                break  # Stop at the first agent that make_plan creates
+
+        # Create initial pending runs
+        user_msg = fixture.messages[0].content if fixture.messages else ""
+        for i, agent_id in enumerate(initial_agents):
+            agent_fix = agents_with_tools[i]
+            prompt = agent_fix.planned_prompt or (
+                f"USER REQUEST:\n{user_msg}" if agent_id in ("router", "planner") else ""
             )
-            self._db.add(agent_run)
+            execution_repo.create_agent_run(
+                session_id=session_id,
+                agent_id=agent_id,
+                status=AgentRunStatus.PENDING,
+                planned_prompt=prompt,
+                sequence_number=i,
+            )
+        self._db.flush()
+
+        # Execute each agent's tool calls in order
+        for seq, agent_fix in enumerate(agents_with_tools):
+            # Find the pending run for this agent (created above or by make_plan)
+            pending = execution_repo.get_next_pending(session_id)
+            if not pending:
+                logger.warning(
+                    "replay_no_pending_run",
+                    session_id=str(session_id),
+                    expected_agent=agent_fix.id,
+                    seq=seq,
+                )
+                break
+
+            if pending.agent_id != agent_fix.id:
+                logger.warning(
+                    "replay_agent_mismatch",
+                    session_id=str(session_id),
+                    expected=agent_fix.id,
+                    found=pending.agent_id,
+                    seq=seq,
+                )
+
+            agent_run_id = pending.id
+
+            # Mark as running (like execute_pending_runs does)
+            execution_repo.update_status(agent_run_id, AgentRunStatus.RUNNING)
             self._db.flush()
 
             # Create one LlmCall per tool call (matches real agent behavior
@@ -293,7 +369,7 @@ class ReplayExecutor:
                 llm_call = LlmCall(
                     id=fixture_uuid(meta.id, "run", seq, "llm", tc_idx),
                     session_id=session_id,
-                    agent_run_id=agent_run.id,
+                    agent_run_id=agent_run_id,
                     provider="replay",
                     model="replay",
                     prompt_tokens=0,
@@ -311,7 +387,7 @@ class ReplayExecutor:
                 self._db.flush()
 
                 result, status, was_real = await self.execute_tool_call(
-                    tc, session_id, agent_run.id,
+                    tc, session_id, agent_run_id,
                     approval_action=tc.approval_action,
                 )
 
@@ -320,7 +396,7 @@ class ReplayExecutor:
                 tc_records = (
                     self._db.query(ToolCall)
                     .filter(
-                        ToolCall.agent_run_id == agent_run.id,
+                        ToolCall.agent_run_id == agent_run_id,
                         ToolCall.mcp_server == tc.mcp_server,
                         ToolCall.tool_name == tc.tool_name,
                     )
@@ -340,8 +416,22 @@ class ReplayExecutor:
                     self._create_outcome_files(tc.outcome, gitea_url, session_id)
 
             # Update agent run status
+            agent_run = self._db.query(AgentRun).filter(AgentRun.id == agent_run_id).first()
             agent_run.status = agent_fix.status
             self._db.flush()
+
+        # Create any remaining pending agent runs (for paused sessions)
+        pending_only = [a for a in fixture.agents if not a.tool_calls]
+        next_seq = execution_repo.get_next_sequence_number(session_id)
+        for i, agent_fix in enumerate(pending_only):
+            execution_repo.create_agent_run(
+                session_id=session_id,
+                agent_id=agent_fix.id,
+                status=AgentRunStatus.PENDING,
+                planned_prompt=agent_fix.planned_prompt,
+                sequence_number=next_seq + i,
+            )
+        self._db.flush()
 
         # Update session status to match fixture
         session.status = meta.status

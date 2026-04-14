@@ -26,7 +26,6 @@ tool-test:
     # --- Planner → BA ---
     - agent: planner
       tool: builtin:make_plan
-      mock: true
       arguments:
         steps:
           - agent_id: business_analyst
@@ -92,7 +91,6 @@ tool-test:
     # --- Planner → Architect ---
     - agent: planner
       tool: builtin:make_plan
-      mock: true
       arguments:
         steps:
           - agent_id: architect
@@ -157,7 +155,6 @@ tool-test:
     # --- Planner → Builder ---
     - agent: planner
       tool: builtin:make_plan
-      mock: true
       arguments:
         steps:
           - agent_id: builder

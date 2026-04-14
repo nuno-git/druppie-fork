@@ -139,7 +139,6 @@ tool-test:
     # --- Planner (after builder → test_executor) ---
     - agent: planner
       tool: builtin:make_plan
-      mock: true
       arguments:
         steps:
           - agent_id: test_executor
@@ -180,7 +179,6 @@ tool-test:
     # --- Planner (after test_executor → deployer) ---
     - agent: planner
       tool: builtin:make_plan
-      mock: true
       arguments:
         steps:
           - agent_id: deployer
@@ -216,7 +214,6 @@ tool-test:
     # --- Planner (after deployer → summarizer) ---
     - agent: planner
       tool: builtin:make_plan
-      mock: true
       arguments:
         steps:
           - agent_id: summarizer
