@@ -399,7 +399,7 @@ services:
       CONTAINERD_NAMESPACE: ${CONTAINERD_NAMESPACE:-default}
       DOCKER_NETWORK: druppie-sandbox-network  # Isolated network — sandboxes can only reach control plane
       DOCKER_MEMORY_LIMIT: ${SANDBOX_MEMORY_LIMIT:-4g}
-      DOCKER_CPU_LIMIT: ${SANDBOX_CPU_LIMIT:-}
+      DOCKER_CPU_LIMIT: ${SANDBOX_CPU_LIMIT:-0}
       SANDBOX_CACHE_VOLUME: druppie_sandbox_dep_cache
       # LLM API keys and proxy URLs no longer needed here.
       # Credentials flow per-session from Druppie -> Control Plane -> Sandbox.
@@ -773,8 +773,6 @@ services:
     network_mode: host
     environment:
       COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME:-cleaner-druppie-docker-compose}
-      # Host project directory for Docker volume mount resolution (required for rootless Docker)
-      HOST_PROJECT_DIR: ${PWD}
       # Init container env vars for re-initialization (use localhost since we're on host network)
       KEYCLOAK_URL: http://localhost:${KEYCLOAK_PORT:-8180}
       KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN:-admin}
