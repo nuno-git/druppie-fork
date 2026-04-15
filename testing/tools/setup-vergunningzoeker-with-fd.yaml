@@ -301,115 +301,166 @@ tool-test:
           ## 6. User Journeys
 
           ### User Journey 1: Eenvoudig zoeken naar oude vergunning
+
           **Actor:** Medewerker vergunningverlening
+
           **Doel:** Een oude vergunning vinden met beperkte informatie
+
+          **Stappen:**
           1. Gebruiker opent zoekinterface
           2. Systeem presenteert enkel zoekvak
           3. Gebruiker voert zoekterm in (bv. deel van locatie of aanvrager naam)
-          4. Systeem doorzoekt alle geïndexeerde metadata
-          5. Systeem toont resultatenlijst met alle metadata-velden
-          6. Gebruiker klikt op vergunning voor detailweergave
-          7. Systeem toont volledige details inclusief archiefnominatie en bronsysteem
-          8. Gebruiker klikt op documentlink om origineel te openen
+          4. Gebruiker klikt op zoekknop of drukt op Enter
+          5. Systeem doorzoekt alle geïndexeerde metadata
+          6. Systeem toont resultatenlijst met alle metadata-velden voor elke vergunning
+          7. Gebruiker identificeert relevante vergunning aan resultaten
+          8. Gebruiker klikt op vergunning voor detailweergave
+          9. Systeem toont volledige details inclusief archiefnominatie, retentieperiode en bronsysteem
+          10. Gebruiker klikt op documentlink
+          11. Systeem opent of downloadt origineel document
 
           ### User Journey 2: Geavanceerd zoeken op specifieke criteria
-          **Actor:** Medewerker vergunningverlening, planning, of archief
+
+          **Actor:** Gebruiker (medewerker vergunningverlening, planning, of archief)
+
           **Doel:** Vergunningen zoeken binnen specifiek gebied en periode
-          1. Gebruiker opent zoekinterface en klikt op "Geavanceerd zoeken"
-          2. Systeem toont filteropties voor alle metadata-velden
-          3. Gebruiker selecteert locatiefilter, datumbereik en eventueel type werk
-          4. Systeem past alle filters toe en toont resultaten
-          5. Gebruiker selecteert relevante vergunningen voor overzicht
+
+          **Stappen:**
+          1. Gebruiker opent zoekinterface
+          2. Gebruiker klikt op "Geavanceerd zoeken"
+          3. Systeem toont filteropties voor alle metadata-velden
+          4. Gebruiker selecteert locatiefilter en voert gebied in
+          5. Gebruiker selecteert datumbereik
+          6. Gebruiker voert eventueel aanvullende filters in (bv. type werk, type oppervlaktewater, type waterkering)
+          7. Gebruiker klikt op zoekknop
+          8. Systeem past alle filters toe en doorzoekt index
+          9. Systeem toont resultaten die aan alle criteria voldoen
+          10. Gebruiker bekijkt resultaten en filtert indien nodig verder
+          11. Gebruiker selecteert relevante vergunningen voor overzicht
 
           ### User Journey 3: Controleren van archiefstatus
-          **Actor:** Medewerker archiefbeheer
+
+          **Actor:** Medewerker vergunningverlening
+
           **Doel:** Controleren of vergunningen voldoen aan Archiefwet
-          1. Gebruiker zoekt op vergunningnummer of andere identifier
-          2. Systeem toont resultaat met archiefnominatie en -status
-          3. Gebruiker bekijkt of retentieperiode verstreken is
-          4. Gebruiker beoordeelt of actie nodig is (vernietigen of bewaren)
+
+          **Stappen:**
+          1. Gebruiker opent zoekinterface
+          2. Gebruiker zoekt op vergunningnummer of andere identifier
+          3. Systeem toont resultaat met alle metadata
+          4. Gebruiker bekijkt archiefnominatie en -status in resultaat
+          5. Gebruiker opent detailweergave indien nodig
+          6. Systeem toont archiefnominatie, retentieperiode (indien van toepassing) en huidige status duidelijk
+          7. Gebruiker kan beoordelen of actie nodig is (vernietigen wanneer retentieperiode verstreken)
 
           ### User Journey 4: Migreren van vergunning naar zaaksysteem
+
           **Actor:** Medewerker vergunningverlening
+
           **Doel:** Een historische vergunning migreren naar het zaaksysteem
-          1. Gebruiker zoekt naar de te migreren vergunning
-          2. Gebruiker selecteert de vergunning en klikt "Migreren naar zaaksysteem"
-          3. Systeem toont overzicht van metadata en documenten die gemigreerd worden
-          4. Gebruiker bevestigt migratie
-          5. Systeem transporteert metadata en document naar zaaksysteem
-          6. Systeem bevestigt succesvolle migratie
+
+          **Stappen:**
+          1. Gebruiker opent zoekinterface
+          2. Gebruiker zoekt naar de te migreren vergunning
+          3. Systeem toont resultaat met alle metadata
+          4. Gebruiker selecteert de vergunning
+          5. Gebruiker klikt op "Migreren naar zaaksysteem"
+          6. Systeem toont overzicht van metadata en documenten die gemigreerd worden
+          7. Gebruiker bevestigt migratie
+          8. Systeem transporteert metadata en origineel document naar zaaksysteem
+          9. Systeem bevestigt succesvolle migratie en toont nieuwe locatie in zaaksysteem
 
           ## 7. Integratiepunten
 
           | Systeem/Dienst | Interactietype | Doel |
           |---------------|----------------|------|
           | Brondatabases (meerdere) | Lezen - Metadata extraheren | Vergunningmetadata ophalen en indexeren |
-          | Documentopslag (PDF's, scans) | Lezen - Documenten ophalen | Originele vergunningdocumenten beschikbaar stellen |
-          | Zaaksysteem | Lezen/Schrijven - Migratie | Metadata en documenten overbrengen |
-          | Selectielijst waterschappen 2012 | Lezen - Referentie | Archiefnominaties en retentieperiodes bepalen |
-          | Authenticatiesysteem | Verifiëren | Afdelingstoegang valideren |
+          | Documentopslag (PDF's, scans) | Lezen - Documenten ophalen | Originele vergunningdocumenten beschikbaar stellen voor weergave/download |
+          | Zaaksysteem | Lezen/Schrijven - Migratie | Metadata en documenten overbrengen naar zaaksysteem |
+          | Organisatiereferentie (selectielijst waterschappen 2012) | Lezen - Referentiegegevens | Archiefnominaties en retentieperiodes ophalen op basis van documenttype |
+          | Authenticatiesysteem | Verifiëren - Toegangscontrole | Valideren van gebruikers en afdelingstoegang |
 
           ## 8. Niet-Functionele Eisen
 
           | ID | Bron | Eis | Verificatiemethode |
           |----|------|-----|-------------------|
-          | NFR-01 | BA | Zoekresultaten binnen 5 seconden retourneren | Performancetest |
-          | NFR-02 | BA | Toegankelijk voor 20+ gelijktijdige gebruikers | Loadtest met 25 gebruikers |
-          | NFR-03 | BA | Beschikbaar tijdens reguliere kantooruren | Uptime monitoring |
-          | NFR-04 | BA | Intuïtieve interface — geen training nodig | Usabilitytest met nieuwe gebruiker |
-          | NFR-05 | BA | Persoonsgegevens beschermen tegen ongeautoriseerde toegang | Beveiligingstest |
-          | NFR-06 | BA | Auditlogs van zoekopdrachten en migraties | Logverificatie |
-          | NFR-07 | BA | Data-integriteit bij migraties garanderen | Vergelijking bron- en doeldata |
+          | NFR-01 | BA | Het systeem moet zoekresultaten binnen 5 seconden retourneren. | Performancetest: Voer zoekopdrachten uit en meet responstijd. |
+          | NFR-02 | BA | Het systeem moet toegankelijk zijn voor 20+ gelijktijdige gebruikers. | Loadtest: Simuleer gelijktijdig gebruik door 25 gebruikers. |
+          | NFR-03 | BA | Het systeem moet beschikbaar zijn tijdens reguliere kantooruren. | Monitoring: Verifieer uptime tijdens bedrijfsdagen. |
+          | NFR-04 | BA | De gebruikersinterface moet intuïtief zijn en vereist geen training voor nieuwe medewerkers. | Usabilitytest: Laat nieuwe gebruiker een zoekopdracht uitvoeren zonder instructies. |
+          | NFR-05 | BA | Het systeem moet persoonsgegevens (namen, adressen, contactgegevens) beschermen tegen ongeautoriseerde toegang. | Beveiligingstest: Verifieer dat niet-geautoriseerde gebruikers geen toegang hebben. |
+          | NFR-06 | BA | Het systeem moet auditlogs bijhouden van wie welke zoekopdrachten en migraties uitvoert. | Test: Voer zoekopdrachten en migraties uit en verifieer aanwezigheid in logs. |
+          | NFR-07 | BA | Migraties moeten data-integriteit garanderen: metadata en documenten moeten volledig en correct worden overgebracht. | Test: Voer migratie uit en vergelijk bron- en doeldata. |
 
-          ## 9. Security & Compliance
+          ## 9. Security & Compliance Eisen (van gebruikersinvoer)
 
-          **Persoonsgegevens:** Ja — namen (aanvrager, vergunninghouder, uitgever), adressen, locaties
-          **Authenticatie:** Ja — toegangsbeperking tot afdelingen vergunningen en planning
-          **Dataretentie:** Systeem slaat geen vergunninggegevens op; index verwijst naar bronsystemen
+          **Persoonsgegevens betrokken:**
+          Ja: Namen (aanvrager, vergunninghouder, uitgever), adressen (locatie), contactgegevens
+
+          **Vertrouwelijke bedrijfsgegevens betrokken:**
+          Nee: Voornamelijk publieke archief-informatie
+
+          **Authenticatie vereist:**
+          Ja: Toegangsbeperking tot specifieke afdelingen (vergunningen, planning)
+
+          **Toegangsbeperkingen:**
+          Alleen gebruikers van specifieke afdelingen hebben toegang
+          Andere afdelingen en publiek hebben geen toegang
+
+          **Failover-voorkeur:**
+          Niet gespecificeerd door gebruiker
+
+          **Dataretentie:**
+          Het systeem zelf slaat geen vergunninggegevens op; deze blijven in bronsystemen
+          Search index verwijst naar brongegevens
+          Migraties verplaatsen data naar zaaksysteem; brondata blijft in bronsysteem
 
           ## 10. Aannames & Open Vragen
 
-          | ID | Type | Beschrijving |
-          |----|------|-------------|
-          | A-01 | Aanname | Selectielijst waterschappen (2012) is beschikbaar als referentie |
-          | A-02 | Aanname | Brondatabases zijn toegankelijk via bekende interfaces |
-          | A-03 | Aanname | Authenticatiesysteem is beschikbaar voor afdelingsvalidatie |
-          | A-04 | Aanname | Zaaksysteem heeft interfaces voor metadata- en documentontvangst |
-          | O-01 | Open vraag | Hoe vaak moeten bronsystemen opnieuw geïndexeerd worden? |
-          | O-02 | Open vraag | Moet zoeken mogelijk zijn tijdens indexering? |
-          | O-03 | Open vraag | Moet gemigreerde vergunning in bronindex als "gemigreerd" worden gemarkeerd? |
+          | ID | Type | Beschrijving | Standaard/Fallback |
+          |----|------|-------------|-------------------|
+          | A-01 | Aanname | Organisatie heeft de selectielijst voor waterschappen (2012) beschikbaar als referentie voor archiefnominaties en retentieperiodes | Wordt gebruikt voor FR-09, FR-10 en FR-11 |
+          | A-02 | Aanname | Brondatabases en documentopslag zijn toegankelijk voor het nieuwe systeem via bekende interfaces | Architect moet interfaces specificeren |
+          | A-03 | Aanname | Authenticatiesysteem is beschikbaar om afdelingstoegang te valideren | Architect moet integratie specificeren |
+          | A-04 | Aanname | Zaaksysteem heeft beschikbare interfaces om metadata en documenten te ontvangen via migratie | Architect moet migratie-interface specificeren |
+          | O-01 | Open vraag | Hoe vaak moeten de bronsystemen opnieuw geïndexeerd worden? | Te bepalen door Architect op basis van datawijzigingfrequentie |
+          | O-02 | Open vraag | Moet het systeem in staat zijn om zoeken terwijl een indexering bezig is? | Te bepalen door Architect |
+          | O-03 | Open vraag | Moet een gemigreerde vergunning in de bronsysteem-index worden gemarkeerd als "gemigreerd"? | Te bepalen door Architect en gebruiker |
 
           ## 11. Out of Scope
 
-          - Aanmaken of wijzigen van vergunningen
+          Dit ontwerp omvat NIET:
+          - Het aanmaken of wijzigen van vergunningen
+          - Integratie met systemen buiten de vergunningdatabases, documentopslag en zaaksysteem
           - Publieke toegang tot vergunninggegevens
-          - Automatische bulk-migratie
-          - Fysieke archivering/vernietiging (slechts statusweergave)
-          - Workflow voor goedkeuring of archivering
+          - Vernietiging of archivering van fysieke documenten (slechts statusweergave)
+          - Workflow voor goedkeuring of archivering (slechts informatieweergave)
+          - Automatische bulk-migratie van alle vergunningen (individuele migratie op initiatief van gebruiker)
 
           ## 12. Proces Flow Diagram
 
           ```mermaid
           flowchart TD
             start(["Gebruiker opent zoekinterface"]) --> choice{"Zoektype"}
-            choice -->|"Eenvoudig zoeken"| simple["Gebruiker voert zoekterm in"]
-            choice -->|"Geavanceerd zoeken"| advanced["Gebruiker selecteert filters"]
+            choice -->|"Eenvoudig zoeken"| simple["Gebruiker voert zoekterm in en drukt op Enter"]
+            choice -->|"Geavanceerd zoeken"| advanced["Gebruiker selecteert filters en voert criteria in"]
             simple --> search["Systeem doorzoekt alle geïndexeerde metadata"]
             advanced --> search
             search --> results["Systeem toont resultaten met alle metadata-velden"]
             results --> action{"Gebruikersactie"}
-            action -->|"Resultaat bekijken"| detail["Detailweergave met archiefstatus"]
-            action -->|"Migreren"| migrate["Selecteer vergunning voor migratie"]
+            action -->|"Resultaat bekijken"| detail["Gebruiker klikt op resultaat voor detailweergave"]
+            action -->|"Migreren naar zaaksysteem"| migrate["Gebruiker selecteert vergunning voor migratie"]
             action -->|"Nieuwe zoekopdracht"| simple
-            detail --> doc{"Document openen?"}
-            doc -->|"Ja"| download["Systeem opent/downloadt document"]
+            detail --> status["Systeem toont details incl. archiefnominatie, retentieperiode en bronsysteem"]
+            status --> doc{"Gebruiker opent document?"}
+            doc -->|"Ja"| download["Systeem opent/downloadt origineel document"]
             doc -->|"Nee"| finish(["Klaar"])
             download --> finish
-            migrate --> confirm["Overzicht metadata en documenten"]
-            confirm --> decision{"Bevestigen?"}
+            migrate --> confirm["Systeem toont overzicht van metadata en documenten die gemigreerd worden"]
+            confirm --> decision{"Gebruiker bevestigt?"}
             decision -->|"Nee"| results
-            decision -->|"Ja"| transfer["Migratie naar zaaksysteem"]
-            transfer --> success["Bevestiging succesvolle migratie"]
+            decision -->|"Ja"| transfer["Systeem transporteert metadata en document naar zaaksysteem"]
+            transfer --> success["Systeem bevestigt succesvolle migratie"]
             success --> finish
           ```
       assert:
