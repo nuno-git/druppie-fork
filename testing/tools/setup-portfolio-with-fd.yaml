@@ -1,0 +1,116 @@
+## Setup: create a portfolio project with functional design ready for architect review
+
+tool-test:
+  name: setup-portfolio-with-fd
+  description: "Creates a portfolio project with FD — ready for architect review"
+  tags: [setup]
+
+  chain:
+    - agent: router
+      tool: builtin:set_intent
+      arguments:
+        intent: create_project
+        project_name: portfolio-website
+        description: "A personal portfolio website to showcase projects and skills"
+
+    - agent: router
+      tool: builtin:done
+      arguments:
+        summary: "Agent router: Classified as create_project for portfolio-website"
+
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: business_analyst
+            prompt: "Gather requirements and create functional design"
+          - agent_id: planner
+            prompt: "Re-evaluate after business_analyst completes"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: Planned business_analyst"
+
+    - agent: business_analyst
+      tool: builtin:hitl_ask_multiple_choice_question
+      mock: true
+      mock_result: "Minimalistisch en clean"
+      arguments:
+        question: "Welke stijl heeft uw voorkeur?"
+        choices:
+          - "Minimalistisch en clean"
+          - "Gedurfd en kleurrijk"
+          - "Professioneel en zakelijk"
+
+    - agent: business_analyst
+      tool: coding:make_design
+      approval:
+        status: approved
+        by: analyst
+      arguments:
+        path: docs/functional-design.md
+        content: |
+          # Functioneel Ontwerp: Portfolio Website
+
+          ## 1. Huidige vs Gewenste Situatie
+          De gebruiker wil een persoonlijke website om projecten en
+          vaardigheden te presenteren aan potentiële werkgevers en klanten.
+
+          ## 2. Functionele Vereisten
+          - FR-01: Homepage met persoonlijke introductie en foto
+          - FR-02: Projectenoverzicht in grid-layout met filteropties
+          - FR-03: Projectdetailpagina met beschrijving, screenshots, links
+          - FR-04: Contactformulier met e-mail notificatie
+          - FR-05: Responsive design voor mobiel en tablet
+          - FR-06: Donkere en lichte modus
+
+          ## 3. Niet-Functionele Vereisten
+          - NFR-01: Pagina laadt binnen 1.5 seconden
+          - NFR-02: Toegankelijk volgens WCAG 2.1 AA
+          - NFR-03: SEO-geoptimaliseerd
+
+          ## 4. Gebruikersrollen
+          - Bezoeker: kan projecten bekijken en contact opnemen
+          - Eigenaar: kan projecten beheren (via CMS of code)
+
+          ## 5. Stijl
+          - Minimalistisch design
+          - Maximale breedte 1200px
+          - Systeemlettertype
+
+    - agent: business_analyst
+      tool: coding:run_git
+      arguments:
+        command: "add docs/functional-design.md"
+
+    - agent: business_analyst
+      tool: coding:run_git
+      arguments:
+        command: "commit -m 'Functioneel ontwerp portfolio website'"
+
+    - agent: business_analyst
+      tool: coding:run_git
+      arguments:
+        command: "push"
+
+    - agent: business_analyst
+      tool: builtin:done
+      arguments:
+        summary: "Agent business_analyst: DESIGN_APPROVED"
+      assert:
+        completed: true
+
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: architect
+            prompt: "Review the functional design and create the technical design"
+          - agent_id: planner
+            prompt: "Re-evaluate after architect completes"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: BA approved, planned architect"

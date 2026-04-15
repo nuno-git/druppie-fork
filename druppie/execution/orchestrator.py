@@ -305,7 +305,7 @@ class Orchestrator:
 
             # Rebuild context before each agent so it reflects changes
             # from previous agents (e.g., set_intent creates project/repo)
-            context = self._build_project_context(session_id)
+            context = self.build_project_context(session_id)
 
             logger.info(
                 "executing_agent_run",
@@ -320,7 +320,7 @@ class Orchestrator:
             self.execution_repo.commit()
 
             # Run the agent with project context
-            status = await self._run_agent(
+            status = await self.run_agent(
                 session_id=session_id,
                 agent_run_id=next_run.id,
                 agent_id=next_run.agent_id,
@@ -350,7 +350,7 @@ class Orchestrator:
 
             # Otherwise "completed" — loop continues to next pending run
 
-    def _build_project_context(self, session_id: UUID) -> dict | None:
+    def build_project_context(self, session_id: UUID) -> dict | None:
         """Build project context for agents.
 
         Retrieves project info (repo_name, repo_owner, etc.) from the session
@@ -418,7 +418,7 @@ class Orchestrator:
 
         return context
 
-    async def _run_agent(
+    async def run_agent(
         self,
         session_id: UUID,
         agent_run_id: UUID,
@@ -514,13 +514,41 @@ class Orchestrator:
             agent_id=agent_id,
         )
 
+        self._on_agent_completed(session_id, agent_run_id, agent_id)
+
         return "completed"
+
+    def _on_agent_completed(
+        self,
+        session_id: UUID,
+        agent_run_id: UUID,
+        agent_id: str,
+    ) -> None:
+        """Fire-and-forget live evaluation if configured."""
+        try:
+            from druppie.testing.eval_config import get_evaluation_config
+
+            config = get_evaluation_config()
+            if not config.should_evaluate(agent_id):
+                return
+
+            from druppie.testing.eval_live import run_live_evaluation
+            from druppie.core.background_tasks import create_tracked_task
+
+            create_tracked_task(
+                run_live_evaluation(session_id, agent_run_id, agent_id),
+                name=f"live-eval-{agent_id}-{agent_run_id}",
+            )
+        except Exception:
+            # Live evaluation must never crash agent execution
+            pass
 
     def _handle_agent_resume_result(
         self,
         session_id: UUID,
         agent_run_id: UUID,
         result: dict,
+        agent_id: str | None = None,
     ) -> str:
         """Handle the result from a resumed agent (continue_run).
 
@@ -552,6 +580,10 @@ class Orchestrator:
         # Completed
         self.execution_repo.update_status(agent_run_id, AgentRunStatus.COMPLETED)
         self.execution_repo.commit()
+
+        if agent_id:
+            self._on_agent_completed(session_id, agent_run_id, agent_id)
+
         return "completed"
 
     async def resume_after_approval(self, session_id: UUID, approval_id: UUID) -> UUID:
@@ -621,7 +653,7 @@ class Orchestrator:
         self.execution_repo.commit()
 
         # Step 5: Build fresh context and continue the agent
-        context = self._build_project_context(session_id)
+        context = self.build_project_context(session_id)
         agent = Agent(agent_run.agent_id, db=db)
         result = await agent.continue_run(
             session_id=session_id,
@@ -630,7 +662,7 @@ class Orchestrator:
         )
 
         # Step 6: Handle result (correctly handles user_paused, sandbox, etc.)
-        status = self._handle_agent_resume_result(session_id, agent_run.id, result)
+        status = self._handle_agent_resume_result(session_id, agent_run.id, result, agent_id=agent_run.agent_id)
 
         if status == "completed":
             logger.info(
@@ -722,7 +754,7 @@ class Orchestrator:
         self.execution_repo.commit()
 
         # Step 5: Build fresh context and continue the agent
-        context = self._build_project_context(session_id)
+        context = self.build_project_context(session_id)
         agent = Agent(agent_run.agent_id, db=db)
         result = await agent.continue_run(
             session_id=session_id,
@@ -731,7 +763,7 @@ class Orchestrator:
         )
 
         # Step 6: Handle result (correctly handles user_paused, sandbox, etc.)
-        status = self._handle_agent_resume_result(session_id, agent_run.id, result)
+        status = self._handle_agent_resume_result(session_id, agent_run.id, result, agent_id=agent_run.agent_id)
 
         if status == "completed":
             logger.info(
@@ -795,7 +827,7 @@ class Orchestrator:
 
                 # Already RUNNING — just continue it
                 db = self.execution_repo.db
-                context = self._build_project_context(session_id)
+                context = self.build_project_context(session_id)
                 agent = Agent(orphan_run.agent_id, db=db)
                 try:
                     result = await agent.continue_run(
@@ -813,7 +845,7 @@ class Orchestrator:
                     self.execution_repo.commit()
                     raise
 
-                status = self._handle_agent_resume_result(session_id, orphan_run.id, result)
+                status = self._handle_agent_resume_result(session_id, orphan_run.id, result, agent_id=orphan_run.agent_id)
 
                 if status == "completed":
                     logger.info(
@@ -845,7 +877,7 @@ class Orchestrator:
 
         # Build fresh context and continue the agent
         db = self.execution_repo.db
-        context = self._build_project_context(session_id)
+        context = self.build_project_context(session_id)
         agent = Agent(paused_run.agent_id, db=db)
         try:
             result = await agent.continue_run(
@@ -864,7 +896,7 @@ class Orchestrator:
             raise
 
         # Handle result (correctly handles user_paused, cancelled, etc.)
-        status = self._handle_agent_resume_result(session_id, paused_run.id, result)
+        status = self._handle_agent_resume_result(session_id, paused_run.id, result, agent_id=paused_run.agent_id)
 
         if status == "completed":
             logger.info(
@@ -964,7 +996,7 @@ class Orchestrator:
 
         # Build fresh context and continue the agent
         db = self.execution_repo.db
-        context = self._build_project_context(session_id)
+        context = self.build_project_context(session_id)
         agent = Agent(agent_run.agent_id, db=db)
         try:
             result = await agent.continue_run(
@@ -983,7 +1015,7 @@ class Orchestrator:
             raise
 
         # Handle result — agent may pause again
-        status = self._handle_agent_resume_result(session_id, agent_run.id, result)
+        status = self._handle_agent_resume_result(session_id, agent_run.id, result, agent_id=agent_run.agent_id)
 
         if status == "completed":
             logger.info(

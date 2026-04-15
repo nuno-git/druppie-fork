@@ -312,6 +312,20 @@ class Agent:
         messages = reconstruct_from_db(llm_calls, execution_repo)
         iteration = len(llm_calls)
 
+        # If reconstructed messages lack a system prompt (e.g., replay/seed
+        # sessions with fake LlmCalls), prepend system + user prompts so the
+        # LLM sees both its instructions AND the prior tool call history.
+        if not messages or messages[0].get("role") != "system":
+            logger.info(
+                "continue_run_prepending_prompts",
+                agent_run_id=str(agent_run_id),
+                reconstructed_count=len(messages),
+            )
+            messages = [
+                {"role": "system", "content": self.prompt_builder.build_system_prompt(language, language_info)},
+                {"role": "user", "content": self.prompt_builder.build_user_prompt(prompt, context)},
+            ] + messages
+
         # Detect language switch by checking old system prompt
         old_language = None
         if messages and messages[0].get("role") == "system":

@@ -63,3 +63,11 @@ druppie-app/
 
 # Personal compose overrides
 docker-compose.robbe.yml
+testing/reports/*.md
+
+# Debug/temp files
+debug_*.png
+debug_*.js
+analyze_storage.sh
+pi-coding-one-shot-agent/
+evaluation_config.yaml
