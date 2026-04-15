@@ -153,15 +153,16 @@ class BoundedOrchestrator:
             # Build context from the session's project
             context = orchestrator.build_project_context(session_id)
 
-            # Collect previous agent summaries (only used for planner prompts,
-            # matching production where done() relays summaries to the next
-            # pending planner — non-planner agents are self-contained).
+            # Get the accumulated summary from the LAST completed run.
+            # Each run's done() already accumulates all prior summaries,
+            # so the last one contains the full chain — no need to
+            # concatenate (which would cause massive duplication).
             completed_runs = execution_repo.get_completed_runs(session_id)
             previous_summary = ""
-            for run in completed_runs:
-                s = execution_repo.get_done_summary_for_run(run.id)
-                if s:
-                    previous_summary += s + "\n"
+            if completed_runs:
+                last_summary = execution_repo.get_done_summary_for_run(completed_runs[-1].id)
+                if last_summary:
+                    previous_summary = last_summary
 
             # Create and run each specified agent directly
             all_agents_completed = True
@@ -227,10 +228,12 @@ class BoundedOrchestrator:
                         )
                         break
 
-                # Update summary for next agent
+                # Update summary for next agent — the new run's done()
+                # summary already includes all prior summaries, so replace
+                # rather than append to avoid duplication.
                 run_summary = execution_repo.get_done_summary_for_run(agent_run.id)
                 if run_summary:
-                    previous_summary += run_summary + "\n"
+                    previous_summary = run_summary
 
             # Only mark COMPLETED if all agents actually ran to completion
             if all_agents_completed:
