@@ -2,9 +2,9 @@
 
 Define your API endpoints here. All routes are prefixed with /api.
 
-Built-in AI endpoints (via Druppie SDK → module-llm):
-    POST /api/ai/chat  — LLM chat completion  (body: {prompt, system?})
-    POST /api/ai/ocr   — OCR text extraction   (body: {image_url})
+Built-in AI endpoints (via Druppie SDK):
+    POST /api/ai/chat  — LLM chat completion  (body: {prompt, system?})  [module-llm]
+    POST /api/ai/ocr   — OCR text extraction   (body: {image_url})       [module-vision]
 
 Example adding your own:
 
@@ -31,7 +31,7 @@ def info():
 
 
 # ---------------------------------------------------------------------------
-# AI endpoints — via Druppie SDK (calls module-llm on the platform)
+# AI endpoints — via Druppie SDK (calls module-llm and module-vision)
 # ---------------------------------------------------------------------------
 
 
@@ -54,5 +54,5 @@ def ai_ocr_endpoint():
     data = request.get_json(silent=True)
     if not data or "image_url" not in data:
         return jsonify(error="Missing required field: image_url"), 400
-    result = druppie.call("llm", "vision", {"image_url": data["image_url"]})
+    result = druppie.call("vision", "ocr", {"image_url": data["image_url"]})
     return jsonify(text=result.get("text", ""))

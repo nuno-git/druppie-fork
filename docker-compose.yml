@@ -338,6 +338,9 @@ services:
     profiles: [infra, dev, prod]
     environment:
       MCP_PORT: "9008"
+      ZAI_API_KEY: ${ZAI_API_KEY:-}
+      ZAI_BASE_URL: ${ZAI_BASE_URL:-}
+      ZAI_MODEL: ${ZAI_MODEL:-}
       DEEPINFRA_API_KEY: ${DEEPINFRA_API_KEY:-}
     ports:
       - "${MCP_LLM_PORT:-9008}:9008"
@@ -345,6 +348,50 @@ services:
       - druppie-new-network
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9008/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  module-vision:
+    build:
+      context: ./druppie/mcp-servers
+      dockerfile: module-vision/Dockerfile
+    container_name: druppie-module-vision
+    profiles: [infra, dev, prod]
+    environment:
+      MCP_PORT: "9011"
+      ZAI_API_KEY: ${ZAI_API_KEY:-}
+      ZAI_BASE_URL: ${ZAI_BASE_URL:-}
+      ZAI_VISION_MODEL: ${ZAI_VISION_MODEL:-}
+      DEEPINFRA_API_KEY: ${DEEPINFRA_API_KEY:-}
+    ports:
+      - "${MCP_VISION_PORT:-9011}:9011"
+    networks:
+      - druppie-new-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9011/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  module-audio:
+    build:
+      context: ./druppie/mcp-servers
+      dockerfile: module-audio/Dockerfile
+    container_name: druppie-module-audio
+    profiles: [infra, dev, prod]
+    environment:
+      MCP_PORT: "9012"
+      ZAI_API_KEY: ${ZAI_API_KEY:-}
+      ZAI_BASE_URL: ${ZAI_BASE_URL:-}
+    ports:
+      - "${MCP_AUDIO_PORT:-9012}:9012"
+    networks:
+      - druppie-new-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9012/health"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -397,6 +444,7 @@ services:
       DOCKER_MEMORY_LIMIT: ${SANDBOX_MEMORY_LIMIT:-4g}
       DOCKER_CPU_LIMIT: ${SANDBOX_CPU_LIMIT:-0}
       SANDBOX_CACHE_VOLUME: druppie_sandbox_dep_cache
+      SANDBOX_SDK_HOST_PATH: ${PWD}/druppie/sdk
       # LLM API keys and proxy URLs no longer needed here.
       # Credentials flow per-session from Druppie -> Control Plane -> Sandbox.
     volumes:

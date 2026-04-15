@@ -183,7 +183,11 @@ system_prompt: |
   answer = result["answer"]
 
   # Vision / OCR
-  result = druppie.call("llm", "vision", {"image_url": "https://..."})
+  result = druppie.call("vision", "ocr", {"image_url": "https://..."})
+  text = result["text"]
+
+  # Audio transcription
+  result = druppie.call("audio", "transcribe", {"file_path": "/path/to/audio.mp3"})
   text = result["text"]
 
   # Web search (if module-web is available)

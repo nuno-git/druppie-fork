@@ -1,6 +1,7 @@
 """LLM MCP Server - Business Logic Module.
 
-Wraps DeepInfra OpenAI-compatible API for chat and vision tools.
+Wraps Z.AI GLM (OpenAI-compatible) API for chat completion.
+Falls back to DeepInfra if ZAI_API_KEY is not set.
 """
 
 import logging
@@ -10,42 +11,59 @@ from openai import OpenAI
 
 logger = logging.getLogger("llm-mcp")
 
-DEFAULT_CHAT_MODEL = "meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8"
-DEFAULT_VISION_MODEL = "PaddlePaddle/PaddleOCR-VL-0.9B"
+# Z.AI GLM defaults
+ZAI_DEFAULT_MODEL = "glm-4.7"
+ZAI_DEFAULT_BASE_URL = "https://api.z.ai/api/coding/paas/v4"
+
+# DeepInfra fallback
+DEEPINFRA_DEFAULT_MODEL = "meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8"
+DEEPINFRA_BASE_URL = "https://api.deepinfra.com/v1/openai"
 
 
 class LLMModule:
-    """Business logic for LLM operations via DeepInfra."""
+    """Business logic for LLM chat completion."""
 
     def __init__(self):
-        api_key = os.environ.get("DEEPINFRA_API_KEY", "")
-        if not api_key:
-            logger.warning("DEEPINFRA_API_KEY not set — LLM calls will fail")
-        self._client = OpenAI(
-            api_key=api_key,
-            base_url="https://api.deepinfra.com/v1/openai",
-        )
+        # Prefer Z.AI, fall back to DeepInfra
+        zai_key = os.environ.get("ZAI_API_KEY", "")
+        deepinfra_key = os.environ.get("DEEPINFRA_API_KEY", "")
+
+        if zai_key:
+            self._provider = "zai"
+            self._client = OpenAI(
+                api_key=zai_key,
+                base_url=os.environ.get("ZAI_BASE_URL", ZAI_DEFAULT_BASE_URL),
+            )
+            self._default_model = os.environ.get("ZAI_MODEL", ZAI_DEFAULT_MODEL)
+            logger.info("LLM provider: Z.AI (model=%s)", self._default_model)
+        elif deepinfra_key:
+            self._provider = "deepinfra"
+            self._client = OpenAI(
+                api_key=deepinfra_key,
+                base_url=DEEPINFRA_BASE_URL,
+            )
+            self._default_model = DEEPINFRA_DEFAULT_MODEL
+            logger.info("LLM provider: DeepInfra (model=%s)", self._default_model)
+        else:
+            self._provider = "none"
+            self._client = None
+            self._default_model = ""
+            logger.warning("No LLM API key set (ZAI_API_KEY or DEEPINFRA_API_KEY) — chat calls will fail")
+
+    @property
+    def provider(self) -> str:
+        return self._provider
 
     def chat(self, prompt: str, system: str = "You are a helpful assistant.", model: str | None = None) -> str:
         """LLM chat completion."""
+        if not self._client:
+            raise RuntimeError("No LLM provider configured — set ZAI_API_KEY or DEEPINFRA_API_KEY")
+
         response = self._client.chat.completions.create(
-            model=model or DEFAULT_CHAT_MODEL,
+            model=model or self._default_model,
             messages=[
                 {"role": "system", "content": system},
                 {"role": "user", "content": prompt},
             ],
-        )
-        return response.choices[0].message.content
-
-    def vision(self, image_url: str, prompt: str = "", model: str | None = None) -> str:
-        """Vision / OCR — extract text or describe an image."""
-        content = [{"type": "image_url", "image_url": {"url": image_url}}]
-        if prompt:
-            content.append({"type": "text", "text": prompt})
-
-        response = self._client.chat.completions.create(
-            model=model or DEFAULT_VISION_MODEL,
-            max_tokens=4092,
-            messages=[{"role": "user", "content": content}],
         )
         return response.choices[0].message.content
