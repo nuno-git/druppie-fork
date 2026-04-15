@@ -1,9 +1,16 @@
-## Setup: create a project with functional design ready for architect review
-## Used as setup for agent tests that need a project with FD already written.
+## Setup: create a project with functional design written and committed
+##
+## Chain: router → planner → BA (HITL + FD + git) → done
+## Ends after BA completes — no trailing planner, so tests that
+## continue_session can control what runs next without stale pending runs.
+##
+## Used by:
+##   - agent tests (setup + continue_session): architect-reviews-fd, planner-after-ba
+##   - tool tests (extends): architect-paused-mid-run
 
 tool-test:
   name: setup-project-with-fd
-  description: "Creates a project with FD — ready for architect review"
+  description: "Creates a project with FD — BA completed, ready for planner re-evaluation"
   tags: [setup]
 
   chain:
@@ -113,18 +120,3 @@ tool-test:
         summary: "Agent business_analyst: DESIGN_APPROVED. Gathered requirements and wrote functional_design.md with 6 functional requirements and 3 non-functional requirements."
       assert:
         completed: true
-
-    # --- Planner (routes to architect) ---
-    - agent: planner
-      tool: builtin:make_plan
-      arguments:
-        steps:
-          - agent_id: architect
-            prompt: "Review the functional design and create the technical design"
-          - agent_id: planner
-            prompt: "Re-evaluate after architect completes"
-
-    - agent: planner
-      tool: builtin:done
-      arguments:
-        summary: "Agent planner: BA approved design, planned architect to review FD and create technical design"
