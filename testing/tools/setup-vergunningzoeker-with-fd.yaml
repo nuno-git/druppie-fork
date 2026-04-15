@@ -1,13 +1,20 @@
 ## Setup: create a vergunningzoeker project with functional design written and committed
 ##
-## Chain: router → planner → BA (HITL + FD + git) → done
+## Chain: router → planner → BA (context gathering, HITL elicitation, summary
+##   validation, FD writing, FD confirmation, git) → done
 ## Ends after BA completes — no trailing planner.
 ##
-## The FD is a real-world permit metadata search system for a Dutch waterschap.
+## The BA flow follows the real operational phases:
+##   Phase 1: Intake & context exploration (registry + project calls)
+##   Phase 4: Elicitation (multiple clarifying questions)
+##   Phase 9: User validation (present summary, user confirms)
+##   Phase 7: Write FD via make_design
+##   Phase 10: FD confirmation (present full FD, user approves)
+##   Git add/commit/push → done()
 
 tool-test:
   name: setup-vergunningzoeker-with-fd
-  description: "Creates vergunningzoeker project with FD — BA completed, ready for planner re-evaluation"
+  description: "Creates vergunningzoeker project with FD — realistic BA elicitation flow"
   tags: [setup, vergunningzoeker]
 
   chain:
@@ -42,26 +49,154 @@ tool-test:
       arguments:
         summary: "Agent planner: Planned business_analyst to gather requirements and create functional design"
 
-    # --- Business Analyst ---
+    # =========================================================================
+    # Business Analyst — realistic elicitation flow
+    # =========================================================================
+
+    # --- Phase 1: Context gathering (registry + project discovery) ---
+    - agent: business_analyst
+      tool: registry:list_modules
+      mock: true
+      mock_result: '[{"id": "llm", "tools": ["chat"]}, {"id": "vision", "tools": ["ocr", "analyze"]}, {"id": "web", "tools": ["search_web"]}, {"id": "filesearch", "tools": ["search"]}]'
+
+    - agent: business_analyst
+      tool: registry:search_modules
+      mock: true
+      mock_result: '[]'
+      arguments:
+        query: "vergunning permit search"
+
+    - agent: business_analyst
+      tool: coding:list_projects
+      mock: true
+      mock_result: '[]'
+
+    # --- Phase 4: Elicitation — clarifying questions ---
+
+    # Question 1: Context & current situation
     - agent: business_analyst
       tool: builtin:hitl_ask_multiple_choice_question
       mock: true
-      mock_result: "Ja, we willen ook migratie naar het zaaksysteem"
+      mock_result: "We zoeken in meerdere oude systemen — sommige alleen op K/L-nummer, sommige op locatie maar alleen na 2018. Nieuwe medewerkers weten niet waar ze moeten zoeken."
       arguments:
-        question: "Moet het systeem ook migratiefunctionaliteit naar het zaaksysteem bieden?"
+        question: "Kunt u vertellen hoe u op dit moment vergunningen zoekt? Wat is het huidige proces?"
         choices:
-          - "Ja, we willen ook migratie naar het zaaksysteem"
-          - "Nee, alleen zoeken en inzicht in archiefstatus"
+          - "We zoeken in meerdere oude systemen — sommige alleen op K/L-nummer, sommige op locatie maar alleen na 2018. Nieuwe medewerkers weten niet waar ze moeten zoeken."
+          - "We hebben één systeem maar het is traag en onvolledig"
+          - "We zoeken vooral in papieren archieven en gescande PDF's"
 
+    # Question 2: Who is affected
+    - agent: business_analyst
+      tool: builtin:hitl_ask_multiple_choice_question
+      mock: true
+      mock_result: "Medewerkers vergunningverlening, leidinggevenden die overzichten nodig hebben, en nieuwe collega's die het systeem niet kennen"
+      arguments:
+        question: "Wie ondervindt dit probleem het meest? Wie zoekt er dagelijks naar vergunningen?"
+        choices:
+          - "Medewerkers vergunningverlening, leidinggevenden die overzichten nodig hebben, en nieuwe collega's die het systeem niet kennen"
+          - "Alleen de afdeling vergunningen"
+          - "Iedereen binnen het waterschap"
+
+    # Question 3: What metadata to search
+    - agent: business_analyst
+      tool: builtin:hitl_ask_multiple_choice_question
+      mock: true
+      mock_result: "Aanvrager, vergunninghouder, uitgever, locatie, datums, vergunningnummer (K/L), toepasselijke wet, type werk, type oppervlaktewater, type waterkering"
+      arguments:
+        question: "Welke gegevens moeten doorzoekbaar zijn? Welke metadata-velden zijn belangrijk?"
+        choices:
+          - "Aanvrager, vergunninghouder, uitgever, locatie, datums, vergunningnummer (K/L), toepasselijke wet, type werk, type oppervlaktewater, type waterkering"
+          - "Alleen vergunningnummer en locatie"
+          - "Alle beschikbare velden, maar ik weet niet precies welke dat zijn"
+
+    # Question 4: Archive compliance
     - agent: business_analyst
       tool: builtin:hitl_ask_multiple_choice_question
       mock: true
       mock_result: "Ja, inclusief retentieperiodes en archiefnominaties volgens selectielijst waterschappen 2012"
       arguments:
-        question: "Moet het systeem archiefstatus tonen volgens de Archiefwet?"
+        question: "Moet het systeem inzicht geven in de archiefstatus van vergunningen? Denk aan de Archiefwet en bewaar-/vernietigingstermijnen."
         choices:
           - "Ja, inclusief retentieperiodes en archiefnominaties volgens selectielijst waterschappen 2012"
-          - "Nee, alleen basis metadata zoeken"
+          - "Ja, maar alleen basale statusweergave"
+          - "Nee, dat is niet nodig"
+
+    # Question 5: Migration to zaaksysteem
+    - agent: business_analyst
+      tool: builtin:hitl_ask_multiple_choice_question
+      mock: true
+      mock_result: "Ja, we willen individuele vergunningen met metadata en documenten kunnen migreren naar het zaaksysteem"
+      arguments:
+        question: "Moet het systeem ook vergunningen kunnen migreren naar het zaaksysteem? Of is het puur zoeken en inzicht?"
+        choices:
+          - "Ja, we willen individuele vergunningen met metadata en documenten kunnen migreren naar het zaaksysteem"
+          - "Nee, alleen zoeken en inzicht"
+          - "Misschien later, maar niet in de eerste versie"
+
+    # Question 6: Access control
+    - agent: business_analyst
+      tool: builtin:hitl_ask_multiple_choice_question
+      mock: true
+      mock_result: "Alleen medewerkers van vergunningen en planning — andere afdelingen mogen niet zoeken"
+      arguments:
+        question: "Wie mag toegang hebben tot het zoeksysteem? Moet er toegangsbeperking zijn?"
+        choices:
+          - "Alleen medewerkers van vergunningen en planning — andere afdelingen mogen niet zoeken"
+          - "Alle medewerkers van het waterschap"
+          - "Openbaar toegankelijk"
+
+    # Question 7: Personal data
+    - agent: business_analyst
+      tool: builtin:hitl_ask_question
+      mock: true
+      mock_result: "Ja, namen van aanvragers, vergunninghouders en uitgevers staan in de metadata. Adressen en locaties ook. Geen bijzondere persoonsgegevens."
+      arguments:
+        question: "Bevatten de vergunninggegevens persoonsgegevens? Denk aan namen, adressen of contactgegevens van aanvragers of vergunninghouders."
+
+    # --- Phase 9: User validation — present summary ---
+    - agent: business_analyst
+      tool: builtin:hitl_ask_multiple_choice_question
+      mock: true
+      mock_result: "Ja, dit beschrijft precies wat we nodig hebben"
+      arguments:
+        question: |
+          **Problemomschrijving**
+          Medewerkers verliezen tijd door in meerdere gefragmenteerde systemen te zoeken naar vergunningen. Oude vergunningen (voor 2018) zijn niet op locatie doorzoekbaar. Kennis over waar te zoeken raakt verloren bij personeelswisselingen. De Archiefwet wordt niet nageleefd omdat retentieperiodes en locatie van alle vergunningen onbekend zijn.
+
+          **Kernprobleem**
+          Vergunningmetadata is verspreid over meerdere legacy databases met verschillende zoekmethoden en nummeringssystemen, waardoor er geen uniform overzicht is.
+
+          **Functionele Eisen**
+          1. FR-01: Eenvoudig zoeken via één zoekvak over alle metadata-velden
+          2. FR-02: Geavanceerd zoeken met filters per veldtype
+          3. FR-03: Indexering van alle metadata (aanvrager, locatie, datums, vergunningnummer, wet, type werk, etc.)
+          4. FR-04: Zoekresultaten tonen alle metadata-velden
+          5. FR-05: Detailweergave van vergunninginformatie
+          6. FR-06: Bronsysteem zichtbaar per vergunning
+          7. FR-07: Originele documenten openen/downloaden
+          8. FR-08: Toegangsbeperking per afdeling
+          9. FR-09: Archiefnominatie tonen (bewaren/vernietigen)
+          10. FR-10: Retentieperiode tonen indien van toepassing
+          11. FR-11: Archiefstatus berekenen en tonen
+          12. FR-12: Migratie van vergunningen naar zaaksysteem
+
+          **Buiten Scope**
+          - Aanmaken of wijzigen van vergunningen
+          - Publieke toegang
+          - Automatische bulk-migratie
+          - Fysieke archivering/vernietiging
+        choices:
+          - "Ja, dit beschrijft precies wat we nodig hebben"
+          - "Gedeeltelijk, er missen nog een paar dingen"
+          - "Nee, er zijn belangrijke punten die niet kloppen"
+
+    # --- Phase 7: Write functional design via make_design ---
+    - agent: business_analyst
+      tool: builtin:invoke_skill
+      mock: true
+      mock_result: "Mermaid diagram syntax rules loaded successfully"
+      arguments:
+        skill_name: making-mermaid-diagrams
 
     - agent: business_analyst
       tool: coding:make_design
@@ -168,6 +303,7 @@ tool-test:
           ### User Journey 1: Eenvoudig zoeken naar oude vergunning
 
           **Actor:** Medewerker vergunningverlening
+
           **Doel:** Een oude vergunning vinden met beperkte informatie
 
           **Stappen:**
@@ -186,6 +322,7 @@ tool-test:
           ### User Journey 2: Geavanceerd zoeken op specifieke criteria
 
           **Actor:** Gebruiker (medewerker vergunningverlening, planning, of archief)
+
           **Doel:** Vergunningen zoeken binnen specifiek gebied en periode
 
           **Stappen:**
@@ -204,6 +341,7 @@ tool-test:
           ### User Journey 3: Controleren van archiefstatus
 
           **Actor:** Medewerker vergunningverlening
+
           **Doel:** Controleren of vergunningen voldoen aan Archiefwet
 
           **Stappen:**
@@ -218,6 +356,7 @@ tool-test:
           ### User Journey 4: Migreren van vergunning naar zaaksysteem
 
           **Actor:** Medewerker vergunningverlening
+
           **Doel:** Een historische vergunning migreren naar het zaaksysteem
 
           **Stappen:**
@@ -253,17 +392,28 @@ tool-test:
           | NFR-06 | BA | Het systeem moet auditlogs bijhouden van wie welke zoekopdrachten en migraties uitvoert. | Test: Voer zoekopdrachten en migraties uit en verifieer aanwezigheid in logs. |
           | NFR-07 | BA | Migraties moeten data-integriteit garanderen: metadata en documenten moeten volledig en correct worden overgebracht. | Test: Voer migratie uit en vergelijk bron- en doeldata. |
 
-          ## 9. Security & Compliance Eisen
+          ## 9. Security & Compliance Eisen (van gebruikersinvoer)
 
-          **Persoonsgegevens betrokken:** Ja — namen (aanvrager, vergunninghouder, uitgever), adressen (locatie), contactgegevens
+          **Persoonsgegevens betrokken:**
+          Ja: Namen (aanvrager, vergunninghouder, uitgever), adressen (locatie), contactgegevens
 
-          **Vertrouwelijke bedrijfsgegevens betrokken:** Nee — voornamelijk publieke archief-informatie
+          **Vertrouwelijke bedrijfsgegevens betrokken:**
+          Nee: Voornamelijk publieke archief-informatie
 
-          **Authenticatie vereist:** Ja — toegangsbeperking tot specifieke afdelingen (vergunningen, planning)
+          **Authenticatie vereist:**
+          Ja: Toegangsbeperking tot specifieke afdelingen (vergunningen, planning)
 
-          **Toegangsbeperkingen:** Alleen gebruikers van specifieke afdelingen hebben toegang. Andere afdelingen en publiek hebben geen toegang.
+          **Toegangsbeperkingen:**
+          Alleen gebruikers van specifieke afdelingen hebben toegang
+          Andere afdelingen en publiek hebben geen toegang
 
-          **Dataretentie:** Het systeem zelf slaat geen vergunninggegevens op; deze blijven in bronsystemen. Search index verwijst naar brongegevens. Migraties verplaatsen data naar zaaksysteem; brondata blijft in bronsysteem.
+          **Failover-voorkeur:**
+          Niet gespecificeerd door gebruiker
+
+          **Dataretentie:**
+          Het systeem zelf slaat geen vergunninggegevens op; deze blijven in bronsystemen
+          Search index verwijst naar brongegevens
+          Migraties verplaatsen data naar zaaksysteem; brondata blijft in bronsysteem
 
           ## 10. Aannames & Open Vragen
 
@@ -292,24 +442,24 @@ tool-test:
           ```mermaid
           flowchart TD
             start(["Gebruiker opent zoekinterface"]) --> choice{"Zoektype"}
-            choice -->|"Eenvoudig zoeken"| simple["Gebruiker voert zoekterm in"]
-            choice -->|"Geavanceerd zoeken"| advanced["Gebruiker selecteert filters"]
+            choice -->|"Eenvoudig zoeken"| simple["Gebruiker voert zoekterm in en drukt op Enter"]
+            choice -->|"Geavanceerd zoeken"| advanced["Gebruiker selecteert filters en voert criteria in"]
             simple --> search["Systeem doorzoekt alle geïndexeerde metadata"]
             advanced --> search
             search --> results["Systeem toont resultaten met alle metadata-velden"]
             results --> action{"Gebruikersactie"}
-            action -->|"Resultaat bekijken"| detail["Gebruiker klikt op resultaat"]
-            action -->|"Migreren naar zaaksysteem"| migrate["Gebruiker selecteert vergunning"]
+            action -->|"Resultaat bekijken"| detail["Gebruiker klikt op resultaat voor detailweergave"]
+            action -->|"Migreren naar zaaksysteem"| migrate["Gebruiker selecteert vergunning voor migratie"]
             action -->|"Nieuwe zoekopdracht"| simple
-            detail --> status["Systeem toont details incl. archiefnominatie, retentieperiode"]
+            detail --> status["Systeem toont details incl. archiefnominatie, retentieperiode en bronsysteem"]
             status --> doc{"Gebruiker opent document?"}
             doc -->|"Ja"| download["Systeem opent/downloadt origineel document"]
             doc -->|"Nee"| finish(["Klaar"])
             download --> finish
-            migrate --> confirm["Systeem toont overzicht van metadata en documenten"]
+            migrate --> confirm["Systeem toont overzicht van metadata en documenten die gemigreerd worden"]
             confirm --> decision{"Gebruiker bevestigt?"}
             decision -->|"Nee"| results
-            decision -->|"Ja"| transfer["Systeem transporteert metadata en document"]
+            decision -->|"Ja"| transfer["Systeem transporteert metadata en document naar zaaksysteem"]
             transfer --> success["Systeem bevestigt succesvolle migratie"]
             success --> finish
           ```
@@ -317,6 +467,18 @@ tool-test:
         result:
           - { contains: "functional-design.md" }
 
+    # --- Phase 10: FD confirmation — user approves the written FD ---
+    - agent: business_analyst
+      tool: builtin:hitl_ask_multiple_choice_question
+      mock: true
+      mock_result: "Ja, goedkeuren en doorsturen naar de Architect"
+      arguments:
+        question: "Het functioneel ontwerp is geschreven met 12 functionele eisen, 7 niet-functionele eisen, 8 bedrijfsregels en 4 user journeys. Wilt u het goedkeuren en doorsturen naar de Architect voor technisch ontwerp?"
+        choices:
+          - "Ja, goedkeuren en doorsturen naar de Architect"
+          - "Nee, ik heb nog feedback"
+
+    # --- Git add/commit/push ---
     - agent: business_analyst
       tool: coding:run_git
       arguments:
@@ -332,9 +494,10 @@ tool-test:
       arguments:
         command: "push"
 
+    # --- done() with DESIGN_APPROVED ---
     - agent: business_analyst
       tool: builtin:done
       arguments:
-        summary: "Agent business_analyst: DESIGN_APPROVED. Gathered requirements and wrote functional_design.md for vergunningzoeker with 12 functional requirements, 7 non-functional requirements, 8 business rules, 4 user journeys, and 5 integration points. Covers unified permit search, archive status tracking (Archiefwet compliance), and migration to zaaksysteem."
+        summary: "Agent business_analyst: DESIGN_APPROVED. Gathered requirements through 7 elicitation questions covering current process, stakeholders, metadata fields, Archiefwet compliance, zaaksysteem migration, access control, and personal data. User validated summary and approved written FD. Wrote functional_design.md with 12 functional requirements, 7 non-functional requirements, 8 business rules, 4 user journeys, and 5 integration points."
       assert:
         completed: true
