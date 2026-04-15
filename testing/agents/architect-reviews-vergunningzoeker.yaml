@@ -1,33 +1,38 @@
-## Agent test: real architect reviews vergunningzoeker FD, then planner re-evaluates
+## Agent test: real architect reviews vergunningzoeker FD, build_classifier
+##   routes, then planner re-evaluates
 ##
 ## Setup: BA completed a detailed FD for a Dutch waterschap permit metadata
 ##   search system with 12 FRs, archive compliance, and zaaksysteem migration.
 ##
-## continue_session: true — architect + planner run in the SAME session.
-##   The architect reviews the FD and creates a technical design.
+## continue_session: true — architect, build_classifier, and planner run
+##   in the SAME session.
+##   The architect reviews the FD and creates a technical design, then calls
+##   done(next_agent="build_classifier") to route to the build path classifier.
+##   The build_classifier determines the build path (standalone vs core update).
 ##   The planner re-evaluates and plans the next step.
 
 agent-test:
   name: architect-reviews-vergunningzoeker
-  description: "Real architect reviews vergunningzoeker FD — complex real-world domain with Archiefwet compliance"
-  tags: [architect, planner, quality, judge, e2e, vergunningzoeker]
+  description: "Real architect reviews vergunningzoeker FD, build_classifier routes, planner re-evaluates"
+  tags: [architect, build_classifier, planner, quality, judge, e2e, vergunningzoeker]
 
   setup:
     - setup-vergunningzoeker-with-fd
   continue_session: true
 
   message: "Review the functional design and create the technical design for the vergunningzoeker"
-  agents: [architect, planner]
+  agents: [architect, build_classifier, planner]
   hitl: non-technical-pm
 
   assert:
     - check: architect-produces-td
 
   judge:
-    context: [architect, planner]
+    context: [architect, build_classifier, planner]
     checks:
       - "The architect should have approved the design (done summary should contain DESIGN_APPROVED), OR given feedback (DESIGN_FEEDBACK). Either is acceptable — but the architect must make a clear decision."
       - "The technical design must address the search architecture — how to index metadata from multiple legacy databases into a unified search system."
       - "The technical design must address Archiefwet compliance — how archive nominations and retention periods from the selectielijst waterschappen 2012 are mapped and calculated."
       - "The technical design must address the zaaksysteem migration interface — how metadata and documents are transferred."
-      - "The planner should call make_plan to schedule the next agent (e.g. builder_planner) or call done if no further work is needed. It must not re-schedule the architect."
+      - "The build_classifier should have determined the build path (BUILD_PATH=STANDALONE or BUILD_PATH=CORE_UPDATE) based on the technical design."
+      - "The planner should call make_plan to schedule the next agent (e.g. builder_planner) based on the build_classifier's routing. It must not re-schedule the architect."
