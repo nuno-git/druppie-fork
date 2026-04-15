@@ -1,0 +1,34 @@
+## Agent test: planner re-evaluates after BA completes
+##
+## Setup: tool test creates a project with FD already written
+##   (router -> planner -> BA -> FD written and pushed)
+##
+## continue_session: true -> planner runs in the SAME session.
+##   It receives the accumulated summary from all setup agents and
+##   decides what to do next (should plan the architect).
+##
+## Tests that:
+##   1. Planner receives a clean, deduplicated PREVIOUS AGENT SUMMARY
+##   2. Planner calls make_plan with the architect as next step
+##   3. Planner does NOT re-schedule the BA
+
+agent-test:
+  name: planner-after-ba
+  description: "Planner re-evaluates after BA wrote FD — should plan architect, not repeat BA"
+  tags: [planner, quality, judge, continue-session]
+
+  setup:
+    - setup-project-with-fd        # creates session with router -> planner -> BA -> FD
+  continue_session: true           # planner runs in the SAME session
+
+  message: "Continue with the next step for this project"
+  agents: [planner]                # only planner runs
+  hitl: non-technical-pm
+
+  judge:
+    context: [planner]
+    checks:
+      - "The planner must have called make_plan. Check that the builtin:make_plan tool was invoked."
+      - "The planner's make_plan should include the architect as the next agent (agent_id: architect). The BA already completed the functional design — the next logical step is technical design by the architect."
+      - "The planner must NOT re-schedule the business_analyst. The BA already completed its work (DESIGN_APPROVED)."
+      - "The planner's prompt should contain a PREVIOUS AGENT SUMMARY section. Verify it includes summaries from router, planner, and business_analyst — each appearing only once (no duplicates)."
