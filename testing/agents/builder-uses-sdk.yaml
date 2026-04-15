@@ -1,0 +1,35 @@
+## Agent test: real builder creates an SDK-aware app, then planner re-evaluates
+##
+## Setup: tool test creates a project with FD + TD + builder plan + tests
+##   (all mentioning Druppie modules and SDK usage)
+##
+## continue_session: true — builder + planner run in the SAME session as setup.
+##   Builder reads FD, TD, and builder-plan.md from the workspace.
+##   Planner re-evaluates after builder, leaving pending runs for continuation.
+##
+## Judge: evaluates that the builder actually used druppie_sdk in its code,
+##   did NOT use openai directly, and did NOT hardcode API keys.
+
+agent-test:
+  name: builder-uses-sdk
+  description: "Real builder creates an app using Druppie SDK, planner re-evaluates — judge verifies SDK usage"
+  tags: [builder, planner, sdk, quality, judge, e2e]
+
+  setup:
+    - setup-sdk-recipe-app      # creates session with full pipeline up to test_builder
+
+  continue_session: true        # builder + planner run in the SAME session
+
+  message: "Build the recipe analyzer app as described in the technical design, using Druppie SDK for AI."
+  agents: [builder, planner]    # builder runs, then planner re-evaluates (leaves pending runs)
+
+  assert:
+    - check: builder-uses-sdk
+
+  judge:
+    context: [builder]
+    checks:
+      - "The builder should have used `from druppie_sdk import DruppieClient` in the app code. Check the execute_coding_task tool call results for SDK imports."
+      - "The builder should NOT have used the openai package directly (no `from openai import` or `import openai`). All LLM calls should go through druppie.call()."
+      - "The builder should NOT have hardcoded any API keys (no DEEPINFRA_API_KEY, OPENAI_API_KEY, or similar in the code). The SDK reads DRUPPIE_URL from environment automatically."
+      - "The builder should have implemented recipe upload with OCR (druppie.call('llm', 'vision', ...)) and a chat endpoint (druppie.call('llm', 'chat', ...))."
