@@ -178,6 +178,26 @@ class BoundedOrchestrator:
                 else:
                     prompt = message
 
+                # Check if this agent was already completed (e.g. by
+                # _bounded_execute during a pause loop — when the architect
+                # pauses for approval, resume triggers execute_pending_runs
+                # which may run the build_classifier that done(next_agent=...)
+                # created). Skip it to avoid running the same agent twice.
+                self._db.expire_all()
+                completed_ids = {
+                    r.agent_id
+                    for r in execution_repo.get_completed_runs(session_id)
+                }
+                if agent_id in completed_ids and agent_id not in ("planner",):
+                    logger.info("Skipping %s — already completed by prior execution", agent_id)
+                    run_summary = None
+                    for run in execution_repo.get_completed_runs(session_id):
+                        if run.agent_id == agent_id:
+                            run_summary = execution_repo.get_done_summary_for_run(run.id)
+                    if run_summary:
+                        previous_summary = run_summary
+                    continue
+
                 # Reuse an existing pending run if one was created by a
                 # previous agent's done(next_agent=...) — e.g. architect
                 # creates a pending build_classifier via next_agent routing.
