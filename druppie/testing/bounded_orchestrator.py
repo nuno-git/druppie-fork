@@ -178,14 +178,22 @@ class BoundedOrchestrator:
                 else:
                     prompt = message
 
-                agent_run = execution_repo.create_agent_run(
-                    session_id=session_id,
-                    agent_id=agent_id,
-                    status=AgentRunStatus.PENDING,
-                    planned_prompt=prompt,
-                    sequence_number=next_seq + 1 + i,
-                )
-                execution_repo.commit()
+                # Reuse an existing pending run if one was created by a
+                # previous agent's done(next_agent=...) — e.g. architect
+                # creates a pending build_classifier via next_agent routing.
+                existing = execution_repo.get_pending_by_agent_id(session_id, agent_id)
+                if existing:
+                    agent_run = existing
+                    logger.info("Reusing existing pending run for %s (id=%s)", agent_id, existing.id)
+                else:
+                    agent_run = execution_repo.create_agent_run(
+                        session_id=session_id,
+                        agent_id=agent_id,
+                        status=AgentRunStatus.PENDING,
+                        planned_prompt=prompt,
+                        sequence_number=next_seq + 1 + i,
+                    )
+                    execution_repo.commit()
 
                 execution_repo.update_status(agent_run.id, AgentRunStatus.RUNNING)
                 execution_repo.commit()
