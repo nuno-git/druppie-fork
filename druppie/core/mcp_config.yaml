@@ -243,7 +243,21 @@ mcps:
     tools:
       - name: chat
         requires_approval: false
-      - name: vision
+
+  vision:
+    url: ${MCP_VISION_URL:-http://module-vision:9011}
+    type: module
+    tools:
+      - name: ocr
+        requires_approval: false
+      - name: analyze
+        requires_approval: false
+
+  audio:
+    url: ${MCP_AUDIO_URL:-http://module-audio:9012}
+    type: module
+    tools:
+      - name: transcribe
         requires_approval: false
 
   registry:
