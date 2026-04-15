@@ -125,6 +125,14 @@ class BoundedOrchestrator:
             # instead of going through process_message (which creates router+planner)
             result_session_id = session_id
 
+            # Cancel pending runs left over from setup (e.g. planner's
+            # make_plan may have created pending architect/planner runs
+            # that would duplicate the agents we're about to create).
+            cancelled = execution_repo.cancel_pending_runs(session_id)
+            if cancelled:
+                logger.info("Cancelled %d pending runs from setup before continue", cancelled)
+            execution_repo.commit()
+
             # Reset session to active
             session_repo.update_status(session_id, SessionStatus.ACTIVE)
             session_repo.commit()
@@ -145,7 +153,9 @@ class BoundedOrchestrator:
             # Build context from the session's project
             context = orchestrator.build_project_context(session_id)
 
-            # Get the last done summary for prompt context
+            # Collect previous agent summaries (only used for planner prompts,
+            # matching production where done() relays summaries to the next
+            # pending planner — non-planner agents are self-contained).
             completed_runs = execution_repo.get_completed_runs(session_id)
             previous_summary = ""
             for run in completed_runs:
@@ -156,7 +166,16 @@ class BoundedOrchestrator:
             # Create and run each specified agent directly
             all_agents_completed = True
             for i, agent_id in enumerate(self._real_agents):
-                prompt = f"PREVIOUS AGENT SUMMARY:\n{previous_summary}\n---\n\nUSER REQUEST:\n{message}"
+                # Planner gets previous summaries (matches production done()
+                # relay). All other agents get just the message — they read
+                # files from the workspace, not summary chains.
+                if agent_id == "planner" and previous_summary:
+                    prompt = (
+                        f"PREVIOUS AGENT SUMMARY:\n{previous_summary}\n---\n\n"
+                        + message
+                    )
+                else:
+                    prompt = message
 
                 agent_run = execution_repo.create_agent_run(
                     session_id=session_id,
