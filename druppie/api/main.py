@@ -107,13 +107,22 @@ async def lifespan(app: FastAPI):
     await cleanup_orphaned_sandbox_users()
 
     # Initialize tool registry (discovers MCP tools from servers via tools/list)
-    from druppie.core.tool_registry import initialize_tool_registry
+    from druppie.core.tool_registry import initialize_tool_registry, get_tool_registry
     try:
         await initialize_tool_registry()
         logger.info("tool_registry_initialized")
     except Exception as e:
         logger.warning("tool_registry_init_failed", error=str(e),
                        hint="MCP servers may not be ready yet. Registry will load builtin tools only.")
+
+    # Retry any MCP servers that failed during startup
+    registry = get_tool_registry()
+    failed = getattr(registry, "_failed_servers", [])
+    if failed:
+        create_tracked_task(
+            registry._retry_failed_servers(failed),
+            name="mcp-registry-retry",
+        )
 
     # Start sandbox watchdog (detects stuck WAITING_SANDBOX tool calls)
     from druppie.api.routes.sandbox import sandbox_watchdog_loop
