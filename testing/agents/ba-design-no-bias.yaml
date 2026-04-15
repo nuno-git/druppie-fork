@@ -1,0 +1,21 @@
+## Agent test: BA writes a functional design without solution bias
+##
+## Runs the real BA agent (LLM call) and uses an LLM judge to check
+## that the functional design describes WHAT not HOW.
+
+agent-test:
+  name: ba-design-no-bias
+  description: "BA writes functional design for a recipe app — judge checks for solution bias"
+  tags: [business_analyst, quality, judge]
+
+  message: "build me a recipe sharing app where people can share and rate recipes"
+  agents: [router, planner, business_analyst]
+  hitl: non-technical-pm
+
+  assert:
+    - check: ba-no-solution-bias
+
+  judge:
+    context: [router, business_analyst]
+    checks:
+      - "The BA should have asked at least one clarifying question before writing the design. Check if hitl_ask_question or hitl_ask_multiple_choice_question was called before make_design."

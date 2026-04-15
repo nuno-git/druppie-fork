@@ -40,6 +40,7 @@ from druppie.repositories import (
     ApprovalRepository,
     QuestionRepository,
     ProjectRepository,
+    EvaluationRepository,
 )
 from druppie.services import (
     SessionService,
@@ -47,6 +48,7 @@ from druppie.services import (
     QuestionService,
     ProjectService,
     WorkflowService,
+    EvaluationService,
 )
 
 # Initialize database tables on import
@@ -77,6 +79,11 @@ def get_question_repository(db: Session = Depends(get_db)) -> QuestionRepository
 def get_project_repository(db: Session = Depends(get_db)) -> ProjectRepository:
     """Get ProjectRepository with DB session injected."""
     return ProjectRepository(db)
+
+
+def get_evaluation_repository(db: Session = Depends(get_db)) -> EvaluationRepository:
+    """Get EvaluationRepository with DB session injected."""
+    return EvaluationRepository(db)
 
 
 # =============================================================================
@@ -116,6 +123,15 @@ def get_project_service(
 ) -> ProjectService:
     """Get ProjectService with repositories injected."""
     return ProjectService(project_repo)
+
+
+def get_evaluation_service(
+    eval_repo: EvaluationRepository = Depends(get_evaluation_repository),
+    db: Session = Depends(get_db),
+) -> EvaluationService:
+    """Get EvaluationService with repositories injected."""
+    from druppie.repositories.analytics_repository import AnalyticsRepository
+    return EvaluationService(eval_repo, AnalyticsRepository(db))
 
 
 def get_execution_repository(db: Session = Depends(get_db)) -> "ExecutionRepository":

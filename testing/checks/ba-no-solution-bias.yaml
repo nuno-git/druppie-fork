@@ -1,0 +1,14 @@
+check:
+  name: ba-no-solution-bias
+  description: "BA functional design should describe WHAT, not HOW — no technology/framework bias"
+  tags: [business_analyst, quality]
+  assert:
+    - agent: business_analyst
+      completed: true
+    - agent: business_analyst
+      tool: coding:make_design
+  judge:
+    context: business_analyst
+    checks:
+      - "The functional design must describe WHAT the system should do (requirements, user stories, acceptance criteria) — NOT HOW it should be built. It should NOT mention specific frameworks (React, Flask, Django), databases (PostgreSQL, MongoDB), or implementation patterns. Check the content of the make_design tool call arguments."
+      - "The functional design must be written in Dutch (Nederlands). All headings, requirements, and descriptions should be in Dutch."
