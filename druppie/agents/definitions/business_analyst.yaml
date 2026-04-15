@@ -971,6 +971,40 @@ mcps:
 # When business_analyst calls make_design (to create functional_design.md),
 # it requires approval from someone with the "business_analyst" role.
 
+required_summary_status:
+  one_of:
+    - "DESIGN_APPROVED"
+    - "DESIGN_REJECTED"
+    - "NO_FD_CHANGE"
+    - "CHAT_COMPLETE"
+    - "CHAT_ROUTE_AGENT"
+    - "CHAT_ROUTE_CREATE_PROJECT"
+    - "CHAT_ROUTE_UPDATE_PROJECT"
+  error_message: >
+    PRECONDITION FAILED: Your done() summary MUST contain one of the required
+    status keywords: DESIGN_APPROVED, DESIGN_REJECTED, NO_FD_CHANGE,
+    CHAT_COMPLETE, CHAT_ROUTE_AGENT, CHAT_ROUTE_CREATE_PROJECT, or
+    CHAT_ROUTE_UPDATE_PROJECT. These are mandatory protocol keywords that must
+    appear exactly as written (in English, uppercase). Review your completion
+    instructions and call done() again with the correct status in your summary.
+
+completion_preconditions:
+  - summary_contains: "DESIGN_APPROVED"
+    required_tools:
+      - tool_name: "make_design"
+        min_calls: 1
+      - tool_name: "run_git"
+        min_calls: 1
+    error_message: >
+      PRECONDITION FAILED: You cannot call done() with DESIGN_APPROVED without
+      first writing functional_design.md AND committing it to git. You MUST
+      call these tools before calling done():
+      1. Call coding_make_design(path="functional_design.md", content="...") to write the file
+      2. Call hitl_ask_multiple_choice_question to present the FD to the user
+      3. Call run_git to add, commit, and push functional_design.md to git
+      Do NOT output markdown text — you must use the coding_make_design TOOL.
+      Do NOT call done() again until you have completed all 3 steps.
+
 llm_profile: cheap
 temperature: 0.2
 max_tokens: 100000

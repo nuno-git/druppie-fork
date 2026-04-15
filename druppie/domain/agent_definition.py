@@ -5,6 +5,36 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 
+class RequiredToolCall(BaseModel):
+    """A tool that must have been called before completion is allowed."""
+
+    tool_name: str
+    min_calls: int = 1
+
+
+class CompletionPrecondition(BaseModel):
+    """Rule: require certain prior tool calls before done() succeeds.
+
+    If summary_contains is set, the rule only applies when the summary matches.
+    If summary_contains is omitted (None), the rule always applies.
+    """
+
+    summary_contains: str | None = None
+    required_tools: list[RequiredToolCall]
+    error_message: str = "Completion precondition not met."
+
+
+class CompletionSummaryRequirement(BaseModel):
+    """Require that done() summary contains one of the allowed status keywords.
+
+    This enforces the agent's status protocol (e.g. DESIGN_APPROVED,
+    DESIGN_REJECTED, NO_FD_CHANGE) regardless of what language the LLM uses.
+    """
+
+    one_of: list[str]
+    error_message: str = "Summary must contain a required status keyword."
+
+
 class ApprovalOverride(BaseModel):
     """Override for tool approval requirements.
 
@@ -53,6 +83,15 @@ class AgentDefinition(BaseModel):
     # Direct routing: which agents this agent can route to via done(next_agent=...)
     # Empty list means no direct routing allowed (default — planner decides)
     allowed_next_agents: list[str] = Field(default_factory=list)
+
+    # Completion preconditions: rules that must be satisfied before done() succeeds
+    # If done()'s summary matches a rule's summary_contains, the required tools
+    # must have been called (with status=completed) during this agent run.
+    completion_preconditions: list[CompletionPrecondition] = Field(default_factory=list)
+
+    # Require done() summary to contain one of the allowed status keywords.
+    # Enforces the agent's status protocol regardless of LLM language drift.
+    required_summary_status: CompletionSummaryRequirement | None = None
 
     # LLM settings
     llm_profile: str = "standard"
