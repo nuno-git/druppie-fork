@@ -77,7 +77,11 @@ async def call_module_tool(module_id: str, req: ModuleCallRequest):
     try:
         from druppie.execution.mcp_http import MCPHttp
         mcp = MCPHttp(config)
-        result = await mcp.call(module_id, req.tool, req.arguments)
+        result = await mcp.call(
+            module_id, req.tool, req.arguments,
+            timeout_seconds=120,
+            max_retries=1,
+        )
         return result
     except Exception as e:
         logger.error("module_call_failed: %s/%s — %s", module_id, req.tool, e)
