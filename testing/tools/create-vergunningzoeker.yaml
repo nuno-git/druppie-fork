@@ -730,6 +730,64 @@ tool-test:
                   "leggerwijziging": {"nominatie": "bewaren", "jaren": None},
               }
 
+          - path: Dockerfile
+            content: |
+              # Stage 1: Build frontend
+              FROM node:20-alpine AS frontend
+              WORKDIR /build
+              COPY frontend/package*.json ./
+              RUN npm install
+              COPY frontend/ .
+              RUN npm run build
+
+              # Stage 2: Python backend
+              FROM python:3.11-slim
+              WORKDIR /app
+              COPY requirements.txt .
+              RUN pip install --no-cache-dir -r requirements.txt
+              COPY druppie-sdk/ /tmp/druppie-sdk/
+              RUN pip install --no-cache-dir /tmp/druppie-sdk/
+              COPY app/ ./app/
+              COPY --from=frontend /build/dist ./static/
+              EXPOSE 8000
+              CMD ["gunicorn", "--bind", "0.0.0.0:8000", "--workers", "2", "--timeout", "300", "--preload", "app:create_app()"]
+
+          - path: app/database.py
+            content: |
+              import logging
+              from sqlalchemy import create_engine, text
+              from sqlalchemy.orm import DeclarativeBase, sessionmaker
+              from app.config import settings
+
+              logger = logging.getLogger(__name__)
+              engine = create_engine(settings.database_url)
+              SessionLocal = sessionmaker(bind=engine)
+
+              class Base(DeclarativeBase):
+                  pass
+
+              def get_db():
+                  db = SessionLocal()
+                  try:
+                      yield db
+                  finally:
+                      db.close()
+
+              def init_db():
+                  import app.models  # noqa: F401
+                  try:
+                      import app.chat  # noqa: F401
+                  except ImportError:
+                      pass
+                  with engine.connect() as conn:
+                      try:
+                          conn.execute(text("SELECT pg_advisory_lock(42)"))
+                          Base.metadata.create_all(bind=engine)
+                          conn.execute(text("SELECT pg_advisory_unlock(42)"))
+                          conn.commit()
+                      except Exception:
+                          Base.metadata.create_all(bind=engine)
+
           - path: app/agent.py
             content: |
               """Vergunningzoeker agent — agentic search over permits.
