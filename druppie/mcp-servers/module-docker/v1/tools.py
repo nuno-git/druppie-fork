@@ -113,6 +113,35 @@ def get_used_host_ports() -> set[int]:
         return set()
 
 
+def _get_host_bound_ports(port_range_start: int, port_range_end: int) -> set[int]:
+    """Check which ports are actually bound on the host (catches orphaned docker-proxies).
+
+    Uses a single throwaway container with host networking to test all ports at once.
+    """
+    try:
+        check_script = (
+            f"import socket\n"
+            f"for p in range({port_range_start},{port_range_end}):\n"
+            f"  try:\n"
+            f"    s=socket.socket()\n"
+            f"    s.bind(('0.0.0.0',p))\n"
+            f"    s.close()\n"
+            f"  except OSError:\n"
+            f"    print(p)\n"
+        )
+        result = subprocess.run(
+            ["docker", "run", "--rm", "--net=host", "python:3.11-slim",
+             "python3", "-c", check_script],
+            capture_output=True, text=True, timeout=15,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return {int(p) for p in result.stdout.strip().split("\n") if p.strip()}
+        return set()
+    except Exception as e:
+        logger.warning("Failed to check host-bound ports: %s", e)
+        return set()
+
+
 def is_port_available(port: int) -> bool:
     """Check if a port is available for binding on the Docker host."""
     docker_ports = get_used_host_ports()
@@ -126,14 +155,17 @@ def is_port_available(port: int) -> bool:
 async def get_next_port() -> int:
     """Get next available port from the configured range.
 
-    Checks both Docker's currently bound ports and our internal tracking.
-    Queries Docker once upfront to avoid N subprocess calls.
+    Checks Docker containers, internal tracking, AND actual host socket
+    availability (catches orphaned docker-proxy processes).
     Uses _port_lock to prevent TOCTOU races on concurrent compose_up calls.
     """
     async with _port_lock:
         docker_ports = get_used_host_ports()
+        host_bound = _get_host_bound_ports(PORT_RANGE_START, PORT_RANGE_END)
+        if host_bound:
+            logger.info("Host-bound ports in range: %s", sorted(host_bound))
         for port in range(PORT_RANGE_START, PORT_RANGE_END):
-            if port not in docker_ports and port not in used_ports:
+            if port not in docker_ports and port not in used_ports and port not in host_bound:
                 used_ports.add(port)
                 logger.info("Auto-selected available port %d", port)
                 return port
