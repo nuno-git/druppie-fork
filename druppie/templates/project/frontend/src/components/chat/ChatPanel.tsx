@@ -137,12 +137,33 @@ export default function ChatPanel() {
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }) }, [messages])
 
   // Load messages when active session changes
+  const loadMessages = useCallback(async (sid: number) => {
+    const data = await api.getSession(sid)
+    setMessages(data.messages || [])
+    return data.messages || []
+  }, [])
+
   useEffect(() => {
     if (!activeId) { setMessages([]); return }
-    api.getSession(activeId).then(data => {
-      setMessages(data.messages || [])
-    })
-  }, [activeId])
+    loadMessages(activeId)
+  }, [activeId, loadMessages])
+
+  // Poll for "thinking" messages — agent processes in background
+  useEffect(() => {
+    const hasThinking = messages.some(m => m.status === "thinking")
+    if (!hasThinking || !activeId) return
+
+    const interval = setInterval(async () => {
+      const msgs = await loadMessages(activeId)
+      const stillThinking = msgs.some((m: ChatMessage) => m.status === "thinking")
+      if (!stillThinking) {
+        setSending(false)
+        loadSessions() // title may have updated
+      }
+    }, 2000)
+
+    return () => clearInterval(interval)
+  }, [messages, activeId, loadMessages, loadSessions])
 
   const handleNew = async () => {
     const session = await api.createSession()
@@ -163,44 +184,29 @@ export default function ChatPanel() {
 
   const handleSend = async () => {
     if (!input.trim() || sending) return
-    if (!activeId) {
-      // Auto-create session on first message
+    let sid = activeId
+    if (!sid) {
       const session = await api.createSession()
       setSessions(prev => [session, ...prev])
       setActiveId(session.id)
-      await sendToSession(session.id, input.trim())
-    } else {
-      await sendToSession(activeId, input.trim())
+      sid = session.id
     }
-  }
-
-  const sendToSession = async (sessionId: number, text: string) => {
     setInput("")
     setSending(true)
-
-    // Optimistic user message
-    const tempMsg: ChatMessage = {
-      id: Date.now(), role: "user", content: text, steps: null, created_at: new Date().toISOString(),
-    }
-    setMessages(prev => [...prev, tempMsg])
-
     try {
-      const reply = await api.sendMessage(sessionId, text)
-      setMessages(prev => [
-        ...prev.filter(m => m.id !== tempMsg.id),
-        { ...tempMsg, id: reply.id - 1 }, // real ID doesn't matter for user msg
-        reply,
-      ])
-      // Refresh session list (title may have changed)
+      // Server returns immediately with a "thinking" message
+      await api.sendMessage(sid, input.trim())
+      // Reload to show user msg + thinking placeholder
+      await loadMessages(sid)
       loadSessions()
+      // Polling effect above will handle the rest
     } catch {
+      setSending(false)
       setMessages(prev => [
         ...prev,
-        { id: Date.now() + 1, role: "assistant", content: "Verbindingsfout — probeer opnieuw.", steps: null, created_at: new Date().toISOString() },
+        { id: Date.now(), role: "assistant", content: "Verbindingsfout — probeer opnieuw.",
+          status: "error", steps: null, created_at: new Date().toISOString() },
       ])
-    } finally {
-      setSending(false)
-      inputRef.current?.focus()
     }
   }
 
@@ -244,19 +250,17 @@ export default function ChatPanel() {
                   </div>
                 )}
                 <div className={`text-sm whitespace-pre-wrap ${m.role === "assistant" ? "bg-muted rounded-2xl rounded-tl-sm px-4 py-2.5" : ""}`}>
-                  {m.content}
+                  {m.role === "assistant" && m.status === "thinking" ? (
+                    <span className="flex items-center gap-2 text-muted-foreground">
+                      <Loader2 className="w-4 h-4 animate-spin" /> Denken...
+                    </span>
+                  ) : m.content}
                 </div>
               </div>
             </div>
           ))}
 
-          {sending && (
-            <div className="flex justify-start">
-              <div className="bg-muted rounded-2xl rounded-tl-sm px-4 py-2.5 text-sm text-muted-foreground flex items-center gap-2">
-                <Loader2 className="w-4 h-4 animate-spin" /> Denken...
-              </div>
-            </div>
-          )}
+          {/* No separate "thinking" bubble needed — the message itself shows status */}
           <div ref={endRef} />
         </div>
 
