@@ -83,48 +83,80 @@ class VisionModule:
         )
         return response.choices[0].message.content
 
+    def _resolve_to_file(self, image_source: str) -> tuple[str, bool]:
+        """Resolve image_source to a local file path.
+
+        Returns (file_path, is_temp) — caller must clean up if is_temp=True.
+        """
+        if image_source.startswith("data:"):
+            import base64, tempfile
+            header, b64data = image_source.split(",", 1)
+            ext = "png"
+            if "jpeg" in header or "jpg" in header:
+                ext = "jpg"
+            elif "pdf" in header:
+                ext = "pdf"
+            with tempfile.NamedTemporaryFile(suffix=f".{ext}", delete=False) as f:
+                f.write(base64.b64decode(b64data))
+                return f.name, True
+        return image_source, False
+
+    def _is_pdf(self, path: str) -> bool:
+        return path.lower().endswith(".pdf")
+
+    async def _ocr_pdf(self, pdf_path: str, prompt: str) -> str:
+        """Convert PDF pages to images and OCR each one."""
+        import tempfile, shutil
+        from pdf2image import convert_from_path
+
+        tmpdir = tempfile.mkdtemp()
+        try:
+            images = convert_from_path(pdf_path, dpi=200, output_folder=tmpdir, fmt="png")
+            logger.info("PDF converted to %d page(s)", len(images))
+
+            all_text = []
+            for i, img in enumerate(images):
+                page_path = os.path.join(tmpdir, f"page_{i+1}.png")
+                img.save(page_path, "PNG")
+                page_prompt = prompt or f"Extract all text from page {i+1} of this document"
+                text = await self._call_zai_mcp("extract_text_from_screenshot", {
+                    "image_source": page_path,
+                    "prompt": page_prompt,
+                })
+                all_text.append(f"--- Page {i+1} ---\n{text}")
+
+            return "\n\n".join(all_text)
+        finally:
+            shutil.rmtree(tmpdir, ignore_errors=True)
+
     async def ocr(self, image_source: str, prompt: str = "") -> str:
-        """Extract text from an image (OCR).
+        """Extract text from an image or PDF (OCR).
 
         Args:
             image_source: Local file path, URL, or base64 data URI.
+                Supports images (JPG, PNG) and PDFs (converted page-by-page).
             prompt: Optional prompt to guide extraction.
         """
         if not self._zai_key and not self._deepinfra_key:
             raise RuntimeError("No vision provider configured — set ZAI_API_KEY or DEEPINFRA_API_KEY")
 
         if self._provider == "zai":
-            # Z.AI MCP server handles local files, URLs, and base64
-            # For base64 data URIs, write to a temp file first
-            if image_source.startswith("data:"):
-                import base64, tempfile
-                # Parse data URI: data:mime;base64,XXXX
-                header, b64data = image_source.split(",", 1)
-                ext = "png"  # default
-                if "jpeg" in header or "jpg" in header:
-                    ext = "jpg"
-                elif "pdf" in header:
-                    ext = "pdf"
-                with tempfile.NamedTemporaryFile(suffix=f".{ext}", delete=False) as f:
-                    f.write(base64.b64decode(b64data))
-                    temp_path = f.name
-                try:
-                    return await self._call_zai_mcp("extract_text_from_screenshot", {
-                        "image_source": temp_path,
-                        "prompt": prompt or "Extract all text from this document",
-                    })
-                finally:
-                    os.unlink(temp_path)
-            else:
+            file_path, is_temp = self._resolve_to_file(image_source)
+            try:
+                if self._is_pdf(file_path):
+                    return await self._ocr_pdf(file_path, prompt)
                 return await self._call_zai_mcp("extract_text_from_screenshot", {
-                    "image_source": image_source,
+                    "image_source": file_path,
                     "prompt": prompt or "Extract all text from this document",
                 })
+            finally:
+                if is_temp:
+                    os.unlink(file_path)
         else:
             return self._call_deepinfra(image_source, prompt or "Extract all text from this image.")
 
     async def analyze(self, image_source: str, prompt: str = "Describe this image.") -> str:
-        """Analyze and describe an image.
+        """Analyze and describe an image or PDF.
 
         Args:
             image_source: Local file path, URL, or base64 data URI.
@@ -134,26 +166,29 @@ class VisionModule:
             raise RuntimeError("No vision provider configured — set ZAI_API_KEY or DEEPINFRA_API_KEY")
 
         if self._provider == "zai":
-            if image_source.startswith("data:"):
-                import base64, tempfile
-                header, b64data = image_source.split(",", 1)
-                ext = "png"
-                if "jpeg" in header or "jpg" in header:
-                    ext = "jpg"
-                with tempfile.NamedTemporaryFile(suffix=f".{ext}", delete=False) as f:
-                    f.write(base64.b64decode(b64data))
-                    temp_path = f.name
-                try:
-                    return await self._call_zai_mcp("analyze_image", {
-                        "image_source": temp_path,
-                        "prompt": prompt,
-                    })
-                finally:
-                    os.unlink(temp_path)
-            else:
+            file_path, is_temp = self._resolve_to_file(image_source)
+            try:
+                if self._is_pdf(file_path):
+                    # For PDFs, analyze first page only
+                    import tempfile, shutil
+                    from pdf2image import convert_from_path
+                    tmpdir = tempfile.mkdtemp()
+                    try:
+                        images = convert_from_path(file_path, dpi=200, output_folder=tmpdir, fmt="png", first_page=1, last_page=1)
+                        page_path = os.path.join(tmpdir, "page_1.png")
+                        images[0].save(page_path, "PNG")
+                        return await self._call_zai_mcp("analyze_image", {
+                            "image_source": page_path,
+                            "prompt": prompt,
+                        })
+                    finally:
+                        shutil.rmtree(tmpdir, ignore_errors=True)
                 return await self._call_zai_mcp("analyze_image", {
-                    "image_source": image_source,
+                    "image_source": file_path,
                     "prompt": prompt,
                 })
+            finally:
+                if is_temp:
+                    os.unlink(file_path)
         else:
             return self._call_deepinfra(image_source, prompt)
