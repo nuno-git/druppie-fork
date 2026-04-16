@@ -20,11 +20,15 @@ The route coordinates both services:
 from uuid import UUID
 import structlog
 
-from ..repositories import ApprovalRepository
+from ..repositories import ApprovalRepository, SessionRepository
 from ..domain import ApprovalDetail, ApprovalHistoryList, PendingApprovalList, ApprovalStatus
 from ..api.errors import NotFoundError, AuthorizationError, ConflictError
 
 logger = structlog.get_logger()
+
+# Sentinel value for approval_overrides that means "the session's own user
+# must approve" instead of a Keycloak role.
+SESSION_OWNER_ROLE = "session_owner"
 
 
 class ApprovalService:
@@ -38,42 +42,47 @@ class ApprovalService:
     the route should call WorkflowService.resume_from_approval().
     """
 
-    def __init__(self, approval_repo: ApprovalRepository):
+    def __init__(self, approval_repo: ApprovalRepository, session_repo: SessionRepository):
         self.approval_repo = approval_repo
+        self.session_repo = session_repo
 
     def get_pending_for_roles(
         self,
         user_roles: list[str],
+        user_id: UUID | None = None,
     ) -> PendingApprovalList:
         """Get approvals user can act on based on their roles.
 
         Admin users see all pending approvals.
-        Other users see only approvals matching their roles.
+        Other users see only approvals matching their roles,
+        plus session_owner approvals for sessions they own.
         """
         if "admin" in user_roles:
             roles_to_check = None  # Admin sees all pending approvals
         else:
             roles_to_check = user_roles
 
-        return self.approval_repo.get_pending_for_roles(roles_to_check)
+        return self.approval_repo.get_pending_for_roles(roles_to_check, user_id=user_id)
 
     def get_history_for_roles(
         self,
         user_roles: list[str],
+        user_id: UUID | None = None,
         page: int = 1,
         limit: int = 20,
     ) -> ApprovalHistoryList:
         """Get resolved approvals user can see based on their roles.
 
         Admin users see all resolved approvals.
-        Other users see only approvals matching their roles.
+        Other users see only approvals matching their roles,
+        plus session_owner approvals for sessions they own.
         """
         if "admin" in user_roles:
             roles_to_check = None  # Admin sees all history
         else:
             roles_to_check = user_roles
 
-        return self.approval_repo.get_resolved_for_roles(roles_to_check, page, limit)
+        return self.approval_repo.get_resolved_for_roles(roles_to_check, page, limit, user_id=user_id)
 
     def approve(
         self,
@@ -113,13 +122,8 @@ class ApprovalService:
         if not approval:
             raise NotFoundError("approval", str(approval_id))
 
-        # Check role authorization
-        required_role = approval.required_role or "admin"
-        if required_role not in user_roles and "admin" not in user_roles:
-            raise AuthorizationError(
-                f"Requires {required_role} role to approve",
-                required_roles=[required_role],
-            )
+        # Check authorization
+        self._check_authorization(approval, user_id, user_roles, action="approve")
 
         # Check not already processed
         if approval.status != ApprovalStatus.PENDING.value:
@@ -174,12 +178,8 @@ class ApprovalService:
         if not approval:
             raise NotFoundError("approval", str(approval_id))
 
-        required_role = approval.required_role or "admin"
-        if required_role not in user_roles and "admin" not in user_roles:
-            raise AuthorizationError(
-                f"Requires {required_role} role to reject",
-                required_roles=[required_role],
-            )
+        # Check authorization
+        self._check_authorization(approval, user_id, user_roles, action="reject")
 
         if approval.status != ApprovalStatus.PENDING.value:
             raise ConflictError(f"Approval already {approval.status}")
@@ -201,3 +201,28 @@ class ApprovalService:
 
         updated = self.approval_repo.get_by_id(approval_id)
         return self.approval_repo._to_detail(updated)
+
+    def _check_authorization(self, approval, user_id: UUID, user_roles: list[str], action: str) -> None:
+        """Check if user is authorized to approve/reject.
+
+        Handles both role-based approvals (required_role = "architect", etc.)
+        and session_owner approvals (required_role = "session_owner").
+        Admins can always approve/reject.
+        """
+        if "admin" in user_roles:
+            return
+
+        required_role = approval.required_role or "admin"
+
+        if required_role == SESSION_OWNER_ROLE:
+            session = self.session_repo.get_by_id(approval.session_id)
+            if not session or session.user_id != user_id:
+                raise AuthorizationError(
+                    f"Only the session owner can {action} this",
+                )
+        else:
+            if required_role not in user_roles:
+                raise AuthorizationError(
+                    f"Requires {required_role} role to {action}",
+                    required_roles=[required_role],
+                )
