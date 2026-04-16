@@ -16,6 +16,7 @@ export interface ChatMessage {
   id: number
   role: "user" | "assistant"
   content: string
+  status: "thinking" | "done" | "error"
   steps: AgentStep[] | null
   created_at: string
 }

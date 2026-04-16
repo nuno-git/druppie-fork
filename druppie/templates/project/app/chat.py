@@ -2,14 +2,20 @@
 
 Provides a ChatGPT-style conversational interface backed by the Druppie SDK.
 Every project gets this out of the box — customize the agent logic in agent.py.
+
+Architecture: messages are processed asynchronously. When a user sends a
+message, the backend saves it, creates a "thinking" placeholder, and
+processes the agent in a background thread. The frontend polls for updates.
+This way navigating away doesn't cancel the AI response.
 """
 
+import threading
 from datetime import datetime, timezone
 
 from sqlalchemy import Column, DateTime, Integer, String, Text, ForeignKey, JSON
 from sqlalchemy.orm import relationship
 
-from app.database import Base, get_db
+from app.database import Base, get_db, SessionLocal
 
 
 # ---------------------------------------------------------------------------
@@ -36,12 +42,50 @@ class ChatMessage(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     session_id = Column(Integer, ForeignKey("chat_sessions.id", ondelete="CASCADE"), nullable=False, index=True)
     role = Column(String(20), nullable=False)  # "user" or "assistant"
-    content = Column(Text, nullable=False)
+    content = Column(Text, nullable=False, default="")
+    # "thinking" while agent processes, "done" when complete, "error" on failure
+    status = Column(String(20), nullable=False, default="done")
     # Agent metadata — search terms, found documents, reasoning steps
     metadata_ = Column("metadata", JSON, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     session = relationship("ChatSession", back_populates="messages")
+
+
+# ---------------------------------------------------------------------------
+# Background agent processing
+# ---------------------------------------------------------------------------
+
+def _process_message_background(session_id: int, assistant_msg_id: int, user_text: str, history: list[dict]):
+    """Run the agent in a background thread with its own DB session."""
+    db = SessionLocal()
+    try:
+        from app.agent import run_agent
+        result = run_agent(user_text, history, db)
+
+        msg = db.query(ChatMessage).filter(ChatMessage.id == assistant_msg_id).first()
+        if msg:
+            msg.content = result.get("answer", "")
+            msg.status = "done"
+            msg.metadata_ = result.get("steps")
+
+        session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
+        if session:
+            session.updated_at = datetime.now(timezone.utc)
+
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        try:
+            msg = db.query(ChatMessage).filter(ChatMessage.id == assistant_msg_id).first()
+            if msg:
+                msg.content = f"Fout bij verwerking: {e}"
+                msg.status = "error"
+            db.commit()
+        except Exception:
+            pass
+    finally:
+        db.close()
 
 
 # ---------------------------------------------------------------------------
@@ -55,7 +99,6 @@ chat_api = Blueprint("chat_api", __name__)
 
 @chat_api.route("/chat/sessions", methods=["POST"])
 def create_session():
-    """Create a new chat session."""
     db = next(get_db())
     session = ChatSession()
     db.add(session)
@@ -66,7 +109,6 @@ def create_session():
 
 @chat_api.route("/chat/sessions")
 def list_sessions():
-    """List all chat sessions, newest first."""
     db = next(get_db())
     sessions = db.query(ChatSession).order_by(ChatSession.updated_at.desc()).all()
     return jsonify([_session_to_dict(s) for s in sessions])
@@ -74,7 +116,6 @@ def list_sessions():
 
 @chat_api.route("/chat/sessions/<int:session_id>")
 def get_session(session_id):
-    """Get a session with all messages."""
     db = next(get_db())
     session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
     if not session:
@@ -87,7 +128,6 @@ def get_session(session_id):
 
 @chat_api.route("/chat/sessions/<int:session_id>", methods=["DELETE"])
 def delete_session(session_id):
-    """Delete a chat session and all its messages."""
     db = next(get_db())
     session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
     if not session:
@@ -99,7 +139,6 @@ def delete_session(session_id):
 
 @chat_api.route("/chat/sessions/<int:session_id>/rename", methods=["POST"])
 def rename_session(session_id):
-    """Rename a chat session."""
     db = next(get_db())
     session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
     if not session:
@@ -113,9 +152,10 @@ def rename_session(session_id):
 
 @chat_api.route("/chat/sessions/<int:session_id>/messages", methods=["POST"])
 def send_message(session_id):
-    """Send a message and get an agent response.
+    """Send a message. Returns immediately with a 'thinking' assistant message.
 
-    The agent logic is defined in app.agent — customize it for your domain.
+    The agent processes in a background thread. Poll GET /sessions/{id}
+    to check when the assistant message status changes from 'thinking' to 'done'.
     """
     db = next(get_db())
     session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
@@ -138,32 +178,29 @@ def send_message(session_id):
     if session.title == "Nieuw gesprek":
         session.title = user_text[:80] + ("..." if len(user_text) > 80 else "")
 
-    db.commit()
-
-    # Get conversation history for context
-    history = [{"role": m.role, "content": m.content}
-               for m in session.messages if m.id != user_msg.id]
-
-    # Run agent
-    try:
-        from app.agent import run_agent
-        result = run_agent(user_text, history, db)
-    except Exception as e:
-        result = {"answer": f"Fout bij verwerking: {e}", "steps": []}
-
-    # Save assistant message
+    # Create placeholder assistant message
     assistant_msg = ChatMessage(
-        session_id=session_id,
-        role="assistant",
-        content=result.get("answer", ""),
-        metadata_=result.get("steps"),
+        session_id=session_id, role="assistant",
+        content="", status="thinking",
     )
     db.add(assistant_msg)
-    session.updated_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(assistant_msg)
 
-    return jsonify(_message_to_dict(assistant_msg))
+    # Get conversation history (excluding the new messages)
+    history = [{"role": m.role, "content": m.content}
+               for m in session.messages
+               if m.id not in (user_msg.id, assistant_msg.id) and m.status == "done"]
+
+    # Process in background thread
+    thread = threading.Thread(
+        target=_process_message_background,
+        args=(session_id, assistant_msg.id, user_text, history),
+        daemon=True,
+    )
+    thread.start()
+
+    return jsonify(_message_to_dict(assistant_msg)), 202
 
 
 def _session_to_dict(s):
@@ -181,6 +218,7 @@ def _message_to_dict(m):
         "id": m.id,
         "role": m.role,
         "content": m.content,
+        "status": m.status,
         "steps": m.metadata_,
         "created_at": m.created_at.isoformat() if m.created_at else None,
     }
