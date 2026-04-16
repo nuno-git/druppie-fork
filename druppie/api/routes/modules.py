@@ -75,10 +75,10 @@ async def call_module_tool(module_id: str, req: ModuleCallRequest):
     mcp_url = config.get_server_url(module_id)
 
     try:
-        from druppie.execution.mcp_http import MCPHttpClient
-        mcp_client = MCPHttpClient()
-        result = await mcp_client.call_tool(mcp_url, req.tool, req.arguments)
+        from druppie.execution.mcp_http import MCPHttp
+        mcp = MCPHttp(config)
+        result = await mcp.call(module_id, req.tool, req.arguments)
         return result
     except Exception as e:
-        logger.error("module_call_failed", module=module_id, tool=req.tool, error=str(e))
+        logger.error("module_call_failed: %s/%s — %s", module_id, req.tool, e)
         raise HTTPException(status_code=502, detail=f"Module call failed: {e}")

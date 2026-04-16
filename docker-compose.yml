@@ -222,6 +222,7 @@ services:
       MCP_PORT: "9002"
       WORKSPACE_ROOT: /workspaces
       DOCKER_NETWORK: druppie-new-network
+      DRUPPIE_URL: ${DRUPPIE_URL:-http://druppie-new-backend:8000}
       DEEPINFRA_API_KEY: ${DEEPINFRA_API_KEY:-}
     volumes:
       - druppie_new_workspace:/workspaces
