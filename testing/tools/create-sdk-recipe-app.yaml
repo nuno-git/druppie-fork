@@ -1,0 +1,219 @@
+## End-to-end: create a recipe analyzer app with Druppie SDK
+## Extends setup-sdk-recipe-app, adds: builder (mocked with SDK code) + deploy (mock)
+##
+## Validates that the full pipeline produces an app that:
+## - Uses druppie_sdk (not openai or hardcoded keys)
+## - Has proper module integration in the builder plan
+## - TD mentions Druppie modules
+
+tool-test:
+  name: create-sdk-recipe-app
+  description: "Full pipeline for SDK-aware app (mocked builder + deploy)"
+  tags: [e2e, create-project, sdk, mock-deploy]
+  extends: setup-sdk-recipe-app
+
+  chain:
+    # --- Planner → Builder ---
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: builder
+            prompt: "Build the recipe analyzer to pass the tests, using Druppie SDK for AI"
+          - agent_id: planner
+            prompt: "Re-evaluate after builder completes"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: Planned builder"
+
+    # --- Builder (mocked — outcome files use druppie_sdk correctly) ---
+    - agent: builder
+      tool: coding:execute_coding_task
+      arguments:
+        task: "Build the recipe analyzer to pass the tests, using Druppie SDK for AI"
+      mock: true
+      mock_result: "All files created successfully"
+      outcome:
+        files:
+          - path: app/routes.py
+            content: |
+              from flask import Blueprint, jsonify, request
+              from druppie_sdk import DruppieClient
+
+              api = Blueprint("api", __name__)
+              druppie = DruppieClient()
+
+              @api.route("/info")
+              def info():
+                  from app.config import settings
+                  return jsonify(app_name=settings.app_name)
+
+              @api.route("/recipes/upload", methods=["POST"])
+              def upload_recipe():
+                  data = request.get_json(silent=True)
+                  if not data or "image_url" not in data:
+                      return jsonify(error="Missing image_url"), 400
+                  result = druppie.call("llm", "vision", {"image_url": data["image_url"]})
+                  extracted_text = result.get("text", "")
+                  analysis = druppie.call("llm", "chat", {
+                      "prompt": f"Analyseer dit recept en geef ingredienten en stappen:\n\n{extracted_text}",
+                      "system": "Je bent een ervaren chef-kok die recepten analyseert.",
+                  })
+                  return jsonify(
+                      extracted_text=extracted_text,
+                      analysis=analysis.get("answer", ""),
+                  )
+
+              @api.route("/recipes/<recipe_id>/chat", methods=["POST"])
+              def chat_recipe(recipe_id):
+                  data = request.get_json(silent=True)
+                  if not data or "prompt" not in data:
+                      return jsonify(error="Missing prompt"), 400
+                  result = druppie.call("llm", "chat", {
+                      "prompt": data["prompt"],
+                      "system": "Je bent een behulpzame chef-kok.",
+                  })
+                  return jsonify(answer=result.get("answer", ""))
+
+    - agent: builder
+      tool: builtin:done
+      arguments:
+        summary: "Agent builder: BUILD_COMPLETE — Recipe analyzer with Druppie SDK for LLM and vision."
+
+    # --- Planner → test_executor ---
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: test_executor
+            prompt: "Run all tests"
+          - agent_id: planner
+            prompt: "Re-evaluate after test_executor completes"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: Planned test_executor"
+
+    # --- Test Executor (mocked) ---
+    - agent: test_executor
+      tool: coding:run_tests
+      mock: true
+      mock_result: '{"success": true, "output": "2 passed, 0 failed", "exit_code": 0}'
+
+    - agent: test_executor
+      tool: coding:get_coverage_report
+      mock: true
+      mock_result: '{"coverage": 82, "lines_covered": 41, "lines_total": 50}'
+
+    - agent: test_executor
+      tool: builtin:test_report
+      mock: true
+      mock_result: '{"status": "ok"}'
+      arguments:
+        total: 2
+        passed: 2
+        failed: 0
+        coverage: 82
+        summary: "Agent test_executor: All 2 tests passed with 82% coverage"
+
+    - agent: test_executor
+      tool: builtin:done
+      arguments:
+        summary: "Agent test_executor: TEST RESULT: PASS — 2/2 tests passed, 82% coverage."
+
+    # --- Planner → deployer ---
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: deployer
+            prompt: "Deploy the recipe analyzer"
+          - agent_id: planner
+            prompt: "Re-evaluate after deployer completes"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: Tests passed, planned deployer"
+
+    # --- Deployer (mocked) ---
+    - agent: deployer
+      tool: docker:list_containers
+      mock: true
+      mock_result: '{"containers": []}'
+
+    - agent: deployer
+      tool: docker:compose_up
+      mock: true
+      mock_result: '{"success": true, "containers": ["recipe-analyzer-1"], "url": "http://localhost:9105", "compose_project_name": "recipe-analyzer"}'
+      arguments:
+        compose_project_name: recipe-analyzer
+        branch: main
+
+    - agent: deployer
+      tool: builtin:done
+      arguments:
+        summary: "Agent deployer: Deployed recipe-analyzer at http://localhost:9105."
+
+    # --- Planner → summarizer ---
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: summarizer
+            prompt: "Summarize what was accomplished"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: Planned summarizer"
+
+    # --- Summarizer ---
+    - agent: summarizer
+      tool: builtin:create_message
+      arguments:
+        content: |
+          Your recipe analyzer has been built and deployed!
+
+          **Features:**
+          - Upload recipe photos — OCR extracts text via Druppie module-llm
+          - AI analysis of recipes (ingredients, steps, nutrition)
+          - Chat interface for questions about recipes
+
+          **Tech:** Flask + React, AI via Druppie SDK (no hardcoded API keys)
+
+          The app is running at http://localhost:9105.
+
+    - agent: summarizer
+      tool: builtin:done
+      arguments:
+        summary: "Agent summarizer: Presented completion summary."
+      assert:
+        completed: true
+
+  # Verify side-effects in Gitea
+  verify:
+    - gitea_repo_exists: true
+    - file_exists: docs/functional-design.md
+    - file_exists: docs/technical-design.md
+    - file_exists: docs/builder-plan.md
+    - file_not_empty: docs/functional-design.md
+    - file_not_empty: docs/technical-design.md
+    - file_not_empty: docs/builder-plan.md
+    # Verify TD mentions Druppie modules
+    - file_contains:
+        path: docs/technical-design.md
+        content: "druppie_sdk"
+    - file_contains:
+        path: docs/technical-design.md
+        content: "DruppieClient"
+    # Verify builder plan includes module integration
+    - file_contains:
+        path: docs/builder-plan.md
+        content: "Module Integration"
+    - file_contains:
+        path: docs/builder-plan.md
+        content: "llm/chat"
