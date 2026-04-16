@@ -151,9 +151,18 @@ The session intent stays `create_project` throughout — there is no separate `c
 - The Architect decides the build path — it reads the functional and technical design to determine if the project is a Foundry agent, core update, or standalone project
 - The Foundry Agent Builder selects from Foundry-native tools only (code_interpreter, file_search, bing_grounding, browser_automation, deep_research)
 - Druppie's own MCPs are not available in Foundry agents (future: a bridge may expose them)
-- `create_foundry_agent` accepts: agent_id, name, description, instructions, model, temperature, foundry_tools
+- `create_foundry_agent` accepts: agent_id, name, description, instructions, model, foundry_tools
+- Temperature is NOT supported by Foundry's `PromptAgentDefinition` — the API rejects it
 - Agents are stored in the database and can be refined/deployed via the Agents page UI
-- Foundry deployment uses DefaultAzureCredential (az login, managed identity) or FOUNDRY_API_KEY
+
+**Deployment to Foundry:**
+- Clicking "Deploy to Foundry" on the Agents page calls `FoundryService.deploy_agent()`
+- Foundry receives ONLY: model (mapped from llm_profile), instructions (system prompt), and tools
+- Tool SDK support: `code_interpreter`, `file_search`, `bing_grounding` are deployed; `browser_automation`, `deep_research`, etc. are stored in DB but not yet sent (SDK lacks classes)
+- `bing_grounding` requires a Bing connection configured in the Azure AI Foundry portal
+- Authentication uses `DefaultAzureCredential` (NOT API key — `AIProjectClient` requires `TokenCredential`)
+- For Docker: set `AZURE_CLIENT_ID` + `AZURE_CLIENT_SECRET` + `AZURE_TENANT_ID` (service principal)
+- For local dev: `az login` or `azd auth login` works
 
 ### general_chat
 

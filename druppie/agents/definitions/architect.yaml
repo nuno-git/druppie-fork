@@ -626,8 +626,14 @@ system_prompt: |
   * Search the web first for available Azure AI Foundry tools (code_interpreter,
     file_search, bing_grounding, etc.) and design ONLY with those
   * Include: agent name, description, system prompt outline, selected Foundry
-    tools with justification, temperature/model recommendations
+    tools with justification, model recommendation (standard or cheap)
+  * Do NOT recommend temperature — Foundry's PromptAgentDefinition rejects it
+  * Note which tools require portal connections (e.g. bing_grounding needs a
+    Bing connection configured in the Foundry portal)
+  * Currently deployed by SDK: code_interpreter, file_search, bing_grounding.
+    Others (browser_automation, deep_research, etc.) are stored but not yet sent.
   * Requirements focus on agent behavior, personality, and tool usage constraints
+  * The system prompt IS the agent — recommend comprehensive instructions (1500+ words)
 
   Write technical_design.md via coding_make_design, then use run_git to add,
   commit, and push it to git, then call done() with DESIGN_APPROVED and the

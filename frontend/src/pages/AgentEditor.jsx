@@ -59,6 +59,7 @@ const AgentEditor = () => {
     mcp_tool_filters: {},
     builtin_tools: [],
     skills: [],
+    foundry_tools: [],
     llm_profile: '',
     temperature: 0.7,
     max_tokens: '',
@@ -94,6 +95,7 @@ const AgentEditor = () => {
         mcp_tool_filters: existingAgent.mcp_tool_filters || {},
         builtin_tools: existingAgent.builtin_tools || [],
         skills: existingAgent.skills || [],
+        foundry_tools: existingAgent.foundry_tools || [],
         llm_profile: existingAgent.llm_profile || '',
         temperature: existingAgent.temperature ?? 0.7,
         max_tokens: existingAgent.max_tokens || '',
@@ -237,6 +239,7 @@ const AgentEditor = () => {
   const metaMcps = metadata?.mcps || []
   const metaBuiltinTools = metadata?.builtin_tools || []
   const metaSkills = metadata?.skills || []
+  const metaFoundryTools = metadata?.foundry_tools || []
   const metaLlmProfiles = metadata?.llm_profiles || []
 
   return (
@@ -452,6 +455,28 @@ const AgentEditor = () => {
                   </label>
                 )
               })}
+            </div>
+          </SectionCard>
+        )}
+
+        {/* Foundry Tools */}
+        {metaFoundryTools.length > 0 && (
+          <SectionCard title="Foundry Tools">
+            <p className="text-xs text-gray-500 mb-3">
+              Azure AI Foundry native tools for deployed agents.
+            </p>
+            <div className="flex flex-wrap gap-x-4 gap-y-2">
+              {metaFoundryTools.map((tool) => (
+                <label key={tool} className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={form.foundry_tools.includes(tool)}
+                    onChange={() => toggleArrayItem('foundry_tools', tool)}
+                    className="w-4 h-4 text-purple-600 border-gray-300 rounded focus:ring-purple-500"
+                  />
+                  <span className="text-sm text-gray-700">{tool}</span>
+                </label>
+              ))}
             </div>
           </SectionCard>
         )}

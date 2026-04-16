@@ -243,9 +243,11 @@ BUILTIN_TOOL_DEFS: dict[str, dict] = {
         "function": {
             "name": "create_foundry_agent",
             "description": (
-                "Create a Foundry agent definition. Use this when the user wants to create "
-                "an AI agent for deployment to Azure AI Foundry. The agent will be stored in "
-                "the database and can be deployed to Foundry from the Agents page."
+                "Create a Foundry agent definition. The agent is stored in the database and "
+                "can be deployed to Azure AI Foundry from the Agents page. Foundry only "
+                "receives: model, instructions, and tools. The instructions field is the most "
+                "critical — it defines the agent's entire behavior. Do NOT set temperature "
+                "(Foundry rejects it)."
             ),
             "parameters": {
                 "type": "object",
@@ -264,28 +266,34 @@ BUILTIN_TOOL_DEFS: dict[str, dict] = {
                     },
                     "instructions": {
                         "type": "string",
-                        "description": "The agent's system prompt / instructions. This is the core behavior definition.",
+                        "description": (
+                            "The agent's system prompt — this is the ONLY behavior definition "
+                            "Foundry receives. Must be comprehensive: role, welcome message, "
+                            "workflow, tool usage, error handling, constraints. Aim for 1500+ words."
+                        ),
                     },
                     "model": {
                         "type": "string",
-                        "description": "LLM profile to use: 'standard' or 'cheap'. Default: 'standard'.",
-                    },
-                    "temperature": {
-                        "type": "number",
-                        "description": "Sampling temperature (0.0-1.0). Default: 0.1.",
+                        "description": "LLM profile: 'standard' or 'cheap' (both map to gpt-4.1-mini in Foundry). Default: 'standard'.",
                     },
                     "foundry_tools": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "Foundry-native tools to enable. Zero-config: 'code_interpreter', 'file_search', 'browser_automation', 'deep_research'. Require portal config: 'bing_grounding', 'bing_custom_search', 'azure_ai_search', 'microsoft_fabric'. Example: ['code_interpreter', 'bing_grounding'].",
+                        "description": (
+                            "Foundry-native tools to enable. Currently deployed by SDK: "
+                            "'code_interpreter', 'file_search', 'bing_grounding'. "
+                            "Stored but not yet deployed: 'browser_automation', 'deep_research', "
+                            "'bing_custom_search', 'azure_ai_search', 'microsoft_fabric'. "
+                            "Note: bing_grounding requires a Bing connection in the Foundry portal."
+                        ),
                     },
                     "max_tokens": {
                         "type": "integer",
-                        "description": "Max tokens per LLM response. Default: 4096.",
+                        "description": "Max tokens per LLM response (stored in DB, not sent to Foundry). Default: 4096.",
                     },
                     "max_iterations": {
                         "type": "integer",
-                        "description": "Max tool-call iterations. Default: 10.",
+                        "description": "Max tool-call iterations (stored in DB, not sent to Foundry). Default: 10.",
                     },
                 },
                 "required": ["agent_id", "name", "description", "instructions"],
@@ -297,8 +305,8 @@ BUILTIN_TOOL_DEFS: dict[str, dict] = {
         "function": {
             "name": "update_foundry_agent",
             "description": (
-                "Update an existing Foundry agent definition. Use this to modify an agent's "
-                "configuration (instructions, foundry_tools, etc.)."
+                "Update an existing Foundry agent definition. Modify instructions, "
+                "foundry_tools, or other fields. Do NOT set temperature (Foundry rejects it)."
             ),
             "parameters": {
                 "type": "object",
@@ -317,28 +325,27 @@ BUILTIN_TOOL_DEFS: dict[str, dict] = {
                     },
                     "instructions": {
                         "type": "string",
-                        "description": "Updated system prompt / instructions.",
+                        "description": (
+                            "Updated system prompt — must be comprehensive (role, workflow, "
+                            "tool usage, constraints). This is the ONLY behavior definition Foundry receives."
+                        ),
                     },
                     "model": {
                         "type": "string",
-                        "description": "LLM profile: 'standard' or 'cheap'.",
-                    },
-                    "temperature": {
-                        "type": "number",
-                        "description": "Sampling temperature (0.0-1.0).",
+                        "description": "LLM profile: 'standard' or 'cheap' (both map to gpt-4.1-mini).",
                     },
                     "foundry_tools": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "Foundry-native tools to enable. See create_foundry_agent for available options.",
+                        "description": "Foundry-native tools. See create_foundry_agent for available options and SDK support status.",
                     },
                     "max_tokens": {
                         "type": "integer",
-                        "description": "Max tokens per LLM response.",
+                        "description": "Max tokens per LLM response (stored in DB, not sent to Foundry).",
                     },
                     "max_iterations": {
                         "type": "integer",
-                        "description": "Max tool-call iterations.",
+                        "description": "Max tool-call iterations (stored in DB, not sent to Foundry).",
                     },
                 },
                 "required": ["agent_id"],
@@ -1306,17 +1313,20 @@ async def create_foundry_agent(
     description: str,
     instructions: str,
     model: str,
-    temperature: float,
     session_id: UUID,
     execution_repo: "ExecutionRepository",
     foundry_tools: list | None = None,
     max_tokens: int = 4096,
     max_iterations: int = 10,
+    temperature: float | None = None,
 ) -> dict:
     """Create a Foundry agent definition in the database.
 
     Called by the foundry_agent_builder after the architect routes to it.
     The agent can later be deployed to Azure AI Foundry from the Agents page.
+
+    Note: temperature is accepted for backwards compatibility but ignored —
+    Foundry's PromptAgentDefinition does not support temperature.
     """
     from druppie.db.database import SessionLocal
     from druppie.repositories.custom_agent_repository import CustomAgentRepository
@@ -1341,7 +1351,7 @@ async def create_foundry_agent(
             category="execution",
             system_prompt=instructions,
             llm_profile=model if model in ("standard", "cheap") else "standard",
-            temperature=temperature,
+            temperature=0.1,
             max_tokens=max_tokens,
             max_iterations=max_iterations,
             owner_id=owner_id,
@@ -1379,12 +1389,15 @@ async def update_foundry_agent(
     description: str | None = None,
     instructions: str | None = None,
     model: str | None = None,
-    temperature: float | None = None,
     foundry_tools: list | None = None,
     max_tokens: int | None = None,
     max_iterations: int | None = None,
 ) -> dict:
-    """Update an existing Foundry agent definition in the database."""
+    """Update an existing Foundry agent definition in the database.
+
+    Note: temperature is not accepted — Foundry's PromptAgentDefinition
+    does not support it, so we don't expose it for updates either.
+    """
     from druppie.db.database import SessionLocal
     from druppie.repositories.custom_agent_repository import CustomAgentRepository
 
@@ -1404,8 +1417,6 @@ async def update_foundry_agent(
             update_kwargs["system_prompt"] = instructions
         if model is not None:
             update_kwargs["llm_profile"] = model if model in ("standard", "cheap") else "standard"
-        if temperature is not None:
-            update_kwargs["temperature"] = temperature
         if max_tokens is not None:
             update_kwargs["max_tokens"] = max_tokens
         if max_iterations is not None:
@@ -1561,7 +1572,6 @@ async def execute_builtin(
             description=args.get("description", ""),
             instructions=args.get("instructions", ""),
             model=args.get("model", "standard"),
-            temperature=args.get("temperature", 0.1),
             session_id=session_id,
             execution_repo=execution_repo,
             foundry_tools=args.get("foundry_tools"),
@@ -1577,7 +1587,6 @@ async def execute_builtin(
             description=args.get("description"),
             instructions=args.get("instructions"),
             model=args.get("model"),
-            temperature=args.get("temperature"),
             foundry_tools=args.get("foundry_tools"),
             max_tokens=args.get("max_tokens"),
             max_iterations=args.get("max_iterations"),

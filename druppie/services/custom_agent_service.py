@@ -247,13 +247,39 @@ class CustomAgentService:
         return warnings
 
     def export_as_yaml(self, agent_id: str) -> str:
-        """Export a custom agent definition as YAML."""
+        """Export a custom agent definition as YAML.
+
+        Builds directly from CustomAgentDetail so that foundry_tools
+        and category are included (AgentDefinition lacks these fields).
+        """
         agent = self.repo.get_by_agent_id(agent_id)
         if not agent:
             raise NotFoundError("agent", agent_id)
 
-        definition = self.repo.to_agent_definition(agent)
-        data = definition.model_dump(exclude_defaults=True)
+        detail = self._to_detail(agent)
+        data: dict = {
+            "id": detail.agent_id,
+            "name": detail.name,
+            "description": detail.description,
+            "category": detail.category,
+            "system_prompt": detail.system_prompt,
+        }
+        if detail.system_prompts:
+            data["system_prompts"] = detail.system_prompts
+        if detail.extra_builtin_tools:
+            data["extra_builtin_tools"] = detail.extra_builtin_tools
+        if detail.mcps:
+            data["mcps"] = detail.mcps
+        if detail.approval_overrides:
+            data["approval_overrides"] = detail.approval_overrides
+        if detail.skills:
+            data["skills"] = detail.skills
+        if detail.foundry_tools:
+            data["foundry_tools"] = detail.foundry_tools
+        data["llm_profile"] = detail.llm_profile
+        data["temperature"] = detail.temperature
+        data["max_tokens"] = detail.max_tokens
+        data["max_iterations"] = detail.max_iterations
         return yaml.dump(data, default_flow_style=False, sort_keys=False)
 
     def get_metadata(self) -> dict:
@@ -305,6 +331,15 @@ class CustomAgentService:
         # Categories (hardcoded, minus "system" which is reserved)
         categories = ["execution", "planning", "review", "analysis"]
 
+        # Foundry tools (known Azure AI Foundry native tools)
+        foundry_tools = [
+            "code_interpreter",
+            "file_search",
+            "bing_grounding",
+            "browser_automation",
+            "deep_research",
+        ]
+
         return {
             "mcps": mcps,
             "skills": skills,
@@ -312,6 +347,7 @@ class CustomAgentService:
             "builtin_tools": builtin_tools,
             "llm_profiles": llm_profiles,
             "categories": categories,
+            "foundry_tools": foundry_tools,
         }
 
     # ── Helpers ──────────────────────────────────────────────

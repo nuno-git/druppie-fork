@@ -343,3 +343,21 @@ Last updated: 2026-03-24
   - Optional policy: auto-purge packages with critical vulnerabilities
   - Dashboard or log aggregation for scan results over time
 - **Priority:** Medium — important for continuous security posture in production environments.
+
+### Foundry — Bing Grounding Portal Connection
+
+- **Current state:** `bing_grounding` is a supported Foundry tool but requires a Bing connection configured in the Azure AI Foundry portal. The `druppie-resource` project does not have this connection yet. Deploying an agent with `bing_grounding` fails with: `"Required properties [\"bing_grounding\"] are not present"`.
+- **Desired improvement:** Configure the Bing Grounding connection in the Foundry portal so agents can use web search.
+- **Priority:** High — blocks the Vergunning Vinder agent and any other agent using web search.
+
+### Foundry — Dynamic Tool Discovery
+
+- **Current state:** The list of available Foundry tools in `get_metadata()` is hardcoded. The SDK has `client.connections.list()` which can discover configured connections (e.g., Bing Grounding, Azure AI Search), but zero-config tools (code_interpreter, file_search) don't appear as connections.
+- **Desired improvement:** Call `FoundryService.list_available_tools()` from `get_metadata()` to dynamically discover connection-based tools, merged with the hardcoded zero-config tools. Graceful fallback to hardcoded list if Foundry is not configured.
+- **Priority:** Low — hardcoded list works fine for now, dynamic discovery is a nice-to-have.
+
+### Foundry — Additional SDK Tool Mappings
+
+- **Current state:** Only `code_interpreter`, `file_search`, and `bing_grounding` are mapped to Azure SDK classes in `FoundryService._build_foundry_tools()`. Other tools (`browser_automation`, `deep_research`, `bing_custom_search`, `azure_ai_search`, `microsoft_fabric`) are stored in the DB but skipped during deployment because the SDK doesn't have classes for them yet.
+- **Desired improvement:** As the `azure-ai-projects` SDK adds new tool classes, map them in `_build_foundry_tools()` so they get deployed.
+- **Priority:** Low — monitor SDK releases and add mappings as they become available.

@@ -24,9 +24,15 @@ class FoundryService:
     def _get_client(self):
         """Lazy-initialize the Foundry client.
 
-        Credential priority:
-        1. API key (set in .env as FOUNDRY_API_KEY)
-        2. DefaultAzureCredential (az login, managed identity, env vars, etc.)
+        Uses DefaultAzureCredential which tries, in order:
+        1. EnvironmentCredential (AZURE_CLIENT_ID + AZURE_CLIENT_SECRET + AZURE_TENANT_ID)
+        2. ManagedIdentityCredential (Azure-hosted containers)
+        3. AzureDeveloperCliCredential (azd on PATH)
+        4. AzureCliCredential (az login)
+
+        Note: AzureKeyCredential does NOT work with AIProjectClient.agents —
+        it requires TokenCredential. FOUNDRY_API_KEY is kept in settings for
+        future SDK changes but is not used here.
         """
         if self._client is not None:
             return self._client
@@ -34,19 +40,12 @@ class FoundryService:
             raise FoundryNotConfiguredError("FOUNDRY_PROJECT_ENDPOINT is not set")
         try:
             from azure.ai.projects import AIProjectClient
+            from azure.identity import DefaultAzureCredential
 
-            if self.api_key:
-                from azure.core.credentials import AzureKeyCredential
-                self._client = AIProjectClient(
-                    endpoint=self.endpoint,
-                    credential=AzureKeyCredential(self.api_key),
-                )
-            else:
-                from azure.identity import DefaultAzureCredential
-                self._client = AIProjectClient(
-                    endpoint=self.endpoint,
-                    credential=DefaultAzureCredential(),
-                )
+            self._client = AIProjectClient(
+                endpoint=self.endpoint,
+                credential=DefaultAzureCredential(),
+            )
             return self._client
         except ImportError:
             raise FoundryNotConfiguredError(
@@ -89,7 +88,6 @@ class FoundryService:
         definition = PromptAgentDefinition(
             model=model,
             instructions=agent_detail.system_prompt,
-            temperature=agent_detail.temperature,
             tools=tools if tools else None,
         )
 
