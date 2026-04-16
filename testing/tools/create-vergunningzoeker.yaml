@@ -669,112 +669,20 @@ tool-test:
                   return jsonify([_permit_summary(p) for p in results])
 
 
-              @api.route("/permits/chat", methods=["POST"])
-              def chat_permits():
-                  """Agentic chat — searches permits and answers questions using LLM.
-
-                  The agent: receives a question, writes search queries, retrieves
-                  matching permits, and synthesizes an answer from the results.
-                  """
-                  data = request.get_json(silent=True)
-                  if not data or "question" not in data:
-                      return jsonify(error="Stel een vraag."), 400
-
-                  question = data["question"].strip()
+              @api.route("/permits/stats")
+              def permit_stats():
+                  """Dashboard stats."""
                   db = next(get_db())
-
-                  # Agent Step 1: LLM generates search queries from the question
-                  query_result = druppie.call("llm", "chat", {
-                      "prompt": (
-                          "De gebruiker stelt een vraag over vergunningen in een database. "
-                          "Genereer 1-3 zoektermen (komma-gescheiden) waarmee relevante "
-                          "vergunningen gevonden kunnen worden. Antwoord ALLEEN met de zoektermen.\n\n"
-                          f"Vraag: {question}"
-                      ),
-                      "system": "Je genereert zoektermen voor een vergunningendatabase. Antwoord alleen met komma-gescheiden zoektermen.",
-                  })
-                  search_terms = [t.strip() for t in query_result.get("answer", question).split(",") if t.strip()]
-
-                  # Agent Step 2: Search the database with each term
-                  found_permits = {}
-                  for term in search_terms[:3]:
-                      like = f"%{term}%"
-                      results = db.query(Permit).filter(
-                          Permit.permit_number.ilike(like)
-                          | Permit.applicant_name.ilike(like)
-                          | Permit.permit_holder_name.ilike(like)
-                          | Permit.location.ilike(like)
-                          | Permit.permit_type.ilike(like)
-                          | Permit.applicable_law.ilike(like)
-                          | Permit.work_type.ilike(like)
-                          | Permit.extracted_text.ilike(like)
-                      ).limit(10).all()
-                      for p in results:
-                          found_permits[p.id] = p
-
-                  # Build context from found permits
-                  if found_permits:
-                      context_parts = []
-                      for p in found_permits.values():
-                          parts = [f"Vergunning #{p.id}: {p.permit_number or 'geen nummer'}"]
-                          if p.applicant_name: parts.append(f"  Aanvrager: {p.applicant_name}")
-                          if p.permit_type: parts.append(f"  Type: {p.permit_type}")
-                          if p.location: parts.append(f"  Locatie: {p.location}")
-                          if p.issue_date: parts.append(f"  Datum: {p.issue_date}")
-                          if p.archive_status: parts.append(f"  Archiefstatus: {p.archive_status}")
-                          if p.applicable_law: parts.append(f"  Wet: {p.applicable_law}")
-                          if p.extracted_text:
-                              parts.append(f"  Tekst: {p.extracted_text[:500]}")
-                          context_parts.append("\n".join(parts))
-                      context = "\n\n".join(context_parts)
-                  else:
-                      context = "Geen vergunningen gevonden in de database."
-
-                  # Agent Step 3: LLM answers the question using found permits
-                  answer_result = druppie.call("llm", "chat", {
-                      "prompt": (
-                          f"Beantwoord de volgende vraag op basis van de vergunningendata hieronder.\n\n"
-                          f"Vraag: {question}\n\n"
-                          f"Gevonden vergunningen ({len(found_permits)} resultaten, "
-                          f"zoektermen: {', '.join(search_terms)}):\n\n{context}"
-                      ),
-                      "system": (
-                          "Je bent een assistent voor waterschap-medewerkers. Beantwoord vragen "
-                          "over vergunningen op basis van de aangeleverde data. Wees specifiek "
-                          "en verwijs naar vergunningnummers. Als de data onvoldoende is, zeg dat."
-                      ),
-                  })
-
-                  # Build search log showing what each term found
-                  search_log = []
-                  seen = set()
-                  for term in search_terms[:3]:
-                      like = f"%{term}%"
-                      hits = db.query(Permit).filter(
-                          Permit.permit_number.ilike(like)
-                          | Permit.applicant_name.ilike(like)
-                          | Permit.permit_holder_name.ilike(like)
-                          | Permit.location.ilike(like)
-                          | Permit.permit_type.ilike(like)
-                          | Permit.applicable_law.ilike(like)
-                          | Permit.work_type.ilike(like)
-                          | Permit.extracted_text.ilike(like)
-                      ).limit(10).all()
-                      new_ids = [p.id for p in hits if p.id not in seen]
-                      seen.update(new_ids)
-                      search_log.append({
-                          "term": term,
-                          "hits": len(hits),
-                          "new": len(new_ids),
-                      })
-
-                  return jsonify({
-                      "answer": answer_result.get("answer", ""),
-                      "search_terms": search_terms,
-                      "search_log": search_log,
-                      "permits_found": len(found_permits),
-                      "permits": [_permit_summary(p) for p in found_permits.values()],
-                  })
+                  total = db.query(Permit).count()
+                  by_type = {}
+                  for p in db.query(Permit).all():
+                      t = (p.permit_type or "onbekend").lower()
+                      by_type[t] = by_type.get(t, 0) + 1
+                  by_archive = {}
+                  for p in db.query(Permit).all():
+                      s = p.archive_status or "onbekend"
+                      by_archive[s] = by_archive.get(s, 0) + 1
+                  return jsonify(total=total, by_type=by_type, by_archive=by_archive)
 
 
               def _permit_summary(p):
@@ -822,12 +730,129 @@ tool-test:
                   "leggerwijziging": {"nominatie": "bewaren", "jaren": None},
               }
 
+          - path: app/agent.py
+            content: |
+              """Vergunningzoeker agent — agentic search over permits.
+
+              Receives questions, generates search queries, searches the permit
+              database, and synthesizes answers. Each step is logged for transparency.
+              """
+
+              import json
+              from druppie_sdk import DruppieClient
+              from app.models import Permit
+
+              druppie = DruppieClient()
+
+
+              def run_agent(question: str, history: list[dict], db) -> dict:
+                  steps = []
+
+                  # Build conversation context
+                  context_str = ""
+                  if history:
+                      recent = history[-4:]
+                      context_str = "\n".join(
+                          f"{'Gebruiker' if m['role'] == 'user' else 'Assistent'}: {m['content'][:200]}"
+                          for m in recent
+                      )
+
+                  # Step 1: Generate search queries
+                  full_prompt = question
+                  if context_str:
+                      full_prompt = f"Gesprekscontext:\n{context_str}\n\nNieuwe vraag: {question}"
+
+                  query_result = druppie.call("llm", "chat", {
+                      "prompt": (
+                          "De gebruiker stelt een vraag over vergunningen in een database. "
+                          "Genereer 1-3 zoektermen (komma-gescheiden) waarmee relevante "
+                          "vergunningen gevonden kunnen worden. Antwoord ALLEEN met de zoektermen.\n\n"
+                          f"Vraag: {full_prompt}"
+                      ),
+                      "system": "Je genereert zoektermen voor een vergunningendatabase. Antwoord alleen met komma-gescheiden zoektermen.",
+                  })
+                  search_terms = [t.strip() for t in query_result.get("answer", question).split(",") if t.strip()]
+
+                  steps.append({
+                      "type": "search",
+                      "label": f"Zoektermen: {', '.join(search_terms)}",
+                      "detail": search_terms,
+                  })
+
+                  # Step 2: Search database with each term
+                  found = {}
+                  search_details = []
+                  for term in search_terms[:3]:
+                      like = f"%{term}%"
+                      results = db.query(Permit).filter(
+                          Permit.permit_number.ilike(like)
+                          | Permit.applicant_name.ilike(like)
+                          | Permit.permit_holder_name.ilike(like)
+                          | Permit.location.ilike(like)
+                          | Permit.permit_type.ilike(like)
+                          | Permit.applicable_law.ilike(like)
+                          | Permit.work_type.ilike(like)
+                          | Permit.extracted_text.ilike(like)
+                      ).limit(10).all()
+                      new_ids = [p.id for p in results if p.id not in found]
+                      for p in results:
+                          found[p.id] = p
+                      search_details.append(f'"{term}" → {len(results)} resultaten ({len(new_ids)} nieuw)')
+
+                  steps.append({
+                      "type": "query",
+                      "label": f"{len(found)} vergunningen gevonden",
+                      "detail": search_details,
+                  })
+
+                  # Step 3: Build context from found permits
+                  if found:
+                      context_parts = []
+                      for p in found.values():
+                          parts = [f"Vergunning #{p.id}: {p.permit_number or 'geen nummer'}"]
+                          if p.applicant_name: parts.append(f"  Aanvrager: {p.applicant_name}")
+                          if p.permit_holder_name: parts.append(f"  Houder: {p.permit_holder_name}")
+                          if p.permit_type: parts.append(f"  Type: {p.permit_type}")
+                          if p.location: parts.append(f"  Locatie: {p.location}")
+                          if p.issue_date: parts.append(f"  Datum: {p.issue_date}")
+                          if p.archive_status: parts.append(f"  Archiefstatus: {p.archive_status}")
+                          if p.applicable_law: parts.append(f"  Wet: {p.applicable_law}")
+                          if p.work_type: parts.append(f"  Type werk: {p.work_type}")
+                          if p.extracted_text:
+                              parts.append(f"  Tekst (fragment): {p.extracted_text[:400]}")
+                          context_parts.append("\n".join(parts))
+                      context = "\n\n".join(context_parts)
+                  else:
+                      context = "Geen vergunningen gevonden in de database."
+
+                  # Step 4: LLM synthesizes answer
+                  steps.append({"type": "reasoning", "label": "Antwoord genereren", "detail": None})
+
+                  answer_result = druppie.call("llm", "chat", {
+                      "prompt": (
+                          f"Beantwoord de volgende vraag op basis van de vergunningendata.\n\n"
+                          f"Vraag: {full_prompt}\n\n"
+                          f"Gevonden vergunningen ({len(found)} resultaten):\n\n{context}"
+                      ),
+                      "system": (
+                          "Je bent een assistent voor waterschap-medewerkers. Beantwoord vragen "
+                          "over vergunningen op basis van de aangeleverde data. Wees specifiek "
+                          "en verwijs naar vergunningnummers. Als de data onvoldoende is, zeg dat eerlijk."
+                      ),
+                  })
+
+                  return {
+                      "answer": answer_result.get("answer", "Geen antwoord ontvangen."),
+                      "steps": steps,
+                  }
+
           - path: frontend/src/App.tsx
             content: |
               import { useState, useEffect, useRef, useCallback } from "react"
               import { Button } from "@/components/ui/button"
               import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
               import { Input } from "@/components/ui/input"
+              import { ChatPanel } from "@/components/chat"
 
               interface PermitSummary {
                 id: number; permit_number: string; applicant_name: string
@@ -844,9 +869,7 @@ tool-test:
                 extracted_text: string | null; error_message: string | null
               }
 
-              interface SearchLog { term: string; hits: number; new: number }
-              interface FoundPermit { id: number; permit_number: string; applicant_name: string; permit_type: string; location: string; archive_status: string; issue_date: string }
-              interface ChatMessage { role: "user" | "assistant"; text: string; terms?: string[]; searchLog?: SearchLog[]; permits?: FoundPermit[] }
+              // Chat is handled by the template's ChatPanel component
 
               const STATUS = {
                 processing: { label: "Verwerken...", cls: "text-blue-600 bg-blue-50 border-blue-200" },
@@ -874,10 +897,7 @@ tool-test:
                 const [dragOver, setDragOver] = useState(false)
                 const fileRef = useRef<HTMLInputElement>(null)
                 // Chat
-                const [chatMessages, setChatMessages] = useState<ChatMessage[]>([])
-                const [chatInput, setChatInput] = useState("")
-                const [chatLoading, setChatLoading] = useState(false)
-                const chatEndRef = useRef<HTMLDivElement>(null)
+                // Chat state managed by ChatPanel component
 
                 const load = useCallback(async (q = "") => {
                   try {
@@ -891,7 +911,7 @@ tool-test:
                   if (!permits.some(p => p.status === "processing")) return
                   const id = setInterval(() => load(query), 3000); return () => clearInterval(id)
                 }, [permits, query, load])
-                useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: "smooth" }) }, [chatMessages])
+                // Chat scroll handled by ChatPanel
 
                 const upload = async () => {
                   if (!file) return; setUploading(true); setUploadErr(null)
@@ -908,23 +928,7 @@ tool-test:
                   } catch { setUploadErr("Verbindingsfout") } finally { setUploading(false) }
                 }
 
-                const sendChat = async () => {
-                  if (!chatInput.trim()) return
-                  const q = chatInput.trim(); setChatInput(""); setChatLoading(true)
-                  setChatMessages(m => [...m, { role: "user", text: q }])
-                  try {
-                    const r = await fetch("/api/permits/chat", {
-                      method: "POST", headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({ question: q }),
-                    })
-                    const d = await r.json()
-                    setChatMessages(m => [...m, {
-                      role: "assistant", text: d.answer || d.error || "Geen antwoord",
-                      terms: d.search_terms, searchLog: d.search_log, permits: d.permits,
-                    }])
-                  } catch { setChatMessages(m => [...m, { role: "assistant", text: "Verbindingsfout" }]) }
-                  finally { setChatLoading(false) }
-                }
+                // Chat send handled by ChatPanel → app/agent.py
 
                 const openDetail = async (id: number) => {
                   const r = await fetch(`/api/permits/${id}`); if (r.ok) setDetail(await r.json())
@@ -1034,64 +1038,12 @@ tool-test:
                         </CardContent>
                       </Card>}
 
-                      {/* ---- CHAT TAB ---- */}
-                      {tab === "chat" && <Card className="flex flex-col" style={{ minHeight: "70vh" }}>
-                        <CardHeader>
-                          <div className="flex items-center justify-between">
-                            <div>
-                              <CardTitle>Vergunning Assistent</CardTitle>
-                              <CardDescription>Stel vragen over de vergunningen in het systeem.</CardDescription>
-                            </div>
-                            {chatMessages.length > 0 && (
-                              <Button variant="outline" size="sm" onClick={() => setChatMessages([])}>Nieuw gesprek</Button>
-                            )}
-                          </div>
-                        </CardHeader>
-                        <CardContent className="flex-1 flex flex-col">
-                          <div className="flex-1 overflow-y-auto space-y-3 mb-4 min-h-[200px]">
-                            {chatMessages.length === 0 && <p className="text-muted-foreground text-center py-8">Stel een vraag, bijvoorbeeld: "Welke vergunningen zijn verleend in Gorinchem?" of "Hoeveel keurvergunningen staan er in het systeem?"</p>}
-                            {chatMessages.map((m, i) => (
-                              <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
-                                <div className={`max-w-[90%] rounded-lg p-3 text-sm ${m.role === "user" ? "bg-primary text-primary-foreground" : "bg-muted space-y-3"}`}>
-                                  {m.role === "assistant" && m.searchLog && (
-                                    <div className="text-xs border border-border/50 rounded p-2 bg-background/50">
-                                      <p className="font-medium mb-1">Zoekopdrachten:</p>
-                                      {m.searchLog.map((s, j) => (
-                                        <div key={j} className="flex gap-2">
-                                          <span className="font-mono text-primary">"{s.term}"</span>
-                                          <span className="text-muted-foreground">→ {s.hits} resultaten{s.new < s.hits ? ` (${s.new} nieuw)` : ""}</span>
-                                        </div>
-                                      ))}
-                                    </div>
-                                  )}
-                                  {m.role === "assistant" && m.permits && m.permits.length > 0 && (
-                                    <div className="text-xs border border-border/50 rounded p-2 bg-background/50">
-                                      <p className="font-medium mb-1">Gevonden vergunningen ({m.permits.length}):</p>
-                                      {m.permits.map((p, j) => (
-                                        <div key={j} className="flex gap-2 py-0.5">
-                                          <span className="font-mono text-primary shrink-0">{p.permit_number || `#${p.id}`}</span>
-                                          <span className="text-muted-foreground truncate">
-                                            {[p.applicant_name, p.permit_type?.replace(/_/g, " "), p.location, p.issue_date].filter(Boolean).join(" · ")}
-                                          </span>
-                                        </div>
-                                      ))}
-                                    </div>
-                                  )}
-                                  <p className="whitespace-pre-wrap">{m.text}</p>
-                                </div>
-                              </div>
-                            ))}
-                            {chatLoading && <div className="flex justify-start"><div className="bg-muted rounded-lg p-3 text-sm text-muted-foreground">Zoeken en analyseren...</div></div>}
-                            <div ref={chatEndRef} />
-                          </div>
-                          <div className="flex gap-2">
-                            <Input value={chatInput} onChange={e => setChatInput(e.target.value)}
-                              onKeyDown={e => e.key === "Enter" && !chatLoading && sendChat()}
-                              placeholder="Stel een vraag over vergunningen..." disabled={chatLoading} />
-                            <Button onClick={sendChat} disabled={chatLoading || !chatInput.trim()}>Verstuur</Button>
-                          </div>
-                        </CardContent>
-                      </Card>}
+                      {/* ---- CHAT TAB — uses template ChatPanel ---- */}
+                      {tab === "chat" && (
+                        <div className="h-[calc(100vh-8rem)]">
+                          <ChatPanel />
+                        </div>
+                      )}
 
                       {/* ---- DETAIL MODAL ---- */}
                       {detail && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setDetail(null)}>
