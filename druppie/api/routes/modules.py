@@ -1,14 +1,27 @@
-"""Module discovery endpoints for the Druppie SDK.
+"""Module discovery and proxy endpoints for the Druppie SDK.
 
-Apps use these endpoints to discover module URLs at runtime.
+Apps use these endpoints to discover and call modules at runtime.
 Data comes from mcp_config.yaml — no database needed.
+
+The /modules/{id}/call endpoint proxies tool calls through the backend
+so apps don't need to handle the MCP Streamable HTTP protocol directly.
 """
 
+import logging
+
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 
 from druppie.core.mcp_config import get_mcp_config
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter()
+
+
+class ModuleCallRequest(BaseModel):
+    tool: str
+    arguments: dict = {}
 
 
 @router.get("/modules")
@@ -41,3 +54,31 @@ async def get_module_endpoint(module_id: str):
 
     url = config.get_server_url(module_id).removesuffix("/mcp")
     return {"url": url, "type": server_type}
+
+
+@router.post("/modules/{module_id}/call")
+async def call_module_tool(module_id: str, req: ModuleCallRequest):
+    """Proxy a tool call to a module via MCP.
+
+    Apps call this instead of calling MCP servers directly. The backend
+    handles the Streamable HTTP protocol and returns the result.
+    """
+    config = get_mcp_config()
+
+    if module_id not in config.get_servers():
+        raise HTTPException(status_code=404, detail=f"Module '{module_id}' not found")
+
+    server_type = config.get_server_type(module_id)
+    if server_type not in ("module", "both"):
+        raise HTTPException(status_code=404, detail=f"Module '{module_id}' is not available to apps")
+
+    mcp_url = config.get_server_url(module_id)
+
+    try:
+        from druppie.execution.mcp_http import MCPHttpClient
+        mcp_client = MCPHttpClient()
+        result = await mcp_client.call_tool(mcp_url, req.tool, req.arguments)
+        return result
+    except Exception as e:
+        logger.error("module_call_failed", module=module_id, tool=req.tool, error=str(e))
+        raise HTTPException(status_code=502, detail=f"Module call failed: {e}")
