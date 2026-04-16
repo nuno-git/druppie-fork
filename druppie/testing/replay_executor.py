@@ -392,7 +392,10 @@ class ReplayExecutor:
 
                 # Handle outcome blocks (file creation in Gitea for execute_coding_task)
                 if tc.outcome and gitea_url:
-                    self._create_outcome_files(tc.outcome, gitea_url, session_id)
+                    try:
+                        self._create_outcome_files(tc.outcome, gitea_url, session_id)
+                    except Exception as e:
+                        logger.error("outcome_write_failed: %s", e)
 
             # Update agent run status
             agent_run = self._db.query(AgentRun).filter(AgentRun.id == agent_run_id).first()
@@ -526,10 +529,10 @@ class ReplayExecutor:
                     )
 
                 if r.status_code in (200, 201):
-                    logger.info("Created file %s in %s/%s", path, repo_owner, repo_name)
+                    logger.info("outcome_file_created: %s in %s/%s", path, repo_owner, repo_name)
                 else:
                     logger.warning(
-                        "Failed to create %s in %s/%s: %s",
+                        "outcome_file_failed: %s in %s/%s status=%s",
                         path, repo_owner, repo_name, r.status_code,
                     )
         finally:
