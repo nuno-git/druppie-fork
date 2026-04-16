@@ -1037,8 +1037,15 @@ tool-test:
                       {/* ---- CHAT TAB ---- */}
                       {tab === "chat" && <Card className="flex flex-col" style={{ minHeight: "70vh" }}>
                         <CardHeader>
-                          <CardTitle>Vergunning Assistent</CardTitle>
-                          <CardDescription>Stel vragen over de vergunningen in het systeem. De assistent doorzoekt de database en geeft antwoord op basis van de gevonden documenten.</CardDescription>
+                          <div className="flex items-center justify-between">
+                            <div>
+                              <CardTitle>Vergunning Assistent</CardTitle>
+                              <CardDescription>Stel vragen over de vergunningen in het systeem.</CardDescription>
+                            </div>
+                            {chatMessages.length > 0 && (
+                              <Button variant="outline" size="sm" onClick={() => setChatMessages([])}>Nieuw gesprek</Button>
+                            )}
+                          </div>
                         </CardHeader>
                         <CardContent className="flex-1 flex flex-col">
                           <div className="flex-1 overflow-y-auto space-y-3 mb-4 min-h-[200px]">
