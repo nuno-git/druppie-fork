@@ -1,6 +1,6 @@
 # Security Implementation Spec: Supply Chain Attack Prevention
 
-> **Status**: DRAFT - Pending review by Jeremy Bode (ISO) and development team  
+> **Status**: DRAFT - Pending review by our ISO and development team  
 > **Date**: 2026-04-16  
 > **Author**: Security research initiative following LiteLLM and GlassWorm incidents  
 > **Branch**: `security_improvements`
@@ -9,53 +9,11 @@
 
 ## Executive Summary
 
-Druppie was exposed to the LiteLLM PyPI supply chain attack (March 2026). Additionally, our ISO flagged opencode-ai as a potential GlassWorm vector, though independent verification with glassworm-hunter could NOT confirm this (see [research/01-glassworm-threat-analysis.md](research/01-glassworm-threat-analysis.md) for details). Regardless, these incidents highlight critical gaps in our supply chain security that this spec addresses.
+Following the LiteLLM supply chain attack (March 2026) and the GlassWorm campaign investigation, we identified critical gaps in our supply chain security. Initial cleanup (credential rotation, codebase scanning, opencode-ai assessment) has been completed. This spec focuses on the structural improvements needed to prevent future incidents.
 
-The plan is organized into four phases, ordered by urgency and impact. Each phase builds on the previous one.
+The plan is organized into four phases, ordered by impact. Each phase builds on the previous one.
 
----
-
-## Phase 0: Verification & Baseline (Immediate - Before Any Other Work)
-
-### 0.1 Verify opencode-ai status
-
-**What**: Independently verify whether opencode-ai is compromised, and address its real CVEs.
-
-**Context**: Jeremy flagged opencode-ai as a GlassWorm vector, but glassworm-hunter scans return clean and no public security report confirms this (see [research/01-glassworm-threat-analysis.md](research/01-glassworm-threat-analysis.md)). However, opencode-ai does have real CVEs (CVE-2026-22812 RCE, CVE-2026-22813 XSS).
-
-**Action**:
-- Share glassworm-hunter scan results with Jeremy and discuss findings
-- Evaluate whether opencode-ai should remain in sandbox image given its real CVEs
-- If keeping it: update to latest patched version
-- If removing it: find alternative or remove from `Dockerfile.sandbox`
-
-### 0.2 Run glassworm-hunter full scan
-
-**What**: Scan the entire codebase and all installed packages for GlassWorm indicators.
-
-**How**:
-```bash
-pip install glassworm-hunter
-glassworm-hunter scan --path /path/to/druppie
-```
-
-**Action on findings**: Quarantine any flagged files. If scan is clean (as expected), this establishes our verified baseline.
-
-### 0.3 Credential rotation (as precaution)
-
-**What**: Even though the GlassWorm infection is unconfirmed, rotating credentials is good hygiene given the LiteLLM exposure and general supply chain risk.
-
-**Priority checklist** (rotate these regardless):
-- [ ] INTERNAL_API_KEY (MCP server auth - currently uses default value)
-- [ ] SANDBOX_API_SECRET (HMAC secret)
-- [ ] ZAI_API_KEY, DEEPINFRA_API_KEY, and other LLM provider keys
-- [ ] Gitea admin credentials and tokens
-- [ ] GitHub personal access tokens (team members who used compromised litellm versions)
-
-**Lower priority** (rotate if time allows):
-- [ ] GitHub App credentials
-- [ ] Keycloak admin credentials
-- [ ] Database passwords
+**Background**: For details on the incidents that prompted this work, see [research/10-incident-lessons-learned.md](research/10-incident-lessons-learned.md). For the opencode-ai investigation (likely misidentification as GlassWorm), see [research/01-glassworm-threat-analysis.md](research/01-glassworm-threat-analysis.md).
 
 ---
 
@@ -473,9 +431,6 @@ on:
 
 | ID | Action | Phase | Priority | Effort | Impact |
 |----|--------|-------|----------|--------|--------|
-| 0.1 | Verify opencode-ai status + address real CVEs | 0 | **HIGH** | Low | Clarifies threat, fixes real vulns |
-| 0.2 | glassworm-hunter full scan | 0 | **HIGH** | Low | Establishes verified clean baseline |
-| 0.3 | Credential rotation (precautionary) | 0 | **MEDIUM** | Medium | Good hygiene after LiteLLM exposure |
 | 1.1 | Hash-pinned Python deps | 1 | **HIGH** | Medium | Prevents dependency tampering |
 | 1.2 | Commit Node.js lock files | 1 | **HIGH** | Low | Deterministic builds |
 | 1.3 | pip-audit in CI/CD | 1 | **HIGH** | Low | Known CVE detection |
@@ -486,16 +441,17 @@ on:
 | 2.2 | anti-trojan-source in CI/CD | 2 | **HIGH** | Low | Unicode attack detection |
 | 2.3 | Pre-commit hooks | 2 | **MEDIUM** | Medium | Developer-level defense |
 | 2.4 | Unicode stripping filter | 2 | **HIGH** | Medium | Agent output defense |
-| 2.5 | Secret scanning | 2 | **MEDIUM** | Low | Credential leak prevention |
+| 2.5 | Secret scanning (gitleaks) | 2 | **MEDIUM** | Low | Credential leak prevention |
 | 3.1 | gVisor sandbox runtime | 3 | **MEDIUM** | High | Container escape prevention |
 | 3.2 | Restrict sandbox network | 3 | **MEDIUM** | Medium | Network isolation |
 | 3.3 | Security gate in control plane | 3 | **HIGH** | High | Mandatory exit scanning |
 | 3.4 | Package installation controls | 3 | **MEDIUM** | Medium | Prevent rogue installs |
-| 4.1 | Dependabot alerts | 4 | **MEDIUM** | Low | Ongoing vulnerability tracking |
-| 4.2 | Branch protection | 4 | **MEDIUM** | Low | Enforcement |
+| 4.1 | Dependabot alerts (no auto-merge) | 4 | **MEDIUM** | Low | Ongoing vulnerability tracking |
+| 4.2 | Branch protection rules | 4 | **MEDIUM** | Low | Enforcement |
 | 4.3 | Evaluate Socket.dev | 4 | **LOW** | Low | Behavioral analysis |
 | 4.4 | Weekly security scan | 4 | **MEDIUM** | Low | Continuous monitoring |
-| 4.5 | SLSA provenance | 4 | **LOW** | Medium | Build integrity attestation |
+| 4.5 | SLSA Level 1 provenance | 4 | **LOW** | Medium | Build integrity attestation |
+| 4.6 | Developer environment hardening (BIO2/NIS2) | 4 | **MEDIUM** | Medium | Device management, ZTNA, devcontainers |
 
 ---
 
@@ -519,11 +475,11 @@ on:
 
 ---
 
-## Appendix: Mapping to Jeremy's Requirements
+## Appendix: Mapping to ISO's Requirements
 
-| Jeremy's Requirement | Spec Section | Phase |
+| ISO's Requirement | Spec Section | Phase |
 |---------------------|-------------|-------|
-| Opschoonactie (cleanup) | Phase 0 (all) | 0 |
+| Opschoonactie (cleanup) | Completed prior to this spec | Done |
 | glassworm-hunter structureel integreren | 2.1 + 3.3 | 2-3 |
 | Security agent scant output builder agent | 3.3 (security gate) | 3 |
 | Agents in geïsoleerde container | 3.1 (gVisor) | 3 |
@@ -531,6 +487,7 @@ on:
 | Filter dat Unicode-tekens stript | 2.4 (Unicode filter) | 2 |
 | Controleren package-lock.json / requirements.txt | 1.1, 1.2, 1.5 | 1 |
 | Controle over Python en npm omgevingen | 1.1-1.6, 3.4 | 1, 3 |
+| Developer environment security (BIO2/NIS2) | 4.6 + [research/11](research/11-developer-environment-security.md) | 4 |
 
 ---
 
