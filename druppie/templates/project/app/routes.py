@@ -54,5 +54,5 @@ def ai_ocr_endpoint():
     data = request.get_json(silent=True)
     if not data or "image_url" not in data:
         return jsonify(error="Missing required field: image_url"), 400
-    result = druppie.call("vision", "ocr", {"image_url": data["image_url"]})
+    result = druppie.call("vision", "ocr", {"image_source": data["image_url"]})
     return jsonify(text=result.get("text", ""))

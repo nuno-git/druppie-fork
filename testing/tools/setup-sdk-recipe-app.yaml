@@ -168,7 +168,7 @@ tool-test:
           from druppie_sdk import DruppieClient
           druppie = DruppieClient()
           result = druppie.call("llm", "chat", {"prompt": "Analyseer dit recept: ..."})
-          result = druppie.call("vision", "ocr", {"image_url": "https://..."})
+          result = druppie.call("vision", "ocr", {"image_source": "https://..."})
           ```
 
           ## Componenten
@@ -261,7 +261,7 @@ tool-test:
           - **Example Calls**:
             ```python
             result = druppie.call("llm", "chat", {"prompt": "Analyseer: ...", "system": "Je bent een chef-kok"})
-            result = druppie.call("vision", "ocr", {"image_url": url})
+            result = druppie.call("vision", "ocr", {"image_source": url})
             ```
           - **No API Keys**: app gebruikt GEEN hardcoded API keys
           - **No openai package**: gebruik `druppie.call("llm", ...)`, `druppie.call("vision", ...)` etc.

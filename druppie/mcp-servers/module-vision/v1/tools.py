@@ -1,6 +1,6 @@
 """Vision v1 — MCP Tool Definitions.
 
-Provides OCR and image analysis backed by Z.AI GLM-4.6V or DeepInfra.
+Provides OCR and image analysis backed by Z.AI MCP server or DeepInfra.
 """
 
 from fastmcp import FastMCP
@@ -20,41 +20,37 @@ module = VisionModule()
 
 @mcp.tool(
     name="ocr",
-    description="Extract text from an image (OCR). Returns the extracted text content.",
+    description="Extract text from an image (OCR). Accepts a local file path, URL, or base64 data URI.",
     meta={"module_id": MODULE_ID, "version": MODULE_VERSION},
 )
 async def ocr(
-    image_url: str,
+    image_source: str,
     prompt: str = "",
-    model: str | None = None,
 ) -> dict:
     """OCR — extract text from an image.
 
     Args:
-        image_url: URL of the image to extract text from.
+        image_source: Local file path, URL, or base64 data URI of the image.
         prompt: Optional prompt to guide extraction (e.g. "Extract the recipe ingredients").
-        model: Optional model override.
     """
-    text = module.ocr(image_url=image_url, prompt=prompt, model=model)
+    text = await module.ocr(image_source=image_source, prompt=prompt)
     return {"text": text}
 
 
 @mcp.tool(
     name="analyze",
-    description="Analyze and describe an image. Returns a description of the visual content.",
+    description="Analyze and describe an image. Accepts a local file path, URL, or base64 data URI.",
     meta={"module_id": MODULE_ID, "version": MODULE_VERSION},
 )
 async def analyze(
-    image_url: str,
+    image_source: str,
     prompt: str = "Describe this image.",
-    model: str | None = None,
 ) -> dict:
     """Image analysis — describe or answer questions about an image.
 
     Args:
-        image_url: URL of the image to analyze.
+        image_source: Local file path, URL, or base64 data URI of the image.
         prompt: What to analyze or describe about the image.
-        model: Optional model override.
     """
-    description = module.analyze(image_url=image_url, prompt=prompt, model=model)
+    description = await module.analyze(image_source=image_source, prompt=prompt)
     return {"description": description}

@@ -75,7 +75,7 @@ tool-test:
           druppie = DruppieClient()
 
           # OCR op geüpload document
-          ocr_result = druppie.call("vision", "ocr", {"image_url": image_url})
+          ocr_result = druppie.call("vision", "ocr", {"image_source": image_url})
           extracted_text = ocr_result["text"]
 
           # Classificatie van vergunningtype
@@ -203,7 +203,7 @@ tool-test:
             - `llm/chat` — classificatie van vergunningtype op basis van geëxtraheerde tekst
           - **Example Calls**:
             ```python
-            ocr_result = druppie.call("vision", "ocr", {"image_url": url})
+            ocr_result = druppie.call("vision", "ocr", {"image_source": url})
             classify_result = druppie.call("llm", "chat", {"prompt": text, "system": "Classificeer dit document"})
             ```
           - **No API Keys**: app gebruikt GEEN hardcoded API keys
@@ -449,7 +449,7 @@ tool-test:
                   data_uri = f"data:{mime};base64,{b64}"
 
                   # Step 1: OCR via druppie vision module
-                  ocr_result = druppie.call("vision", "ocr", {"image_url": data_uri})
+                  ocr_result = druppie.call("vision", "ocr", {"image_source": data_uri})
                   extracted_text = ocr_result.get("text", "")
 
                   # Step 2: Classify permit type via druppie LLM module
