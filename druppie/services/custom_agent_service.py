@@ -221,11 +221,18 @@ class CustomAgentService:
             return result
         except FoundryNotConfiguredError as e:
             raise ValidationError(str(e), field="foundry")
-        except Exception:
+        except Exception as e:
             agent.deployment_status = "failed"
             self.repo.commit()
             logger.error("deploy_custom_agent_failed", agent_id=agent_id, exc_info=True)
-            raise
+            # Surface a clear message instead of letting the raw SDK exception bubble
+            msg = str(e)
+            if "PermissionDenied" in msg:
+                raise AuthorizationError(
+                    "Service principal lacks permissions to deploy agents. "
+                    "Assign the 'Azure AI Developer' role on the AI Services resource."
+                )
+            raise ValidationError(f"Deployment failed: {msg}", field="foundry")
 
     def undeploy_custom_agent(self, agent_id: str, user_id: UUID) -> dict:
         """Remove a custom agent from Azure AI Foundry. Only the owner can undeploy."""
