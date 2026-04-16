@@ -101,9 +101,10 @@ def get_session_service(
 
 def get_approval_service(
     approval_repo: ApprovalRepository = Depends(get_approval_repository),
+    session_repo: SessionRepository = Depends(get_session_repository),
 ) -> ApprovalService:
     """Get ApprovalService with repositories injected."""
-    return ApprovalService(approval_repo)
+    return ApprovalService(approval_repo, session_repo=session_repo)
 
 
 def get_question_service(
