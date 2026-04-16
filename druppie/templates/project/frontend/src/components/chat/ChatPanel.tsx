@@ -37,7 +37,11 @@ function StepBadge({ step }: { step: AgentStep }) {
       </button>
       {open && step.detail && (
         <pre className="mt-1 p-2 bg-muted rounded text-[11px] whitespace-pre-wrap max-h-40 overflow-y-auto">
-          {typeof step.detail === "string" ? step.detail : JSON.stringify(step.detail, null, 2)}
+          {typeof step.detail === "string"
+            ? step.detail
+            : Array.isArray(step.detail)
+              ? step.detail.join("\n")
+              : JSON.stringify(step.detail, null, 2)}
         </pre>
       )}
     </div>

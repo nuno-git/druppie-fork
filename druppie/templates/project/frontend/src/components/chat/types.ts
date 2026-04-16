@@ -9,7 +9,7 @@ export interface ChatSession {
 export interface AgentStep {
   type: string  // "search", "query", "tool", "reasoning"
   label: string
-  detail: unknown
+  detail: string | string[] | Record<string, unknown> | null
 }
 
 export interface ChatMessage {
