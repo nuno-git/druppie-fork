@@ -38,13 +38,3 @@ export async function sendMessage(sessionId: number, message: string): Promise<C
   })
   return r.json()
 }
-
-export async function transcribeAudio(audioBase64: string): Promise<string> {
-  const r = await fetch("/api/ai/transcribe", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ audio_base64: audioBase64 }),
-  })
-  const data = await r.json()
-  return data.text || ""
-}

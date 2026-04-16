@@ -253,13 +253,6 @@ mcps:
       - name: analyze
         requires_approval: false
 
-  audio:
-    url: ${MCP_AUDIO_URL:-http://module-audio:9012}
-    type: module
-    tools:
-      - name: transcribe
-        requires_approval: false
-
   registry:
     url: ${MCP_REGISTRY_URL:-http://module-registry:9007}
     type: core
