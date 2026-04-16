@@ -189,7 +189,7 @@ mcps:
 
   web:
     url: ${MCP_WEB_URL:-http://module-web:9005}
-    type: core
+    type: both
     tools:
       - name: search_files
         requires_approval: false
