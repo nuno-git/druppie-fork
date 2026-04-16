@@ -277,24 +277,27 @@ tool-test:
       arguments:
         path: tests/test_routes.py
         content: |
+          import io
           import pytest
           from unittest.mock import patch
 
           def test_upload_permit(client):
-              """Upload should trigger OCR + classification via SDK."""
+              """File upload should trigger OCR + classification via SDK."""
               with patch("app.routes.druppie") as mock_druppie:
                   mock_druppie.call.side_effect = [
                       {"text": "Vergunning K-2019-0042. Aanvrager: J. de Vries. Lozing oppervlaktewater."},
                       {"answer": "watervergunning_lozing"},
                   ]
-                  resp = client.post("/api/permits/upload", json={
-                      "image_url": "https://example.com/scan.jpg",
+                  data = {
+                      "file": (io.BytesIO(b"fake image data"), "scan.jpg"),
                       "permit_number": "K-2019-0042",
                       "applicant_name": "J. de Vries",
-                  })
+                  }
+                  resp = client.post("/api/permits/upload",
+                      data=data, content_type="multipart/form-data")
                   assert resp.status_code == 200
-                  data = resp.get_json()
-                  assert "extracted_text" in data
+                  result = resp.get_json()
+                  assert "extracted_text" in result
                   assert mock_druppie.call.call_count == 2
 
           def test_search_permits(client):
@@ -401,6 +404,7 @@ tool-test:
 
           - path: app/routes.py
             content: |
+              import base64
               from flask import Blueprint, jsonify, request
               from druppie_sdk import DruppieClient
               from app.database import get_db
@@ -408,6 +412,12 @@ tool-test:
 
               api = Blueprint("api", __name__)
               druppie = DruppieClient()
+
+              ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "gif", "bmp", "tiff", "webp", "pdf"}
+
+
+              def _allowed_file(filename):
+                  return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
 
 
               @api.route("/info")
@@ -418,13 +428,28 @@ tool-test:
 
               @api.route("/permits/upload", methods=["POST"])
               def upload_permit():
-                  """Upload a permit document — OCR + LLM classification via Druppie SDK."""
-                  data = request.get_json(silent=True)
-                  if not data or "image_url" not in data:
-                      return jsonify(error="Missing image_url"), 400
+                  """Upload a permit document (file) — OCR + LLM classification via Druppie SDK."""
+                  if "file" not in request.files:
+                      return jsonify(error="Geen bestand geüpload. Selecteer een scan of foto."), 400
+
+                  file = request.files["file"]
+                  if not file.filename or not _allowed_file(file.filename):
+                      return jsonify(error="Ongeldig bestandstype. Upload een afbeelding of PDF."), 400
+
+                  # Read file and convert to base64 data URI for OCR
+                  file_bytes = file.read()
+                  ext = file.filename.rsplit(".", 1)[1].lower()
+                  mime_map = {
+                      "jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png",
+                      "gif": "image/gif", "bmp": "image/bmp", "tiff": "image/tiff",
+                      "webp": "image/webp", "pdf": "application/pdf",
+                  }
+                  mime = mime_map.get(ext, "application/octet-stream")
+                  b64 = base64.b64encode(file_bytes).decode("utf-8")
+                  data_uri = f"data:{mime};base64,{b64}"
 
                   # Step 1: OCR via druppie vision module
-                  ocr_result = druppie.call("vision", "ocr", {"image_url": data["image_url"]})
+                  ocr_result = druppie.call("vision", "ocr", {"image_url": data_uri})
                   extracted_text = ocr_result.get("text", "")
 
                   # Step 2: Classify permit type via druppie LLM module
@@ -437,13 +462,16 @@ tool-test:
                   permit_type = classify_result.get("answer", "onbekend")
 
                   # Step 3: Store in database
+                  permit_number = request.form.get("permit_number", "")
+                  applicant_name = request.form.get("applicant_name", "")
+
                   db = next(get_db())
                   permit = Permit(
-                      permit_number=data.get("permit_number", ""),
-                      applicant_name=data.get("applicant_name", ""),
+                      permit_number=permit_number,
+                      applicant_name=applicant_name,
                       permit_type=permit_type,
                       extracted_text=extracted_text,
-                      source_file=data["image_url"],
+                      source_file=file.filename,
                   )
                   db.add(permit)
                   db.commit()
@@ -469,6 +497,7 @@ tool-test:
                           "permit_number": p.permit_number,
                           "applicant_name": p.applicant_name,
                           "permit_type": p.permit_type,
+                          "source_file": p.source_file,
                           "upload_date": p.upload_date.isoformat() if p.upload_date else None,
                       }
                       for p in permits
@@ -481,7 +510,7 @@ tool-test:
                   db = next(get_db())
                   permit = db.query(Permit).filter(Permit.id == permit_id).first()
                   if not permit:
-                      return jsonify(error="Permit not found"), 404
+                      return jsonify(error="Vergunning niet gevonden"), 404
                   return jsonify(
                       id=permit.id,
                       permit_number=permit.permit_number,
@@ -519,7 +548,7 @@ tool-test:
 
           - path: frontend/src/App.tsx
             content: |
-              import { useState, useEffect } from "react"
+              import { useState, useEffect, useRef } from "react"
               import { Button } from "@/components/ui/button"
               import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
               import { Input } from "@/components/ui/input"
@@ -529,6 +558,7 @@ tool-test:
                 permit_number: string
                 applicant_name: string
                 permit_type: string
+                source_file?: string
                 extracted_text?: string
                 upload_date?: string
               }
@@ -536,11 +566,14 @@ tool-test:
               function App() {
                 const [permits, setPermits] = useState<Permit[]>([])
                 const [searchQuery, setSearchQuery] = useState("")
-                const [imageUrl, setImageUrl] = useState("")
                 const [permitNumber, setPermitNumber] = useState("")
                 const [applicantName, setApplicantName] = useState("")
+                const [selectedFile, setSelectedFile] = useState<File | null>(null)
                 const [uploading, setUploading] = useState(false)
+                const [uploadResult, setUploadResult] = useState<string | null>(null)
                 const [selectedPermit, setSelectedPermit] = useState<Permit | null>(null)
+                const [dragActive, setDragActive] = useState(false)
+                const fileInputRef = useRef<HTMLInputElement>(null)
 
                 const loadPermits = async (query = "") => {
                   const url = query ? `/api/permits/search?q=${encodeURIComponent(query)}` : "/api/permits"
@@ -552,30 +585,49 @@ tool-test:
                 useEffect(() => { loadPermits() }, [])
 
                 const handleUpload = async () => {
-                  if (!imageUrl) return
+                  if (!selectedFile) return
                   setUploading(true)
+                  setUploadResult(null)
                   try {
+                    const formData = new FormData()
+                    formData.append("file", selectedFile)
+                    if (permitNumber) formData.append("permit_number", permitNumber)
+                    if (applicantName) formData.append("applicant_name", applicantName)
+
                     const res = await fetch("/api/permits/upload", {
                       method: "POST",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({
-                        image_url: imageUrl,
-                        permit_number: permitNumber,
-                        applicant_name: applicantName,
-                      }),
+                      body: formData,
                     })
+                    const data = await res.json()
                     if (res.ok) {
-                      setImageUrl("")
+                      setUploadResult(`Vergunning verwerkt: type "${data.permit_type}"`)
+                      setSelectedFile(null)
                       setPermitNumber("")
                       setApplicantName("")
+                      if (fileInputRef.current) fileInputRef.current.value = ""
                       loadPermits()
+                    } else {
+                      setUploadResult(`Fout: ${data.error}`)
                     }
+                  } catch (err) {
+                    setUploadResult("Fout bij uploaden")
                   } finally {
                     setUploading(false)
                   }
                 }
 
+                const handleDrop = (e: React.DragEvent) => {
+                  e.preventDefault()
+                  setDragActive(false)
+                  if (e.dataTransfer.files?.[0]) setSelectedFile(e.dataTransfer.files[0])
+                }
+
                 const handleSearch = () => loadPermits(searchQuery)
+
+                const loadDetail = async (id: number) => {
+                  const res = await fetch(`/api/permits/${id}`)
+                  if (res.ok) setSelectedPermit(await res.json())
+                }
 
                 return (
                   <div className="min-h-screen bg-background">
@@ -590,14 +642,39 @@ tool-test:
                           <CardTitle>Document uploaden</CardTitle>
                         </CardHeader>
                         <CardContent className="space-y-3">
-                          <Input value={imageUrl} onChange={e => setImageUrl(e.target.value)} placeholder="URL van document (scan/foto)" />
-                          <div className="flex gap-2">
-                            <Input value={permitNumber} onChange={e => setPermitNumber(e.target.value)} placeholder="Vergunningnummer" />
-                            <Input value={applicantName} onChange={e => setApplicantName(e.target.value)} placeholder="Aanvrager" />
+                          <div
+                            className={`border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-colors ${dragActive ? "border-primary bg-primary/5" : "border-muted-foreground/25 hover:border-primary/50"}`}
+                            onDragOver={e => { e.preventDefault(); setDragActive(true) }}
+                            onDragLeave={() => setDragActive(false)}
+                            onDrop={handleDrop}
+                            onClick={() => fileInputRef.current?.click()}
+                          >
+                            <input
+                              ref={fileInputRef}
+                              type="file"
+                              accept="image/*,.pdf"
+                              className="hidden"
+                              onChange={e => { if (e.target.files?.[0]) setSelectedFile(e.target.files[0]) }}
+                            />
+                            {selectedFile ? (
+                              <p className="text-sm font-medium">{selectedFile.name} <span className="text-muted-foreground">({(selectedFile.size / 1024).toFixed(0)} KB)</span></p>
+                            ) : (
+                              <div>
+                                <p className="text-muted-foreground">Sleep een bestand hierheen of klik om te selecteren</p>
+                                <p className="text-xs text-muted-foreground mt-1">Afbeeldingen (JPG, PNG) of PDF</p>
+                              </div>
+                            )}
                           </div>
-                          <Button onClick={handleUpload} disabled={uploading || !imageUrl}>
-                            {uploading ? "Verwerken..." : "Upload & Analyseer"}
+                          <div className="flex gap-2">
+                            <Input value={permitNumber} onChange={e => setPermitNumber(e.target.value)} placeholder="Vergunningnummer (optioneel)" />
+                            <Input value={applicantName} onChange={e => setApplicantName(e.target.value)} placeholder="Aanvrager (optioneel)" />
+                          </div>
+                          <Button onClick={handleUpload} disabled={uploading || !selectedFile} className="w-full">
+                            {uploading ? "Bezig met OCR en classificatie..." : "Upload & Analyseer"}
                           </Button>
+                          {uploadResult && (
+                            <p className={`text-sm ${uploadResult.startsWith("Fout") ? "text-destructive" : "text-green-600"}`}>{uploadResult}</p>
+                          )}
                         </CardContent>
                       </Card>
 
@@ -607,7 +684,7 @@ tool-test:
                         </CardHeader>
                         <CardContent>
                           <div className="flex gap-2">
-                            <Input value={searchQuery} onChange={e => setSearchQuery(e.target.value)} onKeyDown={e => e.key === "Enter" && handleSearch()} placeholder="Zoek op nummer, aanvrager, type..." />
+                            <Input value={searchQuery} onChange={e => setSearchQuery(e.target.value)} onKeyDown={e => e.key === "Enter" && handleSearch()} placeholder="Zoek op nummer, aanvrager, type, of tekst..." />
                             <Button onClick={handleSearch}>Zoek</Button>
                           </div>
                         </CardContent>
@@ -623,11 +700,12 @@ tool-test:
                           ) : (
                             <ul className="space-y-2">
                               {permits.map(p => (
-                                <li key={p.id} className="flex items-center justify-between p-3 rounded border cursor-pointer hover:bg-muted" onClick={() => setSelectedPermit(p)}>
+                                <li key={p.id} className="flex items-center justify-between p-3 rounded border cursor-pointer hover:bg-muted" onClick={() => loadDetail(p.id)}>
                                   <div>
                                     <span className="font-medium">{p.permit_number || "Geen nummer"}</span>
                                     <span className="mx-2 text-muted-foreground">—</span>
                                     <span>{p.applicant_name || "Onbekend"}</span>
+                                    {p.source_file && <span className="ml-2 text-xs text-muted-foreground">({p.source_file})</span>}
                                   </div>
                                   <span className="text-sm text-muted-foreground">{p.permit_type}</span>
                                 </li>
@@ -640,16 +718,17 @@ tool-test:
                       {selectedPermit && (
                         <Card>
                           <CardHeader>
-                            <CardTitle>Detail: {selectedPermit.permit_number}</CardTitle>
+                            <CardTitle>Detail: {selectedPermit.permit_number || selectedPermit.source_file}</CardTitle>
                           </CardHeader>
                           <CardContent className="space-y-2">
-                            <p><strong>Aanvrager:</strong> {selectedPermit.applicant_name}</p>
-                            <p><strong>Type:</strong> {selectedPermit.permit_type}</p>
+                            <p><strong>Aanvrager:</strong> {selectedPermit.applicant_name || "Niet opgegeven"}</p>
+                            <p><strong>Type (AI):</strong> {selectedPermit.permit_type}</p>
+                            <p><strong>Bronbestand:</strong> {selectedPermit.source_file}</p>
                             <p><strong>Upload datum:</strong> {selectedPermit.upload_date}</p>
                             {selectedPermit.extracted_text && (
                               <div>
-                                <strong>Geëxtraheerde tekst:</strong>
-                                <pre className="mt-1 p-3 bg-muted rounded text-sm whitespace-pre-wrap">{selectedPermit.extracted_text}</pre>
+                                <strong>Geëxtraheerde tekst (OCR):</strong>
+                                <pre className="mt-1 p-3 bg-muted rounded text-sm whitespace-pre-wrap max-h-64 overflow-y-auto">{selectedPermit.extracted_text}</pre>
                               </div>
                             )}
                             <Button variant="outline" onClick={() => setSelectedPermit(null)}>Sluiten</Button>
