@@ -486,7 +486,8 @@ tool-test:
 
               def _compute_archive_status(permit_type, issue_date_str):
                   """Compute archive nomination, retention, and status per selectielijst."""
-                  info = SELECTIELIJST.get(permit_type, {"nominatie": "onbekend", "jaren": None})
+                  key = (permit_type or "").strip().lower().replace(" ", "_")
+                  info = SELECTIELIJST.get(key, {"nominatie": "onbekend", "jaren": None})
                   nominatie = info["nominatie"]
                   jaren = info["jaren"]
                   status = "onbekend"
