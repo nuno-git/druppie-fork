@@ -16,4 +16,4 @@ RUN pip install --no-cache-dir /tmp/druppie-sdk/
 COPY app/ ./app/
 COPY --from=frontend /build/dist ./static/
 EXPOSE 8000
-CMD ["gunicorn", "--bind", "0.0.0.0:8000", "--workers", "2", "app:create_app()"]
+CMD ["gunicorn", "--bind", "0.0.0.0:8000", "--workers", "2", "--timeout", "120", "app:create_app()"]
