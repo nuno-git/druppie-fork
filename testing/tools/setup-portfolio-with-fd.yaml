@@ -1,8 +1,11 @@
-## Setup: create a portfolio project with functional design ready for architect review
+## Setup: create a portfolio project with functional design written and committed
+##
+## Chain: router → planner → BA (HITL + FD + git) → done
+## Ends after BA completes — no trailing planner.
 
 tool-test:
   name: setup-portfolio-with-fd
-  description: "Creates a portfolio project with FD — ready for architect review"
+  description: "Creates a portfolio project with FD — BA completed, ready for planner re-evaluation"
   tags: [setup]
 
   chain:
@@ -100,17 +103,3 @@ tool-test:
         summary: "Agent business_analyst: DESIGN_APPROVED"
       assert:
         completed: true
-
-    - agent: planner
-      tool: builtin:make_plan
-      arguments:
-        steps:
-          - agent_id: architect
-            prompt: "Review the functional design and create the technical design"
-          - agent_id: planner
-            prompt: "Re-evaluate after architect completes"
-
-    - agent: planner
-      tool: builtin:done
-      arguments:
-        summary: "Agent planner: BA approved, planned architect"
