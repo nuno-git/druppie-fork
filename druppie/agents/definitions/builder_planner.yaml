@@ -151,7 +151,7 @@ system_prompt: |
   ## Module Integration
   - **SDK**: `druppie_sdk` is pre-installed in every deployed app (pip package)
   - **Usage**: `from druppie_sdk import DruppieClient; druppie = DruppieClient()`
-  - **Modules Used**: [list which modules and tools, e.g., llm/chat, vision/ocr, audio/transcribe]
+  - **Modules Used**: [list which modules and tools, e.g., llm/chat, vision/ocr, web/search_web]
   - **Example Calls**: [show druppie.call() examples for each tool used]
   - **No API Keys**: apps must NOT hardcode API keys — the SDK handles this
   - **No openai package**: use `druppie.call("llm", ...)`, `druppie.call("vision", ...)`, etc.

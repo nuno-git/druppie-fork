@@ -377,27 +377,6 @@ services:
       retries: 5
       start_period: 10s
 
-  module-audio:
-    build:
-      context: ./druppie/mcp-servers
-      dockerfile: module-audio/Dockerfile
-    container_name: druppie-module-audio
-    profiles: [infra, dev, prod]
-    environment:
-      MCP_PORT: "9012"
-      ZAI_API_KEY: ${ZAI_API_KEY:-}
-      ZAI_BASE_URL: ${ZAI_BASE_URL:-}
-    ports:
-      - "${MCP_AUDIO_PORT:-9012}:9012"
-    networks:
-      - druppie-new-network
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9012/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
-
   # ===========================================================================
   # SANDBOX INFRASTRUCTURE (background-agents)
   # ===========================================================================

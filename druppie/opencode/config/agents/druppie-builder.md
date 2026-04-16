@@ -76,7 +76,6 @@ are managed centrally, never in individual apps.
 |----------|---------------|-------------------------------------|-------------|
 | `llm`    | `chat`        | LLM chat completion                 | `answer`    |
 | `vision` | `ocr`         | Extract text from images/PDFs       | `text`      |
-| `audio`  | `transcribe`  | Speech-to-text from audio files     | `text`      |
 | `web`    | `search_web`  | Web search                          | results     |
 
 ### CRITICAL — Common AI Mistakes to Avoid
@@ -102,10 +101,6 @@ answer = result["answer"]
 
 # Vision / OCR: extract text from an image or PDF
 result = druppie.call("vision", "ocr", {"image_source": "https://example.com/scan.png"})
-text = result["text"]
-
-# Audio transcription: speech-to-text (base64 or file path)
-result = druppie.call("audio", "transcribe", {"file_base64": audio_b64})
 text = result["text"]
 
 # Web search

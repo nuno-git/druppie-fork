@@ -8,7 +8,7 @@
 import { useState, useEffect, useRef, useCallback } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { MessageSquarePlus, Trash2, ChevronDown, ChevronRight, Send, Loader2, PanelLeftClose, PanelLeft, Mic, Square } from "lucide-react"
+import { MessageSquarePlus, Trash2, ChevronDown, ChevronRight, Send, Loader2, PanelLeftClose, PanelLeft } from "lucide-react"
 import type { ChatSession, ChatMessage, AgentStep } from "./types"
 import * as api from "./api"
 
@@ -123,10 +123,6 @@ export default function ChatPanel() {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState("")
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
-  const [recording, setRecording] = useState(false)
-  const [transcribing, setTranscribing] = useState(false)
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null)
-  const audioChunksRef = useRef<Blob[]>([])
 
   // Sending state derived from messages — session-specific, not global
   const sending = messages.some(m => m.status === "thinking")
@@ -211,47 +207,6 @@ export default function ChatPanel() {
     }
   }
 
-  const startRecording = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-      const mediaRecorder = new MediaRecorder(stream, { mimeType: "audio/webm" })
-      audioChunksRef.current = []
-      mediaRecorder.ondataavailable = (e) => {
-        if (e.data.size > 0) audioChunksRef.current.push(e.data)
-      }
-      mediaRecorder.onstop = async () => {
-        stream.getTracks().forEach(t => t.stop())
-        const blob = new Blob(audioChunksRef.current, { type: "audio/webm" })
-        setTranscribing(true)
-        try {
-          const reader = new FileReader()
-          reader.onloadend = async () => {
-            const base64 = (reader.result as string).split(",")[1]
-            const text = await api.transcribeAudio(base64)
-            if (text) setInput(prev => prev ? `${prev} ${text}` : text)
-            setTranscribing(false)
-            inputRef.current?.focus()
-          }
-          reader.readAsDataURL(blob)
-        } catch {
-          setTranscribing(false)
-        }
-      }
-      mediaRecorderRef.current = mediaRecorder
-      mediaRecorder.start()
-      setRecording(true)
-    } catch {
-      // Microphone permission denied or not available
-    }
-  }
-
-  const stopRecording = () => {
-    if (mediaRecorderRef.current && recording) {
-      mediaRecorderRef.current.stop()
-      setRecording(false)
-    }
-  }
-
   return (
     <div className="flex h-full">
       <Sidebar
@@ -311,23 +266,14 @@ export default function ChatPanel() {
           <div className="flex gap-2 max-w-3xl mx-auto">
             <Input
               ref={inputRef}
-              value={transcribing ? "Transcriberen..." : input}
+              value={input}
               onChange={e => setInput(e.target.value)}
               onKeyDown={e => e.key === "Enter" && !e.shiftKey && handleSend()}
               placeholder={activeId ? "Typ een bericht..." : "Start een nieuw gesprek..."}
-              disabled={sending || transcribing}
+              disabled={sending}
               className="flex-1"
             />
-            <Button
-              onClick={recording ? stopRecording : startRecording}
-              disabled={sending || transcribing}
-              size="icon"
-              variant={recording ? "destructive" : "outline"}
-              title={recording ? "Stop opname" : "Spraak opnemen"}
-            >
-              {recording ? <Square className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
-            </Button>
-            <Button onClick={handleSend} disabled={sending || !input.trim() || transcribing} size="icon">
+            <Button onClick={handleSend} disabled={sending || !input.trim()} size="icon">
               <Send className="w-4 h-4" />
             </Button>
           </div>
