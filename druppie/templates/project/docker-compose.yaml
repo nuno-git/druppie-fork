@@ -12,7 +12,7 @@ services:
       - DRUPPIE_URL=${DRUPPIE_URL:-http://druppie-backend:8000}
       - DEBUG=${DEBUG:-false}
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 10s
       timeout: 5s
       retries: 5
