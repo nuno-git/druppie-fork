@@ -16,7 +16,7 @@ class DruppieClient:
 
         druppie = DruppieClient()
         result = druppie.call("llm", "chat", {"prompt": "Hello"})
-        result = druppie.call("vision", "ocr", {"image_url": "data:image/jpeg;base64,..."})
+        result = druppie.call("vision", "ocr", {"image_source": "data:image/jpeg;base64,..."})
         modules = druppie.list_modules()
     """
 
