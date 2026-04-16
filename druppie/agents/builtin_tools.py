@@ -26,6 +26,18 @@ from druppie.opencode.model_resolver import get_agent_chain, resolve_sandbox_mod
 
 VALID_REPO_TARGETS = ("project", "druppie_core")
 
+# Valid Foundry-native tool types (must match foundry_service._build_foundry_tools)
+VALID_FOUNDRY_TOOLS = {
+    "code_interpreter",
+    "file_search",
+    "bing_grounding",
+    "browser_automation",
+    "deep_research",
+    "bing_custom_search",
+    "azure_ai_search",
+    "microsoft_fabric",
+}
+
 
 # =============================================================================
 # TOOL DEFINITIONS (OpenAI function format, keyed by name)
@@ -1001,7 +1013,21 @@ async def done(
             # BEFORE any existing pending runs (like the planner).
             existing_next = execution_repo.get_next_pending(session_id)
             if existing_next:
-                start_seq = existing_next.sequence_number - 1
+                # Shift all pending runs up by 1 to make room
+                from druppie.db.models import AgentRun
+                pending_runs = (
+                    execution_repo.db.query(AgentRun)
+                    .filter(
+                        AgentRun.session_id == session_id,
+                        AgentRun.status == AgentRunStatus.PENDING.value,
+                        AgentRun.sequence_number >= existing_next.sequence_number,
+                    )
+                    .order_by(AgentRun.sequence_number.desc())
+                    .all()
+                )
+                for run in pending_runs:
+                    run.sequence_number += 1
+                start_seq = existing_next.sequence_number
             else:
                 start_seq = execution_repo.get_next_sequence_number(session_id)
 
@@ -1328,11 +1354,23 @@ async def create_foundry_agent(
     Note: temperature is accepted for backwards compatibility but ignored —
     Foundry's PromptAgentDefinition does not support temperature.
     """
-    from druppie.db.database import SessionLocal
+    import re
     from druppie.repositories.custom_agent_repository import CustomAgentRepository
+    from druppie.agents.definition_loader import AgentDefinitionLoader
     from druppie.db.models.session import Session
 
-    db = SessionLocal()
+    # Validate agent_id is kebab-case
+    if not re.match(r"^[a-z][a-z0-9-]*$", agent_id):
+        return {"success": False, "error": "agent_id must be kebab-case: lowercase letters, digits, and hyphens"}
+
+    # Prevent shadowing built-in YAML agents
+    if agent_id in AgentDefinitionLoader.list_yaml_agents():
+        return {"success": False, "error": f"agent_id '{agent_id}' conflicts with a built-in agent"}
+
+    # Filter foundry_tools against allowlist
+    validated_tools = [t for t in (foundry_tools or []) if t in VALID_FOUNDRY_TOOLS]
+
+    db = execution_repo.db
     try:
         repo = CustomAgentRepository(db)
 
@@ -1355,7 +1393,7 @@ async def create_foundry_agent(
             max_tokens=max_tokens,
             max_iterations=max_iterations,
             owner_id=owner_id,
-            foundry_tools=foundry_tools or [],
+            foundry_tools=validated_tools,
         )
         db.commit()
 
@@ -1371,14 +1409,12 @@ async def create_foundry_agent(
             "agent_id": agent_id,
             "name": name,
             "description": description,
-            "foundry_tools": foundry_tools or [],
+            "foundry_tools": validated_tools,
             "message": f"Agent '{name}' created successfully. It can be deployed to Azure AI Foundry from the Agents page.",
         }
     except Exception as e:
         logger.error("foundry_agent_creation_failed", error=str(e), agent_id=agent_id)
-        return {"success": False, "error": str(e)}
-    finally:
-        db.close()
+        return {"success": False, "error": "Agent creation failed"}
 
 
 async def update_foundry_agent(
@@ -1398,15 +1434,21 @@ async def update_foundry_agent(
     Note: temperature is not accepted — Foundry's PromptAgentDefinition
     does not support it, so we don't expose it for updates either.
     """
-    from druppie.db.database import SessionLocal
     from druppie.repositories.custom_agent_repository import CustomAgentRepository
+    from druppie.db.models.session import Session
 
-    db = SessionLocal()
+    db = execution_repo.db
     try:
         repo = CustomAgentRepository(db)
 
-        if not repo.agent_id_exists(agent_id):
+        agent = repo.get_by_agent_id(agent_id)
+        if not agent:
             return {"success": False, "error": f"Agent '{agent_id}' not found"}
+
+        # Verify ownership via session
+        session = db.query(Session).filter_by(id=session_id).first()
+        if session and agent.owner_id and session.user_id != agent.owner_id:
+            return {"success": False, "error": "Only the owner can update this agent"}
 
         update_kwargs = {}
         if name is not None:
@@ -1422,7 +1464,7 @@ async def update_foundry_agent(
         if max_iterations is not None:
             update_kwargs["max_iterations"] = max_iterations
         if foundry_tools is not None:
-            update_kwargs["foundry_tools"] = foundry_tools
+            update_kwargs["foundry_tools"] = [t for t in foundry_tools if t in VALID_FOUNDRY_TOOLS]
 
         agent = repo.update(agent_id, **update_kwargs)
         db.commit()
@@ -1442,17 +1484,24 @@ async def update_foundry_agent(
         }
     except Exception as e:
         logger.error("foundry_agent_update_failed", error=str(e), agent_id=agent_id)
-        return {"success": False, "error": str(e)}
-    finally:
-        db.close()
+        return {"success": False, "error": "Agent update failed"}
 
 
-async def list_custom_agents() -> dict:
+async def list_custom_agents(
+    execution_repo: "ExecutionRepository | None" = None,
+) -> dict:
     """List all existing custom/Foundry agents."""
-    from druppie.db.database import SessionLocal
     from druppie.repositories.custom_agent_repository import CustomAgentRepository
 
-    db = SessionLocal()
+    if execution_repo is None:
+        # Fallback for calls without execution context
+        from druppie.db.database import SessionLocal
+        db = SessionLocal()
+        close_db = True
+    else:
+        db = execution_repo.db
+        close_db = False
+
     try:
         repo = CustomAgentRepository(db)
         agents = repo.list_all()
@@ -1471,9 +1520,10 @@ async def list_custom_agents() -> dict:
         }
     except Exception as e:
         logger.error("list_custom_agents_failed", error=str(e))
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": "Failed to list agents"}
     finally:
-        db.close()
+        if close_db:
+            db.close()
 
 
 # =============================================================================
@@ -1564,7 +1614,7 @@ async def execute_builtin(
             strategy=args.get("strategy"),
         )
     elif tool_name == "list_custom_agents":
-        return await list_custom_agents()
+        return await list_custom_agents(execution_repo=execution_repo)
     elif tool_name == "create_foundry_agent":
         return await create_foundry_agent(
             agent_id=args.get("agent_id", ""),

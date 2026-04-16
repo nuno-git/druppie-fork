@@ -2,7 +2,7 @@
  * Agents Page - View built-in agents and manage custom agents
  */
 
-import React, { useState, useCallback } from 'react'
+import React, { useState, useCallback, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import {
@@ -22,9 +22,8 @@ import {
   FileCode,
   X,
   Copy,
-  Save,
 } from 'lucide-react'
-import { getAgents, getCustomAgents, deleteCustomAgent, getCustomAgentYaml, deployCustomAgent, undeployCustomAgent, updateCustomAgent } from '../services/api'
+import { getAgents, getCustomAgents, deleteCustomAgent, getCustomAgentYaml, deployCustomAgent, undeployCustomAgent } from '../services/api'
 import PageHeader from '../components/shared/PageHeader'
 
 const CATEGORY_COLORS = {
@@ -183,13 +182,10 @@ const CustomAgentCard = ({ agent, onEdit, onDelete, onDownloadYaml, onToggleDepl
 }
 
 // YAML editor modal
-const YamlEditorModal = ({ agentId, onClose, onSaved }) => {
+const YamlEditorModal = ({ agentId, onClose }) => {
   const [yaml, setYaml] = useState(null)
   const [loading, setLoading] = useState(true)
-  const [saving, setSaving] = useState(false)
   const [copied, setCopied] = useState(false)
-  const [error, setError] = useState(null)
-  const [dirty, setDirty] = useState(false)
 
   const loadYaml = useCallback(async () => {
     try {
@@ -202,52 +198,7 @@ const YamlEditorModal = ({ agentId, onClose, onSaved }) => {
     }
   }, [agentId])
 
-  useState(() => { loadYaml() })
-
-  const handleSave = async () => {
-    setSaving(true)
-    setError(null)
-    try {
-      // Parse YAML to JSON and send as update
-      const lines = yaml.split('\n')
-      const parsed = {}
-      let currentKey = null
-      let multiline = []
-
-      // Simple YAML parser for flat + multiline string fields
-      for (const line of lines) {
-        if (line.startsWith('#') || line.trim() === '') continue
-        const match = line.match(/^(\w+):\s*(.*)$/)
-        if (match) {
-          if (currentKey && multiline.length > 0) {
-            parsed[currentKey] = multiline.join('\n')
-            multiline = []
-          }
-          currentKey = match[1]
-          const val = match[2]
-          if (val === '|' || val === '>') {
-            multiline = []
-          } else {
-            parsed[currentKey] = val
-            currentKey = null
-          }
-        } else if (currentKey) {
-          multiline.push(line.replace(/^ {2}/, ''))
-        }
-      }
-      if (currentKey && multiline.length > 0) {
-        parsed[currentKey] = multiline.join('\n')
-      }
-
-      await updateCustomAgent(agentId, parsed)
-      setDirty(false)
-      onSaved?.()
-    } catch (err) {
-      setError(err.message || 'Failed to save')
-    } finally {
-      setSaving(false)
-    }
-  }
+  useEffect(() => { loadYaml() }, [agentId])
 
   const handleCopy = () => {
     if (!yaml) return
@@ -271,12 +222,8 @@ const YamlEditorModal = ({ agentId, onClose, onSaved }) => {
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={onClose}>
       <div className="bg-white rounded-xl shadow-xl w-full max-w-4xl max-h-[85vh] flex flex-col m-4" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between px-6 py-4 border-b">
-          <h3 className="text-sm font-medium text-gray-900">{agentId}.yaml {dirty && <span className="text-yellow-500 ml-1">(unsaved)</span>}</h3>
+          <h3 className="text-sm font-medium text-gray-900">{agentId}.yaml <span className="text-gray-400 ml-1">(read-only)</span></h3>
           <div className="flex items-center gap-2">
-            <button onClick={handleSave} disabled={saving || !dirty} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors" title="Save">
-              {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
-              Save
-            </button>
             <button onClick={handleCopy} className="p-1.5 text-gray-400 hover:text-blue-600 rounded transition-colors" title="Copy">
               {copied ? <CheckCircle className="w-4 h-4 text-green-500" /> : <Copy className="w-4 h-4" />}
             </button>
@@ -288,11 +235,6 @@ const YamlEditorModal = ({ agentId, onClose, onSaved }) => {
             </button>
           </div>
         </div>
-        {error && (
-          <div className="mx-6 mt-3 bg-red-50 border border-red-200 rounded-lg p-2">
-            <p className="text-sm text-red-700">{error}</p>
-          </div>
-        )}
         <div className="flex-1 overflow-auto p-0">
           {loading ? (
             <div className="flex items-center justify-center py-12">
@@ -301,8 +243,8 @@ const YamlEditorModal = ({ agentId, onClose, onSaved }) => {
           ) : (
             <textarea
               value={yaml}
-              onChange={(e) => { setYaml(e.target.value); setDirty(true) }}
-              className="w-full h-full min-h-[60vh] p-6 font-mono text-sm text-gray-800 border-none outline-none resize-none"
+              readOnly
+              className="w-full h-full min-h-[60vh] p-6 font-mono text-sm text-gray-800 bg-gray-50 border-none outline-none resize-none"
               spellCheck={false}
             />
           )}
@@ -376,6 +318,10 @@ const Agents = () => {
   }
 
   const handleToggleDeploy = async (agentId, isCurrentlyDeployed) => {
+    const action = isCurrentlyDeployed ? 'undeploy' : 'deploy'
+    if (!window.confirm(`Are you sure you want to ${action} agent "${agentId}" ${isCurrentlyDeployed ? 'from' : 'to'} Azure AI Foundry?`)) {
+      return
+    }
     setDeployingId(agentId)
     try {
       if (isCurrentlyDeployed) {
@@ -528,7 +474,6 @@ const Agents = () => {
         <YamlEditorModal
           agentId={yamlEditorId}
           onClose={() => setYamlEditorId(null)}
-          onSaved={() => queryClient.invalidateQueries({ queryKey: ['custom-agents'] })}
         />
       )}
     </div>

@@ -537,6 +537,7 @@ services:
       - ./secrets:/app/secrets:ro
       - druppie_new_workspace:/app/workspace
       - ${DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock
+      - ${HOME}/.azure:/root/.azure:ro
     ports:
       - "${BACKEND_PORT:-8100}:8000"
     depends_on:

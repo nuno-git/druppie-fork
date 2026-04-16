@@ -30,21 +30,28 @@ class FoundryService:
         3. AzureDeveloperCliCredential (azd on PATH)
         4. AzureCliCredential (az login)
 
-        Note: AzureKeyCredential does NOT work with AIProjectClient.agents —
-        it requires TokenCredential. FOUNDRY_API_KEY is kept in settings for
-        future SDK changes but is not used here.
+        If AZURE_TENANT_ID is set but AZURE_CLIENT_ID is not,
+        EnvironmentCredential is excluded to avoid a ValueError.
         """
         if self._client is not None:
             return self._client
         if not self.endpoint:
             raise FoundryNotConfiguredError("FOUNDRY_PROJECT_ENDPOINT is not set")
         try:
+            import os
             from azure.ai.projects import AIProjectClient
             from azure.identity import DefaultAzureCredential
 
+            # Skip EnvironmentCredential when client_id is missing —
+            # it would crash with "client_id should be the id of a
+            # Microsoft Entra application" if only AZURE_TENANT_ID is set.
+            exclude_env = not os.environ.get("AZURE_CLIENT_ID")
+
             self._client = AIProjectClient(
                 endpoint=self.endpoint,
-                credential=DefaultAzureCredential(),
+                credential=DefaultAzureCredential(
+                    exclude_environment_credential=exclude_env,
+                ),
             )
             return self._client
         except ImportError:
@@ -57,12 +64,15 @@ class FoundryService:
         if not self.endpoint:
             return {"status": "not_configured", "detail": "FOUNDRY_PROJECT_ENDPOINT is not set"}
         try:
-            self._get_client()
-            return {"status": "configured", "endpoint": self.endpoint}
+            client = self._get_client()
+            # Actually verify credentials by making a lightweight API call
+            client.agents.list(limit=1)
+            return {"status": "connected", "endpoint": self.endpoint}
         except FoundryNotConfiguredError as e:
             return {"status": "not_configured", "detail": str(e)}
         except Exception as e:
-            return {"status": "error", "detail": str(e)}
+            logger.warning("foundry_connection_check_failed", error=str(e))
+            return {"status": "error", "detail": "Foundry credentials are invalid or endpoint is unreachable"}
 
     def deploy_agent(self, agent_detail) -> dict:
         """Deploy a custom agent definition to Azure AI Foundry.

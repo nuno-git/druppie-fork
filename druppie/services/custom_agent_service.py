@@ -61,8 +61,8 @@ class CustomAgentService:
                 field="agent_id",
             )
 
-        # Validate not shadowing built-in agents
-        builtin_ids = AgentDefinitionLoader.list_agents()
+        # Validate not shadowing built-in YAML agents
+        builtin_ids = AgentDefinitionLoader.list_yaml_agents()
         if data.agent_id in builtin_ids:
             raise ConflictError(
                 f"agent_id '{data.agent_id}' conflicts with a built-in agent definition"
@@ -187,6 +187,77 @@ class CustomAgentService:
         self.repo.commit()
 
         logger.info("custom_agent_deleted", agent_id=agent_id, by_user=str(user_id))
+
+    def deploy_custom_agent(self, agent_id: str, user_id: UUID) -> dict:
+        """Deploy a custom agent to Azure AI Foundry. Only the owner can deploy."""
+        from datetime import datetime, timezone
+
+        from ..core.config import get_settings
+        from ..services.foundry_service import FoundryNotConfiguredError, FoundryService
+
+        agent = self.repo.get_by_agent_id(agent_id)
+        if not agent:
+            raise NotFoundError("agent", agent_id)
+        if agent.owner_id != user_id:
+            raise AuthorizationError("Only the owner can deploy this custom agent")
+
+        settings = get_settings()
+        foundry = FoundryService(
+            endpoint=settings.llm.foundry_project_endpoint,
+            api_key=settings.llm.foundry_api_key or None,
+        )
+        if not foundry.is_configured():
+            raise ValidationError(
+                "Azure AI Foundry is not configured. Set FOUNDRY_PROJECT_ENDPOINT in .env.",
+                field="foundry",
+            )
+
+        detail = self._to_detail(agent)
+        try:
+            result = foundry.deploy_agent(detail)
+            agent.deployment_status = "deployed"
+            agent.deployed_at = datetime.now(timezone.utc)
+            self.repo.commit()
+            return result
+        except FoundryNotConfiguredError as e:
+            raise ValidationError(str(e), field="foundry")
+        except Exception:
+            agent.deployment_status = "failed"
+            self.repo.commit()
+            logger.error("deploy_custom_agent_failed", agent_id=agent_id, exc_info=True)
+            raise
+
+    def undeploy_custom_agent(self, agent_id: str, user_id: UUID) -> dict:
+        """Remove a custom agent from Azure AI Foundry. Only the owner can undeploy."""
+        from ..core.config import get_settings
+        from ..services.foundry_service import FoundryService
+
+        agent = self.repo.get_by_agent_id(agent_id)
+        if not agent:
+            raise NotFoundError("agent", agent_id)
+        if agent.owner_id != user_id:
+            raise AuthorizationError("Only the owner can undeploy this custom agent")
+
+        settings = get_settings()
+        foundry = FoundryService(
+            endpoint=settings.llm.foundry_project_endpoint,
+            api_key=settings.llm.foundry_api_key or None,
+        )
+
+        if foundry.is_configured():
+            success = foundry.delete_agent(agent_id)
+            if not success:
+                raise ValidationError(
+                    "Failed to remove agent from Azure AI Foundry",
+                    field="foundry",
+                )
+
+        agent.deployment_status = None
+        agent.deployed_at = None
+        self.repo.commit()
+
+        logger.info("custom_agent_undeployed", agent_id=agent_id, by_user=str(user_id))
+        return {"status": "undeployed", "agent_id": agent_id}
 
     def validate_definition(self, data: CustomAgentCreate) -> list[str]:
         """Validate a custom agent definition and return warnings.

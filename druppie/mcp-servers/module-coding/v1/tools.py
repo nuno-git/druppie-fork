@@ -2101,10 +2101,19 @@ async def list_projects() -> dict:
 )
 async def read_project_file(repo_name: str, path: str, ref: str = "main") -> dict:
     """Read a file from any project repository."""
+    import re
     import httpx
 
     if not GITEA_URL or not GITEA_ORG:
         return {"success": False, "error": "Gitea not configured"}
+
+    # Validate inputs to prevent path traversal
+    if not re.match(r"^[a-zA-Z0-9._-]+$", repo_name):
+        return {"success": False, "error": "Invalid repo_name"}
+    if ".." in path or path.startswith("/"):
+        return {"success": False, "error": "Invalid path"}
+    if not re.match(r"^[a-zA-Z0-9._/\-]+$", ref):
+        return {"success": False, "error": "Invalid ref"}
 
     try:
         async with httpx.AsyncClient(timeout=15) as client:

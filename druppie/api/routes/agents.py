@@ -11,12 +11,10 @@ from uuid import UUID
 
 import structlog
 import yaml
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
-from sqlalchemy.orm import Session
 
 from druppie.api.deps import get_current_user, get_custom_agent_service
-from druppie.db.database import get_db
 from druppie.domain.custom_agent import CustomAgentCreate, CustomAgentUpdate
 from druppie.services.custom_agent_service import CustomAgentService
 
@@ -263,84 +261,22 @@ async def validate_custom_agent(
 async def deploy_custom_agent(
     agent_id: str,
     service: CustomAgentService = Depends(get_custom_agent_service),
-    db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
     """Deploy a custom agent to Azure AI Foundry."""
-    from druppie.services.foundry_service import FoundryService, FoundryNotConfiguredError
-    from druppie.core.config import get_settings
-
-    settings = get_settings()
-
-    foundry = FoundryService(
-        endpoint=settings.llm.foundry_project_endpoint,
-        api_key=settings.llm.foundry_api_key or None,
-    )
-
-    if not foundry.is_configured():
-        raise HTTPException(
-            status_code=503,
-            detail="Azure AI Foundry is not configured. Set FOUNDRY_PROJECT_ENDPOINT in .env.",
-        )
-
-    detail = service.get_custom_agent(agent_id)
-
-    try:
-        result = foundry.deploy_agent(detail)
-
-        # Update deployment status in DB
-        from druppie.repositories import CustomAgentRepository
-        repo = CustomAgentRepository(db)
-        agent = repo.get_by_agent_id(agent_id)
-        if agent:
-            from datetime import datetime, timezone
-            agent.deployment_status = "deployed"
-            agent.deployed_at = datetime.now(timezone.utc)
-            db.commit()
-
-        return result
-    except FoundryNotConfiguredError as e:
-        raise HTTPException(status_code=503, detail=str(e))
-    except Exception as e:
-        # Update status to failed
-        from druppie.repositories import CustomAgentRepository
-        repo = CustomAgentRepository(db)
-        agent = repo.get_by_agent_id(agent_id)
-        if agent:
-            agent.deployment_status = "failed"
-            db.commit()
-        raise HTTPException(status_code=500, detail=f"Deployment failed: {str(e)}")
+    user_id = UUID(user["sub"])
+    return service.deploy_custom_agent(agent_id, user_id)
 
 
 @router.post("/agents/custom/{agent_id}/undeploy")
 async def undeploy_custom_agent(
     agent_id: str,
-    db: Session = Depends(get_db),
+    service: CustomAgentService = Depends(get_custom_agent_service),
     user: dict = Depends(get_current_user),
 ):
     """Remove a custom agent from Azure AI Foundry."""
-    from druppie.services.foundry_service import FoundryService
-    from druppie.core.config import get_settings
-
-    settings = get_settings()
-
-    foundry = FoundryService(
-        endpoint=settings.llm.foundry_project_endpoint,
-        api_key=settings.llm.foundry_api_key or None,
-    )
-
-    if foundry.is_configured():
-        foundry.delete_agent(agent_id)
-
-    from druppie.repositories import CustomAgentRepository
-    repo = CustomAgentRepository(db)
-    agent = repo.get_by_agent_id(agent_id)
-    if agent:
-        agent.deployment_status = None
-        agent.deployed_at = None
-        db.commit()
-
-    return {"status": "undeployed", "agent_id": agent_id}
+    user_id = UUID(user["sub"])
+    return service.undeploy_custom_agent(agent_id, user_id)
 
 
 # =============================================================================

@@ -136,16 +136,21 @@ class AgentDefinitionLoader:
         return prompt
 
     @classmethod
+    def list_yaml_agents(cls) -> list[str]:
+        """List agent IDs from YAML files on disk only (no DB agents)."""
+        path = cls._get_definitions_path()
+        if not os.path.exists(path):
+            return []
+        return sorted(
+            f.replace(".yaml", "").replace(".yml", "")
+            for f in os.listdir(path)
+            if f.endswith((".yaml", ".yml"))
+        )
+
+    @classmethod
     def list_agents(cls) -> list[str]:
         """List available agent IDs from disk and database."""
-        path = cls._get_definitions_path()
-        ids = set()
-        if os.path.exists(path):
-            ids = {
-                f.replace(".yaml", "").replace(".yml", "")
-                for f in os.listdir(path)
-                if f.endswith((".yaml", ".yml"))
-            }
+        ids = set(cls.list_yaml_agents())
         # Add custom agents from DB
         if cls._db_id_lister:
             try:
