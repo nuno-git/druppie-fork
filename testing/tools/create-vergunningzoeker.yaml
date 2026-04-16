@@ -745,11 +745,35 @@ tool-test:
                       ),
                   })
 
+                  # Build search log showing what each term found
+                  search_log = []
+                  seen = set()
+                  for term in search_terms[:3]:
+                      like = f"%{term}%"
+                      hits = db.query(Permit).filter(
+                          Permit.permit_number.ilike(like)
+                          | Permit.applicant_name.ilike(like)
+                          | Permit.permit_holder_name.ilike(like)
+                          | Permit.location.ilike(like)
+                          | Permit.permit_type.ilike(like)
+                          | Permit.applicable_law.ilike(like)
+                          | Permit.work_type.ilike(like)
+                          | Permit.extracted_text.ilike(like)
+                      ).limit(10).all()
+                      new_ids = [p.id for p in hits if p.id not in seen]
+                      seen.update(new_ids)
+                      search_log.append({
+                          "term": term,
+                          "hits": len(hits),
+                          "new": len(new_ids),
+                      })
+
                   return jsonify({
                       "answer": answer_result.get("answer", ""),
                       "search_terms": search_terms,
+                      "search_log": search_log,
                       "permits_found": len(found_permits),
-                      "permit_ids": list(found_permits.keys()),
+                      "permits": [_permit_summary(p) for p in found_permits.values()],
                   })
 
 
@@ -820,7 +844,9 @@ tool-test:
                 extracted_text: string | null; error_message: string | null
               }
 
-              interface ChatMessage { role: "user" | "assistant"; text: string; permits?: number; terms?: string[] }
+              interface SearchLog { term: string; hits: number; new: number }
+              interface FoundPermit { id: number; permit_number: string; applicant_name: string; permit_type: string; location: string; archive_status: string; issue_date: string }
+              interface ChatMessage { role: "user" | "assistant"; text: string; terms?: string[]; searchLog?: SearchLog[]; permits?: FoundPermit[] }
 
               const STATUS = {
                 processing: { label: "Verwerken...", cls: "text-blue-600 bg-blue-50 border-blue-200" },
@@ -894,7 +920,7 @@ tool-test:
                     const d = await r.json()
                     setChatMessages(m => [...m, {
                       role: "assistant", text: d.answer || d.error || "Geen antwoord",
-                      permits: d.permits_found, terms: d.search_terms,
+                      terms: d.search_terms, searchLog: d.search_log, permits: d.permits,
                     }])
                   } catch { setChatMessages(m => [...m, { role: "assistant", text: "Verbindingsfout" }]) }
                   finally { setChatLoading(false) }
@@ -1019,9 +1045,32 @@ tool-test:
                             {chatMessages.length === 0 && <p className="text-muted-foreground text-center py-8">Stel een vraag, bijvoorbeeld: "Welke vergunningen zijn verleend in Gorinchem?" of "Hoeveel keurvergunningen staan er in het systeem?"</p>}
                             {chatMessages.map((m, i) => (
                               <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
-                                <div className={`max-w-[80%] rounded-lg p-3 text-sm ${m.role === "user" ? "bg-primary text-primary-foreground" : "bg-muted"}`}>
+                                <div className={`max-w-[90%] rounded-lg p-3 text-sm ${m.role === "user" ? "bg-primary text-primary-foreground" : "bg-muted space-y-3"}`}>
+                                  {m.role === "assistant" && m.searchLog && (
+                                    <div className="text-xs border border-border/50 rounded p-2 bg-background/50">
+                                      <p className="font-medium mb-1">Zoekopdrachten:</p>
+                                      {m.searchLog.map((s, j) => (
+                                        <div key={j} className="flex gap-2">
+                                          <span className="font-mono text-primary">"{s.term}"</span>
+                                          <span className="text-muted-foreground">→ {s.hits} resultaten{s.new < s.hits ? ` (${s.new} nieuw)` : ""}</span>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
+                                  {m.role === "assistant" && m.permits && m.permits.length > 0 && (
+                                    <div className="text-xs border border-border/50 rounded p-2 bg-background/50">
+                                      <p className="font-medium mb-1">Gevonden vergunningen ({m.permits.length}):</p>
+                                      {m.permits.map((p, j) => (
+                                        <div key={j} className="flex gap-2 py-0.5">
+                                          <span className="font-mono text-primary shrink-0">{p.permit_number || `#${p.id}`}</span>
+                                          <span className="text-muted-foreground truncate">
+                                            {[p.applicant_name, p.permit_type?.replace(/_/g, " "), p.location, p.issue_date].filter(Boolean).join(" · ")}
+                                          </span>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
                                   <p className="whitespace-pre-wrap">{m.text}</p>
-                                  {m.terms && <p className="text-xs mt-2 opacity-70">Zoektermen: {m.terms.join(", ")} — {m.permits} resultaten</p>}
                                 </div>
                               </div>
                             ))}
