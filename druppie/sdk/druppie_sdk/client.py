@@ -20,7 +20,7 @@ class DruppieClient:
         modules = druppie.list_modules()
     """
 
-    def __init__(self, base_url: str | None = None, timeout: float = 60.0):
+    def __init__(self, base_url: str | None = None, timeout: float = 300.0):
         self._base_url = (base_url or os.environ.get("DRUPPIE_URL", "http://druppie-backend:8000")).rstrip("/")
         self._client = httpx.Client(timeout=timeout)
 
