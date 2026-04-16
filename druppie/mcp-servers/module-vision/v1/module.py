@@ -33,7 +33,7 @@ class VisionModule:
                 api_key=zai_key,
                 base_url=os.environ.get("ZAI_BASE_URL", ZAI_DEFAULT_BASE_URL),
             )
-            self._default_model = os.environ.get("ZAI_VISION_MODEL", ZAI_DEFAULT_VISION_MODEL)
+            self._default_model = os.environ.get("ZAI_VISION_MODEL") or ZAI_DEFAULT_VISION_MODEL
             logger.info("Vision provider: Z.AI (model=%s)", self._default_model)
         elif deepinfra_key:
             self._provider = "deepinfra"
