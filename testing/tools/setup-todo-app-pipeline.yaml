@@ -44,21 +44,9 @@ tool-test:
 
     # --- Business Analyst ---
     - agent: business_analyst
-      tool: builtin:hitl_ask_multiple_choice_question
-      arguments:
-        question: "What task management features do you need?"
-        choices:
-          - "Basic: add, complete, delete tasks"
-          - "Advanced: priorities, due dates, categories"
-          - "Full: subtasks, recurring tasks, collaboration"
-      mock: true
-      mock_result: "Basic: add, complete, delete tasks"
-
-    - agent: business_analyst
       tool: coding:make_design
       approval:
         status: approved
-        by: analyst
       arguments:
         path: docs/functional-design.md
         content: |
