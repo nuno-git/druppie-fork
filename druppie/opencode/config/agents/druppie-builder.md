@@ -70,62 +70,39 @@ AI capabilities are provided by the Druppie SDK (`druppie_sdk`), which is
 pre-installed in every deployed app. The SDK calls platform modules — API keys
 are managed centrally, never in individual apps.
 
-### Available Modules
+Which modules to use and how is defined in the **technical design** (written by
+the architect). Follow what the technical design specifies.
 
-| Module   | Tool          | What it does                        | Return key  |
-|----------|---------------|-------------------------------------|-------------|
-| `llm`    | `chat`        | LLM chat completion                 | `answer`    |
-| `vision` | `ocr`         | Extract text from images/PDFs       | `text`      |
-| `web`    | `search_web`  | Web search                          | results     |
-
-### CRITICAL — Common AI Mistakes to Avoid
-
-These mistakes have caused production failures:
-
-1. **ALWAYS use the Druppie SDK** — never use `openai`, `httpx`, or `requests`
-   to call LLM providers directly.
-2. **Do NOT hardcode API keys** (`DEEPINFRA_API_KEY`, `OPENAI_API_KEY`, etc.)
-3. **Do NOT add `openai` to requirements.txt**
-4. **There is no `app/ai.py`** — the SDK replaces it. Do NOT create one.
-
-### Backend (Python) — Druppie SDK
+### SDK Usage
 
 ```python
 from druppie_sdk import DruppieClient
 
 druppie = DruppieClient()
 
-# LLM chat completion
+# Call any module: druppie.call(module, tool, arguments)
 result = druppie.call("llm", "chat", {"prompt": "Hello", "system": "Be helpful"})
-answer = result["answer"]
 
-# Vision / OCR: extract text from an image or PDF
-result = druppie.call("vision", "ocr", {"image_source": "https://example.com/scan.png"})
-text = result["text"]
-
-# Web search
-result = druppie.call("web", "search_web", {"query": "search terms"})
-
-# Discover available modules
+# Discover available modules at runtime
 modules = druppie.list_modules()
 ```
 
-### SDK Rules
+### Rules
 
+- **ALWAYS use the Druppie SDK** — never use `openai`, `httpx`, or `requests`
+  to call LLM providers directly.
+- **Do NOT hardcode API keys** (`DEEPINFRA_API_KEY`, `OPENAI_API_KEY`, etc.)
+- **Do NOT add `openai` to requirements.txt**
+- **There is no `app/ai.py`** — the SDK replaces it. Do NOT create one.
 - `DRUPPIE_URL` env var is auto-injected at deploy time
 - `druppie-sdk/` is auto-copied into the build context by the deployer
 - The template Dockerfile already has `COPY druppie-sdk/` + `pip install` lines
 - Never modify the Dockerfile SDK lines
 
-### Backend API endpoints (already in `app/routes.py`)
+### Template API endpoints (already in `app/routes.py`)
 
-```
-POST /api/ai/chat   {"prompt": "...", "system": "..."}  -> {"answer": "..."}
-POST /api/ai/ocr    {"image_url": "https://..."}        -> {"text": "..."}
-```
-
-These endpoints are already implemented. Add custom AI endpoints to
-`app/routes.py` following this pattern:
+The template comes with built-in AI endpoints. Add custom ones following the
+same pattern:
 
 ```python
 @api.route("/ai/classify", methods=["POST"])
@@ -136,20 +113,6 @@ def ai_classify_endpoint():
         "system": "Classify this text into categories...",
     })
     return jsonify(result=result["answer"])
-```
-
-### Frontend (TypeScript)
-
-Call the backend proxy endpoints (AI stays server-side):
-
-```typescript
-import { aiChat, aiOcr } from "@/lib/ai";
-
-// Chat
-const answer = await aiChat("What is the capital of France?");
-
-// OCR
-const text = await aiOcr("https://example.com/receipt.png");
 ```
 
 ## Test Compliance

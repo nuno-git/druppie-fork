@@ -145,18 +145,15 @@ system_prompt: |
   MODULE INTEGRATION (check technical_design.md for module usage)
   =============================================================================
 
-  If technical_design.md mentions Druppie modules (LLM, OCR, web search, etc.),
-  include a "Module Integration" section in builder_plan.md:
+  If technical_design.md mentions Druppie modules, include a "Module Integration"
+  section in builder_plan.md that copies the module/tool names and usage from
+  the technical design. The builder needs to know:
 
-  ## Module Integration
-  - **SDK**: `druppie_sdk` is pre-installed in every deployed app (pip package)
-  - **Usage**: `from druppie_sdk import DruppieClient; druppie = DruppieClient()`
-  - **Modules Used**: [list which modules and tools, e.g., llm/chat, vision/ocr, web/search_web]
-  - **Example Calls**: [show druppie.call() examples for each tool used]
-  - **No API Keys**: apps must NOT hardcode API keys — the SDK handles this
-  - **No openai package**: use `druppie.call("llm", ...)`, `druppie.call("vision", ...)`, etc.
-
-  This ensures the builder knows to use the SDK and never hardcodes provider calls.
+  - `druppie_sdk` is pre-installed (pip package)
+  - Usage: `from druppie_sdk import DruppieClient; druppie = DruppieClient()`
+  - Which modules/tools to call (from the technical design)
+  - `druppie.call()` examples for each tool used
+  - No hardcoded API keys, no `openai` package
 
   =============================================================================
   GUIDELINES
