@@ -381,9 +381,9 @@ tool-test:
         files:
           - path: app/models.py
             content: |
-              from datetime import datetime, timezone
+              from datetime import datetime, date, timezone
 
-              from sqlalchemy import Column, DateTime, Integer, String, Text
+              from sqlalchemy import Column, Date, DateTime, Integer, String, Text
 
               from app.database import Base
 
@@ -392,12 +392,36 @@ tool-test:
                   __tablename__ = "permits"
 
                   id = Column(Integer, primary_key=True, autoincrement=True)
+                  # Core identification
                   permit_number = Column(String(100), nullable=True, index=True)
-                  applicant_name = Column(String(200), nullable=True, index=True)
-                  permit_type = Column(String(100), nullable=True, index=True)
-                  extracted_text = Column(Text, nullable=True)
                   source_file = Column(String(500), nullable=True)
-                  status = Column(String(50), default="processed")
+                  source_system = Column(String(100), nullable=True)
+
+                  # Extracted metadata (FR-03)
+                  applicant_name = Column(String(200), nullable=True, index=True)
+                  permit_holder_name = Column(String(200), nullable=True)
+                  issuer_name = Column(String(200), nullable=True)
+                  location = Column(String(300), nullable=True, index=True)
+                  issue_date = Column(Date, nullable=True)
+                  expiry_date = Column(Date, nullable=True)
+                  applicable_law = Column(String(200), nullable=True)
+                  work_type = Column(String(200), nullable=True)
+                  water_type = Column(String(200), nullable=True)
+                  embankment_type = Column(String(200), nullable=True)
+
+                  # AI classification
+                  permit_type = Column(String(100), nullable=True, index=True)
+
+                  # Archive compliance (FR-09/10/11, BR-01 to BR-06)
+                  archive_nomination = Column(String(50), nullable=True)  # bewaren / vernietigen
+                  retention_years = Column(Integer, nullable=True)
+                  archive_status = Column(String(100), nullable=True)
+
+                  # Full text
+                  extracted_text = Column(Text, nullable=True)
+
+                  # Processing
+                  status = Column(String(50), default="processing")
                   error_message = Column(Text, nullable=True)
                   upload_date = Column(DateTime, default=lambda: datetime.now(timezone.utc))
                   created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
@@ -405,7 +429,9 @@ tool-test:
           - path: app/routes.py
             content: |
               import base64
+              import json
               import logging
+              from datetime import date
               from flask import Blueprint, jsonify, request
               from druppie_sdk import DruppieClient
               from app.database import get_db
@@ -416,15 +442,71 @@ tool-test:
               druppie = DruppieClient()
 
               ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "gif", "bmp", "tiff", "webp", "pdf"}
-              MAX_FILE_SIZE = 25 * 1024 * 1024  # 25 MB
+              MAX_FILE_SIZE = 25 * 1024 * 1024
+
+              # Selectielijst waterschappen 2012 — simplified lookup
+              SELECTIELIJST = {
+                  "watervergunning_lozing": {"nominatie": "vernietigen", "jaren": 20},
+                  "watervergunning_onttrekking": {"nominatie": "vernietigen", "jaren": 20},
+                  "keurvergunning": {"nominatie": "vernietigen", "jaren": 10},
+                  "omgevingsvergunning": {"nominatie": "bewaren", "jaren": None},
+                  "lozingsvergunning": {"nominatie": "vernietigen", "jaren": 20},
+                  "onttrekkingsvergunning": {"nominatie": "vernietigen", "jaren": 15},
+                  "projectplan": {"nominatie": "bewaren", "jaren": None},
+                  "peilbesluit": {"nominatie": "bewaren", "jaren": None},
+                  "leggerwijziging": {"nominatie": "bewaren", "jaren": None},
+              }
+
+              METADATA_EXTRACTION_PROMPT = """Analyseer het volgende vergunningdocument en extraheer de metadata.
+              Antwoord ALLEEN met een JSON object met deze velden (laat leeg als niet gevonden):
+
+              {
+                "permit_number": "vergunningnummer (K-xxxx, L-xxxx, etc.)",
+                "applicant_name": "naam aanvrager",
+                "permit_holder_name": "naam vergunninghouder",
+                "issuer_name": "naam uitgever/verlener",
+                "location": "locatie/adres",
+                "issue_date": "uitgiftedatum (YYYY-MM-DD)",
+                "expiry_date": "geldigheidsdatum (YYYY-MM-DD)",
+                "applicable_law": "toepasselijke wet of regeling",
+                "work_type": "type werk/activiteit",
+                "water_type": "type oppervlaktewater",
+                "embankment_type": "type waterkering",
+                "permit_type": "type vergunning (watervergunning_lozing, keurvergunning, etc.)",
+                "source_system": "bronsysteem indien herkenbaar"
+              }
+
+              Document tekst:
+              """
 
 
-              def _allowed_file(filename):
-                  return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
+              def _allowed_file(fn):
+                  return "." in fn and fn.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
 
 
-              def _get_ext(filename):
-                  return filename.rsplit(".", 1)[1].lower() if "." in filename else ""
+              def _compute_archive_status(permit_type, issue_date_str):
+                  """Compute archive nomination, retention, and status per selectielijst."""
+                  info = SELECTIELIJST.get(permit_type, {"nominatie": "onbekend", "jaren": None})
+                  nominatie = info["nominatie"]
+                  jaren = info["jaren"]
+                  status = "onbekend"
+
+                  if nominatie == "bewaren":
+                      status = "te bewaren (oneindig)"
+                  elif nominatie == "vernietigen" and jaren and issue_date_str:
+                      try:
+                          issue = date.fromisoformat(issue_date_str)
+                          destroy_date = issue.replace(year=issue.year + jaren)
+                          if date.today() >= destroy_date:
+                              status = "te vernietigen"
+                          else:
+                              status = f"te bewaren tot {destroy_date.isoformat()}"
+                      except (ValueError, OverflowError):
+                          status = f"te bewaren ({jaren} jaar na uitgifte)"
+                  elif nominatie == "vernietigen":
+                      status = f"te bewaren ({jaren} jaar na uitgifte)" if jaren else "onbekend"
+
+                  return nominatie, jaren, status
 
 
               @api.route("/info")
@@ -435,94 +517,110 @@ tool-test:
 
               @api.route("/permits/upload", methods=["POST"])
               def upload_permit():
-                  """Upload a permit document — OCR + LLM classification via Druppie SDK.
-
-                  Accepts multipart/form-data with:
-                    file: the document (image or PDF)
-                    permit_number: optional
-                    applicant_name: optional
-                  """
+                  """Upload permit document — OCR + metadata extraction + archive classification."""
                   if "file" not in request.files:
-                      return jsonify(error="Geen bestand geüpload. Selecteer een scan of foto."), 400
-
+                      return jsonify(error="Geen bestand geüpload."), 400
                   file = request.files["file"]
                   if not file.filename or not _allowed_file(file.filename):
-                      return jsonify(error="Ongeldig bestandstype. Upload een afbeelding (JPG, PNG) of PDF."), 400
-
+                      return jsonify(error="Ongeldig bestandstype. Upload JPG, PNG of PDF."), 400
                   file_bytes = file.read()
                   if len(file_bytes) > MAX_FILE_SIZE:
-                      return jsonify(error="Bestand te groot. Maximaal 25 MB."), 400
-                  if len(file_bytes) == 0:
+                      return jsonify(error="Bestand te groot (max 25 MB)."), 400
+                  if not file_bytes:
                       return jsonify(error="Leeg bestand."), 400
 
-                  permit_number = request.form.get("permit_number", "").strip()
-                  applicant_name = request.form.get("applicant_name", "").strip()
-
-                  # Save record immediately so user sees it in the list
                   db = next(get_db())
                   permit = Permit(
-                      permit_number=permit_number,
-                      applicant_name=applicant_name,
+                      permit_number=request.form.get("permit_number", "").strip() or None,
+                      applicant_name=request.form.get("applicant_name", "").strip() or None,
                       source_file=file.filename,
+                      source_system=request.form.get("source_system", "upload").strip(),
                       status="processing",
                   )
                   db.add(permit)
                   db.commit()
                   db.refresh(permit)
 
-                  # Build base64 data URI for the vision module
-                  ext = _get_ext(file.filename)
-                  mime_map = {
-                      "jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png",
-                      "gif": "image/gif", "bmp": "image/bmp", "tiff": "image/tiff",
-                      "webp": "image/webp", "pdf": "application/pdf",
-                  }
+                  ext = file.filename.rsplit(".", 1)[1].lower()
+                  mime_map = {"jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png",
+                              "pdf": "application/pdf", "tiff": "image/tiff", "webp": "image/webp"}
                   mime = mime_map.get(ext, "application/octet-stream")
-                  b64 = base64.b64encode(file_bytes).decode("utf-8")
-                  data_uri = f"data:{mime};base64,{b64}"
+                  data_uri = f"data:{mime};base64,{base64.b64encode(file_bytes).decode()}"
 
                   try:
-                      # Step 1: OCR via druppie vision module
+                      # Step 1: OCR — extract text from document
                       ocr_result = druppie.call("vision", "ocr", {
                           "image_source": data_uri,
                           "prompt": "Extraheer alle tekst uit dit vergunningdocument. Bewaar de structuur.",
                       })
                       extracted_text = ocr_result.get("text", "")
-
-                      # Step 2: Classify permit type via druppie LLM module
-                      classify_result = druppie.call("llm", "chat", {
-                          "prompt": (
-                              "Classificeer het type vergunning op basis van onderstaande tekst. "
-                              "Antwoord met alleen het type, bijvoorbeeld: "
-                              "watervergunning_lozing, watervergunning_onttrekking, "
-                              "keurvergunning, omgevingsvergunning, lozingsvergunning, "
-                              "onttrekkingsvergunning, of 'onbekend' als je het niet kunt bepalen.\n\n"
-                              + extracted_text[:3000]
-                          ),
-                          "system": "Je bent een specialist in watervergunningen bij een Nederlands waterschap. Antwoord alleen met het type.",
-                      })
-                      permit_type = classify_result.get("answer", "onbekend").strip().lower()
-
                       permit.extracted_text = extracted_text
-                      permit.permit_type = permit_type
+
+                      # Step 2: LLM — extract structured metadata from text
+                      meta_result = druppie.call("llm", "chat", {
+                          "prompt": METADATA_EXTRACTION_PROMPT + extracted_text[:4000],
+                          "system": "Je bent een metadata-extractie specialist voor Nederlandse watervergunningen. Antwoord ALLEEN met valid JSON.",
+                      })
+                      raw_answer = meta_result.get("answer", "{}")
+
+                      # Parse JSON from LLM response (handle markdown code blocks)
+                      json_str = raw_answer
+                      if "```" in json_str:
+                          json_str = json_str.split("```")[1]
+                          if json_str.startswith("json"):
+                              json_str = json_str[4:]
+                          json_str = json_str.strip()
+
+                      try:
+                          meta = json.loads(json_str)
+                      except json.JSONDecodeError:
+                          meta = {}
+                          logger.warning("Failed to parse metadata JSON: %s", raw_answer[:200])
+
+                      # Apply extracted metadata (LLM fills gaps, user input takes priority)
+                      permit.permit_number = permit.permit_number or meta.get("permit_number") or None
+                      permit.applicant_name = permit.applicant_name or meta.get("applicant_name") or None
+                      permit.permit_holder_name = meta.get("permit_holder_name") or None
+                      permit.issuer_name = meta.get("issuer_name") or None
+                      permit.location = meta.get("location") or None
+                      permit.applicable_law = meta.get("applicable_law") or None
+                      permit.work_type = meta.get("work_type") or None
+                      permit.water_type = meta.get("water_type") or None
+                      permit.embankment_type = meta.get("embankment_type") or None
+                      permit.permit_type = meta.get("permit_type", "onbekend") or "onbekend"
+                      permit.source_system = permit.source_system or meta.get("source_system") or "upload"
+
+                      # Parse dates
+                      for field, key in [("issue_date", "issue_date"), ("expiry_date", "expiry_date")]:
+                          val = meta.get(key)
+                          if val:
+                              try:
+                                  setattr(permit, field, date.fromisoformat(val))
+                              except (ValueError, TypeError):
+                                  pass
+
+                      # Step 3: Compute archive status (BR-01 to BR-06)
+                      nominatie, jaren, arch_status = _compute_archive_status(
+                          permit.permit_type,
+                          permit.issue_date.isoformat() if permit.issue_date else None,
+                      )
+                      permit.archive_nomination = nominatie
+                      permit.retention_years = jaren
+                      permit.archive_status = arch_status
                       permit.status = "processed"
 
                   except Exception as e:
-                      logger.error("OCR/classification failed for permit %s: %s", permit.id, e)
+                      logger.error("Processing failed for permit %s: %s", permit.id, e)
                       permit.status = "error"
                       permit.error_message = str(e)[:500]
-                      permit.extracted_text = f"Error: {e}"
-                      permit.permit_type = "onbekend"
 
                   db.commit()
                   db.refresh(permit)
-
                   return jsonify(_permit_to_dict(permit))
 
 
               @api.route("/permits")
               def list_permits():
-                  """List all permits, newest first."""
                   db = next(get_db())
                   permits = db.query(Permit).order_by(Permit.created_at.desc()).all()
                   return jsonify([_permit_summary(p) for p in permits])
@@ -530,21 +628,19 @@ tool-test:
 
               @api.route("/permits/<int:permit_id>")
               def get_permit(permit_id):
-                  """Get full permit details including extracted text."""
                   db = next(get_db())
                   permit = db.query(Permit).filter(Permit.id == permit_id).first()
                   if not permit:
-                      return jsonify(error="Vergunning niet gevonden"), 404
+                      return jsonify(error="Niet gevonden"), 404
                   return jsonify(_permit_to_dict(permit))
 
 
               @api.route("/permits/<int:permit_id>", methods=["DELETE"])
               def delete_permit(permit_id):
-                  """Delete a permit."""
                   db = next(get_db())
                   permit = db.query(Permit).filter(Permit.id == permit_id).first()
                   if not permit:
-                      return jsonify(error="Vergunning niet gevonden"), 404
+                      return jsonify(error="Niet gevonden"), 404
                   db.delete(permit)
                   db.commit()
                   return jsonify(ok=True)
@@ -552,30 +648,118 @@ tool-test:
 
               @api.route("/permits/search")
               def search_permits():
-                  """Search permits by keyword across all text fields."""
+                  """Search across all metadata fields (FR-01)."""
                   q = request.args.get("q", "").strip()
                   db = next(get_db())
-                  if q:
-                      like = f"%{q}%"
+                  if not q:
+                      return jsonify([_permit_summary(p) for p in db.query(Permit).order_by(Permit.created_at.desc()).all()])
+                  like = f"%{q}%"
+                  results = db.query(Permit).filter(
+                      Permit.permit_number.ilike(like)
+                      | Permit.applicant_name.ilike(like)
+                      | Permit.permit_holder_name.ilike(like)
+                      | Permit.location.ilike(like)
+                      | Permit.permit_type.ilike(like)
+                      | Permit.applicable_law.ilike(like)
+                      | Permit.work_type.ilike(like)
+                      | Permit.water_type.ilike(like)
+                      | Permit.extracted_text.ilike(like)
+                  ).order_by(Permit.created_at.desc()).all()
+                  return jsonify([_permit_summary(p) for p in results])
+
+
+              @api.route("/permits/chat", methods=["POST"])
+              def chat_permits():
+                  """Agentic chat — searches permits and answers questions using LLM.
+
+                  The agent: receives a question, writes search queries, retrieves
+                  matching permits, and synthesizes an answer from the results.
+                  """
+                  data = request.get_json(silent=True)
+                  if not data or "question" not in data:
+                      return jsonify(error="Stel een vraag."), 400
+
+                  question = data["question"].strip()
+                  db = next(get_db())
+
+                  # Agent Step 1: LLM generates search queries from the question
+                  query_result = druppie.call("llm", "chat", {
+                      "prompt": (
+                          "De gebruiker stelt een vraag over vergunningen in een database. "
+                          "Genereer 1-3 zoektermen (komma-gescheiden) waarmee relevante "
+                          "vergunningen gevonden kunnen worden. Antwoord ALLEEN met de zoektermen.\n\n"
+                          f"Vraag: {question}"
+                      ),
+                      "system": "Je genereert zoektermen voor een vergunningendatabase. Antwoord alleen met komma-gescheiden zoektermen.",
+                  })
+                  search_terms = [t.strip() for t in query_result.get("answer", question).split(",") if t.strip()]
+
+                  # Agent Step 2: Search the database with each term
+                  found_permits = {}
+                  for term in search_terms[:3]:
+                      like = f"%{term}%"
                       results = db.query(Permit).filter(
                           Permit.permit_number.ilike(like)
                           | Permit.applicant_name.ilike(like)
+                          | Permit.permit_holder_name.ilike(like)
+                          | Permit.location.ilike(like)
                           | Permit.permit_type.ilike(like)
+                          | Permit.applicable_law.ilike(like)
+                          | Permit.work_type.ilike(like)
                           | Permit.extracted_text.ilike(like)
-                      ).order_by(Permit.created_at.desc()).all()
+                      ).limit(10).all()
+                      for p in results:
+                          found_permits[p.id] = p
+
+                  # Build context from found permits
+                  if found_permits:
+                      context_parts = []
+                      for p in found_permits.values():
+                          parts = [f"Vergunning #{p.id}: {p.permit_number or 'geen nummer'}"]
+                          if p.applicant_name: parts.append(f"  Aanvrager: {p.applicant_name}")
+                          if p.permit_type: parts.append(f"  Type: {p.permit_type}")
+                          if p.location: parts.append(f"  Locatie: {p.location}")
+                          if p.issue_date: parts.append(f"  Datum: {p.issue_date}")
+                          if p.archive_status: parts.append(f"  Archiefstatus: {p.archive_status}")
+                          if p.applicable_law: parts.append(f"  Wet: {p.applicable_law}")
+                          if p.extracted_text:
+                              parts.append(f"  Tekst: {p.extracted_text[:500]}")
+                          context_parts.append("\n".join(parts))
+                      context = "\n\n".join(context_parts)
                   else:
-                      results = db.query(Permit).order_by(Permit.created_at.desc()).all()
-                  return jsonify([_permit_summary(p) for p in results])
+                      context = "Geen vergunningen gevonden in de database."
+
+                  # Agent Step 3: LLM answers the question using found permits
+                  answer_result = druppie.call("llm", "chat", {
+                      "prompt": (
+                          f"Beantwoord de volgende vraag op basis van de vergunningendata hieronder.\n\n"
+                          f"Vraag: {question}\n\n"
+                          f"Gevonden vergunningen ({len(found_permits)} resultaten, "
+                          f"zoektermen: {', '.join(search_terms)}):\n\n{context}"
+                      ),
+                      "system": (
+                          "Je bent een assistent voor waterschap-medewerkers. Beantwoord vragen "
+                          "over vergunningen op basis van de aangeleverde data. Wees specifiek "
+                          "en verwijs naar vergunningnummers. Als de data onvoldoende is, zeg dat."
+                      ),
+                  })
+
+                  return jsonify({
+                      "answer": answer_result.get("answer", ""),
+                      "search_terms": search_terms,
+                      "permits_found": len(found_permits),
+                      "permit_ids": list(found_permits.keys()),
+                  })
 
 
               def _permit_summary(p):
                   return {
-                      "id": p.id,
-                      "permit_number": p.permit_number,
-                      "applicant_name": p.applicant_name,
-                      "permit_type": p.permit_type,
-                      "source_file": p.source_file,
-                      "status": p.status,
+                      "id": p.id, "permit_number": p.permit_number,
+                      "applicant_name": p.applicant_name, "permit_type": p.permit_type,
+                      "location": p.location, "source_file": p.source_file,
+                      "source_system": p.source_system, "status": p.status,
+                      "archive_status": p.archive_status,
+                      "issue_date": p.issue_date.isoformat() if p.issue_date else None,
                       "upload_date": p.upload_date.isoformat() if p.upload_date else None,
                   }
 
@@ -583,9 +767,35 @@ tool-test:
               def _permit_to_dict(p):
                   return {
                       **_permit_summary(p),
-                      "extracted_text": p.extracted_text,
-                      "error_message": p.error_message,
+                      "permit_holder_name": p.permit_holder_name,
+                      "issuer_name": p.issuer_name,
+                      "expiry_date": p.expiry_date.isoformat() if p.expiry_date else None,
+                      "applicable_law": p.applicable_law,
+                      "work_type": p.work_type, "water_type": p.water_type,
+                      "embankment_type": p.embankment_type,
+                      "archive_nomination": p.archive_nomination,
+                      "retention_years": p.retention_years,
+                      "extracted_text": p.extracted_text, "error_message": p.error_message,
                   }
+
+          - path: app/archive_rules.py
+            content: |
+              """Selectielijst waterschappen 2012 — archive rules.
+
+              Used by the frontend to show archive status without needing
+              a backend call for each permit.
+              """
+              SELECTIELIJST = {
+                  "watervergunning_lozing": {"nominatie": "vernietigen", "jaren": 20},
+                  "watervergunning_onttrekking": {"nominatie": "vernietigen", "jaren": 20},
+                  "keurvergunning": {"nominatie": "vernietigen", "jaren": 10},
+                  "omgevingsvergunning": {"nominatie": "bewaren", "jaren": None},
+                  "lozingsvergunning": {"nominatie": "vernietigen", "jaren": 20},
+                  "onttrekkingsvergunning": {"nominatie": "vernietigen", "jaren": 15},
+                  "projectplan": {"nominatie": "bewaren", "jaren": None},
+                  "peilbesluit": {"nominatie": "bewaren", "jaren": None},
+                  "leggerwijziging": {"nominatie": "bewaren", "jaren": None},
+              }
 
           - path: frontend/src/App.tsx
             content: |
@@ -595,282 +805,285 @@ tool-test:
               import { Input } from "@/components/ui/input"
 
               interface PermitSummary {
-                id: number
-                permit_number: string
-                applicant_name: string
-                permit_type: string
-                source_file: string
-                status: string
-                upload_date: string
+                id: number; permit_number: string; applicant_name: string
+                permit_type: string; location: string; source_file: string
+                source_system: string; status: string; archive_status: string
+                issue_date: string; upload_date: string
               }
 
               interface PermitDetail extends PermitSummary {
-                extracted_text: string | null
-                error_message: string | null
+                permit_holder_name: string; issuer_name: string
+                expiry_date: string; applicable_law: string
+                work_type: string; water_type: string; embankment_type: string
+                archive_nomination: string; retention_years: number | null
+                extracted_text: string | null; error_message: string | null
               }
 
-              const STATUS_LABELS: Record<string, { label: string; color: string }> = {
-                processing: { label: "Verwerken...", color: "text-blue-600 bg-blue-50 border-blue-200" },
-                processed: { label: "Verwerkt", color: "text-green-700 bg-green-50 border-green-200" },
-                error: { label: "Fout", color: "text-red-700 bg-red-50 border-red-200" },
+              interface ChatMessage { role: "user" | "assistant"; text: string; permits?: number; terms?: string[] }
+
+              const STATUS = {
+                processing: { label: "Verwerken...", cls: "text-blue-600 bg-blue-50 border-blue-200" },
+                processed: { label: "Verwerkt", cls: "text-green-700 bg-green-50 border-green-200" },
+                error: { label: "Fout", cls: "text-red-700 bg-red-50 border-red-200" },
+              } as Record<string, { label: string; cls: string }>
+
+              const ARCHIVE_CLS: Record<string, string> = {
+                "te vernietigen": "text-red-700 bg-red-50",
+                "te bewaren (oneindig)": "text-green-700 bg-green-50",
               }
 
               function App() {
+                const [tab, setTab] = useState<"search" | "upload" | "chat">("search")
                 const [permits, setPermits] = useState<PermitSummary[]>([])
-                const [searchQuery, setSearchQuery] = useState("")
-                const [permitNumber, setPermitNumber] = useState("")
-                const [applicantName, setApplicantName] = useState("")
-                const [selectedFile, setSelectedFile] = useState<File | null>(null)
-                const [uploading, setUploading] = useState(false)
-                const [uploadError, setUploadError] = useState<string | null>(null)
+                const [query, setQuery] = useState("")
                 const [detail, setDetail] = useState<PermitDetail | null>(null)
-                const [dragActive, setDragActive] = useState(false)
                 const [loading, setLoading] = useState(true)
-                const fileInputRef = useRef<HTMLInputElement>(null)
+                // Upload
+                const [file, setFile] = useState<File | null>(null)
+                const [permitNum, setPermitNum] = useState("")
+                const [applicant, setApplicant] = useState("")
+                const [uploading, setUploading] = useState(false)
+                const [uploadErr, setUploadErr] = useState<string | null>(null)
+                const [dragOver, setDragOver] = useState(false)
+                const fileRef = useRef<HTMLInputElement>(null)
+                // Chat
+                const [chatMessages, setChatMessages] = useState<ChatMessage[]>([])
+                const [chatInput, setChatInput] = useState("")
+                const [chatLoading, setChatLoading] = useState(false)
+                const chatEndRef = useRef<HTMLDivElement>(null)
 
-                const loadPermits = useCallback(async (query = "") => {
+                const load = useCallback(async (q = "") => {
                   try {
-                    const url = query
-                      ? `/api/permits/search?q=${encodeURIComponent(query)}`
-                      : "/api/permits"
-                    const res = await fetch(url)
-                    if (res.ok) setPermits(await res.json())
-                  } finally {
-                    setLoading(false)
-                  }
+                    const url = q ? `/api/permits/search?q=${encodeURIComponent(q)}` : "/api/permits"
+                    const r = await fetch(url); if (r.ok) setPermits(await r.json())
+                  } finally { setLoading(false) }
                 }, [])
 
-                useEffect(() => { loadPermits() }, [loadPermits])
-
-                // Poll for processing permits
+                useEffect(() => { load() }, [load])
                 useEffect(() => {
-                  const hasProcessing = permits.some(p => p.status === "processing")
-                  if (!hasProcessing) return
-                  const id = setInterval(() => loadPermits(searchQuery), 3000)
-                  return () => clearInterval(id)
-                }, [permits, searchQuery, loadPermits])
+                  if (!permits.some(p => p.status === "processing")) return
+                  const id = setInterval(() => load(query), 3000); return () => clearInterval(id)
+                }, [permits, query, load])
+                useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: "smooth" }) }, [chatMessages])
 
-                const handleUpload = async () => {
-                  if (!selectedFile) return
-                  setUploading(true)
-                  setUploadError(null)
+                const upload = async () => {
+                  if (!file) return; setUploading(true); setUploadErr(null)
                   try {
-                    const formData = new FormData()
-                    formData.append("file", selectedFile)
-                    if (permitNumber) formData.append("permit_number", permitNumber)
-                    if (applicantName) formData.append("applicant_name", applicantName)
-
-                    const res = await fetch("/api/permits/upload", { method: "POST", body: formData })
-                    const data = await res.json()
-                    if (!res.ok) {
-                      setUploadError(data.error || "Upload mislukt")
-                      return
-                    }
-                    setSelectedFile(null)
-                    setPermitNumber("")
-                    setApplicantName("")
-                    if (fileInputRef.current) fileInputRef.current.value = ""
-                    loadPermits(searchQuery)
-                  } catch {
-                    setUploadError("Verbindingsfout bij uploaden")
-                  } finally {
-                    setUploading(false)
-                  }
+                    const fd = new FormData(); fd.append("file", file)
+                    if (permitNum) fd.append("permit_number", permitNum)
+                    if (applicant) fd.append("applicant_name", applicant)
+                    const r = await fetch("/api/permits/upload", { method: "POST", body: fd })
+                    const d = await r.json()
+                    if (!r.ok) { setUploadErr(d.error); return }
+                    setFile(null); setPermitNum(""); setApplicant("")
+                    if (fileRef.current) fileRef.current.value = ""
+                    load(query); setTab("search")
+                  } catch { setUploadErr("Verbindingsfout") } finally { setUploading(false) }
                 }
 
-                const handleDrop = (e: React.DragEvent) => {
-                  e.preventDefault()
-                  setDragActive(false)
-                  const file = e.dataTransfer.files?.[0]
-                  if (file) setSelectedFile(file)
+                const sendChat = async () => {
+                  if (!chatInput.trim()) return
+                  const q = chatInput.trim(); setChatInput(""); setChatLoading(true)
+                  setChatMessages(m => [...m, { role: "user", text: q }])
+                  try {
+                    const r = await fetch("/api/permits/chat", {
+                      method: "POST", headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ question: q }),
+                    })
+                    const d = await r.json()
+                    setChatMessages(m => [...m, {
+                      role: "assistant", text: d.answer || d.error || "Geen antwoord",
+                      permits: d.permits_found, terms: d.search_terms,
+                    }])
+                  } catch { setChatMessages(m => [...m, { role: "assistant", text: "Verbindingsfout" }]) }
+                  finally { setChatLoading(false) }
                 }
 
                 const openDetail = async (id: number) => {
-                  const res = await fetch(`/api/permits/${id}`)
-                  if (res.ok) setDetail(await res.json())
+                  const r = await fetch(`/api/permits/${id}`); if (r.ok) setDetail(await r.json())
                 }
-
-                const deletePermit = async (id: number) => {
-                  if (!confirm("Weet u zeker dat u deze vergunning wilt verwijderen?")) return
+                const del = async (id: number) => {
+                  if (!confirm("Verwijderen?")) return
                   await fetch(`/api/permits/${id}`, { method: "DELETE" })
-                  setDetail(null)
-                  loadPermits(searchQuery)
+                  setDetail(null); load(query)
+                }
+                const fmt = (iso: string | null) => {
+                  if (!iso) return "—"
+                  try { return new Date(iso).toLocaleDateString("nl-NL", { dateStyle: "long" }) } catch { return iso }
+                }
+                const fmtFull = (iso: string | null) => {
+                  if (!iso) return "—"
+                  try { return new Date(iso).toLocaleString("nl-NL", { dateStyle: "long", timeStyle: "short" }) } catch { return iso }
                 }
 
-                const handleSearch = () => { setLoading(true); loadPermits(searchQuery) }
-                const clearSearch = () => { setSearchQuery(""); setLoading(true); loadPermits() }
-
-                const formatDate = (iso: string) => {
-                  try { return new Date(iso).toLocaleString("nl-NL", { dateStyle: "long", timeStyle: "short" }) }
-                  catch { return iso }
-                }
+                const MetaRow = ({ label, value }: { label: string; value: string | null | undefined }) =>
+                  value ? <div><p className="text-xs text-muted-foreground uppercase font-medium">{label}</p><p className="text-sm">{value}</p></div> : null
 
                 return (
                   <div className="min-h-screen bg-background">
                     <header className="border-b bg-card">
-                      <div className="container mx-auto flex h-16 items-center justify-between px-4">
-                        <h1 className="text-xl font-bold">Vergunningzoeker</h1>
-                        <span className="text-xs text-muted-foreground">{permits.length} vergunning{permits.length !== 1 ? "en" : ""}</span>
+                      <div className="container mx-auto flex h-14 items-center justify-between px-4">
+                        <h1 className="text-lg font-bold">Vergunningzoeker</h1>
+                        <div className="flex gap-1">
+                          {(["search", "upload", "chat"] as const).map(t => (
+                            <Button key={t} variant={tab === t ? "default" : "ghost"} size="sm" onClick={() => setTab(t)}>
+                              {t === "search" ? `Zoeken (${permits.length})` : t === "upload" ? "Uploaden" : "Assistent"}
+                            </Button>
+                          ))}
+                        </div>
                       </div>
                     </header>
 
-                    <main className="container mx-auto px-4 py-6 max-w-4xl space-y-6">
-                      {/* Upload section */}
-                      <Card>
-                        <CardHeader>
-                          <CardTitle>Document uploaden</CardTitle>
-                          <CardDescription>Upload een scan, foto of PDF van een vergunningdocument. Het systeem extraheert automatisch de tekst (OCR) en classificeert het type vergunning.</CardDescription>
-                        </CardHeader>
-                        <CardContent className="space-y-3">
-                          <div
-                            className={`border-2 border-dashed rounded-lg p-6 text-center cursor-pointer transition-all ${
-                              dragActive ? "border-primary bg-primary/5 scale-[1.01]"
-                              : selectedFile ? "border-primary/50 bg-primary/5"
-                              : "border-muted-foreground/25 hover:border-primary/50"
-                            }`}
-                            onDragOver={e => { e.preventDefault(); setDragActive(true) }}
-                            onDragLeave={() => setDragActive(false)}
-                            onDrop={handleDrop}
-                            onClick={() => !uploading && fileInputRef.current?.click()}
-                          >
-                            <input ref={fileInputRef} type="file" accept="image/*,.pdf" className="hidden"
-                              onChange={e => { if (e.target.files?.[0]) setSelectedFile(e.target.files[0]) }} />
-                            {selectedFile ? (
-                              <div>
-                                <p className="font-medium">{selectedFile.name}</p>
-                                <p className="text-sm text-muted-foreground">{(selectedFile.size / 1024).toFixed(0)} KB — klik om te wijzigen</p>
-                              </div>
-                            ) : (
-                              <div>
-                                <p className="font-medium text-muted-foreground">Sleep een bestand hierheen of klik om te selecteren</p>
-                                <p className="text-xs text-muted-foreground mt-1">JPG, PNG of PDF — maximaal 25 MB</p>
-                              </div>
-                            )}
-                          </div>
+                    <main className="container mx-auto px-4 py-6 max-w-4xl space-y-4">
 
-                          <div className="grid grid-cols-2 gap-2">
-                            <Input value={permitNumber} onChange={e => setPermitNumber(e.target.value)} placeholder="Vergunningnummer (optioneel)" disabled={uploading} />
-                            <Input value={applicantName} onChange={e => setApplicantName(e.target.value)} placeholder="Aanvrager (optioneel)" disabled={uploading} />
-                          </div>
-
-                          <Button onClick={handleUpload} disabled={uploading || !selectedFile} className="w-full">
-                            {uploading ? "Bezig met OCR en classificatie — dit duurt even..." : "Upload & Analyseer"}
-                          </Button>
-
-                          {uploadError && (
-                            <div className="text-sm text-destructive bg-destructive/10 border border-destructive/20 rounded-md p-3">{uploadError}</div>
-                          )}
-                        </CardContent>
-                      </Card>
-
-                      {/* Search section */}
-                      <Card>
-                        <CardContent className="pt-6">
-                          <div className="flex gap-2">
-                            <Input value={searchQuery}
-                              onChange={e => setSearchQuery(e.target.value)}
-                              onKeyDown={e => e.key === "Enter" && handleSearch()}
-                              placeholder="Zoek op nummer, aanvrager, type of tekst..." />
-                            <Button onClick={handleSearch}>Zoek</Button>
-                            {searchQuery && <Button variant="outline" onClick={clearSearch}>Wis</Button>}
-                          </div>
-                        </CardContent>
-                      </Card>
-
-                      {/* Permits list */}
-                      <Card>
-                        <CardHeader>
-                          <CardTitle>Vergunningen</CardTitle>
-                        </CardHeader>
-                        <CardContent>
-                          {loading ? (
-                            <p className="text-muted-foreground text-center py-4">Laden...</p>
-                          ) : permits.length === 0 ? (
-                            <p className="text-muted-foreground text-center py-4">
-                              {searchQuery ? "Geen resultaten gevonden." : "Nog geen vergunningen geüpload."}
-                            </p>
-                          ) : (
-                            <div className="divide-y">
-                              {permits.map(p => {
-                                const st = STATUS_LABELS[p.status] || STATUS_LABELS.processed
-                                return (
-                                  <div key={p.id}
-                                    className="flex items-center gap-3 py-3 cursor-pointer hover:bg-muted/50 -mx-2 px-2 rounded transition-colors"
-                                    onClick={() => openDetail(p.id)}>
-                                    <div className="flex-1 min-w-0">
-                                      <div className="flex items-center gap-2">
-                                        <span className="font-medium truncate">{p.permit_number || p.source_file}</span>
-                                        <span className={`text-xs px-1.5 py-0.5 rounded border ${st.color}`}>{st.label}</span>
-                                      </div>
-                                      <div className="text-sm text-muted-foreground flex gap-3 mt-0.5">
-                                        {p.applicant_name && <span>{p.applicant_name}</span>}
-                                        <span>{p.source_file}</span>
-                                      </div>
+                      {/* ---- SEARCH TAB ---- */}
+                      {tab === "search" && <>
+                        <Card>
+                          <CardContent className="pt-5">
+                            <div className="flex gap-2">
+                              <Input value={query} onChange={e => setQuery(e.target.value)}
+                                onKeyDown={e => e.key === "Enter" && load(query)}
+                                placeholder="Zoek op nummer, aanvrager, locatie, type, wet..." />
+                              <Button onClick={() => load(query)}>Zoek</Button>
+                              {query && <Button variant="outline" onClick={() => { setQuery(""); load() }}>Wis</Button>}
+                            </div>
+                          </CardContent>
+                        </Card>
+                        <Card>
+                          <CardContent className="pt-5">
+                            {loading ? <p className="text-center text-muted-foreground py-4">Laden...</p>
+                            : permits.length === 0 ? <p className="text-center text-muted-foreground py-4">{query ? "Geen resultaten." : "Nog geen vergunningen."}</p>
+                            : <div className="divide-y">{permits.map(p => {
+                              const s = STATUS[p.status] || STATUS.processed
+                              const a = p.archive_status ? (ARCHIVE_CLS[p.archive_status] || "text-amber-700 bg-amber-50") : ""
+                              return (
+                                <div key={p.id} className="flex items-center gap-3 py-3 cursor-pointer hover:bg-muted/50 -mx-2 px-2 rounded" onClick={() => openDetail(p.id)}>
+                                  <div className="flex-1 min-w-0">
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                      <span className="font-medium">{p.permit_number || p.source_file}</span>
+                                      <span className={`text-[10px] px-1.5 py-0.5 rounded border ${s.cls}`}>{s.label}</span>
+                                      {p.archive_status && <span className={`text-[10px] px-1.5 py-0.5 rounded ${a}`}>{p.archive_status}</span>}
                                     </div>
-                                    <div className="text-right shrink-0">
-                                      {p.permit_type && p.permit_type !== "onbekend" && (
-                                        <div className="text-xs font-medium text-primary">{p.permit_type.replace(/_/g, " ")}</div>
-                                      )}
-                                      <div className="text-xs text-muted-foreground">{formatDate(p.upload_date)}</div>
+                                    <div className="text-xs text-muted-foreground flex gap-2 mt-0.5 flex-wrap">
+                                      {p.applicant_name && <span>{p.applicant_name}</span>}
+                                      {p.location && <span>{p.location}</span>}
+                                      {p.permit_type && p.permit_type !== "onbekend" && <span className="text-primary">{p.permit_type.replace(/_/g, " ")}</span>}
                                     </div>
                                   </div>
-                                )
-                              })}
-                            </div>
-                          )}
+                                  <div className="text-xs text-muted-foreground shrink-0 text-right">
+                                    {p.issue_date && <div>{fmt(p.issue_date)}</div>}
+                                    <div>{p.source_system}</div>
+                                  </div>
+                                </div>
+                              )
+                            })}</div>}
+                          </CardContent>
+                        </Card>
+                      </>}
+
+                      {/* ---- UPLOAD TAB ---- */}
+                      {tab === "upload" && <Card>
+                        <CardHeader>
+                          <CardTitle>Document uploaden</CardTitle>
+                          <CardDescription>Upload een scan, foto of PDF. Het systeem extraheert automatisch metadata (OCR), classificeert het type en berekent de archiefstatus.</CardDescription>
+                        </CardHeader>
+                        <CardContent className="space-y-3">
+                          <div className={`border-2 border-dashed rounded-lg p-6 text-center cursor-pointer transition-all ${dragOver ? "border-primary bg-primary/5" : file ? "border-primary/50 bg-primary/5" : "border-muted-foreground/25 hover:border-primary/50"}`}
+                            onDragOver={e => { e.preventDefault(); setDragOver(true) }} onDragLeave={() => setDragOver(false)}
+                            onDrop={e => { e.preventDefault(); setDragOver(false); e.dataTransfer.files?.[0] && setFile(e.dataTransfer.files[0]) }}
+                            onClick={() => !uploading && fileRef.current?.click()}>
+                            <input ref={fileRef} type="file" accept="image/*,.pdf" className="hidden" onChange={e => e.target.files?.[0] && setFile(e.target.files[0])} />
+                            {file ? <div><p className="font-medium">{file.name}</p><p className="text-sm text-muted-foreground">{(file.size/1024).toFixed(0)} KB</p></div>
+                            : <div><p className="text-muted-foreground">Sleep een bestand hierheen of klik</p><p className="text-xs text-muted-foreground mt-1">JPG, PNG of PDF — max 25 MB</p></div>}
+                          </div>
+                          <div className="grid grid-cols-2 gap-2">
+                            <Input value={permitNum} onChange={e => setPermitNum(e.target.value)} placeholder="Vergunningnummer (optioneel)" disabled={uploading} />
+                            <Input value={applicant} onChange={e => setApplicant(e.target.value)} placeholder="Aanvrager (optioneel)" disabled={uploading} />
+                          </div>
+                          <Button onClick={upload} disabled={uploading || !file} className="w-full">
+                            {uploading ? "Bezig met OCR, metadata-extractie en classificatie..." : "Upload & Analyseer"}
+                          </Button>
+                          {uploadErr && <div className="text-sm text-destructive bg-destructive/10 border border-destructive/20 rounded-md p-3">{uploadErr}</div>}
                         </CardContent>
-                      </Card>
+                      </Card>}
 
-                      {/* Detail modal */}
-                      {detail && (
-                        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setDetail(null)}>
-                          <Card className="w-full max-w-3xl max-h-[85vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
-                            <CardHeader>
-                              <div className="flex items-center justify-between">
-                                <CardTitle>{detail.permit_number || detail.source_file}</CardTitle>
-                                <div className="flex gap-2">
-                                  <Button variant="destructive" size="sm" onClick={() => deletePermit(detail.id)}>Verwijderen</Button>
-                                  <Button variant="outline" size="sm" onClick={() => setDetail(null)}>Sluiten</Button>
+                      {/* ---- CHAT TAB ---- */}
+                      {tab === "chat" && <Card className="flex flex-col" style={{ minHeight: "70vh" }}>
+                        <CardHeader>
+                          <CardTitle>Vergunning Assistent</CardTitle>
+                          <CardDescription>Stel vragen over de vergunningen in het systeem. De assistent doorzoekt de database en geeft antwoord op basis van de gevonden documenten.</CardDescription>
+                        </CardHeader>
+                        <CardContent className="flex-1 flex flex-col">
+                          <div className="flex-1 overflow-y-auto space-y-3 mb-4 min-h-[200px]">
+                            {chatMessages.length === 0 && <p className="text-muted-foreground text-center py-8">Stel een vraag, bijvoorbeeld: "Welke vergunningen zijn verleend in Gorinchem?" of "Hoeveel keurvergunningen staan er in het systeem?"</p>}
+                            {chatMessages.map((m, i) => (
+                              <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
+                                <div className={`max-w-[80%] rounded-lg p-3 text-sm ${m.role === "user" ? "bg-primary text-primary-foreground" : "bg-muted"}`}>
+                                  <p className="whitespace-pre-wrap">{m.text}</p>
+                                  {m.terms && <p className="text-xs mt-2 opacity-70">Zoektermen: {m.terms.join(", ")} — {m.permits} resultaten</p>}
                                 </div>
                               </div>
-                            </CardHeader>
-                            <CardContent className="space-y-4">
-                              <div className="grid grid-cols-2 gap-4">
-                                <div>
-                                  <p className="text-xs text-muted-foreground uppercase font-medium">Aanvrager</p>
-                                  <p>{detail.applicant_name || "Niet opgegeven"}</p>
-                                </div>
-                                <div>
-                                  <p className="text-xs text-muted-foreground uppercase font-medium">Type (AI)</p>
-                                  <p>{detail.permit_type ? detail.permit_type.replace(/_/g, " ") : "Onbekend"}</p>
-                                </div>
-                                <div>
-                                  <p className="text-xs text-muted-foreground uppercase font-medium">Bronbestand</p>
-                                  <p>{detail.source_file}</p>
-                                </div>
-                                <div>
-                                  <p className="text-xs text-muted-foreground uppercase font-medium">Upload datum</p>
-                                  <p>{formatDate(detail.upload_date)}</p>
-                                </div>
+                            ))}
+                            {chatLoading && <div className="flex justify-start"><div className="bg-muted rounded-lg p-3 text-sm text-muted-foreground">Zoeken en analyseren...</div></div>}
+                            <div ref={chatEndRef} />
+                          </div>
+                          <div className="flex gap-2">
+                            <Input value={chatInput} onChange={e => setChatInput(e.target.value)}
+                              onKeyDown={e => e.key === "Enter" && !chatLoading && sendChat()}
+                              placeholder="Stel een vraag over vergunningen..." disabled={chatLoading} />
+                            <Button onClick={sendChat} disabled={chatLoading || !chatInput.trim()}>Verstuur</Button>
+                          </div>
+                        </CardContent>
+                      </Card>}
+
+                      {/* ---- DETAIL MODAL ---- */}
+                      {detail && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setDetail(null)}>
+                        <Card className="w-full max-w-3xl max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+                          <CardHeader>
+                            <div className="flex items-center justify-between">
+                              <CardTitle>{detail.permit_number || detail.source_file}</CardTitle>
+                              <div className="flex gap-2">
+                                <Button variant="destructive" size="sm" onClick={() => del(detail.id)}>Verwijderen</Button>
+                                <Button variant="outline" size="sm" onClick={() => setDetail(null)}>Sluiten</Button>
                               </div>
+                            </div>
+                          </CardHeader>
+                          <CardContent className="space-y-4">
+                            {/* Archive status banner */}
+                            {detail.archive_status && <div className={`rounded-lg p-3 border text-sm ${ARCHIVE_CLS[detail.archive_status] || "bg-amber-50 text-amber-800 border-amber-200"}`}>
+                              <span className="font-medium">Archiefstatus:</span> {detail.archive_status}
+                              {detail.archive_nomination && <> — Nominatie: {detail.archive_nomination}</>}
+                              {detail.retention_years && <> ({detail.retention_years} jaar)</>}
+                            </div>}
 
-                              {detail.error_message && (
-                                <div className="text-sm text-destructive bg-destructive/10 border border-destructive/20 rounded-md p-3">
-                                  <p className="font-medium">Verwerkingsfout</p>
-                                  <p>{detail.error_message}</p>
-                                </div>
-                              )}
+                            {/* Metadata grid */}
+                            <div className="grid grid-cols-2 gap-3">
+                              <MetaRow label="Vergunningnummer" value={detail.permit_number} />
+                              <MetaRow label="Type (AI)" value={detail.permit_type?.replace(/_/g, " ")} />
+                              <MetaRow label="Aanvrager" value={detail.applicant_name} />
+                              <MetaRow label="Vergunninghouder" value={detail.permit_holder_name} />
+                              <MetaRow label="Uitgever" value={detail.issuer_name} />
+                              <MetaRow label="Locatie" value={detail.location} />
+                              <MetaRow label="Uitgiftedatum" value={fmt(detail.issue_date)} />
+                              <MetaRow label="Geldigheidsdatum" value={fmt(detail.expiry_date)} />
+                              <MetaRow label="Toepasselijke wet" value={detail.applicable_law} />
+                              <MetaRow label="Type werk" value={detail.work_type} />
+                              <MetaRow label="Type oppervlaktewater" value={detail.water_type} />
+                              <MetaRow label="Type waterkering" value={detail.embankment_type} />
+                              <MetaRow label="Bronsysteem" value={detail.source_system} />
+                              <MetaRow label="Bronbestand" value={detail.source_file} />
+                              <MetaRow label="Upload datum" value={fmtFull(detail.upload_date)} />
+                            </div>
 
-                              {detail.extracted_text && !detail.extracted_text.startsWith("Error:") && (
-                                <div>
-                                  <p className="text-xs text-muted-foreground uppercase font-medium mb-2">Geëxtraheerde tekst (OCR)</p>
-                                  <pre className="p-4 bg-muted rounded-lg text-sm whitespace-pre-wrap max-h-96 overflow-y-auto leading-relaxed">{detail.extracted_text}</pre>
-                                </div>
-                              )}
-                            </CardContent>
-                          </Card>
-                        </div>
-                      )}
+                            {detail.error_message && <div className="text-sm text-destructive bg-destructive/10 border border-destructive/20 rounded-md p-3">{detail.error_message}</div>}
+
+                            {detail.extracted_text && !detail.extracted_text.startsWith("Error:") && <div>
+                              <p className="text-xs text-muted-foreground uppercase font-medium mb-2">Geëxtraheerde tekst</p>
+                              <pre className="p-3 bg-muted rounded-lg text-xs whitespace-pre-wrap max-h-72 overflow-y-auto">{detail.extracted_text}</pre>
+                            </div>}
+                          </CardContent>
+                        </Card>
+                      </div>}
                     </main>
                   </div>
                 )
