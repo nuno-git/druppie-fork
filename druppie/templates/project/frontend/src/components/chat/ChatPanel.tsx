@@ -122,8 +122,10 @@ export default function ChatPanel() {
   const [activeId, setActiveId] = useState<number | null>(null)
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState("")
-  const [sending, setSending] = useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+
+  // Sending state derived from messages — session-specific, not global
+  const sending = messages.some(m => m.status === "thinking")
   const endRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
@@ -157,7 +159,6 @@ export default function ChatPanel() {
       const msgs = await loadMessages(activeId)
       const stillThinking = msgs.some((m: ChatMessage) => m.status === "thinking")
       if (!stillThinking) {
-        setSending(false)
         loadSessions() // title may have updated
       }
     }, 2000)
@@ -191,17 +192,13 @@ export default function ChatPanel() {
       setActiveId(session.id)
       sid = session.id
     }
+    const text = input.trim()
     setInput("")
-    setSending(true)
     try {
-      // Server returns immediately with a "thinking" message
-      await api.sendMessage(sid, input.trim())
-      // Reload to show user msg + thinking placeholder
+      await api.sendMessage(sid, text)
       await loadMessages(sid)
       loadSessions()
-      // Polling effect above will handle the rest
     } catch {
-      setSending(false)
       setMessages(prev => [
         ...prev,
         { id: Date.now(), role: "assistant", content: "Verbindingsfout — probeer opnieuw.",
