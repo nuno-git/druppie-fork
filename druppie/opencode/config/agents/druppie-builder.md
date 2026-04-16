@@ -67,34 +67,27 @@ already set up and working — extend it, don't replace it:
 ## AI Integration (Druppie SDK)
 
 AI capabilities are provided by the Druppie SDK (`druppie_sdk`), which is
-pre-installed in every deployed app. The SDK calls platform modules (LLM, OCR,
-etc.) — API keys are managed centrally, never in individual apps.
+pre-installed in every deployed app. The SDK calls platform modules — API keys
+are managed centrally, never in individual apps.
+
+### Available Modules
+
+| Module   | Tool          | What it does                        | Return key  |
+|----------|---------------|-------------------------------------|-------------|
+| `llm`    | `chat`        | LLM chat completion                 | `answer`    |
+| `vision` | `ocr`         | Extract text from images/PDFs       | `text`      |
+| `audio`  | `transcribe`  | Speech-to-text from audio files     | `text`      |
+| `web`    | `search_web`  | Web search                          | results     |
 
 ### CRITICAL — Common AI Mistakes to Avoid
 
-These mistakes have caused production failures. Read carefully:
+These mistakes have caused production failures:
 
-1. **ALWAYS use the Druppie SDK** — never write your own OpenAI client, never
-   use `httpx`/`requests` to call LLM providers directly.
-   ```python
-   # CORRECT:
-   from druppie_sdk import DruppieClient
-   druppie = DruppieClient()
-   result = druppie.call("llm", "chat", {"prompt": "Hello"})
-
-   # WRONG — will fail (no API key, wrong endpoint):
-   from openai import OpenAI
-   client = OpenAI(api_key="...")
-   ```
-
+1. **ALWAYS use the Druppie SDK** — never use `openai`, `httpx`, or `requests`
+   to call LLM providers directly.
 2. **Do NOT hardcode API keys** (`DEEPINFRA_API_KEY`, `OPENAI_API_KEY`, etc.)
-   anywhere in the app. The SDK handles authentication with the platform modules.
-
-3. **Do NOT add `openai` to requirements.txt** — the SDK replaces direct
-   provider calls entirely.
-
-4. **There is no `app/ai.py`** — the SDK replaces it. Do NOT create an `ai.py`
-   helper file.
+3. **Do NOT add `openai` to requirements.txt**
+4. **There is no `app/ai.py`** — the SDK replaces it. Do NOT create one.
 
 ### Backend (Python) — Druppie SDK
 
@@ -104,22 +97,30 @@ from druppie_sdk import DruppieClient
 druppie = DruppieClient()
 
 # LLM chat completion
-result = druppie.call("llm", "chat", {"prompt": "What is the capital of France?"})
+result = druppie.call("llm", "chat", {"prompt": "Hello", "system": "Be helpful"})
 answer = result["answer"]
 
-# Chat with custom system prompt
-result = druppie.call("llm", "chat", {
-    "prompt": "Summarize this...",
-    "system": "You are a summarizer.",
-})
-
-# Vision / OCR: extract text from an image URL
-result = druppie.call("llm", "vision", {"image_url": "https://example.com/receipt.png"})
+# Vision / OCR: extract text from an image or PDF
+result = druppie.call("vision", "ocr", {"image_source": "https://example.com/scan.png"})
 text = result["text"]
+
+# Audio transcription: speech-to-text (base64 or file path)
+result = druppie.call("audio", "transcribe", {"file_base64": audio_b64})
+text = result["text"]
+
+# Web search
+result = druppie.call("web", "search_web", {"query": "search terms"})
 
 # Discover available modules
 modules = druppie.list_modules()
 ```
+
+### SDK Rules
+
+- `DRUPPIE_URL` env var is auto-injected at deploy time
+- `druppie-sdk/` is auto-copied into the build context by the deployer
+- The template Dockerfile already has `COPY druppie-sdk/` + `pip install` lines
+- Never modify the Dockerfile SDK lines
 
 ### Backend API endpoints (already in `app/routes.py`)
 
@@ -128,9 +129,8 @@ POST /api/ai/chat   {"prompt": "...", "system": "..."}  -> {"answer": "..."}
 POST /api/ai/ocr    {"image_url": "https://..."}        -> {"text": "..."}
 ```
 
-These endpoints are already implemented. If you need a custom AI endpoint (e.g.
-`/api/classify`, `/api/summarize`), add it to `app/routes.py` following this
-pattern:
+These endpoints are already implemented. Add custom AI endpoints to
+`app/routes.py` following this pattern:
 
 ```python
 @api.route("/ai/classify", methods=["POST"])
@@ -156,14 +156,6 @@ const answer = await aiChat("What is the capital of France?");
 // OCR
 const text = await aiOcr("https://example.com/receipt.png");
 ```
-
-### When to use AI
-
-- If the user's app needs chat, Q&A, summarization -> use `druppie.call("llm", "chat", ...)`
-- If the user's app needs OCR, document scanning, receipt reading -> use `druppie.call("llm", "vision", ...)`
-- Always call AI through the backend API endpoints (keeps keys server-side)
-- Do NOT hardcode API keys anywhere
-- Do NOT add `openai` to requirements.txt or create an `app/ai.py` file
 
 ## Test Compliance
 

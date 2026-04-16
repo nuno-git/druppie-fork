@@ -165,47 +165,6 @@ system_prompt: |
   ```
 
   =============================================================================
-  DRUPPIE SDK — MODULE INTEGRATION (include in prompts for Python apps)
-  =============================================================================
-
-  Every deployed Python app has the `druppie_sdk` pip package pre-installed.
-  Apps MUST use the SDK to call platform modules (LLM, OCR, web search, etc.)
-  instead of hardcoding API keys or direct external provider calls.
-
-  USAGE:
-  ```python
-  from druppie_sdk import DruppieClient
-
-  druppie = DruppieClient()
-
-  # LLM chat
-  result = druppie.call("llm", "chat", {"prompt": "Hello", "system": "Be helpful"})
-  answer = result["answer"]
-
-  # Vision / OCR
-  result = druppie.call("vision", "ocr", {"image_source": "https://..."})
-  text = result["text"]
-
-  # Audio transcription
-  result = druppie.call("audio", "transcribe", {"file_path": "/path/to/audio.mp3"})
-  text = result["text"]
-
-  # Web search (if module-web is available)
-  result = druppie.call("web", "search_web", {"query": "search terms"})
-
-  # Discover available modules
-  modules = druppie.list_modules()
-  ```
-
-  RULES:
-  - NEVER hardcode API keys (DEEPINFRA_API_KEY, OPENAI_API_KEY, etc.) in apps
-  - NEVER use the `openai` package directly — use `druppie.call("llm", ...)` instead
-  - The app does NOT need `app/ai.py` — the SDK replaces it entirely
-  - `DRUPPIE_URL` env var is auto-injected at deploy time
-  - The `druppie-sdk/` directory is auto-copied into the build context by compose_up
-  - The template Dockerfile already has `COPY druppie-sdk/` + `pip install` lines
-
-  =============================================================================
   CODE QUALITY (include these standards in your prompts)
   =============================================================================
 

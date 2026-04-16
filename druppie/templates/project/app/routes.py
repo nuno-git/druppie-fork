@@ -3,8 +3,9 @@
 Define your API endpoints here. All routes are prefixed with /api.
 
 Built-in AI endpoints (via Druppie SDK):
-    POST /api/ai/chat  — LLM chat completion  (body: {prompt, system?})  [module-llm]
-    POST /api/ai/ocr   — OCR text extraction   (body: {image_url})       [module-vision]
+    POST /api/ai/chat        — LLM chat completion    (body: {prompt, system?})  [module-llm]
+    POST /api/ai/ocr         — OCR text extraction     (body: {image_url})       [module-vision]
+    POST /api/ai/transcribe  — Speech-to-text          (body: {audio_base64})    [module-audio]
 
 Example adding your own:
 
@@ -55,4 +56,16 @@ def ai_ocr_endpoint():
     if not data or "image_url" not in data:
         return jsonify(error="Missing required field: image_url"), 400
     result = druppie.call("vision", "ocr", {"image_source": data["image_url"]})
+    return jsonify(text=result.get("text", ""))
+
+
+@api.route("/ai/transcribe", methods=["POST"])
+def ai_transcribe_endpoint():
+    """Speech-to-text. Body: {"audio_base64": "base64-encoded audio data"}"""
+    data = request.get_json(silent=True)
+    if not data or "audio_base64" not in data:
+        return jsonify(error="Missing required field: audio_base64"), 400
+    result = druppie.call("audio", "transcribe", {
+        "file_base64": data["audio_base64"],
+    })
     return jsonify(text=result.get("text", ""))
