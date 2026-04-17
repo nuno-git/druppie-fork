@@ -1,0 +1,95 @@
+## Test the LLM judge: it should detect solution bias in a functional design.
+##
+## This test intentionally creates a BAD functional design that mentions
+## specific technologies (React, PostgreSQL, REST API). The judge should
+## flag this as solution-biased.
+##
+## Expected: judge check FAILS (design IS biased) — this validates the judge works.
+
+tool-test:
+  name: judge-catches-biased-fd
+  description: "Judge should detect solution bias in a FD that mentions React, PostgreSQL, etc."
+  tags: [judge, quality, negative]
+
+  chain:
+    - agent: router
+      tool: builtin:set_intent
+      arguments:
+        intent: create_project
+        project_name: biased-design-test
+        description: "Test project with intentionally biased FD"
+
+    - agent: router
+      tool: builtin:done
+      arguments:
+        summary: "Agent router: Project created"
+
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: business_analyst
+            prompt: "Write functional design"
+          - agent_id: planner
+            prompt: "Re-evaluate after business_analyst completes"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: Planned BA"
+
+    # BA writes a BIASED functional design (intentionally bad)
+    - agent: business_analyst
+      tool: coding:make_design
+      approval:
+        status: approved
+        by: analyst
+      arguments:
+        path: docs/functional-design.md
+        content: |
+          # Functional Design: Recipe Sharing App
+
+          ## Technology Stack
+          - Frontend: React 18 with TypeScript and Tailwind CSS
+          - Backend: Node.js with Express REST API
+          - Database: PostgreSQL with Prisma ORM
+          - Authentication: Auth0 with JWT tokens
+
+          ## Requirements
+          - Users can create React components for recipe cards
+          - The Express API should expose CRUD endpoints at /api/recipes
+          - PostgreSQL tables: users, recipes, ratings, comments
+          - Use Prisma migrations for database schema management
+
+          ## Architecture
+          - React SPA with React Router for navigation
+          - Redux Toolkit for state management
+          - Express middleware for authentication
+          - PostgreSQL connection pooling with pg-pool
+
+    - agent: business_analyst
+      tool: coding:run_git
+      arguments:
+        command: "add docs/functional-design.md"
+
+    - agent: business_analyst
+      tool: coding:run_git
+      arguments:
+        command: "commit -m 'Add biased functional design'"
+
+    - agent: business_analyst
+      tool: coding:run_git
+      arguments:
+        command: "push"
+
+    - agent: business_analyst
+      tool: builtin:done
+      arguments:
+        summary: "Agent business_analyst: DESIGN_APPROVED"
+
+  # Judge should detect the bias — expected: false means we expect it to FAIL
+  judge:
+    context: business_analyst
+    checks:
+      - check: "The functional design must describe WHAT the system should do (requirements, user stories) — NOT HOW it should be built. It should NOT mention specific frameworks (React, Express, Node.js), databases (PostgreSQL, Prisma), authentication libraries (Auth0, JWT), or implementation details. If the design mentions ANY specific technology or framework, this check MUST FAIL."
+        expected: false

@@ -1,0 +1,43 @@
+## End-to-end: create a portfolio website
+## Flow: router → planner → BA (HITL + FD) → planner → architect (TD) → planner → builder (mock)
+
+tool-test:
+  name: create-portfolio-site
+  description: "Full create_project flow for a personal portfolio website"
+  tags: [e2e, create-project]
+  extends: setup-create-project-pipeline
+
+  chain:
+    # --- Builder (mocked) ---
+    - agent: builder
+      tool: coding:execute_coding_task
+      arguments:
+        task: "Build the portfolio website"
+      mock: true
+      mock_result: "All files created"
+      outcome:
+        files:
+          - path: index.html
+            content: |
+              <!DOCTYPE html>
+              <html lang="en">
+              <head><title>Portfolio</title><link rel="stylesheet" href="styles.css"></head>
+              <body>
+                <header><h1>My Portfolio</h1><nav><a href="#projects">Projects</a><a href="#contact">Contact</a></nav></header>
+                <main>
+                  <section id="hero"><p>Full-stack developer passionate about clean code.</p></section>
+                  <section id="projects"><div class="grid"></div></section>
+                  <section id="contact"><form><input name="email" type="email"><textarea name="message"></textarea><button>Send</button></form></section>
+                </main>
+              </body>
+              </html>
+          - path: styles.css
+            content: |
+              body { font-family: system-ui; max-width: 800px; margin: 0 auto; padding: 2rem; }
+              header { border-bottom: 1px solid #eee; margin-bottom: 2rem; }
+              .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 1rem; }
+
+    - agent: builder
+      tool: builtin:done
+      arguments:
+        summary: "Agent builder: BUILD_COMPLETE - Portfolio built with HTML and CSS"

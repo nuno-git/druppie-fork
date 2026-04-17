@@ -1049,9 +1049,11 @@ async def done(
         else:
             next_agent = None  # Ignored — planner will decide as usual
 
-    # Relay accumulated summary to next pending agent
+    # Relay accumulated summary to the next pending planner only.
+    # Non-planner agents are self-contained — they read files from the
+    # workspace, not summary chains from previous agents.
     next_run = execution_repo.get_next_pending(session_id)
-    if next_run:
+    if next_run and next_run.agent_id == "planner":
         existing_prompt = next_run.planned_prompt or ""
         new_prompt = (
             f"PREVIOUS AGENT SUMMARY:\n{accumulated_summary}\n\n---\n\n"
@@ -1060,11 +1062,10 @@ async def done(
         execution_repo.update_planned_prompt(next_run.id, new_prompt)
         execution_repo.flush()
         logger.info(
-            "summary_relayed_to_next_agent",
+            "summary_relayed_to_planner",
             session_id=str(session_id),
             from_agent_run=str(agent_run_id),
             to_agent_run=str(next_run.id),
-            to_agent_id=next_run.agent_id,
         )
 
     result = {
@@ -1175,9 +1176,37 @@ async def execute_sandbox_coding_task(
     task = args.get("task", "")
     from druppie.core.config import DEFAULT_SANDBOX_AGENT
     agent = args.get("agent", DEFAULT_SANDBOX_AGENT)
+    repo_target = args.get("repo_target", "project")
 
     if not task:
         return {"success": False, "error": "task is required"}
+
+    # Enforce per-agent sandbox constraints (e.g. architect can only use explore/druppie_core)
+    from druppie.agents.runtime import Agent as AgentLoader
+    try:
+        agent_run = execution_repo.get_by_id(agent_run_id)
+        if agent_run and agent_run.agent_id:
+            definition = AgentLoader._load_definition(agent_run.agent_id)
+            if definition and definition.sandbox_constraints:
+                constraints = definition.sandbox_constraints
+                if constraints.allowed_agents is not None and agent not in constraints.allowed_agents:
+                    return {
+                        "success": False,
+                        "error": (
+                            f"Agent '{definition.id}' is only allowed to use sandbox agents: "
+                            f"{constraints.allowed_agents}. Got: '{agent}'"
+                        ),
+                    }
+                if constraints.allowed_repo_targets is not None and repo_target not in constraints.allowed_repo_targets:
+                    return {
+                        "success": False,
+                        "error": (
+                            f"Agent '{definition.id}' is only allowed to use repo targets: "
+                            f"{constraints.allowed_repo_targets}. Got: '{repo_target}'"
+                        ),
+                    }
+    except Exception:
+        pass  # Don't block execution if constraint check fails
 
     model_config = resolve_sandbox_models(agent)
     model = model_config.primary_model
@@ -1193,8 +1222,7 @@ async def execute_sandbox_coding_task(
     if not session.user_id:
         return {"success": False, "error": "Cannot create sandbox: session has no user_id"}
 
-    # Determine git provider and repo context based on repo_target param
-    repo_target = args.get("repo_target", "project")
+    # Validate repo_target value
     if repo_target not in VALID_REPO_TARGETS:
         return {"success": False, "error": f"Invalid repo_target '{repo_target}'. Must be one of: {VALID_REPO_TARGETS}."}
 

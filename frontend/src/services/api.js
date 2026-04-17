@@ -36,9 +36,7 @@ const request = async (endpoint, options = {}) => {
 
     if (!response.ok) {
       const error = await response.json().catch(() => ({ detail: 'Unknown error' }))
-      console.error('❌ Error Response:', { status: response.status, error })
-      console.timeEnd('Duration')
-      console.groupEnd()
+      console.error('API Error:', { status: response.status, error })
       const msg = [error.message, error.detail, error.error].find(v => typeof v === 'string' && v)
         || `Request failed: ${response.status}`
       const err = new Error(msg)
@@ -284,6 +282,143 @@ export const getAdminTableData = (tableName, page = 1, limit = 50, options = {})
 }
 export const getAdminRecord = (tableName, recordId) =>
   request(`/api/admin/table/${tableName}/${recordId}`)
+
+// ============ Evaluations (Admin) ============
+export const getBenchmarkRuns = (page = 1, limit = 20, runType = null) => {
+  const params = new URLSearchParams({ page, limit })
+  if (runType) params.append('run_type', runType)
+  return request(`/api/evaluations/benchmark-runs?${params.toString()}`)
+}
+
+export const getBenchmarkRun = (runId) =>
+  request(`/api/evaluations/benchmark-runs/${runId}`)
+
+export const deleteBenchmarkRun = (runId) =>
+  request(`/api/evaluations/benchmark-runs/${runId}`, { method: 'DELETE' })
+
+export const getEvaluationResults = (options = {}) => {
+  const params = new URLSearchParams()
+  if (options.benchmarkRunId) params.append('benchmark_run_id', options.benchmarkRunId)
+  if (options.agentId) params.append('agent_id', options.agentId)
+  if (options.evaluationName) params.append('evaluation_name', options.evaluationName)
+  params.append('page', options.page || 1)
+  params.append('limit', options.limit || 50)
+  return request(`/api/evaluations/results?${params.toString()}`)
+}
+
+export const getEvaluationResult = (resultId) =>
+  request(`/api/evaluations/results/${resultId}`)
+
+export const getAgentEvalSummary = (agentId) =>
+  request(`/api/evaluations/agent-summary/${agentId}`)
+
+export const triggerBenchmark = (scenarioName, judgeModel = null) =>
+  request('/api/evaluations/trigger-benchmark', {
+    method: 'POST',
+    body: JSON.stringify({ scenario_name: scenarioName, judge_model: judgeModel }),
+  })
+
+export const getEvaluationConfig = () =>
+  request('/api/evaluations/config')
+
+export const runUnitTests = () =>
+  request('/api/evaluations/run-unit-tests', { method: 'POST' })
+
+// ============ V2 Test Runs ============
+export const getAvailableTests = () =>
+  request('/api/evaluations/available-tests')
+
+export const getAvailableSetups = () =>
+  request('/api/evaluations/available-setups')
+
+export const seedSessions = (sessionNames, user = 'admin') =>
+  request('/api/evaluations/seed', {
+    method: 'POST',
+    body: JSON.stringify({ session_names: sessionNames, user }),
+  })
+
+export const getTestRuns = (page = 1, limit = 20, tag = null) => {
+  const params = new URLSearchParams({ page, limit })
+  if (tag) params.append('tag', tag)
+  return request(`/api/evaluations/test-runs?${params.toString()}`)
+}
+
+export const getTestRun = (id) =>
+  request(`/api/evaluations/test-runs/${id}`)
+
+export const getTags = () =>
+  request('/api/evaluations/tags')
+
+export const deleteTestUsers = () =>
+  request('/api/evaluations/test-users', { method: 'DELETE' })
+
+export const runTests = (options = {}) =>
+  request('/api/evaluations/run-tests', {
+    method: 'POST',
+    body: JSON.stringify(options),
+  })
+
+export const getRunStatus = (runId) =>
+  request(`/api/evaluations/run-status/${runId}`)
+
+export const getTestBatches = (page = 1, limit = 10, tag = null) => {
+  const params = new URLSearchParams({ page, limit })
+  if (tag) params.append('tag', tag)
+  return request(`/api/evaluations/test-batches?${params.toString()}`)
+}
+
+// ============ Analytics (v3) ============
+
+export const getAnalyticsSummary = (days = 30) =>
+  request(`/api/evaluations/analytics/summary?days=${days}`)
+
+export const getAnalyticsTrends = (days = 30) =>
+  request(`/api/evaluations/analytics/trends?days=${days}`)
+
+export const getAnalyticsByAgent = (batchId = null) => {
+  const params = batchId ? `?batch_id=${batchId}` : ''
+  return request(`/api/evaluations/analytics/by-agent${params}`)
+}
+
+export const getAnalyticsByEval = (batchId = null) => {
+  const params = batchId ? `?batch_id=${batchId}` : ''
+  return request(`/api/evaluations/analytics/by-eval${params}`)
+}
+
+export const getAnalyticsByTool = (batchId = null) => {
+  const params = batchId ? `?batch_id=${batchId}` : ''
+  return request(`/api/evaluations/analytics/by-tool${params}`)
+}
+
+export const getAnalyticsByTest = (batchId = null) => {
+  const params = batchId ? `?batch_id=${batchId}` : ''
+  return request(`/api/evaluations/analytics/by-test${params}`)
+}
+
+export const getAnalyticsBatchDetail = (batchId) =>
+  request(`/api/evaluations/analytics/batch/${batchId}`)
+
+export const getTestRunAssertions = (testRunId) =>
+  request(`/api/evaluations/test-runs/${testRunId}/assertions`)
+
+export const getBatchAssertions = (batchId, filters = {}) => {
+  const params = new URLSearchParams()
+  if (filters.assertion_type) params.append('assertion_type', filters.assertion_type)
+  if (filters.agent_id) params.append('agent_id', filters.agent_id)
+  if (filters.tool_name) params.append('tool_name', filters.tool_name)
+  if (filters.check_text) params.append('check_text', filters.check_text)
+  const qs = params.toString()
+  return request(`/api/evaluations/batch/${batchId}/assertions${qs ? '?' + qs : ''}`)
+}
+
+export const getBatchFilters = (batchId) =>
+  request(`/api/evaluations/batch/${batchId}/filters`)
+
+export const getActiveRun = () =>
+  request('/api/evaluations/active-run')
+
+// Kept for backwards compat - used by Evaluations.jsx TestRunDetail
+export const getTestRunAssertionsList = getTestRunAssertions
 
 // ============ Cache ============
 export const getCachedPackages = () => request('/api/cache/packages')

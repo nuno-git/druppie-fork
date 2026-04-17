@@ -1,0 +1,12 @@
+profiles:
+  default:
+    model: glm-4.5-air
+    provider: zai
+
+  strict:
+    model: glm-4.5-air
+    provider: zai
+
+  fast:
+    model: glm-4.5-air
+    provider: zai
