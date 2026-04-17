@@ -852,6 +852,7 @@ sandbox_constraints:
   allowed_agents:
     - explore
   allowed_repo_targets:
+    - project
     - druppie_core
 
 # LAYERED APPROVAL SYSTEM:
