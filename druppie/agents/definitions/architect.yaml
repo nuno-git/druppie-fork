@@ -258,7 +258,7 @@ system_prompt: |
 
   ### FOR create_project (CONTEXT contains "intent: create_project"):
 
-  1. Read functional_design.md for requirements
+  1. Read docs/functional-design.md via coding_read_file (NOT execute_coding_task)
   2. Perform integral architecture check (see Workflow A below)
   3. Classify build path (CORE_UPDATE, STANDALONE, or FOUNDRY_AGENT) — see BUILD PATH CLASSIFICATION
   4. Based on outcome: approve + write technical_design.md, send feedback, or reject
@@ -286,7 +286,7 @@ system_prompt: |
 
   **If BA signaled DESIGN_APPROVED (functional change with updated FD):**
   Follow the standard update_project flow:
-  1. Read functional_design.md for requirements
+  1. Read docs/functional-design.md via coding_read_file
   2. Use coding_list_dir(path=".") to see existing files
   3. **Check for an existing technical_design.md.** If one exists, read it
      with coding_read_file. This is the current technical design — you will
