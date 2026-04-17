@@ -164,12 +164,12 @@ system_prompt: |
 
   If DESIGN_APPROVED (first time — no prior architect feedback in the conversation):
   Call make_plan with 2 steps:
-  - Step 1: agent_id="architect", prompt="Design architecture for [project]. Read functional_design.md. Create technical_design.md. Classify the build path (CORE_UPDATE, STANDALONE, or FOUNDRY_AGENT) and route via next_agent."
+  - Step 1: agent_id="architect", prompt="Design architecture for [project]. Read docs/functional-design.md. Create technical_design.md. Classify the build path (CORE_UPDATE, STANDALONE, or FOUNDRY_AGENT) and route via next_agent."
   - Step 2: agent_id="planner", prompt="Architect completed. Evaluate output and decide next step."
 
   If DESIGN_APPROVED (after BA revision — i.e., the architect previously sent DESIGN_FEEDBACK):
   Call make_plan with 2 steps:
-  - Step 1: agent_id="architect", prompt="RE-REVIEW: The BA has revised functional_design.md based on your previous feedback. Read the updated functional_design.md and check whether your feedback items were addressed. If all items resolved, write technical_design.md and signal DESIGN_APPROVED. If items remain unresolved, signal DESIGN_FEEDBACK with the remaining items only."
+  - Step 1: agent_id="architect", prompt="RE-REVIEW: The BA has revised functional_design.md based on your previous feedback. Read the updated docs/functional-design.md and check whether your feedback items were addressed. If all items resolved, write technical_design.md and signal DESIGN_APPROVED. If items remain unresolved, signal DESIGN_FEEDBACK with the remaining items only."
   - Step 2: agent_id="planner", prompt="Architect completed re-review. Evaluate output and decide next step."
 
   ### After ARCHITECT completed design work (look for DESIGN_* and BUILD_PATH signals):
@@ -192,7 +192,7 @@ system_prompt: |
   If DESIGN_APPROVED (fallback — normally handled by architect via next_agent):
   Route to builder_planner:
   Call make_plan with 2 steps:
-  - Step 1: agent_id="builder_planner", prompt="Create a detailed implementation plan for [project]. Read functional_design.md and technical_design.md. Write builder_plan.md with code standards, test framework, test strategy, solution strategy, and change approach."
+  - Step 1: agent_id="builder_planner", prompt="Create a detailed implementation plan for [project]. Read docs/functional-design.md and docs/technical-design.md. Write builder_plan.md with code standards, test framework, test strategy, solution strategy, and change approach."
   - Step 2: agent_id="planner", prompt="Builder planner completed. Evaluate output and decide next step."
 
   ### After ARCHITECT routed via next_agent:
@@ -205,7 +205,7 @@ system_prompt: |
   The core changes have been merged (developer approved). Now route back to the
   architect to design the actual project with the core changes in place.
   Call make_plan with 2 steps:
-  - Step 1: agent_id="architect", prompt="Core changes have been merged into Druppie. Now design the actual project. Read functional_design.md. Update or create technical_design.md for the project implementation (not the core changes). Signal DESIGN_APPROVED when ready."
+  - Step 1: agent_id="architect", prompt="Core changes have been merged into Druppie. Now design the actual project. Read docs/functional-design.md. Update or create technical_design.md for the project implementation (not the core changes). Signal DESIGN_APPROVED when ready."
   - Step 2: agent_id="planner", prompt="Architect completed post-core-update design. Evaluate output and decide next step."
 
   ### After FOUNDRY_AGENT_BUILDER completed (look for AGENT_CREATED / FOUNDRY_TOOLS_INSUFFICIENT):
