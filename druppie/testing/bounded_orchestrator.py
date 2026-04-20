@@ -276,9 +276,25 @@ class BoundedOrchestrator:
                     if agent_run and agent_run.agent_id not in self._real_agents:
                         break
 
+                question_context = None
+                if pending_question.tool_call_id:
+                    from druppie.db.models import ToolCall
+                    tc = self._db.query(ToolCall).filter(
+                        ToolCall.id == pending_question.tool_call_id
+                    ).first()
+                    if tc and isinstance(tc.arguments, dict):
+                        question_context = tc.arguments.get("context")
+
+                from druppie.testing.session_transcript import build_transcript
+                transcript = build_transcript(
+                    self._db, session_id, exclude_question_id=pending_question.id,
+                )
+
                 raw_answer = self._hitl_simulator.answer(
                     question_text=pending_question.question,
                     choices=pending_question.choices,
+                    question_context=question_context,
+                    session_transcript=transcript,
                 )
 
                 answer = raw_answer
@@ -306,14 +322,41 @@ class BoundedOrchestrator:
                 if not pending_approval:
                     break
 
-                # Auto-approve with the test user
-                pending_approval.status = "approved"
+                decision_status = "approved"
+                decision_reason: str | None = None
+                if self._hitl_simulator is not None:
+                    from druppie.db.models import ToolCall
+                    from druppie.testing.session_transcript import build_transcript
+                    tc = self._db.query(ToolCall).filter(
+                        ToolCall.id == pending_approval.tool_call_id
+                    ).first()
+                    tool_name = f"{pending_approval.mcp_server}:{pending_approval.tool_name}"
+                    tool_args = tc.arguments if tc and isinstance(tc.arguments, dict) else {}
+                    transcript = build_transcript(
+                        self._db, session_id, exclude_approval_id=pending_approval.id,
+                    )
+                    decision = self._hitl_simulator.decide_approval(
+                        tool_name=tool_name,
+                        tool_arguments=tool_args,
+                        session_transcript=transcript,
+                    )
+                    decision_status = decision.get("status", "approved")
+                    decision_reason = decision.get("reason")
+
+                if decision_status == "rejected":
+                    pending_approval.status = "rejected"
+                    pending_approval.rejection_reason = decision_reason or "Rejected by session owner."
+                else:
+                    pending_approval.status = "approved"
                 pending_approval.resolved_by = session.user_id
                 pending_approval.resolved_at = utcnow()
                 self._db.commit()
 
-                logger.info("Approval auto-approved (iteration %d): tool=%s:%s",
-                            iteration, pending_approval.mcp_server, pending_approval.tool_name)
+                logger.info(
+                    "Approval resolved by simulator (iteration %d): tool=%s:%s status=%s reason=%s",
+                    iteration, pending_approval.mcp_server, pending_approval.tool_name,
+                    pending_approval.status, (decision_reason or "")[:120],
+                )
                 await orchestrator.resume_after_approval(
                     session_id=session_id,
                     approval_id=pending_approval.id,
