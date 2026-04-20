@@ -26,6 +26,7 @@ import {
   extractSurfacedFileWrites,
   extractDependencyInstalls,
   findPendingQuestion,
+  ProjectRepoContext,
 } from './ChatHelpers'
 import TestResultCard from './TestResultCard'
 import SandboxEventCard, {
@@ -835,7 +836,12 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
         waiting_answer: 'bg-amber-500 animate-pulse',
       }[data.status] || 'bg-gray-400'
 
+  const projectRepo = data?.project
+    ? { repo_url: data.project.repo_url, default_branch: data.project.default_branch || 'main' }
+    : null
+
   return (
+    <ProjectRepoContext.Provider value={projectRepo}>
     <div className="flex flex-col h-full min-w-0">
       {/* Header */}
       <div className="px-4 py-2.5 border-b flex-shrink-0">
@@ -1214,6 +1220,7 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
         </div>
       )}
     </div>
+    </ProjectRepoContext.Provider>
   )
 }
 
