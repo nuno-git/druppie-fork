@@ -204,7 +204,7 @@ const TaskCard = ({ task, onApprove, onReject }) => {
   // For session_owner approvals, check if user owns the session
   const isSessionOwnerApproval = requiredRoles.includes('session_owner')
   const canApprove = isSessionOwnerApproval
-    ? (user?.sub === task.session_user_id || hasRole('admin'))
+    ? (user?.id === task.session_user_id || hasRole('admin'))
     : requiredRoles.some(role => hasRole(role))
 
   // MULTI approval state

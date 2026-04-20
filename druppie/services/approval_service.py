@@ -22,6 +22,7 @@ import structlog
 
 from ..repositories import ApprovalRepository, SessionRepository
 from ..domain import ApprovalDetail, ApprovalHistoryList, PendingApprovalList, ApprovalStatus
+from ..db.models import Approval
 from ..api.errors import NotFoundError, AuthorizationError, ConflictError
 
 logger = structlog.get_logger()
@@ -202,7 +203,7 @@ class ApprovalService:
         updated = self.approval_repo.get_by_id(approval_id)
         return self.approval_repo._to_detail(updated)
 
-    def _check_authorization(self, approval, user_id: UUID, user_roles: list[str], action: str) -> None:
+    def _check_authorization(self, approval: Approval, user_id: UUID, user_roles: list[str], action: str) -> None:
         """Check if user is authorized to approve/reject.
 
         Handles both role-based approvals (required_role = "architect", etc.)
