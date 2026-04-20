@@ -17,7 +17,7 @@ prompt: |
   Example of what the system accumulates after 3 agents:
 
     Agent architect: Designed counter app architecture, wrote architecture.md.
-    Agent developer: Implemented app on branch feature/add-counter, pushed 3 files (index.html, styles.css, Dockerfile).
+    Agent builder: TDD_PASSED — Wrote 3 tests, implementation committed on feature/add-counter, 3/3 tests passed (coverage: 91%).
     Agent deployer: Built and deployed preview from feature/add-counter at http://localhost:9101 (container: counter-preview, port 9101:80).
 
   RULES:

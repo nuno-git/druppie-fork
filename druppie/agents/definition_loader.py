@@ -45,7 +45,7 @@ class AgentDefinitionLoader:
         """Load agent definition from YAML, with mtime-based cache.
 
         Args:
-            agent_id: Agent identifier (e.g., "router", "developer")
+            agent_id: Agent identifier (e.g., "router", "builder")
 
         Returns:
             Parsed AgentDefinition

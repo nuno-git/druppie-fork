@@ -692,21 +692,20 @@ Twelve agents are defined as YAML files in `druppie/agents/definitions/`:
 | `business_analyst` | Gathers requirements from user | Default | `coding` (read_file, make_design, list_dir) | `making-mermaid-diagrams` |
 | `architect` | Designs system architecture, writes specs | Default | `coding` (read_file, make_design, list_dir), `archimate` | `making-mermaid-diagrams` |
 | `builder_planner` | Creates implementation plans, writes builder_plan.md | Default | `coding` | — |
-| `builder` | Owns full TDD cycle — dispatches to OpenCode sandbox agents (druppie-test-writer → druppie-implementer → druppie-test-runner) with 3 retry strategies | `execute_coding_task` | — | — |
-| `developer` | Branch setup, improvements, PR merges — dispatches to OpenCode sandbox agents | `execute_coding_task` | — | — |
+| `builder` | Sole execution agent. Four modes (TDD CYCLE / BRANCH SETUP / IMPROVEMENT / MERGE) — all dispatch to OpenCode sandbox agents. TDD CYCLE drives druppie-test-writer → druppie-implementer → druppie-test-runner with 3 retry strategies; other modes call druppie-builder. | `execute_coding_task` | — | — |
 | `reviewer` | Reviews code quality | Default | `coding` | — |
 | `tester` | Writes and runs tests | `execute_coding_task` | `coding`, `docker` | — |
 | `deployer` | Builds and deploys containers | Default | `coding`, `docker` | — |
 | `summarizer` | Creates conversation summary message | `create_message` | None | — |
 
-Default builtin tools (all agents): `done`, `hitl_ask_question`, `hitl_ask_multiple_choice_question`. Optional extra builtins: `execute_coding_task` (sandbox delegation, used by Developer/Tester).
+Default builtin tools (all agents): `done`, `hitl_ask_question`, `hitl_ask_multiple_choice_question`. Optional extra builtins: `execute_coding_task` (sandbox delegation, used by Builder).
 
 Each YAML file specifies:
 
 ```yaml
-name: developer
+name: builder
 system_prompt: |
-  You are a senior developer...
+  You are the builder agent...
 system_prompts:           # Composable system prompts (see 8.2)
   - summary_relay
   - done_tool_format
@@ -740,7 +739,7 @@ Available system prompts:
 
 Agents declare which system prompts to include via the `system_prompts` list in their YAML definition. At runtime, the agent's `_build_system_prompt()` method loads each system prompt and appends it (in order) after the agent's own `system_prompt` text, before tool instructions are added.
 
-Agents without a `system_prompts` list (or with an empty list) receive no system prompts. Currently, these agents include all 4 system prompts: architect, builder, builder_planner, business_analyst, deployer, developer, planner. The router, summarizer, and reviewer agents do not include system prompts.
+Agents without a `system_prompts` list (or with an empty list) receive no system prompts. Currently, these agents include all 4 system prompts: architect, builder, builder_planner, business_analyst, deployer, planner. The router, summarizer, and reviewer agents do not include system prompts.
 
 ### 8.3 Agent Runtime Architecture
 
@@ -903,7 +902,7 @@ process_message(message, user_id)
   |       |     set_intent creates project + Gitea repo if needed,
   |       |     updates planner prompt with intent context
   |       |-- Planner runs -> calls make_plan()
-  |       |     make_plan creates PENDING agent runs (e.g., architect, developer, deployer)
+  |       |     make_plan creates PENDING agent runs (e.g., architect, builder, deployer)
   |       |-- Remaining agents execute in sequence_number order
   |-- 7. If any agent pauses (approval/question), execution stops
   |-- 8. On resume (after approval/answer), agent continues from DB state

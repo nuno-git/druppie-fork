@@ -30,9 +30,8 @@ Thirteen agents are defined. Twelve are functional; one is a stub.
 | **Business Analyst** | Gathers requirements | Engages the user in structured dialogue using a funnel approach (max 1 question at a time, almost always multiple choice). Produces `functional_design.md` via the `make_design` tool with built-in Mermaid validation. Considers security and compliance by design. Handles revision cycles when the Architect sends feedback. Supports `NO_FD_CHANGE` pass-through for technical fixes. Max 50 iterations. |
 | **Architect** | Designs system architecture | Reviews the functional design against NORA standards and water authority architecture principles. Four outcomes: APPROVE (writes `technical_design.md` via `make_design`), APPROVE_CORE_UPDATE (same, but signals the project modifies Druppie's own codebase), FEEDBACK (sends specific items back to BA), or REJECT (communicates directly with user). Has access to ArchiMate models via MCP. Can create Mermaid diagrams with built-in syntax validation. Applies Security by Design and Compliance by Design. Max 50 iterations. |
 | **Builder Planner** | Creates implementation plans | Reads `functional_design.md` and `technical_design.md`, writes `builder_plan.md` with code standards, test framework, test strategy, solution strategy, and change approach. Guides the downstream builder. Max 30 iterations. |
-| **Builder** | Owns the full TDD cycle | Delegates everything to OpenCode sandbox agents via `execute_coding_task`. Drives druppie-test-writer (Red) → druppie-implementer (Green) → druppie-test-runner (Verify), with up to 3 retry strategies (TARGETED_FIXES → REWRITE → SIMPLIFY) on failure. Signals `TDD_PASSED` or `TDD_FAILED` in `done()`. No direct coding MCPs. Max 30 iterations. |
+| **Builder** | Sole execution agent | Delegates ALL coding work to OpenCode sandbox agents via `execute_coding_task`. Four modes with distinct done() signals: **TDD CYCLE** (druppie-test-writer → druppie-implementer → druppie-test-runner, with up to 3 retry strategies — signals `TDD_PASSED` / `TDD_FAILED`), **BRANCH SETUP** (`BRANCH_CREATED`), **IMPROVEMENT** (`IMPROVEMENT_DONE`), **MERGE** (`MERGED`). No direct coding MCPs. Max 30 iterations. |
 | **Update Core Builder** | Implements Druppie core changes | Delegates coding to a dual-repo sandbox via `execute_coding_task` with the `druppie-core-builder` sandbox agent. The sandbox clones Druppie's GitHub repo into `/workspace/core/` and the project repo (with FD/TD) into `/workspace/project/`. Creates a PR targeting `colab-dev` on GitHub. The `done()` tool requires approval from a user with the `developer` role — the reviewer merges the PR on GitHub before approving. Max 100 iterations. |
-| **Developer** | Branching, improvements, merges | Delegates everything to OpenCode sandbox agents via `execute_coding_task`. Handles branch setup, improvement (user feedback), and PR merges. No direct coding MCPs. NOT part of the TDD flow — that's the builder's job. Max 30 iterations. |
 | **Deployer** | Builds and deploys via Docker | Clones from git, builds Docker images, runs containers with auto-assigned ports (9100-9199). Verifies health via container logs. For preview deploys, asks the user for feedback before finalizing. Max 100 iterations. |
 | **Reviewer** | Code review | Reviews code for quality, security, and best practices. |
 | **Tester** | Testing | Writes and runs tests to validate implementations. |
@@ -63,20 +62,19 @@ A new project is created from scratch:
    - If approved: writes `technical_design.md`
 5. **Planner** re-evaluates: plans Builder Planner
 6. **Builder Planner** reads design documents, writes `builder_plan.md` with implementation strategy
-7. **Test Builder** generates comprehensive tests based on design documents and builder_plan.md (TDD Red Phase)
-8. **Builder** implements source code to make the tests pass (TDD Green Phase)
-9. **Test Executor** runs tests, iteratively fixes code until tests pass (internal retry loop)
-   - If PASS: Planner plans Deployer
-   - If FAIL (retry < 3): Planner routes back to Builder with failure feedback (TDD retry)
-   - If FAIL (retry >= 3): Planner escalates to user via HITL with three choices:
-     - Continue with specific instructions: Builder retries with user guidance
+7. **Builder** (TDD CYCLE mode) drives the full Red → Green → Verify loop via OpenCode sandbox agents:
+   - `druppie-test-writer` writes tests, `druppie-implementer` implements code, `druppie-test-runner` runs tests
+   - On test failure, retries up to 3 times with different strategies (TARGETED_FIXES → REWRITE → SIMPLIFY)
+   - Signals `TDD_PASSED` or `TDD_FAILED` in `done()`
+   - On `TDD_FAILED`, Planner escalates to user via HITL with three choices:
+     - Continue with specific instructions: Builder runs a fresh TDD cycle with user guidance
      - Deploy with warning: Deployer deploys despite failing tests
      - Abort project: Summarizer ends the workflow
-10. **Deployer** builds Docker image, runs container, asks user for preview feedback
-11. **Planner** re-evaluates based on user feedback:
+8. **Deployer** builds Docker image, runs container, asks user for preview feedback
+9. **Planner** re-evaluates based on user feedback:
     - If approved: plans Summarizer
-    - If changes requested: loops back to Developer, then Deployer
-12. **Summarizer** creates the final user-facing summary
+    - If changes requested: loops back to Builder (IMPROVEMENT mode), then Deployer
+10. **Summarizer** creates the final user-facing summary
 
 ### update_project
 
@@ -84,18 +82,16 @@ An existing project is modified via feature branches:
 
 1. **Router** classifies intent as `update_project`, identifies the project
 2. **Planner** creates the initial plan
-3. **Developer** creates a feature branch (branch setup only)
+3. **Builder** (BRANCH SETUP mode) creates a feature branch
 4. **Business Analyst** reads existing code, gathers change requirements
 5. **Architect** reviews the change design (design loop with BA if needed)
 6. **Builder Planner** reads design documents, writes `builder_plan.md`
-7. **Test Builder** generates tests based on design documents and builder_plan.md (TDD Red Phase)
-8. **Builder** implements changes to make tests pass (TDD Green Phase)
-9. **Test Executor** runs tests, iteratively fixes code (same retry/HITL flow as create_project)
-10. **Deployer** builds and deploys a preview container (keeps production running)
-11. **Planner** re-evaluates based on user feedback:
-    - If approved: Developer merges PR, Deployer does final deploy from main
-    - If changes requested: loops back to Developer on the feature branch
-12. **Summarizer** creates the final summary
+7. **Builder** (TDD CYCLE mode) drives the full Red → Green → Verify loop via OpenCode sandbox agents; signals `TDD_PASSED` or `TDD_FAILED`
+8. **Deployer** builds and deploys a preview container (keeps production running)
+9. **Planner** re-evaluates based on user feedback:
+    - If approved: Builder (MERGE mode) merges PR, Deployer does final deploy from main
+    - If changes requested: loops back to Builder (IMPROVEMENT mode) on the feature branch
+10. **Summarizer** creates the final summary
 
 ### Core Update (Druppie self-improvement)
 
@@ -393,7 +389,7 @@ Available system prompts:
 | `workspace_state` | Shared workspace and git branch rules |
 | `tool_only_communication` | Reinforces that agents must never add "Other" to multiple choice options — the platform handles it automatically |
 
-Currently included by: Planner, Business Analyst, Architect, Builder Planner, Test Builder, Builder, Test Executor, Developer, Deployer. Agents without a `system_prompts` list receive no system prompts.
+Currently included by: Planner, Business Analyst, Architect, Builder Planner, Builder, Deployer, Update Core Builder. Agents without a `system_prompts` list receive no system prompts.
 
 Key sections:
 
@@ -429,12 +425,12 @@ Agents can delegate coding tasks to isolated Docker sandboxes. Each sandbox is a
 
 **How it works (user perspective):**
 
-1. An agent (e.g., Developer) calls `execute_coding_task` with a task description
+1. An agent (e.g., Builder) calls `execute_coding_task` with a task description
 2. The agent **pauses** (`paused_sandbox`) while the sandbox runs autonomously
 3. When the sandbox completes, a webhook callback resumes the agent automatically
 4. The chat timeline shows a **Sandbox Session card** with files changed, elapsed time, expandable events timeline, and full conversation history
 
-**Sandbox agents:** Three preconfigured agents run inside sandboxes -- `druppie-builder` (implements features), `druppie-tester` (writes and runs tests), and `druppie-core-builder` (implements changes to Druppie's own codebase in a dual-repo sandbox). All enforce a mandatory git workflow: add, commit, push. No unpushed commits allowed.
+**Sandbox agents:** Multiple preconfigured agents run inside sandboxes -- the TDD trio (`druppie-test-writer`, `druppie-implementer`, `druppie-test-runner`) drives the full TDD cycle; `druppie-builder` handles generic coding tasks (branch setup, improvements, merges); `druppie-tester` writes and runs tests outside the TDD flow; `druppie-core-builder` implements changes to Druppie's own codebase in a dual-repo sandbox. All enforce a mandatory git workflow: add, commit, push. No unpushed commits allowed.
 
 **Profile-based LLM routing:** Each sandbox agent/subagent has its own model profile (e.g., `sandbox/druppie-builder`). The LLM proxy resolves profiles to real provider chains at request time, allowing different agents to use different models. Profiles are configured in `sandbox_models.yaml`.
 
