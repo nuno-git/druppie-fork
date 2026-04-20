@@ -10,13 +10,18 @@ import CodeBlock from '../CodeBlock'
 import MermaidBlock from '../MermaidBlock'
 import { getAgentConfig } from '../../utils/agentConfig'
 
-// --- Project repo context (for rewriting relative links in rendered markdown) ---
+// --- Contexts for rewriting relative links in rendered markdown ---
 //
-// Set by SessionDetail to {repo_url, default_branch} for the current project.
-// MarkdownLink below uses it to turn `./foo.md` into a Gitea file URL so
-// links inside in-chat-rendered FD/TD actually go somewhere.
+// ProjectRepoContext  — set by SessionDetail to {repo_url, default_branch}
+// SourceFileContext   — set per file preview (e.g. `docs/functional-design.md`)
+//                       so `./foo.md` in that file resolves relative to the
+//                       file's directory, like Gitea/GitHub do.
+//
+// MarkdownLink below uses both to turn `./foo.md` into a working Gitea
+// file URL.
 
 export const ProjectRepoContext = createContext(null)
+export const SourceFileContext = createContext(null)
 
 const isExternalHref = (href) =>
   !href ||
@@ -25,19 +30,42 @@ const isExternalHref = (href) =>
   href.startsWith('tel:') ||
   href.startsWith('#')
 
-const rewriteRelativeLink = (href, repo) => {
+// Resolve a markdown link href against the directory of the source file it
+// appears in. Mirrors how Gitea/GitHub resolve relative links in rendered
+// markdown:
+//   sourcePath = "docs/functional-design.md", href = "./foo.md"  -> "docs/foo.md"
+//   sourcePath = "docs/functional-design.md", href = "foo.md"    -> "docs/foo.md"
+//   sourcePath = "docs/a/b.md",               href = "../foo.md" -> "docs/foo.md"
+//   any sourcePath,                           href = "/foo.md"   -> "foo.md"
+const resolveRelativePath = (sourcePath, href) => {
+  const hrefSegments = href.split('/')
+  if (hrefSegments[0] === '') {
+    // Absolute from repo root (leading slash). Drop the empty first segment.
+    return hrefSegments.slice(1).filter(Boolean).join('/')
+  }
+  const baseDir = sourcePath ? sourcePath.split('/').slice(0, -1) : []
+  const segments = [...baseDir]
+  for (const seg of hrefSegments) {
+    if (seg === '' || seg === '.') continue
+    if (seg === '..') segments.pop()
+    else segments.push(seg)
+  }
+  return segments.join('/')
+}
+
+const rewriteRelativeLink = (href, repo, sourcePath) => {
   if (!repo || !repo.repo_url) return null
   if (isExternalHref(href)) return null
-  // Drop leading ./ or /
-  const normalized = href.replace(/^\.?\//, '')
+  const resolved = resolveRelativePath(sourcePath, href)
   const branch = repo.default_branch || 'main'
   const base = repo.repo_url.replace(/\/$/, '')
-  return `${base}/src/branch/${branch}/${normalized}`
+  return `${base}/src/branch/${branch}/${resolved}`
 }
 
 const MarkdownLink = ({ href, children, ...props }) => {
   const repo = useContext(ProjectRepoContext)
-  const rewritten = rewriteRelativeLink(href, repo)
+  const sourcePath = useContext(SourceFileContext)
+  const rewritten = rewriteRelativeLink(href, repo, sourcePath)
   if (rewritten) {
     return (
       <a href={rewritten} target="_blank" rel="noopener noreferrer" {...props}>
