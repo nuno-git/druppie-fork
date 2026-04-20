@@ -754,6 +754,69 @@ async def create_message(
 # COMPLETION TOOL IMPLEMENTATION
 # =============================================================================
 
+
+def _check_completion_preconditions(
+    summary: str,
+    agent_run_id: UUID,
+    execution_repo: "ExecutionRepository",
+) -> str | None:
+    """Check if done() preconditions are met for this agent run.
+
+    Returns error message string if a precondition is violated, None if all OK.
+    """
+    from druppie.agents.definition_loader import AgentDefinitionLoader
+
+    agent_run = execution_repo.get_by_id(agent_run_id)
+    if not agent_run or not agent_run.agent_id:
+        return None
+
+    try:
+        loader = AgentDefinitionLoader()
+        definition = loader.load(agent_run.agent_id)
+    except Exception:
+        # Fail closed: if we can't load the definition, block completion.
+        # A guardrail that can be bypassed by an error isn't a guardrail.
+        logger.error(
+            "completion_precondition_definition_load_failed",
+            agent_run_id=str(agent_run_id),
+            agent_id=agent_run.agent_id,
+        )
+        return (
+            f"Internal error: could not load agent definition for '{agent_run.agent_id}'. "
+            "Cannot verify completion preconditions. Please retry or contact support."
+        )
+
+    # Check required summary status keywords
+    if definition.required_summary_status:
+        req = definition.required_summary_status
+        if not any(keyword in summary for keyword in req.one_of):
+            return req.error_message
+
+    if not definition.completion_preconditions:
+        return None
+
+    for precondition in definition.completion_preconditions:
+        if (
+            precondition.summary_contains is not None
+            and precondition.summary_contains not in summary
+        ):
+            continue
+
+        # Rule matches — check required tools
+        tool_calls = execution_repo.get_tool_calls_for_run(agent_run_id)
+
+        for required in precondition.required_tools:
+            completed_count = sum(
+                1
+                for tc in tool_calls
+                if tc.tool_name == required.tool_name and tc.status == "completed"
+            )
+            if completed_count < required.min_calls:
+                return precondition.error_message
+
+    return None
+
+
 async def done(
     summary: str,
     session_id: UUID,
@@ -781,6 +844,21 @@ async def done(
     Returns:
         Completion status with accumulated summary
     """
+    # Check completion preconditions before proceeding
+    precondition_error = _check_completion_preconditions(
+        summary=summary,
+        agent_run_id=agent_run_id,
+        execution_repo=execution_repo,
+    )
+    if precondition_error:
+        logger.warning(
+            "completion_precondition_failed",
+            agent_run_id=str(agent_run_id),
+            summary=summary[:200] if summary else "",
+            error=precondition_error,
+        )
+        return {"success": False, "error": precondition_error}
+
     logger.info(
         "agent_done",
         session_id=str(session_id),
