@@ -20,7 +20,7 @@ from fastapi import APIRouter, Depends, Query, HTTPException
 from pydantic import BaseModel
 import structlog
 
-from druppie.api.deps import get_current_user
+from druppie.api.deps import get_current_user, get_user_roles
 from druppie.api.errors import NotFoundError
 from druppie.core.mcp_config import MCPConfig
 from druppie.execution.mcp_http import MCPHttp, MCPHttpError
@@ -176,7 +176,7 @@ async def _verify_owner_or_admin(
     action: str,
 ) -> None:
     """Raise 403/404 if user is not admin and doesn't own the container."""
-    if "admin" in user.get("roles", []):
+    if "admin" in get_user_roles(user):
         return
     try:
         inspect_result = await mcp_http.call(
@@ -226,7 +226,7 @@ async def list_deployments(
         args["session_id"] = session_id
 
     # Non-admin users can only see their own containers
-    user_roles = user.get("roles", [])
+    user_roles = get_user_roles(user)
     if "admin" not in user_roles:
         args["user_id"] = user.get("sub")
 
@@ -278,7 +278,7 @@ async def stop_deployment(
     mcp_http = get_mcp_http()
 
     # First, verify ownership by inspecting the container
-    user_roles = user.get("roles", [])
+    user_roles = get_user_roles(user)
     if "admin" not in user_roles:
         try:
             inspect_result = await mcp_http.call(
@@ -343,7 +343,7 @@ async def get_deployment_logs(
     mcp_http = get_mcp_http()
 
     # Verify ownership for non-admins
-    user_roles = user.get("roles", [])
+    user_roles = get_user_roles(user)
     if "admin" not in user_roles:
         try:
             inspect_result = await mcp_http.call(
@@ -418,7 +418,7 @@ async def inspect_deployment(
             raise NotFoundError("deployment", container_name)
 
         # Verify ownership for non-admins
-        user_roles = user.get("roles", [])
+        user_roles = get_user_roles(user)
         if "admin" not in user_roles:
             labels = result.get("labels", {})
             owner_id = labels.get("druppie.user_id")
@@ -513,29 +513,77 @@ async def list_volumes(
     in that project carrying their druppie.user_id).
     """
     mcp_http = get_mcp_http()
-    args: dict[str, Any] = {"druppie_only": True}
-    if project_id:
-        args["project_id"] = project_id
 
     try:
-        result = await mcp_http.call(
+        # Pull every volume + every druppie container so we can link by
+        # com.docker.compose.project even when the volume itself has no
+        # druppie.* label (older compose_up deploys didn't label volumes).
+        vols_task = mcp_http.call(
             server="docker",
             tool="list_volumes",
-            args=args,
+            args={"druppie_only": False},
             timeout_seconds=15.0,
         )
-        if not result.get("success"):
-            return VolumeListResponse(items=[], count=0)
+        containers_task = mcp_http.call(
+            server="docker",
+            tool="list_containers",
+            args={"all": True},
+            timeout_seconds=15.0,
+        )
+        vols_res = await vols_task
+        cont_res = await containers_task
 
-        raw = result.get("volumes", [])
-        # Non-admins: filter to volumes whose project_id is owned by the user.
-        # We piggyback on druppie.project_id label set by compose overrides.
-        user_roles = user.get("roles", [])
+        all_volumes = vols_res.get("volumes", []) if vols_res.get("success") else []
+        all_containers = cont_res.get("containers", []) if cont_res.get("success") else []
+
+        # compose_project -> (druppie project_id, user_id) from containers
+        compose_to_project: dict[str, dict[str, str]] = {}
+        for c in all_containers:
+            labels = c.get("labels", {})
+            cp = labels.get("druppie.compose_project") or labels.get("com.docker.compose.project")
+            pid = labels.get("druppie.project_id")
+            if cp and pid:
+                compose_to_project[cp] = {
+                    "project_id": pid,
+                    "user_id": labels.get("druppie.user_id", ""),
+                }
+
+        enriched: list[dict[str, Any]] = []
+        for v in all_volumes:
+            labels = v.get("labels", {})
+            vol_pid = v.get("project_id") or labels.get("druppie.project_id")
+            vol_cp = v.get("compose_project") or labels.get("com.docker.compose.project")
+            link = compose_to_project.get(vol_cp) if vol_cp else None
+
+            # Keep only volumes that resolve to a druppie project
+            if not vol_pid and not link:
+                continue
+
+            resolved_pid = vol_pid or (link["project_id"] if link else None)
+            resolved_uid = v.get("user_id") or labels.get("druppie.user_id") or (
+                link["user_id"] if link else None
+            )
+
+            if project_id and resolved_pid != project_id:
+                continue
+
+            enriched.append({
+                "name": v["name"],
+                "driver": v.get("driver", "local"),
+                "project_id": resolved_pid,
+                "session_id": v.get("session_id") or labels.get("druppie.session_id"),
+                "compose_project": vol_cp,
+                "labels": labels,
+                "_user_id": resolved_uid,
+            })
+
+        # Non-admins see only volumes tied to projects they own a container in
+        user_roles = get_user_roles(user)
         if "admin" not in user_roles:
-            owned = await _owned_project_ids(mcp_http, user.get("sub", ""))
-            raw = [v for v in raw if v.get("project_id") in owned]
+            user_id = user.get("sub", "")
+            enriched = [e for e in enriched if e.get("_user_id") == user_id]
 
-        items = [VolumeSummary(**v) for v in raw]
+        items = [VolumeSummary(**{k: v for k, v in e.items() if k != "_user_id"}) for e in enriched]
         return VolumeListResponse(items=items, count=len(items))
 
     except MCPHttpError as e:
@@ -597,7 +645,7 @@ async def wipe_project(
     containers = list_result.get("containers", []) if list_result.get("success") else []
 
     # Ownership check: non-admin must own every container
-    user_roles = user.get("roles", [])
+    user_roles = get_user_roles(user)
     if "admin" not in user_roles:
         user_id = user.get("sub")
         if not containers:
@@ -632,18 +680,32 @@ async def wipe_project(
         except MCPHttpError as e:
             errors.append(f"rm {name}: {e}")
 
-    # Remove volumes labeled with this project_id
+    # Collect compose project names that belong to this druppie project_id so we
+    # can also reap compose volumes that lack druppie.* labels.
+    compose_projects: set[str] = set()
+    for c in containers:
+        labels = c.get("labels", {})
+        cp = labels.get("druppie.compose_project") or labels.get("com.docker.compose.project")
+        if cp:
+            compose_projects.add(cp)
+
     try:
         vols = await mcp_http.call(
             server="docker",
             tool="list_volumes",
-            args={"project_id": project_id, "druppie_only": True},
+            args={"druppie_only": False},
             timeout_seconds=15.0,
         )
-        for v in vols.get("volumes", []) if vols.get("success") else []:
-            vname = v.get("name")
-            if not vname:
-                continue
+        all_volumes = vols.get("volumes", []) if vols.get("success") else []
+        target_vols = []
+        for v in all_volumes:
+            labels = v.get("labels", {})
+            if labels.get("druppie.project_id") == project_id:
+                target_vols.append(v["name"])
+            elif labels.get("com.docker.compose.project") in compose_projects:
+                target_vols.append(v["name"])
+
+        for vname in target_vols:
             try:
                 r = await mcp_http.call(
                     server="docker",
