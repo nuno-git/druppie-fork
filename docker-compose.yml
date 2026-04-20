@@ -225,7 +225,11 @@ services:
       DEEPINFRA_API_KEY: ${DEEPINFRA_API_KEY:-}
     volumes:
       - druppie_new_workspace:/workspaces
-      - ${DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock
+      - type: bind
+        source: ${DOCKER_SOCK:-/var/run/docker.sock}
+        target: /var/run/docker.sock
+        bind:
+          create_host_path: false
     ports:
       - "${MCP_DOCKER_PORT:-9002}:9002"
     networks:
@@ -379,7 +383,11 @@ services:
       # LLM API keys and proxy URLs no longer needed here.
       # Credentials flow per-session from Druppie -> Control Plane -> Sandbox.
     volumes:
-      - ${DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock
+      - type: bind
+        source: ${DOCKER_SOCK:-/var/run/docker.sock}
+        target: /var/run/docker.sock
+        bind:
+          create_host_path: false
       - sandbox_snapshots:/data/snapshots
     networks:
       - druppie-new-network
@@ -458,7 +466,11 @@ services:
       ENV_FILE: /project/.env
     volumes:
       - druppie_init_marker:/init-marker
-      - ${DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock
+      - type: bind
+        source: ${DOCKER_SOCK:-/var/run/docker.sock}
+        target: /var/run/docker.sock
+        bind:
+          create_host_path: false
       - .:/project
     depends_on:
       keycloak:
@@ -533,7 +545,11 @@ services:
       - ./testing:/app/testing:ro
       - ./secrets:/app/secrets:ro
       - druppie_new_workspace:/app/workspace
-      - ${DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock
+      - type: bind
+        source: ${DOCKER_SOCK:-/var/run/docker.sock}
+        target: /var/run/docker.sock
+        bind:
+          create_host_path: false
     ports:
       - "${BACKEND_PORT:-8100}:8000"
     depends_on:
@@ -612,7 +628,11 @@ services:
     volumes:
       - ./secrets:/app/secrets:ro
       - druppie_new_workspace:/app/workspace
-      - ${DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock
+      - type: bind
+        source: ${DOCKER_SOCK:-/var/run/docker.sock}
+        target: /var/run/docker.sock
+        bind:
+          create_host_path: false
     ports:
       - "${BACKEND_PORT:-8100}:8000"
     depends_on:
@@ -697,7 +717,11 @@ services:
     environment:
       PGPASSWORD: ${DRUPPIE_DB_PASSWORD:-druppie_secret}
     volumes:
-      - ${DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock
+      - type: bind
+        source: ${DOCKER_SOCK:-/var/run/docker.sock}
+        target: /var/run/docker.sock
+        bind:
+          create_host_path: false
     entrypoint: ["sh", "-c"]
     command:
       - |
@@ -761,7 +785,11 @@ services:
       KEYCLOAK_REALM: druppie
       ENV_FILE: /project/.env
     volumes:
-      - ${DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock
+      - type: bind
+        source: ${DOCKER_SOCK:-/var/run/docker.sock}
+        target: /var/run/docker.sock
+        bind:
+          create_host_path: false
       - .:/project
 
   # Full nuke & rebuild - destroys EVERYTHING (containers, volumes, images) and rebuilds from scratch
@@ -782,7 +810,11 @@ services:
       KEYCLOAK_PORT: ${KEYCLOAK_PORT:-8180}
       GITEA_PORT: ${GITEA_PORT:-3100}
     volumes:
-      - ${DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock
+      - type: bind
+        source: ${DOCKER_SOCK:-/var/run/docker.sock}
+        target: /var/run/docker.sock
+        bind:
+          create_host_path: false
       - .:/project
     entrypoint: ["/app/scripts/nuke.sh"]
 
@@ -836,7 +868,11 @@ services:
         echo ""
         echo "=== Purge Complete ==="
     volumes:
-      - ${DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock
+      - type: bind
+        source: ${DOCKER_SOCK:-/var/run/docker.sock}
+        target: /var/run/docker.sock
+        bind:
+          create_host_path: false
 
   # OSV vulnerability scanner for the shared dependency cache
   # Usage: docker compose --profile scan-cache run --rm cache-scanner

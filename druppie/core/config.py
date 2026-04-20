@@ -177,6 +177,14 @@ class GitHubAppSettings(BaseSettings):
         """All three values must be set for the service to work."""
         return bool(self.id and self.private_key_path and self.installation_id)
 
+    @property
+    def is_partially_configured(self) -> bool:
+        """Any of the three values set but not all. Indicates operator intent
+        to use the feature but a misconfiguration that would silently fall
+        back to a disabled service — we prefer to fail startup."""
+        set_count = sum(bool(v) for v in (self.id, self.private_key_path, self.installation_id))
+        return 0 < set_count < 3
+
 
 class MCPSettings(BaseSettings):
     """MCP microservice configuration."""
@@ -295,6 +303,51 @@ class Settings(BaseSettings):
                 "gitea_credentials_not_configured",
                 message="GITEA_ADMIN_PASSWORD or GITEA_TOKEN not set - Gitea operations will fail",
             )
+
+    def validate_startup(self) -> None:
+        """Raise at startup if misconfiguration would cause silent runtime failures.
+
+        Current checks:
+        - GitHub App: if any of GITHUB_APP_ID / _PRIVATE_KEY_PATH / _INSTALLATION_ID
+          is set but not all, fail. Operator clearly intended to enable
+          update_core_builder; a partial config silently disables it and the
+          agent hangs later when it tries to push. Fail now instead.
+        - GitHub App: if all three are set, the private key file must exist and
+          be readable. A dangling GITHUB_APP_PRIVATE_KEY_PATH is the same
+          silent-failure footgun.
+        """
+        gh = self.github_app
+        if gh.is_partially_configured:
+            set_vars = [
+                name for name, val in [
+                    ("GITHUB_APP_ID", gh.id),
+                    ("GITHUB_APP_PRIVATE_KEY_PATH", gh.private_key_path),
+                    ("GITHUB_APP_INSTALLATION_ID", gh.installation_id),
+                ] if val
+            ]
+            missing = [
+                name for name, val in [
+                    ("GITHUB_APP_ID", gh.id),
+                    ("GITHUB_APP_PRIVATE_KEY_PATH", gh.private_key_path),
+                    ("GITHUB_APP_INSTALLATION_ID", gh.installation_id),
+                ] if not val
+            ]
+            raise RuntimeError(
+                "GitHub App is partially configured: set "
+                f"{set_vars} but missing {missing}. "
+                "Set all three (to enable update_core_builder) or none "
+                "(to disable it). A partial configuration silently disables "
+                "the service and hangs update_core_builder at runtime."
+            )
+        if gh.is_configured:
+            import os
+            if not os.path.isfile(gh.private_key_path):
+                raise RuntimeError(
+                    f"GITHUB_APP_PRIVATE_KEY_PATH={gh.private_key_path} does not point "
+                    "to a readable file. The GitHub App key must exist at this path "
+                    "when the backend starts. Fix the path or unset all three "
+                    "GITHUB_APP_* variables to disable the feature."
+                )
 
 
 @lru_cache()
