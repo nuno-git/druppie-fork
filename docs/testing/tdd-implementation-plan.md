@@ -1,5 +1,13 @@
 # TDD Implementation Plan - Builder & Test Agents
 
+> **⚠️ Superseded (2026-04-20).** The TDD flow has been moved entirely to
+> OpenCode sandbox agents. `test_builder` and `test_executor` have been
+> removed; the builder now owns the full TDD cycle via three OpenCode agents
+> (`druppie-test-writer`, `druppie-implementer`, `druppie-test-runner`) called
+> through `execute_coding_task`. See `docs/testing/tdd-workflow.md` for the
+> current architecture. The content below describes the original design and
+> is kept for historical context.
+
 ## Overview
 
 This document combines the detailed implementation plan for the TDD agents (builder_planner, test_builder, builder, test_executor) with the follow-up standalone architecture plan. It provides a complete roadmap for implementing Test-Driven Development (TDD) workflows in the Druppie project.
