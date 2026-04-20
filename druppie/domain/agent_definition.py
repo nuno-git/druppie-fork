@@ -45,6 +45,17 @@ class ApprovalOverride(BaseModel):
     required_role: str | None = None
 
 
+class SandboxConstraints(BaseModel):
+    """Constraints on which sandbox agents and repo targets an agent may use.
+
+    When set, execute_coding_task calls are validated against these lists.
+    When not set (None), all agents and repo targets are allowed.
+    """
+
+    allowed_agents: list[str] | None = None
+    allowed_repo_targets: list[str] | None = None
+
+
 class AgentDefinition(BaseModel):
     """Definition of an agent loaded from YAML.
 
@@ -63,6 +74,10 @@ class AgentDefinition(BaseModel):
     # Extra builtin tools beyond the defaults (done + hitl_ask_question + hitl_ask_multiple_choice_question)
     # These are ADDED to the defaults, e.g. ["make_plan"] gives this agent make_plan on top of defaults
     extra_builtin_tools: list[str] = Field(default_factory=list)
+
+    # Constraints on execute_coding_task parameters.
+    # When set, limits which sandbox agents and repo targets this agent can use.
+    sandbox_constraints: SandboxConstraints | None = None
 
     # MCP servers this agent can use
     # Can be a simple list of MCP names: ["coding"]

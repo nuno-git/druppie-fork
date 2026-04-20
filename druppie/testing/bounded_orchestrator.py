@@ -125,6 +125,14 @@ class BoundedOrchestrator:
             # instead of going through process_message (which creates router+planner)
             result_session_id = session_id
 
+            # Cancel pending runs left over from setup (e.g. planner's
+            # make_plan may have created pending architect/planner runs
+            # that would duplicate the agents we're about to create).
+            cancelled = execution_repo.cancel_pending_runs(session_id)
+            if cancelled:
+                logger.info("Cancelled %d pending runs from setup before continue", cancelled)
+            execution_repo.commit()
+
             # Reset session to active
             session_repo.update_status(session_id, SessionStatus.ACTIVE)
             session_repo.commit()
@@ -145,27 +153,67 @@ class BoundedOrchestrator:
             # Build context from the session's project
             context = orchestrator.build_project_context(session_id)
 
-            # Get the last done summary for prompt context
+            # Get the accumulated summary from the LAST completed run.
+            # Each run's done() already accumulates all prior summaries,
+            # so the last one contains the full chain — no need to
+            # concatenate (which would cause massive duplication).
             completed_runs = execution_repo.get_completed_runs(session_id)
             previous_summary = ""
-            for run in completed_runs:
-                s = execution_repo.get_done_summary_for_run(run.id)
-                if s:
-                    previous_summary += s + "\n"
+            if completed_runs:
+                last_summary = execution_repo.get_done_summary_for_run(completed_runs[-1].id)
+                if last_summary:
+                    previous_summary = last_summary
 
             # Create and run each specified agent directly
             all_agents_completed = True
             for i, agent_id in enumerate(self._real_agents):
-                prompt = f"PREVIOUS AGENT SUMMARY:\n{previous_summary}\n---\n\nUSER REQUEST:\n{message}"
+                # Planner gets previous summaries (matches production done()
+                # relay). All other agents get just the message — they read
+                # files from the workspace, not summary chains.
+                if agent_id == "planner" and previous_summary:
+                    prompt = (
+                        f"PREVIOUS AGENT SUMMARY:\n{previous_summary}\n---\n\n"
+                        + message
+                    )
+                else:
+                    prompt = message
 
-                agent_run = execution_repo.create_agent_run(
-                    session_id=session_id,
-                    agent_id=agent_id,
-                    status=AgentRunStatus.PENDING,
-                    planned_prompt=prompt,
-                    sequence_number=next_seq + 1 + i,
-                )
-                execution_repo.commit()
+                # Check if this agent was already completed (e.g. by
+                # _bounded_execute during a pause loop — when the architect
+                # pauses for approval, resume triggers execute_pending_runs
+                # which may run the build_classifier that done(next_agent=...)
+                # created). Skip it to avoid running the same agent twice.
+                self._db.expire_all()
+                completed_ids = {
+                    r.agent_id
+                    for r in execution_repo.get_completed_runs(session_id)
+                }
+                if agent_id in completed_ids and agent_id not in ("planner",):
+                    logger.info("Skipping %s — already completed by prior execution", agent_id)
+                    run_summary = None
+                    for run in execution_repo.get_completed_runs(session_id):
+                        if run.agent_id == agent_id:
+                            run_summary = execution_repo.get_done_summary_for_run(run.id)
+                    if run_summary:
+                        previous_summary = run_summary
+                    continue
+
+                # Reuse an existing pending run if one was created by a
+                # previous agent's done(next_agent=...) — e.g. architect
+                # creates a pending build_classifier via next_agent routing.
+                existing = execution_repo.get_pending_by_agent_id(session_id, agent_id)
+                if existing:
+                    agent_run = existing
+                    logger.info("Reusing existing pending run for %s (id=%s)", agent_id, existing.id)
+                else:
+                    agent_run = execution_repo.create_agent_run(
+                        session_id=session_id,
+                        agent_id=agent_id,
+                        status=AgentRunStatus.PENDING,
+                        planned_prompt=prompt,
+                        sequence_number=next_seq + 1 + i,
+                    )
+                    execution_repo.commit()
 
                 execution_repo.update_status(agent_run.id, AgentRunStatus.RUNNING)
                 execution_repo.commit()
@@ -208,10 +256,12 @@ class BoundedOrchestrator:
                         )
                         break
 
-                # Update summary for next agent
+                # Update summary for next agent — the new run's done()
+                # summary already includes all prior summaries, so replace
+                # rather than append to avoid duplication.
                 run_summary = execution_repo.get_done_summary_for_run(agent_run.id)
                 if run_summary:
-                    previous_summary += run_summary + "\n"
+                    previous_summary = run_summary
 
             # Only mark COMPLETED if all agents actually ran to completion
             if all_agents_completed:
@@ -276,9 +326,25 @@ class BoundedOrchestrator:
                     if agent_run and agent_run.agent_id not in self._real_agents:
                         break
 
+                question_context = None
+                if pending_question.tool_call_id:
+                    from druppie.db.models import ToolCall
+                    tc = self._db.query(ToolCall).filter(
+                        ToolCall.id == pending_question.tool_call_id
+                    ).first()
+                    if tc and isinstance(tc.arguments, dict):
+                        question_context = tc.arguments.get("context")
+
+                from druppie.testing.session_transcript import build_transcript
+                transcript = build_transcript(
+                    self._db, session_id, exclude_question_id=pending_question.id,
+                )
+
                 raw_answer = self._hitl_simulator.answer(
                     question_text=pending_question.question,
                     choices=pending_question.choices,
+                    question_context=question_context,
+                    session_transcript=transcript,
                 )
 
                 answer = raw_answer
@@ -306,14 +372,41 @@ class BoundedOrchestrator:
                 if not pending_approval:
                     break
 
-                # Auto-approve with the test user
-                pending_approval.status = "approved"
+                decision_status = "approved"
+                decision_reason: str | None = None
+                if self._hitl_simulator is not None:
+                    from druppie.db.models import ToolCall
+                    from druppie.testing.session_transcript import build_transcript
+                    tc = self._db.query(ToolCall).filter(
+                        ToolCall.id == pending_approval.tool_call_id
+                    ).first()
+                    tool_name = f"{pending_approval.mcp_server}:{pending_approval.tool_name}"
+                    tool_args = tc.arguments if tc and isinstance(tc.arguments, dict) else {}
+                    transcript = build_transcript(
+                        self._db, session_id, exclude_approval_id=pending_approval.id,
+                    )
+                    decision = self._hitl_simulator.decide_approval(
+                        tool_name=tool_name,
+                        tool_arguments=tool_args,
+                        session_transcript=transcript,
+                    )
+                    decision_status = decision.get("status", "approved")
+                    decision_reason = decision.get("reason")
+
+                if decision_status == "rejected":
+                    pending_approval.status = "rejected"
+                    pending_approval.rejection_reason = decision_reason or "Rejected by session owner."
+                else:
+                    pending_approval.status = "approved"
                 pending_approval.resolved_by = session.user_id
                 pending_approval.resolved_at = utcnow()
                 self._db.commit()
 
-                logger.info("Approval auto-approved (iteration %d): tool=%s:%s",
-                            iteration, pending_approval.mcp_server, pending_approval.tool_name)
+                logger.info(
+                    "Approval resolved by simulator (iteration %d): tool=%s:%s status=%s reason=%s",
+                    iteration, pending_approval.mcp_server, pending_approval.tool_name,
+                    pending_approval.status, (decision_reason or "")[:120],
+                )
                 await orchestrator.resume_after_approval(
                     session_id=session_id,
                     approval_id=pending_approval.id,

@@ -41,12 +41,12 @@ agents:
 
 subagents:
   explore:
-    - provider: deepinfra
-      model: Qwen/Qwen3-32B
     - provider: zai
       model: glm-4.7-flash
-  analysis:
     - provider: deepinfra
-      model: zai-org/GLM-4.7-Flash
+      model: Qwen/Qwen3-32B
+  analysis:
     - provider: zai
       model: glm-4.7
+    - provider: deepinfra
+      model: zai-org/GLM-4.7-Flash

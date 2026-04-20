@@ -18,4 +18,4 @@ agent-test:
   judge:
     context: [router, business_analyst]
     checks:
-      - "The BA should have asked at least one clarifying question before writing the design. Check if hitl_ask_question or hitl_ask_multiple_choice_question was called before make_design."
+      - "The BA should have asked at least one clarifying question before writing the design. Check if hitl_ask_question was called before make_design (note: hitl_ask_multiple_choice_question is no longer used for FD confirmation — that is handled by the approval gate on make_design)."
