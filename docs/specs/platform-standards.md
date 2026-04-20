@@ -1,9 +1,24 @@
 # Spec: Platform Standards File
 
-**Status:** proposal
+**Status:** implemented (see note below)
 **Author:** nuno
 **Date:** 2026-04-20
 **Branch:** integration/open-prs-20260420 (targets colab-dev)
+
+> **Implementation note — 2026-04-20:** during review we split the single
+> file into two, owned by different agents and visible to different
+> audiences:
+>
+> - `docs/platform-functional-standards.md` — BA domain. User-facing
+>   defaults (language, performance, accessibility, error UX, auth UX).
+>   Linked from every `functional-design.md`. The user sees this.
+> - `docs/platform-technical-standards.md` — Architect domain. Stack,
+>   DB, modules, layering, deployment. Linked from every
+>   `technical-design.md`.
+>
+> The design reasoning below is still accurate; only the file-count
+> detail changed. Section 5 of this spec (database) was rewritten — see
+> the actual file for the final wording.
 
 ---
 
