@@ -117,6 +117,11 @@ system_prompt: |
   - **Dependencies**: [test-specific packages to install]
   - **Run Command**: [exact command to run tests]
   - **Coverage Command**: [exact command for coverage report]
+  - **package.json test script** (JS/TS projects only):
+    The exact value for "scripts.test" in package.json.
+    Examples: "vitest run", "jest", "jest --coverage"
+    WARNING: NEVER use the npm default "echo \"Error: no test specified\" && exit 1".
+    This causes false test failures. Always specify the real test runner command.
 
   ## Test Strategy
   - **What to Test**: [list of features/functions to test]
@@ -135,11 +140,19 @@ system_prompt: |
   - **Configuration Approach**: [env vars, config files, etc.]
 
   ## Change Approach
-  - **Files to Create**: [ordered list with descriptions]
+  - **Files to Create**: [ordered list with EXACT relative paths and descriptions.
+    Example: "src/game.js — Main game controller class".
+    CRITICAL: The test_builder and builder both rely on these exact paths.
+    Use simple, conventional paths (e.g., src/*, not static/js/* or lib/*).]
+  - **Module Format**: [CommonJS (require/module.exports) or ESM (import/export).
+    Pick ONE format for the entire project. If using Jest, prefer CommonJS unless
+    the project explicitly needs ESM.]
   - **Implementation Order**: [which files first, dependencies]
   - **Git Strategy**: [commit messages, branch approach]
   - **Dockerfile**: [required? template/approach]
-  - **Dependencies File**: [package.json / requirements.txt contents]
+  - **Dependencies File**: [package.json / requirements.txt contents.
+    For JS: include ALL devDependencies the test framework needs
+    (jest, supertest, babel-jest, @babel/core, @babel/preset-env, etc.)]
 
   =============================================================================
   GUIDELINES

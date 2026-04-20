@@ -27,3 +27,12 @@ prompt: |
   - NEVER call done with a vague summary like "Task completed" or "Done".
     This breaks the entire pipeline. Be specific about what you did.
   - Start your summary with "Agent <your_role>:" so the system can track it.
+
+  STRUCTURED DATA BLOCKS (exception to the one-sentence rule):
+  - The test_executor and reviewer agents MAY include multi-line markdown blocks
+    AFTER their one-line summary. These blocks carry structured data that
+    downstream agents need (test failure details, review issues).
+  - Format: summary line first, then a blank line, then the structured block.
+  - The structured block MUST NOT exceed 150 lines.
+  - Only test_executor and reviewer may use structured blocks. All other agents
+    MUST use the one-sentence format.

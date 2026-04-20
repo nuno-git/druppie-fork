@@ -1,10 +1,16 @@
-FROM python:3.11-slim
+FROM python:3.12-slim-bookworm
 
 WORKDIR /app
 
-# Install git, curl, Node.js/npm, and Chromium for git operations, health checks,
-# JS test runners, and Mermaid diagram validation (mmdc needs a browser via Puppeteer)
-RUN apt-get update && apt-get install -y git curl nodejs npm chromium && rm -rf /var/lib/apt/lists/*
+# Install git, curl, Chromium, and Node.js 22 LTS (matching sandbox environment)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git curl chromium ca-certificates gnupg \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Node.js 22 LTS (matching sandbox environment)
+RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && apt-get install -y nodejs \
+    && rm -rf /var/lib/apt/lists/*
 
 # Configure Puppeteer to use system Chromium (skip bundled download)
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true

@@ -79,6 +79,14 @@ system_prompt: |
   implementation exists yet (this is TDD - Red phase). The builder agent
   will implement code to make these tests pass.
 
+  RED PHASE VERIFICATION — ensure tests will actually fail without implementation:
+  - Import from source modules that do NOT exist yet (e.g., import { add } from '../src/calculator.js')
+    This guarantees ImportError/ModuleNotFoundError when tests run before implementation.
+  - Do NOT stub or mock the modules under test — test the real imports
+  - Do NOT write tests that pass vacuously (e.g., expect(true).toBe(true))
+  - Every test MUST assert specific behavior that REQUIRES implementation code to pass
+  - Test real return values, side effects, DOM output — not just that functions exist
+
   =============================================================================
   TEST GENERATION GUIDELINES - PER FRAMEWORK
   =============================================================================
@@ -166,7 +174,30 @@ system_prompt: |
 
   File conventions:
   - *.test.js, *.spec.js in tests/ directory
-  - jest.config.js for configuration
+  - CRITICAL: Always use jest.config.cjs (NOT jest.config.js) for the config file.
+    When package.json has "type": "module", Node.js treats .js files as ESM.
+    Jest config uses module.exports (CommonJS), so it MUST use the .cjs extension.
+    If a jest.config.js already exists, DELETE it and create jest.config.cjs instead.
+
+  jest.config.cjs example:
+  ```javascript
+  module.exports = {
+    testEnvironment: 'jsdom',
+    testMatch: ['**/tests/**/*.test.js'],
+    transform: {
+      '^.+\\.js$': ['babel-jest', { presets: [['@babel/preset-env', { targets: { node: 'current' } }]] }]
+    },
+    collectCoverageFrom: ['src/**/*.js', '!src/**/*.test.js'],
+    coverageThreshold: {
+      global: { branches: 80, functions: 80, lines: 80, statements: 80 }
+    }
+  };
+  ```
+
+  IMPORTANT: When package.json has "type": "module", you MUST also:
+  - Add @babel/core, @babel/preset-env, and babel-jest to devDependencies
+    (Jest cannot natively import ESM modules — Babel transpiles them to CommonJS)
+  - Or remove "type": "module" from package.json if the project doesn't need ESM
 
   Test structure example:
   ```javascript
@@ -234,6 +265,12 @@ system_prompt: |
   - Health endpoint: include a test that GET /health returns 200 with status "ok" — this endpoint is critical for deployment and must never be removed
 
   Framework-specific verification:
+  - All JS/TS projects:
+    - package.json MUST have a "test" script pointing to the correct runner
+    - Vitest: "scripts": { "test": "vitest run" }
+    - Jest:   "scripts": { "test": "jest" }
+    - Do NOT leave "test": "echo \"Error: no test specified\" && exit 1"
+
   - Python/Pytest:
     - pytest-cov installed in requirements.txt
     - pytest.ini or pyproject.toml configured
@@ -245,8 +282,15 @@ system_prompt: |
     - tests/setup.js exists for global setup
 
   - Node.js/Jest:
-    - jest.config.js exists
+    - jest.config.cjs exists (NEVER jest.config.js — causes ESM/CommonJS conflict)
+    - If jest.config.js exists, delete it and create jest.config.cjs
+    - If "type": "module" in package.json, add babel-jest + @babel/core + @babel/preset-env
     - supertest for API testing (if backend)
+    - CRITICAL: Every package you import in test files MUST be in package.json
+      devDependencies. If you write `require('supertest')`, you MUST also update
+      package.json to include `"supertest": "^6.3.0"` in devDependencies.
+      Missing devDependencies cause "Cannot find module" errors that waste
+      entire TDD retry cycles.
 
   - E2E/Playwright:
     - playwright.config.js exists
@@ -285,20 +329,33 @@ system_prompt: |
         * Node.js: create/update package.json with jest
         * Go: no setup needed (built-in)
    4. Identify functional requirements and edge cases from design docs
-   5. Generate test files using coding_write_file() with:
+   5. Determine the EXACT file paths from builder_plan.md's "Change Approach" section.
+      Your test imports MUST match these paths exactly. For example, if builder_plan.md
+      says "Create src/game.js", your test must import from '../src/game.js', NOT from
+      some other path like '../../../static/js/game'. If builder_plan.md doesn't specify
+      paths, use the most conventional layout for the framework.
+   6. Generate test files using coding_write_file() with:
        - Proper imports for framework
        - Test cases covering all requirements
        - Proper naming conventions
        - Fixtures and setup/teardown as needed
-   6. If coverage not configured, add config files:
+   7. If coverage not configured, add config files:
        - pytest.ini (Python)
        - vite.config.js test section (Frontend)
-       - jest.config.js (Node.js)
-   7. Add dependencies if missing:
+       - jest.config.cjs (Node.js — must use .cjs to avoid ESM conflict when package.json has "type": "module")
+   8. Add dependencies if missing:
        - pytest-cov (Python)
        - @vitest/coverage-v8 (Frontend)
-   8. Commit all test files
-   9. Call done() with summary of tests generated
+   9. VALIDATION (JS/TS projects only — do this BEFORE committing):
+      Read back package.json and verify that EVERY third-party package imported
+      in your test files is listed in devDependencies. Common ones to check:
+      - jest, @jest/globals (test runner)
+      - supertest (HTTP testing)
+      - @testing-library/* (React testing)
+      - babel-jest, @babel/core, @babel/preset-env (if "type": "module")
+      If any are missing, update package.json with coding_write_file before committing.
+   10. Commit all test files
+   11. Call done() with summary of tests generated
 
 
 system_prompts:

@@ -24,7 +24,7 @@ from pathlib import Path
 from fastmcp import FastMCP
 from .mermaid_validator import validate_mermaid_in_markdown
 from .retry_module import revert_to_commit, close_pull_request
-from .testing_module import TestingModule
+from .testing_module import TestingModule, _strip_ansi
 
 # Configure logging
 logger = logging.getLogger("coding-mcp")
@@ -913,7 +913,7 @@ async def _run_git(
     workspace_id: str, command: str, repo_name: str = None, repo_owner: str = None
 ) -> dict:
     """Execute a whitelisted git command and return raw output."""
-    ALLOWED_SUBCOMMANDS = {"add", "commit", "push", "pull", "fetch", "status", "checkout", "log", "diff", "branch"}
+    ALLOWED_SUBCOMMANDS = {"add", "commit", "push", "pull", "fetch", "status", "checkout", "log", "diff", "branch", "mv", "rm"}
     CREDENTIAL_SUBCOMMANDS = {"push", "pull", "fetch"}
 
     try:
@@ -1141,7 +1141,7 @@ async def run_git(
 ) -> dict:
     """Execute a git command in the workspace.
 
-    Allowed subcommands: add, commit, push, pull, fetch, status, checkout, log, diff, branch.
+    Allowed subcommands: add, branch, checkout, commit, diff, fetch, log, mv, pull, push, rm, status.
     Destructive flags (--force, --hard) are blocked.
 
     Args:
@@ -1269,6 +1269,156 @@ async def get_test_framework(
         return {"success": False, "error": str(e)}
 
 
+def _fix_jest_esm_config(workspace_path: Path) -> None:
+    """Auto-fix Jest ESM/CommonJS conflict.
+
+    When package.json has "type": "module", Node.js treats .js files as ESM.
+    Jest configs use module.exports (CommonJS), so jest.config.js will fail with
+    'ReferenceError: module is not defined'. Fix by renaming to .cjs.
+    """
+    package_json = workspace_path / "package.json"
+    jest_config_js = workspace_path / "jest.config.js"
+    jest_config_cjs = workspace_path / "jest.config.cjs"
+
+    if not package_json.exists():
+        return
+    if not jest_config_js.exists():
+        logger.debug("_fix_jest_esm_config: no jest.config.js found, skipping")
+        return
+
+    try:
+        pkg_data = json.loads(package_json.read_text())
+    except (json.JSONDecodeError, OSError) as e:
+        logger.warning("_fix_jest_esm_config: failed to read package.json: %s", e)
+        return
+
+    if pkg_data.get("type") != "module":
+        logger.debug("_fix_jest_esm_config: package.json has no type=module, skipping")
+        return
+
+    # ESM conflict detected — fix it
+    try:
+        if jest_config_cjs.exists():
+            jest_config_js.unlink()
+            logger.info("_fix_jest_esm_config: deleted redundant jest.config.js (jest.config.cjs already exists)")
+        else:
+            jest_config_js.rename(jest_config_cjs)
+            logger.info("_fix_jest_esm_config: renamed jest.config.js → jest.config.cjs")
+    except OSError as e:
+        logger.error("_fix_jest_esm_config: file operation failed: %s", e)
+        return
+
+    # Post-fix validation
+    if jest_config_js.exists():
+        logger.error("_fix_jest_esm_config: jest.config.js STILL EXISTS after fix attempt!")
+
+
+def _ensure_deps_installed(workspace_path: Path, framework: str) -> list[str]:
+    """Ensure project dependencies are installed before running tests.
+
+    For Node.js projects: always runs npm install to sync node_modules with
+    package.json (handles new deps added by builder after git pull).
+    For Python projects: installs from requirements.txt or pyproject.toml
+    if present but deps appear missing.
+
+    This is best-effort — failures are logged but don't block test execution,
+    since the tests themselves will surface any missing-module errors.
+
+    Returns:
+        List of warning strings for any failures encountered.
+    """
+    warnings: list[str] = []
+    try:
+        if framework in ("vitest", "jest", "playwright"):
+            package_json = workspace_path / "package.json"
+            if package_json.exists():
+                node_modules = workspace_path / "node_modules"
+                # Check if node_modules is stale: missing entirely, or
+                # package.json is newer than node_modules (deps changed)
+                needs_install = not node_modules.exists()
+                if not needs_install:
+                    try:
+                        pkg_mtime = package_json.stat().st_mtime
+                        nm_mtime = node_modules.stat().st_mtime
+                        needs_install = pkg_mtime > nm_mtime
+                    except OSError:
+                        needs_install = True
+
+                if needs_install:
+                    logger.info("run_tests: syncing node dependencies in %s", workspace_path)
+                    result = subprocess.run(
+                        ["npm", "install"],
+                        cwd=str(workspace_path),
+                        capture_output=True,
+                        text=True,
+                        timeout=600,
+                    )
+                    if result.returncode != 0:
+                        msg = f"npm install failed: {result.stderr[:500]}"
+                        logger.warning("run_tests: %s", msg)
+                        warnings.append(msg)
+
+        elif framework == "pytest":
+            # Check if pytest is importable; if not, install deps
+            import sys
+            check = subprocess.run(
+                [sys.executable, "-c", "import pytest"],
+                cwd=str(workspace_path),
+                capture_output=True,
+                timeout=10,
+            )
+            if check.returncode != 0:
+                requirements_txt = workspace_path / "requirements.txt"
+                pyproject_toml = workspace_path / "pyproject.toml"
+                if requirements_txt.exists():
+                    logger.info("run_tests: installing Python deps from requirements.txt")
+                    result = subprocess.run(
+                        ["pip", "install", "-r", "requirements.txt"],
+                        cwd=str(workspace_path),
+                        capture_output=True,
+                        text=True,
+                        timeout=600,
+                    )
+                    if result.returncode != 0:
+                        msg = f"pip install -r requirements.txt failed: {result.stderr[:500]}"
+                        logger.warning("run_tests: %s", msg)
+                        warnings.append(msg)
+                elif pyproject_toml.exists():
+                    logger.info("run_tests: installing Python project from pyproject.toml")
+                    result = subprocess.run(
+                        ["pip", "install", "."],
+                        cwd=str(workspace_path),
+                        capture_output=True,
+                        text=True,
+                        timeout=600,
+                    )
+                    if result.returncode != 0:
+                        msg = f"pip install . failed: {result.stderr[:500]}"
+                        logger.warning("run_tests: %s", msg)
+                        warnings.append(msg)
+                # Always ensure pytest itself is available
+                result = subprocess.run(
+                    ["pip", "install", "pytest", "pytest-cov"],
+                    cwd=str(workspace_path),
+                    capture_output=True,
+                    text=True,
+                    timeout=300,
+                )
+                if result.returncode != 0:
+                    msg = f"pip install pytest pytest-cov failed: {result.stderr[:500]}"
+                    logger.warning("run_tests: %s", msg)
+                    warnings.append(msg)
+    except subprocess.TimeoutExpired:
+        msg = "dependency install timed out"
+        logger.warning("run_tests: %s, proceeding with test execution", msg)
+        warnings.append(msg)
+    except Exception as e:
+        msg = f"dependency install failed: {str(e)}"
+        logger.warning("run_tests: %s", msg)
+        warnings.append(msg)
+    return warnings
+
+
 @mcp.tool(
     meta={"module_id": MODULE_ID, "version": MODULE_VERSION},
 )
@@ -1278,7 +1428,7 @@ async def run_tests(
     project_id: str | None = None,
     user_id: str | None = None,
     test_command: str | None = None,
-    timeout: int = 300,
+    timeout: int = 600,
     repo_name: str | None = None,
     repo_owner: str | None = None,
 ) -> dict:
@@ -1290,7 +1440,7 @@ async def run_tests(
         project_id: Project ID for workspace path (optional)
         user_id: User ID for workspace path (optional)
         test_command: Optional custom test command (default: auto-detected)
-        timeout: Timeout in seconds (default: 300)
+        timeout: Timeout in seconds (default: 600)
         repo_name: Gitea repository name (for cloning)
         repo_owner: Gitea repository owner (for cloning)
 
@@ -1314,6 +1464,26 @@ async def run_tests(
             return {"success": False, "error": "Either session_id or workspace_id is required"}
 
         tm = _testing_module(workspace_path)
+
+        # Auto-pull latest code before running tests.
+        # The LLM agent may skip or forget coding_run_git(command="pull"),
+        # causing tests to run against stale code after a sandbox push.
+        git_dir = workspace_path / ".git"
+        if git_dir.exists():
+            try:
+                pull_result = subprocess.run(
+                    ["git", "pull", "--ff-only"],
+                    cwd=str(workspace_path),
+                    capture_output=True,
+                    text=True,
+                    timeout=60,
+                )
+                if pull_result.returncode != 0:
+                    logger.warning("run_tests: git pull failed: %s", pull_result.stderr[:500])
+            except subprocess.TimeoutExpired:
+                logger.warning("run_tests: git pull timed out")
+            except Exception as e:
+                logger.warning("run_tests: git pull error: %s", str(e))
 
         # Detect framework if command not provided
         if not test_command or test_command.strip().lower() in ("null", "none", ""):
@@ -1344,6 +1514,15 @@ async def run_tests(
             elif "cargo test" in test_command:
                 framework = "cargo"
 
+        # Auto-fix Jest ESM/CommonJS conflict before running tests
+        if framework == "jest":
+            _fix_jest_esm_config(workspace_path)
+
+        # Auto-install dependencies before running tests.
+        # The LLM agent may not always call install_test_dependencies first,
+        # and package.json / requirements.txt may have changed after git pull.
+        dep_warnings = _ensure_deps_installed(workspace_path, framework)
+
         logger.info("Running tests in workspace %s: %s", workspace_path, test_command)
 
         start_time = time.time()
@@ -1360,6 +1539,46 @@ async def run_tests(
             )
             elapsed = time.time() - start_time
 
+            # Auto-detect Jest ESM/CJS config crash and retry once
+            if (
+                framework == "jest"
+                and result.returncode != 0
+                and "module is not defined" in result.stderr
+            ):
+                logger.warning("run_tests: detected Jest ESM/CJS config error, attempting auto-fix and retry")
+                _fix_jest_esm_config(workspace_path)
+                # Nuclear fallback: if jest.config.js STILL exists, force-rename
+                fallback_js = workspace_path / "jest.config.js"
+                fallback_cjs = workspace_path / "jest.config.cjs"
+                if fallback_js.exists():
+                    try:
+                        if fallback_cjs.exists():
+                            fallback_js.unlink()
+                        else:
+                            fallback_js.rename(fallback_cjs)
+                        logger.info("run_tests: force-fixed jest.config.js on retry path")
+                    except OSError:
+                        pass
+                # Retry test execution once
+                try:
+                    result = subprocess.run(
+                        shlex.split(test_command),
+                        shell=False,
+                        cwd=str(workspace_path),
+                        capture_output=True,
+                        text=True,
+                        timeout=timeout,
+                    )
+                    elapsed = time.time() - start_time
+                    logger.info("run_tests: Jest retry completed with exit_code=%d", result.returncode)
+                except subprocess.TimeoutExpired:
+                    return {
+                        "success": False,
+                        "error": f"Test execution timed out after {timeout} seconds (on Jest config retry)",
+                        "framework": framework,
+                        "command": test_command,
+                    }
+
             parsed_results = tm.parse_test_results(
                 result.stdout + "\n" + result.stderr,
                 framework,
@@ -1371,7 +1590,22 @@ async def run_tests(
                 if coverage:
                     parsed_results["coverage"] = coverage
 
-            return {
+            # Detect config/setup errors when no test results could be parsed
+            config_error = None
+            if parsed_results.get("total", 0) == 0 and result.returncode != 0:
+                stderr_lower = _strip_ansi(result.stderr).lower()
+                if "module is not defined" in stderr_lower:
+                    config_error = 'Jest config uses CommonJS (module.exports) but package.json has "type": "module". Config must use .cjs extension.'
+                elif "cannot use import statement" in stderr_lower:
+                    config_error = "Test files use ESM imports but environment is configured for CommonJS."
+                elif "syntaxerror" in stderr_lower and ("unexpected token" in stderr_lower or "cannot find module" in stderr_lower):
+                    config_error = "Configuration/syntax error prevented tests from running. Check stderr."
+
+            # success=True means the MCP tool executed (even if tests failed).
+            # The frontend uses exit_code, results.failed, and config_error
+            # to determine test pass/fail. Setting success=False would cause
+            # tool_executor to discard the entire result dict.
+            response = {
                 "success": True,
                 "framework": framework,
                 "command": test_command,
@@ -1382,6 +1616,11 @@ async def run_tests(
                 "results": parsed_results,
                 "coverage": coverage,
             }
+            if config_error:
+                response["config_error"] = config_error
+            if dep_warnings:
+                response["dependency_warnings"] = dep_warnings
+            return response
 
         except subprocess.TimeoutExpired:
             return {
@@ -1530,7 +1769,7 @@ async def install_test_dependencies(
                         cwd=str(workspace_path),
                         capture_output=True,
                         text=True,
-                        timeout=300,
+                        timeout=600,
                     )
                     results.append({
                         "dependency": "requirements.txt (all)",
@@ -1549,7 +1788,7 @@ async def install_test_dependencies(
                     return {
                         "success": False,
                         "framework": framework,
-                        "error": "pip install -r requirements.txt timed out after 300 seconds",
+                        "error": "pip install -r requirements.txt timed out after 600 seconds",
                         "results": results,
                     }
                 except Exception as e:
@@ -1562,7 +1801,7 @@ async def install_test_dependencies(
                         cwd=str(workspace_path),
                         capture_output=True,
                         text=True,
-                        timeout=300,
+                        timeout=600,
                     )
                     results.append({
                         "dependency": "pyproject.toml (all)",
@@ -1581,7 +1820,7 @@ async def install_test_dependencies(
                     return {
                         "success": False,
                         "framework": framework,
-                        "error": "pip install . timed out after 300 seconds",
+                        "error": "pip install . timed out after 600 seconds",
                         "results": results,
                     }
                 except Exception as e:
@@ -1601,7 +1840,7 @@ async def install_test_dependencies(
                             cwd=str(workspace_path),
                             capture_output=True,
                             text=True,
-                            timeout=120,
+                            timeout=300,
                         )
                         results.append({
                             "dependency": dep,
@@ -1613,40 +1852,41 @@ async def install_test_dependencies(
                         results.append({"dependency": dep, "success": False, "error": str(e)})
 
         elif framework in ["vitest", "jest"]:
-            # Run npm install first if node_modules doesn't exist
-            node_modules = workspace_path / "node_modules"
-            if not node_modules.exists():
-                logger.info("node_modules missing, running npm install first in %s", workspace_path)
-                try:
-                    npm_result = subprocess.run(
-                        ["npm", "install"],
-                        cwd=str(workspace_path),
-                        capture_output=True,
-                        text=True,
-                        timeout=180,
-                    )
-                    results.append({
-                        "dependency": "npm install (all)",
-                        "success": npm_result.returncode == 0,
-                        "output": npm_result.stdout,
-                        "error": npm_result.stderr if npm_result.returncode != 0 else None,
-                    })
-                    if npm_result.returncode != 0:
-                        return {
-                            "success": False,
-                            "framework": framework,
-                            "error": f"npm install failed: {npm_result.stderr}",
-                            "results": results,
-                        }
-                except subprocess.TimeoutExpired:
+            # Always run npm install to sync dependencies — package.json may
+            # have changed after git pull (new deps added by builder/test_builder).
+            # Previously we only ran this when node_modules was missing, which
+            # caused "module not found" failures for newly added packages.
+            logger.info("Running npm install to sync dependencies in %s", workspace_path)
+            try:
+                npm_result = subprocess.run(
+                    ["npm", "install"],
+                    cwd=str(workspace_path),
+                    capture_output=True,
+                    text=True,
+                    timeout=600,
+                )
+                results.append({
+                    "dependency": "npm install (all)",
+                    "success": npm_result.returncode == 0,
+                    "output": npm_result.stdout,
+                    "error": npm_result.stderr if npm_result.returncode != 0 else None,
+                })
+                if npm_result.returncode != 0:
                     return {
                         "success": False,
                         "framework": framework,
-                        "error": "npm install timed out after 180 seconds",
+                        "error": f"npm install failed: {npm_result.stderr}",
                         "results": results,
                     }
-                except Exception as e:
-                    results.append({"dependency": "npm install (all)", "success": False, "error": str(e)})
+            except subprocess.TimeoutExpired:
+                return {
+                    "success": False,
+                    "framework": framework,
+                    "error": "npm install timed out after 600 seconds",
+                    "results": results,
+                }
+            except Exception as e:
+                results.append({"dependency": "npm install (all)", "success": False, "error": str(e)})
 
             # Install any still-missing individual packages
             # Re-check after npm install
@@ -1660,7 +1900,7 @@ async def install_test_dependencies(
                         cwd=str(workspace_path),
                         capture_output=True,
                         text=True,
-                        timeout=120,
+                        timeout=300,
                     )
                     results.append({
                         "dependency": dep,
@@ -1680,7 +1920,7 @@ async def install_test_dependencies(
             "installed": [r["dependency"] for r in successful],
             "failed": [r["dependency"] for r in failed],
             "results": results,
-            "message": f"Installed {len(successful)}/{len(missing)} dependencies" if results else "No dependencies to install",
+            "message": f"Installed {len(successful)} dependencies, {len(failed)} failed" if results else "No dependencies to install",
         }
 
     except Exception as e:
