@@ -692,10 +692,8 @@ Twelve agents are defined as YAML files in `druppie/agents/definitions/`:
 | `business_analyst` | Gathers requirements from user | Default | `coding` (read_file, make_design, list_dir) | `making-mermaid-diagrams` |
 | `architect` | Designs system architecture, writes specs | Default | `coding` (read_file, make_design, list_dir), `archimate` | `making-mermaid-diagrams` |
 | `builder_planner` | Creates implementation plans, writes builder_plan.md | Default | `coding` | — |
-| `test_builder` | Generates tests (TDD Red Phase) | Default | `coding` | — |
-| `builder` | Implements code to pass tests (TDD Green Phase) | Default | `coding` | — |
-| `test_executor` | Runs tests, iteratively fixes code | `test_report` | `coding` | — |
-| `developer` | Writes code, commits, creates PRs | `invoke_skill`, `execute_coding_task` | `coding` | `code-review`, `git-workflow` |
+| `builder` | Owns full TDD cycle — dispatches to OpenCode sandbox agents (druppie-test-writer → druppie-implementer → druppie-test-runner) with 3 retry strategies | `execute_coding_task` | — | — |
+| `developer` | Branch setup, improvements, PR merges — dispatches to OpenCode sandbox agents | `execute_coding_task` | — | — |
 | `reviewer` | Reviews code quality | Default | `coding` | — |
 | `tester` | Writes and runs tests | `execute_coding_task` | `coding`, `docker` | — |
 | `deployer` | Builds and deploys containers | Default | `coding`, `docker` | — |
@@ -742,7 +740,7 @@ Available system prompts:
 
 Agents declare which system prompts to include via the `system_prompts` list in their YAML definition. At runtime, the agent's `_build_system_prompt()` method loads each system prompt and appends it (in order) after the agent's own `system_prompt` text, before tool instructions are added.
 
-Agents without a `system_prompts` list (or with an empty list) receive no system prompts. Currently, 9 agents include all 4 system prompts: architect, builder, builder_planner, business_analyst, deployer, developer, planner, test_builder, and test_executor. The router, summarizer, and reviewer agents do not include system prompts.
+Agents without a `system_prompts` list (or with an empty list) receive no system prompts. Currently, these agents include all 4 system prompts: architect, builder, builder_planner, business_analyst, deployer, developer, planner. The router, summarizer, and reviewer agents do not include system prompts.
 
 ### 8.3 Agent Runtime Architecture
 

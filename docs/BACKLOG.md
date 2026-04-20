@@ -2,7 +2,15 @@
 
 Bugs, implementation gaps, technical debt, and improvement ideas for the Druppie platform.
 
-Last updated: 2026-03-24
+Last updated: 2026-04-20
+
+> **Note (2026-04-20):** The TDD flow has been refactored. `test_builder` and
+> `test_executor` are gone. The `builder` now owns the full TDD cycle by
+> delegating to OpenCode sandbox agents (`druppie-test-writer`,
+> `druppie-implementer`, `druppie-test-runner`) via `execute_coding_task`.
+> Older entries in this document that reference `test_builder`/`test_executor`
+> describe the previous architecture and may be stale; see
+> `docs/testing/tdd-workflow.md` for current design.
 
 ---
 
