@@ -18,6 +18,7 @@ import {
   ChevronRight,
   X,
   Info,
+  Search,
 } from 'lucide-react'
 import {
   getAvailableSetups,
@@ -47,6 +48,7 @@ export const TestSelectorModal = ({
   setJudgeEnabled,
 }) => {
   const [expandedTests, setExpandedTests] = useState(new Set())
+  const [searchQuery, setSearchQuery] = useState('')
 
   const toggleTest = (name) => {
     const next = new Set(selectedTests)
@@ -110,6 +112,28 @@ export const TestSelectorModal = ({
           </button>
         </div>
 
+        {/* Search */}
+        <div className="px-6 pt-3 pb-0">
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search tests by name, tag, or description..."
+              className="w-full pl-9 pr-8 py-2 border border-gray-200 rounded-lg text-sm focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 outline-none"
+            />
+            {searchQuery && (
+              <button
+                onClick={() => setSearchQuery('')}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 p-0.5 hover:bg-gray-100 rounded"
+              >
+                <X className="w-3.5 h-3.5 text-gray-400" />
+              </button>
+            )}
+          </div>
+        </div>
+
         {/* Content */}
         <div className="flex-1 overflow-y-auto px-6 py-4 space-y-3">
           {loading && (
@@ -146,6 +170,16 @@ export const TestSelectorModal = ({
                 if (modeFilter === 'tool') return t.type === 'tool'
                 if (modeFilter === 'agent') return t.type === 'agent' && !t.manual_input
                 return t.type === modeFilter && !t.manual_input
+              }).filter((t) => {
+                if (!searchQuery.trim()) return true
+                const q = searchQuery.toLowerCase()
+                return (
+                  t.name.toLowerCase().includes(q) ||
+                  (t.description && t.description.toLowerCase().includes(q)) ||
+                  (t.tags && t.tags.some((tag) => tag.toLowerCase().includes(q))) ||
+                  (t.agents && t.agents.some((a) => a.toLowerCase().includes(q))) ||
+                  (t.message && t.message.toLowerCase().includes(q))
+                )
               }).map((test) => {
                 const checked = selectAll || selectedTests.has(test.name)
                 const expanded = expandedTests.has(test.name)

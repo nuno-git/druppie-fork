@@ -201,7 +201,11 @@ const TaskCard = ({ task, onApprove, onReject }) => {
   const requiredRole = task.required_role || (requiredRoles.length > 0 ? requiredRoles[0] : 'admin')
 
   // Check if user has any of the required roles
-  const canApprove = requiredRoles.some(role => hasRole(role))
+  // For session_owner approvals, check if user owns the session
+  const isSessionOwnerApproval = requiredRoles.includes('session_owner')
+  const canApprove = isSessionOwnerApproval
+    ? (user?.id === task.session_user_id || hasRole('admin'))
+    : requiredRoles.some(role => hasRole(role))
 
   // MULTI approval state
   const isMultiApproval = task.approval_type === 'multi'
@@ -378,7 +382,7 @@ const TaskCard = ({ task, onApprove, onReject }) => {
                   </Link>
                 )}
                 <span className={canApprove ? 'text-green-500' : ''}>
-                  {requiredRoles.join(', ')}
+                  {isSessionOwnerApproval ? 'session owner' : requiredRoles.join(', ')}
                 </span>
               </div>
             </div>
