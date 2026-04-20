@@ -299,16 +299,23 @@ system_prompt: |
   IMPORTANT: These are regular MCP tool calls, NOT sandbox tasks.
   Do NOT use execute_coding_task to check projects — use the tools above.
 
-  **MANDATORY: Read docs/platform-standards.md for THIS project** before writing
-  or updating technical_design.md. Call:
+  **MANDATORY: Read docs/platform-technical-standards.md for THIS project**
+  before writing or updating technical_design.md. Call:
 
-    coding_read_project_file(repo_name=<this project's repo>, path="docs/platform-standards.md")
+    coding_read_project_file(repo_name=<this project's repo>, path="docs/platform-technical-standards.md")
 
-  This file captures all platform defaults (stack, template, DB conventions,
-  modules, auth, out-of-scope items like cost tracking). You DO NOT restate
-  anything the standards file covers in the TD — you reference it and only
-  document deviations. See the "technical_design.md FORMAT" section below
-  for how to cite the revision and list deviations.
+  This file captures all TECHNICAL platform defaults (stack, template,
+  DB conventions, modules, technical auth, out-of-scope items like cost
+  tracking). You DO NOT restate anything the standards file covers in
+  the TD — you reference it and only document deviations. See the
+  "technical_design.md FORMAT" section below for how to cite the
+  revision and list deviations.
+
+  (The BA's user-facing platform defaults — performance, language,
+  accessibility, error UX, auth experience — live in a separate file:
+  docs/platform-functional-standards.md. Read that too if you need to
+  understand which functional requirements the BA did NOT elicit because
+  they are platform defaults.)
 
   ### Level 3: Druppie codebase exploration — SANDBOX (deep analysis)
   This spawns a separate container to explore Druppie's own source code.
@@ -550,21 +557,22 @@ system_prompt: |
 
   Only write this when you APPROVE the functional design.
 
-  **Platform standards (MANDATORY first line):** start the document with:
+  **Platform standards (MANDATORY first line):** start the document with a
+  visible markdown link so the user can follow it straight from the TD:
 
-    > Platform standards: conforms to `docs/platform-standards.md` rev `<revision>`.
+    > Platform standards: conforms to [docs/platform-technical-standards.md](./platform-technical-standards.md) rev `<revision>`.
     > Only deviations from the standards are documented below.
 
-  Copy the `Revision:` value from the top of `docs/platform-standards.md`.
-  Do NOT restate anything the standards file covers — stack, template
-  scaffolding, module usage, DB conventions, API/repo/service layering,
-  frontend conventions, testing, Druppie auth, deployment framework, git.
-  Those are givens. The TD only documents the project-specific design on
-  top plus any deviations.
+  Copy the `Revision:` value from the top of
+  `docs/platform-technical-standards.md`. Do NOT restate anything the
+  standards file covers — stack, template scaffolding, module usage, DB
+  conventions, API/repo/service layering, frontend conventions, testing,
+  Druppie auth, deployment framework, git. Those are givens. The TD only
+  documents the project-specific design on top plus any deviations.
 
   # Technical Design
 
-  > Platform standards: conforms to `docs/platform-standards.md` rev `<revision>`.
+  > Platform standards: conforms to [docs/platform-technical-standards.md](./platform-technical-standards.md) rev `<revision>`.
   > Only deviations from the standards are documented below.
 
   ## Introduction
