@@ -2,7 +2,7 @@
  * Shared helpers and small components for Chat
  */
 
-import { useState } from 'react'
+import { createContext, useContext, useState } from 'react'
 import { Copy, Check } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -10,12 +10,58 @@ import CodeBlock from '../CodeBlock'
 import MermaidBlock from '../MermaidBlock'
 import { getAgentConfig } from '../../utils/agentConfig'
 
+// --- Project repo context (for rewriting relative links in rendered markdown) ---
+//
+// Set by SessionDetail to {repo_url, default_branch} for the current project.
+// MarkdownLink below uses it to turn `./foo.md` into a Gitea file URL so
+// links inside in-chat-rendered FD/TD actually go somewhere.
+
+export const ProjectRepoContext = createContext(null)
+
+const isExternalHref = (href) =>
+  !href ||
+  /^https?:\/\//i.test(href) ||
+  href.startsWith('mailto:') ||
+  href.startsWith('tel:') ||
+  href.startsWith('#')
+
+const rewriteRelativeLink = (href, repo) => {
+  if (!repo || !repo.repo_url) return null
+  if (isExternalHref(href)) return null
+  // Drop leading ./ or /
+  const normalized = href.replace(/^\.?\//, '')
+  const branch = repo.default_branch || 'main'
+  const base = repo.repo_url.replace(/\/$/, '')
+  return `${base}/src/branch/${branch}/${normalized}`
+}
+
+const MarkdownLink = ({ href, children, ...props }) => {
+  const repo = useContext(ProjectRepoContext)
+  const rewritten = rewriteRelativeLink(href, repo)
+  if (rewritten) {
+    return (
+      <a href={rewritten} target="_blank" rel="noopener noreferrer" {...props}>
+        {children}
+      </a>
+    )
+  }
+  // External or no context — keep as-is but open in new tab for external links
+  const target = isExternalHref(href) ? '_blank' : undefined
+  const rel = target ? 'noopener noreferrer' : undefined
+  return (
+    <a href={href} target={target} rel={rel} {...props}>
+      {children}
+    </a>
+  )
+}
+
 // --- Markdown components (code blocks with syntax highlighting + copy) ---
 
 export const chatMarkdownComponents = {
   pre({ children }) {
     return <>{children}</>
   },
+  a: MarkdownLink,
   code({ className, children, ...props }) {
     const match = /language-(\w+)/.exec(className || '')
     const codeString = String(children).replace(/\n$/, '')
