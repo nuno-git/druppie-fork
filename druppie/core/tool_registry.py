@@ -48,6 +48,7 @@ class ToolRegistry:
         """
         self._mcp_config = mcp_config or get_mcp_config()
         self._tools: dict[str, ToolDefinition] = {}
+        self._failed_servers: list[str] = []
         self._initialized = False
 
     async def initialize(self) -> None:
@@ -111,13 +112,13 @@ class ToolRegistry:
                     impact=f"All tools from '{server}' are unavailable",
                 )
 
+        self._failed_servers = failed_servers
         if failed_servers:
             logger.error(
                 "tool_registry_partial_init",
                 failed_servers=failed_servers,
                 impact=f"{len(failed_servers)} MCP server(s) unreachable — will retry",
             )
-            self._failed_servers = failed_servers
 
     async def _retry_failed_servers(
         self, servers: list[str], max_retries: int = 5, base_delay: float = 5.0
@@ -141,7 +142,10 @@ class ToolRegistry:
             remaining = still_failing
             if not remaining:
                 logger.info("all_mcp_servers_recovered")
+                self._failed_servers = []
                 return
+        # Update to reflect only servers that never recovered
+        self._failed_servers = remaining
         if remaining:
             logger.error(
                 "mcp_servers_permanently_failed",
