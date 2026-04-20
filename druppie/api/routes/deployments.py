@@ -65,10 +65,13 @@ class DeploymentSummary(BaseModel):
     container_name: str
     image: str
     status: str
+    state: str = "unknown"
+    health: str = "none"
     ports: str = ""
     project_id: str | None = None
     session_id: str | None = None
     user_id: str | None = None
+    compose_project: str | None = None
     app_url: str | None = None
 
 
@@ -84,6 +87,35 @@ class StopResponse(BaseModel):
     container_name: str
     stopped: bool = False
     removed: bool = False
+
+
+class ActionResponse(BaseModel):
+    """Generic response for start/restart actions."""
+    success: bool
+    container_name: str
+    error: str | None = None
+
+
+class VolumeSummary(BaseModel):
+    name: str
+    driver: str = "local"
+    project_id: str | None = None
+    session_id: str | None = None
+    compose_project: str | None = None
+    labels: dict[str, str] = {}
+
+
+class VolumeListResponse(BaseModel):
+    items: list[VolumeSummary]
+    count: int
+
+
+class WipeResponse(BaseModel):
+    success: bool
+    project_id: str
+    containers_removed: list[str] = []
+    volumes_removed: list[str] = []
+    errors: list[str] = []
 
 
 class LogsResponse(BaseModel):
@@ -126,12 +158,43 @@ def parse_container_to_deployment(container: dict) -> DeploymentSummary:
         container_name=container.get("name", ""),
         image=container.get("image", ""),
         status=container.get("status", "unknown"),
+        state=container.get("state", "unknown"),
+        health=container.get("health", "none"),
         ports=ports_str,
         project_id=labels.get("druppie.project_id"),
         session_id=labels.get("druppie.session_id"),
         user_id=labels.get("druppie.user_id"),
+        compose_project=labels.get("druppie.compose_project"),
         app_url=app_url,
     )
+
+
+async def _verify_owner_or_admin(
+    mcp_http: MCPHttp,
+    container_name: str,
+    user: dict,
+    action: str,
+) -> None:
+    """Raise 403/404 if user is not admin and doesn't own the container."""
+    if "admin" in user.get("roles", []):
+        return
+    try:
+        inspect_result = await mcp_http.call(
+            server="docker",
+            tool="inspect",
+            args={"container_name": container_name},
+            timeout_seconds=10.0,
+        )
+        if not inspect_result.get("success"):
+            raise NotFoundError("deployment", container_name)
+        owner_id = inspect_result.get("labels", {}).get("druppie.user_id")
+        if owner_id and owner_id != user.get("sub"):
+            raise HTTPException(
+                status_code=403,
+                detail=f"Not authorized to {action} this deployment",
+            )
+    except MCPHttpError:
+        raise NotFoundError("deployment", container_name)
 
 
 # =============================================================================
@@ -375,3 +438,232 @@ async def inspect_deployment(
     except MCPHttpError as e:
         logger.error("deployment_inspect_error", container=container_name, error=str(e))
         raise NotFoundError("deployment", container_name)
+
+
+# =============================================================================
+# LIFECYCLE ACTIONS
+# =============================================================================
+
+
+@router.post("/deployments/{container_name}/start", response_model=ActionResponse)
+async def start_deployment(
+    container_name: str,
+    user: dict = Depends(get_current_user),
+) -> ActionResponse:
+    """Start a stopped deployment."""
+    mcp_http = get_mcp_http()
+    await _verify_owner_or_admin(mcp_http, container_name, user, "start")
+
+    try:
+        result = await mcp_http.call(
+            server="docker",
+            tool="start",
+            args={"container_name": container_name},
+            timeout_seconds=30.0,
+        )
+        return ActionResponse(
+            success=result.get("success", False),
+            container_name=container_name,
+            error=result.get("error"),
+        )
+    except MCPHttpError as e:
+        logger.error("deployment_start_error", container=container_name, error=str(e))
+        return ActionResponse(success=False, container_name=container_name, error=str(e))
+
+
+@router.post("/deployments/{container_name}/restart", response_model=ActionResponse)
+async def restart_deployment(
+    container_name: str,
+    user: dict = Depends(get_current_user),
+) -> ActionResponse:
+    """Restart a deployment."""
+    mcp_http = get_mcp_http()
+    await _verify_owner_or_admin(mcp_http, container_name, user, "restart")
+
+    try:
+        result = await mcp_http.call(
+            server="docker",
+            tool="restart",
+            args={"container_name": container_name},
+            timeout_seconds=60.0,
+        )
+        return ActionResponse(
+            success=result.get("success", False),
+            container_name=container_name,
+            error=result.get("error"),
+        )
+    except MCPHttpError as e:
+        logger.error("deployment_restart_error", container=container_name, error=str(e))
+        return ActionResponse(success=False, container_name=container_name, error=str(e))
+
+
+# =============================================================================
+# VOLUMES
+# =============================================================================
+
+
+@router.get("/deployments/volumes/list", response_model=VolumeListResponse)
+async def list_volumes(
+    project_id: str | None = Query(None, description="Filter by druppie.project_id"),
+    user: dict = Depends(get_current_user),
+) -> VolumeListResponse:
+    """List druppie-labeled Docker volumes.
+
+    Non-admins only see volumes for projects they own (checked via any container
+    in that project carrying their druppie.user_id).
+    """
+    mcp_http = get_mcp_http()
+    args: dict[str, Any] = {"druppie_only": True}
+    if project_id:
+        args["project_id"] = project_id
+
+    try:
+        result = await mcp_http.call(
+            server="docker",
+            tool="list_volumes",
+            args=args,
+            timeout_seconds=15.0,
+        )
+        if not result.get("success"):
+            return VolumeListResponse(items=[], count=0)
+
+        raw = result.get("volumes", [])
+        # Non-admins: filter to volumes whose project_id is owned by the user.
+        # We piggyback on druppie.project_id label set by compose overrides.
+        user_roles = user.get("roles", [])
+        if "admin" not in user_roles:
+            owned = await _owned_project_ids(mcp_http, user.get("sub", ""))
+            raw = [v for v in raw if v.get("project_id") in owned]
+
+        items = [VolumeSummary(**v) for v in raw]
+        return VolumeListResponse(items=items, count=len(items))
+
+    except MCPHttpError as e:
+        logger.error("volumes_list_error", error=str(e))
+        return VolumeListResponse(items=[], count=0)
+
+
+async def _owned_project_ids(mcp_http: MCPHttp, user_id: str) -> set[str]:
+    """Return set of druppie.project_id values the user owns any container in."""
+    try:
+        result = await mcp_http.call(
+            server="docker",
+            tool="list_containers",
+            args={"all": True, "user_id": user_id},
+            timeout_seconds=15.0,
+        )
+        if not result.get("success"):
+            return set()
+        return {
+            c["labels"].get("druppie.project_id")
+            for c in result.get("containers", [])
+            if c.get("labels", {}).get("druppie.project_id")
+        }
+    except MCPHttpError:
+        return set()
+
+
+# =============================================================================
+# PROJECT WIPE (containers + volumes)
+# =============================================================================
+
+
+@router.post("/deployments/project/{project_id}/wipe", response_model=WipeResponse)
+async def wipe_project(
+    project_id: str,
+    user: dict = Depends(get_current_user),
+) -> WipeResponse:
+    """Stop and remove every container + labeled volume for a project.
+
+    Destructive. Only admins or the owning user may call this. Containers are
+    force-removed (docker rm -f) then labeled volumes are removed.
+    """
+    mcp_http = get_mcp_http()
+    containers_removed: list[str] = []
+    volumes_removed: list[str] = []
+    errors: list[str] = []
+
+    # Enumerate containers for the project (all states)
+    try:
+        list_result = await mcp_http.call(
+            server="docker",
+            tool="list_containers",
+            args={"all": True, "project_id": project_id},
+            timeout_seconds=15.0,
+        )
+    except MCPHttpError as e:
+        raise HTTPException(status_code=502, detail=f"Docker MCP unreachable: {e}")
+
+    containers = list_result.get("containers", []) if list_result.get("success") else []
+
+    # Ownership check: non-admin must own every container
+    user_roles = user.get("roles", [])
+    if "admin" not in user_roles:
+        user_id = user.get("sub")
+        if not containers:
+            raise NotFoundError("project", project_id)
+        foreign = [
+            c for c in containers
+            if c.get("labels", {}).get("druppie.user_id")
+            and c["labels"]["druppie.user_id"] != user_id
+        ]
+        if foreign:
+            raise HTTPException(
+                status_code=403,
+                detail="Not authorized to wipe this project",
+            )
+
+    # Remove containers
+    for c in containers:
+        name = c.get("name")
+        if not name:
+            continue
+        try:
+            r = await mcp_http.call(
+                server="docker",
+                tool="remove",
+                args={"container_name": name, "force": True},
+                timeout_seconds=30.0,
+            )
+            if r.get("success"):
+                containers_removed.append(name)
+            else:
+                errors.append(f"rm {name}: {r.get('error', 'unknown')}")
+        except MCPHttpError as e:
+            errors.append(f"rm {name}: {e}")
+
+    # Remove volumes labeled with this project_id
+    try:
+        vols = await mcp_http.call(
+            server="docker",
+            tool="list_volumes",
+            args={"project_id": project_id, "druppie_only": True},
+            timeout_seconds=15.0,
+        )
+        for v in vols.get("volumes", []) if vols.get("success") else []:
+            vname = v.get("name")
+            if not vname:
+                continue
+            try:
+                r = await mcp_http.call(
+                    server="docker",
+                    tool="remove_volume",
+                    args={"volume_name": vname, "force": False},
+                    timeout_seconds=15.0,
+                )
+                if r.get("success"):
+                    volumes_removed.append(vname)
+                else:
+                    errors.append(f"rm volume {vname}: {r.get('error', 'unknown')}")
+            except MCPHttpError as e:
+                errors.append(f"rm volume {vname}: {e}")
+    except MCPHttpError as e:
+        errors.append(f"list_volumes: {e}")
+
+    return WipeResponse(
+        success=len(errors) == 0,
+        project_id=project_id,
+        containers_removed=containers_removed,
+        volumes_removed=volumes_removed,
+        errors=errors,
+    )

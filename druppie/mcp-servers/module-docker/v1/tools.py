@@ -1039,11 +1039,34 @@ async def list_containers(
                                 if k.startswith("druppie."):
                                     labels[k] = v
 
+                    status_str = parts[3]
+                    # docker ps embeds healthcheck state in the status column,
+                    # e.g. "Up 3 minutes (healthy)" — extract it so callers don't reparse.
+                    health = "none"
+                    if "(healthy)" in status_str:
+                        health = "healthy"
+                    elif "(unhealthy)" in status_str:
+                        health = "unhealthy"
+                    elif "(health: starting)" in status_str:
+                        health = "starting"
+
+                    state = "exited"
+                    if status_str.startswith("Up"):
+                        state = "running"
+                    elif status_str.startswith("Restarting"):
+                        state = "restarting"
+                    elif status_str.startswith("Paused"):
+                        state = "paused"
+                    elif status_str.startswith("Created"):
+                        state = "created"
+
                     containers.append({
                         "id": parts[0],
                         "name": parts[1],
                         "image": parts[2],
-                        "status": parts[3],
+                        "status": status_str,
+                        "state": state,
+                        "health": health,
                         "ports": parts[4] if len(parts) > 4 else "",
                         "labels": labels,
                     })
@@ -1156,5 +1179,160 @@ async def exec_command(
 
     except subprocess.TimeoutExpired:
         return {"success": False, "error": "Command timed out"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@mcp.tool(
+    name="start",
+    description="Start a stopped Docker container.",
+    meta={"module_id": MODULE_ID, "version": MODULE_VERSION},
+)
+async def start(container_name: str) -> dict:
+    """Start a stopped container."""
+    try:
+        err = _validate_name(container_name, "container_name")
+        if err:
+            return {"success": False, "error": err}
+
+        result = subprocess.run(
+            ["docker", "start", container_name],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+
+        if result.returncode != 0:
+            return {"success": False, "error": f"Failed to start: {result.stderr}"}
+
+        return {"success": True, "started": container_name}
+
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@mcp.tool(
+    name="restart",
+    description="Restart a Docker container.",
+    meta={"module_id": MODULE_ID, "version": MODULE_VERSION},
+)
+async def restart(container_name: str, timeout: int = 10) -> dict:
+    """Restart a container."""
+    try:
+        err = _validate_name(container_name, "container_name")
+        if err:
+            return {"success": False, "error": err}
+
+        result = subprocess.run(
+            ["docker", "restart", "-t", str(timeout), container_name],
+            capture_output=True,
+            text=True,
+            timeout=timeout + 20,
+        )
+
+        if result.returncode != 0:
+            return {"success": False, "error": f"Failed to restart: {result.stderr}"}
+
+        return {"success": True, "restarted": container_name}
+
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@mcp.tool(
+    name="list_volumes",
+    description="List Docker volumes, optionally filtered by druppie labels or compose project.",
+    meta={"module_id": MODULE_ID, "version": MODULE_VERSION},
+)
+async def list_volumes(
+    project_id: str | None = None,
+    compose_project: str | None = None,
+    druppie_only: bool = True,
+) -> dict:
+    """List Docker volumes with optional filtering.
+
+    Args:
+        project_id: Filter by druppie.project_id label
+        compose_project: Filter by compose project label (com.docker.compose.project)
+        druppie_only: If True, only return volumes tied to druppie.* labels or compose projects
+            that also carry a druppie label on any container
+
+    Returns:
+        Dict with volumes list (name, driver, labels, size if available)
+    """
+    try:
+        cmd = ["docker", "volume", "ls", "--format",
+               "{{.Name}}\t{{.Driver}}\t{{.Labels}}"]
+        if project_id:
+            cmd.extend(["--filter", f"label=druppie.project_id={project_id}"])
+        if compose_project:
+            cmd.extend(["--filter", f"label=com.docker.compose.project={compose_project}"])
+
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+        if result.returncode != 0:
+            return {"success": False, "error": result.stderr}
+
+        volumes = []
+        for line in result.stdout.strip().split("\n"):
+            if not line:
+                continue
+            parts = line.split("\t")
+            if len(parts) < 2:
+                continue
+            name, driver = parts[0], parts[1]
+            labels_str = parts[2] if len(parts) > 2 else ""
+            labels: dict[str, str] = {}
+            if labels_str and labels_str != "<no value>":
+                for label in labels_str.split(","):
+                    if "=" in label:
+                        k, v = label.split("=", 1)
+                        labels[k] = v
+
+            # Keep only druppie-linked volumes when requested. A volume is
+            # druppie-linked if it carries a druppie.* label directly OR belongs
+            # to a compose project whose name starts with a druppie-managed prefix.
+            if druppie_only:
+                has_druppie_label = any(k.startswith("druppie.") for k in labels)
+                if not has_druppie_label:
+                    continue
+
+            volumes.append({
+                "name": name,
+                "driver": driver,
+                "labels": labels,
+                "project_id": labels.get("druppie.project_id"),
+                "session_id": labels.get("druppie.session_id"),
+                "compose_project": labels.get("com.docker.compose.project"),
+            })
+
+        return {"success": True, "volumes": volumes, "count": len(volumes)}
+
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@mcp.tool(
+    name="remove_volume",
+    description="Remove a Docker volume.",
+    meta={"module_id": MODULE_ID, "version": MODULE_VERSION},
+)
+async def remove_volume(volume_name: str, force: bool = False) -> dict:
+    """Remove a volume. Fails if the volume is in use unless force=True."""
+    try:
+        err = _validate_name(volume_name, "volume_name")
+        if err:
+            return {"success": False, "error": err}
+
+        cmd = ["docker", "volume", "rm"]
+        if force:
+            cmd.append("-f")
+        cmd.append(volume_name)
+
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        if result.returncode != 0:
+            return {"success": False, "error": result.stderr.strip()}
+
+        return {"success": True, "removed": volume_name}
+
     except Exception as e:
         return {"success": False, "error": str(e)}
