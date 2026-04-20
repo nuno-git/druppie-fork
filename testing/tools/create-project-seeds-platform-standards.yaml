@@ -1,10 +1,11 @@
-## Tool test: create_project must seed docs/platform-standards.md into the
-## new project's Gitea repo. The file lives in druppie/templates/project/docs/
-## and is pushed verbatim by the existing push_template step of set_intent.
+## Tool test: create_project must seed both platform standards files into
+## the new project's Gitea repo. They live under
+## druppie/templates/project/docs/ and are pushed verbatim by the existing
+## push_template step of set_intent.
 
 tool-test:
   name: create-project-seeds-platform-standards
-  description: "create_project pushes docs/platform-standards.md from the project template"
+  description: "create_project pushes both platform standards files from the project template"
   tags: [platform-standards, create-project, setup]
 
   chain:
@@ -13,7 +14,7 @@ tool-test:
       arguments:
         intent: create_project
         project_name: standards-seed-check
-        description: "Minimal project used to verify the platform-standards.md seed"
+        description: "Minimal project used to verify the platform standards seeds"
       assert:
         result:
           - not_empty
@@ -27,5 +28,7 @@ tool-test:
 
   verify:
     - gitea_repo_exists: true
-    - file_exists: docs/platform-standards.md
-    - file_not_empty: docs/platform-standards.md
+    - file_exists: docs/platform-functional-standards.md
+    - file_not_empty: docs/platform-functional-standards.md
+    - file_exists: docs/platform-technical-standards.md
+    - file_not_empty: docs/platform-technical-standards.md
