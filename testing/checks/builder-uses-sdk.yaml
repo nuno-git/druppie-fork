@@ -1,0 +1,15 @@
+check:
+  name: builder-uses-sdk
+  description: "Builder should use Druppie SDK for AI capabilities, not hardcoded API keys or direct provider calls"
+  tags: [builder, sdk, quality]
+  assert:
+    - agent: builder
+      completed: true
+    - agent: builder
+      tool: coding:execute_coding_task
+  judge:
+    context: builder
+    checks:
+      - "The builder's code MUST import and use druppie_sdk (DruppieClient). Check execute_coding_task output for 'from druppie_sdk import DruppieClient' or 'druppie.call('. If the builder wrote app code, it must contain SDK usage."
+      - "The builder MUST NOT use the 'openai' package directly. Check that execute_coding_task output does NOT contain 'from openai import' or 'import openai'. The SDK handles LLM communication."
+      - "The builder MUST NOT hardcode API keys. Check that the code does NOT contain 'DEEPINFRA_API_KEY', 'OPENAI_API_KEY', or any hardcoded API key strings in the app code."
