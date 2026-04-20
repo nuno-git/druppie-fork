@@ -1,0 +1,25 @@
+## Agent test: BA handles FD rejection then approval via the session_owner
+## approval gate.
+##
+## Exercises the full reject → revise → approve cycle on coding:make_design.
+## The picky-session-owner persona rejects the first make_design with concrete
+## feedback, then approves the revised version. Verifies that the BA reads the
+## rejection reason, revises the FD, and calls make_design again before
+## completing with DESIGN_APPROVED.
+
+agent-test:
+  name: ba-fd-reject-then-approve
+  description: "BA writes FD, session owner rejects first draft with feedback, BA revises, owner approves."
+  tags: [business_analyst, approval_gate, session_owner]
+
+  message: "build me a small recipe sharing app where home cooks can upload and rate recipes"
+  agents: [router, planner, business_analyst]
+  hitl: picky-session-owner
+
+  judge:
+    context: [business_analyst]
+    checks:
+      - "The business_analyst must have called coding:make_design at least TWICE in this session. The first call should have been rejected via the approval gate with a concrete reason, and the second call should have been approved."
+      - "After the first rejection, the second coding:make_design call must show evidence that the BA incorporated the rejection reason — the revised arguments should address the specific gap the reviewer pointed out (do not count simple rewording as a revision)."
+      - "The business_analyst must have ended with done() carrying DESIGN_APPROVED in the summary. It must NOT end with DESIGN_REJECTED."
+      - "The business_analyst must NOT have asked the user to confirm or approve the functional_design.md via any HITL tool. Confirmation of the FD content is the approval gate's job (coding:make_design creates the approval). Legitimate elicitation questions gathering requirements (features, users, data, devices, rules) are fine — only extra 'does the FD look OK?' / 'do you approve this design?' style confirmations around make_design are regressions. Inspect the actual question text of each hitl_ask_multiple_choice_question / hitl_ask_question tool call. Only fail this check if you find one that presents the FD content and asks the user to approve/confirm it."
