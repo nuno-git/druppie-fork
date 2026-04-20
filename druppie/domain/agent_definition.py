@@ -75,6 +75,13 @@ class AgentDefinition(BaseModel):
     # These are ADDED to the defaults, e.g. ["make_plan"] gives this agent make_plan on top of defaults
     extra_builtin_tools: list[str] = Field(default_factory=list)
 
+    # Default builtin tools to SUBTRACT from the default set for this agent.
+    # Useful for late-stage agents that should not be able to ask the user
+    # (e.g. update_core_builder) — listing "hitl_ask_question" here removes
+    # the tool from the OpenAI function schema entirely, so the LLM has no
+    # way to call it. "done" cannot be excluded.
+    excluded_builtin_tools: list[str] = Field(default_factory=list)
+
     # Constraints on execute_coding_task parameters.
     # When set, limits which sandbox agents and repo targets this agent can use.
     sandbox_constraints: SandboxConstraints | None = None
