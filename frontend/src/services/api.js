@@ -229,16 +229,27 @@ export const getProjectFile = (projectId, path, branch = 'main') =>
   request(`/api/projects/${projectId}/file?path=${encodeURIComponent(path)}&branch=${branch}`)
 
 // ============ Deployments ============
-export const getDeployments = (projectId = null) => {
+export const getDeployments = (projectId = null, allContainers = false) => {
   const params = new URLSearchParams()
   if (projectId) params.append('project_id', projectId)
+  if (allContainers) params.append('all_containers', 'true')
   const qs = params.toString()
   return request(`/api/deployments${qs ? `?${qs}` : ''}`)
 }
-export const stopDeployment = (containerName) =>
-  request(`/api/deployments/${containerName}/stop?remove=true`, { method: 'POST' })
-export const getDeploymentLogs = (containerName, tail = 100) =>
+export const stopDeployment = (containerName, remove = true) =>
+  request(`/api/deployments/${containerName}/stop?remove=${remove}`, { method: 'POST' })
+export const startDeployment = (containerName) =>
+  request(`/api/deployments/${containerName}/start`, { method: 'POST' })
+export const restartDeployment = (containerName) =>
+  request(`/api/deployments/${containerName}/restart`, { method: 'POST' })
+export const getDeploymentLogs = (containerName, tail = 200) =>
   request(`/api/deployments/${containerName}/logs?tail=${tail}`)
+export const getDeploymentVolumes = (projectId = null) => {
+  const qs = projectId ? `?project_id=${encodeURIComponent(projectId)}` : ''
+  return request(`/api/deployments/volumes/list${qs}`)
+}
+export const wipeProject = (projectId) =>
+  request(`/api/deployments/project/${encodeURIComponent(projectId)}/wipe`, { method: 'POST' })
 
 // ============ Agents (Transparency) ============
 export const getAgents = async () => {
