@@ -48,6 +48,7 @@ class ToolRegistry:
         """
         self._mcp_config = mcp_config or get_mcp_config()
         self._tools: dict[str, ToolDefinition] = {}
+        self._failed_servers: list[str] = []
         self._initialized = False
 
     async def initialize(self) -> None:
@@ -111,11 +112,45 @@ class ToolRegistry:
                     impact=f"All tools from '{server}' are unavailable",
                 )
 
+        self._failed_servers = failed_servers
         if failed_servers:
             logger.error(
                 "tool_registry_partial_init",
                 failed_servers=failed_servers,
-                impact=f"{len(failed_servers)} MCP server(s) unreachable — their tools will not work",
+                impact=f"{len(failed_servers)} MCP server(s) unreachable — will retry",
+            )
+
+    async def _retry_failed_servers(
+        self, servers: list[str], max_retries: int = 5, base_delay: float = 5.0
+    ) -> None:
+        """Retry loading tools from MCP servers that failed during startup."""
+        remaining = list(servers)
+        for attempt in range(1, max_retries + 1):
+            delay = base_delay * attempt
+            await asyncio.sleep(delay)
+            still_failing = []
+            for server in remaining:
+                try:
+                    await self._load_mcp_tools_from_server(server)
+                    logger.info(
+                        "mcp_server_retry_success",
+                        server=server,
+                        attempt=attempt,
+                    )
+                except Exception:
+                    still_failing.append(server)
+            remaining = still_failing
+            if not remaining:
+                logger.info("all_mcp_servers_recovered")
+                self._failed_servers = []
+                return
+        # Update to reflect only servers that never recovered
+        self._failed_servers = remaining
+        if remaining:
+            logger.error(
+                "mcp_servers_permanently_failed",
+                servers=remaining,
+                impact="These MCP server tools will NOT be available to agents",
             )
 
     def _load_builtin_tools(self) -> None:
@@ -154,7 +189,7 @@ class ToolRegistry:
                 url=url,
                 error=str(e),
             )
-            return
+            raise
 
         # Get approval config from mcp_config.yaml
         tool_configs = {t["name"]: t for t in self._mcp_config.get_tools(server)}
