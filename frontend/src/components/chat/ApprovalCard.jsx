@@ -30,7 +30,7 @@ import {
   Clock,
 } from 'lucide-react'
 import { getUsersByRole } from '../../services/api'
-import { chatMarkdownComponents } from './ChatHelpers'
+import { chatMarkdownComponents, SourceFileContext } from './ChatHelpers'
 
 // Helper to check if a file path is a markdown file
 const isMarkdownFile = (path) => {
@@ -113,7 +113,9 @@ const FilePreviewModal = ({ files, onClose }) => {
                 {/* Content */}
                 {isMarkdownFile(path) && !isRaw(path) ? (
                   <div className="p-6 markdown-content text-sm bg-white text-gray-900 rounded-b-lg">
-                    <ReactMarkdown remarkPlugins={[remarkGfm]} components={chatMarkdownComponents}>{content}</ReactMarkdown>
+                    <SourceFileContext.Provider value={path}>
+                      <ReactMarkdown remarkPlugins={[remarkGfm]} components={chatMarkdownComponents}>{content}</ReactMarkdown>
+                    </SourceFileContext.Provider>
                   </div>
                 ) : (
                   <pre className="p-4 text-sm text-gray-100 whitespace-pre-wrap font-mono leading-relaxed">
