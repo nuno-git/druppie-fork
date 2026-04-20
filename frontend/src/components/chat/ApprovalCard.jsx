@@ -265,7 +265,11 @@ const ApprovalCard = ({ approval, onApprove, onReject, isProcessing, currentUser
 
   // Check if current user can approve based on their roles
   // User can approve if they have admin role OR any of the required roles
-  const userCanApprove = userRoles.includes('admin') || requiredRoles.some((r) => userRoles.includes(r))
+  // For session_owner approvals, check if user owns the session
+  const isSessionOwnerApproval = requiredRoles.includes('session_owner')
+  const userCanApprove = isSessionOwnerApproval
+    ? (currentUserId === approval.session_user_id || userRoles.includes('admin'))
+    : (userRoles.includes('admin') || requiredRoles.some((r) => userRoles.includes(r)))
 
   // Handler to open contact modal
   const handleOpenContactModal = () => {
@@ -337,7 +341,9 @@ const ApprovalCard = ({ approval, onApprove, onReject, isProcessing, currentUser
           {/* Single approval role display */}
           {!isMultiApproval && (
             <div className="text-sm text-gray-500 mb-3">
-              This action requires approval from <span className="font-semibold text-gray-700">{requiredRoles.join(' or ')}</span> role.
+              {isSessionOwnerApproval
+                ? 'This action requires approval from the session owner.'
+                : <>This action requires approval from <span className="font-semibold text-gray-700">{requiredRoles.join(' or ')}</span> role.</>}
             </div>
           )}
 
@@ -471,10 +477,14 @@ const ApprovalCard = ({ approval, onApprove, onReject, isProcessing, currentUser
                     <Clock className="w-5 h-5 text-blue-600" />
                     <div className="flex-1">
                       <span className="text-sm text-blue-800 font-medium">
-                        Waiting for approval from: <span className="font-bold">{requiredRoles.join(' or ')}</span>
+                        {isSessionOwnerApproval
+                          ? 'Waiting for the session owner to approve'
+                          : <>Waiting for approval from: <span className="font-bold">{requiredRoles.join(' or ')}</span></>}
                       </span>
                       <p className="text-xs text-blue-600 mt-0.5">
-                        You don't have the required role to approve this action.
+                        {isSessionOwnerApproval
+                          ? 'Only the user who started this conversation can approve this action.'
+                          : "You don't have the required role to approve this action."}
                       </p>
                     </div>
                   </div>

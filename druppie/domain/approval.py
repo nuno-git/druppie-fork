@@ -29,6 +29,9 @@ class ApprovalDetail(ApprovalSummary):
     agent_id: str | None
     rejection_reason: str | None = None
     created_at: datetime
+    # Session owner ID — populated for session_owner approvals so the frontend
+    # can determine if the current user is the session owner.
+    session_user_id: UUID | None = None
 
 
 class PendingApprovalList(BaseModel):

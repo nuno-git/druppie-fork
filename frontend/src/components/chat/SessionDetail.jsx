@@ -58,7 +58,7 @@ const getToolLabel = (toolName) => {
 
 // --- Inline Approval (minimal chat card) ---
 
-const InlineApproval = ({ tc, sessionId }) => {
+const InlineApproval = ({ tc, sessionId, sessionUserId }) => {
   const queryClient = useQueryClient()
   const user = getUserInfo()
   const [rejectMode, setRejectMode] = useState(false)
@@ -97,7 +97,10 @@ const InlineApproval = ({ tc, sessionId }) => {
 
   const userRoles = user?.roles || []
   const requiredRoles = tc.approval.required_role ? [tc.approval.required_role] : ['admin']
-  const userCanApprove = userRoles.includes('admin') || requiredRoles.some((r) => userRoles.includes(r))
+  const isSessionOwnerApproval = requiredRoles.includes('session_owner')
+  const userCanApprove = isSessionOwnerApproval
+    ? (user?.id === sessionUserId || userRoles.includes('admin'))
+    : (userRoles.includes('admin') || requiredRoles.some((r) => userRoles.includes(r)))
 
   return (
     <div className="group">
@@ -219,7 +222,9 @@ const InlineApproval = ({ tc, sessionId }) => {
                 )
               ) : (
                 <span className="text-xs text-amber-600">
-                  Waiting for {requiredRoles.join(' or ')} approval
+                  {isSessionOwnerApproval
+                    ? 'Waiting for your approval'
+                    : `Waiting for ${requiredRoles.join(' or ')} approval`}
                 </span>
               )}
             </div>
@@ -302,7 +307,7 @@ const TimelineQuestion = ({ tc, agentId, sessionId }) => {
 
 // --- Agent Run ---
 
-const AgentRunItem = ({ run, timelineIndex, sessionId, hasFollowingMessage }) => {
+const AgentRunItem = ({ run, timelineIndex, sessionId, hasFollowingMessage, sessionUserId }) => {
   const orderedItems = extractOrderedItems(run, hasFollowingMessage)
 
   // Show agent trace for completed runs that have no following message
@@ -330,7 +335,7 @@ const AgentRunItem = ({ run, timelineIndex, sessionId, hasFollowingMessage }) =>
         if (item.type === 'approval') {
           return (
             <div key={i} className="mt-2">
-              <InlineApproval tc={item.tc} sessionId={sessionId} />
+              <InlineApproval tc={item.tc} sessionId={sessionId} sessionUserId={sessionUserId} />
             </div>
           )
         }
@@ -1042,6 +1047,7 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
                       timelineIndex={i}
                       sessionId={sessionId}
                       hasFollowingMessage={hasFollowingMessage}
+                      sessionUserId={data?.user_id}
                     />
                     {renderAnnotation(i)}
                   </div>
@@ -1101,7 +1107,7 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
             return (
               <div className="space-y-3">
                 {pending.map((tc, i) => (
-                  <InlineApproval key={tc.approval.id || i} tc={tc} sessionId={sessionId} />
+                  <InlineApproval key={tc.approval.id || i} tc={tc} sessionId={sessionId} sessionUserId={data?.user_id} />
                 ))}
               </div>
             )

@@ -36,21 +36,9 @@ tool-test:
         summary: "Agent planner: Planned business_analyst"
 
     - agent: business_analyst
-      tool: builtin:hitl_ask_multiple_choice_question
-      mock: true
-      mock_result: "Minimalistisch en clean"
-      arguments:
-        question: "Welke stijl heeft uw voorkeur?"
-        choices:
-          - "Minimalistisch en clean"
-          - "Gedurfd en kleurrijk"
-          - "Professioneel en zakelijk"
-
-    - agent: business_analyst
       tool: coding:make_design
       approval:
         status: approved
-        by: analyst
       arguments:
         path: docs/functional-design.md
         content: |

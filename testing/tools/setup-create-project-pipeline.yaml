@@ -1,5 +1,5 @@
 ## Shared base: generic create_project pipeline up to builder planning
-## Router → Planner → BA (HITL + FD + git) → Planner → Architect (TD + git) → Planner
+## Router → Planner → BA (FD + approval gate + git) → Planner → Architect (TD + git) → Planner
 ## Extending tests append: Builder (mock) + done
 ##
 ## Used by: create-expense-tracker, create-portfolio-site, create-weather-dashboard
@@ -40,21 +40,9 @@ tool-test:
 
     # --- Business Analyst ---
     - agent: business_analyst
-      tool: builtin:hitl_ask_multiple_choice_question
-      arguments:
-        question: "Welke variant heeft uw voorkeur?"
-        choices:
-          - "Basis"
-          - "Uitgebreid"
-          - "Volledig"
-      mock: true
-      mock_result: "Uitgebreid"
-
-    - agent: business_analyst
       tool: coding:make_design
       approval:
         status: approved
-        by: analyst
       arguments:
         path: docs/functional-design.md
         content: |
