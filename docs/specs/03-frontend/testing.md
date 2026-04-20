@@ -27,9 +27,9 @@ Config in `frontend/playwright.config.js`:
   workers: 1,                 // single worker, no parallel
   use: {
     baseURL: process.env.BASE_URL || "http://localhost:5273",
-    trace: "on-retry",
+    trace: "on-first-retry",
     screenshot: "only-on-failure",
-    video: "retry-with-video",
+    video: "on-first-retry",
   },
   webServer: process.env.USE_DEV_SERVER ? { command: "npm run dev", port: 5173 } : undefined,
 }

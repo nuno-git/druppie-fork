@@ -4,7 +4,7 @@
 
 Druppie is a **governance platform for AI agents**. It takes a user intent expressed in natural language and drives it through a pipeline of specialised LLM agents that produce real artifacts (functional designs, technical designs, code, tests, deployments) with **approval gates** enforced against role-based permissions.
 
-The platform is the anti-"one monolithic agent": every phase of the SDLC has a dedicated agent with a narrow system prompt, a restricted toolset, and explicit handoff semantics. Agents never output text directly — they communicate through **MCP tool calls** and a mandatory `done()` tool that signals completion and relays a summary to the next agent.
+The platform is the anti-"one monolithic agent": every phase of the SDLC has a dedicated agent with a narrow system prompt, a restricted toolset, and explicit handoff semantics. Agents never output free-form text directly — every effect must go through a tool. Two categories exist: **built-in tools** run in-process inside the Druppie backend (`done`, `make_plan`, `set_intent`, `hitl_ask_question`, `hitl_ask_multiple_choice_question`, `create_message`, `invoke_skill`, `execute_coding_task`, `test_report`), and **MCP tools** run in separate FastMCP servers (coding, docker, web, filesearch, archimate, registry). A mandatory `done()` call ends each agent run and relays a summary to the next agent.
 
 ## Top-level value propositions
 
@@ -20,8 +20,8 @@ The platform is the anti-"one monolithic agent": every phase of the SDLC has a d
 |-------|----------------|------------------|
 | **Frontend SPA** | React 18 + Vite 5 + Tailwind + React Query + Keycloak JS | `frontend/src/main.jsx`, `frontend/src/App.jsx` |
 | **Backend API** | FastAPI on Python 3.11, SQLAlchemy, Pydantic | `druppie/api/main.py` |
-| **Orchestrator** | Custom LangGraph-style loop, per-agent iteration limits | `druppie/execution/orchestrator.py` |
-| **Agent definitions** | 15 YAML files + 4 system-prompt snippets + 3 LLM profiles | `druppie/agents/definitions/` |
+| **Orchestrator** | Custom tool-calling loop (OpenAI function-calling format), per-agent iteration limits | `druppie/execution/orchestrator.py`, `druppie/agents/loop.py` |
+| **Agent definitions** | 14 agent YAML files + 4 system-prompt snippets + `llm_profiles.yaml` (3 profiles) | `druppie/agents/definitions/` |
 | **MCP servers** | FastMCP over HTTP, one container per module | `druppie/mcp-servers/module-*/` |
 | **Skills** | Markdown prompt modules agents load on demand | `druppie/skills/*/SKILL.md` |
 | **Project templates** | Stub React+FastAPI app with `/health` endpoint | `druppie/templates/project/` |
@@ -70,18 +70,19 @@ Each transition is governed by the **planner** (re-evaluates after each agent fi
 ACTIVE ──┬──► PAUSED_APPROVAL ──(approve)──► ACTIVE
          ├──► PAUSED_HITL ─────(answer) ───► ACTIVE
          ├──► PAUSED_SANDBOX ──(webhook) ──► ACTIVE
+         ├──► PAUSED ──────────(user stop, then resume) ──► ACTIVE
          ├──► PAUSED_CRASHED ──(resume) ───► ACTIVE
          ├──► COMPLETED (terminal)
          └──► FAILED (terminal, but retry-from is allowed)
 ```
 
-Crash recovery happens on FastAPI startup in `druppie/api/main.py:100` — active sessions whose agent runs are stuck `RUNNING` with no live task are marked `PAUSED_CRASHED`.
+Crash recovery happens on FastAPI startup via `_recover_zombie_sessions()` in `druppie/api/main.py`. Active sessions are marked `PAUSED_CRASHED` if they have agent runs stuck `RUNNING`, otherwise `PAUSED`; failed sessions with orphaned `RUNNING` runs are also rescued to `PAUSED_CRASHED` (see `druppie/repositories/execution_repository.py:889`).
 
 ## Key architectural invariants
 
 - **No database migrations.** SQLAlchemy ORM `Base.metadata.create_all()` runs at startup. Schema changes ship with a reset: `docker compose --profile reset-db run --rm reset-db`.
 - **No JSON/JSONB blobs for queryable data.** Use normalised tables. JSON is only used for opaque payloads (tool `arguments`, LLM messages, choices arrays).
-- **Agents communicate via tools only.** Agents never emit free-text to the user. All user-facing text is either the `summarizer`'s `create_message` or an explicit HITL question.
+- **Agents communicate via tools only.** Agents never emit free-text to the user. All user-facing text is either the `summarizer`'s `create_message` or a HITL question (`hitl_ask_question` / `hitl_ask_multiple_choice_question`). These live alongside MCP tools in the same OpenAI-format tool list handed to the LLM; the ToolExecutor routes each call to either an in-process builtin handler or an HTTP MCP server.
 - **Config as YAML, not DB.** Agent definitions, LLM profiles, MCP config live in the repo and reload at startup.
 - **MCP servers are independent.** Each has its own Dockerfile, versioned `vN/` directory, and can be deployed separately.
 - **Row-level locking for retries.** `SELECT … FOR UPDATE` in `SessionService.lock_for_retry/resume()` prevents double-spawn.

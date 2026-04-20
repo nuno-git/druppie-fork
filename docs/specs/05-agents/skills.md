@@ -85,18 +85,18 @@ The skill is effectively a "mid-run prompt extension" — the agent asks for mor
 
 ## Agents that can invoke skills
 
-`approval_overrides` aside, only agents with `invoke_skill` in their builtin_tools list can call it:
+An agent gets the `invoke_skill` builtin if (and only if) its YAML declares a non-empty `skills:` list (see `druppie/agents/loop.py` — invoke_skill is auto-added when `definition.skills` is truthy). Today that's three agents:
 
-| Agent | Skills typically invoked |
-|-------|-------------------------|
-| architect | architecture-principles, making-mermaid-diagrams, module-convention |
+| Agent | Skills declared in YAML |
+|-------|--------------------------|
+| architect | making-mermaid-diagrams, architecture-principles, module-convention |
 | business_analyst | making-mermaid-diagrams |
 | developer | code-review, git-workflow |
-| reviewer | code-review |
+
+`router.yaml` has `skills: []` (empty list) and therefore also does **not** receive `invoke_skill`. `reviewer.yaml` omits the block entirely — its review checklist is embedded directly in its system prompt.
 
 ## Writing a new skill
 
 1. Create `druppie/skills/<name>/SKILL.md` with frontmatter.
-2. Update the `invoke_skill` tool schema's enum to include the new name (in `builtin_tools.py`).
-3. Add `invoke_skill` to the relevant agents' `builtin_tools` list if missing.
-4. Restart backend.
+2. Add the skill name to the relevant agents' `skills:` list in their YAML (that alone grants `invoke_skill`).
+3. Restart backend.

@@ -1,6 +1,6 @@
 # Startup & Recovery
 
-`druppie/api/main.py:88-135` — the `@asynccontextmanager` lifespan handler runs on FastAPI startup and shutdown.
+The `@asynccontextmanager` lifespan handler in `druppie/api/main.py` (`lifespan(app)`) runs on FastAPI startup and shutdown; the helpers `_recover_zombie_sessions` and `_recover_orphaned_batch_runs` are defined earlier in the same module.
 
 ## Startup steps
 
@@ -10,23 +10,24 @@
 
 2. **Create tables** — `Base.metadata.create_all(bind=engine)` is idempotent. Missing tables get created; existing tables are left alone (no ALTERs).
 
-3. **Recover zombie sessions** (`main.py:100`). On crash/restart, sessions left in `ACTIVE` with agent runs in `RUNNING` status have no live task driving them. The recovery:
-   - `ExecutionRepository.get_running_agent_runs_for_recovery()` finds them.
-   - Each affected agent run → `PAUSED_USER` (or `FAILED` if beyond retry threshold).
-   - Parent session → `PAUSED_CRASHED`.
+3. **Recover zombie sessions** (`_recover_zombie_sessions` called from the lifespan handler). At startup no background tasks exist, so any `ACTIVE` session is a zombie. The recovery (`ExecutionRepository.recover_zombie_sessions`, `druppie/repositories/execution_repository.py:889`):
+   - Runs over every `ACTIVE` session.
+   - Any `RUNNING` agent run on that session is unconditionally flipped to `PAUSED_USER` (no retry threshold).
+   - Parent session → `PAUSED_CRASHED` if it had RUNNING runs, otherwise `PAUSED`.
+   - Also rescues `FAILED` sessions that still have orphaned `RUNNING` runs: those runs go to `PAUSED_USER` and the session to `PAUSED_CRASHED`.
    - User can click "Resume" on the session to try again.
 
-4. **Recover orphaned batch runs** (`main.py:103`). `TestBatchRun.status == 'running'` with no matching live task → `failed`.
+4. **Recover orphaned batch runs** (`_recover_orphaned_batch_runs`). `TestBatchRun.status == 'running'` with no matching live thread → `error` with `message = "Server restarted while test was running"` and `completed_at = now`.
 
-5. **Clean up orphaned Gitea sandbox users** (`main.py:107`). Test or sandbox users created but not cleaned up at session end are deleted via `gitea.delete_sandbox_users()`.
+5. **Clean up orphaned Gitea sandbox users** (`cleanup_orphaned_sandbox_users` from `druppie/opencode/gitea_cleanup.py`). Sandbox Gitea users that survived a prior crash are deleted.
 
-6. **Initialize Tool Registry** (`main.py:112`). `ToolRegistry.initialize()`:
+6. **Initialize Tool Registry** (`initialize_tool_registry`). `ToolRegistry.initialize()`:
    - Iterates every MCP entry in `druppie/core/mcp_config.yaml`.
    - For each, calls `tools/list` on the MCP server.
    - Populates the in-memory registry with `ToolDefinition` objects.
-   - On server failure: logs and continues (degraded mode).
+   - On server failure: logs and continues (degraded mode) and schedules a background retry task for the failed servers.
 
-7. **Start sandbox watchdog** (`main.py:129`). Background task `sandbox_watchdog_loop()`:
+7. **Start sandbox watchdog** (`create_tracked_task(sandbox_watchdog_loop(), name="sandbox-watchdog")`). Background task:
    - Sleeps for `SANDBOX_WATCHDOG_INTERVAL_SECONDS` (default 300).
    - Queries `ExecutionRepository.get_stuck_sandbox_tool_calls(cutoff=now - SANDBOX_TIMEOUT_MINUTES)`.
    - For each: mark tool call FAILED, parent agent run FAILED, parent session FAILED, attempt `DELETE` on the control plane to clean up the sandbox container.

@@ -11,11 +11,13 @@
 | `get_detail(id, user_id, roles)` | Full SessionDetail with authz | Raises `AuthorizationError` if not owner and not admin |
 | `list_for_user(user_id, page, limit, status)` | Paginated list | `user_id=None` returns all (admin path) |
 | `delete(id, user_id, roles)` | Cascade delete | Owner or admin |
-| `lock_for_retry(id)` | Atomic lock + set ACTIVE | `SELECT … FOR UPDATE`, raises `ConflictError` if ACTIVE |
-| `lock_for_resume(id)` | Atomic lock + set ACTIVE | Allows PAUSED_*, PAUSED_CRASHED, FAILED |
+| `lock_for_retry(id)` | Atomic lock + set ACTIVE | `SELECT … FOR UPDATE`; raises plain `ValueError` if the session is missing or already `ACTIVE` (routes translate to HTTP 409) |
+| `lock_for_resume(id)` | Atomic lock + set ACTIVE | Allows PAUSED_*, PAUSED_CRASHED, FAILED; raises `ValueError` for other states |
 | `mark_failed(id, msg)` | Set FAILED status | Used when background task spawn fails |
 
 Lock/unlock is important: without it, two users clicking "Retry" on the same session both spawn background tasks which race.
+
+> **Exception-type caveat.** The "raises ConflictError" pattern advertised in `02-backend/errors.md` is not yet used by `SessionService` — the current implementation raises bare `ValueError`, and the route layer converts to `HTTPException(409, …)`. The user-visible behaviour is the same; the internal exception type is not `ConflictError`. (Tracked for cleanup.)
 
 ## ApprovalService
 

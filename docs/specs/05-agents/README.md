@@ -8,14 +8,14 @@ The agent system: how agents are defined, loaded, prompted, run, and coordinated
 - [orchestrator.md](orchestrator.md) — `druppie/execution/orchestrator.py` responsibilities
 - [tool-executor.md](tool-executor.md) — `druppie/execution/tool_executor.py`: approvals, HITL, injection, MCP dispatch
 - [agent-loop.md](agent-loop.md) — `druppie/agents/loop.py` in-process LLM + tool loop
-- [builtin-tools.md](builtin-tools.md) — 10 builtin tools with schemas
+- [builtin-tools.md](builtin-tools.md) — 9 builtin tools with schemas
 - [system-prompts.md](system-prompts.md) — The four prompt snippets every agent composes
 - [llm-profiles.md](llm-profiles.md) — `cheap` / `standard` / `ollama` provider chains
 - [skills.md](skills.md) — `druppie/skills/*/SKILL.md` prompt modules
 - [templates.md](templates.md) — `druppie/templates/project/` stub
 - [definitions/](definitions/) — one file per agent YAML
 
-## Agent inventory (15)
+## Agent inventory (14)
 
 | Agent | Category | LLM profile | Role |
 |-------|----------|-------------|------|

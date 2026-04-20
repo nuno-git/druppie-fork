@@ -89,7 +89,7 @@ ReactDOM.createRoot(document.getElementById("root")).render(
 
 `App.jsx`:
 - Initializes Keycloak (async).
-- Provides `AuthContext` with `{ keycloakReady, authenticated, user }`.
+- Provides `AuthContext` with `{ authenticated, user }`. A local `keycloakReady` flag gates the render but is not exported via context.
 - Shows a spinner while Keycloak is initializing.
 - Shows an error screen on init failure (e.g. Keycloak unreachable).
 - Mounts `<BrowserRouter>` with the full route tree.

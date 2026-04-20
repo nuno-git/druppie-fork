@@ -57,10 +57,11 @@ States:
    └────────────────────────────┘
 ```
 
-States:
+States (from `QuestionStatus` in `druppie/domain/common.py`):
 - `PENDING` — awaiting answer.
 - `ANSWERED` — answer + answered_at set.
-- `CANCELLED` — user cancelled; agent resumed with a cancellation signal.
+
+There is no dedicated `CANCELLED` state for questions. When a user cancels the session, the question row is left as `PENDING`; the session-level `ACTIVE → FAILED`/`PAUSED` transition is what effectively drops the outstanding question.
 
 ## Why two phases
 

@@ -36,19 +36,18 @@ class JudgeRunner:
     def __init__(self, judge_profile: JudgeProfile):
         self.profile = judge_profile
 
-    def run_checks(self, checks, session_id, agent_context_filter=None) -> list[JudgeCheckResult]:
-        trace = self._extract_agent_trace(session_id, agent_context_filter)
-        results = []
-        for check in checks:
-            prompt = self._build_prompt(check, trace)
-            response = call_judge_llm(self.profile, prompt)
-            verdict, reasoning = parse_json_from_llm(response)
-            source = "judge_eval" if check.expected is not None else "check"
-            passed = verdict == (check.expected if check.expected is not None else True)
-            results.append(JudgeCheckResult(check=check.name, passed=passed, reasoning=reasoning, source=source,
-                                            raw_input=prompt, raw_output=response))
-        return results
+    def run_checks(
+        self,
+        db: DbSession,
+        session_id: UUID,
+        judge_checks: list,                  # list of JudgeCheck (or dicts convertible via JudgeCheck.from_value)
+        context: str | list[str] = "all",    # "all" | agent_id | list of agent_ids
+        source: str = "check",               # usually "check" (from a CheckDefinition) or "inline" (per-test)
+    ) -> list[JudgeCheckResult]:
+        ...
 ```
+
+`source` is passed through into each `JudgeCheckResult` so the UI can show whether a check came from a reusable `CheckDefinition` or from an inline `judge:` block on the test itself. In Judge-Eval mode the check has an `expected` flag, and the runner compares the LLM verdict against that expected value to decide `passed`.
 
 ## Context filter
 
@@ -90,13 +89,16 @@ Each extractor returns a formatted string the prompt template interpolates.
 
 ```yaml
 default:
-  model: glm-4.7
+  model: glm-4.5-air
   provider: zai
 
 strict:
-  model: claude-sonnet-4-6
-  provider: anthropic
-  temperature: 0.0
+  model: glm-4.5-air
+  provider: zai
+
+fast:
+  model: glm-4.5-air
+  provider: zai
 ```
 
 A judge is just an LLM; the profile picks the model. Different judges for different check types are allowed — e.g. use a cheap model for basic formatting checks and a strong model for design quality.

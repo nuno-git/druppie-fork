@@ -1,6 +1,6 @@
 # module-web
 
-**Port:** 9005. **Type:** both (agents + deployed apps via SDK). **Dockerfile:** `druppie/mcp-servers/module-web/Dockerfile`.
+**Port:** 9005. **Type:** core (registered in `mcp_config.yaml` as `type: core`). **Dockerfile:** `druppie/mcp-servers/module-web/Dockerfile`.
 
 Local file search (over `/dataset`) plus HTTP fetch and web search. 6 tools.
 
