@@ -17,8 +17,7 @@ builder → test_executor`). `test_builder` and `test_executor` have been remove
 | Agent | Role | Tools |
 |-------|------|-------|
 | **builder_planner** | Reads design docs (FD/TD), writes `builder_plan.md` (test framework, test strategy, solution approach). | coding MCP (read_file, write_file, list_dir, run_git) |
-| **builder** | Owns the full TDD cycle. Calls OpenCode sandbox agents via `execute_coding_task`. Signals `TDD_PASSED` or `TDD_FAILED` in its `done()` summary. | `execute_coding_task` only |
-| **developer** | Branch setup, improvements (user feedback), PR merges. Delegates everything to OpenCode via `execute_coding_task`. NOT part of the TDD flow. | `execute_coding_task` only |
+| **builder** | The sole execution agent. Four modes — TDD CYCLE (signals `TDD_PASSED`/`TDD_FAILED`), BRANCH SETUP (`BRANCH_CREATED`), IMPROVEMENT (`IMPROVEMENT_DONE`), MERGE (`MERGED`). All modes delegate to OpenCode via `execute_coding_task`. | `execute_coding_task` only |
 
 ### OpenCode sandbox agents (execution)
 
@@ -66,8 +65,11 @@ prompt — not inside the planner. The planner only branches on the final
 
 | Source | Signal | Meaning |
 |--------|--------|---------|
-| builder `done()` | `TDD_PASSED` | All tests pass. Route to deployer. |
-| builder `done()` | `TDD_FAILED` | All 3 retry strategies exhausted. Escalate to user via HITL. |
+| builder `done()` (TDD mode) | `TDD_PASSED` | All tests pass. Route to deployer. |
+| builder `done()` (TDD mode) | `TDD_FAILED` | All 3 retry strategies exhausted. Escalate to user via HITL. |
+| builder `done()` (branch mode) | `BRANCH_CREATED` | Feature branch ready. Route to BA. |
+| builder `done()` (improve mode) | `IMPROVEMENT_DONE` | User feedback applied. Route to deployer. |
+| builder `done()` (merge mode) | `MERGED` | PR merged. Route to deployer for final deploy. |
 | BA `done()` | `HITL_ESCALATION_RESULT: <choice>` | User's decision after TDD_FAILED. |
 
 ## Verdict block contract
@@ -120,6 +122,6 @@ retry prompt that pastes the full VERDICT for context.
 
 ## Files
 
-- Druppie-side agent definitions: `druppie/agents/definitions/{builder_planner,builder,developer,planner}.yaml`
-- OpenCode sandbox agents: `druppie/opencode/config/agents/druppie-{test-writer,implementer,test-runner}.md`
+- Druppie-side agent definitions: `druppie/agents/definitions/{builder_planner,builder,planner}.yaml`
+- OpenCode sandbox agents: `druppie/opencode/config/agents/druppie-{test-writer,implementer,test-runner}.md` (TDD mode) and `druppie-builder.md` (non-TDD modes)
 - `execute_coding_task` builtin: `druppie/agents/builtin_tools.py`
