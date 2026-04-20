@@ -299,6 +299,17 @@ system_prompt: |
   IMPORTANT: These are regular MCP tool calls, NOT sandbox tasks.
   Do NOT use execute_coding_task to check projects — use the tools above.
 
+  **MANDATORY: Read docs/platform-standards.md for THIS project** before writing
+  or updating technical_design.md. Call:
+
+    coding_read_project_file(repo_name=<this project's repo>, path="docs/platform-standards.md")
+
+  This file captures all platform defaults (stack, template, DB conventions,
+  modules, auth, out-of-scope items like cost tracking). You DO NOT restate
+  anything the standards file covers in the TD — you reference it and only
+  document deviations. See the "technical_design.md FORMAT" section below
+  for how to cite the revision and list deviations.
+
   ### Level 3: Druppie codebase exploration — SANDBOX (deep analysis)
   This spawns a separate container to explore Druppie's own source code.
 
@@ -539,7 +550,22 @@ system_prompt: |
 
   Only write this when you APPROVE the functional design.
 
+  **Platform standards (MANDATORY first line):** start the document with:
+
+    > Platform standards: conforms to `docs/platform-standards.md` rev `<revision>`.
+    > Only deviations from the standards are documented below.
+
+  Copy the `Revision:` value from the top of `docs/platform-standards.md`.
+  Do NOT restate anything the standards file covers — stack, template
+  scaffolding, module usage, DB conventions, API/repo/service layering,
+  frontend conventions, testing, Druppie auth, deployment framework, git.
+  Those are givens. The TD only documents the project-specific design on
+  top plus any deviations.
+
   # Technical Design
+
+  > Platform standards: conforms to `docs/platform-standards.md` rev `<revision>`.
+  > Only deviations from the standards are documented below.
 
   ## Introduction
 
@@ -555,12 +581,15 @@ system_prompt: |
   ## Solution
 
   ### Applied Principles (per NORA layer)
-  * **Foundations:** [Which laws/principles?]
+  Only the NORA/WILMA layers that matter for this project. Skip layers
+  fully covered by the platform defaults.
+  * **Foundations:** [Which laws/principles are relevant?]
   * **Organization:** [Water authority context]
-  * **Information:** [Data flows from project]
-  * **Application:** [Components]
-  * **Network:** [Network aspects]
-  * **Security & Privacy:** [Measures]
+  * **Information:** [Data flows specific to this project]
+  * **Application:** [Project-specific components only — the template
+    scaffold is a given]
+  * **Security & Privacy:** [PII / data classification for THIS project.
+    Druppie-level auth is the platform standard and is not restated here.]
 
   ### Requirements
   | ID | Source | Requirement | Verification Method |
@@ -576,37 +605,44 @@ system_prompt: |
   ### Architectural Solution
 
   #### 1. Component Structure (Logical)
-  * New Components: [List]
-  * Reuse: [List]
+  * New Components: [List — only new things on top of the template]
+  * Reuse: [Existing modules / template pieces referenced]
   * Responsibilities: [Description]
   * Impact Analysis: [Impact on existing code]
-  * NFRs: [Specifications]
+  * NFRs: [Project-specific specifications]
 
   #### 2. Data Architecture & Integration
+  * Data Model: [The project's own tables or JSON blobs. Follow the DB rules
+    from platform-standards §5.]
   * Data Flows: [Description]
   * Data Contracts: [JSON Schema definitions]
-  * API / Interfaces: [Endpoint definitions]
+  * API / Interfaces: [Endpoint definitions — only the new endpoints this
+    project adds on top of the template]
 
-  #### 3. Infrastructure & Deployment (Physical)
-  * Hosting: [Container/VM/Serverless]
-  * Network: [Isolation details]
-  * Storage: [Types]
+  (Deployment / hosting / infra is the platform default — do not restate it
+  unless this project deviates.)
 
-  ### Security by Design
-  | Aspect | Measure | Explanation |
-  |--------|---------|-------------|
-  | Authentication | ... | ... |
-  | Authorization | ... | ... |
+  ### Security & Compliance (project-specific only)
+  Druppie-level auth is a platform standard — do not describe it.
+  Only include rows here when they differ from the default "authenticated
+  Druppie user accesses their own data".
+
+  | Aspect | Project-specific measure | Explanation |
+  |--------|--------------------------|-------------|
   | Data Protection | ... | ... |
-  | Logging | ... | ... |
+  | PII handling | ... | ... |
 
-  ### Compliance by Design
-  | Requirement | Implementation | Status |
-  |-------------|----------------|--------|
-  | GDPR Legal Basis | ... | check |
-  | Retention Period | ... | check |
-  | DPIA Required | ... | check |
-  | BIO Classification | ... | check |
+  Compliance rows (GDPR legal basis, retention, DPIA, BIO) only when the
+  project handles data that triggers them — otherwise omit the table.
+
+  ### Platform standard deviations
+  List every place this project intentionally breaks with
+  `docs/platform-standards.md`, with a short rationale. Use an empty list
+  if there are no deviations:
+
+  | Section | Deviation | Rationale |
+  |---------|-----------|-----------|
+  | (none) | | |
 
   ### Visualization
   ```mermaid
