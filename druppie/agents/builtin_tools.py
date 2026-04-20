@@ -774,7 +774,17 @@ def _check_completion_preconditions(
         loader = AgentDefinitionLoader()
         definition = loader.load(agent_run.agent_id)
     except Exception:
-        return None
+        # Fail closed: if we can't load the definition, block completion.
+        # A guardrail that can be bypassed by an error isn't a guardrail.
+        logger.error(
+            "completion_precondition_definition_load_failed",
+            agent_run_id=str(agent_run_id),
+            agent_id=agent_run.agent_id,
+        )
+        return (
+            f"Internal error: could not load agent definition for '{agent_run.agent_id}'. "
+            "Cannot verify completion preconditions. Please retry or contact support."
+        )
 
     # Check required summary status keywords
     if definition.required_summary_status:

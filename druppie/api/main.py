@@ -117,7 +117,7 @@ async def lifespan(app: FastAPI):
 
     # Retry any MCP servers that failed during startup
     registry = get_tool_registry()
-    failed = getattr(registry, "_failed_servers", [])
+    failed = registry._failed_servers
     if failed:
         create_tracked_task(
             registry._retry_failed_servers(failed),
