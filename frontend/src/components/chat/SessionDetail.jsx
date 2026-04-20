@@ -307,7 +307,7 @@ const TimelineQuestion = ({ tc, agentId, sessionId }) => {
 
 // --- Agent Run ---
 
-const AgentRunItem = ({ run, timelineIndex, sessionId, hasFollowingMessage }) => {
+const AgentRunItem = ({ run, timelineIndex, sessionId, hasFollowingMessage, sessionUserId }) => {
   const orderedItems = extractOrderedItems(run, hasFollowingMessage)
 
   // Show agent trace for completed runs that have no following message
@@ -335,7 +335,7 @@ const AgentRunItem = ({ run, timelineIndex, sessionId, hasFollowingMessage }) =>
         if (item.type === 'approval') {
           return (
             <div key={i} className="mt-2">
-              <InlineApproval tc={item.tc} sessionId={sessionId} sessionUserId={data?.user_id} />
+              <InlineApproval tc={item.tc} sessionId={sessionId} sessionUserId={sessionUserId} />
             </div>
           )
         }
@@ -1047,6 +1047,7 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
                       timelineIndex={i}
                       sessionId={sessionId}
                       hasFollowingMessage={hasFollowingMessage}
+                      sessionUserId={data?.user_id}
                     />
                     {renderAnnotation(i)}
                   </div>
