@@ -41,34 +41,38 @@ Used by `ba-fd-reject-then-approve.yaml`. Programmed behaviour:
 
 ## Session transcript
 
-`druppie/testing/session_transcript.py:build_transcript(session_id, exclude_current_pending=True)`:
-- Queries AgentRun, ToolCall, Question, Approval in creation order.
+`druppie/testing/session_transcript.py:build_transcript(db, session_id, exclude_question_id=None, exclude_approval_id=None)`:
+- Queries AgentRun, ToolCall, Question, Approval in creation order from the injected SQLAlchemy session.
 - Formats each:
   - Tool call: `{agent} called {tool}({args_excerpt}) → {result_excerpt}`
   - Question: `{agent} asked: {question} → {answer}` (or `pending` if unanswered)
   - Approval: `approval requested for {tool} by {role} → {approved|rejected|pending}`
 - Truncates fields to `MAX_FIELD_CHARS = 4000` to keep the prompt bounded.
 
-The `exclude_current_pending=True` flag omits the question/approval the simulator is about to answer — otherwise the prompt would contain the question twice, confusing the LLM.
+The caller passes `exclude_question_id` or `exclude_approval_id` to omit the specific pending record the simulator is about to answer — otherwise the prompt would contain the question twice, confusing the LLM.
 
 ## Simulator flow
 
 ```python
 class HITLSimulator:
-    def __init__(self, profile: HITLProfile, context: dict):
-        self.profile = profile
-        self.context = context
-        self.interactions = 0
+    MAX_HITL_INTERACTIONS = 100
 
-    def answer(self, question_or_approval) -> answer_payload:
-        self.interactions += 1
-        if self.interactions > MAX_HITL_INTERACTIONS:
-            raise RuntimeError("Too many HITL interactions")
-        transcript = build_transcript(session_id, exclude_current_pending=True)
-        prompt = build_prompt(self.profile, transcript, question_or_approval)
-        response = self._call_llm_with_retry(prompt)
-        return parse_response(response, question_or_approval.type)
+    def __init__(self, profile: HITLProfile): ...
+
+    def answer(
+        self,
+        question_text: str,
+        choices: list[dict] | None = None,
+        question_context: str | None = None,
+        session_transcript: str | None = None,
+    ) -> str:
+        # counts interactions; raises if MAX_HITL_INTERACTIONS exceeded
+        # builds persona prompt from profile + transcript + question, calls LLM,
+        # parses and returns a string answer (for multiple-choice, one of the choices)
+        ...
 ```
+
+The caller is responsible for producing the `session_transcript` (via `build_transcript(db, session_id, …)`) and for passing it in alongside the question text and any choices. The simulator itself is stateless across sessions — it just tracks an interaction counter.
 
 ## Integration with `BoundedOrchestrator`
 
@@ -84,5 +88,5 @@ The agent test registers a hook: when the orchestrator would pause on HITL or ap
 ## Limitations
 
 - Personas are prompt-only — no memory across questions beyond the transcript.
-- Persona drift if the LLM is inconsistent. Using a stable model (glm-4.7 or similar) for the simulator helps.
+- Persona drift if the LLM is inconsistent. The default HITL profile currently uses `glm-4.5-air` (see `testing/profiles/hitl.yaml`); swap to a more stable model if drift becomes a problem.
 - Can't simulate long-form domain expertise reliably — personas work best for "style" decisions, not deep-knowledge questions.

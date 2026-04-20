@@ -16,7 +16,7 @@ Code quality review. Produces `REVIEW.md` in the workspace with findings by seve
 | max_tokens | 100000 |
 | max_iterations | 50 |
 | MCPs | `coding` (read_file, list_dir, write_file, run_git) |
-| skills | code-review |
+| skills | — (not configured; the review checklist is embedded in the YAML `system_prompt` itself) |
 
 ## Output: `REVIEW.md`
 
@@ -30,10 +30,12 @@ Structure:
 
 1. Pull latest.
 2. Read changed files and relevant config.
-3. `invoke_skill("code-review")` for the review checklist.
+3. Apply the review checklist (Code Quality / Security / Best Practices) baked into the system prompt.
 4. Author `REVIEW.md`.
 5. Commit + push.
 6. `done()`.
+
+> **Note.** The YAML does not list a `skills` block, so the agent does not receive the `invoke_skill` builtin. If the intent is for reviewer to load `druppie/skills/code-review/SKILL.md` on demand, `skills: [code-review]` needs to be added to `reviewer.yaml` (see questions.md).
 
 ## Placement in pipeline
 

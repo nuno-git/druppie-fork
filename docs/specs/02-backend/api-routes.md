@@ -97,12 +97,12 @@ Bridges to `module-docker` MCP for running containers.
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| GET | `/api/deployments[?project_id=]` | Containers; non-admin filtered by `druppie.user_id` label |
+| GET | `/api/deployments[?project_id=]` | Containers; non-admin filtered by `druppie.project_id` label via project ownership |
 | GET | `/api/deployments/{container_name}` | Inspect |
 | GET | `/api/deployments/{container_name}/logs?tail=` | Logs |
 | POST | `/api/deployments/{container_name}/stop?remove=true` | Stop/remove |
 
-Ownership checked via the `druppie.user_id` Docker label; 403 if mismatch.
+Ownership is enforced by reading the `druppie.project_id` label off the container and confirming the calling user owns that project (see `druppie/services/deployment_service.py`). 403 if mismatch.
 
 ## MCPs
 

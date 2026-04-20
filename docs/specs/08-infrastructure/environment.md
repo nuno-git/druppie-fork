@@ -106,9 +106,9 @@ KATA_RUNTIME=io.containerd.kata.v2       # kata-only
 CONTAINERD_NAMESPACE=default             # kata-only
 SANDBOX_CONTROL_PLANE_URL=http://sandbox-control-plane:8787
 SANDBOX_MANAGER_URL=http://sandbox-manager:8000
-SANDBOX_TIMEOUT_MINUTES=30
-SANDBOX_WATCHDOG_INTERVAL_SECONDS=300
 ```
+
+The sandbox watchdog interval (300 s) and stuck-tool-call timeout (30 min) are wired via defaults inside `druppie/api/routes/sandbox.py` (see the module-level constants) rather than through `.env.example`. Override with the corresponding `SANDBOX_*_SECONDS`/`SANDBOX_*_MINUTES` variables if you need to tune them — they are read at import time but not currently documented in `.env.example`.
 
 ## Druppie self-update (update_core_builder)
 

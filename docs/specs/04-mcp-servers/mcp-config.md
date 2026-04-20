@@ -35,9 +35,9 @@ Environment variable substitution uses the shell `${VAR:-default}` syntax.
 
 - **URL:** `http://module-coding:9001`
 - **Type:** core
-- **Inject:** `session_id`, `project_id`, `repo_name`, `repo_owner`, `user_id` — all `hidden: true`. Applied to every workspace-scoped tool.
+- **Inject:** `session_id`, `project_id`, `repo_name`, `repo_owner` — all `hidden: true`. Applied to every workspace-scoped tool. (Coding tools that need user identity receive it from the backend elsewhere; the `coding` block does not inject `user_id`.)
 - **Approval defaults:**
-  - `read_file, write_file, make_design, list_dir, delete_file, batch_write_files, run_git, run_tests, create_pull_request, get_test_framework, get_coverage_report, install_test_dependencies, validate_tdd, get_git_status, list_projects, read_project_file, list_project_files` → none
+  - `read_file, write_file, make_design, validate_design, list_dir, delete_file, batch_write_files, run_git, run_tests, create_pull_request, get_test_framework, get_coverage_report, install_test_dependencies, validate_tdd, get_git_status, list_projects, read_project_file, list_project_files` → none
   - `merge_pull_request` → `developer`
   - `_internal_*` → none (backend-only)
 - **Agent overrides** (in agent YAML `approval_overrides`):
@@ -48,10 +48,10 @@ Environment variable substitution uses the shell `${VAR:-default}` syntax.
 
 - **URL:** `http://module-docker:9002`
 - **Type:** core
-- **Inject:** `session_id`, `repo_name`, `repo_owner`, `user_id`, `project_id` — hidden.
+- **Inject:** `session_id`, `repo_name`, `repo_owner`, `user_id`, `project_id` — hidden. Each key is scoped to a subset of tools (see `druppie/core/mcp_config.yaml` lines 112-132): `session_id` → `build, run, compose_up`; `repo_name`/`repo_owner` → `build, compose_up`; `user_id`/`project_id` → `run, compose_up` (for ownership labels).
 - **Approval defaults:**
-  - `build, run, compose_up, compose_down, stop, remove, exec_command` → `developer`
-  - `logs, list_containers, inspect` → none (read-only)
+  - `build, run, compose_up, compose_down, remove, exec_command` → `developer`
+  - `stop, logs, list_containers, inspect` → none (read-only / low-risk)
 
 ### `filesearch`
 
@@ -63,7 +63,7 @@ Environment variable substitution uses the shell `${VAR:-default}` syntax.
 ### `web`
 
 - **URL:** `http://module-web:9005`
-- **Type:** both (used by router, architect for web browsing)
+- **Type:** core (used by router, architect for web browsing)
 - **Inject:** none
 - **Approval defaults:** all tools → none
 

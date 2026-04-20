@@ -2,7 +2,7 @@
 
 `druppie/agents/builtin_tools.py`. Tools that run in-process (not via MCP), exposed to agents via `BUILTIN_TOOL_DEFS`.
 
-## The 10 builtin tools
+## The 9 builtin tools
 
 | Tool | Description |
 |------|-------------|
@@ -125,12 +125,14 @@ The system auto-appends "Other" (or "Anders" in Dutch) to the choices if not alr
   "parameters": {
     "type": "object",
     "properties": {
-      "skill_name": {"type": "string", "enum": ["architecture-principles", "code-review", "git-workflow", "making-mermaid-diagrams", "module-convention"]}
+      "skill_name": {"type": "string", "description": "The name of the skill to invoke (e.g., 'code-review', 'git-workflow')"}
     },
     "required": ["skill_name"]
   }
 }
 ```
+
+The schema does not enforce an enum — the `SkillService` resolves the name at invocation time and returns an error if the skill is not found. Currently five skills exist under `druppie/skills/`: `architecture-principles`, `code-review`, `git-workflow`, `making-mermaid-diagrams`, `module-convention`.
 
 ### `execute_coding_task`
 ```json
@@ -162,7 +164,7 @@ The system auto-appends "Other" (or "Anders" in Dutch) to the choices if not alr
       "test_command": {"type": "string"},
       "failed_count": {"type": "integer"},
       "passed_count": {"type": "integer"},
-      "error_classification": {"type": "string", "enum": ["code_bug", "test_bug", "env_bug", "flaky"]}
+      "error_classification": {"type": "string", "description": "assertion_failure, missing_function, import_error, type_error, syntax_error, configuration_error, environment_error, test_error"}
     },
     "required": ["iteration", "tests_passed", "summary"]
   }

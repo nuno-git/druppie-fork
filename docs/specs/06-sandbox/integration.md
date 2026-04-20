@@ -37,21 +37,22 @@ When the sandbox finishes, the control plane calls:
 
 ```
 POST {DRUPPIE_URL}/api/sandbox-sessions/{sandbox_session_id}/complete
-X-Druppie-Signature: hmac-sha256(body, webhook_secret)
+X-Signature: hmac-sha256(body, webhook_secret)
 body: {
-  status: "completed"|"failed"|"timeout",
-  completed_at: <iso>,
-  reason?: <string>,
-  events_url?: <string>,
-  artifacts?: [...],
+  sessionId: "<control-plane session id>",
+  messageId: "<optional message id>",
+  success: true|false,
+  timestamp: <epoch ms>,
 }
 ```
 
+The webhook body is deliberately minimal — it's just a signal to Druppie to pull. Druppie then re-fetches the authoritative event list from the control plane and extracts files, git operations, and agent output from there.
+
 ## Druppie webhook handler (`druppie/api/routes/sandbox.py`)
 
-800+ lines because of idempotency + result extraction:
+Several hundred lines because of idempotency + result extraction:
 
-1. Verify HMAC against the session's `webhook_secret`. 401 if mismatch.
+1. Verify HMAC (`X-Signature` header) against the session's `webhook_secret`. **403** if the header is missing, the signature is mismatched, or the referenced session is gone.
 2. `SELECT … FOR UPDATE` on `tool_calls` row for idempotency. If already COMPLETED, return 200 no-op.
 3. Fetch full event list from control plane (`GET {control_plane_url}/sessions/{id}/events`).
 4. Extract:

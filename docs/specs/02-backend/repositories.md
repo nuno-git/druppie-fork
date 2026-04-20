@@ -16,7 +16,7 @@ Every concrete repository extends `BaseRepository` and exposes methods that retu
 
 ## SessionRepository
 
-`druppie/repositories/session_repository.py` (~200 lines)
+`druppie/repositories/session_repository.py` (~560 lines)
 
 | Method | Returns | Notes |
 |--------|---------|-------|

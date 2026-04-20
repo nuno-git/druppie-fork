@@ -1,6 +1,6 @@
 # MCP Architecture
 
-MCP (Model Context Protocol) is the **only** interface agents have to the outside world. No agent writes a file, runs a container, calls a web API, or touches git except by invoking an MCP tool.
+MCP (Model Context Protocol) is how agents reach anything that lives outside the backend process: no agent writes a file, runs a container, calls a public web API, or touches git except by invoking an MCP tool. In-process effects (advancing the pipeline, asking the user, spawning a sandbox, posting a chat message) go through **built-in tools** instead — see [`05-agents/builtin-tools.md`](../05-agents/builtin-tools.md). Both categories appear in the same OpenAI-format tool list handed to the LLM; the ToolExecutor routes each call based on registration.
 
 ## Components
 

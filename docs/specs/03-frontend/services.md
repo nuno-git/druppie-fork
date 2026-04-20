@@ -59,8 +59,8 @@ Every exported function is a thin wrapper around `request(...)`.
 - `getMCPServers()`
 - `getMCPTools()`
 - `getMCPTool(id)`
-- `checkMCPPermission({ server, tool })`
-- `callMCPTool({ server, tool, arguments, session_id? })` (via `/api/mcp/call`)
+- `checkMCPPermission(tool)` — takes a single tool identifier, returns the server-side permission decision
+- No dedicated `callMCPTool` wrapper; the DebugMCP page (`frontend/src/pages/DebugMCP.jsx`) makes a raw `fetch('/api/mcp/call', …)` with `{ server, tool, arguments, session_id }` in the body
 
 **Workspace**
 - `getWorkspaceFiles(session_id)`
@@ -120,7 +120,7 @@ Configuration read from `import.meta.env`:
 - `VITE_KEYCLOAK_CLIENT_ID` (default `druppie-frontend`)
 
 Lifecycle:
-- `initKeycloak()` — health-checks Keycloak (3×, 2 s each), then `keycloak.init({ onLoad: 'check-sso', silentCheckSsoRedirectUri: '/silent-check-sso.html', pkceMethod: 'S256' })`. Persists tokens to localStorage. Wires `onTokenExpired` → `updateToken(30)` auto-refresh. 30 s total timeout before failing.
+- `initKeycloak()` — health-checks Keycloak, then `keycloak.init({ onLoad: 'check-sso', silentCheckSsoRedirectUri: '…/silent-check-sso.html', checkLoginIframe: false, token, refreshToken, silentCheckSsoFallback: false })`. Persists tokens to localStorage. Wires `onTokenExpired` → auto-refresh. 30 s timeout before failing. PKCE is not explicitly set in the current call; the Keycloak JS adapter's default applies.
 - `getKeycloak()` — singleton accessor.
 - `login()` — redirect to Keycloak.
 - `logout()` — clear storage + redirect.
