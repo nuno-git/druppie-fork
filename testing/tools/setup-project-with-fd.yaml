@@ -47,21 +47,9 @@ tool-test:
 
     # --- Business Analyst ---
     - agent: business_analyst
-      tool: builtin:hitl_ask_multiple_choice_question
-      mock: true
-      mock_result: "Home cooks sharing recipes with friends and family"
-      arguments:
-        question: "Who is the target audience?"
-        choices:
-          - "Home cooks sharing recipes with friends and family"
-          - "Professional chefs and restaurants"
-          - "Food bloggers and content creators"
-
-    - agent: business_analyst
       tool: coding:make_design
       approval:
         status: approved
-        by: analyst
       arguments:
         path: docs/functional-design.md
         content: |

@@ -102,8 +102,9 @@ async def list_approvals(
     - Required role to approve
     - Session and agent info
     """
+    user_id = UUID(user["sub"])
     user_roles = get_user_roles(user)
-    return service.get_pending_for_roles(user_roles)
+    return service.get_pending_for_roles(user_roles, user_id=user_id)
 
 
 @router.get("/history")
@@ -118,8 +119,9 @@ async def approval_history(
     Returns paginated history of approvals that have been resolved,
     filtered by the user's roles. Admin users see all history.
     """
+    user_id = UUID(user["sub"])
     user_roles = get_user_roles(user)
-    return service.get_history_for_roles(user_roles, page, limit)
+    return service.get_history_for_roles(user_roles, user_id=user_id, page=page, limit=limit)
 
 
 @router.post("/{approval_id}/approve")
