@@ -1,0 +1,31 @@
+## Tool test: create_project must seed docs/platform-standards.md into the
+## new project's Gitea repo. The file lives in druppie/templates/project/docs/
+## and is pushed verbatim by the existing push_template step of set_intent.
+
+tool-test:
+  name: create-project-seeds-platform-standards
+  description: "create_project pushes docs/platform-standards.md from the project template"
+  tags: [platform-standards, create-project, setup]
+
+  chain:
+    - agent: router
+      tool: builtin:set_intent
+      arguments:
+        intent: create_project
+        project_name: standards-seed-check
+        description: "Minimal project used to verify the platform-standards.md seed"
+      assert:
+        result:
+          - not_empty
+
+    - agent: router
+      tool: builtin:done
+      arguments:
+        summary: "Agent router: Classified as create_project for standards seed check"
+      assert:
+        completed: true
+
+  verify:
+    - gitea_repo_exists: true
+    - file_exists: docs/platform-standards.md
+    - file_not_empty: docs/platform-standards.md
