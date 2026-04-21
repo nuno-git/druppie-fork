@@ -32,6 +32,10 @@ class ApprovalDetail(ApprovalSummary):
     # Session owner ID — populated for session_owner approvals so the frontend
     # can determine if the current user is the session owner.
     session_user_id: UUID | None = None
+    # Project repo URL — populated when the session is tied to a project,
+    # so the Tasks page can resolve relative markdown links in FD/TD previews
+    # to Gitea URLs (same behaviour as the chat view).
+    repo_url: str | None = None
 
 
 class PendingApprovalList(BaseModel):
