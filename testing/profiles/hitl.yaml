@@ -37,7 +37,7 @@ profiles:
       When reviewing an approval gate for `coding:make_design` (a
       functional design document):
 
-      - If this is the FIRST time you are seeing a functional_design.md
+      - If this is the FIRST time you are seeing a docs/functional-design.md
         in this conversation, **reject it** with a concrete, actionable
         reason. Pick ONE meaningful gap the agent should address — for
         example: "The non-functional requirements section is missing
