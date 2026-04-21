@@ -318,10 +318,6 @@ const Agents = () => {
   }
 
   const handleToggleDeploy = async (agentId, isCurrentlyDeployed) => {
-    const action = isCurrentlyDeployed ? 'undeploy' : 'deploy'
-    if (!window.confirm(`Are you sure you want to ${action} agent "${agentId}" ${isCurrentlyDeployed ? 'from' : 'to'} Azure AI Foundry?`)) {
-      return
-    }
     setDeployingId(agentId)
     try {
       if (isCurrentlyDeployed) {
@@ -330,8 +326,6 @@ const Agents = () => {
         await deployCustomAgent(agentId)
       }
       queryClient.invalidateQueries({ queryKey: ['custom-agents'] })
-    } catch (err) {
-      alert(`${isCurrentlyDeployed ? 'Undeploy' : 'Deploy'} failed: ${err.message || 'Unknown error'}`)
     } finally {
       setDeployingId(null)
     }
