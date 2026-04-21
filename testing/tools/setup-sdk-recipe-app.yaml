@@ -162,19 +162,19 @@ tool-test:
           | Module | Tool | Gebruik |
           |--------|------|---------|
           | llm | chat | Recept analyseren, vragen beantwoorden, suggesties |
-          | llm | vision | OCR: tekst extraheren uit receptfoto's |
+          | vision | ocr | OCR: tekst extraheren uit receptfoto's |
 
           Gebruik:
           ```python
           from druppie_sdk import DruppieClient
           druppie = DruppieClient()
           result = druppie.call("llm", "chat", {"prompt": "Analyseer dit recept: ..."})
-          result = druppie.call("llm", "vision", {"image_url": "https://..."})
+          result = druppie.call("vision", "ocr", {"image_source": "https://..."})
           ```
 
           ## Componenten
           - UploadHandler: verwerkt receptfoto uploads, slaat op in DB
-          - RecipeAnalyzer: roept druppie llm/vision aan voor analyse
+          - RecipeAnalyzer: roept druppie vision/ocr aan voor analyse
           - ChatHandler: LLM chat via druppie SDK voor vragen
           - RecipeStore: PostgreSQL repository voor recepten
 
@@ -258,14 +258,14 @@ tool-test:
           - **Usage**: `from druppie_sdk import DruppieClient; druppie = DruppieClient()`
           - **Modules Used**:
             - `llm/chat` — recept analyseren, vragen beantwoorden, suggesties
-            - `llm/vision` — OCR: tekst extraheren uit receptfoto's
+            - `vision/ocr` — OCR: tekst extraheren uit receptfoto's
           - **Example Calls**:
             ```python
             result = druppie.call("llm", "chat", {"prompt": "Analyseer: ...", "system": "Je bent een chef-kok"})
-            result = druppie.call("llm", "vision", {"image_url": url})
+            result = druppie.call("vision", "ocr", {"image_source": url})
             ```
           - **No API Keys**: app gebruikt GEEN hardcoded API keys
-          - **No openai package**: gebruik `druppie.call("llm", ...)` i.p.v. OpenAI client
+          - **No openai package**: gebruik `druppie.call("llm", ...)`, `druppie.call("vision", ...)` etc.
 
           ## Code Standards
           - Python 3.11, Flask
@@ -300,7 +300,7 @@ tool-test:
     - agent: builder_planner
       tool: builtin:done
       arguments:
-        summary: "Agent builder_planner: Created builder-plan.md with module integration section for llm/chat and llm/vision."
+        summary: "Agent builder_planner: Created builder-plan.md with module integration section for llm/chat and vision/ocr."
 
     # --- Planner → Builder (new flow: builder owns full TDD cycle via OpenCode) ---
     - agent: planner

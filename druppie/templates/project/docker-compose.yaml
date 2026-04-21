@@ -9,10 +9,11 @@ services:
     environment:
       - APP_NAME=${APP_NAME:-My App}
       - DATABASE_URL=postgresql://${POSTGRES_USER:-app}:${POSTGRES_PASSWORD:-app}@db:5432/${POSTGRES_DB:-app}
-      - DEEPINFRA_API_KEY=${DEEPINFRA_API_KEY:-}
+      - DRUPPIE_URL=${DRUPPIE_URL:-http://druppie-backend:8000}
+      - DRUPPIE_MODULE_API_TOKEN=${DRUPPIE_MODULE_API_TOKEN:-}
       - DEBUG=${DEBUG:-false}
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 10s
       timeout: 5s
       retries: 5

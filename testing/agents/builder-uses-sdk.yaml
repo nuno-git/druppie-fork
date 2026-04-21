@@ -34,4 +34,4 @@ agent-test:
       - "The builder should have used `from druppie_sdk import DruppieClient` in the app code. Check the execute_coding_task tool call results for SDK imports."
       - "The builder should NOT have used the openai package directly (no `from openai import` or `import openai`). All LLM calls should go through druppie.call()."
       - "The builder should NOT have hardcoded any API keys (no DEEPINFRA_API_KEY, OPENAI_API_KEY, or similar in the code). The SDK reads DRUPPIE_URL from environment automatically."
-      - "The builder should have implemented recipe upload with OCR (druppie.call('llm', 'vision', ...)) and a chat endpoint (druppie.call('llm', 'chat', ...))."
+      - "The builder should have implemented recipe upload with OCR (druppie.call('vision', 'ocr', ...)) and a chat endpoint (druppie.call('llm', 'chat', ...))."
