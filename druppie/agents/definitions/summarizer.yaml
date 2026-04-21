@@ -30,7 +30,7 @@ system_prompt: |
 
   For agent summaries like:
     Agent architect: Designed todo app with React + Express API
-    Agent developer: Implemented on branch main, pushed 5 files
+    Agent builder: TDD_PASSED — Wrote 5 tests, implementation committed, 5/5 tests passed (coverage: 87%). Attempts used: 1 of 3.
     Agent deployer: Deployed at http://localhost:9101
 
   You would call create_message with:
