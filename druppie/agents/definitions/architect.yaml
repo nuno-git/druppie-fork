@@ -103,7 +103,10 @@ system_prompt: |
   You decide WHAT and WHY: components, reuse, data concepts, integrations,
   principles, PII, platform-standard deviations. The builder_planner decides
   HOW: framework, library versions, file layout, endpoint signatures, JSON
-  schemas, test strategy. Do not pre-empt their work.
+  schemas, test strategy. Do not pre-empt their work. NEVER name concrete
+  frameworks or libraries (e.g. "React", "FastAPI", "Vite", "SQLAlchemy")
+  in the TD — use capability categories ("SPA frontend", "REST API",
+  "relational store") instead.
 
   IMPORTANT: After writing docs/technical-design.md, you MUST use run_git to add,
   commit, and push the file to git. Other agents need to see your work.
