@@ -1,16 +1,14 @@
-## Agent test: real builder runs the full TDD cycle via OpenCode, then planner re-evaluates
+## Agent test: real builder creates an SDK-aware app, then planner re-evaluates
 ##
-## Setup: tool test creates a project with FD + TD + builder plan (all mentioning
-##   Druppie modules and SDK usage). Tests are NOT pre-written — the builder's
-##   druppie-test-writer sandbox agent generates them as part of the TDD cycle.
+## Setup: tool test creates a project with FD + TD + builder plan + tests
+##   (all mentioning Druppie modules and SDK usage)
 ##
 ## continue_session: true — builder + planner run in the SAME session as setup.
-##   Builder drives: druppie-test-writer → druppie-implementer → druppie-test-runner
-##   via execute_coding_task. Planner re-evaluates after builder, leaving pending
-##   runs for continuation.
+##   Builder reads FD, TD, and builder-plan.md from the workspace.
+##   Planner re-evaluates after builder, leaving pending runs for continuation.
 ##
-## Judge: evaluates that the implementer sandbox actually used druppie_sdk in its
-##   code, did NOT use openai directly, and did NOT hardcode API keys.
+## Judge: evaluates that the builder actually used druppie_sdk in its code,
+##   did NOT use openai directly, and did NOT hardcode API keys.
 
 agent-test:
   name: builder-uses-sdk
@@ -18,7 +16,7 @@ agent-test:
   tags: [builder, planner, sdk, quality, judge, e2e]
 
   setup:
-    - setup-sdk-recipe-app      # creates session with pipeline up to builder_planner
+    - setup-sdk-recipe-app      # creates session with full pipeline up to test_builder
 
   continue_session: true        # builder + planner run in the SAME session
 

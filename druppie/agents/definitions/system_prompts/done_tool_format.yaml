@@ -11,7 +11,7 @@ prompt: |
   YOUR OWN summary line.
 
   CORRECT:
-    Call done with summary: "Agent builder: BRANCH_CREATED — feature/add-login pushed to origin."
+    Call done with summary: "Agent developer: Created branch feature/add-login, pushed 4 files."
 
   WRONG — these break the pipeline:
     Calling done with summary "Task completed"

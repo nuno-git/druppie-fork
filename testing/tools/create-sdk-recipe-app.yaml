@@ -1,7 +1,5 @@
 ## End-to-end: create a recipe analyzer app with Druppie SDK
-## Extends setup-sdk-recipe-app. Builder drives the full TDD cycle via OpenCode:
-##   druppie-test-writer → druppie-implementer → druppie-test-runner (all mocked),
-##   then signals TDD_PASSED. Planner goes straight to deployer (mocked).
+## Extends setup-sdk-recipe-app, adds: builder (mocked with SDK code) + deploy (mock)
 ##
 ## Validates that the full pipeline produces an app that:
 ## - Uses druppie_sdk (not openai or hardcoded keys)
@@ -15,41 +13,28 @@ tool-test:
   extends: setup-sdk-recipe-app
 
   chain:
-    # --- Builder drives the full TDD cycle via OpenCode (all three calls mocked) ---
+    # --- Planner → Builder ---
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: builder
+            prompt: "Build the recipe analyzer to pass the tests, using Druppie SDK for AI"
+          - agent_id: planner
+            prompt: "Re-evaluate after builder completes"
 
-    # STEP 1: druppie-test-writer (Red phase)
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: Planned builder"
+
+    # --- Builder (mocked — outcome files use druppie_sdk correctly) ---
     - agent: builder
       tool: coding:execute_coding_task
       arguments:
-        task: "TDD Red Phase. Read functional_design.md, technical_design.md, and builder_plan.md. Set up pytest and write comprehensive tests covering the recipe analyzer endpoints. Commit and push."
-        agent: druppie-test-writer
+        task: "Build the recipe analyzer to pass the tests, using Druppie SDK for AI"
       mock: true
-      mock_result: |
-        ---SUMMARY---
-        Framework: pytest
-        Test files created: tests/test_routes.py
-        Test count: 2
-        Config files added: pytest.ini, requirements.txt (pytest, pytest-cov)
-        Coverage tool: pytest-cov
-        Git: pushed to main
-        ---END SUMMARY---
-
-    # STEP 2: druppie-implementer (Green phase)
-    - agent: builder
-      tool: coding:execute_coding_task
-      arguments:
-        task: "TDD Green Phase (initial). Implement the recipe analyzer to pass the tests, using Druppie SDK for LLM and vision. Preserve /health endpoint. Commit and push."
-        agent: druppie-implementer
-      mock: true
-      mock_result: |
-        ---SUMMARY---
-        Strategy: INITIAL
-        Files created: app/routes.py
-        Files modified: requirements.txt
-        Local test run: 2/2 passed
-        Key decisions: Used druppie.call("llm", "vision", ...) for OCR, druppie.call("llm", "chat", ...) for analysis
-        Git: pushed to main
-        ---END SUMMARY---
+      mock_result: "All files created successfully"
       outcome:
         files:
           - path: app/routes.py
@@ -92,27 +77,54 @@ tool-test:
                   })
                   return jsonify(answer=result.get("answer", ""))
 
-    # STEP 3: druppie-test-runner (Verify)
-    - agent: builder
-      tool: coding:execute_coding_task
-      arguments:
-        task: "Run the full test suite with coverage and report a structured ---VERDICT--- block. Do not modify any code or tests."
-        agent: druppie-test-runner
-      mock: true
-      mock_result: |
-        ---VERDICT---
-        RESULT: PASS
-        Framework: pytest
-        Tests: 2/2 passed
-        Coverage: 82%
-        ---END VERDICT---
-
     - agent: builder
       tool: builtin:done
       arguments:
-        summary: "Agent builder: TDD_PASSED — Wrote 2 tests, implementation committed, 2/2 tests passed (coverage: 82%). Attempts used: 1 of 3."
+        summary: "Agent builder: BUILD_COMPLETE — Recipe analyzer with Druppie SDK for LLM and vision/OCR."
 
-    # --- Planner → deployer (new flow: no test_executor, builder already ran tests internally) ---
+    # --- Planner → test_executor ---
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: test_executor
+            prompt: "Run all tests"
+          - agent_id: planner
+            prompt: "Re-evaluate after test_executor completes"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: Planned test_executor"
+
+    # --- Test Executor (mocked) ---
+    - agent: test_executor
+      tool: coding:run_tests
+      mock: true
+      mock_result: '{"success": true, "output": "2 passed, 0 failed", "exit_code": 0}'
+
+    - agent: test_executor
+      tool: coding:get_coverage_report
+      mock: true
+      mock_result: '{"coverage": 82, "lines_covered": 41, "lines_total": 50}'
+
+    - agent: test_executor
+      tool: builtin:test_report
+      mock: true
+      mock_result: '{"status": "ok"}'
+      arguments:
+        total: 2
+        passed: 2
+        failed: 0
+        coverage: 82
+        summary: "Agent test_executor: All 2 tests passed with 82% coverage"
+
+    - agent: test_executor
+      tool: builtin:done
+      arguments:
+        summary: "Agent test_executor: TEST RESULT: PASS — 2/2 tests passed, 82% coverage."
+
+    # --- Planner → deployer ---
     - agent: planner
       tool: builtin:make_plan
       arguments:
@@ -125,7 +137,7 @@ tool-test:
     - agent: planner
       tool: builtin:done
       arguments:
-        summary: "Agent planner: TDD_PASSED, planned deployer"
+        summary: "Agent planner: Tests passed, planned deployer"
 
     # --- Deployer (mocked) ---
     - agent: deployer

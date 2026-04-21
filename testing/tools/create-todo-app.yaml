@@ -1,7 +1,5 @@
 ## End-to-end: create a to-do app with REAL deploy
-## Extends setup-todo-app-pipeline. Builder drives full TDD cycle via OpenCode
-## (druppie-test-writer → druppie-implementer → druppie-test-runner, all mocked),
-## then REAL deployer + summarizer.
+## Extends setup-todo-app-pipeline, adds: builder (real code) + test_executor + deployer (REAL) + summarizer
 
 tool-test:
   name: create-todo-app
@@ -10,41 +8,13 @@ tool-test:
   extends: setup-todo-app-pipeline
 
   chain:
-    # --- Builder drives the full TDD cycle (3 execute_coding_task calls, all mocked) ---
-
-    # STEP 1: druppie-test-writer (Red phase)
+    # --- Builder (mocked — no sandbox, outcome overwrites scaffold with real todo app) ---
     - agent: builder
       tool: coding:execute_coding_task
       arguments:
-        task: "TDD Red Phase. Read functional_design.md, technical_design.md, and builder_plan.md. Set up vitest and write tests covering todo add/toggle/delete/filter behavior. Do NOT implement production code. Commit and push."
-        agent: druppie-test-writer
+        task: "Build the todo app to pass the tests"
       mock: true
-      mock_result: |
-        ---SUMMARY---
-        Framework: vitest
-        Test files created: src/__tests__/App.test.jsx
-        Test count: 4
-        Config files added: vitest.config.js, package.json updated
-        Coverage tool: @vitest/coverage-v8
-        Git: pushed to main
-        ---END SUMMARY---
-
-    # STEP 2: druppie-implementer (Green phase)
-    - agent: builder
-      tool: coding:execute_coding_task
-      arguments:
-        task: "TDD Green Phase (initial). Implement the todo app to pass the vitest tests. Preserve /health endpoint. Commit and push."
-        agent: druppie-implementer
-      mock: true
-      mock_result: |
-        ---SUMMARY---
-        Strategy: INITIAL
-        Files created: frontend/src/App.tsx
-        Files modified: none
-        Local test run: 4/4 passed
-        Key decisions: Used useState + useEffect for localStorage persistence
-        Git: pushed to main
-        ---END SUMMARY---
+      mock_result: "All files created successfully"
       outcome:
         files:
           - path: frontend/src/App.tsx
@@ -161,27 +131,54 @@ tool-test:
 
               export default App
 
-    # STEP 3: druppie-test-runner (Verify)
-    - agent: builder
-      tool: coding:execute_coding_task
-      arguments:
-        task: "Run the full test suite with coverage and report a structured ---VERDICT--- block."
-        agent: druppie-test-runner
-      mock: true
-      mock_result: |
-        ---VERDICT---
-        RESULT: PASS
-        Framework: vitest
-        Tests: 4/4 passed
-        Coverage: 87%
-        ---END VERDICT---
-
     - agent: builder
       tool: builtin:done
       arguments:
-        summary: "Agent builder: TDD_PASSED — Wrote 4 tests, implementation committed, 4/4 tests passed (coverage: 87%). Attempts used: 1 of 3."
+        summary: "Agent builder: Implemented todo app with 5 components on branch main."
 
-    # --- Planner → deployer (no test_executor in the new flow) ---
+    # --- Planner (after builder → test_executor) ---
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: test_executor
+            prompt: "Run all tests with coverage"
+          - agent_id: planner
+            prompt: "Re-evaluate after test_executor completes"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: Planned test_executor"
+
+    # --- Test Executor (mocked — no real tests to run) ---
+    - agent: test_executor
+      tool: coding:run_tests
+      mock: true
+      mock_result: '{"success": true, "output": "4 passed, 0 failed", "exit_code": 0}'
+
+    - agent: test_executor
+      tool: coding:get_coverage_report
+      mock: true
+      mock_result: '{"coverage": 87, "lines_covered": 174, "lines_total": 200}'
+
+    - agent: test_executor
+      tool: builtin:test_report
+      mock: true
+      mock_result: '{"status": "ok"}'
+      arguments:
+        total: 4
+        passed: 4
+        failed: 0
+        coverage: 87
+        summary: "Agent test_executor: All 4 tests passed with 87% coverage"
+
+    - agent: test_executor
+      tool: builtin:done
+      arguments:
+        summary: "Agent test_executor: TEST RESULT: PASS — 4/4 tests passed, 87% coverage."
+
+    # --- Planner (after test_executor → deployer) ---
     - agent: planner
       tool: builtin:make_plan
       arguments:
@@ -194,7 +191,7 @@ tool-test:
     - agent: planner
       tool: builtin:done
       arguments:
-        summary: "Agent planner: TDD_PASSED, planned deployer"
+        summary: "Agent planner: Tests passed, planned deployer"
 
     # --- Deployer (REAL — actually deploys the app) ---
     - agent: deployer
