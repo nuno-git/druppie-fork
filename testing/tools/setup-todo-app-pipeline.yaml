@@ -1,7 +1,6 @@
 ## Shared base: todo-app pipeline up to builder planning
-## Router → Planner → BA → Architect → Builder Planner → Planner plans Builder
+## Router → Planner → BA → Architect → Builder Planner → Test Builder
 ## Both create-todo-app and create-todo-app-mock-deploy extend this.
-## The real builder drives the full TDD cycle via OpenCode sandbox agents.
 
 tool-test:
   name: setup-todo-app-pipeline
@@ -249,17 +248,93 @@ tool-test:
       arguments:
         summary: "Agent builder_planner: Created builder-plan.md with solution strategy, code standards, and file list."
 
-    # --- Planner (after builder_planner → builder, new flow: builder owns full TDD cycle) ---
+    # --- Planner (after builder_planner → test_builder) ---
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: test_builder
+            prompt: "Write tests for the todo app based on the builder plan"
+          - agent_id: planner
+            prompt: "Re-evaluate after test_builder completes"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: Planned test_builder"
+
+    # --- Test Builder ---
+    - agent: test_builder
+      tool: coding:run_git
+      arguments:
+        command: "pull"
+
+    - agent: test_builder
+      tool: coding:read_file
+      arguments:
+        path: docs/builder-plan.md
+
+    - agent: test_builder
+      tool: coding:get_test_framework
+      mock: true
+      mock_result: '{"framework": "vitest", "config_file": "vitest.config.js"}'
+
+    - agent: test_builder
+      tool: coding:write_file
+      arguments:
+        path: src/__tests__/App.test.jsx
+        content: |
+          import { describe, it, expect } from 'vitest';
+
+          describe('Todo App', () => {
+            it('should add a todo', () => {
+              expect(true).toBe(true);
+            });
+
+            it('should toggle a todo', () => {
+              expect(true).toBe(true);
+            });
+
+            it('should delete a todo', () => {
+              expect(true).toBe(true);
+            });
+
+            it('should filter todos', () => {
+              expect(true).toBe(true);
+            });
+          });
+
+    - agent: test_builder
+      tool: coding:run_git
+      arguments:
+        command: "add src/__tests__/App.test.jsx"
+
+    - agent: test_builder
+      tool: coding:run_git
+      arguments:
+        command: "commit -m 'Add todo app tests (Red phase)'"
+
+    - agent: test_builder
+      tool: coding:run_git
+      arguments:
+        command: "push"
+
+    - agent: test_builder
+      tool: builtin:done
+      arguments:
+        summary: "Agent test_builder: Wrote 4 tests in src/__tests__/App.test.jsx (vitest)."
+
+    # --- Planner (after test_builder → builder) ---
     - agent: planner
       tool: builtin:make_plan
       arguments:
         steps:
           - agent_id: builder
-            prompt: "Drive the full TDD cycle for the todo app. Read functional_design.md, technical_design.md, and builder_plan.md. Write tests (druppie-test-writer), implement code (druppie-implementer), run tests (druppie-test-runner). Apply retry strategies on failure, up to 3 attempts. Signal TDD_PASSED or TDD_FAILED in done()."
+            prompt: "Implement the todo app to pass the tests"
           - agent_id: planner
-            prompt: "Builder completed TDD cycle. Evaluate verdict and decide next step."
+            prompt: "Re-evaluate after builder completes"
 
     - agent: planner
       tool: builtin:done
       arguments:
-        summary: "Agent planner: Planned builder (full TDD cycle via OpenCode)"
+        summary: "Agent planner: Planned builder"
