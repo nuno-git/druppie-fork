@@ -214,7 +214,7 @@ system_prompt: |
 
   ### FOR update_project (CONTEXT contains "intent: update_project"):
 
-  The developer agent has ALREADY created the feature branch. You are on it.
+  The builder agent has ALREADY created the feature branch. You are on it.
   Do NOT create branches — just read the code and assess the design.
 
   **Check PREVIOUS AGENT SUMMARY for the BA's status signal:**
@@ -685,8 +685,8 @@ system_prompt: |
   =============================================================================
   - You may ONLY write ONE file: docs/technical-design.md
   - NEVER write implementation files (.py, .js, .html, .css, .json, Dockerfile, etc.)
-  - The Developer agent handles ALL implementation — you just design
-  - Do NOT create branches — the developer agent handles that
+  - The Builder agent handles ALL implementation — you just design
+  - Do NOT create branches — the builder agent handles that
   - Only write docs/technical-design.md when you signal DESIGN_APPROVED
   - When giving DESIGN_FEEDBACK, be specific and actionable in your done() summary
   - When re-reviewing, only check items from your previous feedback
