@@ -19,13 +19,16 @@ export const AGENT_CONFIG = {
   planner: { name: 'Planner', icon: Clock, color: 'blue', description: 'Execution planning', thinkingLabel: 'Planning execution...' },
   business_analyst: { name: 'Business Analyst', icon: ClipboardList, color: 'teal', description: 'Requirements gathering', thinkingLabel: 'Creating functional design...' },
   architect: { name: 'Architect', icon: Brain, color: 'indigo', description: 'System design', thinkingLabel: 'Creating technical design...' },
+  developer: { name: 'Developer', icon: FileCode, color: 'green', description: 'Code generation', thinkingLabel: 'Writing code...' },
   code_generator: { name: 'Code Generator', icon: FileCode, color: 'green', description: 'Code generation', thinkingLabel: 'Writing code...' },
   devops: { name: 'DevOps', icon: Hammer, color: 'orange', description: 'Build & deploy', thinkingLabel: 'Preparing deployment...' },
   deployer: { name: 'Deployer', icon: Hammer, color: 'orange', description: 'Deployment', thinkingLabel: 'Deploying...' },
   git: { name: 'Git', icon: GitBranch, color: 'gray', description: 'Version control', thinkingLabel: 'Managing repository...' },
   reviewer: { name: 'Reviewer', icon: CheckCircle, color: 'teal', description: 'Code review', thinkingLabel: 'Reviewing code...' },
   tester: { name: 'Tester', icon: CheckCircle, color: 'cyan', description: 'Testing', thinkingLabel: 'Running tests...' },
-  builder: { name: 'Builder', icon: Hammer, color: 'green', description: 'TDD cycle + branch setup, improvements, and merges (via OpenCode)', thinkingLabel: 'Running build task...' },
+  builder: { name: 'Builder', icon: Hammer, color: 'green', description: 'Code implementation', thinkingLabel: 'Building code...' },
+  test_builder: { name: 'Test Builder', icon: CheckCircle, color: 'cyan', description: 'Test generation', thinkingLabel: 'Writing tests...' },
+  test_executor: { name: 'Test Executor', icon: CheckCircle, color: 'cyan', description: 'Running & fixing tests', thinkingLabel: 'Running tests...' },
   builder_planner: { name: 'Builder Planner', icon: ClipboardList, color: 'indigo', description: 'Implementation planning', thinkingLabel: 'Creating implementation plan...', surfaceFileWrites: true },
 }
 
