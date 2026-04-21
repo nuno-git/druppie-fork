@@ -104,10 +104,25 @@ git push origin HEAD
 Every task MUST end with `git push`. Unpushed tests are invisible to the
 implementer sandbox.
 
+## RESUME Mode (updating existing tests)
+
+If your task prompt contains "RESUME:", tests already exist from a previous
+cycle. The user has provided guidance on what to change. In this mode:
+
+1. **Read the existing test files** before making changes.
+2. **Read the user guidance** from your task prompt.
+3. **Update tests** to match the guidance — add, modify, or remove test cases
+   as needed. Do NOT delete tests unrelated to the guidance.
+4. **Keep the `/health` test** — never remove it regardless of guidance.
+5. **Commit and push** as normal.
+
+Use the summary field `Mode: RESUME` instead of the default.
+
 ## Rules
 
 - **NEVER run tests** — they are meant to fail at this stage
 - **NEVER implement production code** — only tests and test config
+- **NEVER modify production code** (`app/`, `frontend/src/` excluding tests)
 - **NEVER remove the `/health` endpoint test**
 - **NEVER use `openai`, `httpx`, or `requests` to call LLM providers** — tests
   should mock the Druppie SDK (`from druppie_sdk import DruppieClient`) instead
@@ -119,8 +134,10 @@ implementer sandbox.
 Output this exact block after your final `git push`:
 
 ---SUMMARY---
+Mode: [INITIAL / RESUME]
 Framework: [pytest / vitest / jest / playwright]
 Test files created: [list]
+Test files modified: [list or "none"]
 Test count: [total number of test cases]
 Config files added: [list or "none"]
 Coverage tool: [pytest-cov / @vitest/coverage-v8 / jest built-in]
