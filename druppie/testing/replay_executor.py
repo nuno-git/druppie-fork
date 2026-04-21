@@ -141,6 +141,14 @@ class ReplayExecutor:
         action = approval_action or {}
         status = action.get("status", "approved")
 
+        if status == "pending":
+            # Leave the approval unresolved on purpose — test wants the
+            # session to stop at the approval gate so a human can approve
+            # or reject through the UI. The Approval row stays as created
+            # by the executor (status=pending), and we propagate the
+            # waiting_approval state back to the caller.
+            return "waiting_approval"
+
         if status == "rejected":
             # Reject the approval
             approval.status = "rejected"

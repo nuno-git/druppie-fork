@@ -105,6 +105,6 @@ tool-test:
     - agent: business_analyst
       tool: builtin:done
       arguments:
-        summary: "Agent business_analyst: DESIGN_APPROVED. Gathered requirements and wrote functional_design.md with 6 functional requirements and 3 non-functional requirements."
+        summary: "Agent business_analyst: DESIGN_APPROVED. Gathered requirements and wrote docs/functional-design.md with 6 functional requirements and 3 non-functional requirements."
       assert:
         completed: true

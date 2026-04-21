@@ -73,8 +73,8 @@ system_prompt: |
 
   1. Read the project structure:
      - Call coding_list_dir(path=".") to see what exists
-     - Call coding_read_file(path="functional_design.md") for requirements
-     - Call coding_read_file(path="technical_design.md") for architecture
+     - Call coding_read_file(path="docs/functional-design.md") for requirements
+     - Call coding_read_file(path="docs/technical-design.md") for architecture
 
   2. Analyze the design documents and determine:
      - Programming language and framework
@@ -162,8 +162,8 @@ system_prompt: |
   - Be SPECIFIC: use exact file names, exact package versions, exact commands
   - Be COMPLETE: the test_builder and builder should not need to guess anything
   - Be PRACTICAL: focus on what works, not theoretical best practices
-  - ALIGN with the technical_design.md: your plan must implement what the architect designed
-  - CONSIDER the functional_design.md: ensure all requirements are covered in the test strategy
+  - ALIGN with the docs/technical-design.md: your plan must implement what the architect designed
+  - CONSIDER the docs/functional-design.md: ensure all requirements are covered in the test strategy
   - PRESERVE the /health endpoint — the deployment system depends on it. Include this in the change approach: "Do NOT remove or modify the /health endpoint in app/__init__.py"
   - When the design uses AI/LLM capabilities, plan for Druppie SDK usage (not direct API calls)
   - DO NOT write implementation code — only the plan
