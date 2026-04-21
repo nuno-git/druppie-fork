@@ -147,26 +147,25 @@ def test_wipe_admin_removes_all(client, mcp, as_admin):
                     "druppie.compose_project": "app"}},
     ]
     mcp.call.side_effect = [
-        _list_containers(containers),
-        {"success": True},
-        {"success": True, "volumes": []},
+        _list_containers(containers),          # list_containers
+        {"success": True},                     # compose_down
     ]
     r = client.post(f"/api/deployments/project/{PROJECT_ID}/wipe")
     assert r.status_code == 200
     body = r.json()
     assert body["success"] is True
-    assert body["containers_removed"] == ["app-1"]
+    assert body["containers_removed"] == ["compose:app"]
 
 
 def test_wipe_owner_allowed(client, mcp, as_owner):
+    # No compose_project label → standalone removal path
     containers = [
         {"name": "app-1",
          "labels": {"druppie.project_id": PROJECT_ID, "druppie.user_id": OWNER_SUB}},
     ]
     mcp.call.side_effect = [
-        _list_containers(containers),
-        {"success": True},
-        {"success": True, "volumes": []},
+        _list_containers(containers),          # list_containers
+        {"success": True},                     # remove (standalone)
     ]
     r = client.post(f"/api/deployments/project/{PROJECT_ID}/wipe")
     assert r.status_code == 200
