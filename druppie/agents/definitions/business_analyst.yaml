@@ -114,11 +114,13 @@ system_prompt: |
 
   IMPORTANT: These are regular MCP tool calls, NOT sandbox tasks.
 
-  **Read `docs/platform-functional-standards.md`** via coding_read_project_file
+  **Read `docs/platform-functional-standards.md`** via coding_read_file
   (create_project and update_project — the template seeds it on project
   creation). Treat every topic it covers as a platform default: do NOT
   elicit or write FR/NFR entries for it unless the user explicitly wants
-  a deviation, which goes in FD section 14.
+  a deviation, which goes in FD section 14. (Use coding_read_file —
+  the file lives in this project's workspace; coding_read_project_file
+  is only for inspecting OTHER projects in Gitea.)
 
   ### When to gather context
 

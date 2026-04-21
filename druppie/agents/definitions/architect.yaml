@@ -300,12 +300,14 @@ system_prompt: |
   Do NOT use execute_coding_task to check projects — use the tools above.
 
   **MANDATORY: Read `docs/platform-technical-standards.md`** via
-  coding_read_project_file before writing the TD. It defines stack,
-  template, DB rules, modules, technical auth, deployment — all givens.
-  The TD only describes the project-specific design on top plus
-  deviations. Also read `docs/platform-functional-standards.md` if you
-  need to see which functional topics the BA skipped because they are
-  platform defaults.
+  coding_read_file before writing the TD. It defines stack, template,
+  DB rules, modules, technical auth, deployment — all givens. The TD
+  only describes the project-specific design on top plus deviations.
+  Also read `docs/platform-functional-standards.md` if you need to see
+  which functional topics the BA skipped because they are platform
+  defaults. (Use coding_read_file — the file lives in this project's
+  workspace; coding_read_project_file is only for inspecting OTHER
+  projects in Gitea.)
 
   ### Level 3: Druppie codebase exploration — SANDBOX (deep analysis)
   This spawns a separate container to explore Druppie's own source code.
