@@ -310,7 +310,7 @@ Last updated: 2026-03-24
 ### ~~Update Core — Architect Signal & Dual-Repo Sandbox~~ (DONE)
 
 - **Resolved in:** `feature/update-core-flow` branch (PR #77)
-- **Architect signal:** The Architect agent detects when a project involves modifying Druppie itself. After writing `technical_design.md`, it signals `DESIGN_APPROVED_CORE_UPDATE` in its `done()` summary (plain text signal, not a tool call). Detection is based on keywords in the functional design and project description.
+- **Architect signal:** The Architect agent detects when a project involves modifying Druppie itself. After writing `docs/technical-design.md`, it signals `DESIGN_APPROVED_CORE_UPDATE` in its `done()` summary (plain text signal, not a tool call). Detection is based on keywords in the functional design and project description.
 - **Planner routing:** The Planner checks for `CORE_UPDATE` in the Architect's summary *before* checking for `DESIGN_APPROVED`. Routes to `update_core_builder` (2-step plan: update_core_builder → planner re-evaluation), then Architect runs again for the actual project design.
 - **`repo_target` parameter:** `execute_coding_task` accepts `repo_target` enum (`"project"` default, `"druppie_core"`). Controls whether the sandbox gets single-repo or dual-repo credentials.
 - **Simplified branch targeting:** The sandbox agent determines PR base branch from its git remote (GitHub repos → `colab-dev`, Gitea repos → `main`). Configured in sandbox agent prompts — no branch parameter threaded through infrastructure.
