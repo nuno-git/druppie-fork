@@ -37,7 +37,7 @@ const isExternalHref = (href) =>
 //   sourcePath = "docs/functional-design.md", href = "foo.md"    -> "docs/foo.md"
 //   sourcePath = "docs/a/b.md",               href = "../foo.md" -> "docs/foo.md"
 //   any sourcePath,                           href = "/foo.md"   -> "foo.md"
-const resolveRelativePath = (sourcePath, href) => {
+export const resolveRelativePath = (sourcePath, href) => {
   const hrefSegments = href.split('/')
   if (hrefSegments[0] === '') {
     // Absolute from repo root (leading slash). Drop the empty first segment.
@@ -53,7 +53,7 @@ const resolveRelativePath = (sourcePath, href) => {
   return segments.join('/')
 }
 
-const rewriteRelativeLink = (href, repo, sourcePath) => {
+export const rewriteRelativeLink = (href, repo, sourcePath) => {
   if (!repo || !repo.repo_url) return null
   if (isExternalHref(href)) return null
   const resolved = resolveRelativePath(sourcePath, href)
