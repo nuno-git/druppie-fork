@@ -196,7 +196,9 @@ class AgentLoop:
         from druppie.core.tool_registry import get_tool_registry
 
         registry = get_tool_registry()
-        builtin_tool_names = DEFAULT_BUILTIN_TOOLS + self.definition.extra_builtin_tools
+        excluded = set(self.definition.excluded_builtin_tools) - {"done"}
+        builtin_tool_names = [t for t in DEFAULT_BUILTIN_TOOLS if t not in excluded]
+        builtin_tool_names = builtin_tool_names + self.definition.extra_builtin_tools
         # Add invoke_skill tool if agent has skills defined
         if self.definition.skills:
             builtin_tool_names = builtin_tool_names + ["invoke_skill"]

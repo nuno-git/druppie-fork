@@ -146,9 +146,12 @@ class ChainStepApproval(BaseModel):
     """How to handle approval for a tool call that requires it."""
 
     __test__ = False
-    status: str = "approved"  # "approved" or "rejected"
+    status: str = "approved"  # "approved", "rejected", or "pending"
     by: str | None = None  # username of approver (defaults to test user)
     reason: str | None = None  # rejection reason
+    # "pending" leaves the approval unresolved so a human can approve or
+    # reject it through the UI — useful for tests that want to land a
+    # session at an approval gate for manual follow-up.
 
 
 class ChainStep(BaseModel):

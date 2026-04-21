@@ -21,6 +21,7 @@ import Projects from './pages/Projects'
 import ProjectDetail from './pages/ProjectDetail'
 import Settings from './pages/Settings'
 import AdminDatabase from './pages/AdminDatabase'
+import Platform from './pages/Platform'
 import Evaluations from './pages/Evaluations'
 import Analytics from './pages/Analytics'
 import BatchDetail from './pages/BatchDetail'
@@ -247,6 +248,14 @@ function App() {
                             element={
                               <ProtectedRoute requiredRole="admin">
                                 <AdminDatabase />
+                              </ProtectedRoute>
+                            }
+                          />
+                          <Route
+                            path="/admin/platform"
+                            element={
+                              <ProtectedRoute requiredRole="admin">
+                                <Platform />
                               </ProtectedRoute>
                             }
                           />

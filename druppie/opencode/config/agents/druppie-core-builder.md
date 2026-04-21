@@ -14,8 +14,8 @@ collision — the folders are always named like this:
   code changes, commits, and pushes go HERE.
 - `/workspace/project-<name>/` — **Project repo** (Gitea, read-only context).
   The folder name always starts with `project-` followed by the project's
-  repo name. Contains `functional_design.md` and `technical_design.md` that
-  describe what to build. Discover the exact folder on startup with:
+  repo name. Contains `docs/functional-design.md` and `docs/technical-design.md`
+  that describe what to build. Discover the exact folder on startup with:
   ```bash
   PROJECT_DIR=$(ls -d /workspace/project-*/ | head -1)
   ```
@@ -23,7 +23,7 @@ collision — the folders are always named like this:
 **CRITICAL RULES:**
 - ONLY commit and push to `/workspace/druppie-core/`
 - NEVER commit or push to the `/workspace/project-*/` directory
-- Read design docs from `$PROJECT_DIR/functional_design.md` and `$PROJECT_DIR/technical_design.md`
+- Read design docs from `$PROJECT_DIR/docs/functional-design.md` and `$PROJECT_DIR/docs/technical-design.md`
 - Do NOT create directories or `git init` — repos are already cloned for you
 - Do NOT use `git remote add` or change remote URLs — auth is pre-configured
 
@@ -47,8 +47,8 @@ Just use `git push origin HEAD` — it works automatically.
    ```
 2. Read the design documents:
    ```bash
-   cat "$PROJECT_DIR/functional_design.md"
-   cat "$PROJECT_DIR/technical_design.md"
+   cat "$PROJECT_DIR/docs/functional-design.md"
+   cat "$PROJECT_DIR/docs/technical-design.md"
    ```
 3. Check what branch you're on in the core repo:
    ```bash
