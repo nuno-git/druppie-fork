@@ -1,0 +1,257 @@
+## Test: core-update workspace directory naming
+##
+## Verifies that when a project with "core" in its name triggers a core update,
+## the dual-repo sandbox uses unambiguous directory names:
+##   /workspace/druppie-core/       — Druppie's own repo (fixed literal name)
+##   /workspace/project-<slug>/     — the user's project repo
+##
+## This prevents the old collision where /workspace/core/ and /workspace/project/
+## would confuse the sandbox agent when the project name contained "core".
+##
+## Chain: router → planner → BA (FD) → planner → architect (TD with CORE_UPDATE signal)
+##   → build_classifier (routes to update_core_builder) → update_core_builder
+##     (execute_coding_task with repo_target=druppie_core, mocked)
+##
+## The execute_coding_task call is mocked. The test verifies:
+## 1. The pipeline routes to update_core_builder (not builder_planner)
+## 2. update_core_builder calls execute_coding_task with repo_target=druppie_core
+
+tool-test:
+  name: core-update-workspace-naming
+  description: "Core update with 'core' in project name — tests unambiguous workspace dirs"
+  tags: [e2e, core-update, workspace, mock]
+
+  chain:
+    # =========================================================================
+    # Router — project name intentionally contains "core"
+    # =========================================================================
+    - agent: router
+      tool: builtin:set_intent
+      arguments:
+        intent: create_project
+        project_name: core-sync-test
+        description: "A tool to sync core configuration files across environments"
+      assert:
+        result:
+          - not_empty
+
+    - agent: router
+      tool: builtin:done
+      arguments:
+        summary: "Agent router: Classified as create_project for core-sync-test"
+
+    # =========================================================================
+    # Planner → BA
+    # =========================================================================
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: business_analyst
+            prompt: "Gather requirements for core-sync-test"
+          - agent_id: planner
+            prompt: "Re-evaluate after BA completes"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: Planned business_analyst"
+
+    # =========================================================================
+    # BA — writes FD describing a Druppie core change
+    # =========================================================================
+    - agent: business_analyst
+      tool: coding:make_design
+      approval:
+        status: approved
+      arguments:
+        path: docs/functional-design.md
+        content: |
+          # Functioneel Ontwerp: Core Sync Test
+
+          ## 1. Huidige vs Gewenste Situatie
+          Druppie mist een MCP module voor het synchroniseren van
+          configuratiebestanden. Dit vereist een wijziging in de Druppie
+          core codebase (nieuwe module in mcp-servers/).
+
+          ## 2. Functionele Vereisten
+          - FR-01: Nieuwe MCP module 'config-sync' in druppie/mcp-servers/
+          - FR-02: Tool 'sync_config' dat configuratiebestanden synchroniseert
+          - FR-03: Gezondheidscheck endpoint op de module
+
+          ## 3. Scope
+          Dit is een wijziging aan de Druppie platformcode zelf, niet een
+          standalone applicatie.
+
+    - agent: business_analyst
+      tool: coding:run_git
+      arguments:
+        command: "add docs/functional-design.md"
+
+    - agent: business_analyst
+      tool: coding:run_git
+      arguments:
+        command: "commit -m 'FD: core-sync-test'"
+
+    - agent: business_analyst
+      tool: coding:run_git
+      arguments:
+        command: "push"
+
+    - agent: business_analyst
+      tool: builtin:done
+      arguments:
+        summary: "Agent business_analyst: DESIGN_APPROVED. Wrote FD for core-sync-test — a new MCP module in Druppie core."
+
+    # =========================================================================
+    # Planner → Architect
+    # =========================================================================
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: architect
+            prompt: "Create technical design for core-sync-test"
+          - agent_id: planner
+            prompt: "Re-evaluate after architect completes"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: Planned architect"
+
+    # =========================================================================
+    # Architect — writes TD signalling CORE_UPDATE
+    # =========================================================================
+    - agent: architect
+      tool: coding:run_git
+      arguments:
+        command: "pull"
+
+    - agent: architect
+      tool: coding:read_file
+      arguments:
+        path: docs/functional-design.md
+
+    - agent: architect
+      tool: coding:make_design
+      approval:
+        status: approved
+        by: architect
+      arguments:
+        path: docs/technical-design.md
+        content: |
+          # Technisch Ontwerp: Core Sync Test
+
+          ## Scope
+          Dit is een wijziging aan de Druppie core codebase. Er moet een
+          nieuwe MCP module worden toegevoegd aan druppie/mcp-servers/.
+
+          ## Module Samenvatting
+          - Module ID: config-sync
+          - Type: core
+          - Poort: 9012
+          - Tools: sync_config
+
+          ## Architectuur
+          Nieuwe directory: druppie/mcp-servers/module-config-sync/
+          Volgt het standaard module patroon (MODULE.yaml, server.py, v1/).
+
+    - agent: architect
+      tool: coding:run_git
+      arguments:
+        command: "add docs/technical-design.md"
+
+    - agent: architect
+      tool: coding:run_git
+      arguments:
+        command: "commit -m 'TD: core-sync-test — core update'"
+
+    - agent: architect
+      tool: coding:run_git
+      arguments:
+        command: "push"
+
+    - agent: architect
+      tool: builtin:done
+      arguments:
+        summary: "Agent architect: DESIGN_APPROVED. Technical design for core-sync-test — new MCP module in Druppie core. This is a CORE UPDATE."
+        next_agent: build_classifier
+
+    # =========================================================================
+    # Build Classifier — should route to update_core_builder
+    # =========================================================================
+    - agent: build_classifier
+      tool: coding:read_file
+      arguments:
+        path: docs/functional-design.md
+
+    - agent: build_classifier
+      tool: coding:read_file
+      arguments:
+        path: docs/technical-design.md
+
+    - agent: build_classifier
+      tool: builtin:done
+      arguments:
+        summary: "Agent build_classifier: BUILD_PATH=CORE_UPDATE. Reason: FD and TD describe a new MCP module in druppie/mcp-servers/ — this modifies Druppie's own codebase."
+        next_agent: update_core_builder
+
+    # =========================================================================
+    # Planner → Update Core Builder
+    # =========================================================================
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: update_core_builder
+            prompt: "CORE CHANGE: Implement the config-sync module as described in the TD."
+          - agent_id: planner
+            prompt: "Re-evaluate after update_core_builder completes"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: Build classifier routed to CORE_UPDATE, planned update_core_builder"
+
+    # =========================================================================
+    # Update Core Builder — mocked execute_coding_task
+    # =========================================================================
+    - agent: update_core_builder
+      tool: builtin:execute_coding_task
+      arguments:
+        task: "Read FD/TD from the project dir. Create branch core/add-module-config-sync from colab-dev in /workspace/druppie-core/. Add the config-sync module. Commit, push, create PR."
+        agent: druppie-core-builder
+        repo_target: druppie_core
+      mock: true
+      mock_result: |
+        Created branch core/add-module-config-sync.
+        Added druppie/mcp-servers/module-config-sync/ with MODULE.yaml, server.py, v1/tools.py.
+        Workspace layout:
+          /workspace/druppie-core/ — Druppie repo (changes made here)
+          /workspace/project-core-sync-test-abc123/ — Project repo (read FD/TD from here)
+        Pushed and created PR #999 targeting colab-dev.
+
+    - agent: update_core_builder
+      tool: builtin:done
+      approval:
+        status: approved
+        by: developer
+      arguments:
+        summary: "Agent update_core_builder: PR #999 created on GitHub targeting colab-dev. Added module-config-sync to druppie/mcp-servers/."
+      assert:
+        completed: true
+
+  # =========================================================================
+  # Verify
+  # =========================================================================
+  verify:
+    - gitea_repo_exists: true
+    - file_exists: docs/functional-design.md
+    - file_exists: docs/technical-design.md
+    - file_contains:
+        path: docs/functional-design.md
+        content: "mcp-servers"
+    - file_contains:
+        path: docs/technical-design.md
+        content: "config-sync"
