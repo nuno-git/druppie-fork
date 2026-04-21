@@ -26,18 +26,20 @@ from .log_config import configure_logging, get_logger
 configure_logging()
 
 
-def _slugify_project_dir_name(context_git_url: str, hint: str | None) -> str:
-    """Derive a safe directory-name slug for the project repo in dual-repo mode.
+def _slugify_project_dir_name(git_url: str, hint: str | None) -> str:
+    """Derive a safe directory-name slug for the project repo directory.
 
-    Prefers an explicit hint from session config; falls back to parsing the
-    context git URL (last path segment with any .git suffix stripped). The
-    result is used as `/workspace/project-<slug>/` so the agent can tell the
-    project apart from `/workspace/druppie-core/` by looking at the names.
+    Used for both dual-repo mode (alongside `/workspace/druppie-core/`) and
+    single-repo mode, so the workspace layout is `/workspace/project-<slug>/`
+    regardless of flow.
+
+    Prefers an explicit hint (repo name from session/env); falls back to
+    parsing the git URL (last path segment with any .git suffix stripped).
     """
     candidate = (hint or "").strip()
     if not candidate:
         try:
-            last = context_git_url.rsplit("/", 1)[-1]
+            last = git_url.rsplit("/", 1)[-1]
             candidate = last[:-4] if last.endswith(".git") else last
         except Exception:  # noqa: BLE001 — never let naming break sandbox bring-up
             candidate = ""
@@ -111,8 +113,14 @@ class SandboxSupervisor:
             )
             self.context_repo_path: Path | None = self.workspace_path / f"project-{project_slug}"
         else:
-            # Single-repo mode: /workspace/<repo_name> (existing behavior)
-            self.repo_path = self.workspace_path / self.repo_name if self.repo_name else self.workspace_path
+            # Single-repo mode: /workspace/project-<slug>/ for naming
+            # consistency with dual-repo mode. When no repo is configured
+            # at all, fall back to /workspace (clone is skipped below).
+            if self.repo_name or self.git_url:
+                project_slug = _slugify_project_dir_name(self.git_url, self.repo_name)
+                self.repo_path = self.workspace_path / f"project-{project_slug}"
+            else:
+                self.repo_path = self.workspace_path
             self.context_repo_path = None
         self.session_id_file = Path("/tmp/opencode-session-id")
 
