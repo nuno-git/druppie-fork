@@ -20,9 +20,19 @@ class DruppieClient:
         modules = druppie.list_modules()
     """
 
-    def __init__(self, base_url: str | None = None, timeout: float = 300.0):
+    def __init__(
+        self,
+        base_url: str | None = None,
+        timeout: float = 300.0,
+        api_token: str | None = None,
+    ):
         self._base_url = (base_url or os.environ.get("DRUPPIE_URL", "http://druppie-backend:8000")).rstrip("/")
+        self._api_token = api_token or os.environ.get("DRUPPIE_MODULE_API_TOKEN")
         self._client = httpx.Client(timeout=timeout)
+
+    def _auth_headers(self) -> dict[str, str]:
+        """Build the auth header dict for requests that hit the proxy."""
+        return {"X-Druppie-Token": self._api_token} if self._api_token else {}
 
     def call(self, module: str, tool: str, arguments: dict | None = None, *, version: str | None = None) -> dict:
         """Call a tool on a Druppie module via the backend proxy.
@@ -43,6 +53,7 @@ class DruppieClient:
         resp = self._client.post(
             f"{self._base_url}/api/modules/{module}/call",
             json={"tool": tool, "arguments": arguments or {}},
+            headers=self._auth_headers(),
         )
         resp.raise_for_status()
         body = resp.json()

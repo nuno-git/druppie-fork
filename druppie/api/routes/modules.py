@@ -5,11 +5,19 @@ Data comes from mcp_config.yaml — no database needed.
 
 The /modules/{id}/call endpoint proxies tool calls through the backend
 so apps don't need to handle the MCP Streamable HTTP protocol directly.
+
+Auth for /modules/{id}/call: when DRUPPIE_MODULE_API_TOKEN is set in the
+backend environment, callers must pass the matching token in the
+X-Druppie-Token header. In dev mode (token unset) the check is skipped
+with a one-time warning. The token is auto-injected into deployed apps
+via compose_up, so the SDK just forwards it transparently.
 """
 
+import hmac
 import logging
+import os
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, status
 from pydantic import BaseModel
 
 from druppie.core.mcp_config import get_mcp_config
@@ -17,6 +25,37 @@ from druppie.core.mcp_config import get_mcp_config
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+_MODULE_API_TOKEN_ENV = "DRUPPIE_MODULE_API_TOKEN"
+_dev_mode_warning_logged = False
+
+
+def require_module_api_token(
+    x_druppie_token: str | None = Header(default=None, alias="X-Druppie-Token"),
+) -> None:
+    """Validate the X-Druppie-Token header against DRUPPIE_MODULE_API_TOKEN.
+
+    If the env var is unset, the check is skipped with a one-time warning
+    (dev/local mode). If set, requests without a matching header are
+    rejected with 401.
+    """
+    expected = os.environ.get(_MODULE_API_TOKEN_ENV)
+    if not expected:
+        global _dev_mode_warning_logged
+        if not _dev_mode_warning_logged:
+            logger.warning(
+                "%s is not set — /modules/{id}/call is UNAUTHENTICATED. "
+                "Set this env var in production.",
+                _MODULE_API_TOKEN_ENV,
+            )
+            _dev_mode_warning_logged = True
+        return
+
+    if not x_druppie_token or not hmac.compare_digest(x_druppie_token, expected):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or missing X-Druppie-Token",
+        )
 
 
 class ModuleCallRequest(BaseModel):
@@ -56,12 +95,18 @@ async def get_module_endpoint(module_id: str):
     return {"url": url, "type": server_type}
 
 
-@router.post("/modules/{module_id}/call")
+@router.post(
+    "/modules/{module_id}/call",
+    dependencies=[Depends(require_module_api_token)],
+)
 async def call_module_tool(module_id: str, req: ModuleCallRequest):
     """Proxy a tool call to a module via MCP.
 
     Apps call this instead of calling MCP servers directly. The backend
     handles the Streamable HTTP protocol and returns the result.
+
+    Requires the X-Druppie-Token header matching DRUPPIE_MODULE_API_TOKEN
+    when that env var is set (see require_module_api_token).
     """
     config = get_mcp_config()
 
@@ -85,4 +130,4 @@ async def call_module_tool(module_id: str, req: ModuleCallRequest):
         return result
     except Exception as e:
         logger.error("module_call_failed: %s/%s — %s", module_id, req.tool, e)
-        raise HTTPException(status_code=502, detail=f"Module call failed: {e}")
+        raise HTTPException(status_code=502, detail="Module call failed")

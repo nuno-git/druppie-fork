@@ -5,7 +5,7 @@ which the Druppie SDK uses to discover module URLs at runtime.
 """
 
 import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, AsyncMock
 
 from fastapi.testclient import TestClient
 from fastapi import FastAPI
@@ -142,3 +142,212 @@ class TestGetModuleEndpoint:
         """Builtin server (type core) should not be exposed."""
         resp = client.get("/api/modules/builtin/endpoint")
         assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# POST /api/modules/{module_id}/call
+# ---------------------------------------------------------------------------
+
+
+class TestCallModuleTool:
+    """Tests for the proxy endpoint that forwards tool calls to MCP servers."""
+
+    def test_happy_path_returns_module_result(self, client):
+        """Successful MCPHttp.call should be returned as-is with 200."""
+        expected = {"answer": "Hello there", "model": "glm-4.6"}
+        mock_mcp_instance = MagicMock()
+        mock_mcp_instance.call = AsyncMock(return_value=expected)
+
+        with patch(
+            "druppie.execution.mcp_http.MCPHttp",
+            return_value=mock_mcp_instance,
+        ):
+            resp = client.post(
+                "/api/modules/llm/call",
+                json={"tool": "chat", "arguments": {"prompt": "Hi"}},
+            )
+
+        assert resp.status_code == 200
+        assert resp.json() == expected
+        mock_mcp_instance.call.assert_awaited_once_with(
+            "llm", "chat", {"prompt": "Hi"},
+            timeout_seconds=120,
+            max_retries=1,
+        )
+
+    def test_happy_path_with_type_module(self, client):
+        """Type 'module' servers should also be callable."""
+        mock_mcp_instance = MagicMock()
+        mock_mcp_instance.call = AsyncMock(return_value={"results": []})
+
+        with patch(
+            "druppie.execution.mcp_http.MCPHttp",
+            return_value=mock_mcp_instance,
+        ):
+            resp = client.post(
+                "/api/modules/web/call",
+                json={"tool": "search", "arguments": {"query": "druppie"}},
+            )
+
+        assert resp.status_code == 200
+        assert resp.json() == {"results": []}
+
+    def test_empty_arguments_default(self, client):
+        """arguments field should default to empty dict when omitted."""
+        mock_mcp_instance = MagicMock()
+        mock_mcp_instance.call = AsyncMock(return_value={"ok": True})
+
+        with patch(
+            "druppie.execution.mcp_http.MCPHttp",
+            return_value=mock_mcp_instance,
+        ):
+            resp = client.post("/api/modules/llm/call", json={"tool": "ping"})
+
+        assert resp.status_code == 200
+        mock_mcp_instance.call.assert_awaited_once_with(
+            "llm", "ping", {},
+            timeout_seconds=120,
+            max_retries=1,
+        )
+
+    def test_unknown_module_returns_404(self, client):
+        """Unknown module_id should return 404 without touching MCPHttp."""
+        with patch("druppie.execution.mcp_http.MCPHttp") as mock_cls:
+            resp = client.post(
+                "/api/modules/nonexistent/call",
+                json={"tool": "chat", "arguments": {}},
+            )
+
+        assert resp.status_code == 404
+        assert "not found" in resp.json()["detail"]
+        mock_cls.assert_not_called()
+
+    def test_core_module_returns_404(self, client):
+        """Core-only modules must not be callable via the proxy."""
+        with patch("druppie.execution.mcp_http.MCPHttp") as mock_cls:
+            resp = client.post(
+                "/api/modules/coding/call",
+                json={"tool": "read_file", "arguments": {"path": "/etc/passwd"}},
+            )
+
+        assert resp.status_code == 404
+        assert "not available to apps" in resp.json()["detail"]
+        mock_cls.assert_not_called()
+
+    def test_mcp_exception_returns_generic_502(self, client):
+        """MCPHttp raising should surface a 502 WITHOUT leaking the exception message."""
+        mock_mcp_instance = MagicMock()
+        mock_mcp_instance.call = AsyncMock(
+            side_effect=RuntimeError("internal: DEEPINFRA_API_KEY missing"),
+        )
+
+        with patch(
+            "druppie.execution.mcp_http.MCPHttp",
+            return_value=mock_mcp_instance,
+        ):
+            resp = client.post(
+                "/api/modules/llm/call",
+                json={"tool": "chat", "arguments": {"prompt": "Hi"}},
+            )
+
+        assert resp.status_code == 502
+        detail = resp.json()["detail"]
+        assert detail == "Module call failed"
+        # Ensure we do NOT leak internal details to the caller
+        assert "DEEPINFRA_API_KEY" not in detail
+        assert "internal" not in detail
+
+    def test_invalid_body_returns_422(self, client):
+        """Missing `tool` field should be rejected by pydantic with 422."""
+        with patch("druppie.execution.mcp_http.MCPHttp") as mock_cls:
+            resp = client.post("/api/modules/llm/call", json={"arguments": {}})
+
+        assert resp.status_code == 422
+        mock_cls.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# POST /api/modules/{module_id}/call — auth (X-Druppie-Token header)
+# ---------------------------------------------------------------------------
+
+
+class TestCallModuleToolAuth:
+    """Tests for require_module_api_token dependency on the proxy endpoint."""
+
+    def test_skipped_when_env_unset(self, client, monkeypatch):
+        """When DRUPPIE_MODULE_API_TOKEN is unset, call is allowed (dev mode)."""
+        monkeypatch.delenv("DRUPPIE_MODULE_API_TOKEN", raising=False)
+        # Reset one-time warning flag so the test is deterministic
+        import druppie.api.routes.modules as mod
+        mod._dev_mode_warning_logged = False
+
+        mock_mcp_instance = MagicMock()
+        mock_mcp_instance.call = AsyncMock(return_value={"ok": True})
+
+        with patch(
+            "druppie.execution.mcp_http.MCPHttp",
+            return_value=mock_mcp_instance,
+        ):
+            resp = client.post(
+                "/api/modules/llm/call",
+                json={"tool": "chat", "arguments": {}},
+            )
+
+        assert resp.status_code == 200
+
+    def test_rejects_missing_header_when_env_set(self, client, monkeypatch):
+        """With token configured, requests without the header get 401."""
+        monkeypatch.setenv("DRUPPIE_MODULE_API_TOKEN", "supersecret")
+
+        with patch("druppie.execution.mcp_http.MCPHttp") as mock_cls:
+            resp = client.post(
+                "/api/modules/llm/call",
+                json={"tool": "chat", "arguments": {}},
+            )
+
+        assert resp.status_code == 401
+        mock_cls.assert_not_called()
+
+    def test_rejects_wrong_header_when_env_set(self, client, monkeypatch):
+        """With token configured, requests with the wrong value get 401."""
+        monkeypatch.setenv("DRUPPIE_MODULE_API_TOKEN", "supersecret")
+
+        with patch("druppie.execution.mcp_http.MCPHttp") as mock_cls:
+            resp = client.post(
+                "/api/modules/llm/call",
+                json={"tool": "chat", "arguments": {}},
+                headers={"X-Druppie-Token": "wrong"},
+            )
+
+        assert resp.status_code == 401
+        mock_cls.assert_not_called()
+
+    def test_accepts_matching_header(self, client, monkeypatch):
+        """With token configured, requests with the matching header succeed."""
+        monkeypatch.setenv("DRUPPIE_MODULE_API_TOKEN", "supersecret")
+
+        mock_mcp_instance = MagicMock()
+        mock_mcp_instance.call = AsyncMock(return_value={"ok": True})
+
+        with patch(
+            "druppie.execution.mcp_http.MCPHttp",
+            return_value=mock_mcp_instance,
+        ):
+            resp = client.post(
+                "/api/modules/llm/call",
+                json={"tool": "chat", "arguments": {}},
+                headers={"X-Druppie-Token": "supersecret"},
+            )
+
+        assert resp.status_code == 200
+        assert resp.json() == {"ok": True}
+
+    def test_auth_does_not_apply_to_discovery_endpoints(self, client, monkeypatch):
+        """GET /modules and /modules/{id}/endpoint should remain unauthenticated."""
+        monkeypatch.setenv("DRUPPIE_MODULE_API_TOKEN", "supersecret")
+
+        resp = client.get("/api/modules")
+        assert resp.status_code == 200
+
+        resp = client.get("/api/modules/llm/endpoint")
+        assert resp.status_code == 200
