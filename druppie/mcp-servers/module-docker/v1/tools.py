@@ -12,7 +12,6 @@ import os
 import re
 import shutil
 import subprocess
-import time
 import urllib.request
 import uuid
 from pathlib import Path
@@ -74,14 +73,6 @@ GITEA_PASSWORD = os.getenv("GITEA_PASSWORD", "")
 used_ports: set[int] = set()
 _port_lock = asyncio.Lock()
 
-# Cache for _get_host_bound_ports. The check spawns a --net=host container
-# to detect orphaned docker-proxies, which adds ~1-2s per port allocation.
-# Orphans persist across a restart and rarely appear/disappear, so a short
-# TTL cache is safe: if a port becomes truly free between scans we'll just
-# allocate another from the pool; if a new orphan appears, the next alloc
-# sees it after TTL expires. Newly-used ports are tracked in `used_ports`.
-_HOST_BOUND_CACHE_TTL = float(os.getenv("PORT_SCAN_CACHE_TTL", "60"))
-_host_bound_cache: dict[str, Any] = {"at": 0.0, "ports": set()}
 
 # Track compose project -> port mapping for clean teardown.
 # In-memory only: after MCP server restart this dict is empty, but compose_down
@@ -123,44 +114,38 @@ def get_used_host_ports() -> set[int]:
         return set()
 
 
-def _get_host_bound_ports(port_range_start: int, port_range_end: int) -> set[int]:
-    """Check which ports are actually bound on the host (catches orphaned docker-proxies).
+def _is_port_free_on_host(port: int) -> bool:
+    """Check if a host port is free by asking the Docker daemon to bind it.
 
-    Uses a single throwaway container with host networking to test all ports at
-    once. Results are cached for `_HOST_BOUND_CACHE_TTL` seconds because the
-    container spawn adds ~1-2s per call and orphan state is stable.
+    Starts a throwaway container with the candidate port mapping. The port
+    bind happens at start time (not create time), so we must actually start
+    the container to detect conflicts. This correctly catches orphaned
+    docker-proxy processes from any Docker daemon on the host — including
+    the system daemon when we run under rootless Docker.
     """
-    now = time.monotonic()
-    if now - _host_bound_cache["at"] < _HOST_BOUND_CACHE_TTL:
-        return set(_host_bound_cache["ports"])
-
+    probe_name = f"port-probe-{port}"
     try:
-        check_script = (
-            f"import socket\n"
-            f"for p in range({port_range_start},{port_range_end}):\n"
-            f"  try:\n"
-            f"    s=socket.socket()\n"
-            f"    s.bind(('0.0.0.0',p))\n"
-            f"    s.close()\n"
-            f"  except OSError:\n"
-            f"    print(p)\n"
-        )
         result = subprocess.run(
-            ["docker", "run", "--rm", "--net=host", "python:3.11-slim",
-             "python3", "-c", check_script],
-            capture_output=True, text=True, timeout=15,
+            ["docker", "run", "--rm", "-d", "--name", probe_name,
+             "-p", f"{port}:80", "alpine", "sleep", "5"],
+            capture_output=True, text=True, timeout=10,
         )
-        if result.returncode == 0 and result.stdout.strip():
-            bound = {int(p) for p in result.stdout.strip().split("\n") if p.strip()}
-        else:
-            bound = set()
+        if result.returncode != 0:
+            return False
+        # Port bound successfully — clean up and report free
+        subprocess.run(
+            ["docker", "rm", "-f", probe_name],
+            capture_output=True, text=True, timeout=5,
+        )
+        return True
     except Exception as e:
-        logger.warning("Failed to check host-bound ports: %s", e)
-        bound = set()
-
-    _host_bound_cache["at"] = now
-    _host_bound_cache["ports"] = bound
-    return set(bound)
+        logger.warning("Port probe failed for %d: %s", port, e)
+        return False
+    finally:
+        subprocess.run(
+            ["docker", "rm", "-f", probe_name],
+            capture_output=True, text=True, timeout=5,
+        )
 
 
 def is_port_available(port: int) -> bool:
@@ -176,20 +161,21 @@ def is_port_available(port: int) -> bool:
 async def get_next_port() -> int:
     """Get next available port from the configured range.
 
-    Checks Docker containers, internal tracking, AND actual host socket
-    availability (catches orphaned docker-proxy processes).
+    Checks Docker containers, internal tracking, AND actual host port
+    availability via the Docker daemon (catches orphaned docker-proxy processes).
     Uses _port_lock to prevent TOCTOU races on concurrent compose_up calls.
     """
     async with _port_lock:
         docker_ports = get_used_host_ports()
-        host_bound = _get_host_bound_ports(PORT_RANGE_START, PORT_RANGE_END)
-        if host_bound:
-            logger.info("Host-bound ports in range: %s", sorted(host_bound))
         for port in range(PORT_RANGE_START, PORT_RANGE_END):
-            if port not in docker_ports and port not in used_ports and port not in host_bound:
-                used_ports.add(port)
-                logger.info("Auto-selected available port %d", port)
-                return port
+            if port in docker_ports or port in used_ports:
+                continue
+            if not _is_port_free_on_host(port):
+                logger.info("Port %d is bound on host (orphaned proxy?), skipping", port)
+                continue
+            used_ports.add(port)
+            logger.info("Auto-selected available port %d", port)
+            return port
         raise RuntimeError(f"No available ports in range {PORT_RANGE_START}-{PORT_RANGE_END}")
 
 
