@@ -189,7 +189,7 @@ mcps:
 
   web:
     url: ${MCP_WEB_URL:-http://module-web:9005}
-    type: core
+    type: both
     tools:
       - name: search_files
         requires_approval: false
@@ -235,6 +235,22 @@ mcps:
         requires_approval: false
 
       - name: get_impact
+        requires_approval: false
+
+  llm:
+    url: ${MCP_LLM_URL:-http://module-llm:9008}
+    type: both
+    tools:
+      - name: chat
+        requires_approval: false
+
+  vision:
+    url: ${MCP_VISION_URL:-http://module-vision:9011}
+    type: module
+    tools:
+      - name: ocr
+        requires_approval: false
+      - name: analyze
         requires_approval: false
 
   registry:

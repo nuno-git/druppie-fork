@@ -70,7 +70,7 @@ tool-test:
                   data = request.get_json(silent=True)
                   if not data or "image_url" not in data:
                       return jsonify(error="Missing image_url"), 400
-                  result = druppie.call("llm", "vision", {"image_url": data["image_url"]})
+                  result = druppie.call("vision", "ocr", {"image_source": data["image_url"]})
                   extracted_text = result.get("text", "")
                   analysis = druppie.call("llm", "chat", {
                       "prompt": f"Analyseer dit recept en geef ingredienten en stappen:\n\n{extracted_text}",
@@ -167,7 +167,7 @@ tool-test:
           Your recipe analyzer has been built and deployed!
 
           **Features:**
-          - Upload recipe photos — OCR extracts text via Druppie module-llm
+          - Upload recipe photos — OCR extracts text via Druppie module-vision
           - AI analysis of recipes (ingredients, steps, nutrition)
           - Chat interface for questions about recipes
 
@@ -204,4 +204,4 @@ tool-test:
         content: "Module Integration"
     - file_contains:
         path: docs/builder-plan.md
-        content: "llm/chat"
+        content: "vision/ocr"

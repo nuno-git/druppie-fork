@@ -27,9 +27,9 @@ Thirteen agents are defined. Twelve are functional; one is a stub.
 |-------|---------|--------------|
 | **Router** | Classifies user intent | Determines whether the request is `create_project`, `update_project`, or `general_chat`. Can ask clarifying questions. Has web search access. |
 | **Planner** | Orchestrates the pipeline | Creates execution plans as ordered sequences of agent steps. Re-evaluates after each major phase. Manages design loops (BA/Architect) and execution loops (Developer/Deployer). Max 15 iterations. |
-| **Business Analyst** | Gathers requirements | Engages the user in structured dialogue using a funnel approach (max 1 question at a time, almost always multiple choice). Produces `functional_design.md` via the `make_design` tool with built-in Mermaid validation. Considers security and compliance by design. Handles revision cycles when the Architect sends feedback. Supports `NO_FD_CHANGE` pass-through for technical fixes. Max 50 iterations. |
-| **Architect** | Designs system architecture | Reviews the functional design against NORA standards and water authority architecture principles. Four outcomes: APPROVE (writes `technical_design.md` via `make_design`), APPROVE_CORE_UPDATE (same, but signals the project modifies Druppie's own codebase), FEEDBACK (sends specific items back to BA), or REJECT (communicates directly with user). Has access to ArchiMate models via MCP. Can create Mermaid diagrams with built-in syntax validation. Applies Security by Design and Compliance by Design. Max 50 iterations. |
-| **Builder Planner** | Creates implementation plans | Reads `functional_design.md` and `technical_design.md`, writes `builder_plan.md` with code standards, test framework, test strategy, solution strategy, and change approach. Guides the downstream builder. Max 30 iterations. |
+| **Business Analyst** | Gathers requirements | Engages the user in structured dialogue using a funnel approach (max 1 question at a time, almost always multiple choice). Produces `docs/functional-design.md` via the `make_design` tool with built-in Mermaid validation. Considers security and compliance by design. Handles revision cycles when the Architect sends feedback. Supports `NO_FD_CHANGE` pass-through for technical fixes. Max 50 iterations. |
+| **Architect** | Designs system architecture | Reviews the functional design against NORA standards and water authority architecture principles. Four outcomes: APPROVE (writes `docs/technical-design.md` via `make_design`), APPROVE_CORE_UPDATE (same, but signals the project modifies Druppie's own codebase), FEEDBACK (sends specific items back to BA), or REJECT (communicates directly with user). Has access to ArchiMate models via MCP. Can create Mermaid diagrams with built-in syntax validation. Applies Security by Design and Compliance by Design. Max 50 iterations. |
+| **Builder Planner** | Creates implementation plans | Reads `docs/functional-design.md` and `docs/technical-design.md`, writes `builder_plan.md` with code standards, test framework, test strategy, solution strategy, and change approach. Guides the downstream builder. Max 30 iterations. |
 | **Builder** | Sole execution agent | Delegates ALL coding work to OpenCode sandbox agents via `execute_coding_task`. Four modes with distinct done() signals: **TDD CYCLE** (druppie-test-writer → druppie-implementer → druppie-test-runner, with up to 3 retry strategies — signals `TDD_PASSED` / `TDD_FAILED`), **BRANCH SETUP** (`BRANCH_CREATED`), **IMPROVEMENT** (`IMPROVEMENT_DONE`), **MERGE** (`MERGED`). No direct coding MCPs. Max 30 iterations. |
 | **Update Core Builder** | Implements Druppie core changes | Delegates coding to a dual-repo sandbox via `execute_coding_task` with the `druppie-core-builder` sandbox agent. The sandbox clones Druppie's GitHub repo into `/workspace/core/` and the project repo (with FD/TD) into `/workspace/project/`. Creates a PR targeting `colab-dev` on GitHub. The `done()` tool requires approval from a user with the `developer` role — the reviewer merges the PR on GitHub before approving. Max 100 iterations. |
 | **Deployer** | Builds and deploys via Docker | Clones from git, builds Docker images, runs containers with auto-assigned ports (9100-9199). Verifies health via container logs. For preview deploys, asks the user for feedback before finalizing. Max 100 iterations. |
@@ -56,10 +56,10 @@ A new project is created from scratch:
 
 1. **Router** classifies intent as `create_project`, assigns a project name
 2. **Planner** creates the initial plan: BA, Architect, then re-evaluate
-3. **Business Analyst** gathers requirements via HITL dialogue, writes `functional_design.md`
+3. **Business Analyst** gathers requirements via HITL dialogue, writes `docs/functional-design.md`
 4. **Architect** reviews the functional design:
    - If feedback needed: sends items back to BA (design loop)
-   - If approved: writes `technical_design.md`
+   - If approved: writes `docs/technical-design.md`
 5. **Planner** re-evaluates: plans Builder Planner
 6. **Builder Planner** reads design documents, writes `builder_plan.md` with implementation strategy
 7. **Builder** (TDD CYCLE mode) drives the full Red → Green → Verify loop via OpenCode sandbox agents:
@@ -102,8 +102,8 @@ The session intent stays `create_project` or `update_project` throughout — the
 **Pipeline:**
 
 1. **Router** classifies intent as `create_project` (a project record and Gitea repo are created as usual)
-2. **Business Analyst** gathers requirements, writes `functional_design.md`
-3. **Architect** (run 1) reviews the design, writes `technical_design.md`, detects the project modifies Druppie's codebase, signals `DESIGN_APPROVED_CORE_UPDATE`
+2. **Business Analyst** gathers requirements, writes `docs/functional-design.md`
+3. **Architect** (run 1) reviews the design, writes `docs/technical-design.md`, detects the project modifies Druppie's codebase, signals `DESIGN_APPROVED_CORE_UPDATE`
 4. **Update Core Builder** delegates to a dual-repo sandbox via `execute_coding_task`:
    - Sandbox clones Druppie's GitHub repo into `/workspace/core/` and the project repo (with FD/TD) into `/workspace/project/`
    - The `druppie-core-builder` sandbox agent reads design docs from `/workspace/project/`, implements changes in `/workspace/core/`
@@ -112,7 +112,7 @@ The session intent stays `create_project` or `update_project` throughout — the
    - Calls `done()` — which requires approval from a user with the `developer` role
    - The reviewer merges the PR on GitHub, then approves `done()` in Druppie
 5. **Architect** (run 2) designs the actual project with the core changes now in place, signals `DESIGN_APPROVED`
-6. Normal pipeline continues: Builder Planner → Test Builder → Builder → Test Executor → Deployer → Summarizer
+6. Normal pipeline continues: Builder Planner → Builder (TDD cycle via OpenCode) → Deployer → Summarizer
 
 **Key characteristics:**
 - The Architect detects core changes by checking if the project adds, modifies, or removes anything in the Druppie codebase/repository itself
