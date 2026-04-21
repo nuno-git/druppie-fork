@@ -21,7 +21,25 @@ if [ ! -S "$SOCK" ]; then
 fi
 
 # Ping the daemon to make sure it actually responds, not just that a socket file exists.
-if ! curl -sf -o /dev/null --unix-socket "$SOCK" http://localhost/_ping; then
+# Uses python3 stdlib (guaranteed in the base image) rather than curl, which is
+# only present here as a side effect of the docker-cli apt setup.
+if ! python3 - "$SOCK" <<'PY'
+import socket, sys
+sock_path = sys.argv[1]
+s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+s.settimeout(5)
+try:
+    s.connect(sock_path)
+    s.sendall(b"GET /_ping HTTP/1.0\r\nHost: localhost\r\n\r\n")
+    resp = s.recv(64)
+except OSError as e:
+    print(f"[preflight] connect/ping error: {e}", file=sys.stderr)
+    sys.exit(1)
+finally:
+    s.close()
+sys.exit(0 if resp.startswith((b"HTTP/1.0 200", b"HTTP/1.1 200")) else 1)
+PY
+then
   echo "[preflight] FATAL: $SOCK exists but the Docker daemon is not responding to /_ping." >&2
   echo "[preflight] The host daemon is likely down, or the container's user can't read the socket." >&2
   exit 1
