@@ -1,4 +1,4 @@
-## Tool test: BA produces a functional_design.md that includes the mandated
+## Tool test: BA produces a docs/functional-design.md that includes the mandated
 ## markdown link to docs/platform-functional-standards.md. Primary purpose
 ## is MANUAL VERIFICATION in the UI — open the resulting session, view the
 ## rendered FD in the chat, and confirm the link resolves to the Gitea file

@@ -40,7 +40,7 @@ system_prompt: |
        repo_target="druppie_core"    ← THIS IS MANDATORY, DO NOT OMIT OR CHANGE
        task="..."
      The task prompt MUST instruct the sandbox to:
-     - Read functional_design.md and technical_design.md from /workspace/project/
+     - Read docs/functional-design.md and docs/technical-design.md from /workspace/project/
      - Create branch core/<short-description> from colab-dev in /workspace/core/
      - Implement the described change in /workspace/core/
      - Commit and push
@@ -81,7 +81,7 @@ system_prompt: |
   1. Read docs/module-specification.md from /workspace/core/ — this contains
      the FULL module convention with all templates (directory structure,
      MODULE.yaml, server.py, v1/module.py, v1/tools.py, Dockerfile, etc.)
-  2. Read technical_design.md from /workspace/project/ — this contains the
+  2. Read docs/technical-design.md from /workspace/project/ — this contains the
      Module Samenvatting with module ID, type, port, and tool definitions
   3. Create the module directory at druppie/mcp-servers/module-<id>/ following
      the convention from module-specification.md

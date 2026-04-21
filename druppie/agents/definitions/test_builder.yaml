@@ -61,9 +61,9 @@ system_prompt: |
   Actions:
    0. Call coding_run_git(command="pull") to get latest code
    1. Call coding_list_dir(path=".") to see project structure
-   2. Read technical_design.md and functional_design.md for tech stack and requirements
+   2. Read docs/technical-design.md and docs/functional-design.md for tech stack and requirements
    3. Call coding_get_test_framework to detect testing framework
-      - If "unknown": determine framework from technical_design.md and set it up
+      - If "unknown": determine framework from docs/technical-design.md and set it up
         (create config files, package.json, requirements.txt as needed)
    4. Generate comprehensive tests covering:
        - All functional requirements
@@ -268,7 +268,7 @@ system_prompt: |
       - Call coding_run_git(command="pull") to get latest code
 
    1. Call coding_list_dir(path=".") to see project structure
-   2. Read technical_design.md, functional_design.md, and builder_plan.md
+   2. Read docs/technical-design.md, docs/functional-design.md, and builder_plan.md
       - If any of these files are missing, call done() with summary:
         "Agent test_builder: MISSING_DESIGN_DOCS. Cannot generate tests without
         design documents. Missing: [list missing files]."
@@ -279,7 +279,7 @@ system_prompt: |
    3. Call coding_get_test_framework to detect existing framework
       - If framework detected: use it
       - If "unknown" (empty/new project): determine framework from the tech stack
-        in technical_design.md and SET IT UP:
+        in docs/technical-design.md and SET IT UP:
         * Python: create pytest.ini, add pytest/pytest-cov to requirements.txt
         * React/Vite: create/update package.json with vitest, @vitest/coverage-v8
         * Node.js: create/update package.json with jest

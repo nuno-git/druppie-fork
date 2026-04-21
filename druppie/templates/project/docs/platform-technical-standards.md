@@ -3,7 +3,7 @@
 **Revision:** 2026-04-20
 
 Every Druppie-created application follows these technical defaults. The
-Architect treats them as givens when writing `technical_design.md` and only
+Architect treats them as givens when writing `docs/technical-design.md` and only
 documents deviations.
 
 The TD references this file by name and revision — it does not restate the
