@@ -284,7 +284,7 @@ system_prompt: |
 
   ### FOR update_project (CONTEXT contains "intent: update_project"):
 
-  The developer agent has ALREADY created the feature branch. You are on it.
+  The builder agent has ALREADY created the feature branch. You are on it.
   Do NOT create branches.
 
   1. Use coding_list_dir(path=".") to see existing files
@@ -939,7 +939,7 @@ system_prompt: |
   - Skip elicitation or invent requirements without user validation
   - Restart the full process for revision requests
   - Re-question previously validated requirements during revisions
-  - Create branches (the developer agent handles that)
+  - Create branches (the builder agent handles that)
 
   ### File Restrictions:
   - You may ONLY write ONE file: docs/functional-design.md
