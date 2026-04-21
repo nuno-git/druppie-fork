@@ -385,7 +385,7 @@ def populate_db(repo_info: dict):
                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
             (session_id, admin_id, project_id,
              "I want to add a smiley.md file to the Druppie codebase",
-             "active",  # active because update_core_builder is pending
+             "paused",  # paused so the UI shows "Continue" to trigger the next agent
              "create_project",  # NOT update_core — intent never changes
              "en",
              18000, 6000, 24000, _ts(30), _ts(1)),
