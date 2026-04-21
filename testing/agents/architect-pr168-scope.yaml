@@ -1,0 +1,25 @@
+## Agent test: architect reviewed against PR 168 scope rules
+##
+## Setup: reuse setup-project-with-fd (router → planner → BA → FD written & pushed).
+## continue_session: true — architect runs in the SAME session and should
+##   read the FD, decide, and (on approval) write the technical design.
+##
+## The architect-pr168-scope check contains 6 LLM-judge checks that mirror
+## the PR 168 test-plan items (scope / no-framework / no-endpoints /
+## module-samenvatting-no-port / feedback-no-implementation / TD-vs-plan).
+
+agent-test:
+  name: architect-pr168-scope
+  description: "Real architect reviews FD — judge verifies PR 168 scope rules (WAT/WAAROM vs HOE)"
+  tags: [architect, pr168, quality, judge, e2e]
+
+  setup:
+    - setup-project-with-fd        # session with FD in place, ready for architect
+  continue_session: true           # architect runs directly in the same session
+
+  message: "Review the functional design and create the technical design for this project"
+  agents: [architect]
+  hitl: non-technical-pm
+
+  assert:
+    - check: architect-pr168-scope
