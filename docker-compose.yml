@@ -223,6 +223,7 @@ services:
       WORKSPACE_ROOT: /workspaces
       DOCKER_NETWORK: druppie-new-network
       DRUPPIE_URL: ${DRUPPIE_URL:-http://druppie-new-backend:8000}
+      DRUPPIE_MODULE_API_TOKEN: ${DRUPPIE_MODULE_API_TOKEN:-}
       DEEPINFRA_API_KEY: ${DEEPINFRA_API_KEY:-}
     volumes:
       - druppie_new_workspace:/workspaces
@@ -560,6 +561,7 @@ services:
       GITEA_ORG: druppie
       WORKSPACE_PATH: /app/workspace
       INTERNAL_API_KEY: ${INTERNAL_API_KEY:-druppie-internal-secret-key}
+      DRUPPIE_MODULE_API_TOKEN: ${DRUPPIE_MODULE_API_TOKEN:-}
       USE_MCP_MICROSERVICES: "true"
       MCP_CODING_URL: ${MCP_CODING_URL:-http://module-coding:9001}
       MCP_DOCKER_URL: ${MCP_DOCKER_URL:-http://module-docker:9002}
@@ -642,6 +644,7 @@ services:
       GITEA_ORG: druppie
       WORKSPACE_PATH: /app/workspace
       INTERNAL_API_KEY: ${INTERNAL_API_KEY:-druppie-internal-secret-key}
+      DRUPPIE_MODULE_API_TOKEN: ${DRUPPIE_MODULE_API_TOKEN:-}
       USE_MCP_MICROSERVICES: "true"
       MCP_CODING_URL: ${MCP_CODING_URL:-http://module-coding:9001}
       MCP_DOCKER_URL: ${MCP_DOCKER_URL:-http://module-docker:9002}

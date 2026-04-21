@@ -12,6 +12,7 @@ import os
 import re
 import shutil
 import subprocess
+import time
 import urllib.request
 import uuid
 from pathlib import Path
@@ -73,6 +74,15 @@ GITEA_PASSWORD = os.getenv("GITEA_PASSWORD", "")
 used_ports: set[int] = set()
 _port_lock = asyncio.Lock()
 
+# Cache for _get_host_bound_ports. The check spawns a --net=host container
+# to detect orphaned docker-proxies, which adds ~1-2s per port allocation.
+# Orphans persist across a restart and rarely appear/disappear, so a short
+# TTL cache is safe: if a port becomes truly free between scans we'll just
+# allocate another from the pool; if a new orphan appears, the next alloc
+# sees it after TTL expires. Newly-used ports are tracked in `used_ports`.
+_HOST_BOUND_CACHE_TTL = float(os.getenv("PORT_SCAN_CACHE_TTL", "60"))
+_host_bound_cache: dict[str, Any] = {"at": 0.0, "ports": set()}
+
 # Track compose project -> port mapping for clean teardown.
 # In-memory only: after MCP server restart this dict is empty, but compose_down
 # has a fallback that discovers ports from running containers via docker ps.
@@ -116,8 +126,14 @@ def get_used_host_ports() -> set[int]:
 def _get_host_bound_ports(port_range_start: int, port_range_end: int) -> set[int]:
     """Check which ports are actually bound on the host (catches orphaned docker-proxies).
 
-    Uses a single throwaway container with host networking to test all ports at once.
+    Uses a single throwaway container with host networking to test all ports at
+    once. Results are cached for `_HOST_BOUND_CACHE_TTL` seconds because the
+    container spawn adds ~1-2s per call and orphan state is stable.
     """
+    now = time.monotonic()
+    if now - _host_bound_cache["at"] < _HOST_BOUND_CACHE_TTL:
+        return set(_host_bound_cache["ports"])
+
     try:
         check_script = (
             f"import socket\n"
@@ -135,11 +151,16 @@ def _get_host_bound_ports(port_range_start: int, port_range_end: int) -> set[int
             capture_output=True, text=True, timeout=15,
         )
         if result.returncode == 0 and result.stdout.strip():
-            return {int(p) for p in result.stdout.strip().split("\n") if p.strip()}
-        return set()
+            bound = {int(p) for p in result.stdout.strip().split("\n") if p.strip()}
+        else:
+            bound = set()
     except Exception as e:
         logger.warning("Failed to check host-bound ports: %s", e)
-        return set()
+        bound = set()
+
+    _host_bound_cache["at"] = now
+    _host_bound_cache["ports"] = bound
+    return set(bound)
 
 
 def is_port_available(port: int) -> bool:
@@ -680,6 +701,10 @@ async def compose_up(
                 **os.environ,
                 "APP_PORT": str(host_port),
                 "DRUPPIE_URL": os.environ.get("DRUPPIE_URL", "http://druppie-backend:8000"),
+                # Shared secret for the /api/modules/{id}/call proxy. Apps
+                # forward this back via the X-Druppie-Token header through
+                # the Druppie SDK. Empty string = dev mode / no auth.
+                "DRUPPIE_MODULE_API_TOKEN": os.environ.get("DRUPPIE_MODULE_API_TOKEN", ""),
             }
             compose_result = await asyncio.to_thread(
                 subprocess.run,
