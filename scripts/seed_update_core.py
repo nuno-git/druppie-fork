@@ -198,7 +198,7 @@ PLANNER_3_SUMMARY = (
 
 UPDATE_CORE_BUILDER_PROMPT = """\
 CORE CHANGE: Implement the approved design. Read functional_design.md and \
-technical_design.md from /workspace/project/. Create a PR targeting colab-dev.
+technical_design.md from /workspace/project-<name>/. Create a PR targeting colab-dev.
 
 The architect has determined this project requires changes to Druppie's own codebase. \
 Add a smiley.md file to the root of the Druppie repository containing a small, \
@@ -599,9 +599,9 @@ def main():
     print("    1. Login as admin / Admin123!")
     print(f"    2. Open {session_url}")
     print("    3. The update_core_builder should be ready to run")
-    print("    4. It will create a sandbox with /workspace/core/ (GitHub) + /workspace/project/ (Gitea)")
-    print("    5. The sandbox agent reads FD/TD from /workspace/project/")
-    print("    6. It adds smiley.md to /workspace/core/ and creates a PR")
+    print("    4. It will create a sandbox with /workspace/druppie-core/ (GitHub) + /workspace/project-<name>/ (Gitea)")
+    print("    5. The sandbox agent reads FD/TD from /workspace/project-<name>/")
+    print("    6. It adds smiley.md to /workspace/druppie-core/ and creates a PR")
     print("    7. done() will pause for developer approval")
     print()
     print("=" * 60)
