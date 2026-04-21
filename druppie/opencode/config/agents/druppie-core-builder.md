@@ -5,18 +5,25 @@ mode: primary
 
 ## Workspace Layout
 
-You are working in a DUAL-REPO workspace:
+You are working in a DUAL-REPO workspace with unambiguous directory names. Even
+if the project happens to be called something like "update-core", there is no
+collision — the folders are always named like this:
 
-- `/workspace/core/` — **Druppie's codebase** (GitHub). This is YOUR working directory.
-  All your code changes, commits, and pushes go HERE. This repo is already cloned.
-- `/workspace/project/` — **Project repo** (Gitea, read-only context). Contains the
-  functional_design.md and technical_design.md that describe what to build.
+- `/workspace/druppie-core/` — **Druppie's own codebase** (GitHub). This is
+  always exactly `druppie-core`. This is YOUR working directory — all your
+  code changes, commits, and pushes go HERE.
+- `/workspace/project-<name>/` — **Project repo** (Gitea, read-only context).
+  The folder name always starts with `project-` followed by the project's
+  repo name. Contains `functional_design.md` and `technical_design.md` that
+  describe what to build. Discover the exact folder on startup with:
+  ```bash
+  PROJECT_DIR=$(ls -d /workspace/project-*/ | head -1)
+  ```
 
 **CRITICAL RULES:**
-- ONLY commit and push to `/workspace/core/`
-- NEVER commit or push to `/workspace/project/`
-- Read design docs from `/workspace/project/functional_design.md` and
-  `/workspace/project/technical_design.md`
+- ONLY commit and push to `/workspace/druppie-core/`
+- NEVER commit or push to the `/workspace/project-*/` directory
+- Read design docs from `$PROJECT_DIR/functional_design.md` and `$PROJECT_DIR/technical_design.md`
 - Do NOT create directories or `git init` — repos are already cloned for you
 - Do NOT use `git remote add` or change remote URLs — auth is pre-configured
 
@@ -32,27 +39,29 @@ Just use `git push origin HEAD` — it works automatically.
 
 ## First Steps
 
-1. Verify the workspace is set up:
+1. Verify the workspace is set up and locate the project dir:
    ```bash
-   ls /workspace/core/ /workspace/project/
+   ls /workspace/
+   PROJECT_DIR=$(ls -d /workspace/project-*/ | head -1)
+   echo "Project dir: $PROJECT_DIR"
    ```
 2. Read the design documents:
    ```bash
-   cat /workspace/project/functional_design.md
-   cat /workspace/project/technical_design.md
+   cat "$PROJECT_DIR/functional_design.md"
+   cat "$PROJECT_DIR/technical_design.md"
    ```
 3. Check what branch you're on in the core repo:
    ```bash
-   cd /workspace/core && git branch -a | head -20
+   cd /workspace/druppie-core && git branch -a | head -20
    ```
 4. Understand what needs to change and implement it
 
 ## Git Workflow (MANDATORY)
 
-All git operations happen in `/workspace/core/`:
+All git operations happen in `/workspace/druppie-core/`:
 
 ```bash
-cd /workspace/core
+cd /workspace/druppie-core
 git checkout -b core/<short-description>   # Branch from current HEAD
 # ... make your changes ...
 git add <specific-files>                    # Stage explicitly (avoid git add -A)
@@ -75,7 +84,7 @@ The tool auto-detects the current branch as `head`. Always set `baseBranch="cola
 **Alternative:** Use `curl` with `$GITHUB_API_PROXY_URL` if the tool is unavailable.
 First discover the repo slug from the git remote:
 ```bash
-cd /workspace/core
+cd /workspace/druppie-core
 REPO_SLUG=$(git remote get-url origin | sed -E 's|.*/([^/]+/[^/]+?)(\.git)?$|\1|')
 echo "Targeting repo: $REPO_SLUG"
 curl -s -X POST "$GITHUB_API_PROXY_URL/repos/$REPO_SLUG/pulls" \
