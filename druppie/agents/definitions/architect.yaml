@@ -618,8 +618,9 @@ system_prompt: |
   * Data Model: [Entities, relationships, and classification (PII, confidentiality).
     Follow the DB rules from platform-standards §5. Exact column types are builder_planner's call.]
   * Data Flows: [Which data moves between which components, and why]
-  * Integration Points: [External systems and trust boundaries —
-    endpoint signatures and schemas are builder_planner's call]
+  * Integration Points: [External systems and trust boundaries. Contracts
+    with external consumers (other Druppie agents, user-facing apps, 3rd party
+    APIs) are pinned here. Internal endpoint signatures are builder_planner's call.]
 
   (Deployment / hosting / infra is the platform default — do not restate it
   unless this project deviates.)
