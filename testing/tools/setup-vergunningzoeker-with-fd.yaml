@@ -498,6 +498,6 @@ tool-test:
     - agent: business_analyst
       tool: builtin:done
       arguments:
-        summary: "Agent business_analyst: DESIGN_APPROVED. Gathered requirements through 7 elicitation questions covering current process, stakeholders, metadata fields, Archiefwet compliance, zaaksysteem migration, access control, and personal data. User validated summary and approved written FD. Wrote functional_design.md with 12 functional requirements, 7 non-functional requirements, 8 business rules, 4 user journeys, and 5 integration points."
+        summary: "Agent business_analyst: DESIGN_APPROVED. Gathered requirements through 7 elicitation questions covering current process, stakeholders, metadata fields, Archiefwet compliance, zaaksysteem migration, access control, and personal data. User validated summary and approved written FD. Wrote docs/functional-design.md with 12 functional requirements, 7 non-functional requirements, 8 business rules, 4 user journeys, and 5 integration points."
       assert:
         completed: true

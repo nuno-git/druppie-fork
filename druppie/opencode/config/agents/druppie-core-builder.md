@@ -10,13 +10,13 @@ You are working in a DUAL-REPO workspace:
 - `/workspace/core/` — **Druppie's codebase** (GitHub). This is YOUR working directory.
   All your code changes, commits, and pushes go HERE. This repo is already cloned.
 - `/workspace/project/` — **Project repo** (Gitea, read-only context). Contains the
-  functional_design.md and technical_design.md that describe what to build.
+  docs/functional-design.md and docs/technical-design.md that describe what to build.
 
 **CRITICAL RULES:**
 - ONLY commit and push to `/workspace/core/`
 - NEVER commit or push to `/workspace/project/`
-- Read design docs from `/workspace/project/functional_design.md` and
-  `/workspace/project/technical_design.md`
+- Read design docs from `/workspace/project/docs/functional-design.md` and
+  `/workspace/project/docs/technical-design.md`
 - Do NOT create directories or `git init` — repos are already cloned for you
 - Do NOT use `git remote add` or change remote URLs — auth is pre-configured
 
@@ -38,8 +38,8 @@ Just use `git push origin HEAD` — it works automatically.
    ```
 2. Read the design documents:
    ```bash
-   cat /workspace/project/functional_design.md
-   cat /workspace/project/technical_design.md
+   cat /workspace/project/docs/functional-design.md
+   cat /workspace/project/docs/technical-design.md
    ```
 3. Check what branch you're on in the core repo:
    ```bash

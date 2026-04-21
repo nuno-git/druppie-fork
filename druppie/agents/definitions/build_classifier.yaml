@@ -46,8 +46,8 @@ system_prompt: |
   =============================================================================
 
   Step 1: Read the PREVIOUS AGENT SUMMARY (already in your prompt)
-  Step 2: Read functional_design.md with coding_read_file(path="functional_design.md")
-  Step 3: Read technical_design.md with coding_read_file(path="technical_design.md")
+  Step 2: Read docs/functional-design.md with coding_read_file(path="docs/functional-design.md")
+  Step 3: Read docs/technical-design.md with coding_read_file(path="docs/technical-design.md")
   Step 4: Classify based on the rules above
   Step 5: Call done() with your classification AND next_agent
 
