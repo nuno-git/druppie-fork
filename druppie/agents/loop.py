@@ -291,13 +291,26 @@ class AgentLoop:
         if not agents:
             return
 
+        # Narrow discovered agents to what this caller is allowed to invoke.
+        # Without this, every agent (even architect, with allowed_agents=[explore])
+        # sees every sandbox agent in the enum and routinely picks a forbidden one.
+        constraints = self.definition.sandbox_constraints
+        allowed_agents = constraints.allowed_agents if constraints else None
+        allowed_repo_targets = constraints.allowed_repo_targets if constraints else None
+
+        if allowed_agents is not None:
+            agents = [a for a in agents if a["name"] in allowed_agents]
+            if not agents:
+                return
+
         # Build enum + enriched description
         agent_names = [a["name"] for a in agents]
         agent_list = ", ".join(
             f"{a['name']} ({a['description']})" for a in agents
         )
 
-        # Read default agent from opencode-config.json
+        # Read default agent from opencode-config.json, but if the caller is
+        # constrained, prefer a default that's actually in the allowed list.
         from druppie.core.config import DEFAULT_SANDBOX_AGENT
         config_file = agents_dir.parent / "opencode-config.json"
         default_agent = DEFAULT_SANDBOX_AGENT
@@ -308,11 +321,21 @@ class AgentLoop:
                 default_agent = config.get("default_agent", default_agent)
             except Exception:
                 pass
+        if default_agent not in agent_names:
+            default_agent = agent_names[0]
 
         base_desc = target["function"]["description"]
+        constraint_note = ""
+        if allowed_agents is not None or allowed_repo_targets is not None:
+            parts = []
+            if allowed_agents is not None:
+                parts.append(f"agent must be one of {allowed_agents}")
+            if allowed_repo_targets is not None:
+                parts.append(f"repo_target must be one of {allowed_repo_targets}")
+            constraint_note = f" CONSTRAINT for this caller: {'; '.join(parts)}."
         target["function"]["description"] = (
             f"{base_desc} Available agents: {agent_list}. "
-            f"Default: {default_agent}."
+            f"Default: {default_agent}.{constraint_note}"
         )
 
         # Replace the agent property with an enum-constrained version
@@ -323,6 +346,14 @@ class AgentLoop:
             "enum": agent_names,
             "type": "string",
         }
+
+        # Narrow repo_target too when caller has a constraint, and move the
+        # default so the LLM doesn't fall through to a forbidden value.
+        if allowed_repo_targets is not None and "repo_target" in props:
+            rt = dict(props["repo_target"])
+            rt["enum"] = list(allowed_repo_targets)
+            rt["default"] = allowed_repo_targets[0]
+            props["repo_target"] = rt
 
     # ------------------------------------------------------------------
     # LLM call with DB record keeping
