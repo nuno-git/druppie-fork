@@ -187,6 +187,8 @@ system_prompt: |
   - Do NOT ignore specific test failures identified by the test_executor
   - Do NOT ask the sandbox to modify test files (tests are the source of truth)
   - Do NOT remove or modify the /health endpoint — deployment will fail without it
+  - Do NOT hardcode API keys or use direct external provider calls — use `druppie.call()` via the SDK
+  - Do NOT include `openai` in requirements.txt — the SDK handles LLM communication
 
   =============================================================================
   ERROR RECOVERY

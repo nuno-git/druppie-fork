@@ -73,6 +73,7 @@ GITEA_PASSWORD = os.getenv("GITEA_PASSWORD", "")
 used_ports: set[int] = set()
 _port_lock = asyncio.Lock()
 
+
 # Track compose project -> port mapping for clean teardown.
 # In-memory only: after MCP server restart this dict is empty, but compose_down
 # has a fallback that discovers ports from running containers via docker ps.
@@ -113,6 +114,40 @@ def get_used_host_ports() -> set[int]:
         return set()
 
 
+def _is_port_free_on_host(port: int) -> bool:
+    """Check if a host port is free by asking the Docker daemon to bind it.
+
+    Starts a throwaway container with the candidate port mapping. The port
+    bind happens at start time (not create time), so we must actually start
+    the container to detect conflicts. This correctly catches orphaned
+    docker-proxy processes from any Docker daemon on the host — including
+    the system daemon when we run under rootless Docker.
+    """
+    probe_name = f"port-probe-{port}"
+    try:
+        result = subprocess.run(
+            ["docker", "run", "--rm", "-d", "--name", probe_name,
+             "-p", f"{port}:80", "alpine", "sleep", "5"],
+            capture_output=True, text=True, timeout=10,
+        )
+        if result.returncode != 0:
+            return False
+        # Port bound successfully — clean up and report free
+        subprocess.run(
+            ["docker", "rm", "-f", probe_name],
+            capture_output=True, text=True, timeout=5,
+        )
+        return True
+    except Exception as e:
+        logger.warning("Port probe failed for %d: %s", port, e)
+        return False
+    finally:
+        subprocess.run(
+            ["docker", "rm", "-f", probe_name],
+            capture_output=True, text=True, timeout=5,
+        )
+
+
 def is_port_available(port: int) -> bool:
     """Check if a port is available for binding on the Docker host."""
     docker_ports = get_used_host_ports()
@@ -126,17 +161,21 @@ def is_port_available(port: int) -> bool:
 async def get_next_port() -> int:
     """Get next available port from the configured range.
 
-    Checks both Docker's currently bound ports and our internal tracking.
-    Queries Docker once upfront to avoid N subprocess calls.
+    Checks Docker containers, internal tracking, AND actual host port
+    availability via the Docker daemon (catches orphaned docker-proxy processes).
     Uses _port_lock to prevent TOCTOU races on concurrent compose_up calls.
     """
     async with _port_lock:
         docker_ports = get_used_host_ports()
         for port in range(PORT_RANGE_START, PORT_RANGE_END):
-            if port not in docker_ports and port not in used_ports:
-                used_ports.add(port)
-                logger.info("Auto-selected available port %d", port)
-                return port
+            if port in docker_ports or port in used_ports:
+                continue
+            if not _is_port_free_on_host(port):
+                logger.info("Port %d is bound on host (orphaned proxy?), skipping", port)
+                continue
+            used_ports.add(port)
+            logger.info("Auto-selected available port %d", port)
+            return port
         raise RuntimeError(f"No available ports in range {PORT_RANGE_START}-{PORT_RANGE_END}")
 
 
@@ -583,6 +622,13 @@ async def compose_up(
             shutil.rmtree(clone_path, ignore_errors=True)
             return {"success": False, "error": "No docker-compose.yaml found in repository"}
 
+        # Step 2b: Inject Druppie SDK (if mounted)
+        sdk_source = Path("/druppie-sdk")
+        if sdk_source.is_dir():
+            sdk_dest = clone_path / "druppie-sdk"
+            shutil.copytree(sdk_source, sdk_dest)
+            logger.info("compose_up: injected druppie-sdk into build context")
+
         # All remaining steps wrapped in try/finally to guarantee clone_path cleanup
         host_port = None
         project_name = None
@@ -637,7 +683,15 @@ async def compose_up(
 
             # Step 6: Run docker compose up
             logger.info("compose_up: starting project %s on port %d", project_name, host_port)
-            env = {**os.environ, "APP_PORT": str(host_port)}
+            env = {
+                **os.environ,
+                "APP_PORT": str(host_port),
+                "DRUPPIE_URL": os.environ.get("DRUPPIE_URL", "http://druppie-backend:8000"),
+                # Shared secret for the /api/modules/{id}/call proxy. Apps
+                # forward this back via the X-Druppie-Token header through
+                # the Druppie SDK. Empty string = dev mode / no auth.
+                "DRUPPIE_MODULE_API_TOKEN": os.environ.get("DRUPPIE_MODULE_API_TOKEN", ""),
+            }
             compose_result = await asyncio.to_thread(
                 subprocess.run,
                 ["docker", "compose", "-p", project_name, "up", "-d", "--build"],

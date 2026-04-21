@@ -222,10 +222,13 @@ services:
       MCP_PORT: "9002"
       WORKSPACE_ROOT: /workspaces
       DOCKER_NETWORK: druppie-new-network
+      DRUPPIE_URL: ${DRUPPIE_URL:-http://druppie-new-backend:8000}
+      DRUPPIE_MODULE_API_TOKEN: ${DRUPPIE_MODULE_API_TOKEN:-}
       DEEPINFRA_API_KEY: ${DEEPINFRA_API_KEY:-}
     volumes:
       - druppie_new_workspace:/workspaces
       - ${DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock
+      - ./druppie/sdk:/druppie-sdk:ro
     ports:
       - "${MCP_DOCKER_PORT:-9002}:9002"
     networks:
@@ -329,6 +332,52 @@ services:
       retries: 5
       start_period: 10s
 
+  module-llm:
+    build:
+      context: ./druppie/mcp-servers
+      dockerfile: module-llm/Dockerfile
+    container_name: druppie-module-llm
+    profiles: [infra, dev, prod]
+    environment:
+      MCP_PORT: "9008"
+      ZAI_API_KEY: ${ZAI_API_KEY:-}
+      ZAI_BASE_URL: ${ZAI_BASE_URL:-}
+      ZAI_MODEL: ${ZAI_MODEL:-}
+      DEEPINFRA_API_KEY: ${DEEPINFRA_API_KEY:-}
+    ports:
+      - "${MCP_LLM_PORT:-9008}:9008"
+    networks:
+      - druppie-new-network
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9008/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  module-vision:
+    build:
+      context: ./druppie/mcp-servers
+      dockerfile: module-vision/Dockerfile
+    container_name: druppie-module-vision
+    profiles: [infra, dev, prod]
+    environment:
+      MCP_PORT: "9011"
+      ZAI_API_KEY: ${ZAI_API_KEY:-}
+      ZAI_BASE_URL: ${ZAI_BASE_URL:-}
+      ZAI_VISION_MODEL: ${ZAI_VISION_MODEL:-}
+      DEEPINFRA_API_KEY: ${DEEPINFRA_API_KEY:-}
+    ports:
+      - "${MCP_VISION_PORT:-9011}:9011"
+    networks:
+      - druppie-new-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9011/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
   # ===========================================================================
   # SANDBOX INFRASTRUCTURE (background-agents)
   # ===========================================================================
@@ -376,6 +425,7 @@ services:
       DOCKER_MEMORY_LIMIT: ${SANDBOX_MEMORY_LIMIT:-4g}
       DOCKER_CPU_LIMIT: ${SANDBOX_CPU_LIMIT:-0}
       SANDBOX_CACHE_VOLUME: druppie_sandbox_dep_cache
+      SANDBOX_SDK_HOST_PATH: ${PWD}/druppie/sdk
       # LLM API keys and proxy URLs no longer needed here.
       # Credentials flow per-session from Druppie -> Control Plane -> Sandbox.
     volumes:
@@ -511,6 +561,7 @@ services:
       GITEA_ORG: druppie
       WORKSPACE_PATH: /app/workspace
       INTERNAL_API_KEY: ${INTERNAL_API_KEY:-druppie-internal-secret-key}
+      DRUPPIE_MODULE_API_TOKEN: ${DRUPPIE_MODULE_API_TOKEN:-}
       USE_MCP_MICROSERVICES: "true"
       MCP_CODING_URL: ${MCP_CODING_URL:-http://module-coding:9001}
       MCP_DOCKER_URL: ${MCP_DOCKER_URL:-http://module-docker:9002}
@@ -593,6 +644,7 @@ services:
       GITEA_ORG: druppie
       WORKSPACE_PATH: /app/workspace
       INTERNAL_API_KEY: ${INTERNAL_API_KEY:-druppie-internal-secret-key}
+      DRUPPIE_MODULE_API_TOKEN: ${DRUPPIE_MODULE_API_TOKEN:-}
       USE_MCP_MICROSERVICES: "true"
       MCP_CODING_URL: ${MCP_CODING_URL:-http://module-coding:9001}
       MCP_DOCKER_URL: ${MCP_DOCKER_URL:-http://module-docker:9002}
