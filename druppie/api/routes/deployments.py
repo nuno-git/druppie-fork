@@ -591,8 +591,46 @@ async def wipe_project(
                 detail="Not authorized to wipe this project",
             )
 
-    # Remove containers
+    # Collect compose project names from druppie-labeled containers so we can
+    # tear down entire compose stacks (app + sidecars like postgres + volumes).
+    compose_projects: set[str] = set()
     for c in containers:
+        labels = c.get("labels", {})
+        cp = labels.get("druppie.compose_project") or labels.get("com.docker.compose.project")
+        if cp:
+            compose_projects.add(cp)
+
+    # Use compose_down to remove all containers AND volumes per compose project.
+    # This handles sidecar containers (db, redis, etc.) that don't carry
+    # druppie.* labels but belong to the same compose stack.
+    for cp in compose_projects:
+        try:
+            r = await mcp_http.call(
+                server="docker",
+                tool="compose_down",
+                args={"compose_project_name": cp, "remove_volumes": True},
+                timeout_seconds=60.0,
+            )
+            if r.get("success"):
+                containers_removed.append(f"compose:{cp}")
+                for v in r.get("volumes_removed", []):
+                    volumes_removed.append(v)
+            else:
+                errors.append(f"compose_down {cp}: {r.get('error', 'unknown')}")
+        except MCPHttpError as e:
+            errors.append(f"compose_down {cp}: {e}")
+
+    # Remove any druppie-labeled containers not part of a compose project
+    # (e.g. standalone containers created outside compose_up).
+    standalone = [
+        c for c in containers
+        if not any(
+            (c.get("labels", {}).get("druppie.compose_project") or
+             c.get("labels", {}).get("com.docker.compose.project")) == cp
+            for cp in compose_projects
+        )
+    ]
+    for c in standalone:
         name = c.get("name")
         if not name:
             continue
@@ -609,48 +647,6 @@ async def wipe_project(
                 errors.append(f"rm {name}: {r.get('error', 'unknown')}")
         except MCPHttpError as e:
             errors.append(f"rm {name}: {e}")
-
-    # Collect compose project names that belong to this druppie project_id so we
-    # can also reap compose volumes that lack druppie.* labels.
-    compose_projects: set[str] = set()
-    for c in containers:
-        labels = c.get("labels", {})
-        cp = labels.get("druppie.compose_project") or labels.get("com.docker.compose.project")
-        if cp:
-            compose_projects.add(cp)
-
-    try:
-        vols = await mcp_http.call(
-            server="docker",
-            tool="list_volumes",
-            args={"druppie_only": False},
-            timeout_seconds=15.0,
-        )
-        all_volumes = vols.get("volumes", []) if vols.get("success") else []
-        target_vols = []
-        for v in all_volumes:
-            labels = v.get("labels", {})
-            if labels.get("druppie.project_id") == project_id:
-                target_vols.append(v["name"])
-            elif labels.get("com.docker.compose.project") in compose_projects:
-                target_vols.append(v["name"])
-
-        for vname in target_vols:
-            try:
-                r = await mcp_http.call(
-                    server="docker",
-                    tool="remove_volume",
-                    args={"volume_name": vname, "force": False},
-                    timeout_seconds=15.0,
-                )
-                if r.get("success"):
-                    volumes_removed.append(vname)
-                else:
-                    errors.append(f"rm volume {vname}: {r.get('error', 'unknown')}")
-            except MCPHttpError as e:
-                errors.append(f"rm volume {vname}: {e}")
-    except MCPHttpError as e:
-        errors.append(f"list_volumes: {e}")
 
     return WipeResponse(
         success=len(errors) == 0,
