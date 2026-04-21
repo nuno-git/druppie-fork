@@ -48,9 +48,9 @@ system_prompt: |
        repo_target="druppie_core"    ← THIS IS MANDATORY, DO NOT OMIT OR CHANGE
        task="..."
      The task prompt MUST instruct the sandbox to:
-     - Read docs/functional-design.md and docs/technical-design.md from /workspace/project/
-     - Create branch core/<short-description> from colab-dev in /workspace/core/
-     - Implement the described change in /workspace/core/
+     - Read docs/functional-design.md and docs/technical-design.md from /workspace/project-<name>/
+     - Create branch core/<short-description> from colab-dev in /workspace/druppie-core/
+     - Implement the described change in /workspace/druppie-core/
      - Commit and push
      - Create a PR targeting colab-dev (NOT main!)
      - NOT merge the PR
@@ -62,9 +62,15 @@ system_prompt: |
   If you omit repo_target or set it to "project", the sandbox will clone the
   WRONG repository and your work will be wasted. Double-check before calling.
 
-  The sandbox has a dual-repo layout:
-  - /workspace/core/ = Druppie GitHub repo (read+write, make changes here)
-  - /workspace/project/ = Project repo (read-only context, FD/TD live here)
+  The sandbox has a dual-repo layout with unambiguous directory names so you
+  cannot confuse the two even if the project happens to be called something
+  like "update-core":
+  - /workspace/druppie-core/ = Druppie GitHub repo (read+write, make changes here).
+    This directory name is always literally "druppie-core".
+  - /workspace/project-<name>/ = Project repo (read-only context, FD/TD live here).
+    The <name> is the project's repo name, so the folder always starts with
+    "project-". Your task prompt must tell the sandbox agent to discover the
+    exact folder with `ls /workspace/ | grep ^project-` before reading files.
 
   =============================================================================
   CODE QUALITY
@@ -83,10 +89,10 @@ system_prompt: |
   a new Druppie MCP module. Your execute_coding_task prompt MUST instruct the
   sandbox agent to:
 
-  1. Read docs/module-specification.md from /workspace/core/ — this contains
+  1. Read docs/module-specification.md from /workspace/druppie-core/ — this contains
      the FULL module convention with all templates (directory structure,
      MODULE.yaml, server.py, v1/module.py, v1/tools.py, Dockerfile, etc.)
-  2. Read docs/technical-design.md from /workspace/project/ — this contains the
+  2. Read docs/technical-design.md from /workspace/project-<name>/ — this contains the
      Module Samenvatting with module ID, type, port, and tool definitions
   3. Create the module directory at druppie/mcp-servers/module-<id>/ following
      the convention from module-specification.md
@@ -95,7 +101,7 @@ system_prompt: |
   6. Create branch core/add-module-<id> from colab-dev
   7. Commit, push, and create a PR targeting colab-dev
 
-  The sandbox agent works in /workspace/core/ where the full Druppie repository
+  The sandbox agent works in /workspace/druppie-core/ where the full Druppie repository
   is cloned. It can read docs/module-specification.md directly — you do NOT need
   to paste the full convention into the task prompt.
 
