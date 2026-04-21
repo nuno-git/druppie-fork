@@ -30,7 +30,7 @@ import {
   Clock,
 } from 'lucide-react'
 import { getUsersByRole } from '../../services/api'
-import { chatMarkdownComponents } from './ChatHelpers'
+import { chatMarkdownComponents, SourceFileContext } from './ChatHelpers'
 
 // Helper to check if a file path is a markdown file
 const isMarkdownFile = (path) => {
@@ -113,7 +113,9 @@ const FilePreviewModal = ({ files, onClose }) => {
                 {/* Content */}
                 {isMarkdownFile(path) && !isRaw(path) ? (
                   <div className="p-6 markdown-content text-sm bg-white text-gray-900 rounded-b-lg">
-                    <ReactMarkdown remarkPlugins={[remarkGfm]} components={chatMarkdownComponents}>{content}</ReactMarkdown>
+                    <SourceFileContext.Provider value={path}>
+                      <ReactMarkdown remarkPlugins={[remarkGfm]} components={chatMarkdownComponents}>{content}</ReactMarkdown>
+                    </SourceFileContext.Provider>
                   </div>
                 ) : (
                   <pre className="p-4 text-sm text-gray-100 whitespace-pre-wrap font-mono leading-relaxed">
@@ -265,7 +267,11 @@ const ApprovalCard = ({ approval, onApprove, onReject, isProcessing, currentUser
 
   // Check if current user can approve based on their roles
   // User can approve if they have admin role OR any of the required roles
-  const userCanApprove = userRoles.includes('admin') || requiredRoles.some((r) => userRoles.includes(r))
+  // For session_owner approvals, check if user owns the session
+  const isSessionOwnerApproval = requiredRoles.includes('session_owner')
+  const userCanApprove = isSessionOwnerApproval
+    ? (currentUserId === approval.session_user_id || userRoles.includes('admin'))
+    : (userRoles.includes('admin') || requiredRoles.some((r) => userRoles.includes(r)))
 
   // Handler to open contact modal
   const handleOpenContactModal = () => {
@@ -337,7 +343,9 @@ const ApprovalCard = ({ approval, onApprove, onReject, isProcessing, currentUser
           {/* Single approval role display */}
           {!isMultiApproval && (
             <div className="text-sm text-gray-500 mb-3">
-              This action requires approval from <span className="font-semibold text-gray-700">{requiredRoles.join(' or ')}</span> role.
+              {isSessionOwnerApproval
+                ? 'This action requires approval from the session owner.'
+                : <>This action requires approval from <span className="font-semibold text-gray-700">{requiredRoles.join(' or ')}</span> role.</>}
             </div>
           )}
 
@@ -471,10 +479,14 @@ const ApprovalCard = ({ approval, onApprove, onReject, isProcessing, currentUser
                     <Clock className="w-5 h-5 text-blue-600" />
                     <div className="flex-1">
                       <span className="text-sm text-blue-800 font-medium">
-                        Waiting for approval from: <span className="font-bold">{requiredRoles.join(' or ')}</span>
+                        {isSessionOwnerApproval
+                          ? 'Waiting for the session owner to approve'
+                          : <>Waiting for approval from: <span className="font-bold">{requiredRoles.join(' or ')}</span></>}
                       </span>
                       <p className="text-xs text-blue-600 mt-0.5">
-                        You don't have the required role to approve this action.
+                        {isSessionOwnerApproval
+                          ? 'Only the user who started this conversation can approve this action.'
+                          : "You don't have the required role to approve this action."}
                       </p>
                     </div>
                   </div>

@@ -3,9 +3,13 @@
 from uuid import UUID
 from datetime import datetime, timezone
 
+from sqlalchemy import or_, and_
+
 from .base import BaseRepository
 from ..domain import ApprovalDetail, ApprovalSummary, ApprovalHistoryList, PendingApprovalList, ApprovalStatus
 from ..db.models import Approval
+from ..db.models.project import Project as ProjectModel
+from ..db.models.session import Session as SessionModel
 
 
 class ApprovalRepository(BaseRepository):
@@ -53,18 +57,32 @@ class ApprovalRepository(BaseRepository):
         """Get raw approval model."""
         return self.db.query(Approval).filter_by(id=approval_id).first()
 
-    def get_pending_for_roles(self, roles: list[str] | None) -> PendingApprovalList:
+    def get_pending_for_roles(
+        self, roles: list[str] | None, user_id: UUID | None = None
+    ) -> PendingApprovalList:
         """Get pending approvals that the user's roles can approve.
 
         Args:
             roles: List of roles to filter by, or None to return all pending.
+            user_id: Current user's ID — used to include session_owner approvals
+                for sessions this user owns.
         """
         query = (
             self.db.query(Approval)
             .filter(Approval.status == ApprovalStatus.PENDING.value)
         )
         if roles is not None:
-            query = query.filter(Approval.required_role.in_(roles))
+            conditions = [Approval.required_role.in_(roles)]
+            if user_id:
+                conditions.append(
+                    and_(
+                        Approval.required_role == "session_owner",
+                        Approval.session_id.in_(
+                            self.db.query(SessionModel.id).filter(SessionModel.user_id == user_id)
+                        ),
+                    )
+                )
+            query = query.filter(or_(*conditions))
         approvals = query.order_by(Approval.created_at.desc()).all()
         return PendingApprovalList(
             items=[self._to_detail(a) for a in approvals],
@@ -72,12 +90,14 @@ class ApprovalRepository(BaseRepository):
         )
 
     def get_resolved_for_roles(
-        self, roles: list[str] | None, page: int = 1, limit: int = 20
+        self, roles: list[str] | None, page: int = 1, limit: int = 20,
+        user_id: UUID | None = None,
     ) -> ApprovalHistoryList:
         """Get resolved approvals (approved/rejected) filtered by roles, paginated.
 
         Args:
             roles: List of roles to filter by, or None to return all resolved.
+            user_id: Current user's ID — used to include session_owner approvals.
         """
         base_query = (
             self.db.query(Approval)
@@ -89,7 +109,17 @@ class ApprovalRepository(BaseRepository):
             )
         )
         if roles is not None:
-            base_query = base_query.filter(Approval.required_role.in_(roles))
+            conditions = [Approval.required_role.in_(roles)]
+            if user_id:
+                conditions.append(
+                    and_(
+                        Approval.required_role == "session_owner",
+                        Approval.session_id.in_(
+                            self.db.query(SessionModel.id).filter(SessionModel.user_id == user_id)
+                        ),
+                    )
+                )
+            base_query = base_query.filter(or_(*conditions))
 
         total = base_query.count()
 
@@ -127,6 +157,22 @@ class ApprovalRepository(BaseRepository):
 
     def _to_detail(self, approval: Approval) -> ApprovalDetail:
         """Convert approval model to detail domain object."""
+        # Session owner for session_owner approvals + project repo_url for
+        # the frontend's link-rewriting in FD/TD previews. One join does both.
+        session_user_id = None
+        repo_url = None
+        if approval.session_id:
+            row = (
+                self.db.query(SessionModel.user_id, ProjectModel.repo_url)
+                .outerjoin(ProjectModel, SessionModel.project_id == ProjectModel.id)
+                .filter(SessionModel.id == approval.session_id)
+                .first()
+            )
+            if row:
+                if approval.required_role == "session_owner":
+                    session_user_id = row.user_id
+                repo_url = row.repo_url
+
         return ApprovalDetail(
             # From ApprovalSummary
             id=approval.id,
@@ -144,6 +190,8 @@ class ApprovalRepository(BaseRepository):
             agent_id=approval.agent_id,
             rejection_reason=approval.rejection_reason,
             created_at=approval.created_at,
+            session_user_id=session_user_id,
+            repo_url=repo_url,
         )
 
     def _to_summary(self, approval: Approval) -> ApprovalSummary:

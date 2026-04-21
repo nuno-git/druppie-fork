@@ -30,6 +30,7 @@ import {
   Package,
 } from 'lucide-react'
 import { getAgentConfig, getAgentMessageColors } from '../../utils/agentConfig'
+import { getUserInfo } from '../../services/keycloak'
 
 // Helper to get tool icon
 const getToolIcon = (toolName) => {
@@ -68,6 +69,7 @@ const ToolDecisionCard = ({
   isProcessing,
   isAnswering,
   userRoles = [],
+  sessionUserId,
 }) => {
   const [expanded, setExpanded] = useState(true)
   const [rejectReason, setRejectReason] = useState('')
@@ -111,9 +113,12 @@ const ToolDecisionCard = ({
   const hasDisplayableArgs = Object.keys(displayArgs).length > 0
 
   // Check if user can approve
+  const isSessionOwnerApproval = approval && (approval.required_roles || []).includes('session_owner')
   const canApprove = approval && approval.status === 'pending' && (
     userRoles.includes('admin') ||
-    (approval.required_roles || []).some(role => userRoles.includes(role))
+    (isSessionOwnerApproval
+      ? (sessionUserId && getUserInfo()?.id === sessionUserId)
+      : (approval.required_roles || []).some(role => userRoles.includes(role)))
   )
 
   // ==========================================================================
@@ -308,7 +313,9 @@ const ToolDecisionCard = ({
         {/* Subtitle */}
         <div className="text-xs text-gray-500 mt-1 ml-9">
           Called by {agentConfig?.name || agent_id || 'Agent'}
-          {approval_required && isPending && ` • Requires ${(approval.required_roles || ['admin']).join(' or ')} approval`}
+          {approval_required && isPending && (isSessionOwnerApproval
+            ? ' • Requires session owner approval'
+            : ` • Requires ${(approval.required_roles || ['admin']).join(' or ')} approval`)}
         </div>
 
         {/* Arguments */}
@@ -447,9 +454,15 @@ const ToolDecisionCard = ({
         {approval_required && isPending && !canApprove && (
           <div className="mt-3 pt-3 border-t border-gray-200">
             <div className="text-xs text-gray-600 bg-gray-100 rounded-lg px-3 py-2">
-              Waiting for approval from: {(approval.required_roles || ['admin']).join(' or ')}
+              {isSessionOwnerApproval
+                ? 'Waiting for the session owner to approve this action.'
+                : <>Waiting for approval from: {(approval.required_roles || ['admin']).join(' or ')}</>}
               <br />
-              <span className="text-gray-500">You don't have the required role to approve this action.</span>
+              <span className="text-gray-500">
+                {isSessionOwnerApproval
+                  ? 'Only the user who started this conversation can approve.'
+                  : "You don't have the required role to approve this action."}
+              </span>
             </div>
           </div>
         )}

@@ -170,13 +170,13 @@ ROUTER_SUMMARY = (
 
 BA_SUMMARY = (
     "Agent business_analyst: DESIGN_APPROVED. Analyzed requirements for adding smiley.md "
-    "to the Druppie codebase. Created functional_design.md with 3 functional requirements "
+    "to the Druppie codebase. Created docs/functional-design.md with 3 functional requirements "
     "and 1 non-functional requirement. User confirmed the design."
 )
 
 ARCHITECT_SUMMARY = (
-    "Agent architect: DESIGN_APPROVED_CORE_UPDATE. Reviewed functional_design.md — "
-    "passes all architecture checks. Wrote technical_design.md with 3 functional requirements, "
+    "Agent architect: DESIGN_APPROVED_CORE_UPDATE. Reviewed docs/functional-design.md — "
+    "passes all architecture checks. Wrote docs/technical-design.md with 3 functional requirements, "
     "1 non-functional requirement, and 2 technical requirements. "
     "This project requires changes to Druppie's core codebase (adding smiley.md to repository root)."
 )
@@ -197,8 +197,8 @@ PLANNER_3_SUMMARY = (
 )
 
 UPDATE_CORE_BUILDER_PROMPT = """\
-CORE CHANGE: Implement the approved design. Read functional_design.md and \
-technical_design.md from /workspace/project/. Create a PR targeting colab-dev.
+CORE CHANGE: Implement the approved design. Read docs/functional-design.md and \
+docs/technical-design.md from /workspace/project/. Create a PR targeting colab-dev.
 
 The architect has determined this project requires changes to Druppie's own codebase. \
 Add a smiley.md file to the root of the Druppie repository containing a small, \
@@ -235,7 +235,7 @@ AGENTS = [
 
     ("business_analyst", "completed", None,
      "Gather functional requirements for adding smiley.md to the Druppie codebase. "
-     "Ask the user clarifying questions. Write functional_design.md.",
+     "Ask the user clarifying questions. Write docs/functional-design.md.",
      BA_SUMMARY),
 
     ("planner",          "completed", None,
@@ -243,8 +243,8 @@ AGENTS = [
      PLANNER_2_SUMMARY),
 
     ("architect",        "completed", None,
-     "Design architecture for druppie-smiley. Read functional_design.md. "
-     "Create technical_design.md. IMPORTANT: If this project adds, modifies, or removes "
+     "Design architecture for druppie-smiley. Read docs/functional-design.md. "
+     "Create docs/technical-design.md. IMPORTANT: If this project adds, modifies, or removes "
      "anything in the Druppie codebase/repository itself, signal DESIGN_APPROVED_CORE_UPDATE.",
      ARCHITECT_SUMMARY),
 
@@ -309,12 +309,12 @@ def create_gitea_repo(client: httpx.Client, name: str) -> dict:
 
 
 def push_design_docs(client: httpx.Client, repo_name: str):
-    """Push functional_design.md and technical_design.md to the project repo."""
+    """Push docs/functional-design.md and docs/technical-design.md to the project repo."""
     import base64
 
     for filename, content in [
-        ("functional_design.md", FUNCTIONAL_DESIGN),
-        ("technical_design.md", TECHNICAL_DESIGN),
+        ("docs/functional-design.md", FUNCTIONAL_DESIGN),
+        ("docs/technical-design.md", TECHNICAL_DESIGN),
     ]:
         encoded = base64.b64encode(content.encode()).decode()
         r = client.post(
@@ -506,8 +506,8 @@ def populate_db(repo_info: dict):
                            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                         (_uid(NS_CORE, 3000 + seq * 10), session_id, run_id, llm_id,
                          "coding", "make_design", 0,
-                         json.dumps({"path": "technical_design.md", "content": TECHNICAL_DESIGN}),
-                         "completed", "Wrote technical_design.md",
+                         json.dumps({"path": "docs/technical-design.md", "content": TECHNICAL_DESIGN}),
+                         "completed", "Wrote docs/technical-design.md",
                          run_ts, run_ts),
                     )
                     total_tc += 1

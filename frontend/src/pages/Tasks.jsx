@@ -9,7 +9,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { CheckCircle, XCircle, Clock, Shield, AlertTriangle, AlertCircle, Loader2, MessageSquare, Bot, ExternalLink, ChevronDown, ChevronRight, History, User, FileCode, FilePlus, Terminal, GitBranch, Code, Eye, X } from 'lucide-react'
 import { getTasks, approveTask, rejectTask, getApprovalHistory } from '../services/api'
-import { chatMarkdownComponents } from '../components/chat/ChatHelpers'
+import { chatMarkdownComponents, ProjectRepoContext, SourceFileContext } from '../components/chat/ChatHelpers'
 import { useAuth } from '../App'
 import { hasRole } from '../services/keycloak'
 import { useToast } from '../components/Toast'
@@ -97,7 +97,9 @@ const FilePreviewModal = ({ files, onClose }) => {
                 {/* Content */}
                 {isMarkdownFile(path) && !isRaw(path) ? (
                   <div className="p-6 markdown-content text-sm bg-white text-gray-900 rounded-b-lg">
-                    <ReactMarkdown remarkPlugins={[remarkGfm]} components={chatMarkdownComponents}>{content}</ReactMarkdown>
+                    <SourceFileContext.Provider value={path}>
+                      <ReactMarkdown remarkPlugins={[remarkGfm]} components={chatMarkdownComponents}>{content}</ReactMarkdown>
+                    </SourceFileContext.Provider>
                   </div>
                 ) : (
                   <pre className="p-4 text-sm text-gray-100 whitespace-pre-wrap font-mono leading-relaxed">
@@ -201,7 +203,11 @@ const TaskCard = ({ task, onApprove, onReject }) => {
   const requiredRole = task.required_role || (requiredRoles.length > 0 ? requiredRoles[0] : 'admin')
 
   // Check if user has any of the required roles
-  const canApprove = requiredRoles.some(role => hasRole(role))
+  // For session_owner approvals, check if user owns the session
+  const isSessionOwnerApproval = requiredRoles.includes('session_owner')
+  const canApprove = isSessionOwnerApproval
+    ? (user?.id === task.session_user_id || hasRole('admin'))
+    : requiredRoles.some(role => hasRole(role))
 
   // MULTI approval state
   const isMultiApproval = task.approval_type === 'multi'
@@ -349,14 +355,16 @@ const TaskCard = ({ task, onApprove, onReject }) => {
                     View {isBatchWrite ? `${Object.keys(batchFiles).length} files` : 'file'}
                   </button>
                   {showCodePreview && (
-                    <FilePreviewModal
-                      files={
-                        isBatchWrite
-                          ? Object.entries(batchFiles).map(([path, content]) => ({ path, content }))
-                          : [{ path: filePath || 'file', content: newContent }]
-                      }
-                      onClose={() => setShowCodePreview(false)}
-                    />
+                    <ProjectRepoContext.Provider value={task.repo_url ? { repo_url: task.repo_url, default_branch: 'main' } : null}>
+                      <FilePreviewModal
+                        files={
+                          isBatchWrite
+                            ? Object.entries(batchFiles).map(([path, content]) => ({ path, content }))
+                            : [{ path: filePath || 'file', content: newContent }]
+                        }
+                        onClose={() => setShowCodePreview(false)}
+                      />
+                    </ProjectRepoContext.Provider>
                   )}
                 </div>
               )}
@@ -378,7 +386,7 @@ const TaskCard = ({ task, onApprove, onReject }) => {
                   </Link>
                 )}
                 <span className={canApprove ? 'text-green-500' : ''}>
-                  {requiredRoles.join(', ')}
+                  {isSessionOwnerApproval ? 'session owner' : requiredRoles.join(', ')}
                 </span>
               </div>
             </div>

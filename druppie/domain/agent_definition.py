@@ -5,6 +5,36 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 
+class RequiredToolCall(BaseModel):
+    """A tool that must have been called before completion is allowed."""
+
+    tool_name: str
+    min_calls: int = 1
+
+
+class CompletionPrecondition(BaseModel):
+    """Rule: require certain prior tool calls before done() succeeds.
+
+    If summary_contains is set, the rule only applies when the summary matches.
+    If summary_contains is omitted (None), the rule always applies.
+    """
+
+    summary_contains: str | None = None
+    required_tools: list[RequiredToolCall]
+    error_message: str = "Completion precondition not met."
+
+
+class CompletionSummaryRequirement(BaseModel):
+    """Require that done() summary contains one of the allowed status keywords.
+
+    This enforces the agent's status protocol (e.g. DESIGN_APPROVED,
+    DESIGN_REJECTED, NO_FD_CHANGE) regardless of what language the LLM uses.
+    """
+
+    one_of: list[str]
+    error_message: str = "Summary must contain a required status keyword."
+
+
 class ApprovalOverride(BaseModel):
     """Override for tool approval requirements.
 
@@ -13,6 +43,17 @@ class ApprovalOverride(BaseModel):
 
     requires_approval: bool = True
     required_role: str | None = None
+
+
+class SandboxConstraints(BaseModel):
+    """Constraints on which sandbox agents and repo targets an agent may use.
+
+    When set, execute_coding_task calls are validated against these lists.
+    When not set (None), all agents and repo targets are allowed.
+    """
+
+    allowed_agents: list[str] | None = None
+    allowed_repo_targets: list[str] | None = None
 
 
 class AgentDefinition(BaseModel):
@@ -34,6 +75,17 @@ class AgentDefinition(BaseModel):
     # These are ADDED to the defaults, e.g. ["make_plan"] gives this agent make_plan on top of defaults
     extra_builtin_tools: list[str] = Field(default_factory=list)
 
+    # Default builtin tools to SUBTRACT from the default set for this agent.
+    # Useful for late-stage agents that should not be able to ask the user
+    # (e.g. update_core_builder) — listing "hitl_ask_question" here removes
+    # the tool from the OpenAI function schema entirely, so the LLM has no
+    # way to call it. "done" cannot be excluded.
+    excluded_builtin_tools: list[str] = Field(default_factory=list)
+
+    # Constraints on execute_coding_task parameters.
+    # When set, limits which sandbox agents and repo targets this agent can use.
+    sandbox_constraints: SandboxConstraints | None = None
+
     # MCP servers this agent can use
     # Can be a simple list of MCP names: ["coding"]
     # Or a dict mapping MCP names to allowed tools: {"coding": ["read_file"]}
@@ -53,6 +105,15 @@ class AgentDefinition(BaseModel):
     # Direct routing: which agents this agent can route to via done(next_agent=...)
     # Empty list means no direct routing allowed (default — planner decides)
     allowed_next_agents: list[str] = Field(default_factory=list)
+
+    # Completion preconditions: rules that must be satisfied before done() succeeds
+    # If done()'s summary matches a rule's summary_contains, the required tools
+    # must have been called (with status=completed) during this agent run.
+    completion_preconditions: list[CompletionPrecondition] = Field(default_factory=list)
+
+    # Require done() summary to contain one of the allowed status keywords.
+    # Enforces the agent's status protocol regardless of LLM language drift.
+    required_summary_status: CompletionSummaryRequirement | None = None
 
     # LLM settings
     llm_profile: str = "standard"

@@ -1,5 +1,5 @@
 """API routes for Druppie platform."""
 
-from . import agents, approvals, chat, deployments, foundry, mcp_bridge, mcps, projects, questions, sandbox, sessions, workspace
+from . import agents, approvals, chat, deployments, evaluations, foundry, mcp_bridge, mcps, modules, projects, questions, sandbox, sessions, workspace
 
-__all__ = ["agents", "approvals", "chat", "deployments", "foundry", "mcp_bridge", "mcps", "projects", "questions", "sandbox", "sessions", "workspace"]
+__all__ = ["agents", "approvals", "chat", "deployments", "evaluations", "foundry", "mcp_bridge", "mcps", "modules", "projects", "questions", "sandbox", "sessions", "workspace"]

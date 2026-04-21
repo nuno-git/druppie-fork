@@ -1,0 +1,27 @@
+## Agent test: real architect reviews portfolio FD
+##
+## Same checks as architect-reviews-fd but for a different project.
+## This lets us see the same judge checks across 2 tests in analytics.
+##
+## Setup creates portfolio project with FD, then architect runs directly.
+
+agent-test:
+  name: architect-reviews-portfolio-fd
+  description: "Real architect reviews portfolio FD — same judge checks as recipe app"
+  tags: [architect, quality, judge, e2e]
+
+  setup:
+    - setup-portfolio-with-fd      # creates session with portfolio FD
+  continue_session: true           # architect runs in the SAME session
+
+  message: "Review the functional design and create the technical design for the portfolio"
+  agents: [architect]
+  hitl: non-technical-pm
+
+  assert:
+    - check: architect-produces-td   # same check as recipe app test
+
+  judge:
+    context: [architect]
+    checks:
+      - "The architect should have approved the design (done summary should contain DESIGN_APPROVED), OR given feedback (DESIGN_FEEDBACK). Either is acceptable — but the architect must make a clear decision."

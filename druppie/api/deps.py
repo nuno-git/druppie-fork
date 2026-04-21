@@ -40,6 +40,7 @@ from druppie.repositories import (
     ApprovalRepository,
     QuestionRepository,
     ProjectRepository,
+    EvaluationRepository,
 )
 from druppie.services import (
     SessionService,
@@ -47,6 +48,7 @@ from druppie.services import (
     QuestionService,
     ProjectService,
     WorkflowService,
+    EvaluationService,
 )
 
 # Initialize database tables on import
@@ -79,6 +81,11 @@ def get_project_repository(db: Session = Depends(get_db)) -> ProjectRepository:
     return ProjectRepository(db)
 
 
+def get_evaluation_repository(db: Session = Depends(get_db)) -> EvaluationRepository:
+    """Get EvaluationRepository with DB session injected."""
+    return EvaluationRepository(db)
+
+
 # =============================================================================
 # SERVICE DEPENDENCIES
 # =============================================================================
@@ -94,9 +101,10 @@ def get_session_service(
 
 def get_approval_service(
     approval_repo: ApprovalRepository = Depends(get_approval_repository),
+    session_repo: SessionRepository = Depends(get_session_repository),
 ) -> ApprovalService:
     """Get ApprovalService with repositories injected."""
-    return ApprovalService(approval_repo)
+    return ApprovalService(approval_repo, session_repo=session_repo)
 
 
 def get_question_service(
@@ -130,6 +138,15 @@ def get_custom_agent_service(
     """Get CustomAgentService with repository injected."""
     from druppie.services import CustomAgentService
     return CustomAgentService(repo)
+
+
+def get_evaluation_service(
+    eval_repo: EvaluationRepository = Depends(get_evaluation_repository),
+    db: Session = Depends(get_db),
+) -> EvaluationService:
+    """Get EvaluationService with repositories injected."""
+    from druppie.repositories.analytics_repository import AnalyticsRepository
+    return EvaluationService(eval_repo, AnalyticsRepository(db))
 
 
 def get_execution_repository(db: Session = Depends(get_db)) -> "ExecutionRepository":

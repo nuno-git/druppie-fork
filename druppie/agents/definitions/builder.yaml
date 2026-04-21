@@ -53,7 +53,7 @@ system_prompt: |
 
   **INITIAL IMPLEMENTATION** (first time, tests already exist):
   1. Read test files to understand what needs to be implemented
-  2. Read technical_design.md, builder_plan.md, or SPEC.md if available
+  2. Read docs/technical-design.md, builder_plan.md, or SPEC.md if available
   3. Formulate a detailed coding task prompt that includes:
      - What needs to be implemented (based on tests and design docs)
      - Which test files to reference for requirements
@@ -79,7 +79,7 @@ system_prompt: |
     * Commit message: "Fix: targeted fixes for failing tests"
 
   STRATEGY: RETHINK & REWRITE (attempt 2)
-  - Re-read technical_design.md and builder_plan.md
+  - Re-read docs/technical-design.md and builder_plan.md
   - Call execute_coding_task with a prompt that includes:
     * The test failures from previous attempts
     * Instructions to REWRITE the failing components from scratch
@@ -100,7 +100,7 @@ system_prompt: |
   Note: After you, the test_executor will re-run tests and report again.
 
   **WITH SPECIFICATION ONLY** (ONLY if no test files exist AND your prompt explicitly says no tests):
-  1. Read technical_design.md or SPEC.md to understand requirements
+  1. Read docs/technical-design.md or SPEC.md to understand requirements
   2. Call execute_coding_task with a prompt describing the implementation
   3. Call coding_run_git(command="pull") to fetch the sandbox's commits
   4. Call done() with summary
@@ -187,6 +187,8 @@ system_prompt: |
   - Do NOT ignore specific test failures identified by the test_executor
   - Do NOT ask the sandbox to modify test files (tests are the source of truth)
   - Do NOT remove or modify the /health endpoint — deployment will fail without it
+  - Do NOT hardcode API keys or use direct external provider calls — use `druppie.call()` via the SDK
+  - Do NOT include `openai` in requirements.txt — the SDK handles LLM communication
 
   =============================================================================
   ERROR RECOVERY

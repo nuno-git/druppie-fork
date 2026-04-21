@@ -22,6 +22,7 @@ from .revert_service import RevertService
 from .custom_agent_service import CustomAgentService
 from .github_app_service import GitHubAppService, get_github_app_service
 from .foundry_service import FoundryService, FoundryNotConfiguredError
+from .evaluation_service import EvaluationService
 
 __all__ = [
     "CustomAgentService",
@@ -37,4 +38,5 @@ __all__ = [
     "get_github_app_service",
     "FoundryService",
     "FoundryNotConfiguredError",
+    "EvaluationService",
 ]

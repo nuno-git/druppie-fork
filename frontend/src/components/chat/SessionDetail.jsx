@@ -26,6 +26,7 @@ import {
   extractSurfacedFileWrites,
   extractDependencyInstalls,
   findPendingQuestion,
+  ProjectRepoContext,
 } from './ChatHelpers'
 import TestResultCard from './TestResultCard'
 import SandboxEventCard, {
@@ -58,7 +59,7 @@ const getToolLabel = (toolName) => {
 
 // --- Inline Approval (minimal chat card) ---
 
-const InlineApproval = ({ tc, sessionId }) => {
+const InlineApproval = ({ tc, sessionId, sessionUserId }) => {
   const queryClient = useQueryClient()
   const user = getUserInfo()
   const [rejectMode, setRejectMode] = useState(false)
@@ -97,7 +98,10 @@ const InlineApproval = ({ tc, sessionId }) => {
 
   const userRoles = user?.roles || []
   const requiredRoles = tc.approval.required_role ? [tc.approval.required_role] : ['admin']
-  const userCanApprove = userRoles.includes('admin') || requiredRoles.some((r) => userRoles.includes(r))
+  const isSessionOwnerApproval = requiredRoles.includes('session_owner')
+  const userCanApprove = isSessionOwnerApproval
+    ? (user?.id === sessionUserId || userRoles.includes('admin'))
+    : (userRoles.includes('admin') || requiredRoles.some((r) => userRoles.includes(r)))
 
   return (
     <div className="group">
@@ -219,7 +223,9 @@ const InlineApproval = ({ tc, sessionId }) => {
                 )
               ) : (
                 <span className="text-xs text-amber-600">
-                  Waiting for {requiredRoles.join(' or ')} approval
+                  {isSessionOwnerApproval
+                    ? 'Waiting for your approval'
+                    : `Waiting for ${requiredRoles.join(' or ')} approval`}
                 </span>
               )}
             </div>
@@ -302,7 +308,7 @@ const TimelineQuestion = ({ tc, agentId, sessionId }) => {
 
 // --- Agent Run ---
 
-const AgentRunItem = ({ run, timelineIndex, sessionId, hasFollowingMessage }) => {
+const AgentRunItem = ({ run, timelineIndex, sessionId, hasFollowingMessage, sessionUserId }) => {
   const orderedItems = extractOrderedItems(run, hasFollowingMessage)
 
   // Show agent trace for completed runs that have no following message
@@ -330,7 +336,7 @@ const AgentRunItem = ({ run, timelineIndex, sessionId, hasFollowingMessage }) =>
         if (item.type === 'approval') {
           return (
             <div key={i} className="mt-2">
-              <InlineApproval tc={item.tc} sessionId={sessionId} />
+              <InlineApproval tc={item.tc} sessionId={sessionId} sessionUserId={sessionUserId} />
             </div>
           )
         }
@@ -830,7 +836,12 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
         waiting_answer: 'bg-amber-500 animate-pulse',
       }[data.status] || 'bg-gray-400'
 
+  const projectRepo = data?.project
+    ? { repo_url: data.project.repo_url, default_branch: data.project.default_branch || 'main' }
+    : null
+
   return (
+    <ProjectRepoContext.Provider value={projectRepo}>
     <div className="flex flex-col h-full min-w-0">
       {/* Header */}
       <div className="px-4 py-2.5 border-b flex-shrink-0">
@@ -1042,6 +1053,7 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
                       timelineIndex={i}
                       sessionId={sessionId}
                       hasFollowingMessage={hasFollowingMessage}
+                      sessionUserId={data?.user_id}
                     />
                     {renderAnnotation(i)}
                   </div>
@@ -1101,7 +1113,7 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
             return (
               <div className="space-y-3">
                 {pending.map((tc, i) => (
-                  <InlineApproval key={tc.approval.id || i} tc={tc} sessionId={sessionId} />
+                  <InlineApproval key={tc.approval.id || i} tc={tc} sessionId={sessionId} sessionUserId={data?.user_id} />
                 ))}
               </div>
             )
@@ -1208,6 +1220,7 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
         </div>
       )}
     </div>
+    </ProjectRepoContext.Provider>
   )
 }
 

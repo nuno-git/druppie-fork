@@ -1,0 +1,61 @@
+## Minimal test: create project from template and deploy it as-is.
+## No BA, architect, or builder — just scaffolds the template and deploys.
+## Useful for testing template features (web search, chat, etc.)
+
+tool-test:
+  name: deploy-template
+  description: "Deploy the bare project template — no custom code"
+  tags: [e2e, template, real-deploy]
+
+  chain:
+    # --- Router: create project (scaffolds template into Gitea) ---
+    - agent: router
+      tool: builtin:set_intent
+      arguments:
+        intent: create_project
+        project_name: template-test
+        description: "Bare template deployment for testing"
+      assert:
+        result:
+          - not_empty
+
+    - agent: router
+      tool: builtin:done
+      arguments:
+        summary: "Agent router: Created template-test project"
+
+    # --- Deployer: deploy the template as-is ---
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: deployer
+            prompt: "Deploy template-test from main"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: Planned deployer"
+
+    - agent: deployer
+      tool: docker:list_containers
+
+    - agent: deployer
+      tool: docker:compose_up
+      approval:
+        status: approved
+        by: developer
+      arguments:
+        compose_project_name: template-test
+        branch: main
+      assert:
+        result:
+          - not_empty
+          - { contains: "success" }
+
+    - agent: deployer
+      tool: builtin:done
+      arguments:
+        summary: "Agent deployer: Deployed template-test from main."
+      assert:
+        completed: true

@@ -524,8 +524,12 @@ async function handleRequestWithFailover(
     }
 
     if (streaming) {
-      // Retry same provider with exponential backoff before failover
-      let succeeded = false;
+      // Retry same provider with exponential backoff before failover.
+      // Only track the FINAL outcome for health purposes — individual retry
+      // failures should not count toward the consecutive error threshold,
+      // otherwise a single request with 3 retries immediately triggers
+      // provider_unhealthy (threshold is also 3).
+      let streamOutcome: StreamResult = "failed_before_headers";
       for (let retry = 0; retry < SAME_PROVIDER_MAX_RETRIES; retry++) {
         if (retry > 0) {
           const delay = SAME_PROVIDER_DELAYS_MS[retry - 1] ?? 120_000;
@@ -544,6 +548,8 @@ async function handleRequestWithFailover(
           attempt.provider
         );
 
+        streamOutcome = result;
+
         if (result === "success") {
           trackLlmResult(proxyKey, attempt.provider, true, credentialStore, callbacks);
           return;
@@ -553,11 +559,12 @@ async function handleRequestWithFailover(
           trackLlmResult(proxyKey, attempt.provider, false, credentialStore, callbacks);
           return;
         }
-        // failed_before_headers — retry same provider or move to next
-        trackLlmResult(proxyKey, attempt.provider, false, credentialStore, callbacks);
+        // failed_before_headers — retry same provider
       }
 
-      // All retries for this provider exhausted
+      // All retries exhausted — track ONE failure for health purposes
+      trackLlmResult(proxyKey, attempt.provider, false, credentialStore, callbacks);
+
       if (isLastAttempt) {
         if (!res.headersSent) {
           res.status(502).json({ error: "All providers failed" });
@@ -566,7 +573,8 @@ async function handleRequestWithFailover(
       }
       continue;
     } else {
-      // Retry same provider with exponential backoff before failover
+      // Retry same provider with exponential backoff before failover.
+      // Only track the FINAL outcome — see streaming path comment above.
       let lastResult: BufferedResult | null = null;
       for (let retry = 0; retry < SAME_PROVIDER_MAX_RETRIES; retry++) {
         if (retry > 0) {
@@ -586,10 +594,10 @@ async function handleRequestWithFailover(
         );
 
         const isRetryable = lastResult.status >= 500 || lastResult.status === 429;
-        trackLlmResult(proxyKey, attempt.provider, !isRetryable, credentialStore, callbacks);
 
         if (!isRetryable) {
           // Success or non-retryable error (4xx) — send response
+          trackLlmResult(proxyKey, attempt.provider, true, credentialStore, callbacks);
           res.status(lastResult.status);
           if (lastResult.contentType) res.setHeader("Content-Type", lastResult.contentType);
           res.send(lastResult.body);
@@ -601,7 +609,9 @@ async function handleRequestWithFailover(
         );
       }
 
-      // All retries exhausted for this provider
+      // All retries exhausted — track ONE failure
+      trackLlmResult(proxyKey, attempt.provider, false, credentialStore, callbacks);
+
       if (isLastAttempt && lastResult) {
         res.status(lastResult.status);
         if (lastResult.contentType) res.setHeader("Content-Type", lastResult.contentType);

@@ -23,7 +23,7 @@ Naming convention:
 
 # Enums
 # Agent definition (YAML config)
-from .agent_definition import AgentDefinition, ApprovalOverride
+from .agent_definition import AgentDefinition, ApprovalOverride, SandboxConstraints
 
 # Agent run models
 from .agent_run import (
@@ -44,6 +44,17 @@ from .custom_agent import (
     CustomAgentDetail,
     CustomAgentSummary,
     CustomAgentUpdate,
+)
+
+# Evaluation models
+from .evaluation import (
+    BenchmarkRunDetail,
+    BenchmarkRunSummary,
+    EvaluationResultDetail,
+    EvaluationResultSummary,
+    TestAssertionResultSummary,
+    TestRunDetail,
+    TestRunSummary,
 )
 
 # Common models
@@ -140,6 +151,7 @@ __all__ = [
     "CustomAgentDetail",
     "CustomAgentCreate",
     "CustomAgentUpdate",
+    "SandboxConstraints",
     # Skill
     "SkillSummary",
     "SkillDetail",
@@ -147,8 +159,18 @@ __all__ = [
     "ToolDefinition",
     "ToolDefinitionSummary",
     "ToolType",
+    # Evaluation
+    "EvaluationResultSummary",
+    "EvaluationResultDetail",
+    "BenchmarkRunSummary",
+    "BenchmarkRunDetail",
+    # Test runs
+    "TestRunSummary",
+    "TestRunDetail",
+    "TestAssertionResultSummary",
 ]
 
 # Rebuild models to resolve forward references (circular imports between session/project)
 ProjectDetail.model_rebuild()
 SessionDetail.model_rebuild()
+BenchmarkRunDetail.model_rebuild()
