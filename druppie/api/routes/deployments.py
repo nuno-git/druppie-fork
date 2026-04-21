@@ -188,7 +188,9 @@ async def _verify_owner_or_admin(
         if not inspect_result.get("success"):
             raise NotFoundError("deployment", container_name)
         owner_id = inspect_result.get("labels", {}).get("druppie.user_id")
-        if owner_id and owner_id != user.get("sub"):
+        # Fail closed: a container without a druppie.user_id label is treated
+        # as not-owned by any non-admin caller.
+        if not owner_id or owner_id != user.get("sub"):
             raise HTTPException(
                 status_code=403,
                 detail=f"Not authorized to {action} this deployment",
@@ -276,32 +278,7 @@ async def stop_deployment(
     Verifies ownership via container labels before stopping.
     """
     mcp_http = get_mcp_http()
-
-    # First, verify ownership by inspecting the container
-    user_roles = get_user_roles(user)
-    if "admin" not in user_roles:
-        try:
-            inspect_result = await mcp_http.call(
-                server="docker",
-                tool="inspect",
-                args={"container_name": container_name},
-                timeout_seconds=10.0,
-            )
-
-            if not inspect_result.get("success"):
-                raise NotFoundError("deployment", container_name)
-
-            labels = inspect_result.get("labels", {})
-            owner_id = labels.get("druppie.user_id")
-
-            if owner_id and owner_id != user.get("sub"):
-                raise HTTPException(
-                    status_code=403,
-                    detail="Not authorized to stop this deployment",
-                )
-
-        except MCPHttpError:
-            raise NotFoundError("deployment", container_name)
+    await _verify_owner_or_admin(mcp_http, container_name, user, "stop")
 
     # Stop the container
     try:
@@ -341,32 +318,7 @@ async def get_deployment_logs(
     Verifies ownership via container labels before fetching logs.
     """
     mcp_http = get_mcp_http()
-
-    # Verify ownership for non-admins
-    user_roles = get_user_roles(user)
-    if "admin" not in user_roles:
-        try:
-            inspect_result = await mcp_http.call(
-                server="docker",
-                tool="inspect",
-                args={"container_name": container_name},
-                timeout_seconds=10.0,
-            )
-
-            if not inspect_result.get("success"):
-                raise NotFoundError("deployment", container_name)
-
-            labels = inspect_result.get("labels", {})
-            owner_id = labels.get("druppie.user_id")
-
-            if owner_id and owner_id != user.get("sub"):
-                raise HTTPException(
-                    status_code=403,
-                    detail="Not authorized to view logs for this deployment",
-                )
-
-        except MCPHttpError:
-            raise NotFoundError("deployment", container_name)
+    await _verify_owner_or_admin(mcp_http, container_name, user, "view logs for")
 
     # Get logs
     try:
@@ -417,13 +369,10 @@ async def inspect_deployment(
         if not result.get("success"):
             raise NotFoundError("deployment", container_name)
 
-        # Verify ownership for non-admins
-        user_roles = get_user_roles(user)
-        if "admin" not in user_roles:
-            labels = result.get("labels", {})
-            owner_id = labels.get("druppie.user_id")
-
-            if owner_id and owner_id != user.get("sub"):
+        # Fail closed on missing owner label — same semantics as the helper.
+        if "admin" not in get_user_roles(user):
+            owner_id = result.get("labels", {}).get("druppie.user_id")
+            if not owner_id or owner_id != user.get("sub"):
                 raise HTTPException(
                     status_code=403,
                     detail="Not authorized to inspect this deployment",
@@ -591,26 +540,6 @@ async def list_volumes(
         return VolumeListResponse(items=[], count=0)
 
 
-async def _owned_project_ids(mcp_http: MCPHttp, user_id: str) -> set[str]:
-    """Return set of druppie.project_id values the user owns any container in."""
-    try:
-        result = await mcp_http.call(
-            server="docker",
-            tool="list_containers",
-            args={"all": True, "user_id": user_id},
-            timeout_seconds=15.0,
-        )
-        if not result.get("success"):
-            return set()
-        return {
-            c["labels"].get("druppie.project_id")
-            for c in result.get("containers", [])
-            if c.get("labels", {}).get("druppie.project_id")
-        }
-    except MCPHttpError:
-        return set()
-
-
 # =============================================================================
 # PROJECT WIPE (containers + volumes)
 # =============================================================================
@@ -640,11 +569,13 @@ async def wipe_project(
             timeout_seconds=15.0,
         )
     except MCPHttpError as e:
-        raise HTTPException(status_code=502, detail=f"Docker MCP unreachable: {e}")
+        logger.error("wipe_project_mcp_unreachable", project_id=project_id, error=str(e))
+        raise HTTPException(status_code=502, detail="Docker MCP unreachable")
 
     containers = list_result.get("containers", []) if list_result.get("success") else []
 
-    # Ownership check: non-admin must own every container
+    # Ownership check: fail closed — non-admin must own every container, and
+    # any container missing druppie.user_id counts as not-owned.
     user_roles = get_user_roles(user)
     if "admin" not in user_roles:
         user_id = user.get("sub")
@@ -652,8 +583,7 @@ async def wipe_project(
             raise NotFoundError("project", project_id)
         foreign = [
             c for c in containers
-            if c.get("labels", {}).get("druppie.user_id")
-            and c["labels"]["druppie.user_id"] != user_id
+            if c.get("labels", {}).get("druppie.user_id") != user_id
         ]
         if foreign:
             raise HTTPException(

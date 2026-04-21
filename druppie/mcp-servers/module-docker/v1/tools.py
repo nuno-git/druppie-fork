@@ -280,6 +280,60 @@ def check_and_remove_existing_container(container_name: str) -> dict | None:
         return {"removed": False, "error": str(e)}
 
 
+def parse_container_line(line: str) -> dict | None:
+    """Parse a single `docker ps` tab-delimited line into a container dict.
+
+    Factored out for unit-testing without a live Docker daemon.
+    Returns None when the line is empty or malformed.
+    """
+    if not line:
+        return None
+    parts = line.split("\t")
+    if len(parts) < 4:
+        return None
+
+    labels_str = parts[5] if len(parts) > 5 else ""
+    labels: dict[str, str] = {}
+    if labels_str:
+        for label in labels_str.split(","):
+            if "=" in label:
+                k, v = label.split("=", 1)
+                if k.startswith("druppie."):
+                    labels[k] = v
+
+    status_str = parts[3]
+    if "(healthy)" in status_str:
+        health = "healthy"
+    elif "(unhealthy)" in status_str:
+        health = "unhealthy"
+    elif "(health: starting)" in status_str:
+        health = "starting"
+    else:
+        health = "none"
+
+    if status_str.startswith("Up"):
+        state = "running"
+    elif status_str.startswith("Restarting"):
+        state = "restarting"
+    elif status_str.startswith("Paused"):
+        state = "paused"
+    elif status_str.startswith("Created"):
+        state = "created"
+    else:
+        state = "exited"
+
+    return {
+        "id": parts[0],
+        "name": parts[1],
+        "image": parts[2],
+        "status": status_str,
+        "state": state,
+        "health": health,
+        "ports": parts[4] if len(parts) > 4 else "",
+        "labels": labels,
+    }
+
+
 def _discover_container_port(compose_file: Path) -> int:
     """Parse the app service's container port from docker-compose.yaml.
 
@@ -1027,49 +1081,9 @@ async def list_containers(
 
         containers = []
         for line in result.stdout.strip().split("\n"):
-            if line:
-                parts = line.split("\t")
-                if len(parts) >= 4:
-                    labels_str = parts[5] if len(parts) > 5 else ""
-                    labels = {}
-                    if labels_str:
-                        for label in labels_str.split(","):
-                            if "=" in label:
-                                k, v = label.split("=", 1)
-                                if k.startswith("druppie."):
-                                    labels[k] = v
-
-                    status_str = parts[3]
-                    # docker ps embeds healthcheck state in the status column,
-                    # e.g. "Up 3 minutes (healthy)" — extract it so callers don't reparse.
-                    health = "none"
-                    if "(healthy)" in status_str:
-                        health = "healthy"
-                    elif "(unhealthy)" in status_str:
-                        health = "unhealthy"
-                    elif "(health: starting)" in status_str:
-                        health = "starting"
-
-                    state = "exited"
-                    if status_str.startswith("Up"):
-                        state = "running"
-                    elif status_str.startswith("Restarting"):
-                        state = "restarting"
-                    elif status_str.startswith("Paused"):
-                        state = "paused"
-                    elif status_str.startswith("Created"):
-                        state = "created"
-
-                    containers.append({
-                        "id": parts[0],
-                        "name": parts[1],
-                        "image": parts[2],
-                        "status": status_str,
-                        "state": state,
-                        "health": health,
-                        "ports": parts[4] if len(parts) > 4 else "",
-                        "labels": labels,
-                    })
+            parsed = parse_container_line(line)
+            if parsed is not None:
+                containers.append(parsed)
 
         return {"success": True, "containers": containers, "count": len(containers)}
 
@@ -1222,6 +1236,9 @@ async def restart(container_name: str, timeout: int = 10) -> dict:
         err = _validate_name(container_name, "container_name")
         if err:
             return {"success": False, "error": err}
+
+        # Clamp so a caller can't pin the MCP worker on a runaway timeout.
+        timeout = max(1, min(timeout, 300))
 
         result = subprocess.run(
             ["docker", "restart", "-t", str(timeout), container_name],
