@@ -1,0 +1,172 @@
+## Seeded session: TD written by the Architect, approval gate PENDING.
+##
+## Starting point for manually testing the architect-role approval flow
+## end-to-end. When this test finishes, the session is paused with a
+## pending `coding:make_design` approval for `docs/technical-design.md`
+## that requires the `architect` role to resolve.
+##
+## To test:
+##   1. Run this test from the evaluations page → green.
+##   2. Log in (or switch) to a user with the `architect` role
+##      (e.g. username `architect`, password `Architect123!`).
+##   3. Go to /tasks — you should see a pending approval for
+##      docs/technical-design.md on a session named "recipe-sharing-app".
+##   4. Click "View file" to inspect the TD (verifies chat link rendering
+##      from the Tasks page works — see manual test #5 in the PR).
+##   5. Approve or reject to exercise the full architect-role approval
+##      flow. After approval, resume the session to let the architect
+##      commit, push and call done().
+##
+## Extends setup-project-with-fd (project + FD already committed), then
+## has the planner plan the architect and has the architect go through
+## its intake (FD read + principles skill mocked) before calling
+## make_design — at which point the approval gate fires and stays open.
+
+tool-test:
+  name: architect-td-approval-pending
+  description: "Architect wrote TD — paused on architect-role approval gate, ready for manual approval"
+  tags: [seed, paused, architect, approval-gate, platform-standards]
+  extends: setup-project-with-fd
+  session_status: paused
+
+  chain:
+    # --- Planner re-evaluates after BA → plans architect ---
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: architect
+            prompt: "Review the functional design and create the technical design"
+          - agent_id: planner
+            prompt: "Re-evaluate after architect completes"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: BA approved design, planned architect to review FD and create technical design"
+
+    # --- Architect intake (mocked so we stay deterministic) ---
+    - agent: architect
+      tool: coding:read_file
+      mock: true
+      mock_result: |
+        # Functioneel Ontwerp: Recipe Sharing App
+
+        > Platform standards applied: [docs/platform-functional-standards.md](./platform-functional-standards.md) rev `2026-04-20`.
+
+        ## 1. Huidige vs Gewenste Situatie
+        Gebruikers willen recepten delen en beoordelen binnen een
+        vrienden- en familiekring. Er is geen bestaande oplossing.
+
+        ## 2. Functionele Vereisten
+        - FR-01: Gebruiker kan een recept aanmaken met titel, ingrediënten,
+          bereidingswijze en foto
+        - FR-02: Gebruiker kan recepten van anderen bekijken
+        - FR-03: Gebruiker kan recepten beoordelen (1-5 sterren)
+        - FR-04: Gebruiker kan commentaar geven op recepten
+        - FR-05: Gebruiker kan recepten zoeken op ingrediënt of naam
+        - FR-06: Gebruiker kan favoriete recepten opslaan
+
+        ## 14. Platform standard deviations
+
+        | Standard | Deviation | Rationale |
+        |----------|-----------|-----------|
+        | (none)   |           |           |
+      arguments:
+        path: docs/functional-design.md
+
+    - agent: architect
+      tool: builtin:invoke_skill
+      mock: true
+      mock_result: "Architecture principles loaded successfully"
+      arguments:
+        skill_name: architecture-principles
+
+    # --- Architect writes the TD — approval gate PENDING ---
+    # The architect-role approval must be resolved manually through the
+    # UI by a user with the `architect` role. After approval the session
+    # can be resumed to let the architect git commit + push + done.
+    - agent: architect
+      tool: coding:make_design
+      approval:
+        status: pending
+      arguments:
+        path: docs/technical-design.md
+        content: |
+          # Technisch Ontwerp: Recipe Sharing App
+
+          > Platform standards: conforms to [docs/platform-technical-standards.md](./platform-technical-standards.md) rev `2026-04-20`.
+
+          ## Introductie
+
+          ### Onderwerp
+          Een platform voor het delen en beoordelen van recepten binnen
+          een vrienden- en familiekring.
+
+          ### Probleemomschrijving
+          Er is geen bestaande oplossing voor thuiskoks om recepten te
+          delen en te beoordelen in een besloten omgeving.
+
+          ### Functionele Vraag
+          Hoe kunnen gebruikers recepten delen, bekijken en beoordelen
+          binnen een veilige en gebruiksvriendelijke applicatie?
+
+          ## Oplossing
+
+          ### Toegepaste Principes (per NORA-laag)
+          * **Informatie:** Receptdata centraal opgeslagen in Postgres
+          * **Applicatie:** Projectspecifieke receptmodule op het template
+          * **Security & Privacy:** Persoonsgegevens in comments — PbD²
+
+          ### Requirements
+          | ID | Source | Requirement | Verification Method |
+          |----|--------|-------------|---------------------|
+          | FR-01 | BA | Recept aanmaken met titel, ingrediënten, bereidingswijze en foto | Functional test |
+          | FR-02 | BA | Recepten bekijken | Functional test |
+          | FR-03 | BA | Recept beoordelen (1-5 sterren) | Functional test |
+          | FR-04 | BA | Commentaar plaatsen | Functional test |
+          | FR-05 | BA | Zoeken op ingrediënt of naam | Functional test |
+          | FR-06 | BA | Favorieten opslaan | Functional test |
+          | TR-01 | AR | Maximaal één beoordeling per gebruiker per recept | Functional test |
+          | TR-02 | AR | Foto-upload ≤ 5 MB, JPEG/PNG/WebP | Validation test |
+
+          ### Architectuuroplossing
+
+          #### 1. Componentstructuur
+          * New Components: Recept-, Beoordeling-, Comment-service op het template
+          * Reuse: Chat-UI, session-framework en Druppie auth uit het template
+
+          #### 2. Data Architecture & Integration
+          * Data Model: `recipes`, `ratings`, `comments`, `favorites` tabellen
+          * API: `/recipes`, `/recipes/{id}/ratings`, `/recipes/{id}/comments`
+
+          ### Platform standard deviations
+
+          | Section | Deviation | Rationale |
+          |---------|-----------|-----------|
+          | (none)  |           |           |
+
+          ### Visualisatie
+          ```mermaid
+          flowchart TD
+            U["Thuiskok"] --> FE["React Frontend"]
+            FE --> API["FastAPI Backend"]
+            API --> DB["Postgres"]
+          ```
+
+    # No more steps — the chain ends with the architect paused on the
+    # pending approval. After a human resolves the approval through the
+    # UI and resumes the session, the architect will git add/commit/push
+    # and call done() against the approved TD content.
+
+  verify:
+    # The FD from the parent setup is still there
+    - gitea_repo_exists: true
+    - file_exists: docs/functional-design.md
+    # The TD has NOT been written yet — the approval gate is pending, so
+    # the make_design tool call has not produced output. This asserts
+    # that the approval really is unresolved (if it had been approved,
+    # docs/technical-design.md would already exist in Gitea).
+    # If the verifier gains a file_not_exists check later, we can be
+    # more explicit. For now we rely on the positive fd check and the
+    # manual UI verification described above.

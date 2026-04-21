@@ -72,14 +72,14 @@ architect → tester(GENERATION) → builder → tester(VALIDATION)
 ### 1. Builder Planner Agent (`agents/definitions/builder_planner.yaml`)
 
 Creates detailed implementation plans before test generation begins:
-- Reads functional_design.md and technical_design.md
+- Reads docs/functional-design.md and docs/technical-design.md
 - Writes builder_plan.md with code standards, test framework, test strategy, solution strategy, and change approach
 - Guides downstream test_builder and builder agents
 
 ### 2. Test Builder Agent (`agents/definitions/test_builder.yaml`)
 
 Generates tests before any implementation exists:
-- Reads functional_design.md and technical_design.md
+- Reads docs/functional-design.md and docs/technical-design.md
 - Detects or sets up test framework
 - Writes comprehensive test files covering all requirements
 - Does NOT run tests (Red Phase — tests are expected to fail)
