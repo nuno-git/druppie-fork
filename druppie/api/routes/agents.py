@@ -259,67 +259,28 @@ async def validate_custom_agent(
     return {"valid": len(warnings) == 0, "warnings": warnings}
 
 
-@router.post("/agents/custom/{agent_id}/deploy")
-async def deploy_custom_agent(
+@router.post("/agents/custom/{agent_id}/deploy-script")
+async def generate_deploy_script(
     agent_id: str,
     service: CustomAgentService = Depends(get_custom_agent_service),
-    db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
-    """Deploy a custom agent to Azure AI Foundry."""
-    from druppie.services.foundry_service import FoundryService, FoundryNotConfiguredError
+    """Generate a PowerShell script to deploy a custom agent to Azure AI Foundry.
+
+    The user runs this script manually — it handles Azure login and deployment.
+    """
+    from druppie.services.foundry_service import generate_powershell_deploy_script
     from druppie.core.config import get_settings
 
     settings = get_settings()
-
-    # Check if user has a stored Azure token from device code flow
-    azure_token = None
-    user_id = user.get("sub")
-    if user_id:
-        from druppie.db.models.user import UserToken
-        token_record = db.query(UserToken).filter_by(user_id=user_id, service="azure").first()
-        if token_record:
-            azure_token = token_record.access_token
-
-    foundry = FoundryService(
-        endpoint=settings.foundry_project_endpoint,
-        api_key=settings.foundry_api_key or None,
-        azure_token=azure_token,
-    )
-
-    if not foundry.is_configured():
-        raise HTTPException(
-            status_code=503,
-            detail="Azure AI Foundry is not configured. Set FOUNDRY_PROJECT_ENDPOINT in .env.",
-        )
-
     detail = service.get_custom_agent(agent_id)
 
-    try:
-        result = foundry.deploy_agent(detail)
+    script = generate_powershell_deploy_script(
+        agent_detail=detail,
+        endpoint=settings.llm.foundry_project_endpoint or "",
+    )
 
-        # Update deployment status in DB
-        from druppie.repositories import CustomAgentRepository
-        repo = CustomAgentRepository(db)
-        agent = repo.get_by_agent_id(agent_id)
-        if agent:
-            from datetime import datetime, timezone
-            agent.deployment_status = "deployed"
-            agent.deployed_at = datetime.now(timezone.utc)
-            db.commit()
-
-        return result
-    except FoundryNotConfiguredError as e:
-        raise HTTPException(status_code=503, detail=str(e))
-    except Exception as e:
-        # Update status to failed
-        from druppie.repositories import CustomAgentRepository
-        repo = CustomAgentRepository(db)
-        agent = repo.get_by_agent_id(agent_id)
-        if agent:
-            agent.deployment_status = "failed"
-            db.commit()
-        raise HTTPException(status_code=500, detail=f"Deployment failed: {str(e)}")
+    return {"script": script, "filename": f"deploy-{agent_id}.ps1"}
 
 
 # =============================================================================

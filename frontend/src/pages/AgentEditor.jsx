@@ -14,13 +14,14 @@ import {
   Trash2,
   Bot,
   Rocket,
+  Download,
 } from 'lucide-react'
 import {
   getCustomAgent,
   createCustomAgent,
   updateCustomAgent,
   getAgentMetadata,
-  deployCustomAgent,
+  getDeployScript,
 } from '../services/api'
 
 const SectionCard = ({ title, children }) => (
@@ -612,21 +613,28 @@ const AgentEditor = () => {
 }
 
 const DeployButton = ({ agentId }) => {
-  const [deploying, setDeploying] = useState(false)
-  const [result, setResult] = useState(null)
+  const [generating, setGenerating] = useState(false)
   const [error, setError] = useState(null)
 
-  const handleDeploy = async () => {
-    setDeploying(true)
+  const handleDownloadScript = async () => {
+    setGenerating(true)
     setError(null)
-    setResult(null)
     try {
-      const data = await deployCustomAgent(agentId)
-      setResult(data)
+      const data = await getDeployScript(agentId)
+      // Download the script as a .ps1 file
+      const blob = new Blob([data.script], { type: 'text/plain' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = data.filename || `deploy-${agentId}.ps1`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
     } catch (err) {
-      setError(err.message || 'Deployment failed')
+      setError(err.message || 'Failed to generate script')
     } finally {
-      setDeploying(false)
+      setGenerating(false)
     }
   }
 
@@ -634,22 +642,17 @@ const DeployButton = ({ agentId }) => {
     <div className="ml-auto flex items-center gap-3">
       <button
         type="button"
-        onClick={handleDeploy}
-        disabled={deploying}
+        onClick={handleDownloadScript}
+        disabled={generating}
         className="inline-flex items-center gap-2 px-5 py-2.5 text-sm font-medium text-white bg-purple-600 rounded-lg hover:bg-purple-700 disabled:opacity-50 transition-colors"
       >
-        {deploying ? (
+        {generating ? (
           <Loader2 className="w-4 h-4 animate-spin" />
         ) : (
-          <Rocket className="w-4 h-4" />
+          <Download className="w-4 h-4" />
         )}
-        Deploy to Foundry
+        Download Deploy Script
       </button>
-      {result && (
-        <span className="text-sm text-green-600">
-          Deployed v{result.version || '1'}
-        </span>
-      )}
       {error && (
         <span className="text-sm text-red-600">{error}</span>
       )}

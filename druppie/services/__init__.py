@@ -21,7 +21,7 @@ from .skill_service import SkillService
 from .revert_service import RevertService
 from .custom_agent_service import CustomAgentService
 from .github_app_service import GitHubAppService, get_github_app_service
-from .foundry_service import FoundryService, FoundryNotConfiguredError
+from .foundry_service import generate_powershell_deploy_script
 
 __all__ = [
     "CustomAgentService",
@@ -35,6 +35,5 @@ __all__ = [
     "RevertService",
     "GitHubAppService",
     "get_github_app_service",
-    "FoundryService",
-    "FoundryNotConfiguredError",
+    "generate_powershell_deploy_script",
 ]

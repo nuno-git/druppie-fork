@@ -241,7 +241,8 @@ BUILTIN_TOOL_DEFS: dict[str, dict] = {
             "description": (
                 "Create a Foundry agent definition. Use this when the user wants to create "
                 "an AI agent for deployment to Azure AI Foundry. The agent will be stored in "
-                "the database and can be deployed to Foundry from the Agents page."
+                "the database. The user can then download a PowerShell deployment script from the Agents page "
+                "and run it manually to deploy the agent to Foundry."
             ),
             "parameters": {
                 "type": "object",
@@ -1214,7 +1215,7 @@ async def create_foundry_agent(
             "agent_id": agent_id,
             "name": name,
             "description": description,
-            "message": f"Agent '{name}' created successfully. It can be deployed to Azure AI Foundry from the Agents page.",
+            "message": f"Agent '{name}' created successfully. A PowerShell deployment script can be downloaded from the Agents page to deploy it to Azure AI Foundry.",
         }
     except Exception as e:
         logger.error("foundry_agent_creation_failed", error=str(e), agent_id=agent_id)

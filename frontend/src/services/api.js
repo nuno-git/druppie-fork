@@ -293,10 +293,7 @@ export const getPackageProjects = (manager, name) =>
 export const getProjectDependencies = (projectId) =>
   request(`/api/projects/${projectId}/dependencies`)
 
-// ============ Azure Auth ============
-export const startAzureDeviceCode = () => request('/api/auth/azure/device-code', { method: 'POST' })
-export const getAzureAuthStatus = () => request('/api/auth/azure/status')
-export const disconnectAzure = () => request('/api/auth/azure/disconnect', { method: 'POST' })
+// ============ Azure AI Foundry ============
 
 // ============ Custom Agents ============
 export const getCustomAgents = () => request('/api/agents/custom')
@@ -309,5 +306,5 @@ export const deleteCustomAgent = (agentId) =>
   request(`/api/agents/custom/${agentId}`, { method: 'DELETE' })
 export const getCustomAgentYaml = (agentId) => request(`/api/agents/custom/${agentId}/yaml`)
 export const getAgentMetadata = () => request('/api/agents/metadata')
-export const deployCustomAgent = (agentId) =>
-  request(`/api/agents/custom/${agentId}/deploy`, { method: 'POST' })
+export const getDeployScript = (agentId) =>
+  request(`/api/agents/custom/${agentId}/deploy-script`, { method: 'POST' })
