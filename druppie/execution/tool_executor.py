@@ -793,7 +793,9 @@ class ToolExecutor:
 
         # For ask_expert, validate that the requested expert_role is allowed
         # by the agent's YAML. Without this gate, an LLM could route any
-        # question to any role.
+        # question to any role. An agent with no `experts:` declared cannot
+        # use these tools at all — we fail loudly rather than silently
+        # allowing every role.
         expert_role = None
         if is_expert_tool:
             expert_role = (args.get("expert_role") or "").strip()
@@ -811,12 +813,26 @@ class ToolExecutor:
                 return ToolCallStatus.FAILED
 
             agent_definition = self._get_agent_definition(tool_call.agent_run_id)
-            allowed = agent_definition.allowed_expert_roles if agent_definition else []
+            allowed = agent_definition.experts if agent_definition else []
+            if not allowed:
+                error = (
+                    f"Agent '{agent_definition.id if agent_definition else '?'}' "
+                    f"has no 'experts:' declared in its YAML, so ask_expert "
+                    f"tools are disabled for this agent. Add an `experts:` "
+                    f"list to the agent definition to enable them."
+                )
+                self.execution_repo.update_tool_call(
+                    tool_call.id,
+                    status=ToolCallStatus.FAILED,
+                    error=error,
+                )
+                self.db.commit()
+                return ToolCallStatus.FAILED
             if expert_role not in allowed:
                 error = (
                     f"Agent '{agent_definition.id if agent_definition else '?'}' is "
                     f"not allowed to ask experts with role '{expert_role}'. "
-                    f"Allowed expert roles: {allowed}."
+                    f"Allowed experts: {allowed}."
                 )
                 self.execution_repo.update_tool_call(
                     tool_call.id,

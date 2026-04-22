@@ -202,6 +202,12 @@ class AgentLoop:
         # Add invoke_skill tool if agent has skills defined
         if self.definition.skills:
             builtin_tool_names = builtin_tool_names + ["invoke_skill"]
+        # Auto-enable ask_expert tools only when `experts:` is declared in
+        # the agent YAML. No experts → tools are not offered to the LLM.
+        if self.definition.experts:
+            for name in ("ask_expert_question", "ask_expert_multiple_choice_question"):
+                if name not in builtin_tool_names:
+                    builtin_tool_names.append(name)
         tools = registry.get_tools_for_agent(
             agent_mcps=self.definition.mcps,
             builtin_tool_names=builtin_tool_names,

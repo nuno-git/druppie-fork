@@ -107,11 +107,22 @@ class AgentDefinition(BaseModel):
     allowed_next_agents: list[str] = Field(default_factory=list)
 
     # Keycloak roles this agent may target with the ask_expert tool family.
-    # When the agent calls ask_expert_question(expert_role=X), X must be in
-    # this list — otherwise the call is rejected. Empty (default) means the
-    # ask_expert tools are unusable for this agent even if listed in
-    # extra_builtin_tools.
-    allowed_expert_roles: list[str] = Field(default_factory=list)
+    #
+    # YAML:
+    #     experts:
+    #       - architect
+    #
+    # When `experts` is present and non-empty:
+    #   - ask_expert_question and ask_expert_multiple_choice_question are
+    #     automatically added to the agent's tool list (no need to list
+    #     them in extra_builtin_tools).
+    #   - Only the listed Keycloak roles are valid expert_role values.
+    #
+    # When `experts` is missing or empty:
+    #   - The ask_expert tools are NOT exposed to the LLM at all.
+    #   - Any ask_expert call that somehow arrives is rejected with a
+    #     clear error — there is no implicit "allow all roles" fallback.
+    experts: list[str] = Field(default_factory=list)
 
     # Completion preconditions: rules that must be satisfied before done() succeeds
     # If done()'s summary matches a rule's summary_contains, the required tools

@@ -759,17 +759,13 @@ mcps:
 
 extra_builtin_tools:
   - execute_coding_task
-  # ask_expert tools route questions to a specific Keycloak role pool
-  # instead of the session owner. The architect agent can pull a human
-  # architect into the conversation when an architectural judgement
-  # call is needed (e.g. trade-offs, principle interpretation). The
-  # session owner cannot answer these — only users with the role can.
-  - ask_expert_question
-  - ask_expert_multiple_choice_question
 
-# Keycloak roles the architect agent is allowed to ask via ask_expert.
-# Limited to "architect" — the human counterpart to this agent.
-allowed_expert_roles:
+# Experts this agent can pull into a session via the ask_expert tool family.
+# Declaring `experts:` automatically enables ask_expert_question and
+# ask_expert_multiple_choice_question and restricts the expert_role arg to
+# the listed Keycloak roles. Omitting this block (or leaving it empty)
+# disables the ask_expert tools entirely — they are not offered to the LLM.
+experts:
   - architect
 
 # Restrict sandbox usage to exploration only — the architect must use
