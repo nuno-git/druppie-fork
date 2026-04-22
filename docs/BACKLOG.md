@@ -42,6 +42,9 @@ Last updated: 2026-03-24
 - Update Core Flow — End-to-End Improvements
 - ~~Update Core — Technical Basis~~ ✅ DONE
 - ~~Update Core — Architect Signal & Dual-Repo Sandbox~~ ✅ DONE
+- Foundry — Agent Sharing & Access Model
+- Foundry — Full Deploy Approval Workflow
+- Foundry — Version History UI
 - Dependency Cache — Remote/Distributed Caching
 - Dependency Cache — Pre-Populated Common Packages
 - Dependency Cache — Automated Periodic Vulnerability Scanning
@@ -361,3 +364,26 @@ Last updated: 2026-03-24
 - **Current state:** Only `code_interpreter`, `file_search`, and `bing_grounding` are mapped to Azure SDK classes in `FoundryService._build_foundry_tools()`. Other tools (`browser_automation`, `deep_research`, `bing_custom_search`, `azure_ai_search`, `microsoft_fabric`) are stored in the DB but skipped during deployment because the SDK doesn't have classes for them yet.
 - **Desired improvement:** As the `azure-ai-projects` SDK adds new tool classes, map them in `_build_foundry_tools()` so they get deployed.
 - **Priority:** Low — monitor SDK releases and add mappings as they become available.
+
+### Foundry — Agent Sharing & Access Model
+
+- **Current state:** Custom agents have an owner (creator). Only the owner can edit/delete. Admin/developer can see all agents. There is no way to share an agent with another user or team, transfer ownership, or grant access to a deployed Foundry agent.
+- **Desired improvement:** Implement a sharing model:
+  - Team ownership — agents belong to a team, not just a user
+  - Access grants — grant specific users or roles access to view/edit an agent
+  - Ownership transfer — allow transferring ownership to another user
+  - Consumer access — define how end-users discover and invoke deployed Foundry agents (Druppie chat tab, Azure portal, Copilot integration)
+  - Role separation: creator (edits definition) vs deployer (pushes to Azure) vs consumer (uses the deployed agent)
+- **Priority:** Medium — blocks team adoption of Foundry agents.
+
+### Foundry — Full Deploy Approval Workflow
+
+- **Current state:** Deploy/undeploy is role-gated (developer/admin only). There is no approval queue — authorized users deploy directly.
+- **Desired improvement:** Introduce a `deploy_foundry_agent` approval type using the existing approval infrastructure. Non-deployer roles can request deployment; developers/admins approve from an approval queue. The approval payload should show the diff vs the currently deployed spec.
+- **Priority:** Low — current role-gating is sufficient for small teams.
+
+### Foundry — Version History UI
+
+- **Current state:** `deployed_version` is persisted on deploy but there is no UI to view deployment history or roll back to a previous version.
+- **Desired improvement:** Show deployment history (version, timestamp, who deployed, spec hash) on the agent detail page. Allow redeploying a previous version.
+- **Priority:** Low — nice-to-have for auditability.

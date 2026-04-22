@@ -1039,6 +1039,32 @@ Tools requiring portal connections (e.g. `bing_grounding`) will fail deployment 
 
 For Docker deployments, create a service principal in Azure Portal (App registrations → New → Client Secret) and set the three env vars in `.env`.
 
+#### Drift detection
+
+When an agent is deployed, Druppie persists:
+- `deployed_spec_hash` — SHA-256 of `model + instructions + sorted(foundry_tools)`, the fields actually sent to Foundry
+- `deployed_version` — version string returned by `client.agents.create_version()`
+- `deployed_at` — timestamp of the deployment
+
+If the agent is edited after deployment (`updated_at > deployed_at`), the UI shows an amber "Edits pending" badge instead of green "Deployed". Redeploying clears the drift.
+
+#### Access control
+
+- **Deploy/undeploy** requires `developer` or `admin` Keycloak role (enforced via `require_any_role` dependency)
+- **Agent list** is role-filtered: admin/developer see all custom agents, other roles see only their own (`list_custom_agents_for_user`)
+- **Create/edit/delete** is owner-gated (any authenticated user can create; only the owner can edit or delete)
+
+#### Naming: Druppie runtime tools vs Foundry tools
+
+Two distinct tool categories exist for custom agents:
+
+| Category | DB table | API field | Runs where |
+|----------|----------|-----------|------------|
+| Druppie runtime tools | `custom_agent_builtin_tools` | `druppie_runtime_tools` | Inside Druppie agent loop (`ToolExecutor`) |
+| Foundry tools | `custom_agent_foundry_tools` | `foundry_tools` | Inside Azure AI Foundry runtime |
+
+The Agent Editor UI labels these as "Druppie Runtime Tools (internal orchestration)" and "Azure Foundry Tools (sent to Azure on deploy)" to avoid confusion.
+
 ---
 
 ## 9. Configuration

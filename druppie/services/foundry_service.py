@@ -1,15 +1,23 @@
 """Azure AI Foundry deployment service."""
 
+import hashlib
 import structlog
 from datetime import datetime, timezone
 
 logger = structlog.get_logger()
 
-# LLM profile -> Foundry model mapping
+# LLM profile -> Foundry model mapping.
+# Uses FOUNDRY_MODEL env var so the deployment name matches what's
+# actually provisioned in the Azure OpenAI resource.
+def _default_foundry_model() -> str:
+    import os
+    return os.environ.get("FOUNDRY_MODEL", "gpt-4.1-mini")
+
+
 PROFILE_MODEL_MAP = {
-    "standard": "gpt-4.1-mini",
-    "cheap": "gpt-4.1-mini",
-    "ollama": "gpt-4.1-mini",
+    "standard": _default_foundry_model(),
+    "cheap": _default_foundry_model(),
+    "ollama": _default_foundry_model(),
 }
 
 
@@ -58,6 +66,16 @@ class FoundryService:
             raise FoundryNotConfiguredError(
                 "azure-ai-projects package not installed. Run: pip install azure-ai-projects azure-identity"
             )
+
+    @staticmethod
+    def compute_spec_hash(agent_detail) -> str:
+        """Compute a SHA-256 hash of the fields sent to Foundry.
+
+        Used to detect drift between the local definition and the deployed version.
+        """
+        model = PROFILE_MODEL_MAP.get(agent_detail.llm_profile, "gpt-4.1-mini")
+        payload = f"{model}\n{agent_detail.system_prompt}\n{sorted(agent_detail.foundry_tools)}"
+        return hashlib.sha256(payload.encode()).hexdigest()
 
     def check_connection(self) -> dict:
         """Check if Foundry credentials are available and valid."""
@@ -199,6 +217,87 @@ class FoundryService:
             else:
                 logger.warning("foundry_unknown_tool_type", tool_type=tool_type)
         return tools
+
+    def validate_for_foundry(self, agent_detail) -> dict:
+        """Validate an agent definition is deployable to Foundry.
+
+        Returns:
+            Dict with 'valid' (bool), 'errors' (list), 'warnings' (list).
+            Errors are blocking — deployment will fail.
+            Warnings are informational — deployment may work but with caveats.
+        """
+        errors = []
+        warnings = []
+
+        # 1. Check agent_id is valid for Foundry (alphanumeric + hyphens, max 64 chars)
+        if not agent_detail.agent_id:
+            errors.append("agent_id is required")
+        elif len(agent_detail.agent_id) > 64:
+            errors.append(f"agent_id is too long ({len(agent_detail.agent_id)} chars, max 64)")
+
+        # 2. Check system_prompt (instructions) is present and non-trivial
+        prompt = (agent_detail.system_prompt or "").strip()
+        if not prompt:
+            errors.append("system_prompt (instructions) is required — Foundry agents need instructions to operate")
+        elif len(prompt) < 20:
+            warnings.append("system_prompt is very short — consider adding more detailed instructions")
+
+        # 3. Check model mapping exists
+        model = PROFILE_MODEL_MAP.get(agent_detail.llm_profile)
+        if not model:
+            warnings.append(
+                f"LLM profile '{agent_detail.llm_profile}' has no Foundry model mapping — "
+                f"will default to gpt-4.1-mini"
+            )
+
+        # 4. Validate foundry_tools
+        deployable_tools = {"code_interpreter", "file_search"}
+        portal_tools = {"bing_grounding"}
+        coming_soon_tools = {"browser_automation", "deep_research"}
+
+        for tool in (agent_detail.foundry_tools or []):
+            if tool in coming_soon_tools:
+                errors.append(
+                    f"Tool '{tool}' is not yet available in the Foundry SDK — "
+                    f"remove it before deploying"
+                )
+            elif tool in portal_tools:
+                warnings.append(
+                    f"Tool '{tool}' requires a connection configured in the Foundry portal — "
+                    f"deployment will succeed but the tool may fail at runtime without portal setup"
+                )
+            elif tool not in deployable_tools:
+                errors.append(f"Unknown Foundry tool: '{tool}'")
+
+        # 5. Check name is present
+        if not (agent_detail.name or "").strip():
+            errors.append("name is required")
+
+        # 6. Warn about Druppie-specific fields that won't transfer to Foundry
+        if agent_detail.mcps and (
+            (isinstance(agent_detail.mcps, list) and len(agent_detail.mcps) > 0) or
+            (isinstance(agent_detail.mcps, dict) and len(agent_detail.mcps) > 0)
+        ):
+            warnings.append(
+                "MCP tools are Druppie-specific and will NOT be available in the Foundry deployment — "
+                "only Foundry-native tools are deployed"
+            )
+        if agent_detail.skills:
+            warnings.append(
+                "Skills are Druppie-specific and will NOT be available in the Foundry deployment"
+            )
+        if agent_detail.druppie_runtime_tools:
+            warnings.append(
+                "Druppie runtime tools are platform-specific and will NOT be available in the Foundry deployment"
+            )
+
+        return {
+            "valid": len(errors) == 0,
+            "errors": errors,
+            "warnings": warnings,
+            "foundry_model": model or "gpt-4.1-mini",
+            "deployable_tools": [t for t in (agent_detail.foundry_tools or []) if t in deployable_tools | portal_tools],
+        }
 
     def is_configured(self) -> bool:
         """Check if Foundry is configured."""

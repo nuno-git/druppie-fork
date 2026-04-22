@@ -155,11 +155,25 @@ The session intent stays `create_project` throughout — there is no separate `c
 - Temperature is NOT supported by Foundry's `PromptAgentDefinition` — the API rejects it
 - Agents are stored in the database and can be refined/deployed via the Agents page UI
 
-**Deployment to Foundry:**
+**Deployment lifecycle:**
+
+| State | Badge | Meaning |
+|-------|-------|---------|
+| Not deployed | Gray | Agent exists in Druppie only |
+| Deployed | Green | Agent is live in Azure Foundry |
+| Edits pending | Amber | Agent was edited after last deploy — Foundry is running a stale version |
+| Failed | Red | Last deploy attempt failed |
+
+- Only users with `developer` or `admin` role can deploy/undeploy
+- Other users can create and edit agents but cannot push to Foundry
+- Admin/developer users see all custom agents; other users see only their own
+- A `deployed_spec_hash` (SHA-256 of model + instructions + tools) is persisted on each deploy to detect drift
+- `deployed_version` from Foundry is stored for traceability
+
+**Deployment details:**
 - Clicking "Deploy to Foundry" on the Agents page calls `FoundryService.deploy_agent()`
 - Foundry receives ONLY: model (mapped from llm_profile), instructions (system prompt), and tools
-- Tool SDK support: `code_interpreter`, `file_search`, `bing_grounding` are deployed; `browser_automation`, `deep_research`, etc. are stored in DB but not yet sent (SDK lacks classes)
-- `bing_grounding` requires a Bing connection configured in the Azure AI Foundry portal
+- Tool SDK support: `code_interpreter`, `file_search` are deployed; `browser_automation`, `deep_research`, etc. are stored in DB but not yet sent (SDK lacks classes)
 - Authentication uses `DefaultAzureCredential` (NOT API key — `AIProjectClient` requires `TokenCredential`)
 - For Docker: set `AZURE_CLIENT_ID` + `AZURE_CLIENT_SECRET` + `AZURE_TENANT_ID` (service principal)
 - For local dev: `az login` or `azd auth login` works

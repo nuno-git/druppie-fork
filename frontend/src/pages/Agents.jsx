@@ -23,7 +23,8 @@ import {
   X,
   Copy,
 } from 'lucide-react'
-import { getAgents, getCustomAgents, deleteCustomAgent, getCustomAgentYaml, deployCustomAgent, undeployCustomAgent } from '../services/api'
+import { getAgents, getCustomAgents, deleteCustomAgent, getCustomAgentYaml, validateForFoundry, deployCustomAgent, undeployCustomAgent } from '../services/api'
+import { hasAnyRole } from '../services/keycloak'
 import PageHeader from '../components/shared/PageHeader'
 
 const CATEGORY_COLORS = {
@@ -109,8 +110,9 @@ const BuiltinAgentRow = ({ agent }) => {
 }
 
 // Custom agent card with deploy toggle, YAML edit, download, delete
-const CustomAgentCard = ({ agent, onEdit, onDelete, onDownloadYaml, onToggleDeploy, onViewYaml, isDeleting, isDeploying }) => {
+const CustomAgentCard = ({ agent, onEdit, onDelete, onDownloadYaml, onToggleDeploy, onViewYaml, isDeleting, isDeploying, canDeploy }) => {
   const isDeployed = agent.deployment_status === 'deployed'
+  const isDirty = agent.is_dirty
 
   return (
     <div
@@ -122,21 +124,35 @@ const CustomAgentCard = ({ agent, onEdit, onDelete, onDownloadYaml, onToggleDepl
           <div className="flex items-center gap-2">
             <span className="font-medium text-gray-900 text-sm">{agent.name}</span>
             <CategoryBadge category={agent.category} />
-            <button
-              onClick={(e) => { e.stopPropagation(); onToggleDeploy(agent.agent_id, isDeployed) }}
-              disabled={isDeploying}
-              className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full transition-colors ${
-                isDeploying ? 'bg-yellow-100 text-yellow-700' :
-                isDeployed
-                  ? 'bg-green-100 text-green-700 hover:bg-red-100 hover:text-red-700'
-                  : 'bg-gray-100 text-gray-400 hover:bg-purple-100 hover:text-purple-700'
-              }`}
-              title={isDeploying ? 'Processing...' : isDeployed ? 'Click to undeploy from Foundry' : 'Click to deploy to Foundry'}
-            >
-              {isDeploying ? <Loader2 className="w-3 h-3 animate-spin" /> :
-               isDeployed ? <Rocket className="w-3 h-3" /> : <XCircle className="w-3 h-3" />}
-              {isDeploying ? 'Processing...' : isDeployed ? 'Deployed' : 'Not deployed'}
-            </button>
+            {canDeploy ? (
+              <button
+                onClick={(e) => { e.stopPropagation(); onToggleDeploy(agent.agent_id, isDeployed) }}
+                disabled={isDeploying}
+                className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full transition-colors ${
+                  isDeploying ? 'bg-yellow-100 text-yellow-700' :
+                  isDirty
+                    ? 'bg-amber-100 text-amber-700 hover:bg-amber-200'
+                    : isDeployed
+                      ? 'bg-green-100 text-green-700 hover:bg-red-100 hover:text-red-700'
+                      : 'bg-gray-100 text-gray-400 hover:bg-purple-100 hover:text-purple-700'
+                }`}
+                title={isDeploying ? 'Processing...' : isDirty ? 'Edits pending — click to redeploy' : isDeployed ? 'Click to undeploy from Foundry' : 'Click to deploy to Foundry'}
+              >
+                {isDeploying ? <Loader2 className="w-3 h-3 animate-spin" /> :
+                 isDeployed ? <Rocket className="w-3 h-3" /> : <XCircle className="w-3 h-3" />}
+                {isDeploying ? 'Processing...' : isDirty ? 'Edits pending' : isDeployed ? 'Deployed' : 'Not deployed'}
+              </button>
+            ) : (
+              <span
+                className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full ${
+                  isDirty ? 'bg-amber-100 text-amber-700' :
+                  isDeployed ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-400'
+                }`}
+              >
+                {isDeployed ? <Rocket className="w-3 h-3" /> : <XCircle className="w-3 h-3" />}
+                {isDirty ? 'Edits pending' : isDeployed ? 'Deployed' : 'Not deployed'}
+              </span>
+            )}
             {agent.deployment_status === 'failed' && (
               <span className="inline-flex items-center gap-1 text-xs text-red-500">
                 <AlertCircle className="w-3 h-3" />
@@ -261,6 +277,7 @@ const Agents = () => {
   const [deletingId, setDeletingId] = useState(null)
   const [deployingId, setDeployingId] = useState(null)
   const [yamlEditorId, setYamlEditorId] = useState(null)
+  const canDeploy = hasAnyRole('developer', 'admin')
 
   const {
     data: builtinAgents = [],
@@ -323,9 +340,23 @@ const Agents = () => {
       if (isCurrentlyDeployed) {
         await undeployCustomAgent(agentId)
       } else {
+        // Validate before deploying
+        const validation = await validateForFoundry(agentId)
+        if (!validation.valid) {
+          alert(`Cannot deploy: ${validation.errors.join('; ')}`)
+          return
+        }
+        if (validation.warnings?.length > 0) {
+          const proceed = window.confirm(
+            `Warnings:\n${validation.warnings.map(w => `• ${w}`).join('\n')}\n\nDeploy anyway?`
+          )
+          if (!proceed) return
+        }
         await deployCustomAgent(agentId)
       }
       queryClient.invalidateQueries({ queryKey: ['custom-agents'] })
+    } catch (err) {
+      alert(err.message || 'Deploy/undeploy failed')
     } finally {
       setDeployingId(null)
     }
@@ -458,6 +489,7 @@ const Agents = () => {
                 onViewYaml={(id) => setYamlEditorId(id)}
                 isDeleting={deletingId === agent.agent_id}
                 isDeploying={deployingId === agent.agent_id}
+                canDeploy={canDeploy}
               />
             ))}
           </div>

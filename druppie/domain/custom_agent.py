@@ -20,6 +20,7 @@ class CustomAgentSummary(BaseModel):
     llm_profile: str
     is_active: bool
     deployment_status: str | None
+    is_dirty: bool = False
     created_at: datetime
 
 
@@ -28,7 +29,7 @@ class CustomAgentDetail(CustomAgentSummary):
 
     system_prompt: str
     system_prompts: list[str]
-    extra_builtin_tools: list[str]
+    druppie_runtime_tools: list[str]
     mcps: list[str] | dict[str, list[str]]
     approval_overrides: dict[str, dict]  # tool_key -> {requires_approval, required_role}
     skills: list[str]
@@ -38,6 +39,8 @@ class CustomAgentDetail(CustomAgentSummary):
     max_iterations: int
     owner_id: UUID
     deployed_at: datetime | None
+    deployed_version: str | None = None
+    deployed_spec_hash: str | None = None
     updated_at: datetime
 
 
@@ -50,7 +53,7 @@ class CustomAgentCreate(BaseModel):
     category: str = "execution"
     system_prompt: str = ""
     system_prompts: list[str] = []
-    extra_builtin_tools: list[str] = []
+    druppie_runtime_tools: list[str] = []
     mcps: list[str] | dict[str, list[str]] = []
     approval_overrides: dict[str, dict] = {}
     skills: list[str] = []
@@ -79,7 +82,7 @@ class CustomAgentUpdate(BaseModel):
     category: str | None = None
     system_prompt: str | None = None
     system_prompts: list[str] | None = None
-    extra_builtin_tools: list[str] | None = None
+    druppie_runtime_tools: list[str] | None = None
     mcps: list[str] | dict[str, list[str]] | None = None
     approval_overrides: dict[str, dict] | None = None
     skills: list[str] | None = None

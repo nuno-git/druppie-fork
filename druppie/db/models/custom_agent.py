@@ -28,6 +28,8 @@ class CustomAgent(Base):
     is_active = Column(Boolean, default=True)
     deployment_status = Column(String(50), nullable=True)
     deployed_at = Column(DateTime(timezone=True), nullable=True)
+    deployed_version = Column(String(100), nullable=True)
+    deployed_spec_hash = Column(String(64), nullable=True)
     created_at = Column(DateTime(timezone=True), default=utcnow)
     updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 

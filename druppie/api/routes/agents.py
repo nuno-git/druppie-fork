@@ -14,7 +14,7 @@ import yaml
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
-from druppie.api.deps import get_current_user, get_custom_agent_service
+from druppie.api.deps import get_current_user, get_custom_agent_service, get_user_roles, require_any_role
 from druppie.domain.custom_agent import CustomAgentCreate, CustomAgentUpdate
 from druppie.services.custom_agent_service import CustomAgentService
 
@@ -166,8 +166,13 @@ async def list_custom_agents(
     service: CustomAgentService = Depends(get_custom_agent_service),
     user: dict = Depends(get_current_user),
 ):
-    """List all custom agents."""
-    agents = service.list_custom_agents()
+    """List custom agents visible to the current user.
+
+    Admin/developer roles see all agents. Others see only their own.
+    """
+    user_id = UUID(user["sub"])
+    roles = get_user_roles(user)
+    agents = service.list_custom_agents_for_user(user_id, roles)
     return {"agents": [a.model_dump() for a in agents], "total": len(agents)}
 
 
@@ -244,7 +249,7 @@ async def validate_custom_agent(
         category=detail.category,
         system_prompt=detail.system_prompt,
         system_prompts=detail.system_prompts,
-        extra_builtin_tools=detail.extra_builtin_tools,
+        druppie_runtime_tools=detail.druppie_runtime_tools,
         mcps=detail.mcps,
         approval_overrides=detail.approval_overrides,
         skills=detail.skills,
@@ -257,13 +262,30 @@ async def validate_custom_agent(
     return {"valid": len(warnings) == 0, "warnings": warnings}
 
 
+@router.post("/agents/custom/{agent_id}/validate-foundry")
+async def validate_for_foundry(
+    agent_id: str,
+    service: CustomAgentService = Depends(get_custom_agent_service),
+    user: dict = Depends(get_current_user),
+):
+    """Validate a custom agent definition is deployable to Azure AI Foundry.
+
+    Returns validation results with errors (blocking) and warnings (informational).
+    """
+    return service.validate_for_foundry(agent_id)
+
+
 @router.post("/agents/custom/{agent_id}/deploy")
 async def deploy_custom_agent(
     agent_id: str,
     service: CustomAgentService = Depends(get_custom_agent_service),
     user: dict = Depends(get_current_user),
+    _: bool = Depends(require_any_role(["developer", "admin"])),
 ):
-    """Deploy a custom agent to Azure AI Foundry."""
+    """Deploy a custom agent to Azure AI Foundry.
+
+    Requires developer or admin role.
+    """
     user_id = UUID(user["sub"])
     return service.deploy_custom_agent(agent_id, user_id)
 
@@ -273,8 +295,12 @@ async def undeploy_custom_agent(
     agent_id: str,
     service: CustomAgentService = Depends(get_custom_agent_service),
     user: dict = Depends(get_current_user),
+    _: bool = Depends(require_any_role(["developer", "admin"])),
 ):
-    """Remove a custom agent from Azure AI Foundry."""
+    """Remove a custom agent from Azure AI Foundry.
+
+    Requires developer or admin role.
+    """
     user_id = UUID(user["sub"])
     return service.undeploy_custom_agent(agent_id, user_id)
 

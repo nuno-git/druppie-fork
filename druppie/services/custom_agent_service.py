@@ -34,6 +34,19 @@ class CustomAgentService:
         agents = self.repo.list_all()
         return [self._to_summary(a) for a in agents]
 
+    def list_custom_agents_for_user(
+        self, user_id: UUID, user_roles: list[str],
+    ) -> list[CustomAgentSummary]:
+        """List custom agents visible to a user.
+
+        Admin/developer roles see all agents. Others see only their own.
+        """
+        if "admin" in user_roles or "developer" in user_roles:
+            agents = self.repo.list_all()
+        else:
+            agents = self.repo.list_by_owner(user_id)
+        return [self._to_summary(a) for a in agents]
+
     def get_custom_agent(self, agent_id: str) -> CustomAgentDetail:
         """Get a single custom agent by agent_id."""
         agent = self.repo.get_by_agent_id(agent_id)
@@ -98,7 +111,7 @@ class CustomAgentService:
             mcps=mcps if mcps else None,
             skills=data.skills or None,
             system_prompts_list=data.system_prompts or None,
-            builtin_tools=data.extra_builtin_tools or None,
+            builtin_tools=data.druppie_runtime_tools or None,
             approval_overrides=data.approval_overrides or None,
             foundry_tools=data.foundry_tools or None,
         )
@@ -161,8 +174,8 @@ class CustomAgentService:
             kwargs["skills"] = data.skills
         if data.system_prompts is not None:
             kwargs["system_prompts_list"] = data.system_prompts
-        if data.extra_builtin_tools is not None:
-            kwargs["builtin_tools"] = data.extra_builtin_tools
+        if data.druppie_runtime_tools is not None:
+            kwargs["builtin_tools"] = data.druppie_runtime_tools
         if data.approval_overrides is not None:
             kwargs["approval_overrides"] = data.approval_overrides
         if data.foundry_tools is not None:
@@ -187,6 +200,21 @@ class CustomAgentService:
         self.repo.commit()
 
         logger.info("custom_agent_deleted", agent_id=agent_id, by_user=str(user_id))
+
+    def validate_for_foundry(self, agent_id: str) -> dict:
+        """Validate a custom agent definition is deployable to Azure AI Foundry.
+
+        Returns dict with 'valid', 'errors', 'warnings', 'foundry_model', 'deployable_tools'.
+        """
+        from ..services.foundry_service import FoundryService
+
+        agent = self.repo.get_by_agent_id(agent_id)
+        if not agent:
+            raise NotFoundError("agent", agent_id)
+
+        detail = self._to_detail(agent)
+        foundry = FoundryService()  # Only need validation logic, no client needed
+        return foundry.validate_for_foundry(detail)
 
     def deploy_custom_agent(self, agent_id: str, user_id: UUID) -> dict:
         """Deploy a custom agent to Azure AI Foundry. Only the owner can deploy."""
@@ -213,11 +241,26 @@ class CustomAgentService:
             )
 
         detail = self._to_detail(agent)
+
+        # Pre-deploy validation — block if there are errors
+        validation = foundry.validate_for_foundry(detail)
+        if not validation["valid"]:
+            raise ValidationError(
+                "Agent definition is not valid for Foundry deployment: " +
+                "; ".join(validation["errors"]),
+                field="foundry",
+            )
+
         try:
             result = foundry.deploy_agent(detail)
             agent.deployment_status = "deployed"
             agent.deployed_at = datetime.now(timezone.utc)
+            agent.deployed_version = result.get("version")
+            agent.deployed_spec_hash = foundry.compute_spec_hash(detail)
             self.repo.commit()
+            # Include validation warnings in the response
+            if validation["warnings"]:
+                result["warnings"] = validation["warnings"]
             return result
         except FoundryNotConfiguredError as e:
             raise ValidationError(str(e), field="foundry")
@@ -261,6 +304,8 @@ class CustomAgentService:
 
         agent.deployment_status = None
         agent.deployed_at = None
+        agent.deployed_version = None
+        agent.deployed_spec_hash = None
         self.repo.commit()
 
         logger.info("custom_agent_undeployed", agent_id=agent_id, by_user=str(user_id))
@@ -302,7 +347,7 @@ class CustomAgentService:
                 warnings.append(f"Unknown skill: '{skill}'")
 
         # Check builtin tools
-        for tool in data.extra_builtin_tools:
+        for tool in data.druppie_runtime_tools:
             if tool not in BUILTIN_TOOL_DEFS:
                 warnings.append(f"Unknown builtin tool: '{tool}'")
 
@@ -344,8 +389,8 @@ class CustomAgentService:
         }
         if detail.system_prompts:
             data["system_prompts"] = detail.system_prompts
-        if detail.extra_builtin_tools:
-            data["extra_builtin_tools"] = detail.extra_builtin_tools
+        if detail.druppie_runtime_tools:
+            data["extra_builtin_tools"] = detail.druppie_runtime_tools
         if detail.mcps:
             data["mcps"] = detail.mcps
         if detail.approval_overrides:
@@ -422,13 +467,23 @@ class CustomAgentService:
             "mcps": mcps,
             "skills": skills,
             "system_prompts": system_prompts,
-            "builtin_tools": builtin_tools,
+            "druppie_runtime_tools": builtin_tools,
             "llm_profiles": llm_profiles,
             "categories": categories,
             "foundry_tools": foundry_tools,
         }
 
     # ── Helpers ──────────────────────────────────────────────
+
+    @staticmethod
+    def _is_dirty(agent: CustomAgent) -> bool:
+        """Check if a deployed agent has been edited since last deployment."""
+        return (
+            agent.deployment_status == "deployed"
+            and agent.deployed_at is not None
+            and agent.updated_at is not None
+            and agent.updated_at > agent.deployed_at
+        )
 
     @staticmethod
     def _to_summary(agent: CustomAgent) -> CustomAgentSummary:
@@ -442,6 +497,7 @@ class CustomAgentService:
             llm_profile=agent.llm_profile or "standard",
             is_active=agent.is_active if agent.is_active is not None else True,
             deployment_status=agent.deployment_status,
+            is_dirty=CustomAgentService._is_dirty(agent),
             created_at=agent.created_at,
         )
 
@@ -477,10 +533,11 @@ class CustomAgentService:
             llm_profile=agent.llm_profile or "standard",
             is_active=agent.is_active if agent.is_active is not None else True,
             deployment_status=agent.deployment_status,
+            is_dirty=CustomAgentService._is_dirty(agent),
             created_at=agent.created_at,
             system_prompt=agent.system_prompt or "",
             system_prompts=[sp.prompt_id for sp in agent.system_prompts],
-            extra_builtin_tools=[bt.tool_name for bt in agent.builtin_tools],
+            druppie_runtime_tools=[bt.tool_name for bt in agent.builtin_tools],
             mcps=mcps,
             approval_overrides=approval_overrides,
             skills=[s.skill_name for s in agent.skills],
@@ -490,5 +547,7 @@ class CustomAgentService:
             max_iterations=agent.max_iterations or 10,
             owner_id=agent.owner_id,
             deployed_at=agent.deployed_at,
+            deployed_version=agent.deployed_version,
+            deployed_spec_hash=agent.deployed_spec_hash,
             updated_at=agent.updated_at,
         )

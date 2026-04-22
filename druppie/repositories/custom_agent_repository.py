@@ -27,6 +27,15 @@ class CustomAgentRepository(BaseRepository):
             .all()
         )
 
+    def list_by_owner(self, owner_id: UUID) -> list[CustomAgent]:
+        """List custom agents owned by a specific user."""
+        return (
+            self.db.query(CustomAgent)
+            .filter(CustomAgent.owner_id == owner_id)
+            .order_by(CustomAgent.created_at.desc())
+            .all()
+        )
+
     def get_by_agent_id(self, agent_id: str) -> CustomAgent | None:
         """Get a custom agent by its agent_id."""
         return self.db.query(CustomAgent).filter_by(agent_id=agent_id).first()
