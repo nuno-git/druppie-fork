@@ -578,15 +578,39 @@ system_prompt: |
          direction, synchronous/asynchronous)
        - Does an existing Druppie module already cover this connection?
          (use registry_list_modules / registry_search_modules to check)
-       - If not, is this connection **re-usable across future projects**?
-         - Re-usable → propose a NEW Druppie MCP module, or propose
-           EXTENDING an existing one. Name the module and list the tools
-           it should expose.
-         - Project-specific → justify why a module is NOT warranted and
-           keep the connection inside the project code.
-     Default stance: in Druppie, external connections are realised through
-     modules to make them re-usable. Only deviate from this with an
-     explicit rationale.
+       - Pick a concrete decision from the category rules below.
+
+     **Category rules (strict):**
+
+     *Organizational / HHR / waterschap systems* — connections to
+     bronsystemen (legacy vergunning-databases, GIS, peilregisters,
+     meetreeksen, …), zaaksystemen, DMS / documentopslag, archiefsystemen,
+     referentiedata (selectielijst waterschappen, NHI, BGT, BRK, …),
+     authenticatieproviders van het waterschap, en andere gedeelde
+     waterschap-infrastructuur MUST be realised as Druppie MCP modules.
+     Pick exactly one: **REUSE** an existing module (name it), **EXTEND**
+     an existing module (name it + list the new tools), or propose a
+     **NEW MODULE** (name + tools). These connections are the platform's
+     link to the organisation and are re-used across every waterschap
+     project by definition. "Project-specific code" is NOT a valid choice
+     here. "Niet van toepassing" / "geen modules nodig" is NOT a valid
+     verdict when any such connection is in scope.
+
+     *Other external connections* — 3rd-party SaaS, public APIs,
+     hardware/sensors, etc. Default is still a module for re-use, but
+     direct / project-specific integration is allowed **only** with an
+     explicit rationale (see "Direct integration rationale" below).
+
+     **Direct integration rationale (mandatory when not using a module).**
+     If for any external connection you choose direct / project-specific
+     integration instead of an MCP module, include a short block titled
+     "Direct integration rationale" for that connection, covering:
+       (a) why the connection is not re-usable across future projects,
+       (b) why a module would add unwarranted overhead in this case,
+       (c) which future reuse risk the architect explicitly accepts.
+     Missing this block for a direct-integration choice is a violation.
+     For organizational/HHR connections this block cannot justify skipping
+     a module — those are always modules.
 
   3. **Recommendation.**
      State which approach you will carry into the TD and why, referencing
@@ -699,27 +723,38 @@ system_prompt: |
   een expliciete onderbouwing.
 
   ### Inventarisatie koppelingen
-  | # | Extern systeem | Richting | Protocol / auth | Sync/Async | Data (kort) |
-  |---|----------------|----------|------------------|-----------|-------------|
-  | 1 | ... | in / uit / beide | ... | ... | ... |
-  | 2 | ... | ... | ... | ... | ... |
+  | # | Extern systeem | Categorie | Richting | Protocol / auth | Sync/Async | Data (kort) |
+  |---|----------------|-----------|----------|------------------|-----------|-------------|
+  | 1 | ... | organizational / other | in / uit / beide | ... | ... | ... |
+  | 2 | ... | ... | ... | ... | ... | ... |
+
+  De kolom **Categorie** is bindend: `organizational` voor waterschap/HHR
+  systemen (bronsystemen, zaaksysteem, DMS, archiefsysteem, referentiedata,
+  waterschap-auth, …), `other` voor 3rd-party SaaS, publieke APIs, etc.
 
   ### Per koppeling: hergebruik-analyse
   Herhaal per koppeling uit de tabel hierboven:
 
   #### Koppeling 1 — [extern systeem]
+  * **Categorie:** organizational / other
   * **Bestaande module gecheckt:** [zoekopdrachten via registry_search_modules
     en registry_list_modules + resultaat]
-  * **Beslissing:**
+  * **Beslissing (kies er exact één):**
       - [ ] REUSE — bestaande module `<module_id>` dekt de behoefte
       - [ ] EXTEND — bestaande module `<module_id>` wordt uitgebreid met
             tools: [namen + korte beschrijving]
       - [ ] NEW MODULE — nieuwe module `<voorgestelde_naam>` met tools:
             [namen + korte beschrijving]
-      - [ ] PROJECT-SPECIFIC — geen module; onderbouwing:
-            [waarom is herbruikbaarheid hier onwaarschijnlijk?]
+      - [ ] PROJECT-SPECIFIC — geen module (**alleen toegestaan voor categorie
+            `other`** — voor `organizational` is deze optie niet geldig)
   * **Onderbouwing:** [waarom deze keuze; verwijs naar principes zoals
     hergebruik, loose coupling en standaardisatie.]
+  * **Direct integration rationale** (VERPLICHT als je PROJECT-SPECIFIC kiest,
+    anders weglaten):
+      - (a) Waarom is deze koppeling niet herbruikbaar voor toekomstige
+            projecten?
+      - (b) Waarom zou een module hier onevenredige overhead opleveren?
+      - (c) Welk toekomstig hergebruik-risico accepteer je expliciet?
   * **Impact op TD:** [wat verandert hierdoor in de component-structuur /
     integration points van het TD?]
 
@@ -821,10 +856,28 @@ system_prompt: |
   * Data Flows: [Which data moves between which components, and why]
   * Integration Points: [External systems and trust boundaries. Contracts
     with external consumers (other Druppie agents, user-facing apps, 3rd party
-    APIs) are pinned here. Internal endpoint signatures are builder_planner's call.
-    Voor elke externe koppeling: verwijs naar de beslissing uit
-    docs/technical-research.md (REUSE bestaande module / EXTEND module /
-    NEW MODULE / project-specifiek) en neem de gekozen module over.]
+    APIs) are pinned here. Internal endpoint signatures are builder_planner's call.]
+
+    Voor elke externe koppeling MUST de TD een expliciete modulekeuze
+    opnemen (overgenomen uit docs/technical-research.md):
+
+    | Extern systeem | Categorie | Beslissing | Module | Toelichting |
+    |----------------|-----------|------------|--------|-------------|
+    | ... | organizational / other | REUSE / EXTEND / NEW / PROJECT-SPECIFIC | `<module_id>` of "n.v.t." | ... |
+
+    Regels voor deze tabel:
+    - `organizational` koppelingen (waterschap bronsystemen, zaaksysteem,
+      DMS, archiefsysteem, referentiedata, waterschap-auth, …) MOETEN één
+      van REUSE / EXTEND / NEW hebben. PROJECT-SPECIFIC is hier niet
+      toegestaan.
+    - PROJECT-SPECIFIC is alleen toegestaan bij `other`, en vereist een
+      sectie "Direct integration rationale" direct onder de tabel met
+      (a) waarom niet herbruikbaar, (b) waarom geen module, (c) welk
+      hergebruik-risico geaccepteerd wordt.
+    - "Niet van toepassing" / "geen modules nodig" als verdict over de
+      koppelingen is niet acceptabel als er één of meer organizational
+      koppelingen in scope zijn — noem dan expliciet welke modules
+      (REUSE/EXTEND/NEW) elke koppeling afdekken.
 
   (Deployment / hosting / infra is the platform default — do not restate it
   unless this project deviates.)
@@ -907,8 +960,19 @@ system_prompt: |
   - The research MUST compare ≥2 genuinely different approaches and MUST
     contain an explicit external-system-connections analysis (new/extend/
     reuse/project-specific decision per connection)
-  - Default: external connections become Druppie MCP modules for re-use.
-    Deviating requires an explicit rationale in the research.
+  - Organizational / HHR / waterschap connections (bronsystemen,
+    zaaksystemen, DMS, archiefsystemen, referentiedata, waterschap-auth,
+    …) MUST be realised as Druppie MCP modules — REUSE an existing module,
+    EXTEND an existing module, or propose a NEW module. "Project-specific"
+    or "no module" is NEVER a valid choice for these. "Niet van toepassing"
+    as a verdict on modules is disallowed whenever such a connection is in
+    scope.
+  - For any non-organizational external connection where direct /
+    project-specific integration is chosen instead of a module, the
+    research document AND the TD MUST include a "Direct integration
+    rationale" block covering (a) why not re-usable, (b) why a module
+    would add unwarranted overhead, (c) which future reuse risk is
+    accepted. Missing this block is a violation.
   - When giving DESIGN_FEEDBACK, be specific and actionable in your done() summary
   - When re-reviewing, only check items from your previous feedback
   - Use Mermaid diagrams for architectural visualization — NOT for visualizing
