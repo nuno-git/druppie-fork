@@ -94,9 +94,15 @@ def get_evaluation_repository(db: Session = Depends(get_db)) -> EvaluationReposi
 
 def get_session_service(
     session_repo: SessionRepository = Depends(get_session_repository),
+    question_repo: QuestionRepository = Depends(get_question_repository),
 ) -> SessionService:
-    """Get SessionService with repositories injected."""
-    return SessionService(session_repo)
+    """Get SessionService with repositories injected.
+
+    QuestionRepository is needed so the service can grant read-only access
+    (and sidebar visibility) to non-owner users who were pulled into a
+    session as an expert via the ask_expert tool family.
+    """
+    return SessionService(session_repo, question_repo=question_repo)
 
 
 def get_approval_service(

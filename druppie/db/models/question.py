@@ -49,6 +49,12 @@ class Question(Base):
     status = Column(String(20), default="pending")  # pending, answered
     answer = Column(Text)  # Text answer or display string of selected choices
     answered_at = Column(DateTime(timezone=True))
+    answered_by = Column(UUID(as_uuid=True), ForeignKey("users.id"))
+
+    # Expert role for ask_expert tool calls.
+    # When set, this question is for users with this Keycloak role
+    # (instead of the session owner). NULL = regular HITL question.
+    expert_role = Column(String(50))
 
     # Agent state for resumption (messages, iteration, context)
     agent_state = Column(JSON)
@@ -81,6 +87,8 @@ class Question(Base):
             "status": self.status,
             "answer": self.answer,
             "answered_at": self.answered_at.isoformat() if self.answered_at else None,
+            "answered_by": str(self.answered_by) if self.answered_by else None,
+            "expert_role": self.expert_role,
             "agent_state": self.agent_state,
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }

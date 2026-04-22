@@ -68,16 +68,29 @@ class SessionRepository(BaseRepository):
         limit: int = 20,
         offset: int = 0,
         status: str | None = None,
+        extra_session_ids: list[UUID] | None = None,
     ) -> tuple[list[SessionSummary], int]:
         """List sessions for a user with pagination.
 
         If user_id is None, returns all sessions (admin view).
+        If extra_session_ids is given, those sessions are also included
+        (used to surface sessions where the current user is an expert).
         """
+        from sqlalchemy import or_
+
         query = self.db.query(SessionModel)
 
         # Filter by user if specified (None means admin viewing all)
         if user_id is not None:
-            query = query.filter_by(user_id=user_id)
+            if extra_session_ids:
+                query = query.filter(
+                    or_(
+                        SessionModel.user_id == user_id,
+                        SessionModel.id.in_(list(extra_session_ids)),
+                    )
+                )
+            else:
+                query = query.filter_by(user_id=user_id)
 
         if status:
             query = query.filter_by(status=status)
@@ -502,9 +515,14 @@ class SessionRepository(BaseRepository):
             if child_run_db:
                 child_run = self._build_agent_run_detail(child_run_db)
 
-        # Get question_id for HITL tools
+        # Get question_id for HITL and ask_expert tools (both use Question table)
         question_id = None
-        if tc.tool_name in ("hitl_ask_question", "hitl_ask_multiple_choice_question"):
+        if tc.tool_name in (
+            "hitl_ask_question",
+            "hitl_ask_multiple_choice_question",
+            "ask_expert_question",
+            "ask_expert_multiple_choice_question",
+        ):
             question = (
                 self.db.query(Question)
                 .filter_by(tool_call_id=tc.id)
