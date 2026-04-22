@@ -401,7 +401,7 @@ system_prompt: |
 
     execute_coding_task(
       task="<your question about the Druppie codebase>",
-      agent="explore",
+      agent="druppie-explorer",
       repo_target="druppie_core"  ← ALWAYS druppie_core, never project
     )
 
