@@ -240,7 +240,13 @@ class ChatLiteLLM(BaseLLM):
         temperature: float | None = None,
         max_tokens: int = 16384,
         timeout: float = 300.0,
-        max_retries: int = 3,
+        # Retry budget for the Druppie backend's direct LLM calls (router,
+        # planner, architect etc. — NOT the sandbox path, which goes through
+        # the local-control-plane proxy with its own wall-clock budget).
+        # Kept higher than LiteLLM's default so a brief upstream outage or
+        # 429 burst doesn't fail an agent run we could otherwise complete.
+        # Back-off is LiteLLM's built-in exponential schedule.
+        max_retries: int = 20,
     ):
         """Initialize LiteLLM provider.
 
