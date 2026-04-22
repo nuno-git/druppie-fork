@@ -289,6 +289,14 @@ class AgentLoop:
                         import yaml
                         frontmatter = yaml.safe_load(parts[1])
                         if frontmatter and isinstance(frontmatter, dict):
+                            # Hide subagents from the LLM — they can only be
+                            # invoked from inside a primary sandbox agent, not
+                            # selected directly via execute_coding_task. Without
+                            # this filter, the LLM sees `explore`/`analysis` as
+                            # valid choices and routinely picks them, which the
+                            # sandbox then fails on with a confusing error.
+                            if frontmatter.get("mode") == "subagent":
+                                continue
                             agents.append({
                                 "name": agent_file.stem,
                                 "description": frontmatter.get("description", ""),

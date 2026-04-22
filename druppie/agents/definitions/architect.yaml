@@ -1070,7 +1070,7 @@ experts:
 # with a builder agent to write and push files directly.
 sandbox_constraints:
   allowed_agents:
-    - explore
+    - druppie-explorer
   allowed_repo_targets:
     - druppie_core
 
