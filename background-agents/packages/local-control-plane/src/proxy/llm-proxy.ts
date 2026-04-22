@@ -44,11 +44,28 @@ const SAME_PROVIDER_RETRY_BUDGET_MS = parseInt(
   process.env.LLM_RETRY_BUDGET_MS || String(24 * 60 * 60 * 1000), // 24h
   10
 );
-const SAME_PROVIDER_DELAYS_MS = [10_000, 30_000, 120_000, 300_000];
+
+/** Parse a CSV of millisecond values (e.g. "100,200,500") into a number array,
+ *  or return null if the env var is unset / malformed. Used by the retry
+ *  integration tests to shrink back-offs below 10s; prod defaults stand. */
+function parseDelaysMs(raw: string | undefined): number[] | null {
+  if (!raw) return null;
+  const parts = raw.split(",").map((s) => parseInt(s.trim(), 10));
+  if (parts.some((n) => !Number.isFinite(n) || n < 0)) return null;
+  if (parts.length === 0) return null;
+  return parts;
+}
+const SAME_PROVIDER_DELAYS_MS: number[] = parseDelaysMs(process.env.LLM_RETRY_DELAYS_MS) ?? [
+  10_000, 30_000, 120_000, 300_000,
+];
 
 /** Keep-alive SSE comments sent to the client during back-off sleeps so its
- *  HTTP socket doesn't idle out while we're waiting on a flaky upstream. */
-const STREAM_KEEPALIVE_INTERVAL_MS = 15_000;
+ *  HTTP socket doesn't idle out while we're waiting on a flaky upstream.
+ *  Env-overridable for tests (via LLM_RETRY_KEEPALIVE_MS). */
+const STREAM_KEEPALIVE_INTERVAL_MS = parseInt(
+  process.env.LLM_RETRY_KEEPALIVE_MS || "15000",
+  10
+);
 
 function nextBackoffDelay(retryIdx: number): number {
   // retryIdx is 1-based (first retry = 1). Cap to the last entry when we
