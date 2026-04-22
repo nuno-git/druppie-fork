@@ -53,16 +53,32 @@ BUILTIN_TOOLS = {
     "set_intent",
     "hitl_ask_question",
     "hitl_ask_multiple_choice_question",
+    "ask_expert_question",
+    "ask_expert_multiple_choice_question",
     "create_message",
     "invoke_skill",
     "execute_coding_task",
     "test_report",
 }
 
-# HITL tools require user answer (create Question record)
+# HITL tools require user answer (create Question record).
+# ask_expert tools share the same pause/resume plumbing — the only
+# difference is who is allowed to answer (an expert role instead of the
+# session owner). They are stored in the same `questions` table.
 HITL_TOOLS = {
     "hitl_ask_question",
     "hitl_ask_multiple_choice_question",
+    "ask_expert_question",
+    "ask_expert_multiple_choice_question",
+}
+
+ASK_EXPERT_TOOLS = {
+    "ask_expert_question",
+    "ask_expert_multiple_choice_question",
+}
+
+ASK_EXPERT_CHOICE_TOOLS = {
+    "ask_expert_multiple_choice_question",
 }
 
 # Tools that can take significantly longer than the default 60s timeout.
@@ -748,26 +764,83 @@ class ToolExecutor:
         return ToolCallStatus.WAITING_APPROVAL
 
     async def _execute_hitl_tool(self, tool_call) -> str:
-        """Execute a HITL tool by creating a Question record.
+        """Execute a HITL or ask_expert tool by creating a Question record.
 
-        HITL (Human-in-the-Loop) tools pause execution to ask the user a question.
-        Creates a Question record via QuestionRepository.
+        Both tool families pause execution and create a Question record.
+        The difference is who can answer:
+        - HITL: session owner only (expert_role is NULL)
+        - ask_expert: any user with the agent-allowed expert_role
 
         Args:
             tool_call: The ToolCall model
 
         Returns:
-            ToolCallStatus.WAITING_ANSWER
+            ToolCallStatus.WAITING_ANSWER, or FAILED if expert_role is invalid
         """
         args = tool_call.arguments or {}
+        is_expert_tool = tool_call.tool_name in ASK_EXPERT_TOOLS
 
-        # Determine question type from tool name
-        if tool_call.tool_name == "hitl_ask_multiple_choice_question":
+        # Choices: both *_multiple_choice_* variants use the same shape
+        if tool_call.tool_name in (
+            "hitl_ask_multiple_choice_question",
+            "ask_expert_multiple_choice_question",
+        ):
             question_type = "choice"
             choices = [{"text": c} for c in args.get("choices", [])]
         else:
             question_type = "text"
             choices = None
+
+        # For ask_expert, validate that the requested expert_role is allowed
+        # by the agent's YAML. Without this gate, an LLM could route any
+        # question to any role. An agent with no `experts:` declared cannot
+        # use these tools at all — we fail loudly rather than silently
+        # allowing every role.
+        expert_role = None
+        if is_expert_tool:
+            expert_role = (args.get("expert_role") or "").strip()
+            if not expert_role:
+                error = (
+                    "ask_expert tools require an 'expert_role' argument naming "
+                    "the role of the expert pool to ask."
+                )
+                self.execution_repo.update_tool_call(
+                    tool_call.id,
+                    status=ToolCallStatus.FAILED,
+                    error=error,
+                )
+                self.db.commit()
+                return ToolCallStatus.FAILED
+
+            agent_definition = self._get_agent_definition(tool_call.agent_run_id)
+            allowed = agent_definition.experts if agent_definition else []
+            if not allowed:
+                error = (
+                    f"Agent '{agent_definition.id if agent_definition else '?'}' "
+                    f"has no 'experts:' declared in its YAML, so ask_expert "
+                    f"tools are disabled for this agent. Add an `experts:` "
+                    f"list to the agent definition to enable them."
+                )
+                self.execution_repo.update_tool_call(
+                    tool_call.id,
+                    status=ToolCallStatus.FAILED,
+                    error=error,
+                )
+                self.db.commit()
+                return ToolCallStatus.FAILED
+            if expert_role not in allowed:
+                error = (
+                    f"Agent '{agent_definition.id if agent_definition else '?'}' is "
+                    f"not allowed to ask experts with role '{expert_role}'. "
+                    f"Allowed experts: {allowed}."
+                )
+                self.execution_repo.update_tool_call(
+                    tool_call.id,
+                    status=ToolCallStatus.FAILED,
+                    error=error,
+                )
+                self.db.commit()
+                return ToolCallStatus.FAILED
 
         # Create question record via repository
         question = self.question_repo.create(
@@ -777,6 +850,7 @@ class ToolExecutor:
             question=args.get("question", ""),
             question_type=question_type,
             choices=choices,
+            expert_role=expert_role,
         )
 
         # Update tool call status to waiting
@@ -791,6 +865,7 @@ class ToolExecutor:
             question_id=str(question.id),
             tool_call_id=str(tool_call.id),
             question_type=question_type,
+            expert_role=expert_role,
         )
 
         return ToolCallStatus.WAITING_ANSWER

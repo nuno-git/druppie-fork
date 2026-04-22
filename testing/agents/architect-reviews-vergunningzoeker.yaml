@@ -24,6 +24,7 @@ agent-test:
 
   assert:
     - check: architect-produces-td
+    - check: architect-vergunningzoeker-integrations
 
   judge:
     context: [architect, build_classifier]

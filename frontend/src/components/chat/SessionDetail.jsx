@@ -245,7 +245,7 @@ const InlineApproval = ({ tc, sessionId, sessionUserId }) => {
 
 // --- Timeline HITL Question ---
 
-const TimelineQuestion = ({ tc, agentId, sessionId }) => {
+const TimelineQuestion = ({ tc, agentId, sessionId, isOwner, isAdmin, userRoles }) => {
   const queryClient = useQueryClient()
 
   const answerMut = useMutation({
@@ -254,6 +254,18 @@ const TimelineQuestion = ({ tc, agentId, sessionId }) => {
   })
 
   const isAnswered = tc.status === 'completed'
+  const isExpertTool = tc.tool_name === 'ask_expert_question' || tc.tool_name === 'ask_expert_multiple_choice_question'
+  const expertRole = isExpertTool ? tc.arguments?.expert_role : null
+
+  // Who is allowed to answer this question right here in the session view:
+  // - regular HITL: session owner or admin
+  // - ask_expert: any user with the expert_role, or admin
+  // The session owner does NOT get to answer expert questions (unless they
+  // hold the role themselves) — they have to wait for the expert.
+  const canAnswer = isAdmin
+    || (isExpertTool
+      ? !!expertRole && Array.isArray(userRoles) && userRoles.includes(expertRole)
+      : !!isOwner)
 
   const rawChoices = tc.arguments?.choices || tc.arguments?.options || []
   const choices = rawChoices
@@ -274,6 +286,7 @@ const TimelineQuestion = ({ tc, agentId, sessionId }) => {
   }
 
   const allowOther = tc.tool_name === 'hitl_ask_multiple_choice_question'
+    || tc.tool_name === 'ask_expert_multiple_choice_question'
 
   // If the LLM put the question text in context instead of question, promote it
   const hasQuestion = !!tc.arguments?.question
@@ -286,15 +299,33 @@ const TimelineQuestion = ({ tc, agentId, sessionId }) => {
     allowOther,
   }
 
+  // For non-answerers we render a stripped-down read-only view. We can't
+  // just pass `answered={true}` to HITLQuestionMessage because the
+  // question is in fact still pending — we just want the UI to not
+  // expose answer controls.
+  const showAsReadOnly = !canAnswer && !isAnswered
+
   return (
     <>
+      {isExpertTool && !isAnswered && (
+        <div className="ml-8 mb-1 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-purple-50 border border-purple-200 text-[11px] font-medium text-purple-700">
+          Expert question · {expertRole || 'unknown role'}
+        </div>
+      )}
       <HITLQuestionMessage
         question={questionData}
         onChoiceSelect={(answer) => answerMut.mutate({ questionId: tc.question_id, answer })}
         onSubmitChoices={({ indices, answerText }) => answerMut.mutate({ questionId: tc.question_id, answer: answerText, selectedChoices: indices })}
         isAnswering={answerMut.isPending}
-        answered={isAnswered}
+        answered={isAnswered || showAsReadOnly}
       />
+      {showAsReadOnly && (
+        <div className="ml-8 mt-1 text-xs text-gray-500 italic">
+          {isExpertTool
+            ? `Waiting for a user with the "${expertRole}" role to answer.`
+            : 'Only the session owner can answer this question.'}
+        </div>
+      )}
       {isAnswered && displayAnswer && (
         <div className="flex justify-end">
           <div className="max-w-[85%] rounded-2xl px-4 py-2.5 text-sm bg-gray-100 text-gray-900">
@@ -308,7 +339,7 @@ const TimelineQuestion = ({ tc, agentId, sessionId }) => {
 
 // --- Agent Run ---
 
-const AgentRunItem = ({ run, timelineIndex, sessionId, hasFollowingMessage, sessionUserId }) => {
+const AgentRunItem = ({ run, timelineIndex, sessionId, hasFollowingMessage, sessionUserId, isOwner, isAdmin, userRoles }) => {
   const orderedItems = extractOrderedItems(run, hasFollowingMessage)
 
   // Show agent trace for completed runs that have no following message
@@ -343,7 +374,14 @@ const AgentRunItem = ({ run, timelineIndex, sessionId, hasFollowingMessage, sess
         if (item.type === 'question') {
           return (
             <div key={i} className="mt-3">
-              <TimelineQuestion tc={item.tc} agentId={item.agentId} sessionId={sessionId} />
+              <TimelineQuestion
+                tc={item.tc}
+                agentId={item.agentId}
+                sessionId={sessionId}
+                isOwner={isOwner}
+                isAdmin={isAdmin}
+                userRoles={userRoles}
+              />
             </div>
           )
         }
@@ -622,6 +660,7 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
   const queryClient = useQueryClient()
   const { user } = useAuth()
   const canDebug = user?.roles?.some(r => r === 'developer' || r === 'admin')
+  const isAdmin = !!user?.roles?.includes('admin')
 
   const { data, isLoading, error } = useQuery({
     queryKey: ['session', sessionId],
@@ -799,6 +838,15 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
 
   if (!data) return null
 
+  // Ownership / control gating.
+  // - Owner: can answer their own HITL questions, send messages, stop, resume
+  // - Expert (non-owner with the right role): read-only here; they answer
+  //   expert questions on the /questions page (or inline when allowed).
+  //   They cannot send messages or stop/resume the session.
+  // - Admin: same as owner.
+  const isOwner = !!data?.user_id && data.user_id === user?.id
+  const canControlSession = isOwner || isAdmin
+
   const pendingQuestion = findPendingQuestion(data.timeline)
 
   const handleContinueSend = () => {
@@ -866,7 +914,7 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
               </span>
             )}
             {/* Continue button — when fully stopped, crashed, or failed */}
-            {['paused', 'paused_crashed', 'failed'].includes(data.status) && !isStopping && (
+            {canControlSession && ['paused', 'paused_crashed', 'failed'].includes(data.status) && !isStopping && (
               <button
                 onClick={() => resumeMutation.mutate()}
                 disabled={resumeMutation.isPending}
@@ -880,7 +928,7 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
                 Continue
               </button>
             )}
-            {data.status === 'active' && (
+            {canControlSession && data.status === 'active' && (
               <button
                 onClick={() => cancelMutation.mutate()}
                 disabled={cancelMutation.isPending}
@@ -893,6 +941,11 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
                 )}
                 Stop
               </button>
+            )}
+            {!canControlSession && (
+              <span className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium text-purple-700 bg-purple-50 border border-purple-200 rounded-lg">
+                Read-only · expert view
+              </span>
             )}
             {(cancelMutation.isError || resumeMutation.isError) && (
               <span className="text-xs text-red-600">
@@ -1054,6 +1107,9 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
                       sessionId={sessionId}
                       hasFollowingMessage={hasFollowingMessage}
                       sessionUserId={data?.user_id}
+                      isOwner={isOwner}
+                      isAdmin={isAdmin}
+                      userRoles={user?.roles || []}
                     />
                     {renderAnnotation(i)}
                   </div>
@@ -1135,8 +1191,10 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
         </div>
       )}
 
-      {/* Floating input bar — hidden in inspect mode and during sandbox */}
-      {data.status !== 'failed' && data.status !== 'paused_sandbox' && viewMode !== 'inspect' && (
+      {/* Floating input bar — hidden in inspect mode, during sandbox, and
+          for non-owner experts (they can only view the session here; they
+          answer their expert questions on the /questions page). */}
+      {canControlSession && data.status !== 'failed' && data.status !== 'paused_sandbox' && viewMode !== 'inspect' && (
         <div className="px-4 pb-4 pt-2 flex-shrink-0">
           <div className="max-w-3xl mx-auto">
             <div className="flex items-end gap-2 border border-gray-200 rounded-2xl shadow-lg px-4 py-3 bg-white focus-within:border-gray-300 focus-within:shadow-xl transition-shadow">

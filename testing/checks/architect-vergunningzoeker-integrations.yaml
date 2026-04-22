@@ -1,0 +1,42 @@
+## Check: architect's TD for the vergunningzoeker explicitly designs the two
+## critical external-system integrations — bronsystemen (ETL) and zaaksysteem
+## (migration) — and takes a position on how each connection is realised in
+## Druppie (reuse / extend / new module / project-specific).
+##
+## The vergunningzoeker stands or falls on these two integrations:
+##   1. Bronsystemen ETL — metadata is scattered across multiple legacy permit
+##      databases with different numbering schemes (K/L-nummer, post-2018
+##      location search). The TD must describe how that data is extracted,
+##      unified and indexed (FR-01..FR-06, A-02, O-01, O-02).
+##   2. Zaaksysteem migration — per-permit outbound migration of metadata +
+##      original documents to the zaaksysteem (FR-12, NFR-07, A-04, UJ-4).
+##
+## The third judge check aligns with the research-based architect: external
+## connections are re-usable by default in Druppie — the TD must explicitly
+## pick REUSE / EXTEND / NEW MODULE / project-specific per connection.
+
+check:
+  name: architect-vergunningzoeker-integrations
+  description: "Vergunningzoeker TD must explicitly design bronsystemen ETL + zaaksysteem migration and decide how each connection is realised in Druppie"
+  tags: [architect, vergunningzoeker, integrations, judge]
+
+  assert:
+    - agent: architect
+      completed: true
+    - agent: architect
+      tool: coding:make_design
+
+  judge:
+    context: architect
+    checks:
+      # 1. Bronsystemen — ETL pipeline
+      - "The technical-design.md must contain an explicit design for the bronsystemen ETL integration: how metadata is EXTRACTED from the multiple legacy permit databases (each with its own numbering scheme — K/L-nummer, post-2018 location search, etc.), TRANSFORMED/unified into a common data model covering the FD's metadata fields (aanvrager, vergunninghouder, uitgever, locatie, datums, vergunningnummer, toepasselijke wet, type werk, type oppervlaktewater, type waterkering), and LOADED into the search index that powers FR-01..FR-05. A vague 'ingest from source systems' sentence is NOT enough — the TD must describe the ETL shape (at minimum: per-source adapter, transform/unify step, index load), the reindexing cadence or trigger (O-01/O-02), and how the originating bronsysteem is preserved on each record so FR-06 works. Missing any of the three ETL stages, the reindex cadence, or bronsysteem-tracking is a FAIL."
+
+      # 2. Zaaksysteem — outbound migration interface
+      - "The technical-design.md must contain an explicit design for the zaaksysteem integration used to migrate a selected permit's metadata AND its original document(s) to the zaaksysteem (FR-12, User Journey 4). The TD must: (a) name the zaaksysteem as an integration point, (b) state the direction (outbound from vergunningzoeker to zaaksysteem), (c) specify that BOTH the metadata and the original PDF/scan are transferred, (d) describe the trigger (per-permit, user-initiated — NOT bulk), and (e) address data-integrity verification consistent with NFR-07 (metadata + documents must arrive complete and correct, with some form of confirmation/verification mechanism). Missing any of (a)–(e) is a FAIL."
+
+      # 3. Module decision per external connection (research-based architect)
+      - "Bronsystemen and zaaksysteem are ORGANIZATIONAL / HHR / waterschap integrations. The technical-design.md MUST realise each of them as a Druppie MCP module — one of REUSE an existing module (name it), EXTEND an existing module (name it + list the new tools), or NEW MODULE (name + tools). 'Project-specific code' and 'direct integration' are NOT valid choices for these two connections. Any of the following is an automatic FAIL: (a) a Module Samenvatting section stating 'Niet van toepassing' / 'geen modules voorgesteld' / 'geen nieuwe modules nodig' while bronsystemen and/or zaaksysteem are in scope; (b) an Integration Points section that lists these connections without pointing to a concrete module name or proposal; (c) a verdict that the project needs no modules at all. If the architect genuinely reuses existing modules for both, the TD must name those existing modules explicitly."
+
+      # 4. Direct-integration rationale (only accepted for non-organizational connections)
+      - "If the technical-design.md chooses direct / project-specific integration for ANY external connection instead of a Druppie MCP module, it MUST include a 'Direct integration rationale' block for that specific connection, covering (a) why the connection is not re-usable across future projects, (b) why a module would add unwarranted overhead, (c) which future reuse risk the architect accepts. Missing this block for a direct-integration choice is a FAIL. If the architect routes every external connection through a module (REUSE/EXTEND/NEW), mark this check as PASS (not applicable). Note: direct integration is NEVER a valid choice for bronsystemen or zaaksysteem — if the TD tries to justify direct integration for those, this check is an automatic FAIL regardless of how complete the rationale looks."
