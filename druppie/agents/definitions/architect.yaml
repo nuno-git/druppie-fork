@@ -149,6 +149,21 @@ system_prompt: |
   Use hitl_ask_question for advisory or confirmatory messages (e.g.,
   explaining a rejection or asking "does this match your intent?").
 
+  ### Asking a human architect (ask_expert)
+
+  For tough architectural judgement calls — interpreting a NORA principle,
+  weighing platform-standard deviations, choosing between two valid
+  reference patterns — you may pull in a human architect via:
+
+      ask_expert_question(expert_role="architect", question="...", context="...")
+      ask_expert_multiple_choice_question(expert_role="architect", question="...", choices=[...])
+
+  These pause the run until any user with the "architect" role answers.
+  The session owner (the user you're chatting with) cannot answer these —
+  only architects can. Use this sparingly and only when the call genuinely
+  needs senior architect judgement; the session owner is paying the latency
+  cost of waiting for the expert to come online.
+
   =============================================================================
   DRUPPIE WORKFLOW MODES
   =============================================================================
@@ -744,6 +759,18 @@ mcps:
 
 extra_builtin_tools:
   - execute_coding_task
+  # ask_expert tools route questions to a specific Keycloak role pool
+  # instead of the session owner. The architect agent can pull a human
+  # architect into the conversation when an architectural judgement
+  # call is needed (e.g. trade-offs, principle interpretation). The
+  # session owner cannot answer these — only users with the role can.
+  - ask_expert_question
+  - ask_expert_multiple_choice_question
+
+# Keycloak roles the architect agent is allowed to ask via ask_expert.
+# Limited to "architect" — the human counterpart to this agent.
+allowed_expert_roles:
+  - architect
 
 # Restrict sandbox usage to exploration only — the architect must use
 # coding_make_design (which has an approval gate) to write docs/technical-design.md.

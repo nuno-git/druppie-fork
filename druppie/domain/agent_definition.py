@@ -106,6 +106,13 @@ class AgentDefinition(BaseModel):
     # Empty list means no direct routing allowed (default — planner decides)
     allowed_next_agents: list[str] = Field(default_factory=list)
 
+    # Keycloak roles this agent may target with the ask_expert tool family.
+    # When the agent calls ask_expert_question(expert_role=X), X must be in
+    # this list — otherwise the call is rejected. Empty (default) means the
+    # ask_expert tools are unusable for this agent even if listed in
+    # extra_builtin_tools.
+    allowed_expert_roles: list[str] = Field(default_factory=list)
+
     # Completion preconditions: rules that must be satisfied before done() succeeds
     # If done()'s summary matches a rule's summary_contains, the required tools
     # must have been called (with status=completed) during this agent run.

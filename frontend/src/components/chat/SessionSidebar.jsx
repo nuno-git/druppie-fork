@@ -4,10 +4,11 @@
 
 import { useState, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Plus, Search, PanelLeftClose, Trash2 } from 'lucide-react'
+import { Plus, Search, PanelLeftClose, Trash2, Users } from 'lucide-react'
 import { getSessions, deleteSession } from '../../services/api'
 import { timeAgo, ACTIVE_STATUSES } from './ChatHelpers'
 import { SkeletonSidebarItem } from '../shared/Skeleton'
+import { useAuth } from '../../App'
 
 const groupSessionsByDate = (sessions) => {
   // Sort by most recent interaction first
@@ -41,6 +42,8 @@ const SessionSidebar = ({ activeSessionId, onSelectSession, onNewChat, onCollaps
   const [search, setSearch] = useState('')
   const [deletingId, setDeletingId] = useState(null)
   const queryClient = useQueryClient()
+  const { user } = useAuth()
+  const currentUsername = user?.username
   const { data, isLoading } = useQuery({
     queryKey: ['sessions'],
     queryFn: () => getSessions(1, 50),
@@ -132,12 +135,19 @@ const SessionSidebar = ({ activeSessionId, onSelectSession, onNewChat, onCollaps
               const isPaused = s.status === 'paused' || (s.status?.startsWith('paused_') && s.status !== 'paused_crashed') || s.status?.startsWith('waiting_')
               const isCrashed = s.status === 'paused_crashed'
               const isFailed = s.status === 'failed'
+              // A session belongs to "someone else" when its owner username
+              // exists and differs from the current user. Used to flag
+              // sessions the current user is only viewing as an expert.
+              const isOthersSession =
+                !!s.username && !!currentUsername && s.username !== currentUsername
               return (
                 <div
                   key={s.id}
                   className={`group relative w-full text-left px-4 py-2.5 hover:bg-gray-50 transition-colors cursor-pointer ${
                     activeSessionId === s.id
                       ? 'bg-blue-50 border-l-2 border-l-blue-600'
+                      : isOthersSession
+                      ? 'border-l-2 border-l-purple-300'
                       : 'border-l-2 border-l-transparent'
                   }`}
                   onClick={() => onSelectSession(s.id)}
@@ -156,13 +166,18 @@ const SessionSidebar = ({ activeSessionId, onSelectSession, onNewChat, onCollaps
                     </span>
                   </div>
                   <div className={`flex items-center gap-2 mt-0.5 ${isActive || isFailed || isCrashed ? 'ml-3.5' : ''}`}>
-                    {s.username && (
+                    {isOthersSession ? (
+                      <span className="text-xs font-medium truncate text-purple-600 flex items-center gap-1">
+                        <Users className="w-3 h-3" />
+                        started by {s.username}
+                      </span>
+                    ) : s.username ? (
                       <span className={`text-xs font-medium truncate ${
                         s.username.startsWith('t-') ? 'text-orange-500' : 'text-blue-400'
                       }`}>
                         {s.username}
                       </span>
-                    )}
+                    ) : null}
                     {s.project_name && (
                       <span className="text-xs text-gray-400 truncate">
                         {s.project_name}
@@ -172,18 +187,20 @@ const SessionSidebar = ({ activeSessionId, onSelectSession, onNewChat, onCollaps
                       {timeAgo(s.updated_at || s.created_at)}
                     </span>
                   </div>
-                  <button
-                    onClick={(e) => handleDelete(e, s)}
-                    disabled={deletingId === s.id}
-                    className="absolute top-2 right-2 p-1 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded opacity-0 group-hover:opacity-100 transition-all focus:opacity-100 focus:outline-none"
-                    aria-label={`Delete session ${s.title || 'Untitled'}`}
-                  >
-                    {deletingId === s.id ? (
-                      <div className="w-3.5 h-3.5 border-2 border-red-600 border-t-transparent rounded-full animate-spin" />
-                    ) : (
-                      <Trash2 className="w-3.5 h-3.5" />
-                    )}
-                  </button>
+                  {!isOthersSession && (
+                    <button
+                      onClick={(e) => handleDelete(e, s)}
+                      disabled={deletingId === s.id}
+                      className="absolute top-2 right-2 p-1 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded opacity-0 group-hover:opacity-100 transition-all focus:opacity-100 focus:outline-none"
+                      aria-label={`Delete session ${s.title || 'Untitled'}`}
+                    >
+                      {deletingId === s.id ? (
+                        <div className="w-3.5 h-3.5 border-2 border-red-600 border-t-transparent rounded-full animate-spin" />
+                      ) : (
+                        <Trash2 className="w-3.5 h-3.5" />
+                      )}
+                    </button>
+                  )}
                 </div>
               )
             })}
