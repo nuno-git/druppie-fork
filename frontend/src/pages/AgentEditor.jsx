@@ -24,6 +24,7 @@ import {
 import {
   getCustomAgent,
   createCustomAgent,
+  updateCustomAgent,
   getAgentMetadata,
   deployCustomAgent,
   validateForFoundry,
@@ -113,7 +114,17 @@ const AgentEditor = () => {
     onError: (err) => setErrors({ submit: err.message }),
   })
 
-  const isSaving = createMutation.isPending
+  const updateMutation = useMutation({
+    mutationFn: (data) => updateCustomAgent(agentId, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['custom-agents'] })
+      queryClient.invalidateQueries({ queryKey: ['custom-agent', agentId] })
+      navigate('/agents')
+    },
+    onError: (err) => setErrors({ submit: err.message }),
+  })
+
+  const isSaving = createMutation.isPending || updateMutation.isPending
 
   const validate = () => {
     const errs = {}
@@ -136,8 +147,8 @@ const AgentEditor = () => {
     }
     if (!payload.max_tokens) delete payload.max_tokens
     if (!payload.max_iterations) delete payload.max_iterations
-    if (isEdit) return // Update not supported for Foundry agents
-    createMutation.mutate(payload)
+    if (isEdit) updateMutation.mutate(payload)
+    else createMutation.mutate(payload)
   }
 
   const updateField = (field, value) => {
@@ -368,6 +379,14 @@ const AgentEditor = () => {
                           This tool is part of the agent design but requires a connection to be configured in the Azure Foundry portal.
                         </p>
                       </div>
+                      <button
+                        type="button"
+                        onClick={() => toggleArrayItem('foundry_tools', toolId)}
+                        className="p-1 text-gray-400 hover:text-red-500 rounded transition-colors"
+                        title="Remove tool"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
                     </div>
                   ))}
                   {foundryTools.length === 0 && orphanedTools.length === 0 && (
@@ -437,26 +456,24 @@ const AgentEditor = () => {
           </SectionCard>
         </div>
 
-        {/* Save bar — only shown for new agents (update not supported for Foundry agents) */}
-        {!isEdit && (
-          <div className="sticky bottom-0 bg-white/80 backdrop-blur-sm border-t border-gray-100 -mx-6 px-6 py-4 flex items-center gap-3">
-            <button
-              type="submit"
-              disabled={isSaving}
-              className="inline-flex items-center gap-2 px-5 py-2.5 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
-            >
-              {isSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-              Create Agent
-            </button>
-            <button
-              type="button"
-              onClick={() => navigate('/agents')}
-              className="px-5 py-2.5 text-sm font-medium text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
-            >
-              Cancel
-            </button>
-          </div>
-        )}
+        {/* Save bar */}
+        <div className="sticky bottom-0 bg-white/80 backdrop-blur-sm border-t border-gray-100 -mx-6 px-6 py-4 flex items-center gap-3">
+          <button
+            type="submit"
+            disabled={isSaving}
+            className="inline-flex items-center gap-2 px-5 py-2.5 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
+          >
+            {isSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+            {isEdit ? 'Update Agent' : 'Create Agent'}
+          </button>
+          <button
+            type="button"
+            onClick={() => navigate('/agents')}
+            className="px-5 py-2.5 text-sm font-medium text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
+          >
+            Cancel
+          </button>
+        </div>
       </form>
     </div>
   )
