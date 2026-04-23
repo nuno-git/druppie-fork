@@ -29,6 +29,7 @@ import {
   deployCustomAgent,
   validateForFoundry,
   getCustomAgentYaml,
+  updateCustomAgentYaml,
 } from '../services/api'
 
 const SectionCard = ({ title, subtitle, children }) => (
@@ -204,7 +205,7 @@ const AgentEditor = () => {
         </div>
         {isEdit && (
           <div className="flex items-center gap-2">
-            <YamlViewerButton agentId={agentId} />
+            <YamlEditorButton agentId={agentId} />
             <DeployButton agentId={agentId} />
           </div>
         )}
@@ -479,15 +480,20 @@ const AgentEditor = () => {
   )
 }
 
-const YamlViewerButton = ({ agentId }) => {
+const YamlEditorButton = ({ agentId }) => {
+  const navigate = useNavigate()
+  const queryClient = useQueryClient()
   const [open, setOpen] = useState(false)
   const [yaml, setYaml] = useState(null)
   const [loading, setLoading] = useState(false)
+  const [saving, setSaving] = useState(false)
   const [copied, setCopied] = useState(false)
+  const [error, setError] = useState(null)
 
   const handleOpen = async () => {
     setOpen(true)
     setLoading(true)
+    setError(null)
     try {
       const result = await getCustomAgentYaml(agentId)
       setYaml(result.yaml)
@@ -495,6 +501,23 @@ const YamlViewerButton = ({ agentId }) => {
       setYaml('# Failed to load YAML')
     } finally {
       setLoading(false)
+    }
+  }
+
+  const handleSave = async () => {
+    if (!yaml) return
+    setSaving(true)
+    setError(null)
+    try {
+      await updateCustomAgentYaml(agentId, yaml)
+      queryClient.invalidateQueries({ queryKey: ['custom-agents'] })
+      queryClient.invalidateQueries({ queryKey: ['custom-agent', agentId] })
+      setOpen(false)
+      navigate(0) // reload page to reflect changes
+    } catch (err) {
+      setError(err.message || 'Failed to save YAML')
+    } finally {
+      setSaving(false)
     }
   }
 
@@ -529,7 +552,7 @@ const YamlViewerButton = ({ agentId }) => {
 
       {open && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setOpen(false)}>
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-3xl max-h-[80vh] flex flex-col m-4" onClick={(e) => e.stopPropagation()}>
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-4xl max-h-[85vh] flex flex-col m-4" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between px-6 py-4 border-b">
               <h3 className="text-sm font-medium text-gray-900">{agentId}.yaml</h3>
               <div className="flex items-center gap-2">
@@ -550,8 +573,38 @@ const YamlViewerButton = ({ agentId }) => {
                   <Loader2 className="w-5 h-5 animate-spin text-gray-400" />
                 </div>
               ) : (
-                <pre className="text-sm font-mono text-gray-800 whitespace-pre-wrap">{yaml}</pre>
+                <textarea
+                  value={yaml || ''}
+                  onChange={(e) => setYaml(e.target.value)}
+                  className="w-full h-full min-h-[400px] px-4 py-3 text-sm font-mono text-gray-800 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-vertical"
+                  style={{ minHeight: '500px' }}
+                  spellCheck={false}
+                />
               )}
+            </div>
+            {error && (
+              <div className="px-6 pb-2">
+                <div className="flex items-start gap-2 text-sm text-red-700 bg-red-50 rounded-lg px-3 py-2">
+                  <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
+                  {error}
+                </div>
+              </div>
+            )}
+            <div className="flex items-center justify-end gap-3 px-6 py-4 border-t bg-gray-50 rounded-b-xl">
+              <button
+                onClick={() => setOpen(false)}
+                className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSave}
+                disabled={saving || loading}
+                className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
+              >
+                {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                Save YAML
+              </button>
             </div>
           </div>
         </div>

@@ -243,6 +243,47 @@ async def export_custom_agent_yaml(
     return {"agent_id": agent_id, "yaml": yaml_str}
 
 
+class YamlUpdateRequest(BaseModel):
+    yaml: str
+
+
+@router.put("/agents/custom/{agent_id}/yaml")
+async def update_custom_agent_yaml(
+    agent_id: str,
+    body: YamlUpdateRequest,
+    service: CustomAgentService = Depends(get_custom_agent_service),
+    user: dict = Depends(get_current_user),
+):
+    """Update a custom agent from raw YAML."""
+    user_id = UUID(user["sub"])
+    try:
+        data = yaml.safe_load(body.yaml)
+    except yaml.YAMLError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid YAML: {e}")
+
+    if not isinstance(data, dict):
+        raise HTTPException(status_code=400, detail="YAML must be a mapping")
+
+    update = CustomAgentUpdate(
+        name=data.get("name"),
+        description=data.get("description"),
+        category=data.get("category"),
+        system_prompt=data.get("system_prompt"),
+        llm_profile=data.get("llm_profile"),
+        temperature=data.get("temperature"),
+        max_tokens=data.get("max_tokens"),
+        max_iterations=data.get("max_iterations"),
+        mcps=data.get("mcps"),
+        skills=data.get("skills"),
+        system_prompts=data.get("system_prompts"),
+        druppie_runtime_tools=data.get("extra_builtin_tools"),
+        approval_overrides=data.get("approval_overrides"),
+        foundry_tools=data.get("foundry_tools"),
+    )
+    detail = service.update_custom_agent(agent_id, update, user_id)
+    return detail.model_dump()
+
+
 @router.post("/agents/custom/{agent_id}/validate")
 async def validate_custom_agent(
     agent_id: str,

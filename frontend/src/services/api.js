@@ -453,6 +453,8 @@ export const updateCustomAgent = (agentId, data) =>
 export const deleteCustomAgent = (agentId) =>
   request(`/api/agents/custom/${agentId}`, { method: 'DELETE' })
 export const getCustomAgentYaml = (agentId) => request(`/api/agents/custom/${agentId}/yaml`)
+export const updateCustomAgentYaml = (agentId, yamlStr) =>
+  request(`/api/agents/custom/${agentId}/yaml`, { method: 'PUT', body: JSON.stringify({ yaml: yamlStr }) })
 export const getAgentMetadata = () => request('/api/agents/metadata')
 export const validateForFoundry = (agentId) =>
   request(`/api/agents/custom/${agentId}/validate-foundry`, { method: 'POST' })
