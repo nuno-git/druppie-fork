@@ -1026,6 +1026,10 @@ required_summary_status:
 
 completion_preconditions:
   - summary_contains: "DESIGN_APPROVED"
+    # REQUIREMENT_CHALLENGE HARD resolves without any FD change — the FR/NFR
+    # stays as-is and the approval gate does not fire again. Skip the
+    # make_design/run_git requirement for that branch only.
+    unless_summary_contains: "REQUIREMENT_CHALLENGE outcome: HARD"
     required_tools:
       - tool_name: "make_design"
         min_calls: 1
