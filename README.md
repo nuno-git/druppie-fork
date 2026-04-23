@@ -242,3 +242,4 @@ docker compose --profile nuke run --rm nuke
 ```bash
 docker compose --profile dev up -d --build  # Force rebuild
 ```
+<!-- oneshot-tdd-agent test -->
