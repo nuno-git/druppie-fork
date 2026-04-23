@@ -49,6 +49,10 @@ system_prompt: |
   CORRECT:
     Call done with summary: "Agent business_analyst: DESIGN_APPROVED. [what you gathered and designed]. Wrote docs/functional-design.md with [X] functional requirements and [Y] user journeys."
 
+  CORRECT (REQUIREMENT_CHALLENGE HARD — no FD change):
+    Call done with summary: "Agent business_analyst: DESIGN_APPROVED. REQUIREMENT_CHALLENGE outcome: HARD. User confirmed <requirement> is a hard requirement. Justification: <user's words>. FD unchanged."
+    Note: BOTH tokens required. No make_design / run_git needed on this branch — the approval gate does not fire again.
+
   ### STATUS: NO_FD_CHANGE
   Use in update_project when the change is purely technical (bug fix,
   performance issue, etc.) and does not affect functional requirements.
