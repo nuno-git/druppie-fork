@@ -11,8 +11,6 @@ import {
   Save,
   Loader2,
   AlertCircle,
-  Plus,
-  Trash2,
   Bot,
   Rocket,
   FileCode,
@@ -26,7 +24,6 @@ import {
 import {
   getCustomAgent,
   createCustomAgent,
-  updateCustomAgent,
   getAgentMetadata,
   deployCustomAgent,
   validateForFoundry,
@@ -71,16 +68,10 @@ const AgentEditor = () => {
     description: '',
     category: 'execution',
     system_prompt: '',
-    system_prompt_fragments: [],
-    mcps: [],
-    mcp_tool_filters: {},
-    druppie_runtime_tools: [],
-    skills: [],
     foundry_tools: [],
     llm_profile: '',
     max_tokens: '',
     max_iterations: '',
-    approval_overrides: [],
   })
   const [errors, setErrors] = useState({})
   const [promptTab, setPromptTab] = useState('edit') // 'edit' | 'preview'
@@ -104,16 +95,10 @@ const AgentEditor = () => {
         description: existingAgent.description || '',
         category: existingAgent.category || 'execution',
         system_prompt: existingAgent.system_prompt || '',
-        system_prompt_fragments: existingAgent.system_prompt_fragments || [],
-        mcps: existingAgent.mcps || [],
-        mcp_tool_filters: existingAgent.mcp_tool_filters || {},
-        druppie_runtime_tools: existingAgent.druppie_runtime_tools || [],
-        skills: existingAgent.skills || [],
         foundry_tools: existingAgent.foundry_tools || [],
         llm_profile: existingAgent.llm_profile || '',
         max_tokens: existingAgent.max_tokens || '',
         max_iterations: existingAgent.max_iterations || '',
-        approval_overrides: existingAgent.approval_overrides || [],
       })
     }
   }, [existingAgent])
@@ -127,17 +112,7 @@ const AgentEditor = () => {
     onError: (err) => setErrors({ submit: err.message }),
   })
 
-  const updateMutation = useMutation({
-    mutationFn: (data) => updateCustomAgent(agentId, data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['custom-agents'] })
-      queryClient.invalidateQueries({ queryKey: ['custom-agent', agentId] })
-      navigate('/agents')
-    },
-    onError: (err) => setErrors({ submit: err.message }),
-  })
-
-  const isSaving = createMutation.isPending || updateMutation.isPending
+  const isSaving = createMutation.isPending
 
   const validate = () => {
     const errs = {}
@@ -157,12 +132,11 @@ const AgentEditor = () => {
       ...form,
       max_tokens: form.max_tokens ? parseInt(form.max_tokens, 10) : undefined,
       max_iterations: form.max_iterations ? parseInt(form.max_iterations, 10) : undefined,
-      approval_overrides: form.approval_overrides.filter((o) => o.tool_key.trim()),
     }
     if (!payload.max_tokens) delete payload.max_tokens
     if (!payload.max_iterations) delete payload.max_iterations
-    if (isEdit) updateMutation.mutate(payload)
-    else createMutation.mutate(payload)
+    if (isEdit) return // Update not supported for Foundry agents
+    createMutation.mutate(payload)
   }
 
   const updateField = (field, value) => {
@@ -179,45 +153,6 @@ const AgentEditor = () => {
     }))
   }
 
-  const toggleMcpTool = (mcpName, toolName) => {
-    setForm((prev) => {
-      const filters = { ...prev.mcp_tool_filters }
-      const current = filters[mcpName] || []
-      if (current.includes(toolName)) {
-        filters[mcpName] = current.filter((t) => t !== toolName)
-        if (filters[mcpName].length === 0) delete filters[mcpName]
-      } else {
-        filters[mcpName] = [...current, toolName]
-      }
-      return { ...prev, mcp_tool_filters: filters }
-    })
-  }
-
-  const addApprovalOverride = () => {
-    setForm((prev) => ({
-      ...prev,
-      approval_overrides: [
-        ...prev.approval_overrides,
-        { tool_key: '', requires_approval: true, required_role: '' },
-      ],
-    }))
-  }
-
-  const updateApprovalOverride = (index, field, value) => {
-    setForm((prev) => ({
-      ...prev,
-      approval_overrides: prev.approval_overrides.map((item, i) =>
-        i === index ? { ...item, [field]: value } : item
-      ),
-    }))
-  }
-
-  const removeApprovalOverride = (index) => {
-    setForm((prev) => ({
-      ...prev,
-      approval_overrides: prev.approval_overrides.filter((_, i) => i !== index),
-    }))
-  }
 
   if ((isEdit && agentLoading) || metaLoading) {
     return (
@@ -236,10 +171,6 @@ const AgentEditor = () => {
     )
   }
 
-  const metaSystemPrompts = metadata?.system_prompts || []
-  const metaMcps = metadata?.mcps || []
-  const metaBuiltinTools = metadata?.druppie_runtime_tools || []
-  const metaSkills = metadata?.skills || []
   const metaLlmProfiles = metadata?.llm_profiles || []
 
   return (
@@ -481,206 +412,26 @@ const AgentEditor = () => {
           </SectionCard>
         </div>
 
-        {/* Druppie-specific sections (MCP, builtin, skills, fragments) — collapsible */}
-        {metaSystemPrompts.length > 0 && (
-          <SectionCard title="System Prompt Fragments" subtitle="Reusable prompt fragments appended to the system prompt.">
-            <div className="flex flex-wrap gap-2">
-              {metaSystemPrompts.map((fragment) => {
-                const key = typeof fragment === 'string' ? fragment : fragment.id || fragment.name
-                const label = typeof fragment === 'string' ? fragment : fragment.name || fragment.id
-                const checked = form.system_prompt_fragments.includes(key)
-                return (
-                  <label
-                    key={key}
-                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg border cursor-pointer transition-colors ${
-                      checked ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-white border-gray-200 text-gray-700 hover:border-gray-300'
-                    }`}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={checked}
-                      onChange={() => toggleArrayItem('system_prompt_fragments', key)}
-                      className="sr-only"
-                    />
-                    {label}
-                  </label>
-                )
-              })}
-            </div>
-          </SectionCard>
+        {/* Save bar — only shown for new agents (update not supported for Foundry agents) */}
+        {!isEdit && (
+          <div className="sticky bottom-0 bg-white/80 backdrop-blur-sm border-t border-gray-100 -mx-6 px-6 py-4 flex items-center gap-3">
+            <button
+              type="submit"
+              disabled={isSaving}
+              className="inline-flex items-center gap-2 px-5 py-2.5 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
+            >
+              {isSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+              Create Agent
+            </button>
+            <button
+              type="button"
+              onClick={() => navigate('/agents')}
+              className="px-5 py-2.5 text-sm font-medium text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
+            >
+              Cancel
+            </button>
+          </div>
         )}
-
-        {metaMcps.length > 0 && (
-          <SectionCard title="MCP Servers" subtitle="Select which MCP servers this agent can access.">
-            <div className="space-y-3">
-              {metaMcps.map((mcp) => {
-                const mcpName = typeof mcp === 'string' ? mcp : mcp.name || mcp.id
-                const mcpTools = typeof mcp === 'object' ? mcp.tools || [] : []
-                const isChecked = form.mcps.includes(mcpName)
-                return (
-                  <div key={mcpName}>
-                    <label className="flex items-center gap-2 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={isChecked}
-                        onChange={() => toggleArrayItem('mcps', mcpName)}
-                        className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
-                      />
-                      <span className="text-sm text-gray-700 font-medium">{mcpName}</span>
-                    </label>
-                    {isChecked && mcpTools.length > 0 && (
-                      <div className="ml-6 mt-1.5 flex flex-wrap gap-x-4 gap-y-1">
-                        {mcpTools.map((tool) => {
-                          const toolName = typeof tool === 'string' ? tool : tool.name
-                          const selectedTools = form.mcp_tool_filters[mcpName] || []
-                          return (
-                            <label key={toolName} className="flex items-center gap-1.5 cursor-pointer">
-                              <input
-                                type="checkbox"
-                                checked={selectedTools.includes(toolName)}
-                                onChange={() => toggleMcpTool(mcpName, toolName)}
-                                className="w-3.5 h-3.5 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
-                              />
-                              <span className="text-xs text-gray-500">{toolName}</span>
-                            </label>
-                          )
-                        })}
-                      </div>
-                    )}
-                  </div>
-                )
-              })}
-            </div>
-          </SectionCard>
-        )}
-
-        {metaBuiltinTools.length > 0 && (
-          <SectionCard title="Druppie Runtime Tools">
-            <p className="text-xs text-gray-400 mb-3">Internal orchestration tools used by the Druppie agent runtime. Not sent to Azure Foundry.</p>
-            <div className="flex flex-wrap gap-2">
-              {metaBuiltinTools.map((tool) => {
-                const toolName = typeof tool === 'string' ? tool : tool.name || tool.id
-                const checked = form.druppie_runtime_tools.includes(toolName)
-                return (
-                  <label
-                    key={toolName}
-                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg border cursor-pointer transition-colors ${
-                      checked ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-white border-gray-200 text-gray-700 hover:border-gray-300'
-                    }`}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={checked}
-                      onChange={() => toggleArrayItem('druppie_runtime_tools', toolName)}
-                      className="sr-only"
-                    />
-                    {toolName}
-                  </label>
-                )
-              })}
-            </div>
-          </SectionCard>
-        )}
-
-        {metaSkills.length > 0 && (
-          <SectionCard title="Skills">
-            <div className="flex flex-wrap gap-2">
-              {metaSkills.map((skill) => {
-                const skillName = typeof skill === 'string' ? skill : skill.name || skill.id
-                const checked = form.skills.includes(skillName)
-                return (
-                  <label
-                    key={skillName}
-                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg border cursor-pointer transition-colors ${
-                      checked ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-white border-gray-200 text-gray-700 hover:border-gray-300'
-                    }`}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={checked}
-                      onChange={() => toggleArrayItem('skills', skillName)}
-                      className="sr-only"
-                    />
-                    {skillName}
-                  </label>
-                )
-              })}
-            </div>
-          </SectionCard>
-        )}
-
-        {/* Approval Overrides */}
-        <SectionCard title="Approval Overrides" subtitle="Override default approval settings for specific tools.">
-          {form.approval_overrides.length > 0 && (
-            <div className="space-y-2 mb-3">
-              {form.approval_overrides.map((override, index) => (
-                <div key={index} className="flex items-center gap-3 bg-gray-50 rounded-lg p-3">
-                  <div className="flex-1">
-                    <input
-                      type="text"
-                      value={override.tool_key}
-                      onChange={(e) => updateApprovalOverride(index, 'tool_key', e.target.value)}
-                      placeholder="e.g. coding:write_file"
-                      className="w-full px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono"
-                    />
-                  </div>
-                  <label className="flex items-center gap-1.5 cursor-pointer flex-shrink-0">
-                    <input
-                      type="checkbox"
-                      checked={override.requires_approval}
-                      onChange={(e) => updateApprovalOverride(index, 'requires_approval', e.target.checked)}
-                      className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
-                    />
-                    <span className="text-xs text-gray-600">Requires Approval</span>
-                  </label>
-                  <div className="w-40">
-                    <input
-                      type="text"
-                      value={override.required_role}
-                      onChange={(e) => updateApprovalOverride(index, 'required_role', e.target.value)}
-                      placeholder="Required role"
-                      className="w-full px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    />
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => removeApprovalOverride(index)}
-                    className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-          <button
-            type="button"
-            onClick={addApprovalOverride}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors"
-          >
-            <Plus className="w-4 h-4" />
-            Add Override
-          </button>
-        </SectionCard>
-
-        {/* Save bar */}
-        <div className="sticky bottom-0 bg-white/80 backdrop-blur-sm border-t border-gray-100 -mx-6 px-6 py-4 flex items-center gap-3">
-          <button
-            type="submit"
-            disabled={isSaving}
-            className="inline-flex items-center gap-2 px-5 py-2.5 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
-          >
-            {isSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-            {isEdit ? 'Update Agent' : 'Create Agent'}
-          </button>
-          <button
-            type="button"
-            onClick={() => navigate('/agents')}
-            className="px-5 py-2.5 text-sm font-medium text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
-          >
-            Cancel
-          </button>
-        </div>
       </form>
     </div>
   )

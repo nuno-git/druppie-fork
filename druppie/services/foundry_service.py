@@ -176,43 +176,50 @@ class FoundryService:
 
         Some tools (bing_grounding, azure_ai_search, microsoft_fabric)
         require connection resources configured in the Foundry portal.
-        They are included here for completeness but will fail at runtime
-        if the connection is not set up. Zero-config tools
-        (code_interpreter, file_search, browser_automation, deep_research)
-        work out of the box.
+        Zero-config tools (code_interpreter, file_search) work out of the box.
         """
         if not foundry_tools:
             return []
 
+        import os
         from azure.ai.projects.models import (
             CodeInterpreterTool,
             FileSearchTool,
             BingGroundingTool,
+            BingGroundingSearchToolParameters,
+            BingGroundingSearchConfiguration,
         )
 
         # Zero-config tools — instantiate directly
         zero_config_map = {
             "code_interpreter": CodeInterpreterTool,
             "file_search": FileSearchTool,
-            # browser_automation and deep_research may need newer SDK
-            # versions — they are stored in DB but skipped if SDK doesn't
-            # support them yet.
-        }
-
-        # Tools requiring connection — instantiate without connection_id;
-        # Foundry portal config provides the connection at runtime.
-        connection_map = {
-            "bing_grounding": BingGroundingTool,
         }
 
         tools = []
         for tool_type in foundry_tools:
-            tool_cls = zero_config_map.get(tool_type) or connection_map.get(tool_type)
-            if tool_cls:
-                tools.append(tool_cls())
+            if tool_type in zero_config_map:
+                tools.append(zero_config_map[tool_type]())
+            elif tool_type == "bing_grounding":
+                connection_id = os.environ.get("FOUNDRY_BING_CONNECTION_ID", "")
+                if not connection_id:
+                    logger.warning(
+                        "foundry_bing_no_connection_id",
+                        hint="Set FOUNDRY_BING_CONNECTION_ID env var to the Bing connection ID from Azure Foundry portal",
+                    )
+                    continue
+                tools.append(
+                    BingGroundingTool(
+                        bing_grounding=BingGroundingSearchToolParameters(
+                            search_configurations=[
+                                BingGroundingSearchConfiguration(
+                                    project_connection_id=connection_id,
+                                )
+                            ]
+                        )
+                    )
+                )
             elif tool_type in ("browser_automation", "deep_research", "bing_custom_search", "azure_ai_search", "microsoft_fabric"):
-                # Known tool types not yet mapped in SDK — stored in DB
-                # for future use, logged but not sent.
                 logger.info("foundry_tool_not_yet_mapped", tool_type=tool_type)
             else:
                 logger.warning("foundry_unknown_tool_type", tool_type=tool_type)
@@ -262,10 +269,17 @@ class FoundryService:
                     f"remove it before deploying"
                 )
             elif tool in portal_tools:
-                warnings.append(
-                    f"Tool '{tool}' requires a connection configured in the Foundry portal — "
-                    f"deployment will succeed but the tool may fail at runtime without portal setup"
-                )
+                import os
+                if tool == "bing_grounding" and not os.environ.get("FOUNDRY_BING_CONNECTION_ID"):
+                    errors.append(
+                        f"Tool '{tool}' requires FOUNDRY_BING_CONNECTION_ID env var — "
+                        f"set it to the Bing connection ID from Azure Foundry portal"
+                    )
+                else:
+                    warnings.append(
+                        f"Tool '{tool}' requires a connection configured in the Foundry portal — "
+                        f"deployment will succeed but the tool may fail at runtime without portal setup"
+                    )
             elif tool not in deployable_tools:
                 errors.append(f"Unknown Foundry tool: '{tool}'")
 
