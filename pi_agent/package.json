@@ -1,0 +1,27 @@
+{
+  "name": "oneshot-tdd-agent",
+  "version": "0.1.0",
+  "description": "One-shot TDD coding agent built on Pi SDK — containerized, git-based, with installable skills and subagents",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "oneshot": "dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/cli.js",
+    "docker:build": "docker build -t oneshot-tdd-agent .",
+    "docker:run": "docker run --rm -v $(pwd)/workspace:/workspace -e ANTHROPIC_API_KEY oneshot-tdd-agent"
+  },
+  "dependencies": {
+    "@mariozechner/pi-agent-core": "latest",
+    "@mariozechner/pi-ai": "latest",
+    "@mariozechner/pi-coding-agent": "latest",
+    "@sinclair/typebox": "^0.34.0",
+    "undici": "^7.25.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0"
+  }
+}

@@ -824,6 +824,7 @@ class ToolExecutor:
                 session_id=tool_call.session_id,
                 agent_run_id=tool_call.agent_run_id,
                 execution_repo=self.execution_repo,
+                tool_call_id=tool_call.id,
             )
 
             # Handle sandbox delegation — tool is waiting for external callback

@@ -238,6 +238,53 @@ BUILTIN_TOOL_DEFS: dict[str, dict] = {
             },
         },
     },
+    "execute_coding_task_pi": {
+        "type": "function",
+        "function": {
+            "name": "execute_coding_task_pi",
+            "description": (
+                "Execute a coding task using the vendored pi_agent orchestrator "
+                "(analyze → plan → build → verify → PR). "
+                "Each call spawns a fresh sandbox container that clones the repo; "
+                "the sandbox is destroyed after completion and any un-pushed work is lost. "
+                "pi_agent pushes the branch and opens a PR automatically. "
+                "Works against either a GitHub App repo (druppie_core) or a Gitea project repo — "
+                "pick with the git_provider argument."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "task": {
+                        "type": "string",
+                        "description": (
+                            "The complete task prompt for the pi_agent orchestrator. "
+                            "Self-contained — describe what to implement, reference files for context, "
+                            "list patterns to follow."
+                        ),
+                    },
+                    "flow": {
+                        "type": "string",
+                        "enum": ["tdd", "explore"],
+                        "description": (
+                            "Which pi_agent flow to run. "
+                            "'tdd' (default): analyst → plan → build → verify → PR. Writes code. "
+                            "'explore': router agent in a sandboxed clone that can fan out parallel "
+                            "explorer subagents to answer questions read-only. No commits, no PR."
+                        ),
+                    },
+                    "repo_target": {
+                        "type": "string",
+                        "enum": ["project", "druppie_core"],
+                        "description": (
+                            "Which repo to operate on. 'project' (default) = session's Gitea project repo. "
+                            "'druppie_core' = Druppie's own GitHub repo."
+                        ),
+                    },
+                },
+                "required": ["task"],
+            },
+        },
+    },
     "test_report": {
         "type": "function",
         "function": {
@@ -1316,6 +1363,7 @@ async def execute_builtin(
     session_id: UUID,
     agent_run_id: UUID,
     execution_repo: "ExecutionRepository",
+    tool_call_id: UUID | None = None,
 ) -> dict:
     """Execute a non-HITL built-in tool.
 
@@ -1378,6 +1426,15 @@ async def execute_builtin(
             agent_run_id=agent_run_id,
             execution_repo=execution_repo,
         )
+    elif tool_name == "execute_coding_task_pi":
+        from druppie.agents.execute_coding_task_pi import execute_coding_task_pi
+        return await execute_coding_task_pi(
+            args=args,
+            session_id=session_id,
+            agent_run_id=agent_run_id,
+            execution_repo=execution_repo,
+            tool_call_id=tool_call_id,
+        )
     elif tool_name == "test_report":
         return await test_report(
             iteration=args.get("iteration", 0),
@@ -1411,6 +1468,7 @@ def is_builtin_tool(tool_name: str) -> bool:
         "create_message",
         "invoke_skill",
         "execute_coding_task",
+        "execute_coding_task_pi",
         "test_report",
     )
 

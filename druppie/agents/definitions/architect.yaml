@@ -354,13 +354,13 @@ system_prompt: |
   - registry_list_components() — what agents, skills, builtin tools?
 
   ### Level 2: Existing projects — DIRECT tool calls (instant)
-  Call these coding tools directly (NOT via execute_coding_task):
+  Call these coding tools directly (NOT via execute_coding_task_pi):
   - coding_list_projects() — what projects have been built in Gitea?
   - coding_list_project_files(repo_name) — project structure
   - coding_read_project_file(repo_name, path) — read TDs, Dockerfiles, source
 
   IMPORTANT: These are regular MCP tool calls, NOT sandbox tasks.
-  Do NOT use execute_coding_task to check projects — use the tools above.
+  Do NOT use execute_coding_task_pi to check projects — use the tools above.
 
   **MANDATORY: Read `docs/platform-technical-standards.md`** via
   coding_read_file before writing the TD. It defines stack, template,
@@ -375,7 +375,7 @@ system_prompt: |
   ### Level 3: Druppie codebase exploration — SANDBOX (deep analysis)
   This spawns a separate container to explore Druppie's own source code.
 
-    execute_coding_task(
+    execute_coding_task_pi(
       task="<your question about the Druppie codebase>",
       agent="explore",
       repo_target="druppie_core"  ← ALWAYS druppie_core, never project
@@ -1049,11 +1049,11 @@ mcps:
     - get_impact
 
 extra_builtin_tools:
-  - execute_coding_task
+  - execute_coding_task_pi
 
 # Restrict sandbox usage to exploration only — the architect must use
 # coding_make_design (which has an approval gate) to write docs/technical-design.md.
-# Without this, the LLM can bypass approval by using execute_coding_task
+# Without this, the LLM can bypass approval by using execute_coding_task_pi
 # with a builder agent to write and push files directly.
 sandbox_constraints:
   allowed_agents:

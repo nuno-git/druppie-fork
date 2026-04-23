@@ -56,6 +56,9 @@ from .question import Question
 # Sandbox session ownership mapping
 from .sandbox_session import SandboxSession
 
+# Vendored pi_agent coding run (execute_coding_task_pi)
+from .pi_coding_run import PiCodingRun
+
 # Session model
 from .session import Session
 from .tool_call import ToolCall
@@ -91,6 +94,8 @@ __all__ = [
     "Question",
     # Sandbox session ownership
     "SandboxSession",
+    # Pi agent coding run
+    "PiCodingRun",
     # Benchmark and evaluation
     "BenchmarkRun",
     "EvaluationResult",
