@@ -491,9 +491,10 @@ system_prompt: |
      Outcome-specific handling:
        - **user confirms hard** → do NOT update the FD. The FR/NFR stays
          unchanged; no Section 10 rewrite is needed. Skip Phase R4 for
-         this item and go straight to R6 — capture the user's exact
-         justification in the done() summary with the
-         `REQUIREMENT_CHALLENGE outcome: HARD` token. The FD approval
+         this item and go straight to R6 — the done() summary MUST
+         contain BOTH the `DESIGN_APPROVED` status keyword (protocol
+         requirement) AND the `REQUIREMENT_CHALLENGE outcome: HARD`
+         token, plus the user's exact justification. The FD approval
          gate does NOT fire again for this outcome.
        - **user relaxes** → update the FR/NFR to the agreed value/wording
          and log the change (before → after + reason) in Section 10.
