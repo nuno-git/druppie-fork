@@ -321,41 +321,71 @@ const AgentEditor = () => {
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           {/* Left column — Foundry Tools (dynamically loaded from Azure) */}
           <SectionCard title="Azure Foundry Tools" subtitle="Loaded from your Azure AI Foundry project.">
-            {foundryTools.length > 0 ? (
-              <div className="space-y-2">
-                {foundryTools.map((tool) => {
-                  const toolId = tool.id
-                  const checked = form.foundry_tools.includes(toolId)
-                  return (
-                    <label
+            {(() => {
+              const availableIds = new Set(foundryTools.map((t) => t.id))
+              const orphanedTools = form.foundry_tools.filter((id) => !availableIds.has(id))
+              return (
+                <div className="space-y-2">
+                  {foundryTools.map((tool) => {
+                    const toolId = tool.id
+                    const checked = form.foundry_tools.includes(toolId)
+                    return (
+                      <label
+                        key={toolId}
+                        className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
+                          checked
+                            ? 'border-purple-200 bg-purple-50'
+                            : 'border-gray-100 hover:border-gray-200'
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => toggleArrayItem('foundry_tools', toolId)}
+                          className="w-4 h-4 mt-0.5 text-purple-600 border-gray-300 rounded focus:ring-purple-500"
+                        />
+                        <div className="flex-1 min-w-0">
+                          <span className="text-sm font-medium text-gray-900">{tool.label}</span>
+                          {tool.description && (
+                            <p className="text-xs text-gray-500 mt-0.5">{tool.description}</p>
+                          )}
+                        </div>
+                      </label>
+                    )
+                  })}
+                  {orphanedTools.map((toolId) => (
+                    <div
                       key={toolId}
-                      className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
-                        checked
-                          ? 'border-purple-200 bg-purple-50'
-                          : 'border-gray-100 hover:border-gray-200'
-                      }`}
+                      className="flex items-start gap-3 p-3 rounded-lg border border-amber-200 bg-amber-50"
                     >
-                      <input
-                        type="checkbox"
-                        checked={checked}
-                        onChange={() => toggleArrayItem('foundry_tools', toolId)}
-                        className="w-4 h-4 mt-0.5 text-purple-600 border-gray-300 rounded focus:ring-purple-500"
-                      />
+                      <AlertCircle className="w-4 h-4 mt-0.5 text-amber-500 flex-shrink-0" />
                       <div className="flex-1 min-w-0">
-                        <span className="text-sm font-medium text-gray-900">{tool.label}</span>
-                        {tool.description && (
-                          <p className="text-xs text-gray-500 mt-0.5">{tool.description}</p>
-                        )}
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-medium text-gray-900">{toolId}</span>
+                          <span className="px-1.5 py-0.5 text-[10px] font-medium bg-amber-100 text-amber-700 rounded">Needs Setup</span>
+                        </div>
+                        <p className="text-xs text-amber-700 mt-0.5">
+                          This tool is part of the agent design but requires a connection to be configured in the Azure Foundry portal.
+                        </p>
                       </div>
-                    </label>
-                  )
-                })}
-              </div>
-            ) : (
-              <p className="text-sm text-gray-400 italic">
-                No tools available — check Foundry connection in Settings.
-              </p>
-            )}
+                      <button
+                        type="button"
+                        onClick={() => toggleArrayItem('foundry_tools', toolId)}
+                        className="p-1 text-gray-400 hover:text-red-500 rounded transition-colors"
+                        title="Remove tool"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  ))}
+                  {foundryTools.length === 0 && orphanedTools.length === 0 && (
+                    <p className="text-sm text-gray-400 italic">
+                      No tools available — check Foundry connection in Settings.
+                    </p>
+                  )}
+                </div>
+              )
+            })()}
           </SectionCard>
 
           {/* Right column — Model & Settings */}
