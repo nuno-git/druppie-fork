@@ -97,13 +97,18 @@ class CustomAgentService:
         # Build mcps for repo (normalize to dict or list)
         mcps = data.mcps
 
+        # Never allow empty model
+        llm_profile = data.llm_profile
+        if not llm_profile or not llm_profile.strip():
+            llm_profile = self._default_model()
+
         agent = self.repo.create(
             agent_id=data.agent_id,
             name=data.name,
             description=data.description,
             category=data.category,
             system_prompt=data.system_prompt,
-            llm_profile=data.llm_profile,
+            llm_profile=llm_profile,
             temperature=data.temperature,
             max_tokens=data.max_tokens,
             max_iterations=data.max_iterations,
@@ -157,6 +162,9 @@ class CustomAgentService:
         if data.system_prompt is not None:
             kwargs["system_prompt"] = data.system_prompt
         if data.llm_profile is not None:
+            if not data.llm_profile.strip():
+                # Never allow empty model — default to first available deployment
+                data.llm_profile = self._default_model()
             kwargs["llm_profile"] = data.llm_profile
         if data.temperature is not None:
             kwargs["temperature"] = data.temperature
@@ -487,6 +495,21 @@ class CustomAgentService:
         }
 
     # ── Helpers ──────────────────────────────────────────────
+
+    def _default_model(self) -> str:
+        """Return the first available Foundry model, or env default."""
+        from druppie.services.foundry_service import FoundryService
+        from druppie.core.config import get_settings
+
+        settings = get_settings()
+        foundry = FoundryService(
+            endpoint=settings.llm.foundry_project_endpoint,
+            api_key=settings.llm.foundry_api_key or None,
+        )
+        models = foundry.list_models()
+        if models:
+            return models[0]["id"]
+        return os.environ.get("FOUNDRY_MODEL", "gpt-4.1-mini")
 
     @staticmethod
     def _is_dirty(agent: CustomAgent) -> bool:
