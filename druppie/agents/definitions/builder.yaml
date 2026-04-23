@@ -220,6 +220,13 @@ mcps:
 extra_builtin_tools:
   - execute_coding_task_pi
 
+# Builder writes code via pi_agent — pin to the tdd flow. Explore would be
+# useless here (read-only). This also narrows the tool's `flow` enum at
+# schema-enrichment time so the LLM can't pick explore by accident.
+sandbox_constraints:
+  allowed_agents:
+    - tdd
+
 llm_profile: standard
 temperature: 0.2
 max_tokens: 16384

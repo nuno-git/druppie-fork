@@ -127,10 +127,13 @@ class PiAgentRunner:
             "node", str(PI_AGENT_CLI),
             "--task", str(task_path),
             "--workdir", str(self.session_dir),
-            "--source-repo-url", repo_url,
+            "--source-repo", repo_url,
         ]
         if self.source_branch:
             cmd += ["--source-branch", self.source_branch]
+        # agent_name doubles as the flow name ("tdd" | "explore"); CLI arg is --flow.
+        if self.agent_name in ("tdd", "explore"):
+            cmd += ["--flow", self.agent_name]
 
         logger.info("pi_agent_subprocess_start", run_id=self.run_id, cmd=cmd[:3])
         proc = await asyncio.create_subprocess_exec(

@@ -118,6 +118,11 @@ export interface RunSubagentOptions {
   sandboxClient?: SandboxClient;
   /** Optional journal — receives per-subagent event stream for the run transcript. */
   journal?: Journal;
+  /** Extra ToolDefinitions to register on top of the sandbox-tool set (e.g.
+   * spawn_parallel_explorers for the explore flow's router). Passed straight
+   * through to pi's customTools. Their names are added to the active-tools list
+   * so the LLM actually sees them. */
+  extraCustomTools?: any[];
 }
 
 /** Run a single subagent with an in-process Pi session. */
@@ -126,7 +131,7 @@ export async function runSubagent(
   prompt: string,
   options: RunSubagentOptions
 ): Promise<SubagentResult> {
-  const { cwd, authStorage, modelRegistry, defaultModel, maxTurns = 30, onOutput, sessionsDir, sandboxClient, journal } = options;
+  const { cwd, authStorage, modelRegistry, defaultModel, maxTurns = 30, onOutput, sessionsDir, sandboxClient, journal, extraCustomTools } = options;
 
   // Resolve model: agent-specific or default
   // Agent model field can be "provider/id" (e.g. "glm-coding/glm-4.5-air") or just "id"
@@ -148,8 +153,14 @@ export async function runSubagent(
   const toolNames = agent.tools ?? ["read", "bash", "edit", "write"];
   const sandboxTools = sandboxClient ? buildSandboxTools(sandboxClient, toolNames) : undefined;
   // (diagnostic removed — the sandboxed tool path is now verified)
-  const tools = sandboxTools ? sandboxTools.activationTools : buildLocalTools(toolNames, cwd);
-  const customTools = sandboxTools?.customTools;
+  const baseTools = sandboxTools ? sandboxTools.activationTools : buildLocalTools(toolNames, cwd);
+  const tools = extraCustomTools?.length
+    ? [...baseTools, ...extraCustomTools.map((t: any) => ({ name: t.name }))]
+    : baseTools;
+  const customTools = [
+    ...(sandboxTools?.customTools ?? []),
+    ...(extraCustomTools ?? []),
+  ];
 
   // Resource loader with system prompt
   const loader = new DefaultResourceLoader({

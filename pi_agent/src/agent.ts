@@ -1,11 +1,16 @@
 /**
- * Main entry point — delegates to the orchestrator.
+ * Main entry point — dispatches to a flow (tdd, explore, …).
  *
- * This is the simple API: give it a task, get a result.
+ * Flow is chosen by `config.flow` (set from the CLI's --flow arg or
+ * environment). Defaults to `tdd` to preserve legacy behaviour.
  */
-import { orchestrate } from "./orchestrator.js";
+import { runFlow, type FlowName, FLOW_NAMES } from "./flows/index.js";
 import type { AgentConfig, RunResult, TaskSpec } from "./types.js";
 
 export async function runOneShotAgent(task: TaskSpec, config: AgentConfig): Promise<RunResult> {
-  return orchestrate(task, config);
+  const raw = (config.flow ?? process.env.PI_AGENT_FLOW ?? "tdd") as FlowName;
+  if (!FLOW_NAMES.includes(raw)) {
+    throw new Error(`Unknown pi_agent flow "${raw}". Available: ${FLOW_NAMES.join(", ")}`);
+  }
+  return runFlow(raw, task, config);
 }

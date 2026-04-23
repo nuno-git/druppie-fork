@@ -146,6 +146,9 @@ export interface AgentConfig {
   /** Sandbox configuration. The sandbox is always on — every tool operation
    * runs inside a Kata microVM. */
   sandbox?: SandboxConfig;
+  /** Pi_agent flow to run. "tdd" (default) = analyst→plan→build→verify→PR.
+   * "explore" = router + parallel explorers for read-only investigation. */
+  flow?: "tdd" | "explore";
 }
 
 export interface SandboxConfig {

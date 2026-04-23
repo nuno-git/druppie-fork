@@ -30,6 +30,7 @@ interface ParsedArgs {
   sandboxImage?: string;
   sandboxPushImage?: string;
   sandboxRemoteUrl?: string;
+  flow?: "tdd" | "explore";
   sandboxPushToken?: string;
   prBase?: string;
   prTitle?: string;
@@ -114,6 +115,14 @@ function parseArgs(argv: string[]): ParsedArgs {
         break;
       case "--source-repo":
         result.sourceRepoUrl = next;
+        i++;
+        break;
+      case "--flow":
+        if (next === "tdd" || next === "explore") {
+          result.flow = next;
+        } else {
+          throw new Error(`--flow must be "tdd" or "explore", got "${next}"`);
+        }
         i++;
         break;
       case "--source-branch":
@@ -211,6 +220,7 @@ async function main(): Promise<void> {
     // (Z.AI), different naming conventions in the ecosystem.
     glmApiKey: parsed.glmKey ?? process.env.GLM_API_KEY ?? process.env.ZAI_API_KEY,
     skillPaths: parsed.skillPaths,
+    flow: parsed.flow,
     sandbox: {
       image: parsed.sandboxImage,
       pushImage: parsed.sandboxPushImage,

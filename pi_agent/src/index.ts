@@ -2,7 +2,10 @@
  * oneshot-tdd-agent — Public API
  */
 export { runOneShotAgent } from "./agent.js";
-export { orchestrate } from "./orchestrator.js";
+export { runFlow, runTddFlow, runExploreFlow, FLOW_NAMES } from "./flows/index.js";
+export type { FlowName } from "./flows/index.js";
+// Legacy alias — older external callers imported `orchestrate`.
+export { runTddFlow as orchestrate } from "./flows/index.js";
 export { runSubagent, runSubagentsParallel, discoverAgents } from "./agents/runner.js";
 export { discoverSkills, toSdkSkills } from "./skills/loader.js";
 export { GitOps } from "./git.js";

@@ -262,9 +262,15 @@ BUILTIN_TOOL_DEFS: dict[str, dict] = {
                             "list patterns to follow."
                         ),
                     },
-                    "agent": {
+                    "flow": {
                         "type": "string",
-                        "description": "Named sub-agent to use inside pi_agent (analyst/planner/builder/verifier/pr-author). Optional; pi_agent defaults to the full flow.",
+                        "enum": ["tdd", "explore"],
+                        "description": (
+                            "Which pi_agent flow to run. "
+                            "'tdd' (default): analyst → plan → build → verify → PR. Writes code. "
+                            "'explore': router agent in a sandboxed clone that can fan out parallel "
+                            "explorer subagents to answer questions read-only. No commits, no PR."
+                        ),
                     },
                     "repo_target": {
                         "type": "string",

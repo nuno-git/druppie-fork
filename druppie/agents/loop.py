@@ -214,6 +214,8 @@ class AgentLoop:
 
         # Enrich execute_coding_task with available sandbox agents
         self._enrich_execute_coding_task(openai_tools)
+        # Enrich execute_coding_task_pi with available pi_agent flows
+        self._enrich_execute_coding_task_pi(openai_tools)
 
         return openai_tools, registry
 
@@ -249,6 +251,61 @@ class AgentLoop:
                     "description": "Skill to invoke",
                 }
                 break
+
+    def _enrich_execute_coding_task_pi(self, openai_tools: list[dict]) -> None:
+        """Enrich execute_coding_task_pi's `flow` argument with the flows this
+        caller is allowed to pick.
+
+        Pi_agent flows are static (tdd, explore) — unlike sandbox agents which
+        are discovered from markdown files, we hard-code them here. Per-caller
+        constraints come from ``sandbox_constraints.allowed_agents`` in the
+        agent YAML (same field as the legacy tool uses — flows and legacy
+        sandbox-agent names don't overlap).
+        """
+        target = None
+        for tool in openai_tools:
+            if tool.get("function", {}).get("name") == "execute_coding_task_pi":
+                target = tool
+                break
+        if target is None:
+            return
+
+        ALL_FLOWS = {
+            "tdd": "analyst → plan → build → verify → PR. Writes code.",
+            "explore": "router + parallel explorers in a sandboxed clone. Read-only, answers questions.",
+        }
+
+        constraints = self.definition.sandbox_constraints
+        allowed = constraints.allowed_agents if constraints else None
+        # If the caller has allowed_agents set, narrow to those that are
+        # actual flow names; otherwise offer all flows.
+        if allowed is not None:
+            flows = {name: desc for name, desc in ALL_FLOWS.items() if name in allowed}
+            if not flows:
+                # Caller only allowed legacy sandbox-agent names, not pi flows —
+                # leave tool schema as-is (all flows) so we don't break the enum.
+                flows = ALL_FLOWS
+        else:
+            flows = ALL_FLOWS
+
+        flow_list = ", ".join(f"{n} ({d})" for n, d in flows.items())
+        default_flow = "tdd" if "tdd" in flows else next(iter(flows.keys()))
+
+        base_desc = target["function"]["description"]
+        constraint_note = (
+            f" CONSTRAINT for this caller: flow must be one of {list(flows.keys())}."
+            if allowed is not None and set(flows.keys()) <= set(allowed)
+            else ""
+        )
+        target["function"]["description"] = f"{base_desc} Flows: {flow_list}.{constraint_note}"
+
+        props = target["function"]["parameters"]["properties"]
+        props["flow"] = {
+            "type": "string",
+            "enum": list(flows.keys()),
+            "default": default_flow,
+            "description": f"pi_agent flow. {flow_list}",
+        }
 
     def _enrich_execute_coding_task(self, openai_tools: list[dict]) -> None:
         """Dynamically enrich execute_coding_task with available sandbox agents.

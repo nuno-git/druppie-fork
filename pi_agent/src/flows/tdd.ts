@@ -24,20 +24,20 @@
 import { join } from "node:path";
 import type { Api, Model } from "@mariozechner/pi-ai";
 import { AuthStorage, ModelRegistry } from "@mariozechner/pi-coding-agent";
-import { selectGitProvider, type GitProvider } from "./git/provider.js";
-import { Journal, printRunSummary } from "./journal.js";
-import { startSimServer, type SimServer } from "./providers/sim.js";
-import { pushBundleIsolated } from "./sandbox/bundle-push.js";
-import { defaultSandboxLaunchOptions, launchSandbox, type RunningSandbox } from "./sandbox/lifecycle.js";
-import { SandboxGitOps } from "./sandbox/sandbox-git.js";
-import { cloneSourceIntoSandbox } from "./sandbox/source-clone.js";
+import { selectGitProvider, type GitProvider } from "../git/provider.js";
+import { Journal, printRunSummary } from "../journal.js";
+import { startSimServer, type SimServer } from "../providers/sim.js";
+import { pushBundleIsolated } from "../sandbox/bundle-push.js";
+import { defaultSandboxLaunchOptions, launchSandbox, type RunningSandbox } from "../sandbox/lifecycle.js";
+import { SandboxGitOps } from "../sandbox/sandbox-git.js";
+import { cloneSourceIntoSandbox } from "../sandbox/source-clone.js";
 import {
   discoverAgents,
   runSubagent,
   runSubagentsParallel,
   type AgentDefinition,
   type RunSubagentOptions,
-} from "./agents/runner.js";
+} from "../agents/runner.js";
 import type {
   AgentConfig,
   BuildPlan,
@@ -47,7 +47,7 @@ import type {
   StepResult,
   TaskSpec,
   VerificationResult,
-} from "./types.js";
+} from "../types.js";
 
 // ── JSON Extraction ─────────────────────────────────────────
 
@@ -67,7 +67,7 @@ function extractJson<T>(output: string): T | null {
 
 // ── Orchestrator ────────────────────────────────────────────
 
-export async function orchestrate(task: TaskSpec, config: AgentConfig): Promise<RunResult> {
+export async function runTddFlow(task: TaskSpec, config: AgentConfig): Promise<RunResult> {
   const cwd = config.workDir;
   const maxIterations = config.maxIterations ?? 3;
   const commits: string[] = [];

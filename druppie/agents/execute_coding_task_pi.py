@@ -29,6 +29,7 @@ logger = structlog.get_logger()
 
 VALID_REPO_TARGETS = {"project", "druppie_core"}
 VALID_GIT_PROVIDERS = {"github_app", "gitea"}
+VALID_FLOWS = {"tdd", "explore"}
 
 
 def _default_git_provider_for(repo_target: str) -> str:
@@ -93,11 +94,59 @@ async def execute_coding_task_pi(
     if repo_target not in VALID_REPO_TARGETS:
         return {"success": False, "error": f"invalid repo_target {repo_target!r}"}
 
+    # Enforce per-caller sandbox_constraints (same pattern as the legacy
+    # execute_coding_task — defense in depth on top of schema narrowing).
+    try:
+        from druppie.agents.runtime import Agent as AgentLoader
+        agent_run = execution_repo.get_by_id(agent_run_id)
+        if agent_run and agent_run.agent_id:
+            definition = AgentLoader._load_definition(agent_run.agent_id)
+            if definition and definition.sandbox_constraints:
+                c = definition.sandbox_constraints
+                if c.allowed_repo_targets is not None and repo_target not in c.allowed_repo_targets:
+                    return {
+                        "success": False,
+                        "error": (
+                            f"Agent '{definition.id}' can only use repo targets {c.allowed_repo_targets} — "
+                            f"got {repo_target!r}"
+                        ),
+                    }
+    except Exception:
+        definition = None
+
     # Derived from repo_target; the LLM never picks this. Kept as a column
     # on PiCodingRun for observability but not part of the tool schema.
     git_provider: str = _default_git_provider_for(repo_target)
 
-    agent_name: str | None = args.get("agent")
+    flow: str = args.get("flow") or "tdd"
+    if flow not in VALID_FLOWS:
+        return {"success": False, "error": f"invalid flow {flow!r}; must be one of {sorted(VALID_FLOWS)}"}
+    # Legacy `agent` field still accepted as an alias for `flow`, but we
+    # prefer `flow`. Drop this once all callers migrate.
+    legacy_agent = args.get("agent")
+    if legacy_agent and legacy_agent not in ("null", None):
+        if legacy_agent in VALID_FLOWS:
+            flow = legacy_agent
+
+    # Enforce per-caller flow constraint too.
+    try:
+        if definition and definition.sandbox_constraints:
+            c = definition.sandbox_constraints
+            if c.allowed_agents is not None:
+                # Only apply if allowed_agents references actual flows — legacy
+                # sandbox-agent names don't overlap with flow names so this is
+                # a safe intersection test.
+                flow_constraint = [a for a in c.allowed_agents if a in VALID_FLOWS]
+                if flow_constraint and flow not in flow_constraint:
+                    return {
+                        "success": False,
+                        "error": (
+                            f"Agent '{definition.id}' can only use pi_agent flows {flow_constraint} — "
+                            f"got {flow!r}"
+                        ),
+                    }
+    except Exception:
+        pass
     source_branch: str | None = args.get("source_branch")
 
     from druppie.opencode.repo_context import resolve_repo_context
@@ -133,7 +182,7 @@ async def execute_coding_task_pi(
         session_id=session_id,
         user_id=session.user_id,
         task_prompt=task,
-        agent_name=agent_name,
+        agent_name=flow,
         repo_target=repo_target,
         git_provider=git_provider,
         repo_owner=repo_ctx.repo_owner,
@@ -151,7 +200,7 @@ async def execute_coding_task_pi(
     runner = PiAgentRunner(
         run_id=run_id,
         task_prompt=task,
-        agent_name=agent_name,
+        agent_name=flow,
         repo_target=repo_target,
         git_provider=git_provider,
         repo_owner=repo_ctx.repo_owner,
