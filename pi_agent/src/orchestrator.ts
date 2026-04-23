@@ -202,8 +202,13 @@ export async function orchestrate(task: TaskSpec, config: AgentConfig): Promise<
     return agent;
   };
 
-  // Pi's per-subagent transcripts land in the same per-run directory as our journal.
-  const sessionsDir = journalDir;
+  // Pi's per-subagent transcripts. Standalone runs keep them next to the
+  // journal for easy post-mortem. Under druppie (PI_AGENT_INGEST_URL set)
+  // the DB is the source of truth, so route transcripts to an OS tmpdir
+  // that gets blown away when the subprocess exits.
+  const sessionsDir = process.env.PI_AGENT_INGEST_URL
+    ? `/tmp/pi-agent-transcripts-${process.pid}`
+    : journalDir;
 
   const baseOpts: RunSubagentOptions = {
     cwd,

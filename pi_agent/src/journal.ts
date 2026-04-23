@@ -120,8 +120,15 @@ interface AgentNarrative {
 
 // ── Journal ───────────────────────────────────────────────────────────────
 
+/**
+ * When PI_AGENT_INGEST_URL is set (druppie run), the DB is the only home for
+ * session data — no JSONL or summary.json on disk. When unset (standalone
+ * CLI debug), we fall back to the original file-based journal.
+ */
+const WRITE_FILES = !process.env.PI_AGENT_INGEST_URL;
+
 export class Journal {
-  private readonly stream: WriteStream;
+  private readonly stream: WriteStream | null;
   private readonly startMs: number;
   private readonly agents = new Map<string, AgentStats>();
   private readonly phases: PhaseRecord[] = [];
@@ -136,16 +143,20 @@ export class Journal {
   private prResult?: { action: string; number?: number; url?: string };
 
   constructor(public readonly dir: string, task: TaskSpec) {
-    mkdirSync(dir, { recursive: true });
-    this.stream = createWriteStream(join(dir, "journal.jsonl"), { flags: "a" });
+    if (WRITE_FILES) {
+      mkdirSync(dir, { recursive: true });
+      this.stream = createWriteStream(join(dir, "journal.jsonl"), { flags: "a" });
+    } else {
+      this.stream = null;
+    }
     this.startMs = Date.now();
     this.write("run_start", { task });
   }
 
-  /** Append one event to the journal (local file + optional druppie ingest). */
+  /** Append one event. Local file only in standalone mode, ingest always. */
   write(type: string, data: Record<string, unknown> = {}): void {
     const event = { ts: new Date().toISOString(), elapsedMs: Date.now() - this.startMs, type, ...data };
-    this.stream.write(JSON.stringify(event) + "\n");
+    this.stream?.write(JSON.stringify(event) + "\n");
     // Fire-and-forget ingest — no await so journal semantics stay synchronous.
     void postEvent(event);
   }
@@ -322,13 +333,17 @@ export class Journal {
     this.write("run_end", { success, durationMs: summary.durationMs });
 
     const summaryPath = join(this.dir, "summary.json");
-    writeFileSync(summaryPath, JSON.stringify(summary, null, 2));
+    if (WRITE_FILES) {
+      writeFileSync(summaryPath, JSON.stringify(summary, null, 2));
+    }
 
     await postSummary(summary);
 
-    await new Promise<void>((resolve, reject) => {
-      this.stream.end((err?: Error | null) => (err ? reject(err) : resolve()));
-    });
+    if (this.stream) {
+      await new Promise<void>((resolve, reject) => {
+        this.stream!.end((err?: Error | null) => (err ? reject(err) : resolve()));
+      });
+    }
     return { summaryPath, summary };
   }
 }
