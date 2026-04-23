@@ -480,6 +480,13 @@ export const extractOrderedItems = (agentRun, hasFollowingMessage) => {
           if (raw?.sandbox_session_id) items.push({ type: 'sandbox', data: raw })
         } catch { /* skip */ }
       }
+      // Pi coding run results (vendored pi_agent)
+      if (tc.tool_name === 'execute_coding_task_pi' && tc.status === 'completed' && tc.result) {
+        try {
+          const raw = typeof tc.result === 'string' ? JSON.parse(tc.result) : tc.result
+          if (raw?.run_id || raw?.pi_coding_run_id) items.push({ type: 'pi_coding', data: raw })
+        } catch { /* skip */ }
+      }
     })
   })
   return items

@@ -29,12 +29,23 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY druppie/ /app/druppie/
 
+# Copy and build the vendored pi_agent (execute_coding_task_pi). Runs as
+# a child subprocess of this backend container — node + docker.io are
+# already installed above. Each invocation spawns its own sysbox/kata
+# sandbox; parallelism is bounded only by the backend container's CPU.
+COPY pi_agent/package.json pi_agent/package-lock.json /app/pi_agent/
+RUN cd /app/pi_agent && npm ci --omit=dev --ignore-scripts || npm install --omit=dev --ignore-scripts
+COPY pi_agent/ /app/pi_agent/
+RUN cd /app/pi_agent && npx --yes tsc || echo "pi_agent tsc skipped — run manually"
+
 # Set environment variables
 ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
+ENV PI_AGENT_ROOT=/app/pi_agent
+ENV PI_AGENT_SESSIONS_DIR=/app/pi_agent_sessions
 
-# Create workspace directory
-RUN mkdir -p /app/workspace
+# Create workspace + pi_agent sessions dirs
+RUN mkdir -p /app/workspace /app/pi_agent_sessions
 
 # Expose port
 EXPOSE 8000
