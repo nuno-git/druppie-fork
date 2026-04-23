@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "start": "tsx src/index.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:proxy": "LLM_RETRY_DELAYS_MS=200,400,800,1600 LLM_RETRY_KEEPALIVE_MS=100 LLM_RETRY_BUDGET_MS=10000 tsx tests/proxy/retry-integration.test.ts"
   },
   "dependencies": {
     "@open-inspect/shared": "file:../shared",

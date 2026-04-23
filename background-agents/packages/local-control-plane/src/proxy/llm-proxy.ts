@@ -27,12 +27,75 @@ const READ_TIMEOUT_MS = 300_000;
 
 const CONSECUTIVE_ERROR_THRESHOLD = 3;
 
-/** Per-provider retry config: retry same provider before failover */
-const SAME_PROVIDER_MAX_RETRIES = 3;
-const SAME_PROVIDER_DELAYS_MS = [10_000, 30_000, 120_000]; // 10s, 30s, 2min
+/**
+ * Per-provider retry config. Retries against the SAME provider happen until
+ * the wall-clock budget runs out, then we failover to the next provider in
+ * the chain.
+ *
+ * Goal: an upstream outage (rate limit, 5xx, connection reset) should cause
+ * the proxy to wait it out rather than bubble up a 502 to opencode within a
+ * few minutes. The C3 watchdog in SessionInstance (LLM_FAILURE_TIMEOUT_MS,
+ * default 24h) still decides when to give up and kill the sandbox.
+ *
+ * Back-off schedule grows then caps: 10s, 30s, 2min, 5min, 5min, 5min, ...
+ * Override the budget per session via env LLM_RETRY_BUDGET_MS.
+ */
+const SAME_PROVIDER_RETRY_BUDGET_MS = parseInt(
+  process.env.LLM_RETRY_BUDGET_MS || String(24 * 60 * 60 * 1000), // 24h
+  10
+);
+
+/** Parse a CSV of millisecond values (e.g. "100,200,500") into a number array,
+ *  or return null if the env var is unset / malformed. Used by the retry
+ *  integration tests to shrink back-offs below 10s; prod defaults stand. */
+function parseDelaysMs(raw: string | undefined): number[] | null {
+  if (!raw) return null;
+  const parts = raw.split(",").map((s) => parseInt(s.trim(), 10));
+  if (parts.some((n) => !Number.isFinite(n) || n < 0)) return null;
+  if (parts.length === 0) return null;
+  return parts;
+}
+const SAME_PROVIDER_DELAYS_MS: number[] = parseDelaysMs(process.env.LLM_RETRY_DELAYS_MS) ?? [
+  10_000, 30_000, 120_000, 300_000,
+];
+
+/** Keep-alive SSE comments sent to the client during back-off sleeps so its
+ *  HTTP socket doesn't idle out while we're waiting on a flaky upstream.
+ *  Env-overridable for tests (via LLM_RETRY_KEEPALIVE_MS). */
+const STREAM_KEEPALIVE_INTERVAL_MS = parseInt(
+  process.env.LLM_RETRY_KEEPALIVE_MS || "15000",
+  10
+);
+
+function nextBackoffDelay(retryIdx: number): number {
+  // retryIdx is 1-based (first retry = 1). Cap to the last entry when we
+  // run past the end of the schedule.
+  const i = Math.max(0, retryIdx - 1);
+  return SAME_PROVIDER_DELAYS_MS[Math.min(i, SAME_PROVIDER_DELAYS_MS.length - 1)];
+}
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Sleep in short slices so we can emit SSE keepalives to the client during
+ *  the wait. If `writeKeepalive` is provided (streaming requests only), we
+ *  call it every STREAM_KEEPALIVE_INTERVAL_MS to keep the downstream socket
+ *  alive. Returns early and truthy if the client disconnected mid-sleep. */
+async function sleepWithKeepalive(
+  ms: number,
+  writeKeepalive: (() => boolean) | null,
+  isClientGone: () => boolean
+): Promise<boolean> {
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
+    if (isClientGone()) return true;
+    const remaining = end - Date.now();
+    const slice = Math.min(remaining, STREAM_KEEPALIVE_INTERVAL_MS);
+    await sleep(slice);
+    if (writeKeepalive && !writeKeepalive()) return true; // socket write failed
+  }
+  return isClientGone();
 }
 
 /** Map of provider names to their base URLs (fallbacks if not stored). */
@@ -199,7 +262,11 @@ async function attemptStreamingRequest(
   headers: Record<string, string>,
   body: Buffer,
   res: Response,
-  provider: string
+  provider: string,
+  /** Optional: called right before we start forwarding upstream bytes.
+   *  Used by the retry loop to commit SSE headers early (for keepalives)
+   *  so we don't try to writeHead() again here. */
+  onBeforeForward?: () => void
 ): Promise<StreamResult> {
   const startTime = Date.now();
   return new Promise<StreamResult>((resolve) => {
@@ -231,21 +298,26 @@ async function attemptStreamingRequest(
         upstreamRes.statusCode &&
         (upstreamRes.statusCode < 200 || upstreamRes.statusCode >= 300)
       ) {
-        // Any non-2xx — retry with next provider in chain
+        // Any non-2xx — retry (same provider first, then failover).
         upstreamRes.resume();
         upstreamRes.on("end", () => resolve("failed_before_headers"));
         return;
       }
 
-      // Success — forward response (can't retry after this)
-      res.writeHead(upstreamRes.statusCode || 200, {
-        "Content-Type": upstreamRes.headers["content-type"] || "text/event-stream",
-        "Cache-Control": "no-cache",
-        Connection: "keep-alive",
-        ...(upstreamRes.headers["x-request-id"]
-          ? { "x-request-id": upstreamRes.headers["x-request-id"] }
-          : {}),
-      });
+      // Success — forward response. If the outer retry loop already
+      // committed SSE headers (for keepalive purposes), skip writeHead
+      // and just start piping upstream chunks.
+      if (onBeforeForward) onBeforeForward();
+      if (!res.headersSent) {
+        res.writeHead(upstreamRes.statusCode || 200, {
+          "Content-Type": upstreamRes.headers["content-type"] || "text/event-stream",
+          "Cache-Control": "no-cache",
+          Connection: "keep-alive",
+          ...(upstreamRes.headers["x-request-id"]
+            ? { "x-request-id": upstreamRes.headers["x-request-id"] }
+            : {}),
+        });
+      }
 
       upstreamRes.on("data", (chunk: Buffer) => {
         chunkCount++;
@@ -523,20 +595,69 @@ async function handleRequestWithFailover(
       );
     }
 
+    // Track whether the downstream client has dropped. `res.on('close')`
+    // fires as soon as opencode disconnects; we stop retrying immediately
+    // rather than burning quota on an orphaned request.
+    let clientGone = false;
+    res.on("close", () => {
+      clientGone = true;
+    });
+    const isClientGone = () => clientGone || res.writableEnded || res.destroyed;
+
     if (streaming) {
-      // Retry same provider with exponential backoff before failover.
-      // Only track the FINAL outcome for health purposes — individual retry
-      // failures should not count toward the consecutive error threshold,
-      // otherwise a single request with 3 retries immediately triggers
-      // provider_unhealthy (threshold is also 3).
-      let streamOutcome: StreamResult = "failed_before_headers";
-      for (let retry = 0; retry < SAME_PROVIDER_MAX_RETRIES; retry++) {
-        if (retry > 0) {
-          const delay = SAME_PROVIDER_DELAYS_MS[retry - 1] ?? 120_000;
+      // We commit to SSE headers BEFORE the first upstream call so we can
+      // send keepalive comments during back-off sleeps. Without this,
+      // opencode's HTTP client idles out after a few tens of seconds while
+      // the proxy waits on a flaky upstream, and the whole retry budget
+      // is wasted on an already-dead socket.
+      //
+      // SSE comment lines (starting with ':') are ignored by parsers —
+      // they exist specifically to keep the socket warm.
+      let headersCommitted = false;
+      const commitStreamingHeaders = () => {
+        if (headersCommitted || res.headersSent) return;
+        res.writeHead(200, {
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache",
+          Connection: "keep-alive",
+          "X-Accel-Buffering": "no", // disable proxy buffering (nginx etc.)
+        });
+        headersCommitted = true;
+      };
+      const writeKeepalive = (): boolean => {
+        commitStreamingHeaders();
+        try {
+          return res.write(`: keepalive ${Date.now()}\n\n`);
+        } catch {
+          return false;
+        }
+      };
+
+      const startedAt = Date.now();
+      let retry = 0;
+      let lastFailureReason: string = "failed_before_headers";
+
+      while (Date.now() - startedAt < SAME_PROVIDER_RETRY_BUDGET_MS) {
+        if (isClientGone()) {
           console.log(
-            `[llm-proxy] ${attempt.provider} retry ${retry}/${SAME_PROVIDER_MAX_RETRIES - 1} after ${delay}ms`
+            `[llm-proxy] ${attempt.provider} client disconnected during retry loop; abandoning`
           );
-          await sleep(delay);
+          trackLlmResult(proxyKey, attempt.provider, false, credentialStore, callbacks);
+          return;
+        }
+
+        if (retry > 0) {
+          const delay = nextBackoffDelay(retry);
+          const budgetLeft = SAME_PROVIDER_RETRY_BUDGET_MS - (Date.now() - startedAt);
+          console.log(
+            `[llm-proxy] ${attempt.provider} retry ${retry} after ${delay}ms ` +
+              `(budget left: ${Math.round(budgetLeft / 1000)}s, last: ${lastFailureReason})`
+          );
+          const disconnected = await sleepWithKeepalive(delay, writeKeepalive, isClientGone);
+          if (disconnected) {
+            trackLlmResult(proxyKey, attempt.provider, false, credentialStore, callbacks);
+            return;
+          }
         }
 
         const result = await attemptStreamingRequest(
@@ -545,44 +666,86 @@ async function handleRequestWithFailover(
           headers,
           attemptBody,
           res,
-          attempt.provider
+          attempt.provider,
+          commitStreamingHeaders
         );
-
-        streamOutcome = result;
 
         if (result === "success") {
           trackLlmResult(proxyKey, attempt.provider, true, credentialStore, callbacks);
           return;
         }
         if (result === "headers_sent") {
-          // Partially sent — can't retry (headers already forwarded to client)
+          // The upstream started streaming but then errored mid-flight.
+          // We can't recover — headers are already downstream and partial
+          // bytes were forwarded. Let opencode see the truncation.
           trackLlmResult(proxyKey, attempt.provider, false, credentialStore, callbacks);
           return;
         }
-        // failed_before_headers — retry same provider
+        // failed_before_headers — upstream returned 4xx/5xx or connection
+        // died before data flowed to the client. Safe to retry.
+        lastFailureReason = result;
+        retry++;
       }
 
-      // All retries exhausted — track ONE failure for health purposes
+      // Wall-clock budget exhausted on this provider.
+      console.warn(
+        `[llm-proxy] ${attempt.provider} retry budget exhausted after ${Math.round(
+          (Date.now() - startedAt) / 1000
+        )}s and ${retry} attempts`
+      );
       trackLlmResult(proxyKey, attempt.provider, false, credentialStore, callbacks);
 
       if (isLastAttempt) {
-        if (!res.headersSent) {
+        // Nothing more to try. We already committed SSE 200 headers (to
+        // keep the client alive during back-offs), so surface the error
+        // as an SSE error event rather than an HTTP status code.
+        if (headersCommitted) {
+          try {
+            res.write(
+              `event: error\ndata: ${JSON.stringify({
+                error: "All providers failed after retry budget exhausted",
+              })}\n\n`
+            );
+            res.end();
+          } catch {
+            // client already gone
+          }
+        } else if (!res.headersSent) {
           res.status(502).json({ error: "All providers failed" });
         }
         return;
       }
       continue;
     } else {
-      // Retry same provider with exponential backoff before failover.
-      // Only track the FINAL outcome — see streaming path comment above.
+      // Buffered (non-streaming) path: we don't have a downstream socket
+      // to keep warm since the client is waiting for the full response,
+      // but we still want the retry budget so the caller eventually
+      // sees success on transient upstream outages.
       let lastResult: BufferedResult | null = null;
-      for (let retry = 0; retry < SAME_PROVIDER_MAX_RETRIES; retry++) {
-        if (retry > 0) {
-          const delay = SAME_PROVIDER_DELAYS_MS[retry - 1] ?? 120_000;
+      const startedAt = Date.now();
+      let retry = 0;
+
+      while (Date.now() - startedAt < SAME_PROVIDER_RETRY_BUDGET_MS) {
+        if (isClientGone()) {
           console.log(
-            `[llm-proxy] ${attempt.provider} retry ${retry}/${SAME_PROVIDER_MAX_RETRIES - 1} after ${delay}ms`
+            `[llm-proxy] ${attempt.provider} client disconnected during buffered retry loop; abandoning`
           );
-          await sleep(delay);
+          trackLlmResult(proxyKey, attempt.provider, false, credentialStore, callbacks);
+          return;
+        }
+
+        if (retry > 0) {
+          const delay = nextBackoffDelay(retry);
+          const budgetLeft = SAME_PROVIDER_RETRY_BUDGET_MS - (Date.now() - startedAt);
+          console.log(
+            `[llm-proxy] ${attempt.provider} buffered retry ${retry} after ${delay}ms ` +
+              `(budget left: ${Math.round(budgetLeft / 1000)}s)`
+          );
+          const disconnected = await sleepWithKeepalive(delay, null, isClientGone);
+          if (disconnected) {
+            trackLlmResult(proxyKey, attempt.provider, false, credentialStore, callbacks);
+            return;
+          }
         }
 
         lastResult = await attemptBufferedRequest(
@@ -605,11 +768,17 @@ async function handleRequestWithFailover(
         }
 
         console.log(
-          `[llm-proxy] ${attempt.provider} returned ${lastResult.status}, ${retry < SAME_PROVIDER_MAX_RETRIES - 1 ? "retrying same provider" : "trying next provider"}`
+          `[llm-proxy] ${attempt.provider} returned ${lastResult.status}, retrying same provider within budget`
         );
+        retry++;
       }
 
-      // All retries exhausted — track ONE failure
+      // Wall-clock budget exhausted.
+      console.warn(
+        `[llm-proxy] ${attempt.provider} buffered retry budget exhausted after ${Math.round(
+          (Date.now() - startedAt) / 1000
+        )}s and ${retry} attempts`
+      );
       trackLlmResult(proxyKey, attempt.provider, false, credentialStore, callbacks);
 
       if (isLastAttempt && lastResult) {
