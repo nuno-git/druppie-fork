@@ -1,0 +1,22 @@
+## Agent test: BA handles general chat correctly — gives advice without writing an FD
+##
+## The user asks a general question about requirements gathering.
+## The BA should provide advice via HITL and finish with CHAT_COMPLETE,
+## not try to create a project or write an FD.
+
+agent-test:
+  name: ba-general-chat-advice
+  description: "BA gives advice in general_chat mode without writing an FD"
+  tags: [business_analyst, general-chat]
+
+  message: "Hoe kan ik het beste omgaan met stakeholders die tegenstrijdige eisen hebben?"
+  agents: [router, planner, business_analyst]
+  hitl: non-technical-pm
+
+  judge:
+    context: [router, business_analyst]
+    checks:
+      - "The router must have classified this as general_chat (not create_project or update_project). This is a general question about stakeholder management, not a request to build something."
+      - "The BA must have provided advice about handling conflicting stakeholder requirements via hitl_ask_question (since this is providing information, not asking a question). The advice should be relevant and grounded in BA expertise."
+      - "The BA must have called done() with CHAT_COMPLETE in the summary. It must NOT have called coding:make_design — there is no project to design here."
+      - "The BA must NOT have tried to start requirements elicitation (no 'What is your role?' or 'Tell me about your situation' style questions aimed at starting a full project intake). It should answer the question directly."

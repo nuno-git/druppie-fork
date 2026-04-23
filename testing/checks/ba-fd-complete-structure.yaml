@@ -1,0 +1,12 @@
+check:
+  name: ba-fd-complete-structure
+  description: "Functional design must contain all required sections from the FD format"
+  tags: [business_analyst, structure, quality]
+  assert:
+    - agent: business_analyst
+      tool: coding:make_design
+  judge:
+    context: business_analyst
+    checks:
+      - "The functional design passed to coding:make_design must contain ALL of these sections (check for section headings, numbering may vary): (1) Current vs Desired Situation, (2) Problem Summary, (3) Functional Requirements with ID/Source/Requirement/Verification columns, (4) Business Rules & Logic, (5) Information Requirements, (6) User Journeys, (7) Integration Points, (8) Non-Functional Requirements with ID/Source/Requirement/Verification columns, (9) Security & Compliance Requirements, (10) Assumptions & Open Questions, (11) Out of Scope, (12) Process Flow Diagram with a mermaid code block, (13) Possible Solution Direction, (14) Platform standard deviations. If any section is completely missing, this check fails."
+      - "The FD must start with a platform standards reference line linking to docs/platform-functional-standards.md with a revision number."

@@ -1,0 +1,12 @@
+check:
+  name: ba-stays-in-scope
+  description: "BA must not make architecture decisions, recommend technologies, or write code"
+  tags: [business_analyst, scope, quality]
+  assert:
+    - agent: business_analyst
+      completed: true
+  judge:
+    context: business_analyst
+    checks:
+      - "The BA must not have recommended specific technologies, frameworks, databases, or programming languages in any HITL message or in the functional design. Terms like React, Python, PostgreSQL, REST API, microservices, etc. should not appear as recommendations. The 'Possible Solution Direction' section in the FD may reference existing platform modules by name — that is acceptable — but the BA must not prescribe HOW to build anything."
+      - "The BA must not have designed user interfaces (wireframes, layout descriptions, specific UI components) or written any code or pseudocode in any HITL message or in the functional design."

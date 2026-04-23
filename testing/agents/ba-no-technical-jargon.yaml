@@ -1,0 +1,18 @@
+## Agent test: BA does not use technical jargon in questions to the user
+##
+## The BA must ask about security/compliance in user-friendly terms,
+## never mentioning GDPR, PII, BIO, NIS2, encryption standards, etc.
+
+agent-test:
+  name: ba-no-technical-jargon
+  description: "BA avoids technical jargon (GDPR, PII, encryption, etc.) when questioning users"
+  tags: [business_analyst, communication, quality]
+
+  message: "Ik wil een applicatie voor het registreren en opvolgen van klachten over waterkwaliteit van burgers"
+  agents: [router, planner, business_analyst]
+  hitl: cooperative-user
+
+  judge:
+    context: business_analyst
+    checks:
+      - "Review ALL hitl_ask_multiple_choice_question and hitl_ask_question calls from the BA. None of them should contain technical or regulatory jargon that a non-technical user would not understand. Specifically check for: GDPR, AVG, BIO, NIS2, PII, AES, TLS, SSL, encryption, audit trail, data sovereignty, compliance framework, authentication protocol, authorization model. If any of these terms appear in a question to the user, this check fails. Note: the FD itself may contain some of these in the Security & Compliance section as documentation — that is acceptable. Only HITL questions to the user are checked."

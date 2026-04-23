@@ -1,0 +1,14 @@
+check:
+  name: ba-vague-terms-clarified
+  description: "BA must clarify vague terms into measurable requirements, not invent numbers"
+  tags: [business_analyst, quality-standards, quality]
+  assert:
+    - agent: business_analyst
+      completed: true
+    - agent: business_analyst
+      tool: coding:make_design
+  judge:
+    context: business_analyst
+    checks:
+      - "The user used vague terms like 'fast', 'easy', 'everyone', or 'good'. The BA must have asked the user to clarify these vague terms by offering concrete options or defaults (e.g., 'Do you mean within 2 seconds?' or 'Do you mean all employees or just your team?'). The BA must NOT have silently translated vague terms into specific numbers without asking the user. Check that for each vague term used by the user, the BA asked a follow-up question before the FD was written."
+      - "The functional design must not contain vague terms like 'fast', 'easy', 'simple', 'user-friendly', 'seamless', or 'real-time' in requirement statements. These must be replaced with measurable criteria that the user confirmed."

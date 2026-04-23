@@ -1,0 +1,14 @@
+check:
+  name: ba-no-fabricated-requirements
+  description: "BA must not invent requirements the user never mentioned or confirmed"
+  tags: [business_analyst, assumptions, quality]
+  assert:
+    - agent: business_analyst
+      completed: true
+    - agent: business_analyst
+      tool: coding:make_design
+  judge:
+    context: business_analyst
+    checks:
+      - "Review ALL functional requirements (FR-xx) and non-functional requirements (NFR-xx) in the make_design content. For each requirement, check whether it traces back to something the user explicitly said or confirmed during the HITL conversation. Requirements that appear in the FD but were never discussed with the user are fabricated. Platform standards (from docs/platform-functional-standards.md) that are restated in the FD also count as fabricated — they should not be in the FD at all. If more than one-third of requirements are fabricated, this check fails."
+      - "The FD must NOT contain specific performance numbers (response times, concurrent users, etc.) as NFRs UNLESS the user explicitly mentioned or confirmed those numbers during the conversation. Generic performance is a platform standard and should not appear as a project-specific NFR."

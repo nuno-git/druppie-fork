@@ -1,0 +1,25 @@
+## Agent test: BA clarifies vague terms instead of inventing numbers
+##
+## The user speaks in vague terms ("fast", "easy", "everyone").
+## The BA must ask follow-up questions to get concrete answers,
+## not silently translate vague terms into specific numbers.
+
+agent-test:
+  name: ba-clarifies-vague-terms
+  description: "BA asks user to clarify vague terms rather than inventing specific numbers"
+  tags: [business_analyst, quality-standards, vague-terms]
+
+  message: "Ik wil een makkelijke app waarmee iedereen snel inspecties kan inplannen"
+  agents: [router, planner, business_analyst]
+  hitl: vague-user
+
+  assert:
+    - check: ba-vague-terms-clarified
+    - check: ba-no-fabricated-requirements
+    - check: ba-mandatory-elicitation
+    - check: ba-fd-in-dutch
+
+  judge:
+    context: business_analyst
+    checks:
+      - "The user said 'makkelijke' (easy), 'iedereen' (everyone), and 'snel' (fast). The BA must have followed up on each vague term to clarify it — offering concrete options or defaults for the user to choose from. The BA must NOT have silently decided on specific numbers (e.g., writing 'within 3 seconds' or 'maximum 5 clicks') without asking the user."

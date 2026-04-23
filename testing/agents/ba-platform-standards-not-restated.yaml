@@ -1,0 +1,25 @@
+## Agent test: BA does not restate platform standards in the FD
+##
+## Platform standards (performance, accessibility, responsiveness, etc.)
+## are inherited automatically. The BA should not write NFRs for things
+## already covered by platform-functional-standards.md unless the user
+## explicitly requests a deviation.
+
+agent-test:
+  name: ba-platform-standards-not-restated
+  description: "BA does not restate platform default standards as project-specific NFRs"
+  tags: [business_analyst, platform-standards, quality]
+
+  message: "Ik wil een applicatie voor het registreren en opvolgen van klachten over waterkwaliteit van burgers"
+  agents: [router, planner, business_analyst]
+  hitl: cooperative-user
+
+  assert:
+    - check: ba-no-fabricated-requirements
+    - check: ba-fd-complete-structure
+
+  judge:
+    context: business_analyst
+    checks:
+      - "The functional design must NOT restate platform standards as project-specific NFRs. Check the Non-Functional Requirements section for items that duplicate platform defaults: page load times (2 seconds), responsive design, WCAG accessibility, keyboard navigation, error message language, Keycloak authentication. If any of these appear as NFR entries in the FD without the user having explicitly requested different values, this check fails. The FD should only contain project-SPECIFIC non-functional requirements that go beyond the platform defaults."
+      - "The FD must contain the platform standards reference line at the top, linking to docs/platform-functional-standards.md with a revision number. This line IS the mechanism for inheriting the defaults — if it is missing, the platform standards are not applied."
