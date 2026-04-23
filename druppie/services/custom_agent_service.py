@@ -459,6 +459,7 @@ class CustomAgentService:
             api_key=settings.llm.foundry_api_key or None,
         )
         foundry_models = foundry.list_models()
+        foundry_tools = foundry.list_tools()
 
         # Categories (hardcoded, minus "system" which is reserved)
         categories = ["execution", "planning", "review", "analysis"]
@@ -469,11 +470,7 @@ class CustomAgentService:
             "system_prompts": system_prompts,
             "druppie_runtime_tools": builtin_tools,
             "foundry_models": foundry_models,
-            "foundry_tools": [
-                {"id": "code_interpreter", "label": "Code Interpreter", "description": "Run Python code in a sandbox"},
-                {"id": "file_search", "label": "File Search", "description": "Search through uploaded files using embeddings"},
-                {"id": "bing_grounding", "label": "Bing Grounding", "description": "Ground responses with web search results"},
-            ],
+            "foundry_tools": foundry_tools,
             "categories": categories,
         }
 

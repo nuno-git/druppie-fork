@@ -311,6 +311,43 @@ class FoundryService:
             "deployable_tools": [t for t in (agent_detail.foundry_tools or []) if t in deployable_tools | portal_tools],
         }
 
+    def list_tools(self) -> list[dict]:
+        """List available tools for Azure AI Foundry agents.
+
+        Combines built-in tools (always available) with connection-based
+        tools discovered from client.connections.list().
+        """
+        # Built-in tools that are always available
+        tools = [
+            {"id": "code_interpreter", "label": "Code Interpreter", "description": "Run Python code in a sandbox"},
+            {"id": "file_search", "label": "File Search", "description": "Search through uploaded files using embeddings"},
+        ]
+
+        # Map connection types to tool IDs
+        connection_tool_map = {
+            "bing": {"id": "bing_grounding", "label": "Bing Grounding", "description": "Ground responses with web search results"},
+            "azure_ai_search": {"id": "azure_ai_search", "label": "Azure AI Search", "description": "Search your own data using Azure AI Search"},
+        }
+
+        try:
+            client = self._get_client()
+            seen_tools = set()
+            for conn in client.connections.list():
+                conn_name = (getattr(conn, "name", "") or "").lower()
+                conn_type = str(getattr(conn, "type", "")).lower()
+                for key, tool_def in connection_tool_map.items():
+                    if key in conn_name or key in conn_type:
+                        if tool_def["id"] not in seen_tools:
+                            tools.append(tool_def)
+                            seen_tools.add(tool_def["id"])
+            logger.info("foundry_tools_listed", count=len(tools))
+        except FoundryNotConfiguredError:
+            pass
+        except Exception as e:
+            logger.warning("foundry_list_tools_failed", error=str(e))
+
+        return tools
+
     def list_models(self) -> list[dict]:
         """List available model deployments from Azure AI Foundry.
 
