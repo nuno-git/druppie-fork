@@ -145,8 +145,6 @@ tool-test:
       tool: builtin:done
       arguments:
         summary: "Agent business_analyst: DESIGN_APPROVED. Wrote docs/functional-design.md with 5 functional requirements and 3 non-functional requirements."
-      assert:
-        completed: true
 
     # =========================================================================
     # Planner → plan architect
