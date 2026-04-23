@@ -181,8 +181,9 @@ class BoundedOrchestrator:
                 # Check if this agent was already completed (e.g. by
                 # _bounded_execute during a pause loop — when the architect
                 # pauses for approval, resume triggers execute_pending_runs
-                # which may run the build_classifier that done(next_agent=...)
-                # created). Skip it to avoid running the same agent twice.
+                # which may run the builder_planner / update_core_builder
+                # that done(next_agent=...) created). Skip it to avoid
+                # running the same agent twice.
                 self._db.expire_all()
                 completed_ids = {
                     r.agent_id
@@ -200,7 +201,8 @@ class BoundedOrchestrator:
 
                 # Reuse an existing pending run if one was created by a
                 # previous agent's done(next_agent=...) — e.g. architect
-                # creates a pending build_classifier via next_agent routing.
+                # creates a pending builder_planner or update_core_builder
+                # via next_agent routing.
                 existing = execution_repo.get_pending_by_agent_id(session_id, agent_id)
                 if existing:
                     agent_run = existing
