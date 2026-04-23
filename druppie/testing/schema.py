@@ -25,6 +25,13 @@ class CheckAssertion(BaseModel):
     status: str | None = None
     error_contains: str | None = None
     error_matches: str | None = None
+    # Inline argument matcher — when set, the assertion passes only if the
+    # agent made a tool call with matching arguments. Supports the same
+    # three matching modes as CheckRef.expected (exact / "*" / any-of list).
+    # Useful for picking a specific call when an agent makes several calls
+    # to the same tool (e.g. architect writes research.md + technical-design.md
+    # via coding:make_design).
+    arguments: dict[str, object] | None = None
 
 
 class JudgeCheck(BaseModel):
