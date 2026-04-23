@@ -280,10 +280,6 @@ BUILTIN_TOOL_DEFS: dict[str, dict] = {
                             "'druppie_core' = Druppie's own GitHub repo."
                         ),
                     },
-                    "source_branch": {
-                        "type": "string",
-                        "description": "Branch to clone as the starting point. Defaults to the repo's default branch.",
-                    },
                 },
                 "required": ["task"],
             },

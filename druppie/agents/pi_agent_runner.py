@@ -35,7 +35,7 @@ logger = structlog.get_logger()
 PI_AGENT_ROOT = Path(os.getenv("PI_AGENT_ROOT", "/app/pi_agent"))
 PI_AGENT_CLI = PI_AGENT_ROOT / "dist" / "cli.js"
 PI_AGENT_SESSIONS_DIR = Path(os.getenv("PI_AGENT_SESSIONS_DIR", "/app/pi_agent_sessions"))
-DRUPPIE_INTERNAL_URL = os.getenv("DRUPPIE_INTERNAL_URL", "http://backend:8000")
+DRUPPIE_INTERNAL_URL = os.getenv("DRUPPIE_INTERNAL_URL", "http://localhost:8000")
 
 # Cap stdout/stderr kept in DB so a runaway log doesn't blow up Postgres.
 _TAIL_BYTES = 64 * 1024
@@ -116,6 +116,13 @@ class PiAgentRunner:
         # setting ONESHOT_SANDBOX_RUNTIME in the backend container's env —
         # prod hosts with Kata registered just pin it there.
         env.setdefault("ONESHOT_SANDBOX_RUNTIME", "sysbox-runc")
+        # pi_agent is inside the backend container, but the sandbox it spawns
+        # is a *sibling* on the host daemon. The sandbox's published port
+        # lives on the host's 127.0.0.1, which is NOT reachable from the
+        # backend container's own loopback. Route through host.docker.internal
+        # (aliased to host-gateway in compose extra_hosts). Overridable for
+        # hosts that don't support that alias.
+        env.setdefault("PI_AGENT_SANDBOX_HOST", "host.docker.internal")
         return env
 
     async def run(self, ingest_token: str) -> dict:

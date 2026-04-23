@@ -147,7 +147,13 @@ async def execute_coding_task_pi(
                     }
     except Exception:
         pass
-    source_branch: str | None = args.get("source_branch")
+    # source_branch is NOT an LLM-facing argument. The branch is determined
+    # by the repo_target (druppie_core → colab-dev; project → repo's default
+    # branch from Gitea). If we ever need to override, do it here based on
+    # server-side context, never from LLM args.
+    source_branch: str | None = (
+        "colab-dev" if repo_target == "druppie_core" else None
+    )
 
     from druppie.opencode.repo_context import resolve_repo_context
     from druppie.repositories import SessionRepository

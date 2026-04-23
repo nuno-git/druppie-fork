@@ -134,7 +134,14 @@ export async function launchSandbox(opts: SandboxLaunchOptions): Promise<Running
   }
 
   // Build the client and wait for the daemon to become reachable.
-  const client = new SandboxClient({ host: "127.0.0.1", port: hostPort, authToken });
+  // Host override: when pi_agent runs inside another container (e.g. druppie's
+  // backend container with /var/run/docker.sock bind-mounted), the sandbox is
+  // a *sibling* container. Its published port lives on the real host's
+  // 127.0.0.1, which is NOT the same loopback as inside our container.
+  // PI_AGENT_SANDBOX_HOST=host.docker.internal (aliased via extra_hosts)
+  // routes through the host-gateway and reaches the published port correctly.
+  const sandboxHost = process.env.PI_AGENT_SANDBOX_HOST ?? "127.0.0.1";
+  const client = new SandboxClient({ host: sandboxHost, port: hostPort, authToken });
   await waitForHealth(client, opts.timeoutSec);
 
   // Schedule a wall-clock timeout to forcibly tear down
