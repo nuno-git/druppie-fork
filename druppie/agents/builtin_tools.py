@@ -1363,6 +1363,7 @@ async def execute_builtin(
     session_id: UUID,
     agent_run_id: UUID,
     execution_repo: "ExecutionRepository",
+    tool_call_id: UUID | None = None,
 ) -> dict:
     """Execute a non-HITL built-in tool.
 
@@ -1432,6 +1433,7 @@ async def execute_builtin(
             session_id=session_id,
             agent_run_id=agent_run_id,
             execution_repo=execution_repo,
+            tool_call_id=tool_call_id,
         )
     elif tool_name == "test_report":
         return await test_report(

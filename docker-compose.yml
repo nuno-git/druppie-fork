@@ -619,6 +619,13 @@ services:
       - ./druppie:/app/druppie
       - ./testing:/app/testing:ro
       - ./secrets:/app/secrets:ro
+      # Bind-mount only pi_agent/dist in dev so TypeScript edits (built on the
+      # host with `cd pi_agent && npm run build`) are picked up on the next
+      # subprocess spawn without rebuilding the backend image. We deliberately
+      # do NOT mount src/ or node_modules/ — the container keeps its own
+      # node_modules baked by the Dockerfile, so host/container Node versions
+      # can safely diverge.
+      - ./pi_agent/dist:/app/pi_agent/dist
       - druppie_new_workspace:/app/workspace
       # Shared with every pi_agent sandbox so the sandbox's /out and the
       # backend's /app/pi_agent_bundles are the same bytes.

@@ -438,3 +438,10 @@ export const getPackageProjects = (manager, name) =>
   request(`/api/cache/packages/${encodeURIComponent(manager)}/${encodeURIComponent(name)}/projects`)
 export const getProjectDependencies = (projectId) =>
   request(`/api/projects/${projectId}/dependencies`)
+
+// ============ pi_agent (execute_coding_task_pi live view) ============
+export const getPiCodingRun = (runId, since = 0) =>
+  request(`/api/pi-agent-runs/${runId}?since=${since}`)
+
+export const getPiCodingRunByToolCall = (toolCallId, since = 0) =>
+  request(`/api/pi-agent-runs/by-tool-call/${toolCallId}?since=${since}`)

@@ -400,14 +400,46 @@ export class AgentHandle {
   }
 }
 
+/** Safe JSON serializer — handles BigInt, Map, Set, circulars, functions,
+ * and unknown class instances. The previous plain `JSON.stringify` regularly
+ * threw on the SDK's internal types, which made every tool_call in the
+ * journal come out as `{_unserialisable: true}` — losing the args the UI
+ * needs to render. */
+function safeStringify(value: unknown, maxLen = 4000): string {
+  const seen = new WeakSet<object>();
+  const replacer = (_key: string, v: unknown): unknown => {
+    if (typeof v === "bigint") return `${v.toString()}n`;
+    if (typeof v === "function") return `[function ${(v as Function).name || "anon"}]`;
+    if (typeof v === "symbol") return (v as symbol).toString();
+    if (v instanceof Map) return Object.fromEntries(v);
+    if (v instanceof Set) return Array.from(v);
+    if (v instanceof Error) return { name: v.name, message: v.message };
+    if (v && typeof v === "object") {
+      if (seen.has(v as object)) return "[circular]";
+      seen.add(v as object);
+    }
+    return v;
+  };
+  try {
+    const json = JSON.stringify(value, replacer);
+    if (json && json.length > maxLen) return json.slice(0, maxLen) + "…[truncated]";
+    return json ?? "";
+  } catch (e) {
+    return `[unserialisable: ${(e as Error).message}]`;
+  }
+}
+
+/** Turn arbitrary tool args into something the UI can render. Keeps small
+ * objects as-is so they can be pretty-printed; falls back to a bounded
+ * string preview for anything large or weird. */
 function truncateArgs(args: unknown): unknown {
   try {
     const json = JSON.stringify(args);
-    if (json.length <= 800) return args;
-    return { _truncated: true, preview: json.slice(0, 800) };
+    if (json != null && json.length <= 1200) return args;
   } catch {
-    return { _unserialisable: true };
+    /* fall through to safe stringify */
   }
+  return { _preview: safeStringify(args, 1200) };
 }
 
 // ── Summary shape ─────────────────────────────────────────────────────────

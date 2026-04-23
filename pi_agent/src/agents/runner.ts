@@ -219,12 +219,8 @@ export async function runSubagent(
       const ev = event as any;
       if (ev.isError) {
         consecutiveErrors++;
-        const errorPreview = (ev.result?.content ?? [])
-          .filter((p: any) => p.type === "text")
-          .map((p: any) => p.text)
-          .join("")
-          .slice(0, 200) || "unknown error";
-        console.error(`  [${agent.name}] Tool error (${ev.toolName}): ${errorPreview}`);
+        const errorPreview = extractResultPreview(ev.result, 400) || "unknown error";
+        console.error(`  [${agent.name}] Tool error (${ev.toolName}): ${errorPreview.slice(0, 200)}`);
         if (handle && ev.toolCallId) {
           const started = toolStartTimes.get(ev.toolCallId) ?? Date.now();
           handle.toolResult(ev.toolCallId, false, Date.now() - started, errorPreview);
@@ -238,11 +234,7 @@ export async function runSubagent(
         consecutiveErrors = 0;
         if (handle && ev.toolCallId) {
           const started = toolStartTimes.get(ev.toolCallId) ?? Date.now();
-          const preview = (ev.result?.content ?? [])
-            .filter((p: any) => p.type === "text")
-            .map((p: any) => p.text)
-            .join("")
-            .slice(0, 400);
+          const preview = extractResultPreview(ev.result, 800);
           handle.toolResult(ev.toolCallId, true, Date.now() - started, preview);
         }
       }
@@ -318,6 +310,39 @@ export async function runSubagentsParallel(
 }
 
 // ── Helpers ─────────────────────────────────────────────────
+
+/**
+ * Best-effort textual preview of a tool result. pi-coding-agent tools return
+ * MCP-style `{content: [{type: "text", text: ...}]}`, but custom tools
+ * (like spawn_parallel_explorers) return `{output, details}`. Grab whichever
+ * looks useful and cap the length.
+ */
+function extractResultPreview(result: any, maxLen = 800): string {
+  if (result == null) return "";
+  // MCP-style: {content: [{type:"text", text:"..."}]}
+  const content = Array.isArray(result?.content) ? result.content : null;
+  if (content) {
+    const text = content
+      .filter((p: any) => p && p.type === "text" && typeof p.text === "string")
+      .map((p: any) => p.text)
+      .join("");
+    if (text) return text.slice(0, maxLen);
+  }
+  // Custom-tool shape used by spawn-tool.ts: `{output: string, details: any}`.
+  if (typeof result?.output === "string" && result.output) {
+    return result.output.slice(0, maxLen);
+  }
+  // Plain string.
+  if (typeof result === "string") return result.slice(0, maxLen);
+  // Fallback: stringify the whole thing so the UI shows *something*.
+  try {
+    const json = JSON.stringify(result);
+    if (json) return json.slice(0, maxLen);
+  } catch {
+    /* ignore */
+  }
+  return "";
+}
 
 /**
  * Build the exact set of tools named in the agent's frontmatter. No more,

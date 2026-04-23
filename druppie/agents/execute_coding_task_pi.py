@@ -78,6 +78,7 @@ async def execute_coding_task_pi(
     session_id: UUID,
     agent_run_id: UUID,
     execution_repo: "ExecutionRepository",
+    tool_call_id: UUID | None = None,
 ) -> dict:
     """Synchronously run the pi_agent orchestrator; return its summary.
 
@@ -187,6 +188,7 @@ async def execute_coding_task_pi(
         run_id=run_id,
         session_id=session_id,
         user_id=session.user_id,
+        tool_call_id=tool_call_id,
         task_prompt=task,
         agent_name=flow,
         repo_target=repo_target,
@@ -230,12 +232,27 @@ async def execute_coding_task_pi(
     summary = result.get("summary")
     exit_code = result["exit_code"]
 
+    # Under druppie (ingest mode) pi_agent's journal.close() posts the summary
+    # straight to /api/pi-agent-runs/{run_id}/summary instead of writing
+    # summary.json to disk — so runner._load_summary() returns None. Fall
+    # back to the DB row, which was just updated by that ingest.
+    if summary is None:
+        db.refresh(row)
+        if row.summary:
+            try:
+                summary = json.loads(row.summary)
+            except (ValueError, TypeError):
+                summary = None
+
     row.exit_code = exit_code
     row.stdout_tail = result.get("stdout_tail")
     row.stderr_tail = result.get("stderr_tail")
     if summary is not None:
-        row.summary = json.dumps(summary)
-        row.status = "succeeded" if summary.get("success") else "failed"
+        # Only persist if not already ingested (avoid a pointless re-write).
+        if not row.summary:
+            row.summary = json.dumps(summary)
+        if not row.status or row.status == "running":
+            row.status = "succeeded" if summary.get("success") else "failed"
         if summary.get("pr", {}).get("url"):
             row.pr_url = summary["pr"]["url"]
             row.pr_number = summary["pr"].get("number")
@@ -250,7 +267,12 @@ async def execute_coding_task_pi(
         return {
             "success": exit_code == 0,
             "run_id": run_id,
-            "error": f"pi_agent exited {exit_code} without summary",
+            "pi_coding_run_id": str(row.id),
+            "error": (
+                f"pi_agent exited {exit_code} without summary — neither "
+                f"summary.json on disk nor the ingested DB row had one. "
+                f"Check the event journal on the PiCodingRun for partial progress."
+            ),
             "stderr_tail": result.get("stderr_tail", "")[-2000:],
         }
 

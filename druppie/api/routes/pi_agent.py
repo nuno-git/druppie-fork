@@ -14,11 +14,13 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from typing import Any
+from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Header, Request
+from fastapi import APIRouter, Depends, HTTPException, Header, Query, Request
 from sqlalchemy.orm import Session as DBSession
 import structlog
 
+from druppie.api.deps import get_current_user, get_user_roles
 from druppie.db.database import get_db
 from druppie.db.models.pi_coding_run import PiCodingRun
 
@@ -113,3 +115,98 @@ async def ingest_summary(
     db.add(row)
     db.commit()
     return {"ok": True}
+
+
+# ─── User-facing live-view endpoints ──────────────────────────────────────
+# Used by the UI to render an execute_coding_task_pi call while it's in
+# flight. Auth is JWT (session owner or admin) — distinct from the
+# server-to-server ingest endpoints above which use a per-run bearer token.
+
+def _view_payload(row: PiCodingRun, since: int = 0) -> dict:
+    """Serialize a PiCodingRun for the live-view UI.
+
+    Events are a JSON array in the column; ``since`` lets the client
+    request only events it hasn't seen yet (cheap tail fetch).
+    """
+    events: list[dict[str, Any]] = json.loads(row.events) if row.events else []
+    total = len(events)
+    if since < 0:
+        since = 0
+    tail = events[since:] if since < total else []
+    summary = json.loads(row.summary) if row.summary else None
+    started = row.created_at
+    ended = row.completed_at
+    now = datetime.now(timezone.utc)
+    elapsed_ms = int(((ended or now) - started).total_seconds() * 1000) if started else 0
+    return {
+        "run_id": row.run_id,
+        "pi_coding_run_id": str(row.id),
+        "tool_call_id": str(row.tool_call_id) if row.tool_call_id else None,
+        "status": row.status,
+        "agent_name": row.agent_name,
+        "repo_target": row.repo_target,
+        "repo_owner": row.repo_owner,
+        "repo_name": row.repo_name,
+        "branch_name": row.branch_name,
+        "pr_url": row.pr_url,
+        "pr_number": row.pr_number,
+        "created_at": started.isoformat() if started else None,
+        "completed_at": ended.isoformat() if ended else None,
+        "elapsed_ms": elapsed_ms,
+        "total_events": total,
+        "since": since,
+        "events": tail,
+        "summary": summary,
+    }
+
+
+def _authorize_view(row: PiCodingRun, user: dict) -> None:
+    """Session owner or admin may view."""
+    user_id = UUID(user["sub"])
+    roles = set(get_user_roles(user))
+    if "admin" in roles:
+        return
+    if row.user_id == user_id:
+        return
+    raise HTTPException(status_code=403, detail="not authorized to view this pi_coding_run")
+
+
+@router.get("/{run_id}")
+async def get_run(
+    run_id: str,
+    since: int = Query(0, ge=0, description="Return only events with index >= since"),
+    db: DBSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+) -> dict:
+    row: PiCodingRun | None = (
+        db.query(PiCodingRun).filter(PiCodingRun.run_id == run_id).one_or_none()
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"pi_coding_run {run_id} not found")
+    _authorize_view(row, user)
+    return _view_payload(row, since=since)
+
+
+@router.get("/by-tool-call/{tool_call_id}")
+async def get_run_by_tool_call(
+    tool_call_id: UUID,
+    since: int = Query(0, ge=0, description="Return only events with index >= since"),
+    db: DBSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+) -> dict:
+    """Fetch a pi_coding_run by the tool_call that launched it.
+
+    The frontend knows the tool_call id but not the opaque pi run_id when
+    the tool call is still executing, so this is the entry point for the
+    live view rendered inside the chat timeline.
+    """
+    row: PiCodingRun | None = (
+        db.query(PiCodingRun)
+        .filter(PiCodingRun.tool_call_id == tool_call_id)
+        .order_by(PiCodingRun.created_at.desc())
+        .first()
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"no pi_coding_run for tool_call {tool_call_id}")
+    _authorize_view(row, user)
+    return _view_payload(row, since=since)

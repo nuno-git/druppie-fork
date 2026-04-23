@@ -487,6 +487,13 @@ export const extractOrderedItems = (agentRun, hasFollowingMessage) => {
           if (raw?.run_id || raw?.pi_coding_run_id) items.push({ type: 'pi_coding', data: raw })
         } catch { /* skip */ }
       }
+      // Pi coding run — LIVE view while the tool is in flight. pi_agent
+      // is synchronous (the tool_call is "executing" until the subprocess
+      // returns), so we render the event stream from the PiCodingRun row
+      // until we flip to the completed summary above.
+      if (tc.tool_name === 'execute_coding_task_pi' && tc.status === 'executing') {
+        items.push({ type: 'pi_coding_live', toolCallId: tc.id })
+      }
     })
   })
   return items

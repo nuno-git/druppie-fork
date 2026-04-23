@@ -30,6 +30,7 @@ import {
 } from './ChatHelpers'
 import TestResultCard from './TestResultCard'
 import PiCodingRunCard from './PiCodingRunCard'
+import PiCodingRunLiveCard from './PiCodingRunLiveCard'
 import SandboxEventCard, {
   processEvents,
   groupBySubagent,
@@ -366,6 +367,13 @@ const AgentRunItem = ({ run, timelineIndex, sessionId, hasFollowingMessage, sess
           return (
             <div key={i} className="mt-2">
               <PiCodingRunCard piResult={item.data} />
+            </div>
+          )
+        }
+        if (item.type === 'pi_coding_live') {
+          return (
+            <div key={i} className="mt-2">
+              <PiCodingRunLiveCard toolCallId={item.toolCallId} />
             </div>
           )
         }
