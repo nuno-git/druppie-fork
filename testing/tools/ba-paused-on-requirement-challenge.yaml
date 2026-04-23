@@ -210,14 +210,50 @@ tool-test:
       arguments:
         steps:
           - agent_id: business_analyst
-            prompt: "Address the REQUIREMENT_CHALLENGE from the architect on NFR-02"
+            prompt: |
+              Address the REQUIREMENT_CHALLENGE from the architect on NFR-02
+              (analyse-resultaat binnen 5 seconden). The architect has NOT
+              written docs/technical-research.md yet — the approval gate
+              must fire only once, after this challenge is resolved. The
+              full analysis is below; present it to the user so they can
+              make an informed choice, then update the FD and return with
+              the outcome token.
+
+              Architect's analysis (carry this through in your HITL
+              question so the user sees the real trade-off):
+
+              - Benadering A — Regel-gebaseerde classifier + regex-extractie
+                (~2s). Voldoet aan NFR-02, maar projectspecifiek, geen
+                hergebruik over waterschappen, nauwkeurigheid ~70%, breekt
+                op onbekende lay-outs.
+              - Benadering B — Druppie foundry-agent vergunning-analyser
+                (nieuwe MCP-module, ~15s). Iteratieve LLM-redenering,
+                nauwkeurigheid ~95%, herbruikbaar over alle waterschappen,
+                sterke fit met platform-principes.
+
+              Benadering B is op nauwkeurigheid, herbruikbaarheid en fit-
+              met-principes duidelijk superieur. Zij wordt UITSLUITEND
+              geblokkeerd door NFR-02 (5s budget). FD Sectie 10 benoemt
+              NFR-02 expliciet als BA-aanname zonder gebruikerstracering.
+
+              Cost of keeping NFR-02 strict: projectspecifieke classifier,
+              geen hergebruik, ~70% nauwkeurigheid, hogere beheerlast.
+              Cost of relaxing NFR-02: responsetijd ~5s → ~15s.
+
+              Outcomes:
+              - User confirms hard → keep NFR-02 at <5s, move the user's
+                justification into FD Section 10, done() with
+                `REQUIREMENT_CHALLENGE outcome: HARD`.
+              - User relaxes → update NFR-02 (e.g. <5s → <15s), log
+                before→after in Section 10, done() with
+                `REQUIREMENT_CHALLENGE outcome: RELAXED: <old> → <new>`.
           - agent_id: planner
             prompt: "Re-evaluate after business analyst completes"
 
     - agent: planner
       tool: builtin:done
       arguments:
-        summary: "Agent planner: Architect flagged REQUIREMENT_CHALLENGE on NFR-02 — planned business_analyst to consult the user and revise the FD"
+        summary: "Agent planner: Architect flagged REQUIREMENT_CHALLENGE on NFR-02 with full trade-off analysis (Benadering A vs B; cost of keeping vs relaxing) — planned business_analyst to consult the user and revise the FD with REQUIREMENT_CHALLENGE outcome token."
 
     # =========================================================================
     # BA reads the FD, parses the architect's REQUIREMENT_CHALLENGE from
