@@ -96,6 +96,14 @@ const AgentEditor = () => {
     }
   }, [existingAgent])
 
+  // Default to first available model when metadata loads and no model is selected
+  useEffect(() => {
+    const models = metadata?.foundry_models || []
+    if (!form.llm_profile && models.length > 0) {
+      setForm((prev) => ({ ...prev, llm_profile: models[0].id }))
+    }
+  }, [metadata, form.llm_profile])
+
   const createMutation = useMutation({
     mutationFn: (data) => createCustomAgent(data),
     onSuccess: () => {
