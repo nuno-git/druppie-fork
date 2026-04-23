@@ -30,6 +30,7 @@ class CustomAgent(Base):
     deployed_at = Column(DateTime(timezone=True), nullable=True)
     deployed_version = Column(String(100), nullable=True)
     deployed_spec_hash = Column(String(64), nullable=True)
+    foundry_agent_id = Column(String(200), nullable=True)
     created_at = Column(DateTime(timezone=True), default=utcnow)
     updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 

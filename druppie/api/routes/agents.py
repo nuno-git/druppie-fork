@@ -11,7 +11,7 @@ from uuid import UUID
 
 import structlog
 import yaml
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from druppie.api.deps import get_current_user, get_custom_agent_service, get_user_roles, require_any_role
@@ -195,7 +195,11 @@ async def get_custom_agent(
     user: dict = Depends(get_current_user),
 ):
     """Get a custom agent's full configuration."""
+    user_id = UUID(user["sub"])
+    roles = get_user_roles(user)
     detail = service.get_custom_agent(agent_id)
+    if detail.owner_id != user_id and not any(r in roles for r in ("admin", "developer")):
+        raise HTTPException(status_code=403, detail="Not authorized to view this agent")
     return detail.model_dump()
 
 
@@ -230,6 +234,11 @@ async def export_custom_agent_yaml(
     user: dict = Depends(get_current_user),
 ):
     """Export a custom agent as YAML."""
+    user_id = UUID(user["sub"])
+    roles = get_user_roles(user)
+    detail = service.get_custom_agent(agent_id)
+    if detail.owner_id != user_id and not any(r in roles for r in ("admin", "developer")):
+        raise HTTPException(status_code=403, detail="Not authorized to view this agent")
     yaml_str = service.export_as_yaml(agent_id)
     return {"agent_id": agent_id, "yaml": yaml_str}
 
@@ -241,7 +250,11 @@ async def validate_custom_agent(
     user: dict = Depends(get_current_user),
 ):
     """Validate a custom agent's configuration."""
+    user_id = UUID(user["sub"])
+    roles = get_user_roles(user)
     detail = service.get_custom_agent(agent_id)
+    if detail.owner_id != user_id and not any(r in roles for r in ("admin", "developer")):
+        raise HTTPException(status_code=403, detail="Not authorized to validate this agent")
     data = CustomAgentCreate(
         agent_id=detail.agent_id,
         name=detail.name,
@@ -272,6 +285,11 @@ async def validate_for_foundry(
 
     Returns validation results with errors (blocking) and warnings (informational).
     """
+    user_id = UUID(user["sub"])
+    roles = get_user_roles(user)
+    detail = service.get_custom_agent(agent_id)
+    if detail.owner_id != user_id and not any(r in roles for r in ("admin", "developer")):
+        raise HTTPException(status_code=403, detail="Not authorized to validate this agent")
     return service.validate_for_foundry(agent_id)
 
 

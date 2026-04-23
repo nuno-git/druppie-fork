@@ -41,6 +41,7 @@ class CustomAgentDetail(CustomAgentSummary):
     deployed_at: datetime | None
     deployed_version: str | None = None
     deployed_spec_hash: str | None = None
+    foundry_agent_id: str | None = None
     updated_at: datetime
 
 

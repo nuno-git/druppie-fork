@@ -251,12 +251,17 @@ class CustomAgentService:
                 field="foundry",
             )
 
+        # Compute spec hash before deployment so a hash failure can't leave
+        # the agent deployed in Azure but with missing hash in the DB.
+        spec_hash = foundry.compute_spec_hash(detail)
+
         try:
             result = foundry.deploy_agent(detail)
             agent.deployment_status = "deployed"
             agent.deployed_at = datetime.now(timezone.utc)
             agent.deployed_version = result.get("version")
-            agent.deployed_spec_hash = foundry.compute_spec_hash(detail)
+            agent.deployed_spec_hash = spec_hash
+            agent.foundry_agent_id = result.get("foundry_agent_id")
             self.repo.commit()
             # Include validation warnings in the response
             if validation["warnings"]:
@@ -295,7 +300,9 @@ class CustomAgentService:
         )
 
         if foundry.is_configured():
-            success = foundry.delete_agent(agent_id)
+            # Use stored Foundry agent ID if available, fall back to agent_id name
+            foundry_name = agent.foundry_agent_id or agent_id
+            success = foundry.delete_agent(foundry_name)
             if not success:
                 raise ValidationError(
                     "Failed to remove agent from Azure AI Foundry",
@@ -306,6 +313,7 @@ class CustomAgentService:
         agent.deployed_at = None
         agent.deployed_version = None
         agent.deployed_spec_hash = None
+        agent.foundry_agent_id = None
         self.repo.commit()
 
         logger.info("custom_agent_undeployed", agent_id=agent_id, by_user=str(user_id))
@@ -549,5 +557,6 @@ class CustomAgentService:
             deployed_at=agent.deployed_at,
             deployed_version=agent.deployed_version,
             deployed_spec_hash=agent.deployed_spec_hash,
+            foundry_agent_id=agent.foundry_agent_id,
             updated_at=agent.updated_at,
         )

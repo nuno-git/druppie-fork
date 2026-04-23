@@ -99,6 +99,37 @@ def _sanitize_param(value: str | None) -> str | None:
     return value
 
 
+def _seed_platform_standards(workspace_path: Path) -> None:
+    """Seed docs/platform-functional-standards.md into a workspace if missing.
+
+    The BA agent expects this file to exist so it can reference platform
+    defaults. Older projects (created before the template) won't have it.
+    Seeding here ensures it's always available regardless of repo state.
+    """
+    standards_rel = Path("docs") / "platform-functional-standards.md"
+    target = workspace_path / standards_rel
+    if target.exists():
+        return
+
+    # Locate the template — bundled with the coding MCP server
+    template = Path("/app/templates/platform-functional-standards.md")
+    if not template.is_file():
+        # Fallback: look relative to this file (dev mode / local runs)
+        template = Path(__file__).resolve().parent.parent / "templates" / "platform-functional-standards.md"
+    if not template.is_file():
+        # Second fallback: full repo path (dev mode with full repo)
+        template = Path(__file__).resolve().parent.parent.parent.parent / "templates" / "project" / standards_rel
+    if not template.is_file():
+        return
+
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(template.read_text(encoding="utf-8"), encoding="utf-8")
+        logger.info("Seeded %s into workspace %s", standards_rel, workspace_path)
+    except Exception as e:
+        logger.warning("Failed to seed platform standards: %s", e)
+
+
 def get_or_create_workspace(
     session_id: str,
     project_id: str | None = None,
@@ -235,6 +266,9 @@ def get_or_create_workspace(
                 )
                 logger.info("Set up git remote: %s", remote_url.replace(GITEA_PASSWORD, "***"))
             logger.info("Auto-initialized git repo at %s", workspace_path)
+
+        # Seed platform standards file if missing from workspace
+        _seed_platform_standards(workspace_path)
 
         # Exclude state file from git (local-only, won't pollute .gitignore)
         exclude_path = workspace_path / ".git" / "info" / "exclude"
