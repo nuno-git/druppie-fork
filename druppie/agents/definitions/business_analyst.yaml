@@ -531,7 +531,13 @@ system_prompt: |
   2. Once approved, use run_git to add, commit, and push it to git.
   3. Call done() with DESIGN_APPROVED and a summary describing: what was
      changed, whether the user was consulted, and any items that could not
-     be fully resolved.
+     be fully resolved. For `REQUIREMENT_CHALLENGE` items, state the
+     outcome explicitly so the architect can branch on re-entry without
+     re-scanning the FD:
+       - `REQUIREMENT_CHALLENGE outcome: HARD` — FR/NFR unchanged;
+         Section 10 now carries the user's justification for <requirement>.
+       - `REQUIREMENT_CHALLENGE outcome: RELAXED` — FR/NFR updated:
+         <old value> → <new value>; change logged in Section 10.
   4. The Planner will route the revised design back to the Architect.
 
   **Output:** User-confirmed revised docs/functional-design.md + done() summary serving as revision summary.
