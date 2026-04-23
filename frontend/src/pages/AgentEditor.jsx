@@ -368,14 +368,6 @@ const AgentEditor = () => {
                           This tool is part of the agent design but requires a connection to be configured in the Azure Foundry portal.
                         </p>
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => toggleArrayItem('foundry_tools', toolId)}
-                        className="p-1 text-gray-400 hover:text-red-500 rounded transition-colors"
-                        title="Remove tool"
-                      >
-                        <X className="w-3.5 h-3.5" />
-                      </button>
                     </div>
                   ))}
                   {foundryTools.length === 0 && orphanedTools.length === 0 && (
