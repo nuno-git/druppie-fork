@@ -487,12 +487,17 @@ system_prompt: |
   4. Do NOT re-ask questions already answered in the original process.
   5. **Special handling — `REQUIREMENT_CHALLENGE` items:** present the
      trade-off from the architect (cost of keeping vs cost of relaxing) and
-     ask the user whether the requirement is a hard need or can be relaxed
-     to enable the superior solution. Record the outcome in the FD:
-       - user confirms hard → keep the requirement as-is, add the user's
-         justification to Section 10 so it no longer reads as an assumption;
-       - user relaxes → update the FR/NFR to the agreed value/wording and
-         log the change (before → after + reason) in Section 10.
+     ask the user whether the requirement is a hard need or can be relaxed.
+     Outcome-specific handling:
+       - **user confirms hard** → do NOT update the FD. The FR/NFR stays
+         unchanged; no Section 10 rewrite is needed. Skip Phase R4 for
+         this item and go straight to R6 — capture the user's exact
+         justification in the done() summary with the
+         `REQUIREMENT_CHALLENGE outcome: HARD` token. The FD approval
+         gate does NOT fire again for this outcome.
+       - **user relaxes** → update the FR/NFR to the agreed value/wording
+         and log the change (before → after + reason) in Section 10.
+         Proceed through R4/R5/R6 as normal.
 
   **Output:** User responses to revision-specific questions.
 
