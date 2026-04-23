@@ -378,39 +378,51 @@ class CustomAgentService:
         return warnings
 
     def export_as_yaml(self, agent_id: str) -> str:
-        """Export a custom agent definition as YAML.
+        """Export a custom agent definition in the Azure Foundry agent format.
 
-        Builds directly from CustomAgentDetail so that foundry_tools
-        and category are included (AgentDefinition lacks these fields).
+        Produces YAML that mirrors the structure returned by the Foundry API
+        (agent.version), so it can be round-tripped via the YAML editor.
         """
         agent = self.repo.get_by_agent_id(agent_id)
         if not agent:
             raise NotFoundError("agent", agent_id)
 
         detail = self._to_detail(agent)
+
+        version = detail.deployed_version or "1"
+        updated_ts = str(int(detail.updated_at.timestamp())) if detail.updated_at else ""
+
+        # Build tools list in Foundry format
+        tools = []
+        for tool_id in (detail.foundry_tools or []):
+            tools.append({"type": tool_id})
+
         data: dict = {
-            "id": detail.agent_id,
-            "name": detail.name,
-            "description": detail.description,
-            "category": detail.category,
-            "system_prompt": detail.system_prompt,
+            "metadata": {
+                "description": detail.description or "",
+                "modified_at": updated_ts,
+            },
+            "object": "agent.version",
+            "id": f"{detail.agent_id}:{version}",
+            "name": detail.agent_id,
+            "version": version,
+            "description": detail.description or "",
+            "definition": {
+                "kind": "prompt",
+                "model": detail.llm_profile or "",
+                "instructions": detail.system_prompt or "",
+                "tools": tools if tools else [],
+            },
+            "status": "active" if detail.is_active else "inactive",
         }
-        if detail.system_prompts:
-            data["system_prompts"] = detail.system_prompts
-        if detail.druppie_runtime_tools:
-            data["extra_builtin_tools"] = detail.druppie_runtime_tools
-        if detail.mcps:
-            data["mcps"] = detail.mcps
-        if detail.approval_overrides:
-            data["approval_overrides"] = detail.approval_overrides
-        if detail.skills:
-            data["skills"] = detail.skills
-        if detail.foundry_tools:
-            data["foundry_tools"] = detail.foundry_tools
-        data["llm_profile"] = detail.llm_profile
-        data["temperature"] = detail.temperature
-        data["max_tokens"] = detail.max_tokens
-        data["max_iterations"] = detail.max_iterations
+
+        if detail.max_tokens:
+            data["definition"]["max_tokens"] = detail.max_tokens
+        if detail.max_iterations:
+            data["definition"]["max_iterations"] = detail.max_iterations
+        if detail.temperature and detail.temperature != 0.7:
+            data["definition"]["temperature"] = detail.temperature
+
         return yaml.dump(data, default_flow_style=False, sort_keys=False)
 
     def get_metadata(self) -> dict:

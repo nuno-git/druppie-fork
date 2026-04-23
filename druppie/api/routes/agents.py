@@ -264,22 +264,46 @@ async def update_custom_agent_yaml(
     if not isinstance(data, dict):
         raise HTTPException(status_code=400, detail="YAML must be a mapping")
 
-    update = CustomAgentUpdate(
-        name=data.get("name"),
-        description=data.get("description"),
-        category=data.get("category"),
-        system_prompt=data.get("system_prompt"),
-        llm_profile=data.get("llm_profile"),
-        temperature=data.get("temperature"),
-        max_tokens=data.get("max_tokens"),
-        max_iterations=data.get("max_iterations"),
-        mcps=data.get("mcps"),
-        skills=data.get("skills"),
-        system_prompts=data.get("system_prompts"),
-        druppie_runtime_tools=data.get("extra_builtin_tools"),
-        approval_overrides=data.get("approval_overrides"),
-        foundry_tools=data.get("foundry_tools"),
-    )
+    # Parse Azure Foundry agent format (has "definition" block)
+    definition = data.get("definition") or {}
+    is_foundry_format = bool(definition)
+
+    if is_foundry_format:
+        # Extract tools as list of type strings from Foundry tool objects
+        tools_raw = definition.get("tools") or []
+        foundry_tools = [
+            t["type"] if isinstance(t, dict) else t
+            for t in tools_raw
+            if (isinstance(t, dict) and "type" in t) or isinstance(t, str)
+        ]
+
+        update = CustomAgentUpdate(
+            name=data.get("name"),
+            description=data.get("description") or (data.get("metadata") or {}).get("description"),
+            system_prompt=definition.get("instructions"),
+            llm_profile=definition.get("model"),
+            temperature=definition.get("temperature"),
+            max_tokens=definition.get("max_tokens"),
+            max_iterations=definition.get("max_iterations"),
+            foundry_tools=foundry_tools,
+        )
+    else:
+        update = CustomAgentUpdate(
+            name=data.get("name"),
+            description=data.get("description"),
+            category=data.get("category"),
+            system_prompt=data.get("system_prompt"),
+            llm_profile=data.get("llm_profile"),
+            temperature=data.get("temperature"),
+            max_tokens=data.get("max_tokens"),
+            max_iterations=data.get("max_iterations"),
+            mcps=data.get("mcps"),
+            skills=data.get("skills"),
+            system_prompts=data.get("system_prompts"),
+            druppie_runtime_tools=data.get("extra_builtin_tools"),
+            approval_overrides=data.get("approval_overrides"),
+            foundry_tools=data.get("foundry_tools"),
+        )
     detail = service.update_custom_agent(agent_id, update, user_id)
     return detail.model_dump()
 
