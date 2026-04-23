@@ -92,9 +92,12 @@ class PiAgentRunner:
         env["PI_AGENT_REPO_TARGET"] = self.repo_target
 
         if self.git_provider == "github_app":
-            env["GITHUB_TOKEN"] = self.git_credentials.get("token", "")
-            env["GITHUB_APP_ID"] = self.git_credentials.get("app_id", "") or env.get("GITHUB_APP_ID", "")
-            env["GITHUB_INSTALLATION_ID"] = self.git_credentials.get("installation_id", "") or env.get("GITHUB_INSTALLATION_ID", "")
+            # pi_agent's github/app.ts reads GITHUB_APP_ID, GITHUB_APP_INSTALLATION_ID,
+            # GITHUB_APP_PRIVATE_KEY_PATH directly from env. Those vars are already
+            # set on the backend container (docker-compose.yml) and the PEM is
+            # bind-mounted at /app/secrets/github-app-private-key.pem. Inherited
+            # here via os.environ.copy() — no extra wiring needed.
+            env.pop("GITHUB_TOKEN", None)  # don't let a PAT shadow App auth
         elif self.git_provider == "gitea":
             env["GITEA_BASE_URL"] = self.git_credentials.get("base_url", os.getenv("GITEA_INTERNAL_URL", ""))
             env["GITEA_USERNAME"] = self.git_credentials.get("username", "")
@@ -154,6 +157,9 @@ class PiAgentRunner:
         }
 
     def _build_repo_url(self) -> str:
+        """Plain HTTPS URL — pi_agent's source-clone.ts calls
+        injectTokenIntoHttpsUrl(url, token) to weave in auth just before cloning,
+        using the token it mints (GitHub) or reads from env (Gitea)."""
         if self.git_provider == "github_app":
             return f"https://github.com/{self.repo_owner}/{self.repo_name}.git"
         base = self.git_credentials.get("base_url") or os.getenv("GITEA_INTERNAL_URL", "")

@@ -36,14 +36,22 @@ def _default_git_provider_for(repo_target: str) -> str:
 
 
 async def _resolve_github_credentials(repo_owner: str, repo_name: str) -> dict:
-    from druppie.services.github_app_service import get_github_app_service
-    service = get_github_app_service()
-    token = await service.get_installation_token()
-    return {
-        "provider": "github_app",
-        "token": token,
-        "username": "x-access-token",
-    }
+    """GitHub App creds are already in env (GITHUB_APP_ID / _INSTALLATION_ID /
+    _PRIVATE_KEY_PATH, configured in docker-compose.yml and mounted via
+    /app/secrets/). pi_agent's github/app.ts reads exactly those names and
+    mints its own installation token per run — so we do NOT mint here.
+
+    Minting on the Python side (and passing GITHUB_TOKEN) would shadow the App
+    vars and force pi_agent into PAT-mode. Just return a marker; the env vars
+    are inherited through os.environ in PiAgentRunner._build_env.
+    """
+    import os
+    if not os.getenv("GITHUB_APP_ID") or not os.getenv("GITHUB_APP_INSTALLATION_ID"):
+        raise ValueError(
+            "GITHUB_APP_ID / GITHUB_APP_INSTALLATION_ID not set in backend env — "
+            "cannot run execute_coding_task_pi with git_provider=github_app"
+        )
+    return {"provider": "github_app"}
 
 
 async def _resolve_gitea_credentials(repo_owner: str, repo_name: str, run_id: str) -> tuple[dict, str | None]:
