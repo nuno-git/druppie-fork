@@ -19,6 +19,7 @@ agent-test:
   hitl: non-technical-pm
 
   assert:
+    - check: architect-produces-research
     - check: architect-produces-td   # same check as recipe app test
 
   judge:
