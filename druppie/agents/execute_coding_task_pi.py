@@ -199,13 +199,41 @@ async def execute_coding_task_pi(
             "stderr_tail": result.get("stderr_tail", "")[-2000:],
         }
 
+    narrative = _build_narrative(summary)
+
     return {
         "success": bool(summary.get("success")),
         "run_id": run_id,
         "pi_coding_run_id": str(row.id),
+        # Human-readable aggregate so the caller agent can reason about
+        # what pi_agent actually DID (not just stats). Each pi_agent
+        # subagent's own end-of-turn text gets trimmed and concatenated.
+        "narrative": narrative,
         "summary": summary,
         "pr_url": row.pr_url,
         "branch": summary.get("push", {}).get("branch") or row.branch_name,
         "commits": summary.get("commits", []),
         "phases": summary.get("phases", []),
     }
+
+
+def _build_narrative(summary: dict) -> str:
+    """Collapse summary.narratives[] into a single scannable block.
+
+    Shape of each narrative item: {agent, iteration, text}. We group by
+    agent (preserving order) and prefix with a header so the caller can
+    see which subagent said what.
+    """
+    items = summary.get("narratives") or []
+    if not items:
+        return ""
+    parts: list[str] = []
+    for item in items:
+        agent = item.get("agent", "?")
+        iteration = item.get("iteration", 0)
+        text = (item.get("text") or "").strip()
+        if not text:
+            continue
+        header = f"[{agent}" + (f" i{iteration}]" if iteration else "]")
+        parts.append(f"{header}\n{text}")
+    return "\n\n".join(parts)

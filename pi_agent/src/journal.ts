@@ -112,6 +112,12 @@ interface Issue {
   resolved: boolean;
 }
 
+interface AgentNarrative {
+  agent: string;
+  iteration: number;
+  text: string;
+}
+
 // ── Journal ───────────────────────────────────────────────────────────────
 
 export class Journal {
@@ -122,6 +128,7 @@ export class Journal {
   private readonly commits: Array<{ phase: string; sha: string; message: string }> = [];
   private readonly issues: Issue[] = [];
   private readonly errors: string[] = [];
+  private readonly narratives: AgentNarrative[] = [];
   private currentPhase?: PhaseRecord;
   private sandboxStartedAt?: number;
   private sandboxReadyAt?: number;
@@ -257,6 +264,15 @@ export class Journal {
     this.write("error", { message, ...context });
   }
 
+  /** Record the free-text summary a subagent produced at end-of-run.
+   * Trimmed to 2000 chars per call to keep the summary payload bounded. */
+  recordNarrative(agent: string, iteration: number, text: string): void {
+    const trimmed = (text ?? "").trim().slice(0, 2000);
+    if (!trimmed) return;
+    this.narratives.push({ agent, iteration, text: trimmed });
+    this.write("subagent_narrative", { agent, iteration, chars: trimmed.length });
+  }
+
   // ── Close ────────────────────────────────────────────────────────────────
 
   async close(success: boolean): Promise<{ summaryPath: string; summary: RunSummary }> {
@@ -300,6 +316,7 @@ export class Journal {
       pr: this.prResult,
       issues: this.issues,
       errors: this.errors,
+      narratives: this.narratives,
     };
 
     this.write("run_end", { success, durationMs: summary.durationMs });
@@ -408,6 +425,7 @@ export interface RunSummary {
   pr?: { action: string; number?: number; url?: string };
   issues: Issue[];
   errors: string[];
+  narratives: AgentNarrative[];
 }
 
 // ── Pretty end-of-run summary for stdout ─────────────────────────────────

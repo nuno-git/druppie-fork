@@ -28,6 +28,7 @@ import {
   Layers,
   Bot,
   AlertTriangle,
+  MessageSquare,
 } from 'lucide-react'
 
 const fmtMs = (ms) => {
@@ -58,6 +59,7 @@ const PiCodingRunCard = ({ piResult }) => {
   const phases = summary.phases || piResult.phases || []
   const commits = summary.commits || piResult.commits || []
   const agents = summary.agents || []
+  const narratives = summary.narratives || []
   const prUrl = piResult.pr_url || summary.pr?.url
   const branch = piResult.branch || summary.push?.branch || '—'
   const totalTokens = agents.reduce(
@@ -166,6 +168,38 @@ const PiCodingRunCard = ({ piResult }) => {
                   </tr>
                 </tbody>
               </table>
+            </section>
+          )}
+
+          {/* Subagent narratives — what each subagent reported at end-of-turn */}
+          {narratives.length > 0 && (
+            <section>
+              <div className="text-xs uppercase tracking-wide text-gray-500 mb-2 flex items-center gap-1">
+                <MessageSquare size={12} /> subagent reports
+              </div>
+              <div className="space-y-2">
+                {narratives.map((n, i) => (
+                  <details key={i} className="bg-white rounded border">
+                    <summary className="px-2 py-1 text-xs font-medium cursor-pointer hover:bg-gray-50 flex items-center gap-2">
+                      <span
+                        className={`px-1.5 rounded text-[10px] ${phaseColor[n.agent.split('/')[0]] || 'bg-gray-100 text-gray-700'}`}
+                      >
+                        {n.agent}
+                      </span>
+                      {n.iteration > 0 && (
+                        <span className="text-gray-500 text-[10px]">iter {n.iteration}</span>
+                      )}
+                      <span className="text-gray-400 text-[10px]">
+                        {n.text.slice(0, 80)}
+                        {n.text.length > 80 ? '…' : ''}
+                      </span>
+                    </summary>
+                    <pre className="px-3 py-2 text-xs whitespace-pre-wrap text-gray-800 border-t bg-gray-50">
+                      {n.text}
+                    </pre>
+                  </details>
+                ))}
+              </div>
             </section>
           )}
 

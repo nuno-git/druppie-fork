@@ -251,6 +251,7 @@ export async function orchestrate(task: TaskSpec, config: AgentConfig): Promise<
   ].filter(Boolean).join("\n");
 
   const analysisResult = await runSubagent(getAgent("analyst"), taskPrompt, baseOpts);
+  journal.recordNarrative("analyst", 0, analysisResult.output);
 
   if (!analysisResult.success) {
     errors.push(`Analyst failed: ${analysisResult.error ?? "unknown"}`);
@@ -309,6 +310,7 @@ export async function orchestrate(task: TaskSpec, config: AgentConfig): Promise<
       : buildInitialPlanPrompt(goalAnalysis, task);
 
     const planResult = await runSubagent(getAgent("planner"), planPrompt, baseOpts);
+    journal.recordNarrative("planner", iteration, planResult.output);
 
     if (!planResult.success) {
       errors.push(`Planner failed${tag}: ${planResult.error ?? "unknown"}`);
@@ -331,6 +333,9 @@ export async function orchestrate(task: TaskSpec, config: AgentConfig): Promise<
 
     const iterationStepResults = await executeWaves(buildPlan, getAgent("builder"), baseOpts, errors);
     allStepResults.push(...iterationStepResults);
+    for (const sr of iterationStepResults) {
+      journal.recordNarrative(`builder/${sr.stepId}`, iteration, sr.output);
+    }
 
     const passed = iterationStepResults.filter((r) => r.success).length;
     console.log(`\n✓ Execution: ${passed}/${iterationStepResults.length} steps succeeded\n`);
@@ -342,6 +347,7 @@ export async function orchestrate(task: TaskSpec, config: AgentConfig): Promise<
 
     const verifyPrompt = buildVerifyPrompt(task, goalAnalysis, buildPlan, iterationStepResults);
     const verifyResult = await runSubagent(getAgent("verifier"), verifyPrompt, baseOpts);
+    journal.recordNarrative("verifier", iteration, verifyResult.output);
 
     lastVerification = extractJson<VerificationResult>(verifyResult.output) ?? undefined;
 
@@ -470,6 +476,7 @@ export async function orchestrate(task: TaskSpec, config: AgentConfig): Promise<
                   const result = await runSubagent(getAgent("pr-author"), prPrompt, baseOpts);
                   const parsed = extractJson<{ title?: string; body?: string }>(result.output);
                   if (parsed?.title && parsed?.body) {
+                    journal.recordNarrative("pr-author", 0, result.output);
                     authoredTitle = authoredTitle ?? parsed.title;
                     authoredBody = authoredBody ?? parsed.body;
                     console.log(`[pr-author] ok — title="${authoredTitle.slice(0, 60)}${authoredTitle.length > 60 ? "…" : ""}"`);
