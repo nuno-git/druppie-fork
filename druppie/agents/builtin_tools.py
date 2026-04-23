@@ -274,14 +274,6 @@ BUILTIN_TOOL_DEFS: dict[str, dict] = {
                             "'druppie_core' = Druppie's own GitHub repo."
                         ),
                     },
-                    "git_provider": {
-                        "type": "string",
-                        "enum": ["github_app", "gitea"],
-                        "description": (
-                            "Git backend. If omitted, derived from repo_target: "
-                            "druppie_core → github_app, project → gitea."
-                        ),
-                    },
                     "source_branch": {
                         "type": "string",
                         "description": "Branch to clone as the starting point. Defaults to the repo's default branch.",

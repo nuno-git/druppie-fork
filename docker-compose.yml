@@ -608,6 +608,8 @@ services:
       SANDBOX_API_SECRET: ${SANDBOX_API_SECRET:-sandbox-dev-secret}
       SANDBOX_MODEL: ${SANDBOX_MODEL:-}
       BACKEND_URL: http://druppie-backend-dev:8000
+      # pi_agent (execute_coding_task_pi) per-run sandbox runtime
+      ONESHOT_SANDBOX_RUNTIME: ${ONESHOT_SANDBOX_RUNTIME:-sysbox-runc}
       GITHUB_APP_ID: ${GITHUB_APP_ID:-}
       GITHUB_APP_PRIVATE_KEY_PATH: ${GITHUB_APP_PRIVATE_KEY_PATH:-}
       GITHUB_APP_INSTALLATION_ID: ${GITHUB_APP_INSTALLATION_ID:-}

@@ -111,6 +111,11 @@ class PiAgentRunner:
             env["ZAI_API_KEY"] = self.llm_credentials["zai_api_key"]
 
         env["PI_AGENT_SANDBOX_IMAGE"] = self.sandbox_image
+        # Default the sandbox runtime to sysbox-runc for dev/single-tenant hosts
+        # (Kata requires nested virt and explicit install). Overridable by
+        # setting ONESHOT_SANDBOX_RUNTIME in the backend container's env —
+        # prod hosts with Kata registered just pin it there.
+        env.setdefault("ONESHOT_SANDBOX_RUNTIME", "sysbox-runc")
         return env
 
     async def run(self, ingest_token: str) -> dict:

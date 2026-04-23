@@ -93,9 +93,9 @@ async def execute_coding_task_pi(
     if repo_target not in VALID_REPO_TARGETS:
         return {"success": False, "error": f"invalid repo_target {repo_target!r}"}
 
-    git_provider: str = args.get("git_provider") or _default_git_provider_for(repo_target)
-    if git_provider not in VALID_GIT_PROVIDERS:
-        return {"success": False, "error": f"invalid git_provider {git_provider!r}"}
+    # Derived from repo_target; the LLM never picks this. Kept as a column
+    # on PiCodingRun for observability but not part of the tool schema.
+    git_provider: str = _default_git_provider_for(repo_target)
 
     agent_name: str | None = args.get("agent")
     source_branch: str | None = args.get("source_branch")
