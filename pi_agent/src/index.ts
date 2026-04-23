@@ -17,6 +17,9 @@ export { mintInstallationToken, loadAppCredentialsFromEnv } from "./github/app.j
 export type { GitHubAppCredentials, InstallationToken } from "./github/app.js";
 export { ensurePullRequest, parseRemote } from "./github/pr.js";
 export type { EnsurePrOptions, EnsurePrResult } from "./github/pr.js";
+export { ensureGiteaPullRequest } from "./gitea/pr.js";
+export { selectGitProvider } from "./git/provider.js";
+export type { GitProvider, GitProviderKind } from "./git/provider.js";
 export { Journal, printRunSummary } from "./journal.js";
 export type { RunSummary } from "./journal.js";
 export type {

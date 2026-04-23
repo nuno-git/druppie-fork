@@ -462,6 +462,28 @@ services:
     profiles: [infra, dev, prod]
     command: ["echo", "Sandbox image built successfully"]
 
+  # Builds the pi_agent sandbox image used by execute_coding_task_pi. Each call
+  # to that tool spawns a sibling container from this image via the host docker
+  # daemon (backend bind-mounts /var/run/docker.sock).
+  pi-agent-sandbox-builder:
+    build:
+      context: ./pi_agent/sandbox
+      dockerfile: Dockerfile
+    image: oneshot-sandbox:latest
+    profiles: [infra, dev, prod]
+    command: ["echo", "pi_agent sandbox image built successfully"]
+
+  # Builds the throwaway push-sandbox image used by pi_agent's bundle-push flow.
+  # Tiny image — only git + a credential helper. Separated from the main sandbox
+  # so the sandbox that produced the bundle never sees the push token.
+  pi-agent-push-sandbox-builder:
+    build:
+      context: ./pi_agent/push-sandbox
+      dockerfile: Dockerfile
+    image: oneshot-push-sandbox:latest
+    profiles: [infra, dev, prod]
+    command: ["echo", "pi_agent push-sandbox image built successfully"]
+
   # ===========================================================================
   # DATABASE ADMIN
   # ===========================================================================

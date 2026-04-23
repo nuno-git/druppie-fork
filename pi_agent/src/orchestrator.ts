@@ -24,8 +24,7 @@
 import { join } from "node:path";
 import type { Api, Model } from "@mariozechner/pi-ai";
 import { AuthStorage, ModelRegistry } from "@mariozechner/pi-coding-agent";
-import { mintInstallationToken } from "./github/app.js";
-import { ensurePullRequest } from "./github/pr.js";
+import { selectGitProvider, type GitProvider } from "./git/provider.js";
 import { Journal, printRunSummary } from "./journal.js";
 import { startSimServer, type SimServer } from "./providers/sim.js";
 import { pushBundleIsolated } from "./sandbox/bundle-push.js";
@@ -81,6 +80,10 @@ export async function orchestrate(task: TaskSpec, config: AgentConfig): Promise<
   const journalDir = join(runsRoot, runTimestamp);
   const journal = new Journal(journalDir, task);
 
+  // ── Git provider (GitHub App vs Gitea) ──
+  const gitProvider = selectGitProvider();
+  journal.write("git_provider_selected", { kind: gitProvider.kind });
+
   // ── Sandbox lifecycle (always on) ──
   const launchOpts = {
     ...defaultSandboxLaunchOptions(),
@@ -106,7 +109,7 @@ export async function orchestrate(task: TaskSpec, config: AgentConfig): Promise<
   const git = new SandboxGitOps(sandbox.client);
 
   if (task.sourceRepoUrl) {
-    const cloneToken = await resolvePushToken(config);
+    const cloneToken = await resolvePushToken(config, gitProvider);
     if (!cloneToken) {
       throw new Error(
         "task.sourceRepoUrl set but no credentials: provide sandbox.githubApp or sandbox.pushToken",
@@ -401,9 +404,9 @@ export async function orchestrate(task: TaskSpec, config: AgentConfig): Promise<
   if (task.pushOnComplete) {
     try {
       const remoteUrl = config.sandbox?.remoteUrl;
-      const token = await resolvePushToken(config);
+      const token = await resolvePushToken(config, gitProvider);
       if (!remoteUrl || !token) {
-        errors.push("Push requested but remoteUrl and (pushToken or githubApp) are required");
+        errors.push("Push requested but remoteUrl and (pushToken / githubApp / gitea) are required");
       } else {
         // Trust the sandbox about the current branch: the agent may have
         // renamed or switched branches mid-run. We push whatever is actually
@@ -479,7 +482,7 @@ export async function orchestrate(task: TaskSpec, config: AgentConfig): Promise<
                 }
               }
 
-              const pr = await ensurePullRequest({
+              const pr = await gitProvider.ensurePullRequest({
                 remoteUrl,
                 head: branch,
                 base: prBase,
@@ -550,12 +553,9 @@ function isSafeBranchName(name: string): boolean {
  * across the whole run causes auth failures at push time on long runs.
  * Minting is a single JWT sign + one API call — cheap.
  */
-async function resolvePushToken(config: AgentConfig): Promise<string | undefined> {
-  if (config.sandbox?.githubApp) {
-    const minted = await mintInstallationToken(config.sandbox.githubApp);
-    console.log(`[auth] minted installation token for App ${config.sandbox.githubApp.appId}, expires ${minted.expiresAt}`);
-    return minted.token;
-  }
+async function resolvePushToken(config: AgentConfig, provider: GitProvider): Promise<string | undefined> {
+  const fromProvider = await provider.resolveToken();
+  if (fromProvider) return fromProvider;
   if (config.sandbox?.pushToken) return config.sandbox.pushToken;
   return undefined;
 }

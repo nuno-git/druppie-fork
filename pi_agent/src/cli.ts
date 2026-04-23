@@ -215,9 +215,14 @@ async function main(): Promise<void> {
       image: parsed.sandboxImage,
       pushImage: parsed.sandboxPushImage,
       remoteUrl: parsed.sandboxRemoteUrl,
-      // Prefer GitHub App when the env vars are present; fall back to PAT.
+      // GitHub App auth is picked up automatically by the git-provider layer
+      // (see pi_agent/src/git/provider.ts). When PI_AGENT_GIT_PROVIDER=gitea,
+      // that layer uses GITEA_TOKEN instead. Keep loadAppCredentialsFromEnv()
+      // here to pre-populate config.sandbox.githubApp for legacy code that
+      // still reads it (e.g. bundle-push), but all new auth flows go through
+      // the provider.
       githubApp: loadAppCredentialsFromEnv() ?? undefined,
-      pushToken: parsed.sandboxPushToken ?? process.env.GITHUB_TOKEN,
+      pushToken: parsed.sandboxPushToken ?? process.env.GITHUB_TOKEN ?? process.env.GITEA_TOKEN,
       prBase: parsed.prBase,
       prTitle: parsed.prTitle,
     },
