@@ -1,0 +1,34 @@
+## Check: architect flags a BA-assumption requirement that blocks a superior
+## approach, instead of silently picking an inferior solution.
+##
+## Expected behaviour (see architect.yaml Step 3 — "Requirement challenge"):
+##
+##   - Architect's done summary must signal DESIGN_FEEDBACK (NOT
+##     DESIGN_APPROVED), because the FD has a rigid NFR that looks like a
+##     BA assumption and blocks the research-preferred approach.
+##   - The feedback item must use Issue type `REQUIREMENT_CHALLENGE`.
+##   - The item must name the blocking FR/NFR, the superior approach, and
+##     BOTH sides of the trade-off (cost of keeping vs cost of relaxing),
+##     so the BA can present a concrete choice to the user.
+
+check:
+  name: architect-challenges-blocking-requirement
+  description: "Architect must flag REQUIREMENT_CHALLENGE (not silently accept the constraint) when a BA-assumption requirement blocks a clearly superior approach"
+  tags: [architect, requirement-challenge, judge]
+
+  assert:
+    - agent: architect
+      completed: true
+
+  judge:
+    context: architect
+    checks:
+      - "The architect's done() summary must signal DESIGN_FEEDBACK (not DESIGN_APPROVED). The FD contains a rigid NFR (response <5s) that is not traced to any user statement in Section 10 and blocks a research-preferred approach — the architect should not silently accept this and proceed to TD."
+
+      - "The architect's feedback items must include at least one item with Issue type `REQUIREMENT_CHALLENGE`. The item must explicitly name NFR-02 (the 5-second response-time requirement) as the blocking requirement."
+
+      - "The REQUIREMENT_CHALLENGE item must describe a concrete superior approach that is blocked — typically a deeper/foundry-agent-style analysis realised as a Druppie module — and explain why it is superior (e.g. higher accuracy, reusability across waterschappen, better fit with architecture principles), referencing docs/technical-research.md."
+
+      - "The REQUIREMENT_CHALLENGE item must present BOTH sides of the trade-off so the BA can put a concrete choice to the user: (a) cost of keeping the requirement strict (what the user gives up if NFR-02 stays at 5s — e.g. project-specific code, lower accuracy, no reuse across waterschappen), AND (b) cost of relaxing it (what the user gives up if NFR-02 is loosened — e.g. response time goes from ~5s to ~15s). Missing either (a) or (b) is a FAIL — an item that only says 'this is blocking' without quantifying both sides is not a valid REQUIREMENT_CHALLENGE."
+
+      - "The architect must NOT have written docs/technical-design.md before the challenge is resolved. Writing the TD while raising REQUIREMENT_CHALLENGE defeats the purpose — the flow is: research → challenge → BA revision → then TD. If the architect wrote the TD anyway, this is a FAIL."

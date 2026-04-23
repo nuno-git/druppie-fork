@@ -1,0 +1,36 @@
+## Agent test: real architect meets a BA-assumption requirement blocking a
+## superior approach — must flag REQUIREMENT_CHALLENGE instead of silently
+## picking an inferior solution.
+##
+## Setup: setup-project-with-challengeable-requirement seeds an FD for a
+##   permit-application analyzer with a rigid NFR-02 "response <5s" that is
+##   NOT traced to user input in Section 10. A deeper foundry-agent-style
+##   approach (Druppie module, reusable across waterschappen) is clearly
+##   superior for accuracy but takes ~15s — blocked only by NFR-02.
+##
+## continue_session: true — the architect runs in the same session as the
+##   setup, so it can read the FD from the workspace.
+
+agent-test:
+  name: architect-challenges-blocking-requirement
+  description: "Architect flags REQUIREMENT_CHALLENGE when a BA-assumption requirement blocks a clearly superior approach"
+  tags: [architect, requirement-challenge, judge, e2e]
+
+  setup:
+    - setup-project-with-challengeable-requirement
+  continue_session: true
+
+  message: "Review the functional design and create the technical design for the vergunning-analyzer"
+  agents: [architect]
+  hitl: non-technical-pm
+
+  assert:
+    - check: architect-produces-research
+    - check: architect-challenges-blocking-requirement
+
+  judge:
+    context: architect
+    checks:
+      - "The architect must treat NFR-02 (response <5s) as challengeable, not as a hard constraint. Evidence: research.md should compare at least one fast-but-project-specific approach and at least one deeper/module-based approach (e.g. foundry-agent-style), and explicitly discuss the response-time trade-off — not just pick the fast approach without comment."
+
+      - "The architect's flow must be research → REQUIREMENT_CHALLENGE → done(DESIGN_FEEDBACK). It must NOT proceed to a Technical Design that silently drops the superior approach to fit the 5s budget, nor write a TD that assumes the 5s budget is non-negotiable without flagging it first."
