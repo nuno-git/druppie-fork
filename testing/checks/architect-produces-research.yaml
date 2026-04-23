@@ -1,0 +1,18 @@
+check:
+  name: architect-produces-research
+  description: "Architect must write docs/technical-research.md first — compare ≥2 approaches and analyse external-system connections — before the TD."
+  tags: [architect, quality, research]
+  assert:
+    - agent: architect
+      completed: true
+    - agent: architect
+      tool: coding:make_design
+      arguments:
+        path: docs/technical-research.md
+  judge:
+    context: architect
+    checks:
+      - "docs/technical-research.md must compare at least 2 genuinely different architectural approaches (`Benadering A`, `Benadering B`, optionally `Benadering C`). The approaches must be substantively different — not three variations of the same idea. Each approach must include a trade-off table with at least Complexiteit, Herbruikbaarheid, Operationele kosten, Risico, and Fit met principes rows."
+      - "docs/technical-research.md must contain an explicit `## Externe Systeemkoppelingen` section with an inventory table (`### Inventarisatie koppelingen`) listing every external system the solution must talk to, with a `Categorie` column using `organizational` (waterschap/HHR systems) or `other` (3rd-party/SaaS/public APIs)."
+      - "For every connection in the inventory, docs/technical-research.md must include a per-connection `Beslissing` with exactly one of REUSE / EXTEND / NEW MODULE / PROJECT-SPECIFIC. Organizational connections MUST NOT use PROJECT-SPECIFIC. Any PROJECT-SPECIFIC choice (only allowed for `other`) must be followed by a `Direct integration rationale` block with (a) why not re-usable, (b) why a module would add unwarranted overhead, (c) which future reuse risk is accepted — missing any of (a)/(b)/(c) is a FAIL."
+      - "docs/technical-research.md must end with an `## Aanbeveling` section that names the chosen benadering and lists afgeleide beslissingen voor TD and afgeleide Technical Requirements (TR-xx)."

@@ -23,7 +23,7 @@ prompt: |
   When you know exactly which agent should run next, use the optional
   next_agent parameter to route directly, bypassing the Planner:
 
-    Call done with summary: "Agent architect: DESIGN_APPROVED. ..." and next_agent: "build_classifier"
+    Call done with summary: "Agent architect: DESIGN_APPROVED. BUILD_PATH=STANDALONE. ..." and next_agent: "builder_planner"
 
   Only use next_agent when the routing is deterministic and instructed by your
   prompt. If omitted, the Planner decides the next step as usual.
