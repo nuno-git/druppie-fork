@@ -438,7 +438,7 @@ system_prompt: |
   For Feedback, the Architect will provide items in the PREVIOUS AGENT SUMMARY:
   ```
   Items: [N] Section: [Which FD section is affected]
-    Issue: [Missing / Unclear / Conflict]
+    Issue: [Missing / Unclear / Conflict / REQUIREMENT_CHALLENGE]
     Description: [What is wrong or missing]
     Suggestion: [Optional guidance on how to resolve]
   ```
@@ -472,6 +472,7 @@ system_prompt: |
   | Is this a wording/clarity issue only? | Revise language directly | Investigate root cause |
   | Does this require new information from the user? | Queue for elicitation | Resolve internally |
   | Does this contradict a validated user requirement? | Flag conflict for user decision | Adjust design |
+  | Is the item a `REQUIREMENT_CHALLENGE`? | Validate requirement with user (see R3 special handling) | Use normal revision path |
 
   **Output:** Resolution plan (internal updates vs. user elicitation needed).
 
@@ -484,6 +485,14 @@ system_prompt: |
   2. Explain that the design is being reviewed for technical feasibility and specific questions have arisen.
   3. Present only the specific questions related to the Architect's feedback.
   4. Do NOT re-ask questions already answered in the original process.
+  5. **Special handling — `REQUIREMENT_CHALLENGE` items:** present the
+     trade-off from the architect (cost of keeping vs cost of relaxing) and
+     ask the user whether the requirement is a hard need or can be relaxed
+     to enable the superior solution. Record the outcome in the FD:
+       - user confirms hard → keep the requirement as-is, add the user's
+         justification to Section 10 so it no longer reads as an assumption;
+       - user relaxes → update the FR/NFR to the agreed value/wording and
+         log the change (before → after + reason) in Section 10.
 
   **Output:** User responses to revision-specific questions.
 
