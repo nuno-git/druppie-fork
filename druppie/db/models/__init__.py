@@ -34,6 +34,18 @@ from .agent_run import AgentRun, Message
 from .approval import Approval
 from .base import Base, new_uuid, utcnow
 
+# Custom agent models
+from .custom_agent import (
+    CustomAgent,
+    CustomAgentApprovalOverride,
+    CustomAgentBuiltinTool,
+    CustomAgentFoundryTool,
+    CustomAgentMcp,
+    CustomAgentMcpTool,
+    CustomAgentSkill,
+    CustomAgentSystemPrompt,
+)
+
 # Benchmark and evaluation models
 from .benchmark_run import BenchmarkRun
 from .evaluation_result import EvaluationResult
@@ -91,6 +103,14 @@ __all__ = [
     "Question",
     # Sandbox session ownership
     "SandboxSession",
+    # Custom agents
+    "CustomAgent",
+    "CustomAgentMcp",
+    "CustomAgentMcpTool",
+    "CustomAgentSkill",
+    "CustomAgentSystemPrompt",
+    "CustomAgentBuiltinTool",
+    "CustomAgentApprovalOverride",
     # Benchmark and evaluation
     "BenchmarkRun",
     "EvaluationResult",

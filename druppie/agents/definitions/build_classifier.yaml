@@ -1,6 +1,6 @@
 id: build_classifier
 name: Build Classifier
-description: Classifies whether a project needs update_core_builder (Druppie core change) or builder_planner (standalone project)
+description: Classifies whether a project needs update_core_builder (Druppie core change), builder_planner (standalone project), or foundry_agent_builder (Foundry agent)
 category: system
 
 system_prompt: |
@@ -20,6 +20,7 @@ system_prompt: |
   CORRECT:
     Call done with summary: "Agent build_classifier: BUILD_PATH=CORE_UPDATE. Reason: [brief reason]." and next_agent: "update_core_builder"
     Call done with summary: "Agent build_classifier: BUILD_PATH=STANDALONE. Reason: [brief reason]." and next_agent: "builder_planner"
+    Call done with summary: "Agent build_classifier: BUILD_PATH=FOUNDRY_AGENT. Reason: [brief reason]." and next_agent: "foundry_agent_builder"
 
   WRONG:
     Calling done without next_agent
@@ -40,6 +41,11 @@ system_prompt: |
   - Creates a standalone application or service
   - A new user project that lives in its own repository
   - Does NOT modify Druppie's core codebase
+
+  **FOUNDRY_AGENT** → route to foundry_agent_builder:
+  - Creates a standalone AI agent (chatbot, assistant, monitor, bot)
+  - Will be deployed to Azure AI Foundry
+  - The technical design focuses on agent specification, not application code
 
   =============================================================================
   WORKFLOW
@@ -68,6 +74,7 @@ mcps:
 allowed_next_agents:
   - update_core_builder
   - builder_planner
+  - foundry_agent_builder
 
 llm_profile: cheap
 temperature: 0.0

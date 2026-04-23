@@ -22,6 +22,7 @@ import {
   Server,
   FlaskConical,
   Package,
+  Bot,
   Boxes,
 } from 'lucide-react'
 
@@ -200,6 +201,7 @@ const NavRail = () => {
         active={isActive('/tasks')}
       />
       <NavRailItem to="/projects" icon={FolderOpen} label="Projects" active={isActive('/projects')} />
+      <NavRailItem to="/agents" icon={Bot} label="Agents" active={isActive('/agents')} />
 
       {/* Tools */}
       <div className="mt-1 pt-1 border-t border-gray-800 w-8" />

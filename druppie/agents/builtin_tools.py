@@ -26,6 +26,18 @@ from druppie.opencode.model_resolver import get_agent_chain, resolve_sandbox_mod
 
 VALID_REPO_TARGETS = ("project", "druppie_core")
 
+# Valid Foundry-native tool types (must match foundry_service._build_foundry_tools)
+VALID_FOUNDRY_TOOLS = {
+    "code_interpreter",
+    "file_search",
+    "bing_grounding",
+    "browser_automation",
+    "deep_research",
+    "bing_custom_search",
+    "azure_ai_search",
+    "microsoft_fabric",
+}
+
 
 # =============================================================================
 # TOOL DEFINITIONS (OpenAI function format, keyed by name)
@@ -235,6 +247,136 @@ BUILTIN_TOOL_DEFS: dict[str, dict] = {
                     },
                 },
                 "required": ["task"],
+            },
+        },
+    },
+    "create_foundry_agent": {
+        "type": "function",
+        "function": {
+            "name": "create_foundry_agent",
+            "description": (
+                "Create a Foundry agent definition. The agent is stored in the database and "
+                "can be deployed to Azure AI Foundry from the Agents page. Foundry only "
+                "receives: model, instructions, and tools. The instructions field is the most "
+                "critical — it defines the agent's entire behavior. Do NOT set temperature "
+                "(Foundry rejects it)."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "agent_id": {
+                        "type": "string",
+                        "description": "Unique kebab-case identifier (e.g. 'weather-monitor-agent')",
+                    },
+                    "name": {
+                        "type": "string",
+                        "description": "Human-readable name (e.g. 'Weather Monitor Agent')",
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "Short description of what the agent does",
+                    },
+                    "instructions": {
+                        "type": "string",
+                        "description": (
+                            "The agent's system prompt — this is the ONLY behavior definition "
+                            "Foundry receives. Must be comprehensive: role, welcome message, "
+                            "workflow, tool usage, error handling, constraints. Aim for 1500+ words."
+                        ),
+                    },
+                    "model": {
+                        "type": "string",
+                        "description": "LLM profile: 'standard' or 'cheap' (both map to gpt-4.1-mini in Foundry). Default: 'standard'.",
+                    },
+                    "foundry_tools": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": (
+                            "Foundry-native tools to enable. Currently deployed by SDK: "
+                            "'code_interpreter', 'file_search', 'bing_grounding'. "
+                            "Stored but not yet deployed: 'browser_automation', 'deep_research', "
+                            "'bing_custom_search', 'azure_ai_search', 'microsoft_fabric'. "
+                            "Note: bing_grounding requires a Bing connection in the Foundry portal."
+                        ),
+                    },
+                    "max_tokens": {
+                        "type": "integer",
+                        "description": "Max tokens per LLM response (stored in DB, not sent to Foundry). Default: 4096.",
+                    },
+                    "max_iterations": {
+                        "type": "integer",
+                        "description": "Max tool-call iterations (stored in DB, not sent to Foundry). Default: 10.",
+                    },
+                },
+                "required": ["agent_id", "name", "description", "instructions"],
+            },
+        },
+    },
+    "update_foundry_agent": {
+        "type": "function",
+        "function": {
+            "name": "update_foundry_agent",
+            "description": (
+                "Update an existing Foundry agent definition. Modify instructions, "
+                "foundry_tools, or other fields. Do NOT set temperature (Foundry rejects it)."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "agent_id": {
+                        "type": "string",
+                        "description": "The agent_id of the existing agent to update.",
+                    },
+                    "name": {
+                        "type": "string",
+                        "description": "Updated human-readable name.",
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "Updated description.",
+                    },
+                    "instructions": {
+                        "type": "string",
+                        "description": (
+                            "Updated system prompt — must be comprehensive (role, workflow, "
+                            "tool usage, constraints). This is the ONLY behavior definition Foundry receives."
+                        ),
+                    },
+                    "model": {
+                        "type": "string",
+                        "description": "LLM profile: 'standard' or 'cheap' (both map to gpt-4.1-mini).",
+                    },
+                    "foundry_tools": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Foundry-native tools. See create_foundry_agent for available options and SDK support status.",
+                    },
+                    "max_tokens": {
+                        "type": "integer",
+                        "description": "Max tokens per LLM response (stored in DB, not sent to Foundry).",
+                    },
+                    "max_iterations": {
+                        "type": "integer",
+                        "description": "Max tool-call iterations (stored in DB, not sent to Foundry).",
+                    },
+                },
+                "required": ["agent_id"],
+            },
+        },
+    },
+    "list_custom_agents": {
+        "type": "function",
+        "function": {
+            "name": "list_custom_agents",
+            "description": (
+                "List all existing custom/Foundry agents with their IDs, names, descriptions, "
+                "and deployment status. Use this to check what agents already exist before "
+                "creating new ones or to avoid duplicates."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": [],
             },
         },
     },
@@ -525,6 +667,7 @@ async def set_intent(
     )
 
     return result
+
 
 
 def _update_planner_prompt(
@@ -947,11 +1090,23 @@ async def done(
         if allowed:
             # Insert the target agent as the next pending run,
             # BEFORE any existing pending runs (like the planner).
-            # We use the lowest pending sequence_number - 1 so
-            # get_next_pending() picks this run first.
             existing_next = execution_repo.get_next_pending(session_id)
             if existing_next:
-                start_seq = existing_next.sequence_number - 1
+                # Shift all pending runs up by 1 to make room
+                from druppie.db.models import AgentRun
+                pending_runs = (
+                    execution_repo.db.query(AgentRun)
+                    .filter(
+                        AgentRun.session_id == session_id,
+                        AgentRun.status == AgentRunStatus.PENDING.value,
+                        AgentRun.sequence_number >= existing_next.sequence_number,
+                    )
+                    .order_by(AgentRun.sequence_number.desc())
+                    .all()
+                )
+                for run in pending_runs:
+                    run.sequence_number += 1
+                start_seq = existing_next.sequence_number
             else:
                 start_seq = execution_repo.get_next_sequence_number(session_id)
 
@@ -1306,6 +1461,199 @@ async def test_report(
     }
 
 
+async def create_foundry_agent(
+    agent_id: str,
+    name: str,
+    description: str,
+    instructions: str,
+    model: str,
+    session_id: UUID,
+    execution_repo: "ExecutionRepository",
+    foundry_tools: list | None = None,
+    max_tokens: int = 4096,
+    max_iterations: int = 10,
+    temperature: float | None = None,
+) -> dict:
+    """Create a Foundry agent definition in the database.
+
+    Called by the foundry_agent_builder after the architect routes to it.
+    The agent can later be deployed to Azure AI Foundry from the Agents page.
+
+    Note: temperature is accepted for backwards compatibility but ignored —
+    Foundry's PromptAgentDefinition does not support temperature.
+    """
+    import re
+    from druppie.repositories.custom_agent_repository import CustomAgentRepository
+    from druppie.agents.definition_loader import AgentDefinitionLoader
+    from druppie.db.models.session import Session
+
+    # Validate agent_id is kebab-case
+    if not re.match(r"^[a-z][a-z0-9-]*$", agent_id):
+        return {"success": False, "error": "agent_id must be kebab-case: lowercase letters, digits, and hyphens"}
+
+    # Prevent shadowing built-in YAML agents
+    if agent_id in AgentDefinitionLoader.list_yaml_agents():
+        return {"success": False, "error": f"agent_id '{agent_id}' conflicts with a built-in agent"}
+
+    # Filter foundry_tools against allowlist
+    validated_tools = [t for t in (foundry_tools or []) if t in VALID_FOUNDRY_TOOLS]
+
+    db = execution_repo.db
+    try:
+        repo = CustomAgentRepository(db)
+
+        # Check for duplicates
+        if repo.agent_id_exists(agent_id):
+            return {"success": False, "error": f"Agent '{agent_id}' already exists"}
+
+        # Resolve owner from session
+        session = db.query(Session).filter_by(id=session_id).first()
+        owner_id = session.user_id if session else None
+
+        agent = repo.create(
+            agent_id=agent_id,
+            name=name,
+            description=description,
+            category="execution",
+            system_prompt=instructions,
+            llm_profile=model if model in ("standard", "cheap") else "standard",
+            temperature=0.1,
+            max_tokens=max_tokens,
+            max_iterations=max_iterations,
+            owner_id=owner_id,
+            foundry_tools=validated_tools,
+        )
+        db.commit()
+
+        logger.info(
+            "foundry_agent_created",
+            agent_id=agent_id,
+            name=name,
+            session_id=str(session_id),
+        )
+
+        return {
+            "success": True,
+            "agent_id": agent_id,
+            "name": name,
+            "description": description,
+            "foundry_tools": validated_tools,
+            "message": f"Agent '{name}' created successfully. It can be deployed to Azure AI Foundry from the Agents page.",
+        }
+    except Exception as e:
+        logger.error("foundry_agent_creation_failed", error=str(e), agent_id=agent_id)
+        return {"success": False, "error": "Agent creation failed"}
+
+
+async def update_foundry_agent(
+    agent_id: str,
+    session_id: UUID,
+    execution_repo: "ExecutionRepository",
+    name: str | None = None,
+    description: str | None = None,
+    instructions: str | None = None,
+    model: str | None = None,
+    foundry_tools: list | None = None,
+    max_tokens: int | None = None,
+    max_iterations: int | None = None,
+) -> dict:
+    """Update an existing Foundry agent definition in the database.
+
+    Note: temperature is not accepted — Foundry's PromptAgentDefinition
+    does not support it, so we don't expose it for updates either.
+    """
+    from druppie.repositories.custom_agent_repository import CustomAgentRepository
+    from druppie.db.models.session import Session
+
+    db = execution_repo.db
+    try:
+        repo = CustomAgentRepository(db)
+
+        agent = repo.get_by_agent_id(agent_id)
+        if not agent:
+            return {"success": False, "error": f"Agent '{agent_id}' not found"}
+
+        # Verify ownership via session
+        session = db.query(Session).filter_by(id=session_id).first()
+        if session and agent.owner_id and session.user_id != agent.owner_id:
+            return {"success": False, "error": "Only the owner can update this agent"}
+
+        update_kwargs = {}
+        if name is not None:
+            update_kwargs["name"] = name
+        if description is not None:
+            update_kwargs["description"] = description
+        if instructions is not None:
+            update_kwargs["system_prompt"] = instructions
+        if model is not None:
+            update_kwargs["llm_profile"] = model if model in ("standard", "cheap") else "standard"
+        if max_tokens is not None:
+            update_kwargs["max_tokens"] = max_tokens
+        if max_iterations is not None:
+            update_kwargs["max_iterations"] = max_iterations
+        if foundry_tools is not None:
+            update_kwargs["foundry_tools"] = [t for t in foundry_tools if t in VALID_FOUNDRY_TOOLS]
+
+        agent = repo.update(agent_id, **update_kwargs)
+        db.commit()
+
+        logger.info(
+            "foundry_agent_updated",
+            agent_id=agent_id,
+            updated_fields=list(update_kwargs.keys()),
+            session_id=str(session_id),
+        )
+
+        return {
+            "success": True,
+            "agent_id": agent_id,
+            "updated_fields": list(update_kwargs.keys()),
+            "message": f"Agent '{agent_id}' updated successfully.",
+        }
+    except Exception as e:
+        logger.error("foundry_agent_update_failed", error=str(e), agent_id=agent_id)
+        return {"success": False, "error": "Agent update failed"}
+
+
+async def list_custom_agents(
+    execution_repo: "ExecutionRepository | None" = None,
+) -> dict:
+    """List all existing custom/Foundry agents."""
+    from druppie.repositories.custom_agent_repository import CustomAgentRepository
+
+    if execution_repo is None:
+        # Fallback for calls without execution context
+        from druppie.db.database import SessionLocal
+        db = SessionLocal()
+        close_db = True
+    else:
+        db = execution_repo.db
+        close_db = False
+
+    try:
+        repo = CustomAgentRepository(db)
+        agents = repo.list_all()
+        return {
+            "success": True,
+            "agents": [
+                {
+                    "agent_id": a.agent_id,
+                    "name": a.name,
+                    "description": a.description,
+                    "deployment_status": a.deployment_status,
+                }
+                for a in agents
+            ],
+            "count": len(agents),
+        }
+    except Exception as e:
+        logger.error("list_custom_agents_failed", error=str(e))
+        return {"success": False, "error": "Failed to list agents"}
+    finally:
+        if close_db:
+            db.close()
+
+
 # =============================================================================
 # TOOL EXECUTION (called by ToolExecutor)
 # =============================================================================
@@ -1393,6 +1741,34 @@ async def execute_builtin(
             error_classification=args.get("error_classification"),
             strategy=args.get("strategy"),
         )
+    elif tool_name == "list_custom_agents":
+        return await list_custom_agents(execution_repo=execution_repo)
+    elif tool_name == "create_foundry_agent":
+        return await create_foundry_agent(
+            agent_id=args.get("agent_id", ""),
+            name=args.get("name", ""),
+            description=args.get("description", ""),
+            instructions=args.get("instructions", ""),
+            model=args.get("model", "standard"),
+            session_id=session_id,
+            execution_repo=execution_repo,
+            foundry_tools=args.get("foundry_tools"),
+            max_tokens=args.get("max_tokens", 4096),
+            max_iterations=args.get("max_iterations", 10),
+        )
+    elif tool_name == "update_foundry_agent":
+        return await update_foundry_agent(
+            agent_id=args.get("agent_id", ""),
+            session_id=session_id,
+            execution_repo=execution_repo,
+            name=args.get("name"),
+            description=args.get("description"),
+            instructions=args.get("instructions"),
+            model=args.get("model"),
+            foundry_tools=args.get("foundry_tools"),
+            max_tokens=args.get("max_tokens"),
+            max_iterations=args.get("max_iterations"),
+        )
     else:
         return {
             "success": False,
@@ -1402,17 +1778,7 @@ async def execute_builtin(
 
 def is_builtin_tool(tool_name: str) -> bool:
     """Check if a tool name is a built-in tool."""
-    return tool_name in (
-        "hitl_ask_question",
-        "hitl_ask_multiple_choice_question",
-        "done",
-        "make_plan",
-        "set_intent",
-        "create_message",
-        "invoke_skill",
-        "execute_coding_task",
-        "test_report",
-    )
+    return tool_name in BUILTIN_TOOL_DEFS
 
 
 def is_hitl_tool(tool_name: str) -> bool:

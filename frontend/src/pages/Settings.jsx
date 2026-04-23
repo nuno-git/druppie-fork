@@ -2,10 +2,10 @@
  * Settings Page - Admin Configuration
  */
 
-import React, { useState } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { User, Server, Bot, Info, Shield, CheckCircle, XCircle, RefreshCw, Cpu, Thermometer, Zap, ChevronDown, ChevronRight } from 'lucide-react'
-import { getMCPServers, getMCPTools, getStatus, getAgents } from '../services/api'
+import { User, Server, Bot, Info, Shield, CheckCircle, XCircle, RefreshCw, Cpu, ChevronDown, ChevronRight, Cloud } from 'lucide-react'
+import { getMCPServers, getMCPTools, getStatus, getAgents, getFoundryStatus } from '../services/api'
 import { useAuth } from '../App'
 import PageHeader from '../components/shared/PageHeader'
 import { SkeletonSettingsSection } from '../components/shared/Skeleton'
@@ -112,6 +112,65 @@ const AgentRow = ({ agent }) => {
         </div>
       )}
     </div>
+  )
+}
+
+const FoundryStatusSection = () => {
+  const [status, setStatus] = useState('loading')
+  const [detail, setDetail] = useState(null)
+  const [endpoint, setEndpoint] = useState(null)
+
+  const checkStatus = useCallback(async () => {
+    try {
+      const result = await getFoundryStatus()
+      setStatus(result.status)
+      setDetail(result.detail || null)
+      setEndpoint(result.endpoint || null)
+    } catch {
+      setStatus('error')
+      setDetail('Could not reach backend')
+    }
+  }, [])
+
+  useEffect(() => { checkStatus() }, [checkStatus])
+
+  return (
+    <SectionCard title="Azure AI Foundry" icon={Cloud}>
+      <div className="space-y-4">
+        <div className="flex items-center justify-between">
+          <span className="text-sm text-gray-500">Connection Status</span>
+          {status === 'loading' ? (
+            <span className="text-xs text-gray-400">Checking...</span>
+          ) : status === 'configured' ? (
+            <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-700">
+              <CheckCircle className="w-3 h-3 mr-1" />
+              Configured
+            </span>
+          ) : (
+            <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-500">
+              <XCircle className="w-3 h-3 mr-1" />
+              Not configured
+            </span>
+          )}
+        </div>
+
+        {endpoint && (
+          <div className="text-xs text-gray-500 truncate">
+            Endpoint: <span className="font-mono">{endpoint}</span>
+          </div>
+        )}
+
+        {detail && status !== 'configured' && (
+          <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3">
+            <p className="text-sm text-yellow-700">{detail}</p>
+          </div>
+        )}
+
+        <p className="text-xs text-gray-400">
+          Agent deployment uses DefaultAzureCredential (az login, managed identity) or FOUNDRY_API_KEY.
+        </p>
+      </div>
+    </SectionCard>
   )
 }
 
@@ -314,6 +373,11 @@ const Settings = () => {
             </div>
           )}
         </SectionCard>
+      </div>
+
+      {/* Azure AI Foundry Authentication */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <FoundryStatusSection />
       </div>
     </div>
   )
