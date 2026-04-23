@@ -206,6 +206,15 @@ const AgentEditor = () => {
         {isEdit && (
           <div className="flex items-center gap-2">
             <YamlEditorButton agentId={agentId} />
+            <button
+              type="button"
+              onClick={() => document.getElementById('agent-form').requestSubmit()}
+              disabled={isSaving}
+              className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
+            >
+              {isSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+              Update
+            </button>
             <DeployButton agentId={agentId} />
           </div>
         )}
@@ -218,7 +227,7 @@ const AgentEditor = () => {
         </div>
       )}
 
-      <form onSubmit={handleSubmit} className="space-y-6">
+      <form id="agent-form" onSubmit={handleSubmit} className="space-y-6">
         {/* Identity — compact row */}
         <SectionCard title="Identity">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -457,24 +466,26 @@ const AgentEditor = () => {
           </SectionCard>
         </div>
 
-        {/* Save bar */}
-        <div className="sticky bottom-0 bg-white/80 backdrop-blur-sm border-t border-gray-100 -mx-6 px-6 py-4 flex items-center gap-3">
-          <button
-            type="submit"
-            disabled={isSaving}
-            className="inline-flex items-center gap-2 px-5 py-2.5 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
-          >
-            {isSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-            {isEdit ? 'Update Agent' : 'Create Agent'}
-          </button>
-          <button
-            type="button"
-            onClick={() => navigate('/agents')}
-            className="px-5 py-2.5 text-sm font-medium text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
-          >
-            Cancel
-          </button>
-        </div>
+        {/* Save bar — only for create mode (edit uses the header Update button) */}
+        {!isEdit && (
+          <div className="sticky bottom-0 bg-white/80 backdrop-blur-sm border-t border-gray-100 -mx-6 px-6 py-4 flex items-center gap-3">
+            <button
+              type="submit"
+              disabled={isSaving}
+              className="inline-flex items-center gap-2 px-5 py-2.5 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
+            >
+              {isSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+              Create Agent
+            </button>
+            <button
+              type="button"
+              onClick={() => navigate('/agents')}
+              className="px-5 py-2.5 text-sm font-medium text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
+            >
+              Cancel
+            </button>
+          </div>
+        )}
       </form>
     </div>
   )
