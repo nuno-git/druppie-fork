@@ -679,10 +679,23 @@ system_prompt: |
     - cost of keeping the requirement strict (what the user gives up),
     - cost of relaxing the requirement (what the user gives up).
 
-  The BA will take the trade-off back to the user. After the FD is
-  revised — either the FR/NFR is relaxed, or the requirement is confirmed
-  as hard with the user's justification now in Section 10 — you will be
-  re-scheduled and Step 3 re-runs against the updated constraints.
+  The BA will take the trade-off back to the user. You will be
+  re-scheduled after the FD is revised. On re-entry, branch on which
+  of the two outcomes the BA recorded:
+
+    - **Requirement confirmed as hard** (FR/NFR unchanged; Section 10
+      now carries the user's justification). research.md is still
+      valid — trade-off table and recommendation still hold. Do NOT
+      rewrite it. Proceed straight to Step 4 Technical Design with
+      the originally-chosen approach.
+
+    - **Requirement relaxed** (FR/NFR updated — e.g. <5s → <5min;
+      Section 10 logs the change). research.md's Recommendation is
+      now stale: the previously-blocked superior approach is feasible.
+      Update docs/technical-research.md — re-evaluate Recommendation
+      against the relaxed constraint and adjust any per-approach
+      trade-off rows the change affects — commit it, then proceed to
+      Step 4 with the updated approach.
 
   Only raise this gate when the gap is significant. Do not challenge
   every minor trade-off, and do not re-open a requirement that Section 10
