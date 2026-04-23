@@ -19,8 +19,10 @@
 ##
 ## Extends setup-project-with-fd (project + FD already committed), then
 ## has the planner plan the architect and has the architect go through
-## its intake (FD read + principles skill mocked) before calling
-## make_design — at which point the approval gate fires and stays open.
+## its intake (FD read + principles skill mocked), write the technical
+## research and approve+commit it, then call `coding:make_design` for
+## the technical-design.md — at which point the TD approval gate fires
+## and stays open.
 
 tool-test:
   name: architect-td-approval-pending
@@ -36,14 +38,14 @@ tool-test:
       arguments:
         steps:
           - agent_id: architect
-            prompt: "Review the functional design and create the technical design"
+            prompt: "Review the functional design and create the technical research + design"
           - agent_id: planner
             prompt: "Re-evaluate after architect completes"
 
     - agent: planner
       tool: builtin:done
       arguments:
-        summary: "Agent planner: BA approved design, planned architect to review FD and create technical design"
+        summary: "Agent planner: BA approved design, planned architect to review FD and create technical research + design"
 
     # --- Architect intake (mocked so we stay deterministic) ---
     - agent: architect
@@ -81,6 +83,89 @@ tool-test:
       mock_result: "Architecture principles loaded successfully"
       arguments:
         skill_name: architecture-principles
+
+    # --- Architect writes the technical research first (approved inline) ---
+    - agent: architect
+      tool: coding:make_design
+      approval:
+        status: approved
+        by: architect
+      arguments:
+        path: docs/technical-research.md
+        content: |
+          # Technisch Onderzoek: Recipe Sharing App
+
+          > Platform standards: conforms to [docs/platform-technical-standards.md](./platform-technical-standards.md) rev `2026-04-20`.
+
+          ## Introductie
+          Onderzoek naar architectuuropties voor een receptdeel-applicatie
+          voor thuiskoks binnen een besloten kring.
+
+          ## Vergeleken Benaderingen
+
+          ### Benadering A — Monolithische FastAPI + PostgreSQL
+          Eén Python-backend met SQLAlchemy en PostgreSQL, React frontend,
+          MinIO voor foto-opslag.
+
+          | Aspect | Beoordeling |
+          |--------|-------------|
+          | Complexiteit | Laag — één deploybare service |
+          | Herbruikbaarheid | Gemiddeld — standaard stack |
+          | Operationele kosten | Laag |
+          | Risico | Laag — bekende componenten |
+          | Fit met principes | Goed — sluit aan bij platform-standards |
+
+          ### Benadering B — Serverless (AWS Lambda + DynamoDB)
+          API Gateway + Lambda functies + DynamoDB + S3 voor foto's.
+
+          | Aspect | Beoordeling |
+          |--------|-------------|
+          | Complexiteit | Hoog — verspreide functies, cold starts |
+          | Herbruikbaarheid | Laag — vendor lock-in |
+          | Operationele kosten | Variabel — duur bij lage load |
+          | Risico | Hoog — nieuwe stack voor team |
+          | Fit met principes | Zwak — breekt met containerised deployment |
+
+          ## Externe Systeemkoppelingen
+
+          ### Inventarisatie koppelingen
+          | Systeem | Categorie | Doel |
+          |---------|-----------|------|
+          | Keycloak | organizational | OAuth2/OIDC authenticatie |
+          | MinIO | organizational | Foto-opslag |
+
+          ### Beslissingen per koppeling
+          - **Keycloak**: REUSE — bestaande platform-IdP, geen eigen auth bouwen.
+          - **MinIO**: REUSE — al beschikbaar in platform voor objectopslag.
+
+          ## Aanbeveling
+          Gekozen: **Benadering A** (Monolithische FastAPI + PostgreSQL).
+
+          ### Afgeleide beslissingen voor TD
+          - React + Vite frontend
+          - FastAPI + SQLAlchemy backend
+          - PostgreSQL als primaire datastore
+          - MinIO voor receptfoto's
+          - Keycloak voor authenticatie
+
+          ### Afgeleide Technical Requirements
+          - TR-01: Maximaal één beoordeling per gebruiker per recept
+          - TR-02: Foto-upload ≤ 5 MB, JPEG/PNG/WebP
+
+    - agent: architect
+      tool: coding:run_git
+      arguments:
+        command: "add docs/technical-research.md"
+
+    - agent: architect
+      tool: coding:run_git
+      arguments:
+        command: "commit -m 'Technisch onderzoek recipe sharing app'"
+
+    - agent: architect
+      tool: coding:run_git
+      arguments:
+        command: "push"
 
     # --- Architect writes the TD — approval gate PENDING ---
     # The architect-role approval must be resolved manually through the
@@ -163,10 +248,12 @@ tool-test:
     # The FD from the parent setup is still there
     - gitea_repo_exists: true
     - file_exists: docs/functional-design.md
-    # The TD has NOT been written yet — the approval gate is pending, so
-    # the make_design tool call has not produced output. This asserts
-    # that the approval really is unresolved (if it had been approved,
-    # docs/technical-design.md would already exist in Gitea).
+    # The research HAS been approved and committed, so it should exist in Gitea.
+    - file_exists: docs/technical-research.md
+    # The TD has NOT been written yet — the TD approval gate is pending,
+    # so the second make_design call has not produced output. This
+    # asserts that the TD approval really is unresolved (if it had been
+    # approved, docs/technical-design.md would already exist in Gitea).
     # If the verifier gains a file_not_exists check later, we can be
-    # more explicit. For now we rely on the positive fd check and the
+    # more explicit. For now we rely on the positive checks and the
     # manual UI verification described above.
