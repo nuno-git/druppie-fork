@@ -1,0 +1,118 @@
+## Test: architect execute_coding_task with explicit repo_target="project" is rejected
+##
+## Defence in depth: even if the LLM explicitly passes repo_target="project",
+## the server-side constraint check rejects it. The execute_coding_task call
+## should return a failure with a clear message naming the constraint violation.
+
+tool-test:
+  name: architect-sandbox-constraints-rejected
+  description: "Architect execute_coding_task with explicit repo_target=project is rejected by constraint"
+  tags: [architect, sandbox, constraints, defence-in-depth]
+
+  chain:
+    # =========================================================================
+    # Router
+    # =========================================================================
+    - agent: router
+      tool: builtin:set_intent
+      arguments:
+        intent: create_project
+        project_name: constraint-reject-test
+        description: "Test that architect cannot use repo_target=project"
+      assert:
+        result:
+          - not_empty
+
+    - agent: router
+      tool: builtin:done
+      arguments:
+        summary: "Agent router: Classified as create_project for constraint-reject-test"
+
+    # =========================================================================
+    # Planner → BA
+    # =========================================================================
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: business_analyst
+            prompt: "Gather requirements"
+          - agent_id: planner
+            prompt: "Re-evaluate"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: Planned business_analyst"
+
+    # =========================================================================
+    # BA — minimal FD
+    # =========================================================================
+    - agent: business_analyst
+      tool: coding:make_design
+      approval:
+        status: approved
+      arguments:
+        path: docs/functional-design.md
+        content: |
+          # Functioneel Ontwerp: Constraint Reject Test
+          ## Functionele Vereisten
+          - FR-01: Test that forbidden repo_target is rejected
+
+    - agent: business_analyst
+      tool: coding:run_git
+      arguments:
+        command: "add docs/functional-design.md"
+
+    - agent: business_analyst
+      tool: coding:run_git
+      arguments:
+        command: "commit -m 'FD: constraint reject test'"
+
+    - agent: business_analyst
+      tool: coding:run_git
+      arguments:
+        command: "push"
+
+    - agent: business_analyst
+      tool: builtin:done
+      arguments:
+        summary: "Agent business_analyst: DESIGN_APPROVED."
+
+    # =========================================================================
+    # Planner → Architect
+    # =========================================================================
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: architect
+            prompt: "Review the design"
+          - agent_id: planner
+            prompt: "Re-evaluate"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: Planned architect"
+
+    # =========================================================================
+    # Architect — explicitly passes repo_target="project" (forbidden)
+    # Should be rejected server-side with constraint error
+    # =========================================================================
+    - agent: architect
+      tool: builtin:execute_coding_task
+      arguments:
+        task: "Explore the project repository."
+        agent: explore
+        repo_target: project
+      assert:
+        result:
+          - { contains: "only allowed to use repo targets" }
+
+    - agent: architect
+      tool: builtin:done
+      arguments:
+        summary: "Agent architect: Confirmed constraint rejection works."
+      assert:
+        completed: true

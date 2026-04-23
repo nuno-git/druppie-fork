@@ -170,6 +170,9 @@ def create_app() -> FastAPI:
     """Create and configure the FastAPI application."""
     # Load configuration
     settings = get_settings()
+    # Fail fast on known-bad configs (e.g. partial GitHub App setup) rather
+    # than booting a silently-broken service. See Settings.validate_startup.
+    settings.validate_startup()
 
     app = FastAPI(
         title="Druppie Platform",

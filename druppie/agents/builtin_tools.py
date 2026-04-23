@@ -1253,38 +1253,59 @@ async def execute_sandbox_coding_task(
 
     task = args.get("task", "")
     from druppie.core.config import DEFAULT_SANDBOX_AGENT
-    agent = args.get("agent", DEFAULT_SANDBOX_AGENT)
-    repo_target = args.get("repo_target", "project")
+    raw_agent = args.get("agent")
+    raw_repo_target = args.get("repo_target")
 
     if not task:
         return {"success": False, "error": "task is required"}
 
-    # Enforce per-agent sandbox constraints (e.g. architect can only use explore/druppie_core)
+    # Load caller's sandbox_constraints (if any) so defaults can prefer an
+    # allowed value rather than falling through to "project" / DEFAULT_SANDBOX_AGENT
+    # and hitting the validation below.
     from druppie.agents.runtime import Agent as AgentLoader
+    definition = None
+    constraints = None
     try:
         agent_run = execution_repo.get_by_id(agent_run_id)
         if agent_run and agent_run.agent_id:
             definition = AgentLoader._load_definition(agent_run.agent_id)
             if definition and definition.sandbox_constraints:
                 constraints = definition.sandbox_constraints
-                if constraints.allowed_agents is not None and agent not in constraints.allowed_agents:
-                    return {
-                        "success": False,
-                        "error": (
-                            f"Agent '{definition.id}' is only allowed to use sandbox agents: "
-                            f"{constraints.allowed_agents}. Got: '{agent}'"
-                        ),
-                    }
-                if constraints.allowed_repo_targets is not None and repo_target not in constraints.allowed_repo_targets:
-                    return {
-                        "success": False,
-                        "error": (
-                            f"Agent '{definition.id}' is only allowed to use repo targets: "
-                            f"{constraints.allowed_repo_targets}. Got: '{repo_target}'"
-                        ),
-                    }
     except Exception:
-        pass  # Don't block execution if constraint check fails
+        pass
+
+    if raw_agent is not None:
+        agent = raw_agent
+    elif constraints and constraints.allowed_agents and DEFAULT_SANDBOX_AGENT not in constraints.allowed_agents:
+        agent = constraints.allowed_agents[0]
+    else:
+        agent = DEFAULT_SANDBOX_AGENT
+
+    if raw_repo_target is not None:
+        repo_target = raw_repo_target
+    elif constraints and constraints.allowed_repo_targets and "project" not in constraints.allowed_repo_targets:
+        repo_target = constraints.allowed_repo_targets[0]
+    else:
+        repo_target = "project"
+
+    # Enforce per-agent sandbox constraints (e.g. architect can only use explore/druppie_core)
+    if constraints:
+        if constraints.allowed_agents is not None and agent not in constraints.allowed_agents:
+            return {
+                "success": False,
+                "error": (
+                    f"Agent '{definition.id}' is only allowed to use sandbox agents: "
+                    f"{constraints.allowed_agents}. Got: '{agent}'"
+                ),
+            }
+        if constraints.allowed_repo_targets is not None and repo_target not in constraints.allowed_repo_targets:
+            return {
+                "success": False,
+                "error": (
+                    f"Agent '{definition.id}' is only allowed to use repo targets: "
+                    f"{constraints.allowed_repo_targets}. Got: '{repo_target}'"
+                ),
+            }
 
     model_config = resolve_sandbox_models(agent)
     model = model_config.primary_model

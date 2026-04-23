@@ -182,7 +182,12 @@ export class SessionInstance {
   private lastSuccessfulLlmCall: number | null = null;
   private lastLlmCallAttempt: number | null = null;
   private llmCallAttemptCount = 0;
-  private static readonly LLM_FAILURE_TIMEOUT_MS = 300_000; // 5 minutes of LLM failures → kill
+  // 24h default — keep retrying through upstream outages rather than killing
+  // the sandbox within minutes. Override via env (e.g. LLM_FAILURE_TIMEOUT_MS=300000).
+  private static readonly LLM_FAILURE_TIMEOUT_MS = parseInt(
+    process.env.LLM_FAILURE_TIMEOUT_MS || String(24 * 60 * 60 * 1000),
+    10
+  );
   private static readonly LLM_MIN_ATTEMPTS_BEFORE_KILL = 3; // Minimum failed attempts before C3 triggers
 
   constructor(
@@ -839,6 +844,10 @@ export class SessionInstance {
     if (success) {
       this.lastSuccessfulLlmCall = now;
     }
+    // Count LLM attempts as sandbox activity: while the sandbox is actively
+    // retrying against an unhealthy upstream it shouldn't be killed by the
+    // inactivity watchdog. C3 (LLM_FAILURE_TIMEOUT_MS) is the real cap.
+    this.updateSandboxLastActivity(now);
   }
 
   async processSandboxEvent(event: any): Promise<void> {

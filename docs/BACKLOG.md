@@ -285,7 +285,7 @@ Last updated: 2026-03-24
 - **What works:**
   - Architect detects core-change requests via keyword matching in the functional design
   - Planner routes `DESIGN_APPROVED_CORE_UPDATE` signal to `update_core_builder` (no new intent — session stays `create_project`/`update_project`)
-  - `update_core_builder` calls `execute_coding_task` with `repo_target="druppie_core"` — dual-repo sandbox clones `/workspace/core/` (GitHub) + `/workspace/project/` (Gitea)
+  - `update_core_builder` calls `execute_coding_task` with `repo_target="druppie_core"` — dual-repo sandbox clones `/workspace/druppie-core/` (GitHub) + `/workspace/project-<name>/` (Gitea)
   - `create-pull-request` sandbox tool creates PRs via control plane endpoint
   - GitHub API proxy injects GitHub App installation tokens (short-lived, scoped) — sandbox never sees real tokens
   - `done()` on `update_core_builder` requires developer approval (reviewer merges PR first)
@@ -303,7 +303,7 @@ Last updated: 2026-03-24
 - GitHub App integration: `GitHubAppService` generates short-lived installation tokens from `GITHUB_APP_*` env vars. Caches until near-expiry. Disabled when not configured (no crash).
 - Signal-based routing: Architect detects core-change requests and signals `DESIGN_APPROVED_CORE_UPDATE` in its `done()` summary. Planner reads the signal and routes to `update_core_builder`. No separate `update_core` intent — session intent stays `create_project`/`update_project`.
 - `update_core_builder` agent: calls `execute_coding_task` with `repo_target="druppie_core"` and `agent="druppie-core-builder"`. `done()` requires developer role approval.
-- Dual-repo sandbox: `/workspace/core/` (GitHub, read+write) + `/workspace/project/` (Gitea, read-only context with FD/TD). Credential store manages dual git proxy keys per session.
+- Dual-repo sandbox: `/workspace/druppie-core/` (GitHub, read+write) + `/workspace/project-<name>/` (Gitea, read-only context with FD/TD). Credential store manages dual git proxy keys per session.
 - GitHub API proxy in control plane: reverse proxy at `/github-api-proxy/:proxyKey/*` → `api.github.com`. Injects GitHub App token server-side.
 - Git proxy fix: `express.raw()` for binary git protocol data. Validates both primary and context git proxy keys.
 - `create-pull-request` sandbox tool: OpenCode inspect tool that calls control plane `/sessions/:id/pr` endpoint. Auto-detects current branch, defaults base to `main`.

@@ -1,0 +1,140 @@
+## Test: architect execute_coding_task defaults to allowed values
+##
+## Verifies that when the architect calls execute_coding_task WITHOUT
+## specifying agent or repo_target, the sandbox_constraints on the
+## architect definition auto-resolve to the allowed values (explore,
+## druppie_core) instead of hitting the constraint-mismatch error.
+##
+## Chain: router → planner → BA (FD) → planner → architect
+##   → architect calls execute_coding_task with no agent/repo_target (mocked)
+##
+## The key assertion: the execute_coding_task call succeeds (not rejected
+## with "Agent 'architect' is only allowed to use...").
+
+tool-test:
+  name: architect-sandbox-constraints
+  description: "Architect execute_coding_task defaults to explore/druppie_core without constraint error"
+  tags: [architect, sandbox, constraints, mock]
+
+  chain:
+    # =========================================================================
+    # Router
+    # =========================================================================
+    - agent: router
+      tool: builtin:set_intent
+      arguments:
+        intent: create_project
+        project_name: constraint-test
+        description: "Test project for sandbox constraint enforcement"
+      assert:
+        result:
+          - not_empty
+
+    - agent: router
+      tool: builtin:done
+      arguments:
+        summary: "Agent router: Classified as create_project for constraint-test"
+
+    # =========================================================================
+    # Planner → BA
+    # =========================================================================
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: business_analyst
+            prompt: "Gather requirements"
+          - agent_id: planner
+            prompt: "Re-evaluate"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: Planned business_analyst"
+
+    # =========================================================================
+    # BA — minimal FD
+    # =========================================================================
+    - agent: business_analyst
+      tool: coding:make_design
+      approval:
+        status: approved
+      arguments:
+        path: docs/functional-design.md
+        content: |
+          # Functioneel Ontwerp: Constraint Test
+          ## Functionele Vereisten
+          - FR-01: Test sandbox constraint defaults
+
+    - agent: business_analyst
+      tool: coding:run_git
+      arguments:
+        command: "add docs/functional-design.md"
+
+    - agent: business_analyst
+      tool: coding:run_git
+      arguments:
+        command: "commit -m 'FD: constraint test'"
+
+    - agent: business_analyst
+      tool: coding:run_git
+      arguments:
+        command: "push"
+
+    - agent: business_analyst
+      tool: builtin:done
+      arguments:
+        summary: "Agent business_analyst: DESIGN_APPROVED."
+
+    # =========================================================================
+    # Planner → Architect
+    # =========================================================================
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: architect
+            prompt: "Review the design and explore the codebase"
+          - agent_id: planner
+            prompt: "Re-evaluate"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: Planned architect"
+
+    # =========================================================================
+    # Architect — calls execute_coding_task WITHOUT agent/repo_target
+    # The sandbox_constraints should auto-resolve to explore/druppie_core
+    # =========================================================================
+    - agent: architect
+      tool: coding:run_git
+      arguments:
+        command: "pull"
+
+    - agent: architect
+      tool: coding:read_file
+      arguments:
+        path: docs/functional-design.md
+
+    - agent: architect
+      tool: builtin:execute_coding_task
+      arguments:
+        task: "Explore the repository structure. List all top-level files and directories. Report what you find."
+        # NOTE: agent and repo_target intentionally omitted
+        # Architect's sandbox_constraints should default to explore/druppie_core
+      mock: true
+      mock_result: |
+        Repository structure explored successfully.
+        Found: druppie/, frontend/, docs/, testing/, docker-compose.yml, CLAUDE.md
+        Working directory: /workspace/druppie-core/
+      assert:
+        result:
+          - not_empty
+
+    - agent: architect
+      tool: builtin:done
+      arguments:
+        summary: "Agent architect: Explored codebase structure via sandbox. No constraint errors."
+      assert:
+        completed: true
