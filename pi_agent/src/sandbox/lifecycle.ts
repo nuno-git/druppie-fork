@@ -99,6 +99,33 @@ export async function launchSandbox(opts: SandboxLaunchOptions): Promise<Running
   // gives dockerd-in-container the right caps without global privilege.
   const isolationFlags = opts.runtime === KATA_RUNTIME ? ["--privileged"] : [];
 
+  // Networking strategy:
+  //
+  // Standalone mode (CLI debug, no PI_AGENT_SANDBOX_NETWORK): publish the
+  // daemon port to 127.0.0.1 on the host and connect via loopback. Simple,
+  // works on any machine.
+  //
+  // Druppie mode (PI_AGENT_SANDBOX_NETWORK set): pi_agent runs *inside* the
+  // backend container. Publishing to the host's loopback is unreachable from
+  // inside backend (different netns). Instead, join the sandbox to the same
+  // docker network the backend is already on, skip port publishing, and
+  // connect by container name on the internal DNS. This also avoids the
+  // port-exposure on the public host entirely.
+  const sharedNetwork = process.env.PI_AGENT_SANDBOX_NETWORK;
+  const networkFlags = sharedNetwork
+    ? ["--network", sharedNetwork]
+    : (opts.allowNetwork ? [] : ["--network=none"]);
+  const portFlags = sharedNetwork ? [] : ["-p", "127.0.0.1::8000"];
+
+  // Bundle output dir: same story — under druppie, bind-mounting a path
+  // inside the backend container would have the host daemon resolve it
+  // against its own /, finding nothing. Use a named volume that both backend
+  // and sandbox mount so pi_agent can read what the sandbox wrote.
+  const bundleVolume = process.env.PI_AGENT_BUNDLE_VOLUME;
+  const bundleMountFlags = bundleVolume
+    ? ["-v", `${bundleVolume}:/out`]
+    : ["-v", `${bundleHostDir}:/out`];
+
   const args = [
     "run",
     "-d",
@@ -108,11 +135,9 @@ export async function launchSandbox(opts: SandboxLaunchOptions): Promise<Running
     `--memory=${opts.memoryLimit}`,
     `--cpus=${opts.cpuLimit}`,
     `--pids-limit=${opts.pidsLimit}`,
-    ...(opts.allowNetwork ? [] : ["--network=none"]),
-    // Publish the exec-daemon port on a random loopback port chosen by Docker.
-    "-p", "127.0.0.1::8000",
-    // Bundle output dir — only opaque git-pack bytes ever cross this boundary.
-    "-v", `${bundleHostDir}:/out`,
+    ...networkFlags,
+    ...portFlags,
+    ...bundleMountFlags,
     ...envFlags,
     opts.image,
   ];
@@ -123,24 +148,26 @@ export async function launchSandbox(opts: SandboxLaunchOptions): Promise<Running
     throw new Error(`docker run failed: ${result.stderr || result.stdout}`);
   }
 
-  // Ask docker for the dynamically chosen host port
-  const portOut = spawnSync("docker", ["port", containerName, "8000/tcp"], { encoding: "utf-8" });
-  const portMatch = (portOut.stdout || "").match(/:(\d+)\s*$/m);
-  const hostPort = portMatch ? Number(portMatch[1]) : 0;
-  if (!hostPort) {
-    spawnSync("docker", ["rm", "-f", containerName], { stdio: "ignore" });
-    rmSync(workDir, { recursive: true, force: true });
-    throw new Error(`could not resolve sandbox host port: ${portOut.stdout}`);
+  // Address to reach the daemon.
+  let sandboxHost: string;
+  let hostPort: number;
+  if (sharedNetwork) {
+    // Same network → connect by container name on port 8000 (internal).
+    sandboxHost = containerName;
+    hostPort = 8000;
+  } else {
+    // Standalone: ask docker for the dynamically chosen host port.
+    const portOut = spawnSync("docker", ["port", containerName, "8000/tcp"], { encoding: "utf-8" });
+    const portMatch = (portOut.stdout || "").match(/:(\d+)\s*$/m);
+    hostPort = portMatch ? Number(portMatch[1]) : 0;
+    if (!hostPort) {
+      spawnSync("docker", ["rm", "-f", containerName], { stdio: "ignore" });
+      rmSync(workDir, { recursive: true, force: true });
+      throw new Error(`could not resolve sandbox host port: ${portOut.stdout}`);
+    }
+    sandboxHost = process.env.PI_AGENT_SANDBOX_HOST ?? "127.0.0.1";
   }
 
-  // Build the client and wait for the daemon to become reachable.
-  // Host override: when pi_agent runs inside another container (e.g. druppie's
-  // backend container with /var/run/docker.sock bind-mounted), the sandbox is
-  // a *sibling* container. Its published port lives on the real host's
-  // 127.0.0.1, which is NOT the same loopback as inside our container.
-  // PI_AGENT_SANDBOX_HOST=host.docker.internal (aliased via extra_hosts)
-  // routes through the host-gateway and reaches the published port correctly.
-  const sandboxHost = process.env.PI_AGENT_SANDBOX_HOST ?? "127.0.0.1";
   const client = new SandboxClient({ host: sandboxHost, port: hostPort, authToken });
   await waitForHealth(client, opts.timeoutSec);
 

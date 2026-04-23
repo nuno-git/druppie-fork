@@ -116,13 +116,17 @@ class PiAgentRunner:
         # setting ONESHOT_SANDBOX_RUNTIME in the backend container's env —
         # prod hosts with Kata registered just pin it there.
         env.setdefault("ONESHOT_SANDBOX_RUNTIME", "sysbox-runc")
-        # pi_agent is inside the backend container, but the sandbox it spawns
-        # is a *sibling* on the host daemon. The sandbox's published port
-        # lives on the host's 127.0.0.1, which is NOT reachable from the
-        # backend container's own loopback. Route through host.docker.internal
-        # (aliased to host-gateway in compose extra_hosts). Overridable for
-        # hosts that don't support that alias.
-        env.setdefault("PI_AGENT_SANDBOX_HOST", "host.docker.internal")
+        # Attach each spawned sandbox to the same docker network as the
+        # backend container. pi_agent then talks to the sandbox by container
+        # name on the internal bridge — no port publishing, no 127.0.0.1
+        # games across container boundaries. Backend must be on this network
+        # too (docker-compose.yml wires it).
+        env.setdefault("PI_AGENT_SANDBOX_NETWORK", "druppie-new-network")
+        # Bundle output via a named volume mounted on both backend and each
+        # sandbox. Host bind-mounts don't work when pi_agent runs inside
+        # backend (the path is resolved against the host fs, which doesn't
+        # have the in-container temp dir).
+        env.setdefault("PI_AGENT_BUNDLE_VOLUME", "druppie_pi_agent_bundles")
         return env
 
     async def run(self, ingest_token: str) -> dict:

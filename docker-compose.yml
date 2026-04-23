@@ -620,6 +620,9 @@ services:
       - ./testing:/app/testing:ro
       - ./secrets:/app/secrets:ro
       - druppie_new_workspace:/app/workspace
+      # Shared with every pi_agent sandbox so the sandbox's /out and the
+      # backend's /app/pi_agent_bundles are the same bytes.
+      - pi_agent_bundles:/app/pi_agent_bundles
       - type: bind
         source: ${DOCKER_SOCK:-/var/run/docker.sock}
         target: /var/run/docker.sock
@@ -704,6 +707,7 @@ services:
     volumes:
       - ./secrets:/app/secrets:ro
       - druppie_new_workspace:/app/workspace
+      - pi_agent_bundles:/app/pi_agent_bundles
       - type: bind
         source: ${DOCKER_SOCK:-/var/run/docker.sock}
         target: /var/run/docker.sock
@@ -989,6 +993,12 @@ volumes:
     name: druppie_sandbox_dep_cache
   cache_scan_results:
     name: druppie_cache_scan_results
+  # Shared between backend and every pi_agent sandbox so the sandbox can drop
+  # the final git bundle at /out/<run>/run.bundle and backend (which spawned
+  # the sandbox via bind-mounted docker.sock) can read it back without the
+  # host daemon trying to resolve an in-container path.
+  pi_agent_bundles:
+    name: druppie_pi_agent_bundles
 
 # =============================================================================
 # NETWORKS
