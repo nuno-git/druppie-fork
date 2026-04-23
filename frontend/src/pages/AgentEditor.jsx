@@ -48,13 +48,6 @@ const CATEGORIES = [
   { value: 'deployment', label: 'Deployment' },
 ]
 
-const FOUNDRY_TOOLS = [
-  { id: 'code_interpreter', label: 'Code Interpreter', desc: 'Run Python code in a sandbox', status: 'ready' },
-  { id: 'file_search', label: 'File Search', desc: 'Search through uploaded files using embeddings', status: 'ready' },
-  { id: 'bing_grounding', label: 'Bing Grounding', desc: 'Ground responses with web search results', status: 'portal', note: 'Requires Bing connection in Foundry portal' },
-  { id: 'browser_automation', label: 'Browser Automation', desc: 'Automate browser interactions', status: 'coming' },
-  { id: 'deep_research', label: 'Deep Research', desc: 'In-depth research across multiple sources', status: 'coming' },
-]
 
 const AgentEditor = () => {
   const { agentId } = useParams()
@@ -171,7 +164,8 @@ const AgentEditor = () => {
     )
   }
 
-  const metaLlmProfiles = metadata?.llm_profiles || []
+  const foundryModels = metadata?.foundry_models || []
+  const foundryTools = metadata?.foundry_tools || []
 
   return (
     <div className="space-y-6 max-w-5xl">
@@ -317,73 +311,74 @@ const AgentEditor = () => {
 
         {/* Two-column layout for tools and settings */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* Left column — Foundry Tools */}
-          <SectionCard title="Azure Foundry Tools" subtitle="Sent to Azure on deploy. These run inside the Foundry runtime.">
-            <div className="space-y-2">
-              {FOUNDRY_TOOLS.map((tool) => (
-                <label
-                  key={tool.id}
-                  className={`flex items-start gap-3 p-3 rounded-lg border transition-colors ${
-                    form.foundry_tools.includes(tool.id)
-                      ? 'border-purple-200 bg-purple-50'
-                      : 'border-gray-100 hover:border-gray-200'
-                  } ${tool.status === 'coming' ? 'opacity-50' : 'cursor-pointer'}`}
-                >
-                  <input
-                    type="checkbox"
-                    checked={form.foundry_tools.includes(tool.id)}
-                    onChange={() => tool.status !== 'coming' && toggleArrayItem('foundry_tools', tool.id)}
-                    disabled={tool.status === 'coming'}
-                    className="w-4 h-4 mt-0.5 text-purple-600 border-gray-300 rounded focus:ring-purple-500"
-                  />
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm font-medium text-gray-900">{tool.label}</span>
-                      {tool.status === 'ready' && (
-                        <span className="px-1.5 py-0.5 text-[10px] font-medium bg-green-100 text-green-700 rounded">Ready</span>
-                      )}
-                      {tool.status === 'portal' && (
-                        <span className="px-1.5 py-0.5 text-[10px] font-medium bg-amber-100 text-amber-700 rounded">Needs Setup</span>
-                      )}
-                      {tool.status === 'coming' && (
-                        <span className="px-1.5 py-0.5 text-[10px] font-medium bg-gray-100 text-gray-500 rounded">Coming Soon</span>
-                      )}
-                    </div>
-                    <p className="text-xs text-gray-500 mt-0.5">{tool.desc}</p>
-                    {tool.note && form.foundry_tools.includes(tool.id) && (
-                      <p className="text-xs text-amber-600 mt-1">{tool.note}</p>
-                    )}
-                  </div>
-                </label>
-              ))}
-            </div>
+          {/* Left column — Foundry Tools (dynamically loaded from Azure) */}
+          <SectionCard title="Azure Foundry Tools" subtitle="Loaded from your Azure AI Foundry project.">
+            {foundryTools.length > 0 ? (
+              <div className="space-y-2">
+                {foundryTools.map((tool) => {
+                  const toolId = tool.id
+                  const checked = form.foundry_tools.includes(toolId)
+                  return (
+                    <label
+                      key={toolId}
+                      className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
+                        checked
+                          ? 'border-purple-200 bg-purple-50'
+                          : 'border-gray-100 hover:border-gray-200'
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => toggleArrayItem('foundry_tools', toolId)}
+                        className="w-4 h-4 mt-0.5 text-purple-600 border-gray-300 rounded focus:ring-purple-500"
+                      />
+                      <div className="flex-1 min-w-0">
+                        <span className="text-sm font-medium text-gray-900">{tool.label}</span>
+                        {tool.description && (
+                          <p className="text-xs text-gray-500 mt-0.5">{tool.description}</p>
+                        )}
+                      </div>
+                    </label>
+                  )
+                })}
+              </div>
+            ) : (
+              <p className="text-sm text-gray-400 italic">
+                No tools available — check Foundry connection in Settings.
+              </p>
+            )}
           </SectionCard>
 
-          {/* Right column — LLM Settings */}
-          <SectionCard title="LLM Settings" subtitle="Foundry mapping: standard = gpt-4.1-mini, cheap = gpt-4.1-nano.">
+          {/* Right column — Model & Settings */}
+          <SectionCard title="Model & Settings" subtitle="Select the Azure model deployment for this agent.">
             <div className="space-y-4">
               <div>
-                <label className="block text-xs font-medium text-gray-500 mb-1">LLM Profile</label>
-                {metaLlmProfiles.length > 0 ? (
+                <label className="block text-xs font-medium text-gray-500 mb-1">Model</label>
+                {foundryModels.length > 0 ? (
                   <select
                     value={form.llm_profile}
                     onChange={(e) => updateField('llm_profile', e.target.value)}
                     className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   >
-                    <option value="">Default (standard)</option>
-                    {metaLlmProfiles.map((profile) => {
-                      const val = typeof profile === 'string' ? profile : profile.name || profile.id
-                      return <option key={val} value={val}>{val}</option>
-                    })}
+                    <option value="">Select a model...</option>
+                    {foundryModels.map((model) => (
+                      <option key={model.id} value={model.id}>{model.label}</option>
+                    ))}
                   </select>
                 ) : (
                   <input
                     type="text"
                     value={form.llm_profile}
                     onChange={(e) => updateField('llm_profile', e.target.value)}
-                    placeholder="standard"
+                    placeholder="e.g. gpt-4.1-mini"
                     className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   />
+                )}
+                {foundryModels.length === 0 && (
+                  <p className="text-xs text-gray-400 mt-1">
+                    Could not load models from Foundry — enter model name manually.
+                  </p>
                 )}
               </div>
               <div className="grid grid-cols-2 gap-4">

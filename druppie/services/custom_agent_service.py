@@ -449,36 +449,32 @@ class CustomAgentService:
         # Builtin tools from BUILTIN_TOOL_DEFS
         builtin_tools = sorted(BUILTIN_TOOL_DEFS.keys())
 
-        # LLM profiles from llm_profiles.yaml
-        profiles_path = os.path.join(
-            AgentDefinitionLoader._get_definitions_path(), "llm_profiles.yaml"
+        # LLM models from Azure Foundry (dynamically loaded)
+        from druppie.services.foundry_service import FoundryService
+        from druppie.core.config import get_settings
+
+        settings = get_settings()
+        foundry = FoundryService(
+            endpoint=settings.llm.foundry_project_endpoint,
+            api_key=settings.llm.foundry_api_key or None,
         )
-        llm_profiles: list[str] = []
-        if os.path.isfile(profiles_path):
-            with open(profiles_path) as f:
-                profiles_data = yaml.safe_load(f) or {}
-            llm_profiles = sorted(profiles_data.get("profiles", {}).keys())
+        foundry_models = foundry.list_models()
 
         # Categories (hardcoded, minus "system" which is reserved)
         categories = ["execution", "planning", "review", "analysis"]
-
-        # Foundry tools (known Azure AI Foundry native tools)
-        foundry_tools = [
-            "code_interpreter",
-            "file_search",
-            "bing_grounding",
-            "browser_automation",
-            "deep_research",
-        ]
 
         return {
             "mcps": mcps,
             "skills": skills,
             "system_prompts": system_prompts,
             "druppie_runtime_tools": builtin_tools,
-            "llm_profiles": llm_profiles,
+            "foundry_models": foundry_models,
+            "foundry_tools": [
+                {"id": "code_interpreter", "label": "Code Interpreter", "description": "Run Python code in a sandbox"},
+                {"id": "file_search", "label": "File Search", "description": "Search through uploaded files using embeddings"},
+                {"id": "bing_grounding", "label": "Bing Grounding", "description": "Ground responses with web search results"},
+            ],
             "categories": categories,
-            "foundry_tools": foundry_tools,
         }
 
     # ── Helpers ──────────────────────────────────────────────

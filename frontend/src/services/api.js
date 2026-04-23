@@ -441,6 +441,7 @@ export const getProjectDependencies = (projectId) =>
 
 // ============ Foundry ============
 export const getFoundryStatus = () => request('/api/foundry/status')
+export const getFoundryModels = () => request('/api/foundry/models')
 
 // ============ Custom Agents ============
 export const getCustomAgents = () => request('/api/agents/custom')

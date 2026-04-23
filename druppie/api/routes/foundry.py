@@ -28,3 +28,18 @@ async def get_foundry_status(
         api_key=settings.llm.foundry_api_key or None,
     )
     return foundry.check_connection()
+
+
+@router.get("/foundry/models")
+async def list_foundry_models(
+    user: dict = Depends(get_current_user),
+):
+    """List available model deployments from Azure AI Foundry."""
+    from druppie.services.foundry_service import FoundryService
+
+    settings = get_settings()
+    foundry = FoundryService(
+        endpoint=settings.llm.foundry_project_endpoint,
+        api_key=settings.llm.foundry_api_key or None,
+    )
+    return {"models": foundry.list_models()}

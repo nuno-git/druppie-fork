@@ -6,19 +6,9 @@ from datetime import datetime, timezone
 
 logger = structlog.get_logger()
 
-# LLM profile -> Foundry model mapping.
-# Uses FOUNDRY_MODEL env var so the deployment name matches what's
-# actually provisioned in the Azure OpenAI resource.
 def _default_foundry_model() -> str:
     import os
     return os.environ.get("FOUNDRY_MODEL", "gpt-4.1-mini")
-
-
-PROFILE_MODEL_MAP = {
-    "standard": _default_foundry_model(),
-    "cheap": _default_foundry_model(),
-    "ollama": _default_foundry_model(),
-}
 
 
 class FoundryService:
@@ -73,7 +63,7 @@ class FoundryService:
 
         Used to detect drift between the local definition and the deployed version.
         """
-        model = PROFILE_MODEL_MAP.get(agent_detail.llm_profile, "gpt-4.1-mini")
+        model = agent_detail.llm_profile or _default_foundry_model()
         payload = f"{model}\n{agent_detail.system_prompt}\n{sorted(agent_detail.foundry_tools)}"
         return hashlib.sha256(payload.encode()).hexdigest()
 
@@ -110,7 +100,7 @@ class FoundryService:
         client = self._get_client()
         from azure.ai.projects.models import PromptAgentDefinition
 
-        model = PROFILE_MODEL_MAP.get(agent_detail.llm_profile, "gpt-4.1-mini")
+        model = agent_detail.llm_profile or _default_foundry_model()
         tools = self._build_foundry_tools(agent_detail.foundry_tools)
 
         definition = PromptAgentDefinition(
@@ -170,18 +160,16 @@ class FoundryService:
             logger.warning("foundry_get_agent_failed", agent_name=agent_name, error=str(e))
             return None
 
-    @staticmethod
-    def _build_foundry_tools(foundry_tools: list[str]) -> list:
+    def _build_foundry_tools(self, foundry_tools: list[str]) -> list:
         """Map foundry_tools strings to Azure SDK tool objects.
 
-        Some tools (bing_grounding, azure_ai_search, microsoft_fabric)
-        require connection resources configured in the Foundry portal.
+        Some tools (bing_grounding) require connection resources configured
+        in the Foundry portal — the connection ID is auto-discovered.
         Zero-config tools (code_interpreter, file_search) work out of the box.
         """
         if not foundry_tools:
             return []
 
-        import os
         from azure.ai.projects.models import (
             CodeInterpreterTool,
             FileSearchTool,
@@ -201,13 +189,12 @@ class FoundryService:
             if tool_type in zero_config_map:
                 tools.append(zero_config_map[tool_type]())
             elif tool_type == "bing_grounding":
-                connection_id = os.environ.get("FOUNDRY_BING_CONNECTION_ID", "")
+                connection_id = self._find_bing_connection()
                 if not connection_id:
-                    logger.warning(
-                        "foundry_bing_no_connection_id",
-                        hint="Set FOUNDRY_BING_CONNECTION_ID env var to the Bing connection ID from Azure Foundry portal",
+                    raise ValueError(
+                        "bing_grounding requires a Bing connection in Azure Foundry portal. "
+                        "Go to Foundry portal → Project → Connected resources → add a Bing connection."
                     )
-                    continue
                 tools.append(
                     BingGroundingTool(
                         bing_grounding=BingGroundingSearchToolParameters(
@@ -224,6 +211,20 @@ class FoundryService:
             else:
                 logger.warning("foundry_unknown_tool_type", tool_type=tool_type)
         return tools
+
+    def _find_bing_connection(self) -> str | None:
+        """Auto-discover the Bing Grounding connection from the Foundry project."""
+        try:
+            client = self._get_client()
+            for conn in client.connections.list():
+                name = (conn.name or "").lower()
+                conn_type = str(getattr(conn, "type", "")).lower()
+                if "bing" in name or "bing" in conn_type:
+                    logger.info("foundry_bing_connection_found", connection_id=conn.id)
+                    return conn.id
+        except Exception as e:
+            logger.warning("foundry_bing_connection_lookup_failed", error=str(e))
+        return None
 
     def validate_for_foundry(self, agent_detail) -> dict:
         """Validate an agent definition is deployable to Foundry.
@@ -249,12 +250,11 @@ class FoundryService:
         elif len(prompt) < 20:
             warnings.append("system_prompt is very short — consider adding more detailed instructions")
 
-        # 3. Check model mapping exists
-        model = PROFILE_MODEL_MAP.get(agent_detail.llm_profile)
-        if not model:
+        # 3. Check model is set
+        model = agent_detail.llm_profile or _default_foundry_model()
+        if not agent_detail.llm_profile:
             warnings.append(
-                f"LLM profile '{agent_detail.llm_profile}' has no Foundry model mapping — "
-                f"will default to gpt-4.1-mini"
+                f"No model selected — will default to {_default_foundry_model()}"
             )
 
         # 4. Validate foundry_tools
@@ -269,16 +269,14 @@ class FoundryService:
                     f"remove it before deploying"
                 )
             elif tool in portal_tools:
-                import os
-                if tool == "bing_grounding" and not os.environ.get("FOUNDRY_BING_CONNECTION_ID"):
+                if tool == "bing_grounding" and not self._find_bing_connection():
                     errors.append(
-                        f"Tool '{tool}' requires FOUNDRY_BING_CONNECTION_ID env var — "
-                        f"set it to the Bing connection ID from Azure Foundry portal"
+                        f"Tool '{tool}' requires a Bing connection in Azure Foundry portal — "
+                        f"go to Foundry portal → Project → Connected resources → add a Bing connection"
                     )
                 else:
                     warnings.append(
-                        f"Tool '{tool}' requires a connection configured in the Foundry portal — "
-                        f"deployment will succeed but the tool may fail at runtime without portal setup"
+                        f"Tool '{tool}' uses a portal connection (auto-discovered from Foundry project)"
                     )
             elif tool not in deployable_tools:
                 errors.append(f"Unknown Foundry tool: '{tool}'")
@@ -309,9 +307,40 @@ class FoundryService:
             "valid": len(errors) == 0,
             "errors": errors,
             "warnings": warnings,
-            "foundry_model": model or "gpt-4.1-mini",
+            "foundry_model": model,
             "deployable_tools": [t for t in (agent_detail.foundry_tools or []) if t in deployable_tools | portal_tools],
         }
+
+    def list_models(self) -> list[dict]:
+        """List available model deployments from Azure AI Foundry.
+
+        Uses client.deployments.list() to enumerate all model deployments
+        in the project, authenticated via the service principal.
+        """
+        try:
+            client = self._get_client()
+            result = []
+            for deployment in client.deployments.list():
+                name = deployment.get("name") or deployment.get("id")
+                if not name:
+                    continue
+                model_name = ""
+                model_info = deployment.get("model") or {}
+                if isinstance(model_info, dict):
+                    model_name = model_info.get("name", "")
+                label = f"{name} ({model_name})" if model_name else name
+                result.append({
+                    "id": name,
+                    "label": label,
+                    "model": model_name,
+                })
+            logger.info("foundry_models_listed", count=len(result))
+            return result
+        except FoundryNotConfiguredError:
+            return []
+        except Exception as e:
+            logger.warning("foundry_list_models_failed", error=str(e))
+            return []
 
     def is_configured(self) -> bool:
         """Check if Foundry is configured."""
