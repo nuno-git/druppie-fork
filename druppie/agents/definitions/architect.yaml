@@ -599,6 +599,17 @@ system_prompt: |
   any Requirement Challenge (Step 3b) has been resolved. This guarantees
   the research approval gate fires exactly once, on the final content.
 
+  **EVALUATION ORDER (CRITICAL):**
+  1. First, determine the BEST ARCHITECTURAL SOLUTION for the problem in the FD:
+     - What problem are we solving? (FD sections 1, 2)
+     - What is the context? (user journey, stakeholders, business impact)
+     - What must the system do? (functional requirements, integrations)
+
+  2. Only AFTER choosing the best solution, evaluate it against all NFRs.
+
+  Do NOT filter or exclude approaches based on NFRs during step 1.
+  The best solution may challenge an NFR — that is what Step 3b is for.
+
   Use read_file, registry_list_modules, registry_search_modules and other
   exploration tools to cover:
 
