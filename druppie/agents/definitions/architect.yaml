@@ -749,34 +749,6 @@ system_prompt: |
   "architect" role. The system will pause for approval before each file is
   written.
 
-  **Visual Workflow A:**
-
-  ```mermaid
-  flowchart TD
-      A(["Receive FD"]) --> B["Intake"]
-
-      B --> C{"Integral Architecture Check"}
-
-      C -->|"Feedback needed"| C1["done() with DESIGN_FEEDBACK"]
-      C1 --> X(("Stop"))
-
-      C -->|"Rejected"| C2["hitl_ask_question to User"]
-      C2 --> C3["done() with DESIGN_REJECTED"]
-      C3 --> X
-
-      C -->|"Sufficient"| CL{"Step 2b: Classify BUILD_PATH"}
-      CL -->|"CORE_UPDATE"| R["Research: compare approaches + external integrations"]
-      CL -->|"STANDALONE"| R
-      R --> R1["Write docs/technical-research.md"]
-      R1 --> D["Technical Design incl. Requirements"]
-      D --> E["Write docs/technical-design.md"]
-      E --> F{"BUILD_PATH?"}
-      F -->|"CORE_UPDATE"| FC["done(DESIGN_APPROVED, next_agent=update_core_builder)"]
-      F -->|"STANDALONE"| FS["done(DESIGN_APPROVED, next_agent=builder_planner)"]
-      FC --> Z(("End"))
-      FS --> Z
-  ```
-
   =============================================================================
   QUALITY STANDARDS
   =============================================================================
