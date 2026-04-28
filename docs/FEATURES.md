@@ -178,6 +178,19 @@ The session intent stays `create_project` throughout — there is no separate `c
 - For Docker: set `AZURE_CLIENT_ID` + `AZURE_CLIENT_SECRET` + `AZURE_TENANT_ID` (service principal)
 - For local dev: `az login` or `azd auth login` works
 
+### Foundry MCP (YAML-direct deploy)
+
+The `foundry` MCP server (`druppie/mcp-servers/module-foundry`, port 9012) provides agents a direct path from an architect-authored YAML to a deployed Foundry agent. Parallel to the DB-backed "Agents page" flow above.
+
+Tools exposed:
+- `validate_agent_yaml(yaml_content)` — hard, Pydantic-based schema validation. Not LLM-based. Checks parseability, required fields, name regex, instruction length cap, metadata limits, unknown keys, duplicate tool types, and `connection_id` requirement for `bing_grounding` / `bing_custom_search` / `azure_ai_search` / `microsoft_fabric`. Returns structured `{valid, errors, warnings, normalized}`.
+- `list_foundry_tools()` — live query against the configured project via `AIProjectClient.connections.list()` and `.deployments.list()`. Returns always-available tools, which connection-backed tools have a matching connection, and the list of deployed models. Distinguishes "not available" from "endpoint unreachable" in the `reason`/`code` fields.
+- `deploy_agent(yaml_content, dry_run=false)` — pipeline: validate → cross-check availability against `list_foundry_tools` → `AIProjectClient.agents.create_version`. Approval-gated (`required_role: developer`). `dry_run=true` stops after the availability stage.
+
+Agent access:
+- `deployer` — all three tools; prompt instructs `validate → list → deploy` ordering; reports `AGENT_DEPLOYED` / `DEPLOY_REJECTED` / `DEPLOY_FAILED` in its `done()` summary.
+- `foundry_agent_builder` — `validate_agent_yaml` + `list_foundry_tools` for pre-flight checks while building the design.
+
 ### general_chat
 
 The Router classifies the request as conversational, answers the question directly via HITL, and completes without planning.

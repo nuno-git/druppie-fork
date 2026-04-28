@@ -193,6 +193,7 @@ druppie/
     module-web/          # Port 9005 — web browsing/search
     module-archimate/    # Port 9006 — ArchiMate model ops
     module-registry/     # Port 9007 — platform catalog/discovery
+    module-foundry/      # Port 9012 — Azure AI Foundry YAML validate/deploy
 ```
 
 ---
@@ -560,6 +561,7 @@ module-filesearch   FastMCP           :9004   File search
 module-web          FastMCP           :9005   Web browsing
 module-archimate    FastMCP           :9006   ArchiMate models
 module-registry     FastMCP           :9007   Platform catalog/discovery
+module-foundry      FastMCP           :9012   Foundry YAML validate/deploy
 adminer             Adminer           :8081   DB admin UI
 sandbox-control-plane  Node.js        :8787   Sandbox session/event management
 sandbox-manager     Node.js           :8000   Sandbox container lifecycle
