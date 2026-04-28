@@ -269,7 +269,7 @@ tool-test:
     #   - AI NLP processing = ~1-2s for 95% accuracy
     #   - Total = 2-4s, not 0.5s
     #   - Architect calls done(DESIGN_FEEDBACK) with Issue: REQUIREMENT_CHALLENGE
-    #   - Analysis inline (no research.md yet — approval gate must fire only once)
+    #   - Analysis inline (research.md written with draft — approval gate fired once on draft)
     #
     # The test validates that the architect raised the challenge WITHOUT prompting.
     #
