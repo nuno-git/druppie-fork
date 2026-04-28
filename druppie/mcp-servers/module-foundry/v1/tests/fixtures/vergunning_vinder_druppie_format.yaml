@@ -1,0 +1,13 @@
+# Provided by the architect in Druppie's internal AgentDefinition format.
+# This is NOT valid Foundry input — the Foundry MCP expects name/model/
+# instructions/tools. Running this through validate_agent_yaml is the
+# negative test case: it must fail hard with structured errors.
+id: vergunning-vinder-agent
+name: Vergunning Vinder Agent
+description: "AI-aangedreven zoekagent die gemeentemedewerkers helpt om met trefwoorden relevante vergunningen te vinden uit meerdere bronnen (overheidswebsites en SharePoint). Toont naam, beschrijving en bronverwijzing per resultaat. Volledig stateless — geen opslag van zoekgegevens."
+system_prompt: |
+  # Vergunning Vinder Agent — Systeeminstructies
+
+  ## Rol
+  Je bent de Vergunning Vinder Agent. Je helpt gemeentemedewerkers bij het
+  vinden van relevante vergunningen op basis van trefwoorden.

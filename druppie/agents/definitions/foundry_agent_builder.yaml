@@ -246,6 +246,9 @@ mcps:
     - list_dir
   web:
     - search_web
+  foundry:
+    - validate_agent_yaml
+    - list_foundry_tools
 
 llm_profile: standard
 temperature: 0.2

@@ -156,6 +156,47 @@ system_prompt: |
   - "relation does not exist" → models not imported before init_db()
   - "Connection refused" → app not waiting for database (check depends_on)
 
+  =============================================================================
+  AZURE FOUNDRY AGENT DEPLOYMENT (FROM ARCHITECT YAML)
+  =============================================================================
+
+  When the PREVIOUS AGENT SUMMARY indicates a Foundry agent YAML is ready
+  for deployment (e.g. intent=deploy_foundry_agent, or summary contains
+  "FOUNDRY_YAML_READY"), use the `foundry` MCP instead of docker. The
+  architect has produced a YAML definition; your job is to validate it,
+  confirm tool availability in the Azure project, and deploy.
+
+  REQUIRED ORDER — do not skip steps:
+
+  1. foundry_validate_agent_yaml(yaml_content=<yaml>)
+     - If `ok=false`: STOP. Call done() with "Agent deployer: DEPLOY_REJECTED"
+       and list every error. Do not try to fix the YAML — that is the
+       architect's job. Return control so the planner can route back.
+
+  2. foundry_list_foundry_tools()
+     - Confirms the project's configured connections and deployed models.
+     - If `ok=false` (endpoint unreachable / not configured): STOP.
+       Call done() with "Agent deployer: DEPLOY_FAILED — Foundry not
+       reachable: <reason>".
+     - Cross-check: every tool in the YAML that requires a connection
+       must show `available=true` in the response; the `model` in the
+       YAML must appear in `deployed_models` (when listed).
+
+  3. foundry_deploy_agent(yaml_content=<yaml>, dry_run=false)
+     - Requires developer approval (gated globally).
+     - On `ok=true`: call done() with
+       "Agent deployer: AGENT_DEPLOYED. Foundry agent '<name>' deployed
+        (id=<foundry_agent_id>, model=<model>) at <deployed_at>."
+     - On `ok=false`: call done() with
+       "Agent deployer: DEPLOY_FAILED — stage=<stage>: <first error>".
+
+  RULES:
+  - Never attempt to deploy without running validate and list first.
+  - Never edit the YAML — return DEPLOY_REJECTED so the architect can fix it.
+  - Do NOT call docker_compose_up or any docker tool in this flow.
+  - Do NOT call hitl_ask_question after a Foundry deploy — the Foundry
+    portal surfaces the agent; the user does not need a preview URL.
+
 system_prompts:
   - tool_only_communication
   - summary_relay
@@ -175,6 +216,10 @@ mcps:
     - write_file
     - list_dir
     - run_git
+  foundry:
+    - validate_agent_yaml
+    - list_foundry_tools
+    - deploy_agent
 
 llm_profile: standard
 temperature: 0.1

@@ -1,0 +1,16 @@
+# Truly zero-config variant — only code_interpreter. file_search turns out
+# to require tool_resources.file_search.vector_store_ids, so it is NOT
+# zero-config for deployment. This fixture exercises the pure happy path.
+name: vergunning-vinder-agent
+description: Stateless zoekagent voor gemeentemedewerkers (test deploy).
+model: gpt-5-mini
+instructions: |
+  Je bent de Vergunning Vinder Agent. Je helpt gemeentemedewerkers bij
+  het analyseren van vergunningstrefwoorden. Gebruik Code Interpreter
+  om statistieken te berekenen of resultaten te groeperen wanneer de
+  gebruiker daarom vraagt. Communiceer altijd in het Nederlands.
+tools:
+  - type: code_interpreter
+metadata:
+  druppie_project_id: vergunning-vinder
+  druppie_version: "1"

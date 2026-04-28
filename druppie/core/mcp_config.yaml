@@ -274,3 +274,21 @@ mcps:
 
       - name: get_skill
         requires_approval: false
+
+  # Azure AI Foundry agent deployment from YAML
+  # validate_agent_yaml: pure schema check, no approval
+  # list_foundry_tools:  live query to project, read-only, no approval
+  # deploy_agent:        writes to Azure — gated behind developer role
+  foundry:
+    url: ${MCP_FOUNDRY_URL:-http://module-foundry:9012}
+    type: core
+    tools:
+      - name: validate_agent_yaml
+        requires_approval: false
+
+      - name: list_foundry_tools
+        requires_approval: false
+
+      - name: deploy_agent
+        requires_approval: true
+        required_role: developer
