@@ -190,13 +190,6 @@ def _recover_orphaned_pi_agent_tool_calls() -> None:
         db.rollback()
     finally:
         db.close()
-        else:
-            logger.info("no_orphaned_pi_agent_runs")
-    except Exception as e:
-        logger.error("orphaned_pi_agent_recovery_failed", error=str(e), exc_info=True)
-        db.rollback()
-    finally:
-        db.close()
 
 
 @asynccontextmanager
