@@ -79,7 +79,3 @@ tool-test:
           - Performance benchmark vs legacy flow
       assert:
         completed: true
-
-  verify:
-    # Verify the test ran successfully
-    completed: true

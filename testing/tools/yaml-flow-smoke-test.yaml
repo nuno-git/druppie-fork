@@ -92,6 +92,3 @@ tool-test:
           - Performance benchmark vs legacy
       assert:
         completed: true
-
-  verify:
-    completed: true
