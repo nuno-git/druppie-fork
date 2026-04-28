@@ -240,6 +240,17 @@ async def stop_run(
     if result["success"]:
         row.status = "stopped"
         row.completed_at = datetime.now(timezone.utc)
+
+        # Also update the associated ToolCall status
+        if row.tool_call_id:
+            from druppie.db.models import ToolCall
+            tool_call = db.query(ToolCall).filter(ToolCall.id == row.tool_call_id).first()
+            if tool_call:
+                tool_call.status = "failed"
+                tool_call.error_message = f"Run stopped by user: {result['message']}"
+                tool_call.completed_at = datetime.now(timezone.utc)
+                db.add(tool_call)
+
         db.add(row)
         db.commit()
         logger.info("pi_agent_run_stopped", run_id=run_id, user_id=user["sub"])

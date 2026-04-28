@@ -93,9 +93,13 @@ def _recover_orphaned_pi_agent_runs() -> None:
     we know the in-memory process registry is lost, so any "running" or
     "stopping" run is an orphan (the actual subprocess was killed by the
     server shutdown).
+
+    Also marks the associated ToolCall as "failed" so the frontend doesn't
+    show "Stopping..." indefinitely.
     """
     from druppie.db.database import SessionLocal
     from druppie.db.models.pi_coding_run import PiCodingRun
+    from druppie.db.models import ToolCall
     from druppie.db.models.base import utcnow
 
     db = SessionLocal()
@@ -106,6 +110,16 @@ def _recover_orphaned_pi_agent_runs() -> None:
         for run in orphans:
             run.status = "stopped"
             run.completed_at = utcnow()
+
+            # Also update the associated ToolCall status
+            if run.tool_call_id:
+                tool_call = db.query(ToolCall).filter(ToolCall.id == run.tool_call_id).first()
+                if tool_call:
+                    tool_call.status = "failed"
+                    tool_call.error_message = "Server restarted while pi_agent was running"
+                    tool_call.completed_at = utcnow()
+                    db.add(tool_call)
+
         if orphans:
             db.commit()
             logger.warning(
@@ -113,6 +127,69 @@ def _recover_orphaned_pi_agent_runs() -> None:
                 count=len(orphans),
                 run_ids=[r.run_id for r in orphans],
             )
+        else:
+            logger.info("no_orphaned_pi_agent_runs")
+    except Exception as e:
+        logger.error("orphaned_pi_agent_recovery_failed", error=str(e), exc_info=True)
+        db.rollback()
+    finally:
+        db.close()
+
+
+def _recover_orphaned_pi_agent_tool_calls() -> None:
+    """Mark orphaned pi_agent tool calls as failed on startup.
+
+    If a ToolCall for execute_coding_task_pi is in "executing" state but
+    has no corresponding PiCodingRun (or the PiCodingRun is already stopped),
+    mark it as failed to prevent the frontend from showing "Stopping...".
+    """
+    from druppie.db.database import SessionLocal
+    from druppie.db.models import ToolCall
+    from druppie.db.models.base import utcnow
+
+    db = SessionLocal()
+    try:
+        # Find ToolCalls for execute_coding_task_pi that are still executing
+        orphaned_calls = (
+            db.query(ToolCall)
+            .filter(
+                ToolCall.tool_name == "execute_coding_task_pi",
+                ToolCall.status == "executing"
+            )
+            .all()
+        )
+
+        recovered_count = 0
+        for tool_call in orphaned_calls:
+            # Check if there's a corresponding PiCodingRun that's still running
+            from druppie.db.models.pi_coding_run import PiCodingRun
+            pi_run = (
+                db.query(PiCodingRun)
+                .filter(PiCodingRun.tool_call_id == tool_call.id)
+                .first()
+            )
+
+            # If no PiCodingRun exists, or if it's already stopped, mark ToolCall as failed
+            if not pi_run or pi_run.status not in ("running", "stopping"):
+                tool_call.status = "failed"
+                tool_call.error_message = "Server restarted while tool was executing"
+                tool_call.completed_at = utcnow()
+                recovered_count += 1
+
+        if recovered_count > 0:
+            db.commit()
+            logger.warning(
+                "orphaned_pi_agent_tool_calls_recovered",
+                count=recovered_count,
+                tool_call_ids=[str(tc.id) for tc in orphaned_calls if tc.status == "failed"],
+            )
+        else:
+            logger.info("no_orphaned_pi_agent_tool_calls")
+    except Exception as e:
+        logger.error("orphaned_pi_agent_tool_calls_recovery_failed", error=str(e), exc_info=True)
+        db.rollback()
+    finally:
+        db.close()
         else:
             logger.info("no_orphaned_pi_agent_runs")
     except Exception as e:
@@ -141,6 +218,9 @@ async def lifespan(app: FastAPI):
 
     # Recover orphaned pi_agent runs left in "running" or "stopping" state
     _recover_orphaned_pi_agent_runs()
+
+    # Recover orphaned pi_agent tool calls left in "executing" state
+    _recover_orphaned_pi_agent_tool_calls()
 
     # Clean up orphaned sandbox Gitea users from previous runs
     from druppie.opencode.gitea_cleanup import cleanup_orphaned_sandbox_users
