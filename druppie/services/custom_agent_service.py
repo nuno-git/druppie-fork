@@ -327,6 +327,30 @@ class CustomAgentService:
         logger.info("custom_agent_undeployed", agent_id=agent_id, by_user=str(user_id))
         return {"status": "undeployed", "agent_id": agent_id}
 
+    def validate_agent(self, agent_id: str) -> list[str]:
+        """Validate a custom agent by agent_id. Returns warnings."""
+        agent = self.repo.get_by_agent_id(agent_id)
+        if not agent:
+            raise NotFoundError("agent", agent_id)
+        detail = self._to_detail(agent)
+        data = CustomAgentCreate(
+            agent_id=detail.agent_id,
+            name=detail.name,
+            description=detail.description,
+            category=detail.category,
+            system_prompt=detail.system_prompt,
+            system_prompts=detail.system_prompts,
+            druppie_runtime_tools=detail.druppie_runtime_tools,
+            mcps=detail.mcps,
+            approval_overrides=detail.approval_overrides,
+            skills=detail.skills,
+            llm_profile=detail.llm_profile,
+            temperature=detail.temperature,
+            max_tokens=detail.max_tokens,
+            max_iterations=detail.max_iterations,
+        )
+        return self.validate_definition(data)
+
     def validate_definition(self, data: CustomAgentCreate) -> list[str]:
         """Validate a custom agent definition and return warnings.
 
@@ -428,7 +452,7 @@ class CustomAgentService:
             data["definition"]["max_tokens"] = detail.max_tokens
         if detail.max_iterations:
             data["definition"]["max_iterations"] = detail.max_iterations
-        if detail.temperature and detail.temperature != 0.7:
+        if detail.temperature and detail.temperature != 0.1:
             data["definition"]["temperature"] = detail.temperature
 
         return yaml.dump(data, default_flow_style=False, sort_keys=False)
@@ -530,6 +554,7 @@ class CustomAgentService:
             name=agent.name,
             description=agent.description or "",
             category=agent.category or "execution",
+            kind=agent.kind or "prompt",
             llm_profile=agent.llm_profile or "standard",
             is_active=agent.is_active if agent.is_active is not None else True,
             deployment_status=agent.deployment_status,
@@ -566,12 +591,14 @@ class CustomAgentService:
             name=agent.name,
             description=agent.description or "",
             category=agent.category or "execution",
+            kind=agent.kind or "prompt",
             llm_profile=agent.llm_profile or "standard",
             is_active=agent.is_active if agent.is_active is not None else True,
             deployment_status=agent.deployment_status,
             is_dirty=CustomAgentService._is_dirty(agent),
             created_at=agent.created_at,
             system_prompt=agent.system_prompt or "",
+            workflow_yaml=agent.workflow_yaml,
             system_prompts=[sp.prompt_id for sp in agent.system_prompts],
             druppie_runtime_tools=[bt.tool_name for bt in agent.builtin_tools],
             mcps=mcps,

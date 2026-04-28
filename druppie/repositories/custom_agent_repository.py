@@ -46,7 +46,9 @@ class CustomAgentRepository(BaseRepository):
         name: str,
         description: str | None = None,
         category: str = "execution",
+        kind: str = "prompt",
         system_prompt: str | None = None,
+        workflow_yaml: str | None = None,
         llm_profile: str = "standard",
         temperature: float = 0.1,
         max_tokens: int = 4096,
@@ -65,7 +67,9 @@ class CustomAgentRepository(BaseRepository):
             name=name,
             description=description,
             category=category,
+            kind=kind,
             system_prompt=system_prompt,
+            workflow_yaml=workflow_yaml,
             llm_profile=llm_profile,
             temperature=temperature,
             max_tokens=max_tokens,
@@ -99,41 +103,19 @@ class CustomAgentRepository(BaseRepository):
                 setattr(agent, key, value)
 
         # Replace child rows if provided
-        if mcps is not None:
-            for mcp in agent.mcps:
-                self.db.delete(mcp)
-            self.db.flush()
-            agent.mcps = []
-
-        if skills is not None:
-            for skill in agent.skills:
-                self.db.delete(skill)
-            self.db.flush()
-            agent.skills = []
-
-        if system_prompts_list is not None:
-            for sp in agent.system_prompts:
-                self.db.delete(sp)
-            self.db.flush()
-            agent.system_prompts = []
-
-        if builtin_tools is not None:
-            for bt in agent.builtin_tools:
-                self.db.delete(bt)
-            self.db.flush()
-            agent.builtin_tools = []
-
-        if approval_overrides is not None:
-            for ao in agent.approval_overrides:
-                self.db.delete(ao)
-            self.db.flush()
-            agent.approval_overrides = []
-
-        if foundry_tools is not None:
-            for ft in agent.foundry_tools:
-                self.db.delete(ft)
-            self.db.flush()
-            agent.foundry_tools = []
+        for new_value, attr in [
+            (mcps, "mcps"),
+            (skills, "skills"),
+            (system_prompts_list, "system_prompts"),
+            (builtin_tools, "builtin_tools"),
+            (approval_overrides, "approval_overrides"),
+            (foundry_tools, "foundry_tools"),
+        ]:
+            if new_value is not None:
+                for row in getattr(agent, attr):
+                    self.db.delete(row)
+                self.db.flush()
+                setattr(agent, attr, [])
 
         self._create_child_rows(agent, mcps, skills, system_prompts_list, builtin_tools, approval_overrides, foundry_tools)
         self.db.flush()

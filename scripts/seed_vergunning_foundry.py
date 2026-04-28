@@ -299,7 +299,7 @@ genereren met:
 ## Taal
 Communiceer altijd in het Nederlands. Gebruik juridisch correcte
 terminologie maar leg vakjargon uit in begrijpelijke taal.
-Gebruik "u" als aanspreekvorml.
+Gebruik "u" als aanspreeksvorm.
 """
 
 # ---------------------------------------------------------------------------

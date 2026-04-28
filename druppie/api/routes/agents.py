@@ -300,7 +300,7 @@ async def update_custom_agent_yaml(
             mcps=data.get("mcps"),
             skills=data.get("skills"),
             system_prompts=data.get("system_prompts"),
-            druppie_runtime_tools=data.get("extra_builtin_tools"),
+            druppie_runtime_tools=data.get("druppie_runtime_tools"),
             approval_overrides=data.get("approval_overrides"),
             foundry_tools=data.get("foundry_tools"),
         )
@@ -320,23 +320,7 @@ async def validate_custom_agent(
     detail = service.get_custom_agent(agent_id)
     if detail.owner_id != user_id and not any(r in roles for r in ("admin", "developer")):
         raise HTTPException(status_code=403, detail="Not authorized to validate this agent")
-    data = CustomAgentCreate(
-        agent_id=detail.agent_id,
-        name=detail.name,
-        description=detail.description,
-        category=detail.category,
-        system_prompt=detail.system_prompt,
-        system_prompts=detail.system_prompts,
-        druppie_runtime_tools=detail.druppie_runtime_tools,
-        mcps=detail.mcps,
-        approval_overrides=detail.approval_overrides,
-        skills=detail.skills,
-        llm_profile=detail.llm_profile,
-        temperature=detail.temperature,
-        max_tokens=detail.max_tokens,
-        max_iterations=detail.max_iterations,
-    )
-    warnings = service.validate_definition(data)
+    warnings = service.validate_agent(agent_id)
     return {"valid": len(warnings) == 0, "warnings": warnings}
 
 
