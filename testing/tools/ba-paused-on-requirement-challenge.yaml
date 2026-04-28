@@ -2,13 +2,12 @@
 ##
 ## The full first leg of the loop is scripted:
 ##   router → planner → BA writes FD (NFR-02 <5s explicitly flagged in
-##        Section 10 as a BA assumption) → planner → architect reads
-##        the FD, does the research analysis in its head, hits the
+architect reads the FD, writes research.md with draft recommendation (Step 3),
+##        the FD, hits the Requirement Challenge Gate (Step 3b), and calls the
 ##        Requirement Challenge Gate (Step 3b), and calls
 ##        done(DESIGN_FEEDBACK) with Issue REQUIREMENT_CHALLENGE
-##        containing the analysis INLINE. No research.md is written
-##        yet — the approval gate must fire only once, on the final
-##        content, after the challenge is resolved → planner schedules
+##        noting that research.md exists with draft. The approval gate
+##        fired on the draft version → planner schedules
 ##        BA revision → BA parses the feedback from PREVIOUS AGENT
 ##        SUMMARY and calls hitl_ask_question.
 ##
@@ -16,15 +15,14 @@
 ## in the UI:
 ##   - Answer "5s is een harde UX-eis" → HARD path: BA adds the user's
 ##     justification to FD Section 10, NFR-02 unchanged, done() with
-##     `REQUIREMENT_CHALLENGE outcome: HARD`. Architect re-entry writes
-##     research.md for the FIRST time via make_design (approval gate
-##     fires once) with Benadering A as Recommendation, then TD.
+##     `REQUIREMENT_CHALLENGE outcome: HARD`. Architect re-entry revises
+##     research.md via make_design (approval gate fires on revision)
+##     with Benadering A as Recommendation, then TD.
 ##   - Answer "5s mag naar 15s" → RELAXED path: BA updates NFR-02 (5s
 ##     → 15s), logs the change in Section 10, done() with
 ##     `REQUIREMENT_CHALLENGE outcome: RELAXED: 5s → 15s`. Architect
-##     re-entry writes research.md for the FIRST time via make_design
-##     (approval gate fires once) with Benadering B as Recommendation,
-##     then TD.
+##     re-entry revises research.md via make_design (approval gate fires
+##     on revision) with Benadering B as Recommendation, then TD.
 
 tool-test:
   name: ba-paused-on-requirement-challenge
@@ -185,7 +183,7 @@ tool-test:
 
           Items: [1] Section: NFR-02 (analyse-resultaat binnen 5s), Issue: REQUIREMENT_CHALLENGE.
 
-          Analysis (inline — research.md is intentionally not written yet; the approval gate must fire only once, after this is resolved):
+          Analysis (inline — research.md exists with draft; the approval gate fired on draft version; now BA presents trade-off):
 
           Benadering A — Regel-gebaseerde classifier + regex-extractie (~2s).
           Projectspecifiek, geen hergebruik over waterschappen, nauwkeurigheid ~70%, breekt op onbekende lay-outs, geen platform-fit.
@@ -273,7 +271,7 @@ tool-test:
         question: |
           De architect heeft een REQUIREMENT_CHALLENGE gesignaleerd op NFR-02 (analyse-resultaat binnen 5 seconden).
 
-          Uit de analyse van de architect (research.md is nog niet geschreven — de approval gate vuurt pas als dit is opgelost):
+          Uit de analyse van de architect (research.md bestaat met draft):
           - Benadering A (regel-gebaseerde classifier, ~2s): voldoet aan 5s, maar nauwkeurigheid ~70%, projectspecifiek, geen hergebruik.
           - Benadering B (Druppie foundry-agent vergunning-analyser, ~15s): nauwkeurigheid ~95%, herbruikbaar over waterschappen, past bij platform-principes — maar duurt ~15s.
 
@@ -281,8 +279,8 @@ tool-test:
 
           De vraag: is 5 seconden een harde UX-behoefte voor de vergunningverleners, of mogen we die versoepelen naar ~15 seconden om de betere analyse (Benadering B) mogelijk te maken?
 
-          - Antwoord "hard" (bv. "5s is echt nodig") → NFR-02 blijft staan, Benadering A wordt gekozen, architect schrijft dán pas research.md (approval gate vuurt één keer).
-          - Antwoord "versoepelen" (bv. "15s mag ook") → NFR-02 wordt aangepast, Benadering B wordt gekozen, architect schrijft dán pas research.md (approval gate vuurt één keer).
+          - Antwoord "hard" (bv. "5s is echt nodig") → NFR-02 blijft staan, Benadering A wordt gekozen, architect reviseert dán research.md (approval gate vuurt één keer).
+          - Antwoord "versoepelen" (bv. "15s mag ook") → NFR-02 wordt aangepast, Benadering B wordt gekozen, architect reviseert dán research.md (approval gate vuurt één keer).
 
     # Chain ends here. The HITL question is pending. Session is marked
     # paused (see session_status above). The user opens the session in
