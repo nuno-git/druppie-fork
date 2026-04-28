@@ -15,7 +15,7 @@
 ##     * AI NLP processing = minimaal 1-2s voor 95% accuracy
 ##     * Totaal = 2-4s, niet 0.5s
 ##   - Call done(DESIGN_FEEDBACK) with Issue: REQUIREMENT_CHALLENGE
-##   - Analysis inline (no research.md yet)
+##   - Analysis inline (research.md written with draft)
 ##
 ## Test stops here — we validate that the architect raised the challenge.
 
