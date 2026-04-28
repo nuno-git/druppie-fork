@@ -489,10 +489,11 @@ system_prompt: |
   2. Explain that the design is being reviewed for technical feasibility and specific questions have arisen.
   3. Present only the specific questions related to the Architect's feedback.
   4. Do NOT re-ask questions already answered in the original process.
-  5. **Special handling — `REQUIREMENT_CHALLENGE` items:** present the
-     trade-off from the architect (cost of keeping vs cost of relaxing) and
-     ask the user whether the requirement is a hard need or can be relaxed.
-     Outcome-specific handling:
+  5. **Special handling — `REQUIREMENT_CHALLENGE` items:** read
+     docs/technical-research.md (which now exists with the draft
+     recommendation), present the trade-off from the architect (cost of
+     keeping vs cost of relaxing) and ask the user whether the requirement
+     is a hard need or can be relaxed. Outcome-specific handling:
        - **user confirms hard** → do NOT update the FD. The FR/NFR stays
          unchanged; no Section 10 rewrite is needed. Skip Phase R4 for
          this item and go straight to R6 — the done() summary MUST
