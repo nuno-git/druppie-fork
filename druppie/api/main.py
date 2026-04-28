@@ -85,6 +85,43 @@ def _recover_orphaned_batch_runs() -> None:
         db.close()
 
 
+def _recover_orphaned_pi_agent_runs() -> None:
+    """Mark orphaned pi_agent runs as stopped on startup.
+
+    If the server was killed while a pi_agent process was running, the
+    PiCodingRun stays in "running" or "stopping" state forever.  On startup
+    we know the in-memory process registry is lost, so any "running" or
+    "stopping" run is an orphan (the actual subprocess was killed by the
+    server shutdown).
+    """
+    from druppie.db.database import SessionLocal
+    from druppie.db.models.pi_coding_run import PiCodingRun
+    from druppie.db.models.base import utcnow
+
+    db = SessionLocal()
+    try:
+        orphans = db.query(PiCodingRun).filter(
+            PiCodingRun.status.in_(["running", "stopping"])
+        ).all()
+        for run in orphans:
+            run.status = "stopped"
+            run.completed_at = utcnow()
+        if orphans:
+            db.commit()
+            logger.warning(
+                "orphaned_pi_agent_runs_recovered",
+                count=len(orphans),
+                run_ids=[r.run_id for r in orphans],
+            )
+        else:
+            logger.info("no_orphaned_pi_agent_runs")
+    except Exception as e:
+        logger.error("orphaned_pi_agent_recovery_failed", error=str(e), exc_info=True)
+        db.rollback()
+    finally:
+        db.close()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan handler."""
@@ -101,6 +138,9 @@ async def lifespan(app: FastAPI):
 
     # Recover orphaned test batch runs left in "running" state by a crash/restart
     _recover_orphaned_batch_runs()
+
+    # Recover orphaned pi_agent runs left in "running" or "stopping" state
+    _recover_orphaned_pi_agent_runs()
 
     # Clean up orphaned sandbox Gitea users from previous runs
     from druppie.opencode.gitea_cleanup import cleanup_orphaned_sandbox_users
