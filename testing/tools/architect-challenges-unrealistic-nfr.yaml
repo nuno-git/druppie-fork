@@ -1,0 +1,290 @@
+## Test: Architect challenges unrealistic NFR in FD
+##
+## The BA writes a Functional Design with an unrealistic NFR-01 (0.5 seconden
+## response time) that conflicts with FR-03 (3 external API calls, each with
+## 2s timeout) and FR-04 (AI processing with 95% accuracy).
+##
+## The architect MUST discover this contradiction themselves and raise a
+## REQUIREMENT_CHALLENGE — the BA does NOT flag this as an assumption.
+##
+## Expected architect behavior:
+##   - Read the FD
+##   - Analyze alternatives (at least 2)
+##   - Discover that NFR-01 (0.5s) is mathematically impossible:
+##     * 3 API calls (Kadaster, GIS, peilregister) = minimaal 1-2s paralleel
+##     * AI NLP processing = minimaal 1-2s voor 95% accuracy
+##     * Totaal = 2-4s, niet 0.5s
+##   - Call done(DESIGN_FEEDBACK) with Issue: REQUIREMENT_CHALLENGE
+##   - Analysis inline (no research.md yet)
+##
+## Test stops here — we validate that the architect raised the challenge.
+
+tool-test:
+  name: architect-challenges-unrealistic-nfr
+  description: "Architect discovers impossible NFR-01 (0.5s with AI + 3 APIs) and raises REQUIREMENT_CHALLENGE without prompting"
+  tags: [architect, requirement-challenge, unrealistic-nfr, smoke]
+  session_status: completed
+
+  chain:
+    # =========================================================================
+    # Router → create_project
+    # =========================================================================
+    - agent: router
+      tool: builtin:set_intent
+      arguments:
+        intent: create_project
+        project_name: slimme-vergunning-analyzer
+        description: "AI-gestuurde vergunning-analyzer met classificatie, metadata extractie en validatie tegen externe bronnen"
+      assert:
+        result:
+          - not_empty
+
+    - agent: router
+      tool: builtin:done
+      arguments:
+        summary: "Agent router: Classified as create_project for slimme-vergunning-analyzer"
+
+    # =========================================================================
+    # Planner → plan BA
+    # =========================================================================
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: business_analyst
+            prompt: "Gather requirements and create functional design"
+          - agent_id: planner
+            prompt: "Re-evaluate after business analyst completes"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: Planned business_analyst to gather requirements and create functional design"
+
+    # =========================================================================
+    # BA writes FD — NO explicit assumption flag, NFR-01 looks normal but is impossible
+    # =========================================================================
+    - agent: business_analyst
+      tool: coding:make_design
+      approval:
+        status: approved
+      arguments:
+        path: docs/functional-design.md
+        content: |
+          # Functioneel Ontwerp: Slimme Vergunning-analyzer
+
+          > Platform standards applied: [docs/platform-functional-standards.md](./platform-functional-standards.md) rev <revision>
+
+          ## 1. Huidige vs Gewenste Situatie
+
+          | Aspect | Huidige Situatie | Gewenste Situatie |
+          |--------|------------------|-------------------|
+          | Proces | Medewerkers uploaden vergunningdocumenten en voeren handmatige controles uit | Automatische analyse en validatie met direct resultaat |
+          | Doorlooptijd | 15-30 minuten per document | < 1 seconde |
+          | Nauwkeurigheid | Afhankelijk van menselijke inspectie | Consistente, hoge nauwkeurigheid |
+
+          ## 2. Problem Summary
+
+          Medewerkers van het waterschap besteden veel tijd aan het handmatig analyseren van vergunningdocumenten. Ze moeten:
+          - Documenten classificeren (type vergunning)
+          - Metadata extraheren (aanvrager, locatie, datums)
+          - Valideren tegen beleidsregels
+          - Cross-checken met externe bronnen (Kadaster, GIS, peilgegevens)
+
+          Dit is foutgevoelig, traag en frustreert medewerkers.
+
+          **Wie is erdoor affected:** Vergunningverleners (15 FTE)
+          **Business impact:** 15-30 minuten per document → 2000 documents/jaar = ~500-1000 uur/jaar aan handmatig werk
+          **Gewenst outcome:** Directe, nauwkeurige analyse zodat medewerkers alleen uitzonderingen beoordelen
+
+          ## 3. Functionele Vereisten
+
+          | ID | Source | Requirement | Verification Method |
+          |----|--------|-------------|---------------------|
+          | FR-01 | BA | Het systeem automatiseert classificatie van vergunningdocumenten (watervergunning, lozingsvergunning, onttrekkingsvergunning, overig) | Functionele test |
+          | FR-02 | BA | Het systeem extraheert gestructureerde metadata: aanvrager, vergunningnummer, locatie (coördinaten), startdatum, einddatum, toepasselijke wetgeving | Functionele test |
+          | FR-03 | BA | Het systeem valideert vergunninggegevens tegen minimaal 3 externe bronnen: Kadaster (perceel), GIS (locatie), en waterschap peilregister (waterstanden) | Functionele test |
+          | FR-04 | BA | Het systeem past AI-gestuurde natural language processing toe om context uit de tekst te halen en relevante regels uit beleidsdocumenten te matchen (95% nauwkeurigheid) | Functionele test |
+          | FR-05 | BA | Het systeem presenteert analyse-resultaat met onderbouwing per gevonden item (welke regel, waar matched, wat ontbreekt) | Functionele test |
+          | FR-06 | BA | De gebruiker kan het resultaat accepteren of corrigeren (handmatige override wordt teruggekoppeld voor learning) | Functionele test |
+
+          ## 4. Business Rules & Logic
+
+          | Rule ID | Description | Condition | Outcome |
+          |---------|-------------|-----------|---------|
+          | BR-01 | Indien locatie valt binnen Natura 2000 gebied → markeer als "extra toetsing vereist" | Document bevat locatie | Warning flag |
+          | BR-02 | Indien lozingsvergunning → verplichte check tegen lozingsregister | Type = lozingsvergunning | Extra validatie stap |
+          | BR-03 | Indien perceel niet gevonden in Kadaster → foutmelding | Kadaster API geeft geen resultaat | Error flag |
+
+          ## 5. Information Requirements
+
+          | Information | Description | Source | Used By |
+          |-------------|-------------|--------|---------|
+          | Vergunningdocument | PDF/scan van ingediende vergunning | User upload | AI-classificatie + extractie |
+          | Perceelgegevens | Kadastrale informatie per locatie | Kadaster API | Validatie locatie |
+          | GIS data | Geografische en planologische data | Waterschap GIS | Contextuele checks |
+          | Peilgegevens | Waterstanden bij locatie | Waterschap peilregister | Watergerelateerde regels |
+          | Beleidsregels | Regels voor vergunningverlening | Waterschap documenten | Rule matching |
+
+          ## 6. User Journeys
+
+          ### Journey 1: Upload en Analyse
+          1. Gebruiker upload PDF/scan van vergunning
+          2. Systeem start automatisch analyse
+          3. Gebruiker ziet voortgangsindicator
+          4. Binnen 1 seconden verschijnt resultaat met:
+             - Classificatie (type vergunning)
+             - Geëxtraheerde metadata (tabel)
+             - Validatie flags (groen/oranje/rood per regel)
+          5. Gebruiker beoordeelt en accepteert corrigeert
+
+          ### Journey 2: Handmatige Correctie
+          1. Gebruiker klikt op "Corrigeer" bij een item
+          2. Systeem toont originele tekst uit document + voorgestelde waarde
+          3. Gebruiker past waarde aan
+          4. Systeem update analyse en slaat correction op voor learning
+
+          ## 7. Integration Points
+
+          | System/Service | Interaction Type | Purpose |
+          |----------------|------------------|---------|
+          | Kadaster API | REST call (uitgaand) | Validatie perceelgegevens |
+          | Waterschap GIS | REST call (uitgaand) | Locatie checks + planologie |
+          | Waterschap Peilregister | REST call (uitgaand) | Waterstand validatie |
+          | Beleidsdocumenten | Read-only | Rule matching engine |
+
+          ## 8. Niet-Functionele Vereisten
+
+          | ID | Source | Requirement | Verification Method |
+          |----|--------|-------------|---------------------|
+          | NFR-01 | BA | Analyse-resultaat verschijnt binnen 0.5 seconden na upload (inclusief AI verwerking + 3 externe API calls) | Performance test |
+          | NFR-02 | BA | Systeem kan minimaal 100 documenten per uur verwerken | Performance test |
+          | NFR-03 | BA | AI-classificatie behaalt minimaal 95% nauwkeurigheid op testset van 500 documenten | Acceptatietest |
+          | NFR-04 | BA | Systeem is beschikbaar tijdens kantooruren (08:00-18:00) met 99.5% uptime | Monitoring |
+          | NFR-05 | BA | Alle externe API calls hebben een timeout van maximaal 2 seconden per call | Config check |
+
+          ## 9. Security & Compliance Requirements
+
+          - **Personal Data Involved:** Yes (aanvrager, locatie)
+          - **Confidential Data Involved:** No (vergunningen zijn publiek)
+          - **Authentication Required:** Yes (medewerkers waterschap)
+          - **Access Restrictions:** Alleen vergunningverleners en beheerders
+          - **Failure Preference:** Continue if possible (toon waarschuwing, maar blokkeer niet)
+          - **Data Retention:** 7 jaar (wettelijke bewaartermijn vergunningingen)
+
+          ## 10. Aannames & Open Vragen
+
+          | ID | Type | Description | Default/Fallback |
+          |----|------|-------------|------------------|
+          | A-01 | Capacity | Waterschap medewerkers hebben moderne devices (≤3 jaar oud) | Assume true |
+          | A-02 | Network | Interne netwerkverbinding is stabiel met <50ms latency naar interne systemen | Assume true |
+          | A-03 | APIs | Externe APIs (Kadaster, GIS, peilregister) zijn beschikbaar met >99% uptime | Assume true |
+          | A-04 | Volume | Gemiddeld 2000 vergunningdocumenten per jaar, piek naar 4000 in drukke periodes | Assume true |
+          | A-05 | Format | Documenten zijn voornamelijk PDF (95%), rest Word/afbeelding | Assume true |
+
+          ## 11. Out of Scope
+
+          - Automatische goedkeuring/afwijzing van vergunningen (beslissing blijft bij mens)
+          - Integratie met zaaksysteem (kan later toegevoegd worden)
+          - Mobiele app (webapp sufficiënt)
+          - Archivering van originele documenten (DSO handelt dit af)
+
+          ## 12. Process Flow Diagram
+
+          ```mermaid
+          flowchart TD
+              A([Gebruiker upload document]) --> B[Start automatische analyse]
+              B --> C[AI classificatie + metadata extractie]
+              C --> D[Parallele API calls: Kadaster, GIS, Peilregister]
+              D --> E[Rule matching tegen beleidsregels]
+              E --> F{Resultaat compleet?}
+              F -->|Ja| G[Toon resultaat met onderbouwing]
+              F -->|Nee| H[Toon gedeeltelijk resultaat + waarschuwing]
+              G --> I{Gebruiker akkoord?}
+              H --> I
+              I -->|Ja| J[Opslaan als definitief]
+              I -->|Nee, corrigeer| K[Handmatige correctie]
+              K --> L[Update analyse + learning feedback]
+              L --> J
+              J --> M([Klaar])
+          ```
+
+          ## 13. Possible Solution Direction
+
+          Geen bestaande modules of projects gevonden die direct toepasbaar zijn voor vergunning-analyse met deze specifieke combinatie van AI + waterschap-bronsystemen.
+
+          ## 14. Platform Standard Deviations
+
+          | Standard | Deviation | Rationale |
+          |----------|-----------|-----------|
+          | (none) | | |
+      assert:
+        result:
+          - { contains: "functional-design.md" }
+
+    - agent: business_analyst
+      tool: coding:run_git
+      arguments:
+        command: "add docs/functional-design.md"
+
+    - agent: business_analyst
+      tool: coding:run_git
+      arguments:
+        command: "commit -m 'Functioneel ontwerp slimme vergunning-analyzer'"
+
+    - agent: business_analyst
+      tool: coding:run_git
+      arguments:
+        command: "push"
+
+    - agent: business_analyst
+      tool: builtin:done
+      arguments:
+        summary: "Agent business_analyst: DESIGN_APPROVED. Wrote docs/functional-design.md with 6 functional requirements and 5 non-functional requirements including NFR-01 (0.5s response time with AI + 3 external API calls)."
+
+    # =========================================================================
+    # Planner → plan architect
+    # =========================================================================
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: architect
+            prompt: "Review the functional design and create the technical research + design"
+          - agent_id: planner
+            prompt: "Re-evaluate after architect completes"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: BA approved design, planned architect to review FD and create technical research + design"
+
+    # =========================================================================
+    # Architect reviews FD — MUST discover NFR-01 is impossible and REQUIREMENT_CHALLENGE it
+    # =========================================================================
+    # Expected behavior:
+    #   - Architect reads FD
+    #   - Analyzes: NFR-01 (0.5s) conflicts with FR-03 (3 API calls, 2s timeout each) + FR-04 (AI with 95% accuracy)
+    #   - Even parallel API calls = ~1-2s
+    #   - AI NLP processing = ~1-2s for 95% accuracy
+    #   - Total = 2-4s, not 0.5s
+    #   - Architect calls done(DESIGN_FEEDBACK) with Issue: REQUIREMENT_CHALLENGE
+    #   - Analysis inline (no research.md yet — approval gate must fire only once)
+    #
+    # The test validates that the architect raised the challenge WITHOUT prompting.
+    #
+    - agent: architect
+      tool: coding:read_file
+      mock: true
+      arguments:
+        path: docs/functional-design.md
+
+    - agent: architect
+      tool: builtin:done
+      assert:
+        completed: true
+      # The assertion validates that the architect's done() summary contains:
+      # - DESIGN_FEEDBACK (not DESIGN_APPROVED — design needs revision)
+      # - REQUIREMENT_CHALLENGE (the issue type)
+      # - NFR-01 (the requirement being challenged)
+      # - Analysis of why it's impossible (0.5s vs 2-4s realistic)
