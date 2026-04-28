@@ -17,9 +17,13 @@ class CompletionPrecondition(BaseModel):
 
     If summary_contains is set, the rule only applies when the summary matches.
     If summary_contains is omitted (None), the rule always applies.
+    If unless_summary_contains is set, the rule is skipped when the summary
+    also contains that marker (used for branches that legitimately bypass
+    the normal artefact requirement, e.g. REQUIREMENT_CHALLENGE HARD).
     """
 
     summary_contains: str | None = None
+    unless_summary_contains: str | None = None
     required_tools: list[RequiredToolCall]
     error_message: str = "Completion precondition not met."
 

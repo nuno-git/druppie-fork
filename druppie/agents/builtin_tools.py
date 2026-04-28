@@ -802,6 +802,12 @@ def _check_completion_preconditions(
         ):
             continue
 
+        if (
+            precondition.unless_summary_contains is not None
+            and precondition.unless_summary_contains in summary
+        ):
+            continue
+
         # Rule matches — check required tools
         tool_calls = execution_repo.get_tool_calls_for_run(agent_run_id)
 
