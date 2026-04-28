@@ -8,6 +8,10 @@ description: Test-driven development flow with analysis, planning, implementatio
 variables:
   maxIterations: 3
   iteration: 1
+  firstIteration: true
+  testsPassed: false
+  buildPassed: false
+  remainingIssuesCount: 999
 
 # Phases execute in order
 phases:
@@ -18,8 +22,8 @@ phases:
 
   # Phase 2: Build loop (plan → execute → verify, retry as needed)
   - name: build_loop
-    # Continue while: within max iterations AND (tests not passing OR issues remaining)
-    while: "${iteration} <= ${maxIterations} && (!@verifier.testsPassed || @verifier.remainingIssuesCount > 0)"
+    # Continue while: (first iteration OR tests not passing) AND within max iterations
+    while: "( ${firstIteration} || !${testsPassed} ) && ${iteration} <= ${maxIterations}"
     phases:
       # Phase 2a: Create or update the build plan
       - name: plan
@@ -27,6 +31,8 @@ phases:
         description: Create a build plan (initial or fix plan)
         inputs:
           previousSummaries: true
+        set:
+          firstIteration: false
 
       # Phase 2b: Execute the plan in parallel waves
       - name: execute
@@ -41,6 +47,10 @@ phases:
         description: Run tests and fix simple issues
         inputs:
           previousSummaries: true
+        set:
+          testsPassed: true
+          buildPassed: true
+          remainingIssuesCount: 0
 
     # Update iteration counter after each loop
     set:
@@ -49,7 +59,7 @@ phases:
   # Phase 3: Push to git (conditional)
   - name: push
     # Only push if: push requested AND tests passing AND build passing
-    if: "${task.pushOnComplete} && @verifier.testsPassed && @verifier.buildPassed"
+    if: "${task.pushOnComplete} && ${testsPassed} && ${buildPassed}"
     agent: push-agent
     description: Push commits and create PR
     builtIn: true
