@@ -5,7 +5,7 @@
 ## docs/technical-research.md, git-commits the research, writes
 ## docs/technical-design.md. Paused before TD git commit + done.
 ## Click "Continue" in the UI to resume — the architect should just
-## git add/commit/push the TD and call done(DESIGN_APPROVED, BUILD_PATH=STANDALONE).
+## git add/commit/push the TD and call done(DESIGN_APPROVED, BUILD_PATH=PROJECT).
 
 tool-test:
   name: architect-paused-mid-run
@@ -255,4 +255,4 @@ tool-test:
     # Research has been committed and pushed; TD has been written but
     # not yet committed. Session is now paused. On resume, the architect
     # sees its full tool history and should just git add/commit/push the
-    # TD and call done(DESIGN_APPROVED, BUILD_PATH=STANDALONE).
+    # TD and call done(DESIGN_APPROVED, BUILD_PATH=PROJECT).
