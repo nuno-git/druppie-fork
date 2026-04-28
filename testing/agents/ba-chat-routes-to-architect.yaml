@@ -1,20 +1,23 @@
-## Agent test: BA correctly routes architecture questions to the architect
+## Agent test: BA correctly routes to architect when user pivots to a
+## technical question mid-conversation.
 ##
-## The user asks a question that falls under the architect's expertise.
-## The BA should recognize this and signal CHAT_ROUTE_AGENT with
-## the architect as the suggested agent.
+## The conversation starts with a BA-appropriate topic (stakeholder
+## management). The HITL persona then pivots to a database technology
+## question. The BA should recognize this is outside its scope and
+## signal CHAT_ROUTE_AGENT with the architect as the suggested agent.
 
 agent-test:
   name: ba-chat-routes-to-architect
-  description: "BA routes an architecture question to the architect in general_chat"
+  description: "BA routes to architect when user pivots to a technical question mid-chat"
   tags: [business_analyst, general-chat, routing]
 
-  message: "Welke database technologie is het beste voor het opslaan van tijdreeksdata van waterkwaliteitsmetingen?"
+  message: "Hoe kan ik het beste omgaan met stakeholders die tegenstrijdige eisen hebben?"
   agents: [router, planner, business_analyst]
-  hitl: non-technical-pm
+  hitl: topic-switcher
 
   judge:
-    context: [router, business_analyst]
+    context: business_analyst
     checks:
-      - "This is a technology/architecture question (database choice for time-series data). The BA must have recognized this is outside its scope and called done() with CHAT_ROUTE_AGENT in the summary, suggesting the architect agent. The BA must NOT have tried to answer the database technology question itself."
-      - "The done() summary must include enough context about the user's question so the architect can pick it up without the user having to repeat themselves."
+      - "The user pivoted to a database technology question during the conversation. The BA must have recognized this is outside its scope and called done() with CHAT_ROUTE_AGENT in the summary, suggesting the architect agent. The BA must NOT have tried to answer the database technology question itself."
+      - "The done() summary must include enough context about the user's database technology question so the architect can pick it up without the user having to repeat themselves."
+      - "Before the user pivoted, the BA should have engaged with the original stakeholder question — it should not have immediately ended the conversation without providing any advice on the first topic."

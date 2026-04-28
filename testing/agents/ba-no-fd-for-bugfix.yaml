@@ -1,9 +1,9 @@
 ## Agent test: BA correctly identifies a bug fix as NO_FD_CHANGE
 ##
-## Uses a setup that creates a project with an existing FD, then
-## continues the session with a bug report. The BA should identify
-## this as a technical issue and signal NO_FD_CHANGE without writing
-## a new functional design.
+## Setup creates a project with an existing FD (recipe-sharing-app).
+## Then a NEW session starts with a bug report. The router should
+## classify this as update_project, and the BA should signal NO_FD_CHANGE
+## without writing a new functional design.
 
 agent-test:
   name: ba-no-fd-for-bugfix
@@ -13,9 +13,7 @@ agent-test:
   setup:
     - setup-project-with-fd
 
-  continue_session: true
-  message: "De zoekfunctie werkt niet goed: als ik zoek met accenten (bijv. kanaäl) krijg ik geen resultaten, maar zonder accent (kanaal) werkt het wel"
-  agents: [planner, business_analyst]
+  message: "In de recipe sharing app werkt de zoekfunctie niet goed: als ik zoek met accenten (bijv. kanaäl) krijg ik geen resultaten, maar zonder accent (kanaal) werkt het wel"
   hitl: bugfix-reporter
 
   assert:
