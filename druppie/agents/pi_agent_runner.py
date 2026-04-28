@@ -24,13 +24,18 @@ import json
 import os
 import secrets
 import tempfile
+import signal
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import UUID, uuid4
+from typing import Dict
 
 import structlog
 
 logger = structlog.get_logger()
+
+# Registry to track running processes for cancellation
+_RUNNING_PROCESSES: Dict[str, asyncio.subprocess.Process] = {}
 
 PI_AGENT_ROOT = Path(os.getenv("PI_AGENT_ROOT", "/app/pi_agent"))
 PI_AGENT_CLI = PI_AGENT_ROOT / "dist" / "cli.js"
@@ -39,6 +44,69 @@ DRUPPIE_INTERNAL_URL = os.getenv("DRUPPIE_INTERNAL_URL", "http://localhost:8000"
 
 # Cap stdout/stderr kept in DB so a runaway log doesn't blow up Postgres.
 _TAIL_BYTES = 64 * 1024
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Process Registry - for cancellation
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def register_process(run_id: str, proc: asyncio.subprocess.Process) -> None:
+    """Register a running process so it can be cancelled later."""
+    _RUNNING_PROCESSES[run_id] = proc
+    logger.info("pi_agent_process_registered", run_id=run_id, pid=proc.pid)
+
+
+def unregister_process(run_id: str) -> None:
+    """Unregister a process (call when it completes)."""
+    _RUNNING_PROCESSES.pop(run_id, None)
+    logger.info("pi_agent_process_unregistered", run_id=run_id)
+
+
+async def stop_run(run_id: str) -> dict:
+    """Stop a running pi_agent process.
+
+    Attempts graceful termination first, then force kills if needed.
+
+    Returns:
+        Dict with success status and message
+    """
+    proc = _RUNNING_PROCESSES.get(run_id)
+    if not proc:
+        return {
+            "success": False,
+            "message": f"No running process found for run_id: {run_id}",
+        }
+
+    try:
+        # Try graceful termination first
+        proc.terminate()
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=5.0)
+            unregister_process(run_id)
+            return {
+                "success": True,
+                "message": f"Process {run_id} terminated gracefully",
+            }
+        except asyncio.TimeoutError:
+            # Force kill if graceful termination didn't work
+            proc.kill()
+            await proc.wait()
+            unregister_process(run_id)
+            return {
+                "success": True,
+                "message": f"Process {run_id} killed (didn't respond to SIGTERM)",
+            }
+    except Exception as e:
+        logger.error("failed_to_stop_pi_agent_process", run_id=run_id, error=str(e))
+        return {
+            "success": False,
+            "message": f"Failed to stop process {run_id}: {str(e)}",
+        }
+
+
+def list_running_runs() -> list[str]:
+    """List all currently running pi_agent run IDs."""
+    return list(_RUNNING_PROCESSES.keys())
 
 
 class PiAgentRunner:
@@ -169,26 +237,34 @@ class PiAgentRunner:
             env=env,
             cwd=str(PI_AGENT_ROOT),
         )
-        stdout_b, stderr_b = await proc.communicate()
-        exit_code = proc.returncode or 0
 
-        summary = self._load_summary()
-        stdout_tail = stdout_b[-_TAIL_BYTES:].decode("utf-8", errors="replace") if stdout_b else ""
-        stderr_tail = stderr_b[-_TAIL_BYTES:].decode("utf-8", errors="replace") if stderr_b else ""
+        # Register the process so it can be cancelled
+        register_process(self.run_id, proc)
 
-        logger.info(
-            "pi_agent_subprocess_exit",
-            run_id=self.run_id,
-            exit_code=exit_code,
-            has_summary=summary is not None,
-        )
+        try:
+            stdout_b, stderr_b = await proc.communicate()
+            exit_code = proc.returncode or 0
 
-        return {
-            "exit_code": exit_code,
-            "summary": summary,
-            "stdout_tail": stdout_tail,
-            "stderr_tail": stderr_tail,
-        }
+            summary = self._load_summary()
+            stdout_tail = stdout_b[-_TAIL_BYTES:].decode("utf-8", errors="replace") if stdout_b else ""
+            stderr_tail = stderr_b[-_TAIL_BYTES:].decode("utf-8", errors="replace") if stderr_b else ""
+
+            logger.info(
+                "pi_agent_subprocess_exit",
+                run_id=self.run_id,
+                exit_code=exit_code,
+                has_summary=summary is not None,
+            )
+
+            return {
+                "exit_code": exit_code,
+                "summary": summary,
+                "stdout_tail": stdout_tail,
+                "stderr_tail": stderr_tail,
+            }
+        finally:
+            # Always unregister the process, even on error
+            unregister_process(self.run_id)
 
     def _build_repo_url(self) -> str:
         """Plain HTTPS URL — pi_agent's source-clone.ts calls

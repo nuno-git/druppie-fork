@@ -210,3 +210,77 @@ async def get_run_by_tool_call(
         raise HTTPException(status_code=404, detail=f"no pi_coding_run for tool_call {tool_call_id}")
     _authorize_view(row, user)
     return _view_payload(row, since=since)
+
+
+@router.post("/{run_id}/stop")
+async def stop_run(
+    run_id: str,
+    db: DBSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+) -> dict:
+    """Stop a running pi_agent process.
+
+    Only the session owner or admin can stop a run.
+    """
+    from druppie.agents.pi_agent_runner import stop_run as stop_pi_agent_run
+
+    # Verify the run exists and user has permission
+    row: PiCodingRun | None = (
+        db.query(PiCodingRun).filter(PiCodingRun.run_id == run_id).one_or_none()
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"pi_coding_run {run_id} not found")
+
+    _authorize_view(row, user)
+
+    # Attempt to stop the process
+    result = await stop_pi_agent_run(run_id)
+
+    # Update the database if successful
+    if result["success"]:
+        row.status = "stopped"
+        row.completed_at = datetime.now(timezone.utc)
+        db.add(row)
+        db.commit()
+        logger.info("pi_agent_run_stopped", run_id=run_id, user_id=user["sub"])
+
+    return result
+
+
+@router.get("/running/list")
+async def list_running_runs(
+    db: DBSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+) -> dict:
+    """List all currently running pi_agent processes.
+
+    Only admins can list all running runs; users can only see their own.
+    """
+    from druppie.agents.pi_agent_runner import list_running_runs as list_pi_agent_runs
+
+    user_id = UUID(user["sub"])
+    roles = set(get_user_roles(user))
+
+    # Get all running processes from the registry
+    all_running = list_pi_agent_runs()
+
+    # Filter based on permissions
+    if "admin" in roles:
+        # Admins can see all
+        visible_runs = all_running
+    else:
+        # Regular users can only see their own runs
+        visible_runs = []
+        for run_id in all_running:
+            row: PiCodingRun | None = (
+                db.query(PiCodingRun)
+                .filter(PiCodingRun.run_id == run_id, PiCodingRun.user_id == user_id)
+                .one_or_none()
+            )
+            if row:
+                visible_runs.append(run_id)
+
+    return {
+        "running_runs": visible_runs,
+        "total": len(visible_runs),
+    }
