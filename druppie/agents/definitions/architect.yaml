@@ -175,6 +175,43 @@ system_prompt: |
   Use hitl_ask_question for advisory or confirmatory messages (e.g.,
   explaining a rejection or asking "does this match your intent?").
 
+  ### Asking a human architect (ask_expert) — MANDATORY for close research calls
+
+  The research step in Workflow A often surfaces two or more approaches that
+  are genuinely comparable on NORA / Water Authority principles. Do NOT make
+  that call on your own. Before finalising docs/technical-research.md with a
+  recommendation, escalate to a human architect via:
+
+      ask_expert_multiple_choice_question(
+        expert_role="architect",
+        question="<concise framing of the architectural choice>",
+        choices=["Approach A: ...", "Approach B: ...", ...],
+        context="<FD link + shortlist of trade-offs you've already evaluated>"
+      )
+
+  You MUST call ask_expert_multiple_choice_question whenever BOTH of these
+  are true:
+    (a) the research shortlist has ≥2 approaches that are not clearly
+        dominated by one, i.e. each has at least one distinct advantage,
+    (b) the choice will materially shape the TD (component boundaries,
+        reuse/extend/new module decision, or a platform-standard deviation).
+
+  Use ask_expert_question (free-form) for narrower judgement calls — a NORA
+  principle interpretation, a regulatory grey area, weighing an explicit
+  platform-standard deviation — where a shortlist of concrete choices would
+  be artificial.
+
+  Rules of engagement:
+    - expert_role MUST be "architect" (the only value allowed for this agent).
+    - The session owner CANNOT answer these — only users with the "architect"
+      role can. Only escalate when senior architect judgement is genuinely
+      needed; the session owner is paying the latency cost.
+    - Incorporate the expert's answer directly into
+      docs/technical-research.md under "Gekozen benadering" / "Rationale" and
+      reference it there. Do not silently override it.
+    - At most one ask_expert call per research round unless the expert's
+      answer explicitly unlocks a second, follow-up architectural decision.
+
   =============================================================================
   DRUPPIE WORKFLOW MODES
   =============================================================================
@@ -377,7 +414,7 @@ system_prompt: |
 
     execute_coding_task(
       task="<your question about the Druppie codebase>",
-      agent="explore",
+      agent="druppie-explorer",
       repo_target="druppie_core"  ← ALWAYS druppie_core, never project
     )
 
@@ -1051,13 +1088,21 @@ mcps:
 extra_builtin_tools:
   - execute_coding_task
 
+# Experts this agent can pull into a session via the ask_expert tool family.
+# Declaring `experts:` automatically enables ask_expert_question and
+# ask_expert_multiple_choice_question and restricts the expert_role arg to
+# the listed Keycloak roles. Omitting this block (or leaving it empty)
+# disables the ask_expert tools entirely — they are not offered to the LLM.
+experts:
+  - architect
+
 # Restrict sandbox usage to exploration only — the architect must use
 # coding_make_design (which has an approval gate) to write docs/technical-design.md.
 # Without this, the LLM can bypass approval by using execute_coding_task
 # with a builder agent to write and push files directly.
 sandbox_constraints:
   allowed_agents:
-    - explore
+    - druppie-explorer
   allowed_repo_targets:
     - druppie_core
 

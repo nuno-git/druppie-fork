@@ -30,7 +30,7 @@ import structlog
 
 from druppie.api.deps import get_current_user, get_question_service, get_user_roles
 from druppie.services import QuestionService
-from druppie.domain import QuestionDetail
+from druppie.domain import QuestionDetail, PendingQuestionList
 from druppie.core.background_tasks import create_session_task, run_session_task, SessionTaskConflict
 
 logger = structlog.get_logger()
@@ -92,6 +92,27 @@ async def _resume_workflow_after_answer(
 # =============================================================================
 
 
+@router.get("/pending")
+async def list_pending_questions(
+    question_service: QuestionService = Depends(get_question_service),
+    user: dict = Depends(get_current_user),
+) -> PendingQuestionList:
+    """List pending questions the user can answer.
+
+    Includes:
+    - Regular HITL questions for sessions the current user owns.
+    - `ask_expert` questions whose `expert_role` is one of the user's roles.
+    - Admins see every pending question.
+    """
+    user_id = UUID(user["sub"])
+    user_roles = get_user_roles(user)
+    return question_service.get_pending_for_user(
+        user_id=user_id,
+        user_roles=user_roles,
+        is_admin="admin" in user_roles,
+    )
+
+
 @router.post("/{question_id}/answer")
 async def answer_question(
     question_id: UUID,
@@ -136,6 +157,7 @@ async def answer_question(
         answer=request.answer,
         selected_choices=request.selected_choices,
         is_admin="admin" in roles,
+        user_roles=roles,
     )
 
     # Step 2: Spawn background task to resume workflow

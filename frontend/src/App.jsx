@@ -14,6 +14,7 @@ import NavRail from './components/NavRail'
 // Pages
 import Dashboard from './pages/Dashboard'
 import Tasks from './pages/Tasks'
+import Questions from './pages/Questions'
 import Chat from './pages/Chat'
 import DebugMCP from './pages/DebugMCP'
 import DebugProjects from './pages/DebugProjects'
@@ -211,6 +212,14 @@ function App() {
                             element={
                               <ProtectedRoute>
                                 <Tasks />
+                              </ProtectedRoute>
+                            }
+                          />
+                          <Route
+                            path="/questions"
+                            element={
+                              <ProtectedRoute>
+                                <Questions />
                               </ProtectedRoute>
                             }
                           />

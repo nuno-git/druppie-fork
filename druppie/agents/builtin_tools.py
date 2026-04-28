@@ -83,6 +83,72 @@ BUILTIN_TOOL_DEFS: dict[str, dict] = {
             },
         },
     },
+    "ask_expert_question": {
+        "type": "function",
+        "function": {
+            "name": "ask_expert_question",
+            "description": (
+                "Ask a free-form question to an expert (a user with a specific Keycloak role) "
+                "instead of the session owner. Use this when you need domain expertise the "
+                "current user does not have. The workflow pauses until any user holding the "
+                "given role answers. The session owner CANNOT answer expert questions unless "
+                "they themselves hold the role. Available expert_role values are restricted "
+                "by the agent's allowed_expert_roles."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "expert_role": {
+                        "type": "string",
+                        "description": "Keycloak role of the expert pool to ask (must be in this agent's allowed_expert_roles).",
+                    },
+                    "question": {
+                        "type": "string",
+                        "description": "The question to ask the expert.",
+                    },
+                    "context": {
+                        "type": "string",
+                        "description": "Optional context explaining why this question is being asked.",
+                    },
+                },
+                "required": ["expert_role", "question"],
+            },
+        },
+    },
+    "ask_expert_multiple_choice_question": {
+        "type": "function",
+        "function": {
+            "name": "ask_expert_multiple_choice_question",
+            "description": (
+                "Ask an expert (a user with a specific Keycloak role) a multiple choice question. "
+                "Same routing rules as ask_expert_question. An 'Other' option is added "
+                "automatically — do NOT include it in your choices."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "expert_role": {
+                        "type": "string",
+                        "description": "Keycloak role of the expert pool to ask (must be in this agent's allowed_expert_roles).",
+                    },
+                    "question": {
+                        "type": "string",
+                        "description": "The question to ask the expert.",
+                    },
+                    "choices": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "List of choices for the expert to select from. Do NOT include an 'Other' option — one is added automatically.",
+                    },
+                    "context": {
+                        "type": "string",
+                        "description": "Optional context explaining why this question is being asked.",
+                    },
+                },
+                "required": ["expert_role", "question", "choices"],
+            },
+        },
+    },
     "done": {
         "type": "function",
         "function": {
@@ -1405,6 +1471,8 @@ def is_builtin_tool(tool_name: str) -> bool:
     return tool_name in (
         "hitl_ask_question",
         "hitl_ask_multiple_choice_question",
+        "ask_expert_question",
+        "ask_expert_multiple_choice_question",
         "done",
         "make_plan",
         "set_intent",
@@ -1416,8 +1484,23 @@ def is_builtin_tool(tool_name: str) -> bool:
 
 
 def is_hitl_tool(tool_name: str) -> bool:
-    """Check if a tool name is a HITL tool (requires user answer)."""
+    """Check if a tool name pauses the agent for a human answer.
+
+    Includes both classic HITL tools (session owner answers) and ask_expert
+    tools (a user holding a given role answers). Both share the Question
+    record and pause/resume plumbing.
+    """
     return tool_name in (
         "hitl_ask_question",
         "hitl_ask_multiple_choice_question",
+        "ask_expert_question",
+        "ask_expert_multiple_choice_question",
+    )
+
+
+def is_ask_expert_tool(tool_name: str) -> bool:
+    """Check if a tool name is one of the ask_expert variants."""
+    return tool_name in (
+        "ask_expert_question",
+        "ask_expert_multiple_choice_question",
     )
