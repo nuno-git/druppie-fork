@@ -39,14 +39,19 @@ export async function cloneSourceIntoSandbox(
       bareDir,
     ]);
 
-    // 2. Bundle everything — all refs, all history.
+    // 2. Verify the requested branch exists; otherwise fall back to the
+    //    remote's default (HEAD). Without this, callers hardcoding
+    //    e.g. "colab-dev" break against test fixtures that only have main.
+    const effectiveBranch = resolveBranch(bareDir, opts.branch);
+
+    // 3. Bundle everything — all refs, all history.
     const bundlePath = join(work, "src.bundle");
     run("git", ["-C", bareDir, "bundle", "create", bundlePath, "--all"]);
 
-    // 3. POST the bundle bytes to the sandbox's /import-bundle endpoint.
+    // 4. POST the bundle bytes to the sandbox's /import-bundle endpoint.
     const body = readFileSync(bundlePath);
     const agent = new Agent();
-    const url = `http://${endpoint.host}:${endpoint.port}/import-bundle?branch=${encodeURIComponent(opts.branch)}`;
+    const url = `http://${endpoint.host}:${endpoint.port}/import-bundle?branch=${encodeURIComponent(effectiveBranch)}`;
     const res = await undiciFetch(url, {
       method: "POST",
       headers: {
@@ -67,10 +72,15 @@ export async function cloneSourceIntoSandbox(
 
 function injectTokenIntoHttpsUrl(url: string, token: string): string {
   const parsed = new URL(url);
-  if (parsed.protocol !== "https:") {
-    throw new Error(`sourceRepoUrl must be https, got: ${url}`);
+  // Allow both https (external providers like GitHub) and http (internal
+  // dev providers like druppie's Gitea on the docker bridge). The clear-wire
+  // concern doesn't apply on a private compose network, and refusing http
+  // there broke Gitea-backed runs entirely.
+  if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+    throw new Error(`sourceRepoUrl must be http(s), got: ${url}`);
   }
-  // x-access-token is GitHub's documented username for installation / PAT auth.
+  // x-access-token is GitHub's documented username for installation / PAT
+  // auth; Gitea accepts the same shape (any username works with a PAT).
   parsed.username = "x-access-token";
   parsed.password = token;
   return parsed.toString();
@@ -81,4 +91,40 @@ function run(cmd: string, args: string[]): void {
   if (res.status !== 0) {
     throw new Error(`${cmd} ${args.join(" ")} failed (${res.status}): ${res.stderr || res.stdout}`);
   }
+}
+
+/** Pick the branch to check out inside the sandbox. If `requested` exists in
+ * the bare clone, use it. Otherwise fall back to the remote's default
+ * branch (HEAD) — this stops runs from exploding on legitimately-missing
+ * branches (e.g. caller hardcoded "colab-dev" but the repo only has main).
+ */
+function resolveBranch(bareDir: string, requested: string): string {
+  const has = (ref: string): boolean => {
+    const res = spawnSync("git", ["-C", bareDir, "show-ref", "--verify", "--quiet", ref], { stdio: "ignore" });
+    return res.status === 0;
+  };
+  if (requested && has(`refs/heads/${requested}`)) return requested;
+
+  // Default: whatever HEAD points at in the remote.
+  const headRef = spawnSync(
+    "git",
+    ["-C", bareDir, "symbolic-ref", "--short", "HEAD"],
+    { encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] },
+  );
+  const head = headRef.stdout?.trim();
+  if (headRef.status === 0 && head) {
+    if (requested && requested !== head) {
+      console.warn(`[source-clone] requested branch "${requested}" not found; falling back to default "${head}"`);
+    }
+    return head;
+  }
+  // Last-ditch: pick any branch so the sandbox at least boots.
+  const anyBranch = spawnSync(
+    "git",
+    ["-C", bareDir, "for-each-ref", "--format=%(refname:short)", "--count=1", "refs/heads/"],
+    { encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] },
+  );
+  const fallback = anyBranch.stdout?.trim();
+  if (fallback) return fallback;
+  throw new Error(`could not determine a branch to use in ${bareDir}`);
 }

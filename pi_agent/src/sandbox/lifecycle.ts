@@ -40,6 +40,11 @@ export interface RunningSandbox {
   containerName: string;
   bundleHostDir: string;
   authToken: string;
+  /** Host to reach the sandbox daemon. Container name on shared network,
+   * 127.0.0.1 on standalone mode. */
+  host: string;
+  /** Port to reach the sandbox daemon. 8000 on shared network; random
+   * host-published port on standalone. */
   hostPort: number;
   client: SandboxClient;
   stop: () => void;
@@ -121,7 +126,22 @@ export async function launchSandbox(opts: SandboxLaunchOptions): Promise<Running
   // inside the backend container would have the host daemon resolve it
   // against its own /, finding nothing. Use a named volume that both backend
   // and sandbox mount so pi_agent can read what the sandbox wrote.
+  //
+  // When the named-volume path is used, `bundleHostDir` (the path pi_agent
+  // later reads the bundle from) must point at where the backend container
+  // mounts that same volume — NOT the tmp dir we made above. Default to
+  // the compose mount point; override with PI_AGENT_BUNDLE_HOST_DIR.
+  //
+  // Concurrency note: the named volume is shared across all concurrent
+  // sandboxes, so two runs pushing simultaneously would step on each
+  // other's `run.bundle`. That's acceptable today (serial runs per
+  // backend) but should be swapped for a per-run subdir when we lift
+  // concurrency, e.g. /out/<runId>/run.bundle.
   const bundleVolume = process.env.PI_AGENT_BUNDLE_VOLUME;
+  const bundleHostDirOverride = process.env.PI_AGENT_BUNDLE_HOST_DIR;
+  const effectiveBundleHostDir = bundleVolume
+    ? (bundleHostDirOverride || "/app/pi_agent_bundles")
+    : bundleHostDir;
   const bundleMountFlags = bundleVolume
     ? ["-v", `${bundleVolume}:/out`]
     : ["-v", `${bundleHostDir}:/out`];
@@ -196,7 +216,7 @@ export async function launchSandbox(opts: SandboxLaunchOptions): Promise<Running
     }
   };
 
-  return { containerName, bundleHostDir, authToken, hostPort, client, stop };
+  return { containerName, bundleHostDir: effectiveBundleHostDir, authToken, host: sandboxHost, hostPort, client, stop };
 }
 
 function ensureImage(image: string): void {

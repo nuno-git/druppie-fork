@@ -276,41 +276,102 @@ async def execute_coding_task_pi(
             "stderr_tail": result.get("stderr_tail", "")[-2000:],
         }
 
-    narrative = _build_narrative(summary)
+    pi_success = bool(summary.get("success"))
+
+    # When pi_agent completed but reported success=false, build a concrete
+    # error message from summary.errors so the caller agent isn't left
+    # with "Tool call failed: None".
+    error_message: str | None = None
+    if not pi_success:
+        err_list = [e for e in (summary.get("errors") or []) if e]
+        error_message = "; ".join(err_list[:5]) if err_list else (
+            f"pi_agent flow={flow} completed but reported success=false "
+            f"with no specific errors. See PiCodingRun events for context."
+        )
+
+    # Keep the payload that's returned to the CALLING agent minimal —
+    # agents don't need full phase/agent stats, token counts, or the
+    # full journal, they need the answer / deliverables. The UI pulls
+    # everything richer via /api/pi-agent-runs/by-tool-call/{id} directly.
+    if flow == "explore":
+        # Explore: return the answer. That's it.
+        answer = _extract_explore_answer(summary)
+        return {
+            "success": pi_success,
+            "run_id": run_id,
+            "pi_coding_run_id": str(row.id),
+            "answer": answer,
+            **({"error": error_message} if error_message else {}),
+        }
+
+    # TDD: return agent summaries AND deliverables (branch, PR, commits).
+    # The summaries give the calling agent context about what each agent did.
+    summaries = _extract_agent_summaries(summary)
 
     return {
-        "success": bool(summary.get("success")),
+        "success": pi_success,
         "run_id": run_id,
         "pi_coding_run_id": str(row.id),
-        # Human-readable aggregate so the caller agent can reason about
-        # what pi_agent actually DID (not just stats). Each pi_agent
-        # subagent's own end-of-turn text gets trimmed and concatenated.
-        "narrative": narrative,
-        "summary": summary,
-        "pr_url": row.pr_url,
-        "branch": summary.get("push", {}).get("branch") or row.branch_name,
-        "commits": summary.get("commits", []),
-        "phases": summary.get("phases", []),
+        "summaries": summaries,
+        "deliverables": {
+            "pr_url": row.pr_url,
+            "branch": summary.get("push", {}).get("branch") or row.branch_name,
+            "commits": [
+                {"sha": c.get("sha"), "message": c.get("message")}
+                for c in (summary.get("commits") or [])
+            ],
+        },
+        **({"error": error_message} if error_message else {}),
     }
 
 
-def _build_narrative(summary: dict) -> str:
-    """Collapse summary.narratives[] into a single scannable block.
+def _extract_explore_answer(summary: dict) -> str:
+    """Return ONLY the router's final answer for an explore run.
 
-    Shape of each narrative item: {agent, iteration, text}. We group by
-    agent (preserving order) and prefix with a header so the caller can
-    see which subagent said what.
+    pi_agent's explore flow records each router attempt's end-of-turn
+    message as a narrative keyed "router/attempt-N". We take the LAST
+    non-empty one — that's the attempt that actually produced a
+    synthesised answer (earlier empty attempts triggered retries).
+    Explorer reports are an internal artifact, not the deliverable.
     """
-    items = summary.get("narratives") or []
-    if not items:
-        return ""
-    parts: list[str] = []
-    for item in items:
-        agent = item.get("agent", "?")
-        iteration = item.get("iteration", 0)
-        text = (item.get("text") or "").strip()
-        if not text:
-            continue
-        header = f"[{agent}" + (f" i{iteration}]" if iteration else "]")
-        parts.append(f"{header}\n{text}")
-    return "\n\n".join(parts)
+    narratives = summary.get("narratives") or []
+    router_attempts = [
+        n for n in narratives
+        if (n.get("agent") or "").startswith("router")
+        and (n.get("text") or "").strip()
+    ]
+    if router_attempts:
+        return router_attempts[-1]["text"].strip()
+    return ""
+
+
+def _extract_agent_summaries(summary: dict) -> dict[str, str]:
+    """Extract agent summaries from the run summary.
+
+    pi_agent's TDD flow records each agent's summary as a narrative.
+    We extract these and return them as a map of agent name to summary.
+
+    The summary section is identified by the agent name (e.g., "analyst",
+    "planner", "wave-orchestrator", "verifier", "pr-author").
+    """
+    narratives = summary.get("narratives") or []
+    summaries: dict[str, str] = {}
+
+    # Agents that produce summaries in the TDD flow
+    agent_names = ["analyst", "planner", "wave-orchestrator", "verifier", "pr-author"]
+
+    for agent_name in agent_names:
+        # Find the last narrative from this agent
+        agent_narratives = [
+            n for n in narratives
+            if (n.get("agent") or "").startswith(agent_name)
+            and (n.get("text") or "").strip()
+        ]
+        if agent_narratives:
+            # Extract the summary section from the narrative text
+            # The narrative may have ## Summary section or be the summary itself
+            text = agent_narratives[-1]["text"]
+            summary_match = text.split("## Summary")[1].split("##")[0].strip() if "## Summary" in text else text.strip()
+            summaries[agent_name] = summary_match
+
+    return summaries

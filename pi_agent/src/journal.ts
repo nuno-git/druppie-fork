@@ -203,7 +203,15 @@ export class Journal {
 
   // ── Subagents ────────────────────────────────────────────────────────────
 
-  startAgent(name: string, model: string): AgentHandle {
+  /**
+   * Start tracking a subagent. `meta` carries structural context from the
+   * orchestrator — e.g. which wave + step this builder belongs to, or which
+   * explorer slot it occupies inside a parallel spawn. That metadata lands
+   * on the `subagent_start` event so the UI (and replay) can group and lay
+   * out subagents by the planner's actual structure, not by time-overlap
+   * heuristics.
+   */
+  startAgent(name: string, model: string, meta?: Record<string, unknown>): AgentHandle {
     const ordinal = [...this.agents.values()].filter((a) => a.name === name).length + 1;
     const id = `${name}-${ordinal}`;
     const stats: AgentStats = {
@@ -222,8 +230,19 @@ export class Journal {
     };
     this.agents.set(id, stats);
     this.currentPhase?.subagents.push(id);
-    this.write("subagent_start", { id, name, model });
+    this.write("subagent_start", { id, name, model, ...(meta ?? {}) });
     return new AgentHandle(this, stats);
+  }
+
+  /** Record a logical wave boundary — groups the subagents spawned inside
+   *  it under one `waveId` on their `subagent_start` events. The UI reads
+   *  these to render parallel waves as a visual group. */
+  waveStart(meta: { waveId: string; iteration: number; waveIndex: number; stepIds: string[]; parallel: boolean }): void {
+    this.write("wave_start", meta);
+  }
+
+  waveEnd(meta: { waveId: string; durationMs: number; successCount: number; failureCount: number }): void {
+    this.write("wave_end", meta);
   }
 
   /** Internal — called by AgentHandle.end(). */
@@ -275,13 +294,30 @@ export class Journal {
     this.write("error", { message, ...context });
   }
 
+  /** Read-only view of the narratives recorded so far. Flows use this as
+   *  an emergency-synthesis fallback when a primary agent (e.g. the
+   *  explore router) fails to produce its own summary. */
+  getNarratives(): ReadonlyArray<AgentNarrative> {
+    return this.narratives;
+  }
+
   /** Record the free-text summary a subagent produced at end-of-run.
-   * Trimmed to 2000 chars per call to keep the summary payload bounded. */
+   *
+   * NO TRUNCATION. The narrative is the LLM's actual output — we store
+   * and forward it verbatim. If the model produced 500 KB of synthesis,
+   * we keep 500 KB. Postgres TEXT columns hold up to 1 GB and pi runs
+   * don't accumulate enough narratives to matter.
+   */
   recordNarrative(agent: string, iteration: number, text: string): void {
-    const trimmed = (text ?? "").trim().slice(0, 2000);
-    if (!trimmed) return;
-    this.narratives.push({ agent, iteration, text: trimmed });
-    this.write("subagent_narrative", { agent, iteration, chars: trimmed.length });
+    const raw = (text ?? "").trim();
+    if (!raw) return;
+    this.narratives.push({ agent, iteration, text: raw });
+    this.write("subagent_narrative", {
+      agent,
+      iteration,
+      chars: raw.length,
+      text: raw,
+    });
   }
 
   // ── Close ────────────────────────────────────────────────────────────────
@@ -363,14 +399,18 @@ export class AgentHandle {
     this.journal.write("tool_call", { agentId: this.stats.id, tool, args: truncateArgs(args), callId });
   }
 
-  /** Called on tool_execution_end. */
+  /** Called on tool_execution_end. Always writes `preview` (even if the
+   * tool produced no output) so the UI can distinguish "tool finished
+   * with silent stdout" from "tool never completed" — those are very
+   * different things and the previous `preview ? …` spread lost the
+   * signal. Full output, no truncation. */
   toolResult(callId: string, ok: boolean, durationMs: number, preview?: string): void {
     this.journal.write("tool_result", {
       agentId: this.stats.id,
       callId,
       ok,
       durationMs,
-      ...(preview ? { preview: preview.slice(0, 400) } : {}),
+      preview: preview ?? "",
     });
   }
 
@@ -401,11 +441,9 @@ export class AgentHandle {
 }
 
 /** Safe JSON serializer — handles BigInt, Map, Set, circulars, functions,
- * and unknown class instances. The previous plain `JSON.stringify` regularly
- * threw on the SDK's internal types, which made every tool_call in the
- * journal come out as `{_unserialisable: true}` — losing the args the UI
- * needs to render. */
-function safeStringify(value: unknown, maxLen = 4000): string {
+ * and unknown class instances. Returns the full stringified value, no
+ * truncation: tool args are LLM-authored output and we store them whole. */
+function safeStringify(value: unknown): string {
   const seen = new WeakSet<object>();
   const replacer = (_key: string, v: unknown): unknown => {
     if (typeof v === "bigint") return `${v.toString()}n`;
@@ -421,25 +459,22 @@ function safeStringify(value: unknown, maxLen = 4000): string {
     return v;
   };
   try {
-    const json = JSON.stringify(value, replacer);
-    if (json && json.length > maxLen) return json.slice(0, maxLen) + "…[truncated]";
-    return json ?? "";
+    return JSON.stringify(value, replacer) ?? "";
   } catch (e) {
     return `[unserialisable: ${(e as Error).message}]`;
   }
 }
 
-/** Turn arbitrary tool args into something the UI can render. Keeps small
- * objects as-is so they can be pretty-printed; falls back to a bounded
- * string preview for anything large or weird. */
+/** Hand tool args to the journal as-is when JSON-round-trippable; fall
+ * back to a string preview (via safeStringify) for exotic types (BigInt,
+ * class instances, circulars). No length cap — tool args are LLM output. */
 function truncateArgs(args: unknown): unknown {
   try {
-    const json = JSON.stringify(args);
-    if (json != null && json.length <= 1200) return args;
+    JSON.stringify(args);
+    return args;
   } catch {
-    /* fall through to safe stringify */
+    return { _preview: safeStringify(args) };
   }
-  return { _preview: safeStringify(args, 1200) };
 }
 
 // ── Summary shape ─────────────────────────────────────────────────────────

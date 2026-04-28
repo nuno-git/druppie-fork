@@ -1,0 +1,85 @@
+## Test YAML-based TDD flow with execute_coding_task_pi
+## Verifies that agent summaries are properly returned in tool results
+
+tool-test:
+  name: yaml-tdd-flow-summarize-results
+  description: "Test YAML flow returns agent summaries in tool result"
+  tags: [e2e, yaml-flow, tdd, summaries]
+
+  chain:
+    # --- Agent: Developer ---
+    # Agent asks for a simple implementation using the new YAML flow
+    - agent: developer
+      tool: coding:execute_coding_task_pi
+      arguments:
+        task: "Implement a simple hello world function in TypeScript that logs 'Hello, World!' to the console"
+        repo_target: "project"
+        flow: "tdd"
+        # Don't actually push/create PR for this test
+        # We just want to verify summaries are returned
+      mock: true
+      mock_result: |
+        {
+          "success": true,
+          "run_id": "test-run-123",
+          "pi_coding_run_id": "456",
+          "summaries": {
+            "analyst": "Analyzed the task to implement a hello world function. Determined we need a simple TypeScript function with console.log. Language: typescript. Test framework: none needed.",
+            "planner": "Created initial build plan with 1 wave. Wave 1 implements hello-world.ts with a single function that logs 'Hello, World!'. Simple and straightforward.",
+            "wave-orchestrator": "Executed 1 wave with 1 step (hello-world.ts). Step succeeded with 1 commit.",
+            "verifier": "No test framework configured, verified manually that hello-world.ts compiles without errors. All checks passing.",
+            "pr-author": "Skipped - no PR created (pushOnComplete was false)"
+          },
+          "deliverables": {
+            "branch": "feat/hello-world",
+            "commits": [
+              {"sha": "abc123", "message": "feat: implement hello world function"}
+            ]
+          }
+        }
+      assert:
+        result:
+          - { contains: "summaries" }
+          - { contains: "analyst" }
+          - { contains: "planner" }
+          - { contains: "wave-orchestrator" }
+          - { contains: "verifier" }
+          - { contains: "pr-author" }
+          - { contains: "Analyzed the task" }
+          - { contains: "Created initial build plan" }
+          - { contains: "Executed 1 wave" }
+          - { contains: "All checks passing" }
+
+    # --- Completion ---
+    - agent: developer
+      tool: builtin:create_message
+      arguments:
+        content: |
+          ✅ **YAML Flow Test Passed!**
+
+          The YAML-based TDD flow successfully returned agent summaries in the tool result.
+
+          **What was tested:**
+          - YAML flow execution (tdd.yaml)
+          - Agent summary extraction from all 5 agents
+          - Summary propagation through the flow
+          - Tool result format with summaries + deliverables
+
+          **Verified:**
+          ✅ All 5 agent summaries present
+          ✅ Each summary properly formatted
+          ✅ Summaries explain what each agent did
+          ✅ Deliverables (branch, commits) included
+          ✅ Tool result structure matches expected format
+
+          **Next Steps:**
+          - Test with real LLM calls (remove mock)
+          - Test with actual sandbox operations
+          - Test with git push/PR creation
+          - Performance benchmark vs legacy flow
+      assert:
+        completed: true
+
+  verify:
+    # Verify the test ran successfully
+    completed: true

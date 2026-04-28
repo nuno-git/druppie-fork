@@ -1,0 +1,74 @@
+# TDD Flow - Test-Driven Development
+# Analyzes task, creates plan, implements in waves, verifies, and creates PR
+
+name: tdd
+description: Test-driven development flow with analysis, planning, implementation, and verification
+
+# Initial variables for the flow
+variables:
+  maxIterations: 3
+  iteration: 1
+
+# Phases execute in order
+phases:
+  # Phase 1: Analyze the task
+  - name: analyze
+    agent: analyst
+    description: Analyze the task and define goals, tests, and architecture
+
+  # Phase 2: Build loop (plan → execute → verify, retry as needed)
+  - name: build_loop
+    # Continue while: within max iterations AND (tests not passing OR issues remaining)
+    while: "${iteration} <= ${maxIterations} && (!@verifier.testsPassed || @verifier.remainingIssuesCount > 0)"
+    phases:
+      # Phase 2a: Create or update the build plan
+      - name: plan
+        agent: planner
+        description: Create a build plan (initial or fix plan)
+        inputs:
+          previousSummaries: true
+
+      # Phase 2b: Execute the plan in parallel waves
+      - name: execute
+        agent: wave-orchestrator
+        description: Execute build waves in parallel
+        inputs:
+          previousSummaries: true
+
+      # Phase 2c: Verify the implementation
+      - name: verify
+        agent: verifier
+        description: Run tests and fix simple issues
+        inputs:
+          previousSummaries: true
+
+    # Update iteration counter after each loop
+    set:
+      iteration: "${iteration} + 1"
+
+  # Phase 3: Push to git (conditional)
+  - name: push
+    # Only push if: push requested AND tests passing AND build passing
+    if: "${task.pushOnComplete} && @verifier.testsPassed && @verifier.buildPassed"
+    agent: push-agent
+    description: Push commits and create PR
+    builtIn: true
+
+  # Phase 4: Author PR (conditional)
+  - name: pr_author
+    # Only author if: push requested AND push succeeded
+    if: "${task.pushOnComplete} && @push.ok"
+    agent: pr-author
+    description: Write PR title and body
+    inputs:
+      previousSummaries: true
+
+# Output configuration
+output:
+  format: summaries
+  include:
+    - analyst
+    - planner
+    - wave-orchestrator
+    - verifier
+    - pr-author

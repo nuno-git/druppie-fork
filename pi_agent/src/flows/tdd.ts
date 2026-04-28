@@ -120,7 +120,7 @@ export async function runTddFlow(task: TaskSpec, config: AgentConfig): Promise<R
     journal.sourceClone(task.sourceRepoUrl, sourceBranch);
     await cloneSourceIntoSandbox(
       sandbox.client,
-      { host: "127.0.0.1", port: sandbox.hostPort, authToken: sandbox.authToken },
+      { host: sandbox.host, port: sandbox.hostPort, authToken: sandbox.authToken },
       { remoteUrl: task.sourceRepoUrl, branch: sourceBranch, token: cloneToken },
     );
     console.log(`[sandbox] clone complete`);
@@ -336,7 +336,7 @@ export async function runTddFlow(task: TaskSpec, config: AgentConfig): Promise<R
     journal.phaseStart("EXECUTE", iteration);
     console.log(`\n▸ EXECUTE${tag}\n`);
 
-    const iterationStepResults = await executeWaves(buildPlan, getAgent("builder"), baseOpts, errors);
+    const iterationStepResults = await executeWaves(buildPlan, getAgent("builder"), baseOpts, errors, journal, iteration);
     allStepResults.push(...iterationStepResults);
     for (const sr of iterationStepResults) {
       journal.recordNarrative(`builder/${sr.stepId}`, iteration, sr.output);
@@ -701,22 +701,41 @@ async function executeWaves(
   plan: BuildPlan,
   builderAgent: AgentDefinition,
   baseOpts: RunSubagentOptions,
-  errors: string[]
+  errors: string[],
+  journal: Journal | undefined,
+  iteration: number,
 ): Promise<StepResult[]> {
   const stepResults: StepResult[] = [];
 
   for (let waveIdx = 0; waveIdx < plan.waves.length; waveIdx++) {
     const wave = plan.waves[waveIdx];
-    const parallel = wave.length > 1 ? " (parallel)" : "";
-    console.log(`  Wave ${waveIdx + 1}/${plan.waves.length} — ${wave.length} step(s)${parallel}`);
+    const isParallel = wave.length > 1;
+    const waveId = `iter${iteration}-w${waveIdx + 1}`;
+    console.log(`  Wave ${waveIdx + 1}/${plan.waves.length} — ${wave.length} step(s)${isParallel ? " (parallel)" : ""}`);
 
+    const waveStart = Date.now();
+    journal?.waveStart({
+      waveId,
+      iteration,
+      waveIndex: waveIdx + 1,
+      stepIds: wave.map((s) => s.id),
+      parallel: isParallel,
+    });
+
+    let waveSuccessCount = 0;
+    let waveFailureCount = 0;
     if (wave.length === 1) {
       const step = wave[0];
-      const sr = await executeStep(builderAgent, step, baseOpts);
+      const sr = await executeStep(builderAgent, step, baseOpts, { waveId, waveIndex: waveIdx + 1, stepId: step.id, iteration });
       stepResults.push(sr);
-      if (!sr.success) errors.push(`Step "${step.id}" failed: ${sr.error ?? "unknown"}`);
+      if (!sr.success) { errors.push(`Step "${step.id}" failed: ${sr.error ?? "unknown"}`); waveFailureCount++; }
+      else waveSuccessCount++;
     } else {
-      const tasks = wave.map((step) => ({ agent: builderAgent, prompt: step.prompt }));
+      const tasks = wave.map((step) => ({
+        agent: builderAgent,
+        prompt: step.prompt,
+        meta: { waveId, waveIndex: waveIdx + 1, stepId: step.id, iteration, parallel: true },
+      }));
       const results = await runSubagentsParallel(tasks, baseOpts);
       for (let i = 0; i < wave.length; i++) {
         const step = wave[i];
@@ -728,16 +747,29 @@ async function executeWaves(
           filesChanged: step.files,
           error: sub.error,
         });
-        if (!sub.success) errors.push(`Step "${step.id}" failed: ${sub.error ?? "unknown"}`);
+        if (!sub.success) { errors.push(`Step "${step.id}" failed: ${sub.error ?? "unknown"}`); waveFailureCount++; }
+        else waveSuccessCount++;
       }
     }
+
+    journal?.waveEnd({
+      waveId,
+      durationMs: Date.now() - waveStart,
+      successCount: waveSuccessCount,
+      failureCount: waveFailureCount,
+    });
   }
 
   return stepResults;
 }
 
-async function executeStep(agent: AgentDefinition, step: BuildStep, opts: RunSubagentOptions): Promise<StepResult> {
-  const r = await runSubagent(agent, step.prompt, opts);
+async function executeStep(
+  agent: AgentDefinition,
+  step: BuildStep,
+  opts: RunSubagentOptions,
+  meta?: Record<string, unknown>,
+): Promise<StepResult> {
+  const r = await runSubagent(agent, step.prompt, { ...opts, meta });
   return {
     stepId: step.id,
     success: r.success,

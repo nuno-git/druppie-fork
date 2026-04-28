@@ -146,6 +146,21 @@ class PiAgentRunner:
         if self.agent_name in ("tdd", "explore"):
             cmd += ["--flow", self.agent_name]
 
+        # For the tdd flow, the whole point is "end with a pushed branch + PR".
+        # Without --push, pi_agent makes commits inside the sandbox and then
+        # discards them when the sandbox is destroyed — the caller saw
+        # "success" but got no branch_name / pr_url, which made the tool
+        # look broken even when it worked internally. Explore is read-only,
+        # no push needed.
+        if self.agent_name == "tdd":
+            cmd += ["--push", "--push-remote", repo_url]
+            # Base branch for the PR. For druppie_core we target colab-dev
+            # (the project's default); for Gitea projects pi_agent defaults
+            # to the source branch it actually ended up cloning (see
+            # source-clone.ts resolveBranch), so we omit --pr-base.
+            if self.repo_target == "druppie_core" and self.source_branch:
+                cmd += ["--pr-base", self.source_branch]
+
         logger.info("pi_agent_subprocess_start", run_id=self.run_id, cmd=cmd[:3])
         proc = await asyncio.create_subprocess_exec(
             *cmd,

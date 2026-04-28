@@ -23,6 +23,12 @@ export interface SpawnToolContext {
   maxParallel?: number;
   /** Hook so the router's journal records each round for the narrative. */
   onRoundComplete?: (round: number, results: Array<{ id: string; output: string; success: boolean }>) => void;
+  /** Mutable ref to the parent agent's id (e.g. "router-1") — set by the
+   * caller right before it spawns the parent so the tool knows which agent
+   * invoked it. Used to stamp parentAgentId on each spawned explorer so
+   * the UI can render them as children of the router's tool call instead
+   * of as peer top-level agents. */
+  parentRef?: { current?: string };
 }
 
 const SpawnParams = Type.Object({
@@ -59,14 +65,27 @@ export function createSpawnParallelExplorersTool(ctx: SpawnToolContext): any {
     promptSnippet: "spawn_parallel_explorers: fan out explorer subagents to investigate independent sub-questions in parallel.",
     parameters: SpawnParams,
     async execute(
-      _toolCallId: string,
+      toolCallId: string,
       params: { tasks: Array<{ id: string; prompt: string }> },
     ) {
       const tasks = params.tasks.slice(0, maxParallel);
       roundIndex += 1;
       const round = roundIndex;
 
-      const specs = tasks.map((t) => ({ agent: ctx.explorer, prompt: t.prompt }));
+      // Stamp parent linkage on every spawned explorer so the UI can nest
+      // them under the router's tool_call row instead of rendering them as
+      // peer top-level agents (which misrepresents the hierarchy).
+      const parentAgentId = ctx.parentRef?.current;
+      const specs = tasks.map((t) => ({
+        agent: ctx.explorer,
+        prompt: t.prompt,
+        meta: {
+          parentAgentId,
+          parentToolCallId: toolCallId,
+          explorerSlug: t.id,
+          round,
+        },
+      }));
       const subResults = await runSubagentsParallel(specs, ctx.baseOpts);
 
       const results = tasks.map((t, i) => ({

@@ -59,3 +59,12 @@ Then, on its own line, output `PR AUTHORED`.
   { "title": "", "body": "" }
   ```
   and `PR AUTHORED` — the orchestrator will handle the degenerate case.
+
+## Your Summary
+
+After you author the PR, write a brief summary (2-3 sentences) that includes:
+- What the PR is about (title and main change)
+- How many commits are included
+- Any notable aspects (e.g., partial work, known limitations)
+
+This summary will be returned to the calling agent as part of the flow result.

@@ -480,18 +480,13 @@ export const extractOrderedItems = (agentRun, hasFollowingMessage) => {
           if (raw?.sandbox_session_id) items.push({ type: 'sandbox', data: raw })
         } catch { /* skip */ }
       }
-      // Pi coding run results (vendored pi_agent)
-      if (tc.tool_name === 'execute_coding_task_pi' && tc.status === 'completed' && tc.result) {
-        try {
-          const raw = typeof tc.result === 'string' ? JSON.parse(tc.result) : tc.result
-          if (raw?.run_id || raw?.pi_coding_run_id) items.push({ type: 'pi_coding', data: raw })
-        } catch { /* skip */ }
-      }
-      // Pi coding run — LIVE view while the tool is in flight. pi_agent
-      // is synchronous (the tool_call is "executing" until the subprocess
-      // returns), so we render the event stream from the PiCodingRun row
-      // until we flip to the completed summary above.
-      if (tc.tool_name === 'execute_coding_task_pi' && tc.status === 'executing') {
+      // Pi coding run — unified live + final view. The PiCodingRunLiveCard
+      // polls /api/pi-agent-runs/by-tool-call/{id} and keeps polling until
+      // the run is terminal, then stops. Same component handles executing,
+      // succeeded, and failed states, so the user always sees the full
+      // timeline + per-agent details, not a stripped-down post-hoc summary.
+      if (tc.tool_name === 'execute_coding_task_pi' &&
+          (tc.status === 'executing' || tc.status === 'completed' || tc.status === 'failed')) {
         items.push({ type: 'pi_coding_live', toolCallId: tc.id })
       }
     })

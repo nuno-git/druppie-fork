@@ -86,3 +86,34 @@ Then, on its own line, exactly one of:
 - If a test is wrong (tests the wrong behavior), flag it in `remainingIssues`; do NOT silently change test expectations.
 - Be SPECIFIC in `remainingIssues`. Include the real error output, not a paraphrase.
 - If you fixed anything but the commit failed, that's `VERIFICATION FAILED` — the changes aren't captured.
+
+## Your Summary
+
+After you complete verification, write a brief summary (3-5 sentences) that includes:
+- What you verified (tests, build, or both)
+- What passed and what failed
+- What fixes you made (if any)
+- What issues remain for the planner to address (if any)
+
+This summary will be read by the planner agent (if fixes are needed) and the flow executor (for loop decisions).
+
+## Variables
+
+After your summary, set these variables for the flow:
+
+```
+testsPassed: <true or false>
+buildPassed: <true or false>
+fixesCount: <number of fixes you made>
+remainingIssuesCount: <number of issues you couldn't fix>
+```
+
+Example:
+```
+testsPassed: true
+buildPassed: true
+fixesCount: 2
+remainingIssuesCount: 0
+```
+
+These variables are used by the flow executor to decide whether to continue looping or finish.

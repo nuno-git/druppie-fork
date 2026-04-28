@@ -37,14 +37,37 @@ export function pushBundleIsolated(opts: BundlePushOptions): { ok: boolean; outp
   const image = opts.pushImage ?? DEFAULT_PUSH_IMAGE;
   ensureImage(image);
 
-  // Copy the bundle into a scratch dir we can mount read-only so the push
-  // container has no write access to the host filesystem at all.
-  const scratch = `/tmp/oneshot-push-${Date.now()}-${randomBytes(4).toString("hex")}`;
-  spawnSync("mkdir", ["-p", scratch]);
-  const inPath = join(scratch, "run.bundle");
-  copyFileSync(opts.bundleHostPath, inPath);
+  // Under druppie (pi_agent runs inside the backend container, talks to the
+  // host docker daemon via the shared socket), a bind mount from "a path
+  // inside the backend" is resolved by the host daemon against ITS filesystem
+  // and finds nothing. So instead of copying to /tmp and bind-mounting it,
+  // mount the same named volume that already holds run.bundle from the main
+  // sandbox's /out. In standalone CLI mode, PI_AGENT_BUNDLE_VOLUME is unset
+  // and we fall back to the copy-to-tmpfs path.
+  const bundleVolume = process.env.PI_AGENT_BUNDLE_VOLUME;
+  let mountFlag: string;
+  let cleanupScratch: (() => void) | null = null;
+
+  if (bundleVolume) {
+    // The sandbox already wrote run.bundle into /out of the shared volume.
+    // Mount that volume read-only at /in.
+    mountFlag = `${bundleVolume}:/in:ro`;
+  } else {
+    const scratch = `/tmp/oneshot-push-${Date.now()}-${randomBytes(4).toString("hex")}`;
+    spawnSync("mkdir", ["-p", scratch]);
+    const inPath = join(scratch, "run.bundle");
+    copyFileSync(opts.bundleHostPath, inPath);
+    mountFlag = `${scratch}:/in:ro`;
+    cleanupScratch = () => spawnSync("rm", ["-rf", scratch]);
+  }
 
   try {
+    // Network: in standalone mode use the default bridge (reaches github
+    // via the internet). Under druppie, Gitea is only reachable by name
+    // on the compose network — default bridge can't resolve "gitea:3000"
+    // and git fails with "Could not resolve host: gitea". Join the same
+    // network the main sandbox already uses.
+    const pushNetwork = process.env.PI_AGENT_SANDBOX_NETWORK || "bridge";
     const args = [
       "run",
       "--rm",
@@ -52,12 +75,12 @@ export function pushBundleIsolated(opts: BundlePushOptions): { ok: boolean; outp
       "--tmpfs=/tmp:rw,exec,size=128m",
       "--security-opt=no-new-privileges",
       "--cap-drop=ALL",
-      "--network=bridge", // needs real DNS + internet to reach github
+      `--network=${pushNetwork}`,
       "-e", `REMOTE_URL=${asHttpsWithToken(opts.remoteUrl)}`,
       "-e", `BRANCH=${opts.branch}`,
       "-e", `GITHUB_TOKEN=${opts.token}`,
       "-e", "GIT_ASKPASS=/usr/local/bin/git-askpass",
-      "-v", `${scratch}:/in:ro`,
+      "-v", mountFlag,
       image,
     ];
     const res = spawnSync("docker", args, {
@@ -68,7 +91,7 @@ export function pushBundleIsolated(opts: BundlePushOptions): { ok: boolean; outp
     const output = (res.stdout || "") + (res.stderr || "");
     return { ok: res.status === 0, output };
   } finally {
-    spawnSync("rm", ["-rf", scratch]);
+    cleanupScratch?.();
   }
 }
 

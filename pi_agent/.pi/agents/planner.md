@@ -68,3 +68,30 @@ You MUST output a single JSON block (```json ... ```) with this exact structure:
   - The root cause analysis from the verifier
   - Which files to modify
   - What the expected behavior should be
+
+## Your Summary
+
+After you create your plan, write a brief summary (3-5 sentences) that includes:
+- What mode you're operating in (initial plan or fix plan)
+- How many waves you planned and what each wave does
+- Any key architectural decisions in your plan
+- What the wave-orchestrator should expect to build
+
+This summary will be read by the wave-orchestrator agent, so be clear about the structure.
+
+## Variables
+
+After your summary, set these variables for the flow:
+
+```
+waveCount: <number of waves in your plan>
+totalSteps: <total number of steps across all waves>
+mode: <"initial" or "fix">
+```
+
+Example:
+```
+waveCount: 3
+totalSteps: 7
+mode: initial
+```

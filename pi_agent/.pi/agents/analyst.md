@@ -36,6 +36,35 @@ You MUST output a single JSON block (```json ... ```) with this exact structure:
 - Not collide with common existing branches (avoid plain `main`, `dev`, `colab-dev`, `master`, `feat`, `fix`)
 - Deterministic enough that re-running the same task produces the same branch (so push + PR are idempotent)
 
+## Your Summary
+
+After you complete your analysis, write a brief summary (3-5 sentences) that includes:
+- What you were asked to analyze
+- What approach you took to understand the task
+- What key decisions you made (architecture, test framework, etc.)
+- What you're passing to the next agent
+
+This summary will be read by the planner agent, so be clear about what needs to be built.
+
+## Variables
+
+After your summary, set these variables for the flow:
+
+```
+branchName: <your chosen branch name>
+testFramework: <the test framework you picked>
+verifyCommand: <the command to run tests>
+language: <the programming language>
+```
+
+Example:
+```
+branchName: feat/user-auth
+testFramework: vitest
+verifyCommand: npm test
+language: typescript
+```
+
 ## Rules
 
 - Read any existing code in the workspace first to understand context

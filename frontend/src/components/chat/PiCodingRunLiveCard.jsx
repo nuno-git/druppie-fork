@@ -1,15 +1,18 @@
 /**
- * PiCodingRunLiveCard — live view of an execute_coding_task_pi run while it
- * executes. Polls /api/pi-agent-runs/by-tool-call/{toolCallId} every ~1.5s
- * until status is "succeeded" or "failed".
+ * PiCodingRunLiveCard — unified live + final view of an execute_coding_task_pi
+ * run. Polls /api/pi-agent-runs/by-tool-call/{toolCallId} every ~1.5s while
+ * the run is active, stops on terminal state. Same component renders
+ * executing, succeeded, and failed runs — the timeline/agent tree stays
+ * visible after completion so you can go back and see exactly what happened
+ * in the sandbox, long after the call has returned to the caller agent.
  *
- * Shape of each event comes from pi_agent/src/journal.ts — see JournalEvent.
- * Tool-call detail: each tool_call event carries `args`; the matching
- * tool_result (paired by callId) carries `preview` + `ok` + `durationMs`.
+ * The caller agent only receives the summarised result (for explore: just
+ * the final answer; for tdd: branch + PR + commits). All the sandbox detail
+ * lives here so it doesn't pollute the caller's context.
  *
- * Once the run is complete and PiCodingRunCard picks it up via the tool
- * result, this card is no longer rendered (SessionDetail switches to the
- * summary card based on tool_call.status === 'completed').
+ * Event shape from pi_agent/src/journal.ts — see JournalEvent. Tool-call
+ * detail: each tool_call event carries `args`; the matching tool_result
+ * (paired by callId) carries `preview` + `ok` + `durationMs`.
  */
 
 import { useMemo, useState } from 'react'
@@ -72,12 +75,18 @@ const phaseColor = {
 }
 
 // Roll up raw journal events into: phase, subagents (each with their full
-// tool-call history), sandbox state, commits, errors, narratives. Single
-// pass so the render stays cheap even for long runs.
+// tool-call history), sandbox state, commits, errors, narratives, waves.
+// Single pass so the render stays cheap even for long runs.
+//
+// The planner emits `wave_start`/`wave_end` events around each build wave,
+// and each subagent spawned inside that wave carries a `waveId` on its
+// `subagent_start` event (see pi_agent/src/flows/tdd.ts). The UI groups
+// builders by that waveId instead of guessing parallelism from timestamps.
 const rollup = (events) => {
   const agents = new Map()  // id -> { id, name, state, ..., toolCalls:[] }
   const callIndex = new Map()  // callId -> { agentId, idx } so tool_result can pair back
   const phases = []
+  const waves = new Map()  // waveId -> { waveId, iteration, waveIndex, stepIds, parallel, startedAt, endedAt, agentIds:[] }
   let currentPhase = null
   const commits = []
   const errors = []
@@ -111,15 +120,57 @@ const rollup = (events) => {
       case 'subagent_start':
         agents.set(e.id, {
           id: e.id, name: e.name, model: e.model,
-          state: 'running', startedAt: e.ts,
+          state: 'running', startedAt: e.ts, endedAt: null,
+          phase: currentPhase?.phase, phaseIteration: currentPhase?.iteration,
+          // Wave/step linkage comes directly from the planner's structure
+          // — not inferred from timestamps.
+          waveId: e.waveId ?? null,
+          waveIndex: e.waveIndex ?? null,
+          stepId: e.stepId ?? null,
+          iteration: e.iteration ?? null,
+          // Parent-agent linkage (router → explorer): set by pi_agent when a
+          // custom tool like spawn_parallel_explorers fans out subagents. The
+          // UI uses these to nest children under the tool_call that spawned
+          // them rather than render everything as top-level.
+          parentAgentId: e.parentAgentId ?? null,
+          parentToolCallId: e.parentToolCallId ?? null,
+          explorerSlug: e.explorerSlug ?? null,
+          role: e.role ?? null,
           turns: 0, toolCalls: 0, retries: 0,
           toolHistory: [],
+          narrative: null,
+        })
+        if (e.waveId && waves.has(e.waveId)) waves.get(e.waveId).agentIds.push(e.id)
+        break
+      case 'wave_start':
+        waves.set(e.waveId, {
+          waveId: e.waveId,
+          iteration: e.iteration,
+          waveIndex: e.waveIndex,
+          stepIds: e.stepIds || [],
+          parallel: !!e.parallel,
+          startedAt: e.ts,
+          endedAt: null,
+          agentIds: [],
+          state: 'running',
         })
         break
+      case 'wave_end': {
+        const w = waves.get(e.waveId)
+        if (w) {
+          w.endedAt = e.ts
+          w.durationMs = e.durationMs
+          w.successCount = e.successCount
+          w.failureCount = e.failureCount
+          w.state = (e.failureCount ?? 0) > 0 ? 'failed' : 'done'
+        }
+        break
+      }
       case 'subagent_end': {
         const a = agents.get(e.id)
         if (a) {
           a.state = e.success ? 'done' : 'failed'
+          a.endedAt = e.ts
           a.turns = e.turns ?? a.turns
           a.toolCalls = e.toolCalls ?? a.toolCalls
           a.retries = e.retries ?? a.retries
@@ -174,7 +225,7 @@ const rollup = (events) => {
         errors.push(e.message)
         break
       case 'subagent_narrative':
-        narratives.push({ agent: e.agent, iteration: e.iteration, chars: e.chars })
+        narratives.push({ agent: e.agent, iteration: e.iteration, chars: e.chars, text: e.text })
         break
       default:
         break
@@ -182,9 +233,48 @@ const rollup = (events) => {
   }
 
   const allAgents = [...agents.values()]
+
+  // Attach each narrative back to the agent that produced it, so the UI can
+  // render it in the owning SubagentBlock / child row. Matching is based on
+  // pi_agent's narrative key convention (see recordNarrative call sites):
+  //   "router/attempt-N"  → agent id router-N
+  //   "explorer/<slug>"    → explorer agent with matching explorerSlug + iteration
+  //   "builder/<stepId>"   → builder agent with matching stepId
+  //   "<name>"             → top-level agent by name + iteration (analyst, planner, verifier)
+  for (const n of narratives) {
+    const [head, rest] = (n.agent || '').split('/', 2)
+    let match = null
+    if (head === 'router' && rest) {
+      const m = rest.match(/attempt-(\d+)/)
+      if (m) match = allAgents.find((a) => a.name === 'router' && a.id === `router-${m[1]}`)
+    } else if (head === 'explorer' && rest) {
+      match = allAgents.find((a) => a.name === 'explorer' && a.explorerSlug === rest)
+    } else if (head === 'builder' && rest) {
+      match = allAgents.find((a) => a.name === 'builder' && a.stepId === rest)
+    } else if (head) {
+      match = allAgents.find((a) => a.name === head)
+    }
+    if (match && !match.narrative) match.narrative = n.text
+  }
+
+  // Primary = not spawned as a child of another agent. Children are those
+  // with parentAgentId set (e.g. explorers under a router tool call).
+  const primary = allAgents.filter((a) => !a.parentAgentId)
+  const childrenByParentCallId = new Map()
+  for (const a of allAgents) {
+    if (a.parentToolCallId) {
+      const list = childrenByParentCallId.get(a.parentToolCallId) ?? []
+      list.push(a)
+      childrenByParentCallId.set(a.parentToolCallId, list)
+    }
+  }
+
   const active = allAgents.filter((a) => a.state === 'running')
   const done = allAgents.filter((a) => a.state !== 'running')
-  return { currentPhase, phases, agents: allAgents, active, done, sandbox, commits, errors, narratives, push, pr, callIndex }
+  const wavesList = [...waves.values()].sort((a, b) =>
+    a.iteration === b.iteration ? a.waveIndex - b.waveIndex : a.iteration - b.iteration,
+  )
+  return { currentPhase, phases, agents: allAgents, primary, childrenByParentCallId, active, done, sandbox, commits, errors, narratives, push, pr, callIndex, waves: wavesList }
 }
 
 const friendlyEvent = (e) => {
@@ -201,7 +291,6 @@ const friendlyEvent = (e) => {
     case 'subagent_end': return `${e.id} ${e.success ? 'done' : 'failed'} · ${e.turns}t ${e.toolCalls}tc ${fmtMs(e.durationMs)}`
     case 'llm_retry_start': return `${e.agentId} LLM retry #${e.attempt}${e.reason ? ' — ' + e.reason : ''}`
     case 'llm_retry_end': return `${e.agentId} LLM retry #${e.attempt} ${e.success ? 'ok' : 'err'}`
-    case 'router_retry': return `router retry #${e.attempt}${e.reason ? ' — ' + e.reason : ''}`
     case 'branch_renamed': return `branch renamed ${e.from} → ${e.to}`
     case 'commit': return `commit ${(e.sha || '').slice(0, 7)}: ${e.message || ''}`
     case 'push_start': return `push ${e.branch} (${e.bundleBytes ?? 0}B)`
@@ -226,13 +315,22 @@ const eventColor = (type) => {
 }
 
 // Expandable tool-call row: shows `agent → tool (status, duration)` with
-// an accordion for args and result preview. Used both in the timeline and
-// in per-subagent drilldowns.
-const ToolCallRow = ({ entry, showAgent = true }) => {
+// an accordion for args + result preview + any subagents this tool call
+// spawned (e.g. spawn_parallel_explorers → N explorer agents). Children
+// come directly from the journal's parentToolCallId linkage, so "what
+// the router's tool spawned" lines up 1:1 with the orchestrator's actual
+// calls — no guessing.
+const ToolCallRow = ({ entry, showAgent = true, childAgents = [] }) => {
   const [open, setOpen] = useState(false)
   const hasArgs = entry.args && (typeof entry.args !== 'object' || Object.keys(entry.args).length > 0)
-  const hasPreview = entry.preview && entry.preview.length > 0
-  const clickable = hasArgs || hasPreview
+  const previewIsEmpty = entry.preview === '' || entry.preview == null
+  const hasPreview = entry.preview != null && entry.preview.length > 0
+  const hasChildren = childAgents && childAgents.length > 0
+  // Every completed tool call is expandable — so you can always see its
+  // status, even when there were no args and no result text. A completed
+  // call with no output renders an explicit "(no output)" in the result
+  // section, distinct from an un-completed (pending/abandoned) call.
+  const clickable = hasArgs || hasPreview || hasChildren || entry.done === true
   const status =
     entry.done == null || !entry.done ? 'pending' :
     entry.ok ? 'ok' : 'err'
@@ -255,6 +353,11 @@ const ToolCallRow = ({ entry, showAgent = true }) => {
         {showAgent && <span className="text-indigo-700 font-mono text-[11px] shrink-0">{entry.agentId}</span>}
         <Wrench size={11} className="text-gray-400 shrink-0" />
         <span className="font-mono text-[11px] text-gray-800 truncate flex-1">{entry.tool}</span>
+        {hasChildren && (
+          <span className="text-[10px] px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 shrink-0">
+            {childAgents.length} subagent{childAgents.length > 1 ? 's' : ''}
+          </span>
+        )}
         {entry.durationMs != null && (
           <span className="text-gray-400 text-[10px] shrink-0">{fmtMs(entry.durationMs)}</span>
         )}
@@ -274,14 +377,53 @@ const ToolCallRow = ({ entry, showAgent = true }) => {
               </pre>
             </div>
           )}
-          {hasPreview && (
+          {hasChildren && (
+            <div>
+              <div className="text-[10px] uppercase tracking-wide text-gray-500 mb-0.5">
+                {childAgents.length} subagent{childAgents.length > 1 ? 's' : ''} spawned by this call{childAgents.length > 1 ? ' — parallel' : ''}
+              </div>
+              {/* Stack vertically so each subagent has full width. The
+                  violet left stripe marks them as siblings of one parallel
+                  spawn; the index prefix makes the ordering explicit. */}
+              <div className="pl-3 border-l-4 border-violet-400 space-y-1">
+                {childAgents.map((c, i) => (
+                  <ChildAgentCard key={c.id} agent={c} index={i + 1} siblingCount={childAgents.length} />
+                ))}
+              </div>
+            </div>
+          )}
+          {/* Always show a result section for completed tool calls.
+              Distinguishes three cases explicitly:
+                (a) has output → render it verbatim.
+                (b) completed with empty stdout → "(no output — tool
+                    succeeded silently, e.g. mkdir/cd/rm)".
+                (c) not completed → shown in the outer status icon (spinner).
+              Previously (b) looked the same as (c) because we just omitted
+              the whole section. */}
+          {entry.done === true ? (
             <div>
               <div className="text-[10px] uppercase tracking-wide text-gray-500 mb-0.5">
                 result {entry.ok === false && <span className="text-rose-700">· error</span>}
               </div>
-              <pre className="font-mono text-[11px] whitespace-pre-wrap break-words bg-white border rounded p-2 max-h-48 overflow-y-auto">
-                {entry.preview}
-              </pre>
+              {hasPreview ? (
+                <pre className="font-mono text-[11px] whitespace-pre-wrap break-words bg-white border rounded p-2 max-h-96 overflow-y-auto">
+                  {entry.preview}
+                </pre>
+              ) : (
+                <div className="font-mono text-[11px] italic text-gray-500 bg-white border rounded p-2">
+                  (no output — tool succeeded silently)
+                </div>
+              )}
+            </div>
+          ) : (
+            <div>
+              <div className="text-[10px] uppercase tracking-wide text-gray-500 mb-0.5">
+                result
+              </div>
+              <div className="font-mono text-[11px] italic text-amber-700 bg-amber-50 border border-amber-200 rounded p-2">
+                no tool_result event recorded — the session likely aborted before
+                this tool finished (max-turns, consecutive errors, or crash).
+              </div>
             </div>
           )}
         </div>
@@ -290,10 +432,169 @@ const ToolCallRow = ({ entry, showAgent = true }) => {
   )
 }
 
-const SubagentBlock = ({ agent }) => {
+// One full-width row for a subagent spawned by a parent's tool call (e.g.
+// an explorer spawned by router's spawn_parallel_explorers). Shows status,
+// slug, numbered index, quick stats; expands to reveal the subagent's
+// final assistant output AND its full tool-call history (args + results).
+const ChildAgentCard = ({ agent, index, siblingCount }) => {
+  const [open, setOpen] = useState(false)
+  const [toolsOpen, setToolsOpen] = useState(false)
+  const running = agent.state === 'running'
+  const failed = agent.state === 'failed'
+  const borderClass = failed ? 'border-rose-200' : running ? 'border-sky-200' : 'border-emerald-200'
+  const tools = agent.toolHistory || []
+  return (
+    <div className={`border rounded bg-white ${borderClass}`}>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="w-full flex items-center gap-2 px-2 py-1 text-left hover:bg-gray-50 text-[11px]"
+      >
+        <span className="text-[10px] font-mono text-violet-700 bg-violet-50 rounded px-1 shrink-0 min-w-[2ch] text-center">
+          {index}{siblingCount > 1 ? `/${siblingCount}` : ''}
+        </span>
+        {running ? <Loader2 size={11} className="animate-spin text-sky-600 shrink-0" /> :
+          failed ? <X size={11} className="text-rose-600 shrink-0" /> :
+          <Check size={11} className="text-emerald-600 shrink-0" />}
+        <span className="font-mono font-medium truncate">{agent.explorerSlug || agent.id}</span>
+        {agent.explorerSlug && (
+          <span className="text-gray-400 text-[10px] truncate">({agent.id})</span>
+        )}
+        <span className="ml-auto text-gray-500 shrink-0">{agent.turns}t · {agent.toolCalls}tc · {fmtMs(agent.durationMs)}</span>
+      </button>
+      {open && (
+        <div className="border-t border-gray-100 bg-gray-50 text-[11px]">
+          {/* Final assistant output */}
+          <div className="p-2">
+            <div className="text-[10px] uppercase tracking-wide text-gray-500 mb-0.5">
+              final output
+            </div>
+            {agent.narrative ? (
+              <pre className="whitespace-pre-wrap break-words bg-white border rounded p-2 max-h-96 overflow-y-auto font-mono">
+                {agent.narrative}
+              </pre>
+            ) : (
+              <span className="text-gray-400 italic">no output yet</span>
+            )}
+            {agent.error && <div className="mt-1 text-rose-700">error: {agent.error}</div>}
+          </div>
+          {/* Tool-call history — per-subagent, collapsed by default so the
+              final output leads the view. Click the "tool calls (N)" header
+              to expand the list; each row is then individually expandable
+              to reveal its args + result preview. */}
+          {tools.length > 0 && (
+            <div className="border-t border-gray-100">
+              <button
+                type="button"
+                onClick={() => setToolsOpen((v) => !v)}
+                className="w-full flex items-center gap-1 px-2 py-1 text-left hover:bg-gray-100 text-[10px] uppercase tracking-wide text-gray-500"
+              >
+                {toolsOpen ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
+                tool calls ({tools.length})
+              </button>
+              {toolsOpen && (
+                <div className="bg-white border-t border-gray-100">
+                  {tools.map((t) => (
+                    <ToolCallRow key={t.callId || t.ts} entry={t} showAgent={false} />
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// Visualise the planner's waves: each wave = one row of step-chips, with
+// "parallel" bracketing when the wave has >1 step. Wave boundaries come
+// directly from pi_agent's `wave_start`/`wave_end` events — the grouping
+// is authoritative, not inferred from time-overlap.
+const WavesBlock = ({ waves, agents }) => {
+  if (!waves || waves.length === 0) return null
+  const agentByStep = new Map()
+  for (const a of agents) if (a.stepId) agentByStep.set(a.stepId, a)
+  return (
+    <section>
+      <div className="text-xs uppercase tracking-wide text-gray-500 mb-1 flex items-center gap-1">
+        <Layers size={12} /> waves ({waves.length})
+      </div>
+      <div className="space-y-1">
+        {waves.map((w) => (
+          <div key={w.waveId} className="bg-white border rounded">
+            <div className="flex items-center gap-2 px-2 py-1 border-b border-gray-100 text-[11px]">
+              {w.state === 'running' ? (
+                <Loader2 size={12} className="animate-spin text-sky-600 shrink-0" />
+              ) : w.state === 'done' ? (
+                <Check size={12} className="text-emerald-600 shrink-0" />
+              ) : (
+                <X size={12} className="text-rose-600 shrink-0" />
+              )}
+              <span className="font-mono font-medium">{w.waveId}</span>
+              <span className={`px-1.5 rounded text-[10px] ${w.parallel ? 'bg-amber-100 text-amber-800' : 'bg-gray-100 text-gray-700'}`}>
+                {w.parallel ? `parallel × ${w.stepIds.length}` : 'sequential'}
+              </span>
+              <span className="text-gray-400">iter {w.iteration}</span>
+              {w.durationMs != null && <span className="ml-auto text-gray-500">{fmtMs(w.durationMs)}</span>}
+            </div>
+            {/* Steps stacked vertically. For parallel waves, an amber left
+                stripe groups the siblings visually and each gets a
+                numbered index to make ordering + count obvious. */}
+            <div className={`px-2 py-1 space-y-1 ${w.parallel ? 'border-l-4 border-amber-300 ml-2' : ''}`}>
+              {w.stepIds.map((stepId, i) => {
+                const a = agentByStep.get(stepId)
+                const status = a?.state ?? 'pending'
+                const rowColor =
+                  status === 'running' ? 'bg-sky-50 text-sky-800 border-sky-200' :
+                  status === 'done' ? 'bg-emerald-50 text-emerald-800 border-emerald-200' :
+                  status === 'failed' ? 'bg-rose-50 text-rose-800 border-rose-200' :
+                  'bg-gray-50 text-gray-600 border-gray-200'
+                return (
+                  <div
+                    key={stepId}
+                    className={`text-[11px] px-2 py-1 rounded border ${rowColor} flex items-center gap-2`}
+                    title={a ? `${a.id} · ${a.turns}t · ${a.toolCalls}tc · ${fmtMs(a.durationMs)}` : 'not yet started'}
+                  >
+                    {w.parallel && (
+                      <span className="text-[10px] font-mono bg-amber-100 text-amber-800 rounded px-1 shrink-0 min-w-[2ch] text-center">
+                        {i + 1}/{w.stepIds.length}
+                      </span>
+                    )}
+                    {status === 'running' ? (
+                      <Loader2 size={11} className="animate-spin shrink-0" />
+                    ) : status === 'done' ? (
+                      <Check size={11} className="shrink-0" />
+                    ) : status === 'failed' ? (
+                      <X size={11} className="shrink-0" />
+                    ) : (
+                      <span className="inline-block w-[11px] h-[11px] rounded-full border border-current shrink-0" />
+                    )}
+                    <span className="font-mono font-medium truncate">{stepId}</span>
+                    {a && <span className="opacity-60 font-mono text-[10px]">{a.id}</span>}
+                    {a?.durationMs != null && (
+                      <span className="ml-auto opacity-70 text-[10px] shrink-0">{fmtMs(a.durationMs)}</span>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  )
+}
+
+// Block for one primary agent (analyst / planner / builder / verifier /
+// router). Expands to reveal the agent's tool-call history with any
+// subagents spawned by those calls nested inline, plus the agent's own
+// narrative (the end-of-turn text it produced).
+const AgentBlock = ({ agent, childrenByParentCallId }) => {
   const [open, setOpen] = useState(false)
   const isRunning = agent.state === 'running'
   const tools = agent.toolHistory || []
+  const hasNarrative = !!(agent.narrative && agent.narrative.trim())
   return (
     <div className="bg-white border rounded">
       <button
@@ -310,6 +611,7 @@ const SubagentBlock = ({ agent }) => {
           <X size={12} className="text-rose-600 shrink-0" />
         )}
         <span className="font-mono text-[11px] font-medium">{agent.id}</span>
+        {agent.stepId && <span className="text-[10px] px-1 rounded bg-gray-100 text-gray-700">{agent.stepId}</span>}
         <span className="text-gray-400 text-[10px]">{agent.model}</span>
         {agent.retries > 0 && (
           <span className="flex items-center gap-0.5 text-amber-700 text-[10px]">
@@ -326,8 +628,23 @@ const SubagentBlock = ({ agent }) => {
             <div className="px-3 py-1 text-[11px] text-gray-400 italic">no tool calls yet</div>
           ) : (
             tools.map((t) => (
-              <ToolCallRow key={t.callId || t.ts} entry={t} showAgent={false} />
+              <ToolCallRow
+                key={t.callId || t.ts}
+                entry={t}
+                showAgent={false}
+                childAgents={t.callId ? (childrenByParentCallId?.get(t.callId) ?? []) : []}
+              />
             ))
+          )}
+          {hasNarrative && (
+            <details className="border-t border-gray-100">
+              <summary className="px-3 py-1 text-[11px] cursor-pointer hover:bg-gray-100 text-gray-600">
+                final output ({agent.narrative.length} chars)
+              </summary>
+              <pre className="font-mono text-[11px] whitespace-pre-wrap break-words bg-white m-2 border rounded p-2 max-h-96 overflow-y-auto">
+                {agent.narrative}
+              </pre>
+            </details>
           )}
           {agent.error && (
             <div className="px-3 py-1 text-[11px] text-rose-700">error: {agent.error}</div>
@@ -412,11 +729,27 @@ const PiCodingRunLiveCard = ({ toolCallId }) => {
         <span className="text-xs text-gray-500 flex items-center gap-1">
           <GitBranch size={12} /> {data.branch_name || data.repo_target || '—'}
         </span>
+        {state.commits.length > 0 && (
+          <span className="text-xs text-gray-500 flex items-center gap-1">
+            <GitCommit size={12} /> {state.commits.length}
+          </span>
+        )}
         {state.currentPhase && (
           <span className={`text-xs px-2 py-0.5 rounded ${phaseColor[state.currentPhase.phase] || 'bg-gray-100 text-gray-700'}`}>
             {state.currentPhase.phase}
             {state.currentPhase.iteration > 1 && <span className="opacity-60"> ×{state.currentPhase.iteration}</span>}
           </span>
+        )}
+        {data.pr_url && (
+          <a
+            href={data.pr_url}
+            target="_blank"
+            rel="noreferrer"
+            onClick={(e) => e.stopPropagation()}
+            className="text-xs text-sky-700 hover:underline flex items-center gap-1"
+          >
+            PR{data.pr_number ? ` #${data.pr_number}` : ''}
+          </a>
         )}
         <span className="ml-auto text-xs text-gray-500">
           {data.total_events} events
@@ -440,14 +773,24 @@ const PiCodingRunLiveCard = ({ toolCallId }) => {
             )}
           </div>
 
-          {/* Subagents (active + done merged, each expandable to tool history) */}
-          {state.agents.length > 0 && (
+          {/* Wave grouping (tdd flow) — shows which agents the planner
+              grouped together (parallel) vs ran sequentially. Pulled
+              directly from pi_agent's wave_start/wave_end events. */}
+          <WavesBlock waves={state.waves} agents={state.agents} />
+
+          {/* Primary agents only at the top level. Children (explorers
+              spawned by a router via spawn_parallel_explorers) are nested
+              inside the parent's corresponding tool_call row, keeping the
+              UI structure aligned with what the agent actually did. */}
+          {state.primary.length > 0 && (
             <section>
               <div className="text-xs uppercase tracking-wide text-gray-500 mb-1 flex items-center gap-1">
-                <Bot size={12} /> subagents ({state.active.length} active / {state.agents.length} total)
+                <Bot size={12} /> agents ({state.primary.filter((a) => a.state === 'running').length} active / {state.primary.length} total)
               </div>
               <div className="space-y-1">
-                {state.agents.map((a) => <SubagentBlock key={a.id} agent={a} />)}
+                {state.primary.map((a) => (
+                  <AgentBlock key={a.id} agent={a} childrenByParentCallId={state.childrenByParentCallId} />
+                ))}
               </div>
             </section>
           )}

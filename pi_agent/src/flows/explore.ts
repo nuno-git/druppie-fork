@@ -13,7 +13,6 @@
  * enough to answer. No commits, no push, no PR — purely read-only.
  */
 import { join } from "node:path";
-import { Type } from "@sinclair/typebox";
 import type { Api, Model } from "@mariozechner/pi-ai";
 import { AuthStorage, ModelRegistry } from "@mariozechner/pi-coding-agent";
 
@@ -32,25 +31,6 @@ import {
 import type { AgentConfig, RunResult, TaskSpec } from "../types.js";
 
 import { createSpawnParallelExplorersTool } from "./spawn-tool.js";
-
-// `done(answer)` tool so the router can return a structured final answer.
-const DoneParams = Type.Object({
-  answer: Type.String({ description: "Final synthesized answer to the original question." }),
-});
-
-function createDoneTool(onDone: (answer: string) => void): any {
-  return {
-    name: "done",
-    label: "Done",
-    description: "Finish the exploration with a synthesized answer to the original question. Call this once you have enough context.",
-    promptSnippet: "done: return the final answer text. Exactly once, at the end.",
-    parameters: DoneParams,
-    async execute(_toolCallId: string, params: { answer: string }) {
-      onDone(params.answer);
-      return { output: "recorded", details: { length: params.answer.length } };
-    },
-  };
-}
 
 export async function runExploreFlow(task: TaskSpec, config: AgentConfig): Promise<RunResult> {
   const cwd = config.workDir;
@@ -99,7 +79,7 @@ export async function runExploreFlow(task: TaskSpec, config: AgentConfig): Promi
       journal.sourceClone(task.sourceRepoUrl, sourceBranch);
       await cloneSourceIntoSandbox(
         sandbox.client,
-        { host: "127.0.0.1", port: sandbox.hostPort, authToken: sandbox.authToken },
+        { host: sandbox.host, port: sandbox.hostPort, authToken: sandbox.authToken },
         { remoteUrl: task.sourceRepoUrl, branch: sourceBranch, token },
       );
       await git.init();
@@ -150,55 +130,110 @@ export async function runExploreFlow(task: TaskSpec, config: AgentConfig): Promi
       journal,
     };
 
-    // Assemble the router's custom tools. `done` captures the final answer
-    // by mutating this outer variable; cleaner than trying to thread it
-    // through pi's event protocol.
-    let finalAnswer: string | undefined;
+    // parentRef lets the spawn tool stamp each explorer's `parentAgentId`
+    // at execute-time so the UI can render the hierarchy correctly.
+    const parentRef: { current?: string } = {};
     const spawnTool = createSpawnParallelExplorersTool({
       explorer,
       baseOpts,
+      parentRef,
       onRoundComplete: (round, results) => {
         for (const r of results) {
           journal.recordNarrative(`explorer/${r.id}`, round, r.output);
         }
       },
     });
-    const doneTool = createDoneTool((answer) => {
-      finalAnswer = answer;
-    });
 
-    // Pass the router the spawn+done tools on top of its read tools.
-    // We extend the runSubagent options with customTools, threaded through
-    // via a cast so we don't have to modify RunSubagentOptions.
-    journal.phaseStart("EXPLORE", 1);
-    const routerPrompt = [
+    // The router is a subagent. It signals "I'm finished" by emitting a
+    // final assistant message with no tool calls — pi's session stops
+    // naturally. We take `routerResult.output` as the answer. There is
+    // no concatenate-explorer-findings fallback: that's garbage data.
+    // If the router doesn't produce text, we RETRY with a direct nudge,
+    // up to MAX_ROUTER_ATTEMPTS. If all attempts are empty the run fails.
+    const routerBasePrompt = [
       `## Question`,
       task.description,
       ``,
       `Answer this by reading the repo (cloned at /workspace) directly with bash/read/grep/find,`,
       `and/or by calling spawn_parallel_explorers when you need several independent lookups at once.`,
-      `When you have a solid answer, call done(answer: "<your synthesis>"). Do not output the final`,
-      `answer as plain text — it must come through the done tool.`,
+      ``,
+      `When you have a solid answer, write it as your final assistant message. That final message`,
+      `IS your answer — no special tool is needed. After the synthesis, stop calling tools and`,
+      `stop writing; the loop ends when you end your turn without any tool calls.`,
     ].join("\n");
 
-    const routerResult = await runSubagent(router, routerPrompt, {
-      ...baseOpts,
-      // HACK: pi-coding-agent supports extra custom tools via a field that
-      // isn't exposed on RunSubagentOptions today. We cast to allow the
-      // injection; runner.ts forwards anything extra into the session.
-      extraCustomTools: [spawnTool, doneTool],
-    } as any);
+    const MAX_ROUTER_ATTEMPTS = 3;
+    let finalAnswer = "";
+    let lastRouterError: string | undefined;
 
-    journal.recordNarrative("router", 1, routerResult.output);
-    journal.phaseEnd();
+    for (let attempt = 1; attempt <= MAX_ROUTER_ATTEMPTS; attempt++) {
+      const isRetry = attempt > 1;
+      // On retry, include the prior explorer findings in the prompt so the
+      // model has context — we can't reuse the previous session, each
+      // attempt spawns a fresh one. Cap to 12 entries to keep it bounded.
+      const findings = journal.getNarratives()
+        .filter((n) => n.agent.startsWith("explorer/"))
+        .slice(-12)
+        .map((n) => `### ${n.agent} (iter ${n.iteration})\n${n.text}`)
+        .join("\n\n");
 
-    if (!routerResult.success) {
-      errors.push(`Router failed: ${routerResult.error ?? "unknown"}`);
-    } else if (finalAnswer === undefined) {
-      errors.push("Router finished without calling done() — no final answer produced");
+      const promptForThisAttempt = !isRetry
+        ? routerBasePrompt
+        : [
+            `## Retry ${attempt}/${MAX_ROUTER_ATTEMPTS} — your previous attempt ended without a final answer.`,
+            ``,
+            `You did the investigation but did NOT emit a final assistant message. The only thing`,
+            `you need to do this turn is write your synthesised answer as a plain assistant message.`,
+            `Do not call any tools. Just write the answer and stop.`,
+            ``,
+            `## Original question`,
+            task.description,
+            ``,
+            `## Findings from the earlier explorers`,
+            findings || "(no explorer findings recorded yet — answer from general knowledge and what you already read)",
+          ].join("\n");
+
+      journal.phaseStart("EXPLORE", attempt);
+      parentRef.current = `router-${attempt}`;
+      const routerResult = await runSubagent(router, promptForThisAttempt, {
+        ...baseOpts,
+        extraCustomTools: [spawnTool],
+        maxTurns: 60,
+        meta: { role: "orchestrator", attempt },
+      } as any);
+      journal.recordNarrative(`router/attempt-${attempt}`, attempt, routerResult.output);
+      journal.phaseEnd();
+
+      if (!routerResult.success) {
+        lastRouterError = routerResult.error ?? "unknown";
+        break;  // hard error (not just empty output) — stop retrying.
+      }
+
+      const text = (routerResult.output ?? "").trim();
+      if (text) {
+        finalAnswer = text;
+        if (isRetry) {
+          journal.write("router_retry_recovered", { attempts: attempt });
+        }
+        break;
+      }
+
+      journal.write("router_retry", {
+        attempt,
+        reason: "empty final message",
+        willRetry: attempt < MAX_ROUTER_ATTEMPTS,
+      });
     }
 
-    const success = errors.length === 0 && finalAnswer !== undefined;
+    if (!finalAnswer) {
+      errors.push(
+        lastRouterError
+          ? `Router failed: ${lastRouterError}`
+          : `Router produced no final message after ${MAX_ROUTER_ATTEMPTS} attempts.`,
+      );
+    }
+
+    const success = !!finalAnswer && errors.length === 0;
     for (const e of errors) journal.error(e);
     sandbox.stop();
     journal.sandboxStop();
@@ -208,7 +243,7 @@ export async function runExploreFlow(task: TaskSpec, config: AgentConfig): Promi
     // The final answer also lands in summary.narratives[] as an
     // "answer" entry so Python (which reads summary.narratives) can
     // surface it cleanly alongside the exploration reports.
-    if (finalAnswer !== undefined) {
+    if (finalAnswer) {
       journal.recordNarrative("answer", 0, finalAnswer);
     }
 
@@ -218,7 +253,7 @@ export async function runExploreFlow(task: TaskSpec, config: AgentConfig): Promi
       commits: [],
       testsPassed: false,
       buildPassed: false,
-      summary: finalAnswer ?? "",
+      summary: finalAnswer,
       errors,
       stepResults: [],
       iterations: 1,

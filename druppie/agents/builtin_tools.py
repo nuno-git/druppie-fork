@@ -243,13 +243,17 @@ BUILTIN_TOOL_DEFS: dict[str, dict] = {
         "function": {
             "name": "execute_coding_task_pi",
             "description": (
-                "Execute a coding task using the vendored pi_agent orchestrator "
-                "(analyze → plan → build → verify → PR). "
-                "Each call spawns a fresh sandbox container that clones the repo; "
-                "the sandbox is destroyed after completion and any un-pushed work is lost. "
-                "pi_agent pushes the branch and opens a PR automatically. "
-                "Works against either a GitHub App repo (druppie_core) or a Gitea project repo — "
-                "pick with the git_provider argument."
+                "Execute a full coding task using the vendored pi_agent orchestrator. "
+                "ONE call = ONE complete flow: analyze → plan → build → verify → push → PR (for flow='tdd'), "
+                "or read-only investigation (for flow='explore'). "
+                "Each call spawns a fresh throwaway sandbox that clones the repo; the sandbox is "
+                "destroyed after completion and any un-pushed work is lost. "
+                "pi_agent creates its own feature branch, commits the work, pushes via a separate "
+                "credentialed push-container, and opens a PR automatically — so you do NOT call "
+                "this tool for 'just create a branch' or 'just run git push'. The sandbox itself has "
+                "no git credentials; pushes only happen when the flow produces real commits. "
+                "Works against either a GitHub App repo (repo_target='druppie_core') or a Gitea "
+                "project repo (repo_target='project')."
             ),
             "parameters": {
                 "type": "object",
@@ -259,7 +263,9 @@ BUILTIN_TOOL_DEFS: dict[str, dict] = {
                         "description": (
                             "The complete task prompt for the pi_agent orchestrator. "
                             "Self-contained — describe what to implement, reference files for context, "
-                            "list patterns to follow."
+                            "list patterns to follow. Should describe actual code work; 'create a branch' "
+                            "or 'run a shell command' alone are NOT valid tasks (the flow expects files "
+                            "to be written / changed so there's something to commit and push)."
                         ),
                     },
                     "flow": {

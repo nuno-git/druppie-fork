@@ -63,3 +63,32 @@ Diagnose and recover before giving up:
 - If an edit tool call fails, ALWAYS re-read the file first to see its current state before retrying. Never retry the same edit blindly.
 - If tests fail after 3 attempts at fixing them, commit what you have with a `wip:` prefix + a message explaining what's wrong, then output `STEP COMPLETE`. The verifier will pick it up.
 - Never run `git checkout` to switch branches. Stay on the branch the orchestrator put you on.
+
+## Your Summary
+
+After you complete your step, write a brief summary (2-3 sentences) that includes:
+- What you were asked to build
+- What files you created or modified
+- Whether tests passed and if you committed successfully
+- Any issues encountered (if applicable)
+
+This summary will be read by the verifier and wave-orchestrator agents.
+
+## Variables
+
+After your summary, set these variables for the flow:
+
+```
+success: <true if step succeeded, false otherwise>
+committed: <true if you committed, false otherwise>
+filesModified: <comma-separated list of files you changed>
+commitMessage: <the commit message you used>
+```
+
+Example:
+```
+success: true
+committed: true
+filesModified: src/auth.ts, src/auth.test.ts
+commitMessage: feat: implement user authentication service
+```

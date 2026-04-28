@@ -56,6 +56,7 @@ BUILTIN_TOOLS = {
     "create_message",
     "invoke_skill",
     "execute_coding_task",
+    "execute_coding_task_pi",
     "test_report",
 }
 
@@ -855,11 +856,17 @@ class ToolExecutor:
             is_success = result.get("success", True) if isinstance(result, dict) else True
             status = ToolCallStatus.COMPLETED if is_success else ToolCallStatus.FAILED
 
+            # Keep the full result even on failure — tools like
+            # execute_coding_task_pi return diagnostic context (run_id,
+            # narrative, stderr_tail, summary) that the LLM needs to
+            # decide whether to retry, switch approach, or give up.
+            # Previously we zeroed it out and the agent saw
+            # "Tool call failed: None" with no info.
             self.execution_repo.update_tool_call(
                 tool_call.id,
                 status=status,
-                result=result if is_success else None,
-                error=result.get("error") if not is_success else None,
+                result=result,
+                error=result.get("error") if (not is_success and isinstance(result, dict)) else None,
             )
             self.db.commit()
 

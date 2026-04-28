@@ -61,6 +61,40 @@ function parseFrontmatter(content: string): { frontmatter: Record<string, string
   return { frontmatter: fm, body: match[2] };
 }
 
+/** Parse a frontmatter value that may be a JSON array, a YAML-flow array,
+ * or a comma-separated list. Previously the runner split raw strings by
+ * comma and left the brackets + quotes intact, so e.g.
+ *   tools: ["read", "grep", "find", "bash"]
+ * parsed as the four literal strings `["read"`, `"grep"`, `"find"`, `"bash"]`
+ * which then failed every `want.has("read")` check in buildSandboxTools —
+ * silently giving every subagent zero tools. That's the root cause of the
+ * "explorer emits XML tool calls in text" failure we spent hours on.
+ */
+function parseFrontmatterList(raw: string | undefined): string[] | undefined {
+  if (!raw) return undefined;
+  const trimmed = raw.trim();
+  // Try JSON first — handles ["a","b","c"] and even ['a','b'] after quote swap.
+  if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
+    try {
+      const parsed = JSON.parse(trimmed.replace(/'/g, '"'));
+      if (Array.isArray(parsed)) return parsed.map(String).map((s) => s.trim()).filter(Boolean);
+    } catch {
+      // Fall through to manual parse.
+    }
+    // Manual: strip brackets, split, strip quotes/whitespace.
+    return trimmed
+      .slice(1, -1)
+      .split(",")
+      .map((t) => t.trim().replace(/^["']|["']$/g, ""))
+      .filter(Boolean);
+  }
+  // Bare comma-separated form: `tools: read, grep, find, bash`
+  return trimmed
+    .split(",")
+    .map((t) => t.trim().replace(/^["']|["']$/g, ""))
+    .filter(Boolean);
+}
+
 export function discoverAgents(cwd: string, extraDirs?: string[]): AgentDefinition[] {
   const agents: AgentDefinition[] = [];
   const dirs = [
@@ -81,7 +115,7 @@ export function discoverAgents(cwd: string, extraDirs?: string[]): AgentDefiniti
       agents.push({
         name: frontmatter.name,
         description: frontmatter.description,
-        tools: frontmatter.tools?.split(",").map((t) => t.trim()).filter(Boolean),
+        tools: parseFrontmatterList(frontmatter.tools),
         model: frontmatter.model,
         systemPrompt: body.trim(),
         source: "project",
@@ -92,6 +126,86 @@ export function discoverAgents(cwd: string, extraDirs?: string[]): AgentDefiniti
   return agents;
 }
 
+// ── Summary & Variable Extraction ──────────────────────────
+
+/**
+ * Extract the ## Summary section from agent output.
+ *
+ * Looks for a section starting with "## Summary" and returns its content
+ * until the next "##" header or end of string.
+ *
+ * @param output - Full agent output
+ * @returns Extracted summary text, or empty string if not found
+ */
+export function extractSummary(output: string): string {
+  const summaryMatch = output.match(/## Summary\n([\s\S]+?)(?=\n##|\n*$)/);
+  if (!summaryMatch) return "";
+
+  let summary = summaryMatch[1].trim();
+
+  // Remove the "## Variables" section if present (we parse that separately)
+  const varMatch = summary.match(/([\s\S]+?)\n## Variables\n/);
+  if (varMatch) {
+    summary = varMatch[1].trim();
+  }
+
+  return summary;
+}
+
+/**
+ * Extract variables from the ## Variables section of an agent summary.
+ *
+ * Parses key: value pairs from the variables section.
+ *
+ * @param summary - Agent summary (may include ## Variables section)
+ * @returns Map of variable names to values
+ */
+export function extractVariables(summary: string): Map<string, string> {
+  const vars = new Map<string, string>();
+  const varMatch = summary.match(/## Variables\n([\s\S]+?)(?=\n##|\n*$)/);
+
+  if (!varMatch) return vars;
+
+  const varText = varMatch[1];
+  for (const line of varText.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+
+    // Parse "key: value" format
+    const colonIndex = trimmed.indexOf(":");
+    if (colonIndex > 0) {
+      const key = trimmed.slice(0, colonIndex).trim();
+      const value = trimmed.slice(colonIndex + 1).trim();
+      if (key) {
+        vars.set(key, value);
+      }
+    }
+  }
+
+  return vars;
+}
+
+/**
+ * Parse agent result into structured data for flow consumption.
+ *
+ * For agents that output structured data in code blocks (e.g., ```json),
+ * this function attempts to parse and return it.
+ *
+ * @param output - Full agent output
+ * @returns Parsed structured data, or undefined if not found
+ */
+export function extractStructuredData<T = unknown>(output: string): T | undefined {
+  // Try to find a JSON code block
+  const jsonMatch = output.match(/```(?:json)?\s*\n([\s\S]+?)\n```/);
+  if (!jsonMatch) return undefined;
+
+  try {
+    return JSON.parse(jsonMatch[1]) as T;
+  } catch {
+    return undefined;
+  }
+}
+
 // ── Subagent Execution ──────────────────────────────────────
 
 export interface SubagentResult {
@@ -100,6 +214,10 @@ export interface SubagentResult {
   success: boolean;
   turnCount: number;
   error?: string;
+  /** Extracted summary section from the output */
+  summary?: string;
+  /** Parsed variables from the summary */
+  variables?: Map<string, string>;
 }
 
 export interface RunSubagentOptions {
@@ -123,6 +241,10 @@ export interface RunSubagentOptions {
    * through to pi's customTools. Their names are added to the active-tools list
    * so the LLM actually sees them. */
   extraCustomTools?: any[];
+  /** Optional structural metadata attached to this subagent's start event.
+   *  Set by flow orchestrators (e.g. tdd's executeWaves) so the UI can
+   *  group subagents by wave / step instead of inferring from timestamps. */
+  meta?: Record<string, unknown>;
 }
 
 /** Run a single subagent with an in-process Pi session. */
@@ -131,7 +253,7 @@ export async function runSubagent(
   prompt: string,
   options: RunSubagentOptions
 ): Promise<SubagentResult> {
-  const { cwd, authStorage, modelRegistry, defaultModel, maxTurns = 30, onOutput, sessionsDir, sandboxClient, journal, extraCustomTools } = options;
+  const { cwd, authStorage, modelRegistry, defaultModel, maxTurns = 30, onOutput, sessionsDir, sandboxClient, journal, extraCustomTools, meta } = options;
 
   // Resolve model: agent-specific or default
   // Agent model field can be "provider/id" (e.g. "glm-coding/glm-4.5-air") or just "id"
@@ -169,6 +291,7 @@ export async function runSubagent(
   });
   await loader.reload();
 
+
   // Session
   const { session } = await createAgentSession({
     cwd,
@@ -201,7 +324,7 @@ export async function runSubagent(
   let consecutiveErrors = 0;
   const MAX_CONSECUTIVE_ERRORS = 5;
 
-  const handle: AgentHandle | undefined = journal?.startAgent(agent.name, `${model.provider}/${model.id}`);
+  const handle: AgentHandle | undefined = journal?.startAgent(agent.name, `${model.provider}/${model.id}`, meta);
   const toolStartTimes = new Map<string, number>();
 
   session.subscribe((event) => {
@@ -211,15 +334,23 @@ export async function runSubagent(
       onOutput?.(delta);
     }
     if (event.type === "tool_execution_start") {
-      const ev = event as { toolName?: string; toolCallId?: string; input?: unknown };
+      // pi-agent-core emits the parsed arguments as `args` (see its
+      // README "tool_execution_start { toolCallId, toolName, args }"),
+      // so reading only `ev.input` was silently dropping every tool's
+      // args. Accept both for safety.
+      const ev = event as { toolName?: string; toolCallId?: string; args?: unknown; input?: unknown };
       if (ev.toolCallId) toolStartTimes.set(ev.toolCallId, Date.now());
-      handle?.toolCall(ev.toolName ?? "?", ev.input, ev.toolCallId ?? "");
+      const toolArgs = ev.args !== undefined ? ev.args : ev.input;
+      handle?.toolCall(ev.toolName ?? "?", toolArgs, ev.toolCallId ?? "");
     }
     if (event.type === "tool_execution_end") {
       const ev = event as any;
       if (ev.isError) {
         consecutiveErrors++;
-        const errorPreview = extractResultPreview(ev.result, 400) || "unknown error";
+        const errorPreview = extractResultPreview(ev.result) || "unknown error";
+        // Console log stays bounded so one giant stderr line doesn't blow
+        // up the terminal — but the stored preview (sent to the journal
+        // below) is the full thing.
         console.error(`  [${agent.name}] Tool error (${ev.toolName}): ${errorPreview.slice(0, 200)}`);
         if (handle && ev.toolCallId) {
           const started = toolStartTimes.get(ev.toolCallId) ?? Date.now();
@@ -234,7 +365,7 @@ export async function runSubagent(
         consecutiveErrors = 0;
         if (handle && ev.toolCallId) {
           const started = toolStartTimes.get(ev.toolCallId) ?? Date.now();
-          const preview = extractResultPreview(ev.result, 800);
+          const preview = extractResultPreview(ev.result);
           handle.toolResult(ev.toolCallId, true, Date.now() - started, preview);
         }
       }
@@ -244,11 +375,21 @@ export async function runSubagent(
       handle?.turn();
       if (turnCount >= maxTurns) session.abort();
     }
-    // Capture token usage from completed assistant messages
+    // Capture token usage AND defensive-capture the final assistant text
+    // from the complete message. Relying only on text_delta events misses
+    // turns where the model streams via a different path (e.g. reasoning
+    // mode where content arrives in one chunk, or provider adapters that
+    // don't emit per-character deltas for the final turn). Here we read
+    // the finished message and overwrite `output` if it gives us more text
+    // than we captured via text_delta — taking the longer of the two.
     if (event.type === "message_end") {
       const ev = event as any;
-      if (ev.message?.role === "assistant" && ev.message?.usage) {
-        handle?.usage(ev.message.usage);
+      if (ev.message?.role === "assistant") {
+        if (ev.message.usage) handle?.usage(ev.message.usage);
+        const extracted = extractAssistantText(ev.message);
+        if (extracted && extracted.length > output.length) {
+          output = extracted;
+        }
       }
     }
     // Retry events — pi emits these when a provider request is auto-retried
@@ -268,24 +409,41 @@ export async function runSubagent(
 
     const success = !output.includes("STEP FAILED") && !output.includes("VERIFICATION FAILED");
     handle?.end(success);
-    return { agentName: agent.name, output, success, turnCount };
+
+    // Extract summary and variables
+    const summary = extractSummary(output);
+    const variables = extractVariables(output);
+
+    return { agentName: agent.name, output, success, turnCount, summary, variables };
   } catch (err) {
     session.dispose();
     const errorMsg = err instanceof Error ? err.message : String(err);
     handle?.end(false, errorMsg);
+
+    // Extract summary and variables even on error
+    const summary = extractSummary(output);
+    const variables = extractVariables(output);
+
     return {
       agentName: agent.name,
       output: output + `\n\nError: ${errorMsg}`,
       success: false,
       turnCount,
       error: errorMsg,
+      summary,
+      variables,
     };
   }
 }
 
-/** Run multiple subagents in parallel, all sharing the same cwd. */
+/** Run multiple subagents in parallel, all sharing the same cwd.
+ *
+ * Each task may carry its own `meta` — that lands on the subagent's
+ * `subagent_start` event so the UI can render the wave grouping that
+ * the planner actually asked for.
+ */
 export async function runSubagentsParallel(
-  agents: Array<{ agent: AgentDefinition; prompt: string }>,
+  agents: Array<{ agent: AgentDefinition; prompt: string; meta?: Record<string, unknown> }>,
   options: RunSubagentOptions
 ): Promise<SubagentResult[]> {
   const MAX_CONCURRENCY = 4;
@@ -296,11 +454,12 @@ export async function runSubagentsParallel(
     while (true) {
       const idx = nextIndex++;
       if (idx >= agents.length) return;
-      const { agent, prompt } = agents[idx];
+      const { agent, prompt, meta } = agents[idx];
       const prefix = `[${agent.name}] `;
       results[idx] = await runSubagent(agent, prompt, {
         ...options,
         onOutput: (delta) => options.onOutput?.(prefix + delta),
+        meta: meta ?? options.meta,
       });
     }
   });
@@ -312,12 +471,35 @@ export async function runSubagentsParallel(
 // ── Helpers ─────────────────────────────────────────────────
 
 /**
- * Best-effort textual preview of a tool result. pi-coding-agent tools return
- * MCP-style `{content: [{type: "text", text: ...}]}`, but custom tools
- * (like spawn_parallel_explorers) return `{output, details}`. Grab whichever
- * looks useful and cap the length.
+ * Pull the plain text out of an assistant AgentMessage regardless of how
+ * the provider laid it out. pi-agent-core messages typically carry a
+ * `content` array of `{type, text}` blocks (Anthropic-style). Some
+ * providers put a flat string in `content`. Some surface `text` directly.
+ * We try them all and return the concatenated text — used as a safety-net
+ * when text_delta streaming didn't capture the final turn (e.g. reasoning
+ * mode finalising in one chunk).
  */
-function extractResultPreview(result: any, maxLen = 800): string {
+function extractAssistantText(message: any): string {
+  if (!message) return "";
+  if (typeof message.content === "string") return message.content;
+  if (Array.isArray(message.content)) {
+    return message.content
+      .filter((b: any) => b && b.type === "text" && typeof b.text === "string")
+      .map((b: any) => b.text)
+      .join("");
+  }
+  if (typeof message.text === "string") return message.text;
+  return "";
+}
+
+/**
+ * Full textual view of a tool result. pi-coding-agent tools return
+ * MCP-style `{content: [{type: "text", text: ...}]}`, but custom tools
+ * (like spawn_parallel_explorers) return `{output, details}`. We return
+ * the whole thing verbatim — this is the exact context the LLM saw
+ * after the tool ran, and we don't truncate LLM-facing data.
+ */
+function extractResultPreview(result: any): string {
   if (result == null) return "";
   // MCP-style: {content: [{type:"text", text:"..."}]}
   const content = Array.isArray(result?.content) ? result.content : null;
@@ -326,18 +508,18 @@ function extractResultPreview(result: any, maxLen = 800): string {
       .filter((p: any) => p && p.type === "text" && typeof p.text === "string")
       .map((p: any) => p.text)
       .join("");
-    if (text) return text.slice(0, maxLen);
+    if (text) return text;
   }
   // Custom-tool shape used by spawn-tool.ts: `{output: string, details: any}`.
   if (typeof result?.output === "string" && result.output) {
-    return result.output.slice(0, maxLen);
+    return result.output;
   }
   // Plain string.
-  if (typeof result === "string") return result.slice(0, maxLen);
+  if (typeof result === "string") return result;
   // Fallback: stringify the whole thing so the UI shows *something*.
   try {
     const json = JSON.stringify(result);
-    if (json) return json.slice(0, maxLen);
+    if (json) return json;
   } catch {
     /* ignore */
   }
