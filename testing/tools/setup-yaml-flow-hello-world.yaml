@@ -1,0 +1,171 @@
+## Setup: create project with FD + TD for YAML flow test
+## Creates a session ready for developer to use execute_coding_task_pi
+
+tool-test:
+  name: setup-yaml-flow-hello-world
+  description: "Setup project with FD and TD for hello world YAML flow test"
+  tags: [setup, yaml-flow, hello-world]
+
+  chain:
+    # --- Router ---
+    - agent: router
+      tool: builtin:set_intent
+      arguments:
+        intent: create_project
+        project_name: hello-world-yaml-flow
+        description: "A simple hello world TypeScript project for YAML flow testing"
+
+    - agent: router
+      tool: builtin:done
+      arguments:
+        summary: "Agent router: Classified as create_project"
+
+    # --- Planner → BA ---
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: business_analyst
+            prompt: "Gather requirements and create functional design for hello world app"
+          - agent_id: planner
+            prompt: "Re-evaluate after business_analyst completes"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: Planned business_analyst"
+
+    # --- Business Analyst (creates FD) ---
+    - agent: business_analyst
+      tool: coding:make_design
+      approval:
+        status: approved
+      arguments:
+        path: docs/functional-design.md
+        content: |
+          # Functional Design: Hello World App
+
+          ## Requirements
+          - FR-01: Implement a simple hello world function
+          - FR-02: Function should log 'Hello, World!' to console
+          - FR-03: Use TypeScript
+          - FR-04: File name: hello-world.ts
+
+          ## Functionality
+          - Single function that logs message to console
+          - No user interface needed
+          - Pure implementation task
+
+    - agent: business_analyst
+      tool: coding:run_git
+      arguments:
+        command: "add docs/functional-design.md"
+
+    - agent: business_analyst
+      tool: coding:run_git
+      arguments:
+        command: "commit -m 'docs: add functional design for hello world'"
+
+    - agent: business_analyst
+      tool: coding:run_git
+      arguments:
+        command: "push"
+
+    - agent: business_analyst
+      tool: builtin:done
+      arguments:
+        summary: "Agent business_analyst: DESIGN_APPROVED - Functional design created and approved"
+
+    # --- Planner → Architect ---
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: architect
+            prompt: "Create technical design for hello world implementation"
+          - agent_id: planner
+            prompt: "Re-evaluate after architect completes"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: BA approved, planned architect"
+
+    # --- Architect (creates TD) ---
+    - agent: architect
+      tool: coding:run_git
+      arguments:
+        command: "pull"
+
+    - agent: architect
+      tool: coding:read_file
+      arguments:
+        path: docs/functional-design.md
+
+    - agent: architect
+      tool: coding:make_design
+      approval:
+        status: approved
+        by: architect
+      arguments:
+        path: docs/technical-design.md
+        content: |
+          # Technical Design: Hello World Implementation
+
+          ## Technology Stack
+          - Language: TypeScript
+          - Runtime: Node.js
+          - No frameworks needed (console output only)
+
+          ## Implementation Plan
+          1. Create hello-world.ts file
+          2. Implement function that logs 'Hello, World!' to console
+          3. Export the function
+          4. Verify compilation
+
+          ## File Structure
+          - hello-world.ts (main implementation)
+
+          ## Testing Strategy
+          - Manual verification: compile and run
+          - Verify output: "Hello, World!" appears in console
+
+    - agent: architect
+      tool: coding:run_git
+      arguments:
+        command: "add docs/technical-design.md"
+
+    - agent: architect
+      tool: coding:run_git
+      arguments:
+        command: "commit -m 'docs: add technical design for hello world'"
+
+    - agent: architect
+      tool: coding:run_git
+      arguments:
+        command: "push"
+
+    - agent: architect
+      tool: builtin:done
+      arguments:
+        summary: "Agent architect: TECHNICAL_DESIGN_APPROVED - Technical design created and approved"
+
+    # --- Planner (sets up developer) ---
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: developer
+            prompt: "Implement the hello world function as described in the technical design. Use the execute_coding_task_pi tool with flow='tdd' to implement this."
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: Planned developer implementation"
+
+  verify:
+    - gitea_repo_exists: true
+    - file_exists: docs/functional-design.md
+    - file_exists: docs/technical-design.md
+    - file_not_empty: docs/functional-design.md
+    - file_not_empty: docs/technical-design.md

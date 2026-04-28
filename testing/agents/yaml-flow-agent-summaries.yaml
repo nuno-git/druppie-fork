@@ -1,5 +1,11 @@
 ## Agent test: Developer uses YAML flow, receives all agent summaries
 ##
+## Setup: tool test creates a project with FD + TD for hello world
+##   (ready for developer to implement using execute_coding_task_pi)
+##
+## continue_session: true — developer runs in the SAME session as setup.
+##   Developer reads FD and TD from the workspace, then uses execute_coding_task_pi.
+##
 ## This test verifies that when the developer agent calls execute_coding_task_pi
 ## with the new YAML-based TDD flow, it receives summaries from all agents in the tool result.
 ##
@@ -7,25 +13,29 @@
 ## - Tool result includes "summaries" object with entries for each agent
 ## - Each agent (analyst, planner, wave-orchestrator, verifier, pr-author) produces a summary
 ## - Summaries explain what each agent did (not just deliverables)
-## - Variables are set by agents and used for flow control
 
 agent-test:
   name: yaml-flow-agent-summaries
   description: "Developer agent uses YAML flow and receives all agent summaries in tool result"
   tags: [yaml-flow, tdd, summaries, developer, e2e]
 
+  setup:
+    - setup-yaml-flow-hello-world    # creates session with FD + TD + developer pending run
+
+  continue_session: true              # developer runs in the SAME session
+
   message: |
-    I need you to implement a simple hello world function in TypeScript.
-    Use the execute_coding_task_pi tool with the TDD flow.
+    Please implement the hello world function as described in the technical design.
+    Use the execute_coding_task_pi tool with flow='tdd' to implement this.
 
-    Requirements:
-    - Function should log 'Hello, World!' to console
-    - File name: hello-world.ts
-    - Don't create a PR (just verify locally)
+    The technical design is in docs/technical-design.md and specifies:
+    - TypeScript hello-world.ts file
+    - Function that logs 'Hello, World!' to console
+    - Verify compilation locally (no PR needed)
 
-    After the flow completes, report back what each agent did based on the summaries you receive.
+    After the flow completes, please report back what each agent did based on the summaries you receive in the tool result.
 
-  agents: [developer]
+  agents: [developer]                  # developer executes the YAML flow
 
   assert:
     # Verify the tool was called with the correct parameters
@@ -46,18 +56,18 @@ agent-test:
       evaluate: |
         The tool call should include:
         - flow: "tdd"
-        - task: description of implementing hello world
-        - language: "typescript"
-        - repo_target: "project" or "druppie_core"
+        - task: description of implementing hello world based on TD
+        - repo_target: "project"
+        - No language parameter (YAML flow infers from files/context)
 
     result-has-all-summaries:
       description: "Tool result contains summaries from all 5 agents"
       evaluate: |
         The tool result should have a "summaries" object with keys:
-        - "analyst" - non-empty string
-        - "planner" - non-empty string
-        - "wave-orchestrator" - non-empty string
-        - "verifier" - non-empty string
+        - "analyst" - non-empty string explaining task analysis
+        - "planner" - non-empty string explaining build plan
+        - "wave-orchestrator" - non-empty string explaining execution
+        - "verifier" - non-empty string explaining verification
         - "pr-author" - non-empty string (may indicate skipped)
 
     analyst-summary-formatted:
@@ -66,7 +76,7 @@ agent-test:
         The analyst summary should:
         - Mention what was asked (task analysis)
         - Mention approach taken
-        - Mention key decisions (language, simple function)
+        - Mention key decisions (TypeScript, console logging)
         - Be 2-5 sentences long
         - NOT be empty or just "Done"
 
