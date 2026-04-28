@@ -65,6 +65,9 @@ def _register_custom_agent_db_loader() -> None:
             if agent:
                 return repo.to_agent_definition(agent)
             return None
+        except Exception:
+            db.rollback()
+            raise
         finally:
             db.close()
 
@@ -73,6 +76,9 @@ def _register_custom_agent_db_loader() -> None:
         try:
             repo = CustomAgentRepository(db)
             return repo.list_agent_ids()
+        except Exception:
+            db.rollback()
+            raise
         finally:
             db.close()
 

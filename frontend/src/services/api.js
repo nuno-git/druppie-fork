@@ -445,20 +445,20 @@ export const getFoundryStatus = () => request('/api/foundry/status')
 
 // ============ Custom Agents ============
 export const getCustomAgents = () => request('/api/agents/custom')
-export const getCustomAgent = (agentId) => request(`/api/agents/custom/${agentId}`)
+export const getCustomAgent = (agentId) => request(`/api/agents/custom/${encodeURIComponent(agentId)}`)
 export const createCustomAgent = (data) =>
   request('/api/agents/custom', { method: 'POST', body: JSON.stringify(data) })
 export const updateCustomAgent = (agentId, data) =>
-  request(`/api/agents/custom/${agentId}`, { method: 'PUT', body: JSON.stringify(data) })
+  request(`/api/agents/custom/${encodeURIComponent(agentId)}`, { method: 'PUT', body: JSON.stringify(data) })
 export const deleteCustomAgent = (agentId) =>
-  request(`/api/agents/custom/${agentId}`, { method: 'DELETE' })
-export const getCustomAgentYaml = (agentId) => request(`/api/agents/custom/${agentId}/yaml`)
+  request(`/api/agents/custom/${encodeURIComponent(agentId)}`, { method: 'DELETE' })
+export const getCustomAgentYaml = (agentId) => request(`/api/agents/custom/${encodeURIComponent(agentId)}/yaml`)
 export const updateCustomAgentYaml = (agentId, yamlStr) =>
-  request(`/api/agents/custom/${agentId}/yaml`, { method: 'PUT', body: JSON.stringify({ yaml: yamlStr }) })
+  request(`/api/agents/custom/${encodeURIComponent(agentId)}/yaml`, { method: 'PUT', body: JSON.stringify({ yaml: yamlStr }) })
 export const getAgentMetadata = () => request('/api/agents/metadata')
 export const validateForFoundry = (agentId) =>
-  request(`/api/agents/custom/${agentId}/validate-foundry`, { method: 'POST' })
+  request(`/api/agents/custom/${encodeURIComponent(agentId)}/validate-foundry`, { method: 'POST' })
 export const deployCustomAgent = (agentId) =>
-  request(`/api/agents/custom/${agentId}/deploy`, { method: 'POST' })
+  request(`/api/agents/custom/${encodeURIComponent(agentId)}/deploy`, { method: 'POST' })
 export const undeployCustomAgent = (agentId) =>
-  request(`/api/agents/custom/${agentId}/undeploy`, { method: 'POST' })
+  request(`/api/agents/custom/${encodeURIComponent(agentId)}/undeploy`, { method: 'POST' })

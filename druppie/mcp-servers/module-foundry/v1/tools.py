@@ -308,6 +308,17 @@ async def deploy_agent(yaml_content: str, dry_run: bool = False) -> dict:
             "warnings": warnings,
         }
 
+    if deploy_result.get("skipped_tools"):
+        warnings.append(
+            {
+                "field": "tools",
+                "message": (
+                    f"these tool types were skipped (not supported by current SDK): "
+                    f"{deploy_result['skipped_tools']}"
+                ),
+            }
+        )
+
     return {
         "ok": True,
         "stage": "deploy",

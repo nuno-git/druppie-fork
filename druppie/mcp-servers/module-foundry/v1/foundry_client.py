@@ -177,16 +177,14 @@ class FoundryClient:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def build_tool_objects(tool_refs: list[dict]) -> list:
+    def build_tool_objects(tool_refs: list[dict]) -> tuple[list, list[str]]:
         """Map FoundryToolRef dicts to Azure SDK tool objects.
 
-        Tools the current SDK doesn't expose (browser_automation,
-        deep_research, etc.) are silently skipped — matches the
-        existing FoundryService behavior. The validator runs before
-        this, so inputs are already schema-valid.
+        Returns (tools, skipped_types) — skipped_types lists tool types
+        that the current SDK doesn't expose (browser_automation, etc.).
         """
         if not tool_refs:
-            return []
+            return [], []
 
         from azure.ai.projects.models import (
             BingGroundingTool,
@@ -194,24 +192,23 @@ class FoundryClient:
             FileSearchTool,
         )
 
-        # zero-config: no constructor args
         zero_config = {
             "code_interpreter": CodeInterpreterTool,
             "file_search": FileSearchTool,
         }
-        # connection-backed: prefer passing connection_id, fall back to
-        # no-arg instantiation for SDK versions that don't accept it
         connection_backed = {
             "bing_grounding": BingGroundingTool,
         }
 
         tools = []
+        skipped = []
         for ref in tool_refs:
             ttype = ref.get("type")
             cid = ref.get("connection_id")
             cls = zero_config.get(ttype) or connection_backed.get(ttype)
             if cls is None:
                 logger.info("foundry_tool_type_not_supported_by_sdk: %s", ttype)
+                skipped.append(ttype)
                 continue
             if ttype in connection_backed and cid:
                 try:
@@ -223,7 +220,7 @@ class FoundryClient:
                         ttype,
                     )
             tools.append(cls())
-        return tools
+        return tools, skipped
 
     def create_agent(self, normalized: dict) -> dict:
         """Deploy a validated, normalized YAML payload to Foundry."""
@@ -241,7 +238,13 @@ class FoundryClient:
                 "code": "sdk_missing",
             }
 
-        tools = self.build_tool_objects(normalized.get("tools", []))
+        tools, skipped_tools = self.build_tool_objects(normalized.get("tools", []))
+        if skipped_tools:
+            logger.warning(
+                "foundry_create_agent_skipped_tools: name=%s skipped=%s",
+                normalized.get("name"),
+                skipped_tools,
+            )
 
         definition = PromptAgentDefinition(
             model=normalized["model"],
@@ -266,7 +269,7 @@ class FoundryClient:
                 "code": "deploy_failed",
             }
 
-        return {
+        resp = {
             "ok": True,
             "foundry_agent_id": getattr(result, "id", None),
             "name": getattr(result, "name", normalized["name"]),
@@ -274,6 +277,9 @@ class FoundryClient:
             "model": normalized["model"],
             "deployed_at": datetime.now(timezone.utc).isoformat(),
         }
+        if skipped_tools:
+            resp["skipped_tools"] = skipped_tools
+        return resp
 
 
 class FoundryNotConfiguredError(Exception):

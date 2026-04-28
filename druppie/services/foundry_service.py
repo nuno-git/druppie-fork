@@ -1,6 +1,7 @@
 """Azure AI Foundry deployment service."""
 
 import hashlib
+import json
 import structlog
 from datetime import datetime, timezone
 
@@ -14,9 +15,8 @@ def _default_foundry_model() -> str:
 class FoundryService:
     """Deploys agent definitions to Azure AI Foundry."""
 
-    def __init__(self, endpoint: str | None = None, api_key: str | None = None):
+    def __init__(self, endpoint: str | None = None):
         self.endpoint = endpoint
-        self.api_key = api_key
         self._client = None
 
     def _get_client(self):
@@ -63,8 +63,15 @@ class FoundryService:
 
         Used to detect drift between the local definition and the deployed version.
         """
-        model = agent_detail.llm_profile or _default_foundry_model()
-        payload = f"{model}\n{agent_detail.system_prompt}\n{sorted(agent_detail.foundry_tools)}"
+        canonical = {
+            "model": agent_detail.llm_profile or _default_foundry_model(),
+            "system_prompt": agent_detail.system_prompt or "",
+            "foundry_tools": sorted(agent_detail.foundry_tools or []),
+            "temperature": agent_detail.temperature,
+            "max_tokens": agent_detail.max_tokens,
+            "description": agent_detail.description or "",
+        }
+        payload = json.dumps(canonical, sort_keys=True)
         return hashlib.sha256(payload.encode()).hexdigest()
 
     def check_connection(self) -> dict:
@@ -75,7 +82,7 @@ class FoundryService:
             client = self._get_client()
             # Actually verify credentials by making a lightweight API call
             client.agents.list(limit=1)
-            return {"status": "connected", "endpoint": self.endpoint}
+            return {"status": "connected", "endpoint": "configured"}
         except FoundryNotConfiguredError as e:
             return {"status": "not_configured", "detail": str(e)}
         except Exception as e:

@@ -12,9 +12,17 @@ from uuid import UUID
 import structlog
 import yaml
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from druppie.api.deps import get_current_user, get_custom_agent_service, get_user_roles, require_any_role
+
+
+def _get_user_id(user: dict) -> UUID:
+    """Extract and validate user UUID from JWT token."""
+    try:
+        return UUID(user["sub"])
+    except (ValueError, KeyError):
+        raise HTTPException(status_code=401, detail="Invalid user identity in token")
 from druppie.domain.custom_agent import CustomAgentCreate, CustomAgentUpdate
 from druppie.services.custom_agent_service import CustomAgentService
 
@@ -170,7 +178,7 @@ async def list_custom_agents(
 
     Admin/developer roles see all agents. Others see only their own.
     """
-    user_id = UUID(user["sub"])
+    user_id = _get_user_id(user)
     roles = get_user_roles(user)
     agents = service.list_custom_agents_for_user(user_id, roles)
     return {"agents": [a.model_dump() for a in agents], "total": len(agents)}
@@ -181,9 +189,10 @@ async def create_custom_agent(
     data: CustomAgentCreate,
     service: CustomAgentService = Depends(get_custom_agent_service),
     user: dict = Depends(get_current_user),
+    _role=Depends(require_any_role(["developer", "admin", "architect"])),
 ):
-    """Create a new custom agent."""
-    owner_id = UUID(user["sub"])
+    """Create a new custom agent. Requires developer, admin, or architect role."""
+    owner_id = _get_user_id(user)
     detail = service.create_custom_agent(data, owner_id)
     return detail.model_dump()
 
@@ -195,7 +204,7 @@ async def get_custom_agent(
     user: dict = Depends(get_current_user),
 ):
     """Get a custom agent's full configuration."""
-    user_id = UUID(user["sub"])
+    user_id = _get_user_id(user)
     roles = get_user_roles(user)
     detail = service.get_custom_agent(agent_id)
     if detail.owner_id != user_id and not any(r in roles for r in ("admin", "developer")):
@@ -211,8 +220,9 @@ async def update_custom_agent(
     user: dict = Depends(get_current_user),
 ):
     """Update a custom agent."""
-    user_id = UUID(user["sub"])
-    detail = service.update_custom_agent(agent_id, data, user_id)
+    user_id = _get_user_id(user)
+    roles = get_user_roles(user)
+    detail = service.update_custom_agent(agent_id, data, user_id, user_roles=roles)
     return detail.model_dump()
 
 
@@ -223,8 +233,9 @@ async def delete_custom_agent(
     user: dict = Depends(get_current_user),
 ):
     """Delete a custom agent."""
-    user_id = UUID(user["sub"])
-    service.delete_custom_agent(agent_id, user_id)
+    user_id = _get_user_id(user)
+    roles = get_user_roles(user)
+    service.delete_custom_agent(agent_id, user_id, user_roles=roles)
 
 
 @router.get("/agents/custom/{agent_id}/yaml")
@@ -234,7 +245,7 @@ async def export_custom_agent_yaml(
     user: dict = Depends(get_current_user),
 ):
     """Export a custom agent as YAML."""
-    user_id = UUID(user["sub"])
+    user_id = _get_user_id(user)
     roles = get_user_roles(user)
     detail = service.get_custom_agent(agent_id)
     if detail.owner_id != user_id and not any(r in roles for r in ("admin", "developer")):
@@ -244,7 +255,7 @@ async def export_custom_agent_yaml(
 
 
 class YamlUpdateRequest(BaseModel):
-    yaml: str
+    yaml: str = Field(..., max_length=65536)
 
 
 @router.put("/agents/custom/{agent_id}/yaml")
@@ -255,7 +266,7 @@ async def update_custom_agent_yaml(
     user: dict = Depends(get_current_user),
 ):
     """Update a custom agent from raw YAML."""
-    user_id = UUID(user["sub"])
+    user_id = _get_user_id(user)
     try:
         data = yaml.safe_load(body.yaml)
     except yaml.YAMLError as e:
@@ -315,7 +326,7 @@ async def validate_custom_agent(
     user: dict = Depends(get_current_user),
 ):
     """Validate a custom agent's configuration."""
-    user_id = UUID(user["sub"])
+    user_id = _get_user_id(user)
     roles = get_user_roles(user)
     detail = service.get_custom_agent(agent_id)
     if detail.owner_id != user_id and not any(r in roles for r in ("admin", "developer")):
@@ -334,7 +345,7 @@ async def validate_for_foundry(
 
     Returns validation results with errors (blocking) and warnings (informational).
     """
-    user_id = UUID(user["sub"])
+    user_id = _get_user_id(user)
     roles = get_user_roles(user)
     detail = service.get_custom_agent(agent_id)
     if detail.owner_id != user_id and not any(r in roles for r in ("admin", "developer")):
@@ -353,8 +364,9 @@ async def deploy_custom_agent(
 
     Requires developer or admin role.
     """
-    user_id = UUID(user["sub"])
-    return service.deploy_custom_agent(agent_id, user_id)
+    user_id = _get_user_id(user)
+    roles = get_user_roles(user)
+    return service.deploy_custom_agent(agent_id, user_id, user_roles=roles)
 
 
 @router.post("/agents/custom/{agent_id}/undeploy")
@@ -368,8 +380,9 @@ async def undeploy_custom_agent(
 
     Requires developer or admin role.
     """
-    user_id = UUID(user["sub"])
-    return service.undeploy_custom_agent(agent_id, user_id)
+    user_id = _get_user_id(user)
+    roles = get_user_roles(user)
+    return service.undeploy_custom_agent(agent_id, user_id, user_roles=roles)
 
 
 # =============================================================================

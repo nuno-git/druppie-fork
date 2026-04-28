@@ -392,13 +392,8 @@ services:
       MCP_PORT: "9012"
       FOUNDRY_PROJECT_ENDPOINT: ${FOUNDRY_PROJECT_ENDPOINT:-}
       AZURE_TENANT_ID: ${AZURE_TENANT_ID:-}
-      # Map host-side SP_* vars (project convention) onto the names the
-      # Azure SDK's EnvironmentCredential actually reads. SP_SEC_ID (the
-      # secret's AAD object id) is not used — SDK only needs the value.
-      AZURE_CLIENT_ID: ${SP_APP_ID:-}
-      AZURE_CLIENT_SECRET: ${SP_SECRET:-}
-    volumes:
-      - ${HOME}/.azure:/root/.azure:ro
+      AZURE_CLIENT_ID: ${AZURE_CLIENT_ID:-}
+      AZURE_CLIENT_SECRET: ${AZURE_CLIENT_SECRET:-}
     ports:
       - "${MCP_FOUNDRY_PORT:-9012}:9012"
     networks:
@@ -594,8 +589,8 @@ services:
       FOUNDRY_API_URL: ${FOUNDRY_API_URL:-}
       FOUNDRY_PROJECT_ENDPOINT: ${FOUNDRY_PROJECT_ENDPOINT:-}
       AZURE_TENANT_ID: ${AZURE_TENANT_ID:-}
-      AZURE_CLIENT_ID: ${SP_APP_ID:-}
-      AZURE_CLIENT_SECRET: ${SP_SECRET:-}
+      AZURE_CLIENT_ID: ${AZURE_CLIENT_ID:-}
+      AZURE_CLIENT_SECRET: ${AZURE_CLIENT_SECRET:-}
       CORS_ORIGINS: http://${EXTERNAL_HOST:-localhost}:${FRONTEND_PORT:-5273},http://localhost:5173
       GITEA_URL: http://${EXTERNAL_HOST:-localhost}:${GITEA_PORT:-3100}
       GITEA_INTERNAL_URL: http://gitea:3000
@@ -634,7 +629,6 @@ services:
         target: /var/run/docker.sock
         bind:
           create_host_path: false
-      - ${HOME}/.azure:/root/.azure:ro
     ports:
       - "${BACKEND_PORT:-8100}:8000"
     depends_on:
@@ -687,8 +681,8 @@ services:
       FOUNDRY_API_URL: ${FOUNDRY_API_URL:-}
       FOUNDRY_PROJECT_ENDPOINT: ${FOUNDRY_PROJECT_ENDPOINT:-}
       AZURE_TENANT_ID: ${AZURE_TENANT_ID:-}
-      AZURE_CLIENT_ID: ${SP_APP_ID:-}
-      AZURE_CLIENT_SECRET: ${SP_SECRET:-}
+      AZURE_CLIENT_ID: ${AZURE_CLIENT_ID:-}
+      AZURE_CLIENT_SECRET: ${AZURE_CLIENT_SECRET:-}
       CORS_ORIGINS: http://${EXTERNAL_HOST:-localhost}:${FRONTEND_PORT:-5273},http://localhost:5173
       GITEA_URL: http://${EXTERNAL_HOST:-localhost}:${GITEA_PORT:-3100}
       GITEA_INTERNAL_URL: http://gitea:3000

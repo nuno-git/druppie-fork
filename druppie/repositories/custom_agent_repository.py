@@ -16,6 +16,18 @@ from ..db.models.custom_agent import (
 )
 
 
+UPDATABLE_FIELDS = {
+    "name", "description", "category", "system_prompt",
+    "llm_profile", "temperature", "max_tokens", "max_iterations",
+    "kind", "workflow_yaml", "is_active",
+}
+
+DEPLOYMENT_FIELDS = {
+    "deployment_status", "deployed_at", "deployed_version",
+    "deployed_spec_hash", "foundry_agent_id",
+}
+
+
 class CustomAgentRepository(BaseRepository):
     """Database access for custom agent definitions."""
 
@@ -97,9 +109,9 @@ class CustomAgentRepository(BaseRepository):
         approval_overrides = kwargs.pop("approval_overrides", None)
         foundry_tools = kwargs.pop("foundry_tools", None)
 
-        # Update scalar fields
+        # Update scalar fields (allowlist prevents mass-assignment)
         for key, value in kwargs.items():
-            if hasattr(agent, key):
+            if key in UPDATABLE_FIELDS:
                 setattr(agent, key, value)
 
         # Replace child rows if provided
@@ -120,6 +132,16 @@ class CustomAgentRepository(BaseRepository):
         self._create_child_rows(agent, mcps, skills, system_prompts_list, builtin_tools, approval_overrides, foundry_tools)
         self.db.flush()
         return agent
+
+    def update_deployment_status(self, agent_id: str, **kwargs) -> None:
+        """Update deployment-related fields only."""
+        agent = self.get_by_agent_id(agent_id)
+        if not agent:
+            raise ValueError(f"Custom agent '{agent_id}' not found")
+        for key, value in kwargs.items():
+            if key in DEPLOYMENT_FIELDS:
+                setattr(agent, key, value)
+        self.db.flush()
 
     def delete(self, agent_id: str) -> None:
         """Delete a custom agent by agent_id."""

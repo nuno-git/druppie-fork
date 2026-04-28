@@ -2,7 +2,7 @@
  * Agent Editor Page - Create or edit custom agent definitions
  */
 
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Markdown from 'react-markdown'
@@ -146,8 +146,8 @@ const AgentEditor = () => {
       max_tokens: form.max_tokens ? parseInt(form.max_tokens, 10) : undefined,
       max_iterations: form.max_iterations ? parseInt(form.max_iterations, 10) : undefined,
     }
-    if (!payload.max_tokens) delete payload.max_tokens
-    if (!payload.max_iterations) delete payload.max_iterations
+    if (payload.max_tokens === undefined || payload.max_tokens === null || payload.max_tokens === '') delete payload.max_tokens
+    if (payload.max_iterations === undefined || payload.max_iterations === null || payload.max_iterations === '') delete payload.max_iterations
     if (isEdit) updateMutation.mutate(payload)
     else createMutation.mutate(payload)
   }
@@ -524,7 +524,6 @@ const YamlEditorButton = ({ agentId }) => {
       queryClient.invalidateQueries({ queryKey: ['custom-agents'] })
       queryClient.invalidateQueries({ queryKey: ['custom-agent', agentId] })
       setOpen(false)
-      navigate(0) // reload page to reflect changes
     } catch (err) {
       setError(err.message || 'Failed to save YAML')
     } finally {
@@ -543,12 +542,23 @@ const YamlEditorButton = ({ agentId }) => {
     URL.revokeObjectURL(url)
   }
 
+  const copyTimerRef = useRef(null)
   const handleCopy = () => {
     if (!yaml) return
     navigator.clipboard.writeText(yaml)
     setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
+    clearTimeout(copyTimerRef.current)
+    copyTimerRef.current = setTimeout(() => setCopied(false), 2000)
   }
+
+  useEffect(() => () => clearTimeout(copyTimerRef.current), [])
+
+  useEffect(() => {
+    if (!open) return
+    const onKey = (e) => { if (e.key === 'Escape') setOpen(false) }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [open])
 
   return (
     <>
@@ -562,10 +572,10 @@ const YamlEditorButton = ({ agentId }) => {
       </button>
 
       {open && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setOpen(false)}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setOpen(false)} role="dialog" aria-modal="true" aria-labelledby="yaml-modal-title">
           <div className="bg-white rounded-xl shadow-xl w-full max-w-4xl max-h-[85vh] flex flex-col m-4" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between px-6 py-4 border-b">
-              <h3 className="text-sm font-medium text-gray-900">{agentId}.yaml</h3>
+              <h3 id="yaml-modal-title" className="text-sm font-medium text-gray-900">{agentId}.yaml</h3>
               <div className="flex items-center gap-2">
                 <button onClick={handleCopy} className="p-1.5 text-gray-400 hover:text-blue-600 rounded transition-colors" title="Copy">
                   {copied ? <CheckCircle className="w-4 h-4 text-green-500" /> : <Copy className="w-4 h-4" />}
@@ -625,6 +635,7 @@ const YamlEditorButton = ({ agentId }) => {
 }
 
 const DeployButton = ({ agentId }) => {
+  const queryClient = useQueryClient()
   const [phase, setPhase] = useState('idle') // idle | validating | validated | deploying
   const [validation, setValidation] = useState(null)
   const [result, setResult] = useState(null)
@@ -653,6 +664,8 @@ const DeployButton = ({ agentId }) => {
       setResult(data)
       setPhase('idle')
       setValidation(null)
+      queryClient.invalidateQueries({ queryKey: ['custom-agents'] })
+      queryClient.invalidateQueries({ queryKey: ['custom-agent', agentId] })
     } catch (err) {
       setError(err.message || 'Deployment failed')
       setPhase('idle')
@@ -664,6 +677,13 @@ const DeployButton = ({ agentId }) => {
     setValidation(null)
     setError(null)
   }
+
+  useEffect(() => {
+    if (phase !== 'validated') return
+    const onKey = (e) => { if (e.key === 'Escape') handleClose() }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [phase])
 
   return (
     <div className="relative">
@@ -684,10 +704,10 @@ const DeployButton = ({ agentId }) => {
 
       {/* Validation results dialog */}
       {phase === 'validated' && validation && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={handleClose}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={handleClose} role="dialog" aria-modal="true" aria-labelledby="deploy-modal-title">
           <div className="bg-white rounded-xl shadow-xl w-full max-w-lg m-4" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between px-6 py-4 border-b">
-              <h3 className="text-sm font-medium text-gray-900">Foundry Deployment Validation</h3>
+              <h3 id="deploy-modal-title" className="text-sm font-medium text-gray-900">Foundry Deployment Validation</h3>
               <button onClick={handleClose} className="p-1.5 text-gray-400 hover:text-gray-600 rounded transition-colors">
                 <X className="w-4 h-4" />
               </button>

@@ -2,7 +2,7 @@
  * Settings Page - Admin Configuration
  */
 
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { User, Server, Bot, Info, Shield, CheckCircle, XCircle, RefreshCw, Cpu, ChevronDown, ChevronRight, Cloud } from 'lucide-react'
 import { getMCPServers, getMCPTools, getStatus, getAgents, getFoundryStatus } from '../services/api'
@@ -116,35 +116,26 @@ const AgentRow = ({ agent }) => {
 }
 
 const FoundryStatusSection = () => {
-  const [status, setStatus] = useState('loading')
-  const [detail, setDetail] = useState(null)
-  const [endpoint, setEndpoint] = useState(null)
+  const { data, isLoading, error } = useQuery({
+    queryKey: ['foundry-status'],
+    queryFn: getFoundryStatus,
+  })
 
-  const checkStatus = useCallback(async () => {
-    try {
-      const result = await getFoundryStatus()
-      setStatus(result.status)
-      setDetail(result.detail || null)
-      setEndpoint(result.endpoint || null)
-    } catch {
-      setStatus('error')
-      setDetail('Could not reach backend')
-    }
-  }, [])
-
-  useEffect(() => { checkStatus() }, [checkStatus])
+  const status = error ? 'error' : (data?.status || 'loading')
+  const detail = error ? 'Could not reach backend' : (data?.detail || null)
+  const endpoint = data?.endpoint || null
 
   return (
     <SectionCard title="Azure AI Foundry" icon={Cloud}>
       <div className="space-y-4">
         <div className="flex items-center justify-between">
           <span className="text-sm text-gray-500">Connection Status</span>
-          {status === 'loading' ? (
+          {isLoading ? (
             <span className="text-xs text-gray-400">Checking...</span>
-          ) : status === 'configured' ? (
+          ) : status === 'connected' ? (
             <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-700">
               <CheckCircle className="w-3 h-3 mr-1" />
-              Configured
+              Connected
             </span>
           ) : (
             <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-500">
@@ -160,14 +151,14 @@ const FoundryStatusSection = () => {
           </div>
         )}
 
-        {detail && status !== 'configured' && (
+        {detail && status !== 'connected' && (
           <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3">
             <p className="text-sm text-yellow-700">{detail}</p>
           </div>
         )}
 
         <p className="text-xs text-gray-400">
-          Agent deployment uses DefaultAzureCredential (az login, managed identity) or FOUNDRY_API_KEY.
+          Agent deployment uses DefaultAzureCredential (az login, managed identity, or service principal env vars).
         </p>
       </div>
     </SectionCard>

@@ -111,6 +111,7 @@ __all__ = [
     "CustomAgentSystemPrompt",
     "CustomAgentBuiltinTool",
     "CustomAgentApprovalOverride",
+    "CustomAgentFoundryTool",
     # Benchmark and evaluation
     "BenchmarkRun",
     "EvaluationResult",

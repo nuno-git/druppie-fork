@@ -36,6 +36,7 @@ VALID_FOUNDRY_TOOLS = {
     "bing_custom_search",
     "azure_ai_search",
     "microsoft_fabric",
+    "sharepoint_grounding",
 }
 
 

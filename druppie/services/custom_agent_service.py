@@ -2,10 +2,12 @@
 
 import os
 import re
+import time
 from uuid import UUID
 
 import structlog
 import yaml
+from sqlalchemy.exc import IntegrityError
 
 from ..agents.builtin_tools import BUILTIN_TOOL_DEFS
 from ..agents.definition_loader import AgentDefinitionLoader
@@ -21,6 +23,27 @@ from ..domain.custom_agent import (
 from ..repositories.custom_agent_repository import CustomAgentRepository
 
 logger = structlog.get_logger()
+
+_foundry_metadata_cache: dict = {"data": None, "expires": 0.0}
+_FOUNDRY_CACHE_TTL = 300  # 5 minutes
+
+
+def _get_cached_foundry_metadata(endpoint: str | None) -> dict:
+    """Return Foundry models + tools, cached for 5 minutes."""
+    now = time.time()
+    if _foundry_metadata_cache["data"] is not None and now < _foundry_metadata_cache["expires"]:
+        return _foundry_metadata_cache["data"]
+
+    from druppie.services.foundry_service import FoundryService
+
+    foundry = FoundryService(endpoint=endpoint)
+    result = {
+        "foundry_models": foundry.list_models(),
+        "foundry_tools": foundry.list_tools(),
+    }
+    _foundry_metadata_cache["data"] = result
+    _foundry_metadata_cache["expires"] = now + _FOUNDRY_CACHE_TTL
+    return result
 
 
 class CustomAgentService:
@@ -120,7 +143,13 @@ class CustomAgentService:
             approval_overrides=data.approval_overrides or None,
             foundry_tools=data.foundry_tools or None,
         )
-        self.repo.commit()
+        try:
+            self.repo.commit()
+        except IntegrityError:
+            self.repo.rollback()
+            raise ConflictError(
+                f"Custom agent with agent_id '{data.agent_id}' already exists"
+            )
 
         logger.info(
             "custom_agent_created",
@@ -134,15 +163,15 @@ class CustomAgentService:
         agent_id: str,
         data: CustomAgentUpdate,
         user_id: UUID,
+        user_roles: list[str] | None = None,
     ) -> CustomAgentDetail:
-        """Update an existing custom agent. Only the owner can update."""
+        """Update an existing custom agent. Owner or admin can update."""
         agent = self.repo.get_by_agent_id(agent_id)
         if not agent:
             raise NotFoundError("agent", agent_id)
 
-        # Verify ownership
-        if agent.owner_id != user_id:
-            raise AuthorizationError("Only the owner can update this custom agent")
+        if agent.owner_id != user_id and "admin" not in (user_roles or []):
+            raise AuthorizationError("Only the owner or an admin can update this custom agent")
 
         # Validate category if being changed
         if data.category == "system":
@@ -195,14 +224,16 @@ class CustomAgentService:
         logger.info("custom_agent_updated", agent_id=agent_id, by_user=str(user_id))
         return self._to_detail(agent)
 
-    def delete_custom_agent(self, agent_id: str, user_id: UUID) -> None:
-        """Delete a custom agent. Only the owner can delete."""
+    def delete_custom_agent(
+        self, agent_id: str, user_id: UUID, user_roles: list[str] | None = None,
+    ) -> None:
+        """Delete a custom agent. Owner or admin can delete."""
         agent = self.repo.get_by_agent_id(agent_id)
         if not agent:
             raise NotFoundError("agent", agent_id)
 
-        if agent.owner_id != user_id:
-            raise AuthorizationError("Only the owner can delete this custom agent")
+        if agent.owner_id != user_id and "admin" not in (user_roles or []):
+            raise AuthorizationError("Only the owner or an admin can delete this custom agent")
 
         self.repo.delete(agent_id)
         self.repo.commit()
@@ -224,8 +255,10 @@ class CustomAgentService:
         foundry = FoundryService()  # Only need validation logic, no client needed
         return foundry.validate_for_foundry(detail)
 
-    def deploy_custom_agent(self, agent_id: str, user_id: UUID) -> dict:
-        """Deploy a custom agent to Azure AI Foundry. Only the owner can deploy."""
+    def deploy_custom_agent(
+        self, agent_id: str, user_id: UUID, user_roles: list[str] | None = None,
+    ) -> dict:
+        """Deploy a custom agent to Azure AI Foundry. Owner or admin can deploy."""
         from datetime import datetime, timezone
 
         from ..core.config import get_settings
@@ -234,14 +267,11 @@ class CustomAgentService:
         agent = self.repo.get_by_agent_id(agent_id)
         if not agent:
             raise NotFoundError("agent", agent_id)
-        if agent.owner_id != user_id:
-            raise AuthorizationError("Only the owner can deploy this custom agent")
+        if agent.owner_id != user_id and "admin" not in (user_roles or []):
+            raise AuthorizationError("Only the owner or an admin can deploy this custom agent")
 
         settings = get_settings()
-        foundry = FoundryService(
-            endpoint=settings.llm.foundry_project_endpoint,
-            api_key=settings.llm.foundry_api_key or None,
-        )
+        foundry = FoundryService(endpoint=settings.llm.foundry_project_endpoint)
         if not foundry.is_configured():
             raise ValidationError(
                 "Azure AI Foundry is not configured. Set FOUNDRY_PROJECT_ENDPOINT in .env.",
@@ -265,20 +295,22 @@ class CustomAgentService:
 
         try:
             result = foundry.deploy_agent(detail)
-            agent.deployment_status = "deployed"
-            agent.deployed_at = datetime.now(timezone.utc)
-            agent.deployed_version = result.get("version")
-            agent.deployed_spec_hash = spec_hash
-            agent.foundry_agent_id = result.get("foundry_agent_id")
+            self.repo.update_deployment_status(
+                agent_id,
+                deployment_status="deployed",
+                deployed_at=datetime.now(timezone.utc),
+                deployed_version=result.get("version"),
+                deployed_spec_hash=spec_hash,
+                foundry_agent_id=result.get("foundry_agent_id"),
+            )
             self.repo.commit()
-            # Include validation warnings in the response
             if validation["warnings"]:
                 result["warnings"] = validation["warnings"]
             return result
         except FoundryNotConfiguredError as e:
             raise ValidationError(str(e), field="foundry")
         except Exception as e:
-            agent.deployment_status = "failed"
+            self.repo.update_deployment_status(agent_id, deployment_status="failed")
             self.repo.commit()
             logger.error("deploy_custom_agent_failed", agent_id=agent_id, exc_info=True)
             # Surface a clear message instead of letting the raw SDK exception bubble
@@ -290,25 +322,23 @@ class CustomAgentService:
                 )
             raise ValidationError(f"Deployment failed: {msg}", field="foundry")
 
-    def undeploy_custom_agent(self, agent_id: str, user_id: UUID) -> dict:
-        """Remove a custom agent from Azure AI Foundry. Only the owner can undeploy."""
+    def undeploy_custom_agent(
+        self, agent_id: str, user_id: UUID, user_roles: list[str] | None = None,
+    ) -> dict:
+        """Remove a custom agent from Azure AI Foundry. Owner or admin can undeploy."""
         from ..core.config import get_settings
         from ..services.foundry_service import FoundryService
 
         agent = self.repo.get_by_agent_id(agent_id)
         if not agent:
             raise NotFoundError("agent", agent_id)
-        if agent.owner_id != user_id:
-            raise AuthorizationError("Only the owner can undeploy this custom agent")
+        if agent.owner_id != user_id and "admin" not in (user_roles or []):
+            raise AuthorizationError("Only the owner or an admin can undeploy this custom agent")
 
         settings = get_settings()
-        foundry = FoundryService(
-            endpoint=settings.llm.foundry_project_endpoint,
-            api_key=settings.llm.foundry_api_key or None,
-        )
+        foundry = FoundryService(endpoint=settings.llm.foundry_project_endpoint)
 
         if foundry.is_configured():
-            # Use stored Foundry agent ID if available, fall back to agent_id name
             foundry_name = agent.foundry_agent_id or agent_id
             success = foundry.delete_agent(foundry_name)
             if not success:
@@ -317,11 +347,14 @@ class CustomAgentService:
                     field="foundry",
                 )
 
-        agent.deployment_status = None
-        agent.deployed_at = None
-        agent.deployed_version = None
-        agent.deployed_spec_hash = None
-        agent.foundry_agent_id = None
+        self.repo.update_deployment_status(
+            agent_id,
+            deployment_status=None,
+            deployed_at=None,
+            deployed_version=None,
+            deployed_spec_hash=None,
+            foundry_agent_id=None,
+        )
         self.repo.commit()
 
         logger.info("custom_agent_undeployed", agent_id=agent_id, by_user=str(user_id))
@@ -452,7 +485,7 @@ class CustomAgentService:
             data["definition"]["max_tokens"] = detail.max_tokens
         if detail.max_iterations:
             data["definition"]["max_iterations"] = detail.max_iterations
-        if detail.temperature and detail.temperature != 0.1:
+        if detail.temperature is not None and abs(detail.temperature - 0.1) > 1e-9:
             data["definition"]["temperature"] = detail.temperature
 
         return yaml.dump(data, default_flow_style=False, sort_keys=False)
@@ -493,17 +526,13 @@ class CustomAgentService:
         # Builtin tools from BUILTIN_TOOL_DEFS
         builtin_tools = sorted(BUILTIN_TOOL_DEFS.keys())
 
-        # LLM models from Azure Foundry (dynamically loaded)
-        from druppie.services.foundry_service import FoundryService
+        # LLM models from Azure Foundry (cached, 5-min TTL)
         from druppie.core.config import get_settings
 
         settings = get_settings()
-        foundry = FoundryService(
-            endpoint=settings.llm.foundry_project_endpoint,
-            api_key=settings.llm.foundry_api_key or None,
-        )
-        foundry_models = foundry.list_models()
-        foundry_tools = foundry.list_tools()
+        foundry_meta = _get_cached_foundry_metadata(settings.llm.foundry_project_endpoint)
+        foundry_models = foundry_meta["foundry_models"]
+        foundry_tools = foundry_meta["foundry_tools"]
 
         # Categories (hardcoded, minus "system" which is reserved)
         categories = ["execution", "planning", "review", "analysis"]
@@ -526,10 +555,7 @@ class CustomAgentService:
         from druppie.core.config import get_settings
 
         settings = get_settings()
-        foundry = FoundryService(
-            endpoint=settings.llm.foundry_project_endpoint,
-            api_key=settings.llm.foundry_api_key or None,
-        )
+        foundry = FoundryService(endpoint=settings.llm.foundry_project_endpoint)
         models = foundry.list_models()
         if models:
             return models[0]["id"]

@@ -195,7 +195,7 @@ function App() {
                           <Route
                             path="/agents/new"
                             element={
-                              <ProtectedRoute>
+                              <ProtectedRoute requiredRole="developer">
                                 <AgentEditor />
                               </ProtectedRoute>
                             }
@@ -203,7 +203,7 @@ function App() {
                           <Route
                             path="/agents/:agentId/edit"
                             element={
-                              <ProtectedRoute>
+                              <ProtectedRoute requiredRole="developer">
                                 <AgentEditor />
                               </ProtectedRoute>
                             }

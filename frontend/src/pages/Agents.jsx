@@ -2,7 +2,7 @@
  * Agents Page - View built-in agents and manage custom agents
  */
 
-import React, { useState, useCallback, useEffect } from 'react'
+import React, { useState, useCallback, useEffect, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import {
@@ -214,14 +214,24 @@ const YamlEditorModal = ({ agentId, onClose }) => {
     }
   }, [agentId])
 
-  useEffect(() => { loadYaml() }, [agentId])
+  useEffect(() => { loadYaml() }, [loadYaml])
 
+  const copyTimerRef = useRef(null)
   const handleCopy = () => {
     if (!yaml) return
     navigator.clipboard.writeText(yaml)
     setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
+    clearTimeout(copyTimerRef.current)
+    copyTimerRef.current = setTimeout(() => setCopied(false), 2000)
   }
+
+  useEffect(() => () => clearTimeout(copyTimerRef.current), [])
+
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose() }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [onClose])
 
   const handleDownload = () => {
     if (!yaml) return
@@ -235,10 +245,10 @@ const YamlEditorModal = ({ agentId, onClose }) => {
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={onClose} role="dialog" aria-modal="true" aria-labelledby="yaml-viewer-title">
       <div className="bg-white rounded-xl shadow-xl w-full max-w-4xl max-h-[85vh] flex flex-col m-4" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between px-6 py-4 border-b">
-          <h3 className="text-sm font-medium text-gray-900">{agentId}.yaml <span className="text-gray-400 ml-1">(read-only)</span></h3>
+          <h3 id="yaml-viewer-title" className="text-sm font-medium text-gray-900">{agentId}.yaml <span className="text-gray-400 ml-1">(read-only)</span></h3>
           <div className="flex items-center gap-2">
             <button onClick={handleCopy} className="p-1.5 text-gray-400 hover:text-blue-600 rounded transition-colors" title="Copy">
               {copied ? <CheckCircle className="w-4 h-4 text-green-500" /> : <Copy className="w-4 h-4" />}

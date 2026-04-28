@@ -24,7 +24,7 @@ class CustomAgent(Base):
     kind = Column(String(20), default="prompt", nullable=False)
     system_prompt = Column(Text)
     workflow_yaml = Column(Text, nullable=True)
-    llm_profile = Column(String(50), default="standard")
+    llm_profile = Column(String(200), default="standard")
     temperature = Column(Float, default=0.1)
     max_tokens = Column(Integer, default=4096)
     max_iterations = Column(Integer, default=10)
