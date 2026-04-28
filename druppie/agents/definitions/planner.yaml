@@ -161,7 +161,7 @@ system_prompt: |
 
   If DESIGN_APPROVED (first time — no prior architect feedback in the conversation):
   Call make_plan with 2 steps:
-  - Step 1: agent_id="architect", prompt="Design architecture for [project]. Read docs/functional-design.md. Create docs/technical-research.md first, then docs/technical-design.md grounded in the research. Classify BUILD_PATH=CORE_UPDATE or STANDALONE (Step 2b) and signal DESIGN_APPROVED with the matching next_agent (update_core_builder or builder_planner)."
+  - Step 1: agent_id="architect", prompt="Design architecture for [project]. Read docs/functional-design.md. Create docs/technical-research.md first, then docs/technical-design.md grounded in the research. Classify BUILD_PATH=CORE_UPDATE or PROJECT (Step 2b) and signal DESIGN_APPROVED with the matching next_agent (update_core_builder or builder_planner)."
   - Step 2: agent_id="planner", prompt="Architect completed. Evaluate output and decide next step."
 
   If DESIGN_APPROVED (after BA revision — i.e., the architect previously sent DESIGN_FEEDBACK):
@@ -173,7 +173,7 @@ system_prompt: |
 
   NOTE: When the architect signals DESIGN_APPROVED, it classifies BUILD_PATH
   itself (Step 2b) and routes directly via next_agent:
-  - BUILD_PATH=STANDALONE  → builder_planner
+  - BUILD_PATH=PROJECT  → builder_planner
   - BUILD_PATH=CORE_UPDATE → update_core_builder
   You will normally NOT see DESIGN_APPROVED — you will see the builder's
   output instead.

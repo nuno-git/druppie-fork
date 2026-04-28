@@ -1,6 +1,6 @@
 ## End-to-end: create vergunningzoeker app with REAL deploy
 ## Extends setup-vergunningzoeker-with-fd (BA completed with FD).
-## Adds: architect (TD + BUILD_PATH=STANDALONE) → builder_planner → test_builder
+## Adds: architect (TD + BUILD_PATH=PROJECT) → builder_planner → test_builder
 ##   → builder (real code with druppie SDK for OCR + LLM) → test_executor
 ##   → deployer (REAL) → summarizer
 ##
@@ -134,7 +134,7 @@ tool-test:
     - agent: architect
       tool: builtin:done
       arguments:
-        summary: "Agent architect: DESIGN_APPROVED. BUILD_PATH=STANDALONE. Wrote technical_design.md with Flask + React stack, Druppie SDK for vision/ocr and llm/chat, PostgreSQL for permit storage. Uses existing modules — no core changes needed."
+        summary: "Agent architect: DESIGN_APPROVED. BUILD_PATH=PROJECT. Wrote technical_design.md with Flask + React stack, Druppie SDK for vision/ocr and llm/chat, PostgreSQL for permit storage. Uses existing modules — no core changes needed."
         next_agent: builder_planner
 
     # =========================================================================
@@ -152,7 +152,7 @@ tool-test:
     - agent: planner
       tool: builtin:done
       arguments:
-        summary: "Agent planner: Architect routed directly to builder_planner (BUILD_PATH=STANDALONE)"
+        summary: "Agent planner: Architect routed directly to builder_planner (BUILD_PATH=PROJECT)"
 
     # =========================================================================
     # Builder Planner

@@ -1,11 +1,11 @@
-## Paused session: architect mid-run (research + TD written), ready for manual resume
+## Paused session: architect mid-run (research.md written and approved with draft, TD written), ready for manual resume
 ## Extends setup-project-with-fd (BA completed, FD in place).
 ## Adds planner re-evaluation (plans architect), then architect works through
 ## the new research-first flow: reads FD, loads principles, writes
-## docs/technical-research.md, git-commits the research, writes
-## docs/technical-design.md. Paused before TD git commit + done.
+## docs/technical-research.md with draft, gets approval, git-commits research.md,
+## then writes docs/technical-design.md. Paused before TD git commit + done.
 ## Click "Continue" in the UI to resume — the architect should just
-## git add/commit/push the TD and call done(DESIGN_APPROVED, BUILD_PATH=STANDALONE).
+## git add/commit/push the TD and call done(DESIGN_APPROVED, BUILD_PATH=PROJECT).
 
 tool-test:
   name: architect-paused-mid-run
@@ -255,4 +255,4 @@ tool-test:
     # Research has been committed and pushed; TD has been written but
     # not yet committed. Session is now paused. On resume, the architect
     # sees its full tool history and should just git add/commit/push the
-    # TD and call done(DESIGN_APPROVED, BUILD_PATH=STANDALONE).
+    # TD and call done(DESIGN_APPROVED, BUILD_PATH=PROJECT).
