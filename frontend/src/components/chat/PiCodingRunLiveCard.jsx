@@ -22,7 +22,6 @@ import {
   ChevronRight,
   Loader2,
   Clock,
-  Layers,
   Bot,
   Wrench,
   GitBranch,
@@ -75,18 +74,12 @@ const phaseColor = {
 }
 
 // Roll up raw journal events into: phase, subagents (each with their full
-// tool-call history), sandbox state, commits, errors, narratives, waves.
+// tool-call history), sandbox state, commits, errors, narratives.
 // Single pass so the render stays cheap even for long runs.
-//
-// The planner emits `wave_start`/`wave_end` events around each build wave,
-// and each subagent spawned inside that wave carries a `waveId` on its
-// `subagent_start` event (see pi_agent/src/flows/tdd.ts). The UI groups
-// builders by that waveId instead of guessing parallelism from timestamps.
 const rollup = (events) => {
   const agents = new Map()  // id -> { id, name, state, ..., toolCalls:[] }
   const callIndex = new Map()  // callId -> { agentId, idx } so tool_result can pair back
   const phases = []
-  const waves = new Map()  // waveId -> { waveId, iteration, waveIndex, stepIds, parallel, startedAt, endedAt, agentIds:[] }
   let currentPhase = null
   const commits = []
   const errors = []
@@ -122,11 +115,6 @@ const rollup = (events) => {
           id: e.id, name: e.name, model: e.model,
           state: 'running', startedAt: e.ts, endedAt: null,
           phase: currentPhase?.phase, phaseIteration: currentPhase?.iteration,
-          // Wave/step linkage comes directly from the planner's structure
-          // — not inferred from timestamps.
-          waveId: e.waveId ?? null,
-          waveIndex: e.waveIndex ?? null,
-          stepId: e.stepId ?? null,
           iteration: e.iteration ?? null,
           // Parent-agent linkage (router → explorer): set by pi_agent when a
           // custom tool like spawn_parallel_explorers fans out subagents. The
@@ -140,32 +128,7 @@ const rollup = (events) => {
           toolHistory: [],
           narrative: null,
         })
-        if (e.waveId && waves.has(e.waveId)) waves.get(e.waveId).agentIds.push(e.id)
         break
-      case 'wave_start':
-        waves.set(e.waveId, {
-          waveId: e.waveId,
-          iteration: e.iteration,
-          waveIndex: e.waveIndex,
-          stepIds: e.stepIds || [],
-          parallel: !!e.parallel,
-          startedAt: e.ts,
-          endedAt: null,
-          agentIds: [],
-          state: 'running',
-        })
-        break
-      case 'wave_end': {
-        const w = waves.get(e.waveId)
-        if (w) {
-          w.endedAt = e.ts
-          w.durationMs = e.durationMs
-          w.successCount = e.successCount
-          w.failureCount = e.failureCount
-          w.state = (e.failureCount ?? 0) > 0 ? 'failed' : 'done'
-        }
-        break
-      }
       case 'subagent_end': {
         const a = agents.get(e.id)
         if (a) {
@@ -271,10 +234,7 @@ const rollup = (events) => {
 
   const active = allAgents.filter((a) => a.state === 'running')
   const done = allAgents.filter((a) => a.state !== 'running')
-  const wavesList = [...waves.values()].sort((a, b) =>
-    a.iteration === b.iteration ? a.waveIndex - b.waveIndex : a.iteration - b.iteration,
-  )
-  return { currentPhase, phases, agents: allAgents, primary, childrenByParentCallId, active, done, sandbox, commits, errors, narratives, push, pr, callIndex, waves: wavesList }
+  return { currentPhase, phases, agents: allAgents, primary, childrenByParentCallId, active, done, sandbox, commits, errors, narratives, push, pr, callIndex }
 }
 
 const friendlyEvent = (e) => {
@@ -507,85 +467,6 @@ const ChildAgentCard = ({ agent, index, siblingCount }) => {
   )
 }
 
-// Visualise the planner's waves: each wave = one row of step-chips, with
-// "parallel" bracketing when the wave has >1 step. Wave boundaries come
-// directly from pi_agent's `wave_start`/`wave_end` events — the grouping
-// is authoritative, not inferred from time-overlap.
-const WavesBlock = ({ waves, agents }) => {
-  if (!waves || waves.length === 0) return null
-  const agentByStep = new Map()
-  for (const a of agents) if (a.stepId) agentByStep.set(a.stepId, a)
-  return (
-    <section>
-      <div className="text-xs uppercase tracking-wide text-gray-500 mb-1 flex items-center gap-1">
-        <Layers size={12} /> waves ({waves.length})
-      </div>
-      <div className="space-y-1">
-        {waves.map((w) => (
-          <div key={w.waveId} className="bg-white border rounded">
-            <div className="flex items-center gap-2 px-2 py-1 border-b border-gray-100 text-[11px]">
-              {w.state === 'running' ? (
-                <Loader2 size={12} className="animate-spin text-sky-600 shrink-0" />
-              ) : w.state === 'done' ? (
-                <Check size={12} className="text-emerald-600 shrink-0" />
-              ) : (
-                <X size={12} className="text-rose-600 shrink-0" />
-              )}
-              <span className="font-mono font-medium">{w.waveId}</span>
-              <span className={`px-1.5 rounded text-[10px] ${w.parallel ? 'bg-amber-100 text-amber-800' : 'bg-gray-100 text-gray-700'}`}>
-                {w.parallel ? `parallel × ${w.stepIds.length}` : 'sequential'}
-              </span>
-              <span className="text-gray-400">iter {w.iteration}</span>
-              {w.durationMs != null && <span className="ml-auto text-gray-500">{fmtMs(w.durationMs)}</span>}
-            </div>
-            {/* Steps stacked vertically. For parallel waves, an amber left
-                stripe groups the siblings visually and each gets a
-                numbered index to make ordering + count obvious. */}
-            <div className={`px-2 py-1 space-y-1 ${w.parallel ? 'border-l-4 border-amber-300 ml-2' : ''}`}>
-              {w.stepIds.map((stepId, i) => {
-                const a = agentByStep.get(stepId)
-                const status = a?.state ?? 'pending'
-                const rowColor =
-                  status === 'running' ? 'bg-sky-50 text-sky-800 border-sky-200' :
-                  status === 'done' ? 'bg-emerald-50 text-emerald-800 border-emerald-200' :
-                  status === 'failed' ? 'bg-rose-50 text-rose-800 border-rose-200' :
-                  'bg-gray-50 text-gray-600 border-gray-200'
-                return (
-                  <div
-                    key={stepId}
-                    className={`text-[11px] px-2 py-1 rounded border ${rowColor} flex items-center gap-2`}
-                    title={a ? `${a.id} · ${a.turns}t · ${a.toolCalls}tc · ${fmtMs(a.durationMs)}` : 'not yet started'}
-                  >
-                    {w.parallel && (
-                      <span className="text-[10px] font-mono bg-amber-100 text-amber-800 rounded px-1 shrink-0 min-w-[2ch] text-center">
-                        {i + 1}/{w.stepIds.length}
-                      </span>
-                    )}
-                    {status === 'running' ? (
-                      <Loader2 size={11} className="animate-spin shrink-0" />
-                    ) : status === 'done' ? (
-                      <Check size={11} className="shrink-0" />
-                    ) : status === 'failed' ? (
-                      <X size={11} className="shrink-0" />
-                    ) : (
-                      <span className="inline-block w-[11px] h-[11px] rounded-full border border-current shrink-0" />
-                    )}
-                    <span className="font-mono font-medium truncate">{stepId}</span>
-                    {a && <span className="opacity-60 font-mono text-[10px]">{a.id}</span>}
-                    {a?.durationMs != null && (
-                      <span className="ml-auto opacity-70 text-[10px] shrink-0">{fmtMs(a.durationMs)}</span>
-                    )}
-                  </div>
-                )
-              })}
-            </div>
-          </div>
-        ))}
-      </div>
-    </section>
-  )
-}
-
 // Block for one primary agent (analyst / planner / builder / verifier /
 // router). Expands to reveal the agent's tool-call history with any
 // subagents spawned by those calls nested inline, plus the agent's own
@@ -772,11 +653,6 @@ const PiCodingRunLiveCard = ({ toolCallId }) => {
               <span className="text-gray-400 font-mono">{state.sandbox.containerName}</span>
             )}
           </div>
-
-          {/* Wave grouping (tdd flow) — shows which agents the planner
-              grouped together (parallel) vs ran sequentially. Pulled
-              directly from pi_agent's wave_start/wave_end events. */}
-          <WavesBlock waves={state.waves} agents={state.agents} />
 
           {/* Primary agents only at the top level. Children (explorers
               spawned by a router via spawn_parallel_explorers) are nested
