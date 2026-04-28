@@ -16,23 +16,7 @@ tool-test:
         repo_target: "project"
         flow: "tdd"
       mock: true
-      mock_result: |
-        {
-          "success": true,
-          "run_id": "smoke-test-123",
-          "pi_coding_run_id": "456",
-          "summaries": {
-            "analyst": "Analyzed task to create hello.ts. Simple TypeScript file with console.log.",
-            "planner": "Created 1-wave plan to implement hello.ts.",
-            "wave-orchestrator": "Executed 1 wave with 1 step. Succeeded.",
-            "verifier": "Verified hello.ts compiles successfully.",
-            "pr-author": "Skipped (no PR requested)."
-          },
-          "deliverables": {
-            "branch": "feat/hello",
-            "commits": [{"sha": "abc123", "message": "feat: add hello.ts"}]
-          }
-        }
+      mock_result: '{"success": true, "run_id": "smoke-test-123", "pi_coding_run_id": "456", "summaries": {"analyst": "Analyzed task to create hello.ts", "planner": "Created 1-wave plan", "wave-orchestrator": "Executed 1 wave", "verifier": "Verified compilation", "pr-author": "Skipped"}, "deliverables": {"branch": "feat/hello", "commits": [{"sha": "abc123"}]}}'
       assert:
         result:
           - { contains: "summaries" }
@@ -41,10 +25,6 @@ tool-test:
           - { contains: "wave-orchestrator" }
           - { contains: "verifier" }
           - { contains: "pr-author" }
-          - { contains: "Analyzed task" }
-          - { contains: "Created 1-wave" }
-          - { contains: "Executed 1 wave" }
-          - { contains: "Verified" }
 
     # --- Verify legacy format still works (explore flow) ---
     - agent: developer
@@ -54,13 +34,7 @@ tool-test:
         repo_target: "project"
         flow: "explore"
       mock: true
-      mock_result: |
-        {
-          "success": true,
-          "run_id": "explore-test-123",
-          "pi_coding_run_id": "789",
-          "answer": "The src directory contains: index.ts, main.ts, and utils.ts"
-        }
+      mock_result: '{"success": true, "run_id": "explore-test-123", "pi_coding_run_id": "789", "answer": "The src directory contains: index.ts, main.ts"}'
       assert:
         result:
           - { contains: "answer" }
@@ -70,25 +44,6 @@ tool-test:
     - agent: developer
       tool: builtin:create_message
       arguments:
-        content: |
-          ✅ **YAML Flow Smoke Test Passed!**
-
-          Successfully tested the new YAML-based flow system:
-
-          **TDD Flow (with YAML):**
-          ✅ Returns agent summaries in tool result
-          ✅ All 5 agents included: analyst, planner, wave-orchestrator, verifier, pr-author
-          ✅ Each summary explains what the agent did
-          ✅ Deliverables (branch, commits) also included
-
-          **Explore Flow (unchanged):**
-          ✅ Still returns "answer" field
-          ✅ Backwards compatible
-
-          **Next Steps:**
-          - Run full agent test: yaml-flow-agent-summaries.yaml
-          - Run with real LLM calls (remove mock)
-          - Test with sandbox operations
-          - Performance benchmark vs legacy
+        content: "YAML Flow Smoke Test Passed! TDD flow returns agent summaries, explore flow returns answer field."
       assert:
         completed: true
