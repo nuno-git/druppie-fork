@@ -132,8 +132,8 @@ export class FlowContext {
    * @param str - String with ${varName} placeholders
    * @returns Interpolated string
    */
-  interpolate(str: string): string {
-    // Replace ${var} with variable values
+  interpolate(str: string | number | boolean): string {
+    if (typeof str !== "string") return String(str);
     return str.replace(/\$\{([^}]+)\}/g, (match, varName) => {
       const value = this.variables.get(varName);
       if (value === undefined) {
