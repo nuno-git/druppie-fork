@@ -244,4 +244,24 @@ export class FlowContext {
 
     return undefined;
   }
+
+  /**
+   * Validate that all required variables have been set.
+   *
+   * @param requiredVars - Array of variable names that must be set
+   * @throws Error if any required variables are missing
+   */
+  validateRequiredVariables(requiredVars: string[]): void {
+    const missing: string[] = [];
+    for (const varName of requiredVars) {
+      if (!this.variables.has(varName)) {
+        missing.push(varName);
+      }
+    }
+    if (missing.length > 0) {
+      throw new Error(
+        `Missing required variables in FlowState: ${missing.join(", ")}`
+      );
+    }
+  }
 }

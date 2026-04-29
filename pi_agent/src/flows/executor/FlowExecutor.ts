@@ -240,17 +240,15 @@ export class FlowExecutor {
     const result = await runSubagent(agent, prompt, baseOpts);
     this.journal?.write("agent_end", { agent: agentName, phase: phase.name, success: result.success });
 
-    // Enforce done tool usage if phase has required variables
-    if (phase.variables && phase.variables.length > 0) {
-      this.enforceDoneTool(phase, agentName, result.output);
-    }
+    // Enforce done tool usage for ALL phases (unconditional per PRD)
+    this.enforceDoneTool(phase, agentName, result.output);
 
     // Store summary
     if (result.summary) {
       ctx.addSummary(agentName, result.summary);
     }
 
-    // Store variables from done tool
+    // Store variables from done tool (required)
     if (this.doneToolUsed) {
       for (const [key, value] of Object.entries(this.doneToolVariables)) {
         // Ensure value is of the correct type
@@ -260,11 +258,6 @@ export class FlowExecutor {
           // Convert to string for complex types
           ctx.setVariable(key, String(value));
         }
-      }
-    } else if (result.variables) {
-      // Fallback to legacy variable extraction if no done tool
-      for (const [key, value] of result.variables.entries()) {
-        ctx.setVariable(key, value);
       }
     }
 
@@ -370,6 +363,14 @@ export class FlowExecutor {
         `Agent "${agentName}" in phase "${phase.name}" did not use the done tool. ` +
         `This phase requires the following variables to be set: ${phase.variables?.map(v => v.name).join(", ") || "none"}. ` +
         `You MUST use the done tool at the end of your work with all required variables.`
+      );
+    }
+
+    // Validate that message was provided
+    if (!this.doneToolMessage || this.doneToolMessage.trim() === "") {
+      throw new Error(
+        `Agent "${agentName}" in phase "${phase.name}" used done tool but did not provide a required message. ` +
+        `The done tool requires both variables and message parameters.`
       );
     }
 

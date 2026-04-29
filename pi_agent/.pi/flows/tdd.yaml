@@ -1,5 +1,5 @@
 # TDD Flow - Test-Driven Development
-# Analyzes task, creates plan, implements in waves, verifies, and creates PR
+# Analyzes task, creates plan + spawns builders, verifies, and creates PR
 
 name: tdd
 description: Test-driven development flow with analysis, planning, implementation, and verification
@@ -18,28 +18,21 @@ phases:
     agent: analyst
     description: Analyze the task and define goals, tests, and architecture
 
-  # Phase 2: Build loop (plan → execute → verify, retry as needed)
+  # Phase 2: Build loop (plan+execute → verify, retry as needed)
   - name: build_loop
     # Continue while: (first iteration OR not succeeded) AND within max iterations
     while: "( ${firstIteration} || !${succeeded} ) && ${iteration} <= ${maxIterations}"
     phases:
-      # Phase 2a: Create or update the build plan
-      - name: plan
+      # Phase 2a: Plan and execute (planner spawns builder agents directly)
+      - name: build
         agent: planner
-        description: Create a build plan (initial or fix plan)
+        description: Create a build plan and spawn builder agents to execute it
         inputs:
           previousSummaries: true
         set:
           firstIteration: false
 
-      # Phase 2b: Execute the plan in parallel waves
-      - name: execute
-        agent: wave-orchestrator
-        description: Execute build waves in parallel
-        inputs:
-          previousSummaries: true
-
-      # Phase 2c: Verify the implementation
+      # Phase 2b: Verify the implementation
       - name: verify
         agent: verifier
         description: Run tests and fix simple issues
@@ -77,6 +70,5 @@ output:
   include:
     - analyst
     - planner
-    - wave-orchestrator
     - verifier
     - pr-author

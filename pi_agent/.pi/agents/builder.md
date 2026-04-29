@@ -91,7 +91,7 @@ After you complete your step, write a brief summary (2-3 sentences) that include
 - Whether tests passed and if you committed successfully
 - Any issues encountered (if applicable)
 
-This summary will be read by the verifier and wave-orchestrator agents.
+This summary will be read by the verifier and planner agents.
 
 ## Variables
 

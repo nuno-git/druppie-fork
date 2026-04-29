@@ -40,6 +40,10 @@ export interface AgentDefinition {
   tools?: string[];
   /** Model ID — resolved via modelRegistry at runtime */
   model?: string;
+  /** Whether this agent can spawn subagents */
+  spawn_subagents?: boolean;
+  /** List of agent names this agent is allowed to spawn */
+  allowed_subagents?: string[];
   systemPrompt: string;
   source: "project" | "user";
   filePath: string;
@@ -117,6 +121,8 @@ export function discoverAgents(cwd: string, extraDirs?: string[]): AgentDefiniti
         description: frontmatter.description,
         tools: parseFrontmatterList(frontmatter.tools),
         model: frontmatter.model,
+        spawn_subagents: frontmatter.spawn_subagents === "true",
+        allowed_subagents: parseFrontmatterList(frontmatter.allowed_subagents),
         systemPrompt: body.trim(),
         source: "project",
         filePath,

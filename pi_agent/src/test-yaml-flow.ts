@@ -434,51 +434,50 @@ async function testDoneToolEnforcement() {
     return false;
   }
 
-  // Test 4: Phase without required variables (no enforcement needed)
+  // Test 4: Phase without variables but agent uses done tool (unconditional enforcement)
   const phase4: any = {
     name: "test-phase-4",
     agent: "test-agent",
   };
-  const outputAllVars = 'done(variables={var1: "value1", var2: "123", var3: "true"}, message="All variables set")';
-  executor.extractDoneToolUsage(outputAllVars);
+  const output4done = 'done(variables={}, message="Phase completed")';
+  executor.extractDoneToolUsage(output4done);
 
   try {
-    executor.enforceDoneTool(phase1, "test-agent", outputAllVars);
-
-  // Test 4: Phase without required variables (no enforcement needed)
-  const phase4: any = {
-    name: "test-phase-4",
-    agent: "test-agent",
-  };
-
-  const output4 = "Agent output without done tool or required variables";
-  executor.extractDoneToolUsage(output4);
-
-  try {
-    executor.enforceDoneTool(phase4, "test-agent", output4);
-    console.log("✅ Correctly skipped enforcement when no required variables");
+    executor.enforceDoneTool(phase4, "test-agent", output4done);
+    console.log("✅ Correctly allowed done tool on phase without required variables");
   } catch (error) {
-    console.log("❌ Should not have enforced when no required variables:", error);
+    console.log("❌ Should not have thrown error when done tool used:", error);
     return false;
   }
 
-  // Test 5: Phase with empty variables array
-  const phase5: any = {
-    name: "test-phase-5",
+  // Test 5: Phase without variables and agent does NOT use done tool (must still throw)
+  const output5noDone = "Agent output without done tool usage";
+  executor.extractDoneToolUsage(output5noDone);
+
+  try {
+    executor.enforceDoneTool(phase4, "test-agent", output5noDone);
+    console.log("❌ Should have enforced done tool even for phase without variables");
+    return false;
+  } catch (error) {
+    console.log("✅ Correctly enforced done tool for all phases (unconditional)");
+  }
+
+  // Test 6: Phase with empty variables array
+  const phase6: any = {
+    name: "test-phase-6",
     agent: "test-agent",
     variables: [],
   };
 
-  const output5 = "done(variables={}, message=\"No required variables\")";
-  executor.extractDoneToolUsage(output5);
+  const output6 = 'done(variables={}, message="No required variables")';
+  executor.extractDoneToolUsage(output6);
 
   try {
-    executor.enforceDoneTool(phase5, "test-agent", output5);
+    executor.enforceDoneTool(phase6, "test-agent", output6);
     console.log("✅ Correctly handled empty variables array");
   } catch (error) {
     console.log("❌ Should not have thrown error with empty variables:", error);
     return false;
-  }
   }
 
   console.log("\n✅ All enforcement tests passed!");

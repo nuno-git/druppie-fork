@@ -69,11 +69,36 @@ export function createDoneTool(ctx: FlowContext) {
     promptSnippet:
       "done: mark your work as complete and set variables for the next flow phase",
     parameters: ParametersSchema,
-    async execute(
+  async execute(
       toolCallId: string,
       params: { variables: Record<string, unknown>; message: string }
     ) {
       const { variables, message } = params;
+
+      // Validate required parameters at runtime
+      // Ensure 'variables' is provided
+      if (!variables) {
+        throw new Error(
+          "Done tool requires 'variables' parameter. " +
+          "Usage: done(variables={...}, message='...')"
+        );
+      }
+
+      // Ensure 'message' is provided
+      if (message === undefined || message === null) {
+        throw new Error(
+          "Done tool requires 'message' parameter. " +
+          "Usage: done(variables={...}, message='...')"
+        );
+      }
+
+      // Ensure 'message' is a non-empty string
+      if (typeof message !== "string" || message.trim() === "") {
+        throw new Error(
+          "Done tool 'message' parameter must be a non-empty string. " +
+          "Please provide a descriptive message about what was accomplished."
+        );
+      }
 
       try {
         // Validate and set all variables in the flow context
@@ -117,7 +142,8 @@ export function createDoneTool(ctx: FlowContext) {
           output: JSON.stringify({
             success: false,
             error: errorMessage,
-            variables: Object.keys(variables),
+            // Safely handle undefined 'variables' in error path
+            variables: variables ? Object.keys(variables) : [],
           }),
           details: {
             error: errorMessage,

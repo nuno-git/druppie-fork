@@ -72,8 +72,13 @@ export interface PhaseVariable {
   /** Variable name */
   name: string;
   /** Variable type: "str", "int", "float", "bool", or custom */
-  type: string;
+  type: VariableType;
 }
+
+/**
+ * Supported variable types for phase variables.
+ */
+export type VariableType = "str" | "int" | "float" | "bool";
 
 /**
  * Input configuration for a phase.
@@ -108,6 +113,65 @@ export class FlowValidationError extends Error {
   ) {
     super(`Flow validation failed for ${flowPath}: ${message}`);
     this.name = "FlowValidationError";
+  }
+}
+
+/**
+ * Validate that a variable value matches its declared type.
+ */
+export function validateVariableType(variable: PhaseVariable, value: unknown): boolean {
+  switch (variable.type) {
+    case "str":
+      return typeof value === "string";
+    case "int":
+      return typeof value === "number" && Number.isInteger(value);
+    case "float":
+      return typeof value === "number";
+    case "bool":
+      return typeof value === "boolean";
+    default:
+      console.warn(`Unknown variable type: ${variable.type}`);
+      return true;
+  }
+}
+
+/**
+ * Validate that all variables required by a phase were set by the agent
+ * and that their values match the declared types.
+ */
+export function validatePhaseVariables(
+  phase: PhaseDef,
+  setVariables: Record<string, unknown>,
+  flowPath: string
+): void {
+  const errors: string[] = [];
+  const prefix = `Phase "${phase.name}"`;
+
+  if (phase.variables) {
+    for (const variable of phase.variables) {
+      if (!(variable.name in setVariables)) {
+        errors.push(
+          `${prefix}: Required variable '${variable.name}' (type: ${variable.type}) was not set by agent`
+        );
+        continue;
+      }
+
+      const value = setVariables[variable.name];
+      if (!validateVariableType(variable, value)) {
+        errors.push(
+          `${prefix}: Variable '${variable.name}' expected type '${variable.type}' ` +
+          `but got ${typeof value} (value: ${JSON.stringify(value)})`
+        );
+      }
+    }
+  }
+
+  if (errors.length > 0) {
+    throw new FlowValidationError(
+      `Phase variable validation failed`,
+      flowPath,
+      errors
+    );
   }
 }
 
