@@ -1,5 +1,5 @@
 # Architect's agent mapped to the Foundry-native schema the MCP validates.
-# - `name` (was `id`): kebab-case, passes ^[A-Za-z0-9_-]{1,256}$
+# - `name` (was `id`): kebab-case, passes ^[A-Za-z0-9_-]{1,64}$
 # - `instructions` (was `system_prompt`): full system prompt
 # - `model`: one of the project's deployed models (live-checked)
 # - `tools`: references the tools the instructions talk about

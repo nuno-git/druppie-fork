@@ -46,8 +46,8 @@ CONNECTION_REQUIRED: set[str] = {
     "sharepoint_grounding",
 }
 
-# Foundry agent name constraints
-NAME_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,256}$")
+# Foundry agent name constraints (Azure limit is 64 characters)
+NAME_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
 # Foundry metadata limits
 METADATA_MAX_ENTRIES = 16
@@ -96,8 +96,8 @@ class FoundryAgentYAML(BaseModel):
     def _name_format(cls, v: str) -> str:
         if not NAME_PATTERN.match(v):
             raise ValueError(
-                "name must match ^[A-Za-z0-9_-]{1,256}$ "
-                "(alphanumeric, underscore, hyphen; 1-256 chars)"
+                "name must match ^[A-Za-z0-9_-]{1,64}$ "
+                "(alphanumeric, underscore, hyphen; 1-64 chars)"
             )
         return v
 

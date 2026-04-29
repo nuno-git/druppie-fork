@@ -277,7 +277,8 @@ class FoundryService:
         # 4. Validate foundry_tools
         deployable_tools = {"code_interpreter", "file_search"}
         portal_tools = {"bing_grounding"}
-        coming_soon_tools = {"browser_automation", "deep_research"}
+        skipped_at_deploy = {"browser_automation", "deep_research", "bing_custom_search",
+                             "azure_ai_search", "microsoft_fabric", "sharepoint_grounding"}
         tool_configs = getattr(agent_detail, 'foundry_tool_configs', None) or {}
 
         for tool in (agent_detail.foundry_tools or []):
@@ -289,10 +290,10 @@ class FoundryService:
                         "in the Azure AI Foundry portal and add its ID via the YAML editor "
                         "(tool_resources.file_search.vector_store_ids)"
                     )
-            elif tool in coming_soon_tools:
-                errors.append(
-                    f"Tool '{tool}' is not yet available in the Foundry SDK — "
-                    f"remove it before deploying"
+            elif tool in skipped_at_deploy:
+                warnings.append(
+                    f"Tool '{tool}' will be stored but skipped during Foundry deployment "
+                    f"(not yet supported by the Azure SDK)"
                 )
             elif tool in portal_tools:
                 if tool == "bing_grounding" and not self._find_bing_connection():
@@ -384,13 +385,10 @@ class FoundryService:
             client = self._get_client()
             result = []
             for deployment in client.deployments.list():
-                name = deployment.get("name") or deployment.get("id")
+                name = getattr(deployment, "name", None) or getattr(deployment, "id", None)
                 if not name:
                     continue
-                model_name = ""
-                model_info = deployment.get("model") or {}
-                if isinstance(model_info, dict):
-                    model_name = model_info.get("name", "")
+                model_name = getattr(deployment, "model_name", None) or getattr(deployment, "model", None) or ""
                 label = f"{name} ({model_name})" if model_name else name
                 result.append({
                     "id": name,

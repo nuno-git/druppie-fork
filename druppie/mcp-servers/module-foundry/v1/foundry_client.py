@@ -187,6 +187,8 @@ class FoundryClient:
             return [], []
 
         from azure.ai.projects.models import (
+            BingGroundingSearchConfiguration,
+            BingGroundingSearchToolParameters,
             BingGroundingTool,
             CodeInterpreterTool,
             FileSearchTool,
@@ -196,9 +198,7 @@ class FoundryClient:
             "code_interpreter": CodeInterpreterTool,
             "file_search": FileSearchTool,
         }
-        connection_backed = {
-            "bing_grounding": BingGroundingTool,
-        }
+        connection_backed = {"bing_grounding"}
 
         tools = []
         skipped = []
@@ -206,24 +206,32 @@ class FoundryClient:
             ttype = ref.get("type")
             cid = ref.get("connection_id")
             vs_ids = ref.get("vector_store_ids")
-            cls = zero_config.get(ttype) or connection_backed.get(ttype)
-            if cls is None:
+
+            if ttype in zero_config:
+                cls = zero_config[ttype]
+                if ttype == "file_search" and vs_ids:
+                    tools.append(cls(vector_store_ids=vs_ids))
+                else:
+                    tools.append(cls())
+            elif ttype in connection_backed:
+                if ttype == "bing_grounding":
+                    if cid:
+                        tools.append(
+                            BingGroundingTool(
+                                bing_grounding=BingGroundingSearchToolParameters(
+                                    search_configurations=[
+                                        BingGroundingSearchConfiguration(
+                                            project_connection_id=cid,
+                                        )
+                                    ]
+                                )
+                            )
+                        )
+                    else:
+                        tools.append(BingGroundingTool())
+            else:
                 logger.info("foundry_tool_type_not_supported_by_sdk: %s", ttype)
                 skipped.append(ttype)
-                continue
-            if ttype in connection_backed and cid:
-                try:
-                    tools.append(cls(connection_id=cid))
-                    continue
-                except TypeError:
-                    logger.info(
-                        "foundry_tool_no_connection_id_kwarg: %s — using portal config",
-                        ttype,
-                    )
-            if ttype == "file_search" and vs_ids:
-                tools.append(cls(vector_store_ids=vs_ids))
-            else:
-                tools.append(cls())
         return tools, skipped
 
     def create_agent(self, normalized: dict) -> dict:
@@ -243,11 +251,13 @@ class FoundryClient:
             }
 
         tool_resources = normalized.get("tool_resources") or {}
-        tool_refs = normalized.get("tools", [])
-        for ref in tool_refs:
+        tool_refs = []
+        for ref in normalized.get("tools", []):
+            merged = dict(ref)
             tr = tool_resources.get(ref.get("type"), {})
             if tr:
-                ref.update(tr)
+                merged.update(tr)
+            tool_refs.append(merged)
 
         tools, skipped_tools = self.build_tool_objects(tool_refs)
         if skipped_tools:
