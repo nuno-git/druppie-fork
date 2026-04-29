@@ -288,6 +288,13 @@ async def update_custom_agent_yaml(
             if (isinstance(t, dict) and "type" in t) or isinstance(t, str)
         ]
 
+        # Extract per-tool config from tool_resources (e.g. vector_store_ids for file_search)
+        tool_resources = data.get("tool_resources") or definition.get("tool_resources") or {}
+        foundry_tool_configs: dict = {}
+        for tool_key, res in tool_resources.items():
+            if isinstance(res, dict) and res:
+                foundry_tool_configs[tool_key] = res
+
         update = CustomAgentUpdate(
             name=data.get("name"),
             description=data.get("description") or (data.get("metadata") or {}).get("description"),
@@ -297,6 +304,7 @@ async def update_custom_agent_yaml(
             max_tokens=definition.get("max_tokens"),
             max_iterations=definition.get("max_iterations"),
             foundry_tools=foundry_tools,
+            foundry_tool_configs=foundry_tool_configs if foundry_tool_configs else None,
         )
     else:
         update = CustomAgentUpdate(
@@ -314,6 +322,7 @@ async def update_custom_agent_yaml(
             druppie_runtime_tools=data.get("druppie_runtime_tools"),
             approval_overrides=data.get("approval_overrides"),
             foundry_tools=data.get("foundry_tools"),
+            foundry_tool_configs=data.get("foundry_tool_configs"),
         )
     detail = service.update_custom_agent(agent_id, update, user_id)
     return detail.model_dump()

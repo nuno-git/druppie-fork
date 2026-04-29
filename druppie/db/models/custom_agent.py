@@ -136,6 +136,8 @@ class CustomAgentFoundryTool(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
     custom_agent_id = Column(UUID(as_uuid=True), ForeignKey("custom_agents.id", ondelete="CASCADE"), nullable=False)
     tool_type = Column(String(100), nullable=False)  # e.g. "code_interpreter", "file_search", "bing_grounding"
+    connection_id = Column(String(500), nullable=True)  # portal connection ID for bing_grounding, azure_ai_search, etc.
+    vector_store_ids = Column(String(2000), nullable=True)  # comma-separated vector store IDs for file_search
 
     # Relationships
     custom_agent = relationship("CustomAgent", back_populates="foundry_tools")

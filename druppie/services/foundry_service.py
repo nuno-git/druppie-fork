@@ -63,10 +63,12 @@ class FoundryService:
 
         Used to detect drift between the local definition and the deployed version.
         """
+        tool_configs = getattr(agent_detail, 'foundry_tool_configs', None) or {}
         canonical = {
             "model": agent_detail.llm_profile or _default_foundry_model(),
             "system_prompt": agent_detail.system_prompt or "",
             "foundry_tools": sorted(agent_detail.foundry_tools or []),
+            "foundry_tool_configs": tool_configs,
             "temperature": agent_detail.temperature,
             "max_tokens": agent_detail.max_tokens,
             "description": agent_detail.description or "",
@@ -108,12 +110,20 @@ class FoundryService:
         from azure.ai.projects.models import PromptAgentDefinition
 
         model = agent_detail.llm_profile or _default_foundry_model()
-        tools = self._build_foundry_tools(agent_detail.foundry_tools)
+        tool_configs = getattr(agent_detail, 'foundry_tool_configs', None) or {}
+        tools = self._build_foundry_tools(agent_detail.foundry_tools, tool_configs)
+
+        tool_resources = {}
+        for tool_type, config in tool_configs.items():
+            vs_ids = config.get("vector_store_ids")
+            if vs_ids:
+                tool_resources[tool_type] = {"vector_store_ids": vs_ids}
 
         definition = PromptAgentDefinition(
             model=model,
             instructions=agent_detail.system_prompt,
             tools=tools if tools else None,
+            tool_resources=tool_resources if tool_resources else None,
         )
 
         logger.info(
@@ -167,15 +177,16 @@ class FoundryService:
             logger.warning("foundry_get_agent_failed", agent_name=agent_name, error=str(e))
             return None
 
-    def _build_foundry_tools(self, foundry_tools: list[str]) -> list:
+    def _build_foundry_tools(self, foundry_tools: list[str], tool_configs: dict[str, dict] | None = None) -> list:
         """Map foundry_tools strings to Azure SDK tool objects.
 
-        Some tools (bing_grounding) require connection resources configured
-        in the Foundry portal — the connection ID is auto-discovered.
-        Zero-config tools (code_interpreter, file_search) work out of the box.
+        Args:
+            foundry_tools: List of tool type strings.
+            tool_configs: Per-tool config dict, e.g. {"file_search": {"vector_store_ids": ["vs_123"]}}.
         """
         if not foundry_tools:
             return []
+        tool_configs = tool_configs or {}
 
         from azure.ai.projects.models import (
             CodeInterpreterTool,
@@ -185,18 +196,17 @@ class FoundryService:
             BingGroundingSearchConfiguration,
         )
 
-        # Zero-config tools — instantiate directly
-        zero_config_map = {
-            "code_interpreter": CodeInterpreterTool,
-            "file_search": FileSearchTool,
-        }
-
         tools = []
         for tool_type in foundry_tools:
-            if tool_type in zero_config_map:
-                tools.append(zero_config_map[tool_type]())
+            config = tool_configs.get(tool_type, {})
+
+            if tool_type == "code_interpreter":
+                tools.append(CodeInterpreterTool())
+            elif tool_type == "file_search":
+                vs_ids = config.get("vector_store_ids", [])
+                tools.append(FileSearchTool(vector_store_ids=vs_ids if vs_ids else None))
             elif tool_type == "bing_grounding":
-                connection_id = self._find_bing_connection()
+                connection_id = config.get("connection_id") or self._find_bing_connection()
                 if not connection_id:
                     raise ValueError(
                         "bing_grounding requires a Bing connection in Azure Foundry portal. "
@@ -213,7 +223,7 @@ class FoundryService:
                         )
                     )
                 )
-            elif tool_type in ("browser_automation", "deep_research", "bing_custom_search", "azure_ai_search", "microsoft_fabric"):
+            elif tool_type in ("browser_automation", "deep_research", "bing_custom_search", "azure_ai_search", "microsoft_fabric", "sharepoint_grounding"):
                 logger.info("foundry_tool_not_yet_mapped", tool_type=tool_type)
             else:
                 logger.warning("foundry_unknown_tool_type", tool_type=tool_type)
@@ -268,9 +278,18 @@ class FoundryService:
         deployable_tools = {"code_interpreter", "file_search"}
         portal_tools = {"bing_grounding"}
         coming_soon_tools = {"browser_automation", "deep_research"}
+        tool_configs = getattr(agent_detail, 'foundry_tool_configs', None) or {}
 
         for tool in (agent_detail.foundry_tools or []):
-            if tool in coming_soon_tools:
+            if tool == "file_search":
+                vs_ids = (tool_configs.get("file_search") or {}).get("vector_store_ids", [])
+                if not vs_ids:
+                    errors.append(
+                        "Tool 'file_search' requires vector_store_ids — create a vector store "
+                        "in the Azure AI Foundry portal and add its ID via the YAML editor "
+                        "(tool_resources.file_search.vector_store_ids)"
+                    )
+            elif tool in coming_soon_tools:
                 errors.append(
                     f"Tool '{tool}' is not yet available in the Foundry SDK — "
                     f"remove it before deploying"

@@ -217,6 +217,8 @@ class CustomAgentService:
             kwargs["approval_overrides"] = data.approval_overrides
         if data.foundry_tools is not None:
             kwargs["foundry_tools"] = data.foundry_tools
+        if data.foundry_tool_configs is not None:
+            kwargs["foundry_tool_configs"] = data.foundry_tool_configs
 
         agent = self.repo.update(agent_id, **kwargs)
         self.repo.commit()
@@ -488,6 +490,9 @@ class CustomAgentService:
         if detail.temperature is not None and abs(detail.temperature - 0.1) > 1e-9:
             data["definition"]["temperature"] = detail.temperature
 
+        if detail.foundry_tool_configs:
+            data["tool_resources"] = detail.foundry_tool_configs
+
         return yaml.dump(data, default_flow_style=False, sort_keys=False)
 
     def get_metadata(self) -> dict:
@@ -631,6 +636,7 @@ class CustomAgentService:
             approval_overrides=approval_overrides,
             skills=[s.skill_name for s in agent.skills],
             foundry_tools=[ft.tool_type for ft in agent.foundry_tools],
+            foundry_tool_configs=CustomAgentService._build_foundry_tool_configs(agent.foundry_tools),
             temperature=agent.temperature or 0.1,
             max_tokens=agent.max_tokens or 4096,
             max_iterations=agent.max_iterations or 10,
@@ -641,3 +647,19 @@ class CustomAgentService:
             foundry_agent_id=agent.foundry_agent_id,
             updated_at=agent.updated_at,
         )
+
+    @staticmethod
+    def _build_foundry_tool_configs(foundry_tools) -> dict[str, dict]:
+        """Build per-tool config dict from ORM foundry tool rows."""
+        configs = {}
+        for ft in foundry_tools:
+            config = {}
+            if ft.vector_store_ids:
+                config["vector_store_ids"] = [
+                    vid.strip() for vid in ft.vector_store_ids.split(",") if vid.strip()
+                ]
+            if ft.connection_id:
+                config["connection_id"] = ft.connection_id
+            if config:
+                configs[ft.tool_type] = config
+        return configs

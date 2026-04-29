@@ -72,6 +72,7 @@ class CustomAgentRepository(BaseRepository):
         builtin_tools: list[str] | None = None,
         approval_overrides: dict[str, dict] | None = None,
         foundry_tools: list[str] | None = None,
+        foundry_tool_configs: dict[str, dict] | None = None,
     ) -> CustomAgent:
         """Create a custom agent with all child rows."""
         agent = CustomAgent(
@@ -91,7 +92,7 @@ class CustomAgentRepository(BaseRepository):
         self.db.add(agent)
         self.db.flush()
 
-        self._create_child_rows(agent, mcps, skills, system_prompts_list, builtin_tools, approval_overrides, foundry_tools)
+        self._create_child_rows(agent, mcps, skills, system_prompts_list, builtin_tools, approval_overrides, foundry_tools, foundry_tool_configs)
         self.db.flush()
         return agent
 
@@ -108,6 +109,7 @@ class CustomAgentRepository(BaseRepository):
         builtin_tools = kwargs.pop("builtin_tools", None)
         approval_overrides = kwargs.pop("approval_overrides", None)
         foundry_tools = kwargs.pop("foundry_tools", None)
+        foundry_tool_configs = kwargs.pop("foundry_tool_configs", None)
 
         # Update scalar fields (allowlist prevents mass-assignment)
         for key, value in kwargs.items():
@@ -129,7 +131,7 @@ class CustomAgentRepository(BaseRepository):
                 self.db.flush()
                 setattr(agent, attr, [])
 
-        self._create_child_rows(agent, mcps, skills, system_prompts_list, builtin_tools, approval_overrides, foundry_tools)
+        self._create_child_rows(agent, mcps, skills, system_prompts_list, builtin_tools, approval_overrides, foundry_tools, foundry_tool_configs)
         self.db.flush()
         return agent
 
@@ -205,6 +207,7 @@ class CustomAgentRepository(BaseRepository):
         builtin_tools: list[str] | None,
         approval_overrides: dict[str, dict] | None,
         foundry_tools: list[str] | None = None,
+        foundry_tool_configs: dict[str, dict] | None = None,
     ) -> None:
         """Create child rows for a custom agent."""
         if mcps is not None:
@@ -241,8 +244,13 @@ class CustomAgentRepository(BaseRepository):
                 ))
 
         if foundry_tools is not None:
+            configs = foundry_tool_configs or {}
             for tool_type in foundry_tools:
+                tc = configs.get(tool_type, {})
+                vs_ids = tc.get("vector_store_ids")
                 self.db.add(CustomAgentFoundryTool(
                     custom_agent_id=agent.id,
                     tool_type=tool_type,
+                    connection_id=tc.get("connection_id"),
+                    vector_store_ids=",".join(vs_ids) if vs_ids else None,
                 ))

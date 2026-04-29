@@ -36,6 +36,7 @@ class CustomAgentDetail(CustomAgentSummary):
     approval_overrides: dict[str, dict]  # tool_key -> {requires_approval, required_role}
     skills: list[str]
     foundry_tools: list[str]  # Foundry-native tools: code_interpreter, file_search, bing_grounding
+    foundry_tool_configs: dict[str, dict] = {}  # per-tool config: {"file_search": {"vector_store_ids": [...]}, ...}
     temperature: float
     max_tokens: int
     max_iterations: int
@@ -90,6 +91,7 @@ class CustomAgentUpdate(BaseModel):
     approval_overrides: dict[str, dict] | None = None
     skills: list[str] | None = None
     foundry_tools: list[str] | None = None
+    foundry_tool_configs: dict[str, dict] | None = None
     llm_profile: str | None = None
     temperature: float | None = None
     max_tokens: int | None = None

@@ -300,6 +300,14 @@ BUILTIN_TOOL_DEFS: dict[str, dict] = {
                             "Note: bing_grounding requires a Bing connection in the Foundry portal."
                         ),
                     },
+                    "tool_resources": {
+                        "type": "object",
+                        "description": (
+                            "Per-tool configuration. Required for file_search: "
+                            '{"file_search": {"vector_store_ids": ["vs_abc123"]}}. '
+                            "Create vector stores in the Azure AI Foundry portal first."
+                        ),
+                    },
                     "max_tokens": {
                         "type": "integer",
                         "description": "Max tokens per LLM response (stored in DB, not sent to Foundry). Default: 4096.",
@@ -351,6 +359,13 @@ BUILTIN_TOOL_DEFS: dict[str, dict] = {
                         "type": "array",
                         "items": {"type": "string"},
                         "description": "Foundry-native tools. See create_foundry_agent for available options and SDK support status.",
+                    },
+                    "tool_resources": {
+                        "type": "object",
+                        "description": (
+                            "Per-tool configuration. Required for file_search: "
+                            '{"file_search": {"vector_store_ids": ["vs_abc123"]}}.'
+                        ),
                     },
                     "max_tokens": {
                         "type": "integer",
@@ -1468,6 +1483,14 @@ async def test_report(
     }
 
 
+def _resolve_foundry_model(model: str) -> str:
+    """Resolve a Foundry model name, accepting both profile names and real deployment names."""
+    if model in ("standard", "cheap"):
+        import os
+        return os.environ.get("FOUNDRY_MODEL", "gpt-4.1-mini")
+    return model
+
+
 async def create_foundry_agent(
     agent_id: str,
     name: str,
@@ -1477,6 +1500,7 @@ async def create_foundry_agent(
     session_id: UUID,
     execution_repo: "ExecutionRepository",
     foundry_tools: list | None = None,
+    tool_resources: dict | None = None,
     max_tokens: int = 4096,
     max_iterations: int = 10,
     temperature: float | None = None,
@@ -1517,18 +1541,25 @@ async def create_foundry_agent(
         session = db.query(Session).filter_by(id=session_id).first()
         owner_id = session.user_id if session else None
 
+        foundry_tool_configs = {}
+        if tool_resources:
+            for tool_type, res in tool_resources.items():
+                if isinstance(res, dict) and res:
+                    foundry_tool_configs[tool_type] = res
+
         agent = repo.create(
             agent_id=agent_id,
             name=name,
             description=description,
             category="execution",
             system_prompt=instructions,
-            llm_profile=model if model in ("standard", "cheap") else "standard",
+            llm_profile=_resolve_foundry_model(model),
             temperature=0.1,
             max_tokens=max_tokens,
             max_iterations=max_iterations,
             owner_id=owner_id,
             foundry_tools=validated_tools,
+            foundry_tool_configs=foundry_tool_configs if foundry_tool_configs else None,
         )
         db.commit()
 
@@ -1561,6 +1592,7 @@ async def update_foundry_agent(
     instructions: str | None = None,
     model: str | None = None,
     foundry_tools: list | None = None,
+    tool_resources: dict | None = None,
     max_tokens: int | None = None,
     max_iterations: int | None = None,
 ) -> dict:
@@ -1593,13 +1625,20 @@ async def update_foundry_agent(
         if instructions is not None:
             update_kwargs["system_prompt"] = instructions
         if model is not None:
-            update_kwargs["llm_profile"] = model if model in ("standard", "cheap") else "standard"
+            update_kwargs["llm_profile"] = _resolve_foundry_model(model)
         if max_tokens is not None:
             update_kwargs["max_tokens"] = max_tokens
         if max_iterations is not None:
             update_kwargs["max_iterations"] = max_iterations
         if foundry_tools is not None:
             update_kwargs["foundry_tools"] = [t for t in foundry_tools if t in VALID_FOUNDRY_TOOLS]
+        if tool_resources is not None:
+            ftc = {}
+            for tool_type, res in tool_resources.items():
+                if isinstance(res, dict) and res:
+                    ftc[tool_type] = res
+            if ftc:
+                update_kwargs["foundry_tool_configs"] = ftc
 
         agent = repo.update(agent_id, **update_kwargs)
         db.commit()
@@ -1760,6 +1799,7 @@ async def execute_builtin(
             session_id=session_id,
             execution_repo=execution_repo,
             foundry_tools=args.get("foundry_tools"),
+            tool_resources=args.get("tool_resources"),
             max_tokens=args.get("max_tokens", 4096),
             max_iterations=args.get("max_iterations", 10),
         )
@@ -1773,6 +1813,7 @@ async def execute_builtin(
             instructions=args.get("instructions"),
             model=args.get("model"),
             foundry_tools=args.get("foundry_tools"),
+            tool_resources=args.get("tool_resources"),
             max_tokens=args.get("max_tokens"),
             max_iterations=args.get("max_iterations"),
         )

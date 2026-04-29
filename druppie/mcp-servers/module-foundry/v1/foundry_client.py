@@ -205,6 +205,7 @@ class FoundryClient:
         for ref in tool_refs:
             ttype = ref.get("type")
             cid = ref.get("connection_id")
+            vs_ids = ref.get("vector_store_ids")
             cls = zero_config.get(ttype) or connection_backed.get(ttype)
             if cls is None:
                 logger.info("foundry_tool_type_not_supported_by_sdk: %s", ttype)
@@ -219,7 +220,10 @@ class FoundryClient:
                         "foundry_tool_no_connection_id_kwarg: %s — using portal config",
                         ttype,
                     )
-            tools.append(cls())
+            if ttype == "file_search" and vs_ids:
+                tools.append(cls(vector_store_ids=vs_ids))
+            else:
+                tools.append(cls())
         return tools, skipped
 
     def create_agent(self, normalized: dict) -> dict:
@@ -238,7 +242,14 @@ class FoundryClient:
                 "code": "sdk_missing",
             }
 
-        tools, skipped_tools = self.build_tool_objects(normalized.get("tools", []))
+        tool_resources = normalized.get("tool_resources") or {}
+        tool_refs = normalized.get("tools", [])
+        for ref in tool_refs:
+            tr = tool_resources.get(ref.get("type"), {})
+            if tr:
+                ref.update(tr)
+
+        tools, skipped_tools = self.build_tool_objects(tool_refs)
         if skipped_tools:
             logger.warning(
                 "foundry_create_agent_skipped_tools: name=%s skipped=%s",
@@ -250,6 +261,7 @@ class FoundryClient:
             model=normalized["model"],
             instructions=normalized["instructions"],
             tools=tools if tools else None,
+            tool_resources=tool_resources if tool_resources else None,
         )
 
         try:
