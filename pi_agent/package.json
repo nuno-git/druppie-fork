@@ -8,7 +8,7 @@
     "oneshot": "dist/cli.js"
   },
   "scripts": {
-    "build": "tsc",
+    "build": "rm -rf dist && tsc",
     "start": "node dist/cli.js",
     "docker:build": "docker build -t oneshot-tdd-agent .",
     "docker:run": "docker run --rm -v $(pwd)/workspace:/workspace -e ANTHROPIC_API_KEY oneshot-tdd-agent"
