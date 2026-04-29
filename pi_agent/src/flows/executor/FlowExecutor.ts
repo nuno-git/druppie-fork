@@ -20,7 +20,7 @@ import {
 } from "@mariozechner/pi-coding-agent";
 import type { TaskSpec, AgentConfig } from "../../types.js";
 import type { FlowDef, PhaseDef } from "../schema.js";
-import { parseFlow } from "../schema.js";
+import { parseFlow, validatePhaseVariables } from "../schema.js";
 import { FlowContext } from "./FlowContext.js";
 import { evaluateCondition } from "../tools/decision-tool.js";
 import type { Journal } from "../../journal.js";
@@ -32,6 +32,7 @@ import {
   type SubagentResult,
 } from "../../agents/runner.js";
 import { createDoneTool } from "../tools/done-tool.js";
+import { createSpawnSubagentsTool } from "../tools/spawn-subagents-tool.js";
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Flow Result
@@ -62,6 +63,7 @@ export interface FlowResult {
  */
 export class FlowExecutor {
   private journal?: Journal;
+  private flowPath: string = "";
   private doneToolUsed: boolean = false;
   private doneToolVariables: Record<string, unknown> = {};
   private doneToolMessage: string = "";
@@ -85,6 +87,7 @@ export class FlowExecutor {
   ): Promise<FlowResult> {
     // Parse and validate flow
     const flow = parseFlow(flowPath);
+    this.flowPath = flowPath;
     this.journal?.write("flow_start", { flow: flow.name, path: flowPath });
 
     // Initialize flow context
@@ -101,7 +104,7 @@ export class FlowExecutor {
       agentMap.set(agent.name, agent);
     }
 
-    // Create auth storage and model registry (like tdd.ts does)
+    // Create auth storage and model registry
     const authStorage = AuthStorageType.create();
     if (config.apiKey) authStorage.setRuntimeApiKey("anthropic", config.apiKey);
     const modelRegistry = ModelRegistryType.create(authStorage);
@@ -235,13 +238,29 @@ export class FlowExecutor {
     // Build prompt
     const prompt = this.buildPrompt(phase, ctx);
 
+    // Build options — inject spawn_subagents tool if agent supports it
+    const opts = { ...baseOpts };
+    if (agent.spawn_subagents && agent.allowed_subagents?.length) {
+      const spawnTool = createSpawnSubagentsTool({
+        agentMap,
+        allowedAgents: agent.allowed_subagents,
+        baseOpts,
+      });
+      opts.extraCustomTools = [...(opts.extraCustomTools ?? []), spawnTool];
+    }
+
     // Run agent
     this.journal?.write("agent_start", { agent: agentName, phase: phase.name });
-    const result = await runSubagent(agent, prompt, baseOpts);
+    const result = await runSubagent(agent, prompt, opts);
     this.journal?.write("agent_end", { agent: agentName, phase: phase.name, success: result.success });
 
     // Enforce done tool usage for ALL phases (unconditional per PRD)
     this.enforceDoneTool(phase, agentName, result.output);
+
+    // Validate variable types match declarations (schema.ts enforcement)
+    if (phase.variables?.length && this.doneToolUsed) {
+      validatePhaseVariables(phase, this.doneToolVariables, this.flowPath);
+    }
 
     // Store summary
     if (result.summary) {

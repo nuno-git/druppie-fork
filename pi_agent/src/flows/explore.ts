@@ -97,7 +97,7 @@ export async function runExploreFlow(task: TaskSpec, config: AgentConfig): Promi
     const router = findAgent("router");
     const explorer = findAgent("explorer");
 
-    // LLM setup — mirror tdd.ts exactly (private constructors, use .create()).
+    // LLM setup — AuthStorage.create() / ModelRegistry.create() pattern.
     const authStorage = AuthStorage.create();
     if (config.apiKey) authStorage.setRuntimeApiKey("anthropic", config.apiKey);
     const modelRegistry = ModelRegistry.create(authStorage);

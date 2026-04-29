@@ -5,7 +5,7 @@
  * druppie's execute_coding_task_pi schema can enumerate them.
  */
 import type { AgentConfig, RunResult, TaskSpec } from "../types.js";
-import { runTddFlow } from "./tdd.js";
+import { runTddFlow } from "./tdd-wrapper.js";
 import { runExploreFlow } from "./explore.js";
 
 export type FlowName = "tdd" | "explore";
@@ -35,5 +35,5 @@ export async function runFlow(
   }
 }
 
-export { runTddFlow } from "./tdd.js";
+export { runTddFlow } from "./tdd-wrapper.js";
 export { runExploreFlow } from "./explore.js";

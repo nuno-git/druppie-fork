@@ -968,13 +968,6 @@ done(
 - Remove deprecated JSON output instructions
 - Standardize completion message format
 
-#### File: `docs/IMPLEMENTATION_NOTES.md` (NEW FILE)
-**Changes:**
-- Document migration from old to new flow system
-- Provide examples of before/after agent YAML
-- Provide examples of before/after flow YAML
-- Document common pitfalls and solutions
-
 ### Summary of File Changes
 
 **Core Files (5 files):**
@@ -1001,9 +994,6 @@ done(
 **Testing Files (2 files):**
 14. `src/test-yaml-flow.ts` - Add done tool and validation tests
 15. `src/flows/test/done-tool.test.ts` - NEW: Comprehensive done tool tests
-
-**Documentation Files (1 file):**
-16. `docs/IMPLEMENTATION_NOTES.md` - NEW: Migration documentation
 
 ### Key Implementation Patterns
 
@@ -1859,8 +1849,7 @@ const ParametersSchema = Type.Object({
 
 ### Phase 5: Testing and Documentation (Low Priority)
 16. Add comprehensive tests for all fixes
-17. Update IMPLEMENTATION_NOTES.md with iteration 2 changes
-18. Verify all agents work with updated system
+17. Verify all agents work with updated system
 
 ---
 
