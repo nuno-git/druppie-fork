@@ -67,6 +67,7 @@ export class FlowExecutor {
   private doneToolUsed: boolean = false;
   private doneToolVariables: Record<string, unknown> = {};
   private doneToolMessage: string = "";
+  private agentNameCounter: Map<string, number> = new Map();
 
   constructor(journal?: Journal) {
     this.journal = journal;
@@ -230,6 +231,9 @@ export class FlowExecutor {
       throw new Error(`Agent "${agentName}" not found. Available: ${Array.from(agentMap.keys()).join(", ")}`);
     }
 
+    const count = (this.agentNameCounter.get(agentName) ?? 0) + 1;
+    this.agentNameCounter.set(agentName, count);
+
     // Reset done tool tracking for this phase
     this.doneToolUsed = false;
     this.doneToolVariables = {};
@@ -240,51 +244,83 @@ export class FlowExecutor {
 
     // Build options — inject spawn_subagents tool if agent supports it
     const opts = { ...baseOpts };
+    const parentRef: { current?: string } = {};
+    const childToolCallsUsed = new Set<string>();
     if (agent.spawn_subagents && agent.allowed_subagents?.length) {
       const spawnTool = createSpawnSubagentsTool({
         agentMap,
         allowedAgents: agent.allowed_subagents,
         baseOpts,
+        parentRef,
+        childToolCallsUsed,
       });
       opts.extraCustomTools = [...(opts.extraCustomTools ?? []), spawnTool];
     }
 
-    // Run agent
-    this.journal?.write("agent_start", { agent: agentName, phase: phase.name });
-    const result = await runSubagent(agent, prompt, opts);
-    this.journal?.write("agent_end", { agent: agentName, phase: phase.name, success: result.success });
+    parentRef.current = `${agentName}-${count}`;
 
-    // Enforce done tool usage for ALL phases (unconditional per PRD)
-    const doneCalledViaApi = result.toolCallsUsed?.has("done") ?? false;
-    this.enforceDoneTool(phase, agentName, result.output, doneCalledViaApi, result.summary);
+    const MAX_DONE_RETRIES = 2;
+    let lastError: Error | undefined;
 
-    // Validate variable types match declarations (schema.ts enforcement)
-    if (phase.variables?.length && this.doneToolUsed && !doneCalledViaApi) {
-      validatePhaseVariables(phase, this.doneToolVariables, this.flowPath);
-    }
+    for (let attempt = 1; attempt <= MAX_DONE_RETRIES; attempt++) {
+      this.doneToolUsed = false;
+      this.doneToolVariables = {};
+      this.doneToolMessage = "";
 
-    // Store summary
-    if (result.summary) {
-      ctx.addSummary(agentName, result.summary);
-    }
+      const currentPrompt = attempt === 1
+        ? prompt
+        : prompt + "\n\nCRITICAL: You forgot to use the done tool in your previous attempt. " +
+          "You MUST call the done tool at the end of your work with all required variables. " +
+          "This is your last chance.";
 
-    // Store variables from done tool (required)
-    if (this.doneToolUsed) {
-      for (const [key, value] of Object.entries(this.doneToolVariables)) {
-        // Ensure value is of the correct type
-        if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
-          ctx.setVariable(key, value);
-        } else {
-          // Convert to string for complex types
-          ctx.setVariable(key, String(value));
+      this.journal?.write("agent_start", { agent: agentName, phase: phase.name, attempt });
+      const result = await runSubagent(agent, currentPrompt, opts);
+      this.journal?.write("agent_end", { agent: agentName, phase: phase.name, success: result.success, attempt });
+
+      const doneCalledViaApi = (result.toolCallsUsed?.has("done") ?? false) ||
+        (childToolCallsUsed.has("done"));
+
+      try {
+        this.enforceDoneTool(phase, agentName, result.output, doneCalledViaApi, result.summary);
+      } catch (err) {
+        lastError = err instanceof Error ? err : new Error(String(err));
+        if (attempt < MAX_DONE_RETRIES) {
+          this.journal?.write("done_tool_retry", { agent: agentName, phase: phase.name, attempt });
+          continue;
+        }
+        throw lastError;
+      }
+
+      // Validate variable types match declarations (schema.ts enforcement)
+      if (phase.variables?.length && this.doneToolUsed && !doneCalledViaApi) {
+        validatePhaseVariables(phase, this.doneToolVariables, this.flowPath);
+      }
+
+      // Store summary
+      if (result.summary) {
+        ctx.addSummary(agentName, result.summary);
+      }
+
+      // Store variables from done tool (required)
+      if (this.doneToolUsed) {
+        for (const [key, value] of Object.entries(this.doneToolVariables)) {
+          if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+            ctx.setVariable(key, value);
+          } else {
+            ctx.setVariable(key, String(value));
+          }
         }
       }
+
+      // Check for errors
+      if (!result.success) {
+        throw new Error(`Agent "${agentName}" failed: ${result.error || "unknown error"}`);
+      }
+
+      return;
     }
 
-    // Check for errors
-    if (!result.success) {
-      throw new Error(`Agent "${agentName}" failed: ${result.error || "unknown error"}`);
-    }
+    throw lastError ?? new Error(`Agent "${agentName}" failed after ${MAX_DONE_RETRIES} attempts`);
   }
 
   /**

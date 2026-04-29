@@ -21,6 +21,12 @@ export interface SpawnSubagentsContext {
   baseOpts: RunSubagentOptions;
   /** Hard cap on parallel subagents per call. Default 4. */
   maxParallel?: number;
+  /** Mutable ref — caller sets to current agent's ID before running the parent.
+   *  Used to stamp parentAgentId on each spawned child for UI hierarchy. */
+  parentRef?: { current?: string };
+  /** Mutable output — after execute(), contains the union of all child toolCallsUsed.
+   *  The FlowExecutor reads this to check if any child called "done". */
+  childToolCallsUsed?: Set<string>;
 }
 
 const SpawnParams = Type.Object({
@@ -61,6 +67,7 @@ export function createSpawnSubagentsTool(ctx: SpawnSubagentsContext): any {
       const tasks = params.tasks.slice(0, maxParallel);
       const errors: string[] = [];
 
+      const parentAgentId = ctx.parentRef?.current;
       const specs = tasks.map((t) => {
         const agentDef = ctx.agentMap.get(t.agent);
         if (!agentDef) {
@@ -71,7 +78,14 @@ export function createSpawnSubagentsTool(ctx: SpawnSubagentsContext): any {
           errors.push(`Agent "${t.agent}" not in allowed_subagents list. Allowed: ${ctx.allowedAgents.join(", ")}`);
           return null;
         }
-        return { agent: agentDef, prompt: t.prompt };
+        return {
+          agent: agentDef,
+          prompt: t.prompt,
+          meta: {
+            parentAgentId,
+            parentToolCallId: toolCallId,
+          },
+        };
       });
 
       if (errors.length > 0) {
@@ -81,8 +95,14 @@ export function createSpawnSubagentsTool(ctx: SpawnSubagentsContext): any {
         };
       }
 
-      const validSpecs = specs.filter(Boolean) as Array<{ agent: AgentDefinition; prompt: string }>;
+      const validSpecs = specs.filter(Boolean) as Array<{ agent: AgentDefinition; prompt: string; meta?: Record<string, unknown> }>;
       const subResults = await runSubagentsParallel(validSpecs, ctx.baseOpts);
+
+      const mergedToolCalls = ctx.childToolCallsUsed ?? new Set<string>();
+      for (const r of subResults) {
+        r.toolCallsUsed?.forEach(t => mergedToolCalls.add(t));
+      }
+      ctx.childToolCallsUsed = mergedToolCalls;
 
       const results = tasks.map((t, i) => ({
         agent: t.agent,
