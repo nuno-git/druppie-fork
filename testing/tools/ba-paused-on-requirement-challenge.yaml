@@ -1,0 +1,288 @@
+## Paused session: BA is asking the user about a REQUIREMENT_CHALLENGE
+##
+## The full first leg of the loop is scripted:
+##   router → planner → BA writes FD (NFR-02 <5s explicitly flagged in
+architect reads the FD, writes research.md with draft recommendation (Step 3),
+##        the FD, hits the Requirement Challenge Gate (Step 3b), and calls the
+##        Requirement Challenge Gate (Step 3b), and calls
+##        done(DESIGN_FEEDBACK) with Issue REQUIREMENT_CHALLENGE
+##        noting that research.md exists with draft. The approval gate
+##        fired on the draft version → planner schedules
+##        BA revision → BA parses the feedback from PREVIOUS AGENT
+##        SUMMARY and calls hitl_ask_question.
+##
+## The session is left paused at that HITL question. The user picks up
+## in the UI:
+##   - Answer "5s is een harde UX-eis" → HARD path: BA adds the user's
+##     justification to FD Section 10, NFR-02 unchanged, done() with
+##     `REQUIREMENT_CHALLENGE outcome: HARD`. Architect re-entry revises
+##     research.md via make_design (approval gate fires on revision)
+##     with Benadering A as Recommendation, then TD.
+##   - Answer "5s mag naar 15s" → RELAXED path: BA updates NFR-02 (5s
+##     → 15s), logs the change in Section 10, done() with
+##     `REQUIREMENT_CHALLENGE outcome: RELAXED: 5s → 15s`. Architect
+##     re-entry revises research.md via make_design (approval gate fires
+##     on revision) with Benadering B as Recommendation, then TD.
+
+tool-test:
+  name: ba-paused-on-requirement-challenge
+  description: "Full first leg of the REQUIREMENT_CHALLENGE loop, paused at the BA's HITL question — resume manually to test HARD or RELAXED"
+  tags: [seed, paused, architect, business_analyst, requirement-challenge]
+  session_status: paused
+
+  chain:
+    # =========================================================================
+    # Router → create_project
+    # =========================================================================
+    - agent: router
+      tool: builtin:set_intent
+      arguments:
+        intent: create_project
+        project_name: vergunning-analyzer
+        description: "Analyseert geüploade vergunningdocumenten: classificatie, metadata-extractie en beleidsvalidatie"
+      assert:
+        result:
+          - not_empty
+
+    - agent: router
+      tool: builtin:done
+      arguments:
+        summary: "Agent router: Classified as create_project for vergunning-analyzer"
+
+    # =========================================================================
+    # Planner → plan BA
+    # =========================================================================
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: business_analyst
+            prompt: "Gather requirements and create functional design"
+          - agent_id: planner
+            prompt: "Re-evaluate after business analyst completes"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: Planned business_analyst to gather requirements and create functional design"
+
+    # =========================================================================
+    # BA writes FD — challengeable NFR-02, Section 10 explicitly flags it as BA-assumption
+    # =========================================================================
+    - agent: business_analyst
+      tool: coding:make_design
+      approval:
+        status: approved
+      arguments:
+        path: docs/functional-design.md
+        content: |
+          # Functioneel Ontwerp: Vergunning-analyzer
+
+          ## 1. Huidige vs Gewenste Situatie
+          Medewerkers van het waterschap uploaden vergunningdocumenten en
+          moeten handmatig classificeren, metadata overtypen en toetsen aan
+          beleidsregels. Foutgevoelig en traag. Gewenst: een tool die
+          uploads automatisch analyseert en resultaat presenteert ter
+          controle.
+
+          ## 2. Functionele Vereisten
+          - FR-01: Gebruiker kan een vergunningdocument (PDF/scan) uploaden.
+          - FR-02: Systeem classificeert het documenttype (watervergunning,
+            lozingsvergunning, onttrekkingsvergunning, overig).
+          - FR-03: Systeem extraheert gestructureerde metadata (aanvrager,
+            vergunninghouder, locatie, datums, vergunningnummer,
+            toepasselijke wet).
+          - FR-04: Systeem toetst tegen waterschap-beleidsregels en
+            markeert afwijkingen met onderbouwing.
+          - FR-05: Gebruiker ziet het analyse-resultaat met onderbouwing
+            per metadata-veld en per beleidsregel.
+
+          ## 3. Niet-Functionele Vereisten
+          - NFR-01: Analyses zijn reproduceerbaar (zelfde input → zelfde output).
+          - NFR-02: Analyse-resultaat verschijnt binnen 5 seconden na upload.
+          - NFR-03: Alle documenten worden versleuteld opgeslagen.
+
+          ## 4. Gebruikersrollen
+          - Vergunningverlener: uploadt documenten, beoordeelt analyse.
+          - Beheerder: beheert beleidsregels.
+
+          ## 5. Gebruikersinteractie
+          - Uploadpagina met drag-and-drop.
+          - Resultaatpagina met classificatie, metadata-tabel en
+            beleidsafwijkingen — inclusief onderbouwing per item.
+          - Gebruiker accepteert resultaat of corrigeert handmatig.
+
+          ## 10. Aannames & Open Vragen
+          - Aanname: documenten zijn maximaal 30 pagina's.
+          - Aanname: waterschap levert beleidsregels aan in gestructureerd
+            formaat.
+          - Aanname (BA, niet geverifieerd bij gebruiker): NFR-02 (analyse
+            binnen 5 seconden) is als doelstelling overgenomen omdat het
+            "snel genoeg voelt". Er is geen expliciete gebruikersuitspraak
+            waarin dit als harde eis is benoemd.
+      assert:
+        result:
+          - { contains: "functional-design.md" }
+
+    - agent: business_analyst
+      tool: coding:run_git
+      arguments:
+        command: "add docs/functional-design.md"
+
+    - agent: business_analyst
+      tool: coding:run_git
+      arguments:
+        command: "commit -m 'Functioneel ontwerp vergunning-analyzer'"
+
+    - agent: business_analyst
+      tool: coding:run_git
+      arguments:
+        command: "push"
+
+    - agent: business_analyst
+      tool: builtin:done
+      arguments:
+        summary: "Agent business_analyst: DESIGN_APPROVED. Wrote docs/functional-design.md with 5 functional requirements and 3 non-functional requirements."
+
+    # =========================================================================
+    # Planner → plan architect
+    # =========================================================================
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: architect
+            prompt: "Review the functional design and create the technical research + design for vergunning-analyzer"
+          - agent_id: planner
+            prompt: "Re-evaluate after architect completes"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: BA approved design, planned architect to review FD and create technical research + design"
+
+    # =========================================================================
+    # Architect reads FD, does the research analysis in its head
+    # (Step 3), hits the Requirement Challenge Gate (Step 3b), and —
+    # because NFR-02 looks like a BA assumption blocking a superior
+    # approach — calls done(DESIGN_FEEDBACK) with the full analysis
+    # inline. No coding_make_design for research.md yet: the approval
+    # gate must fire only once, after the challenge is resolved.
+    # =========================================================================
+    - agent: architect
+      tool: coding:read_file
+      mock: true
+      arguments:
+        path: docs/functional-design.md
+
+    - agent: architect
+      tool: builtin:done
+      arguments:
+        summary: |
+          Agent architect: DESIGN_FEEDBACK. Functional design needs revision before research.md can be written.
+
+          Items: [1] Section: NFR-02 (analyse-resultaat binnen 5s), Issue: REQUIREMENT_CHALLENGE.
+
+          Analysis (inline — research.md exists with draft; the approval gate fired on draft version; now BA presents trade-off):
+
+          Benadering A — Regel-gebaseerde classifier + regex-extractie (~2s).
+          Projectspecifiek, geen hergebruik over waterschappen, nauwkeurigheid ~70%, breekt op onbekende lay-outs, geen platform-fit.
+
+          Benadering B — Druppie foundry-agent vergunning-analyser (nieuwe MCP-module, ~15s).
+          Iteratieve LLM-redenering, nauwkeurigheid ~95%, herbruikbaar over alle waterschappen, sterke fit met module-first principe, robuust op varianten.
+
+          Benadering B is op nauwkeurigheid, herbruikbaarheid en fit-met-principes duidelijk superieur. Zij wordt UITSLUITEND geblokkeerd door NFR-02 (5s budget). FD Sectie 10 benoemt NFR-02 expliciet als BA-aanname zonder gebruikerstracering.
+
+          Cost of keeping NFR-02 strict: projectspecifieke classifier, geen hergebruik, ~70% nauwkeurigheid, hogere beheerlast.
+          Cost of relaxing NFR-02: responsetijd gaat van ~5s naar ~15s.
+
+          Suggestion: BA verifieert met gebruiker of NFR-02 een harde UX-behoefte is (→ Benadering A) of versoepeld kan worden naar ~15s (→ Benadering B).
+      assert:
+        completed: true
+
+    # =========================================================================
+    # Planner → plan BA revision
+    # =========================================================================
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: business_analyst
+            prompt: |
+              Address the REQUIREMENT_CHALLENGE from the architect on NFR-02
+              (analyse-resultaat binnen 5 seconden). The architect has NOT
+              written docs/technical-research.md yet — the approval gate
+              must fire only once, after this challenge is resolved. The
+              full analysis is below; present it to the user so they can
+              make an informed choice, then update the FD and return with
+              the outcome token.
+
+              Architect's analysis (carry this through in your HITL
+              question so the user sees the real trade-off):
+
+              - Benadering A — Regel-gebaseerde classifier + regex-extractie
+                (~2s). Voldoet aan NFR-02, maar projectspecifiek, geen
+                hergebruik over waterschappen, nauwkeurigheid ~70%, breekt
+                op onbekende lay-outs.
+              - Benadering B — Druppie foundry-agent vergunning-analyser
+                (nieuwe MCP-module, ~15s). Iteratieve LLM-redenering,
+                nauwkeurigheid ~95%, herbruikbaar over alle waterschappen,
+                sterke fit met platform-principes.
+
+              Benadering B is op nauwkeurigheid, herbruikbaarheid en fit-
+              met-principes duidelijk superieur. Zij wordt UITSLUITEND
+              geblokkeerd door NFR-02 (5s budget). FD Sectie 10 benoemt
+              NFR-02 expliciet als BA-aanname zonder gebruikerstracering.
+
+              Cost of keeping NFR-02 strict: projectspecifieke classifier,
+              geen hergebruik, ~70% nauwkeurigheid, hogere beheerlast.
+              Cost of relaxing NFR-02: responsetijd ~5s → ~15s.
+
+              Outcomes:
+              - User confirms hard → keep NFR-02 at <5s, move the user's
+                justification into FD Section 10, done() with
+                `REQUIREMENT_CHALLENGE outcome: HARD`.
+              - User relaxes → update NFR-02 (e.g. <5s → <15s), log
+                before→after in Section 10, done() with
+                `REQUIREMENT_CHALLENGE outcome: RELAXED: <old> → <new>`.
+          - agent_id: planner
+            prompt: "Re-evaluate after business analyst completes"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: Architect flagged REQUIREMENT_CHALLENGE on NFR-02 with full trade-off analysis (Benadering A vs B; cost of keeping vs relaxing) — planned business_analyst to consult the user and revise the FD with REQUIREMENT_CHALLENGE outcome token."
+
+    # =========================================================================
+    # BA reads the FD, parses the architect's REQUIREMENT_CHALLENGE from
+    # PREVIOUS AGENT SUMMARY (analysis is inline there — research.md
+    # doesn't exist yet), and asks the user the trade-off question.
+    # Session pauses here; the user answers in the UI.
+    # =========================================================================
+    - agent: business_analyst
+      tool: coding:read_file
+      mock: true
+      arguments:
+        path: docs/functional-design.md
+
+    - agent: business_analyst
+      tool: builtin:hitl_ask_question
+      arguments:
+        question: |
+          De architect heeft een REQUIREMENT_CHALLENGE gesignaleerd op NFR-02 (analyse-resultaat binnen 5 seconden).
+
+          Uit de analyse van de architect (research.md bestaat met draft):
+          - Benadering A (regel-gebaseerde classifier, ~2s): voldoet aan 5s, maar nauwkeurigheid ~70%, projectspecifiek, geen hergebruik.
+          - Benadering B (Druppie foundry-agent vergunning-analyser, ~15s): nauwkeurigheid ~95%, herbruikbaar over waterschappen, past bij platform-principes — maar duurt ~15s.
+
+          Benadering B is op alle andere assen duidelijk beter; alleen NFR-02 blokkeert het. In het FD staat NFR-02 als BA-aanname zonder gebruikerstracering.
+
+          De vraag: is 5 seconden een harde UX-behoefte voor de vergunningverleners, of mogen we die versoepelen naar ~15 seconden om de betere analyse (Benadering B) mogelijk te maken?
+
+          - Antwoord "hard" (bv. "5s is echt nodig") → NFR-02 blijft staan, Benadering A wordt gekozen, architect reviseert dán research.md (approval gate vuurt één keer).
+          - Antwoord "versoepelen" (bv. "15s mag ook") → NFR-02 wordt aangepast, Benadering B wordt gekozen, architect reviseert dán research.md (approval gate vuurt één keer).
+
+    # Chain ends here. The HITL question is pending. Session is marked
+    # paused (see session_status above). The user opens the session in
+    # the UI and answers — that triggers the BA's Phase R3 branching
+    # (HARD vs RELAXED) and the rest of the loop runs for real.

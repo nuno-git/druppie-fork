@@ -8,12 +8,13 @@
 ## This prevents the old collision where /workspace/core/ and /workspace/project/
 ## would confuse the sandbox agent when the project name contained "core".
 ##
-## Chain: router → planner → BA (FD) → planner → architect (TD with CORE_UPDATE signal)
-##   → build_classifier (routes to update_core_builder) → update_core_builder
+## Chain: router → planner → BA (FD) → planner → architect (TD + BUILD_PATH=CORE_UPDATE,
+##   routes directly to update_core_builder via next_agent) → update_core_builder
 ##     (execute_coding_task with repo_target=druppie_core, mocked)
 ##
 ## The execute_coding_task call is mocked. The test verifies:
-## 1. The pipeline routes to update_core_builder (not builder_planner)
+## 1. The architect classifies BUILD_PATH=CORE_UPDATE in Step 2b and routes directly
+##    to update_core_builder (not builder_planner)
 ## 2. update_core_builder calls execute_coding_task with repo_target=druppie_core
 
 tool-test:
@@ -175,26 +176,7 @@ tool-test:
     - agent: architect
       tool: builtin:done
       arguments:
-        summary: "Agent architect: DESIGN_APPROVED. Technical design for core-sync-test — new MCP module in Druppie core. This is a CORE UPDATE."
-        next_agent: build_classifier
-
-    # =========================================================================
-    # Build Classifier — should route to update_core_builder
-    # =========================================================================
-    - agent: build_classifier
-      tool: coding:read_file
-      arguments:
-        path: docs/functional-design.md
-
-    - agent: build_classifier
-      tool: coding:read_file
-      arguments:
-        path: docs/technical-design.md
-
-    - agent: build_classifier
-      tool: builtin:done
-      arguments:
-        summary: "Agent build_classifier: BUILD_PATH=CORE_UPDATE. Reason: FD and TD describe a new MCP module in druppie/mcp-servers/ — this modifies Druppie's own codebase."
+        summary: "Agent architect: DESIGN_APPROVED. BUILD_PATH=CORE_UPDATE. Technical design for core-sync-test — new MCP module 'config-sync' in druppie/mcp-servers/. Modifies Druppie's own codebase."
         next_agent: update_core_builder
 
     # =========================================================================

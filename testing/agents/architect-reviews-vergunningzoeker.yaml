@@ -1,35 +1,38 @@
-## Agent test: real architect reviews vergunningzoeker FD, build_classifier routes
+## Agent test: real architect reviews vergunningzoeker FD and classifies build path
 ##
 ## Setup: BA completed a detailed FD for a Dutch waterschap permit metadata
 ##   search system with 12 FRs, archive compliance, and zaaksysteem migration.
 ##
-## continue_session: true — architect and build_classifier run in the SAME session.
-##   The architect reviews the FD and creates a technical design, then calls
-##   done(next_agent="build_classifier") which creates a pending build_classifier.
-##   The bounded orchestrator reuses that pending run (no duplicate).
-##   The build_classifier determines the build path (standalone vs core update).
+## continue_session: true — the architect runs in the same session as the
+##   setup. The architect reviews the FD, writes docs/technical-research.md
+##   and docs/technical-design.md, classifies BUILD_PATH (Step 2b), and
+##   routes directly via next_agent to builder_planner (PROJECT) or
+##   update_core_builder (CORE_UPDATE). The architect owns the build-path
+##   decision itself — there is no separate classifier agent.
 
 agent-test:
   name: architect-reviews-vergunningzoeker
-  description: "Real architect reviews vergunningzoeker FD, build_classifier determines build path"
-  tags: [architect, build_classifier, quality, judge, e2e, vergunningzoeker]
+  description: "Real architect reviews vergunningzoeker FD and classifies BUILD_PATH itself"
+  tags: [architect, quality, judge, e2e, vergunningzoeker]
 
   setup:
     - setup-vergunningzoeker-with-fd
   continue_session: true
 
   message: "Review the functional design and create the technical design for the vergunningzoeker"
-  agents: [architect, build_classifier]
+  agents: [architect]
   hitl: non-technical-pm
 
   assert:
+    - check: architect-produces-research
     - check: architect-produces-td
+    - check: architect-vergunningzoeker-integrations
 
   judge:
-    context: [architect, build_classifier]
+    context: architect
     checks:
       - "The architect should have approved the design (done summary should contain DESIGN_APPROVED), OR given feedback (DESIGN_FEEDBACK). Either is acceptable — but the architect must make a clear decision."
       - "The technical design must address the search architecture — how to index metadata from multiple legacy databases into a unified search system."
       - "The technical design must address Archiefwet compliance — how archive nominations and retention periods from the selectielijst waterschappen 2012 are mapped and calculated."
       - "The technical design must address the zaaksysteem migration interface — how metadata and documents are transferred."
-      - "The build_classifier should have determined the build path (BUILD_PATH=STANDALONE or BUILD_PATH=CORE_UPDATE) based on the technical design."
+      - "If the architect approved the design, the done summary must include a BUILD_PATH classification (BUILD_PATH=PROJECT or BUILD_PATH=CORE_UPDATE) and the next_agent must match it: builder_planner for PROJECT or update_core_builder for CORE_UPDATE. Because the research proposes new Druppie MCP modules for bronsystem/zaaksysteem/selectielijst, BUILD_PATH=CORE_UPDATE is the expected outcome."
