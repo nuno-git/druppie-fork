@@ -814,3 +814,245 @@ done(
 - Only phases that need variables define them in flow YAML (e.g., verifier sets succeeded)
 - All agents MUST use done tool with required message
 - System enforces that required variables are set when defined
+
+---
+
+## Implementation Plan
+
+### Phase 1: Core Infrastructure Changes
+
+#### File: `src/flows/schema.ts`
+**Changes:**
+- Add `variables` field to `PhaseDef` interface for per-phase variable requirements
+- Update variable typing to support type definitions (e.g., `- succeeded: bool`)
+- Add validation for required vs optional variables in phases
+
+#### File: `src/flows/executor/FlowContext.ts`
+**Changes:**
+- Simplify from Map-based to simple dict-like structure (closer to PRD's FlowState)
+- Add method to validate required variables are set
+- Add method to check if done tool was used by agent
+- Update variable interpolation to support new syntax
+- Remove complex agent reference parsing (simplify to direct variable access)
+
+#### File: `src/flows/executor/FlowExecutor.ts`
+**Changes:**
+- Add done tool to agent tool list automatically
+- Implement done tool enforcement (raise error if not used)
+- Implement required variable validation after each phase
+- Update phase execution to check done tool usage
+- Modify agent result handling to extract done tool parameters
+- Add error handling for missing done tool or missing required variables
+
+#### File: `src/flows/tools/decision-tool.ts`
+**Changes:**
+- Update condition evaluation to support simplified FlowState
+- Add support for new variable interpolation patterns
+- Ensure compatibility with per-phase variable definitions
+
+### Phase 2: Done Tool Implementation
+
+#### File: `src/tools/done-tool.ts` (NEW FILE)
+**Changes:**
+- Create new done tool with required `variables` and `message` parameters
+- Implement tool definition following TypeScript tool patterns
+- Add validation that both parameters are provided
+- Add descriptive error messages for missing parameters
+- Integrate with existing tool infrastructure
+
+#### File: `src/agents/runner.ts`
+**Changes:**
+- Update agent execution to detect and handle done tool calls
+- Modify result extraction to capture done tool parameters
+- Update summary/variable extraction to work with done tool output
+- Add validation for done tool usage in agent results
+
+### Phase 3: Agent YAML Updates
+
+#### File: `.pi/agents/verifier.md`
+**Changes:**
+- Remove JSON output requirement
+- Remove complex variable definitions from instructions
+- Add done tool usage instructions with examples
+- Simplify output to use done tool instead of JSON + verdict line
+- Update examples to show done(variables={succeeded: true}, message="...")
+
+#### File: `.pi/agents/planner.md`
+**Changes:**
+- Remove any variable output requirements
+- Add done tool usage instructions
+- Update examples to use done tool
+- Simplify completion message format
+
+#### File: `.pi/agents/analyst.md`
+**Changes:**
+- Add done tool usage instructions
+- Update completion pattern to use done tool
+- Remove any structured output requirements
+
+#### File: `.pi/agents/wave-orchestrator.md`
+**Changes:**
+- Add `spawn_subagents: true` to frontmatter (if not present)
+- Add `allowed_subagents: [builder, tester]` to frontmatter
+- Add done tool usage instructions for coordination
+- Update subagent spawning examples
+- Add done tool call after subagent completion
+
+### Phase 4: Flow YAML Updates
+
+#### File: `.pi/flows/tdd.yaml`
+**Changes:**
+- Add `variables` field to phases that require variable setting
+- Update verify phase to require `succeeded` variable
+- Remove complex variable sets, simplify to inline expressions
+- Update conditions to use simplified variable access
+- Add explicit variable requirements for relevant phases
+
+**Example changes:**
+```yaml
+# Before:
+- name: verify
+  agent: verifier
+  description: Run tests and fix simple issues
+  set:
+    testsPassed: true
+    buildPassed: true
+    remainingIssuesCount: 0
+
+# After:
+- name: verify
+  agent: verifier
+  description: Run tests and set succeeded variable
+  variables:  # Variables this agent MUST set
+    - succeeded: bool
+```
+
+### Phase 5: Agent Discovery and Configuration
+
+#### File: `src/agents/runner.ts` (agent discovery section)
+**Changes:**
+- Update frontmatter parsing to handle `spawn_subagents` field
+- Update frontmatter parsing to handle `allowed_subagents` field
+- Add validation for subagent configuration
+- Update AgentDefinition interface to include subagent fields
+
+#### File: `src/flows/executor/FlowExecutor.ts` (agent preparation)
+**Changes:**
+- Add support for subagent spawning in base options
+- Implement allowed subagent validation
+- Pass subagent configuration to agent runner
+
+### Phase 6: Testing Infrastructure
+
+#### File: `src/test-yaml-flow.ts`
+**Changes:**
+- Add tests for done tool enforcement
+- Add tests for required variable validation
+- Add tests for per-phase variable definitions
+- Update existing tests to use new flow structure
+- Add tests for error conditions (missing done, missing variables)
+
+#### File: New test file: `src/flows/test/done-tool.test.ts`
+**Changes:**
+- Create comprehensive tests for done tool functionality
+- Test parameter validation
+- Test integration with FlowExecutor
+- Test error handling
+
+### Phase 7: Documentation and Migration
+
+#### File: `.pi/agents/*.md` (all agent files)
+**Changes:**
+- Update system prompts to reflect new completion pattern
+- Add done tool usage examples to all agents
+- Remove deprecated JSON output instructions
+- Standardize completion message format
+
+#### File: `docs/IMPLEMENTATION_NOTES.md` (NEW FILE)
+**Changes:**
+- Document migration from old to new flow system
+- Provide examples of before/after agent YAML
+- Provide examples of before/after flow YAML
+- Document common pitfalls and solutions
+
+### Summary of File Changes
+
+**Core Files (5 files):**
+1. `src/flows/schema.ts` - Add per-phase variable definitions
+2. `src/flows/executor/FlowContext.ts` - Simplify to dict-like, add validation
+3. `src/flows/executor/FlowExecutor.ts` - Add done tool enforcement
+4. `src/flows/tools/decision-tool.ts` - Update for simplified state
+5. `src/tools/done-tool.ts` - NEW: Done tool implementation
+
+**Agent Files (5+ files):**
+6. `.pi/agents/verifier.md` - Remove JSON, add done tool
+7. `.pi/agents/planner.md` - Add done tool usage
+8. `.pi/agents/analyst.md` - Add done tool usage
+9. `.pi/agents/wave-orchestrator.md` - Add subagent config, done tool
+10. `.pi/agents/*.md` - Update remaining agents
+
+**Flow Files (1+ files):**
+11. `.pi/flows/tdd.yaml` - Add per-phase variables, simplify structure
+
+**Agent Infrastructure (2 files):**
+12. `src/agents/runner.ts` - Update discovery, add done tool handling
+13. `src/agents/runner.ts` (agent discovery) - Add subagent field parsing
+
+**Testing Files (2 files):**
+14. `src/test-yaml-flow.ts` - Add done tool and validation tests
+15. `src/flows/test/done-tool.test.ts` - NEW: Comprehensive done tool tests
+
+**Documentation Files (1 file):**
+16. `docs/IMPLEMENTATION_NOTES.md` - NEW: Migration documentation
+
+### Key Implementation Patterns
+
+**Done Tool Pattern:**
+```typescript
+// Tool definition
+{
+  name: "done",
+  description: "Mark your work as complete. YOU MUST USE THIS TOOL TO FINISH.",
+  parameters: {
+    type: "object",
+    properties: {
+      variables: {
+        type: "object",
+        description: "Variables to set in FlowState",
+      },
+      message: {
+        type: "string",
+        description: "Completion message",
+      }
+    },
+    required: ["variables", "message"]
+  }
+}
+```
+
+**Per-Phase Variable Pattern:**
+```yaml
+# Flow YAML
+- name: verify
+  agent: verifier
+  variables:
+    - succeeded: bool
+    - bugs_fixed: int
+```
+
+**Enforcement Pattern:**
+```typescript
+// After agent execution
+if (!doneToolUsed) {
+  throw new Error(`Agent ${agentName} did not use required 'done' tool`);
+}
+
+// Validate required variables
+for (const requiredVar of phase.variables) {
+  if (!setVariables.has(requiredVar.name)) {
+    throw new Error(`Agent ${agentName} did not set required variable: ${requiredVar.name}`);
+  }
+}
+```
+
+This implementation plan provides a clear roadmap for transitioning from the current complex JSON-based agent output system to the simplified done tool-based system while maintaining all functionality and adding proper enforcement mechanisms.
