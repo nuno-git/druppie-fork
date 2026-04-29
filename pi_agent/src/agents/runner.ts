@@ -224,6 +224,8 @@ export interface SubagentResult {
   summary?: string;
   /** Parsed variables from the summary */
   variables?: Map<string, string>;
+  /** Set of tool names that were actually invoked during this session */
+  toolCallsUsed: Set<string>;
 }
 
 export interface RunSubagentOptions {
@@ -329,6 +331,7 @@ export async function runSubagent(
   let turnCount = 0;
   let consecutiveErrors = 0;
   const MAX_CONSECUTIVE_ERRORS = 5;
+  const toolCallsUsed = new Set<string>();
 
   const handle: AgentHandle | undefined = journal?.startAgent(agent.name, `${model.provider}/${model.id}`, meta);
   const toolStartTimes = new Map<string, number>();
@@ -340,11 +343,8 @@ export async function runSubagent(
       onOutput?.(delta);
     }
     if (event.type === "tool_execution_start") {
-      // pi-agent-core emits the parsed arguments as `args` (see its
-      // README "tool_execution_start { toolCallId, toolName, args }"),
-      // so reading only `ev.input` was silently dropping every tool's
-      // args. Accept both for safety.
       const ev = event as { toolName?: string; toolCallId?: string; args?: unknown; input?: unknown };
+      toolCallsUsed.add(ev.toolName ?? "?");
       if (ev.toolCallId) toolStartTimes.set(ev.toolCallId, Date.now());
       const toolArgs = ev.args !== undefined ? ev.args : ev.input;
       handle?.toolCall(ev.toolName ?? "?", toolArgs, ev.toolCallId ?? "");
@@ -420,7 +420,7 @@ export async function runSubagent(
     const summary = extractSummary(output);
     const variables = extractVariables(output);
 
-    return { agentName: agent.name, output, success, turnCount, summary, variables };
+    return { agentName: agent.name, output, success, turnCount, summary, variables, toolCallsUsed };
   } catch (err) {
     session.dispose();
     const errorMsg = err instanceof Error ? err.message : String(err);
@@ -438,6 +438,7 @@ export async function runSubagent(
       error: errorMsg,
       summary,
       variables,
+      toolCallsUsed,
     };
   }
 }

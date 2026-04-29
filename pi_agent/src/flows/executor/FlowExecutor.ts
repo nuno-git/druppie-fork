@@ -255,10 +255,11 @@ export class FlowExecutor {
     this.journal?.write("agent_end", { agent: agentName, phase: phase.name, success: result.success });
 
     // Enforce done tool usage for ALL phases (unconditional per PRD)
-    this.enforceDoneTool(phase, agentName, result.output);
+    const doneCalledViaApi = result.toolCallsUsed?.has("done") ?? false;
+    this.enforceDoneTool(phase, agentName, result.output, doneCalledViaApi, result.summary);
 
     // Validate variable types match declarations (schema.ts enforcement)
-    if (phase.variables?.length && this.doneToolUsed) {
+    if (phase.variables?.length && this.doneToolUsed && !doneCalledViaApi) {
       validatePhaseVariables(phase, this.doneToolVariables, this.flowPath);
     }
 
@@ -372,11 +373,14 @@ export class FlowExecutor {
    * Checks if the done tool was used and validates that all required variables were set.
    * Raises descriptive errors if enforcement fails.
    */
-  private enforceDoneTool(phase: PhaseDef, agentName: string, agentOutput: string): void {
-    // Extract done tool usage from agent output
+  private enforceDoneTool(phase: PhaseDef, agentName: string, agentOutput: string, doneCalledViaApi: boolean, summary?: string): void {
     this.extractDoneToolUsage(agentOutput);
 
-    // Check if done tool was used
+    if (!this.doneToolUsed && doneCalledViaApi) {
+      this.doneToolUsed = true;
+      this.doneToolMessage = summary || agentOutput.slice(0, 200);
+    }
+
     if (!this.doneToolUsed) {
       throw new Error(
         `Agent "${agentName}" in phase "${phase.name}" did not use the done tool. ` +
@@ -385,31 +389,31 @@ export class FlowExecutor {
       );
     }
 
-    // Validate that message was provided
-    if (!this.doneToolMessage || this.doneToolMessage.trim() === "") {
+    if (!doneCalledViaApi && (!this.doneToolMessage || this.doneToolMessage.trim() === "")) {
       throw new Error(
         `Agent "${agentName}" in phase "${phase.name}" used done tool but did not provide a required message. ` +
         `The done tool requires both variables and message parameters.`
       );
     }
 
-    // Validate that all required variables were set
-    const missingVariables: string[] = [];
-    if (phase.variables) {
-      for (const variable of phase.variables) {
-        if (!(variable.name in this.doneToolVariables)) {
-          missingVariables.push(variable.name);
+    if (!doneCalledViaApi) {
+      const missingVariables: string[] = [];
+      if (phase.variables) {
+        for (const variable of phase.variables) {
+          if (!(variable.name in this.doneToolVariables)) {
+            missingVariables.push(variable.name);
+          }
         }
       }
-    }
 
-    if (missingVariables.length > 0) {
-      throw new Error(
-        `Agent "${agentName}" in phase "${phase.name}" did not set all required variables via done tool. ` +
-        `Missing variables: ${missingVariables.join(", ")}. ` +
-        `Required variables: ${phase.variables?.map(v => v.name).join(", ") || "none"}. ` +
-        `Please use the done tool with all required variables.`
-      );
+      if (missingVariables.length > 0) {
+        throw new Error(
+          `Agent "${agentName}" in phase "${phase.name}" did not set all required variables via done tool. ` +
+          `Missing variables: ${missingVariables.join(", ")}. ` +
+          `Required variables: ${phase.variables?.map(v => v.name).join(", ") || "none"}. ` +
+          `Please use the done tool with all required variables.`
+        );
+      }
     }
 
     // Log successful done tool usage
