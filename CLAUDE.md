@@ -108,6 +108,15 @@ Domain models use Summary/Detail naming:
 - `SessionSummary` for lists, `SessionDetail` for single items
 - All exports through `druppie/domain/__init__.py`
 
+## Agent Subagent Policy (MUST FOLLOW)
+
+- **ALWAYS use subagents (explore, librarian) for codebase exploration** — never read files yourself unless you already know the exact file and line you need.
+- If there is any chance a file is irrelevant to your task, do NOT read it yourself. Delegate.
+- Direct file reads are acceptable ONLY when you have high confidence the file contains exactly what you need (e.g., you wrote it earlier in this session).
+- Grep/search tools should also be delegated to explore agents unless it's a single targeted lookup.
+- **ALWAYS use subagents (deep, unspecified-high, quick, etc.) for writing and coding tasks** — delegate implementation work, never do it yourself.
+- You are an orchestrator. Your job is to decompose, delegate, and verify — not to write code directly.
+
 ## Critical Rules
 
 1. **NO database migrations** - Update SQLAlchemy models directly, reset DB with `docker compose --profile reset-db run --rm reset-db`
