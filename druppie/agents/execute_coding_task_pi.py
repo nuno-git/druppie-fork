@@ -36,6 +36,37 @@ def _default_git_provider_for(repo_target: str) -> str:
     return "github_app" if repo_target == "druppie_core" else "gitea"
 
 
+async def _run_explore_flow(
+    task: str,
+    run_id: str,
+    ingest_token: str,
+    git_credentials: dict,
+    source_branch: str | None,
+) -> dict:
+    import os
+    from druppie.flows.explore import explore
+
+    ingest_url = f"{os.getenv('DRUPPIE_INTERNAL_URL', 'http://localhost:8000')}/api/pi-agent-runs/{run_id}/events"
+    sandbox_image = os.getenv("PI_AGENT_SANDBOX_IMAGE", "oneshot-tdd-agent-sandbox:latest")
+
+    agent_result = await explore(
+        task_description=task,
+        source_repo=f"{git_credentials.get('base_url', '')}/{os.getenv('GITEA_REPO_OWNER', '')}/{os.getenv('GITEA_REPO_NAME', '')}"
+        if git_credentials.get("provider") != "github_app" else None,
+        source_branch=source_branch,
+        sandbox_image=sandbox_image,
+        ingest_url=ingest_url,
+        ingest_token=ingest_token,
+        extra_env={"PI_AGENT_RUN_ID": run_id},
+    )
+
+    return {
+        "success": agent_result.success,
+        "answer": agent_result.output or agent_result.summary,
+        "exit_code": 0 if agent_result.success else 1,
+    }
+
+
 async def _resolve_github_credentials(repo_owner: str, repo_name: str) -> dict:
     """GitHub App creds are already in env (GITHUB_APP_ID / _INSTALLATION_ID /
     _PRIVATE_KEY_PATH, configured in docker-compose.yml and mounted via
@@ -205,21 +236,29 @@ async def execute_coding_task_pi(
     ingest_token = generate_ingest_token()
     register_ingest_token(run_id, ingest_token)
 
-    runner = PiAgentRunner(
-        run_id=run_id,
-        task_prompt=task,
-        agent_name=flow,
-        repo_target=repo_target,
-        git_provider=git_provider,
-        repo_owner=repo_ctx.repo_owner,
-        repo_name=repo_ctx.repo_name,
-        git_credentials=git_creds,
-        llm_credentials=llm_creds,
-        source_branch=source_branch,
-    )
-
     try:
-        result = await runner.run(ingest_token)
+        if flow == "explore":
+            result = await _run_explore_flow(
+                task=task,
+                run_id=run_id,
+                ingest_token=ingest_token,
+                git_credentials=git_creds,
+                source_branch=source_branch,
+            )
+        else:
+            runner = PiAgentRunner(
+                run_id=run_id,
+                task_prompt=task,
+                agent_name=flow,
+                repo_target=repo_target,
+                git_provider=git_provider,
+                repo_owner=repo_ctx.repo_owner,
+                repo_name=repo_ctx.repo_name,
+                git_credentials=git_creds,
+                llm_credentials=llm_creds,
+                source_branch=source_branch,
+            )
+            result = await runner.run(ingest_token)
     finally:
         revoke_ingest_token(run_id)
         if gitea_user_id:
@@ -229,8 +268,12 @@ async def execute_coding_task_pi(
             except Exception as e:
                 logger.warning("pi_agent_gitea_cleanup_failed", run_id=run_id, error=str(e))
 
-    summary = result.get("summary")
-    exit_code = result["exit_code"]
+    if flow == "explore":
+        exit_code = 0 if result["success"] else 1
+        summary = None
+    else:
+        summary = result.get("summary")
+        exit_code = result["exit_code"]
 
     # Under druppie (ingest mode) pi_agent's journal.close() posts the summary
     # straight to /api/pi-agent-runs/{run_id}/summary instead of writing
