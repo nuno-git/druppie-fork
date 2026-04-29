@@ -116,13 +116,14 @@ export function discoverAgents(cwd: string, extraDirs?: string[]): AgentDefiniti
 
       if (!frontmatter.name || !frontmatter.description) continue;
 
+      const spawnList = parseFrontmatterList(frontmatter.spawn);
       agents.push({
         name: frontmatter.name,
         description: frontmatter.description,
         tools: parseFrontmatterList(frontmatter.tools),
         model: frontmatter.model,
-        spawn_subagents: frontmatter.spawn_subagents === "true",
-        allowed_subagents: parseFrontmatterList(frontmatter.allowed_subagents),
+        spawn_subagents: frontmatter.spawn_subagents === "true" || (spawnList !== undefined && spawnList.length > 0),
+        allowed_subagents: parseFrontmatterList(frontmatter.allowed_subagents) ?? spawnList,
         systemPrompt: body.trim(),
         source: "project",
         filePath,
