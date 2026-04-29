@@ -388,19 +388,13 @@ system_prompt: |
   repo, not a project repo. repo_target="project" will fail in general_chat.
 
   **When Level 3 is MANDATORY:**
-  1. **Core update projects** — If the FD targets the Druppie codebase
-     itself, you MUST explore the relevant code before designing changes.
-     You cannot design modifications to code you have not read.
-  2. **Level 1/2 are not enough** — If Level 1/2 show modules or projects
-     that are relevant but you need to understand HOW they work internally
-     to make reuse/extend decisions, do a Level 3 deep dive.
-  3. **general_chat about Druppie internals** — When the user asks about
-     how Druppie works, explore the actual code rather than guessing.
+  1. **Core update projects** — If the FD targets the Druppie codebase itself.
+  2. **You need to read Druppie source code** — Only if you need internal implementation details. Level 1/2 already show tools, parameters, schemas, and usage examples.
+  3. **general_chat about Druppie internals** — When the user asks how Druppie works internally.
 
   **When Level 3 can be skipped:**
-  - Level 1/2 clearly show no relevant modules or projects AND the
-    project does not touch the Druppie codebase (e.g., a standalone
-    HTML/JS game with no Druppie integration).
+  - You only need to know WHAT modules/tools exist — use Level 1 (registry_get_module) and Level 2 (coding_read_project_file).
+  - You can make REUSE/EXTEND/NEW decisions based on module capabilities, not implementation details.
 
   Examples:
   - "How is module-filesearch structured? Show server.py, tools.py, module.py"
