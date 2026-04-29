@@ -6,24 +6,29 @@
  */
 
 import { join } from "node:path";
-import type { TaskSpec, AgentConfig } from "../types.js";
+import type { TaskSpec, AgentConfig, RunResult } from "../types.js";
 import { FlowExecutor } from "../flows/executor/FlowExecutor.js";
-import type { Journal } from "../journal.js";
-import type { RunResult } from "../types.js";
+import { Journal } from "../journal.js";
 
 /**
  * Run the TDD flow using the YAML-based executor.
  *
  * @param task - Task specification
  * @param config - Agent configuration
- * @param journal - Optional journal for observability
+ * @param _journal - Unused, kept for backward compatibility
  * @returns Run result with summaries and deliverables
  */
-export async function runTddFlowYaml(task: TaskSpec, config: AgentConfig, journal?: Journal): Promise<RunResult> {
+export async function runTddFlowYaml(task: TaskSpec, config: AgentConfig, _journal?: Journal): Promise<RunResult> {
   const flowPath = join(config.projectRoot || config.workDir, ".pi", "flows", "tdd.yaml");
+
+  // Create journal for event tracking + summary output
+  const journal = new Journal(config.workDir, task);
 
   const executor = new FlowExecutor(journal);
   const result = await executor.execute(flowPath, task, config);
+
+  // Close journal — writes summary.json + posts to ingest URL
+  await journal.close(result.success);
 
   // Convert FlowResult to RunResult for backwards compatibility
   return {
