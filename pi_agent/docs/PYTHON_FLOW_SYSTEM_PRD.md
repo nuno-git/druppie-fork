@@ -825,7 +825,7 @@ done(
 **Changes:**
 - Add `variables` field to `PhaseDef` interface for per-phase variable requirements
 - Update variable typing to support type definitions (e.g., `- succeeded: bool`)
-- Add validation for required vs optional variables in phases
+- Add validation that all defined variables are required (no optional variables)
 
 #### File: `src/flows/executor/FlowContext.ts`
 **Changes:**
@@ -838,11 +838,11 @@ done(
 #### File: `src/flows/executor/FlowExecutor.ts`
 **Changes:**
 - Add done tool to agent tool list automatically
-- Implement done tool enforcement (raise error if not used)
-- Implement required variable validation after each phase
-- Update phase execution to check done tool usage
+- Implement done tool enforcement for ALL phases (raise error if not used)
+- Implement variable validation after each phase (all defined variables are required)
+- Update phase execution to check done tool usage unconditionally
 - Modify agent result handling to extract done tool parameters
-- Add error handling for missing done tool or missing required variables
+- Add error handling for missing done tool, missing variables, or missing message
 
 #### File: `src/flows/tools/decision-tool.ts`
 **Changes:**
@@ -1042,17 +1042,904 @@ done(
 
 **Enforcement Pattern:**
 ```typescript
-// After agent execution
+// After agent execution - ALWAYS enforce done tool usage
 if (!doneToolUsed) {
   throw new Error(`Agent ${agentName} did not use required 'done' tool`);
 }
 
-// Validate required variables
-for (const requiredVar of phase.variables) {
-  if (!setVariables.has(requiredVar.name)) {
-    throw new Error(`Agent ${agentName} did not set required variable: ${requiredVar.name}`);
+// Validate message was provided
+if (!doneToolMessage || doneToolMessage.trim() === "") {
+  throw new Error(`Agent ${agentName} must provide a message in done tool`);
+}
+
+// Validate all defined variables were set (all are required)
+for (const variable of phase.variables) {
+  if (!setVariables.has(variable.name)) {
+    throw new Error(`Agent ${agentName} did not set required variable: ${variable.name}`);
   }
 }
 ```
 
 This implementation plan provides a clear roadmap for transitioning from the current complex JSON-based agent output system to the simplified done tool-based system while maintaining all functionality and adding proper enforcement mechanisms.
+
+---
+
+# Iteration 2: Critical Fixes and Implementation Gaps
+
+## Overview
+
+After reviewing the implementation against the PRD requirements, several critical issues were identified that prevent full compliance. The implementation is approximately 60% complete with solid foundations but missing critical enforcement functionality and containing遗留 legacy code.
+
+## Implementation Status Summary
+
+### ✅ Correctly Implemented (60%)
+- Done tool created and integrated with FlowExecutor
+- Per-phase variable definitions in schema.ts
+- YAML parsing supports variable type definitions
+- Done tool parameter extraction handles multiple formats
+- Agent YAML files updated with done tool instructions
+- Spawn subagents configuration in place
+- Flow YAML updated with variables field
+
+### ❌ Critical Issues Found (40%)
+1. **FlowExecutor enforcement bugs** - Conditional enforcement, legacy fallbacks, missing message validation
+2. **schema.ts missing enforcement** - No type validation, no enforcement mechanisms
+3. **Agent JSON remnants** - Complex JSON structures still present in agent files
+4. **Missing file updates** - runner.ts, FlowContext.ts, decision-tool.ts not updated
+5. **Done tool validation gaps** - Missing runtime validation and error handling bugs
+
+---
+
+## Detailed Fix Plan
+
+### Priority 1: Fix Critical FlowExecutor Enforcement Bugs
+
+**File:** `src/flows/executor/FlowExecutor.ts`
+
+**Bug #1: Conditional Done Tool Enforcement (CRITICAL)**
+**Location:** Lines 243-246
+**Current Code:**
+```typescript
+// Enforce done tool usage if phase has required variables
+if (phase.variables && phase.variables.length > 0) {
+  this.enforceDoneTool(phase, agentName, result.output);
+}
+```
+
+**Problem:** Only enforces done tool when `phase.variables` exists, allowing agents to complete without using done tool for phases without variables.
+
+**Fix Required:**
+```typescript
+// Enforce done tool usage for ALL phases (unconditional)
+this.enforceDoneTool(phase, agentName, result.output);
+```
+
+**Bug #2: Legacy Variable Fallback (HIGH)**
+**Location:** Lines 264-269
+**Current Code:**
+```typescript
+if (this.doneToolUsed) {
+  for (const [key, value] of Object.entries(this.doneToolVariables)) {
+    ctx.setVariable(key, value);
+  }
+} else if (result.variables) {
+  // Fallback to legacy variable extraction if no done tool
+  for (const [key, value] of result.variables.entries()) {
+    ctx.setVariable(key, value);
+  }
+}
+```
+
+**Problem:** Allows agents to bypass done tool enforcement entirely by using old variable extraction method.
+
+**Fix Required:**
+```typescript
+// Store variables from done tool (required)
+if (this.doneToolUsed) {
+  for (const [key, value] of Object.entries(this.doneToolVariables)) {
+    // Ensure value is of the correct type
+    if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+      ctx.setVariable(key, value);
+    } else {
+      // Convert to string for complex types
+      ctx.setVariable(key, String(value));
+    }
+  }
+}
+// Remove the else if block completely
+```
+
+**Bug #3: Missing Message Parameter Validation (MEDIUM)**
+**Location:** Lines 363-402 in `enforceDoneTool()`
+**Current Code:**
+```typescript
+private enforceDoneTool(phase: PhaseDef, agentName: string, agentOutput: string): void {
+  this.extractDoneToolUsage(agentOutput);
+
+  // Check if done tool was used
+  if (!this.doneToolUsed) {
+    throw new Error(
+      `Agent "${agentName}" in phase "${phase.name}" did not use the done tool. ` +
+      // ... error message
+    );
+  }
+
+  // Validate that all required variables were set
+  const missingVariables: string[] = [];
+  if (phase.variables) {
+    for (const variable of phase.variables) {
+      if (!(variable.name in this.doneToolVariables)) {
+        missingVariables.push(variable.name);
+      }
+    }
+  }
+  // ... rest of validation
+}
+```
+
+**Problem:** Doesn't validate that `message` parameter was provided in done tool call, despite it being required.
+
+**Fix Required:**
+```typescript
+private enforceDoneTool(phase: PhaseDef, agentName: string, agentOutput: string): void {
+  this.extractDoneToolUsage(agentOutput);
+
+  // Check if done tool was used
+  if (!this.doneToolUsed) {
+    throw new Error(
+      `Agent "${agentName}" in phase "${phase.name}" did not use the done tool. ` +
+      `You MUST use the done tool at the end of your work with all required variables and a message.`
+    );
+  }
+
+  // Validate that message was provided
+  if (!this.doneToolMessage || this.doneToolMessage.trim() === "") {
+    throw new Error(
+      `Agent "${agentName}" in phase "${phase.name}" used done tool but did not provide a required message. ` +
+      `The done tool requires both variables and message parameters.`
+    );
+  }
+
+  // Validate that all defined variables were set
+  const missingVariables: string[] = [];
+  if (phase.variables) {
+    for (const variable of phase.variables) {
+      if (!(variable.name in this.doneToolVariables)) {
+        missingVariables.push(variable.name);
+      }
+    }
+  }
+
+  if (missingVariables.length > 0) {
+    throw new Error(
+      `Agent "${agentName}" in phase "${phase.name}" did not set all required variables via done tool. ` +
+      `Missing variables: ${missingVariables.join(", ")}. ` +
+      `Required variables: ${phase.variables?.map(v => v.name).join(", ") || "none"}. ` +
+      `Please use the done tool with all required variables.`
+    );
+  }
+}
+```
+
+---
+
+### Priority 2: Complete schema.ts Enforcement Implementation
+
+**File:** `src/flows/schema.ts`
+
+**Missing Feature #1: Type System Enhancement**
+**Current Implementation (Line 75):**
+```typescript
+type: string;
+```
+
+**Problem:** String-based type system allows invalid type names like "string" instead of "str", or typos like "bol" instead of "bool".
+
+**Fix Required:**
+```typescript
+// Define supported variable types
+export type VariableType = "str" | "int" | "float" | "bool";
+
+export interface PhaseVariable {
+  /** Variable name (must be valid JavaScript identifier) */
+  name: string;
+  /** Variable type: "str", "int", "float", or "bool" */
+  type: VariableType;
+}
+```
+
+**Missing Feature #2: Type Validation Function**
+**Current State:** No validation function exists to check if variable values match their declared types.
+
+**Fix Required:**
+```typescript
+/**
+ * Validate that a variable value matches its declared type.
+ *
+ * @param variable - The variable definition from flow YAML
+ * @param value - The actual value set by the agent
+ * @returns true if type matches, false otherwise
+ */
+export function validateVariableType(variable: PhaseVariable, value: unknown): boolean {
+  switch (variable.type) {
+    case "str":
+      return typeof value === "string";
+    case "int":
+      return typeof value === "number" && Number.isInteger(value);
+    case "float":
+      return typeof value === "number";
+    case "bool":
+      return typeof value === "boolean";
+    default:
+      // Should never happen with VariableType union, but handle gracefully
+      console.warn(`Unknown variable type: ${variable.type}`);
+      return true;
+  }
+}
+```
+
+**Missing Feature #3: Phase Variable Validation Function**
+**Current State:** Schema validates structure but doesn't provide enforcement mechanism for checking agents set required variables with correct types.
+
+**Fix Required:**
+```typescript
+/**
+ * Validate that all variables required by a phase were set by the agent
+ * and that their values match the declared types.
+ *
+ * @param phase - The phase definition
+ * @param setVariables - Variables actually set by the agent via done tool
+ * @param flowPath - Path to the flow file (for error messages)
+ * @throws FlowValidationError if validation fails
+ */
+export function validatePhaseVariables(
+  phase: PhaseDef,
+  setVariables: Record<string, unknown>,
+  flowPath: string
+): void {
+  const errors: string[] = [];
+  const prefix = `Phase "${phase.name}"`;
+
+  if (phase.variables) {
+    for (const variable of phase.variables) {
+      // Check if variable was set
+      if (!(variable.name in setVariables)) {
+        errors.push(
+          `${prefix}: Required variable '${variable.name}' (type: ${variable.type}) was not set by agent`
+        );
+        continue;
+      }
+
+      // Check if variable type matches
+      const value = setVariables[variable.name];
+      if (!validateVariableType(variable, value)) {
+        errors.push(
+          `${prefix}: Variable '${variable.name}' expected type '${variable.type}' ` +
+          `but got ${typeof value} (value: ${JSON.stringify(value)})`
+        );
+      }
+    }
+  }
+
+  if (errors.length > 0) {
+    throw new FlowValidationError(
+      `Phase variable validation failed`,
+      flowPath,
+      errors
+    );
+  }
+}
+```
+
+**Integration Required:**
+Add call to `validatePhaseVariables()` in FlowExecutor after extracting done tool variables:
+
+```typescript
+// In FlowExecutor.ts, after extracting done tool variables
+if (this.doneToolUsed) {
+  // Validate types and completeness
+  validatePhaseVariables(phase, this.doneToolVariables, this.config.flowPath);
+
+  // Set variables in context
+  for (const [key, value] of Object.entries(this.doneToolVariables)) {
+    ctx.setVariable(key, value);
+  }
+}
+```
+
+---
+
+### Priority 3: Remove JSON Structures from Agent YAML Files
+
+**File:** `.pi/agents/verifier.md`
+
+**Issue:** Lines 61-88 contain complex JSON output examples that should be removed per PRD.
+
+**Current Content (Lines 61-88):**
+```markdown
+## Example Output Structure
+
+When you find issues, structure them as:
+
+```json
+{
+  "testsPassed": false,
+  "buildPassed": false,
+  "fixes": [
+    {
+      "file": "src/utils.ts",
+      "issue": "Missing null check",
+      "fix": "Add if (value !== null) check"
+    }
+  ],
+  "remainingIssues": [
+    {
+      "file": "src/api.ts",
+      "issue": "Type mismatch",
+      "severity": "high"
+    }
+  ]
+}
+```
+
+Use the done tool to report this:
+
+```bash
+done(variables={
+    "testsPassed": true,
+    "buildPassed": true,
+    "fixes": [...],
+    "remainingIssues": [...]
+}, message="...")
+```
+```
+
+**Fix Required:**
+Replace with simplified version that only sets `succeeded: bool`:
+
+```markdown
+## Completion
+
+After running tests and analysis, use the done tool to report results:
+
+### Success Case
+```bash
+# If all tests pass and no issues found
+done(variables={
+    "succeeded": true
+}, message="All tests passed successfully. No issues found.")
+```
+
+### Failure Case
+```bash
+# If tests fail or issues found
+done(variables={
+    "succeeded": false
+}, message="Tests failed with 2 errors. See test output for details.")
+```
+
+**Important:** Only set the `succeeded` variable as specified in the flow YAML. Describe any issues in the message parameter rather than creating complex JSON structures.
+```
+
+---
+
+**File:** `.pi/agents/planner.md`
+
+**Issue:** Lines 28-47 contain complete JSON schema definitions that should be removed.
+
+**Current Content (Lines 28-47):**
+```markdown
+## Output Format
+
+Your plan should follow this JSON structure:
+
+```json
+{
+  "summary": "Brief overview of the plan",
+  "approach": "Implementation approach",
+  "steps": [
+    {
+      "step": 1,
+      "description": "Step description",
+      "files": ["file1.ts", "file2.ts"],
+      "estimatedComplexity": "low|medium|high"
+    }
+  ],
+  "dependencies": ["external-dep1", "external-dep2"],
+  "risks": ["potential risk 1", "potential risk 2"]
+}
+```
+
+Write this plan to `plan.md` and use done tool to complete.
+```
+
+**Fix Required:**
+Replace with simple instructions:
+
+```markdown
+## Creating the Plan
+
+1. Read requirements and test files
+2. Use explore subagents for research and discovery
+3. Create a clear, step-by-step build plan
+4. Write the plan to `plan.md` in markdown format
+
+## Plan Format
+
+Use clear markdown format for your plan:
+
+```markdown
+# Build Plan
+
+## Summary
+Brief overview of what will be implemented.
+
+## Approach
+Description of the implementation approach and key decisions.
+
+## Implementation Steps
+
+### Step 1: [Step Name]
+- Description of what to do
+- Files to modify
+- Key considerations
+
+### Step 2: [Step Name]
+- Description of what to do
+- Files to modify
+- Key considerations
+
+## Dependencies
+List any external dependencies that need to be installed.
+
+## Risks
+List potential risks and mitigation strategies.
+```
+
+## Completion
+
+After creating the plan, use the done tool:
+
+```bash
+done(variables={}, message="Build plan created and saved to plan.md")
+```
+```
+
+---
+
+**File:** `.pi/agents/analyst.md`
+
+**Issue:** Lines 12-31 contain JSON schema for analysis output that should be removed.
+
+**Current Content (Lines 12-31):**
+```markdown
+## Output Structure
+
+Your analysis should include:
+
+```json
+{
+  "goals": ["goal1", "goal2"],
+  "testRequirements": ["test1", "test2"],
+  "architecture": {
+    "components": ["comp1", "comp2"],
+    "dataFlow": "description"
+  },
+  "technicalConsiderations": ["consideration1", "consideration2"]
+}
+```
+
+Write this analysis to `analysis.md` and use done tool to complete.
+```
+
+**Fix Required:**
+Replace with simple markdown format instructions:
+
+```markdown
+## Creating the Analysis
+
+Analyze the task and create a comprehensive analysis document. Write your analysis to `analysis.md` in markdown format.
+
+## Analysis Format
+
+```markdown
+# Task Analysis
+
+## Goals
+List the main goals and objectives.
+
+## Test Requirements
+Detail what tests need to be created and what they should verify.
+
+## Architecture
+Describe the system architecture and key components.
+
+## Technical Considerations
+List any technical constraints, dependencies, or considerations.
+
+## Next Steps
+Outline the recommended next steps for implementation.
+```
+
+## Completion
+
+After completing your analysis, use the done tool:
+
+```bash
+done(variables={}, message="Analysis complete and saved to analysis.md")
+```
+```
+
+---
+
+### Priority 4: Update Missing Critical Files
+
+**File:** `src/agents/runner.ts`
+
+**Issue:** No logic to detect or handle done tool calls, no validation that agents used done tool.
+
+**Required Changes:**
+
+1. **Add Done Tool Detection in Agent Results:**
+```typescript
+// In the function that processes agent results
+export interface AgentResult {
+  output: string;
+  doneToolUsed: boolean;
+  doneToolVariables: Record<string, unknown>;
+  doneToolMessage: string;
+  // ... other fields
+}
+
+// After running agent, check for done tool usage
+const doneToolUsage = extractDoneToolUsage(agentOutput);
+return {
+  output: agentOutput,
+  doneToolUsed: doneToolUsage.used,
+  doneToolVariables: doneToolUsage.variables,
+  doneToolMessage: doneToolUsage.message,
+  // ... other fields
+};
+```
+
+2. **Add Done Tool Extraction Function:**
+```typescript
+/**
+ * Extract done tool usage from agent output.
+ * This duplicates logic from FlowExecutor for consistency,
+ * or could be moved to a shared utility module.
+ */
+function extractDoneToolUsage(output: string): {
+  used: boolean;
+  variables: Record<string, unknown>;
+  message: string;
+} {
+  // Implementation similar to FlowExecutor.extractDoneToolUsage()
+  // ... parsing logic for multiple done tool call formats
+  return { used: false, variables: {}, message: "" };
+}
+```
+
+3. **Update Frontmatter Parsing for Subagent Fields:**
+```typescript
+// Ensure these fields are parsed from agent YAML frontmatter
+export interface AgentDefinition {
+  name: string;
+  description: string;
+  tools: string[];
+  spawn_subagents?: boolean;
+  allowed_subagents?: string[];
+  model?: string;
+  // ... other fields
+}
+```
+
+---
+
+**File:** `src/flows/executor/FlowContext.ts`
+
+**Issue:** No validation methods, needs simplification to dict-like structure per PRD.
+
+**Required Changes:**
+
+1. **Add Variable Validation Method:**
+```typescript
+/**
+ * Validate that all required variables have been set.
+ *
+ * @param requiredVars - Array of variable names that must be set
+ * @throws Error if any required variables are missing
+ */
+validateRequiredVariables(requiredVars: string[]): void {
+  const missing: string[] = [];
+  for (const varName of requiredVars) {
+    if (!this.variables.has(varName)) {
+      missing.push(varName);
+    }
+  }
+  if (missing.length > 0) {
+    throw new Error(
+      `Missing required variables in FlowState: ${missing.join(", ")}`
+    );
+  }
+}
+```
+
+2. **Simplify Variable Access (Optional Future Enhancement):**
+```typescript
+// Consider adding simpler dict-like access
+get(key: string): string | number | boolean | undefined {
+  return this.variables.get(key);
+}
+
+set(key: string, value: string | number | boolean): void {
+  this.variables.set(key, value);
+}
+
+// Allow iteration like a dict
+entries(): IterableIterator<[string, string | number | boolean]> {
+  return this.variables.entries();
+}
+```
+
+3. **Add Done Tool Usage Tracking (Optional):**
+```typescript
+// Could be added if FlowContext needs to track done tool usage
+private doneToolUsed: boolean = false;
+
+markDoneToolUsed(): void {
+  this.doneToolUsed = true;
+}
+
+wasDoneToolUsed(): boolean {
+  return this.doneToolUsed;
+}
+```
+
+---
+
+**File:** `src/flows/tools/decision-tool.ts`
+
+**Issue:** Still uses complex `@agentName.property` syntax that should be simplified per PRD.
+
+**Required Changes:**
+
+1. **Simplify Expression Evaluation for Dict-like State:**
+```typescript
+// Update evaluateSafe() to work with simplified FlowState
+function evaluateSafe(expr: string, context: Record<string, unknown>): any {
+  // Remove or simplify agent reference replacement (@agentName.property)
+  // Work with direct variable access (${variableName})
+  // ... implementation
+}
+```
+
+2. **Remove Complex Agent Reference Parsing:**
+```typescript
+// Simplify or remove this logic if @-syntax is being deprecated
+// The PRD states: "Remove complex agent reference parsing (simplify to direct variable access)"
+```
+
+3. **Update for Simplified Variable Access:**
+```typescript
+// Ensure decision tool works with ${variable} syntax
+// Remove dependency on @agentName.property references
+```
+
+---
+
+### Priority 5: Add Missing Done Tool Parameter Validation
+
+**File:** `src/flows/tools/done-tool.ts`
+
+**Issue #1: No Runtime Parameter Validation**
+**Location:** Lines 72-76
+**Current Code:**
+```typescript
+async execute(
+  toolCallId: string,
+  params: { variables: Record<string, unknown>; message: string }
+) {
+  const { variables, message } = params;
+  // No validation that parameters are actually provided
+```
+
+**Fix Required:**
+```typescript
+async execute(
+  toolCallId: string,
+  params: { variables: Record<string, unknown>; message: string }
+) {
+  const { variables, message } = params;
+
+  // Validate required parameters
+  if (!variables) {
+    throw new Error(
+      "Done tool requires 'variables' parameter. " +
+      "Usage: done(variables={...}, message='...')"
+    );
+  }
+
+  if (message === undefined || message === null) {
+    throw new Error(
+      "Done tool requires 'message' parameter. " +
+      "Usage: done(variables={...}, message='...')"
+    );
+  }
+
+  if (typeof message !== "string" || message.trim() === "") {
+    throw new Error(
+      "Done tool 'message' parameter must be a non-empty string. " +
+      "Please provide a descriptive message about what was accomplished."
+    );
+  }
+
+  // Continue with rest of implementation
+```
+
+**Issue #2: Error Handling Bug**
+**Location:** Line 120
+**Current Code:**
+```typescript
+return {
+  output: JSON.stringify({
+    success: false,
+    error: errorMessage,
+    variables: Object.keys(variables), // This will fail if variables is undefined
+  }),
+```
+
+**Fix Required:**
+```typescript
+return {
+  output: JSON.stringify({
+    success: false,
+    error: errorMessage,
+    variables: variables ? Object.keys(variables) : [],
+  }),
+```
+
+**Issue #3: Missing TypeBox Required Validation**
+**Location:** Lines 49-62
+**Current Code:**
+```typescript
+const ParametersSchema = Type.Object({
+  variables: Type.Record(...),
+  message: Type.String(...),
+});
+```
+
+**Fix Required:**
+```typescript
+const ParametersSchema = Type.Object({
+  variables: Type.Record(
+    Type.String(),
+    Type.Unknown(),
+    {
+      description:
+        "Variables to set in FlowState. MUST include all variables specified in the flow YAML phase. " +
+        "These variables will be available to subsequent phases via ${variable} syntax.",
+    }
+  ),
+  message: Type.String({
+    description:
+      "Completion message describing what was done. THIS IS REQUIRED. " +
+      "Should clearly state the outcome and any important details.",
+    minLength: 1, // Ensure non-empty message
+  }),
+}, { additionalProperties: false }); // Strict validation
+```
+
+---
+
+## Implementation Order
+
+### Phase 1: Critical Bug Fixes (High Priority)
+1. Fix FlowExecutor conditional enforcement bug
+2. Remove FlowExecutor legacy fallback
+3. Add FlowExecutor message validation
+4. Fix done-tool error handling bug
+
+### Phase 2: Core Functionality (High Priority)
+5. Complete schema.ts type validation
+6. Add schema.ts enforcement functions
+7. Integrate schema.ts validation into FlowExecutor
+8. Add done-tool runtime parameter validation
+
+### Phase 3: Agent Cleanup (Medium Priority)
+9. Remove JSON structures from verifier.md
+10. Remove JSON structures from planner.md
+11. Remove JSON structures from analyst.md
+12. Update agent examples to match flow YAML expectations
+
+### Phase 4: Infrastructure Updates (Medium Priority)
+13. Update runner.ts with done tool detection
+14. Add validation methods to FlowContext.ts
+15. Simplify decision-tool.ts for new state
+
+### Phase 5: Testing and Documentation (Low Priority)
+16. Add comprehensive tests for all fixes
+17. Update IMPLEMENTATION_NOTES.md with iteration 2 changes
+18. Verify all agents work with updated system
+
+---
+
+## Success Criteria for Iteration 2
+
+- [ ] FlowExecutor enforces done tool usage for ALL phases (no conditional enforcement)
+- [ ] FlowExecutor validates message parameter is provided and non-empty
+- [ ] No legacy variable fallback exists in FlowExecutor
+- [ ] schema.ts has proper VariableType union type
+- [ ] schema.ts has validateVariableType() function
+- [ ] schema.ts has validatePhaseVariables() function
+- [ ] FlowExecutor calls validatePhaseVariables() after extracting done tool variables
+- [ ] done-tool validates both parameters at runtime
+- [ ] done-tool has descriptive error messages for missing parameters
+- [ ] done-tool error handling bug is fixed
+- [ ] No JSON output structures remain in agent YAML files
+- [ ] All agent examples match flow YAML variable expectations
+- [ ] runner.ts detects and handles done tool calls
+- [ ] FlowContext.ts has validation methods
+- [ ] decision-tool.ts works with simplified state
+
+---
+
+## Estimated Effort
+
+- **Phase 1 (Critical Bugs):** 2-3 hours
+- **Phase 2 (Core Functionality):** 3-4 hours
+- **Phase 3 (Agent Cleanup):** 2-3 hours
+- **Phase 4 (Infrastructure):** 2-3 hours
+- **Phase 5 (Testing/Docs):** 2-3 hours
+
+**Total Estimated Time:** 11-16 hours
+
+---
+
+## Testing Strategy
+
+After implementing each phase, run:
+
+1. **Unit Tests:**
+   ```bash
+   npm test -- src/flows/schema.test.ts
+   npm test -- src/flows/tools/done-tool.test.ts
+   npm test -- src/flows/executor/FlowExecutor.test.ts
+   ```
+
+2. **Integration Tests:**
+   ```bash
+   npm test -- src/test-yaml-flow.ts
+   npm test -- src/test-done-enforcement.ts
+   ```
+
+3. **End-to-End Tests:**
+   ```bash
+   npm run test:e2e
+   ```
+
+4. **Manual Testing:**
+   - Run TDD flow with simple task
+   - Verify agents must use done tool
+   - Verify error messages are clear
+   - Test with missing variables
+   - Test with wrong types
+   - Test with missing message
+
+---
+
+## Rollback Plan
+
+If any changes break existing functionality:
+
+1. Each fix should be in a separate commit for easy rollback
+2. Keep backup of original files before modification
+3. Test incrementally after each phase
+4. Use git to revert specific commits if needed
+
+```bash
+# Example rollback
+git revert <commit-hash>
+# or
+git checkout HEAD~1 -- path/to/file.ts
+```
