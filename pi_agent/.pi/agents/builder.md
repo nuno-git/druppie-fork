@@ -51,10 +51,29 @@ Diagnose and recover before giving up:
 | `nothing to commit, working tree clean` | You wrote nothing. If the prompt asked for changes, re-check whether your edit actually saved, then retry |
 | merge conflicts / detached HEAD / other | Report `STEP FAILED: <the error>`, do NOT silently continue |
 
-## Output
+## Completion
 
-- `STEP COMPLETE` on its own line **only after `git log --oneline -1` confirms a new commit** with the message you wrote.
-- `STEP FAILED: <reason>` if you couldn't finish — including if the commit couldn't be made.
+When you have completed your step, you MUST use the `done` tool to finish:
+
+```bash
+done(variables={
+    "success": true,
+    "committed": true,
+    "filesModified": "src/auth.ts, src/auth.test.ts",
+    "commitMessage": "feat: implement user authentication service"
+}, message="Successfully implemented user authentication service with tests")
+```
+
+If you couldn't complete the step:
+
+```bash
+done(variables={
+    "success": false,
+    "committed": false,
+    "filesModified": "src/auth.ts",
+    "commitMessage": ""
+}, message="Failed to implement authentication service: tests failing after 3 attempts")
+```
 
 ## Rules
 
@@ -76,19 +95,9 @@ This summary will be read by the verifier and wave-orchestrator agents.
 
 ## Variables
 
-After your summary, set these variables for the flow:
+The `done` tool's `variables` parameter will set these for the flow:
 
-```
-success: <true if step succeeded, false otherwise>
-committed: <true if you committed, false otherwise>
-filesModified: <comma-separated list of files you changed>
-commitMessage: <the commit message you used>
-```
-
-Example:
-```
-success: true
-committed: true
-filesModified: src/auth.ts, src/auth.test.ts
-commitMessage: feat: implement user authentication service
-```
+- `success` (boolean): Whether the step succeeded
+- `committed` (boolean): Whether you committed the changes
+- `filesModified` (string): Comma-separated list of files you changed
+- `commitMessage` (string): The commit message you used (empty if not committed)

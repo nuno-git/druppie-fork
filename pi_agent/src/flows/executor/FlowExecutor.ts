@@ -31,6 +31,7 @@ import {
   type RunSubagentOptions,
   type SubagentResult,
 } from "../../agents/runner.js";
+import { createDoneTool } from "../tools/done-tool.js";
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Flow Result
@@ -61,6 +62,9 @@ export interface FlowResult {
  */
 export class FlowExecutor {
   private journal?: Journal;
+  private doneToolUsed: boolean = false;
+  private doneToolVariables: Record<string, unknown> = {};
+  private doneToolMessage: string = "";
 
   constructor(journal?: Journal) {
     this.journal = journal;
@@ -223,6 +227,11 @@ export class FlowExecutor {
       throw new Error(`Agent "${agentName}" not found. Available: ${Array.from(agentMap.keys()).join(", ")}`);
     }
 
+    // Reset done tool tracking for this phase
+    this.doneToolUsed = false;
+    this.doneToolVariables = {};
+    this.doneToolMessage = "";
+
     // Build prompt
     const prompt = this.buildPrompt(phase, ctx);
 
@@ -231,11 +240,29 @@ export class FlowExecutor {
     const result = await runSubagent(agent, prompt, baseOpts);
     this.journal?.write("agent_end", { agent: agentName, phase: phase.name, success: result.success });
 
-    // Store summary and variables
+    // Enforce done tool usage if phase has required variables
+    if (phase.variables && phase.variables.length > 0) {
+      this.enforceDoneTool(phase, agentName, result.output);
+    }
+
+    // Store summary
     if (result.summary) {
       ctx.addSummary(agentName, result.summary);
     }
-    if (result.variables) {
+
+    // Store variables from done tool
+    if (this.doneToolUsed) {
+      for (const [key, value] of Object.entries(this.doneToolVariables)) {
+        // Ensure value is of the correct type
+        if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+          ctx.setVariable(key, value);
+        } else {
+          // Convert to string for complex types
+          ctx.setVariable(key, String(value));
+        }
+      }
+    } else if (result.variables) {
+      // Fallback to legacy variable extraction if no done tool
       for (const [key, value] of result.variables.entries()) {
         ctx.setVariable(key, value);
       }
@@ -328,6 +355,188 @@ export class FlowExecutor {
   }
 
   /**
+   * Enforce done tool usage for phases with required variables.
+   *
+   * Checks if the done tool was used and validates that all required variables were set.
+   * Raises descriptive errors if enforcement fails.
+   */
+  private enforceDoneTool(phase: PhaseDef, agentName: string, agentOutput: string): void {
+    // Extract done tool usage from agent output
+    this.extractDoneToolUsage(agentOutput);
+
+    // Check if done tool was used
+    if (!this.doneToolUsed) {
+      throw new Error(
+        `Agent "${agentName}" in phase "${phase.name}" did not use the done tool. ` +
+        `This phase requires the following variables to be set: ${phase.variables?.map(v => v.name).join(", ") || "none"}. ` +
+        `You MUST use the done tool at the end of your work with all required variables.`
+      );
+    }
+
+    // Validate that all required variables were set
+    const missingVariables: string[] = [];
+    if (phase.variables) {
+      for (const variable of phase.variables) {
+        if (!(variable.name in this.doneToolVariables)) {
+          missingVariables.push(variable.name);
+        }
+      }
+    }
+
+    if (missingVariables.length > 0) {
+      throw new Error(
+        `Agent "${agentName}" in phase "${phase.name}" did not set all required variables via done tool. ` +
+        `Missing variables: ${missingVariables.join(", ")}. ` +
+        `Required variables: ${phase.variables?.map(v => v.name).join(", ") || "none"}. ` +
+        `Please use the done tool with all required variables.`
+      );
+    }
+
+    // Log successful done tool usage
+    this.journal?.write("done_tool_used", {
+      agent: agentName,
+      phase: phase.name,
+      message: this.doneToolMessage,
+      variables: Object.keys(this.doneToolVariables),
+    });
+  }
+
+  /**
+   * Extract done tool usage from agent output.
+   *
+   * Looks for done tool calls in the agent's output and extracts the variables and message.
+   */
+  private extractDoneToolUsage(output: string): void {
+    // Look for done tool usage in various formats
+
+    // Format 1: Function call like done(variables={...}, message="...")
+    // This handles the equals sign format used in agent examples
+    const equalsFormatMatch = output.match(/done\s*\(\s*variables\s*=\s*\{[\s\S]*?\}[\s\S]*?\)/);
+    if (equalsFormatMatch) {
+      const callStr = equalsFormatMatch[0];
+
+      // Extract variables object
+      const varsMatch = callStr.match(/variables\s*=\s*(\{[\s\S]*?\})/);
+      // Extract message
+      const msgMatch = callStr.match(/message\s*=\s*"([^"]*)"/);
+
+      if (varsMatch || msgMatch) {
+        this.doneToolUsed = true;
+        this.doneToolMessage = msgMatch ? msgMatch[1] : "";
+
+        if (varsMatch) {
+          try {
+            this.doneToolVariables = JSON.parse(varsMatch[1]);
+          } catch {
+            this.doneToolVariables = this.extractVariablesFromText(varsMatch[1]);
+          }
+        }
+        return;
+      }
+    }
+
+    // Format 2: Function call like done({variables: {...}, message: "..."})
+    const colonFormatMatch = output.match(/done\s*\(\s*\{[\s\S]*?\}/);
+    if (colonFormatMatch) {
+      const callStr = colonFormatMatch[0];
+
+      // Extract variables object
+      const varsMatch = callStr.match(/variables\s*:\s*(\{[\s\S]*?\})/);
+      // Extract message
+      const msgMatch = callStr.match(/message\s*:\s*"([^"]*)"/);
+
+      if (varsMatch || msgMatch) {
+        this.doneToolUsed = true;
+        this.doneToolMessage = msgMatch ? msgMatch[1] : "";
+
+        if (varsMatch) {
+          try {
+            this.doneToolVariables = JSON.parse(varsMatch[1]);
+          } catch {
+            this.doneToolVariables = this.extractVariablesFromText(varsMatch[1]);
+          }
+        }
+        return;
+      }
+    }
+
+    // Format 3: JSON-style tool call
+    const jsonToolMatch = output.match(/"name"\s*:\s*"done"[\s\S]*?"parameters"\s*:\s*\{[\s\S]*?"variables"\s*:\s*(\{[^}]*\})[\s\S]*?"message"\s*:\s*"([^"]*)"/);
+    if (jsonToolMatch) {
+      this.doneToolUsed = true;
+      this.doneToolMessage = jsonToolMatch[2];
+      try {
+        this.doneToolVariables = JSON.parse(jsonToolMatch[1]);
+      } catch {
+        this.doneToolVariables = this.extractVariablesFromText(jsonToolMatch[1]);
+      }
+      return;
+    }
+
+    // Format 4: Simple done(variables, message) format
+    const simpleMatch = output.match(/done\s*\(\s*(\{[^}]*\})\s*,\s*"([^"]*)"\s*\)/);
+    if (simpleMatch) {
+      this.doneToolUsed = true;
+      this.doneToolMessage = simpleMatch[2];
+      try {
+        this.doneToolVariables = JSON.parse(simpleMatch[1]);
+      } catch {
+        this.doneToolVariables = this.extractVariablesFromText(simpleMatch[1]);
+      }
+      return;
+    }
+
+    // Format 5: Look for explicit done tool usage in tool calls
+    const toolCallMatch = output.match(/tool_call\s*:\s*\{[\s\S]*?"name"\s*:\s*"done"[\s\S]*?\}/);
+    if (toolCallMatch) {
+      this.doneToolUsed = true;
+      // Extract variables from the tool call
+      const variablesMatch = toolCallMatch[0].match(/"variables"\s*:\s*(\{[^}]*\})/);
+      const messageMatch = toolCallMatch[0].match(/"message"\s*:\s*"([^"]*)"/);
+      if (variablesMatch) {
+        try {
+          this.doneToolVariables = JSON.parse(variablesMatch[1]);
+        } catch {
+          this.doneToolVariables = this.extractVariablesFromText(variablesMatch[1]);
+        }
+      }
+      if (messageMatch) {
+        this.doneToolMessage = messageMatch[1];
+      }
+      return;
+    }
+
+    // No done tool usage found
+    this.doneToolUsed = false;
+  }
+
+  /**
+   * Extract variables from text when JSON parsing fails.
+   */
+  private extractVariablesFromText(text: string): Record<string, unknown> {
+    const variables: Record<string, unknown> = {};
+    const lines = text.split("\n");
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (trimmed.includes(":")) {
+        const [key, ...valueParts] = trimmed.split(":");
+        const value = valueParts.join(":").trim();
+        if (key) {
+          // Try to parse as JSON, otherwise keep as string
+          try {
+            variables[key.trim()] = JSON.parse(value);
+          } catch {
+            variables[key.trim()] = value;
+          }
+        }
+      }
+    }
+
+    return variables;
+  }
+
+  /**
    * Prepare base options for subagent execution.
    */
   private prepareBaseOptions(
@@ -337,6 +546,9 @@ export class FlowExecutor {
     modelRegistry: ModelRegistryType,
     defaultModel: Model<Api>
   ): RunSubagentOptions {
+    // Create done tool for this execution context
+    const doneTool = createDoneTool(ctx);
+
     return {
       cwd: config.workDir,
       authStorage,
@@ -345,6 +557,7 @@ export class FlowExecutor {
       maxTurns: config.maxTurnsPerAgent,
       onOutput: (delta) => process.stdout.write(delta),
       journal: this.journal,
+      extraCustomTools: [doneTool],
     };
   }
 }

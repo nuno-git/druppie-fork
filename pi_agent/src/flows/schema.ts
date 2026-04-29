@@ -58,6 +58,21 @@ export interface PhaseDef {
   if?: string;
   /** Variables to set after phase execution */
   set?: Record<string, string>;
+
+  // Variable requirements
+  /** Variable definitions for this phase (e.g., [{name: "succeeded", type: "bool"}]) */
+  variables?: PhaseVariable[];
+}
+
+/**
+ * Variable definition for a phase.
+ * Parsed from YAML format: `- variable_name: type`
+ */
+export interface PhaseVariable {
+  /** Variable name */
+  name: string;
+  /** Variable type: "str", "int", "float", "bool", or custom */
+  type: string;
 }
 
 /**
@@ -180,10 +195,35 @@ function validatePhase(
       errors.push(`${prefix}: 'set' must be an object`);
     } else {
       for (const [key, value] of Object.entries(phase.set)) {
-        if (typeof value !== "string") {
-          errors.push(`${prefix}: 'set.${key}' must be a string (expression)`);
+        // Allow string expressions, boolean values, or numeric values
+        if (typeof value !== "string" && typeof value !== "boolean" && typeof value !== "number") {
+          errors.push(`${prefix}: 'set.${key}' must be a string, boolean, or number`);
         }
       }
+    }
+  }
+
+  // Validate variable definitions
+  if (phase.variables) {
+    if (!Array.isArray(phase.variables)) {
+      errors.push(`${prefix}: 'variables' must be an array`);
+    } else {
+      phase.variables.forEach((variable, varIndex) => {
+        const varPrefix = `${prefix}.variables[${varIndex}]`;
+
+        // Variable should be an object with name and type properties
+        if (typeof variable !== "object" || variable === null) {
+          errors.push(`${varPrefix}: Must be an object`);
+        } else {
+          // Handle object format: {name: "variable_name", type: "string"}
+          if (!variable.name || typeof variable.name !== "string") {
+            errors.push(`${varPrefix}: 'name' must be a string`);
+          }
+          if (!variable.type || typeof variable.type !== "string") {
+            errors.push(`${varPrefix}: 'type' must be a string`);
+          }
+        }
+      });
     }
   }
 }
@@ -219,7 +259,7 @@ function validateOutput(output: OutputDef, flowPath: string, errors: string[]): 
 export function parseFlow(flowPath: string): FlowDef {
   try {
     const content = readFileSync(flowPath, "utf-8");
-    const flow = yaml.load(content) as FlowDef;
+    const flow = parseFlowContent(content, flowPath);
     validateFlow(flow, flowPath);
     return flow;
   } catch (error) {
@@ -240,8 +280,66 @@ export function parseFlow(flowPath: string): FlowDef {
  */
 export function parseFlowContent(content: string, source: string): FlowDef {
   try {
-    return yaml.load(content) as FlowDef;
+    const rawFlow = yaml.load(content) as Record<string, unknown>;
+    // Transform variable definitions from "- name: type" format to {name, type} objects
+    return transformVariableDefinitions(rawFlow) as unknown as FlowDef;
   } catch (error) {
     throw new Error(`Failed to parse YAML from ${source}: ${error instanceof Error ? error.message : String(error)}`);
   }
+}
+
+/**
+ * Transform variable definitions from YAML format to TypeScript objects.
+ * Converts "- variable_name: type" to {name: "variable_name", type: "type"}
+ */
+function transformVariableDefinitions(obj: Record<string, unknown>): Record<string, unknown> {
+  const result: Record<string, unknown> = { ...obj };
+
+  // Transform phases recursively
+  if (result.phases && Array.isArray(result.phases)) {
+    result.phases = result.phases.map((phase) => transformPhaseVariables(phase));
+  }
+
+  return result;
+}
+
+/**
+ * Transform variable definitions in a phase.
+ */
+function transformPhaseVariables(phase: Record<string, unknown>): Record<string, unknown> {
+  const result: Record<string, unknown> = { ...phase };
+
+  // Transform variables if present
+  if (result.variables && Array.isArray(result.variables)) {
+    result.variables = result.variables.map((variable) => {
+      // If it's a string in format "name: type", convert to object
+      if (typeof variable === "string") {
+        const match = variable.match(/^(\w+):\s*(.+)$/);
+        if (match) {
+          return { name: match[1], type: match[2] };
+        }
+      }
+      // If it's an object with a single key-value pair, convert to {name, type}
+      if (typeof variable === "object" && variable !== null) {
+        const keys = Object.keys(variable);
+        // Check if it's a single-key object (YAML format: "- name: type")
+        if (keys.length === 1 && typeof variable[keys[0]] === "string") {
+          return { name: keys[0], type: variable[keys[0]] as string };
+        }
+        // If it's already in {name, type} format, return as-is
+        if (variable.name && variable.type) {
+          return variable;
+        }
+      }
+      // Fallback: return as-is for validation to catch
+      return variable;
+    });
+  }
+
+  // Recursively transform sub-phases
+  if (result.phases && Array.isArray(result.phases)) {
+    result.phases = result.phases.map((subPhase) => transformPhaseVariables(subPhase));
+  }
+
+  return result;
 }

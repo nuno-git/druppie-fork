@@ -9,9 +9,7 @@ variables:
   maxIterations: 3
   iteration: 1
   firstIteration: true
-  testsPassed: false
-  buildPassed: false
-  remainingIssuesCount: 999
+  succeeded: false
 
 # Phases execute in order
 phases:
@@ -22,8 +20,8 @@ phases:
 
   # Phase 2: Build loop (plan → execute → verify, retry as needed)
   - name: build_loop
-    # Continue while: (first iteration OR tests not passing) AND within max iterations
-    while: "( ${firstIteration} || !${testsPassed} ) && ${iteration} <= ${maxIterations}"
+    # Continue while: (first iteration OR not succeeded) AND within max iterations
+    while: "( ${firstIteration} || !${succeeded} ) && ${iteration} <= ${maxIterations}"
     phases:
       # Phase 2a: Create or update the build plan
       - name: plan
@@ -47,10 +45,10 @@ phases:
         description: Run tests and fix simple issues
         inputs:
           previousSummaries: true
+        variables:
+          - succeeded: bool
         set:
-          testsPassed: true
-          buildPassed: true
-          remainingIssuesCount: 0
+          succeeded: true
 
     # Update iteration counter after each loop
     set:
@@ -58,8 +56,8 @@ phases:
 
   # Phase 3: Push to git (conditional)
   - name: push
-    # Only push if: push requested AND tests passing AND build passing
-    if: "${task.pushOnComplete} && ${testsPassed} && ${buildPassed}"
+    # Only push if: push requested AND succeeded
+    if: "${task.pushOnComplete} && ${succeeded}"
     agent: push-agent
     description: Push commits and create PR
     builtIn: true

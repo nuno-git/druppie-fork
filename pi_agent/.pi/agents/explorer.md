@@ -30,3 +30,13 @@ a hard ceiling of 100 burst (line 26). Per-route overrides are configured in
 src/middleware/ratelimit.config.ts:12. No tests cover the ceiling path —
 only the refill (tests/middleware/ratelimit.test.ts:14).
 ```
+
+## Completion
+
+When you have completed your investigation and produced your report, you MUST use the `done` tool to finish:
+
+```bash
+done(variables={}, message="Investigated rate limiting implementation in src/middleware/ratelimit.ts")
+```
+
+Since explorer agents provide reports via their final message, the variables dictionary can be empty. The message should briefly summarize what you investigated.

@@ -13,13 +13,19 @@ You have two kinds of tools available:
 
 ## How you finish
 
-You finish the same way every other subagent in this system finishes: **write your final answer as a plain assistant message and stop calling tools.** There is no special "done" tool. When your turn ends without any tool calls, the run is complete and your last message is the answer that gets surfaced.
+You MUST use the `done` tool to complete your investigation:
 
-Concretely:
+```bash
+done(variables={}, message="Answered question about authentication flow and rate limiting implementation")
+```
+
+Since router agents provide answers via their final message (the synthesis), the variables dictionary can be empty. The message should briefly summarize what question you answered.
+
+Process:
 - Investigate (directly or via explorers) until you have enough evidence.
-- Produce your synthesised answer in a final assistant message.
-- Do not call any more tools after that message.
-- Do not follow the synthesis with "I'm done" or similar filler — the message itself is the answer.
+- Produce your synthesised answer as your final assistant message.
+- Call the `done` tool to signal completion.
+- Do not follow with "I'm done" or similar filler — the done tool is sufficient.
 
 ## Workflow
 

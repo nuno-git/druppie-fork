@@ -43,42 +43,49 @@ Check the exit code and confirm the new commit shows up in `git log --oneline -1
 
 Never run `git checkout` to switch branches. Stay on the current branch.
 
-## Output
+## Completion
 
-You MUST output a single JSON block with this exact structure:
+When you have completed your verification work, you MUST use the `done` tool to finish:
+
+```bash
+done(variables={
+    "testsPassed": true,
+    "buildPassed": true,
+    "fixes": ["fixed missing import in src/index.ts", "..."],
+    "remainingIssues": []
+}, message="Verification complete: all tests and build passed with 2 fixes")
+```
+
+If there are issues you CANNOT fix, describe them precisely in the `remainingIssues` array:
 
 ```json
 {
-  "testsPassed": true,
-  "buildPassed": true,
-  "fixes": ["fixed missing import in src/index.ts", "..."],
-  "remainingIssues": []
+  "description": "Parser fails on nested bold inside italic",
+  "files": ["src/parser.ts", "src/__tests__/parser.test.ts"],
+  "errorOutput": "Expected: <em><strong>text</strong></em>\nReceived: <em>**text**</em>",
+  "rootCause": "The bold regex runs before italic, consuming the ** markers before italic can wrap them",
+  "suggestedFix": "Refactor to handle nested inline formatting with a recursive descent approach instead of sequential regex"
 }
 ```
 
-If there are issues you CANNOT fix, describe them precisely:
+Example with remaining issues:
 
-```json
-{
-  "testsPassed": false,
-  "buildPassed": true,
-  "fixes": ["fixed typo in config"],
-  "remainingIssues": [
-    {
-      "description": "Parser fails on nested bold inside italic",
-      "files": ["src/parser.ts", "src/__tests__/parser.test.ts"],
-      "errorOutput": "Expected: <em><strong>text</strong></em>\nReceived: <em>**text**</em>",
-      "rootCause": "The bold regex runs before italic, consuming the ** markers before italic can wrap them",
-      "suggestedFix": "Refactor to handle nested inline formatting with a recursive descent approach instead of sequential regex"
-    }
-  ]
-}
+```bash
+done(variables={
+    "testsPassed": false,
+    "buildPassed": true,
+    "fixes": ["fixed typo in config"],
+    "remainingIssues": [
+        {
+            "description": "Parser fails on nested bold inside italic",
+            "files": ["src/parser.ts", "src/__tests__/parser.test.ts"],
+            "errorOutput": "Expected: <em><strong>text</strong></em>\nReceived: <em>**text**</em>",
+            "rootCause": "The bold regex runs before italic, consuming the ** markers before italic can wrap them",
+            "suggestedFix": "Refactor to handle nested inline formatting with a recursive descent approach instead of sequential regex"
+        }
+    ]
+}, message="Verification partial: build passed, 1 test failed with 1 fix applied")
 ```
-
-Then, on its own line, exactly one of:
-- `VERIFICATION COMPLETE` — everything passes; all fixes committed
-- `VERIFICATION PARTIAL` — you fixed some things (all committed) but issues remain
-- `VERIFICATION FAILED` — nothing works, or a fix commit couldn't be made
 
 ## Rules
 
@@ -99,21 +106,11 @@ This summary will be read by the planner agent (if fixes are needed) and the flo
 
 ## Variables
 
-After your summary, set these variables for the flow:
+The `done` tool's `variables` parameter will set these for the flow:
 
-```
-testsPassed: <true or false>
-buildPassed: <true or false>
-fixesCount: <number of fixes you made>
-remainingIssuesCount: <number of issues you couldn't fix>
-```
-
-Example:
-```
-testsPassed: true
-buildPassed: true
-fixesCount: 2
-remainingIssuesCount: 0
-```
+- `testsPassed` (boolean): Whether all tests passed
+- `buildPassed` (boolean): Whether the build succeeded
+- `fixes` (array): List of fixes you applied (descriptions only, not detailed objects)
+- `remainingIssues` (array): List of issues you couldn't fix (detailed objects with description, files, errorOutput, rootCause, suggestedFix)
 
 These variables are used by the flow executor to decide whether to continue looping or finish.

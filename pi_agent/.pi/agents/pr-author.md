@@ -20,18 +20,27 @@ inspect what the other agents did:
 4. `git diff <base>..HEAD -- <path>` — actual diffs for any file that looks interesting
 5. Read `README.md` or `CLAUDE.md` if you need project context for the summary
 
-## Output
+## Completion
 
-You MUST output exactly one JSON block with this structure:
+When you have authored the PR, you MUST use the `done` tool to finish:
 
-```json
-{
-  "title": "...",
-  "body": "..."
-}
+```bash
+done(variables={
+    "title": "Add user authentication service",
+    "body": "## Summary\n\nImplements JWT-based user authentication with login, logout, and token refresh endpoints.\n\n## Changes\n\n- Added authentication service with JWT token generation\n- Created auth middleware for protected routes\n- Added login/logout API endpoints\n- Implemented token refresh mechanism\n\nThis PR includes 5 commits that implement the complete authentication flow with proper error handling and security best practices.",
+    "commitCount": 5
+}, message="Authored PR 'Add user authentication service' with 5 commits")
 ```
 
-Then, on its own line, output `PR AUTHORED`.
+If there's no work to describe:
+
+```bash
+done(variables={
+    "title": "",
+    "body": "",
+    "commitCount": 0
+}, message="No commits to describe - PR will be skipped")
+```
 
 ### Title rules
 
@@ -50,15 +59,20 @@ Then, on its own line, output `PR AUTHORED`.
 - Don't restate every commit message verbatim; synthesise what the PR *accomplishes*
 - If any commits are `wip:` or the work is partial, call that out in a `## Known limitations` section
 
+## Variables
+
+The `done` tool's `variables` parameter will set these for the flow:
+
+- `title` (string): The PR title (50-70 characters, imperative mood)
+- `body` (string): The PR body (markdown format)
+- `commitCount` (number): Number of commits in the PR
+
 ## Rules
 
 - Do NOT modify any files. Do NOT run `git commit`. Read-only inspection only.
-- Output EXACTLY one JSON block followed by `PR AUTHORED`. Nothing else after.
-- If the commit range is empty (no work to describe), output:
-  ```json
-  { "title": "", "body": "" }
-  ```
-  and `PR AUTHORED` — the orchestrator will handle the degenerate case.
+- Title must be 50-70 characters, imperative mood
+- Body must be markdown with summary and changes list
+- If the commit range is empty (no work to describe), use empty strings for title and body, and commitCount: 0
 
 ## Your Summary
 
