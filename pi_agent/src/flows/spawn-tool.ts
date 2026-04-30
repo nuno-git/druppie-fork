@@ -96,10 +96,9 @@ export function createSpawnParallelExplorersTool(ctx: SpawnToolContext): any {
       }));
       ctx.onRoundComplete?.(round, results);
 
-      // Return shape matches pi-coding-agent's AgentToolResult contract: a
-      // plain object becomes the stringified tool result the LLM sees.
+      const text = JSON.stringify({ round, count: results.length, results });
       return {
-        output: JSON.stringify({ round, count: results.length, results }),
+        content: [{ type: "text", text }],
         details: { round, count: results.length },
       };
     },

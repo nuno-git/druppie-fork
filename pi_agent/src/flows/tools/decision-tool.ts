@@ -159,11 +159,11 @@ export function createDecisionTool(ctx: FlowContext) {
         const boolResult = Boolean(result);
 
         return {
-          output: JSON.stringify({
+          content: [{ type: "text", text: JSON.stringify({
             result: boolResult,
             raw: result,
             expression,
-          }),
+          }) }],
           details: {
             result: boolResult,
             raw: String(result),
@@ -171,10 +171,10 @@ export function createDecisionTool(ctx: FlowContext) {
         };
       } catch (error) {
         return {
-          output: JSON.stringify({
+          content: [{ type: "text", text: JSON.stringify({
             error: error instanceof Error ? error.message : String(error),
             expression,
-          }),
+          }) }],
           details: {
             error: error instanceof Error ? error.message : String(error),
           },

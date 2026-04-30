@@ -203,6 +203,11 @@ export async function runSingleAgent(params: SingleAgentParams): Promise<SingleA
       extraCustomTools,
     });
 
+    const agentNarrative = subResult.doneMessage || subResult.output || "";
+    if (agentNarrative) {
+      journal.recordNarrative(`${agentDef.name}`, 1, agentNarrative);
+    }
+
     // ── 8. Build final result ───────────────────────────────────
     const finalResult: SingleAgentResult = {
       output: subResult.output,

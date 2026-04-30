@@ -287,7 +287,7 @@ export async function runSubagent(
         }
       }
       return {
-        output: JSON.stringify({ success: true, message: params.message }),
+        content: [{ type: "text", text: JSON.stringify({ success: true, message: params.message }) }],
         details: { message: params.message },
       };
     },

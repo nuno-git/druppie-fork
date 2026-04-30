@@ -282,9 +282,11 @@ async def execute_coding_task_pi(
     if flow == "explore":
         exit_code = 0 if result["success"] else 1
         summary = None
+        explore_answer = result.get("answer", "")
     else:
         summary = result.get("summary")
         exit_code = result["exit_code"]
+        explore_answer = ""
 
     # Under druppie (ingest mode) pi_agent's journal.close() posts the summary
     # straight to /api/pi-agent-runs/{run_id}/summary instead of writing
@@ -348,8 +350,7 @@ async def execute_coding_task_pi(
     # full journal, they need the answer / deliverables. The UI pulls
     # everything richer via /api/pi-agent-runs/by-tool-call/{id} directly.
     if flow == "explore":
-        # Explore: return the answer. That's it.
-        answer = _extract_explore_answer(summary)
+        answer = explore_answer or _extract_explore_answer(summary)
         return {
             "success": pi_success,
             "run_id": run_id,

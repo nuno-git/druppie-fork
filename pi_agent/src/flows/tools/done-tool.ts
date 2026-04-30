@@ -128,7 +128,7 @@ export function createDoneTool(ctx: FlowContext) {
         };
 
         return {
-          output: JSON.stringify(result),
+          content: [{ type: "text", text: JSON.stringify(result) }],
           details: {
             message,
             variablesSet: Object.keys(validatedVariables),
@@ -139,12 +139,11 @@ export function createDoneTool(ctx: FlowContext) {
         const errorMessage = error instanceof Error ? error.message : String(error);
 
         return {
-          output: JSON.stringify({
+          content: [{ type: "text", text: JSON.stringify({
             success: false,
             error: errorMessage,
-            // Safely handle undefined 'variables' in error path
             variables: variables ? Object.keys(variables) : [],
-          }),
+          }) }],
           details: {
             error: errorMessage,
           },

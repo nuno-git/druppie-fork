@@ -201,7 +201,7 @@ export async function runExploreFlow(task: TaskSpec, config: AgentConfig): Promi
         maxTurns: 60,
         meta: { role: "orchestrator", attempt },
       } as any);
-      journal.recordNarrative(`router/attempt-${attempt}`, attempt, routerResult.output);
+      journal.recordNarrative(`router/attempt-${attempt}`, attempt, routerResult.output || routerResult.doneMessage || "");
       journal.phaseEnd();
 
       if (!routerResult.success) {
@@ -209,7 +209,7 @@ export async function runExploreFlow(task: TaskSpec, config: AgentConfig): Promi
         break;  // hard error (not just empty output) — stop retrying.
       }
 
-      const text = (routerResult.output ?? "").trim();
+      const text = (routerResult.output ?? "").trim() || routerResult.doneMessage?.trim() || "";
       if (text) {
         finalAnswer = text;
         if (isRetry) {

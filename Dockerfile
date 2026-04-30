@@ -34,9 +34,9 @@ COPY druppie/ /app/druppie/
 # already installed above. Each invocation spawns its own sysbox/kata
 # sandbox; parallelism is bounded only by the backend container's CPU.
 COPY pi_agent/package.json pi_agent/package-lock.json /app/pi_agent/
-RUN cd /app/pi_agent && npm ci --omit=dev --ignore-scripts || npm install --omit=dev --ignore-scripts
+RUN cd /app/pi_agent && npm ci --ignore-scripts || npm install --ignore-scripts
 COPY pi_agent/ /app/pi_agent/
-RUN cd /app/pi_agent && rm -rf dist && npx --yes tsc || echo "pi_agent tsc skipped — run manually"
+RUN cd /app/pi_agent && rm -rf dist && npx tsc && npm prune --omit=dev
 
 # Set environment variables
 ENV PYTHONPATH=/app

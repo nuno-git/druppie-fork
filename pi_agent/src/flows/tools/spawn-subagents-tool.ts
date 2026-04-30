@@ -120,8 +120,9 @@ export function createSpawnSubagentsTool(ctx: SpawnSubagentsContext): any {
         ...(subResults[i].error ? { error: subResults[i].error } : {}),
       }));
 
+      const text = JSON.stringify({ count: results.length, results });
       return {
-        output: JSON.stringify({ count: results.length, results }),
+        content: [{ type: "text", text }],
         details: { count: results.length },
       };
     },

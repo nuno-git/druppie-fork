@@ -6,6 +6,10 @@ import { parseFlow, validateFlow } from "./flows/schema.js";
 import { FlowContext } from "./flows/executor/FlowContext.js";
 import { extractSummary, extractVariables, extractStructuredData } from "./agents/runner.js";
 
+function toolText(result: any): string {
+  return result?.content?.[0]?.text ?? result?.output ?? JSON.stringify(result);
+}
+
 async function testSchemaParsing() {
   console.log("\n=== Testing Schema Parsing ===\n");
 
@@ -165,7 +169,7 @@ async function testDoneTool() {
     message: "Test completed successfully",
   });
 
-  const parsedResult1 = JSON.parse(result1.output);
+  const parsedResult1 = JSON.parse(toolText(result1));
   console.log("✅ Tool execution succeeded:", parsedResult1.success);
   console.log("✅ Variables set:", Object.keys(parsedResult1.variablesSet));
 
@@ -185,7 +189,7 @@ async function testDoneTool() {
     message: "Test with mixed variable types",
   });
 
-  const parsedResult2 = JSON.parse(result2.output);
+  const parsedResult2 = JSON.parse(toolText(result2));
   console.log("✅ Mixed types handled:", parsedResult2.success);
   console.log("✅ Valid variables set:", Object.keys(parsedResult2.variablesSet));
   console.log("✅ Invalid variables skipped:", parsedResult2.warnings?.[0]);
@@ -228,7 +232,7 @@ async function testDoneToolParameterValidation() {
     variables: { testVar: "value" },
     message: "",
   });
-  const parsed2 = JSON.parse(result2.output);
+  const parsed2 = JSON.parse(toolText(result2));
   console.log("✅ Empty message accepted:", parsed2.message === "");
 
   // Test 3: Empty variables parameter
@@ -248,7 +252,7 @@ async function testDoneToolParameterValidation() {
     variables: {},
     message: "Test with no variables",
   });
-  const parsed4 = JSON.parse(result4.output);
+  const parsed4 = JSON.parse(toolText(result4));
   console.log("✅ Empty variables accepted:", parsed4.success);
   console.log("✅ No variables set:", Object.keys(parsed4.variablesSet).length === 0);
 
@@ -264,7 +268,7 @@ async function testDoneToolParameterValidation() {
     },
     message: "All parameter types test",
   });
-  const parsed5 = JSON.parse(result5.output);
+  const parsed5 = JSON.parse(toolText(result5));
   console.log("✅ All primitive types accepted:", Object.keys(parsed5.variablesSet).length === 6);
 
   // Test 6: Utility function validation
@@ -634,7 +638,7 @@ async function testDoneToolErrorHandling() {
     },
     message: "Error handling test",
   });
-  const parsed1 = JSON.parse(result1.output);
+  const parsed1 = JSON.parse(toolText(result1));
   console.log("✅ Error handled gracefully:", parsed1.success);
   const details1 = result1.details as any;
   console.log("✅ Warning generated:", details1?.warnings?.length > 0);
@@ -649,7 +653,7 @@ async function testDoneToolErrorHandling() {
     },
     message: "All invalid test",
   });
-  const parsed2 = JSON.parse(result2.output);
+  const parsed2 = JSON.parse(toolText(result2));
   console.log("✅ All invalid handled:", parsed2.success);
   console.log("✅ No variables set:", Object.keys(parsed2.variablesSet).length === 0);
   const details2 = result2.details as any;
@@ -666,7 +670,7 @@ async function testDoneToolErrorHandling() {
     },
     message: "Complex mixed test",
   });
-  const parsed3 = JSON.parse(result3.output);
+  const parsed3 = JSON.parse(toolText(result3));
   console.log("✅ Complex mixed handled:", parsed3.success);
   console.log("✅ Valid variables set:", Object.keys(parsed3.variablesSet).length === 3);
   const details3 = result3.details as any;
@@ -682,7 +686,7 @@ async function testDoneToolErrorHandling() {
     },
     message: "Special string values",
   });
-  const parsed4 = JSON.parse(result4.output);
+  const parsed4 = JSON.parse(toolText(result4));
   console.log("✅ Special string values handled:", parsed4.success);
   console.log("✅ Empty string set:", ctx.getVariable("emptyString") === "");
   console.log("✅ Unicode set:", ctx.getVariable("unicode") === "你好世界");
@@ -698,7 +702,7 @@ async function testDoneToolErrorHandling() {
     },
     message: "Edge case numbers",
   });
-  const parsed5 = JSON.parse(result5.output);
+  const parsed5 = JSON.parse(toolText(result5));
   console.log("✅ Edge case numbers handled:", parsed5.success);
   console.log("✅ Zero value:", ctx.getVariable("zero") === 0);
   console.log("✅ Negative value:", ctx.getVariable("negative") === -123);
@@ -741,7 +745,7 @@ async function testDoneToolIntegration() {
     message: "Phase 1 completed successfully",
   });
 
-  const parsed1 = JSON.parse(result1.output);
+  const parsed1 = JSON.parse(toolText(result1));
   console.log("✅ Integration test 1 - Tool executed:", parsed1.success);
   console.log("✅ Variables in context:", ctx1.getVariable("phaseComplete") === true);
   console.log("✅ Message captured:", parsed1.message === "Phase 1 completed successfully");
@@ -872,7 +876,7 @@ async function testDoneToolSuccessScenarios() {
     message: "Task completed successfully. All tests pass.",
   });
 
-  const parsed1 = JSON.parse(result1.output);
+  const parsed1 = JSON.parse(toolText(result1));
   console.log("✅ Scenario 1 - Success:", parsed1.success);
   console.log("✅ All variables set:", Object.keys(parsed1.variablesSet).length === 3);
   console.log("✅ Message:", parsed1.message);
@@ -894,7 +898,7 @@ async function testDoneToolSuccessScenarios() {
     message: "All quality checks passed. Ready for deployment.",
   });
 
-  const parsed2 = JSON.parse(result2.output);
+  const parsed2 = JSON.parse(toolText(result2));
   console.log("✅ Scenario 2 - Success:", parsed2.success);
   console.log("✅ Variables:", Object.keys(parsed2.variablesSet).length === 6);
   console.log("✅ Build status:", ctx2.getVariable("buildStatus") === "passed");
