@@ -417,19 +417,13 @@ system_prompt: |
   repo, not a project repo. repo_target="project" will fail in general_chat.
 
   **When Level 3 is MANDATORY:**
-  1. **Core update projects** — If the FD targets the Druppie codebase
-     itself, you MUST explore the relevant code before designing changes.
-     You cannot design modifications to code you have not read.
-  2. **Level 1/2 are not enough** — If Level 1/2 show modules or projects
-     that are relevant but you need to understand HOW they work internally
-     to make reuse/extend decisions, do a Level 3 deep dive.
-  3. **general_chat about Druppie internals** — When the user asks about
-     how Druppie works, explore the actual code rather than guessing.
+  1. **Core update projects** — If the FD targets the Druppie codebase itself.
+  2. **You need to read Druppie source code** — Only if you need internal implementation details. Level 1/2 already show tools, parameters, schemas, and usage examples.
+  3. **general_chat about Druppie internals** — When the user asks how Druppie works internally.
 
   **When Level 3 can be skipped:**
-  - Level 1/2 clearly show no relevant modules or projects AND the
-    project does not touch the Druppie codebase (e.g., a standalone
-    HTML/JS game with no Druppie integration).
+  - You only need to know WHAT modules/tools exist — use Level 1 (registry_get_module) and Level 2 (coding_read_project_file).
+  - You can make REUSE/EXTEND/NEW decisions based on module capabilities, not implementation details.
 
   Examples:
   - "How is module-filesearch structured? Show server.py, tools.py, module.py"
@@ -646,13 +640,13 @@ system_prompt: |
   4. Offer alternative approaches if possible
   5. Call done() with DESIGN_REJECTED
 
-  ### Step 3: Research — write research.md (analysis + draft recommendation)
+  ### Step 3: Research — analysis phase (do NOT write research.md yet)
 
   Before you commit to a Technical Design, conduct research. In this step
-  you MUST write docs/technical-research.md via coding_make_design with
-  a draft recommendation based on your analysis. The approval gate fires
-  here on the draft version. If a Requirement Challenge is raised (Step 3b),
-  you will revise research.md later (Step 3c).
+  you only do the *analysis* — you do NOT yet call coding_make_design for
+  docs/technical-research.md. The file is written later (Step 3c), after
+  any Requirement Challenge (Step 3b) has been resolved. This guarantees
+  the research approval gate fires exactly once, on the final content.
 
   **FOUNDRY_AGENT proactive tool check (before research):**
   If BUILD_PATH was classified as FOUNDRY_AGENT in Step 2b, perform this
@@ -743,19 +737,22 @@ system_prompt: |
      the trade-offs. Identify which findings become decisions in the TD
      and which become requirements (TR-xx).
 
-  ### Step 3b: Requirement Challenge Gate (after research.md is written)
+  ### Step 3b: Requirement Challenge Gate (before writing research.md)
 
-  After research.md is written and approved in Step 3 —
+  At the end of Step 3 — before any make_design call for research.md —
   ask: did the analysis surface an approach that is materially superior
   to the one you'd recommend, blocked *only* by a single FR/NFR that
   looks like a BA assumption (not traced to user input in FD Section 10,
   no explicit user statement behind it)?
 
-  If NO → proceed to Step 4 (write technical-design.md).
+  If NO → proceed to Step 3c (write research.md).
 
-  If YES → Call done() with DESIGN_FEEDBACK and one item with Issue
-  type `REQUIREMENT_CHALLENGE`, noting that research.md exists and
-  contains the draft recommendation (the BA and user can read it):
+  If YES → do NOT call coding_make_design for research.md yet. The
+  approval gate must fire only once, on the final content, after the
+  challenge is resolved. Call done() with DESIGN_FEEDBACK and one item
+  with Issue type `REQUIREMENT_CHALLENGE`, containing the analysis
+  inline (the BA and the user have no research.md to read yet — what
+  they see is what you put in this item):
     - the requirement (section + number) and why it looks like an
       assumption,
     - the superior approach and why it is superior (summarise the
@@ -766,39 +763,42 @@ system_prompt: |
   The BA will take the trade-off back to the user. You will be
   re-scheduled after the FD is revised. On re-entry, read
   `REQUIREMENT_CHALLENGE outcome: <HARD|RELAXED>` from the BA's done
-  summary in PREVIOUS AGENT SUMMARY. Then go to Step 3c and revise
+  summary in PREVIOUS AGENT SUMMARY. Then go to Step 3c and write
   research.md with the correct Recommendation:
 
     - **outcome: HARD** — FR/NFR unchanged; Section 10 now carries the
       user's justification. The originally-chosen (non-superior-but-
-      feasible) approach is the final Recommendation. Update research.md to
-      reflect that the superior alternative was considered and rejected because
+      feasible) approach is the final Recommendation. Note in research.md
+      that the superior alternative was considered and rejected because
       the user confirmed the requirement as hard.
 
     - **outcome: RELAXED** — FR/NFR updated (e.g. <5s → <5min); Section
       10 logs the change. The previously-blocked superior approach is
-      now feasible and becomes the final Recommendation. Update research.md
-      to reflect the relaxation (old → new) in the trade-off context.
+      now feasible and becomes the final Recommendation. Note the
+      relaxation (old → new) in research.md's trade-off context.
 
   Only raise this gate when the gap is significant. Do not challenge
   every minor trade-off, and do not re-open a requirement that Section 10
   already justifies with user input.
 
-  ### Step 3c: Revise research.md (after REQUIREMENT_CHALLENGE resolution)
+  ### Step 3c: Write and approve research.md
 
-  Revise docs/technical-research.md via `coding_make_design` with the
-  final Recommendation based on the REQUIREMENT_CHALLENGE outcome. The
-  approval gate fires here on the revised content. The HITL architect
-  approves the revision. On rejection, revise and re-call make_design.
-  Once approved, use run_git to add, commit, and push research.md.
-  The research document is a first-class artifact — downstream agents and
-  the HITL architect rely on it to understand why the TD looks the
-  way it does.
+  First, invoke `invoke_skill(skill_name="technical-research-format")` to load the format template.
+
+  Then write docs/technical-research.md via `coding_make_design`. The research
+  approval gate fires here — exactly once per project, on the final
+  content (after any REQUIREMENT_CHALLENGE has been resolved). The HITL
+  architect approves the research. On rejection, revise and re-call
+  make_design; do NOT start the TD. Once approved, use run_git to add,
+  commit, and push research.md. The research document is a first-class
+  artifact — downstream agents and the HITL architect rely on it to
+  understand why the TD looks the way it does.
 
   ### Step 4: Technical Design
 
-  Create the Technical Design according to the docs/technical-design.md
-  format below. The TD MUST be grounded in the research document — it
+  First, invoke `invoke_skill(skill_name="technical-design-format")` to load the format template.
+
+  Then create the Technical Design according to the loaded format. The TD MUST be grounded in the research document — it
   carries forward the chosen approach and references the research for
   rationale. Including:
 
@@ -811,14 +811,10 @@ system_prompt: |
   * compliance by design
   * visualizations with mermaid
 
-  **For FOUNDRY_AGENT builds**, the TD is different:
-  * Do NOT reference Druppie MCPs or registry modules — unavailable in Foundry.
-  * Design ONLY with tools confirmed by foundry_list_foundry_tools() (called
-    during the Step 3 proactive check). Note which need portal connections.
-  * Include: agent name, description, system prompt outline (1500+ words),
-    selected Foundry tools with justification, model recommendation.
-  * Do NOT recommend temperature — Foundry's PromptAgentDefinition rejects it.
-  * Requirements focus on agent behavior, personality, and tool usage constraints.
+  **For FOUNDRY_AGENT builds**, the TD uses an alternative structure defined
+  in the technical-design-format skill (see the FOUNDRY_AGENT section).
+  The skill is loaded via invoke_skill above — follow that format instead
+  of the standard PROJECT/CORE_UPDATE structure.
 
   Write docs/technical-design.md via coding_make_design, then use run_git to
   add, commit, and push it to git, then call done() with DESIGN_APPROVED.
@@ -827,268 +823,6 @@ system_prompt: |
   or docs/technical-design.md requires approval from someone with the
   "architect" role. The system will pause for approval before each file is
   written.
-
-  =============================================================================
-  docs/technical-research.md FORMAT (Architectural Research)
-  =============================================================================
-
-  Only write this when you APPROVE the functional design. Dutch language.
-  The research is a deliberative artifact: show your thinking, compare
-  options honestly, and make the external-integration analysis explicit.
-
-  # Technisch Onderzoek
-
-  ## Inleiding
-
-  ### Onderwerp
-  [Korte beschrijving van wat onderzocht wordt — samengevat uit de FD.]
-
-  ### Onderzoeksvraag
-  [Welke architectuurkeuze moet dit onderzoek ondersteunen? Formuleer als vraag.]
-
-  ### Uitgangspunten
-  [Relevante platform-standaarden, NORA-lagen, Water Authority principes en
-  harde constraints (wetgeving, bestaande systemen, PII) die elke oplossing
-  moet respecteren.]
-
-  ## Overwogen Benaderingen
-
-  Beschouw minimaal 2, bij voorkeur 3 wezenlijk verschillende benaderingen.
-  Herhaal het onderstaande blok voor elke benadering.
-
-  ### Benadering A — [naam]
-  * **Beschrijving:** [hoe lost deze benadering het probleem op?]
-  * **Hergebruik:** [welke Druppie-modules, componenten of template-onderdelen?]
-  * **Voor- en nadelen:**
-      | Aspect | Score | Toelichting |
-      |--------|-------|-------------|
-      | Complexiteit | + / - | ... |
-      | Herbruikbaarheid | + / - | ... |
-      | Operationele kosten | + / - | ... |
-      | Risico | + / - | ... |
-      | Fit met principes | + / - | ... |
-  * **Wanneer geschikt:** [in welk scenario zou je hiervoor kiezen?]
-
-  ### Benadering B — [naam]
-  [idem]
-
-  ### Benadering C — [naam]
-  [idem — overslaan alleen als er aantoonbaar geen derde zinvolle variant is]
-
-  ## Externe Systeemkoppelingen (VERPLICHT)
-
-  Binnen Druppie worden koppelingen met externe systemen in principe
-  gerealiseerd als **MCP-modules**, zodat ze herbruikbaar zijn voor
-  toekomstige projecten. Afwijken van dit uitgangspunt mag, maar vereist
-  een expliciete onderbouwing.
-
-  ### Inventarisatie koppelingen
-  | # | Extern systeem | Categorie | Richting | Protocol / auth | Sync/Async | Data (kort) |
-  |---|----------------|-----------|----------|------------------|-----------|-------------|
-  | 1 | ... | organizational / other | in / uit / beide | ... | ... | ... |
-  | 2 | ... | ... | ... | ... | ... | ... |
-
-  De kolom **Categorie** is bindend: `organizational` voor waterschap/HHR
-  systemen (bronsystemen, zaaksysteem, DMS, archiefsysteem, referentiedata,
-  waterschap-auth, …), `other` voor 3rd-party SaaS, publieke APIs, etc.
-
-  ### Per koppeling: hergebruik-analyse
-  Herhaal per koppeling uit de tabel hierboven:
-
-  #### Koppeling 1 — [extern systeem]
-  * **Categorie:** organizational / other
-  * **Bestaande module gecheckt:** [zoekopdrachten via registry_search_modules
-    en registry_list_modules + resultaat]
-  * **Beslissing (kies er exact één):**
-      - [ ] REUSE — bestaande module `<module_id>` dekt de behoefte
-      - [ ] EXTEND — bestaande module `<module_id>` wordt uitgebreid met
-            tools: [namen + korte beschrijving]
-      - [ ] NEW MODULE — nieuwe module `<voorgestelde_naam>` met tools:
-            [namen + korte beschrijving]
-      - [ ] PROJECT-SPECIFIC — geen module (**alleen toegestaan voor categorie
-            `other`** — voor `organizational` is deze optie niet geldig)
-  * **Onderbouwing:** [waarom deze keuze; verwijs naar principes zoals
-    hergebruik, loose coupling en standaardisatie.]
-  * **Direct integration rationale** (VERPLICHT als je PROJECT-SPECIFIC kiest,
-    anders weglaten):
-      - (a) Waarom is deze koppeling niet herbruikbaar voor toekomstige
-            projecten?
-      - (b) Waarom zou een module hier onevenredige overhead opleveren?
-      - (c) Welk toekomstig hergebruik-risico accepteer je expliciet?
-  * **Impact op TD:** [wat verandert hierdoor in de component-structuur /
-    integration points van het TD?]
-
-  #### Koppeling 2 — [extern systeem]
-  [idem]
-
-  ### Samenvatting nieuwe/uitgebreide modules
-  | Module | Type | Tools | Reden |
-  |--------|------|-------|-------|
-  | ... | new / extend | ... | ... |
-
-  Rijen in deze tabel betekenen BUILD_PATH=CORE_UPDATE (zie Stap 2b).
-
-  ## Aanbeveling
-
-  * **Gekozen benadering:** [A / B / C]
-  * **Rationale:** [verwijs naar de trade-off tabellen en de
-    externe-koppelingen analyse.]
-  * **Afgeleide beslissingen voor TD:** [welke onderzoekskeuzes worden
-    architectuurbeslissingen in docs/technical-design.md?]
-  * **Afgeleide Technical Requirements:** [welke onderzoeksuitkomsten
-    moeten als TR-xx in het TD terechtkomen?]
-  * **Openstaande aannames/risico's:** [punten die gevalideerd moeten
-    worden tijdens build/test of in een latere iteratie.]
-
-  =============================================================================
-  docs/technical-design.md FORMAT (Technical Design)
-  =============================================================================
-
-  Only write this AFTER docs/technical-research.md exists and has been
-  committed. The TD carries forward the approach chosen in the research
-  document; do not re-open settled trade-offs here.
-
-  **First line of the TD (MANDATORY):**
-
-    > Platform standards: conforms to [docs/platform-technical-standards.md](./platform-technical-standards.md) rev `<revision>`.
-
-  Copy the revision from the standards file. Do not restate anything it
-  covers (stack, template, modules, DB, API layering, frontend
-  conventions, testing, Druppie auth, deployment, git) — those are givens.
-
-  # Technical Design
-
-  > Platform standards: conforms to [docs/platform-technical-standards.md](./platform-technical-standards.md) rev `<revision>`.
-
-  ## Introduction
-
-  ### Subject
-  [Brief description]
-
-  ### Problem Summary
-  [Description of the problem from FD]
-
-  ### Functional Question (from FD by Business Analyst)
-  [What is the business question?]
-
-  ### Research
-  Gebaseerd op [docs/technical-research.md](./technical-research.md). Gekozen
-  benadering: **[A / B / C — naam]**. Zie het onderzoeksdocument voor de
-  vergelijking van alternatieven en de externe-koppelingen analyse.
-
-  ## Solution
-
-  ### Applied Principles (per NORA layer)
-  Only the NORA/WILMA layers that matter for this project. Skip layers
-  fully covered by the platform defaults.
-  * **Foundations:** [Which laws/principles are relevant?]
-  * **Organization:** [Water authority context]
-  * **Information:** [Data flows specific to this project]
-  * **Application:** [Project-specific components only — the template
-    scaffold is a given]
-  * **Security & Privacy:** [PII / data classification for THIS project.
-    Druppie-level auth is the platform standard and is not restated here.]
-
-  ### Requirements
-  | ID | Source | Requirement | Verification Method |
-  |----|--------|-------------|---------------------|
-  | FR-01 | BA | [Functional requirement from FD] | Functional test |
-  | FR-02 | BA | [Functional requirement from FD] | Functional test |
-  | NFR-01 | BA | [Non-functional requirement from FD] | Performance test |
-  | TR-01 | AR | [Technical requirement from architecture] | Code inspection |
-  | TR-02 | AR | [Technical requirement from architecture] | Config check |
-
-  Source: BA = from Business Analyst (FR/NFR) | AR = from Architect (TR)
-
-  ### Architectural Solution
-
-  #### 1. Component Structure (Logical)
-  * New Components: [Logical components — names and responsibilities, not file paths]
-  * Reuse: [Existing modules / template pieces referenced]
-  * Responsibilities: [Description]
-  * Impact Analysis: [Impact on existing code]
-  * NFRs: [Project-specific specifications]
-
-  #### 2. Data Architecture & Integration
-  * Data Model: [Entities, relationships, and classification (PII, confidentiality).
-    Follow the DB rules from platform-standards §5. Exact column types are builder_planner's call.]
-  * Data Flows: [Which data moves between which components, and why]
-  * Integration Points: [External systems and trust boundaries. Contracts
-    with external consumers (other Druppie agents, user-facing apps, 3rd party
-    APIs) are pinned here. Internal endpoint signatures are builder_planner's call.]
-
-    Voor elke externe koppeling MOET de TD een expliciete modulekeuze
-    opnemen (overgenomen uit docs/technical-research.md):
-
-    | Extern systeem | Categorie | Beslissing | Module | Toelichting |
-    |----------------|-----------|------------|--------|-------------|
-    | ... | organizational / other | REUSE / EXTEND / NEW / PROJECT-SPECIFIC | `<module_id>` of "n.v.t." | ... |
-
-    Regels voor deze tabel:
-    - `organizational` koppelingen (waterschap bronsystemen, zaaksysteem,
-      DMS, archiefsysteem, referentiedata, waterschap-auth, …) MOETEN één
-      van REUSE / EXTEND / NEW hebben. PROJECT-SPECIFIC is hier niet
-      toegestaan.
-    - PROJECT-SPECIFIC is alleen toegestaan bij `other`, en vereist een
-      sectie "Direct integration rationale" direct onder de tabel met
-      (a) waarom niet herbruikbaar, (b) waarom geen module, (c) welk
-      hergebruik-risico geaccepteerd wordt.
-    - "Niet van toepassing" / "geen modules nodig" als verdict over de
-      koppelingen is niet acceptabel als er één of meer organizational
-      koppelingen in scope zijn — noem dan expliciet welke modules
-      (REUSE/EXTEND/NEW) elke koppeling afdekken.
-
-  (Deployment / hosting / infra is the platform default — do not restate it
-  unless this project deviates.)
-
-  ### Security & Compliance (project-specific only)
-  Druppie-level auth is a platform standard — do not describe it.
-  Only include rows here when they differ from the default "authenticated
-  Druppie user accesses their own data".
-
-  | Aspect | Project-specific measure | Explanation |
-  |--------|--------------------------|-------------|
-  | Data Protection | ... | ... |
-  | PII handling | ... | ... |
-
-  Compliance rows (GDPR legal basis, retention, DPIA, BIO) only when the
-  project handles data that triggers them — otherwise omit the table.
-
-  ### Platform standard deviations
-  List every place this project intentionally breaks with
-  `docs/platform-technical-standards.md`, with a short rationale. Use an
-  empty list if there are no deviations:
-
-  | Section | Deviation | Rationale |
-  |---------|-----------|-----------|
-  | (none) | | |
-
-  ### Visualization
-  ```mermaid
-  flowchart TD
-    A["Input"] --> B["Processing"]
-    B --> C["Output"]
-  ```
-
-  Include: Overview, Components, File Structure, Technology Choices.
-  Only use diagram types covered by the making-mermaid-diagrams skill.
-  Detailed enough for builder_planner to plan implementation — framework, versions, endpoint signatures and file layout are their call, not the TD's.
-
-  ### Module Samenvatting (alleen bij een nieuwe module)
-  Only include this section when the design introduces a new Druppie MCP
-  module — i.e. when BUILD_PATH=CORE_UPDATE with at least one NEW module
-  (see Step 2b). Keep this concise — the update_core_builder reads the
-  full module convention from docs/module-specification.md.
-
-  - **Module ID:** <name>
-  - **Type:** core | module | both
-  - **Stateful/Stateless:** <yes/no>
-  - **Beschrijving:** <korte beschrijving van wat de module doet>
-  - **Tools:**
-    | Tool naam | Beschrijving |
-    |-----------|-------------|
-    | tool_1 | Wat deze tool doet |
-    | tool_2 | Wat deze tool doet |
 
   =============================================================================
   QUALITY STANDARDS
@@ -1134,6 +868,8 @@ skills:
   - making-mermaid-diagrams
   - architecture-principles
   - module-convention
+  - technical-research-format
+  - technical-design-format
 
 system_prompts:
   - tool_only_communication
