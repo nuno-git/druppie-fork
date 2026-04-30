@@ -1,8 +1,10 @@
-"""Vision MCP Server - OCR via PaddleOCR-VL (DeepInfra).
+"""Vision MCP Server — OCR via DeepInfra.
 
-Direct HTTP calls to DeepInfra's PaddleOCR-VL-0.9B — a dedicated OCR model.
-Pages are processed in parallel via async HTTP. Falls back to ZAI MCP server
-if DEEPINFRA_API_KEY is not set.
+Primary: allenai/olmOCR-2-7B-1025 (7B, purpose-built document OCR).
+Fallback: PaddlePaddle/PaddleOCR-VL-0.9B (with required "OCR:" prompt).
+Last resort: Z.AI MCP server (sequential, slow).
+
+Pages processed in parallel via async HTTP when using DeepInfra.
 """
 
 import asyncio
@@ -14,10 +16,11 @@ import httpx
 
 logger = logging.getLogger("vision-mcp")
 
+OLMOCR_MODEL = "allenai/olmOCR-2-7B-1025"
 PADDLEOCR_MODEL = "PaddlePaddle/PaddleOCR-VL-0.9B"
 DEEPINFRA_BASE_URL = "https://api.deepinfra.com/v1/openai"
 DEFAULT_DPI = 150
-OCR_TIMEOUT = 30
+OCR_TIMEOUT = 60
 MAX_CONCURRENT_PAGES = 8
 
 
@@ -26,10 +29,11 @@ class VisionModule:
     def __init__(self):
         self._deepinfra_key = os.environ.get("DEEPINFRA_API_KEY", "")
         self._zai_key = os.environ.get("ZAI_API_KEY", "")
+        self._model = OLMOCR_MODEL
 
         if self._deepinfra_key:
             self._provider = "deepinfra"
-            logger.info("Vision provider: DeepInfra PaddleOCR-VL (parallel HTTP)")
+            logger.info("Vision provider: DeepInfra %s (parallel HTTP)", self._model)
         elif self._zai_key:
             self._provider = "zai"
             logger.info("Vision provider: Z.AI MCP server (sequential)")
@@ -59,26 +63,34 @@ class VisionModule:
         return paths, tmpdir
 
     # -----------------------------------------------------------------
-    # DeepInfra PaddleOCR (parallel async HTTP)
+    # DeepInfra OCR (parallel async HTTP)
     # -----------------------------------------------------------------
 
-    async def _ocr_page_deepinfra(self, client: httpx.AsyncClient, image_path: str, page_num: int) -> str:
+    async def _ocr_page_deepinfra(
+        self, client: httpx.AsyncClient, image_path: str, page_num: int
+    ) -> str:
         b64 = base64.b64encode(open(image_path, "rb").read()).decode()
+        image_content = {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}}
+
+        if self._model == PADDLEOCR_MODEL:
+            content = [image_content, {"type": "text", "text": "OCR:"}]
+        else:
+            content = [image_content]
+
         resp = await client.post(
             f"{DEEPINFRA_BASE_URL}/chat/completions",
             headers={"Authorization": f"Bearer {self._deepinfra_key}"},
             json={
-                "model": PADDLEOCR_MODEL,
-                "max_tokens": 4096,
-                "messages": [{"role": "user", "content": [
-                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}}
-                ]}],
+                "model": self._model,
+                "max_tokens": 8192,
+                "temperature": 0.0,
+                "messages": [{"role": "user", "content": content}],
             },
         )
         resp.raise_for_status()
         data = resp.json()
         text = data["choices"][0]["message"]["content"]
-        logger.info("Page %d: %d chars via PaddleOCR", page_num, len(text))
+        logger.info("Page %d: %d chars via %s", page_num, len(text), self._model)
         return text
 
     async def _ocr_pages_parallel(self, image_paths: list[str]) -> list[str]:
@@ -180,7 +192,6 @@ class VisionModule:
                 finally:
                     shutil.rmtree(tmpdir, ignore_errors=True)
 
-            # Single image
             if self._provider == "deepinfra":
                 results = await self._ocr_pages_parallel([file_path])
                 return results[0] if results else ""
@@ -210,36 +221,17 @@ class VisionModule:
                     )
                     page_path = os.path.join(tmpdir, "page_1.png")
                     images[0].save(page_path, "PNG", optimize=True)
-
                     if self._provider == "deepinfra":
-                        b64 = base64.b64encode(open(page_path, "rb").read()).decode()
-                        async with httpx.AsyncClient(timeout=OCR_TIMEOUT) as client:
-                            resp = await client.post(
-                                f"{DEEPINFRA_BASE_URL}/chat/completions",
-                                headers={"Authorization": f"Bearer {self._deepinfra_key}"},
-                                json={"model": PADDLEOCR_MODEL, "max_tokens": 4096,
-                                      "messages": [{"role": "user", "content": [
-                                          {"type": "image_url", "image_url": {
-                                              "url": f"data:image/png;base64,{b64}"}}]}]},
-                            )
-                            return resp.json()["choices"][0]["message"]["content"]
+                        results = await self._ocr_pages_parallel([page_path])
+                        return results[0] if results else ""
                     else:
                         return await self._analyze_single_zai(page_path, prompt)
                 finally:
                     shutil.rmtree(tmpdir, ignore_errors=True)
 
             if self._provider == "deepinfra":
-                b64 = base64.b64encode(open(file_path, "rb").read()).decode()
-                async with httpx.AsyncClient(timeout=OCR_TIMEOUT) as client:
-                    resp = await client.post(
-                        f"{DEEPINFRA_BASE_URL}/chat/completions",
-                        headers={"Authorization": f"Bearer {self._deepinfra_key}"},
-                        json={"model": PADDLEOCR_MODEL, "max_tokens": 4096,
-                              "messages": [{"role": "user", "content": [
-                                  {"type": "image_url", "image_url": {
-                                      "url": f"data:image/png;base64,{b64}"}}]}]},
-                    )
-                    return resp.json()["choices"][0]["message"]["content"]
+                results = await self._ocr_pages_parallel([file_path])
+                return results[0] if results else ""
             else:
                 return await self._analyze_single_zai(file_path, prompt)
         finally:
