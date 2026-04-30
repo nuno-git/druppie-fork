@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-
 import yaml
 
 from druppie.testing.schema import (
@@ -18,6 +17,62 @@ from druppie.testing.schema import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+class YAMLLoadError(Exception):
+    """Raised when a YAML test file cannot be parsed or validated.
+
+    Carries the file path and original error for clear diagnostics.
+    """
+
+    def __init__(self, path: Path, detail: str, original: Exception | None = None):
+        self.path = path
+        self.original = original
+        super().__init__(f"{path.name}: {detail}")
+
+
+def _load_yaml_file(path: Path) -> dict:
+    """Load and validate a single YAML file into a dict.
+
+    Catches three classes of mistake early with actionable messages:
+      1. YAML syntax errors (e.g. bare text outside a comment)
+      2. File parses but result is not a dict (bare scalar document)
+      3. File is empty or all-comments (yaml.safe_load returns None)
+    """
+    raw = path.read_text()
+    try:
+        data = yaml.safe_load(raw)
+    except yaml.YAMLError as e:
+        line = getattr(e, "problem_mark", None)
+        line_info = f" (line {line.line + 1})" if line else ""
+        raise YAMLLoadError(
+            path,
+            f"YAML syntax error{line_info}: {e}",
+            original=e,
+        ) from e
+
+    if data is None:
+        raise YAMLLoadError(
+            path,
+            "File is empty or contains only comments — no YAML content found. "
+            "Make sure the file starts with a top-level key like 'tool-test:', 'check:', or 'agent-test:'.",
+        )
+
+    if not isinstance(data, dict):
+        # This is the exact failure mode when a comment line loses its ## prefix.
+        # yaml.safe_load returns the bare string as the document, ignoring the
+        # real content below it.
+        preview = str(data)[:80]
+        raise YAMLLoadError(
+            path,
+            f"File parsed as a '{type(data).__name__}' ({preview!r}…) instead of a mapping. "
+            "This usually means a line that should be a comment (##) is missing its prefix, "
+            "causing YAML to treat it as the document body. "
+            "Check for un-commented text above your top-level key.",
+            original=None,
+        )
+
+    return data
 
 
 # ---------------------------------------------------------------------------
@@ -39,15 +94,21 @@ class ProfileLoader:
     def _load(self) -> None:
         hitl_path = self._profiles_dir / "hitl.yaml"
         if hitl_path.exists():
-            data = yaml.safe_load(hitl_path.read_text())
-            parsed = HITLProfilesFile(**data)
-            self._hitl = dict(parsed.profiles)
+            try:
+                data = _load_yaml_file(hitl_path)
+                parsed = HITLProfilesFile(**data)
+                self._hitl = dict(parsed.profiles)
+            except (YAMLLoadError, Exception) as e:
+                logger.error("Failed to load %s: %s", hitl_path.name, e)
 
         judges_path = self._profiles_dir / "judges.yaml"
         if judges_path.exists():
-            data = yaml.safe_load(judges_path.read_text())
-            parsed = JudgeProfilesFile(**data)
-            self._judges = dict(parsed.profiles)
+            try:
+                data = _load_yaml_file(judges_path)
+                parsed = JudgeProfilesFile(**data)
+                self._judges = dict(parsed.profiles)
+            except (YAMLLoadError, Exception) as e:
+                logger.error("Failed to load %s: %s", judges_path.name, e)
 
     def get_hitl(self, name: str) -> HITLProfile:
         if name == "default":
@@ -94,9 +155,12 @@ class CheckLoader:
             logger.warning("Checks directory not found: %s", self._checks_dir)
             return
         for path in sorted(self._checks_dir.glob("*.yaml")):
-            data = yaml.safe_load(path.read_text())
-            parsed = CheckFile(**data)
-            self._checks[parsed.check.name] = parsed.check
+            try:
+                data = _load_yaml_file(path)
+                parsed = CheckFile(**data)
+                self._checks[parsed.check.name] = parsed.check
+            except (YAMLLoadError, Exception) as e:
+                logger.error("Failed to load check %s: %s", path.name, e)
 
     def get(self, name: str) -> CheckDefinition:
         if name not in self._checks:
@@ -126,9 +190,12 @@ class ToolTestLoader:
             logger.warning("Tools directory not found: %s", self._tools_dir)
             return
         for path in sorted(self._tools_dir.glob("*.yaml")):
-            data = yaml.safe_load(path.read_text())
-            parsed = ToolTestFile(**data)
-            self._tests[parsed.tool_test.name] = parsed.tool_test
+            try:
+                data = _load_yaml_file(path)
+                parsed = ToolTestFile(**data)
+                self._tests[parsed.tool_test.name] = parsed.tool_test
+            except (YAMLLoadError, Exception) as e:
+                logger.error("Failed to load tool test %s: %s", path.name, e)
 
     def get(self, name: str) -> ToolTestDefinition:
         if name not in self._tests:
