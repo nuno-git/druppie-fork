@@ -124,7 +124,7 @@ async def call_module_tool(module_id: str, req: ModuleCallRequest):
         mcp = MCPHttp(config)
         result = await mcp.call(
             module_id, req.tool, req.arguments,
-            timeout_seconds=120,
+            timeout_seconds=600,
             max_retries=1,
         )
         return result
