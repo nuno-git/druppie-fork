@@ -271,7 +271,6 @@ class FoundryClient:
             model=normalized["model"],
             instructions=normalized["instructions"],
             tools=tools if tools else None,
-            tool_resources=tool_resources if tool_resources else None,
         )
 
         try:

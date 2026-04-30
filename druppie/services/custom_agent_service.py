@@ -341,12 +341,11 @@ class CustomAgentService:
         foundry = FoundryService(endpoint=settings.llm.foundry_project_endpoint)
 
         if foundry.is_configured():
-            foundry_name = agent.foundry_agent_id or agent_id
-            success = foundry.delete_agent(foundry_name)
+            success = foundry.delete_agent(agent_id)
             if not success:
-                raise ValidationError(
-                    "Failed to remove agent from Azure AI Foundry",
-                    field="foundry",
+                logger.warning(
+                    "foundry_delete_failed_clearing_local",
+                    agent_id=agent_id,
                 )
 
         self.repo.update_deployment_status(

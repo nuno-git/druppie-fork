@@ -136,14 +136,21 @@ class CustomAgentRepository(BaseRepository):
         return agent
 
     def update_deployment_status(self, agent_id: str, **kwargs) -> None:
-        """Update deployment-related fields only."""
+        """Update deployment-related fields only.
+
+        When deployed_at is set, we sync it to updated_at so the agent
+        doesn't immediately appear dirty due to SQLAlchemy's onupdate.
+        """
         agent = self.get_by_agent_id(agent_id)
         if not agent:
             raise ValueError(f"Custom agent '{agent_id}' not found")
+        setting_deployed_at = "deployed_at" in kwargs and kwargs["deployed_at"] is not None
         for key, value in kwargs.items():
             if key in DEPLOYMENT_FIELDS:
                 setattr(agent, key, value)
         self.db.flush()
+        if setting_deployed_at:
+            agent.deployed_at = agent.updated_at
 
     def delete(self, agent_id: str) -> None:
         """Delete a custom agent by agent_id."""

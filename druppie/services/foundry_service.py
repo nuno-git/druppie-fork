@@ -113,17 +113,10 @@ class FoundryService:
         tool_configs = getattr(agent_detail, 'foundry_tool_configs', None) or {}
         tools = self._build_foundry_tools(agent_detail.foundry_tools, tool_configs)
 
-        tool_resources = {}
-        for tool_type, config in tool_configs.items():
-            vs_ids = config.get("vector_store_ids")
-            if vs_ids:
-                tool_resources[tool_type] = {"vector_store_ids": vs_ids}
-
         definition = PromptAgentDefinition(
             model=model,
             instructions=agent_detail.system_prompt,
             tools=tools if tools else None,
-            tool_resources=tool_resources if tool_resources else None,
         )
 
         logger.info(
