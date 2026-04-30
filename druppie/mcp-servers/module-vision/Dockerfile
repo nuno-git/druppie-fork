@@ -2,7 +2,7 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install Node.js 22 (required for @z_ai/mcp-server) and poppler (for PDF→image)
+# Install Node.js 22 (for @z_ai/mcp-server fallback) and poppler (for PDF→image)
 RUN apt-get update && apt-get install -y curl poppler-utils && \
     curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
     apt-get install -y nodejs && \
