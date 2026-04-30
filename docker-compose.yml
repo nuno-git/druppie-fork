@@ -382,29 +382,6 @@ services:
       retries: 5
       start_period: 10s
 
-  module-foundry:
-    build:
-      context: ./druppie/mcp-servers
-      dockerfile: module-foundry/Dockerfile
-    container_name: druppie-module-foundry
-    profiles: [infra, dev, prod]
-    environment:
-      MCP_PORT: "9012"
-      FOUNDRY_PROJECT_ENDPOINT: ${FOUNDRY_PROJECT_ENDPOINT:-}
-      AZURE_TENANT_ID: ${AZURE_TENANT_ID:-}
-      AZURE_CLIENT_ID: ${AZURE_CLIENT_ID:-}
-      AZURE_CLIENT_SECRET: ${AZURE_CLIENT_SECRET:-}
-    ports:
-      - "${MCP_FOUNDRY_PORT:-9012}:9012"
-    networks:
-      - druppie-new-network
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9012/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
-
   # ===========================================================================
   # SANDBOX INFRASTRUCTURE (background-agents)
   # ===========================================================================
@@ -608,7 +585,6 @@ services:
       MCP_WEB_URL: ${MCP_WEB_URL:-http://module-web:9005}
       MCP_ARCHIMATE_URL: ${MCP_ARCHIMATE_URL:-http://module-archimate:9006}
       MCP_REGISTRY_URL: ${MCP_REGISTRY_URL:-http://module-registry:9007}
-      MCP_FOUNDRY_URL: ${MCP_FOUNDRY_URL:-http://module-foundry:9012}
       SANDBOX_CONTROL_PLANE_URL: http://sandbox-control-plane:8787
       SANDBOX_MANAGER_URL: http://sandbox-manager:8000
       SANDBOX_API_SECRET: ${SANDBOX_API_SECRET:-sandbox-dev-secret}
@@ -700,7 +676,6 @@ services:
       MCP_WEB_URL: ${MCP_WEB_URL:-http://module-web:9005}
       MCP_ARCHIMATE_URL: ${MCP_ARCHIMATE_URL:-http://module-archimate:9006}
       MCP_REGISTRY_URL: ${MCP_REGISTRY_URL:-http://module-registry:9007}
-      MCP_FOUNDRY_URL: ${MCP_FOUNDRY_URL:-http://module-foundry:9012}
       SANDBOX_CONTROL_PLANE_URL: http://sandbox-control-plane:8787
       SANDBOX_API_SECRET: ${SANDBOX_API_SECRET:-sandbox-dev-secret}
       SANDBOX_MODEL: ${SANDBOX_MODEL:-}
