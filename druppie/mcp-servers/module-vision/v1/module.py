@@ -1,36 +1,42 @@
-"""Vision MCP Server - Business Logic Module.
+"""Vision MCP Server — OCR via DeepInfra.
 
-Strategy for text extraction:
-1. PDFs: try pdfplumber first (fast, no AI). If text found, use it.
-   Only fall back to OCR for scanned/image PDFs with no extractable text.
-2. Images: always use Z.AI MCP server for OCR.
-3. OCR uses a single MCP session for all pages (no per-page npx spawn).
+Primary: allenai/olmOCR-2-7B-1025 (7B, purpose-built document OCR).
+Fallback: PaddlePaddle/PaddleOCR-VL-0.9B (with required "OCR:" prompt).
+Last resort: Z.AI MCP server (sequential, slow).
+
+Pages processed in parallel via async HTTP when using DeepInfra.
 """
 
 import asyncio
+import base64
 import logging
 import os
 
+import httpx
+
 logger = logging.getLogger("vision-mcp")
 
-DEEPINFRA_DEFAULT_VISION_MODEL = "PaddlePaddle/PaddleOCR-VL-0.9B"
+OLMOCR_MODEL = "allenai/olmOCR-2-7B-1025"
+PADDLEOCR_MODEL = "PaddlePaddle/PaddleOCR-VL-0.9B"
 DEEPINFRA_BASE_URL = "https://api.deepinfra.com/v1/openai"
-MAX_OCR_PAGES = 3  # limit OCR to first N pages (each takes ~20s)
+DEFAULT_DPI = 150
+OCR_TIMEOUT = 60
+MAX_CONCURRENT_PAGES = 8
 
 
 class VisionModule:
-    """Business logic for vision/OCR operations."""
 
     def __init__(self):
-        self._zai_key = os.environ.get("ZAI_API_KEY", "")
         self._deepinfra_key = os.environ.get("DEEPINFRA_API_KEY", "")
+        self._zai_key = os.environ.get("ZAI_API_KEY", "")
+        self._model = OLMOCR_MODEL
 
-        if self._zai_key:
-            self._provider = "zai"
-            logger.info("Vision provider: Z.AI MCP server (@z_ai/mcp-server)")
-        elif self._deepinfra_key:
+        if self._deepinfra_key:
             self._provider = "deepinfra"
-            logger.info("Vision provider: DeepInfra (model=%s)", DEEPINFRA_DEFAULT_VISION_MODEL)
+            logger.info("Vision provider: DeepInfra %s (parallel HTTP)", self._model)
+        elif self._zai_key:
+            self._provider = "zai"
+            logger.info("Vision provider: Z.AI MCP server (sequential)")
         else:
             self._provider = "none"
             logger.warning("No vision API key set — vision calls will fail")
@@ -40,46 +46,66 @@ class VisionModule:
         return self._provider
 
     # -----------------------------------------------------------------
-    # PDF text extraction (no AI needed)
+    # PDF → images
     # -----------------------------------------------------------------
 
-    def _extract_pdf_text(self, pdf_path: str) -> str | None:
-        """Try extracting text directly from PDF (works for text-based PDFs).
-
-        Returns extracted text if found, None if the PDF is scanned/image-only.
-        """
-        try:
-            import pdfplumber
-        except ImportError:
-            logger.warning("pdfplumber not installed — skipping direct text extraction")
-            return None
-
-        try:
-            all_text = []
-            with pdfplumber.open(pdf_path) as pdf:
-                for i, page in enumerate(pdf.pages):
-                    text = page.extract_text()
-                    if text and text.strip():
-                        all_text.append(f"--- Pagina {i + 1} ---\n{text.strip()}")
-
-            if all_text:
-                combined = "\n\n".join(all_text)
-                logger.info("Extracted text from %d PDF pages (no OCR needed)", len(all_text))
-                return combined
-
-            logger.info("No extractable text in PDF — falling back to OCR")
-            return None
-
-        except Exception as e:
-            logger.warning("PDF text extraction failed: %s — falling back to OCR", e)
-            return None
+    def _pdf_to_images(self, pdf_path: str) -> tuple[list[str], str]:
+        import tempfile
+        from pdf2image import convert_from_path
+        tmpdir = tempfile.mkdtemp()
+        images = convert_from_path(pdf_path, dpi=DEFAULT_DPI, output_folder=tmpdir, fmt="png")
+        paths = []
+        for i, img in enumerate(images):
+            p = os.path.join(tmpdir, f"page_{i + 1}.png")
+            img.save(p, "PNG", optimize=True)
+            paths.append(p)
+        logger.info("PDF → %d page(s) at %d DPI", len(paths), DEFAULT_DPI)
+        return paths, tmpdir
 
     # -----------------------------------------------------------------
-    # Z.AI MCP vision (single session for multiple calls)
+    # DeepInfra OCR (parallel async HTTP)
     # -----------------------------------------------------------------
 
-    async def _ocr_with_zai(self, image_paths: list[str], prompt: str) -> list[str]:
-        """OCR multiple images in a single MCP session (one npx spawn)."""
+    async def _ocr_page_deepinfra(
+        self, client: httpx.AsyncClient, image_path: str, page_num: int
+    ) -> str:
+        b64 = base64.b64encode(open(image_path, "rb").read()).decode()
+        image_content = {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}}
+
+        if self._model == PADDLEOCR_MODEL:
+            content = [image_content, {"type": "text", "text": "OCR:"}]
+        else:
+            content = [image_content]
+
+        resp = await client.post(
+            f"{DEEPINFRA_BASE_URL}/chat/completions",
+            headers={"Authorization": f"Bearer {self._deepinfra_key}"},
+            json={
+                "model": self._model,
+                "max_tokens": 8192,
+                "temperature": 0.0,
+                "messages": [{"role": "user", "content": content}],
+            },
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        text = data["choices"][0]["message"]["content"]
+        logger.info("Page %d: %d chars via %s", page_num, len(text), self._model)
+        return text
+
+    async def _ocr_pages_parallel(self, image_paths: list[str]) -> list[str]:
+        sem = asyncio.Semaphore(MAX_CONCURRENT_PAGES)
+        async with httpx.AsyncClient(timeout=OCR_TIMEOUT) as client:
+            async def limited(page_num, path):
+                async with sem:
+                    return await self._ocr_page_deepinfra(client, path, page_num)
+            return await asyncio.gather(*[limited(i + 1, p) for i, p in enumerate(image_paths)])
+
+    # -----------------------------------------------------------------
+    # ZAI MCP fallback (sequential)
+    # -----------------------------------------------------------------
+
+    async def _ocr_all_pages_zai(self, image_paths: list[str], prompt: str) -> list[str]:
         from mcp import ClientSession, StdioServerParameters
         from mcp.client.stdio import stdio_client
 
@@ -94,73 +120,40 @@ class VisionModule:
             },
         )
 
-        results = []
+        results: list[str] = []
         async with stdio_client(server) as (read, write):
             async with ClientSession(read, write) as session:
                 await session.initialize()
-                for path in image_paths:
-                    try:
-                        result = await session.call_tool("extract_text_from_screenshot", {
-                            "image_source": path,
-                            "prompt": prompt or "Extract all text from this document",
-                        })
-                        text = result.content[0].text if result.content else ""
-                        results.append(text)
-                    except Exception as e:
-                        logger.error("OCR failed for %s: %s", path, e)
-                        results.append(f"[OCR fout: {e}]")
+                for idx, path in enumerate(image_paths):
+                    result = await session.call_tool("extract_text_from_screenshot", {
+                        "image_source": path,
+                        "prompt": prompt or "Extract all text from this document",
+                    })
+                    results.append(result.content[0].text if result.content else "")
         return results
 
-    async def _analyze_with_zai(self, image_path: str, prompt: str) -> str:
-        """Analyze a single image via Z.AI MCP."""
+    async def _analyze_single_zai(self, image_path: str, prompt: str) -> str:
         from mcp import ClientSession, StdioServerParameters
         from mcp.client.stdio import stdio_client
 
         server = StdioServerParameters(
-            command="npx",
-            args=["-y", "@z_ai/mcp-server"],
-            env={
-                "Z_AI_API_KEY": self._zai_key,
-                "Z_AI_MODE": "ZAI",
-                "PATH": os.environ.get("PATH", ""),
-                "HOME": os.environ.get("HOME", "/root"),
-            },
+            command="npx", args=["-y", "@z_ai/mcp-server"],
+            env={"Z_AI_API_KEY": self._zai_key, "Z_AI_MODE": "ZAI",
+                 "PATH": os.environ.get("PATH", ""), "HOME": os.environ.get("HOME", "/root")},
         )
-
         async with stdio_client(server) as (read, write):
             async with ClientSession(read, write) as session:
                 await session.initialize()
-                result = await session.call_tool("analyze_image", {
-                    "image_source": image_path,
-                    "prompt": prompt,
-                })
+                result = await session.call_tool("analyze_image", {"image_source": image_path, "prompt": prompt})
                 return result.content[0].text if result.content else ""
 
     # -----------------------------------------------------------------
-    # DeepInfra fallback
-    # -----------------------------------------------------------------
-
-    def _call_deepinfra(self, image_url: str, prompt: str) -> str:
-        from openai import OpenAI
-        client = OpenAI(api_key=self._deepinfra_key, base_url=DEEPINFRA_BASE_URL)
-        content = [{"type": "image_url", "image_url": {"url": image_url}}]
-        if prompt:
-            content.append({"type": "text", "text": prompt})
-        response = client.chat.completions.create(
-            model=DEEPINFRA_DEFAULT_VISION_MODEL,
-            max_tokens=4096,
-            messages=[{"role": "user", "content": content}],
-        )
-        return response.choices[0].message.content
-
-    # -----------------------------------------------------------------
-    # File handling helpers
+    # File helpers
     # -----------------------------------------------------------------
 
     def _resolve_to_file(self, image_source: str) -> tuple[str, bool]:
-        """Resolve to local file. Returns (path, is_temp)."""
         if image_source.startswith("data:"):
-            import base64, tempfile
+            import tempfile
             header, b64data = image_source.split(",", 1)
             ext = "png"
             if "jpeg" in header or "jpg" in header:
@@ -175,63 +168,36 @@ class VisionModule:
     def _is_pdf(self, path: str) -> bool:
         return path.lower().endswith(".pdf")
 
-    def _pdf_to_images(self, pdf_path: str, max_pages: int = MAX_OCR_PAGES) -> tuple[list[str], str]:
-        """Convert PDF pages to PNG images. Returns (image_paths, tmpdir)."""
-        import tempfile
-        from pdf2image import convert_from_path
-        tmpdir = tempfile.mkdtemp()
-        images = convert_from_path(
-            pdf_path, dpi=200, output_folder=tmpdir, fmt="png",
-            first_page=1, last_page=max_pages,
-        )
-        paths = []
-        for i, img in enumerate(images):
-            p = os.path.join(tmpdir, f"page_{i + 1}.png")
-            img.save(p, "PNG")
-            paths.append(p)
-        logger.info("PDF → %d page image(s) (max %d)", len(paths), max_pages)
-        return paths, tmpdir
-
     # -----------------------------------------------------------------
     # Public API
     # -----------------------------------------------------------------
 
     async def ocr(self, image_source: str, prompt: str = "") -> str:
-        """Extract text from an image or PDF.
-
-        For PDFs: tries direct text extraction first (fast). Falls back
-        to OCR only for scanned/image PDFs. OCR limited to first 3 pages.
-        """
-        if not self._zai_key and not self._deepinfra_key:
-            raise RuntimeError("No vision provider configured — set ZAI_API_KEY or DEEPINFRA_API_KEY")
+        """Extract text via OCR. All pages, parallel if DeepInfra."""
+        if self._provider == "none":
+            raise RuntimeError("No vision provider configured — set DEEPINFRA_API_KEY or ZAI_API_KEY")
 
         file_path, is_temp = self._resolve_to_file(image_source)
         try:
-            # PDF: try direct text extraction first
             if self._is_pdf(file_path):
-                direct_text = self._extract_pdf_text(file_path)
-                if direct_text:
-                    return direct_text
+                import shutil
+                image_paths, tmpdir = self._pdf_to_images(file_path)
+                try:
+                    if self._provider == "deepinfra":
+                        results = await self._ocr_pages_parallel(image_paths)
+                    else:
+                        results = await self._ocr_all_pages_zai(image_paths, prompt)
+                    parts = [f"--- Pagina {i + 1} ---\n{text}" for i, text in enumerate(results)]
+                    return "\n\n".join(parts)
+                finally:
+                    shutil.rmtree(tmpdir, ignore_errors=True)
 
-                # Scanned PDF — convert to images and OCR
-                if self._provider == "zai":
-                    import shutil
-                    image_paths, tmpdir = self._pdf_to_images(file_path)
-                    try:
-                        results = await self._ocr_with_zai(image_paths, prompt)
-                        parts = [f"--- Pagina {i + 1} ---\n{text}" for i, text in enumerate(results)]
-                        return "\n\n".join(parts)
-                    finally:
-                        shutil.rmtree(tmpdir, ignore_errors=True)
-                else:
-                    return self._call_deepinfra(image_source, prompt or "Extract all text")
-
-            # Image: OCR directly
-            if self._provider == "zai":
-                results = await self._ocr_with_zai([file_path], prompt)
+            if self._provider == "deepinfra":
+                results = await self._ocr_pages_parallel([file_path])
                 return results[0] if results else ""
             else:
-                return self._call_deepinfra(image_source, prompt or "Extract all text")
+                results = await self._ocr_all_pages_zai([file_path], prompt)
+                return results[0] if results else ""
 
         finally:
             if is_temp:
@@ -239,26 +205,35 @@ class VisionModule:
 
     async def analyze(self, image_source: str, prompt: str = "Describe this image.") -> str:
         """Analyze and describe an image or first page of a PDF."""
-        if not self._zai_key and not self._deepinfra_key:
-            raise RuntimeError("No vision provider configured — set ZAI_API_KEY or DEEPINFRA_API_KEY")
+        if self._provider == "none":
+            raise RuntimeError("No vision provider configured — set DEEPINFRA_API_KEY or ZAI_API_KEY")
 
         file_path, is_temp = self._resolve_to_file(image_source)
         try:
             if self._is_pdf(file_path):
-                import shutil
-                image_paths, tmpdir = self._pdf_to_images(file_path, max_pages=1)
+                import tempfile, shutil
+                from pdf2image import convert_from_path
+                tmpdir = tempfile.mkdtemp()
                 try:
-                    if self._provider == "zai":
-                        return await self._analyze_with_zai(image_paths[0], prompt)
+                    images = convert_from_path(
+                        file_path, dpi=DEFAULT_DPI, output_folder=tmpdir, fmt="png",
+                        first_page=1, last_page=1,
+                    )
+                    page_path = os.path.join(tmpdir, "page_1.png")
+                    images[0].save(page_path, "PNG", optimize=True)
+                    if self._provider == "deepinfra":
+                        results = await self._ocr_pages_parallel([page_path])
+                        return results[0] if results else ""
                     else:
-                        return self._call_deepinfra(image_paths[0], prompt)
+                        return await self._analyze_single_zai(page_path, prompt)
                 finally:
                     shutil.rmtree(tmpdir, ignore_errors=True)
 
-            if self._provider == "zai":
-                return await self._analyze_with_zai(file_path, prompt)
+            if self._provider == "deepinfra":
+                results = await self._ocr_pages_parallel([file_path])
+                return results[0] if results else ""
             else:
-                return self._call_deepinfra(image_source, prompt)
+                return await self._analyze_single_zai(file_path, prompt)
         finally:
             if is_temp:
                 os.unlink(file_path)

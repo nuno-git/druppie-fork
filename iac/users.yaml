@@ -255,7 +255,10 @@ clients:
     directAccessGrantsEnabled: true
     rootUrl: http://${EXTERNAL_HOST}:${FRONTEND_PORT}
     redirectUris:
+      - http://localhost:${FRONTEND_PORT}/*
+      - http://localhost:${FRONTEND_PORT}
       - http://${EXTERNAL_HOST}:${FRONTEND_PORT}/*
+      - http://${EXTERNAL_HOST}:${FRONTEND_PORT}
     webOrigins:
       - http://${EXTERNAL_HOST}:${FRONTEND_PORT}
 
