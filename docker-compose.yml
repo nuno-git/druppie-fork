@@ -799,7 +799,7 @@ services:
     profiles: [reset-hard]
     network_mode: host
     environment:
-      COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME:-cleaner-druppie-docker-compose}
+      COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME:-druppie}
       # Host project directory for Docker volume mount resolution (required for rootless Docker)
       HOST_PROJECT_DIR: ${PWD}
       # Init container env vars for re-initialization (use localhost since we're on host network)
@@ -837,7 +837,7 @@ services:
     profiles: [nuke]
     network_mode: host
     environment:
-      COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME:-cleaner-druppie-docker-compose}
+      COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME:-druppie}
       START_AFTER: ${START_AFTER:-true}
       FRONTEND_PORT: ${FRONTEND_PORT:-5173}
       BACKEND_PORT: ${BACKEND_PORT:-8000}
