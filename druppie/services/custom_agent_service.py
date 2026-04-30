@@ -265,7 +265,10 @@ class CustomAgentService:
     def deploy_custom_agent(
         self, agent_id: str, user_id: UUID, user_roles: list[str] | None = None,
     ) -> dict:
-        """Deploy a custom agent to Azure AI Foundry. Owner or admin can deploy."""
+        """Deploy a custom agent to Azure AI Foundry.
+
+        Requires owner, developer, or admin role — matching the API route gate.
+        """
         from datetime import datetime, timezone
 
         from ..core.config import get_settings
@@ -274,8 +277,9 @@ class CustomAgentService:
         agent = self.repo.get_by_agent_id(agent_id)
         if not agent:
             raise NotFoundError("agent", agent_id)
-        if agent.owner_id != user_id and "admin" not in (user_roles or []):
-            raise AuthorizationError("Only the owner or an admin can deploy this custom agent")
+        roles = set(user_roles or [])
+        if agent.owner_id != user_id and not roles & {"admin", "developer"}:
+            raise AuthorizationError("Only the owner, a developer, or an admin can deploy this agent")
 
         settings = get_settings()
         foundry = FoundryService(endpoint=settings.llm.foundry_project_endpoint)
@@ -332,15 +336,19 @@ class CustomAgentService:
     def undeploy_custom_agent(
         self, agent_id: str, user_id: UUID, user_roles: list[str] | None = None,
     ) -> dict:
-        """Remove a custom agent from Azure AI Foundry. Owner or admin can undeploy."""
+        """Remove a custom agent from Azure AI Foundry.
+
+        Requires owner, developer, or admin role — matching the API route gate.
+        """
         from ..core.config import get_settings
         from ..services.foundry_service import FoundryService
 
         agent = self.repo.get_by_agent_id(agent_id)
         if not agent:
             raise NotFoundError("agent", agent_id)
-        if agent.owner_id != user_id and "admin" not in (user_roles or []):
-            raise AuthorizationError("Only the owner or an admin can undeploy this custom agent")
+        roles = set(user_roles or [])
+        if agent.owner_id != user_id and not roles & {"admin", "developer"}:
+            raise AuthorizationError("Only the owner, a developer, or an admin can undeploy this agent")
 
         settings = get_settings()
         foundry = FoundryService(endpoint=settings.llm.foundry_project_endpoint)
@@ -391,7 +399,15 @@ class CustomAgentService:
         max_iterations: int = 10,
     ) -> dict:
         """Create a Foundry agent from a builtin tool call."""
+        import re
+        from ..agents.definition_loader import AgentDefinitionLoader
         from .foundry_service import FoundryService, ALLOWED_TOOL_TYPES
+
+        if not re.match(r"^[a-z][a-z0-9-]*$", agent_id):
+            return {"success": False, "error": "agent_id must be kebab-case: lowercase letters, digits, and hyphens"}
+
+        if agent_id in AgentDefinitionLoader.list_yaml_agents():
+            return {"success": False, "error": f"agent_id '{agent_id}' conflicts with a built-in agent"}
 
         spec_errors = FoundryService.validate_agent_spec(
             name=name,

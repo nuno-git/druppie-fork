@@ -513,6 +513,58 @@ def get_builtin_tools(tool_names: list[str]) -> list[dict]:
 
 
 # =============================================================================
+# BUILTIN PRE-VALIDATORS (used by tool_executor Step 2.6)
+# =============================================================================
+
+def _pre_validate_create_foundry_agent(args: dict) -> dict:
+    from druppie.services.foundry_service import FoundryService
+    errors = FoundryService.validate_agent_spec(
+        name=args.get("agent_id", ""),
+        description=args.get("description", ""),
+        instructions=args.get("instructions", ""),
+        foundry_tools=args.get("foundry_tools"),
+        tool_resources=args.get("tool_resources"),
+    )
+    return {"valid": len(errors) == 0, "errors": errors}
+
+
+def _pre_validate_update_foundry_agent(args: dict) -> dict:
+    from druppie.services.foundry_service import FoundryService
+    errors: list[str] = []
+    if "instructions" in args and args["instructions"] is not None:
+        if not args["instructions"] or not args["instructions"].strip():
+            errors.append("instructions must be a non-empty system prompt")
+    if "description" in args and args["description"] is not None:
+        if len(args["description"]) > 512:
+            errors.append("description must be <= 512 characters")
+    if "foundry_tools" in args and args["foundry_tools"] is not None:
+        spec_errors = FoundryService.validate_agent_spec(
+            name=args.get("agent_id", "x"),
+            description=args.get("description", "x"),
+            instructions=args.get("instructions", "x"),
+            foundry_tools=args["foundry_tools"],
+            tool_resources=args.get("tool_resources"),
+        )
+        errors.extend(e for e in spec_errors if "foundry tool" in e or "connection_id" in e or "vector_store_ids" in e)
+    return {"valid": len(errors) == 0, "errors": errors}
+
+
+def _pre_validate_deploy_foundry_agent(args: dict) -> dict:
+    errors: list[str] = []
+    agent_id = args.get("agent_id", "")
+    if not agent_id:
+        errors.append("agent_id is required")
+    return {"valid": len(errors) == 0, "errors": errors}
+
+
+BUILTIN_PRE_VALIDATORS: dict[str, callable] = {
+    "create_foundry_agent": _pre_validate_create_foundry_agent,
+    "update_foundry_agent": _pre_validate_update_foundry_agent,
+    "deploy_foundry_agent": _pre_validate_deploy_foundry_agent,
+}
+
+
+# =============================================================================
 # INTENT TOOL IMPLEMENTATION
 # =============================================================================
 

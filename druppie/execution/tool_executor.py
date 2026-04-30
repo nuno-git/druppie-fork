@@ -448,6 +448,9 @@ class ToolExecutor:
         # If the tool definition has a meta.pre_validate field, call the named
         # validation tool BEFORE the approval gate so agents can fix errors
         # without wasting a human reviewer's time.
+        #
+        # For builtin tools: BUILTIN_PRE_VALIDATORS maps tool names to
+        # callables that accept (args) and return {valid, errors}.
         from druppie.core.tool_registry import get_tool_registry
         registry = get_tool_registry()
         if tool_call.mcp_server and tool_call.mcp_server != "builtin":
@@ -455,9 +458,53 @@ class ToolExecutor:
         else:
             full_name = tool_call.tool_name
         tool_def = registry.get(full_name) if full_name else None
+
+        # Builtin pre-validation (sync callables, no MCP call needed)
+        from druppie.agents.builtin_tools import BUILTIN_PRE_VALIDATORS
+        builtin_validator = BUILTIN_PRE_VALIDATORS.get(tool_call.tool_name)
+        if is_builtin and builtin_validator:
+            try:
+                validate_result = builtin_validator(tool_call.arguments or {})
+                if not validate_result.get("valid", True):
+                    errors = validate_result.get("errors", [])
+                    content_error = (
+                        "PRE-VALIDATION FAILED — tool was NOT executed. "
+                        "Fix these errors and try again:\n\n"
+                        + "\n".join(str(e) for e in errors)
+                    )
+                    logger.warning(
+                        "builtin_pre_validation_failed",
+                        tool_call_id=str(tool_call_id),
+                        tool_name=tool_call.tool_name,
+                    )
+                    self.execution_repo.update_tool_call(
+                        tool_call.id,
+                        status=ToolCallStatus.FAILED,
+                        error=content_error,
+                    )
+                    self.db.commit()
+                    return ToolCallStatus.FAILED
+            except Exception as e:
+                error_msg = (
+                    f"PRE-VALIDATION ERROR — {tool_call.tool_name}: {e}. "
+                    f"Tool was NOT executed. Retry or contact an administrator."
+                )
+                logger.error(
+                    "builtin_pre_validation_exception",
+                    tool_name=tool_call.tool_name,
+                    error=str(e),
+                )
+                self.execution_repo.update_tool_call(
+                    tool_call.id,
+                    status=ToolCallStatus.FAILED,
+                    error=error_msg,
+                )
+                self.db.commit()
+                return ToolCallStatus.FAILED
+
+        # MCP pre-validation (via HTTP call to the validation tool)
         if tool_def and tool_def.meta.get("pre_validate"):
             validate_tool_name = tool_def.meta["pre_validate"]
-            # Look up the validation tool's schema to pass only the args it expects
             validate_tool_def = registry.get_by_server_and_name(tool_def.server, validate_tool_name)
             validate_args = tool_call.arguments or {}
             if validate_tool_def and validate_tool_def.json_schema:
