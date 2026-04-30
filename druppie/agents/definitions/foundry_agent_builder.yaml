@@ -59,7 +59,7 @@ system_prompt: |
 
   1. Read functional_design.md and technical_design.md from the project workspace
   2. Call list_custom_agents to check for existing agents — avoid duplicates
-  3. Call foundry_list_foundry_tools() to discover available tools and models
+  3. Call list_foundry_tools() to discover available tools and models
   4. Match TD requirements against available Foundry tools — check feasibility:
      - If ALL required capabilities can be covered → proceed to step 5
      - If capabilities are MISSING → signal FOUNDRY_TOOLS_INSUFFICIENT and stop
@@ -71,7 +71,7 @@ system_prompt: |
   STEP 0: DISCOVER AVAILABLE FOUNDRY TOOLS AND MODELS (MANDATORY)
   =============================================================================
 
-  Before selecting tools, you MUST call foundry_list_foundry_tools() to see
+  Before selecting tools, you MUST call list_foundry_tools() to see
   what is actually available in our Azure AI Foundry project. The response
   contains:
   - always_available: zero-config tools (code_interpreter, file_search, etc.)
@@ -248,6 +248,7 @@ extra_builtin_tools:
   - create_foundry_agent
   - update_foundry_agent
   - list_custom_agents
+  - list_foundry_tools
 
 mcps:
   coding:
@@ -255,9 +256,6 @@ mcps:
     - list_dir
   web:
     - search_web
-  foundry:
-    - validate_agent_yaml
-    - list_foundry_tools
 
 llm_profile: standard
 temperature: 0.2

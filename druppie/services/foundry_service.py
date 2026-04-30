@@ -2,14 +2,51 @@
 
 import hashlib
 import json
+import os
+import re
 import structlog
 from datetime import datetime, timezone
 
 logger = structlog.get_logger()
 
-def _default_foundry_model() -> str:
-    import os
-    return os.environ.get("FOUNDRY_MODEL", "gpt-4.1-mini")
+ALLOWED_TOOL_TYPES: set[str] = {
+    "code_interpreter",
+    "file_search",
+    "bing_grounding",
+    "bing_custom_search",
+    "azure_ai_search",
+    "microsoft_fabric",
+    "sharepoint_grounding",
+    "browser_automation",
+    "deep_research",
+}
+
+CONNECTION_REQUIRED: set[str] = {
+    "bing_grounding",
+    "bing_custom_search",
+    "azure_ai_search",
+    "microsoft_fabric",
+    "sharepoint_grounding",
+}
+
+# Multiple Azure connection type strings can map to a single Foundry tool.
+CONNECTION_TYPE_TO_TOOL: dict[str, str] = {
+    "groundingwithbingsearch": "bing_grounding",
+    "apibinggrounding": "bing_grounding",
+    "bing_grounding": "bing_grounding",
+    "bingcustomsearch": "bing_custom_search",
+    "azureaisearch": "azure_ai_search",
+    "cognitivesearch": "azure_ai_search",
+    "fabric": "microsoft_fabric",
+    "microsoftfabric": "microsoft_fabric",
+    "sharepoint": "sharepoint_grounding",
+    "sharepointgrounding": "sharepoint_grounding",
+    "microsoft365": "sharepoint_grounding",
+    "m365": "sharepoint_grounding",
+}
+
+_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+_INSTRUCTIONS_MAX = 256_000
 
 
 class FoundryService:
@@ -18,6 +55,74 @@ class FoundryService:
     def __init__(self, endpoint: str | None = None):
         self.endpoint = endpoint
         self._client = None
+
+    @staticmethod
+    def resolve_model(model: str) -> str:
+        """Resolve a model name, accepting both profile names and real deployment names."""
+        if model in ("standard", "cheap"):
+            return os.environ.get("FOUNDRY_MODEL", "gpt-4.1-mini")
+        return model
+
+    @staticmethod
+    def validate_agent_spec(
+        name: str,
+        description: str,
+        instructions: str,
+        foundry_tools: list[str] | None = None,
+        tool_resources: dict | None = None,
+    ) -> list[str]:
+        """Validate parameters against Foundry agent constraints.
+
+        Returns a list of error strings. Empty list means valid.
+        """
+        errors: list[str] = []
+
+        if not _NAME_PATTERN.match(name):
+            errors.append(
+                "name must match ^[A-Za-z0-9_-]{1,64}$ "
+                "(alphanumeric, underscore, hyphen; 1-64 chars)"
+            )
+
+        if len(description) > 512:
+            errors.append("description must be <= 512 characters")
+
+        if not instructions or not instructions.strip():
+            errors.append("instructions must be a non-empty system prompt")
+        elif len(instructions) > _INSTRUCTIONS_MAX:
+            errors.append(
+                f"instructions exceed Foundry limit of {_INSTRUCTIONS_MAX} characters"
+            )
+
+        tools = foundry_tools or []
+        seen: set[str] = set()
+        for t in tools:
+            if t in seen:
+                errors.append(f"duplicate foundry tool '{t}' — each tool may appear at most once")
+            seen.add(t)
+
+            if t not in ALLOWED_TOOL_TYPES:
+                errors.append(
+                    f"unknown foundry tool '{t}'. Allowed: "
+                    + ", ".join(sorted(ALLOWED_TOOL_TYPES))
+                )
+
+            if t in CONNECTION_REQUIRED:
+                tc = (tool_resources or {}).get(t, {})
+                if not isinstance(tc, dict) or not tc.get("connection_id"):
+                    errors.append(
+                        f"tool '{t}' requires a connection_id in tool_resources"
+                    )
+
+        if "file_search" in seen:
+            fs = (tool_resources or {}).get("file_search", {})
+            vs_ids = fs.get("vector_store_ids") if isinstance(fs, dict) else None
+            if not isinstance(vs_ids, list) or not vs_ids:
+                errors.append(
+                    "tool 'file_search' requires tool_resources.file_search."
+                    "vector_store_ids to be a non-empty list of vector store IDs"
+                )
+
+        return errors
 
     def _get_client(self):
         """Lazy-initialize the Foundry client.
@@ -65,7 +170,7 @@ class FoundryService:
         """
         tool_configs = getattr(agent_detail, 'foundry_tool_configs', None) or {}
         canonical = {
-            "model": agent_detail.llm_profile or _default_foundry_model(),
+            "model": agent_detail.llm_profile or FoundryService.resolve_model("standard"),
             "system_prompt": agent_detail.system_prompt or "",
             "foundry_tools": sorted(agent_detail.foundry_tools or []),
             "foundry_tool_configs": tool_configs,
@@ -109,7 +214,7 @@ class FoundryService:
         client = self._get_client()
         from azure.ai.projects.models import PromptAgentDefinition
 
-        model = agent_detail.llm_profile or _default_foundry_model()
+        model = agent_detail.llm_profile or FoundryService.resolve_model("standard")
         tool_configs = getattr(agent_detail, 'foundry_tool_configs', None) or {}
         tools = self._build_foundry_tools(agent_detail.foundry_tools, tool_configs)
 
@@ -261,10 +366,10 @@ class FoundryService:
             warnings.append("system_prompt is very short — consider adding more detailed instructions")
 
         # 3. Check model is set
-        model = agent_detail.llm_profile or _default_foundry_model()
+        model = agent_detail.llm_profile or FoundryService.resolve_model("standard")
         if not agent_detail.llm_profile:
             warnings.append(
-                f"No model selected — will default to {_default_foundry_model()}"
+                f"No model selected — will default to {FoundryService.resolve_model("standard")}"
             )
 
         # 4. Validate foundry_tools
@@ -395,6 +500,92 @@ class FoundryService:
         except Exception as e:
             logger.warning("foundry_list_models_failed", error=str(e))
             return []
+
+    def list_available_tools(self) -> dict:
+        """Live-query available tools, connections, and deployed models.
+
+        Returns a rich format for agent use: always-available tools,
+        connection-backed tools with their availability and connection
+        details, and deployed model names.
+        """
+        checked_at = datetime.now(timezone.utc).isoformat()
+        base = {
+            "endpoint": self.endpoint,
+            "checked_at": checked_at,
+            "always_available": sorted(ALLOWED_TOOL_TYPES - CONNECTION_REQUIRED),
+        }
+
+        try:
+            client = self._get_client()
+        except FoundryNotConfiguredError as e:
+            return {
+                **base,
+                "ok": False,
+                "reason": str(e),
+                "connection_backed": [],
+                "deployed_models": [],
+            }
+
+        # Enumerate connections and bucket by tool type
+        try:
+            raw_conns = list(client.connections.list())
+        except Exception as e:
+            logger.warning("foundry_list_connections_failed", error=str(e))
+            return {
+                **base,
+                "ok": False,
+                "reason": f"failed to list connections: {e}",
+                "connection_backed": [],
+                "deployed_models": [],
+            }
+
+        buckets: dict[str, list[dict]] = {}
+        for conn in raw_conns:
+            conn_type_raw = str(getattr(conn, "type", "") or "")
+            normalized = conn_type_raw.replace("-", "").replace("_", "").lower()
+            tool_type = CONNECTION_TYPE_TO_TOOL.get(normalized)
+            if tool_type:
+                entry = {
+                    "id": getattr(conn, "id", None) or getattr(conn, "name", None),
+                    "name": getattr(conn, "name", None),
+                    "type": conn_type_raw,
+                }
+                buckets.setdefault(tool_type, []).append(entry)
+
+        connection_backed = []
+        for tool_type in sorted(CONNECTION_REQUIRED):
+            conns = buckets.get(tool_type, [])
+            connection_backed.append({
+                "type": tool_type,
+                "available": bool(conns),
+                "connections": conns,
+            })
+
+        # Enumerate deployed models
+        deployed_models = []
+        deployed_models_warning = None
+        try:
+            if hasattr(client, "deployments"):
+                for dep in client.deployments.list():
+                    name = getattr(dep, "name", None)
+                    model = getattr(dep, "model_name", None) or getattr(dep, "model", None)
+                    if name:
+                        deployed_models.append({"name": name, "model": model})
+            else:
+                deployed_models_warning = "SDK has no deployments accessor"
+        except Exception as e:
+            logger.warning("foundry_list_models_failed", error=str(e))
+            deployed_models_warning = f"could not enumerate deployed models: {e}"
+
+        result = {
+            **base,
+            "ok": True,
+            "connection_backed": connection_backed,
+            "deployed_models": deployed_models,
+        }
+        if deployed_models_warning:
+            result["deployed_models_warning"] = deployed_models_warning
+        return result
 
     def is_configured(self) -> bool:
         """Check if Foundry is configured."""

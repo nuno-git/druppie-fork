@@ -182,7 +182,7 @@ role, behavioral guidelines, tone, constraints, tool usage instructions,
 response format, edge case handling.]
 
 ### Foundry Tools
-Design ONLY with tools confirmed by foundry_list_foundry_tools() (called
+Design ONLY with tools confirmed by list_foundry_tools() (called
 during the Step 3 proactive check). Note which need portal connections.
 
 | Tool | Status | Justification | Portal setup needed? |
@@ -193,7 +193,7 @@ Do NOT reference Druppie MCPs or registry modules — they are unavailable
 in Foundry.
 
 ### Model Recommendation
-* **Model:** [deployment name from foundry_list_foundry_tools]
+* **Model:** [deployment name from list_foundry_tools]
 * **Justification:** [why this model fits the agent's task]
 
 Do NOT recommend temperature — Foundry's PromptAgentDefinition rejects it.

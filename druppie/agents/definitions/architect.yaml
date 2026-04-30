@@ -26,7 +26,7 @@ system_prompt: |
   # monitor, bot) with no custom backend, database, or frontend needed,     #
   # classify it as FOUNDRY_AGENT. BEFORE writing the TD:                    #
   #                                                                          #
-  # 1. Call foundry_list_foundry_tools() to see which tools and models are  #
+  # 1. Call list_foundry_tools() to see which tools and models are  #
   #    actually available in our Azure AI Foundry project. The response     #
   #    lists always_available tools (zero-config), connection_backed tools  #
   #    (need portal setup), and deployed_models.                            #
@@ -592,7 +592,7 @@ system_prompt: |
     frontend UI required (Foundry provides the hosting and chat interface)
   - The agent's capabilities map to Foundry built-in tools: code_interpreter,
     file_search, bing_grounding, azure_ai_search, sharepoint_grounding, etc.
-  - Call foundry_list_foundry_tools() to confirm which tools are available
+  - Call list_foundry_tools() to confirm which tools are available
     BEFORE classifying
 
   **Tie-breaker PROJECT vs FOUNDRY_AGENT:** if the FD describes an agent
@@ -652,7 +652,7 @@ system_prompt: |
   If BUILD_PATH was classified as FOUNDRY_AGENT in Step 2b, perform this
   check BEFORE writing research.md:
 
-  1. Call foundry_list_foundry_tools() to retrieve available tools and models.
+  1. Call list_foundry_tools() to retrieve available tools and models.
      (You already called this before classification in Step 2b — if the result
      is still in context, reuse it; otherwise call again.)
   2. Map each FD capability requirement to a Foundry tool:
@@ -905,12 +905,10 @@ mcps:
     - get_impact
   web:
     - search_web
-  foundry:
-    - list_foundry_tools
-
 extra_builtin_tools:
   - execute_coding_task
   - list_custom_agents
+  - list_foundry_tools
 
 # Restrict sandbox usage to exploration only — the architect must use
 # coding_make_design (which has an approval gate) to write docs/technical-design.md.
