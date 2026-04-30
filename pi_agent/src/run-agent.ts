@@ -211,10 +211,11 @@ export async function runSingleAgent(params: SingleAgentParams): Promise<SingleA
 
     const extraCustomTools: any[] = [doneTool];
 
+    const parentRef: { current?: string } = {};
+
     // Auto-inject spawn tool if agent has spawn_subagents enabled
     const agentMap = new Map(agents.map((a) => [a.name, a]));
     if (agentDef.spawn_subagents && agentDef.allowed_subagents && agentDef.allowed_subagents.length > 0) {
-      const parentRef: { current?: string } = {};
       const baseOpts: RunSubagentOptions = {
         cwd,
         authStorage,
@@ -243,6 +244,10 @@ export async function runSingleAgent(params: SingleAgentParams): Promise<SingleA
       const prompt = isRetry
         ? `${params.prompt}\n\nIMPORTANT: You MUST use the "done" tool to complete your work. Call the done tool now with your findings.`
         : params.prompt;
+
+      if (parentRef) {
+        parentRef.current = `${agentDef.name}-${attempt + 1}`;
+      }
 
       doneCapture.called = false;
       doneCapture.variables = {};
