@@ -238,6 +238,59 @@ BUILTIN_TOOL_DEFS: dict[str, dict] = {
             },
         },
     },
+    "execute_coding_task_pi": {
+        "type": "function",
+        "function": {
+            "name": "execute_coding_task_pi",
+            "description": (
+                "Execute a full coding task using the vendored pi_agent orchestrator. "
+                "ONE call = ONE complete flow: analyze → plan → build → verify → push → PR (for flow='tdd'), "
+                "or read-only investigation (for flow='explore'). "
+                "Each call spawns a fresh throwaway sandbox that clones the repo; the sandbox is "
+                "destroyed after completion and any un-pushed work is lost. "
+                "pi_agent creates its own feature branch, commits the work, pushes via a separate "
+                "credentialed push-container, and opens a PR automatically — so you do NOT call "
+                "this tool for 'just create a branch' or 'just run git push'. The sandbox itself has "
+                "no git credentials; pushes only happen when the flow produces real commits. "
+                "Works against either a GitHub App repo (repo_target='druppie_core') or a Gitea "
+                "project repo (repo_target='project')."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "task": {
+                        "type": "string",
+                        "description": (
+                            "The complete task prompt for the pi_agent orchestrator. "
+                            "Self-contained — describe what to implement, reference files for context, "
+                            "list patterns to follow. Should describe actual code work; 'create a branch' "
+                            "or 'run a shell command' alone are NOT valid tasks (the flow expects files "
+                            "to be written / changed so there's something to commit and push)."
+                        ),
+                    },
+                    "flow": {
+                        "type": "string",
+                        "enum": ["tdd", "explore"],
+                        "description": (
+                            "Which pi_agent flow to run. "
+                            "'tdd' (default): analyst → plan → build → verify → PR. Writes code. "
+                            "'explore': router agent in a sandboxed clone that can fan out parallel "
+                            "explorer subagents to answer questions read-only. No commits, no PR."
+                        ),
+                    },
+                    "repo_target": {
+                        "type": "string",
+                        "enum": ["project", "druppie_core"],
+                        "description": (
+                            "Which repo to operate on. 'project' (default) = session's Gitea project repo. "
+                            "'druppie_core' = Druppie's own GitHub repo."
+                        ),
+                    },
+                },
+                "required": ["task"],
+            },
+        },
+    },
     "test_report": {
         "type": "function",
         "function": {
@@ -1322,6 +1375,7 @@ async def execute_builtin(
     session_id: UUID,
     agent_run_id: UUID,
     execution_repo: "ExecutionRepository",
+    tool_call_id: UUID | None = None,
 ) -> dict:
     """Execute a non-HITL built-in tool.
 
@@ -1384,6 +1438,15 @@ async def execute_builtin(
             agent_run_id=agent_run_id,
             execution_repo=execution_repo,
         )
+    elif tool_name == "execute_coding_task_pi":
+        from druppie.agents.execute_coding_task_pi import execute_coding_task_pi
+        return await execute_coding_task_pi(
+            args=args,
+            session_id=session_id,
+            agent_run_id=agent_run_id,
+            execution_repo=execution_repo,
+            tool_call_id=tool_call_id,
+        )
     elif tool_name == "test_report":
         return await test_report(
             iteration=args.get("iteration", 0),
@@ -1417,6 +1480,7 @@ def is_builtin_tool(tool_name: str) -> bool:
         "create_message",
         "invoke_skill",
         "execute_coding_task",
+        "execute_coding_task_pi",
         "test_report",
     )
 

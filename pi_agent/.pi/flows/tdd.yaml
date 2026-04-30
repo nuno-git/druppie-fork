@@ -1,0 +1,74 @@
+# TDD Flow - Test-Driven Development
+# Analyzes task, creates plan + spawns builders, verifies, and creates PR
+
+name: tdd
+description: Test-driven development flow with analysis, planning, implementation, and verification
+
+# Initial variables for the flow
+variables:
+  maxIterations: 3
+  iteration: 1
+  firstIteration: true
+  succeeded: false
+
+# Phases execute in order
+phases:
+  # Phase 1: Analyze the task
+  - name: analyze
+    agent: analyst
+    description: Analyze the task and define goals, tests, and architecture
+
+  # Phase 2: Build loop (plan+execute → verify, retry as needed)
+  - name: build_loop
+    # Continue while: (first iteration OR not succeeded) AND within max iterations
+    while: "( ${firstIteration} || !${succeeded} ) && ${iteration} <= ${maxIterations}"
+    phases:
+      # Phase 2a: Plan and execute (planner spawns builder agents directly)
+      - name: build
+        agent: planner
+        description: Create a build plan and spawn builder agents to execute it
+        inputs:
+          previousSummaries: true
+        set:
+          firstIteration: false
+
+      # Phase 2b: Verify the implementation
+      - name: verify
+        agent: verifier
+        description: Run tests and fix simple issues
+        inputs:
+          previousSummaries: true
+        variables:
+          - succeeded: bool
+        set:
+          succeeded: true
+
+    # Update iteration counter after each loop
+    set:
+      iteration: "${iteration} + 1"
+
+  # Phase 3: Push to git (conditional)
+  - name: push
+    # Only push if: push requested AND succeeded
+    if: "${task.pushOnComplete} && ${succeeded}"
+    agent: push-agent
+    description: Push commits and create PR
+    builtIn: true
+
+  # Phase 4: Author PR (conditional)
+  - name: pr_author
+    # Only author if: push requested AND push succeeded
+    if: "${task.pushOnComplete} && @push.ok"
+    agent: pr-author
+    description: Write PR title and body
+    inputs:
+      previousSummaries: true
+
+# Output configuration
+output:
+  format: summaries
+  include:
+    - analyst
+    - planner
+    - verifier
+    - pr-author

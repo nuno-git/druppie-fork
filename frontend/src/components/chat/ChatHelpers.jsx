@@ -480,6 +480,15 @@ export const extractOrderedItems = (agentRun, hasFollowingMessage) => {
           if (raw?.sandbox_session_id) items.push({ type: 'sandbox', data: raw })
         } catch { /* skip */ }
       }
+      // Pi coding run — unified live + final view. The PiCodingRunLiveCard
+      // polls /api/pi-agent-runs/by-tool-call/{id} and keeps polling until
+      // the run is terminal, then stops. Same component handles executing,
+      // succeeded, and failed states, so the user always sees the full
+      // timeline + per-agent details, not a stripped-down post-hoc summary.
+      if (tc.tool_name === 'execute_coding_task_pi' &&
+          (tc.status === 'executing' || tc.status === 'completed' || tc.status === 'failed')) {
+        items.push({ type: 'pi_coding_live', toolCallId: tc.id })
+      }
     })
   })
   return items

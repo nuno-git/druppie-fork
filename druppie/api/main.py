@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import httpx
 import structlog
 
-from druppie.api.routes import agents, approvals, cache, chat, deployments, evaluations, mcp_bridge, mcps, modules, projects, questions, sandbox, sessions, workspace
+from druppie.api.routes import agents, approvals, cache, chat, deployments, evaluations, mcp_bridge, mcps, modules, pi_agent, projects, questions, sandbox, sessions, workspace
 from druppie.api.errors import register_exception_handlers
 from druppie.core.auth import get_auth_service
 from druppie.core.config import get_settings
@@ -85,6 +85,113 @@ def _recover_orphaned_batch_runs() -> None:
         db.close()
 
 
+def _recover_orphaned_pi_agent_runs() -> None:
+    """Mark orphaned pi_agent runs as stopped on startup.
+
+    If the server was killed while a pi_agent process was running, the
+    PiCodingRun stays in "running" or "stopping" state forever.  On startup
+    we know the in-memory process registry is lost, so any "running" or
+    "stopping" run is an orphan (the actual subprocess was killed by the
+    server shutdown).
+
+    Also marks the associated ToolCall as "failed" so the frontend doesn't
+    show "Stopping..." indefinitely.
+    """
+    from druppie.db.database import SessionLocal
+    from druppie.db.models.pi_coding_run import PiCodingRun
+    from druppie.db.models import ToolCall
+    from druppie.db.models.base import utcnow
+
+    db = SessionLocal()
+    try:
+        orphans = db.query(PiCodingRun).filter(
+            PiCodingRun.status.in_(["running", "stopping"])
+        ).all()
+        for run in orphans:
+            run.status = "stopped"
+            run.completed_at = utcnow()
+
+            # Also update the associated ToolCall status
+            if run.tool_call_id:
+                tool_call = db.query(ToolCall).filter(ToolCall.id == run.tool_call_id).first()
+                if tool_call:
+                    tool_call.status = "failed"
+                    tool_call.error_message = "Server restarted while pi_agent was running"
+                    tool_call.completed_at = utcnow()
+                    db.add(tool_call)
+
+        if orphans:
+            db.commit()
+            logger.warning(
+                "orphaned_pi_agent_runs_recovered",
+                count=len(orphans),
+                run_ids=[r.run_id for r in orphans],
+            )
+        else:
+            logger.info("no_orphaned_pi_agent_runs")
+    except Exception as e:
+        logger.error("orphaned_pi_agent_recovery_failed", error=str(e), exc_info=True)
+        db.rollback()
+    finally:
+        db.close()
+
+
+def _recover_orphaned_pi_agent_tool_calls() -> None:
+    """Mark orphaned pi_agent tool calls as failed on startup.
+
+    If a ToolCall for execute_coding_task_pi is in "executing" state but
+    has no corresponding PiCodingRun (or the PiCodingRun is already stopped),
+    mark it as failed to prevent the frontend from showing "Stopping...".
+    """
+    from druppie.db.database import SessionLocal
+    from druppie.db.models import ToolCall
+    from druppie.db.models.base import utcnow
+
+    db = SessionLocal()
+    try:
+        # Find ToolCalls for execute_coding_task_pi that are still executing
+        orphaned_calls = (
+            db.query(ToolCall)
+            .filter(
+                ToolCall.tool_name == "execute_coding_task_pi",
+                ToolCall.status == "executing"
+            )
+            .all()
+        )
+
+        recovered_count = 0
+        for tool_call in orphaned_calls:
+            # Check if there's a corresponding PiCodingRun that's still running
+            from druppie.db.models.pi_coding_run import PiCodingRun
+            pi_run = (
+                db.query(PiCodingRun)
+                .filter(PiCodingRun.tool_call_id == tool_call.id)
+                .first()
+            )
+
+            # If no PiCodingRun exists, or if it's already stopped, mark ToolCall as failed
+            if not pi_run or pi_run.status not in ("running", "stopping"):
+                tool_call.status = "failed"
+                tool_call.error_message = "Server restarted while tool was executing"
+                tool_call.completed_at = utcnow()
+                recovered_count += 1
+
+        if recovered_count > 0:
+            db.commit()
+            logger.warning(
+                "orphaned_pi_agent_tool_calls_recovered",
+                count=recovered_count,
+                tool_call_ids=[str(tc.id) for tc in orphaned_calls if tc.status == "failed"],
+            )
+        else:
+            logger.info("no_orphaned_pi_agent_tool_calls")
+    except Exception as e:
+        logger.error("orphaned_pi_agent_tool_calls_recovery_failed", error=str(e), exc_info=True)
+        db.rollback()
+    finally:
+        db.close()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan handler."""
@@ -101,6 +208,12 @@ async def lifespan(app: FastAPI):
 
     # Recover orphaned test batch runs left in "running" state by a crash/restart
     _recover_orphaned_batch_runs()
+
+    # Recover orphaned pi_agent runs left in "running" or "stopping" state
+    _recover_orphaned_pi_agent_runs()
+
+    # Recover orphaned pi_agent tool calls left in "executing" state
+    _recover_orphaned_pi_agent_tool_calls()
 
     # Clean up orphaned sandbox Gitea users from previous runs
     from druppie.opencode.gitea_cleanup import cleanup_orphaned_sandbox_users
@@ -175,6 +288,7 @@ def create_app() -> FastAPI:
     app.include_router(mcps.router, prefix="/api", tags=["MCPs"])
     app.include_router(mcp_bridge.router, prefix="/api/mcp", tags=["MCP Bridge"])
     app.include_router(sandbox.router, prefix="/api", tags=["Sandbox"])
+    app.include_router(pi_agent.router, prefix="/api", tags=["PiAgent"])
     app.include_router(evaluations.router, prefix="/api", tags=["Evaluations"])
     app.include_router(cache.router, prefix="/api", tags=["Cache"])
     app.include_router(modules.router, prefix="/api", tags=["Modules"])

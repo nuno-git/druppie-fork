@@ -29,6 +29,7 @@ import {
   ProjectRepoContext,
 } from './ChatHelpers'
 import TestResultCard from './TestResultCard'
+import PiCodingRunLiveCard from './PiCodingRunLiveCard'
 import SandboxEventCard, {
   processEvents,
   groupBySubagent,
@@ -361,6 +362,13 @@ const AgentRunItem = ({ run, timelineIndex, sessionId, hasFollowingMessage, sess
             </div>
           )
         }
+        if (item.type === 'pi_coding_live') {
+          return (
+            <div key={i} className="mt-2">
+              <PiCodingRunLiveCard toolCallId={item.toolCallId} />
+            </div>
+          )
+        }
         return null
       })}
     </div>
@@ -683,7 +691,16 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
   const hasRunningAgentRun = data?.timeline?.some(
     e => e.type === 'agent_run' && e.agent_run?.status === 'running'
   )
-  const isStopping = data?.status === 'paused' && hasRunningAgentRun
+
+  // Check if there are actually executing tool calls (not failed ones)
+  // If all tool calls are failed, don't show "Stopping..." even if agent_run is "running"
+  const hasActuallyRunningToolCall = data?.timeline?.some(
+    e => e.type === 'agent_run' && e.agent_run?.tool_calls?.some(
+      tc => tc.status === 'executing' || tc.status === 'waiting_approval' || tc.status === 'waiting_sandbox'
+    )
+  )
+
+  const isStopping = data?.status === 'paused' && hasRunningAgentRun && hasActuallyRunningToolCall
 
   // When session has pending approvals, keep the tasks/badge cache fresh
   useEffect(() => {

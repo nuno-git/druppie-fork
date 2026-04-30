@@ -1,0 +1,6 @@
+{
+  "description": "Build a CLI tool that converts CSV files to JSON with streaming support for large files",
+  "language": "typescript",
+  "testCommand": "npm test",
+  "buildCommand": "npm run build"
+}

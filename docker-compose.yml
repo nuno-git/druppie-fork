@@ -462,6 +462,28 @@ services:
     profiles: [infra, dev, prod]
     command: ["echo", "Sandbox image built successfully"]
 
+  # Builds the pi_agent sandbox image used by execute_coding_task_pi. Each call
+  # to that tool spawns a sibling container from this image via the host docker
+  # daemon (backend bind-mounts /var/run/docker.sock).
+  pi-agent-sandbox-builder:
+    build:
+      context: ./pi_agent/sandbox
+      dockerfile: Dockerfile
+    image: oneshot-sandbox:latest
+    profiles: [infra, dev, prod]
+    command: ["echo", "pi_agent sandbox image built successfully"]
+
+  # Builds the throwaway push-sandbox image used by pi_agent's bundle-push flow.
+  # Tiny image — only git + a credential helper. Separated from the main sandbox
+  # so the sandbox that produced the bundle never sees the push token.
+  pi-agent-push-sandbox-builder:
+    build:
+      context: ./pi_agent/push-sandbox
+      dockerfile: Dockerfile
+    image: oneshot-push-sandbox:latest
+    profiles: [infra, dev, prod]
+    command: ["echo", "pi_agent push-sandbox image built successfully"]
+
   # ===========================================================================
   # DATABASE ADMIN
   # ===========================================================================
@@ -586,6 +608,10 @@ services:
       SANDBOX_API_SECRET: ${SANDBOX_API_SECRET:-sandbox-dev-secret}
       SANDBOX_MODEL: ${SANDBOX_MODEL:-}
       BACKEND_URL: http://druppie-backend-dev:8000
+      # pi_agent (execute_coding_task_pi) per-run sandbox runtime
+      ONESHOT_SANDBOX_RUNTIME: ${ONESHOT_SANDBOX_RUNTIME:-sysbox-runc}
+      PI_AGENT_SANDBOX_NETWORK: druppie-new-network
+      PI_AGENT_BUNDLE_VOLUME: druppie_pi_agent_bundles
       GITHUB_APP_ID: ${GITHUB_APP_ID:-}
       GITHUB_APP_PRIVATE_KEY_PATH: ${GITHUB_APP_PRIVATE_KEY_PATH:-}
       GITHUB_APP_INSTALLATION_ID: ${GITHUB_APP_INSTALLATION_ID:-}
@@ -595,7 +621,17 @@ services:
       - ./druppie:/app/druppie
       - ./testing:/app/testing:ro
       - ./secrets:/app/secrets:ro
+      # Bind-mount only pi_agent/dist in dev so TypeScript edits (built on the
+      # host with `cd pi_agent && npm run build`) are picked up on the next
+      # subprocess spawn without rebuilding the backend image. We deliberately
+      # do NOT mount src/ or node_modules/ — the container keeps its own
+      # node_modules baked by the Dockerfile, so host/container Node versions
+      # can safely diverge.
+      - ./pi_agent/dist:/app/pi_agent/dist
       - druppie_new_workspace:/app/workspace
+      # Shared with every pi_agent sandbox so the sandbox's /out and the
+      # backend's /app/pi_agent_bundles are the same bytes.
+      - pi_agent_bundles:/app/pi_agent_bundles
       - type: bind
         source: ${DOCKER_SOCK:-/var/run/docker.sock}
         target: /var/run/docker.sock
@@ -680,6 +716,7 @@ services:
     volumes:
       - ./secrets:/app/secrets:ro
       - druppie_new_workspace:/app/workspace
+      - pi_agent_bundles:/app/pi_agent_bundles
       - type: bind
         source: ${DOCKER_SOCK:-/var/run/docker.sock}
         target: /var/run/docker.sock
@@ -965,6 +1002,12 @@ volumes:
     name: druppie_sandbox_dep_cache
   cache_scan_results:
     name: druppie_cache_scan_results
+  # Shared between backend and every pi_agent sandbox so the sandbox can drop
+  # the final git bundle at /out/<run>/run.bundle and backend (which spawned
+  # the sandbox via bind-mounted docker.sock) can read it back without the
+  # host daemon trying to resolve an in-container path.
+  pi_agent_bundles:
+    name: druppie_pi_agent_bundles
 
 # =============================================================================
 # NETWORKS
