@@ -164,6 +164,25 @@ async def run_tests(
     def _run():
         import os
         from druppie.testing.runner import TestRunner
+        from druppie.testing.loaders import YAMLLoadError
+
+        try:
+            _run_inner(run_id, test_name, test_names, tag, run_all,
+                       execute, judge, input_values)
+        except YAMLLoadError as e:
+            logger.error("test_yaml_error", run_id=run_id, file=str(e.path), error=str(e))
+            _update_batch(status="error", current_test=None,
+                          message=f"YAML error in {e.path.name}: {e}",
+                          completed_at=datetime.now(timezone.utc))
+        except Exception as e:
+            logger.error("tests_run_fatal", run_id=run_id, error=str(e), exc_info=True)
+            _update_batch(status="error", current_test=None,
+                          message=str(e), completed_at=datetime.now(timezone.utc))
+
+    def _run_inner(run_id, test_name, test_names, tag, run_all,
+                   execute, judge, input_values):
+        import os
+        from druppie.testing.runner import TestRunner
 
         # Use a short-lived session just for loading test definitions.
         # Each individual test gets its own session via runner.with_db().
@@ -241,60 +260,47 @@ async def run_tests(
         _update_batch(total_tests=total, message=f"Running 0/{total} tests...")
 
         all_results = []
-        test_timeout = int(os.getenv("TEST_TIMEOUT_SECONDS", "600"))  # 10 min default
+        test_timeout = int(os.getenv("TEST_TIMEOUT_SECONDS", "600"))
 
-        try:
-            for idx, (name, test_def) in enumerate(tests_to_run):
-                _update_batch(current_test=name,
-                              message=f"Running {idx + 1}/{total}: {name}")
+        for idx, (name, test_def) in enumerate(tests_to_run):
+            _update_batch(current_test=name,
+                          message=f"Running {idx + 1}/{total}: {name}")
 
-                try:
-                    # Each test gets its own DB session — created and closed
-                    # within the worker thread so no cross-thread sharing.
-                    def _run_single_test():
-                        test_db = SessionLocal()
-                        try:
-                            test_runner = runner.with_db(test_db)
-                            results = test_runner.run_test(test_def, **phase_flags)
-                            test_db.commit()  # Persist TestRun + assertions
-                            return results
-                        except Exception:
-                            test_db.rollback()
-                            raise
-                        finally:
-                            test_db.close()
-
-                    with ThreadPoolExecutor(max_workers=1) as pool:
-                        future = pool.submit(_run_single_test)
-                        test_results = future.result(timeout=test_timeout)
-                    all_results.extend(test_results)
-                except FuturesTimeoutError:
-                    logger.error("test_timed_out", test=name, timeout=test_timeout)
-                    from druppie.testing.runner import TestRunResult
-                    all_results.append(TestRunResult(
-                        test_name=name, test_user="timeout", test_type="tool",
-                        assertion_results=[], status="error",
-                        duration_ms=test_timeout * 1000,
-                    ))
-                except Exception as test_err:
-                    logger.error("test_failed", test=name, error=str(test_err), exc_info=True)
-
-            passed = sum(1 for r in all_results if r.status == "passed")
-            _update_batch(
-                status="completed", current_test=None,
-                message=f"{passed}/{len(all_results)} passed",
-                completed_at=datetime.now(timezone.utc),
-            )
-
-        except Exception as e:
-            logger.error("tests_run_error", run_id=run_id, error=str(e), exc_info=True)
             try:
-                _update_batch(
-                    status="error", current_test=None,
-                    message=str(e), completed_at=datetime.now(timezone.utc),
-                )
-            except Exception:
-                pass
+                def _run_single_test():
+                    test_db = SessionLocal()
+                    try:
+                        test_runner = runner.with_db(test_db)
+                        results = test_runner.run_test(test_def, **phase_flags)
+                        test_db.commit()
+                        return results
+                    except Exception:
+                        test_db.rollback()
+                        raise
+                    finally:
+                        test_db.close()
+
+                with ThreadPoolExecutor(max_workers=1) as pool:
+                    future = pool.submit(_run_single_test)
+                    test_results = future.result(timeout=test_timeout)
+                all_results.extend(test_results)
+            except FuturesTimeoutError:
+                logger.error("test_timed_out", test=name, timeout=test_timeout)
+                from druppie.testing.runner import TestRunResult
+                all_results.append(TestRunResult(
+                    test_name=name, test_user="timeout", test_type="tool",
+                    assertion_results=[], status="error",
+                    duration_ms=test_timeout * 1000,
+                ))
+            except Exception as test_err:
+                logger.error("test_failed", test=name, error=str(test_err), exc_info=True)
+
+        passed = sum(1 for r in all_results if r.status == "passed")
+        _update_batch(
+            status="completed", current_test=None,
+            message=f"{passed}/{len(all_results)} passed",
+            completed_at=datetime.now(timezone.utc),
+        )
 
     thread = threading.Thread(target=_run, daemon=True, name=f"test-run-{run_id}")
     thread.start()

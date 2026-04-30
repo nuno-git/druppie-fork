@@ -2,7 +2,7 @@
 ##
 ## The full first leg of the loop is scripted:
 ##   router → planner → BA writes FD (NFR-02 <5s explicitly flagged in
-architect reads the FD, writes research.md with draft recommendation (Step 3),
+##    architect reads the FD, writes research.md with draft recommendation (Step 3),
 ##        the FD, hits the Requirement Challenge Gate (Step 3b), and calls the
 ##        Requirement Challenge Gate (Step 3b), and calls
 ##        done(DESIGN_FEEDBACK) with Issue REQUIREMENT_CHALLENGE
