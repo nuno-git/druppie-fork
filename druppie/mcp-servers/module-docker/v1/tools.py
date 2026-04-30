@@ -691,7 +691,11 @@ async def compose_up(
             host_port = await get_next_port()
 
             # Step 4: Determine compose project name
+            # Use project_id when available so re-deploys replace instead of duplicate.
+            # Fallback to repo_name + session suffix for one-off builds.
             project_name = compose_project_name
+            if not project_name and project_id:
+                project_name = project_id
             if not project_name:
                 sid_suffix = (session_id or build_id)[:8]
                 project_name = f"{repo_name or 'app'}-{sid_suffix}"
@@ -699,6 +703,24 @@ async def compose_up(
             project_name = re.sub(r'[^a-z0-9-]', '', project_name.lower().replace("_", "-"))
             if not project_name:
                 project_name = f"app-{build_id}"
+
+            # Step 4b: Tear down any existing deployment for this project.
+            # Ensures clean replacement — removes old containers, volumes, networks.
+            existing_port = compose_port_registry.get(project_name)
+            try:
+                down_result = await asyncio.to_thread(
+                    subprocess.run,
+                    ["docker", "compose", "-p", project_name, "down", "-v"],
+                    capture_output=True,
+                    text=True,
+                    timeout=120,
+                )
+                if down_result.returncode == 0 and existing_port:
+                    await release_port(existing_port)
+                    compose_port_registry.pop(project_name, None)
+                    logger.info("compose_up: cleaned up previous deployment for %s", project_name)
+            except Exception as e:
+                logger.warning("compose_up: pre-cleanup failed for %s: %s", project_name, e)
 
             # Step 5: Write override file with druppie labels and network config
             labels = {}
@@ -722,8 +744,12 @@ async def compose_up(
 
             # Join the Druppie Docker network so containers are discoverable
             if DOCKER_NETWORK:
+                override_data["services"]["app"]["networks"] = [
+                    "default",
+                    DOCKER_NETWORK,
+                ]
                 override_data["networks"] = {
-                    "default": {
+                    DOCKER_NETWORK: {
                         "external": True,
                         "name": DOCKER_NETWORK,
                     }
