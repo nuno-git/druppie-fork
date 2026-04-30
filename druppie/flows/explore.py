@@ -25,20 +25,6 @@ async def explore(
     ingest_url: str | None = None,
     ingest_token: str | None = None,
 ) -> AgentResult:
-    """Run the explore flow.
-
-    Args:
-        task_description: What to investigate
-        source_repo: Git repo to clone into sandbox
-        source_branch: Branch to clone
-        sandbox_image: Sandbox Docker image
-        model: LLM model override
-        ingest_url: URL for journal events
-        ingest_token: Auth token for journal
-
-    Returns:
-        AgentResult with the investigation answer
-    """
 
     prompt = (
         f"## Question\n"

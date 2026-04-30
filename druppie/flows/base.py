@@ -45,7 +45,6 @@ async def run_agent(
     work_dir: str | None = None,
     ingest_url: str | None = None,
     ingest_token: str | None = None,
-    extra_env: dict[str, str] | None = None,
 ) -> AgentResult:
     """Run a single agent via pi_agent subprocess.
 
@@ -64,7 +63,6 @@ async def run_agent(
         work_dir: Working directory (auto-created if not set)
         ingest_url: URL for journal event posting
         ingest_token: Auth token for journal events
-        extra_env: Additional environment variables
 
     Returns:
         AgentResult with output, summary, variables, success
@@ -100,9 +98,6 @@ async def run_agent(
         env["PI_AGENT_INGEST_URL"] = ingest_url
     if ingest_token:
         env["PI_AGENT_INGEST_TOKEN"] = ingest_token
-    if extra_env:
-        env.update(extra_env)
-
     # LLM credentials — inherit from backend container env
     # (ZAI_API_KEY, ANTHROPIC_API_KEY, etc.)
 

@@ -41,23 +41,31 @@ async def _run_explore_flow(
     run_id: str,
     ingest_token: str,
     git_credentials: dict,
+    git_provider: str,
+    repo_owner: str,
+    repo_name: str,
     source_branch: str | None,
 ) -> dict:
     import os
     from druppie.flows.explore import explore
 
     ingest_url = f"{os.getenv('DRUPPIE_INTERNAL_URL', 'http://localhost:8000')}/api/pi-agent-runs/{run_id}/events"
-    sandbox_image = os.getenv("PI_AGENT_SANDBOX_IMAGE", "oneshot-tdd-agent-sandbox:latest")
+    sandbox_image = os.getenv("PI_AGENT_SANDBOX_IMAGE", "oneshot-sandbox:latest")
+
+    if git_provider == "github_app":
+        source_repo = f"https://github.com/{repo_owner}/{repo_name}.git"
+    else:
+        base = git_credentials.get("base_url") or os.getenv("GITEA_INTERNAL_URL", "")
+        base = base.rstrip("/")
+        source_repo = f"{base}/{repo_owner}/{repo_name}.git"
 
     agent_result = await explore(
         task_description=task,
-        source_repo=f"{git_credentials.get('base_url', '')}/{os.getenv('GITEA_REPO_OWNER', '')}/{os.getenv('GITEA_REPO_NAME', '')}"
-        if git_credentials.get("provider") != "github_app" else None,
+        source_repo=source_repo,
         source_branch=source_branch,
         sandbox_image=sandbox_image,
         ingest_url=ingest_url,
         ingest_token=ingest_token,
-        extra_env={"PI_AGENT_RUN_ID": run_id},
     )
 
     return {
@@ -243,6 +251,9 @@ async def execute_coding_task_pi(
                 run_id=run_id,
                 ingest_token=ingest_token,
                 git_credentials=git_creds,
+                git_provider=git_provider,
+                repo_owner=repo_ctx.repo_owner,
+                repo_name=repo_ctx.repo_name,
                 source_branch=source_branch,
             )
         else:
