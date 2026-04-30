@@ -10,7 +10,7 @@ system_prompt: |
   #                                                                          #
   # In Step 2b you classify the project as one of:                           #
   #   CORE_UPDATE → modifies the Druppie repo → next_agent=update_core_builder
-  #   STANDALONE  → separate app, consumes Druppie only → next_agent=builder_planner
+  #   PROJECT  → separate app, consumes Druppie only → next_agent=builder_planner
   #                                                                          #
   # Full rules + tie-breakers: see Step 2b. Use next_agent ONLY on           #
   # DESIGN_APPROVED — DESIGN_FEEDBACK and DESIGN_REJECTED leave routing      #
@@ -78,11 +78,11 @@ system_prompt: |
 
   | BUILD_PATH  | next_agent           | modules note in summary      |
   |-------------|----------------------|------------------------------|
-  | STANDALONE  | builder_planner      | [reused modules]             |
+  | PROJECT  | builder_planner      | [reused modules]             |
   | CORE_UPDATE | update_core_builder  | [new/extended modules: <ids>]|
 
   Template:
-    Call done with summary: "Agent architect: DESIGN_APPROVED. BUILD_PATH=<STANDALONE|CORE_UPDATE>. Reviewed docs/functional-design.md — passes all architecture checks. Wrote docs/technical-research.md comparing [N] approaches and analysing external integrations (<modules note>). Wrote docs/technical-design.md grounded in the chosen approach, with requirements ([X] functional, [Y] technical)." and next_agent: "<builder_planner|update_core_builder>"
+    Call done with summary: "Agent architect: DESIGN_APPROVED. BUILD_PATH=<PROJECT|CORE_UPDATE>. Reviewed docs/functional-design.md — passes all architecture checks. Wrote docs/technical-research.md comparing [N] approaches and analysing external integrations (<modules note>). Wrote docs/technical-design.md grounded in the chosen approach, with requirements ([X] functional, [Y] technical)." and next_agent: "<builder_planner|update_core_builder>"
 
   ### STATUS: DESIGN_FEEDBACK
   Use when the functional design needs revision by the BA. Include specific feedback items.
@@ -113,10 +113,10 @@ system_prompt: |
 
   Your role has THREE possible outcomes:
   1. **APPROVE**: FD passes all checks → classify BUILD_PATH (CORE_UPDATE or
-     STANDALONE) → write docs/technical-research.md (explore approaches +
+     PROJECT) → write docs/technical-research.md (explore approaches +
      external integrations) → write docs/technical-design.md grounded in the
      research → signal DESIGN_APPROVED with next_agent="update_core_builder"
-     (CORE_UPDATE) or "builder_planner" (STANDALONE)
+     (CORE_UPDATE) or "builder_planner" (PROJECT)
   2. **FEEDBACK**: FD needs revision → signal DESIGN_FEEDBACK with specific items
   3. **REJECT**: Fundamental issues → communicate with user → signal DESIGN_REJECTED
 
@@ -148,7 +148,7 @@ system_prompt: |
   interact with the BA directly — the Planner decides what happens next.
 
   After you call done():
-  - If DESIGN_APPROVED + STANDALONE  → builder_planner runs next (via next_agent)
+  - If DESIGN_APPROVED + PROJECT  → builder_planner runs next (via next_agent)
   - If DESIGN_APPROVED + CORE_UPDATE → update_core_builder runs next (via next_agent)
   - If DESIGN_FEEDBACK → Planner sends the BA back to revise, then you review again
   - If DESIGN_REJECTED → Planner routes to summarizer (user has already been informed via hitl_ask_question)
@@ -542,7 +542,7 @@ system_prompt: |
   - Modifies Druppie backend code (anywhere under `druppie/`)
   - Any change to files inside the Druppie repository itself
 
-  **STANDALONE** — project is a separate application:
+  **PROJECT** — project is a separate application:
   - New user project in its own repository
   - Does NOT touch Druppie's codebase
 
