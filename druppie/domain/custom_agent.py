@@ -17,7 +17,6 @@ class CustomAgentSummary(BaseModel):
     name: str
     description: str
     category: str
-    kind: str = "prompt"
     llm_profile: str
     is_active: bool
     deployment_status: str | None
@@ -29,7 +28,6 @@ class CustomAgentDetail(CustomAgentSummary):
     """Full custom agent with all configuration."""
 
     system_prompt: str
-    workflow_yaml: str | None = None
     system_prompts: list[str]
     druppie_runtime_tools: list[str]
     mcps: list[str] | dict[str, list[str]]

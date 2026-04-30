@@ -19,11 +19,7 @@ class CustomAgent(Base):
     name = Column(String(255), nullable=False)
     description = Column(Text)
     category = Column(String(50), default="execution")
-    # "prompt" → deploys as Foundry PromptAgentDefinition (system_prompt + tools).
-    # "workflow" → deploys as Foundry WorkflowAgentDefinition (CSDL YAML in workflow_yaml).
-    kind = Column(String(20), default="prompt", nullable=False)
     system_prompt = Column(Text)
-    workflow_yaml = Column(Text, nullable=True)
     llm_profile = Column(String(200), default="standard")
     temperature = Column(Float, default=0.1)
     max_tokens = Column(Integer, default=4096)

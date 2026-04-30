@@ -19,7 +19,7 @@ from ..db.models.custom_agent import (
 UPDATABLE_FIELDS = {
     "name", "description", "category", "system_prompt",
     "llm_profile", "temperature", "max_tokens", "max_iterations",
-    "kind", "workflow_yaml", "is_active",
+    "is_active",
 }
 
 DEPLOYMENT_FIELDS = {
@@ -58,9 +58,7 @@ class CustomAgentRepository(BaseRepository):
         name: str,
         description: str | None = None,
         category: str = "execution",
-        kind: str = "prompt",
         system_prompt: str | None = None,
-        workflow_yaml: str | None = None,
         llm_profile: str = "standard",
         temperature: float = 0.1,
         max_tokens: int = 4096,
@@ -80,9 +78,7 @@ class CustomAgentRepository(BaseRepository):
             name=name,
             description=description,
             category=category,
-            kind=kind,
             system_prompt=system_prompt,
-            workflow_yaml=workflow_yaml,
             llm_profile=llm_profile,
             temperature=temperature,
             max_tokens=max_tokens,

@@ -12,6 +12,7 @@ Use get_builtin_tools(names) to get OpenAI-format definitions for an agent.
 """
 
 import os
+import re
 from typing import TYPE_CHECKING
 from uuid import UUID
 
@@ -38,6 +39,81 @@ VALID_FOUNDRY_TOOLS = {
     "microsoft_fabric",
     "sharepoint_grounding",
 }
+
+# Foundry tools that require a portal-configured connection_id
+_CONNECTION_REQUIRED = {
+    "bing_grounding",
+    "bing_custom_search",
+    "azure_ai_search",
+    "microsoft_fabric",
+    "sharepoint_grounding",
+}
+
+_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+_INSTRUCTIONS_MAX = 256_000
+
+
+def _validate_foundry_agent_spec(
+    name: str,
+    description: str,
+    instructions: str,
+    foundry_tools: list[str] | None = None,
+    tool_resources: dict | None = None,
+) -> list[str]:
+    """Validate parameters against Foundry agent constraints.
+
+    Returns a list of error strings. Empty list means valid.
+    Same checks as the validate_agent_yaml MCP tool, but against
+    structured params instead of YAML.
+    """
+    errors: list[str] = []
+
+    if not _NAME_PATTERN.match(name):
+        errors.append(
+            "name must match ^[A-Za-z0-9_-]{1,64}$ "
+            "(alphanumeric, underscore, hyphen; 1-64 chars)"
+        )
+
+    if len(description) > 512:
+        errors.append("description must be <= 512 characters")
+
+    if not instructions or not instructions.strip():
+        errors.append("instructions must be a non-empty system prompt")
+    elif len(instructions) > _INSTRUCTIONS_MAX:
+        errors.append(
+            f"instructions exceed Foundry limit of {_INSTRUCTIONS_MAX} characters"
+        )
+
+    tools = foundry_tools or []
+    seen: set[str] = set()
+    for t in tools:
+        if t in seen:
+            errors.append(f"duplicate foundry tool '{t}' — each tool may appear at most once")
+        seen.add(t)
+
+        if t not in VALID_FOUNDRY_TOOLS:
+            errors.append(
+                f"unknown foundry tool '{t}'. Allowed: "
+                + ", ".join(sorted(VALID_FOUNDRY_TOOLS))
+            )
+
+        if t in _CONNECTION_REQUIRED:
+            tc = (tool_resources or {}).get(t, {})
+            if not isinstance(tc, dict) or not tc.get("connection_id"):
+                errors.append(
+                    f"tool '{t}' requires a connection_id in tool_resources"
+                )
+
+    if "file_search" in seen:
+        fs = (tool_resources or {}).get("file_search", {})
+        vs_ids = fs.get("vector_store_ids") if isinstance(fs, dict) else None
+        if not isinstance(vs_ids, list) or not vs_ids:
+            errors.append(
+                "tool 'file_search' requires tool_resources.file_search."
+                "vector_store_ids to be a non-empty list of vector store IDs"
+            )
+
+    return errors
 
 
 # =============================================================================
@@ -393,6 +469,72 @@ BUILTIN_TOOL_DEFS: dict[str, dict] = {
                 "type": "object",
                 "properties": {},
                 "required": [],
+            },
+        },
+    },
+    "list_foundry_tools": {
+        "type": "function",
+        "function": {
+            "name": "list_foundry_tools",
+            "description": (
+                "Live-query the configured Azure AI Foundry project for available tools "
+                "and deployed models. Returns always-available tools (code_interpreter, "
+                "file_search), connection-backed tools with their availability and "
+                "connection details, and the list of deployed model names. Call this "
+                "before creating a Foundry agent to confirm tool and model availability."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": [],
+            },
+        },
+    },
+    "deploy_foundry_agent": {
+        "type": "function",
+        "function": {
+            "name": "deploy_foundry_agent",
+            "description": (
+                "Deploy an existing agent definition from the database to Azure AI Foundry. "
+                "The agent must already exist (created via create_foundry_agent). Runs "
+                "validation, checks tool/model availability, then deploys. Updates the "
+                "agent's deployment status in the database. Use dry_run=true to validate "
+                "without deploying."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "agent_id": {
+                        "type": "string",
+                        "description": "The agent_id of the agent to deploy (must exist in DB).",
+                    },
+                    "dry_run": {
+                        "type": "boolean",
+                        "description": "When true, validate and check availability without deploying. Default: false.",
+                    },
+                },
+                "required": ["agent_id"],
+            },
+        },
+    },
+    "undeploy_foundry_agent": {
+        "type": "function",
+        "function": {
+            "name": "undeploy_foundry_agent",
+            "description": (
+                "Remove a deployed agent from Azure AI Foundry and clear its deployment "
+                "status in the database. The agent definition is preserved in the DB "
+                "and can be redeployed later."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "agent_id": {
+                        "type": "string",
+                        "description": "The agent_id of the agent to undeploy.",
+                    },
+                },
+                "required": ["agent_id"],
             },
         },
     },
@@ -1513,7 +1655,6 @@ async def create_foundry_agent(
     Note: temperature is accepted for backwards compatibility but ignored —
     Foundry's PromptAgentDefinition does not support temperature.
     """
-    import re
     from druppie.repositories.custom_agent_repository import CustomAgentRepository
     from druppie.agents.definition_loader import AgentDefinitionLoader
     from druppie.db.models.session import Session
@@ -1525,6 +1666,20 @@ async def create_foundry_agent(
     # Prevent shadowing built-in YAML agents
     if agent_id in AgentDefinitionLoader.list_yaml_agents():
         return {"success": False, "error": f"agent_id '{agent_id}' conflicts with a built-in agent"}
+
+    # Pre-validate against Foundry spec constraints
+    spec_errors = _validate_foundry_agent_spec(
+        name=name,
+        description=description,
+        instructions=instructions,
+        foundry_tools=foundry_tools,
+        tool_resources=tool_resources,
+    )
+    if spec_errors:
+        return {
+            "success": False,
+            "error": "Foundry spec validation failed:\n" + "\n".join(f"- {e}" for e in spec_errors),
+        }
 
     # Filter foundry_tools against allowlist
     validated_tools = [t for t in (foundry_tools or []) if t in VALID_FOUNDRY_TOOLS]
@@ -1617,6 +1772,24 @@ async def update_foundry_agent(
         if session and agent.owner_id and session.user_id != agent.owner_id:
             return {"success": False, "error": "Only the owner can update this agent"}
 
+        # Pre-validate merged state against Foundry spec constraints
+        merged_name = name if name is not None else agent.name
+        merged_desc = description if description is not None else (agent.description or "")
+        merged_instructions = instructions if instructions is not None else (agent.system_prompt or "")
+        merged_tools = foundry_tools if foundry_tools is not None else [ft.tool_type for ft in agent.foundry_tools]
+        spec_errors = _validate_foundry_agent_spec(
+            name=merged_name,
+            description=merged_desc,
+            instructions=merged_instructions,
+            foundry_tools=merged_tools,
+            tool_resources=tool_resources,
+        )
+        if spec_errors:
+            return {
+                "success": False,
+                "error": "Foundry spec validation failed:\n" + "\n".join(f"- {e}" for e in spec_errors),
+            }
+
         update_kwargs = {}
         if name is not None:
             update_kwargs["name"] = name
@@ -1698,6 +1871,214 @@ async def list_custom_agents(
     finally:
         if close_db:
             db.close()
+
+
+# =============================================================================
+# FOUNDRY DEPLOY / UNDEPLOY / LIST TOOLS
+# =============================================================================
+
+async def list_foundry_tools(
+    execution_repo: "ExecutionRepository | None" = None,
+) -> dict:
+    """Live-query available Foundry tools, connections, and deployed models."""
+    try:
+        from druppie.services.foundry_service import FoundryService
+        endpoint = os.environ.get("FOUNDRY_PROJECT_ENDPOINT")
+        foundry = FoundryService(endpoint=endpoint)
+        return foundry.list_available_tools()
+    except Exception as e:
+        logger.error("list_foundry_tools_failed", error=str(e))
+        return {"ok": False, "reason": str(e)}
+
+
+async def deploy_foundry_agent(
+    agent_id: str,
+    session_id: UUID,
+    execution_repo: "ExecutionRepository",
+    dry_run: bool = False,
+) -> dict:
+    """Deploy an agent from the database to Azure AI Foundry."""
+    from druppie.repositories.custom_agent_repository import CustomAgentRepository
+    from druppie.services.custom_agent_service import CustomAgentService
+    from druppie.services.foundry_service import FoundryService
+
+    db = execution_repo.db
+    try:
+        repo = CustomAgentRepository(db)
+        agent = repo.get_by_agent_id(agent_id)
+        if not agent:
+            return {"ok": False, "stage": "load", "errors": [f"Agent '{agent_id}' not found"]}
+
+        endpoint = os.environ.get("FOUNDRY_PROJECT_ENDPOINT")
+        foundry = FoundryService(endpoint=endpoint)
+        if not foundry.is_configured():
+            return {
+                "ok": False,
+                "stage": "load",
+                "errors": ["Azure AI Foundry is not configured. Set FOUNDRY_PROJECT_ENDPOINT."],
+            }
+
+        detail = CustomAgentService._to_detail(agent)
+
+        # Stage 1 — validate
+        validation = foundry.validate_for_foundry(detail)
+        if not validation["valid"]:
+            return {
+                "ok": False,
+                "stage": "validate",
+                "errors": validation["errors"],
+                "warnings": validation.get("warnings", []),
+            }
+        warnings = validation.get("warnings", [])
+
+        # Stage 2 — availability
+        avail = foundry.list_available_tools()
+        if not avail.get("ok"):
+            return {
+                "ok": False,
+                "stage": "availability",
+                "errors": [avail.get("reason", "Could not check tool availability")],
+                "warnings": warnings,
+            }
+
+        avail_errors = []
+        conn_by_type = {c["type"]: c for c in avail.get("connection_backed", [])}
+        for tool in (detail.foundry_tools or []):
+            if tool in _CONNECTION_REQUIRED:
+                entry = conn_by_type.get(tool)
+                if not entry or not entry.get("available"):
+                    avail_errors.append(
+                        f"Tool '{tool}' requires a connection in the Foundry project but none was found"
+                    )
+
+        known_models = {m["name"] for m in avail.get("deployed_models", []) if m.get("name")}
+        model = detail.llm_profile or _resolve_foundry_model("standard")
+        if known_models and model not in known_models:
+            avail_errors.append(
+                f"Model '{model}' is not deployed in this project (known: {sorted(known_models)})"
+            )
+
+        if avail_errors:
+            return {
+                "ok": False,
+                "stage": "availability",
+                "errors": avail_errors,
+                "warnings": warnings,
+            }
+
+        if dry_run:
+            return {
+                "ok": True,
+                "stage": "availability",
+                "dry_run": True,
+                "warnings": warnings,
+                "plan": {
+                    "agent_id": agent_id,
+                    "name": detail.name,
+                    "model": model,
+                    "tools": detail.foundry_tools or [],
+                },
+            }
+
+        # Stage 3 — deploy
+        spec_hash = foundry.compute_spec_hash(detail)
+        result = foundry.deploy_agent(detail)
+
+        from datetime import datetime, timezone
+        repo.update_deployment_status(
+            agent_id,
+            deployment_status="deployed",
+            deployed_at=datetime.now(timezone.utc),
+            deployed_version=result.get("version"),
+            deployed_spec_hash=spec_hash,
+            foundry_agent_id=result.get("foundry_agent_id"),
+        )
+        db.commit()
+
+        logger.info(
+            "builtin_foundry_agent_deployed",
+            agent_id=agent_id,
+            foundry_id=result.get("foundry_agent_id"),
+            session_id=str(session_id),
+        )
+
+        return {
+            "ok": True,
+            "stage": "deploy",
+            "warnings": warnings,
+            "deployment": {
+                "agent_id": agent_id,
+                "foundry_agent_id": result.get("foundry_agent_id"),
+                "name": result.get("name"),
+                "version": result.get("version"),
+                "model": model,
+                "deployed_at": result.get("deployed_at"),
+            },
+        }
+    except Exception as e:
+        logger.error("builtin_foundry_deploy_failed", error=str(e), agent_id=agent_id)
+        try:
+            repo.update_deployment_status(agent_id, deployment_status="failed")
+            db.commit()
+        except Exception:
+            pass
+        return {
+            "ok": False,
+            "stage": "deploy",
+            "errors": [f"Deployment failed: {e}"],
+        }
+
+
+async def undeploy_foundry_agent(
+    agent_id: str,
+    session_id: UUID,
+    execution_repo: "ExecutionRepository",
+) -> dict:
+    """Remove a deployed agent from Azure AI Foundry and clear DB status."""
+    from druppie.repositories.custom_agent_repository import CustomAgentRepository
+    from druppie.services.foundry_service import FoundryService
+    from druppie.db.models.session import Session
+
+    db = execution_repo.db
+    try:
+        repo = CustomAgentRepository(db)
+        agent = repo.get_by_agent_id(agent_id)
+        if not agent:
+            return {"success": False, "error": f"Agent '{agent_id}' not found"}
+
+        session = db.query(Session).filter_by(id=session_id).first()
+        if session and agent.owner_id and session.user_id != agent.owner_id:
+            return {"success": False, "error": "Only the owner can undeploy this agent"}
+
+        endpoint = os.environ.get("FOUNDRY_PROJECT_ENDPOINT")
+        foundry = FoundryService(endpoint=endpoint)
+        if foundry.is_configured():
+            foundry.delete_agent(agent_id)
+
+        repo.update_deployment_status(
+            agent_id,
+            deployment_status=None,
+            deployed_at=None,
+            deployed_version=None,
+            deployed_spec_hash=None,
+            foundry_agent_id=None,
+        )
+        db.commit()
+
+        logger.info(
+            "builtin_foundry_agent_undeployed",
+            agent_id=agent_id,
+            session_id=str(session_id),
+        )
+
+        return {
+            "success": True,
+            "agent_id": agent_id,
+            "message": f"Agent '{agent_id}' undeployed from Azure AI Foundry.",
+        }
+    except Exception as e:
+        logger.error("builtin_foundry_undeploy_failed", error=str(e), agent_id=agent_id)
+        return {"success": False, "error": f"Undeploy failed: {e}"}
 
 
 # =============================================================================
@@ -1816,6 +2197,21 @@ async def execute_builtin(
             tool_resources=args.get("tool_resources"),
             max_tokens=args.get("max_tokens"),
             max_iterations=args.get("max_iterations"),
+        )
+    elif tool_name == "list_foundry_tools":
+        return await list_foundry_tools(execution_repo=execution_repo)
+    elif tool_name == "deploy_foundry_agent":
+        return await deploy_foundry_agent(
+            agent_id=args.get("agent_id", ""),
+            session_id=session_id,
+            execution_repo=execution_repo,
+            dry_run=args.get("dry_run", False),
+        )
+    elif tool_name == "undeploy_foundry_agent":
+        return await undeploy_foundry_agent(
+            agent_id=args.get("agent_id", ""),
+            session_id=session_id,
+            execution_repo=execution_repo,
         )
     else:
         return {
