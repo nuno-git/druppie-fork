@@ -98,6 +98,15 @@ export function createSpawnSubagentsTool(ctx: SpawnSubagentsContext): any {
       const validSpecs = specs.filter(Boolean) as Array<{ agent: AgentDefinition; prompt: string; meta?: Record<string, unknown> }>;
       const subResults = await runSubagentsParallel(validSpecs, ctx.baseOpts);
 
+      if (ctx.baseOpts.journal) {
+        for (let i = 0; i < subResults.length; i++) {
+          const r = subResults[i];
+          if (r.output) {
+            ctx.baseOpts.journal.recordNarrative(tasks[i].agent, i + 1, r.output);
+          }
+        }
+      }
+
       const mergedToolCalls = ctx.childToolCallsUsed ?? new Set<string>();
       for (const r of subResults) {
         r.toolCallsUsed?.forEach(t => mergedToolCalls.add(t));

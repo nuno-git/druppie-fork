@@ -13,7 +13,6 @@ import { tmpdir } from "node:os";
 import { mkdtempSync } from "node:fs";
 import type { Api, Model } from "@mariozechner/pi-ai";
 import { AuthStorage, ModelRegistry } from "@mariozechner/pi-coding-agent";
-import { Type } from "@sinclair/typebox";
 
 import { Journal } from "./journal.js";
 import {
@@ -66,54 +65,6 @@ export interface SingleAgentResult {
   variables: Record<string, unknown>;
   success: boolean;
   toolCallsUsed: string[];
-}
-
-// ── Standalone Done Tool ──────────────────────────────────────
-// The flow-system's createDoneTool depends on FlowContext. For
-// the standalone run-agent we need a simpler version that captures
-// variables in a mutable ref object.
-
-interface DoneToolCapture {
-  variables: Record<string, unknown>;
-  message: string;
-  called: boolean;
-}
-
-function createStandaloneDoneTool(capture: DoneToolCapture) {
-  const ParametersSchema = Type.Object({
-    variables: Type.Record(Type.String(), Type.Unknown(), {
-      description: "Variables to return. MUST include all variables the caller expects.",
-    }),
-    message: Type.String({
-      description: "Completion message describing what was done.",
-    }),
-  });
-
-  return {
-    name: "done",
-    label: "Mark Work as Complete",
-    description:
-      "Mark your work as complete. YOU MUST USE THIS TOOL TO FINISH. " +
-      "Sets variables for the caller and provides a completion message.",
-    promptSnippet: "done: mark your work as complete and set variables",
-    parameters: ParametersSchema,
-    async execute(
-      _toolCallId: string,
-      params: { variables: Record<string, unknown>; message: string },
-    ) {
-      capture.called = true;
-      capture.message = params.message ?? "";
-      for (const [k, v] of Object.entries(params.variables ?? {})) {
-        if (typeof v === "string" || typeof v === "number" || typeof v === "boolean") {
-          capture.variables[k] = v;
-        }
-      }
-      return {
-        output: JSON.stringify({ success: true, message: params.message, variablesSet: Object.keys(capture.variables) }),
-        details: { message: params.message, variablesSet: Object.keys(capture.variables) },
-      };
-    },
-  };
 }
 
 // ── Main Function ─────────────────────────────────────────────
@@ -206,10 +157,7 @@ export async function runSingleAgent(params: SingleAgentParams): Promise<SingleA
     const journal = new Journal(journalDir, taskSpec);
 
     // ── 6. Build tool injections ────────────────────────────────
-    const doneCapture: DoneToolCapture = { variables: {}, message: "", called: false };
-    const doneTool = createStandaloneDoneTool(doneCapture);
-
-    const extraCustomTools: any[] = [doneTool];
+    const extraCustomTools: any[] = [];
 
     const parentRef: { current?: string } = {};
 
@@ -235,64 +183,33 @@ export async function runSingleAgent(params: SingleAgentParams): Promise<SingleA
       extraCustomTools.push(spawnTool);
     }
 
-    // ── 7. Run the agent with done-tool enforcement ────────────
-    const MAX_RETRIES = 2;
-    let result: { output: string; success: boolean; toolCallsUsed: Set<string> } | undefined;
+    // ── 7. Run the agent ───────────────────────────────────────
+    parentRef.current = `${agentDef.name}-1`;
 
-    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-      const isRetry = attempt > 0;
-      const prompt = isRetry
-        ? `${params.prompt}\n\nIMPORTANT: You MUST use the "done" tool to complete your work. Call the done tool now with your findings.`
-        : params.prompt;
+    const sessionsDir = process.env.PI_AGENT_INGEST_URL
+      ? `/tmp/pi-agent-transcripts-${process.pid}`
+      : journalDir;
 
-      if (parentRef) {
-        parentRef.current = `${agentDef.name}-${attempt + 1}`;
-      }
-
-      doneCapture.called = false;
-      doneCapture.variables = {};
-      doneCapture.message = "";
-
-      // Set up ingest env vars before each run if provided
-      if (params.ingestUrl) process.env.PI_AGENT_INGEST_URL = params.ingestUrl;
-      if (params.ingestToken) process.env.PI_AGENT_INGEST_TOKEN = params.ingestToken;
-
-      const sessionsDir = process.env.PI_AGENT_INGEST_URL
-        ? `/tmp/pi-agent-transcripts-${process.pid}`
-        : journalDir;
-
-      const subResult = await runSubagent(agentDef, prompt, {
-        cwd,
-        authStorage,
-        modelRegistry,
-        defaultModel,
-        maxTurns: params.maxTurns ?? 40,
-        onOutput: (delta) => process.stderr.write(delta),
-        sessionsDir,
-        sandboxClient,
-        journal,
-        extraCustomTools,
-      });
-
-      result = subResult;
-
-      // Check if done tool was used
-      if (doneCapture.called || subResult.toolCallsUsed.has("done")) {
-        break;
-      }
-
-      if (attempt < MAX_RETRIES) {
-        process.stderr.write(`\n[run-agent] done tool not used, retrying (${attempt + 1}/${MAX_RETRIES})...\n`);
-      }
-    }
+    const subResult = await runSubagent(agentDef, params.prompt, {
+      cwd,
+      authStorage,
+      modelRegistry,
+      defaultModel,
+      maxTurns: params.maxTurns ?? 40,
+      onOutput: (delta) => process.stderr.write(delta),
+      sessionsDir,
+      sandboxClient,
+      journal,
+      extraCustomTools,
+    });
 
     // ── 8. Build final result ───────────────────────────────────
     const finalResult: SingleAgentResult = {
-      output: result?.output ?? "",
-      summary: doneCapture.message || (result?.output ?? "").slice(0, 500),
-      variables: doneCapture.variables,
-      success: (result?.success ?? false) && (doneCapture.called || (result?.toolCallsUsed.has("done") ?? false)),
-      toolCallsUsed: [...(result?.toolCallsUsed ?? [])],
+      output: subResult.output,
+      summary: subResult.doneMessage || subResult.output.slice(0, 500),
+      variables: subResult.doneVariables,
+      success: subResult.success && subResult.doneCalled,
+      toolCallsUsed: [...subResult.toolCallsUsed],
     };
 
     // ── 9. Teardown ────────────────────────────────────────────

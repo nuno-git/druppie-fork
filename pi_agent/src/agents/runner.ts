@@ -28,6 +28,7 @@ import {
   SessionManager,
   SettingsManager,
 } from "@mariozechner/pi-coding-agent";
+import { Type } from "@sinclair/typebox";
 import type { AgentHandle, Journal } from "../journal.js";
 import type { SandboxClient } from "../sandbox/client.js";
 import { buildSandboxTools } from "../sandbox/tools-factory.js";
@@ -221,12 +222,12 @@ export interface SubagentResult {
   success: boolean;
   turnCount: number;
   error?: string;
-  /** Extracted summary section from the output */
   summary?: string;
-  /** Parsed variables from the summary */
   variables?: Map<string, string>;
-  /** Set of tool names that were actually invoked during this session */
   toolCallsUsed: Set<string>;
+  doneCalled: boolean;
+  doneMessage: string;
+  doneVariables: Record<string, unknown>;
 }
 
 export interface RunSubagentOptions {
@@ -264,6 +265,34 @@ export async function runSubagent(
 ): Promise<SubagentResult> {
   const { cwd, authStorage, modelRegistry, defaultModel, maxTurns = 30, onOutput, sessionsDir, sandboxClient, journal, extraCustomTools, meta } = options;
 
+  let doneCalled = false;
+  let doneMessage = "";
+  const doneVariables: Record<string, unknown> = {};
+
+  const doneTool = {
+    name: "done",
+    label: "Mark Work as Complete",
+    description: "Mark your work as complete. YOU MUST USE THIS TOOL TO FINISH. Sets variables for the caller and provides a completion message.",
+    promptSnippet: "done: mark your work as complete and set variables",
+    parameters: Type.Object({
+      variables: Type.Record(Type.String(), Type.Unknown(), { description: "Variables to return." }),
+      message: Type.String({ description: "Completion message describing what was done." }),
+    }),
+    async execute(_toolCallId: string, params: { variables: Record<string, unknown>; message: string }) {
+      doneCalled = true;
+      doneMessage = params.message ?? "";
+      for (const [k, v] of Object.entries(params.variables ?? {})) {
+        if (typeof v === "string" || typeof v === "number" || typeof v === "boolean") {
+          doneVariables[k] = v;
+        }
+      }
+      return {
+        output: JSON.stringify({ success: true, message: params.message }),
+        details: { message: params.message },
+      };
+    },
+  };
+
   // Resolve model: agent-specific or default
   // Agent model field can be "provider/id" (e.g. "glm-coding/glm-4.5-air") or just "id"
   let model: Model<Api> = defaultModel;
@@ -286,9 +315,10 @@ export async function runSubagent(
   // (diagnostic removed — the sandboxed tool path is now verified)
   const baseTools = sandboxTools ? sandboxTools.activationTools : buildLocalTools(toolNames, cwd);
   const tools = extraCustomTools?.length
-    ? [...baseTools, ...extraCustomTools.map((t: any) => ({ name: t.name }))]
-    : baseTools;
+    ? [...baseTools, ...extraCustomTools.map((t: any) => ({ name: t.name })), { name: "done" }]
+    : [...baseTools, { name: "done" }];
   const customTools = [
+    doneTool,
     ...(sandboxTools?.customTools ?? []),
     ...(extraCustomTools ?? []),
   ];
@@ -412,22 +442,27 @@ export async function runSubagent(
 
   try {
     await session.prompt(prompt);
+
+    const MAX_DONE_RETRIES = 2;
+    for (let retry = 0; retry < MAX_DONE_RETRIES && !doneCalled; retry++) {
+      process.stderr.write(`\n[${agent.name}] done tool not used, retrying in same session (${retry + 1}/${MAX_DONE_RETRIES})...\n`);
+      await session.prompt("You MUST call the done tool now with your findings. Do not use any other tools.");
+    }
+
     session.dispose();
 
     const success = !output.includes("STEP FAILED") && !output.includes("VERIFICATION FAILED");
     handle?.end(success);
 
-    // Extract summary and variables
     const summary = extractSummary(output);
     const variables = extractVariables(output);
 
-    return { agentName: agent.name, output, success, turnCount, summary, variables, toolCallsUsed };
+    return { agentName: agent.name, output, success, turnCount, summary, variables, toolCallsUsed, doneCalled, doneMessage, doneVariables };
   } catch (err) {
     session.dispose();
     const errorMsg = err instanceof Error ? err.message : String(err);
     handle?.end(false, errorMsg);
 
-    // Extract summary and variables even on error
     const summary = extractSummary(output);
     const variables = extractVariables(output);
 
@@ -440,6 +475,9 @@ export async function runSubagent(
       summary,
       variables,
       toolCallsUsed,
+      doneCalled,
+      doneMessage,
+      doneVariables,
     };
   }
 }
