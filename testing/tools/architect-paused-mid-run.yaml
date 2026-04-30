@@ -1,13 +1,15 @@
-## Paused session: architect mid-run, ready for manual resume
+## Paused session: architect mid-run (research.md written and approved with draft, TD written), ready for manual resume
 ## Extends setup-project-with-fd (BA completed, FD in place).
-## Adds planner re-evaluation (plans architect), then architect starts work:
-## reads FD, loads principles, writes TD. Paused before git commit + done.
+## Adds planner re-evaluation (plans architect), then architect works through
+## the new research-first flow: reads FD, loads principles, writes
+## docs/technical-research.md with draft, gets approval, git-commits research.md,
+## then writes docs/technical-design.md. Paused before TD git commit + done.
 ## Click "Continue" in the UI to resume — the architect should just
-## git add/commit/push the TD and call done().
+## git add/commit/push the TD and call done(DESIGN_APPROVED, BUILD_PATH=PROJECT).
 
 tool-test:
   name: architect-paused-mid-run
-  description: "Architect mid-run (TD written), paused — resume to git commit + done"
+  description: "Architect mid-run (research committed, TD written), paused — resume to commit TD + done"
   tags: [seed, paused, architect]
   extends: setup-project-with-fd
   session_status: paused
@@ -19,14 +21,14 @@ tool-test:
       arguments:
         steps:
           - agent_id: architect
-            prompt: "Review the functional design and create the technical design"
+            prompt: "Review the functional design and create the technical research + design"
           - agent_id: planner
             prompt: "Re-evaluate after architect completes"
 
     - agent: planner
       tool: builtin:done
       arguments:
-        summary: "Agent planner: BA approved design, planned architect to review FD and create technical design"
+        summary: "Agent planner: BA approved design, planned architect to review FD and create technical research + design"
 
     # --- Architect starts work ---
     - agent: architect
@@ -71,6 +73,88 @@ tool-test:
       mock_result: "Architecture principles loaded successfully"
       arguments:
         skill_name: architecture-principles
+
+    # Architect writes the technical research first (with HITL approval)
+    - agent: architect
+      tool: coding:make_design
+      approval:
+        status: approved
+        by: architect
+      arguments:
+        path: docs/technical-research.md
+        content: |
+          # Technisch Onderzoek: Recipe Sharing App
+
+          ## Introductie
+          Onderzoek naar architectuuropties voor een receptdeel-applicatie
+          voor thuiskoks binnen een besloten kring.
+
+          ## Vergeleken Benaderingen
+
+          ### Benadering A — Monolithische FastAPI + PostgreSQL
+          Eén Python-backend met SQLAlchemy en PostgreSQL, React frontend,
+          MinIO voor foto-opslag.
+
+          | Aspect | Beoordeling |
+          |--------|-------------|
+          | Complexiteit | Laag — één deploybare service |
+          | Herbruikbaarheid | Gemiddeld — standaard stack |
+          | Operationele kosten | Laag |
+          | Risico | Laag — bekende componenten |
+          | Fit met principes | Goed — sluit aan bij platform-standards |
+
+          ### Benadering B — Serverless (AWS Lambda + DynamoDB)
+          API Gateway + Lambda functies + DynamoDB + S3 voor foto's.
+
+          | Aspect | Beoordeling |
+          |--------|-------------|
+          | Complexiteit | Hoog — verspreide functies, cold starts |
+          | Herbruikbaarheid | Laag — vendor lock-in |
+          | Operationele kosten | Variabel — duur bij lage load |
+          | Risico | Hoog — nieuwe stack voor team |
+          | Fit met principes | Zwak — breekt met containerised deployment |
+
+          ## Externe Systeemkoppelingen
+
+          ### Inventarisatie koppelingen
+          | Systeem | Categorie | Doel |
+          |---------|-----------|------|
+          | Keycloak | organizational | OAuth2/OIDC authenticatie |
+          | MinIO | organizational | Foto-opslag |
+
+          ### Beslissingen per koppeling
+          - **Keycloak**: REUSE — bestaande platform-IdP, geen eigen auth bouwen.
+          - **MinIO**: REUSE — al beschikbaar in platform voor objectopslag.
+
+          ## Aanbeveling
+          Gekozen: **Benadering A** (Monolithische FastAPI + PostgreSQL).
+
+          ### Afgeleide beslissingen voor TD
+          - React + Vite frontend
+          - FastAPI + SQLAlchemy backend
+          - PostgreSQL als primaire datastore
+          - MinIO voor receptfoto's
+          - Keycloak voor authenticatie
+
+          ### Afgeleide Technical Requirements
+          - TR-01: PostgreSQL voor gestructureerde data
+          - TR-02: Docker-containerisatie voor alle services
+          - TR-03: API rate limiting (100 req/min)
+
+    - agent: architect
+      tool: coding:run_git
+      arguments:
+        command: "add docs/technical-research.md"
+
+    - agent: architect
+      tool: coding:run_git
+      arguments:
+        command: "commit -m 'Technisch onderzoek recipe sharing app'"
+
+    - agent: architect
+      tool: coding:run_git
+      arguments:
+        command: "push"
 
     # Architect writes the technical design (with HITL approval)
     - agent: architect
@@ -168,6 +252,7 @@ tool-test:
             API --> KC["Keycloak"]
           ```
 
-    # Architect has written the TD. Session is now paused.
-    # On resume, the architect sees its full tool history and should
-    # just git add/commit/push the TD and call done().
+    # Research has been committed and pushed; TD has been written but
+    # not yet committed. Session is now paused. On resume, the architect
+    # sees its full tool history and should just git add/commit/push the
+    # TD and call done(DESIGN_APPROVED, BUILD_PATH=PROJECT).
