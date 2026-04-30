@@ -21,9 +21,6 @@ here doesn't fit a project, the BA documents the deviation in the FD.
 
 - Pages load within **2 seconds** under normal conditions (home network,
   reasonable payload).
-- Interactive actions (save, submit, filter) acknowledge the user within
-  **1 second** — at minimum with a loading indicator if the real work
-  takes longer.
 - Search / filter results appear within **2 seconds** for typical datasets.
 - The app works acceptably for at least **25 concurrent users** without
   visible slowdown.
