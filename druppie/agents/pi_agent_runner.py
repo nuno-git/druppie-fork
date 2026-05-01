@@ -1,7 +1,7 @@
 """Subprocess runner for the vendored pi_agent (execute_coding_task_pi).
 
 The pi_agent is a Node/TypeScript orchestrator copied into ``pi_agent/`` at
-the repo root. Each run spawns ``node pi_agent/dist/cli.js --task <file>``
+the repo root. Each run spawns ``node pi_agent/dist/cli.js run-agent --agent <name> --prompt <text>``
 as a child of the druppie backend container and streams its journal events
 back over HTTP to ``/api/pi-agent-runs/{run_id}/events`` (see
 ``druppie/api/routes/pi_agent.py``). When the child exits it writes a
@@ -25,6 +25,7 @@ import os
 import secrets
 import tempfile
 import signal
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import UUID, uuid4
@@ -136,7 +137,7 @@ class PiAgentRunner:
         self.git_credentials = git_credentials
         self.llm_credentials = llm_credentials
         self.source_branch = source_branch
-        self.sandbox_image = sandbox_image or os.getenv("PI_AGENT_SANDBOX_IMAGE", "oneshot-tdd-agent-sandbox:latest")
+        self.sandbox_image = sandbox_image or os.getenv("PI_AGENT_SANDBOX_IMAGE", "oneshot-sandbox:latest")
 
         PI_AGENT_SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
         self.session_dir = PI_AGENT_SESSIONS_DIR / run_id
@@ -198,36 +199,42 @@ class PiAgentRunner:
         return env
 
     async def run(self, ingest_token: str) -> dict:
-        task_path = self._write_task_file()
+        self._write_task_file()  # kept for backward compat; CLI no longer reads it
         env = self._build_env(ingest_token)
 
         repo_url = self._build_repo_url()
+
+        agent_name = self.agent_name
+        if agent_name == "tdd":
+            agent_name = "planner"
+        elif agent_name == "explore":
+            agent_name = "router"
+
         cmd = [
             "node", str(PI_AGENT_CLI),
-            "--task", str(task_path),
+            "run-agent",
+            "--agent", agent_name,
+            "--prompt", self.task_prompt,
             "--workdir", str(self.session_dir),
+            "--sandbox-launch",
             "--source-repo", repo_url,
         ]
         if self.source_branch:
             cmd += ["--source-branch", self.source_branch]
-        # agent_name doubles as the flow name ("tdd" | "explore"); CLI arg is --flow.
-        if self.agent_name in ("tdd", "explore"):
-            cmd += ["--flow", self.agent_name]
+        if self.sandbox_image:
+            cmd += ["--sandbox-image", self.sandbox_image]
+        if self.llm_credentials.get("zai_api_key"):
+            cmd += ["--glm-key", self.llm_credentials["zai_api_key"]]
+        elif self.llm_credentials.get("anthropic_api_key"):
+            cmd += ["--api-key", self.llm_credentials["anthropic_api_key"]]
 
-        # For the tdd flow, the whole point is "end with a pushed branch + PR".
-        # Without --push, pi_agent makes commits inside the sandbox and then
-        # discards them when the sandbox is destroyed — the caller saw
-        # "success" but got no branch_name / pr_url, which made the tool
-        # look broken even when it worked internally. Explore is read-only,
-        # no push needed.
-        if self.agent_name == "tdd":
-            cmd += ["--push", "--push-remote", repo_url]
-            # Base branch for the PR. For druppie_core we target colab-dev
-            # (the project's default); for Gitea projects pi_agent defaults
-            # to the source branch it actually ended up cloning (see
-            # source-clone.ts resolveBranch), so we omit --pr-base.
-            if self.repo_target == "druppie_core" and self.source_branch:
-                cmd += ["--pr-base", self.source_branch]
+        push_token = self.git_credentials.get("password") or self.git_credentials.get("token")
+        if push_token:
+            cmd += ["--push-token", push_token]
+
+        cmd += ["--ingest-url", env.get("PI_AGENT_INGEST_URL", "")]
+        cmd += ["--ingest-token", ingest_token]
+        cmd += ["--ingest-run-id", self.run_id]
 
         logger.info("pi_agent_subprocess_start", run_id=self.run_id, cmd=cmd[:3])
         proc = await asyncio.create_subprocess_exec(
@@ -245,9 +252,38 @@ class PiAgentRunner:
             stdout_b, stderr_b = await proc.communicate()
             exit_code = proc.returncode or 0
 
-            summary = self._load_summary()
-            stdout_tail = stdout_b[-_TAIL_BYTES:].decode("utf-8", errors="replace") if stdout_b else ""
+            stdout_text = stdout_b.decode("utf-8", errors="replace") if stdout_b else ""
             stderr_tail = stderr_b[-_TAIL_BYTES:].decode("utf-8", errors="replace") if stderr_b else ""
+
+            # Parse SingleAgentResult from stdout (always available)
+            stdout_result = self._parse_stdout_result(stdout_text)
+
+            # Try to load rich RunSummary from disk (journal.close() writes it)
+            summary = self._load_summary()
+
+            # If no disk summary, construct a basic one from stdout
+            if summary is None and stdout_result is not None:
+                summary = {
+                    "success": stdout_result.get("success", False),
+                    "errors": [] if stdout_result.get("success") else [
+                        stdout_result.get("output", "Agent reported failure")[:500]
+                    ],
+                    "narratives": [],
+                    "commits": [],
+                    "push": None,
+                    "pr": None,
+                }
+            elif summary is None and exit_code != 0:
+                summary = {
+                    "success": False,
+                    "errors": [f"Agent exited with code {exit_code}"],
+                    "narratives": [],
+                    "commits": [],
+                    "push": None,
+                    "pr": None,
+                }
+
+            stdout_tail = stdout_text[-_TAIL_BYTES:]
 
             logger.info(
                 "pi_agent_subprocess_exit",
@@ -276,17 +312,44 @@ class PiAgentRunner:
         base = base.rstrip("/")
         return f"{base}/{self.repo_owner}/{self.repo_name}.git"
 
+    def _parse_stdout_result(self, stdout_text: str) -> dict | None:
+        """Parse SingleAgentResult JSON from the last line of stdout.
+
+        The CLI (cli.ts) writes: process.stdout.write(JSON.stringify(result) + "\\n")
+        where result is {output, summary, variables, success, toolCallsUsed}.
+        """
+        try:
+            lines = stdout_text.strip().split("\n")
+            if lines:
+                return json.loads(lines[-1])
+        except (json.JSONDecodeError, IndexError):
+            pass
+        return None
+
     def _load_summary(self) -> dict | None:
-        """pi_agent writes summary.json into the session dir on close()."""
-        for candidate in (
-            self.session_dir / "summary.json",
-            *self.session_dir.glob("*/summary.json"),
-        ):
-            if candidate.exists():
-                try:
-                    return json.loads(candidate.read_text())
-                except json.JSONDecodeError:
-                    continue
+        """Load RunSummary from the journal directory.
+
+        The journal writes summary.json to PI_AGENT_ROOT/sessions/runs/<timestamp>/
+        (not self.session_dir which is PI_AGENT_SESSIONS_DIR/<run_id>/).
+        """
+        # Check journal directory: PI_AGENT_ROOT/sessions/runs/<timestamp>/summary.json
+        runs_dir = PI_AGENT_ROOT / "sessions" / "runs"
+        if runs_dir.exists():
+            # Find the most recent summary (journal dirs are ISO-timestamped)
+            summaries = sorted(
+                runs_dir.glob("*/summary.json"),
+                key=lambda p: p.stat().st_mtime,
+                reverse=True,
+            )
+            # Pick the most recent one that was written within the last 5 minutes
+            # (avoids picking up stale summaries from previous runs)
+            cutoff = time.time() - 300
+            for candidate in summaries[:5]:
+                if candidate.stat().st_mtime >= cutoff:
+                    try:
+                        return json.loads(candidate.read_text())
+                    except json.JSONDecodeError:
+                        continue
         return None
 
 

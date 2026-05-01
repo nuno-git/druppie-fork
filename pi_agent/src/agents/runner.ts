@@ -74,6 +74,8 @@ function parseFrontmatter(content: string): { frontmatter: Record<string, string
  * which then failed every `want.has("read")` check in buildSandboxTools —
  * silently giving every subagent zero tools. That's the root cause of the
  * "explorer emits XML tool calls in text" failure we spent hours on.
+ *
+ * Also used by the `spawn` frontmatter field to parse allowed agent lists.
  */
 function parseFrontmatterList(raw: string | undefined): string[] | undefined {
   if (!raw) return undefined;
@@ -134,86 +136,6 @@ export function discoverAgents(cwd: string, extraDirs?: string[]): AgentDefiniti
   return agents;
 }
 
-// ── Summary & Variable Extraction ──────────────────────────
-
-/**
- * Extract the ## Summary section from agent output.
- *
- * Looks for a section starting with "## Summary" and returns its content
- * until the next "##" header or end of string.
- *
- * @param output - Full agent output
- * @returns Extracted summary text, or empty string if not found
- */
-export function extractSummary(output: string): string {
-  const summaryMatch = output.match(/## Summary\n([\s\S]+?)(?=\n##|\n*$)/);
-  if (!summaryMatch) return "";
-
-  let summary = summaryMatch[1].trim();
-
-  // Remove the "## Variables" section if present (we parse that separately)
-  const varMatch = summary.match(/([\s\S]+?)\n## Variables\n/);
-  if (varMatch) {
-    summary = varMatch[1].trim();
-  }
-
-  return summary;
-}
-
-/**
- * Extract variables from the ## Variables section of an agent summary.
- *
- * Parses key: value pairs from the variables section.
- *
- * @param summary - Agent summary (may include ## Variables section)
- * @returns Map of variable names to values
- */
-export function extractVariables(summary: string): Map<string, string> {
-  const vars = new Map<string, string>();
-  const varMatch = summary.match(/## Variables\n([\s\S]+?)(?=\n##|\n*$)/);
-
-  if (!varMatch) return vars;
-
-  const varText = varMatch[1];
-  for (const line of varText.split("\n")) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("#")) continue;
-
-    // Parse "key: value" format
-    const colonIndex = trimmed.indexOf(":");
-    if (colonIndex > 0) {
-      const key = trimmed.slice(0, colonIndex).trim();
-      const value = trimmed.slice(colonIndex + 1).trim();
-      if (key) {
-        vars.set(key, value);
-      }
-    }
-  }
-
-  return vars;
-}
-
-/**
- * Parse agent result into structured data for flow consumption.
- *
- * For agents that output structured data in code blocks (e.g., ```json),
- * this function attempts to parse and return it.
- *
- * @param output - Full agent output
- * @returns Parsed structured data, or undefined if not found
- */
-export function extractStructuredData<T = unknown>(output: string): T | undefined {
-  // Try to find a JSON code block
-  const jsonMatch = output.match(/```(?:json)?\s*\n([\s\S]+?)\n```/);
-  if (!jsonMatch) return undefined;
-
-  try {
-    return JSON.parse(jsonMatch[1]) as T;
-  } catch {
-    return undefined;
-  }
-}
-
 // ── Subagent Execution ──────────────────────────────────────
 
 export interface SubagentResult {
@@ -222,8 +144,6 @@ export interface SubagentResult {
   success: boolean;
   turnCount: number;
   error?: string;
-  summary?: string;
-  variables?: Map<string, string>;
   toolCallsUsed: Set<string>;
   doneCalled: boolean;
   doneMessage: string;
@@ -287,8 +207,9 @@ export async function runSubagent(
         }
       }
       return {
-        content: [{ type: "text", text: JSON.stringify({ success: true, message: params.message }) }],
-        details: { message: params.message },
+        content: [{ type: "text", text: JSON.stringify({ success: true, message: params.message, variables: params.variables }) }],
+        details: { message: params.message, variables: params.variables },
+        terminate: true,
       };
     },
   };
@@ -443,28 +364,16 @@ export async function runSubagent(
   try {
     await session.prompt(prompt);
 
-    const MAX_DONE_RETRIES = 2;
-    for (let retry = 0; retry < MAX_DONE_RETRIES && !doneCalled; retry++) {
-      process.stderr.write(`\n[${agent.name}] done tool not used, retrying in same session (${retry + 1}/${MAX_DONE_RETRIES})...\n`);
-      await session.prompt("You MUST call the done tool now with your findings. Do not use any other tools.");
-    }
-
     session.dispose();
 
     const success = !output.includes("STEP FAILED") && !output.includes("VERIFICATION FAILED");
     handle?.end(success);
 
-    const summary = extractSummary(output);
-    const variables = extractVariables(output);
-
-    return { agentName: agent.name, output, success, turnCount, summary, variables, toolCallsUsed, doneCalled, doneMessage, doneVariables };
+    return { agentName: agent.name, output, success, turnCount, toolCallsUsed, doneCalled, doneMessage, doneVariables };
   } catch (err) {
     session.dispose();
     const errorMsg = err instanceof Error ? err.message : String(err);
     handle?.end(false, errorMsg);
-
-    const summary = extractSummary(output);
-    const variables = extractVariables(output);
 
     return {
       agentName: agent.name,
@@ -472,8 +381,6 @@ export async function runSubagent(
       success: false,
       turnCount,
       error: errorMsg,
-      summary,
-      variables,
       toolCallsUsed,
       doneCalled,
       doneMessage,

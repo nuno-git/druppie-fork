@@ -1,11 +1,8 @@
 /**
  * Run journal — append-only timeline of every interesting event + a final
- * rolled-up summary. When running standalone it writes journal.jsonl +
- * summary.json on disk. When launched by druppie's execute_coding_task_pi,
- * PI_AGENT_INGEST_URL is set and each event is additionally POSTed to the
- * druppie backend so it lands in the PiCodingRun row for UI playback.
+ * rolled-up summary. Writes journal.jsonl + summary.json on disk.
  *
- * Directory layout under `sessions/runs/<iso>-<slug>/` (standalone mode):
+ * Directory layout under `sessions/runs/<iso>-<slug>/`:
  *   journal.jsonl       ← streaming events, one per line
  *   summary.json        ← final rollup written at close()
  *   <agent>.jsonl       ← pi-managed per-subagent transcripts (written by SDK)
@@ -15,44 +12,32 @@ import { join } from "node:path";
 
 import type { TaskSpec } from "./types.js";
 
-// ── Druppie ingest sink ────────────────────────────────────────────────────
+// ── HTTP ingest (druppie mode) ──────────────────────────────────────────
+const INGEST_URL = process.env.PI_AGENT_INGEST_URL || "";
+const INGEST_TOKEN = process.env.PI_AGENT_INGEST_TOKEN || "";
 
-const INGEST_URL = process.env.PI_AGENT_INGEST_URL;
-const INGEST_TOKEN = process.env.PI_AGENT_INGEST_TOKEN;
-const INGEST_SUMMARY_URL = INGEST_URL?.replace(/\/events$/, "/summary");
-
-async function postEvent(event: Record<string, unknown>): Promise<void> {
-  if (!INGEST_URL || !INGEST_TOKEN) return;
-  try {
-    await fetch(INGEST_URL, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        authorization: `Bearer ${INGEST_TOKEN}`,
-      },
-      body: JSON.stringify(event),
-    });
-  } catch (e) {
-    // Ingest failures are non-fatal — the agent keeps running and the
-    // file-based journal remains available for post-hoc recovery.
-    console.error("[journal] ingest POST failed:", (e as Error).message);
-  }
+/** Fire-and-forget POST a single event to the druppie backend. */
+function postEvent(event: Record<string, unknown>): void {
+  if (!INGEST_URL) return;
+  fetch(INGEST_URL, {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${INGEST_TOKEN}` },
+    body: JSON.stringify(event),
+  }).catch(() => { /* swallow — journal must not throw on network errors */ });
 }
 
-async function postSummary(summary: RunSummary): Promise<void> {
-  if (!INGEST_SUMMARY_URL || !INGEST_TOKEN) return;
+/** POST the final summary to the druppie backend. */
+async function postSummary(summary: Record<string, unknown>): Promise<void> {
+  if (!INGEST_URL) return;
+  // Summary goes to the sibling /summary endpoint
+  const summaryUrl = INGEST_URL.replace(/\/events\/?$/, "/summary");
   try {
-    await fetch(INGEST_SUMMARY_URL, {
+    await fetch(summaryUrl, {
       method: "POST",
-      headers: {
-        "content-type": "application/json",
-        authorization: `Bearer ${INGEST_TOKEN}`,
-      },
+      headers: { "content-type": "application/json", authorization: `Bearer ${INGEST_TOKEN}` },
       body: JSON.stringify(summary),
     });
-  } catch (e) {
-    console.error("[journal] summary POST failed:", (e as Error).message);
-  }
+  } catch { /* swallow */ }
 }
 
 // ── Event shape ────────────────────────────────────────────────────────────
@@ -120,15 +105,8 @@ interface AgentNarrative {
 
 // ── Journal ───────────────────────────────────────────────────────────────
 
-/**
- * When PI_AGENT_INGEST_URL is set (druppie run), the DB is the only home for
- * session data — no JSONL or summary.json on disk. When unset (standalone
- * CLI debug), we fall back to the original file-based journal.
- */
-const WRITE_FILES = !process.env.PI_AGENT_INGEST_URL;
-
 export class Journal {
-  private readonly stream: WriteStream | null;
+  private readonly stream: WriteStream;
   private readonly startMs: number;
   private readonly agents = new Map<string, AgentStats>();
   private readonly phases: PhaseRecord[] = [];
@@ -143,22 +121,16 @@ export class Journal {
   private prResult?: { action: string; number?: number; url?: string };
 
   constructor(public readonly dir: string, task: TaskSpec) {
-    if (WRITE_FILES) {
-      mkdirSync(dir, { recursive: true });
-      this.stream = createWriteStream(join(dir, "journal.jsonl"), { flags: "a" });
-    } else {
-      this.stream = null;
-    }
+    mkdirSync(dir, { recursive: true });
+    this.stream = createWriteStream(join(dir, "journal.jsonl"), { flags: "a" });
     this.startMs = Date.now();
     this.write("run_start", { task });
   }
 
-  /** Append one event. Local file only in standalone mode, ingest always. */
   write(type: string, data: Record<string, unknown> = {}): void {
     const event = { ts: new Date().toISOString(), elapsedMs: Date.now() - this.startMs, type, ...data };
-    this.stream?.write(JSON.stringify(event) + "\n");
-    // Fire-and-forget ingest — no await so journal semantics stay synchronous.
-    void postEvent(event);
+    this.stream.write(JSON.stringify(event) + "\n");
+    void postEvent(event as Record<string, unknown>);
   }
 
   // ── Sandbox lifecycle ────────────────────────────────────────────────────
@@ -369,17 +341,12 @@ export class Journal {
     this.write("run_end", { success, durationMs: summary.durationMs });
 
     const summaryPath = join(this.dir, "summary.json");
-    if (WRITE_FILES) {
-      writeFileSync(summaryPath, JSON.stringify(summary, null, 2));
-    }
+    writeFileSync(summaryPath, JSON.stringify(summary, null, 2));
 
-    await postSummary(summary);
-
-    if (this.stream) {
-      await new Promise<void>((resolve, reject) => {
-        this.stream!.end((err?: Error | null) => (err ? reject(err) : resolve()));
-      });
-    }
+    await new Promise<void>((resolve, reject) => {
+      this.stream.end((err?: Error | null) => (err ? reject(err) : resolve()));
+    });
+    await postSummary(summary as unknown as Record<string, unknown>);
     return { summaryPath, summary };
   }
 }

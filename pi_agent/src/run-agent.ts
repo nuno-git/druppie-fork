@@ -28,9 +28,8 @@ import {
   discoverAgents,
   runSubagent,
   type AgentDefinition,
-  type RunSubagentOptions,
 } from "./agents/runner.js";
-import { createSpawnSubagentsTool } from "./flows/tools/spawn-subagents-tool.js";
+import { createSubagentsTool } from "./tools/subagents-tool.js";
 
 // ── Public Interface ──────────────────────────────────────────
 
@@ -157,34 +156,29 @@ export async function runSingleAgent(params: SingleAgentParams): Promise<SingleA
     const journal = new Journal(journalDir, taskSpec);
 
     // ── 6. Build tool injections ────────────────────────────────
+    // Build subagents tool if agent has spawn capability
     const extraCustomTools: any[] = [];
-
-    const parentRef: { current?: string } = {};
-
-    // Auto-inject spawn tool if agent has spawn_subagents enabled
     const agentMap = new Map(agents.map((a) => [a.name, a]));
-    if (agentDef.spawn_subagents && agentDef.allowed_subagents && agentDef.allowed_subagents.length > 0) {
-      const baseOpts: RunSubagentOptions = {
-        cwd,
-        authStorage,
-        modelRegistry,
-        defaultModel,
-        maxTurns: params.maxTurns ?? 40,
-        onOutput: (delta) => process.stderr.write(delta),
-        sandboxClient,
-        journal,
-      };
-      const spawnTool = createSpawnSubagentsTool({
+    const spawnList = agentDef.allowed_subagents ?? [];
+    if (spawnList.length > 0) {
+      const subagentsTool = createSubagentsTool({
         agentMap,
-        allowedAgents: agentDef.allowed_subagents,
-        baseOpts,
-        parentRef,
+        allowedAgents: spawnList,
+        baseOpts: {
+          cwd,
+          authStorage,
+          modelRegistry,
+          defaultModel,
+          maxTurns: params.maxTurns ?? 40,
+          onOutput: (delta) => process.stderr.write(delta),
+          sandboxClient,
+          journal,
+        },
       });
-      extraCustomTools.push(spawnTool);
+      extraCustomTools.push(subagentsTool);
     }
 
     // ── 7. Run the agent ───────────────────────────────────────
-    parentRef.current = `${agentDef.name}-1`;
 
     const sessionsDir = process.env.PI_AGENT_INGEST_URL
       ? `/tmp/pi-agent-transcripts-${process.pid}`

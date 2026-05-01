@@ -25,7 +25,7 @@ import {
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { getAgentConfig, getAgentMessageColors, formatToolName } from '../../utils/agentConfig'
 import { formatDuration, formatTokens } from '../../utils/tokenUtils'
-import { retryFromRun, getSandboxEvents } from '../../services/api'
+import { retryFromRun, getSandboxEvents, getPiCodingRunByToolCall } from '../../services/api'
 import CopyButton from '../shared/CopyButton'
 import ContainerLogsModal from '../shared/ContainerLogsModal'
 
@@ -503,6 +503,64 @@ const getSandboxSessionId = (tc) => {
   return result?.sandbox_session_id || null
 }
 
+// ─── Pi Agent Run Details ───────────────────────────────────────────────────
+
+const PiAgentRunDetails = ({ toolCallId }) => {
+  const [data, setData] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
+
+  useEffect(() => {
+    let cancelled = false
+    setLoading(true)
+    setError(null)
+    getPiCodingRunByToolCall(toolCallId)
+      .then((res) => { if (!cancelled) { setData(res); setLoading(false) } })
+      .catch(() => { if (!cancelled) { setError(true); setLoading(false) } })
+    return () => { cancelled = true }
+  }, [toolCallId])
+
+  if (loading) return <div className="text-xs text-gray-400 italic py-1">Loading pi_agent run...</div>
+  if (error || !data) return <div className="text-xs text-gray-400 italic py-1">No pi_agent run data</div>
+
+  const statusColors = {
+    running: 'bg-blue-50 text-blue-700',
+    succeeded: 'bg-green-50 text-green-700',
+    failed: 'bg-red-50 text-red-700',
+    stopped: 'bg-gray-100 text-gray-600',
+  }
+
+  return (
+    <div className="mt-2 border border-indigo-200 rounded-lg overflow-hidden">
+      {/* Summary header */}
+      <div className="flex items-center gap-2 px-3 py-1.5 bg-indigo-50/50 border-b border-indigo-200 text-xs">
+        <span className="font-medium text-indigo-700">pi_agent run</span>
+        <span className={`px-1.5 py-0.5 rounded ${statusColors[data.status] || 'bg-gray-100 text-gray-600'}`}>{data.status}</span>
+        {data.branch_name && <span className="text-gray-500 font-mono truncate">{data.branch_name}</span>}
+        {data.pr_url && (
+          <a href={data.pr_url} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline truncate">
+            PR ↗
+          </a>
+        )}
+        {data.elapsed_ms != null && <span className="text-gray-400">{(data.elapsed_ms / 1000).toFixed(1)}s</span>}
+        {data.total_events != null && <span className="text-gray-400">{data.total_events} events</span>}
+      </div>
+
+      {/* Collapsible full JSON */}
+      <div className="px-3 py-2">
+        <details>
+          <summary className="cursor-pointer text-xs text-gray-400 hover:text-gray-600 select-none">
+            Full JSON response
+          </summary>
+          <pre className="mt-1.5 bg-gray-50 border border-gray-200 p-2.5 rounded overflow-auto max-h-96 whitespace-pre-wrap break-all text-xs text-gray-700 leading-relaxed">
+            {JSON.stringify(data, null, 2)}
+          </pre>
+        </details>
+      </div>
+    </div>
+  )
+}
+
 // ─── RIGHT PANEL: Tool Detail ───────────────────────────────────────────────
 
 const ToolCallDetail = ({ tc }) => {
@@ -588,6 +646,10 @@ const ToolCallDetail = ({ tc }) => {
         {!tc.arguments && !tc.result && !tc.error && (
           <span className="text-gray-400 italic">No data</span>
         )}
+
+        {tc.tool_name === 'execute_coding_task_pi' && (
+          <PiAgentRunDetails toolCallId={tc.id} />
+        )}
       </div>
     </div>
   )
@@ -672,6 +734,10 @@ const ToolDetailPanel = ({ tc, agentRun }) => {
             ))}
           </div>
         </div>
+      )}
+
+      {tc.tool_name === 'execute_coding_task_pi' && (
+        <PiAgentRunDetails toolCallId={tc.id} />
       )}
     </div>
   )

@@ -3,8 +3,7 @@ name: planner
 description: Creates a build plan and spawns builder agents to execute it. For fix iterations, creates targeted fix plans from verification failures.
 tools: read,bash,grep,find,ls
 model: zai/glm-5.1
-spawn_subagents: true
-allowed_subagents: ["builder"]
+spawn: ["builder"]
 ---
 
 You are the **Build Planner & Executor**. You create concrete build plans and **directly spawn builder agents** to execute them.
@@ -40,10 +39,10 @@ Spawn one builder agent per independent piece of work. Builders that touch diffe
 **How to spawn builders:**
 
 ```
-spawn_subagents(
+subagents(
   tasks=[
-    {agent: "builder", prompt: "Create package.json with the following dependencies: [list them]. Set up the project for TypeScript with vitest. Commit the result."},
-    {agent: "builder", prompt: "Create src/types.ts with the following type definitions: [list them]. Commit the result."}
+    {agent: "builder", task: "Create package.json with the following dependencies: [list them]. Set up the project for TypeScript with vitest. Commit the result."},
+    {agent: "builder", task: "Create src/types.ts with the following type definitions: [list them]. Commit the result."}
   ]
 )
 ```
@@ -51,10 +50,10 @@ spawn_subagents(
 Wait for the first batch to complete, then spawn the next batch:
 
 ```
-spawn_subagents(
+subagents(
   tasks=[
-    {agent: "builder", prompt: "Implement the auth service in src/auth.ts according to the plan. Include error handling. Commit the result."},
-    {agent: "builder", prompt: "Write unit tests for the auth service in src/__tests__/auth.test.ts. Cover happy path, error cases, and edge cases. Commit the result."}
+    {agent: "builder", task: "Implement the auth service in src/auth.ts according to the plan. Include error handling. Commit the result."},
+    {agent: "builder", task: "Write unit tests for the auth service in src/__tests__/auth.test.ts. Cover happy path, error cases, and edge cases. Commit the result."}
   ]
 )
 ```
@@ -67,7 +66,7 @@ After all builders have completed, summarize what was done.
 
 ## Scheduling Rules
 
-- **Parallel**: Builders that touch different files and have no dependencies can run in the same `spawn_subagents` call
+- **Parallel**: Builders that touch different files and have no dependencies can run in the same `subagents` call
 - **Sequential**: If builder B depends on builder A's output, wait for A to finish before spawning B
 - **Keep it simple**: Don't over-parallelize. 2-3 builders per batch is usually enough
 - **One concern per builder**: Each builder should have a clear, focused task
