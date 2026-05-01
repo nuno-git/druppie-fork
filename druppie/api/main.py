@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import httpx
 import structlog
 
-from druppie.api.routes import agents, approvals, cache, chat, deployments, evaluations, mcp_bridge, mcps, modules, projects, questions, sandbox, sessions, workspace
+from druppie.api.routes import agents, approvals, cache, chat, deployments, evaluations, foundry, mcp_bridge, mcps, modules, projects, questions, sandbox, sessions, workspace
 from druppie.api.errors import register_exception_handlers
 from druppie.core.auth import get_auth_service
 from druppie.core.config import get_settings
@@ -49,6 +49,40 @@ def _recover_zombie_sessions() -> None:
         db.rollback()
     finally:
         db.close()
+
+
+def _register_custom_agent_db_loader() -> None:
+    """Register DB callbacks so AgentDefinitionLoader can find custom agents."""
+    from druppie.agents.definition_loader import AgentDefinitionLoader
+    from druppie.db.database import SessionLocal
+    from druppie.repositories.custom_agent_repository import CustomAgentRepository
+
+    def _load_from_db(agent_id: str):
+        db = SessionLocal()
+        try:
+            repo = CustomAgentRepository(db)
+            agent = repo.get_by_agent_id(agent_id)
+            if agent:
+                return repo.to_agent_definition(agent)
+            return None
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            db.close()
+
+    def _list_db_ids():
+        db = SessionLocal()
+        try:
+            repo = CustomAgentRepository(db)
+            return repo.list_agent_ids()
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            db.close()
+
+    AgentDefinitionLoader.register_db_loader(_load_from_db, _list_db_ids)
 
 
 def _recover_orphaned_batch_runs() -> None:
@@ -91,7 +125,10 @@ async def lifespan(app: FastAPI):
     # Startup
     logger.info("druppie_starting")
 
-    # List available agents
+    # Register DB loader for custom agents so the definition loader can find them
+    _register_custom_agent_db_loader()
+
+    # List available agents (includes custom agents from DB)
     agents_list = Agent.list_agents()
     logger.info("druppie_initialized", agents=len(agents_list))
 
@@ -177,6 +214,7 @@ def create_app() -> FastAPI:
     app.include_router(sandbox.router, prefix="/api", tags=["Sandbox"])
     app.include_router(evaluations.router, prefix="/api", tags=["Evaluations"])
     app.include_router(cache.router, prefix="/api", tags=["Cache"])
+    app.include_router(foundry.router, prefix="/api", tags=["Foundry"])
     app.include_router(modules.router, prefix="/api", tags=["Modules"])
 
     @app.get("/health")

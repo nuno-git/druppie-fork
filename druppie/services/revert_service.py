@@ -116,8 +116,19 @@ class RevertService:
                 break
 
         if first_planner_seq is not None:
-            runs_to_reset = [r for r in same_turn_runs if r.sequence_number <= first_planner_seq]
-            runs_to_delete = [r for r in same_turn_runs if r.sequence_number > first_planner_seq] + later_turn_runs
+            # Reset the target run, the planner, and anything before the planner.
+            # Runs at the SAME sequence as the planner but created BY the planner
+            # (via make_plan) must be deleted — they'll be recreated when the
+            # planner re-runs.  Only the planner itself is kept.
+            runs_to_reset = [
+                r for r in same_turn_runs
+                if r.sequence_number < first_planner_seq
+                or (r.sequence_number == first_planner_seq and r.agent_id == "planner")
+            ]
+            runs_to_delete = [
+                r for r in same_turn_runs
+                if r not in runs_to_reset
+            ] + later_turn_runs
         else:
             runs_to_reset = same_turn_runs
             runs_to_delete = later_turn_runs

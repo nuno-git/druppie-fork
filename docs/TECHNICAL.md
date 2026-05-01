@@ -113,6 +113,8 @@ druppie/
     workflow_service.py
     deployment_service.py
     revert_service.py
+    custom_agent_service.py  # Custom/Foundry agent CRUD, metadata, YAML export
+    foundry_service.py       # Azure AI Foundry deployment (PromptAgentDefinition)
   repositories/
     session_repository.py
     approval_repository.py
@@ -978,6 +980,93 @@ Note: `CANCELLED` is never set by user actions. It is only used internally by th
 
 ---
 
+## 8.10 Foundry Agent Deployment
+
+Custom agents created via `foundry_agent_builder` (or the Agents page UI) can be deployed to Azure AI Foundry.
+
+#### Architecture
+
+```
+AgentEditor UI → POST /api/agents/custom/{id}/deploy → FoundryService.deploy_agent()
+                                                            ↓
+                                                    AIProjectClient.agents.create_version(
+                                                        agent_name=agent_id,
+                                                        definition=PromptAgentDefinition(
+                                                            model=...,
+                                                            instructions=...,
+                                                            tools=[...]
+                                                        )
+                                                    )
+```
+
+#### What Foundry receives
+
+`PromptAgentDefinition` accepts only three fields:
+
+| Field | Source | Notes |
+|-------|--------|-------|
+| `model` | `PROFILE_MODEL_MAP[llm_profile]` | Both `standard` and `cheap` map to `gpt-4.1-mini` |
+| `instructions` | `system_prompt` | The entire agent behavior definition |
+| `tools` | `foundry_tools` mapped to SDK classes | See tool support below |
+
+**Not sent to Foundry:** temperature (API rejects it), max_tokens, max_iterations, name, description. These are stored in the Druppie DB only.
+
+#### Tool SDK support
+
+| Tool ID | SDK Class | Status |
+|---------|-----------|--------|
+| `code_interpreter` | `CodeInterpreterTool` | Deployed (zero-config) |
+| `file_search` | `FileSearchTool` | Deployed (zero-config) |
+| `bing_grounding` | `BingGroundingTool` | Deployed (requires portal connection) |
+| `browser_automation` | — | Stored in DB, not yet in SDK |
+| `deep_research` | — | Stored in DB, not yet in SDK |
+| `bing_custom_search` | — | Stored in DB, not yet in SDK |
+| `azure_ai_search` | — | Stored in DB, not yet in SDK |
+| `microsoft_fabric` | — | Stored in DB, not yet in SDK |
+
+Tools requiring portal connections (e.g. `bing_grounding`) will fail deployment if the connection is not configured in the Azure AI Foundry portal.
+
+#### Authentication
+
+`AIProjectClient` requires `TokenCredential` — `AzureKeyCredential` does not work (it lacks `get_token()`). `FoundryService` uses `DefaultAzureCredential`, which tries credentials in this order:
+
+| Method | When it works | Env vars needed |
+|--------|--------------|-----------------|
+| Service principal | Docker, CI/CD | `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`, `AZURE_TENANT_ID` |
+| Managed identity | Azure-hosted (AKS, Container Apps) | None (auto-detected) |
+| Azure Developer CLI | Local dev with `azd auth login` | `azd` on PATH |
+| Azure CLI | Local dev with `az login` | `az` on PATH |
+
+For Docker deployments, create a service principal in Azure Portal (App registrations → New → Client Secret) and set the three env vars in `.env`.
+
+#### Drift detection
+
+When an agent is deployed, Druppie persists:
+- `deployed_spec_hash` — SHA-256 of `model + instructions + sorted(foundry_tools)`, the fields actually sent to Foundry
+- `deployed_version` — version string returned by `client.agents.create_version()`
+- `deployed_at` — timestamp of the deployment
+
+If the agent is edited after deployment (`updated_at > deployed_at`), the UI shows an amber "Edits pending" badge instead of green "Deployed". Redeploying clears the drift.
+
+#### Access control
+
+- **Deploy/undeploy** requires `developer` or `admin` Keycloak role (enforced via `require_any_role` dependency)
+- **Agent list** is role-filtered: admin/developer see all custom agents, other roles see only their own (`list_custom_agents_for_user`)
+- **Create/edit/delete** is owner-gated (any authenticated user can create; only the owner can edit or delete)
+
+#### Naming: Druppie runtime tools vs Foundry tools
+
+Two distinct tool categories exist for custom agents:
+
+| Category | DB table | API field | Runs where |
+|----------|----------|-----------|------------|
+| Druppie runtime tools | `custom_agent_builtin_tools` | `druppie_runtime_tools` | Inside Druppie agent loop (`ToolExecutor`) |
+| Foundry tools | `custom_agent_foundry_tools` | `foundry_tools` | Inside Azure AI Foundry runtime |
+
+The Agent Editor UI labels these as "Druppie Runtime Tools (internal orchestration)" and "Azure Foundry Tools (sent to Azure on deploy)" to avoid confusion.
+
+---
+
 ## 9. Configuration
 
 ### 9.1 Environment Variables
@@ -1006,6 +1095,10 @@ Optional:
 | `SANDBOX_API_SECRET` | `sandbox-dev-secret` | HMAC-SHA256 secret for sandbox auth tokens |
 | `SANDBOX_MEMORY_LIMIT` | `4g` | Docker memory limit per sandbox container |
 | `SANDBOX_CPU_LIMIT` | `2` | Docker CPU limit per sandbox container |
+| `FOUNDRY_PROJECT_ENDPOINT` | — | Azure AI Foundry project endpoint for agent deployment |
+| `AZURE_TENANT_ID` | — | Azure AD tenant ID (for service principal auth) |
+| `AZURE_CLIENT_ID` | — | Service principal app/client ID (for Docker deployments) |
+| `AZURE_CLIENT_SECRET` | — | Service principal secret (for Docker deployments) |
 
 ### 9.2 Configuration Files
 

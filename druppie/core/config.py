@@ -129,11 +129,6 @@ class LLMSettings(BaseSettings):
         alias="ZAI_BASE_URL",
         description="Z.AI API base URL",
     )
-    foundry_api_key: str = Field(
-        default="",
-        alias="FOUNDRY_API_KEY",
-        description="Azure Foundry API key",
-    )
     foundry_model: str = Field(
         default="GPT-5-MINI",
         alias="FOUNDRY_MODEL",
@@ -143,6 +138,11 @@ class LLMSettings(BaseSettings):
         default="",
         alias="FOUNDRY_API_URL",
         description="Azure Foundry API URL",
+    )
+    foundry_project_endpoint: str = Field(
+        default="",
+        alias="FOUNDRY_PROJECT_ENDPOINT",
+        description="Azure AI Foundry project endpoint for agent deployment",
     )
 
 

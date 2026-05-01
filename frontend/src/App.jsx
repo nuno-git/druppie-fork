@@ -26,6 +26,8 @@ import Evaluations from './pages/Evaluations'
 import Analytics from './pages/Analytics'
 import BatchDetail from './pages/BatchDetail'
 import CachedDependencies from './pages/CachedDependencies'
+import Agents from './pages/Agents'
+import AgentEditor from './pages/AgentEditor'
 
 // Auth context
 const AuthContext = React.createContext(null)
@@ -182,6 +184,30 @@ function App() {
                           <Route path="/debug-approvals" element={<Navigate to="/tasks" replace />} />
                           <Route path="/debug-mcp" element={<Navigate to="/tools/mcp" replace />} />
                           <Route path="/debug-projects" element={<Navigate to="/tools/infrastructure" replace />} />
+                          <Route
+                            path="/agents"
+                            element={
+                              <ProtectedRoute>
+                                <Agents />
+                              </ProtectedRoute>
+                            }
+                          />
+                          <Route
+                            path="/agents/new"
+                            element={
+                              <ProtectedRoute requiredRole="developer">
+                                <AgentEditor />
+                              </ProtectedRoute>
+                            }
+                          />
+                          <Route
+                            path="/agents/:agentId/edit"
+                            element={
+                              <ProtectedRoute requiredRole="developer">
+                                <AgentEditor />
+                              </ProtectedRoute>
+                            }
+                          />
                           <Route
                             path="/tools/mcp"
                             element={
