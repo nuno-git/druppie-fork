@@ -369,7 +369,7 @@ class FoundryService:
         model = agent_detail.llm_profile or FoundryService.resolve_model("standard")
         if not agent_detail.llm_profile:
             warnings.append(
-                f"No model selected — will default to {FoundryService.resolve_model("standard")}"
+                f"No model selected — will default to {model}"
             )
 
         # 4. Validate foundry_tools
