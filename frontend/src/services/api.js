@@ -445,3 +445,9 @@ export const getPiCodingRun = (runId, since = 0) =>
 
 export const getPiCodingRunByToolCall = (toolCallId, since = 0) =>
   request(`/api/pi-agent-runs/by-tool-call/${toolCallId}?since=${since}`)
+
+export const executeDeveloperTask = (payload) =>
+  request('/api/developer/execute', { method: 'POST', body: JSON.stringify(payload) })
+
+export const getPiCodingRunBySession = (sessionId, since = 0) =>
+  request(`/api/pi-agent-runs/by-session/${sessionId}?since=${since}`)

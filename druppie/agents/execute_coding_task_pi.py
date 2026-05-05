@@ -11,8 +11,10 @@ Runs inside the druppie backend container (node + docker.io already present).
 from __future__ import annotations
 
 import json
+import os
 import uuid
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import TYPE_CHECKING
 from uuid import UUID
 
@@ -29,50 +31,44 @@ logger = structlog.get_logger()
 
 VALID_REPO_TARGETS = {"project", "druppie_core"}
 VALID_GIT_PROVIDERS = {"github_app", "gitea"}
-VALID_FLOWS = {"tdd", "explore"}
+
+PI_AGENT_ROOT = Path(os.getenv("PI_AGENT_ROOT", "/app/pi_agent"))
+
+
+def _discover_primary_agents() -> set[str]:
+    """Scan pi_agent/.pi/agents/*.md for agents with `primary: true` in frontmatter."""
+    agents_dir = PI_AGENT_ROOT / ".pi" / "agents"
+    primary: set[str] = set()
+    if not agents_dir.is_dir():
+        logger.warning("pi_agent_agents_dir_not_found", path=str(agents_dir))
+        return primary
+    for md_file in sorted(agents_dir.glob("*.md")):
+        try:
+            text = md_file.read_text(encoding="utf-8")
+        except Exception:
+            continue
+        # Simple frontmatter parser: extract YAML between --- markers
+        if not text.startswith("---"):
+            continue
+        end = text.find("---", 3)
+        if end == -1:
+            continue
+        frontmatter = text[3:end].strip()
+        # Check for primary: true (handles both "primary: true" and "primary:  true")
+        if "primary: true" in frontmatter or "primary:  true" in frontmatter:
+            # Extract the name field
+            for line in frontmatter.split("\n"):
+                line = line.strip()
+                if line.startswith("name:"):
+                    agent_name = line.split(":", 1)[1].strip()
+                    if agent_name:
+                        primary.add(agent_name)
+                        break
+    return primary
 
 
 def _default_git_provider_for(repo_target: str) -> str:
     return "github_app" if repo_target == "druppie_core" else "gitea"
-
-
-async def _run_explore_flow(
-    task: str,
-    run_id: str,
-    ingest_token: str,
-    git_credentials: dict,
-    git_provider: str,
-    repo_owner: str,
-    repo_name: str,
-    source_branch: str | None,
-) -> dict:
-    import os
-    from druppie.flows.explore import explore
-
-    ingest_url = f"{os.getenv('DRUPPIE_INTERNAL_URL', 'http://localhost:8000')}/api/pi-agent-runs/{run_id}/events"
-    sandbox_image = os.getenv("PI_AGENT_SANDBOX_IMAGE", "oneshot-sandbox:latest")
-
-    if git_provider == "github_app":
-        source_repo = f"https://github.com/{repo_owner}/{repo_name}.git"
-    else:
-        base = git_credentials.get("base_url") or os.getenv("GITEA_INTERNAL_URL", "")
-        base = base.rstrip("/")
-        source_repo = f"{base}/{repo_owner}/{repo_name}.git"
-
-    agent_result = await explore(
-        task_description=task,
-        source_repo=source_repo,
-        source_branch=source_branch,
-        sandbox_image=sandbox_image,
-        ingest_url=ingest_url,
-        ingest_token=ingest_token,
-    )
-
-    return {
-        "success": agent_result.success,
-        "answer": agent_result.output or agent_result.summary,
-        "exit_code": 0 if agent_result.success else 1,
-    }
 
 
 async def _resolve_github_credentials(repo_owner: str, repo_name: str) -> dict:
@@ -85,7 +81,6 @@ async def _resolve_github_credentials(repo_owner: str, repo_name: str) -> dict:
     vars and force pi_agent into PAT-mode. Just return a marker; the env vars
     are inherited through os.environ in PiAgentRunner._build_env.
     """
-    import os
     if not os.getenv("GITHUB_APP_ID") or not os.getenv("GITHUB_APP_INSTALLATION_ID"):
         raise ValueError(
             "GITHUB_APP_ID / GITHUB_APP_INSTALLATION_ID not set in backend env — "
@@ -105,7 +100,6 @@ async def _resolve_gitea_credentials(repo_owner: str, repo_name: str, run_id: st
 
 
 def _resolve_llm_credentials() -> dict:
-    import os
     return {
         "anthropic_api_key": os.getenv("ANTHROPIC_API_KEY", ""),
         "zai_api_key": os.getenv("ZAI_API_KEY", ""),
@@ -158,14 +152,18 @@ async def execute_coding_task_pi(
     # on PiCodingRun for observability but not part of the tool schema.
     git_provider: str = _default_git_provider_for(repo_target)
 
-    flow: str = args.get("flow") or "tdd"
-    if flow not in VALID_FLOWS:
-        return {"success": False, "error": f"invalid flow {flow!r}; must be one of {sorted(VALID_FLOWS)}"}
+    primary_agents: set[str] = _discover_primary_agents()
+    if not primary_agents:
+        logger.warning("no_primary_agents_found", pi_agent_root=str(PI_AGENT_ROOT))
+
+    flow: str = args.get("flow") or "planner"
+    if flow not in primary_agents:
+        return {"success": False, "error": f"invalid flow {flow!r}; must be one of {sorted(primary_agents)}"}
     # Legacy `agent` field still accepted as an alias for `flow`, but we
     # prefer `flow`. Drop this once all callers migrate.
     legacy_agent = args.get("agent")
     if legacy_agent and legacy_agent not in ("null", None):
-        if legacy_agent in VALID_FLOWS:
+        if legacy_agent in primary_agents:
             flow = legacy_agent
 
     # Enforce per-caller flow constraint too.
@@ -173,10 +171,7 @@ async def execute_coding_task_pi(
         if definition and definition.sandbox_constraints:
             c = definition.sandbox_constraints
             if c.allowed_agents is not None:
-                # Only apply if allowed_agents references actual flows — legacy
-                # sandbox-agent names don't overlap with flow names so this is
-                # a safe intersection test.
-                flow_constraint = [a for a in c.allowed_agents if a in VALID_FLOWS]
+                flow_constraint = [a for a in c.allowed_agents if a in primary_agents]
                 if flow_constraint and flow not in flow_constraint:
                     return {
                         "success": False,
@@ -245,31 +240,19 @@ async def execute_coding_task_pi(
     register_ingest_token(run_id, ingest_token)
 
     try:
-        if flow == "explore":
-            result = await _run_explore_flow(
-                task=task,
-                run_id=run_id,
-                ingest_token=ingest_token,
-                git_credentials=git_creds,
-                git_provider=git_provider,
-                repo_owner=repo_ctx.repo_owner,
-                repo_name=repo_ctx.repo_name,
-                source_branch=source_branch,
-            )
-        else:
-            runner = PiAgentRunner(
-                run_id=run_id,
-                task_prompt=task,
-                agent_name=flow,
-                repo_target=repo_target,
-                git_provider=git_provider,
-                repo_owner=repo_ctx.repo_owner,
-                repo_name=repo_ctx.repo_name,
-                git_credentials=git_creds,
-                llm_credentials=llm_creds,
-                source_branch=source_branch,
-            )
-            result = await runner.run(ingest_token)
+        runner = PiAgentRunner(
+            run_id=run_id,
+            task_prompt=task,
+            agent_name=flow,
+            repo_target=repo_target,
+            git_provider=git_provider,
+            repo_owner=repo_ctx.repo_owner,
+            repo_name=repo_ctx.repo_name,
+            git_credentials=git_creds,
+            llm_credentials=llm_creds,
+            source_branch=source_branch,
+        )
+        result = await runner.run(ingest_token)
     finally:
         revoke_ingest_token(run_id)
         if gitea_user_id:
@@ -279,14 +262,8 @@ async def execute_coding_task_pi(
             except Exception as e:
                 logger.warning("pi_agent_gitea_cleanup_failed", run_id=run_id, error=str(e))
 
-    if flow == "explore":
-        exit_code = 0 if result["success"] else 1
-        summary = None
-        explore_answer = result.get("answer", "")
-    else:
-        summary = result.get("summary")
-        exit_code = result["exit_code"]
-        explore_answer = ""
+    summary = result.get("summary")
+    exit_code = result["exit_code"]
 
     # Under druppie (ingest mode) pi_agent's journal.close() posts the summary
     # straight to /api/pi-agent-runs/{run_id}/summary instead of writing
@@ -345,22 +322,11 @@ async def execute_coding_task_pi(
             f"with no specific errors. See PiCodingRun events for context."
         )
 
-    # Keep the payload that's returned to the CALLING agent minimal —
-    # agents don't need full phase/agent stats, token counts, or the
-    # full journal, they need the answer / deliverables. The UI pulls
-    # everything richer via /api/pi-agent-runs/by-tool-call/{id} directly.
-    if flow == "explore":
-        answer = explore_answer or _extract_explore_answer(summary)
-        return {
-            "success": pi_success,
-            "run_id": run_id,
-            "pi_coding_run_id": str(row.id),
-            "answer": answer,
-            **({"error": error_message} if error_message else {}),
-        }
-
-    # TDD: return agent summaries AND deliverables (branch, PR, commits).
-    # The summaries give the calling agent context about what each agent did.
+    # Build a unified response. For router/explore flows the answer is
+    # the key deliverable (a concise narrative); for planner/coding flows
+    # the agent summaries and git deliverables are what matters. Both are
+    # returned together — the caller can pick what it needs.
+    answer = _extract_primary_answer(summary, flow)
     summaries = _extract_agent_summaries(summary)
 
     # Fallback: if summary lacks push/PR data, check the stdout variables
@@ -377,6 +343,7 @@ async def execute_coding_task_pi(
         "success": pi_success,
         "run_id": run_id,
         "pi_coding_run_id": str(row.id),
+        "answer": answer,
         "summaries": summaries,
         "deliverables": {
             "pr_url": pr_url,
@@ -390,53 +357,51 @@ async def execute_coding_task_pi(
     }
 
 
-def _extract_explore_answer(summary: dict) -> str:
-    """Return ONLY the router's final answer for an explore run.
+def _extract_primary_answer(summary: dict, primary_agent: str) -> str:
+    """Return the primary agent's final narrative as the answer.
 
-    pi_agent's explore flow records each router attempt's end-of-turn
-    message as a narrative keyed "router/attempt-N". We take the LAST
-    non-empty one — that's the attempt that actually produced a
-    synthesised answer (earlier empty attempts triggered retries).
-    Explorer reports are an internal artifact, not the deliverable.
+    For router/explore flows the answer is a synthesised text answer.
+    For planner/coding flows the answer is the planner's build summary.
+    We take the LAST non-empty narrative from the primary agent.
     """
     narratives = summary.get("narratives") or []
-    router_attempts = [
+    agent_attempts = [
         n for n in narratives
-        if (n.get("agent") or "").startswith("router")
+        if (n.get("agent") or "").startswith(primary_agent)
         and (n.get("text") or "").strip()
     ]
-    if router_attempts:
-        return router_attempts[-1]["text"].strip()
+    if agent_attempts:
+        return agent_attempts[-1]["text"].strip()
     return ""
 
 
 def _extract_agent_summaries(summary: dict) -> dict[str, str]:
     """Extract agent summaries from the run summary.
 
-    pi_agent's TDD flow records each agent's summary as a narrative.
-    We extract these and return them as a map of agent name to summary.
-
-    The summary section is identified by the agent name (e.g., "planner",
-    "builder", "pusher").
+    Dynamically discovers which agents produced narratives and extracts
+    their final message as a summary. The summary section is identified
+    by the agent name prefix in each narrative key.
     """
     narratives = summary.get("narratives") or []
     summaries: dict[str, str] = {}
 
-    # Agents that produce summaries in the TDD flow
-    agent_names = ["planner", "builder", "pusher"]
+    # Dynamically discover which agents ran from the narratives
+    # Each narrative key is like "router/attempt-1", "planner/attempt-0", etc.
+    discovered_agents: set[str] = set()
+    for n in narratives:
+        agent_key = (n.get("agent") or "").split("/")[0]
+        if agent_key:
+            discovered_agents.add(agent_key)
 
-    for agent_name in agent_names:
-        # Find the last narrative from this agent
+    for agent_name in sorted(discovered_agents):
         agent_narratives = [
             n for n in narratives
             if (n.get("agent") or "").startswith(agent_name)
             and (n.get("text") or "").strip()
         ]
         if agent_narratives:
-            # Extract the summary section from the narrative text
-            # The narrative may have ## Summary section or be the summary itself
             text = agent_narratives[-1]["text"]
-            summary_match = text.split("## Summary")[1].split("##")[0].strip() if "## Summary" in text else text.strip()
-            summaries[agent_name] = summary_match
+            summary_text = text.split("## Summary")[1].split("##")[0].strip() if "## Summary" in text else text.strip()
+            summaries[agent_name] = summary_text
 
     return summaries

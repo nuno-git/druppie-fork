@@ -216,6 +216,30 @@ async def get_run_by_tool_call(
     return _view_payload(row, since=since)
 
 
+@router.get("/by-session/{session_id}")
+async def get_run_by_session(
+    session_id: UUID,
+    since: int = Query(0, ge=0, description="Return only events with index >= since"),
+    db: DBSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+) -> dict:
+    """Fetch the latest pi_coding_run for a given session.
+
+    Used by the developer page history to re-view past runs without
+    needing to search through the session's timeline for tool calls.
+    """
+    row: PiCodingRun | None = (
+        db.query(PiCodingRun)
+        .filter(PiCodingRun.session_id == session_id)
+        .order_by(PiCodingRun.created_at.desc())
+        .first()
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"no pi_coding_run for session {session_id}")
+    _authorize_view(row, user)
+    return _view_payload(row, since=since)
+
+
 @router.post("/{run_id}/stop")
 async def stop_run(
     run_id: str,

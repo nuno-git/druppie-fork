@@ -270,12 +270,11 @@ BUILTIN_TOOL_DEFS: dict[str, dict] = {
                     },
                     "flow": {
                         "type": "string",
-                        "enum": ["tdd", "explore"],
                         "description": (
-                            "Which pi_agent flow to run. "
-                            "'tdd' (default): plan → build → push. Writes code. "
-                            "'explore': router agent in a sandboxed clone that can fan out parallel "
-                            "explorer subagents to answer questions read-only. No commits, no PR."
+                            "Which pi_agent flow/agent to run. "
+                            "Use 'planner' for TDD/coding (plan → build → push). "
+                            "Use 'router' for exploration (read-only investigation). "
+                            "Future: extend with new primary agents as they're added."
                         ),
                     },
                     "repo_target": {

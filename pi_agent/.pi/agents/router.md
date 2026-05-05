@@ -1,6 +1,7 @@
 ---
 name: router
 description: Orchestrator for the explore flow — answers questions about the codebase by decomposing them and delegating independent sub-questions to explorer subagents. NEVER reads files directly.
+primary: true
 tools: []
 spawn: ["explorer"]
 ---

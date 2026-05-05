@@ -1,6 +1,7 @@
 ---
 name: planner
 description: Creates a build plan and spawns builder agents to execute it. For fix iterations, creates targeted fix plans from verification failures.
+primary: true
 tools: read,bash,grep,find,ls
 model: zai/glm-5.1
 spawn: ["builder", "pusher"]

@@ -204,16 +204,10 @@ class PiAgentRunner:
 
         repo_url = self._build_repo_url()
 
-        agent_name = self.agent_name
-        if agent_name == "tdd":
-            agent_name = "planner"
-        elif agent_name == "explore":
-            agent_name = "router"
-
         cmd = [
             "node", str(PI_AGENT_CLI),
             "run-agent",
-            "--agent", agent_name,
+            "--agent", self.agent_name,
             "--prompt", self.task_prompt,
             "--workdir", str(self.session_dir),
             "--sandbox-launch",
