@@ -44,7 +44,7 @@ from druppie.testing.assertions import AssertionResult, match_assertions
 from druppie.testing.bounded_orchestrator import BoundedOrchestrator
 from druppie.testing.hitl_simulator import HITLSimulator
 from druppie.testing.judge_runner import JudgeCheckResult, JudgeRunner
-from druppie.testing.loaders import CheckLoader, ProfileLoader, ToolTestLoader
+from druppie.testing.loaders import CheckLoader, ProfileLoader, ToolTestLoader, YAMLLoadError, _load_yaml_file
 from druppie.testing.schema import (
     AgentTestDefinition,
     AgentTestFile,
@@ -118,16 +118,16 @@ class TestRunner:
         return clone
 
     def load_agent_test(self, path: Path) -> AgentTestDefinition:
-        data = yaml.safe_load(path.read_text())
+        data = _load_yaml_file(path)
         return AgentTestFile(**data).agent_test
 
     def load_tool_test(self, path: Path) -> ToolTestDefinition:
-        data = yaml.safe_load(path.read_text())
+        data = _load_yaml_file(path)
         return ToolTestFile(**data).tool_test
 
     def load_test(self, path: Path) -> AgentTestDefinition | ToolTestDefinition:
         """Load a test from any path, detecting type from content."""
-        data = yaml.safe_load(path.read_text())
+        data = _load_yaml_file(path)
         if "tool-test" in data:
             return ToolTestFile(**data).tool_test
         elif "agent-test" in data:
