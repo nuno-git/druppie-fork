@@ -273,15 +273,25 @@ class PiAgentRunner:
                     "push": None,
                     "pr": None,
                 }
-            elif summary is None and exit_code != 0:
-                summary = {
-                    "success": False,
-                    "errors": [f"Agent exited with code {exit_code}"],
-                    "narratives": [],
-                    "commits": [],
-                    "push": None,
-                    "pr": None,
-                }
+            elif summary is None:
+                if exit_code != 0:
+                    summary = {
+                        "success": False,
+                        "errors": [f"Agent exited with code {exit_code}"],
+                        "narratives": [],
+                        "commits": [],
+                        "push": None,
+                        "pr": None,
+                    }
+                else:
+                    summary = {
+                        "success": False,
+                        "errors": ["Agent exited with code 0 but produced no summary"],
+                        "narratives": [],
+                        "commits": [],
+                        "push": None,
+                        "pr": None,
+                    }
 
             stdout_tail = stdout_text[-_TAIL_BYTES:]
 
@@ -297,6 +307,7 @@ class PiAgentRunner:
                 "summary": summary,
                 "stdout_tail": stdout_tail,
                 "stderr_tail": stderr_tail,
+                "variables": (stdout_result or {}).get("variables", {}),
             }
         finally:
             # Always unregister the process, even on error
@@ -329,10 +340,27 @@ class PiAgentRunner:
     def _load_summary(self) -> dict | None:
         """Load RunSummary from the journal directory.
 
-        The journal writes summary.json to PI_AGENT_ROOT/sessions/runs/<timestamp>/
+        Two possible locations:
+        1. PI_AGENT_ROOT/dist/sessions/runs/<timestamp>/
+        or PI_AGENT_ROOT/sessions/runs/
         (not self.session_dir which is PI_AGENT_SESSIONS_DIR/<run_id>/).
         """
-        # Check journal directory: PI_AGENT_ROOT/sessions/runs/<timestamp>/summary.json
+        # Check both possible journal directories
+        candidates_dir = PI_AGENT_ROOT / "dist" / "sessions" / "runs"
+        if candidates_dir.exists():
+            summaries = sorted(
+                candidates_dir.glob("*/summary.json"),
+                key=lambda p: p.stat().st_mtime,
+                reverse=True,
+            )
+            cutoff = time.time() - 300
+            for candidate in summaries[:5]:
+                if candidate.stat().st_mtime >= cutoff:
+                    try:
+                        return json.loads(candidate.read_text())
+                    except json.JSONDecodeError:
+                        continue
+        # Fallback: PI_AGENT_ROOT/sessions/runs/<timestamp>/summary.json
         runs_dir = PI_AGENT_ROOT / "sessions" / "runs"
         if runs_dir.exists():
             # Find the most recent summary (journal dirs are ISO-timestamped)

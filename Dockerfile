@@ -36,7 +36,7 @@ COPY druppie/ /app/druppie/
 COPY pi_agent/package.json pi_agent/package-lock.json /app/pi_agent/
 RUN cd /app/pi_agent && npm ci --ignore-scripts || npm install --ignore-scripts
 COPY pi_agent/ /app/pi_agent/
-RUN cd /app/pi_agent && rm -rf dist && npx tsc && npm prune --omit=dev
+RUN cd /app/pi_agent && npm run build && npm prune --omit=dev
 
 # Set environment variables
 ENV PYTHONPATH=/app

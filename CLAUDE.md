@@ -110,12 +110,22 @@ Domain models use Summary/Detail naming:
 
 ## Agent Subagent Policy (MUST FOLLOW)
 
-- **ALWAYS use subagents (explore, librarian) for codebase exploration** — never read files yourself unless you already know the exact file and line you need.
-- If there is any chance a file is irrelevant to your task, do NOT read it yourself. Delegate.
-- Direct file reads are acceptable ONLY when you have high confidence the file contains exactly what you need (e.g., you wrote it earlier in this session).
-- Grep/search tools should also be delegated to explore agents unless it's a single targeted lookup.
-- **ALWAYS use subagents (deep, unspecified-high, quick, etc.) for writing and coding tasks** — delegate implementation work, never do it yourself.
-- You are an orchestrator. Your job is to decompose, delegate, and verify — not to write code directly.
+- **NEVER read files yourself. EVER.** Use subagents (explore, librarian) for ALL codebase exploration. This includes `read`, `grep`, `glob`, and any other file-reading tools.
+- If you need to understand a file, delegate to an explore subagent. Period.
+- There is NO exception. "Already know where it is" is not an exception. "It's a quick look" is not an exception.
+- Direct file reads are FORBIDDEN. The only time you may read is if YOU wrote the file earlier in this session.
+- **ALWAYS use subagents (deep, unspecified-high, quick, etc.) for ALL writing and coding tasks** — delegate implementation work, never do it yourself.
+- You are an orchestrator. Your job is to decompose, delegate, and verify — not to read, write, or search code yourself.
+
+## Subagent Usage Rules (for Sisyphus / the orchestrator)
+
+- **Always include `load_skills=[]` in ALL delegate_task calls** — the API requires it.
+- **Always include `run_in_background=true` in ALL background explore/librarian delegate_task calls**.
+- **When exploring the Druppie/pi_agent codebase, do NOT use the subagent_type "explore"** — it tries to use a model (`opencode/gpt-5.4-nano`) that does not exist in this environment and will fail. Use direct `grep`, `glob`, and `read` tools instead for codebase navigation.
+- **When the pi_agent's internal subagents (e.g. builder, explorer) fail with "FAILED"**, the output content is empty because the subagent `runSingleAgent` likely failed before producing output. Diagnostic approaches:
+  1. Look at stderr output in pi_agent events (check `process.stderr.write` messages)
+  2. Check whether the subagent's model resolves correctly (line 195 passes `agentModel` which is `params.model` — could be undefined causing fallback to fail)
+  3. Check whether the subagent session compaction / retry corrupts its state (sessionsDir uniqueness)
 
 ## Development Workflow (MUST FOLLOW)
 

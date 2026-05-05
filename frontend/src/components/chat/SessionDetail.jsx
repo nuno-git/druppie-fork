@@ -692,11 +692,12 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
     e => e.type === 'agent_run' && e.agent_run?.status === 'running'
   )
 
-  // Check if there are actually executing tool calls (not failed ones)
   // If all tool calls are failed, don't show "Stopping..." even if agent_run is "running"
   const hasActuallyRunningToolCall = data?.timeline?.some(
-    e => e.type === 'agent_run' && e.agent_run?.tool_calls?.some(
-      tc => tc.status === 'executing' || tc.status === 'waiting_approval' || tc.status === 'waiting_sandbox'
+    e => e.type === 'agent_run' && (e.agent_run?.llm_calls || []).some(
+      llm => (llm.tool_calls || []).some(
+        tc => tc.status === 'executing' || tc.status === 'waiting_approval' || tc.status === 'waiting_sandbox'
+      )
     )
   )
 

@@ -101,7 +101,7 @@ async def _resolve_gitea_credentials(repo_owner: str, repo_name: str, run_id: st
         repo_owner=repo_owner,
         repo_name=repo_name,
     )
-    return creds, creds.get("user_id")
+    return creds, creds.get("username")
 
 
 def _resolve_llm_credentials() -> dict:
@@ -309,9 +309,9 @@ async def execute_coding_task_pi(
             row.summary = json.dumps(summary)
         if not row.status or row.status == "running":
             row.status = "succeeded" if summary.get("success") else "failed"
-        if summary.get("pr", {}).get("url"):
+        if (summary.get("pr") or {}).get("url"):
             row.pr_url = summary["pr"]["url"]
-            row.pr_number = summary["pr"].get("number")
+            row.pr_number = (summary.get("pr") or {}).get("number")
     else:
         row.status = "failed" if exit_code != 0 else "succeeded"
     if row.status in ("succeeded", "failed") and row.completed_at is None:
@@ -363,14 +363,24 @@ async def execute_coding_task_pi(
     # The summaries give the calling agent context about what each agent did.
     summaries = _extract_agent_summaries(summary)
 
+    # Fallback: if summary lacks push/PR data, check the stdout variables
+    # (_branch, _pr_url are set by run-agent.ts after git ops).
+    variables = result.get("variables", {})
+    branch = (summary.get("push") or {}).get("branch") or row.branch_name
+    if not branch:
+        branch = variables.get("_branch")
+    pr_url = row.pr_url
+    if not pr_url:
+        pr_url = variables.get("_pr_url")
+
     return {
         "success": pi_success,
         "run_id": run_id,
         "pi_coding_run_id": str(row.id),
         "summaries": summaries,
         "deliverables": {
-            "pr_url": row.pr_url,
-            "branch": summary.get("push", {}).get("branch") or row.branch_name,
+            "pr_url": pr_url,
+            "branch": branch,
             "commits": [
                 {"sha": c.get("sha"), "message": c.get("message")}
                 for c in (summary.get("commits") or [])
@@ -406,14 +416,14 @@ def _extract_agent_summaries(summary: dict) -> dict[str, str]:
     pi_agent's TDD flow records each agent's summary as a narrative.
     We extract these and return them as a map of agent name to summary.
 
-    The summary section is identified by the agent name (e.g., "analyst",
-    "planner", "wave-orchestrator", "verifier", "pr-author").
+    The summary section is identified by the agent name (e.g., "planner",
+    "builder", "pusher").
     """
     narratives = summary.get("narratives") or []
     summaries: dict[str, str] = {}
 
     # Agents that produce summaries in the TDD flow
-    agent_names = ["analyst", "planner", "wave-orchestrator", "verifier", "pr-author"]
+    agent_names = ["planner", "builder", "pusher"]
 
     for agent_name in agent_names:
         # Find the last narrative from this agent

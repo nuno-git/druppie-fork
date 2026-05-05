@@ -1,11 +1,4 @@
 #!/usr/bin/env node
-/**
- * CLI entrypoint for the one-shot TDD agent.
- *
- * All tool operations run inside a Kata microVM. The pi orchestrator
- * and LLM credentials stay on the host. The final push happens from a
- * separate throwaway container that only sees the bundle and the token.
- */
 import { mkdirSync, readFileSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -13,7 +6,6 @@ import { fileURLToPath } from "node:url";
 import { runSingleAgent, type SingleAgentParams, type SingleAgentResult } from "./run-agent.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-/** Project root = parent of dist/ where the CLI lives */
 const PROJECT_ROOT = resolve(__dirname, "..");
 
 interface RunAgentArgs {

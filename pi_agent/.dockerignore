@@ -1,0 +1,32 @@
+# Build artifacts
+dist/
+node_modules/
+
+# Runtime / state
+.env
+sessions/
+*.jsonl
+
+# IDE / OS
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Git
+.git/
+.gitignore
+
+# Docker
+Dockerfile
+.dockerignore
+
+# Docs / examples (not needed at runtime)
+docs/
+examples/
+
+# Large generated files
+*.tgz
+*.tar.gz

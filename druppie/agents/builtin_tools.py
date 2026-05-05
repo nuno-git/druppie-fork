@@ -273,7 +273,7 @@ BUILTIN_TOOL_DEFS: dict[str, dict] = {
                         "enum": ["tdd", "explore"],
                         "description": (
                             "Which pi_agent flow to run. "
-                            "'tdd' (default): analyst → plan → build → verify → PR. Writes code. "
+                            "'tdd' (default): plan → build → push. Writes code. "
                             "'explore': router agent in a sandboxed clone that can fan out parallel "
                             "explorer subagents to answer questions read-only. No commits, no PR."
                         ),

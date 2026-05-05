@@ -1,32 +1,16 @@
-/**
- * Tiny HTTP client for the sandbox daemon.
- *
- * Talks over a unix socket (default) or HTTP host:port. Provides both
- * async (native `fetch` with undici agent) and sync (`curl --unix-socket`)
- * variants — a handful of pi tools (ls/grep/find) call their operations
- * synchronously and can't be made async without rewriting them.
- *
- * Auth: Bearer token on every request. The daemon rejects 401 otherwise.
- */
 import { execFileSync } from "node:child_process";
 import { Agent, fetch as undiciFetch } from "undici";
-
-export interface SandboxEndpoint {
-  socketPath?: string;
-  host?: string;
-  port?: number;
-  authToken: string;
-}
+import type { SandboxEndpoint } from "./types.js";
 
 export class SandboxClient {
   private readonly agent: Agent;
   private readonly baseUrl: string;
+  private readonly endpoint: SandboxEndpoint;
 
-  constructor(private readonly endpoint: SandboxEndpoint) {
+  constructor(endpoint: SandboxEndpoint) {
+    this.endpoint = endpoint;
     if (endpoint.socketPath) {
-      this.agent = new Agent({
-        connect: { socketPath: endpoint.socketPath },
-      });
+      this.agent = new Agent({ connect: { socketPath: endpoint.socketPath } });
       this.baseUrl = "http://sandbox";
     } else if (endpoint.host) {
       this.agent = new Agent();
@@ -34,6 +18,10 @@ export class SandboxClient {
     } else {
       throw new Error("SandboxClient: socketPath or host is required");
     }
+  }
+
+  getEndpoint(): SandboxEndpoint {
+    return this.endpoint;
   }
 
   async post<T = unknown>(path: string, body: unknown, signal?: AbortSignal): Promise<T> {
@@ -68,7 +56,6 @@ export class SandboxClient {
     return (await res.json()) as T;
   }
 
-  /** Stream an exec response. Calls onData on every stdout/stderr chunk, resolves with the exit info. */
   async execStream(
     body: { command: string; cwd?: string; timeout?: number },
     onData: (chunk: Buffer, kind: "stdout" | "stderr") => void,
@@ -93,11 +80,11 @@ export class SandboxClient {
     let buf = "";
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
+
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
       buf += decoder.decode(value, { stream: true });
-      // SSE frames separated by blank line
       let idx: number;
       while ((idx = buf.indexOf("\n\n")) !== -1) {
         const frame = buf.slice(0, idx);
@@ -118,7 +105,7 @@ export class SandboxClient {
             exitInfo = payload;
           }
         } catch {
-          // ignore parse errors
+          // ignore SSE parse errors
         }
       }
     }
@@ -126,11 +113,9 @@ export class SandboxClient {
     return exitInfo;
   }
 
-  /** Synchronous POST via curl — needed for pi's sync tool ops (ls, grep, find). */
   postSync<T = unknown>(path: string, body: unknown): T {
     const args = [
-      "-sS",
-      "-X", "POST",
+      "-sS", "-X", "POST",
       "-H", "Content-Type: application/json",
       "-H", `Authorization: Bearer ${this.endpoint.authToken}`,
       "--data-binary", "@-",

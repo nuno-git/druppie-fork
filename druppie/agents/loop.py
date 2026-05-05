@@ -271,7 +271,7 @@ class AgentLoop:
             return
 
         ALL_FLOWS = {
-            "tdd": "analyst → plan → build → verify → PR. Writes code.",
+            "tdd": "plan → build → push. Writes code.",
             "explore": "router + parallel explorers in a sandboxed clone. Read-only, answers questions.",
         }
 

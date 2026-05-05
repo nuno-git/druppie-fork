@@ -1,6 +1,10 @@
 /**
- * Run journal — append-only timeline of every interesting event + a final
+ * Run journal — append-only file-based timeline of every event + a final
  * rolled-up summary. Writes journal.jsonl + summary.json on disk.
+ *
+ * When `ingestUrl` is provided, every event is also fire-and-forget POSTed
+ * to that endpoint (with `ingestToken` as a Bearer token) so the Druppie
+ * backend can ingest events into the database in real time.
  *
  * Directory layout under `sessions/runs/<iso>-<slug>/`:
  *   journal.jsonl       ← streaming events, one per line
@@ -11,34 +15,6 @@ import { createWriteStream, mkdirSync, writeFileSync, type WriteStream } from "n
 import { join } from "node:path";
 
 import type { TaskSpec } from "./types.js";
-
-// ── HTTP ingest (druppie mode) ──────────────────────────────────────────
-const INGEST_URL = process.env.PI_AGENT_INGEST_URL || "";
-const INGEST_TOKEN = process.env.PI_AGENT_INGEST_TOKEN || "";
-
-/** Fire-and-forget POST a single event to the druppie backend. */
-function postEvent(event: Record<string, unknown>): void {
-  if (!INGEST_URL) return;
-  fetch(INGEST_URL, {
-    method: "POST",
-    headers: { "content-type": "application/json", authorization: `Bearer ${INGEST_TOKEN}` },
-    body: JSON.stringify(event),
-  }).catch(() => { /* swallow — journal must not throw on network errors */ });
-}
-
-/** POST the final summary to the druppie backend. */
-async function postSummary(summary: Record<string, unknown>): Promise<void> {
-  if (!INGEST_URL) return;
-  // Summary goes to the sibling /summary endpoint
-  const summaryUrl = INGEST_URL.replace(/\/events\/?$/, "/summary");
-  try {
-    await fetch(summaryUrl, {
-      method: "POST",
-      headers: { "content-type": "application/json", authorization: `Bearer ${INGEST_TOKEN}` },
-      body: JSON.stringify(summary),
-    });
-  } catch { /* swallow */ }
-}
 
 // ── Event shape ────────────────────────────────────────────────────────────
 
@@ -108,6 +84,8 @@ interface AgentNarrative {
 export class Journal {
   private readonly stream: WriteStream;
   private readonly startMs: number;
+  private readonly ingestUrl?: string;
+  private readonly ingestToken?: string;
   private readonly agents = new Map<string, AgentStats>();
   private readonly phases: PhaseRecord[] = [];
   private readonly commits: Array<{ phase: string; sha: string; message: string }> = [];
@@ -120,17 +98,34 @@ export class Journal {
   private pushResult?: { ok: boolean; branch?: string };
   private prResult?: { action: string; number?: number; url?: string };
 
-  constructor(public readonly dir: string, task: TaskSpec) {
+  constructor(public readonly dir: string, task: TaskSpec, ingestUrl?: string, ingestToken?: string) {
     mkdirSync(dir, { recursive: true });
     this.stream = createWriteStream(join(dir, "journal.jsonl"), { flags: "a" });
     this.startMs = Date.now();
+    this.ingestUrl = ingestUrl;
+    this.ingestToken = ingestToken;
     this.write("run_start", { task });
   }
 
   write(type: string, data: Record<string, unknown> = {}): void {
     const event = { ts: new Date().toISOString(), elapsedMs: Date.now() - this.startMs, type, ...data };
     this.stream.write(JSON.stringify(event) + "\n");
-    void postEvent(event as Record<string, unknown>);
+    this._ingest(type, event);
+  }
+
+  /** Fire-and-forget POST the event to the ingest endpoint. Never throws. */
+  private _ingest(_type: string, event: Record<string, unknown>): void {
+    if (!this.ingestUrl) return;
+    fetch(this.ingestUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(this.ingestToken ? { Authorization: `Bearer ${this.ingestToken}` } : {}),
+      },
+      body: JSON.stringify(event),
+    }).catch(() => {
+      /* fire-and-forget — ignore network errors */
+    });
   }
 
   // ── Sandbox lifecycle ────────────────────────────────────────────────────
@@ -346,7 +341,6 @@ export class Journal {
     await new Promise<void>((resolve, reject) => {
       this.stream.end((err?: Error | null) => (err ? reject(err) : resolve()));
     });
-    await postSummary(summary as unknown as Record<string, unknown>);
     return { summaryPath, summary };
   }
 }

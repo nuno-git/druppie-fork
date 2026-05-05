@@ -80,7 +80,11 @@ async def ingest_event(
     elif etype == "pr_ensured":
         row.pr_url = last.get("url") or row.pr_url
         row.pr_number = last.get("number") or row.pr_number
-    elif etype == "run_end":
+    elif etype == "run_end" and row.status == "running":
+        # Only the first run_end sets the status. Subagents also fire run_end
+        # via the same ingest endpoint, and their events can arrive out of order
+        # (fire-and-forget fetch) — we must not let a subagent's failure
+        # overwrite the outer agent's success status.
         row.status = "succeeded" if last.get("success") else "failed"
         row.completed_at = datetime.now(timezone.utc)
 
@@ -107,9 +111,9 @@ async def ingest_summary(
         raise HTTPException(status_code=404, detail=f"pi_coding_run {run_id} not found")
 
     row.summary = json.dumps(summary)
-    if summary.get("pr", {}).get("url"):
+    if (summary.get("pr") or {}).get("url"):
         row.pr_url = summary["pr"]["url"]
-        row.pr_number = summary["pr"].get("number")
+        row.pr_number = (summary.get("pr") or {}).get("number")
     row.status = "succeeded" if summary.get("success") else "failed"
     row.completed_at = datetime.now(timezone.utc)
     db.add(row)

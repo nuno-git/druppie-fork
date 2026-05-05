@@ -1,13 +1,17 @@
 /**
- * SandboxGitOps — matches the surface of src/git.ts but runs every git
- * command inside the sandbox via the daemon's /exec endpoint. This means
- * the sandbox's local VM disk is the one and only source of truth for the
- * working tree; the host never clones, checks out, or inspects the workspace.
+ * Git operations inside the sandbox via the daemon's /exec and /bundle endpoints.
+ * The host never clones, checks out, or inspects the workspace directly.
  */
-import type { GitLike, GitInitOptions } from "../git.js";
-import type { SandboxClient } from "./client.js";
+import type { SandboxClient } from "./sandbox-client.js";
 
-export class SandboxGitOps implements GitLike {
+export interface GitInitOptions {
+  userName?: string;
+  userEmail?: string;
+  branch?: string;
+  remoteUrl?: string;
+}
+
+export class SandboxGitOps {
   constructor(
     private readonly client: SandboxClient,
     private readonly relCwd: string = "",
@@ -17,7 +21,10 @@ export class SandboxGitOps implements GitLike {
     const chunks: Buffer[] = [];
     const result = await this.client.execStream(
       { command: cmd, cwd: this.relCwd || undefined, timeout: 60 },
-      (buf) => chunks.push(buf),
+      (buf, kind) => {
+        if (kind === "stdout") chunks.push(buf);
+        else chunks.push(buf); // stderr too for error messages
+      },
     );
     const out = Buffer.concat(chunks).toString("utf-8").trim();
     if (result.exitCode !== 0) {
@@ -63,18 +70,16 @@ export class SandboxGitOps implements GitLike {
     return this.run("git branch --show-current");
   }
 
-  /** Rename the current branch in-place. */
   async renameCurrentBranch(newName: string): Promise<void> {
     await this.run(`git branch -m ${shellQuote(newName)}`);
   }
 
-  /** List commits on the current branch that aren't on `baseRef`. Newest first. */
   async listNewCommits(baseRef: string): Promise<Array<{ sha: string; message: string }>> {
     const out = await this.run(`git log --pretty=format:%h%x00%s ${shellQuote(baseRef)}..HEAD`);
     if (!out) return [];
     return out.split("\n").map((line) => {
       const [sha, message] = line.split("\0");
-      return { sha, message };
+      return { sha: sha ?? "", message: message ?? "" };
     });
   }
 
