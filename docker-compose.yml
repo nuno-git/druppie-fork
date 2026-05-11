@@ -39,14 +39,14 @@ services:
 
   druppie-db:
     image: postgres:15-alpine
-    container_name: druppie-new-db
+    container_name: druppie-prod-db
     profiles: [infra, dev, prod, reset-db]
     environment:
       POSTGRES_DB: druppie
       POSTGRES_USER: druppie
       POSTGRES_PASSWORD: ${DRUPPIE_DB_PASSWORD:-druppie_secret}
     volumes:
-      - druppie_new_postgres:/var/lib/postgresql/data
+      - druppie_prod_postgres:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "druppie"]
       interval: 5s
@@ -55,43 +55,43 @@ services:
     ports:
       - "${DRUPPIE_DB_PORT:-5533}:5432"
     networks:
-      - druppie-new-network
+      - druppie-prod-network
 
   keycloak-db:
     image: postgres:15-alpine
-    container_name: druppie-new-keycloak-db
+    container_name: druppie-prod-keycloak-db
     profiles: [infra, dev, prod]
     environment:
       POSTGRES_DB: keycloak
       POSTGRES_USER: keycloak
       POSTGRES_PASSWORD: ${KEYCLOAK_DB_PASSWORD:-keycloak_secret}
     volumes:
-      - druppie_new_keycloak_postgres:/var/lib/postgresql/data
+      - druppie_prod_keycloak_postgres:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "keycloak"]
       interval: 5s
       timeout: 5s
       retries: 10
     networks:
-      - druppie-new-network
+      - druppie-prod-network
 
   gitea-db:
     image: postgres:15-alpine
-    container_name: druppie-new-gitea-db
+    container_name: druppie-prod-gitea-db
     profiles: [infra, dev, prod]
     environment:
       POSTGRES_DB: gitea
       POSTGRES_USER: gitea
       POSTGRES_PASSWORD: ${GITEA_DB_PASSWORD:-gitea_secret}
     volumes:
-      - druppie_new_gitea_postgres:/var/lib/postgresql/data
+      - druppie_prod_gitea_postgres:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "gitea"]
       interval: 5s
       timeout: 5s
       retries: 10
     networks:
-      - druppie-new-network
+      - druppie-prod-network
 
   # ===========================================================================
   # KEYCLOAK (Identity Provider)
@@ -99,7 +99,7 @@ services:
 
   keycloak:
     image: quay.io/keycloak/keycloak:24.0
-    container_name: druppie-new-keycloak
+    container_name: druppie-prod-keycloak
     profiles: [infra, dev, prod]
     environment:
       KC_DB: postgres
@@ -109,9 +109,8 @@ services:
       KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN:-admin}
       KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
       KC_HOSTNAME: ${EXTERNAL_HOST:-localhost}
-      KC_HOSTNAME_PORT: ${KEYCLOAK_PORT:-8180}
       KC_HOSTNAME_STRICT: "false"
-      KC_HOSTNAME_STRICT_HTTPS: "false"
+      KC_HOSTNAME_STRICT_HTTPS: ${KC_HOSTNAME_STRICT_HTTPS:-false}
       KC_HTTP_ENABLED: "true"
       KC_PROXY: edge
       KC_HEALTH_ENABLED: "true"
@@ -133,7 +132,7 @@ services:
       retries: 15
       start_period: 60s
     networks:
-      - druppie-new-network
+      - druppie-prod-network
 
   # ===========================================================================
   # GITEA (Git Server)
@@ -141,7 +140,7 @@ services:
 
   gitea:
     image: gitea/gitea:1.21
-    container_name: druppie-new-gitea
+    container_name: druppie-prod-gitea
     profiles: [infra, dev, prod]
     environment:
       USER_UID: 1000
@@ -151,7 +150,7 @@ services:
       GITEA__database__NAME: gitea
       GITEA__database__USER: gitea
       GITEA__database__PASSWD: ${GITEA_DB_PASSWORD:-gitea_secret}
-      GITEA__server__ROOT_URL: http://${EXTERNAL_HOST:-localhost}:${GITEA_PORT:-3100}/
+      GITEA__server__ROOT_URL: ${GITEA_PUBLIC_URL:-http://${EXTERNAL_HOST:-localhost}:${GITEA_PORT:-3100}}
       GITEA__server__HTTP_PORT: 3000
       GITEA__server__DOMAIN: ${EXTERNAL_HOST:-localhost}
       GITEA__security__INSTALL_LOCK: "true"
@@ -160,7 +159,7 @@ services:
       GITEA__oauth2_client__ENABLE_AUTO_REGISTRATION: "true"
       GITEA__oauth2_client__USERNAME: email
     volumes:
-      - druppie_new_gitea:/data
+      - druppie_prod_gitea:/data
     ports:
       - "${GITEA_PORT:-3100}:3000"
       - "${GITEA_SSH_PORT:-2223}:22"
@@ -174,7 +173,7 @@ services:
       retries: 10
       start_period: 30s
     networks:
-      - druppie-new-network
+      - druppie-prod-network
 
   # ===========================================================================
   # MCP SERVERS (Microservices)
@@ -184,7 +183,7 @@ services:
     build:
       context: ./druppie/mcp-servers
       dockerfile: module-coding/Dockerfile
-    container_name: druppie-module-coding
+    container_name: druppie-prod-module-coding
     profiles: [infra, dev, prod]
     environment:
       WORKSPACE_ROOT: /workspaces
@@ -198,7 +197,7 @@ services:
       BACKEND_URL: http://druppie-backend:8000
       INTERNAL_API_KEY: ${INTERNAL_API_KEY:-druppie-internal-secret-key}
     volumes:
-      - druppie_new_workspace:/workspaces
+      - druppie_prod_workspace:/workspaces
     ports:
       - "${MCP_CODING_PORT:-9001}:9001"
     depends_on:
@@ -207,7 +206,7 @@ services:
       sandbox-control-plane:
         condition: service_healthy
     networks:
-      - druppie-new-network
+      - druppie-prod-network
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9001/health"]
       interval: 10s
@@ -219,17 +218,17 @@ services:
     build:
       context: ./druppie/mcp-servers
       dockerfile: module-docker/Dockerfile
-    container_name: druppie-module-docker
+    container_name: druppie-prod-module-docker
     profiles: [infra, dev, prod]
     environment:
       MCP_PORT: "9002"
       WORKSPACE_ROOT: /workspaces
-      DOCKER_NETWORK: druppie-new-network
-      DRUPPIE_URL: ${DRUPPIE_URL:-http://druppie-new-backend:8000}
+      DOCKER_NETWORK: druppie-prod-network
+      DRUPPIE_URL: ${DRUPPIE_URL:-http://druppie-prod-backend:8000}
       DRUPPIE_MODULE_API_TOKEN: ${DRUPPIE_MODULE_API_TOKEN:-}
       DEEPINFRA_API_KEY: ${DEEPINFRA_API_KEY:-}
     volumes:
-      - druppie_new_workspace:/workspaces
+      - druppie_prod_workspace:/workspaces
       - type: bind
         source: ${DOCKER_SOCK:-/var/run/docker.sock}
         target: /var/run/docker.sock
@@ -239,7 +238,7 @@ services:
     ports:
       - "${MCP_DOCKER_PORT:-9002}:9002"
     networks:
-      - druppie-new-network
+      - druppie-prod-network
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9002/health"]
       interval: 10s
@@ -251,17 +250,17 @@ services:
     build:
       context: ./druppie/mcp-servers
       dockerfile: module-filesearch/Dockerfile
-    container_name: druppie-module-filesearch
+    container_name: druppie-prod-module-filesearch
     profiles: [infra, dev, prod]
     environment:
       SEARCH_ROOT: /dataset
       MCP_PORT: "9004"
     volumes:
-      - druppie_new_dataset:/dataset
+      - druppie_prod_dataset:/dataset
     ports:
       - "${MCP_FILESEARCH_PORT:-9004}:9004"
     networks:
-      - druppie-new-network
+      - druppie-prod-network
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9004/health"]
       interval: 10s
@@ -273,7 +272,7 @@ services:
     build:
       context: ./druppie/mcp-servers
       dockerfile: module-archimate/Dockerfile
-    container_name: druppie-module-archimate
+    container_name: druppie-prod-module-archimate
     profiles: [infra, dev, prod]
     environment:
       MODELS_DIR: /models
@@ -283,7 +282,7 @@ services:
     ports:
       - "${MCP_ARCHIMATE_PORT:-9006}:9006"
     networks:
-      - druppie-new-network
+      - druppie-prod-network
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9006/health"]
       interval: 10s
@@ -295,17 +294,17 @@ services:
     build:
       context: ./druppie/mcp-servers
       dockerfile: module-web/Dockerfile
-    container_name: druppie-module-web
+    container_name: druppie-prod-module-web
     profiles: [infra, dev, prod]
     environment:
       SEARCH_ROOT: /dataset
       MCP_PORT: "9005"
     volumes:
-      - druppie_new_dataset:/dataset
+      - druppie_prod_dataset:/dataset
     ports:
       - "${MCP_WEB_PORT:-9005}:9005"
     networks:
-      - druppie-new-network
+      - druppie-prod-network
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9005/health"]
       interval: 10s
@@ -317,7 +316,7 @@ services:
     build:
       context: ./druppie/mcp-servers
       dockerfile: module-registry/Dockerfile
-    container_name: druppie-module-registry
+    container_name: druppie-prod-module-registry
     profiles: [infra, dev, prod]
     environment:
       DATA_DIR: /data
@@ -331,7 +330,7 @@ services:
     ports:
       - "${MCP_REGISTRY_PORT:-9007}:9007"
     networks:
-      - druppie-new-network
+      - druppie-prod-network
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9007/health"]
       interval: 10s
@@ -343,7 +342,7 @@ services:
     build:
       context: ./druppie/mcp-servers
       dockerfile: module-llm/Dockerfile
-    container_name: druppie-module-llm
+    container_name: druppie-prod-module-llm
     profiles: [infra, dev, prod]
     environment:
       MCP_PORT: "9008"
@@ -354,7 +353,7 @@ services:
     ports:
       - "${MCP_LLM_PORT:-9008}:9008"
     networks:
-      - druppie-new-network
+      - druppie-prod-network
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9008/health')"]
       interval: 10s
@@ -366,7 +365,7 @@ services:
     build:
       context: ./druppie/mcp-servers
       dockerfile: module-vision/Dockerfile
-    container_name: druppie-module-vision
+    container_name: druppie-prod-module-vision
     profiles: [infra, dev, prod]
     environment:
       MCP_PORT: "9011"
@@ -377,7 +376,7 @@ services:
     ports:
       - "${MCP_VISION_PORT:-9011}:9011"
     networks:
-      - druppie-new-network
+      - druppie-prod-network
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9011/health"]
       interval: 10s
@@ -418,7 +417,7 @@ services:
     build:
       context: ./background-agents
       dockerfile: packages/local-control-plane/Dockerfile
-    container_name: druppie-sandbox-control-plane
+    container_name: druppie-prod-sandbox-control-plane
     profiles: [infra, dev, prod]
     environment:
       PORT: 8787
@@ -432,8 +431,8 @@ services:
     volumes:
       - sandbox_data:/data
     networks:
-      - druppie-new-network
-      - druppie-sandbox-network  # Dual-network: sandbox containers reach control plane here
+      - druppie-prod-network
+      - druppie-prod-sandbox-network  # Dual-network: sandbox containers reach control plane here
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://localhost:8787/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
       interval: 10s
@@ -445,7 +444,7 @@ services:
     build:
       context: ./background-agents
       dockerfile: packages/local-sandbox-manager/Dockerfile
-    container_name: druppie-sandbox-manager
+    container_name: druppie-prod-sandbox-manager
     profiles: [infra, dev, prod]
     environment:
       MODAL_API_SECRET: ${SANDBOX_API_SECRET:-sandbox-dev-secret}
@@ -453,7 +452,7 @@ services:
       SANDBOX_IMAGE: open-inspect-sandbox:latest
       KATA_RUNTIME: ${KATA_RUNTIME:-io.containerd.kata.v2}
       CONTAINERD_NAMESPACE: ${CONTAINERD_NAMESPACE:-default}
-      DOCKER_NETWORK: druppie-sandbox-network  # Isolated network — sandboxes can only reach control plane
+      DOCKER_NETWORK: druppie-prod-sandbox-network  # Isolated network — sandboxes can only reach control plane
       DOCKER_MEMORY_LIMIT: ${SANDBOX_MEMORY_LIMIT:-4g}
       DOCKER_CPU_LIMIT: ${SANDBOX_CPU_LIMIT:-0}
       SANDBOX_CACHE_VOLUME: druppie_sandbox_dep_cache
@@ -468,7 +467,7 @@ services:
           create_host_path: false
       - sandbox_snapshots:/data/snapshots
     networks:
-      - druppie-new-network
+      - druppie-prod-network
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
       interval: 10s
@@ -496,7 +495,7 @@ services:
 
   adminer:
     image: adminer:latest
-    container_name: druppie-adminer
+    container_name: druppie-prod-adminer
     profiles: [infra, dev, prod]
     ports:
       - "${ADMINER_PORT:-8081}:8080"
@@ -507,7 +506,56 @@ services:
       druppie-db:
         condition: service_healthy
     networks:
-      - druppie-new-network
+      - druppie-prod-network
+
+  # ===========================================================================
+  # OAUTH2 PROXY (authentication gatekeeper)
+  # ===========================================================================
+  # Sits in front of the app via nginx auth_request.
+  # Redirects unauthenticated users to Keycloak login.
+  # Works in all browsers (no Basic Auth popup dependency).
+
+  oauth2-proxy:
+    image: quay.io/oauth2-proxy/oauth2-proxy:v7.8.1
+    container_name: druppie-prod-oauth2-proxy
+    profiles: [infra, dev, prod]
+    command:
+      - --provider=keycloak-oidc
+      - --skip-oidc-discovery=true
+      - --login-url=https://druppie.notitiemaker.nl/realms/druppie-gate/protocol/openid-connect/auth
+      - --redeem-url=http://keycloak:8080/realms/druppie-gate/protocol/openid-connect/token
+      - --oidc-jwks-url=http://keycloak:8080/realms/druppie-gate/protocol/openid-connect/certs
+      - --profile-url=http://keycloak:8080/realms/druppie-gate/protocol/openid-connect/userinfo
+      - --oidc-issuer-url=https://druppie.notitiemaker.nl/realms/druppie-gate
+      - --client-id=druppie-proxy
+      - --client-secret=${OAUTH2_PROXY_CLIENT_SECRET}
+      - --cookie-secret=${OAUTH2_PROXY_COOKIE_SECRET}
+      - --cookie-domain=.notitiemaker.nl
+      - --cookie-secure=true
+      - --cookie-samesite=lax
+      - --redirect-url=https://druppie.notitiemaker.nl/oauth2/callback
+      - --email-domain=*
+      - --skip-provider-button=true
+      - --upstream=static://200
+      - --http-address=0.0.0.0:4180
+      - --reverse-proxy=true
+      - --whitelist-domain=.druppie.notitiemaker.nl
+      - --allowed-role=platform-access
+      - --oidc-groups-claim=realm_access.roles
+      - --session-cookie-minimal=true
+    ports:
+      - "127.0.0.1:4180:4180"
+    depends_on:
+      keycloak:
+        condition: service_healthy
+    networks:
+      - druppie-prod-network
+    healthcheck:
+      test: ["CMD", "wget", "-qO", "/dev/null", "http://localhost:4180/ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
 
   # ===========================================================================
   # INITIALIZATION CONTAINER (one-time setup)
@@ -520,7 +568,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.init
-    container_name: druppie-init
+    container_name: druppie-prod-init
     profiles: [init, dev, prod]
     environment:
       # Keycloak config (internal Docker URLs)
@@ -540,6 +588,8 @@ services:
       GITEA_ADMIN_EMAIL: ${GITEA_ADMIN_EMAIL:-admin@druppie.local}
       KEYCLOAK_INTERNAL_URL: http://keycloak:8080
       KEYCLOAK_REALM: druppie
+      # Container name for Gitea (setup_gitea.py uses docker exec)
+      GITEA_CONTAINER: druppie-prod-gitea
       # Override .env path for setup_gitea.py token writing
       ENV_FILE: /project/.env
     volumes:
@@ -556,7 +606,7 @@ services:
       gitea:
         condition: service_healthy
     networks:
-      - druppie-new-network
+      - druppie-prod-network
     restart: "no"
 
   # ===========================================================================
@@ -567,7 +617,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: druppie-new-backend
+    container_name: druppie-prod-backend
     profiles: [dev]
     command: ["uvicorn", "druppie.api.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload", "--reload-dir", "druppie", "--reload-dir", "testing"]
     environment:
@@ -623,7 +673,7 @@ services:
       - ./druppie:/app/druppie
       - ./testing:/app/testing:ro
       - ./secrets:/app/secrets:ro
-      - druppie_new_workspace:/app/workspace
+      - druppie_prod_workspace:/app/workspace
       - type: bind
         source: ${DOCKER_SOCK:-/var/run/docker.sock}
         target: /var/run/docker.sock
@@ -639,7 +689,7 @@ services:
       gitea:
         condition: service_healthy
     networks:
-      - druppie-new-network
+      - druppie-prod-network
     extra_hosts:
       - "host.docker.internal:host-gateway"
     healthcheck:
@@ -657,14 +707,14 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: druppie-new-backend
+    container_name: druppie-prod-backend
     profiles: [prod]
     environment:
       ENVIRONMENT: ${ENVIRONMENT:-production}
       DATABASE_URL: postgresql://druppie:${DRUPPIE_DB_PASSWORD:-druppie_secret}@druppie-db:5432/druppie
       DEV_MODE: ${DEV_MODE:-false}
       KEYCLOAK_SERVER_URL: http://keycloak:8080
-      KEYCLOAK_ISSUER_URL: http://${EXTERNAL_HOST:-localhost}:${KEYCLOAK_PORT:-8180}
+      KEYCLOAK_ISSUER_URL: ${KEYCLOAK_PUBLIC_URL:-http://${EXTERNAL_HOST:-localhost}:${KEYCLOAK_PORT:-8180}}
       KEYCLOAK_REALM: druppie
       KEYCLOAK_CLIENT_ID: druppie-backend
       LLM_PROVIDER: ${LLM_PROVIDER:-zai}
@@ -679,8 +729,8 @@ services:
       FOUNDRY_API_KEY: ${FOUNDRY_API_KEY:-}
       FOUNDRY_MODEL: ${FOUNDRY_MODEL:-GPT-5-MINI}
       FOUNDRY_API_URL: ${FOUNDRY_API_URL:-}
-      CORS_ORIGINS: http://${EXTERNAL_HOST:-localhost}:${FRONTEND_PORT:-5273},http://localhost:5173
-      GITEA_URL: http://${EXTERNAL_HOST:-localhost}:${GITEA_PORT:-3100}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://${EXTERNAL_HOST:-localhost}:${FRONTEND_PORT:-5273},http://localhost:5173}
+      GITEA_URL: ${GITEA_PUBLIC_URL:-http://${EXTERNAL_HOST:-localhost}:${GITEA_PORT:-3100}}
       GITEA_INTERNAL_URL: http://gitea:3000
       GITEA_ADMIN_USER: ${GITEA_ADMIN_USER:-gitea_admin}
       GITEA_ADMIN_PASSWORD: ${GITEA_ADMIN_PASSWORD:-GiteaAdmin123}
@@ -707,7 +757,7 @@ services:
       DRUPPIE_REPO_NAME: ${DRUPPIE_REPO_NAME:-}
     volumes:
       - ./secrets:/app/secrets:ro
-      - druppie_new_workspace:/app/workspace
+      - druppie_prod_workspace:/app/workspace
       - type: bind
         source: ${DOCKER_SOCK:-/var/run/docker.sock}
         target: /var/run/docker.sock
@@ -723,7 +773,7 @@ services:
       gitea:
         condition: service_healthy
     networks:
-      - druppie-new-network
+      - druppie-prod-network
     extra_hosts:
       - "host.docker.internal:host-gateway"
     healthcheck:
@@ -741,7 +791,7 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile.dev
-    container_name: druppie-new-frontend
+    container_name: druppie-prod-frontend
     profiles: [dev]
     ports:
       - "${FRONTEND_PORT:-5273}:5173"
@@ -757,7 +807,7 @@ services:
       druppie-backend-dev:
         condition: service_healthy
     networks:
-      - druppie-new-network
+      - druppie-prod-network
 
   # ===========================================================================
   # FRONTEND - Production Mode
@@ -768,12 +818,12 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
       args:
-        VITE_API_URL: http://${EXTERNAL_HOST:-localhost}:${BACKEND_PORT:-8100}
-        VITE_KEYCLOAK_URL: http://${EXTERNAL_HOST:-localhost}:${KEYCLOAK_PORT:-8180}
+        VITE_API_URL: ${BACKEND_PUBLIC_URL:-http://${EXTERNAL_HOST:-localhost}:${BACKEND_PORT:-8100}}
+        VITE_KEYCLOAK_URL: ${KEYCLOAK_PUBLIC_URL:-http://${EXTERNAL_HOST:-localhost}:${KEYCLOAK_PORT:-8180}}
         VITE_KEYCLOAK_REALM: druppie
         VITE_KEYCLOAK_CLIENT_ID: druppie-frontend
-        VITE_GITEA_URL: http://${EXTERNAL_HOST:-localhost}:${GITEA_PORT:-3100}
-    container_name: druppie-new-frontend
+        VITE_GITEA_URL: ${GITEA_PUBLIC_URL:-http://${EXTERNAL_HOST:-localhost}:${GITEA_PORT:-3100}}
+    container_name: druppie-prod-frontend
     profiles: [prod]
     ports:
       - "${FRONTEND_PORT:-5273}:5173"
@@ -781,7 +831,7 @@ services:
       druppie-backend:
         condition: service_healthy
     networks:
-      - druppie-new-network
+      - druppie-prod-network
 
   # ===========================================================================
   # RESET SERVICES
@@ -792,7 +842,7 @@ services:
   # Keeps: users, user_roles, user_tokens (synced from Keycloak)
   reset-db:
     image: docker:cli
-    container_name: druppie-reset-db
+    container_name: druppie-prod-reset-db
     profiles: [reset-db]
     environment:
       PGPASSWORD: ${DRUPPIE_DB_PASSWORD:-druppie_secret}
@@ -809,9 +859,9 @@ services:
         echo "Preserving user tables (users, user_roles, user_tokens)"
         echo ""
         echo "Waiting for database..."
-        until docker exec druppie-new-db pg_isready -U druppie; do sleep 1; done
+        until docker exec druppie-prod-db pg_isready -U druppie; do sleep 1; done
         echo "Dropping application tables..."
-        docker exec druppie-new-db psql -U druppie -d druppie -c "
+        docker exec druppie-prod-db psql -U druppie -d druppie -c "
           DROP TABLE IF EXISTS sandbox_sessions CASCADE;
           DROP TABLE IF EXISTS tool_call_normalizations CASCADE;
           DROP TABLE IF EXISTS llm_retries CASCADE;
@@ -826,13 +876,13 @@ services:
         "
         echo ""
         echo "Restarting backend to recreate tables..."
-        docker restart druppie-new-backend 2>/dev/null || echo "Backend not running"
+        docker restart druppie-prod-backend 2>/dev/null || echo "Backend not running"
         echo ""
         echo "=== Database reset complete ==="
         echo "Application tables dropped. User accounts preserved."
         echo "Backend restarted - tables will be recreated automatically."
     networks:
-      - druppie-new-network
+      - druppie-prod-network
 
   # Full reset - removes ALL volumes and re-initializes
   # NOTE: This service runs with network_mode: host to avoid being stopped by docker compose down
@@ -840,7 +890,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.reset
-    container_name: druppie-reset-hard
+    container_name: druppie-prod-reset-hard
     profiles: [reset-hard]
     network_mode: host
     environment:
@@ -879,7 +929,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.reset
-    container_name: druppie-nuke
+    container_name: druppie-prod-nuke
     profiles: [nuke]
     network_mode: host
     environment:
@@ -903,7 +953,7 @@ services:
   # With reason: PURGE_REASON="suspected compromise" docker compose --profile reset-cache run --rm reset-cache
   reset-cache:
     image: docker:cli
-    container_name: druppie-reset-cache
+    container_name: druppie-prod-reset-cache
     profiles: [reset-cache]
     entrypoint: ["sh", "-c"]
     command:
@@ -913,7 +963,7 @@ services:
         echo "Reason: ${PURGE_REASON:-manual}"
         echo ""
         echo "Step 1: Stopping running sandbox containers..."
-        sandbox_ids=$(docker ps --filter "network=druppie-sandbox-network" -q)
+        sandbox_ids=$(docker ps --filter "network=druppie-prod-sandbox-network" -q)
         if [ -n "$sandbox_ids" ]; then
           echo "  Stopping sandbox(es)..."
           if ! docker stop -t 5 $sandbox_ids 2>/dev/null; then
@@ -960,7 +1010,7 @@ services:
     build:
       context: ./background-agents/packages/local-sandbox-manager
       dockerfile: Dockerfile.cache-scanner
-    container_name: druppie-cache-scanner
+    container_name: druppie-prod-cache-scanner
     profiles: [scan-cache]
     volumes:
       - sandbox_dep_cache:/cache:ro
@@ -971,39 +1021,41 @@ services:
 # =============================================================================
 
 volumes:
-  druppie_new_postgres:
-    name: druppie_new_postgres
-  druppie_new_keycloak_postgres:
-    name: druppie_new_keycloak_postgres
-  druppie_new_gitea_postgres:
-    name: druppie_new_gitea_postgres
-  druppie_new_gitea:
-    name: druppie_new_gitea
-  druppie_new_workspace:
-    name: druppie_new_workspace
-  druppie_new_dataset:
-    name: druppie_new_dataset
+  druppie_prod_postgres:
+    name: druppie_prod_postgres
+  druppie_prod_keycloak_postgres:
+    name: druppie_prod_keycloak_postgres
+  druppie_prod_gitea_postgres:
+    name: druppie_prod_gitea_postgres
+  druppie_prod_gitea:
+    name: druppie_prod_gitea
+  druppie_prod_workspace:
+    name: druppie_prod_workspace
+  druppie_prod_dataset:
+    name: druppie_prod_dataset
   druppie_init_marker:
-    name: druppie_init_marker
+    name: druppie_prod_init_marker
   sandbox_data:
-    name: druppie_sandbox_data
+    name: druppie_prod_sandbox_data
   sandbox_snapshots:
-    name: druppie_sandbox_snapshots
+    name: druppie_prod_sandbox_snapshots
   sandbox_dep_cache:
-    name: druppie_sandbox_dep_cache
+    name: druppie_prod_sandbox_dep_cache
   cache_scan_results:
-    name: druppie_cache_scan_results
+    name: druppie_prod_cache_scan_results
 
+# =============================================================================
+# VOLUMES
 # =============================================================================
 # NETWORKS
 # =============================================================================
 
 networks:
-  druppie-new-network:
-    name: druppie-new-network
+  druppie-prod-network:
+    name: druppie-prod-network
     driver: bridge
-  druppie-sandbox-network:
-    name: druppie-sandbox-network
+  druppie-prod-sandbox-network:
+    name: druppie-prod-sandbox-network
     driver: bridge
     # Isolated network for sandbox containers — only the control plane bridges both networks.
     # Prevents compromised sandboxes from reaching the database, Keycloak, Gitea, or backend directly.
