@@ -5,11 +5,14 @@ from datetime import datetime, timezone
 
 from sqlalchemy import or_, and_
 
-from .base import BaseRepository
-from ..domain import ApprovalDetail, ApprovalSummary, ApprovalHistoryList, PendingApprovalList, ApprovalStatus
+from ..core.gitea import get_gitea_client
 from ..db.models import Approval
 from ..db.models.project import Project as ProjectModel
 from ..db.models.session import Session as SessionModel
+
+from ..domain import ApprovalDetail, ApprovalHistoryList, ApprovalStatus, ApprovalSummary, PendingApprovalList
+
+from .base import BaseRepository
 
 
 class ApprovalRepository(BaseRepository):
@@ -160,10 +163,12 @@ class ApprovalRepository(BaseRepository):
         # Session owner for session_owner approvals + project repo_url for
         # the frontend's link-rewriting in FD/TD previews. One join does both.
         session_user_id = None
+        repo_name = None
+        repo_owner = None
         repo_url = None
         if approval.session_id:
             row = (
-                self.db.query(SessionModel.user_id, ProjectModel.repo_url)
+                self.db.query(SessionModel.user_id, ProjectModel.repo_name, ProjectModel.repo_owner)
                 .outerjoin(ProjectModel, SessionModel.project_id == ProjectModel.id)
                 .filter(SessionModel.id == approval.session_id)
                 .first()
@@ -171,7 +176,14 @@ class ApprovalRepository(BaseRepository):
             if row:
                 if approval.required_role == "session_owner":
                     session_user_id = row.user_id
-                repo_url = row.repo_url
+                repo_name = row.repo_name
+                repo_owner = row.repo_owner
+
+                # Resolve repo_url dynamically from repo_name + repo_owner
+                try:
+                    repo_url = get_gitea_client().get_public_url(repo_name, repo_owner)
+                except Exception:
+                    pass  # Leave repo_url as None if resolution fails
 
         return ApprovalDetail(
             # From ApprovalSummary
@@ -191,6 +203,8 @@ class ApprovalRepository(BaseRepository):
             rejection_reason=approval.rejection_reason,
             created_at=approval.created_at,
             session_user_id=session_user_id,
+            repo_name=repo_name,
+            repo_owner=repo_owner,
             repo_url=repo_url,
         )
 

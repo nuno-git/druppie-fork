@@ -1,18 +1,20 @@
 """Project repository for database access."""
 
 from uuid import UUID
+
 from sqlalchemy import func
 
 from .base import BaseRepository
-from ..domain import (
-    ProjectSummary,
-    ProjectDetail,
-    TokenUsage,
-    SessionSummary,
-    SessionStatus,
-)
+from ..core.gitea import get_gitea_client
 from ..db.models import Project, Session as SessionModel
 from ..db.models.user import User as UserModel
+from ..domain import (
+    ProjectDetail,
+    ProjectSummary,
+    SessionStatus,
+    SessionSummary,
+    TokenUsage,
+)
 
 
 class ProjectRepository(BaseRepository):
@@ -96,16 +98,23 @@ class ProjectRepository(BaseRepository):
         # Get recent sessions
         sessions = self._get_recent_sessions(project_id, session_limit)
 
+        # Resolve repo_url dynamically from repo_name + repo_owner
+        try:
+            repo_url = get_gitea_client().get_public_url(project.repo_name, project.repo_owner)
+        except Exception:
+            repo_url = project.repo_url  # Fallback to stored value
+
         return ProjectDetail(
             # Inherited from ProjectSummary
             id=project.id,
             name=project.name,
             description=project.description,
-            repo_url=project.repo_url,
+            repo_name=project.repo_name,
+            repo_owner=project.repo_owner,
+            repo_url=repo_url,
             created_at=project.created_at,
             # ProjectDetail specific
             owner_id=project.owner_id,
-            repo_name=project.repo_name,
             token_usage=TokenUsage(
                 prompt_tokens=stats.prompt_tokens,
                 completion_tokens=stats.completion_tokens,
@@ -120,14 +129,14 @@ class ProjectRepository(BaseRepository):
         self,
         project_id: UUID,
         repo_name: str,
-        repo_url: str,
         repo_owner: str | None = None,
     ) -> None:
-        """Update project with Gitea repository info."""
-        updates = {
-            "repo_name": repo_name,
-            "repo_url": repo_url,
-        }
+        """Update project with Gitea repository info.
+
+        Only writes repo_name and repo_owner. The repo_url is resolved
+        dynamically at read time using GiteaClient.get_public_url().
+        """
+        updates = {"repo_name": repo_name}
         if repo_owner:
             updates["repo_owner"] = repo_owner
         self.db.query(Project).filter_by(id=project_id).update(updates)
@@ -144,13 +153,20 @@ class ProjectRepository(BaseRepository):
             user = self.db.query(UserModel).filter_by(id=project.owner_id).first()
             if user:
                 username = user.username
+
+        # Resolve repo_url dynamically from repo_name + repo_owner
+        try:
+            repo_url = get_gitea_client().get_public_url(project.repo_name, project.repo_owner)
+        except Exception:
+            repo_url = project.repo_url  # Fallback to stored value
+
         return ProjectSummary(
             id=project.id,
             name=project.name,
             description=project.description,
-            repo_url=project.repo_url,
             repo_name=project.repo_name,
             repo_owner=project.repo_owner,
+            repo_url=repo_url,
             username=username,
             created_at=project.created_at,
         )

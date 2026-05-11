@@ -35,6 +35,8 @@ class ApprovalDetail(ApprovalSummary):
     # Project repo URL — populated when the session is tied to a project,
     # so the Tasks page can resolve relative markdown links in FD/TD previews
     # to Gitea URLs (same behaviour as the chat view).
+    repo_name: str | None = None
+    repo_owner: str | None = None
     repo_url: str | None = None
 
 

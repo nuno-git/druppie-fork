@@ -98,8 +98,6 @@ def create_repo(client: httpx.Client, name: str) -> dict:
     return {
         "repo_name": name,
         "repo_owner": "druppie_admin",
-        "repo_url": f"{GITEA_URL}/druppie_admin/{name}",
-        "clone_url": data.get("clone_url", f"{GITEA_URL}/druppie_admin/{name}.git"),
     }
 
 
@@ -299,13 +297,12 @@ def populate_db(repo_info: dict):
         # -- Project --
         cur.execute(
             """INSERT INTO projects
-               (id, name, description, repo_name, repo_owner, repo_url, clone_url,
+               (id, name, description, repo_name, repo_owner,
                 owner_id, status, created_at, updated_at)
-               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s)""",
             (project_id, SESSION["project_name"],
              f"Seeded: {SESSION['title']}",
              repo_info["repo_name"], repo_info["repo_owner"],
-             repo_info["repo_url"], repo_info["clone_url"],
              admin_id, "active", base_ts, base_ts),
         )
 
@@ -536,7 +533,7 @@ def main():
     print(f"  Session ID:    {session_id}")
     print(f"  Session URL:   {session_url}")
     print(f"  Deployer run:  {deployer_run_id}")
-    print(f"  Gitea repo:    {repo_info['repo_url']}")
+    print(f"  Gitea repo:    {GITEA_URL}/druppie_admin/{repo_info['repo_name']}")
     print()
     print("  Session state:")
     for seq_idx, (agent_id, status, err, _) in enumerate(SESSION["agents"]):

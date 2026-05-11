@@ -39,6 +39,8 @@ class ProjectSummary(BaseModel):
     id: UUID
     name: str
     description: str | None
+    repo_name: str | None = None
+    repo_owner: str | None = None
     repo_url: str | None
     repo_name: str | None
     repo_owner: str | None
