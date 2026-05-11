@@ -19,6 +19,7 @@ class TestBatchRun(Base):
     status = Column(String(50), nullable=False, default="running")
     message = Column(Text, nullable=True)
     current_test = Column(String(255), nullable=True)
+    running_tests = Column(Text, nullable=True)  # JSON array of test names currently running in parallel
     total_tests = Column(Integer, default=0)
     started_at = Column(DateTime(timezone=True), default=utcnow)
     completed_at = Column(DateTime(timezone=True), nullable=True)

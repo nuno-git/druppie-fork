@@ -5,9 +5,10 @@ not in-memory dicts. This means status survives process restarts
 and there's no lock/eviction complexity.
 """
 
+import json
 import threading
 import uuid as uuid_mod
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError, as_completed
 from datetime import datetime, timezone
 from uuid import UUID
 
@@ -261,43 +262,65 @@ async def run_tests(
 
         all_results = []
         test_timeout = int(os.getenv("TEST_TIMEOUT_SECONDS", "600"))
+        max_workers = int(os.getenv("PARALLEL_TEST_WORKERS", "3"))
 
-        for idx, (name, test_def) in enumerate(tests_to_run):
-            _update_batch(current_test=name,
-                          message=f"Running {idx + 1}/{total}: {name}")
+        active_tests: set[str] = set()
+        active_lock = threading.Lock()
 
+        def _sync_running_tests():
+            with active_lock:
+                names = list(active_tests)
+            _update_batch(
+                current_test=names[0] if len(names) == 1 else f"{len(names)} tests",
+                running_tests=json.dumps(names),
+                message=f"Running {total - len(tests_to_run) + len(names)}/{total}: {', '.join(names[:3])}{'...' if len(names) > 3 else ''}",
+            )
+
+        def _run_single_test(name, test_def):
+            active_tests.add(name)
+            _sync_running_tests()
             try:
-                def _run_single_test():
-                    test_db = SessionLocal()
-                    try:
-                        test_runner = runner.with_db(test_db)
-                        results = test_runner.run_test(test_def, **phase_flags)
-                        test_db.commit()
-                        return results
-                    except Exception:
-                        test_db.rollback()
-                        raise
-                    finally:
-                        test_db.close()
+                test_db = SessionLocal()
+                try:
+                    test_runner = runner.with_db(test_db)
+                    results = test_runner.run_test(test_def, **phase_flags)
+                    test_db.commit()
+                    return results
+                except Exception:
+                    test_db.rollback()
+                    raise
+                finally:
+                    test_db.close()
+            finally:
+                active_tests.discard(name)
 
-                with ThreadPoolExecutor(max_workers=1) as pool:
-                    future = pool.submit(_run_single_test)
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            futures = {}
+            for name, test_def in tests_to_run:
+                future = pool.submit(_run_single_test, name, test_def)
+                futures[future] = name
+
+            for future in as_completed(futures):
+                name = futures[future]
+                try:
                     test_results = future.result(timeout=test_timeout)
-                all_results.extend(test_results)
-            except FuturesTimeoutError:
-                logger.error("test_timed_out", test=name, timeout=test_timeout)
-                from druppie.testing.runner import TestRunResult
-                all_results.append(TestRunResult(
-                    test_name=name, test_user="timeout", test_type="tool",
-                    assertion_results=[], status="error",
-                    duration_ms=test_timeout * 1000,
-                ))
-            except Exception as test_err:
-                logger.error("test_failed", test=name, error=str(test_err), exc_info=True)
+                    all_results.extend(test_results)
+                except FuturesTimeoutError:
+                    logger.error("test_timed_out", test=name, timeout=test_timeout)
+                    from druppie.testing.runner import TestRunResult
+                    all_results.append(TestRunResult(
+                        test_name=name, test_user="timeout", test_type="tool",
+                        assertion_results=[], status="error",
+                        duration_ms=test_timeout * 1000,
+                    ))
+                except Exception as test_err:
+                    logger.error("test_failed", test=name, error=str(test_err), exc_info=True)
+                finally:
+                    _sync_running_tests()
 
         passed = sum(1 for r in all_results if r.status == "passed")
         _update_batch(
-            status="completed", current_test=None,
+            status="completed", current_test=None, running_tests=None,
             message=f"{passed}/{len(all_results)} passed",
             completed_at=datetime.now(timezone.utc),
         )
@@ -326,10 +349,14 @@ async def get_run_status(
 
         completed_tests = repo.get_completed_test_runs(run_id)
 
+        running_tests_raw = batch.running_tests
+        running_tests = json.loads(running_tests_raw) if running_tests_raw else []
+
         return {
             "status": batch.status,
             "message": batch.message,
             "current_test": batch.current_test,
+            "running_tests": running_tests,
             "total_tests": batch.total_tests,
             "completed_tests": completed_tests,
             "started_at": batch.started_at.isoformat() if batch.started_at else None,
@@ -358,12 +385,15 @@ async def get_active_run(user: dict = Depends(require_admin)):
             return {"active": False}
 
         completed_tests = repo.get_completed_test_runs(active.id)
+        running_tests_raw = active.running_tests
+        running_tests = json.loads(running_tests_raw) if running_tests_raw else []
         return {
             "active": True,
             "run_id": active.id,
             "status": active.status,
             "message": active.message,
             "current_test": active.current_test,
+            "running_tests": running_tests,
             "total_tests": active.total_tests,
             "completed_tests": completed_tests,
         }
