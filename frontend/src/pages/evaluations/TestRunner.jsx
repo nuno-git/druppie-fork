@@ -437,12 +437,19 @@ export const RunProgress = ({ runMessage, runProgress }) => {
               <span className="text-gray-400">{formatDuration(t.duration_ms)}</span>
             </div>
           ))}
-          {runProgress.current_test && (
-            <div className="flex items-center gap-2 text-xs">
-              <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-500" />
-              <span className="text-blue-700 font-medium">{runProgress.current_test}</span>
-            </div>
-          )}
+          {runProgress.running_tests && runProgress.running_tests.length > 0
+            ? runProgress.running_tests.map((name) => (
+                <div key={name} className="flex items-center gap-2 text-xs">
+                  <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-500" />
+                  <span className="text-blue-700 font-medium">{name}</span>
+                </div>
+              ))
+            : runProgress.current_test && (
+                <div className="flex items-center gap-2 text-xs">
+                  <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-500" />
+                  <span className="text-blue-700 font-medium">{runProgress.current_test}</span>
+                </div>
+              )}
         </div>
       )}
     </div>
