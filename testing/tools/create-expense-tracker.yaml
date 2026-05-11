@@ -1,0 +1,44 @@
+## End-to-end: create an expense tracker
+## Flow: router → planner → BA (HITL + FD) → planner → architect (TD) → planner → builder (mock)
+
+tool-test:
+  name: create-expense-tracker
+  description: "Full create_project flow for an expense tracking app with categories"
+  tags: [e2e, create-project]
+  extends: setup-create-project-pipeline
+
+  chain:
+    # --- Builder (mocked) ---
+    - agent: builder
+      tool: coding:execute_coding_task
+      arguments:
+        task: "Build the expense tracker with React"
+      mock: true
+      mock_result: "All files created successfully"
+      outcome:
+        files:
+          - path: src/App.jsx
+            content: |
+              import React, { useState } from 'react';
+              import ExpenseForm from './ExpenseForm';
+              import ExpenseTable from './ExpenseTable';
+
+              export default function App() {
+                const [expenses, setExpenses] = useState([]);
+                const addExpense = (expense) => setExpenses([...expenses, { ...expense, id: Date.now().toString() }]);
+                const total = expenses.reduce((sum, e) => sum + e.amount, 0);
+
+                return (
+                  <div>
+                    <h1>Expense Tracker</h1>
+                    <p>Total: &euro;{total.toFixed(2)}</p>
+                    <ExpenseForm onAdd={addExpense} />
+                    <ExpenseTable expenses={expenses} />
+                  </div>
+                );
+              }
+
+    - agent: builder
+      tool: builtin:done
+      arguments:
+        summary: "Agent builder: BUILD_COMPLETE - Expense tracker built"

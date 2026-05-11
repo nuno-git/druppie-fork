@@ -20,7 +20,9 @@ import {
   LogOut,
   Wrench,
   Server,
+  FlaskConical,
   Package,
+  Boxes,
 } from 'lucide-react'
 
 import { useAuth } from '../App'
@@ -207,13 +209,30 @@ const NavRail = () => {
 
       {/* Admin */}
       {user?.roles?.includes('admin') && (
-        <NavRailItem
-          to="/admin/database"
-          icon={Database}
-          label="Database"
-          active={isActive('/admin/database')}
-          accent="purple"
-        />
+        <>
+          <div className="mt-1 pt-1 border-t border-gray-800 w-8" />
+          <NavRailItem
+            to="/admin/platform"
+            icon={Boxes}
+            label="Platform"
+            active={isActive('/admin/platform')}
+            accent="purple"
+          />
+          <NavRailItem
+            to="/admin/database"
+            icon={Database}
+            label="Database"
+            active={isActive('/admin/database')}
+            accent="purple"
+          />
+          <NavRailItem
+            to="/admin/evaluations"
+            icon={FlaskConical}
+            label="Tests"
+            active={isActive('/admin/evaluations')}
+            accent="purple"
+          />
+        </>
       )}
 
       {/* Spacer */}

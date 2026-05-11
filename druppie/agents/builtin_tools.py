@@ -87,13 +87,17 @@ BUILTIN_TOOL_DEFS: dict[str, dict] = {
         "type": "function",
         "function": {
             "name": "done",
-            "description": "Signal task completion with a DETAILED summary. The summary is the ONLY way to pass information to the next agent in the pipeline.",
+            "description": "Signal task completion with a DETAILED summary. The summary is the ONLY way to pass information to the next agent in the pipeline. Optionally specify next_agent to route directly to a specific agent, bypassing the Planner.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "summary": {
                         "type": "string",
                         "description": "DETAILED summary including: (1) your own 'Agent [role]:' line with key outputs (URLs, branch names, container names, file paths). Previous agent summaries are auto-prepended by the system. NEVER write just 'Task completed'.",
+                    },
+                    "next_agent": {
+                        "type": "string",
+                        "description": "Optional: ID of the agent to run next, bypassing the Planner. Use only when the next step is deterministic. If omitted, the Planner decides as usual.",
                     },
                 },
                 "required": ["summary"],
@@ -750,11 +754,81 @@ async def create_message(
 # COMPLETION TOOL IMPLEMENTATION
 # =============================================================================
 
+
+def _check_completion_preconditions(
+    summary: str,
+    agent_run_id: UUID,
+    execution_repo: "ExecutionRepository",
+) -> str | None:
+    """Check if done() preconditions are met for this agent run.
+
+    Returns error message string if a precondition is violated, None if all OK.
+    """
+    from druppie.agents.definition_loader import AgentDefinitionLoader
+
+    agent_run = execution_repo.get_by_id(agent_run_id)
+    if not agent_run or not agent_run.agent_id:
+        return None
+
+    try:
+        loader = AgentDefinitionLoader()
+        definition = loader.load(agent_run.agent_id)
+    except Exception:
+        # Fail closed: if we can't load the definition, block completion.
+        # A guardrail that can be bypassed by an error isn't a guardrail.
+        logger.error(
+            "completion_precondition_definition_load_failed",
+            agent_run_id=str(agent_run_id),
+            agent_id=agent_run.agent_id,
+        )
+        return (
+            f"Internal error: could not load agent definition for '{agent_run.agent_id}'. "
+            "Cannot verify completion preconditions. Please retry or contact support."
+        )
+
+    # Check required summary status keywords
+    if definition.required_summary_status:
+        req = definition.required_summary_status
+        if not any(keyword in summary for keyword in req.one_of):
+            return req.error_message
+
+    if not definition.completion_preconditions:
+        return None
+
+    for precondition in definition.completion_preconditions:
+        if (
+            precondition.summary_contains is not None
+            and precondition.summary_contains not in summary
+        ):
+            continue
+
+        if (
+            precondition.unless_summary_contains is not None
+            and precondition.unless_summary_contains in summary
+        ):
+            continue
+
+        # Rule matches — check required tools
+        tool_calls = execution_repo.get_tool_calls_for_run(agent_run_id)
+
+        for required in precondition.required_tools:
+            completed_count = sum(
+                1
+                for tc in tool_calls
+                if tc.tool_name == required.tool_name and tc.status == "completed"
+            )
+            if completed_count < required.min_calls:
+                return precondition.error_message
+
+    return None
+
+
 async def done(
     summary: str,
     session_id: UUID,
     agent_run_id: UUID,
     execution_repo: "ExecutionRepository",
+    next_agent: str | None = None,
 ) -> dict:
     """Signal that the agent has completed its task.
 
@@ -763,15 +837,34 @@ async def done(
     an accumulated summary. Relays the full accumulated summary to the
     next pending agent by prepending it to that agent's planned_prompt.
 
+    When next_agent is specified, creates a direct pending run for that agent
+    (plus a follow-up planner run), bypassing the normal Planner routing.
+
     Args:
         summary: Summary of what was accomplished (this agent's own summary)
         session_id: Session UUID
         agent_run_id: Agent run UUID for tracking
         execution_repo: Execution repository
+        next_agent: Optional agent ID to route to directly
 
     Returns:
         Completion status with accumulated summary
     """
+    # Check completion preconditions before proceeding
+    precondition_error = _check_completion_preconditions(
+        summary=summary,
+        agent_run_id=agent_run_id,
+        execution_repo=execution_repo,
+    )
+    if precondition_error:
+        logger.warning(
+            "completion_precondition_failed",
+            agent_run_id=str(agent_run_id),
+            summary=summary[:200] if summary else "",
+            error=precondition_error,
+        )
+        return {"success": False, "error": precondition_error}
+
     logger.info(
         "agent_done",
         session_id=str(session_id),
@@ -820,27 +913,98 @@ async def done(
         accumulated_preview=accumulated_summary[:200],
     )
 
-    # Relay accumulated summary to next pending agent
+    # Direct routing: if next_agent is specified, validate it against the
+    # calling agent's allowed_next_agents list and insert it as the next
+    # pending run. Does NOT cancel existing pending runs — just inserts
+    # before them. The planner still runs after (already planned).
+    if next_agent:
+        from druppie.agents.definition_loader import AgentDefinitionLoader
+        from druppie.domain.common import AgentRunStatus
+
+        # Get the calling agent's definition to check allowed_next_agents
+        current_agent_run = execution_repo.get_by_id(agent_run_id)
+        current_agent_id = current_agent_run.agent_id if current_agent_run else None
+
+        loader = AgentDefinitionLoader()
+        allowed = False
+        try:
+            if current_agent_id:
+                caller_def = loader.load(current_agent_id)
+                if next_agent in caller_def.allowed_next_agents:
+                    # Also verify the target agent exists
+                    loader.load(next_agent)
+                    allowed = True
+                else:
+                    logger.warning(
+                        "next_agent_not_allowed",
+                        caller=current_agent_id,
+                        next_agent=next_agent,
+                        allowed=caller_def.allowed_next_agents,
+                        session_id=str(session_id),
+                    )
+        except Exception as e:
+            logger.warning(
+                "next_agent_validation_failed",
+                next_agent=next_agent,
+                error=str(e),
+                session_id=str(session_id),
+            )
+
+        if allowed:
+            # Insert the target agent as the next pending run,
+            # BEFORE any existing pending runs (like the planner).
+            # We use the lowest pending sequence_number - 1 so
+            # get_next_pending() picks this run first.
+            existing_next = execution_repo.get_next_pending(session_id)
+            if existing_next:
+                start_seq = existing_next.sequence_number - 1
+            else:
+                start_seq = execution_repo.get_next_sequence_number(session_id)
+
+            execution_repo.create_agent_run(
+                session_id=session_id,
+                agent_id=next_agent,
+                status=AgentRunStatus.PENDING,
+                planned_prompt="",  # Will be filled by relay below
+                sequence_number=start_seq,
+            )
+            execution_repo.flush()
+
+            logger.info(
+                "next_agent_direct_route",
+                session_id=str(session_id),
+                from_agent=current_agent_id,
+                next_agent=next_agent,
+            )
+        else:
+            next_agent = None  # Ignored — planner will decide as usual
+
+    # Relay accumulated summary to the next pending planner only.
+    # Non-planner agents are self-contained — they read files from the
+    # workspace, not summary chains from previous agents.
     next_run = execution_repo.get_next_pending(session_id)
-    if next_run and next_run.planned_prompt:
+    if next_run and next_run.agent_id == "planner":
+        existing_prompt = next_run.planned_prompt or ""
         new_prompt = (
             f"PREVIOUS AGENT SUMMARY:\n{accumulated_summary}\n\n---\n\n"
-            + next_run.planned_prompt
+            + existing_prompt
         )
         execution_repo.update_planned_prompt(next_run.id, new_prompt)
         execution_repo.flush()
         logger.info(
-            "summary_relayed_to_next_agent",
+            "summary_relayed_to_planner",
             session_id=str(session_id),
             from_agent_run=str(agent_run_id),
             to_agent_run=str(next_run.id),
-            to_agent_id=next_run.agent_id,
         )
 
-    return {
+    result = {
         "status": "completed",
         "summary": accumulated_summary,
     }
+    if next_agent:
+        result["next_agent"] = next_agent
+    return result
 
 
 # =============================================================================
@@ -941,10 +1105,59 @@ async def execute_sandbox_coding_task(
 
     task = args.get("task", "")
     from druppie.core.config import DEFAULT_SANDBOX_AGENT
-    agent = args.get("agent", DEFAULT_SANDBOX_AGENT)
+    raw_agent = args.get("agent")
+    raw_repo_target = args.get("repo_target")
 
     if not task:
         return {"success": False, "error": "task is required"}
+
+    # Load caller's sandbox_constraints (if any) so defaults can prefer an
+    # allowed value rather than falling through to "project" / DEFAULT_SANDBOX_AGENT
+    # and hitting the validation below.
+    from druppie.agents.runtime import Agent as AgentLoader
+    definition = None
+    constraints = None
+    try:
+        agent_run = execution_repo.get_by_id(agent_run_id)
+        if agent_run and agent_run.agent_id:
+            definition = AgentLoader._load_definition(agent_run.agent_id)
+            if definition and definition.sandbox_constraints:
+                constraints = definition.sandbox_constraints
+    except Exception:
+        pass
+
+    if raw_agent is not None:
+        agent = raw_agent
+    elif constraints and constraints.allowed_agents and DEFAULT_SANDBOX_AGENT not in constraints.allowed_agents:
+        agent = constraints.allowed_agents[0]
+    else:
+        agent = DEFAULT_SANDBOX_AGENT
+
+    if raw_repo_target is not None:
+        repo_target = raw_repo_target
+    elif constraints and constraints.allowed_repo_targets and "project" not in constraints.allowed_repo_targets:
+        repo_target = constraints.allowed_repo_targets[0]
+    else:
+        repo_target = "project"
+
+    # Enforce per-agent sandbox constraints (e.g. architect can only use explore/druppie_core)
+    if constraints:
+        if constraints.allowed_agents is not None and agent not in constraints.allowed_agents:
+            return {
+                "success": False,
+                "error": (
+                    f"Agent '{definition.id}' is only allowed to use sandbox agents: "
+                    f"{constraints.allowed_agents}. Got: '{agent}'"
+                ),
+            }
+        if constraints.allowed_repo_targets is not None and repo_target not in constraints.allowed_repo_targets:
+            return {
+                "success": False,
+                "error": (
+                    f"Agent '{definition.id}' is only allowed to use repo targets: "
+                    f"{constraints.allowed_repo_targets}. Got: '{repo_target}'"
+                ),
+            }
 
     model_config = resolve_sandbox_models(agent)
     model = model_config.primary_model
@@ -960,8 +1173,7 @@ async def execute_sandbox_coding_task(
     if not session.user_id:
         return {"success": False, "error": "Cannot create sandbox: session has no user_id"}
 
-    # Determine git provider and repo context based on repo_target param
-    repo_target = args.get("repo_target", "project")
+    # Validate repo_target value
     if repo_target not in VALID_REPO_TARGETS:
         return {"success": False, "error": f"Invalid repo_target '{repo_target}'. Must be one of: {VALID_REPO_TARGETS}."}
 
@@ -1133,6 +1345,7 @@ async def execute_builtin(
             session_id=session_id,
             agent_run_id=agent_run_id,
             execution_repo=execution_repo,
+            next_agent=args.get("next_agent"),
         )
     elif tool_name == "make_plan":
         return await make_plan(

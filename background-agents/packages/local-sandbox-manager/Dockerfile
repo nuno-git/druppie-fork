@@ -31,6 +31,13 @@ RUN pip install --no-cache-dir \
 # Copy source
 COPY packages/local-sandbox-manager/src/ ./src/
 
+# Preflight script — verifies docker.sock is reachable before starting uvicorn.
+# Prevents the "service healthy but every sandbox spawn fails" failure mode
+# caused by a bind mount that silently became a directory (compose default
+# when DOCKER_SOCK points at a path missing on the host at up time).
+COPY packages/local-sandbox-manager/scripts/preflight.sh /usr/local/bin/preflight.sh
+RUN chmod +x /usr/local/bin/preflight.sh
+
 # Snapshot data directory (mount as volume)
 RUN mkdir -p /data/snapshots
 
@@ -38,4 +45,5 @@ ENV SNAPSHOT_DIR=/data/snapshots
 
 EXPOSE 8000
 
+ENTRYPOINT ["/usr/local/bin/preflight.sh"]
 CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000"]

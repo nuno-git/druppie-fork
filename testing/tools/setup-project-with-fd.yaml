@@ -1,0 +1,110 @@
+## Setup: create a project with functional design written and committed
+##
+## Chain: router → planner → BA (HITL + FD + git) → done
+## Ends after BA completes — no trailing planner, so tests that
+## continue_session can control what runs next without stale pending runs.
+##
+## Used by:
+##   - agent tests (setup + continue_session): architect-reviews-fd, planner-after-ba
+##   - tool tests (extends): architect-paused-mid-run
+
+tool-test:
+  name: setup-project-with-fd
+  description: "Creates a project with FD — BA completed, ready for planner re-evaluation"
+  tags: [setup]
+
+  chain:
+    # --- Router ---
+    - agent: router
+      tool: builtin:set_intent
+      arguments:
+        intent: create_project
+        project_name: recipe-sharing-app
+        description: "A recipe sharing platform where users can share and rate recipes"
+      assert:
+        result:
+          - not_empty
+
+    - agent: router
+      tool: builtin:done
+      arguments:
+        summary: "Agent router: Classified as create_project for recipe-sharing-app"
+
+    # --- Planner ---
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: business_analyst
+            prompt: "Gather requirements and create functional design"
+          - agent_id: planner
+            prompt: "Re-evaluate after business analyst completes"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: Planned business_analyst to gather requirements and create functional design"
+
+    # --- Business Analyst ---
+    - agent: business_analyst
+      tool: coding:make_design
+      approval:
+        status: approved
+      arguments:
+        path: docs/functional-design.md
+        content: |
+          # Functioneel Ontwerp: Recipe Sharing App
+
+          ## 1. Huidige vs Gewenste Situatie
+          Gebruikers willen recepten delen en beoordelen binnen een
+          vrienden- en familiekring. Er is geen bestaande oplossing.
+
+          ## 2. Functionele Vereisten
+          - FR-01: Gebruiker kan een recept aanmaken met titel, ingrediënten,
+            bereidingswijze en foto
+          - FR-02: Gebruiker kan recepten van anderen bekijken
+          - FR-03: Gebruiker kan recepten beoordelen (1-5 sterren)
+          - FR-04: Gebruiker kan commentaar geven op recepten
+          - FR-05: Gebruiker kan recepten zoeken op ingrediënt of naam
+          - FR-06: Gebruiker kan favoriete recepten opslaan
+
+          ## 3. Niet-Functionele Vereisten
+          - NFR-01: Applicatie laadt binnen 2 seconden
+          - NFR-02: Ondersteunt minimaal 100 gelijktijdige gebruikers
+          - NFR-03: Gegevens worden veilig opgeslagen
+
+          ## 4. Gebruikersrollen
+          - Thuiskok: kan recepten aanmaken, bekijken, beoordelen
+          - Beheerder: kan gebruikers en content modereren
+
+          ## 5. Gebruikersinteractie
+          - Homepage met nieuwste en best beoordeelde recepten
+          - Recept-detailpagina met ingrediënten, stappen, beoordelingen
+          - Profielpagina met eigen recepten en favorieten
+          - Zoekfunctie met filters
+
+      assert:
+        result:
+          - { contains: "functional-design.md" }
+
+    - agent: business_analyst
+      tool: coding:run_git
+      arguments:
+        command: "add docs/functional-design.md"
+
+    - agent: business_analyst
+      tool: coding:run_git
+      arguments:
+        command: "commit -m 'Functioneel ontwerp recipe sharing app'"
+
+    - agent: business_analyst
+      tool: coding:run_git
+      arguments:
+        command: "push"
+
+    - agent: business_analyst
+      tool: builtin:done
+      arguments:
+        summary: "Agent business_analyst: DESIGN_APPROVED. Gathered requirements and wrote docs/functional-design.md with 6 functional requirements and 3 non-functional requirements."
+      assert:
+        completed: true

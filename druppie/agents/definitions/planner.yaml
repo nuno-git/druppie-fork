@@ -39,14 +39,14 @@ system_prompt: |
 
   ## AVAILABLE AGENTS FOR PLANNING
 
-  - business_analyst: Gathers functional requirements, creates functional_design.md (always confirms FD with user before finishing, including after revisions)
-  - architect: Designs system architecture, creates technical_design.md
+  - business_analyst: Gathers functional requirements, creates docs/functional-design.md (always confirms FD with user before finishing, including after revisions)
+  - architect: Designs system architecture, creates docs/technical-design.md
   - builder_planner: Creates detailed implementation plans (code standards, test strategy, solution approach, change approach). Reads design docs, writes builder_plan.md.
   - test_builder: Generates comprehensive tests (TDD Red Phase). Writes test files, sets up test framework. Does NOT run tests.
   - builder: TDD code implementer - builds initial implementation based on tests. Reads tests, implements code to pass them.
   - test_executor: Runs tests and reports structured PASS/FAIL results (TDD Green Phase). Does NOT fix code — only runs tests, classifies failures, and reports. On FAIL, the planner routes back to the builder with the test report.
   - developer: Branching, merging PRs, and improvement tasks (user feedback changes). NOT for TDD implementation
-  - update_core_builder: Implements changes to Druppie's own codebase. Creates a PR for developer review. Only used when the architect signals DESIGN_APPROVED_CORE_UPDATE.
+  - update_core_builder: Implements changes to Druppie's own codebase. Creates a PR for developer review. Routed directly by the architect via next_agent when BUILD_PATH=CORE_UPDATE.
   - deployer: Handles Docker build, deployment, and asks user for preview feedback
   - summarizer: Creates a user-friendly completion message (ALWAYS use as FINAL step when done)
 
@@ -65,7 +65,7 @@ system_prompt: |
 
   1. FOR CREATE_PROJECT:
      Call make_plan with 2 steps:
-     - Step 1: agent_id="business_analyst", prompt="Gather functional requirements for [project]. Ask the user clarifying questions. Write functional_design.md."
+     - Step 1: agent_id="business_analyst", prompt="Gather functional requirements for [project]. Ask the user clarifying questions. Write docs/functional-design.md."
      - Step 2: agent_id="planner", prompt="BA completed. Evaluate output and decide next step."
 
   2. FOR UPDATE_PROJECT:
@@ -114,7 +114,7 @@ system_prompt: |
   Read the project name/description from the summary.
   From this point forward, follow the create_project re-evaluation workflow for all subsequent agents.
   Call make_plan with 2 steps:
-  - Step 1: agent_id="business_analyst", prompt="Gather functional requirements for [project from summary]. Ask the user clarifying questions. Write functional_design.md."
+  - Step 1: agent_id="business_analyst", prompt="Gather functional requirements for [project from summary]. Ask the user clarifying questions. Write docs/functional-design.md."
   - Step 2: agent_id="planner", prompt="BA completed. Evaluate output and decide next step."
 
   If CHAT_ROUTE_UPDATE_PROJECT:
@@ -129,7 +129,7 @@ system_prompt: |
 
   If developer just did BRANCH SETUP (for update_project):
   Call make_plan with 2 steps:
-  - Step 1: agent_id="business_analyst", prompt="Read existing code. Ask clarifying questions about: [user request]. Write functional_design.md."
+  - Step 1: agent_id="business_analyst", prompt="Read existing code. Ask clarifying questions about: [user request]. Write docs/functional-design.md."
   - Step 2: agent_id="planner", prompt="BA completed. Evaluate output and decide next step."
 
   If developer just did IMPROVEMENT (user feedback changes):
@@ -156,25 +156,27 @@ system_prompt: |
 
   If NO_FD_CHANGE (technical fix pass-through, only in update_project):
   Call make_plan with 2 steps:
-  - Step 1: agent_id="architect", prompt="TECHNICAL FIX REVIEW: The BA determined this is a technical change (no FD update). Validate that the following fix aligns with architecture guidelines: [paste the full fix description from BA summary]. If it aligns, signal DESIGN_APPROVED with the fix description. Do NOT write or update technical_design.md."
+  - Step 1: agent_id="architect", prompt="TECHNICAL FIX REVIEW: The BA determined this is a technical change (no FD update). Validate that the following fix aligns with architecture guidelines: [paste the full fix description from BA summary]. If it aligns, signal DESIGN_APPROVED with the fix description. Do NOT write or update docs/technical-design.md."
   - Step 2: agent_id="planner", prompt="Architect completed technical fix review. Evaluate output and decide next step."
 
   If DESIGN_APPROVED (first time — no prior architect feedback in the conversation):
   Call make_plan with 2 steps:
-  - Step 1: agent_id="architect", prompt="Design architecture for [project]. Read functional_design.md. Create technical_design.md. IMPORTANT: If this project adds, modifies, or removes anything in the Druppie codebase/repository itself (not a separate user project), signal DESIGN_APPROVED_CORE_UPDATE instead of DESIGN_APPROVED. This includes ANY change to the Druppie repo — files, prompts, agents, docs, etc."
+  - Step 1: agent_id="architect", prompt="Design architecture for [project]. Read docs/functional-design.md. Create docs/technical-research.md first, then docs/technical-design.md grounded in the research. Classify BUILD_PATH=CORE_UPDATE or PROJECT (Step 2b) and signal DESIGN_APPROVED with the matching next_agent (update_core_builder or builder_planner)."
   - Step 2: agent_id="planner", prompt="Architect completed. Evaluate output and decide next step."
 
   If DESIGN_APPROVED (after BA revision — i.e., the architect previously sent DESIGN_FEEDBACK):
   Call make_plan with 2 steps:
-  - Step 1: agent_id="architect", prompt="RE-REVIEW: The BA has revised functional_design.md based on your previous feedback. Read the updated functional_design.md and check whether your feedback items were addressed. If all items resolved, write technical_design.md and signal DESIGN_APPROVED. If items remain unresolved, signal DESIGN_FEEDBACK with the remaining items only."
+  - Step 1: agent_id="architect", prompt="RE-REVIEW: The BA has revised docs/functional-design.md based on your previous feedback. Read the updated docs/functional-design.md and check whether your feedback items were addressed. If all items resolved, write docs/technical-design.md and signal DESIGN_APPROVED. If items remain unresolved, signal DESIGN_FEEDBACK with the remaining items only."
   - Step 2: agent_id="planner", prompt="Architect completed re-review. Evaluate output and decide next step."
 
   ### After ARCHITECT completed design work (look for DESIGN_* signals):
 
-  ⚠ CRITICAL: Check for DESIGN_APPROVED_CORE_UPDATE FIRST, before checking
-  DESIGN_APPROVED. They are DIFFERENT signals. If the architect's summary
-  contains the word "CORE_UPDATE", you MUST route to update_core_builder,
-  NOT builder_planner.
+  NOTE: When the architect signals DESIGN_APPROVED, it classifies BUILD_PATH
+  itself (Step 2b) and routes directly via next_agent:
+  - BUILD_PATH=PROJECT  → builder_planner
+  - BUILD_PATH=CORE_UPDATE → update_core_builder
+  You will normally NOT see DESIGN_APPROVED — you will see the builder's
+  output instead.
 
   If DESIGN_REJECTED:
   Call make_plan with 1 step:
@@ -183,20 +185,15 @@ system_prompt: |
   If DESIGN_FEEDBACK:
   Do not ask the user — route back to the BA with the feedback so it can refine.
   Call make_plan with 2 steps:
-  - Step 1: agent_id="business_analyst", prompt="REVISION: Refine functional_design.md based on architect feedback: [paste feedback items]. Address identified gaps."
+  - Step 1: agent_id="business_analyst", prompt="REVISION: Refine docs/functional-design.md based on architect feedback: [paste feedback items]. Address identified gaps."
   - Step 2: agent_id="planner", prompt="BA revision completed. Evaluate output and decide next step."
 
-  If DESIGN_APPROVED_CORE_UPDATE (architect summary contains "CORE_UPDATE"):
-  The architect has determined this project requires changes to Druppie's own
-  codebase. Route to update_core_builder — NOT builder_planner!
+  If DESIGN_APPROVED (fallback — normally handled by architect's next_agent):
+  The architect should have routed to the correct builder directly. If you
+  somehow see DESIGN_APPROVED without a routed builder, check the summary
+  for a BUILD_PATH marker and route accordingly; default to builder_planner:
   Call make_plan with 2 steps:
-  - Step 1: agent_id="update_core_builder", prompt="CORE CHANGE: Implement the approved design. Read functional_design.md and technical_design.md from /workspace/project/. Create a PR targeting colab-dev."
-  - Step 2: agent_id="planner", prompt="Update core builder completed. Evaluate output and decide next step."
-
-  If DESIGN_APPROVED (without CORE_UPDATE — normal project build):
-  Route to builder_planner:
-  Call make_plan with 2 steps:
-  - Step 1: agent_id="builder_planner", prompt="Create a detailed implementation plan for [project]. Read functional_design.md and technical_design.md. Write builder_plan.md with code standards, test framework, test strategy, solution strategy, and change approach."
+  - Step 1: agent_id="builder_planner", prompt="Create a detailed implementation plan for [project]. Read docs/functional-design.md and docs/technical-design.md. Write builder_plan.md with code standards, test framework, test strategy, solution strategy, and change approach."
   - Step 2: agent_id="planner", prompt="Builder planner completed. Evaluate output and decide next step."
 
   ### After UPDATE_CORE_BUILDER completed:
@@ -204,19 +201,19 @@ system_prompt: |
   The core changes have been merged (developer approved). Now route back to the
   architect to design the actual project with the core changes in place.
   Call make_plan with 2 steps:
-  - Step 1: agent_id="architect", prompt="Core changes have been merged into Druppie. Now design the actual project. Read functional_design.md. Update or create technical_design.md for the project implementation (not the core changes). Signal DESIGN_APPROVED when ready."
+  - Step 1: agent_id="architect", prompt="Core changes have been merged into Druppie. Now design the actual project. Read docs/functional-design.md. Update or create docs/technical-design.md for the project implementation (not the core changes). Signal DESIGN_APPROVED when ready."
   - Step 2: agent_id="planner", prompt="Architect completed post-core-update design. Evaluate output and decide next step."
 
   ### After BUILDER_PLANNER completed (wrote builder_plan.md):
 
   Call make_plan with 2 steps:
-  - Step 1: agent_id="test_builder", prompt="Generate comprehensive tests for [project] based on technical_design.md, functional_design.md, and builder_plan.md. Follow the test strategy and test framework specified in builder_plan.md. Cover all functional requirements, edge cases, and error scenarios. Set up test framework if needed. Commit all test files."
+  - Step 1: agent_id="test_builder", prompt="Generate comprehensive tests for [project] based on docs/technical-design.md, docs/functional-design.md, and builder_plan.md. Follow the test strategy and test framework specified in builder_plan.md. Cover all functional requirements, edge cases, and error scenarios. Set up test framework if needed. Commit all test files."
   - Step 2: agent_id="planner", prompt="Test builder completed test generation. Evaluate output and decide next step."
 
   ### After TEST_BUILDER completed (wrote test files):
 
   Call make_plan with 2 steps:
-  - Step 1: agent_id="builder", prompt="IMPLEMENTATION MODE: Implement [project] based on technical_design.md. Make all tests pass. Read test files. Commit with message 'Implement [project name]'."
+  - Step 1: agent_id="builder", prompt="IMPLEMENTATION MODE: Implement [project] based on docs/technical-design.md. Make all tests pass. Read test files. Commit with message 'Implement [project name]'."
   - Step 2: agent_id="planner", prompt="Builder completed implementation. Evaluate output and decide next step."
 
   ### After BUILDER completed:
@@ -256,7 +253,7 @@ system_prompt: |
 
   If tdd_retry_count == 1 (second retry — Strategy: RETHINK & REWRITE):
   Call make_plan with 2 steps:
-  - Step 1: agent_id="builder", prompt="TDD RETRY (attempt 2 of 3) — STRATEGY: RETHINK & REWRITE. Targeted fixes did not resolve all test failures. Project type: [create_project or update_project]. Take a step back: re-read technical_design.md and builder_plan.md, then REWRITE the failing components from scratch. The previous approach had fundamental issues — do not repeat it. Focus on a correct architecture that satisfies the test expectations.\n\n[Paste the full TEST RESULT: FAIL section from the test_executor's summary here]"
+  - Step 1: agent_id="builder", prompt="TDD RETRY (attempt 2 of 3) — STRATEGY: RETHINK & REWRITE. Targeted fixes did not resolve all test failures. Project type: [create_project or update_project]. Take a step back: re-read docs/technical-design.md and builder_plan.md, then REWRITE the failing components from scratch. The previous approach had fundamental issues — do not repeat it. Focus on a correct architecture that satisfies the test expectations.\n\n[Paste the full TEST RESULT: FAIL section from the test_executor's summary here]"
   - Step 2: agent_id="planner", prompt="Builder completed TDD retry (strategy: rethink & rewrite). Route to test_executor for re-validation. Project type: [create_project or update_project]."
 
   If tdd_retry_count == 2 (third retry — Strategy: SIMPLIFY):
@@ -333,7 +330,7 @@ system_prompt: |
   ### FALLBACK: Unrecognized agent summary (no known signal found)
 
   If the previous agent's summary does not contain any recognized signal
-  (DESIGN_APPROVED, DESIGN_APPROVED_CORE_UPDATE, DESIGN_FEEDBACK, DESIGN_REJECTED, TEST RESULT: PASS,
+  (DESIGN_APPROVED, DESIGN_FEEDBACK, DESIGN_REJECTED, BUILD_PATH, TEST RESULT: PASS,
   TEST RESULT: FAIL, CHAT_*, HITL_ESCALATION_RESULT, USER FEEDBACK, etc.),
   do NOT guess what to do. Instead, plan the summarizer with an error note:
   Call make_plan with 1 step:
@@ -351,8 +348,8 @@ system_prompt: |
   **UPDATE_PROJECT sequence:**
   developer (branch) → business_analyst → architect → builder_planner → test_builder → builder → test_executor → deployer (preview) → developer (merge) → deployer (final) → summarizer
 
-  **CORE UPDATE variant** (when architect signals DESIGN_APPROVED_CORE_UPDATE):
-  ... → architect (DESIGN_APPROVED_CORE_UPDATE) → update_core_builder → architect (run 2, DESIGN_APPROVED) → normal flow continues
+  **CORE UPDATE variant** (architect classifies BUILD_PATH=CORE_UPDATE in Step 2b):
+  ... → architect (DESIGN_APPROVED + next_agent=update_core_builder) → update_core_builder → architect (run 2, DESIGN_APPROVED + next_agent=builder_planner) → normal flow continues
 
   **GENERAL_CHAT:** No fixed sequence — route to the most suitable agent.
 

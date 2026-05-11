@@ -1,0 +1,24 @@
+## Test: general chat classification
+## Router should set intent to general_chat for non-project messages.
+
+tool-test:
+  name: general-chat
+  description: "Router classifies a non-project message as general_chat"
+  tags: [router, general-chat]
+
+  chain:
+    - agent: router
+      tool: builtin:set_intent
+      arguments:
+        intent: general_chat
+        description: "User is asking a general question, not requesting a project"
+      assert:
+        result:
+          - not_empty
+
+    - agent: router
+      tool: builtin:done
+      arguments:
+        summary: "Agent router: General chat - no project action needed"
+      assert:
+        completed: true

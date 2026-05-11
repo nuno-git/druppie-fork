@@ -1,0 +1,259 @@
+## Seeded session: TD written by the Architect, approval gate PENDING.
+##
+## Starting point for manually testing the architect-role approval flow
+## end-to-end. When this test finishes, the session is paused with a
+## pending `coding:make_design` approval for `docs/technical-design.md`
+## that requires the `architect` role to resolve.
+##
+## To test:
+##   1. Run this test from the evaluations page → green.
+##   2. Log in (or switch) to a user with the `architect` role
+##      (e.g. username `architect`, password `Architect123!`).
+##   3. Go to /tasks — you should see a pending approval for
+##      docs/technical-design.md on a session named "recipe-sharing-app".
+##   4. Click "View file" to inspect the TD (verifies chat link rendering
+##      from the Tasks page works — see manual test #5 in the PR).
+##   5. Approve or reject to exercise the full architect-role approval
+##      flow. After approval, resume the session to let the architect
+##      commit, push and call done().
+##
+## Extends setup-project-with-fd (project + FD already committed), then
+## has the planner plan the architect and has the architect go through
+## its intake (FD read + principles skill mocked), write the technical
+## research and approve+commit it, then call `coding:make_design` for
+## the technical-design.md — at which point the TD approval gate fires
+## and stays open.
+
+tool-test:
+  name: architect-td-approval-pending
+  description: "Architect wrote TD — paused on architect-role approval gate, ready for manual approval"
+  tags: [seed, paused, architect, approval-gate, platform-standards]
+  extends: setup-project-with-fd
+  session_status: paused
+
+  chain:
+    # --- Planner re-evaluates after BA → plans architect ---
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: architect
+            prompt: "Review the functional design and create the technical research + design"
+          - agent_id: planner
+            prompt: "Re-evaluate after architect completes"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: BA approved design, planned architect to review FD and create technical research + design"
+
+    # --- Architect intake (mocked so we stay deterministic) ---
+    - agent: architect
+      tool: coding:read_file
+      mock: true
+      mock_result: |
+        # Functioneel Ontwerp: Recipe Sharing App
+
+        > Platform standards applied: [docs/platform-functional-standards.md](./platform-functional-standards.md) rev `2026-04-20`.
+
+        ## 1. Huidige vs Gewenste Situatie
+        Gebruikers willen recepten delen en beoordelen binnen een
+        vrienden- en familiekring. Er is geen bestaande oplossing.
+
+        ## 2. Functionele Vereisten
+        - FR-01: Gebruiker kan een recept aanmaken met titel, ingrediënten,
+          bereidingswijze en foto
+        - FR-02: Gebruiker kan recepten van anderen bekijken
+        - FR-03: Gebruiker kan recepten beoordelen (1-5 sterren)
+        - FR-04: Gebruiker kan commentaar geven op recepten
+        - FR-05: Gebruiker kan recepten zoeken op ingrediënt of naam
+        - FR-06: Gebruiker kan favoriete recepten opslaan
+
+        ## 14. Platform standard deviations
+
+        | Standard | Deviation | Rationale |
+        |----------|-----------|-----------|
+        | (none)   |           |           |
+      arguments:
+        path: docs/functional-design.md
+
+    - agent: architect
+      tool: builtin:invoke_skill
+      mock: true
+      mock_result: "Architecture principles loaded successfully"
+      arguments:
+        skill_name: architecture-principles
+
+    # --- Architect writes the technical research first (approved inline) ---
+    - agent: architect
+      tool: coding:make_design
+      approval:
+        status: approved
+        by: architect
+      arguments:
+        path: docs/technical-research.md
+        content: |
+          # Technisch Onderzoek: Recipe Sharing App
+
+          > Platform standards: conforms to [docs/platform-technical-standards.md](./platform-technical-standards.md) rev `2026-04-20`.
+
+          ## Introductie
+          Onderzoek naar architectuuropties voor een receptdeel-applicatie
+          voor thuiskoks binnen een besloten kring.
+
+          ## Vergeleken Benaderingen
+
+          ### Benadering A — Monolithische FastAPI + PostgreSQL
+          Eén Python-backend met SQLAlchemy en PostgreSQL, React frontend,
+          MinIO voor foto-opslag.
+
+          | Aspect | Beoordeling |
+          |--------|-------------|
+          | Complexiteit | Laag — één deploybare service |
+          | Herbruikbaarheid | Gemiddeld — standaard stack |
+          | Operationele kosten | Laag |
+          | Risico | Laag — bekende componenten |
+          | Fit met principes | Goed — sluit aan bij platform-standards |
+
+          ### Benadering B — Serverless (AWS Lambda + DynamoDB)
+          API Gateway + Lambda functies + DynamoDB + S3 voor foto's.
+
+          | Aspect | Beoordeling |
+          |--------|-------------|
+          | Complexiteit | Hoog — verspreide functies, cold starts |
+          | Herbruikbaarheid | Laag — vendor lock-in |
+          | Operationele kosten | Variabel — duur bij lage load |
+          | Risico | Hoog — nieuwe stack voor team |
+          | Fit met principes | Zwak — breekt met containerised deployment |
+
+          ## Externe Systeemkoppelingen
+
+          ### Inventarisatie koppelingen
+          | Systeem | Categorie | Doel |
+          |---------|-----------|------|
+          | Keycloak | organizational | OAuth2/OIDC authenticatie |
+          | MinIO | organizational | Foto-opslag |
+
+          ### Beslissingen per koppeling
+          - **Keycloak**: REUSE — bestaande platform-IdP, geen eigen auth bouwen.
+          - **MinIO**: REUSE — al beschikbaar in platform voor objectopslag.
+
+          ## Aanbeveling
+          Gekozen: **Benadering A** (Monolithische FastAPI + PostgreSQL).
+
+          ### Afgeleide beslissingen voor TD
+          - React + Vite frontend
+          - FastAPI + SQLAlchemy backend
+          - PostgreSQL als primaire datastore
+          - MinIO voor receptfoto's
+          - Keycloak voor authenticatie
+
+          ### Afgeleide Technical Requirements
+          - TR-01: Maximaal één beoordeling per gebruiker per recept
+          - TR-02: Foto-upload ≤ 5 MB, JPEG/PNG/WebP
+
+    - agent: architect
+      tool: coding:run_git
+      arguments:
+        command: "add docs/technical-research.md"
+
+    - agent: architect
+      tool: coding:run_git
+      arguments:
+        command: "commit -m 'Technisch onderzoek recipe sharing app'"
+
+    - agent: architect
+      tool: coding:run_git
+      arguments:
+        command: "push"
+
+    # --- Architect writes the TD — approval gate PENDING ---
+    # The architect-role approval must be resolved manually through the
+    # UI by a user with the `architect` role. After approval the session
+    # can be resumed to let the architect git commit + push + done.
+    - agent: architect
+      tool: coding:make_design
+      approval:
+        status: pending
+      arguments:
+        path: docs/technical-design.md
+        content: |
+          # Technisch Ontwerp: Recipe Sharing App
+
+          > Platform standards: conforms to [docs/platform-technical-standards.md](./platform-technical-standards.md) rev `2026-04-20`.
+
+          ## Introductie
+
+          ### Onderwerp
+          Een platform voor het delen en beoordelen van recepten binnen
+          een vrienden- en familiekring.
+
+          ### Probleemomschrijving
+          Er is geen bestaande oplossing voor thuiskoks om recepten te
+          delen en te beoordelen in een besloten omgeving.
+
+          ### Functionele Vraag
+          Hoe kunnen gebruikers recepten delen, bekijken en beoordelen
+          binnen een veilige en gebruiksvriendelijke applicatie?
+
+          ## Oplossing
+
+          ### Toegepaste Principes (per NORA-laag)
+          * **Informatie:** Receptdata centraal opgeslagen in Postgres
+          * **Applicatie:** Projectspecifieke receptmodule op het template
+          * **Security & Privacy:** Persoonsgegevens in comments — PbD²
+
+          ### Requirements
+          | ID | Source | Requirement | Verification Method |
+          |----|--------|-------------|---------------------|
+          | FR-01 | BA | Recept aanmaken met titel, ingrediënten, bereidingswijze en foto | Functional test |
+          | FR-02 | BA | Recepten bekijken | Functional test |
+          | FR-03 | BA | Recept beoordelen (1-5 sterren) | Functional test |
+          | FR-04 | BA | Commentaar plaatsen | Functional test |
+          | FR-05 | BA | Zoeken op ingrediënt of naam | Functional test |
+          | FR-06 | BA | Favorieten opslaan | Functional test |
+          | TR-01 | AR | Maximaal één beoordeling per gebruiker per recept | Functional test |
+          | TR-02 | AR | Foto-upload ≤ 5 MB, JPEG/PNG/WebP | Validation test |
+
+          ### Architectuuroplossing
+
+          #### 1. Componentstructuur
+          * New Components: Recept-, Beoordeling-, Comment-service op het template
+          * Reuse: Chat-UI, session-framework en Druppie auth uit het template
+
+          #### 2. Data Architecture & Integration
+          * Data Model: `recipes`, `ratings`, `comments`, `favorites` tabellen
+          * API: `/recipes`, `/recipes/{id}/ratings`, `/recipes/{id}/comments`
+
+          ### Platform standard deviations
+
+          | Section | Deviation | Rationale |
+          |---------|-----------|-----------|
+          | (none)  |           |           |
+
+          ### Visualisatie
+          ```mermaid
+          flowchart TD
+            U["Thuiskok"] --> FE["React Frontend"]
+            FE --> API["FastAPI Backend"]
+            API --> DB["Postgres"]
+          ```
+
+    # No more steps — the chain ends with the architect paused on the
+    # pending approval. After a human resolves the approval through the
+    # UI and resumes the session, the architect will git add/commit/push
+    # and call done() against the approved TD content.
+
+  verify:
+    # The FD from the parent setup is still there
+    - gitea_repo_exists: true
+    - file_exists: docs/functional-design.md
+    # The research HAS been approved and committed, so it should exist in Gitea.
+    - file_exists: docs/technical-research.md
+    # The TD has NOT been written yet — the TD approval gate is pending,
+    # so the second make_design call has not produced output. This
+    # asserts that the TD approval really is unresolved (if it had been
+    # approved, docs/technical-design.md would already exist in Gitea).
+    # If the verifier gains a file_not_exists check later, we can be
+    # more explicit. For now we rely on the positive checks and the
+    # manual UI verification described above.

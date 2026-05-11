@@ -1,0 +1,40 @@
+## Check: architect stays within PR 168 scope rules
+##
+## PR 168 sharpens the architect vs. builder_planner boundary. The architect
+## decides WHAT and WHY (components, data concepts, integrations, principles,
+## PII). The builder_planner decides HOW (framework, library versions, file
+## layout, endpoint signatures, JSON schemas).
+##
+## These 6 judge checks mirror the PR 168 test-plan items.
+
+check:
+  name: architect-pr168-scope
+  description: "PR 168 — architect must stay in WAT/WAAROM scope, not dive into HOE"
+  tags: [architect, pr168, scope, judge]
+
+  assert:
+    - agent: architect
+      completed: true
+    - agent: architect
+      tool: coding:make_design
+
+  judge:
+    context: architect
+    checks:
+      # 1. general_chat architectuurvraag — advies op basis van NORA/principes
+      - "The architect's output must show principle-based reasoning — it should reference NORA layers (Grondslagen / Organisatie / Informatie / Applicatie / Netwerk / Beveiliging) OR explicit Water Authority / waterschap architecture principles somewhere in the technical design. An architecture review without any principle references is a regression."
+
+      # 2. create_project standalone: TD bevat géén framework/versie/library keuzes
+      - "The technical-design.md must NOT prescribe specific frameworks, specific libraries, or library versions (e.g. 'React 18', 'FastAPI', 'SQLAlchemy 2.0', 'shadcn/ui', 'Keycloak', 'Vite'). Naming a concrete framework or library inside the TD is a scope violation — those are builder_planner's call per platform-standards. Generic technology categories ('relational database', 'REST API', 'web frontend') are fine."
+
+      # 3. create_project standalone: TD bevat géén concrete endpoint-signatures of JSON schemas
+      - "The technical-design.md must NOT contain concrete HTTP endpoint signatures (e.g. `GET /api/recipes/{id}`, `POST /users`) or JSON Schema / field-level payload definitions. High-level integration points ('frontend calls backend for recipe CRUD', 'searches legacy permit DB via adapter') are fine; contract-level signatures and schemas are builder_planner's scope."
+
+      # 4. create_project core_update met nieuwe module: Module Samenvatting zonder Port
+      - "If the technical-design.md contains a 'Module Samenvatting' section (a new MCP module proposal), that section must NOT contain a 'Port:' line or any port number in the 9010-9099 range. Port allocation is operational, not architectural. If no Module Samenvatting section is present in the TD, mark this check as PASS (not applicable)."
+
+      # 5. DESIGN_FEEDBACK flow: architect geeft BA feedback zonder in implementatie te duiken
+      - "If the architect signaled DESIGN_FEEDBACK in its done() summary, the feedback items must target WHAT/WHY gaps in the functional design (missing NFRs, unclear data ownership, missing security posture, unclear user roles) — NOT HOW choices (framework picks, library choices, file layouts, endpoint shapes). If the architect approved the design (DESIGN_APPROVED), mark this check as PASS (not applicable)."
+
+      # 6. End-to-end: TD blijft op WAT/WAAROM niveau — HOE hoort in builder-plan.md
+      - "The technical-design.md must stay at the WAT/WAAROM level — logical components with names and responsibilities, data concepts (entities/relationships/PII), integration points, principles, NFRs. It must NOT include file paths, directory layouts, pseudocode, or concrete implementation decisions. Those belong in builder-plan.md, which builder_planner owns."
