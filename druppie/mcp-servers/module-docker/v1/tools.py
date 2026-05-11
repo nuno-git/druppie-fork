@@ -59,7 +59,7 @@ def _validate_name(name: str, label: str) -> str | None:
 
 
 # Configuration
-DOCKER_NETWORK = os.getenv("DOCKER_NETWORK", "druppie-new-network")
+DOCKER_NETWORK = os.getenv("DOCKER_NETWORK", "")
 PORT_RANGE_START = int(os.getenv("PORT_RANGE_START", "9100"))
 PORT_RANGE_END = int(os.getenv("PORT_RANGE_END", "9199"))
 BUILD_DIR = Path(os.getenv("BUILD_DIR", "/tmp/docker-builds"))

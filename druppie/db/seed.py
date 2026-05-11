@@ -2,7 +2,7 @@
 
 Usage:
     python -m druppie.db.seed          # from project root
-    docker compose exec druppie-new-backend python -m druppie.db.seed
+    docker compose exec backend python -m druppie.db.seed
 """
 
 import uuid

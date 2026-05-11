@@ -37,7 +37,7 @@ echo ""
 
 # Step 2: Remove any remaining druppie volumes (in case they were external)
 echo "--- Step 2: Cleaning up any remaining volumes ---"
-for vol in druppie_new_postgres druppie_new_keycloak_postgres druppie_new_gitea_postgres druppie_new_gitea druppie_new_workspace druppie_new_dataset druppie_init_marker druppie_sandbox_dep_cache druppie_cache_scan_results; do
+for vol in ${P}_postgres ${P}_keycloak_postgres ${P}_gitea_postgres ${P}_gitea ${P}_workspace ${P}_dataset ${P}_init_marker ${P}_sandbox_dep_cache ${P}_cache_scan_results; do
     if docker volume inspect "$vol" >/dev/null 2>&1; then
         echo "  Removing volume: $vol"
         docker volume rm "$vol" 2>/dev/null || echo "  Warning: Could not remove $vol"
@@ -55,7 +55,7 @@ echo "--- Step 4: Waiting for services to be healthy ---"
 
 echo "  Waiting for PostgreSQL..."
 for i in $(seq 1 30); do
-    if docker exec druppie-new-db pg_isready -U druppie >/dev/null 2>&1; then
+    if docker exec ${P}-druppie-db-1 pg_isready -U druppie >/dev/null 2>&1; then
         echo "  PostgreSQL is ready"
         break
     fi
@@ -64,7 +64,7 @@ done
 
 echo "  Waiting for Keycloak..."
 for i in $(seq 1 30); do
-    if docker exec druppie-new-keycloak curl -sf http://localhost:8080/health/ready >/dev/null 2>&1; then
+    if docker exec ${P}-keycloak-1 curl -sf http://localhost:8080/health/ready >/dev/null 2>&1; then
         echo "  Keycloak is ready"
         break
     fi
@@ -73,7 +73,7 @@ done
 
 echo "  Waiting for Gitea..."
 for i in $(seq 1 30); do
-    if docker exec druppie-new-gitea curl -sf http://localhost:3000/api/healthz >/dev/null 2>&1; then
+    if docker exec ${P}-gitea-1 curl -sf http://localhost:3000/api/healthz >/dev/null 2>&1; then
         echo "  Gitea is ready"
         break
     fi
