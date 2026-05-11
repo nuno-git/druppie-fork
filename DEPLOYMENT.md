@@ -34,11 +34,10 @@ EXTERNAL_HOST=druppie.example.com
 FRONTEND_PUBLIC_URL=https://druppie.example.com
 BACKEND_PUBLIC_URL=https://druppie.example.com
 KEYCLOAK_PUBLIC_URL=https://druppie.example.com
-GITEA_PUBLIC_URL=https://gitea.druppie.example.com
+GITEA_PUBLIC_URL=https://gitea.example.com
 CORS_ORIGINS=https://druppie.example.com
 
 # Keycloak HTTPS (set when behind reverse proxy)
-KC_HOSTNAME_PORT=
 KC_HOSTNAME_STRICT_HTTPS=true
 
 # Production mode — requires non-default INTERNAL_API_KEY and SANDBOX_API_SECRET
@@ -50,19 +49,30 @@ DRUPPIE_MODULE_API_TOKEN=<generate with: python3 -c "import secrets; print(secre
 
 ### Multi-Instance (Running Alongside Another Druppie)
 
-If another Druppie instance runs on the same machine, use port offsets to avoid collisions:
+If another Druppie instance runs on the same machine, use port offsets and a unique project name:
 
 ```bash
 # In .env:
+COMPOSE_PROJECT_NAME=druppie-prod
 PORT_OFFSET=2000
 
 # Then apply:
 bash scripts/apply-port-offset.sh
 ```
 
-This shifts all ports by +2000. Container names, volumes, and networks are isolated via `COMPOSE_PROJECT_NAME` (defaults to directory name).
+This shifts all ports by +2000. All Docker resources (containers, volumes, networks) are automatically isolated by `COMPOSE_PROJECT_NAME`. No manual name changes needed.
 
 ## How It Works
+
+### Dynamic Resource Naming
+
+All Docker resources are dynamically named via `COMPOSE_PROJECT_NAME`:
+
+- **Containers**: `<PROJECT>-<service>-1` (e.g., `druppie-prod-backend-1`)
+- **Volumes**: `<PROJECT>_<key>` (e.g., `druppie-prod_postgres`)
+- **Networks**: `<PROJECT>_<key>` (e.g., `druppie-prod_main`)
+
+For dev, `COMPOSE_PROJECT_NAME` defaults to the directory name. For prod, set it explicitly in `.env`.
 
 ### Dynamic URL Resolution
 
@@ -73,10 +83,14 @@ All public-facing URLs are controlled by 4 environment variables:
 | `FRONTEND_PUBLIC_URL` | `http://HOST:FRONTEND_PORT` | Keycloak redirect URIs, CORS |
 | `BACKEND_PUBLIC_URL` | `http://HOST:BACKEND_PORT` | Frontend build args (VITE_API_URL) |
 | `KEYCLOAK_PUBLIC_URL` | `http://HOST:KEYCLOAK_PORT` | Backend issuer URL, frontend build args |
-| `GITEA_PUBLIC_URL` | `http://HOST:GITEA_PORT` | Keycloak redirect URIs, backend CORS |
+| `GITEA_PUBLIC_URL` | `http://HOST:GITEA_PORT` | Keycloak redirect URIs, Gitea ROOT_URL |
 
 - **For localhost dev**: leave them unset — defaults to `http://localhost:PORT`
 - **For production**: set them to `https://your-domain` (no port) — reverse proxy handles routing
+
+### Dynamic repo_url Resolution
+
+The backend stores only `repo_name` and `repo_owner` in the database (not full URLs). The `repo_url` shown in the frontend is resolved dynamically from these fields plus the `GITEA_URL` env var. This means switching between dev and prod requires zero database changes.
 
 ### Keycloak Init (iac/users.yaml)
 
@@ -89,6 +103,7 @@ The `iac/users.yaml` file uses `${FRONTEND_PUBLIC_URL}` and `${GITEA_PUBLIC_URL}
 ```bash
 cp .env.example .env
 # Edit .env — set all variables from the "Production with Reverse Proxy" section above
+# Also set COMPOSE_PROJECT_NAME to isolate from any dev instance
 ```
 
 ### 2. Set Port Offset (if co-existing with another instance)
@@ -101,14 +116,9 @@ bash scripts/apply-port-offset.sh
 ### 3. Configure Nginx
 
 ```bash
-# Generate htpasswd (Basic Auth)
-sudo apt install apache2-utils  # if not installed
-sudo htpasswd -c /etc/nginx/druppie-prod.htpasswd druppie_team
-# Enter password when prompted
-
 # Install nginx site config
-sudo cp nginx/druppie-prod.conf /etc/nginx/sites-available/
-sudo ln -s /etc/nginx/sites-available/druppie-prod.conf /etc/nginx/sites-enabled/
+sudo cp nginx/druppie-prod.conf /etc/nginx/sites-available/druppie-prod
+sudo ln -s /etc/nginx/sites-available/druppie-prod /etc/nginx/sites-enabled/
 
 # Update the proxy_pass ports in the nginx config to match your PORT_OFFSET
 # Backend: 10000 + offset, Frontend: 7173 + offset, Keycloak: 10080 + offset, Gitea: 5000 + offset
@@ -117,21 +127,23 @@ sudo ln -s /etc/nginx/sites-available/druppie-prod.conf /etc/nginx/sites-enabled
 sudo nginx -t && sudo systemctl reload nginx
 ```
 
+The nginx config includes oauth2-proxy auth gate (separate Keycloak realm `druppie-gate`) for production access control.
+
 ### 4. DNS
 
 Point these DNS records to your server:
 
 ```
-druppie.notitiemaker.nl      → A record → server IP
-gitea.druppie.notitiemaker.nl → A record → server IP (wildcard *.notitiemaker.nl also works)
+druppie.example.com  → A record → server IP
+gitea.example.com    → A record → server IP
 ```
 
 ### 5. SSL Certificate
 
-The nginx config expects certs at `/etc/letsencrypt/live/notitiemaker.nl/`. Obtain a wildcard cert:
+The nginx config expects certs at `/etc/letsencrypt/live/`. Obtain a wildcard cert:
 
 ```bash
-sudo certbot certonly --manual --preferred-challenges dns -d '*.notitiemaker.nl' -d notitiemaker.nl
+sudo certbot certonly --manual --preferred-challenges dns -d '*.example.com' -d example.com
 ```
 
 ### 6. Build and Start
@@ -147,7 +159,7 @@ docker compose --profile prod --profile init up -d --build
 docker compose ps
 
 # Test HTTPS access
-curl -u druppie_team:YOUR_PASSWORD https://druppie.notitiemaker.nl/health
+curl https://druppie.example.com/health
 ```
 
 ## Switching Between Dev and Prod
@@ -156,20 +168,23 @@ Everything is controlled by `.env`. To switch:
 
 ```bash
 # Dev mode (localhost, no HTTPS, default ports)
+COMPOSE_PROJECT_NAME=druppie-dev
 EXTERNAL_HOST=localhost
 ENVIRONMENT=development
 # Leave all PUBLIC_URL variables commented out
 
 # Prod mode (reverse proxy, HTTPS)
-EXTERNAL_HOST=druppie.notitiemaker.nl
+COMPOSE_PROJECT_NAME=druppie-prod
+EXTERNAL_HOST=druppie.example.com
 ENVIRONMENT=production
-FRONTEND_PUBLIC_URL=https://druppie.notitiemaker.nl
-BACKEND_PUBLIC_URL=https://druppie.notitiemaker.nl
-KEYCLOAK_PUBLIC_URL=https://druppie.notitiemaker.nl
-GITEA_PUBLIC_URL=https://gitea.druppie.notitiemaker.nl
-CORS_ORIGINS=https://druppie.notitiemaker.nl
-KC_HOSTNAME_PORT=
+FRONTEND_PUBLIC_URL=https://druppie.example.com
+BACKEND_PUBLIC_URL=https://druppie.example.com
+KEYCLOAK_PUBLIC_URL=https://druppie.example.com
+GITEA_PUBLIC_URL=https://gitea.example.com
+CORS_ORIGINS=https://druppie.example.com
 KC_HOSTNAME_STRICT_HTTPS=true
 ```
 
 Then rebuild: `docker compose --profile prod --profile init up -d --build`
+
+No code changes needed. No database changes needed. Only `.env` differs between environments.
