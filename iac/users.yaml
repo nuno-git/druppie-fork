@@ -253,14 +253,11 @@ clients:
     publicClient: true
     standardFlowEnabled: true
     directAccessGrantsEnabled: true
-    rootUrl: http://${EXTERNAL_HOST}:${FRONTEND_PORT}
+    rootUrl: ${FRONTEND_PUBLIC_URL}
     redirectUris:
-      - http://localhost:${FRONTEND_PORT}/*
-      - http://localhost:${FRONTEND_PORT}
-      - http://${EXTERNAL_HOST}:${FRONTEND_PORT}/*
-      - http://${EXTERNAL_HOST}:${FRONTEND_PORT}
+      - ${FRONTEND_PUBLIC_URL}/*
     webOrigins:
-      - http://${EXTERNAL_HOST}:${FRONTEND_PORT}
+      - ${FRONTEND_PUBLIC_URL}
 
   - clientId: druppie-backend
     name: Druppie Backend API
@@ -275,10 +272,8 @@ clients:
     description: Gitea OAuth2 Integration
     publicClient: false
     standardFlowEnabled: true
-    rootUrl: http://${EXTERNAL_HOST}:${GITEA_PORT}
+    rootUrl: ${GITEA_PUBLIC_URL}
     redirectUris:
-      - http://localhost:${GITEA_PORT}/*
-      - http://${EXTERNAL_HOST}:${GITEA_PORT}/*
+      - ${GITEA_PUBLIC_URL}/*
     webOrigins:
-      - http://localhost:${GITEA_PORT}
-      - http://${EXTERNAL_HOST}:${GITEA_PORT}
+      - ${GITEA_PUBLIC_URL}

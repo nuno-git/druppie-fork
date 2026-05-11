@@ -53,11 +53,15 @@ def wait_for_gitea():
     return False
 
 
+# Container name for Gitea (must match docker-compose container_name)
+GITEA_CONTAINER = os.getenv("GITEA_CONTAINER", "druppie-new-gitea")
+
+
 def run_gitea_cli(args: list) -> tuple[bool, str, str]:
     """Run Gitea CLI command inside container as git user."""
     try:
         result = subprocess.run(
-            ["docker", "exec", "-u", "git", "druppie-new-gitea", "gitea"] + args,
+            ["docker", "exec", "-u", "git", GITEA_CONTAINER, "gitea"] + args,
             capture_output=True,
             text=True,
             timeout=30,
