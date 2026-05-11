@@ -140,7 +140,8 @@ async def run_tests(
     _UNSET = object()
 
     def _update_batch(status=_UNSET, current_test=_UNSET, message=_UNSET,
-                      total_tests=_UNSET, completed_at=_UNSET):
+                      total_tests=_UNSET, completed_at=_UNSET,
+                      running_tests=_UNSET):
         """Update batch run status with a short-lived DB session.
 
         Only explicitly passed values are forwarded (None is a valid
@@ -149,7 +150,8 @@ async def run_tests(
         updates = {}
         for key, val in [("status", status), ("current_test", current_test),
                          ("message", message), ("total_tests", total_tests),
-                         ("completed_at", completed_at)]:
+                         ("completed_at", completed_at),
+                         ("running_tests", running_tests)]:
             if val is not _UNSET:
                 updates[key] = val
         if not updates:
