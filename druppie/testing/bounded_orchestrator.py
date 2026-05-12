@@ -1,6 +1,7 @@
 """Bounded orchestrator that wraps the real Orchestrator to stop after specified agents."""
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from uuid import UUID
@@ -423,15 +424,29 @@ class BoundedOrchestrator:
                 )
                 continue
 
-            # Not paused — check for unexpected states
-            if status not in (
-                SessionStatus.ACTIVE.value,
-                SessionStatus.COMPLETED.value,
-            ):
-                logger.warning(
-                    "Pause loop: unexpected session status=%s, stopping: session=%s",
-                    status, session_id,
+            # Handle sandbox pause — wait for webhook to resume
+            if status == SessionStatus.PAUSED_SANDBOX.value:
+                logger.info(
+                    "Pause loop: waiting for sandbox to complete: session=%s",
+                    session_id,
                 )
+                await asyncio.sleep(5)
+                continue
+
+            # Session is active (agents still running) — wait briefly
+            if status == SessionStatus.ACTIVE.value:
+                await asyncio.sleep(2)
+                continue
+
+            # Completed or other terminal state — exit
+            if status == SessionStatus.COMPLETED.value:
+                break
+
+            # Unexpected state
+            logger.warning(
+                "Pause loop: unexpected session status=%s, stopping: session=%s",
+                status, session_id,
+            )
             break
 
         return session_id

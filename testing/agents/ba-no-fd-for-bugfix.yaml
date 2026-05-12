@@ -14,6 +14,7 @@ agent-test:
     - setup-project-with-fd
 
   message: "In de recipe sharing app werkt de zoekfunctie niet goed: als ik zoek met accenten (bijv. kanaäl) krijg ik geen resultaten, maar zonder accent (kanaal) werkt het wel"
+  agents: [router, planner, business_analyst]
   hitl: bugfix-reporter
 
   assert:

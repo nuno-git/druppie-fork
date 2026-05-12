@@ -1,12 +1,13 @@
-# BA Agent Baseline Test Results — 2026-04-23 (Updated 2026-04-28)
+# BA Agent Baseline Test Results — 2026-04-23 (Updated 2026-05-12)
 
 Baseline evaluation of the Business Analyst agent prompt before negative prompting rewrite.
-Tests run across two batches due to infrastructure interruptions.
+Tests run across three batches due to infrastructure interruptions.
 
 - Batch 1: `49684a79-0a67-4090-b21a-06dac10601c9` (4 of 13 completed before server restart)
 - Batch 2: `8102bbe8-f3c8-4a12-a8b9-1e8ffd9b32ae` (10 tests, completed)
+- Batch 3: `458cb3cf-5215-4b9d-99ab-e6ff36a8454f` (1 test: ba-no-fd-for-bugfix re-run, completed)
 - LLM model: `zai/glm-5`
-- Judge model: `zai/glm-4.5-air`
+- Judge model: `zai/glm-5` (upgraded from `glm-4.5-air` after batch 2)
 - Branch: `feature/ba-evaluation-tests`
 
 ## Results Summary
@@ -21,13 +22,13 @@ Tests run across two batches due to infrastructure interruptions.
 | ba-design-no-bias | FAIL | **PASS** | 14m 58s | Pre-existing check wording error (asked for hitl_ask_question, BA correctly used multiple choice) |
 | ba-fd-reject-then-approve | FAIL | **PASS** | 17m 27s | Judge parse error on 1 check, BA handled reject-revise-approve correctly |
 | ba-general-chat-advice | PASS | **PASS** | 2m 33s | BA gave advice without starting project intake |
-| ba-no-fd-for-bugfix | FAIL | **INVALID TEST** | 1m 33s | Test infrastructure bug: BA never saw the actual bug report. BA responded to setup message instead, then test ended before BA could process the bug. Needs re-run with proper sequencing. |
+| ba-no-fd-for-bugfix | PASS | **PASS** | 7m 57s | Re-run 2026-05-12: BA correctly identified bug as NO_FD_CHANGE. 1/1 assertions + 5/5 judge checks passed. Required planner fix + agents bound. |
 | ba-no-technical-jargon | PASS | **PASS** | 15m 33s | BA avoided all jargon (GDPR, PII, etc.) in user-facing questions. 1/1 judge check passed. |
 | ba-platform-standards-not-restated | FAIL | **FAIL** | 12m 47s | BA included "25 concurrent users" in NFR-02 without user ever mentioning this number. Manually reviewed: confirmed judge verdict is correct (not false negative). 5/6 judge checks passed. |
 | ba-refuses-skip-questions | FAIL | **FAIL** | 7m 20s | BA compromised on making assumptions after user repeatedly tried to skip. Said "I'll make assumptions for everything else" instead of firmly refusing. Created design based on 1 genuine answer + 6 assumptions. |
 | ba-unpacks-solution-speak | PASS | **PASS** | 13m 37s | All assertions (9/9) and judge checks (8/8) passed. BA correctly dug deeper instead of accepting "dashboard" as the requirement. |
 
-**Manual pass rate: 7/14 tests passed** (includes 1 test with judge parse errors where BA behavior was correct)
+**Manual pass rate: 8/13 tests passed** (includes 1 test with judge parse errors where BA behavior was correct)
 
 ## Real BA Issues Found
 
@@ -57,49 +58,11 @@ The `glm-4.5-air` judge model had several problems:
 2. **False negatives (2 occurrences)**: Judge correctly analyzed that the BA did the right thing, then still returned `pass: false`. Example: "The BA actually provided extensive advice... The check incorrectly claims the BA immediately ended the conversation" — yet still failed.
 3. **Check wording sensitivity**: Checks phrased as negations ("should not have...") or that describe wrong behavior confuse the judge into failing correct behavior.
 
-**Recommendation**: Consider upgrading judge profile to `glm-5` for more reliable evaluation, or tighten check wording to use positive assertions.
+**Update**: Judge profiles have since been upgraded to `glm-5` (see `testing/profiles/judges.yaml`). Remaining recommendation: tighten check wording to use positive assertions to reduce false negatives.
 
-## Tests Still Pending
+## Detailed Test Results
 
-### ba-no-fd-for-bugfix - Test Infrastructure Fixed, Awaiting Planner Fix (2026-04-28)
-
-**Status**: Test infrastructure fixed and re-run, but test fails due to planner routing bug.
-
-**Infrastructure Fix Applied** (2026-04-28):
-- Removed `continue_session: true` and `agents` list from test configuration
-- Test now starts a fresh session that references the existing project so router naturally classifies as `update_project`
-- Database corruption issue resolved and database reset successfully
-
-**Re-run Results** (2026-04-28):
-- Test execution: Successful (setup works, router correctly classifies as update_project)
-- Duration: ~79 seconds
-- **Failure Root Cause**: The planner incorrectly routes small bug reports to `developer` agent instead of `business_analyst` agent. This is a known planner routing issue.
-- **BA Agent Never Runs**: Because planner routes to developer, the BA agent never executes, so the test cannot evaluate BA behavior.
-
-**Future Test Work Required** (once planner routing is fixed):
-- Re-run this test to verify the BA correctly:
-  1. Identifies the bug report as a technical issue (not a functional change)
-  2. Asks a few clarifying questions about the bug (when it happens, which characters, etc.)
-  3. Does NOT start full requirements elicitation for a new feature
-  4. Calls `done()` with `NO_FD_CHANGE` in the summary
-  5. Provides a clear technical description of the bug that the Architect can act on
-  6. Does NOT call `coding:make_design` (writing an FD for a bug fix is incorrect)
-
-All other 13 tests have completed and been manually reviewed.
-
-After planner routing is fixed, manually review the test result (act as a second judge by reading the full agent traces from the API) since the `glm-4.5-air` judge model is unreliable — see "Judge Reliability Issues" below. Update this file with both the automated judge verdict and manual verdict.
-
-Run with (after planner fix):
-```bash
-curl -X POST "http://localhost:8300/api/evaluations/run-tests" \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"test_names": ["ba-no-fd-for-bugfix"], "execute": true, "judge": true}'
-```
-
-## Final Test Results (All Tests Completed)
-
-As of 2026-04-28, 13 of 14 baseline tests have completed and been manually reviewed. Here are the detailed results:
+As of 2026-05-12, all 13 baseline tests have completed and been reviewed. Here are the detailed results:
 
 ### ba-unpacks-solution-speak ✅ PASSED
 - **Assertions**: 9/9 passed (100%)
@@ -120,19 +83,19 @@ As of 2026-04-28, 13 of 14 baseline tests have completed and been manually revie
 - **Manual review**: Confirmed judge verdict is correct (not a false negative)
 - **Finding**: BA compromised when user repeatedly tried to skip questions. After user said "Make assumptions for everything", BA said "I'll make assumptions for everything else after this ONE question" and proceeded to create a full functional design based on 1 genuine answer and 6 assumptions. Confirms new critical issue #6.
 
-### ba-no-fd-for-bugfix 🔄 TEST INFRASTRUCTURE BUG (Fixed)
-- **Status**: Invalid test — BA never saw the actual bug report
-- **Duration**: 1m 33s
-- **Issue**: Test used `continue_session: true` which caused agents to run before the new message was processed. BA only saw the setup message "Tool test: setup-project-with-fd" and never received the bug report
-- **Fix applied**: Removed `continue_session: true` and `agents` list. Test now starts a fresh session with message referencing the existing project so router naturally classifies as `update_project`
-- **Status**: Ready to re-run
+### ba-no-fd-for-bugfix ✅ PASSED
+- **Assertions**: 1/1 passed (100%)
+- **Judge checks**: 5/5 passed (100%)
+- **Duration**: 7m 57s
+- **Finding**: BA correctly identified the accented-character search bug as a technical issue (not a functional change). Asked clarifying questions about when the bug occurs and which characters are affected. Called `done()` with `NO_FD_CHANGE` and a clear technical description. Did NOT call `coding:make_design`.
+- **History**: Originally blocked by test infrastructure (2026-04-23) and planner routing (2026-04-28). Fixed and re-run 2026-05-12.
 
-**Final manual pass rate: 7/14 tests passed** (includes 1 test with judge parse errors where BA behavior was actually correct)
+**Final pass rate: 8/13 tests passed** (includes 1 test with judge parse errors where BA behavior was actually correct)
 
-**Tests remaining: 1** (`ba-no-fd-for-bugfix` — re-run pending)
+**All 13 tests completed.**
 
 ## Test Infrastructure Issues
 
-1. **`ba-no-fd-for-bugfix`** ✅ FIXED: Test used `continue_session: true` which caused the BA to start processing BEFORE the bug report message was sent. BA only saw the setup message "Tool test: setup-project-with-fd" and never received the actual bug report about the search function. Fix applied: Removed `continue_session: true` and `agents` list. Test now starts a fresh session with a message that references the existing project ("In de recipe sharing app...") so the router naturally classifies it as `update_project`. Ready to re-run.
+1. **`ba-no-fd-for-bugfix`** ✅ FIXED (2026-05-12): Originally used `continue_session: true` which caused the BA to never see the bug report. Removed `continue_session`, restored `agents: [router, planner, business_analyst]`, and added planner prompt clarification that bug fixes must go through BA. Test now passes.
 2. **`ba-chat-routes-to-architect` (original)**: Test sent a database technology question directly, which the planner correctly routed to the architect — the BA never ran. Redesigned to start with a BA-appropriate question and have the HITL persona pivot to a technical question mid-conversation.
 3. **`ba-design-no-bias` (pre-existing)**: Check wording asks for `hitl_ask_question` specifically, but the BA correctly uses `hitl_ask_multiple_choice_question` (the preferred tool per the prompt). Check needs rewording.
