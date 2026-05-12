@@ -21,7 +21,7 @@ These stay the same across all LLM runs:
 | Component | Model | Provider | Config file |
 |-----------|-------|----------|-------------|
 | Judge | `glm-5` | `zai` | `testing/profiles/judges.yaml` |
-| HITL simulator | `glm-4.5-air` | `zai` | `testing/profiles/hitl.yaml` |
+| HITL simulator | `glm-5` | `zai` | `testing/profiles/hitl.yaml` |
 
 The `LLM_FORCE_PROVIDER` / `LLM_FORCE_MODEL` override only affects agent execution,
 not the judge or HITL simulator.

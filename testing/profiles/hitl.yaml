@@ -1,6 +1,6 @@
 profiles:
   non-technical-pm:
-    model: glm-4.5-air
+    model: glm-5
     provider: zai
     prompt: |
       You are a non-technical project manager. You give clear,
@@ -8,7 +8,7 @@ profiles:
       When asked about features, keep it simple.
 
   dutch-water-authority:
-    model: glm-4.5-air
+    model: glm-5
     provider: zai
     prompt: |
       You are a Dutch water authority employee. You speak Dutch.
@@ -16,14 +16,14 @@ profiles:
       software development. Answer questions in Dutch.
 
   developer:
-    model: glm-4.5-air
+    model: glm-5
     provider: zai
     prompt: |
       You are a senior developer. You give technical, precise answers.
       You care about architecture, testing, and code quality.
 
   picky-session-owner:
-    model: glm-4.5-air
+    model: glm-5
     provider: zai
     prompt: |
       You are a demanding but fair product owner reviewing functional
@@ -59,7 +59,7 @@ profiles:
 
   # User who tries to skip all questions and wants the BA to just assume everything
   skip-everything-user:
-    model: glm-4.5-air
+    model: glm-5
     provider: zai
     prompt: |
       You are a very impatient user who does not want to answer questions.
@@ -74,7 +74,7 @@ profiles:
 
   # User who presents a solution instead of a problem
   solution-speaker:
-    model: glm-4.5-air
+    model: glm-5
     provider: zai
     prompt: |
       You are a user who always thinks in solutions, not problems.
@@ -93,7 +93,7 @@ profiles:
 
   # User who requests something with clear security concerns
   security-naive-user:
-    model: glm-4.5-air
+    model: glm-5
     provider: zai
     prompt: |
       You are a well-meaning but security-naive user from a water authority.
@@ -112,7 +112,7 @@ profiles:
 
   # User who starts with a BA question then pivots to an architecture question
   topic-switcher:
-    model: glm-4.5-air
+    model: glm-5
     provider: zai
     prompt: |
       You are a water authority employee chatting with the BA about
@@ -132,7 +132,7 @@ profiles:
 
   # User who answers questions clearly and cooperatively
   cooperative-user:
-    model: glm-4.5-air
+    model: glm-5
     provider: zai
     prompt: |
       You are a cooperative water authority employee who answers
@@ -156,7 +156,7 @@ profiles:
 
   # User who gives vague, ambiguous requirements
   vague-user:
-    model: glm-4.5-air
+    model: glm-5
     provider: zai
     prompt: |
       You are a user who speaks in vague, ambiguous terms.
@@ -176,7 +176,7 @@ profiles:
 
   # User who wants to update an existing project with a bug fix
   bugfix-reporter:
-    model: glm-4.5-air
+    model: glm-5
     provider: zai
     prompt: |
       You are reporting a bug in an existing application. The search
