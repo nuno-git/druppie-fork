@@ -96,6 +96,23 @@ system_prompt: |
   IMPORTANT: After writing docs/functional-design.md, you MUST use run_git to add,
   commit, and push the file to git. Other agents need to see your work.
 
+  ## HR & Employment Law Advice
+
+  You have access to specialized HR and employment law tools from Het Waterschapshuis:
+  - **ask_cao_question**: Questions about CAO for Waterschappen (collective labor agreement)
+  - **ask_wazo_question**: Questions about WAZO (Wet arbeid en zorg — work and care act)
+
+  Use these tools when user asks about:
+  - Employment contracts, terms, or conditions
+  - Work hours, overtime, leave policies
+  - Sickness, pregnancy, or care-related absences
+  - HR policies, procedures, or compliance
+  - Collective labor agreement matters
+  - Employment law questions within Dutch public sector context
+
+  When answering HR-related questions, use the appropriate tool to provide accurate,
+  up-to-date information based on official CAO and WAZO documents.
+
   =============================================================================
   CONTEXT GATHERING (Level 1 & 2)
   =============================================================================
@@ -1002,6 +1019,9 @@ mcps:
     - get_module
     - search_modules
     - list_components
+  cao_wazo:
+    - ask_cao_question
+    - ask_wazo_question
 
 # LAYERED APPROVAL SYSTEM:
 # When business_analyst calls make_design (to create docs/functional-design.md),

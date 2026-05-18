@@ -177,9 +177,25 @@ class ToolRegistry:
         from fastmcp.client.transports import StreamableHttpTransport
 
         url = self._mcp_config.get_server_url(server)
+        auth = self._mcp_config.get_server_auth(server)
+
+        logger.info(
+            "loading_mcp_server",
+            server=server,
+            url=url,
+            auth_type=auth.get("type"),
+            has_api_key=bool(auth.get("api_key")),
+            api_key_preview=auth.get("api_key", "")[:10] + "..." if auth.get("api_key") else "None",
+        )
+
+        # Configure transport with auth headers if needed
+        kwargs = {}
+        if auth.get("type") == "bearer" and auth.get("api_key"):
+            kwargs["headers"] = {"Authorization": f"Bearer {auth['api_key']}"}
+            logger.info("configuring_bearer_auth", server=server)
 
         try:
-            transport = StreamableHttpTransport(url)
+            transport = StreamableHttpTransport(url, **kwargs)
             async with Client(transport) as client:
                 tools = await client.list_tools()
         except Exception as e:
@@ -188,6 +204,7 @@ class ToolRegistry:
                 server=server,
                 url=url,
                 error=str(e),
+                auth_config=auth,
             )
             raise
 

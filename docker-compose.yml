@@ -591,6 +591,8 @@ services:
       GITHUB_APP_INSTALLATION_ID: ${GITHUB_APP_INSTALLATION_ID:-}
       DRUPPIE_REPO_OWNER: ${DRUPPIE_REPO_OWNER:-}
       DRUPPIE_REPO_NAME: ${DRUPPIE_REPO_NAME:-}
+      MCP_CAO_WAZO_URL: ${MCP_CAO_WAZO_URL:-https://cao-wazo-mcp.salmonbay-a93ad59f.westeurope.azurecontainerapps.io/mcp}
+      MCP_CAO_WAZO_API_KEY: ${MCP_CAO_WAZO_API_KEY:-}
     volumes:
       - ./druppie:/app/druppie
       - ./testing:/app/testing:ro
@@ -677,6 +679,8 @@ services:
       GITHUB_APP_INSTALLATION_ID: ${GITHUB_APP_INSTALLATION_ID:-}
       DRUPPIE_REPO_OWNER: ${DRUPPIE_REPO_OWNER:-}
       DRUPPIE_REPO_NAME: ${DRUPPIE_REPO_NAME:-}
+      MCP_CAO_WAZO_URL: ${MCP_CAO_WAZO_URL:-https://cao-wazo-mcp.salmonbay-a93ad59f.westeurope.azurecontainerapps.io/mcp}
+      MCP_CAO_WAZO_API_KEY: ${MCP_CAO_WAZO_API_KEY:-}
     volumes:
       - ./secrets:/app/secrets:ro
       - druppie_new_workspace:/app/workspace

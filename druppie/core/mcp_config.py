@@ -112,7 +112,7 @@ class MCPConfig:
             default = match.group(2)
             return os.getenv(var_name, default)
 
-        content = re.sub(r"\$\{(\w+):-([^}]+)\}", replace_with_default, content)
+        content = re.sub(r"\$\{(\w+):-([^}]*)\}", replace_with_default, content)
 
         # Handle ${VAR} syntax
         def replace_simple(match):
@@ -140,6 +140,26 @@ class MCPConfig:
             url = url.rstrip("/") + "/mcp"
 
         return url
+
+    def get_server_auth(self, server: str) -> dict:
+        """Get authentication configuration for an MCP server.
+
+        Args:
+            server: Server name
+
+        Returns:
+            Auth config dict with 'type' and 'api_key' (or empty dict)
+        """
+        mcp = self.config.get("mcps", {}).get(server, {})
+        auth = mcp.get("auth", {})
+        logger.debug(
+            "get_server_auth",
+            server=server,
+            auth_type=auth.get("type"),
+            api_key=auth.get("api_key", "")[:20] + "..." if auth.get("api_key") else "None",
+            api_key_length=len(auth.get("api_key", "")) if auth.get("api_key") else 0,
+        )
+        return auth
 
     def get_servers(self) -> list[str]:
         """Get list of configured MCP server names."""

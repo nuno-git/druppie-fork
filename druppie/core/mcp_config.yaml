@@ -274,3 +274,17 @@ mcps:
 
       - name: get_skill
         requires_approval: false
+
+  cao_wazo:
+    url: ${MCP_CAO_WAZO_URL:-https://cao-wazo-mcp.salmonbay-a93ad59f.westeurope.azurecontainerapps.io/mcp}
+    type: external
+    # External server requires Bearer token authentication
+    auth:
+      type: bearer
+      api_key: ${MCP_CAO_WAZO_API_KEY:-}
+    tools:
+      - name: ask_cao_question
+        requires_approval: false
+
+      - name: ask_wazo_question
+        requires_approval: false

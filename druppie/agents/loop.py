@@ -556,7 +556,18 @@ class AgentLoop:
             return "builtin", tool_name
         if ":" in tool_name:
             return tool_name.split(":", 1)
-        # Convert coding_read_file -> coding:read_file
+
+        # Try to find the correct server by checking against known servers
+        from druppie.core.mcp_config import get_mcp_config
+        config = get_mcp_config()
+        known_servers = config.get_servers()
+
+        # Find the longest server prefix that matches
+        for server in sorted(known_servers, key=len, reverse=True):
+            if tool_name.startswith(f"{server}_"):
+                return server, tool_name[len(server) + 1:]  # +1 for underscore
+
+        # Fallback: split at first underscore
         parts = tool_name.split("_", 1)
         server = parts[0] if len(parts) > 1 else "coding"
         tool = parts[1] if len(parts) > 1 else tool_name

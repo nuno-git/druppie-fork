@@ -163,7 +163,14 @@ class MCPHttp:
     def _create_client(self, server: str) -> Client:
         """Create a fresh FastMCP client for a server."""
         url = self.config.get_server_url(server)
-        transport = StreamableHttpTransport(url)
+        auth = self.config.get_server_auth(server)
+
+        # Configure transport with auth headers if needed
+        kwargs = {}
+        if auth.get("type") == "bearer" and auth.get("api_key"):
+            kwargs["headers"] = {"Authorization": f"Bearer {auth['api_key']}"}
+
+        transport = StreamableHttpTransport(url, **kwargs)
         return Client(transport)
 
     async def call(
