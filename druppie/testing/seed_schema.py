@@ -48,6 +48,7 @@ class AgentRunFixture(BaseModel):
     ]
     error_message: str | None = None
     planned_prompt: str | None = None
+    parent_agent: str | None = None
     tool_calls: list[ToolCallFixture] = Field(default_factory=list)
 
 

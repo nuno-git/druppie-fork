@@ -364,6 +364,7 @@ class TestRunner:
         current_agent: str | None = None
         current_tools: list[ToolCallFixture] = []
         current_planned_prompt: str | None = None
+        current_parent_agent: str | None = None
 
         for step in test.chain:
             # Convert ChainStepApproval to dict for replay
@@ -395,12 +396,16 @@ class TestRunner:
                     agent_runs.append(AgentRunFixture(
                         id=current_agent, status=status, tool_calls=current_tools,
                         planned_prompt=current_planned_prompt,
+                        parent_agent=current_parent_agent,
                     ))
                 current_agent = step.agent
                 current_tools = []
                 current_planned_prompt = step.planned_prompt
+                current_parent_agent = step.parent_agent
             elif step.planned_prompt and not current_planned_prompt:
                 current_planned_prompt = step.planned_prompt
+            elif step.parent_agent and not current_parent_agent:
+                current_parent_agent = step.parent_agent
 
             current_tools.append(tc_fixture)
 
@@ -411,6 +416,7 @@ class TestRunner:
             agent_runs.append(AgentRunFixture(
                 id=current_agent, status=status, tool_calls=current_tools,
                 planned_prompt=current_planned_prompt,
+                parent_agent=current_parent_agent,
             ))
 
         # If session_status is "paused", mark the last non-completed
@@ -473,7 +479,7 @@ class TestRunner:
 
                 tc_records = (
                     self._db.query(ToolCall)
-                    .join(AgentRun)
+                    .join(AgentRun, ToolCall.agent_run_id == AgentRun.id)
                     .filter(
                         AgentRun.session_id == session_id,
                         AgentRun.agent_id == step.agent,

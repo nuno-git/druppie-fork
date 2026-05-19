@@ -178,6 +178,11 @@ class ChainStep(BaseModel):
     # Set on the FIRST step of an agent run to store planned_prompt on the
     # AgentRun record.  Used by continue_run() when resuming paused sessions.
     planned_prompt: str | None = None
+    # Set on the FIRST step of a subagent run to identify the parent agent.
+    # When set, the replay executor creates a child agent run with
+    # parent_run_id pointing to the parent's agent run and
+    # spawning_tool_call_id pointing to the subagents tool call.
+    parent_agent: str | None = None
 
 
 class PendingAgent(BaseModel):

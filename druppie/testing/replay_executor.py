@@ -323,23 +323,71 @@ class ReplayExecutor:
         self._db.flush()
 
         # Execute each agent's tool calls in order
+        agent_run_ids: dict[str, UUID] = {}  # agent_id -> latest run_id
+
         for seq, agent_fix in enumerate(agents_with_tools):
-            # Find the pending run for this agent (created above or by make_plan)
-            pending = execution_repo.get_next_pending(session_id)
-            if not pending:
-                logger.warning(
-                    "replay_no_pending_run: session=%s expected=%s seq=%d",
-                    session_id, agent_fix.id, seq,
-                )
-                break
+            if agent_fix.parent_agent:
+                parent_run_id = agent_run_ids.get(agent_fix.parent_agent)
+                if not parent_run_id:
+                    logger.warning(
+                        "replay_no_parent: session=%s child=%s parent=%s seq=%d",
+                        session_id, agent_fix.id, agent_fix.parent_agent, seq,
+                    )
+                    break
 
-            if pending.agent_id != agent_fix.id:
-                logger.warning(
-                    "replay_agent_mismatch: session=%s expected=%s found=%s seq=%d",
-                    session_id, agent_fix.id, pending.agent_id, seq,
+                subagents_tc = (
+                    self._db.query(ToolCall)
+                    .filter(
+                        ToolCall.agent_run_id == parent_run_id,
+                        ToolCall.mcp_server == "builtin",
+                        ToolCall.tool_name == "subagents",
+                    )
+                    .order_by(ToolCall.created_at.desc())
+                    .first()
                 )
+                if not subagents_tc:
+                    logger.warning(
+                        "replay_no_subagents_tc: session=%s parent_run=%s seq=%d",
+                        session_id, parent_run_id, seq,
+                    )
+                    break
 
-            agent_run_id = pending.id
+                child_run = execution_repo.create_agent_run(
+                    session_id=session_id,
+                    agent_id=agent_fix.id,
+                    status=AgentRunStatus.PENDING,
+                    planned_prompt=agent_fix.planned_prompt,
+                    parent_run_id=parent_run_id,
+                    spawning_tool_call_id=subagents_tc.id,
+                    sequence_number=execution_repo.get_next_sequence_number(session_id),
+                )
+                agent_run_id = child_run.id
+            elif agent_fix.id in agent_run_ids:
+                # Same agent appearing again (e.g. parent agent continuing
+                # after subagents finish) — reuse the existing run.
+                agent_run_id = agent_run_ids[agent_fix.id]
+                logger.info(
+                    "replay_reusing_run: session=%s agent=%s run=%s seq=%d",
+                    session_id, agent_fix.id, agent_run_id, seq,
+                )
+            else:
+                pending = execution_repo.get_next_pending(session_id)
+                if not pending:
+                    logger.warning(
+                        "replay_no_pending_run: session=%s expected=%s seq=%d",
+                        session_id, agent_fix.id, seq,
+                    )
+                    break
+
+                if pending.agent_id != agent_fix.id:
+                    logger.warning(
+                        "replay_agent_mismatch: session=%s expected=%s found=%s seq=%d",
+                        session_id, agent_fix.id, pending.agent_id, seq,
+                    )
+
+                agent_run_id = pending.id
+
+            agent_run_ids[agent_fix.id] = agent_run_id
 
             # Mark as running (like execute_pending_runs does)
             execution_repo.update_status(agent_run_id, AgentRunStatus.RUNNING)

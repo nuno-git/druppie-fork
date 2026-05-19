@@ -1,0 +1,172 @@
+## Tool test: ultimate_dev spawns 2 subagents
+## Tests the subagent replay flow where ultimate_dev calls the subagents tool
+## to spawn explorer and builder_subagent, both of which complete their work.
+
+tool-test:
+  name: ultimate-dev-subagents
+  description: "Ultimate dev spawns 2 subagents (explorer + builder_subagent)"
+  tags: [subagent]
+
+  chain:
+    # --- Router ---
+    - agent: router
+      tool: builtin:set_intent
+      arguments:
+        intent: create_project
+        project_name: subagent-test
+        description: "A test project for verifying ultimate_dev subagent spawning"
+
+    - agent: router
+      tool: builtin:done
+      arguments:
+        summary: "Agent router: Classified as create_project"
+
+    # --- Planner → BA ---
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: business_analyst
+            prompt: "Gather requirements and create functional design for subagent test app"
+          - agent_id: planner
+            prompt: "Re-evaluate after business_analyst completes"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: Planned business_analyst"
+
+    # --- Business Analyst (creates FD) ---
+    - agent: business_analyst
+      tool: coding:make_design
+      approval:
+        status: approved
+      arguments:
+        path: docs/functional-design.md
+        content: |
+          # Functional Design: Subagent Test App
+
+          ## Requirements
+          - FR-01: The system must support a simple greeting endpoint
+          - FR-02: The greeting should be configurable
+          - FR-03: Use TypeScript
+
+    - agent: business_analyst
+      tool: coding:push_changes
+
+    - agent: business_analyst
+      tool: builtin:done
+      arguments:
+        summary: "Agent business_analyst: DESIGN_APPROVED - Functional design created and approved"
+
+    # --- Planner → Architect ---
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: architect
+            prompt: "Create technical design for subagent test app"
+          - agent_id: planner
+            prompt: "Re-evaluate after architect completes"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: BA approved, planned architect"
+
+    # --- Architect (creates TD) ---
+    - agent: architect
+      tool: coding:read_file
+      mock: true
+      mock_result: "# Functional Design: Subagent Test App\n## Requirements\n- FR-01: Greeting endpoint\n- FR-02: Configurable greeting\n- FR-03: TypeScript"
+      arguments:
+        path: docs/functional-design.md
+
+    - agent: architect
+      tool: coding:make_design
+      approval:
+        status: approved
+        by: architect
+      arguments:
+        path: docs/technical-design.md
+        content: |
+          # Technical Design: Subagent Test App
+
+          ## Technology Stack
+          - Language: TypeScript
+          - Runtime: Node.js
+
+          ## Implementation Plan
+          1. Create src/greeting.ts with configurable greeting function
+          2. Export the function
+          3. Verify compilation
+
+    - agent: architect
+      tool: coding:push_changes
+
+    - agent: architect
+      tool: builtin:done
+      arguments:
+        summary: "Agent architect: TECHNICAL_DESIGN_APPROVED - Technical design created and approved"
+
+    # --- Planner → ultimate_dev ---
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: ultimate_dev
+            prompt: "Implement the greeting app. Use the explorer subagent to read design docs, then builder_subagent to implement."
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: Planned ultimate_dev"
+
+    # --- Ultimate Dev (calls subagents tool — mocked) ---
+    - agent: ultimate_dev
+      tool: builtin:subagents
+      mock: true
+      mock_result: '{"status": "success", "agents": ["explorer", "builder_subagent"]}'
+      arguments:
+        agents:
+          - agent: explorer
+            prompt: "Read docs/functional-design.md and docs/technical-design.md. Report what needs to be built."
+          - agent: builder_subagent
+            prompt: "Implement the greeting app described in the design docs."
+
+    # --- Explorer subagent (mocked read, then done) ---
+    - agent: explorer
+      parent_agent: ultimate_dev
+      tool: coding:read_file
+      mock: true
+      mock_result: "# Functional Design: Subagent Test App\n## Requirements\n- FR-01: Greeting endpoint\n- FR-02: Configurable greeting\n- FR-03: TypeScript"
+      arguments:
+        path: docs/functional-design.md
+
+    - agent: explorer
+      tool: builtin:done
+      arguments:
+        summary: "Agent explorer: Read functional design and technical design. Found greeting app requirements with configurable greeting and TypeScript stack."
+
+    # --- Builder subagent (mocked read, then done) ---
+    - agent: builder_subagent
+      parent_agent: ultimate_dev
+      tool: coding:read_file
+      mock: true
+      mock_result: "# Technical Design: Subagent Test App\n## Technology Stack\n- TypeScript, Node.js\n## Implementation Plan\n1. Create src/greeting.ts"
+      arguments:
+        path: docs/technical-design.md
+
+    - agent: builder_subagent
+      tool: builtin:done
+      arguments:
+        summary: "Agent builder_subagent: Implemented src/greeting.ts with configurable greeting function. All files committed."
+
+    # --- Ultimate Dev (done after subagents) ---
+    - agent: ultimate_dev
+      tool: builtin:done
+      arguments:
+        summary: "Agent ultimate_dev: Explored design docs via explorer, implemented greeting app via builder_subagent. Application ready."
+
+  assert:
+    - check: all-agents-completed

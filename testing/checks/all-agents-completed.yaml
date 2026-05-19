@@ -1,0 +1,11 @@
+check:
+  name: all-agents-completed
+  description: "All agents in the chain should have completed successfully"
+  tags: [assertion]
+  assert:
+    - agent: ultimate_dev
+      completed: true
+    - agent: explorer
+      completed: true
+    - agent: builder_subagent
+      completed: true

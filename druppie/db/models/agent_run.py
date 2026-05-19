@@ -50,6 +50,7 @@ class AgentRun(Base):
     # Relationships
     messages = relationship("Message", back_populates="agent_run")
     tool_calls = relationship("ToolCall", back_populates="agent_run", foreign_keys="[ToolCall.agent_run_id]")
+    spawning_tool_call = relationship("ToolCall", foreign_keys=[spawning_tool_call_id])
 
     def to_dict(self) -> dict[str, Any]:
         return {
