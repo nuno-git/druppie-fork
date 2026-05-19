@@ -113,8 +113,9 @@ const InspectSummary = ({ agentRuns, data }) => {
   const stats = useMemo(() => {
     let llmCallCount = 0
     let toolCallCount = 0
+    let subagentCount = 0
     const agentTokens = {}
-    agentRuns.forEach((run) => {
+    const countRun = (run) => {
       const config = getAgentConfig(run.agent_id)
       const tokens = run.token_usage?.total_tokens || 0
       if (tokens > 0) agentTokens[config.name] = (agentTokens[config.name] || 0) + tokens
@@ -122,13 +123,21 @@ const InspectSummary = ({ agentRuns, data }) => {
         llmCallCount++
         toolCallCount += llm.tool_calls?.length || 0
       })
+    }
+    agentRuns.forEach((run) => {
+      countRun(run)
+      run.subagent_runs?.forEach((sub) => {
+        subagentCount++
+        countRun(sub)
+      })
     })
-    return { agentCount: agentRuns.length, llmCallCount, toolCallCount, totalTokens: data.token_usage?.total_tokens || 0, agentTokens }
+    return { agentCount: agentRuns.length, subagentCount, llmCallCount, toolCallCount, totalTokens: data.token_usage?.total_tokens || 0, agentTokens }
   }, [agentRuns, data])
 
   return (
     <div className="border-b bg-gray-50 flex-shrink-0 px-3 py-1.5 flex flex-wrap items-center gap-3 text-xs text-gray-500">
       <span className="flex items-center gap-1"><Hash className="w-3 h-3" />{stats.agentCount} agents</span>
+      {stats.subagentCount > 0 && <span className="flex items-center gap-1"><Hash className="w-3 h-3" />{stats.subagentCount} subagents</span>}
       <span className="flex items-center gap-1"><Bot className="w-3 h-3" />{stats.llmCallCount} LLM calls</span>
       <span className="flex items-center gap-1"><Zap className="w-3 h-3" />{stats.toolCallCount} tools</span>
       {stats.totalTokens > 0 && <span>{formatTokens(stats.totalTokens)} tokens</span>}
@@ -823,10 +832,44 @@ const DebugEventLog = ({ data, sessionId, sessionStatus }) => {
           )}
           {agentRuns.map((run) => {
             const allTools = []
+            const linkedSubIds = new Set()
+            const subagentToolMap = {}
             for (const llm of run.llm_calls || []) {
               for (const tc of llm.tool_calls || []) {
                 allTools.push(tc)
+                if (tc.tool_name === 'subagents' && run.subagent_runs?.length > 0) {
+                  const linked = run.subagent_runs.filter(
+                    sub => sub.spawning_tool_call_id === tc.id
+                  )
+                  if (linked.length > 0) {
+                    subagentToolMap[tc.id] = linked
+                    linked.forEach(sub => linkedSubIds.add(sub.id))
+                  }
+                }
               }
+            }
+            const unlinkedSubs = (run.subagent_runs || []).filter(
+              sub => !linkedSubIds.has(sub.id)
+            )
+            const renderSubBlock = (subRun) => {
+              const subTools = (subRun.llm_calls || []).flatMap(llm => llm.tool_calls || [])
+              return (
+                <div key={subRun.id} className="pl-4 border-l-2 border-gray-100 ml-3">
+                  <OutlineAgentHeader
+                    agentRun={subRun}
+                    selected={isAgentSelected(subRun) && selection?.type === 'agent'}
+                    onClick={() => selectAgent(subRun)}
+                  />
+                  {subTools.map((stc, sti) => (
+                    <OutlineToolLine
+                      key={stc.id || sti}
+                      tc={stc}
+                      selected={isToolSelected(stc)}
+                      onClick={() => selectTool(stc, subRun)}
+                    />
+                  ))}
+                </div>
+              )
             }
             return (
               <div key={run.id}>
@@ -836,13 +879,16 @@ const DebugEventLog = ({ data, sessionId, sessionStatus }) => {
                   onClick={() => selectAgent(run)}
                 />
                 {allTools.map((tc, ti) => (
-                  <OutlineToolLine
-                    key={tc.id || ti}
-                    tc={tc}
-                    selected={isToolSelected(tc)}
-                    onClick={() => selectTool(tc, run)}
-                  />
+                  <div key={tc.id || ti}>
+                    <OutlineToolLine
+                      tc={tc}
+                      selected={isToolSelected(tc)}
+                      onClick={() => selectTool(tc, run)}
+                    />
+                    {subagentToolMap[tc.id]?.map(renderSubBlock)}
+                  </div>
                 ))}
+                {unlinkedSubs.map(renderSubBlock)}
               </div>
             )
           })}
