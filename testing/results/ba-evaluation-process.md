@@ -1,30 +1,38 @@
-# BA Agent LLM Comparison — Test Process
+# BA Agent Evaluation Process
 
-How to evaluate and compare different LLMs for the Business Analyst agent.
+How to evaluate the Business Analyst agent using the standardized test suite.
 
 ## Overview
 
-Run the full BA test suite (13 tests) across multiple LLMs, 5 iterations each,
-to determine which model produces the best BA behavior. The HITL simulator and
-judge model stay fixed across all runs to ensure consistent evaluation.
+Run the full BA test suite (13 tests) to measure how well the BA agent performs
+across a range of expected behaviors. Each evaluation run consists of 5 iterations
+to account for LLM non-determinism. Results reveal which behaviors are reliable,
+which are flaky, and which consistently fail.
+
+Use this process to evaluate:
+
+- **BA prompt or workflow changes** — does a new version of the agent definition
+  improve or regress behavior?
+- **LLM swaps** — does a different model produce better BA behavior with the same
+  agent definition?
+- **Infrastructure changes** — do changes to tool implementations, MCP servers,
+  or the execution loop affect BA outcomes?
 
 ## Prerequisites
 
 - Druppie dev environment running (`docker compose --profile dev --profile init up -d`)
 - Admin credentials (`admin` / `Admin123!`)
-- API keys configured for each LLM provider you want to test (see `.env`)
+- API keys configured for the relevant LLM provider (see `.env`)
 
 ## Fixed test infrastructure
 
-These stay the same across all LLM runs:
+The judge and HITL simulator stay the same across all evaluation runs to ensure
+consistent scoring:
 
 | Component | Model | Provider | Config file |
 |-----------|-------|----------|-------------|
 | Judge | `glm-5` | `zai` | `testing/profiles/judges.yaml` |
 | HITL simulator | `glm-5` | `zai` | `testing/profiles/hitl.yaml` |
-
-The `LLM_FORCE_PROVIDER` / `LLM_FORCE_MODEL` override only affects agent execution,
-not the judge or HITL simulator.
 
 ## Test suite
 
@@ -46,20 +54,34 @@ All 13 tests are tagged `business_analyst` and can be run as a batch:
 | ba-refuses-skip-questions | Refuses when user tries to skip all questions |
 | ba-unpacks-solution-speak | Digs into underlying problem behind solution-speak |
 
-## Process per LLM
+### Known BA weaknesses
 
-Repeat this for each LLM you want to evaluate. Each LLM gets 5 full iterations.
+These 6 issues were identified during baseline evaluation. Tests that target them
+deserve extra attention when reviewing results:
 
-### 1. Configure the LLM
+1. **Requirement fabrication** — BA invents requirements not stated by the user
+2. **Restating platform standards** — BA lists platform defaults as project-specific NFRs
+3. **Inventing numbers from vague input** — BA assigns concrete values to vague terms
+4. **Not challenging privacy concerns** — BA doesn't push back on risky data decisions
+5. **Multiple questions per HITL call** — BA asks several questions at once instead of one at a time
+6. **Giving up too easily** — BA stops elicitation when the user is uncooperative
 
-Edit `.env` (or set container environment variables) to force all agents to the target model:
+## Running an evaluation
+
+### 1. Configure the agent under test
+
+If you are evaluating a change to the BA agent definition, make sure the updated
+`agents/definitions/business_analyst.yaml` is in place and the backend has been
+restarted.
+
+If you are testing a different LLM, set the force overrides in `.env`:
 
 ```bash
 LLM_FORCE_PROVIDER=zai        # or: deepinfra, deepseek, azure_foundry, ollama
 LLM_FORCE_MODEL=glm-5         # the specific model to test
 ```
 
-Restart the backend to pick up the new environment:
+Then restart the backend:
 
 ```bash
 docker compose --profile dev restart druppie-backend-dev
@@ -97,23 +119,18 @@ A full batch takes approximately 2-3 hours (13 tests, ~10-15 min average each).
 
 ### 4. Repeat 5 times
 
-Run steps 2-3 five times for the same LLM. Wait for each batch to complete before
-starting the next (only one batch can run at a time).
+Run steps 2-3 five times. Wait for each batch to complete before starting the
+next (only one batch can run at a time).
 
 Record the batch IDs:
 
-| LLM | Iteration | Batch ID | Date |
-|-----|-----------|----------|------|
-| `zai/glm-5` | 1 | | |
-| `zai/glm-5` | 2 | | |
-| `zai/glm-5` | 3 | | |
-| `zai/glm-5` | 4 | | |
-| `zai/glm-5` | 5 | | |
-
-### 5. Move to next LLM
-
-Change `LLM_FORCE_PROVIDER` and `LLM_FORCE_MODEL`, restart the backend, and repeat
-steps 2-4.
+| What changed | Iteration | Batch ID | Date |
+|--------------|-----------|----------|------|
+| _(describe the change)_ | 1 | | |
+| | 2 | | |
+| | 3 | | |
+| | 4 | | |
+| | 5 | | |
 
 ## Collecting results
 
@@ -140,9 +157,9 @@ curl -s "http://localhost:8000/api/evaluations/batch/$BATCH_ID/assertions" \
 
 ## Analysis
 
-### What to compare
+### What to compute
 
-For each LLM, compute from the 5 iterations:
+For each evaluation (5 iterations), compute:
 
 1. **Aggregate pass rate**: total tests passed / total tests run (out of 65)
 2. **Per-test pass rate**: how often each test passes across 5 runs (out of 5)
@@ -151,32 +168,33 @@ For each LLM, compute from the 5 iterations:
 
 ### What to look for
 
-- **Stable passes** (5/5): the model reliably handles this behavior
-- **Stable fails** (0/5): the model consistently gets this wrong
-- **Flaky tests** (1-4 out of 5): where models differ most — this is where the
-  interesting comparison happens
-- **Critical test performance**: pay extra attention to the tests that catch the
-  6 known BA issues (fabrication, platform standards, vague terms, privacy,
-  multiple questions, giving up). A model that passes these is meaningfully better.
+- **Stable passes** (5/5): the BA reliably handles this behavior
+- **Stable fails** (0/5): the BA consistently gets this wrong — high-priority fix target
+- **Flaky tests** (1-4 out of 5): partially learned behavior — prompt tuning may help
+- **Known weakness performance**: check the 6 known BA issues listed above. Improvement
+  on these is the clearest signal that a change is working.
 
-### Results template
+### Comparing evaluations
 
-| Test | LLM A (pass rate) | LLM B (pass rate) | LLM C (pass rate) |
-|------|-------------------|-------------------|-------------------|
-| ba-challenges-public-personal-data | /5 | /5 | /5 |
-| ba-chat-routes-to-architect | /5 | /5 | /5 |
-| ba-clarifies-vague-terms | /5 | /5 | /5 |
-| ba-context-gathering | /5 | /5 | /5 |
-| ba-cooperative-full-fd | /5 | /5 | /5 |
-| ba-design-no-bias | /5 | /5 | /5 |
-| ba-fd-reject-then-approve | /5 | /5 | /5 |
-| ba-general-chat-advice | /5 | /5 | /5 |
-| ba-no-fd-for-bugfix | /5 | /5 | /5 |
-| ba-no-technical-jargon | /5 | /5 | /5 |
-| ba-platform-standards-not-restated | /5 | /5 | /5 |
-| ba-refuses-skip-questions | /5 | /5 | /5 |
-| ba-unpacks-solution-speak | /5 | /5 | /5 |
-| **Total** | **/65** | **/65** | **/65** |
+When comparing two evaluations (e.g., before/after a prompt change, or two different
+LLMs), use this template:
+
+| Test | Baseline (pass rate) | Changed (pass rate) | Delta |
+|------|---------------------|---------------------|-------|
+| ba-challenges-public-personal-data | /5 | /5 | |
+| ba-chat-routes-to-architect | /5 | /5 | |
+| ba-clarifies-vague-terms | /5 | /5 | |
+| ba-context-gathering | /5 | /5 | |
+| ba-cooperative-full-fd | /5 | /5 | |
+| ba-design-no-bias | /5 | /5 | |
+| ba-fd-reject-then-approve | /5 | /5 | |
+| ba-general-chat-advice | /5 | /5 | |
+| ba-no-fd-for-bugfix | /5 | /5 | |
+| ba-no-technical-jargon | /5 | /5 | |
+| ba-platform-standards-not-restated | /5 | /5 | |
+| ba-refuses-skip-questions | /5 | /5 | |
+| ba-unpacks-solution-speak | /5 | /5 | |
+| **Total** | **/65** | **/65** | |
 
 ## Notes
 
