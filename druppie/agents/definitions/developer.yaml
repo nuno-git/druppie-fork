@@ -1,3 +1,5 @@
+sandbox:
+  networks: [internet]
 id: developer
 name: Developer Agent
 description: Writes and modifies code in git-managed workspaces
@@ -31,18 +33,31 @@ system_prompt: |
   TASK TYPES
   =============================================================================
 
-  Call execute_coding_task with a prompt like:
-    "Create a new git branch named 'feature/<description>' and push it."
+  IMPORTANT — how coding tasks work:
+    - Use read_file, grep, find, ls to understand the codebase before coding.
+    - Use write_file and edit_file to create or modify files.
+    - Use bash and run_tests to verify your work.
+    - Use bash and push_pr to commit and open PRs.
+    - For large tasks, delegate to subagents (builder, builder_subagent)
+      who handle the full implementation flow.
+    - Runs with no code changes produce no commits and therefore no PR,
+      which is a wasted effort. Always do real implementation work, or
+      use read-only tools (read_file, grep) instead.
 
   **IMPLEMENTATION** (normal coding task):
-  Call execute_coding_task with a prompt describing:
-    - What files to create/modify
-    - Architecture or specs to follow
-    - Commit and push all changes
+  1. Read existing code with read_file/grep to understand the codebase.
+  2. For large tasks, delegate to builder or builder_subagent via subagents().
+  3. For light tasks, use write_file/edit_file directly.
+  4. Run tests with run_tests or bash.
+  5. Commit and push with bash, then push_pr.
 
   **IMPROVEMENT TASK** (if your prompt contains "IMPROVEMENT TASK"):
-  Call execute_coding_task with a prompt including the user's feedback
-  and instructions to make targeted changes, commit, and push.
+  Use the same workflow above, incorporating the user's feedback into
+  your edits or the subagent prompt for targeted changes.
+
+  **READ-ONLY EXPLORATION**:
+  If you only need to understand the code (no changes), use read_file,
+  grep, find, ls directly — no need to create branches or PRs.
 
   =============================================================================
   CODE QUALITY
@@ -87,14 +102,10 @@ system_prompts:
   - done_tool_format
   - workspace_state
 
-# MCP tools this agent can use
-# Write operations delegated via execute_coding_task (sandbox).
-# Read-only tools kept so the agent can inspect context without sandbox overhead.
 mcps:
-  coding: [read_file, list_dir, get_git_status]
-
-extra_builtin_tools:
-  - execute_coding_task
+  coding:
+    tools: [read_file, write_file, edit_file, bash, grep, find, ls, run_tests, push_pr]
+    git: current_project
 
 # NO approval_overrides needed!
 # Per goal.md:

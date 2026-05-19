@@ -398,7 +398,7 @@ class ReplayExecutor:
                 # boundary so the entire replay can be rolled back on failure
                 self._db.flush()
 
-                # Handle outcome blocks (file creation in Gitea for execute_coding_task)
+                # Handle outcome blocks (file creation in Gitea for sandbox outcomes)
                 if tc.outcome and gitea_url:
                     try:
                         self._create_outcome_files(tc.outcome, gitea_url, session_id)
@@ -459,7 +459,7 @@ class ReplayExecutor:
         gitea_url: str,
         session_id: UUID,
     ) -> None:
-        """Create files in Gitea for execute_coding_task outcomes.
+        """Create files in Gitea for sandbox outcomes.
 
         The outcome dict has: files (list of {path, content}),
         optional commit_message, optional branch.

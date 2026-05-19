@@ -56,6 +56,7 @@ class ExecutionRepository(BaseRepository):
         planned_prompt: str | None = None,
         sequence_number: int | None = None,
         parent_run_id: UUID | None = None,
+        spawning_tool_call_id: UUID | None = None,
     ) -> AgentRunSummary:
         """Create an agent run record."""
         agent_run = AgentRun(
@@ -65,6 +66,7 @@ class ExecutionRepository(BaseRepository):
             planned_prompt=planned_prompt,
             sequence_number=sequence_number,
             parent_run_id=parent_run_id,
+            spawning_tool_call_id=spawning_tool_call_id,
         )
         self.db.add(agent_run)
         self.db.flush()
@@ -278,6 +280,8 @@ class ExecutionRepository(BaseRepository):
             error_message=agent_run.error_message,
             planned_prompt=agent_run.planned_prompt,
             sequence_number=agent_run.sequence_number,
+            spawning_tool_call_id=agent_run.spawning_tool_call_id,
+            parent_run_id=agent_run.parent_run_id,
             token_usage=TokenUsage(
                 prompt_tokens=agent_run.prompt_tokens or 0,
                 completion_tokens=agent_run.completion_tokens or 0,
@@ -514,6 +518,7 @@ class ExecutionRepository(BaseRepository):
                 llm_call.provider = actual_provider
             if actual_model:
                 llm_call.model = actual_model
+            self.db.flush()
 
     def update_llm_error(
         self,
@@ -528,6 +533,7 @@ class ExecutionRepository(BaseRepository):
         if llm_call:
             llm_call.response_content = json.dumps({"error": error_message})
             llm_call.duration_ms = duration_ms
+            self.db.flush()
 
     # =========================================================================
     # LLM RETRY METHODS
@@ -650,14 +656,14 @@ class ExecutionRepository(BaseRepository):
     def get_last_commit_before_sequence(
         self, session_id: UUID, before_sequence: int
     ) -> ToolCallRecord | None:
-        """Get the last completed run_git tool call before a sequence number."""
+        """Get the last completed bash tool call with git commit before a sequence number."""
         tc = (
             self.db.query(ToolCall)
             .join(AgentRun, ToolCall.agent_run_id == AgentRun.id)
             .filter(
                 AgentRun.session_id == session_id,
                 AgentRun.sequence_number < before_sequence,
-                ToolCall.tool_name == "run_git",
+                ToolCall.tool_name == "bash",
                 ToolCall.status == "completed",
             )
             .order_by(ToolCall.created_at.desc())
@@ -668,13 +674,13 @@ class ExecutionRepository(BaseRepository):
         return ToolCallRecord(id=tc.id, tool_name=tc.tool_name, status=tc.status, result=tc.result)
 
     def get_first_commit_in_session(self, session_id: UUID) -> ToolCallRecord | None:
-        """Get the first completed run_git tool call with commit_sha in a session."""
+        """Get the first completed bash tool call with commit_sha in a session."""
         tc = (
             self.db.query(ToolCall)
             .join(AgentRun, ToolCall.agent_run_id == AgentRun.id)
             .filter(
                 AgentRun.session_id == session_id,
-                ToolCall.tool_name == "run_git",
+                ToolCall.tool_name == "bash",
                 ToolCall.status == "completed",
             )
             .order_by(ToolCall.created_at)
@@ -688,11 +694,56 @@ class ExecutionRepository(BaseRepository):
     # BULK DELETE METHODS (used by RevertService)
     # =========================================================================
 
+    def _collect_and_delete_spawned_runs(self, tc_ids: list[UUID]) -> None:
+        """Recursively find and delete agent_runs spawned by tool_calls in tc_ids.
+
+        A subagent tool_call spawns child agent_runs via spawning_tool_call_id.
+        Those children may themselves have tool_calls that spawn grandchildren,
+        so we recurse until no more spawned runs are found.
+
+        Deletes in FK-safe order: grandchild artifacts first, then grandchild
+        runs, then child artifacts, then child runs.
+        """
+        if not tc_ids:
+            return
+
+        spawned_run_ids = [
+            r.id
+            for r in self.db.query(AgentRun.id)
+            .filter(AgentRun.spawning_tool_call_id.in_(tc_ids))
+            .all()
+        ]
+
+        if not spawned_run_ids:
+            return
+
+        spawned_tc_ids = [
+            tc.id
+            for tc in self.db.query(ToolCall.id)
+            .filter(ToolCall.agent_run_id.in_(spawned_run_ids))
+            .all()
+        ]
+        self._collect_and_delete_spawned_runs(spawned_tc_ids)
+
+        # Now safe to delete artifacts of spawned runs
+        self.clear_execution_artifacts(spawned_run_ids)
+
+        self.db.query(AgentRun).filter(
+            AgentRun.id.in_(spawned_run_ids)
+        ).delete(synchronize_session="fetch")
+
+        logger.info(
+            "spawned_runs_deleted",
+            count=len(spawned_run_ids),
+            spawned_by_tool_calls=len(tc_ids),
+        )
+
     def clear_execution_artifacts(self, agent_run_ids: list[UUID]) -> dict:
         """Delete execution artifacts for agent runs, keeping the runs themselves.
 
-        Deletes in FK-safe order: normalizations -> approvals -> questions ->
-        tool_calls -> llm_retries -> llm_calls -> messages
+        Deletes in FK-safe order: spawned child runs -> normalizations ->
+        approvals -> questions -> tool_calls -> llm_retries -> llm_calls ->
+        messages
 
         Returns counts for logging.
         """
@@ -720,6 +771,11 @@ class ExecutionRepository(BaseRepository):
         self.db.query(Question).filter(
             Question.agent_run_id.in_(agent_run_ids)
         ).delete(synchronize_session="fetch")
+
+        # 3b. Cascade-delete any agent_runs spawned by our tool_calls.
+        # Must happen BEFORE deleting the tool_calls themselves to avoid
+        # FK violation on agent_runs.spawning_tool_call_id.
+        self._collect_and_delete_spawned_runs(tc_ids)
 
         # 4. ToolCall (FK -> agent_runs, llm_calls)
         if tc_ids:

@@ -71,19 +71,9 @@ tool-test:
           - Systeemlettertype
 
     - agent: business_analyst
-      tool: coding:run_git
+      tool: coding:push_pr
       arguments:
-        command: "add docs/functional-design.md"
-
-    - agent: business_analyst
-      tool: coding:run_git
-      arguments:
-        command: "commit -m 'Functioneel ontwerp portfolio website'"
-
-    - agent: business_analyst
-      tool: coding:run_git
-      arguments:
-        command: "push"
+        pr_title: "Functioneel ontwerp portfolio website"
 
     - agent: business_analyst
       tool: builtin:done

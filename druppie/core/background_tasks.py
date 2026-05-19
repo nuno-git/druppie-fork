@@ -210,13 +210,13 @@ async def run_session_task(
     """
     from druppie.db.database import SessionLocal
     from druppie.domain.common import SessionStatus
+    from druppie.execution import Orchestrator
     from druppie.repositories import (
-        SessionRepository,
         ExecutionRepository,
         ProjectRepository,
         QuestionRepository,
+        SessionRepository,
     )
-    from druppie.execution import Orchestrator
 
     db = SessionLocal()
     try:
@@ -264,6 +264,22 @@ async def run_session_task(
                 f"failed_to_update_session_status_after_{task_name}",
                 session_id=str(session_id),
                 error=str(update_error),
+            )
+        try:
+            import os
+
+            import httpx
+            coding_url = os.getenv("MCP_CODING_URL", "http://module-coding:9001")
+            async with httpx.AsyncClient() as client:
+                await client.post(
+                    f"{coding_url}/management/sandbox/cleanup/{session_id}",
+                    timeout=10,
+                )
+        except Exception as cleanup_err:
+            logger.warning(
+                f"sandbox_cleanup_failed_after_{task_name}",
+                session_id=str(session_id),
+                error=str(cleanup_err),
             )
     finally:
         db.close()

@@ -231,21 +231,23 @@ class RevertService:
         tool_calls = self.execution_repo.get_tool_calls_for_runs(agent_run_ids)
 
         for tc in tool_calls:
-            if tc.tool_name == "run_git" and tc.result:
+            if tc.tool_name == "bash" and tc.result:
                 result = self._parse_tool_result(tc.result)
                 if result and result.get("commit_sha"):
                     commit_shas.append(result["commit_sha"])
 
-            elif tc.tool_name == "create_pull_request" and tc.result:
+            elif tc.tool_name == "push_pr" and tc.result:
                 result = self._parse_tool_result(tc.result)
                 if result and result.get("pr_number"):
                     pr_numbers.append(result["pr_number"])
 
-            elif tc.tool_name == "merge_pull_request" and tc.status == "completed":
-                warnings.append(
-                    f"Agent run contains a merged PR — cannot safely revert merge. "
-                    f"Tool call: {tc.id}"
-                )
+            elif tc.tool_name == "push_pr" and tc.status == "completed" and tc.result:
+                result = self._parse_tool_result(tc.result)
+                if result and result.get("merged"):
+                    warnings.append(
+                        f"Agent run contains a merged PR — cannot safely revert merge. "
+                        f"Tool call: {tc.id}"
+                    )
 
         # Find pre-run commit SHA from the last commit before the target sequence
         pre_run_commit_sha = None

@@ -1,0 +1,55 @@
+## Agent test: ultimate_dev implements the todo app
+##
+## Setup: tool test creates a project with FD + TD
+##   (ready for ultimate_dev to implement)
+##
+## continue_session: true — ultimate_dev runs in the SAME session as setup.
+##   ultimate_dev reads FD and TD, then implements the todo app.
+##
+## This test validates the full ultimate_dev agent works:
+## - Reads functional-design.md and technical-design.md
+## - Uses SubagentsMCP tools (explorer, builder_subagent)
+## - Implements the React todo app
+## - Commits and pushes to git
+## - Calls done() successfully
+
+agent-test:
+  name: todo-app-ultimate-dev
+  description: "ultimate_dev agent builds the todo app from FD+TD"
+  tags: [ultimate-dev, todo-app, e2e]
+
+  setup:
+    - setup-todo-app-dev-only
+
+  continue_session: true
+
+  message: |
+    Implement the todo app as described in docs/functional-design.md and docs/technical-design.md.
+    Read both documents first, then implement all components.
+    Commit and push when done.
+
+  agents: [ultimate_dev]
+
+  assert:
+    - check: ultimate-dev-completed
+    - check: todo-app-files-created
+    - check: code-pushed-to-git
+
+  checks:
+    ultimate-dev-completed:
+      description: "ultimate_dev agent completed successfully"
+      evaluate: |
+        The ultimate_dev agent should have status "completed" (not "failed").
+        It should have called done() with a summary describing the implementation.
+
+    todo-app-files-created:
+      description: "Todo app source files were created in the repo"
+      evaluate: |
+        The repo should contain React component files for the todo app.
+        At minimum, an App component or index.html with the todo app logic.
+
+    code-pushed-to-git:
+      description: "Implementation was committed and pushed to git"
+      evaluate: |
+        The ultimate_dev agent should have used run_git to commit and push
+        the implementation code to the main branch.

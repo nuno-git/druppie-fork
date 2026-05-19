@@ -153,24 +153,10 @@ tool-test:
           - TR-02: Foto-upload ≤ 5 MB, JPEG/PNG/WebP
 
     - agent: architect
-      tool: coding:run_git
+      tool: coding:push_pr
       arguments:
-        command: "add docs/technical-research.md"
+        pr_title: "Technisch onderzoek recipe sharing app"
 
-    - agent: architect
-      tool: coding:run_git
-      arguments:
-        command: "commit -m 'Technisch onderzoek recipe sharing app'"
-
-    - agent: architect
-      tool: coding:run_git
-      arguments:
-        command: "push"
-
-    # --- Architect writes the TD — approval gate PENDING ---
-    # The architect-role approval must be resolved manually through the
-    # UI by a user with the `architect` role. After approval the session
-    # can be resumed to let the architect git commit + push + done.
     - agent: architect
       tool: coding:make_design
       approval:

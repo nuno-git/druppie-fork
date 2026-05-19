@@ -89,19 +89,9 @@ tool-test:
           - { contains: "functional-design.md" }
 
     - agent: business_analyst
-      tool: coding:run_git
+      tool: coding:push_pr
       arguments:
-        command: "add docs/functional-design.md"
-
-    - agent: business_analyst
-      tool: coding:run_git
-      arguments:
-        command: "commit -m 'Functioneel ontwerp recipe analyzer'"
-
-    - agent: business_analyst
-      tool: coding:run_git
-      arguments:
-        command: "push"
+        pr_title: "Functioneel ontwerp recipe analyzer"
 
     - agent: business_analyst
       tool: builtin:done
@@ -125,9 +115,9 @@ tool-test:
 
     # --- Architect (TD explicitly mentions druppie modules + SDK) ---
     - agent: architect
-      tool: coding:run_git
+      tool: coding:bash
       arguments:
-        command: "pull"
+        command: "git pull"
 
     - agent: architect
       tool: coding:read_file
@@ -192,19 +182,9 @@ tool-test:
           - { contains: "technical-design.md" }
 
     - agent: architect
-      tool: coding:run_git
+      tool: coding:push_pr
       arguments:
-        command: "add docs/technical-design.md"
-
-    - agent: architect
-      tool: coding:run_git
-      arguments:
-        command: "commit -m 'Technisch ontwerp recipe analyzer met Druppie SDK'"
-
-    - agent: architect
-      tool: coding:run_git
-      arguments:
-        command: "push"
+        pr_title: "Technisch ontwerp recipe analyzer met Druppie SDK"
 
     - agent: architect
       tool: builtin:done

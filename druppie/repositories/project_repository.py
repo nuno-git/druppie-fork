@@ -93,6 +93,13 @@ class ProjectRepository(BaseRepository):
             .first()
         )
 
+        # Get username from users table
+        username = None
+        if project.owner_id:
+            user = self.db.query(UserModel).filter_by(id=project.owner_id).first()
+            if user:
+                username = user.username
+
         # Get recent sessions
         sessions = self._get_recent_sessions(project_id, session_limit)
 
@@ -102,10 +109,11 @@ class ProjectRepository(BaseRepository):
             name=project.name,
             description=project.description,
             repo_url=project.repo_url,
+            username=username,
+            repo_name=project.repo_name,
             created_at=project.created_at,
             # ProjectDetail specific
             owner_id=project.owner_id,
-            repo_name=project.repo_name,
             token_usage=TokenUsage(
                 prompt_tokens=stats.prompt_tokens,
                 completion_tokens=stats.completion_tokens,
@@ -150,6 +158,7 @@ class ProjectRepository(BaseRepository):
             description=project.description,
             repo_url=project.repo_url,
             username=username,
+            repo_name=project.repo_name,
             created_at=project.created_at,
         )
 

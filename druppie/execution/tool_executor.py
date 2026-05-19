@@ -55,7 +55,6 @@ BUILTIN_TOOLS = {
     "hitl_ask_multiple_choice_question",
     "create_message",
     "invoke_skill",
-    "execute_coding_task",
     "test_report",
 }
 
@@ -139,6 +138,7 @@ class ToolExecutor:
         tool_name: str,
         args: dict,
         session_id: UUID | None,
+        agent_run_id: UUID | None = None,
     ) -> dict:
         """Apply declarative injection rules from mcp_config.yaml.
 
@@ -181,7 +181,7 @@ class ToolExecutor:
         )
 
         # Create context for resolving paths
-        context = ToolContext(self.db, session_id)
+        context = ToolContext(self.db, session_id, agent_run_id=agent_run_id)
 
         # Apply each rule
         injected_args = dict(args)
@@ -824,6 +824,7 @@ class ToolExecutor:
                 session_id=tool_call.session_id,
                 agent_run_id=tool_call.agent_run_id,
                 execution_repo=self.execution_repo,
+                tool_call_id=tool_call.id,
             )
 
             # Handle sandbox delegation — tool is waiting for external callback
@@ -854,11 +855,14 @@ class ToolExecutor:
             is_success = result.get("success", True) if isinstance(result, dict) else True
             status = ToolCallStatus.COMPLETED if is_success else ToolCallStatus.FAILED
 
+            # Keep the full result even on failure — builtin tools may
+            # return diagnostic context that the LLM needs to decide
+            # whether to retry, switch approach, or give up.
             self.execution_repo.update_tool_call(
                 tool_call.id,
                 status=status,
-                result=result if is_success else None,
-                error=result.get("error") if not is_success else None,
+                result=result,
+                error=result.get("error") if (not is_success and isinstance(result, dict)) else None,
             )
             self.db.commit()
 
@@ -919,6 +923,7 @@ class ToolExecutor:
             tool_name=tool_call.tool_name,
             args=args,
             session_id=tool_call.session_id,
+            agent_run_id=tool_call.agent_run_id,
         )
 
         logger.info(

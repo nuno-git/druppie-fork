@@ -11,7 +11,6 @@ Tool definitions are in BUILTIN_TOOL_DEFS (dict keyed by name).
 Use get_builtin_tools(names) to get OpenAI-format definitions for an agent.
 """
 
-import os
 from typing import TYPE_CHECKING
 from uuid import UUID
 
@@ -21,10 +20,6 @@ if TYPE_CHECKING:
     from druppie.repositories import ExecutionRepository
 
 logger = structlog.get_logger()
-
-from druppie.opencode.model_resolver import get_agent_chain, resolve_sandbox_models
-
-VALID_REPO_TARGETS = ("project", "druppie_core")
 
 
 # =============================================================================
@@ -192,49 +187,6 @@ BUILTIN_TOOL_DEFS: dict[str, dict] = {
                     },
                 },
                 "required": ["skill_name"],
-            },
-        },
-    },
-    "execute_coding_task": {
-        "type": "function",
-        "function": {
-            "name": "execute_coding_task",
-            "description": (
-                "Execute a coding task in an isolated sandbox. "
-                "IMPORTANT: Each call spawns a FRESH container that clones the project repo from git. "
-                "The sandbox is DESTROYED after the task completes. "
-                "Any work NOT committed and pushed within the sandbox is LOST. "
-                "There is NO persistent workspace between calls — each call starts from the latest git state. "
-                "The sandbox agent will automatically commit and push its work. "
-                "To build on previous work, simply call again — the new sandbox clones the repo with all previous pushes."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "task": {
-                        "type": "string",
-                        "description": (
-                            "The complete task prompt for the sandbox coding agent. "
-                            "This is the ONLY instruction it receives, so be self-contained: "
-                            "describe what to implement, reference files to read for context "
-                            "(e.g. SPEC.md, test files), and include any patterns to follow."
-                        ),
-                    },
-                    "agent": {
-                        "type": "string",
-                        "description": "Which sandbox agent to use",
-                    },
-                    "repo_target": {
-                        "type": "string",
-                        "enum": ["project", "druppie_core"],
-                        "description": (
-                            "Which repo the sandbox works on. "
-                            "'project' (default) = session's Gitea project repo. "
-                            "'druppie_core' = Druppie's own GitHub repo (dual-repo: core + project context)."
-                        ),
-                    },
-                },
-                "required": ["task"],
             },
         },
     },
@@ -1082,176 +1034,6 @@ async def invoke_skill(
 
 
 # =============================================================================
-# SANDBOX CODING TASK IMPLEMENTATION
-# =============================================================================
-
-async def execute_sandbox_coding_task(
-    args: dict,
-    session_id: UUID,
-    agent_run_id: UUID,
-    execution_repo: "ExecutionRepository",
-) -> dict:
-    """Create a sandbox session, send the prompt, register ownership, return immediately.
-
-    Does NOT poll for completion. The control plane will send a webhook
-    to /api/sandbox-sessions/{sandbox_session_id}/complete when done.
-
-    Returns:
-        Dict with status="waiting_sandbox" and sandbox_session_id on success.
-        The caller (tool_executor) should set ToolCallStatus.WAITING_SANDBOX.
-    """
-    import json as _json
-    from druppie.opencode import create_and_start_sandbox, SandboxCreateError
-
-    task = args.get("task", "")
-    from druppie.core.config import DEFAULT_SANDBOX_AGENT
-    raw_agent = args.get("agent")
-    raw_repo_target = args.get("repo_target")
-
-    if not task:
-        return {"success": False, "error": "task is required"}
-
-    # Load caller's sandbox_constraints (if any) so defaults can prefer an
-    # allowed value rather than falling through to "project" / DEFAULT_SANDBOX_AGENT
-    # and hitting the validation below.
-    from druppie.agents.runtime import Agent as AgentLoader
-    definition = None
-    constraints = None
-    try:
-        agent_run = execution_repo.get_by_id(agent_run_id)
-        if agent_run and agent_run.agent_id:
-            definition = AgentLoader._load_definition(agent_run.agent_id)
-            if definition and definition.sandbox_constraints:
-                constraints = definition.sandbox_constraints
-    except Exception:
-        pass
-
-    if raw_agent is not None:
-        agent = raw_agent
-    elif constraints and constraints.allowed_agents and DEFAULT_SANDBOX_AGENT not in constraints.allowed_agents:
-        agent = constraints.allowed_agents[0]
-    else:
-        agent = DEFAULT_SANDBOX_AGENT
-
-    if raw_repo_target is not None:
-        repo_target = raw_repo_target
-    elif constraints and constraints.allowed_repo_targets and "project" not in constraints.allowed_repo_targets:
-        repo_target = constraints.allowed_repo_targets[0]
-    else:
-        repo_target = "project"
-
-    # Enforce per-agent sandbox constraints (e.g. architect can only use explore/druppie_core)
-    if constraints:
-        if constraints.allowed_agents is not None and agent not in constraints.allowed_agents:
-            return {
-                "success": False,
-                "error": (
-                    f"Agent '{definition.id}' is only allowed to use sandbox agents: "
-                    f"{constraints.allowed_agents}. Got: '{agent}'"
-                ),
-            }
-        if constraints.allowed_repo_targets is not None and repo_target not in constraints.allowed_repo_targets:
-            return {
-                "success": False,
-                "error": (
-                    f"Agent '{definition.id}' is only allowed to use repo targets: "
-                    f"{constraints.allowed_repo_targets}. Got: '{repo_target}'"
-                ),
-            }
-
-    model_config = resolve_sandbox_models(agent)
-    model = model_config.primary_model
-
-    # Get project context from the session via repositories
-    from druppie.repositories import SessionRepository, ProjectRepository
-    db = execution_repo.db
-    session_repo = SessionRepository(db)
-    session = session_repo.get_by_id(session_id)
-    if not session:
-        return {"success": False, "error": f"Session {session_id} not found"}
-
-    if not session.user_id:
-        return {"success": False, "error": "Cannot create sandbox: session has no user_id"}
-
-    # Validate repo_target value
-    if repo_target not in VALID_REPO_TARGETS:
-        return {"success": False, "error": f"Invalid repo_target '{repo_target}'. Must be one of: {VALID_REPO_TARGETS}."}
-
-    from druppie.opencode.repo_context import resolve_repo_context
-    try:
-        repo_ctx = resolve_repo_context(repo_target, session_id, db)
-    except ValueError as e:
-        return {"success": False, "error": str(e)}
-
-    repo_owner = repo_ctx.repo_owner
-    repo_name = repo_ctx.repo_name
-    git_provider = repo_ctx.git_provider
-    context_repo_owner = repo_ctx.context_repo_owner
-    context_repo_name = repo_ctx.context_repo_name
-    context_git_provider = repo_ctx.context_git_provider
-
-    # Append mandatory push instruction to the task prompt.
-    # The sandbox agent (OpenCode) must push after committing — the deployer
-    # pulls from the remote and unpushed commits are invisible.
-    task += (
-        "\n\n## MANDATORY: Git push after commit"
-        "\nAfter committing your changes, you MUST push to the remote."
-        "\n"
-        "\nFirst, configure git credentials (the git proxy handles auth server-side,"
-        "\nso these are just placeholders to prevent interactive prompts):"
-        "\n```bash"
-        "\ngit config --global credential.helper '!f() { echo username=x; echo password=x; }; f'"
-        "\n```"
-        "\n"
-        "\nThen push:"
-        "\n```bash"
-        "\ngit push origin HEAD"
-        "\n```"
-        "\nVerify the push succeeded by running: git log --oneline origin/HEAD..HEAD"
-        "\n(should show nothing). Do NOT complete the task until push succeeds."
-    )
-
-    try:
-        result = await create_and_start_sandbox(
-            task_prompt=task,
-            model=model,
-            agent_name=agent,
-            repo_owner=repo_owner,
-            repo_name=repo_name,
-            user_id=session.user_id,
-            session_id=session_id,
-            model_chain=_json.dumps(get_agent_chain(agent)),
-            model_chain_index=0,
-            title=f"Druppie sandbox: {task[:80]}",
-            source="api",
-            author_id="druppie-agent",
-            db=db,
-            git_provider=git_provider,
-            context_repo_owner=context_repo_owner,
-            context_repo_name=context_repo_name,
-            context_git_provider=context_git_provider,
-            repo_target=repo_target,
-        )
-
-        logger.info(
-            "execute_coding_task: prompt sent, pausing for webhook",
-            sandbox_session_id=result["sandbox_session_id"],
-            message_id=result["message_id"],
-        )
-
-        return {
-            "success": True,
-            "status": "waiting_sandbox",
-            "sandbox_session_id": result["sandbox_session_id"],
-            "message_id": result["message_id"],
-        }
-
-    except SandboxCreateError as e:
-        logger.error("execute_coding_task: failed", error=str(e))
-        return {"success": False, "error": str(e)}
-
-
-# =============================================================================
 # TEST REPORT TOOL IMPLEMENTATION
 # =============================================================================
 
@@ -1322,6 +1104,7 @@ async def execute_builtin(
     session_id: UUID,
     agent_run_id: UUID,
     execution_repo: "ExecutionRepository",
+    tool_call_id: UUID | None = None,
 ) -> dict:
     """Execute a non-HITL built-in tool.
 
@@ -1377,13 +1160,6 @@ async def execute_builtin(
             agent_run_id=agent_run_id,
             execution_repo=execution_repo,
         )
-    elif tool_name == "execute_coding_task":
-        return await execute_sandbox_coding_task(
-            args=args,
-            session_id=session_id,
-            agent_run_id=agent_run_id,
-            execution_repo=execution_repo,
-        )
     elif tool_name == "test_report":
         return await test_report(
             iteration=args.get("iteration", 0),
@@ -1416,7 +1192,6 @@ def is_builtin_tool(tool_name: str) -> bool:
         "set_intent",
         "create_message",
         "invoke_skill",
-        "execute_coding_task",
         "test_report",
     )
 

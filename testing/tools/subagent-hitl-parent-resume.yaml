@@ -1,0 +1,188 @@
+## Setup: create project with FD + TD for subagent HITL flow test
+## Creates a session ending with a pending developer agent run.
+## When the developer is retried, its prompt instructs it to spawn subagents
+## that each call hitl_ask_question, testing the parent-resume flow after
+## HITL answers are provided by the user.
+
+tool-test:
+  name: subagent-hitl-parent-resume
+  description: >
+    Setup test for subagent HITL (human-in-the-loop) parent-resume flow.
+    Creates a full pipeline (router → planner → BA → architect → planner → developer)
+    ending with a pending developer agent run. The developer's planned_prompt
+    strongly instructs it to use the subagents() tool to spawn explorer and
+    builder_subagent agents, each with a prompt to ask a simple HITL question.
+    After running this setup, retry the developer via API or UI to verify that:
+    - Subagents spawn and pause for HITL questions
+    - User answers propagate correctly
+    - Parent developer agent resumes after subagents complete
+    - Subagents tool call result shows "success" for completed subagents
+  tags: [e2e, subagent, hitl]
+
+  chain:
+    # --- Router ---
+    - agent: router
+      tool: builtin:set_intent
+      arguments:
+        intent: create_project
+        project_name: subagent-hitl-test
+        description: "A test project for verifying subagent HITL parent-resume flow"
+
+    - agent: router
+      tool: builtin:done
+      arguments:
+        summary: "Agent router: Classified as create_project"
+
+    # --- Planner → BA ---
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: business_analyst
+            prompt: "Gather requirements and create functional design for subagent HITL test app"
+          - agent_id: planner
+            prompt: "Re-evaluate after business_analyst completes"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: Planned business_analyst"
+
+    # --- Business Analyst (creates FD) ---
+    - agent: business_analyst
+      tool: coding:make_design
+      approval:
+        status: approved
+      arguments:
+        path: docs/functional-design.md
+        content: |
+          # Functional Design: Subagent HITL Test App
+
+          ## Requirements
+          - FR-01: The system must support spawning subagents from a parent agent
+          - FR-02: Each subagent must be able to ask a HITL question and receive an answer
+          - FR-03: The parent agent must resume after all subagents complete
+          - FR-04: Subagent results must show "success" status when completed
+          - FR-05: Use TypeScript for implementation
+
+          ## Functionality
+          - Parent agent spawns two subagents: explorer and builder_subagent
+          - Explorer subagent asks a clarification question via HITL
+          - Builder subagent asks a confirmation question via HITL
+          - After user answers, subagents complete and parent resumes
+          - Simple file-based output demonstrating the flow
+
+    - agent: business_analyst
+      tool: coding:push_pr
+      arguments:
+        pr_title: "docs: add functional design for subagent HITL test"
+
+    - agent: business_analyst
+      tool: builtin:done
+      arguments:
+        summary: "Agent business_analyst: DESIGN_APPROVED - Functional design created and approved"
+
+    # --- Planner → Architect ---
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: architect
+            prompt: "Create technical design for subagent HITL test implementation"
+          - agent_id: planner
+            prompt: "Re-evaluate after architect completes"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: BA approved, planned architect"
+
+    # --- Architect (creates TD) ---
+    - agent: architect
+      tool: coding:bash
+      arguments:
+        command: "git pull"
+
+    - agent: architect
+      tool: coding:read_file
+      arguments:
+        path: docs/functional-design.md
+
+    - agent: architect
+      tool: coding:make_design
+      approval:
+        status: approved
+        by: architect
+      arguments:
+        path: docs/technical-design.md
+        content: |
+          # Technical Design: Subagent HITL Test Implementation
+
+          ## Technology Stack
+          - Language: TypeScript
+          - Runtime: Node.js
+          - No frameworks needed (console output only)
+
+          ## Implementation Plan
+          1. Create subagent-hitl-demo.ts file
+          2. Implement parent function that spawns subagents
+          3. Explorer subagent: asks HITL question, returns answer
+          4. Builder subagent: asks HITL question, returns answer
+          5. Parent resumes with subagent results and writes summary
+          6. Export all functions
+
+          ## File Structure
+          - subagent-hitl-demo.ts (main implementation)
+
+          ## Testing Strategy
+          - Verify subagents spawn correctly
+          - Verify HITL questions are asked and answered
+          - Verify parent resumes after subagent completion
+          - Verify subagent results show "success" status
+
+    - agent: architect
+      tool: coding:push_pr
+      arguments:
+        pr_title: "docs: add technical design for subagent HITL test"
+
+    - agent: architect
+      tool: builtin:done
+      arguments:
+        summary: "Agent architect: TECHNICAL_DESIGN_APPROVED - Technical design created and approved"
+
+    # --- Planner (sets up developer with subagent HITL prompt) ---
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: developer
+            prompt: >
+              CRITICAL INSTRUCTION - You MUST follow these steps exactly:
+
+              1. You MUST call the subagents() tool. Do NOT call hitl_ask_question yourself.
+              2. Spawn these two subagents using the subagents() tool:
+
+                 Subagent 1 - "explorer":
+                 prompt: "You are the explorer subagent. You MUST call the hitl_ask_question tool with the question 'What is your preferred greeting style for the output file?'. Wait for the user's answer, then call done with a summary of the answer."
+
+                 Subagent 2 - "builder_subagent":
+                 prompt: "You are the builder subagent. You MUST call the hitl_ask_question tool with the question 'Should the output file include a timestamp?'. Wait for the user's answer, then call done with a summary of the answer."
+
+              3. After both subagents complete, the subagents tool will return their results showing "success" status.
+              4. Then create a simple TypeScript file subagent-hitl-demo.ts that logs the subagent results.
+              5. Commit and push the file.
+              6. Call done with a summary.
+
+              DO NOT implement the task yourself. You MUST use the subagents() tool to delegate to explorer and builder_subagent.
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: Planned developer with subagent HITL prompt"
+
+  verify:
+    - gitea_repo_exists: true
+    - file_exists: docs/functional-design.md
+    - file_exists: docs/technical-design.md
+    - file_not_empty: docs/functional-design.md
+    - file_not_empty: docs/technical-design.md

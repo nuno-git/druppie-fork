@@ -63,11 +63,13 @@ class FallbackLLM(BaseLLM):
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None = None,
     ) -> LLMResponse:
+        primary_error: LLMError | None = None
         try:
             response = self._primary.chat(messages, tools)
             self._active = self._primary
             return response
         except LLMError as e:
+            primary_error = e
             logger.warning(
                 "llm_fallback_activated",
                 primary_provider=self._primary.provider_name,
@@ -75,9 +77,17 @@ class FallbackLLM(BaseLLM):
                 error_type=type(e).__name__,
                 error=str(e)[:200],
             )
-            response = self._fallback.chat(messages, tools)
-            self._active = self._fallback
-            return response
+            try:
+                response = self._fallback.chat(messages, tools)
+                self._active = self._fallback
+                return response
+            except LLMError as fallback_error:
+                logger.error(
+                    "llm_fallback_also_failed",
+                    primary_error=f"{type(primary_error).__name__}: {str(primary_error)[:200]}",
+                    fallback_error=f"{type(fallback_error).__name__}: {str(fallback_error)[:200]}",
+                )
+                raise primary_error from fallback_error
 
     async def achat(
         self,
@@ -85,11 +95,13 @@ class FallbackLLM(BaseLLM):
         tools: list[dict[str, Any]] | None = None,
         max_tokens: int | None = None,
     ) -> LLMResponse:
+        primary_error: LLMError | None = None
         try:
             response = await self._primary.achat(messages, tools, max_tokens)
             self._active = self._primary
             return response
         except LLMError as e:
+            primary_error = e
             logger.warning(
                 "llm_fallback_activated",
                 primary_provider=self._primary.provider_name,
@@ -97,9 +109,21 @@ class FallbackLLM(BaseLLM):
                 error_type=type(e).__name__,
                 error=str(e)[:200],
             )
-            response = await self._fallback.achat(messages, tools, max_tokens)
-            self._active = self._fallback
-            return response
+            try:
+                response = await self._fallback.achat(messages, tools, max_tokens)
+                self._active = self._fallback
+                return response
+            except LLMError as fallback_error:
+                # Both failed — raise PRIMARY error with fallback context.
+                # The primary error is the real issue; the fallback error is
+                # secondary noise (e.g. expired key) that would otherwise mask
+                # the actual root cause.
+                logger.error(
+                    "llm_fallback_also_failed",
+                    primary_error=f"{type(primary_error).__name__}: {str(primary_error)[:200]}",
+                    fallback_error=f"{type(fallback_error).__name__}: {str(fallback_error)[:200]}",
+                )
+                raise primary_error from fallback_error
 
     # ------------------------------------------------------------------
     # History — concatenate both

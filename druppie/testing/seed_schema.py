@@ -26,7 +26,7 @@ class ToolCallFixture(BaseModel):
     answer: str | None = None  # HITL: creates Question record if present
     approval: ApprovalFixture | None = None
     approval_action: dict | None = None  # For replay: {"status": "approved", "by": "architect"}
-    outcome: dict | None = None  # For execute_coding_task: {files: [{path, content}]}
+    outcome: dict | None = None  # For sandbox file creation outcomes
     execute: bool | None = None
 
     @property

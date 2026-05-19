@@ -1,0 +1,1471 @@
+tool-test:
+  name: create-vergunningzoeker-ds
+  description: "Full vergunningzoeker pipeline with real deploy — includes OCR, LLM extraction, approval flow, full-text search, ZIP uploads, audit logging"
+  tags: [e2e, create-project, sdk, real-deploy, vergunningzoeker]
+  extends: setup-vergunningzoeker-with-fd
+
+  chain:
+    # =========================================================================
+    # Planner → Architect
+    # =========================================================================
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: architect
+            prompt: "Create technical design for the vergunningzoeker following the platform technical standards"
+          - agent_id: planner
+            prompt: "Re-evaluate after architect completes"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: BA approved, planned architect"
+
+    # =========================================================================
+    # Architect — writes TD according to the provided technical design
+    # =========================================================================
+    - agent: architect
+      tool: coding:bash
+      arguments:
+        command: "git pull"
+
+    - agent: architect
+      tool: coding:read_file
+      arguments:
+        path: docs/functional-design.md
+
+    - agent: architect
+      tool: coding:make_design
+      approval:
+        status: approved
+        by: architect
+      arguments:
+        path: docs/technical-design.md
+        content: |
+          # Technical Design — Vergunningzoeker
+
+          > Platform standards: conforms to [docs/platform-technical-standards.md](./platform-technical-standards.md) rev 2026-04-20.
+
+          ## Introduction
+
+          ### Subject
+          De vergunningzoeker is een webtoepassing voor waterschap-medewerkers die vergunningen uit historische bronnen
+          (PDF's, gescande documenten, andere bestanden) verzamelt via upload, automatisch verwerkt met OCR en LLM-extractie,
+          doorzoekbaar maakt, en na menselijke validatie opslaat.
+
+          ### Problem Summary
+          Vergunningdata bestaat uit verspreide PDF's, gescande documenten en andere bestanden met verschillende
+          nummeringssystemen. Medewerkers kunnen oude vergunningen niet uniform doorzoeken en archiefstatussen zijn onbekend.
+
+          ### Functional Question
+          Hoe kunnen we alle vergunningbestanden centraal verzamelen, automatisch verwerken tot doorzoekbare metadata,
+          met archiefstatus-inzicht en een goedkeuringsflow, toegankelijk voor geautoriseerde medewerkers van specifieke afdelingen?
+
+          ## Solution
+
+          ### Applied Principles (NORA)
+          - Foundations: Archiefwet, selectielijst waterschappen 2012, duurzame toegankelijkheid.
+          - Organization: Waterschap eigenaar van data.
+          - Information: OCR+LLM extractie, PostgreSQL full-text search, selectielijst als context.
+          - Application: Druppie-template (React, FastAPI, PostgreSQL). Services: upload, documentverwerking, zoek, goedkeuring, autorisatie, auditlog.
+          - Security & Privacy: PII beschermd via afdelingsautorisatie (Keycloak headers), geen binaries in DB, auditlogging.
+
+          ### Requirements (subset)
+          - FR-01 t/m FR-11: zoeken, filteren, metadata weergave, archiefinfo, document download.
+          - NFR-01 t/m NFR-06: performance, load, usability, PII, auditlog.
+          - TR-01 t/m TR-15: technische eisen (tsvector, ZIP upload, asynchrone verwerking, pending_review, goedkeuring, autorisatie, auditlog, documentopslag).
+
+          ### Component Structure
+          - **Uploadservice**: individuele bestanden en ZIP upload, uitpakken, opslaan in lokale storage, start asynchrone verwerking.
+          - **Documentverwerkingsservice**: asynchrone pipeline: module-vision.ocr → module-llm.chat (met selectielijst-context) → opslag metadata met status pending_review.
+          - **Zoekservice**: full-text search via tsvector, filter op status en alle metadata-velden, markeert niet-goedgekeurde resultaten.
+          - **Goedkeuringsservice**: medewerker bewerkt metadata en keurt goed. Status wordt approved, ready_for_migration wordt true.
+          - **Autorisatieservice**: check op afdelingsheaders (Keycloak).
+          - **Auditlogservice**: logt uploads, zoekacties, goedkeuringen.
+
+          ### Data Model
+          - **permit**: kernentiteit met kolommen id, permit_number, applicant_name, permit_holder_name, issuer_name, location,
+            issue_date, validity_date, applicable_law, work_type, surface_water_type, water_barrier_type,
+            source_system, document_path, search_vector (tsvector, GIN index), archive_nomination, retention_period_years,
+            status (pending_review / approved), ready_for_migration (bool), ocr_text, created_at, updated_at, reviewed_at, reviewed_by.
+          - **audit_log**: id, user_id, action_type, action_details, timestamp.
+          - **upload_batch**: id, user_id, file_count, status (processing/completed/failed), created_at.
+
+          ### Integration
+          - OCR: reuse module-vision
+          - LLM: reuse module-llm
+          - Authenticatie: Keycloak headers (X-Forwarded-Groups)
+          - Zaaksysteem: out of scope v1, voorbereid met ready_for_migration flag
+
+          ### Visualization
+          (diagrams included in separate diagrams.md)
+
+    - agent: architect
+      tool: coding:push_pr
+      arguments:
+        pr_title: "Technisch ontwerp vergunningzoeker met goedkeuringsflow en full-text search"
+
+    - agent: architect
+      tool: builtin:done
+      arguments:
+        summary: "Agent architect: DESIGN_APPROVED. BUILD_PATH=PROJECT. Wrote technical-design.md covering upload, OCR+LLM extraction, approval flow, full-text search, audit logging, and archive compliance."
+        next_agent: builder_planner
+
+    # =========================================================================
+    # Planner → Builder Planner
+    # =========================================================================
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: builder_planner
+            prompt: "Create builder plan for the vergunningzoeker"
+          - agent_id: planner
+            prompt: "Re-evaluate after builder_planner completes"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: Architect routed directly to builder_planner"
+
+    # =========================================================================
+    # Builder Planner
+    # =========================================================================
+    - agent: builder_planner
+      tool: coding:run_git
+      arguments:
+        command: "pull"
+
+    - agent: builder_planner
+      tool: coding:read_file
+      arguments:
+        path: docs/functional-design.md
+
+    - agent: builder_planner
+      tool: coding:read_file
+      arguments:
+        path: docs/technical-design.md
+
+    - agent: builder_planner
+      tool: coding:write_file
+      arguments:
+        path: docs/builder-plan.md
+        content: |
+          # Builder Plan: Vergunningzoeker
+
+          ## Solution Strategy
+          FastAPI backend (conform Druppie-template) met React frontend. Gebruik van Druppie SDK voor OCR en LLM.
+          PostgreSQL met full-text search (tsvector). Upload verwerkt ZIP archieven. Asynchrone documentverwerking
+          met status pending_review. Medewerker keurt metadata goed (approved). Audit logging voor alle acties.
+          Autorisatie op afdelingsniveau via headers.
+
+          ## Module Integration
+          - `module-vision` → `druppie.call("vision", "ocr", ...)`
+          - `module-llm` → `druppie.call("llm", "chat", ...)` met selectielijst-context
+          - Geen hardcoded API keys, gebruik alléén de SDK.
+
+          ## Code Standards
+          - Python 3.11, FastAPI
+          - React 18, TypeScript, Vite
+          - SQLAlchemy 2.0 (async?), maar voor nu sync met background threads.
+          - Selectielijst gedefinieerd in `app/archive_rules.py`, hergebruikt in backend en frontend (als API).
+
+          ## Test Framework
+          pytest met FastAPI TestClient, SQLite in-memory.
+
+          ## Files to Create/Modify
+          - `app/models.py` — Permit, AuditLog, UploadBatch met volledige kolommen, search_vector, GIN index
+          - `app/database.py` — engine, session, init_db met create_all
+          - `app/routes.py` — alle endpoints inclusief ZIP upload, document download, goedkeuring, audit logging, autorisatie dependency
+          - `app/archive_rules.py` — SELECTIELIJST en helper functies
+          - `app/agent.py` — chat agent (search + synthesize)
+          - `Dockerfile` — multi-stage build
+          - `frontend/src/App.tsx` — volledige UI met tabs: zoeken (geavanceerd filter), upload (ZIP ondersteuning), chat, detail/approval weergave
+          - `tests/test_routes.py` — uitgebreide tests
+
+    - agent: builder_planner
+      tool: coding:run_git
+      arguments:
+        command: "add docs/builder-plan.md"
+
+    - agent: builder_planner
+      tool: coding:run_git
+      arguments:
+        command: "commit -m 'Add builder plan for vergunningzoeker with full feature set'"
+
+    - agent: builder_planner
+      tool: coding:run_git
+      arguments:
+        command: "push"
+
+    - agent: builder_planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent builder_planner: Created builder-plan.md covering all new requirements."
+
+    # =========================================================================
+    # Planner → Test Builder
+    # =========================================================================
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: test_builder
+            prompt: "Write tests for the vergunningzoeker covering the full pipeline"
+          - agent_id: planner
+            prompt: "Re-evaluate after test_builder completes"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: Planned test_builder"
+
+    # =========================================================================
+    # Test Builder
+    # =========================================================================
+    - agent: test_builder
+      tool: coding:run_git
+      arguments:
+        command: "pull"
+
+    - agent: test_builder
+      tool: coding:read_file
+      arguments:
+        path: docs/builder-plan.md
+
+    - agent: test_builder
+      tool: coding:write_file
+      arguments:
+        path: tests/conftest.py
+        content: |
+              import os
+              os.environ["DATABASE_URL"] = "sqlite:///test.db"
+              os.environ["UPLOAD_DIR"] = "./test_uploads"
+
+              import pytest
+              from fastapi.testclient import TestClient
+              from app import create_app
+              from app.database import Base, engine, init_db
+
+              @pytest.fixture
+              def client():
+                  app = create_app()
+                  init_db()
+                  with TestClient(app) as test_client:
+                      yield test_client
+                  Base.metadata.drop_all(bind=engine)
+
+               @pytest.fixture
+               def auth_headers():
+                   return {"X-Forwarded-Groups": "vergunningen"}
+
+    - agent: test_builder
+      tool: coding:write_file
+      arguments:
+        path: tests/test_routes.py
+        content: |
+          import io
+          import zipfile
+          import pytest
+          from unittest.mock import patch
+
+          def test_upload_single_image(client, auth_headers):
+              with patch("app.routes.druppie") as mock_druppie:
+                  mock_druppie.call.side_effect = [
+                      {"text": "Vergunning K-2019-0042. Aanvrager: J. de Vries. Lozing oppervlaktewater."},
+                      {"answer": '{"permit_type": "watervergunning", "permit_subtype": "watervergunning_lozing", "applicant_name": "J. de Vries", "location": "Testdorp"}'},
+                  ]
+                  data = {
+                      "file": (io.BytesIO(b"fake image data"), "scan.jpg"),
+                  }
+                  resp = client.post("/api/permits/upload", files=data, headers=auth_headers)
+                  assert resp.status_code == 200
+                  result = resp.json()
+                  assert result["status"] == "pending_review"
+                  assert result["permit_number"] == "K-2019-0042"
+
+          def test_upload_zip(client, auth_headers):
+              zip_buffer = io.BytesIO()
+              with zipfile.ZipFile(zip_buffer, "w") as zf:
+                  zf.writestr("doc1.pdf", b"pdf content")
+                  zf.writestr("doc2.jpg", b"jpg content")
+              zip_buffer.seek(0)
+              with patch("app.routes.druppie") as mock_druppie:
+                  mock_druppie.call.return_value = {"text": "dummy", "answer": "{}"}
+                  data = {
+                      "file": (zip_buffer, "archive.zip"),
+                  }
+                  resp = client.post("/api/permits/upload", files=data, headers=auth_headers)
+                  assert resp.status_code == 200
+                  result = resp.json()
+                  assert result["file_count"] == 2
+                  assert result["status"] == "processing"
+
+          def test_list_permits(client, auth_headers):
+              resp = client.get("/api/permits", headers=auth_headers)
+              assert resp.status_code == 200
+
+          def test_search_permits(client, auth_headers):
+              resp = client.get("/api/permits/search?q=test", headers=auth_headers)
+              assert resp.status_code == 200
+
+          def test_advanced_search(client, auth_headers):
+              resp = client.get("/api/permits/search?applicant_name=Jansen&status=pending_review", headers=auth_headers)
+              assert resp.status_code == 200
+
+          def test_approve_permit(client, auth_headers, tmp_path):
+              # eerst een permit uploaden
+              with patch("app.routes.druppie") as mock_druppie:
+                  mock_druppie.call.side_effect = [
+                      {"text": "test"},
+                      {"answer": "{}"},
+                  ]
+                  upload_resp = client.post("/api/permits/upload",
+                      files={"file": (io.BytesIO(b"data"), "doc.pdf")},
+                      headers=auth_headers)
+                  permit_id = upload_resp.json()["id"]
+
+              # goedkeuren met aangepaste metadata
+              approve_data = {
+                  "permit_number": "K-2024-0001",
+                  "applicant_name": "Nieuwe Aanvrager",
+                  "location": "Nieuwe locatie",
+                  "issue_date": "2024-01-15",
+              }
+              resp = client.post(f"/api/permits/{permit_id}/approve",
+                                 json=approve_data, headers=auth_headers)
+              assert resp.status_code == 200
+              updated = resp.json()
+              assert updated["status"] == "approved"
+              assert updated["ready_for_migration"] == True
+              assert updated["permit_number"] == "K-2024-0001"
+
+          def test_document_download(client, auth_headers, tmp_path):
+              # stel upload_dir in naar tmp_path
+              import app.routes as routes
+              routes.UPLOAD_DIR = str(tmp_path)
+              # maak bestand aan
+              fpath = tmp_path / "test.txt"
+              fpath.write_text("hello world")
+              permit_id = 99  # we kunnen een permit in DB zetten met dat pad, maar vereenvoudigd mock
+              # test zonder echte DB maar we kunnen het endpoint apart testen
+              # hier simuleer: we zetten de route even uit
+              # in een echte test zouden we de DB gebruiken, hier vereenvoudigd:
+              pass
+
+          def test_unauthorized_access(client):
+              resp = client.get("/api/permits")  # geen headers
+              assert resp.status_code in (401, 403)
+
+    - agent: test_builder
+      tool: coding:run_git
+      arguments:
+        command: "add tests/"
+
+    - agent: test_builder
+      tool: coding:run_git
+      arguments:
+        command: "commit -m 'Add comprehensive tests for vergunningzoeker'"
+
+    - agent: test_builder
+      tool: coding:run_git
+      arguments:
+        command: "push"
+
+    - agent: test_builder
+      tool: builtin:done
+      arguments:
+        summary: "Agent test_builder: Wrote tests for upload, ZIP, search, approval, and authorization."
+
+    # =========================================================================
+    # Planner → Builder
+    # =========================================================================
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: builder
+            prompt: "Build the vergunningzoeker to pass the tests, using Druppie SDK and the provided technical design"
+          - agent_id: planner
+            prompt: "Re-evaluate after builder completes"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: Planned builder"
+
+    # =========================================================================
+    # Builder — real code using druppie SDK for OCR + LLM classification
+    # =========================================================================
+    - agent: builder
+      tool: coding:execute_coding_task
+      arguments:
+        task: "Build the complete vergunningzoeker application according to the technical design"
+      mock: true
+      mock_result: "All files created successfully"
+      outcome:
+        files:
+          - path: app/models.py
+            content: |
+              import datetime
+              from sqlalchemy import Column, Integer, String, Text, DateTime, Date, Boolean, ForeignKey
+              from sqlalchemy.dialects.postgresql import TSVECTOR
+              from sqlalchemy.sql import func
+              from app.database import Base
+
+              class Permit(Base):
+                  __tablename__ = "permits"
+
+                  id = Column(Integer, primary_key=True, autoincrement=True)
+                  permit_number = Column(String(100), nullable=True, index=True)
+                  applicant_name = Column(String(200), nullable=True)
+                  permit_holder_name = Column(String(200), nullable=True)
+                  issuer_name = Column(String(200), nullable=True)
+                  location = Column(String(300), nullable=True)
+                  issue_date = Column(Date, nullable=True)
+                  validity_date = Column(Date, nullable=True)
+                  applicable_law = Column(String(200), nullable=True)
+                  work_type = Column(String(200), nullable=True)
+                  surface_water_type = Column(String(200), nullable=True)
+                  water_barrier_type = Column(String(200), nullable=True)
+                  permit_type = Column(String(100), nullable=True, index=True)
+                  permit_subtype = Column(String(100), nullable=True)
+                  source_system = Column(String(100), nullable=True)
+                  document_path = Column(String(500), nullable=True)
+                  search_vector = Column(TSVECTOR)
+                  archive_nomination = Column(String(50), nullable=True)
+                  retention_period_years = Column(Integer, nullable=True)
+                  status = Column(String(50), default="pending_review", index=True)  # pending_review / approved
+                  ready_for_migration = Column(Boolean, default=False)
+                  ocr_text = Column(Text, nullable=True)
+                  created_at = Column(DateTime, server_default=func.now())
+                  updated_at = Column(DateTime, onupdate=func.now())
+                  reviewed_at = Column(DateTime, nullable=True)
+                  reviewed_by = Column(String(100), nullable=True)
+
+                  __table_args__ = (
+                      {"extend_existing": True},
+                  )
+
+              class AuditLog(Base):
+                  __tablename__ = "audit_log"
+                  id = Column(Integer, primary_key=True, autoincrement=True)
+                  user_id = Column(String(100), nullable=False)
+                  action_type = Column(String(50), nullable=False)  # upload, search, approve
+                  action_details = Column(Text, nullable=True)
+                  timestamp = Column(DateTime, server_default=func.now())
+
+              class UploadBatch(Base):
+                  __tablename__ = "upload_batch"
+                  id = Column(Integer, primary_key=True, autoincrement=True)
+                  user_id = Column(String(100), nullable=False)
+                  file_count = Column(Integer, nullable=False)
+                  status = Column(String(50), default="processing")  # processing, completed, failed
+                  created_at = Column(DateTime, server_default=func.now())
+
+          - path: app/database.py
+            content: |
+              import logging
+              from sqlalchemy import create_engine, text
+              from sqlalchemy.orm import sessionmaker
+              from app.config import settings
+
+              logger = logging.getLogger(__name__)
+               engine = create_engine(settings.database_url)
+               SessionLocal = sessionmaker(bind=engine)
+
+               def get_db():
+                   db = SessionLocal()
+                   try:
+                       yield db
+                   finally:
+                       db.close()
+
+               # Base voor declaratieve modellen
+              from sqlalchemy.orm import DeclarativeBase
+              class Base(DeclarativeBase):
+                  pass
+
+              def init_db():
+                  import app.models  # noqa: F401
+                  with engine.connect() as conn:
+                      # Activeer pg_trgm voor ilike, tsvector extensie
+                      try:
+                          conn.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
+                          conn.execute(text("CREATE EXTENSION IF NOT EXISTS unaccent"))
+                      except Exception:
+                          pass
+                      Base.metadata.create_all(bind=engine)
+                      # Maak GIN index op search_vector na creatie
+                      try:
+                          conn.execute(text("""
+                              CREATE INDEX IF NOT EXISTS idx_permits_search_vector
+                              ON permits USING GIN (search_vector)
+                          """))
+                          conn.commit()
+                      except Exception as e:
+                          logger.warning("Could not create GIN index: %s", e)
+
+          - path: app/archive_rules.py
+            content: |
+              SELECTIELIJST = {
+                  "watervergunning_lozing": {"nominatie": "vernietigen", "jaren": 20},
+                  "watervergunning_onttrekking": {"nominatie": "vernietigen", "jaren": 20},
+                  "keurvergunning": {"nominatie": "vernietigen", "jaren": 10},
+                  "omgevingsvergunning": {"nominatie": "bewaren", "jaren": None},
+                  "lozingsvergunning": {"nominatie": "vernietigen", "jaren": 20},
+                  "onttrekkingsvergunning": {"nominatie": "vernietigen", "jaren": 15},
+                  "projectplan": {"nominatie": "bewaren", "jaren": None},
+                  "peilbesluit": {"nominatie": "bewaren", "jaren": None},
+                  "leggerwijziging": {"nominatie": "bewaren", "jaren": None},
+              }
+
+              def resolve_selectielijst_key(permit_type, permit_subtype, extracted_text=None):
+                  """Bepaal de beste sleutel uit de selectielijst op basis van type/subtype/tekst."""
+                  subtype = (permit_subtype or "").strip().lower().replace(" ", "_")
+                  ptype = (permit_type or "").strip().lower().replace(" ", "_")
+                  if subtype in SELECTIELIJST:
+                      return subtype
+                  if ptype in SELECTIELIJST:
+                      return ptype
+                  # fallback: prefix match
+                  for key in SELECTIELIJST:
+                      if key.startswith(ptype) or ptype.startswith(key):
+                          return key
+                  return None
+
+              def compute_archive_details(selectielijst_key, issue_date_str):
+                  """Bereken archiefnominatie, retentie en status tekst."""
+                  if not selectielijst_key:
+                      return {"nominatie": "onbekend", "jaren": None, "status_tekst": "onbekend"}
+                  entry = SELECTIELIJST.get(selectielijst_key)
+                  if not entry:
+                      return {"nominatie": "onbekend", "jaren": None, "status_tekst": "onbekend"}
+                  nominatie = entry["nominatie"]
+                  jaren = entry["jaren"]
+                  status_tekst = "onbekend"
+                  if nominatie == "bewaren":
+                      status_tekst = "te bewaren (oneindig)"
+                  elif nominatie == "vernietigen" and jaren and issue_date_str:
+                      try:
+                          from datetime import date
+                          issue = date.fromisoformat(issue_date_str)
+                          destroy_date = issue.replace(year=issue.year + jaren)
+                          today = date.today()
+                          if today >= destroy_date:
+                              status_tekst = "te vernietigen"
+                          else:
+                              status_tekst = f"te bewaren tot {destroy_date.isoformat()}"
+                      except Exception:
+                          status_tekst = f"te bewaren ({jaren} jaar na uitgifte)"
+                  else:
+                      status_tekst = f"te bewaren ({jaren} jaar na uitgifte)" if jaren else "onbekend"
+                  return {"nominatie": nominatie, "jaren": jaren, "status_tekst": status_tekst}
+
+          - path: app/authorization.py
+            content: |
+              from fastapi import Header, HTTPException, Depends
+
+              ALLOWED_GROUPS = {"vergunningen", "planning"}
+
+              def verify_department(x_forwarded_groups: str = Header(None)):
+                  if not x_forwarded_groups:
+                      raise HTTPException(status_code=401, detail="Niet geautoriseerd (geen groepen header)")
+                  groups = set(g.strip() for g in x_forwarded_groups.split(","))
+                  if not groups.intersection(ALLOWED_GROUPS):
+                      raise HTTPException(status_code=403, detail="Toegang geweigerd: afdeling niet geautoriseerd")
+                  return groups
+
+          - path: app/routes.py
+            content: |
+              import base64
+              import io
+              import json
+              import logging
+              import os
+              import threading
+              import zipfile
+              from datetime import date, datetime, timezone
+              from pathlib import Path
+
+              from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Query
+              from sqlalchemy.orm import Session
+              from sqlalchemy import text
+
+              from druppie_sdk import DruppieClient
+              from app.database import SessionLocal, engine
+              from app.models import Permit, AuditLog, UploadBatch
+              from app.archive_rules import (
+                  SELECTIELIJST,
+                  resolve_selectielijst_key,
+                  compute_archive_details,
+              )
+              from app.authorization import verify_department
+
+              logger = logging.getLogger(__name__)
+              router = APIRouter(prefix="/api")
+              druppie = DruppieClient()
+
+              UPLOAD_DIR = Path(os.environ.get("UPLOAD_DIR", "/data/uploads"))
+              UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
+              ALLOWED_EXTENSIONS = {"pdf", "png", "jpg", "jpeg", "tiff", "bmp", "webp"}
+
+              def _get_db():
+                  db = SessionLocal()
+                  try:
+                      yield db
+                  finally:
+                      db.close()
+
+              def _log_action(user_id: str, action_type: str, details: str = None):
+                  db = SessionLocal()
+                  try:
+                      log = AuditLog(user_id=user_id, action_type=action_type, action_details=details)
+                      db.add(log)
+                      db.commit()
+                  except Exception as e:
+                      logger.error("Audit log failed: %s", e)
+                  finally:
+                      db.close()
+
+              def _update_search_vector(db: Session, permit_id: int):
+                  stmt = text("""
+                      UPDATE permits SET search_vector = to_tsvector('dutch', coalesce(permit_number,'') || ' ' ||
+                          coalesce(applicant_name,'') || ' ' || coalesce(permit_holder_name,'') || ' ' ||
+                          coalesce(issuer_name,'') || ' ' || coalesce(location,'') || ' ' ||
+                          coalesce(applicable_law,'') || ' ' || coalesce(work_type,'') || ' ' ||
+                          coalesce(surface_water_type,'') || ' ' || coalesce(water_barrier_type,'') || ' ' ||
+                          coalesce(ocr_text,''))
+                      WHERE id = :id
+                  """)
+                  db.execute(stmt, {"id": permit_id})
+                  db.commit()
+
+              def _process_document(permit_id: int, file_path: Path):
+                  db = SessionLocal()
+                  try:
+                      permit = db.query(Permit).filter(Permit.id == permit_id).first()
+                      if not permit:
+                          return
+                      try:
+                          # OCR
+                          ocr_result = druppie.call("vision", "ocr", {
+                              "image_source": str(file_path),
+                          })
+                          extracted_text = ocr_result.get("text", "")
+                          permit.ocr_text = extracted_text
+
+                          # LLM metadata extractie met selectielijst context
+                          keys_str = ", ".join(sorted(SELECTIELIJST.keys()))
+                          prompt = (
+                              f"Analyseer het volgende vergunningdocument en extraheer metadata. "
+                              f"Extraheer: permit_number, applicant_name, permit_holder_name, issuer_name, location, "
+                              f"issue_date (YYYY-MM-DD), validity_date (YYYY-MM-DD), applicable_law, work_type, "
+                              f"surface_water_type, water_barrier_type, permit_type, permit_subtype. "
+                              f"Kies voor permit_subtype een van: {keys_str} als het past. "
+                              f"Antwoord ALLEEN met een JSON object.\n\n"
+                              f"{extracted_text[:3000]}"
+                          )
+                          llm_result = druppie.call("llm", "chat", {
+                              "prompt": prompt,
+                              "system": "Je bent een metadata-extractie specialist. Antwoord uitsluitend met geldige JSON.",
+                          })
+                          answer = llm_result.get("answer", "{}")
+                          # Parse JSON antwoord, eventueel met code blok
+                          if "```json" in answer:
+                              answer = answer.split("```json")[1].split("```")[0]
+                          elif "```" in answer:
+                              answer = answer.split("```")[1].split("```")[0]
+                          meta = json.loads(answer)
+
+                          # Velden overnemen
+                          permit.permit_number = meta.get("permit_number") or permit.permit_number
+                          permit.applicant_name = meta.get("applicant_name") or None
+                          permit.permit_holder_name = meta.get("permit_holder_name") or None
+                          permit.issuer_name = meta.get("issuer_name") or None
+                          permit.location = meta.get("location") or None
+                          if meta.get("issue_date"):
+                              try:
+                                  permit.issue_date = date.fromisoformat(meta["issue_date"])
+                              except ValueError:
+                                  pass
+                          if meta.get("validity_date"):
+                              try:
+                                  permit.validity_date = date.fromisoformat(meta["validity_date"])
+                              except ValueError:
+                                  pass
+                          permit.applicable_law = meta.get("applicable_law") or None
+                          permit.work_type = meta.get("work_type") or None
+                          permit.surface_water_type = meta.get("surface_water_type") or None
+                          permit.water_barrier_type = meta.get("water_barrier_type") or None
+
+                          permit_type = meta.get("permit_type") or "onbekend"
+                          permit_subtype = meta.get("permit_subtype") or None
+                          key = resolve_selectielijst_key(permit_type, permit_subtype, extracted_text)
+                          if key:
+                              arch = compute_archive_details(key, permit.issue_date.isoformat() if permit.issue_date else None)
+                              permit.archive_nomination = arch["nominatie"]
+                              permit.retention_period_years = arch["jaren"]
+                          permit.status = "pending_review"
+                      except Exception as e:
+                          logger.exception("Processing failed for permit %s", permit_id)
+                          permit.status = "pending_review"  # blijft pending_review, met error? optioneel error veld toevoegen
+                      finally:
+                          db.commit()
+                          _update_search_vector(db, permit_id)
+                  finally:
+                      db.close()
+
+              @router.post("/permits/upload")
+              async def upload_permit(
+                  file: UploadFile = File(...),
+                  groups: set = Depends(verify_department),
+                  db: Session = Depends(_get_db),
+              ):
+                  user_id = groups.pop() if groups else "unknown"  # vereenvoudigd, echte user header later
+                  if not file.filename:
+                      raise HTTPException(400, "Geen bestand geüpload.")
+
+                  ext = file.filename.rsplit(".", 1)[-1].lower() if "." in file.filename else ""
+                  if ext == "zip":
+                      # ZIP upload: uitpakken en elk bestand verwerken
+                      contents = await file.read()
+                      zip_buffer = io.BytesIO(contents)
+                      processed = 0
+                      batch = UploadBatch(user_id=user_id, file_count=0, status="processing")
+                      db.add(batch)
+                      db.commit()
+                      db.refresh(batch)
+                      with zipfile.ZipFile(zip_buffer, "r") as zf:
+                          for name in zf.namelist():
+                              inner_ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
+                              if inner_ext not in ALLOWED_EXTENSIONS:
+                                  continue
+                              inner_data = zf.read(name)
+                              # Opslaan
+                              safe_name = f"{batch.id}_{name.replace('/', '_')}"
+                              file_path = UPLOAD_DIR / safe_name
+                              file_path.write_bytes(inner_data)
+                              # Maak permit
+                              permit = Permit(source_system="upload", document_path=str(file_path), status="processing")
+                              db.add(permit)
+                              db.commit()
+                              db.refresh(permit)
+                              threading.Thread(target=_process_document, args=(permit.id, file_path), daemon=True).start()
+                              processed += 1
+                      batch.file_count = processed
+                      batch.status = "completed" if processed > 0 else "failed"
+                      db.commit()
+                      _log_action(user_id, "upload", f"ZIP batch {batch.id} met {processed} bestanden")
+                      return {"batch_id": batch.id, "file_count": processed, "status": batch.status}
+
+                  # Enkel bestand
+                  if ext not in ALLOWED_EXTENSIONS:
+                      raise HTTPException(400, f"Ongeldig bestandstype: {ext}. Toegestaan: {', '.join(ALLOWED_EXTENSIONS)}")
+                  contents = await file.read()
+                  if not contents:
+                      raise HTTPException(400, "Leeg bestand.")
+
+                  safe_name = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{file.filename}"
+                  file_path = UPLOAD_DIR / safe_name
+                  file_path.write_bytes(contents)
+
+                  permit = Permit(source_system="upload", document_path=str(file_path), status="processing")
+                  db.add(permit)
+                  db.commit()
+                  db.refresh(permit)
+
+                  threading.Thread(target=_process_document, args=(permit.id, file_path), daemon=True).start()
+                  _log_action(user_id, "upload", f"Enkel bestand {file.filename}, permit {permit.id}")
+                  return {"id": permit.id, "status": "processing", "filename": file.filename}
+
+              @router.get("/permits")
+              def list_permits(
+                  db: Session = Depends(_get_db),
+                  groups: set = Depends(verify_department),
+              ):
+                  permits = db.query(Permit).order_by(Permit.created_at.desc()).all()
+                  return [_permit_summary(p) for p in permits]
+
+              @router.get("/permits/search")
+              def search_permits(
+                  q: str = Query(None),
+                  applicant_name: str = Query(None),
+                  permit_number: str = Query(None),
+                  location: str = Query(None),
+                  status: str = Query(None),
+                  permit_type: str = Query(None),
+                  groups: set = Depends(verify_department),
+                  db: Session = Depends(_get_db),
+              ):
+                  user_id = next(iter(groups)) if groups else "unknown"
+                  query = db.query(Permit)
+                  # Full-text search via tsvector
+                  if q:
+                      query = query.filter(Permit.search_vector.match(q, postgresql_regconfig="dutch"))
+                  # Specifieke filters
+                  if applicant_name:
+                      query = query.filter(Permit.applicant_name.ilike(f"%{applicant_name}%"))
+                  if permit_number:
+                      query = query.filter(Permit.permit_number.ilike(f"%{permit_number}%"))
+                  if location:
+                      query = query.filter(Permit.location.ilike(f"%{location}%"))
+                  if status:
+                      query = query.filter(Permit.status == status)
+                  if permit_type:
+                      query = query.filter(Permit.permit_type.ilike(f"%{permit_type}%"))
+                  results = query.order_by(Permit.created_at.desc()).limit(200).all()
+                  _log_action(user_id, "search", f"q={q}, filters: applicant={applicant_name}, status={status}")
+                  return [_permit_summary(p) for p in results]
+
+              @router.get("/permits/{permit_id}")
+              def get_permit(permit_id: int, db: Session = Depends(_get_db), groups: set = Depends(verify_department)):
+                  permit = db.query(Permit).filter(Permit.id == permit_id).first()
+                  if not permit:
+                      raise HTTPException(404, "Vergunning niet gevonden")
+                  return _permit_detail(permit)
+
+              @router.post("/permits/{permit_id}/approve")
+              def approve_permit(
+                  permit_id: int,
+                  body: dict,
+                  db: Session = Depends(_get_db),
+                  groups: set = Depends(verify_department),
+              ):
+                  user_id = next(iter(groups)) if groups else "unknown"
+                  permit = db.query(Permit).filter(Permit.id == permit_id).first()
+                  if not permit:
+                      raise HTTPException(404, "Vergunning niet gevonden")
+                  # Update velden uit de body (indien meegegeven)
+                  for field in [
+                      "permit_number", "applicant_name", "permit_holder_name", "issuer_name",
+                      "location", "applicable_law", "work_type", "surface_water_type", "water_barrier_type",
+                  ]:
+                      if field in body:
+                          setattr(permit, field, body[field])
+                  if "issue_date" in body:
+                      try:
+                          permit.issue_date = date.fromisoformat(body["issue_date"])
+                      except ValueError:
+                          pass
+                  if "validity_date" in body:
+                      try:
+                          permit.validity_date = date.fromisoformat(body["validity_date"])
+                      except ValueError:
+                          pass
+                  # Bereken archiefinfo opnieuw indien subtype gewijzigd
+                  key = resolve_selectielijst_key(permit_type=getattr(permit, "permit_type", None), permit_subtype=body.get("permit_subtype"))
+                  if key:
+                      arch = compute_archive_details(key, permit.issue_date.isoformat() if permit.issue_date else None)
+                      permit.archive_nomination = arch["nominatie"]
+                      permit.retention_period_years = arch["jaren"]
+                  permit.status = "approved"
+                  permit.ready_for_migration = True
+                  permit.reviewed_at = datetime.now(timezone.utc)
+                  permit.reviewed_by = user_id
+                  db.commit()
+                  _update_search_vector(db, permit.id)
+                  _log_action(user_id, "approve", f"Permit {permit_id} goedgekeurd")
+                  return _permit_detail(permit)
+
+              @router.get("/permits/{permit_id}/document")
+              def download_document(permit_id: int, db: Session = Depends(_get_db), groups: set = Depends(verify_department)):
+                  permit = db.query(Permit).filter(Permit.id == permit_id).first()
+                  if not permit or not permit.document_path:
+                      raise HTTPException(404, "Document niet beschikbaar")
+                  path = Path(permit.document_path)
+                  if not path.exists():
+                      raise HTTPException(404, "Bestand niet gevonden op server")
+                  from fastapi.responses import FileResponse
+                  return FileResponse(path, media_type="application/octet-stream", filename=path.name)
+
+              def _permit_summary(p: Permit):
+                  return {
+                      "id": p.id,
+                      "permit_number": p.permit_number,
+                      "applicant_name": p.applicant_name,
+                      "permit_type": p.permit_type,
+                      "location": p.location,
+                      "source_system": p.source_system,
+                      "status": p.status,
+                      "ready_for_migration": p.ready_for_migration,
+                      "archive_statustext": compute_archive_details(
+                          resolve_selectielijst_key(p.permit_type, p.permit_subtype) if hasattr(p, 'permit_subtype') else None,
+                          p.issue_date.isoformat() if p.issue_date else None,
+                      )["status_tekst"],
+                      "issue_date": p.issue_date.isoformat() if p.issue_date else None,
+                      "validity_date": p.validity_date.isoformat() if p.validity_date else None,
+                      "created_at": p.created_at.isoformat() if p.created_at else None,
+                  }
+
+              def _permit_detail(p: Permit):
+                  d = _permit_summary(p)
+                  d.update({
+                      "permit_holder_name": p.permit_holder_name,
+                      "issuer_name": p.issuer_name,
+                      "applicable_law": p.applicable_law,
+                      "work_type": p.work_type,
+                      "surface_water_type": p.surface_water_type,
+                      "water_barrier_type": p.water_barrier_type,
+                      "archive_nomination": p.archive_nomination,
+                      "retention_period_years": p.retention_period_years,
+                      "ocr_text": p.ocr_text,
+                      "document_path": p.document_path,
+                      "reviewed_at": p.reviewed_at.isoformat() if p.reviewed_at else None,
+                      "reviewed_by": p.reviewed_by,
+                  })
+                  return d
+
+          - path: app/agent.py
+            content: |
+              """Vergunningzoeker agent — agentic search over permits."""
+              import json
+              from druppie_sdk import DruppieClient
+              from app.models import Permit
+
+              druppie = DruppieClient()
+
+              def run_agent(question: str, history: list[dict], db) -> dict:
+                  steps = []
+                  context_str = ""
+                  if history:
+                      recent = history[-4:]
+                      context_str = "\n".join(
+                          f"{'Gebruiker' if m['role']=='user' else 'Assistent'}: {m['content'][:200]}"
+                          for m in recent
+                      )
+                  full_prompt = question
+                  if context_str:
+                      full_prompt = f"Gesprekscontext:\n{context_str}\n\nNieuwe vraag: {question}"
+                  # Zoektermen genereren
+                  query_result = druppie.call("llm", "chat", {
+                      "prompt": (
+                          "De gebruiker stelt een vraag over vergunningen. Genereer 1-3 zoektermen "
+                          "(komma-gescheiden). Antwoord ALLEEN met de zoektermen.\n\nVraag: " + full_prompt
+                      ),
+                      "system": "Je genereert zoektermen. Antwoord met komma-gescheiden termen.",
+                  })
+                  terms = [t.strip() for t in query_result.get("answer", question).split(",") if t.strip()]
+                  steps.append({"type": "search", "label": f"Zoektermen: {', '.join(terms)}", "detail": terms})
+
+                  # Zoeken in DB
+                  found = {}
+                  for term in terms[:3]:
+                      like = f"%{term}%"
+                      results = db.query(Permit).filter(
+                          Permit.permit_number.ilike(like) |
+                          Permit.applicant_name.ilike(like) |
+                          Permit.permit_holder_name.ilike(like) |
+                          Permit.location.ilike(like) |
+                          Permit.permit_type.ilike(like) |
+                          Permit.applicable_law.ilike(like) |
+                          Permit.work_type.ilike(like) |
+                          Permit.ocr_text.ilike(like)
+                      ).limit(10).all()
+                      for p in results:
+                          found[p.id] = p
+                  steps.append({"type": "query", "label": f"{len(found)} vergunningen gevonden", "detail": None})
+
+                  # Synthesize antwoord
+                  if found:
+                      parts = []
+                      for p in found.values():
+                          parts.append(f"Vergunning {p.id}: {p.permit_number or 'onbekend'}, aanvrager: {p.applicant_name}, type: {p.permit_type}")
+                      context = "\n".join(parts)
+                  else:
+                      context = "Geen vergunningen gevonden."
+                  answer_result = druppie.call("llm", "chat", {
+                      "prompt": f"Beantwoord de vraag op basis van de data.\n\nVraag: {full_prompt}\n\nData:\n{context}",
+                      "system": "Je bent een behulpzame assistent voor waterschapmedewerkers.",
+                  })
+                  return {"answer": answer_result.get("answer", "Geen antwoord."), "steps": steps}
+
+          - path: app/config.py
+            content: |
+              from pydantic_settings import BaseSettings
+
+              class Settings(BaseSettings):
+                  app_name: str = "Vergunningzoeker"
+                  database_url: str = "postgresql://postgres:postgres@db:5432/vergunningen"
+                  upload_dir: str = "/data/uploads"
+
+                  class Config:
+                      env_file = ".env"
+
+              settings = Settings()
+
+          - path: app/__init__.py
+            content: |
+              import logging
+
+              from fastapi import FastAPI
+              from fastapi.middleware.cors import CORSMiddleware
+              from app.routes import router
+              from app.chat import chat_router
+
+              logger = logging.getLogger(__name__)
+
+              def create_app():
+                  app = FastAPI(title="Vergunningzoeker")
+                  app.add_middleware(
+                      CORSMiddleware,
+                      allow_origins=["*"],
+                      allow_methods=["*"],
+                      allow_headers=["*"],
+                  )
+                  app.include_router(router)
+                  app.include_router(chat_router)
+
+                  @app.get("/health")
+                  def health():
+                      return {"status": "ok"}
+
+                  @app.on_event("startup")
+                  def startup():
+                      try:
+                          from app.database import init_db
+                          init_db()
+                      except Exception as e:
+                          logger.error("Database initialization failed: %s", e)
+
+                  # Serve static frontend files
+                  import os
+                  static_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "static")
+                  if os.path.isdir(static_dir):
+                      @app.get("/{full_path:path}")
+                      async def serve_spa(full_path: str):
+                          from fastapi.responses import FileResponse
+                          import os as _os
+                          file_path = _os.path.join(static_dir, full_path)
+                          if full_path and _os.path.isfile(file_path):
+                              return FileResponse(file_path)
+                          return FileResponse(_os.path.join(static_dir, "index.html"))
+
+                  return app
+
+              app = create_app()
+
+          - path: Dockerfile
+            content: |
+              FROM node:20-alpine AS frontend
+              WORKDIR /build
+              COPY frontend/package*.json ./
+              RUN npm install
+              COPY frontend/ .
+              RUN npm run build
+
+              FROM python:3.11-slim
+              RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
+              WORKDIR /app
+              COPY requirements.txt .
+              RUN pip install --no-cache-dir -r requirements.txt
+              COPY druppie-sdk/ /tmp/druppie-sdk/
+              RUN pip install --no-cache-dir /tmp/druppie-sdk/
+              COPY app/ ./app/
+              COPY --from=frontend /build/dist ./static/
+              EXPOSE 8000
+              CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000"]
+
+          - path: requirements.txt
+            content: |
+              fastapi==0.115.0
+              uvicorn[standard]==0.34.0
+              sqlalchemy==2.0.36
+              psycopg2-binary==2.9.10
+              pydantic-settings==2.7.0
+              python-multipart==0.0.18
+              gunicorn==23.0.0
+
+          - path: frontend/src/App.tsx
+            content: |
+              import { useState, useEffect, useRef, useCallback } from "react"
+              import { Button } from "@/components/ui/button"
+              import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
+              import { Input } from "@/components/ui/input"
+              import { ChatPanel } from "@/components/chat"
+
+              interface PermitSummary {
+                id: number; permit_number: string; applicant_name: string
+                permit_type: string; location: string; source_system: string
+                status: string; ready_for_migration: boolean
+                archive_statustext: string; issue_date: string; validity_date: string; created_at: string
+              }
+
+              interface PermitDetail extends PermitSummary {
+                permit_holder_name: string; issuer_name: string
+                applicable_law: string; work_type: string
+                surface_water_type: string; water_barrier_type: string
+                archive_nomination: string; retention_period_years: number | null
+                ocr_text: string | null; document_path: string
+                reviewed_at: string | null; reviewed_by: string | null
+              }
+
+              function App() {
+                const [tab, setTab] = useState<"search" | "upload" | "chat">("search")
+                const [permits, setPermits] = useState<PermitSummary[]>([])
+                const [query, setQuery] = useState("")
+                const [filters, setFilters] = useState<Record<string,string>>({})
+                const [detail, setDetail] = useState<PermitDetail | null>(null)
+                const [loading, setLoading] = useState(true)
+                // Upload
+                const [file, setFile] = useState<File | null>(null)
+                const [uploading, setUploading] = useState(false)
+                const [uploadErr, setUploadErr] = useState<string | null>(null)
+                const fileRef = useRef<HTMLInputElement>(null)
+                // Chat handled by ChatPanel
+
+                const load = useCallback(async () => {
+                  const params = new URLSearchParams()
+                  if (query) params.set("q", query)
+                  Object.entries(filters).forEach(([k,v]) => { if(v) params.set(k, v) })
+                  const url = params.toString() ? `/api/permits/search?${params}` : "/api/permits"
+                  try {
+                    const r = await fetch(url, { headers: { "X-Forwarded-Groups": "vergunningen" } })
+                    if (r.ok) setPermits(await r.json())
+                  } finally { setLoading(false) }
+                }, [query, filters])
+
+                useEffect(() => { load() }, [load])
+                useEffect(() => {
+                  if (!permits.some(p => p.status === "processing" || p.status === "pending_review")) return
+                  const id = setInterval(() => load(), 5000)
+                  return () => clearInterval(id)
+                }, [permits, load])
+
+                const uploadFile = async () => {
+                  if (!file) return
+                  setUploading(true); setUploadErr(null)
+                  const fd = new FormData()
+                  fd.append("file", file)
+                  try {
+                    const r = await fetch("/api/permits/upload", {
+                      method: "POST", body: fd,
+                      headers: { "X-Forwarded-Groups": "vergunningen" },
+                    })
+                    const d = await r.json()
+                    if (!r.ok) { setUploadErr(d.detail || d.error); return }
+                    setFile(null)
+                    if (fileRef.current) fileRef.current.value = ""
+                    load()
+                    setTab("search")
+                  } catch { setUploadErr("Verbindingsfout") } finally { setUploading(false) }
+                }
+
+                const openDetail = async (id: number) => {
+                  const r = await fetch(`/api/permits/${id}`, { headers: { "X-Forwarded-Groups": "vergunningen" } })
+                  if (r.ok) setDetail(await r.json())
+                }
+
+                const approvePermit = async (id: number, updates: Record<string, string>) => {
+                  const r = await fetch(`/api/permits/${id}/approve`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json", "X-Forwarded-Groups": "vergunningen" },
+                    body: JSON.stringify(updates),
+                  })
+                  if (r.ok) {
+                    setDetail(await r.json())
+                    load()
+                  }
+                }
+
+                const downloadDocument = (id: number) => {
+                  window.open(`/api/permits/${id}/document`, "_blank")
+                }
+
+                return (
+                  <div className="min-h-screen bg-background">
+                    <header className="border-b bg-card">
+                      <div className="container mx-auto flex h-14 items-center justify-between px-4">
+                        <h1 className="text-lg font-bold">Vergunningzoeker</h1>
+                        <div className="flex gap-1">
+                          {(["search", "upload", "chat"] as const).map(t => (
+                            <Button key={t} variant={tab === t ? "default" : "ghost"} size="sm" onClick={() => setTab(t)}>
+                              {t === "search" ? `Zoeken (${permits.length})` : t === "upload" ? "Uploaden" : "Assistent"}
+                            </Button>
+                          ))}
+                        </div>
+                      </div>
+                    </header>
+                    <main className="container mx-auto px-4 py-6 max-w-4xl space-y-4">
+                      {tab === "search" && <>
+                        <Card>
+                          <CardContent className="pt-5 space-y-2">
+                            <div className="flex gap-2">
+                              <Input value={query} onChange={e => setQuery(e.target.value)} placeholder="Volledige tekst zoeken..." />
+                              <Button onClick={load}>Zoek</Button>
+                            </div>
+                            <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                              <Input placeholder="Aanvrager" value={filters.applicant_name || ""}
+                                onChange={e => setFilters(f => ({...f, applicant_name: e.target.value}))} />
+                              <Input placeholder="Vergunningnummer" value={filters.permit_number || ""}
+                                onChange={e => setFilters(f => ({...f, permit_number: e.target.value}))} />
+                              <Input placeholder="Locatie" value={filters.location || ""}
+                                onChange={e => setFilters(f => ({...f, location: e.target.value}))} />
+                              <Input placeholder="Status (pending_review/approved)" value={filters.status || ""}
+                                onChange={e => setFilters(f => ({...f, status: e.target.value}))} />
+                            </div>
+                          </CardContent>
+                        </Card>
+                        <Card>
+                          <CardContent className="pt-5">
+                            {loading ? <p className="text-center py-4">Laden...</p>
+                            : permits.length === 0 ? <p className="text-center py-4">Geen resultaten.</p>
+                            : <div className="divide-y">{permits.map(p => (
+                              <div key={p.id} className="flex items-center gap-3 py-3 cursor-pointer hover:bg-muted/50 rounded px-2"
+                                   onClick={() => openDetail(p.id)}>
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    <span className="font-medium">{p.permit_number || "onbekend"}</span>
+                                    <span className={`text-xs px-1.5 py-0.5 rounded ${
+                                      p.status === "approved" ? "bg-green-100 text-green-800" :
+                                      "bg-yellow-100 text-yellow-800"}`}>
+                                      {p.status === "approved" ? "Goedgekeurd" : "Nog niet gecontroleerd"}
+                                    </span>
+                                    {p.ready_for_migration && <span className="text-xs bg-blue-100 text-blue-800 px-1.5 py-0.5 rounded">Klaar voor migratie</span>}
+                                    <span className="text-xs bg-gray-100 text-gray-800 px-1.5 py-0.5 rounded">{p.archive_statustext}</span>
+                                  </div>
+                                  <div className="text-xs text-muted-foreground mt-0.5">
+                                    {p.applicant_name && <span>{p.applicant_name} · </span>}
+                                    {p.location && <span>{p.location} · </span>}
+                                    {p.permit_type && <span>{p.permit_type}</span>}
+                                  </div>
+                                </div>
+                              </div>
+                            ))}</div>}
+                          </CardContent>
+                        </Card>
+                      </>}
+                      {tab === "upload" && <Card>
+                        <CardHeader><CardTitle>Document(en) uploaden</CardTitle>
+                        <CardDescription>Upload een bestand (PDF, JPG, PNG, TIFF) of een ZIP-bestand met meerdere documenten.</CardDescription></CardHeader>
+                        <CardContent className="space-y-3">
+                          <div className="border-2 border-dashed rounded-lg p-6 text-center cursor-pointer"
+                               onClick={() => fileRef.current?.click()}>
+                            <input ref={fileRef} type="file" accept=".pdf,.jpg,.jpeg,.png,.tiff,.bmp,.webp,.zip" className="hidden"
+                                   onChange={e => e.target.files?.[0] && setFile(e.target.files[0])} />
+                            {file ? <div><p className="font-medium">{file.name}</p><p className="text-sm text-muted-foreground">{(file.size/1024).toFixed(0)} KB</p></div>
+                            : <p className="text-muted-foreground">Sleep een bestand of klik om te selecteren</p>}
+                          </div>
+                          <Button onClick={uploadFile} disabled={uploading || !file} className="w-full">
+                            {uploading ? "Bezig met uploaden en analyseren..." : "Upload & Verwerken"}
+                          </Button>
+                          {uploadErr && <div className="text-sm text-red-600 bg-red-50 p-3 rounded">{uploadErr}</div>}
+                        </CardContent>
+                      </Card>}
+                      {tab === "chat" && <div className="h-[calc(100vh-8rem)]"><ChatPanel /></div>}
+                      {detail && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setDetail(null)}>
+                        <Card className="w-full max-w-3xl max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+                          <CardHeader>
+                            <div className="flex items-center justify-between">
+                              <CardTitle>{detail.permit_number || detail.id}</CardTitle>
+                              <div className="flex gap-2">
+                                {detail.status !== "approved" && <Button size="sm" onClick={() => {
+                                  const update = {
+                                    permit_number: detail.permit_number || "",
+                                    applicant_name: detail.applicant_name || "",
+                                    location: detail.location || "",
+                                    issue_date: detail.issue_date || "",
+                                    validity_date: detail.validity_date || "",
+                                  }
+                                  approvePermit(detail.id, update)
+                                }}>Goedkeuren</Button>}
+                                {detail.document_path && <Button variant="outline" size="sm" onClick={() => downloadDocument(detail.id)}>Document downloaden</Button>}
+                                <Button variant="ghost" size="sm" onClick={() => setDetail(null)}>Sluiten</Button>
+                              </div>
+                            </div>
+                          </CardHeader>
+                          <CardContent className="space-y-4">
+                            <div className="grid grid-cols-2 gap-3">
+                              {detail.permit_number && <MetaRow label="Vergunningnummer" value={detail.permit_number} />}
+                              {detail.applicant_name && <MetaRow label="Aanvrager" value={detail.applicant_name} />}
+                              {detail.permit_holder_name && <MetaRow label="Houder" value={detail.permit_holder_name} />}
+                              {detail.issuer_name && <MetaRow label="Uitgever" value={detail.issuer_name} />}
+                              {detail.location && <MetaRow label="Locatie" value={detail.location} />}
+                              {detail.applicable_law && <MetaRow label="Toepasselijke wet" value={detail.applicable_law} />}
+                              {detail.work_type && <MetaRow label="Type werk" value={detail.work_type} />}
+                              {detail.surface_water_type && <MetaRow label="Type oppervlaktewater" value={detail.surface_water_type} />}
+                              {detail.water_barrier_type && <MetaRow label="Type waterkering" value={detail.water_barrier_type} />}
+                              <MetaRow label="Archiefnominatie" value={detail.archive_nomination} />
+                              <MetaRow label="Retentie (jaren)" value={detail.retention_period_years?.toString() || ""} />
+                              <MetaRow label="Archiefstatus" value={detail.archive_statustext} />
+                              <MetaRow label="Status" value={detail.status} />
+                              <MetaRow label="Klaar voor migratie" value={detail.ready_for_migration ? "Ja" : "Nee"} />
+                            </div>
+                            {detail.ocr_text && <div>
+                              <p className="text-xs font-medium uppercase">Geëxtraheerde tekst</p>
+                              <pre className="p-3 bg-muted rounded text-xs whitespace-pre-wrap max-h-48 overflow-y-auto">{detail.ocr_text}</pre>
+                            </div>}
+                          </CardContent>
+                        </Card>
+                      </div>}
+                    </main>
+                  </div>
+                )
+              }
+
+              function MetaRow({ label, value }: { label: string; value: string }) {
+                return value ? <div><p className="text-xs uppercase text-muted-foreground">{label}</p><p className="text-sm">{value}</p></div> : null
+              }
+
+              export default App
+
+    - agent: builder
+      tool: builtin:done
+      arguments:
+        summary: "Agent builder: BUILD_COMPLETE. Implemented complete vergunningzoeker with OCR, LLM, approval, full-text search, ZIP handling, audit logging."
+
+    # =========================================================================
+    # Planner → Test Executor
+    # =========================================================================
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: test_executor
+            prompt: "Run all tests"
+          - agent_id: planner
+            prompt: "Re-evaluate after test_executor completes"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: Planned test_executor"
+
+    # =========================================================================
+    # Test Executor (mocked — tests pass)
+    # =========================================================================
+    - agent: test_executor
+      tool: coding:run_tests
+      mock: true
+      mock_result: '{"success": true, "output": "8 passed, 0 failed", "exit_code": 0}'
+
+    - agent: test_executor
+      tool: coding:get_coverage_report
+      mock: true
+      mock_result: '{"coverage": 82, "lines_covered": 140, "lines_total": 171}'
+
+    - agent: test_executor
+      tool: builtin:test_report
+      mock: true
+      mock_result: '{"status": "ok"}'
+      arguments:
+        total: 8
+        passed: 8
+        failed: 0
+        coverage: 82
+        summary: "All 8 tests passed with 82% coverage."
+
+    - agent: test_executor
+      tool: builtin:done
+      arguments:
+        summary: "Agent test_executor: TEST RESULT: PASS — 8/8 tests passed, 82% coverage."
+
+    # =========================================================================
+    # Planner → Deployer
+    # =========================================================================
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: deployer
+            prompt: "Deploy the vergunningzoeker from main branch"
+          - agent_id: planner
+            prompt: "Re-evaluate after deployer completes"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: Tests passed, planned deployer"
+
+    # =========================================================================
+    # Deployer (REAL — actually deploys the app)
+    # =========================================================================
+    - agent: deployer
+      tool: docker:list_containers
+
+    - agent: deployer
+      tool: docker:compose_up
+      approval:
+        status: approved
+        by: developer
+      arguments:
+        compose_project_name: vergunningzoeker
+        branch: main
+      assert:
+        result:
+          - not_empty
+          - { contains: "success" }
+
+    - agent: deployer
+      tool: builtin:done
+      arguments:
+        summary: "Agent deployer: Deployed vergunningzoeker from main."
+
+    # =========================================================================
+    # Planner → Summarizer
+    # =========================================================================
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: summarizer
+            prompt: "Summarize what was accomplished"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: Planned summarizer"
+
+    # =========================================================================
+    # Summarizer
+    # =========================================================================
+    - agent: summarizer
+      tool: builtin:create_message
+      arguments:
+        content: |
+          De **vergunningzoeker** is succesvol gebouwd en gedeployed!
+
+          **Nieuwe functionaliteiten t.o.v. vorige versie:**
+          - **ZIP upload** — meerdere documenten tegelijk verwerken
+          - **Full-text search** (tsvector) en uitgebreide filters
+          - **Goedkeuringsworkflow** — metadata bewerken en goedkeuren (status `approved`, ready_for_migration = true)
+          - **Document download** — originele bestanden direct openen
+          - **Audit logging** — alle acties worden gelogd
+          - **Afdeling-autorisatie** — toegang beperkt tot vergunningen/planning via headers
+          - **Archiefstatus** automatisch berekend o.b.v. selectielijst waterschappen
+          - **NORA-compliance** (Privacy by Design, duurzame toegankelijkheid)
+
+          **Technische basis:** React + FastAPI, PostgreSQL met GIN index, OCR/LLM via Druppie SDK, Docker.
+
+          De app is actief — controleer de deployer tool call voor de URL.
+
+    - agent: summarizer
+      tool: builtin:done
+      arguments:
+        summary: "Agent summarizer: Presented completion summary to user."
+      assert:
+        completed: true
+
+  # Verify side-effects in Gitea
+  verify:
+    - gitea_repo_exists: true
+    - file_exists: docs/functional-design.md
+    - file_exists: docs/technical-design.md
+    - file_exists: docs/builder-plan.md
+    - file_not_empty: docs/functional-design.md
+    - file_not_empty: docs/technical-design.md
+    - file_not_empty: docs/builder-plan.md
+    - file_contains:
+        path: docs/technical-design.md
+        content: "druppie_sdk"
+    - file_contains:
+        path: docs/technical-design.md
+        content: "tsvector"
+    - file_contains:
+        path: docs/builder-plan.md
+        content: "ZIP"
+    - file_contains:
+        path: docs/builder-plan.md
+        content: "pending_review"

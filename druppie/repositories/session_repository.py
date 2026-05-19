@@ -221,6 +221,11 @@ class SessionRepository(BaseRepository):
             user = self.db.query(UserModel).filter_by(id=session.user_id).first()
             if user:
                 username = user.username
+        project_name = None
+        if session.project_id:
+            project = self.db.query(Project).filter_by(id=session.project_id).first()
+            if project:
+                project_name = project.name
         return SessionSummary(
             id=session.id,
             title=session.title or "Untitled",
@@ -228,6 +233,7 @@ class SessionRepository(BaseRepository):
             error_message=session.error_message,
             project_id=session.project_id,
             username=username,
+            project_name=project_name,
             token_usage=TokenUsage(
                 prompt_tokens=session.prompt_tokens or 0,
                 completion_tokens=session.completion_tokens or 0,
@@ -313,6 +319,7 @@ class SessionRepository(BaseRepository):
             error_message=run.error_message,
             planned_prompt=run.planned_prompt,
             sequence_number=run.sequence_number,
+            spawning_tool_call_id=run.spawning_tool_call_id,
             token_usage=TokenUsage(
                 prompt_tokens=run.prompt_tokens or 0,
                 completion_tokens=run.completion_tokens or 0,
@@ -322,9 +329,22 @@ class SessionRepository(BaseRepository):
             completed_at=run.completed_at,
         )
 
-    def _build_agent_run_detail(self, run: AgentRun) -> AgentRunDetail:
-        """Build full agent run detail with LLM calls and their tool executions."""
+    def _build_agent_run_detail(self, run: AgentRun, _depth: int = 0) -> AgentRunDetail:
+        """Build full agent run detail with LLM calls, tool executions, and nested subagent runs."""
         llm_calls = self._build_llm_calls(run.id)
+
+        subagent_runs: list[AgentRunDetail] = []
+        if _depth < 3:
+            child_runs = (
+                self.db.query(AgentRun)
+                .filter_by(parent_run_id=run.id)
+                .order_by(AgentRun.sequence_number, AgentRun.created_at)
+                .all()
+            )
+            subagent_runs = [
+                self._build_agent_run_detail(child, _depth=_depth + 1)
+                for child in child_runs
+            ]
 
         return AgentRunDetail(
             id=run.id,
@@ -334,6 +354,7 @@ class SessionRepository(BaseRepository):
             error_message=run.error_message,
             planned_prompt=run.planned_prompt,
             sequence_number=run.sequence_number,
+            spawning_tool_call_id=run.spawning_tool_call_id,
             token_usage=TokenUsage(
                 prompt_tokens=run.prompt_tokens or 0,
                 completion_tokens=run.completion_tokens or 0,
@@ -342,6 +363,7 @@ class SessionRepository(BaseRepository):
             started_at=run.started_at,
             completed_at=run.completed_at,
             llm_calls=llm_calls,
+            subagent_runs=subagent_runs,
         )
 
     def _build_llm_calls(self, agent_run_id: UUID) -> list[LLMCallDetail]:
@@ -363,27 +385,24 @@ class SessionRepository(BaseRepository):
             # Get tool calls that were executed after this LLM call
             tool_calls = self._build_tool_calls_for_llm(llm)
 
-            # Parse response_content and response_tool_calls from the
-            # JSON blob stored in llm_calls.response_content
-            response_content = None
-            response_tool_calls = None
-            if llm.response_content:
+            response_content = self._extract_response_content(llm.response_content)
+
+            response_tool_calls = llm.response_tool_calls
+            if not response_tool_calls and llm.response_content:
                 try:
                     raw_data = json.loads(llm.response_content)
-                    response_content = raw_data.get("content")
                     response_tool_calls = raw_data.get("tool_calls")
                 except json.JSONDecodeError:
-                    # Fallback for old format (plain text)
-                    response_content = llm.response_content
+                    pass
 
             result.append(LLMCallDetail(
                 id=llm.id,
                 model=llm.model,
                 provider=llm.provider,
                 token_usage=TokenUsage(
-                    prompt_tokens=llm.prompt_tokens,
-                    completion_tokens=llm.completion_tokens,
-                    total_tokens=llm.total_tokens,
+                    prompt_tokens=llm.prompt_tokens or 0,
+                    completion_tokens=llm.completion_tokens or 0,
+                    total_tokens=llm.total_tokens or 0,
                 ),
                 duration_ms=llm.duration_ms,
                 messages=messages,
@@ -403,6 +422,29 @@ class SessionRepository(BaseRepository):
             ))
 
         return result
+
+    @staticmethod
+    def _extract_response_content(raw: str | None) -> str | None:
+        """Extract the LLM text content from the response_content column.
+
+        The column may contain:
+        - A JSON blob: {"content": "...", "tool_calls": [...], ...}
+        - Plain text (legacy format)
+        - An error JSON: {"error": "..."}
+        - None
+
+        Returns the actual LLM response text, or None.
+        """
+        if not raw:
+            return None
+        import json
+        try:
+            data = json.loads(raw)
+            if isinstance(data, dict):
+                return data.get("content") or None
+            return raw
+        except json.JSONDecodeError:
+            return raw
 
     def _parse_messages(self, raw_messages: list | None) -> list[LLMMessage]:
         """Parse raw message dicts into LLMMessage objects."""
@@ -555,5 +597,6 @@ class SessionRepository(BaseRepository):
             description=project.description,
             repo_url=project.repo_url,
             username=username,
+            repo_name=project.repo_name,
             created_at=project.created_at,
         )

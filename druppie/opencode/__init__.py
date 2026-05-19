@@ -116,7 +116,7 @@ async def create_and_start_sandbox(
     """Create a sandbox session on the control plane, register ownership, and send the prompt.
 
     This is the single source of truth for sandbox session creation, used by
-    both the initial execute_coding_task path and the retry path.
+    the retry path.
 
     Args:
         task_prompt: The coding task prompt to send.

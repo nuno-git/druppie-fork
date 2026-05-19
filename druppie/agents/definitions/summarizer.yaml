@@ -1,3 +1,5 @@
+sandbox:
+  networks: []
 id: summarizer
 name: Summarizer Agent
 description: Creates a user-friendly completion message from agent run summaries

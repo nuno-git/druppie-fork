@@ -25,15 +25,21 @@ approvals/questions and uses:
 
 from uuid import UUID
 
+import httpx
+import structlog
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
-import structlog
 
-from druppie.api.deps import get_current_user, get_optional_user, get_session_repository, get_user_roles
-from druppie.repositories import SessionRepository
+from druppie.api.deps import (
+    get_current_user,
+    get_optional_user,
+    get_session_repository,
+    get_user_roles,
+)
+from druppie.api.errors import AuthorizationError, NotFoundError
+from druppie.core.background_tasks import SessionTaskConflict, create_session_task, run_session_task
 from druppie.domain.common import SessionStatus
-from druppie.api.errors import NotFoundError, AuthorizationError
-from druppie.core.background_tasks import create_session_task, SessionTaskConflict, run_session_task
+from druppie.repositories import SessionRepository
 
 logger = structlog.get_logger()
 
@@ -278,6 +284,17 @@ async def stop_session(
     # Agent runs are NOT touched: they keep their current status
     session_repo.update_status(session_id, SessionStatus.PAUSED)
     session_repo.commit()
+
+    try:
+        import os
+        coding_url = os.getenv("MCP_CODING_URL", "http://module-coding:9001")
+        async with httpx.AsyncClient() as client:
+            await client.post(
+                f"{coding_url}/management/sandbox/cleanup/{session_id}",
+                timeout=10,
+            )
+    except Exception as e:
+        logger.warning("sandbox_cleanup_failed_on_stop", session_id=str(session_id), error=str(e))
 
     logger.info("session_stopped", session_id=str(session_id))
 

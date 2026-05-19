@@ -44,6 +44,7 @@ class ToolCallStatus(str, Enum):
     EXECUTING = "executing"  # Currently running
     COMPLETED = "completed"
     FAILED = "failed"
+    PAUSED = "paused"  # Subagent paused (waiting for child to resume)
 
 
 class ApprovalStatus(str, Enum):

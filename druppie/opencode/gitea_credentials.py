@@ -112,6 +112,7 @@ async def create_sandbox_git_user(
             )
 
         data = resp.json()
+        data = data or {}
         token = data.get("sha1") or data.get("token") or ""
         if not token:
             await _delete_user(client, base, username)
@@ -126,7 +127,9 @@ async def create_sandbox_git_user(
         return {
             "provider": "gitea",
             "url": gitea_url,
+            "base_url": gitea_url,
             "username": username,
+            "user_id": username,
             "password": token,
             "authorizedRepo": f"{repo_owner}/{repo_name}",
         }

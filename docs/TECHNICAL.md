@@ -1071,3 +1071,225 @@ The `sandbox_sessions` table maps control plane session IDs to Druppie users:
 
 The `tool_call_id` FK enables direct lookup from webhook → tool call without table scans. Events proxy (`GET /api/sandbox-sessions/{id}/events`) enforces ownership — non-owners get 403, admins bypass.
 
+---
+
+## 11. Agent Runtime Library (`druppie/agent_runtime/`)
+
+### 11.1 Design Principle
+
+The `agent_runtime` package is a **storage-agnostic, self-contained agent execution library** with zero coupling to `druppie.db`, `druppie.domain`, or `druppie.repositories`. It defines its own types (dataclasses, not Pydantic), its own event system, and its own tool routing. The only external dependencies are stdlib and PyYAML.
+
+This library can execute an LLM agent loop with MCP tool calling, event emission, subagent spawning, and sandbox management without touching any database or web framework.
+
+### 11.2 Dependencies
+
+| Dependency | Purpose |
+|------------|---------|
+| Python stdlib | Core types, async IO, dataclasses |
+| PyYAML | Agent definition parsing |
+
+No Pydantic, no SQLAlchemy, no FastAPI, no LiteLLM. All domain types use `@dataclass` for zero-framework overhead.
+
+### 11.3 Layer Architecture (Bottom-Up)
+
+The package is organized in strict dependency layers. Higher layers import from lower layers, never the reverse.
+
+```
+Layer 0: types.py          Core types (dataclasses)
+Layer 1: definition.py     YAML parsing + schema generation
+Layer 2: events.py         EventEmitter (callback-based)
+Layer 3: tools/mcp.py      MCPConnection type
+Layer 4: tools/done.py     DoneTool with dynamic schema + validation
+Layer 5: tools/provider.py ToolProvider protocol + MCPToolProvider
+Layer 6: loop.py           AgentLoop main execution loop
+Layer 7: subagents.py      Parallel subagent spawning
+Layer 8: sandbox.py        Sandbox warm pool + resolver factory
+```
+
+#### Layer 0: `types.py` — Core Types
+
+Defines the foundational data structures used by all higher layers:
+
+| Type | Purpose |
+|------|---------|
+| `AgentEvent` | Lifecycle event emitted during execution (agent_start, agent_end, tool_call, tool_result, etc.) |
+| `AgentResult` | Final result returned by `AgentLoop.run()` — contains output, status, and metadata |
+| `LoopConfig` | Configuration for the agent loop (max iterations, timeouts, temperature, etc.) |
+| `CancellationToken` | Cooperative cancellation check (polled between iterations) |
+| `DoneResult` | Structured result from the `done` tool (summary, status, preconditions) |
+| `RequiredToolCall` | Specifies a tool that must be called before the agent can finish |
+| `CompletionPrecondition` | A condition that must be satisfied for the agent to complete |
+| `CompletionSummaryRequirement` | Defines what the summary must contain |
+| `AgentLoopError` | Base exception for loop errors |
+| `AgentCancelledError` | Raised when the cancellation token is triggered |
+
+#### Layer 1: `definition.py` — Agent Definition Parsing
+
+Parses YAML agent definition files into structured types. Also provides `build_done_schema()` which dynamically generates the JSON schema for the `done` tool based on the agent's declared summary requirements and preconditions.
+
+#### Layer 2: `events.py` — EventEmitter
+
+Callback-based event system. Consumers register handlers for named events. The loop emits events at key lifecycle points:
+
+| Event | When |
+|-------|------|
+| `agent_start` | Loop begins execution |
+| `agent_end` | Loop completes (success or failure) |
+| `tool_call` | A tool invocation starts |
+| `tool_result` | A tool invocation completes |
+| `subagent_start` | A subagent is spawned |
+| `subagent_end` | A subagent completes |
+| `context_overflow` | Context window exceeds limits |
+
+#### Layer 3: `tools/mcp.py` — MCP Connection
+
+Defines the `MCPConnection` type representing a connection to a single MCP server (URL, headers, metadata). Used by `MCPToolProvider` to route tool calls.
+
+#### Layer 4: `tools/done.py` — Done Tool
+
+Implements the `DoneTool` with a **dynamically generated schema** derived from the agent definition. Validation follows a three-stage pipeline:
+
+1. **Schema validation** — arguments must conform to the generated JSON schema
+2. **Summary status check** — the `summary_status` field must match allowed values
+3. **Preconditions check** — all declared `CompletionPrecondition` items must be satisfied
+
+Agents cannot finish until all preconditions are met and a valid summary is provided.
+
+#### Layer 5: `tools/provider.py` — Tool Provider
+
+Defines the `ToolProvider` protocol (abstract interface) and `MCPToolProvider` implementation:
+
+```
+ToolProvider (protocol)
+  |-- list_tools()        -> list of available tools
+  |-- call_tool(name, args) -> tool result
+  |-- get_tool_schema(name) -> JSON schema
+
+MCPToolProvider (implementation)
+  |-- Routes calls to MCPConnection per server
+  |-- One MCPConnection per configured MCP server
+```
+
+The protocol allows alternative tool backends (e.g., builtins, mocks) without modifying the loop.
+
+#### Layer 6: `loop.py` — AgentLoop
+
+The main execution loop. Orchestrates the full agent lifecycle:
+
+```
+AgentLoop.run(llm, tool_provider, definition, events, cancellation_token)
+  |
+  |-- 1. Build messages from definition (system prompt + user prompt)
+  |-- 2. Call LLM with messages + tool schemas
+  |-- 3. Parse response for tool calls
+  |-- 4. Route each tool call through ToolProvider
+  |-- 5. If "done" tool -> validate + return AgentResult
+  |-- 6. If context overflow -> truncate and retry
+  |-- 7. If cancellation triggered -> raise AgentCancelledError
+  |-- 8. If pause detected -> yield control
+  |-- 9. Otherwise -> append results, loop to step 2
+```
+
+Key responsibilities:
+
+- **LLM interface**: The `llm` parameter is an async callable compatible with litellm's `acompletion` signature. The library does not import litellm — it receives the callable from the caller.
+- **Tool routing**: All tool calls go through the `ToolProvider` protocol.
+- **Context overflow**: Detects when the message history exceeds the model's context window and truncates older messages.
+- **Done enforcement**: The `done` tool is always available. Agents must call it to finish.
+- **Pause detection**: Checks the cancellation token between iterations for cooperative stopping.
+
+#### Layer 7: `subagents.py` — Subagent Management
+
+`SubagentsMCP` provides parallel subagent spawning with safety guardrails:
+
+| Feature | Behavior |
+|---------|----------|
+| Parallel spawning | Multiple subagents run concurrently via `asyncio` |
+| Depth limits | Maximum nesting depth prevents infinite recursion |
+| Circular detection | Tracks active agent IDs to prevent re-entrant cycles |
+| Sandbox sharing | Subagents inherit the parent's sandbox context |
+
+#### Layer 8: `sandbox.py` — Sandbox Pool
+
+`SandboxWarmPool` maintains a pool of pre-warmed sandbox containers for reduced latency. `make_sandbox_resolver()` is a factory that creates sandbox lookup functions bound to a specific pool configuration.
+
+### 11.4 Data Flow
+
+```
+AgentDefinition (YAML)
+  |
+  v
+AgentLoop.run(llm, tool_provider, ...)
+  |
+  |-- LLM call (async callable)
+  |     |
+  |     v
+  |   Tool calls (parsed from LLM response)
+  |     |
+  |     v
+  |   ToolProvider.call_tool(name, args)
+  |     |
+  |     v
+  |   MCPToolProvider -> MCPConnection -> MCP server (HTTP)
+  |
+  |-- EventEmitter callbacks (lifecycle events)
+  |
+  v
+AgentResult (output, status, metadata)
+```
+
+### 11.5 LLM Interface
+
+The library accepts an **async callable** as its LLM interface, compatible with litellm's `acompletion`:
+
+```python
+async def llm(messages: list, tools: list, **kwargs) -> LLMResponse:
+    ...
+```
+
+The library never imports litellm directly. The caller (typically the druppie backend) wraps litellm or any compatible provider and passes the callable. This keeps the library provider-agnostic.
+
+### 11.6 Tool Routing
+
+```
+AgentLoop
+  |
+  v
+ToolProvider (protocol)
+  |
+  v
+MCPToolProvider
+  |
+  +-- MCPConnection (server A)  ->  HTTP POST to MCP server A
+  +-- MCPConnection (server B)  ->  HTTP POST to MCP server B
+  +-- ...
+```
+
+Each MCP server has its own `MCPConnection`. The provider maps tool names to their originating server and routes calls accordingly.
+
+### 11.7 Coexistence with Existing Agent System
+
+The `agent_runtime` library is **completely separate** from the existing agent system in `druppie/agents/` and `druppie/execution/`:
+
+| Aspect | Existing (`druppie/agents/` + `druppie/execution/`) | Library (`druppie/agent_runtime/`) |
+|--------|------------------------------------------------------|-------------------------------------|
+| Types | Pydantic models (`druppie/domain/`) | Dataclasses (self-contained) |
+| Storage | Direct DB access via repositories | Storage-agnostic, no DB dependency |
+| Tool routing | `ToolExecutor` + `ToolRegistry` | `ToolProvider` protocol |
+| Event system | None (DB writes for status) | `EventEmitter` callbacks |
+| LLM calls | `LLMService` singleton | Async callable injection |
+| Agent definitions | `AgentDefinitionLoader` (YAML + DB) | `definition.py` (YAML only) |
+
+Zero modifications are required to existing code when using the library. Both systems can coexist in the same process.
+
+### 11.8 Test Suite
+
+179 tests in `druppie/tests/agent_runtime/` with a shared `conftest.py` providing:
+
+| Fixture | Purpose |
+|---------|---------|
+| `MockLLM` | Simulates LLM responses (configurable per-call) |
+| `mock_mcp_connection` | Simulates MCP server connections with canned responses |
+
+Tests cover all layers: type construction, YAML parsing, event emission, tool routing, loop iteration, done enforcement, subagent spawning, and sandbox pool management.
+

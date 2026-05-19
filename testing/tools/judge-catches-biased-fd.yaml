@@ -68,19 +68,9 @@ tool-test:
           - PostgreSQL connection pooling with pg-pool
 
     - agent: business_analyst
-      tool: coding:run_git
+      tool: coding:push_pr
       arguments:
-        command: "add docs/functional-design.md"
-
-    - agent: business_analyst
-      tool: coding:run_git
-      arguments:
-        command: "commit -m 'Add biased functional design'"
-
-    - agent: business_analyst
-      tool: coding:run_git
-      arguments:
-        command: "push"
+        pr_title: "Add biased functional design"
 
     - agent: business_analyst
       tool: builtin:done

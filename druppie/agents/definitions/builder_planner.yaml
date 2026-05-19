@@ -1,3 +1,5 @@
+sandbox:
+  networks: [internet]
 id: builder_planner
 name: Builder Planner Agent
 description: Creates detailed implementation plans (code standards, test strategy, solution approach, change approach). Reads design docs, writes builder_plan.md.
@@ -37,7 +39,7 @@ system_prompt: |
   The session_id is auto-injected into tool calls - you don't need to provide it.
 
   IMPORTANT: write_file does NOT commit or push!
-  You MUST use run_git to commit and push after writing files.
+  You MUST use bash for git add/commit and push_pr to push after writing files.
 
   =============================================================================
   GIT SYNC (CRITICAL — builder uses sandbox)
@@ -47,12 +49,12 @@ system_prompt: |
   You MUST sync via git so the sandbox sees your changes:
 
   BEFORE doing any work:
-    coding_run_git(command="pull")
+    coding_bash(command="git pull")
 
   AFTER writing files:
-    coding_run_git(command="add builder_plan.md")
-    coding_run_git(command="commit -m 'Add builder_plan.md'")
-    coding_run_git(command="push")
+    coding_bash(command="git add builder_plan.md")
+    coding_bash(command="git commit -m 'Add builder_plan.md'")
+    coding_push_pr()
 
   This ensures the sandbox (builder) always has the latest files.
 
@@ -69,7 +71,7 @@ system_prompt: |
   =============================================================================
 
   0. Pull latest changes:
-     - Call coding_run_git(command="pull") to get latest code
+      - Call coding_bash(command="git pull") to get latest code
 
   1. Read the project structure:
      - Call coding_list_dir(path=".") to see what exists
@@ -91,9 +93,9 @@ system_prompt: |
      - Change Approach
 
   4. Commit and push:
-     - Call coding_run_git(command="add builder_plan.md")
-     - Call coding_run_git(command="commit -m 'Add builder_plan.md'")
-     - Call coding_run_git(command="push")
+       - Call coding_bash(command="git add builder_plan.md")
+       - Call coding_bash(command="git commit -m 'Add builder_plan.md'")
+       - Call coding_push_pr() to push
 
   5. Call done() with summary
 
@@ -190,10 +192,8 @@ system_prompts:
 
 mcps:
   coding:
-    - read_file
-    - write_file
-    - list_dir
-    - run_git
+    tools: [read_file, write_file, edit_file, bash, grep, find, ls, push_pr]
+    git: current_project
 
 llm_profile: standard
 temperature: 0.1

@@ -23,6 +23,7 @@ Environment variables:
 """
 
 import json
+import logging
 import os
 import time
 from typing import Any
@@ -382,6 +383,28 @@ class ChatLiteLLM(BaseLLM):
         if effective_tools:
             kwargs["tools"] = effective_tools
             kwargs["tool_choice"] = "auto"
+
+        url = f"{self.api_base}/chat/completions" if self.api_base else "https://api.openai.com/v1/chat/completions"
+        tool_details = []
+        for t in (effective_tools or []):
+            td = {"type": t.get("type")}
+            fn = t.get("function")
+            if fn:
+                td["fn_name"] = fn.get("name")
+                td["fn_desc"] = (fn.get("description") or "")[:50]
+            else:
+                td["raw_name"] = t.get("name")
+                td["raw_keys"] = list(t.keys())
+            tool_details.append(td)
+        logger.info(
+            "llm_request_url",
+            provider=self.provider,
+            model=self._litellm_model,
+            url=url,
+            tool_count=len(effective_tools or []),
+            tool_details=tool_details,
+            api_key_prefix=self.api_key[:8] + "..." if self.api_key else "MISSING",
+        )
 
         return kwargs
 

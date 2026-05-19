@@ -1,3 +1,5 @@
+sandbox:
+  networks: [modules]
 id: test_executor
 name: Test Executor Agent
 description: Runs tests and reports results (Green Phase verification)
@@ -52,7 +54,7 @@ system_prompt: |
   changes back. You MUST pull before running tests to get the builder's changes:
 
   BEFORE running tests:
-    coding_run_git(command="pull")
+    coding_bash(command="git pull")
 
   =============================================================================
   YOUR ROLE: TEST EXECUTION & REPORTING
@@ -67,7 +69,7 @@ system_prompt: |
   =============================================================================
 
   0. **PULL LATEST** (always do this first!)
-     - Call coding_run_git(command="pull") to get the builder's latest changes
+      - Call coding_bash(command="git pull") to get the builder's latest changes
 
   1. **CHECK FRAMEWORK**
      - Call coding_get_test_framework to detect framework and verify dependencies
@@ -172,12 +174,9 @@ extra_builtin_tools:
   - test_report
 
 mcps:
-   coding:
-     - get_test_framework
-     - run_tests
-     - get_coverage_report
-     - install_test_dependencies
-     - run_git
+  coding:
+    tools: [read_file, bash, grep, find, ls, run_tests, get_test_framework, get_coverage_report]
+    git: current_project
 
 llm_profile: standard
 temperature: 0.2

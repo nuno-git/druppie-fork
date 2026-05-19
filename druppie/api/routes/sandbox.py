@@ -287,7 +287,7 @@ def _extract_git_operations(events: list[dict]) -> dict:
                 result = {}
 
         # Extract commit info
-        if tool in ("run_git", "git") and isinstance(result, dict):
+        if tool in ("bash",) and isinstance(result, dict):
             output = result.get("output", "") or result.get("stdout", "") or ""
             args = data.get("args", {})
             command = args.get("command", "") or args.get("args", "")
@@ -300,7 +300,7 @@ def _extract_git_operations(events: list[dict]) -> dict:
                         branches.append(line)
 
         # Extract PR info
-        if tool in ("create_pull_request", "create_pr"):
+        if tool in ("push_pr",):
             if isinstance(result, dict):
                 pr_url = result.get("url") or result.get("pr_url") or result.get("html_url") or ""
                 if pr_url:
@@ -340,12 +340,12 @@ def _extract_tool_results_summary(events: list[dict]) -> list[str]:
         elif tool_lower == "edit":
             path = args.get("filePath") or args.get("path") or "?"
             summaries.append(f"Edited file: {path}")
-        elif tool_lower in ("run_git", "git"):
+        elif tool_lower == "bash":
             command = args.get("command") or args.get("args") or ""
             if isinstance(command, list):
                 command = " ".join(command)
             summaries.append(f"Git: {command[:100]}")
-        elif tool_lower in ("create_pull_request", "create_pr"):
+        elif tool_lower == "push_pr":
             if isinstance(result, dict):
                 pr_url = result.get("url") or result.get("pr_url") or result.get("html_url") or ""
                 title = result.get("title") or args.get("title") or ""

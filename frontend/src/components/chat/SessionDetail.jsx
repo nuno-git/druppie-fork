@@ -306,12 +306,143 @@ const TimelineQuestion = ({ tc, agentId, sessionId }) => {
   )
 }
 
+// --- Subagent Run Card ---
+
+const STATUS_COLORS = {
+  completed: { bg: 'bg-emerald-50', text: 'text-emerald-700', border: 'border-emerald-200' },
+  failed: { bg: 'bg-red-50', text: 'text-red-700', border: 'border-red-200' },
+  running: { bg: 'bg-blue-50', text: 'text-blue-700', border: 'border-blue-200' },
+  pending: { bg: 'bg-gray-50', text: 'text-gray-500', border: 'border-gray-200' },
+  paused_hitl: { bg: 'bg-amber-50', text: 'text-amber-700', border: 'border-amber-200' },
+  paused_tool: { bg: 'bg-amber-50', text: 'text-amber-700', border: 'border-amber-200' },
+  paused_sandbox: { bg: 'bg-amber-50', text: 'text-amber-700', border: 'border-amber-200' },
+  paused_crashed: { bg: 'bg-red-50', text: 'text-red-700', border: 'border-red-200' },
+}
+
+const StatusBadge = ({ status }) => {
+  const colors = STATUS_COLORS[status] || STATUS_COLORS.pending
+  const label = status?.replace(/_/g, ' ') || 'unknown'
+  return (
+    <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium uppercase tracking-wider ${colors.bg} ${colors.text} ${colors.border} border`}>
+      {label}
+    </span>
+  )
+}
+
+const SubagentToolCall = ({ tc }) => {
+  const [expanded, setExpanded] = useState(false)
+  const hasResult = tc.result && tc.status === 'completed'
+  const parsedResult = (() => {
+    if (!hasResult) return null
+    try {
+      return typeof tc.result === 'string' ? JSON.parse(tc.result) : tc.result
+    } catch {
+      return tc.result
+    }
+  })()
+  const resultStr = parsedResult && typeof parsedResult === 'string'
+    ? parsedResult
+    : parsedResult ? JSON.stringify(parsedResult, null, 2) : null
+
+  const tcStatusColors = tc.status === 'completed'
+    ? 'text-emerald-600'
+    : tc.status === 'failed'
+      ? 'text-red-600'
+      : 'text-gray-400'
+
+  return (
+    <div className="flex flex-col">
+      <button
+        onClick={() => hasResult && setExpanded(!expanded)}
+        className={`flex items-center gap-1.5 text-xs py-0.5 ${hasResult ? 'cursor-pointer hover:text-gray-900' : 'cursor-default'}`}
+      >
+        {hasResult ? (
+          expanded ? <ChevronDown className="w-3 h-3 flex-shrink-0" /> : <ChevronRight className="w-3 h-3 flex-shrink-0" />
+        ) : (
+          <span className="w-3" />
+        )}
+        <span className={`font-mono ${tcStatusColors}`}>{getToolLabel(tc.tool_name)}</span>
+        {!hasResult && tc.status && (
+          <span className="text-[10px] text-gray-400">{tc.status}</span>
+        )}
+      </button>
+      {expanded && resultStr && (
+        <div className="ml-4.5 mt-0.5 p-2 rounded bg-gray-50 border border-gray-100 text-xs text-gray-700 whitespace-pre-wrap break-all max-h-40 overflow-auto font-mono">
+          {resultStr.length > 2000 ? resultStr.slice(0, 2000) + '…' : resultStr}
+        </div>
+      )}
+    </div>
+  )
+}
+
+const SubagentRunCard = ({ subagentRun, depth = 0, sessionId }) => {
+  const [expanded, setExpanded] = useState(depth < 1)
+  const queryClient = useQueryClient()
+  const config = getAgentConfig(subagentRun.agent_id)
+  const AgentIcon = config.icon
+
+  const allToolCalls = []
+  subagentRun.llm_calls?.forEach((llm) => {
+    llm.tool_calls?.forEach((tc) => {
+      allToolCalls.push(tc)
+    })
+  })
+
+  const hasContent = allToolCalls.length > 0 || (subagentRun.subagent_runs?.length > 0)
+
+  return (
+    <div
+      className="mt-1.5 rounded-lg border border-gray-200/70 bg-white/60"
+      style={{ marginLeft: depth > 0 ? 12 : 0 }}
+    >
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="w-full flex items-center gap-2 px-2.5 py-1.5 text-left hover:bg-gray-50/50 rounded-lg transition-colors"
+      >
+        {expanded ? (
+          <ChevronDown className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
+        ) : (
+          <ChevronRight className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
+        )}
+        <div className="w-4 h-4 rounded-full bg-gray-100 border border-gray-200 flex items-center justify-center flex-shrink-0">
+          <AgentIcon className="w-2.5 h-2.5 text-gray-500" />
+        </div>
+        <span className="text-xs font-medium text-gray-700">{config.name}</span>
+        <StatusBadge status={subagentRun.status} />
+        {allToolCalls.length > 0 && (
+          <span className="text-[10px] text-gray-400 ml-auto">
+            {allToolCalls.length} tool{allToolCalls.length !== 1 ? 's' : ''}
+          </span>
+        )}
+      </button>
+
+      {expanded && hasContent && (
+        <div className="px-3 pb-2 pt-0.5 space-y-0.5">
+          {allToolCalls.map((tc, i) =>
+            tc.tool_name?.includes('hitl_ask') ? (
+              <TimelineQuestion key={tc.id || i} tc={tc} agentId={subagentRun.agent_id} sessionId={sessionId} />
+            ) : (
+              <SubagentToolCall key={tc.id || i} tc={tc} />
+            )
+          )}
+          {subagentRun.subagent_runs?.length > 0 && (
+            <div className="mt-1.5 border-l-2 border-gray-200/80 pl-2">
+              {subagentRun.subagent_runs.map((sa, i) => (
+                <SubagentRunCard key={sa.id || i} subagentRun={sa} depth={depth + 1} sessionId={sessionId} />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // --- Agent Run ---
 
 const AgentRunItem = ({ run, timelineIndex, sessionId, hasFollowingMessage, sessionUserId }) => {
   const orderedItems = extractOrderedItems(run, hasFollowingMessage)
 
-  // Show agent trace for completed runs that have no following message
   const showAgentTrace = !hasFollowingMessage && run.status !== 'running'
 
   if (!showAgentTrace && orderedItems.length === 0) return null
@@ -361,7 +492,16 @@ const AgentRunItem = ({ run, timelineIndex, sessionId, hasFollowingMessage, sess
             </div>
           )
         }
-        return null
+        if (item.type === 'subagents') {
+          return (
+            <div key={i} className="mt-2 border-l-2 border-gray-200/80 pl-2">
+              {item.subagentRuns.map((sa, si) => (
+                <SubagentRunCard key={sa.id || si} subagentRun={sa} depth={0} sessionId={sessionId} />
+              ))}
+            </div>
+          )
+        }
+      return null
       })}
     </div>
   )
@@ -683,7 +823,17 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
   const hasRunningAgentRun = data?.timeline?.some(
     e => e.type === 'agent_run' && e.agent_run?.status === 'running'
   )
-  const isStopping = data?.status === 'paused' && hasRunningAgentRun
+
+  // If all tool calls are failed, don't show "Stopping..." even if agent_run is "running"
+  const hasActuallyRunningToolCall = data?.timeline?.some(
+    e => e.type === 'agent_run' && (e.agent_run?.llm_calls || []).some(
+      llm => (llm.tool_calls || []).some(
+        tc => tc.status === 'executing' || tc.status === 'waiting_approval' || tc.status === 'waiting_sandbox'
+      )
+    )
+  )
+
+  const isStopping = data?.status === 'paused' && hasRunningAgentRun && hasActuallyRunningToolCall
 
   // When session has pending approvals, keep the tasks/badge cache fresh
   useEffect(() => {

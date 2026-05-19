@@ -116,3 +116,28 @@ class AgentRunDetail(AgentRunSummary):
 
     # The execution trace - each LLM call includes its tool executions
     llm_calls: list[LLMCallDetail] = []
+
+
+class ToolCallSummary(BaseModel):
+    """Truncated tool call for summary view."""
+
+    id: str
+    name: str
+    server_name: str | None = None
+    status: str
+    arguments: str | None = None
+    result: str | None = None
+    approval: ApprovalSummary | None = None
+
+
+class AgentRunSummaryView(BaseModel):
+    """Summary view of agent run - no LLM calls, truncated tool results."""
+
+    id: UUID
+    agent_id: str
+    status: str
+    error_message: str | None = None
+    token_usage: TokenUsage
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    tool_calls: list[ToolCallSummary] = []

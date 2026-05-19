@@ -456,6 +456,8 @@ export const extractDependencyInstalls = (agentRun) => {
 
 export const extractOrderedItems = (agentRun, hasFollowingMessage) => {
   const items = []
+  const subagentRuns = agentRun?.subagent_runs || []
+
   agentRun?.llm_calls?.forEach((llm) => {
     llm.tool_calls?.forEach((tc) => {
       // Approvals (only when no following message)
@@ -480,8 +482,22 @@ export const extractOrderedItems = (agentRun, hasFollowingMessage) => {
           if (raw?.sandbox_session_id) items.push({ type: 'sandbox', data: raw })
         } catch { /* skip */ }
       }
+      if (tc.tool_name === 'subagents') {
+        const linkedRuns = subagentRuns.filter(sub => sub.spawning_tool_call_id === tc.id)
+        if (linkedRuns.length > 0) {
+          items.push({ type: 'subagents', subagentRuns: linkedRuns })
+        }
+      }
     })
   })
+
+  const hasSubagentsToolCall = agentRun?.llm_calls?.some(llm =>
+    llm.tool_calls?.some(tc => tc.tool_name === 'subagents')
+  ) ?? false
+  if (!hasSubagentsToolCall && subagentRuns.length > 0) {
+    items.push({ type: 'subagents', subagentRuns })
+  }
+
   return items
 }
 

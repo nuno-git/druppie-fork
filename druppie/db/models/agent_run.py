@@ -28,6 +28,7 @@ class AgentRun(Base):
     session_id = Column(UUID(as_uuid=True), ForeignKey("sessions.id", ondelete="CASCADE"))
     agent_id = Column(String(100), nullable=False)
     parent_run_id = Column(UUID(as_uuid=True), ForeignKey("agent_runs.id"))
+    spawning_tool_call_id = Column(UUID(as_uuid=True), ForeignKey("tool_calls.id"), nullable=True)
 
     # pending = created by planner, not started yet
     status = Column(String(20), default="running")  # pending, running, paused_tool, paused_hitl, paused_user, cancelled, completed, failed
@@ -48,7 +49,7 @@ class AgentRun(Base):
 
     # Relationships
     messages = relationship("Message", back_populates="agent_run")
-    tool_calls = relationship("ToolCall", back_populates="agent_run")
+    tool_calls = relationship("ToolCall", back_populates="agent_run", foreign_keys="[ToolCall.agent_run_id]")
 
     def to_dict(self) -> dict[str, Any]:
         return {

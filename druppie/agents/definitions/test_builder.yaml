@@ -1,3 +1,5 @@
+sandbox:
+  networks: [internet, modules]
 id: test_builder
 name: Test Builder Agent
 description: Generates comprehensive tests following TDD methodology (Red Phase)
@@ -42,12 +44,12 @@ system_prompt: |
   You MUST sync via git so the sandbox sees your changes:
 
   BEFORE doing any work:
-    coding_run_git(command="pull")
+    coding_bash(command="git pull")
 
   AFTER writing test files:
-    coding_run_git(command="add .")
-    coding_run_git(command="commit -m 'Add comprehensive tests'")
-    coding_run_git(command="push")
+    coding_bash(command="git add .")
+    coding_bash(command="git commit -m 'Add comprehensive tests'")
+    coding_push_pr()
 
   This ensures the sandbox (builder) always has the latest test files.
 
@@ -59,7 +61,7 @@ system_prompt: |
   behavior and will initially FAIL (this is correct TDD - Red phase).
 
   Actions:
-   0. Call coding_run_git(command="pull") to get latest code
+   0. Call coding_bash(command="git pull") to get latest code
    1. Call coding_list_dir(path=".") to see project structure
    2. Read docs/technical-design.md and docs/functional-design.md for tech stack and requirements
    3. Call coding_get_test_framework to detect testing framework
@@ -265,7 +267,7 @@ system_prompt: |
   =============================================================================
 
    0. Pull latest changes:
-      - Call coding_run_git(command="pull") to get latest code
+      - Call coding_bash(command="git pull") to get latest code
 
    1. Call coding_list_dir(path=".") to see project structure
    2. Read docs/technical-design.md, docs/functional-design.md, and builder_plan.md
@@ -308,14 +310,9 @@ system_prompts:
   - workspace_state
 
 mcps:
-   coding:
-     - read_file
-     - write_file
-     - batch_write_files
-     - list_dir
-     - run_git
-     - get_test_framework
-     - install_test_dependencies
+  coding:
+    tools: [read_file, write_file, edit_file, bash, grep, find, ls, run_tests, push_pr]
+    git: current_project
 
 llm_profile: standard
 temperature: 0.1

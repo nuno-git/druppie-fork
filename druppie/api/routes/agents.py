@@ -35,10 +35,20 @@ class AgentResponse(BaseModel):
     temperature: float | None = None
     max_tokens: int | None = None
     max_iterations: int | None = None
-    # MCP tools this agent can use
+    # MCP tools this agent can use (list of MCP server names)
     mcps: list[str] = []
     # Category for UI grouping
     category: str = "execution"
+    # Role: primary, subagent, both
+    role: str = "primary"
+    # Git scope for sandbox: current_project, update_core, other_projects, or null
+    git_scope: str | None = None
+    # Whether this agent has a sandbox (mcps.sandbox section)
+    has_sandbox: bool = False
+    # All tool names flattened across all MCP sections
+    tools: list[str] = []
+    # List of subagent IDs this agent can spawn
+    subagents: list[str] = []
 
 
 class AgentsListResponse(BaseModel):
@@ -74,12 +84,31 @@ def load_agent_definitions() -> list[AgentResponse]:
             if not data or not data.get("id"):
                 continue
 
-            # Determine MCP list (can be list or dict)
+            # Read MCP config (can be list or dict)
             mcps = data.get("mcps", [])
             if isinstance(mcps, dict):
                 mcp_list = list(mcps.keys())
             else:
                 mcp_list = mcps
+
+            # Extract git scope, tools, and has_sandbox from mcps dict
+            git_scope = None
+            has_sandbox = False
+            all_tools: list[str] = []
+            if isinstance(mcps, dict):
+                sandbox_cfg = mcps.get("sandbox")
+                if isinstance(sandbox_cfg, dict):
+                    has_sandbox = True
+                    git_scope = sandbox_cfg.get("git")
+                    sandbox_tools = sandbox_cfg.get("tools", [])
+                    if isinstance(sandbox_tools, list):
+                        all_tools.extend(sandbox_tools)
+                # Extract tools from other MCP sections
+                for mcp_name, mcp_cfg in mcps.items():
+                    if mcp_name == "sandbox":
+                        continue
+                    if isinstance(mcp_cfg, list):
+                        all_tools.extend(mcp_cfg)
 
             # Read category from YAML definition (default: execution)
             category = data.get("category", "execution")
@@ -94,6 +123,11 @@ def load_agent_definitions() -> list[AgentResponse]:
                 max_iterations=data.get("max_iterations"),
                 mcps=mcp_list,
                 category=category,
+                role=data.get("role", "primary"),
+                git_scope=git_scope,
+                has_sandbox=has_sandbox,
+                tools=all_tools,
+                subagents=data.get("subagents", []),
             )
             agents.append(agent)
 

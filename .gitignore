@@ -28,8 +28,6 @@ ENV/
 # Node.js
 node_modules/
 package-lock.json
-# Un-ignore background-agents lockfile (required by sandbox Dockerfiles)
-!background-agents/package-lock.json
 
 # IDE
 .idea/
@@ -48,10 +46,6 @@ test-results/
 instance/
 *.db
 
-# Secrets (private keys, certificates)
-secrets/
-secrets
-
 # Local config
 .druppie/
 .playwright-mcp/
@@ -63,11 +57,10 @@ druppie-app/
 
 # Personal compose overrides
 docker-compose.robbe.yml
-testing/reports/*.md
 
-# Debug/temp files
-debug_*.png
-debug_*.js
-analyze_storage.sh
-pi-coding-one-shot-agent/
+# GitHub App
+*.pem
+github-app-*.pem
+.sisyphus/
+*.png
 evaluation_config.yaml

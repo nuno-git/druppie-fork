@@ -23,6 +23,8 @@ import {
   FlaskConical,
   Package,
   Boxes,
+  Code2,
+  Terminal,
 } from 'lucide-react'
 
 import { useAuth } from '../App'
@@ -201,8 +203,10 @@ const NavRail = () => {
       />
       <NavRailItem to="/projects" icon={FolderOpen} label="Projects" active={isActive('/projects')} />
 
-      {/* Tools */}
+      {/* Agent Test */}
+      <NavRailItem to="/tools/developer" icon={Terminal} label="Agent Test" active={isActive('/tools/developer')} />
       <div className="mt-1 pt-1 border-t border-gray-800 w-8" />
+      {/* Tools */}
       <NavRailItem to="/tools/mcp" icon={Wrench} label="MCP Tools" active={isActive('/tools/mcp')} />
       <NavRailItem to="/tools/infrastructure" icon={Server} label="Infrastructure" active={isActive('/tools/infrastructure')} />
       <NavRailItem to="/tools/cache" icon={Package} label="Dep Cache" active={isActive('/tools/cache')} />
