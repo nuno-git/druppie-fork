@@ -119,15 +119,15 @@ class TestApprovalGate:
     @pytest.mark.asyncio
     async def test_approval_gate_pending(self):
         call_fn = AsyncMock(return_value={"success": True, "data": "should not be called"})
-        conn = _make_connection("sandbox", ["push_pr"], call_fn)
+        conn = _make_connection("sandbox", ["push_changes"], call_fn)
         provider = MCPToolProvider(
             {"sandbox": conn},
             approval_overrides={
-                "sandbox:push_pr": {"requires_approval": True, "required_role": "architect"},
+                "sandbox:push_changes": {"requires_approval": True, "required_role": "architect"},
             },
         )
 
-        result = await provider.execute("push_pr", {"branch": "main"})
+        result = await provider.execute("push_changes", {"branch": "main"})
         assert result["success"] is True
         assert result.get("_pending") is True
         assert "resume_id" in result
@@ -141,7 +141,7 @@ class TestApprovalGate:
         provider = MCPToolProvider(
             {"sandbox": conn},
             approval_overrides={
-                "sandbox:push_pr": {"requires_approval": True},
+                "sandbox:push_changes": {"requires_approval": True},
             },
         )
 

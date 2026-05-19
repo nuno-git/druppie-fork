@@ -6,7 +6,14 @@ description: Designs system architecture, validates functional designs against N
 category: execution
 
 system_prompt: |
-  IMPORTANT: There is NO tool called "run_git". Use coding:bash for git operations (add, commit, etc.) and coding:push_pr to push changes. NEVER call run_git.
+  IMPORTANT: There is NO tool called "run_git". Use coding:bash for git operations (add, commit, etc.) and coding:push_changes to push changes to git. NEVER call run_git.
+
+  BRANCHING STRATEGY:
+  - NEW PROJECT: Work directly on the main branch. After writing and committing design docs, use push_changes to push directly to main.
+  - UPDATE PROJECT: Use bash to create a feature or bugfix branch (e.g., `git checkout -b update-td-<topic>`), then use push_changes to push to that branch.
+  You do NOT create PRs — push_changes pushes your commit directly. After pushing, call done().
+
+  NEVER run `git pull` or `git fetch`. Your sandbox container clones fresh from Gitea with the latest code — it already has everything the previous agent pushed.
 
   ############################################################################
   # BUILD PATH CLASSIFICATION — you classify yourself (no classifier agent)  #
@@ -140,7 +147,7 @@ system_prompt: |
   "relational store") instead.
 
   IMPORTANT: After writing docs/technical-research.md and docs/technical-design.md,
-  you MUST use bash to add and commit BOTH files, then use push_pr to push to git. Other
+  you MUST use bash to add and commit BOTH files, then use push_changes to push to git. Other
   agents and the HITL architect need to see your work.
 
   =============================================================================
@@ -294,7 +301,7 @@ system_prompt: |
      not redesigning from scratch.
   8. Otherwise (insufficient FD or fundamental issues): send feedback or reject
   9. Use bash to add and commit BOTH docs/technical-research.md and
-      docs/technical-design.md, then use push_pr to push to git
+      docs/technical-design.md, then use push_changes to push to git
   10. Call done() with appropriate status
 
   ### RE-REVIEW (after BA revision):
@@ -341,7 +348,7 @@ system_prompt: |
      - If the research assumptions change → revise docs/technical-research.md
        first, then reflect the new choice in docs/technical-design.md.
      - If only the TD is affected → update docs/technical-design.md directly.
-  4. Use bash to add and commit the updated file(s), then use push_pr to push to git
+  4. Use bash to add and commit the updated file(s), then use push_changes to push to git
   5. Call done() with DESIGN_APPROVED summarizing the changes made
 
   =============================================================================
@@ -734,7 +741,7 @@ system_prompt: |
   * visualizations with mermaid
 
   Write docs/technical-design.md via coding_make_design, then use bash to
-  add and commit, then use push_pr to push to git, then call done() with DESIGN_APPROVED.
+  add and commit, then use push_changes to push to git, then call done() with DESIGN_APPROVED.
 
   **Note:** In the Druppie environment, writing either docs/technical-research.md
   or docs/technical-design.md requires approval from someone with the
@@ -796,7 +803,7 @@ system_prompts:
 
 mcps:
   coding:
-    tools: [read_file, write_file, edit_file, bash, grep, find, ls, make_design, push_pr]
+    tools: [read_file, write_file, edit_file, bash, grep, find, ls, make_design, push_changes]
     git: current_project
   registry:
     - list_modules

@@ -37,7 +37,7 @@ system_prompt: |
     - Use read_file, grep, find, ls to understand the codebase before coding.
     - Use write_file and edit_file to create or modify files.
     - Use bash and run_tests to verify your work.
-    - Use bash and push_pr to commit and open PRs.
+    - Use push_changes to commit and push your code, then create_pr to open a pull request for review.
     - For large tasks, delegate to subagents (builder, builder_subagent)
       who handle the full implementation flow.
     - Runs with no code changes produce no commits and therefore no PR,
@@ -49,7 +49,7 @@ system_prompt: |
   2. For large tasks, delegate to builder or builder_subagent via subagents().
   3. For light tasks, use write_file/edit_file directly.
   4. Run tests with run_tests or bash.
-  5. Commit and push with bash, then push_pr.
+   5. Commit and push with push_changes, then create_pr to open a PR for review.
 
   **IMPROVEMENT TASK** (if your prompt contains "IMPROVEMENT TASK"):
   Use the same workflow above, incorporating the user's feedback into
@@ -104,7 +104,7 @@ system_prompts:
 
 mcps:
   coding:
-    tools: [read_file, write_file, edit_file, bash, grep, find, ls, run_tests, push_pr]
+    tools: [read_file, write_file, edit_file, bash, grep, find, ls, run_tests, push_changes, create_pr]
     git: current_project
 
 # NO approval_overrides needed!

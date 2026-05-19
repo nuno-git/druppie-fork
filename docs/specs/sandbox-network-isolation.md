@@ -161,7 +161,7 @@ sandbox:
 | `search_files` | grep/ripgrep in workspace | No | No |
 | `get_file_info` | stat/lstat on files | No | No |
 | `make_design` | Write markdown file | No | No |
-| `push_pr` (part 1) | `git add -A && git commit && git bundle create` | No | No |
+| `push_changes` (part 1) | `git add -A && git commit && git bundle create` | No | No |
 | `run_git` | Local git ops (add, commit, status, diff) | No | No |
 | `build` / `run` | npm install, pip install, build commands | ✅ Internet | No |
 | SDK calls (via bash) | `druppie_sdk.ocr.extract(...)` in test scripts | No | ✅ Modules |
@@ -172,9 +172,9 @@ sandbox:
 |------|-----------|-------------|
 | `_ensure_sandbox` | `git clone` repo to local temp dir | Yes |
 | `_ensure_sandbox` | Stream cloned repo into sandbox via tar pipe | No |
-| `push_pr` (part 2) | Extract git bundle from sandbox | No |
-| `push_pr` (part 3) | `git push` to Gitea | Yes |
-| `push_pr` (part 4) | `curl` to create PR on Gitea | Yes |
+| `push_changes` (part 2) | Extract git bundle from sandbox | No |
+| `push_changes` (part 3) | `git push` to Gitea | Yes |
+| `create_pr` | `curl` to create PR on Gitea | Yes |
 
 ### Commit Flow (end-to-end)
 
@@ -187,7 +187,7 @@ sandbox:
    └─ module-coding: docker exec sandbox sh -c 'cd /workspace && npm install && npm test'
       [INSIDE sandbox — needs INTERNET tier for npm install]
 
-3. Agent calls push_pr(title, description)
+3. Agent calls push_changes(branch)
    └─ Step A: docker exec sandbox git add -A && git commit
       [INSIDE sandbox — no network]
    └─ Step B: docker exec sandbox git bundle create /tmp/bundle.git --all
@@ -198,10 +198,12 @@ sandbox:
       [IN module-coding — no network]
    └─ Step E: git push origin HEAD:refs/heads/feature/xxx
       [IN module-coding — NEEDS Gitea on app-net]
+
+4. Agent calls create_pr(title, description)
    └─ Step F: curl -X POST gitea:3000/api/v1/repos/.../pulls
       [IN module-coding — NEEDS Gitea on app-net]
 
-4. test_builder calls bash("python -m pytest tests/test_ocr.py")
+5. test_builder calls bash("python -m pytest tests/test_ocr.py")
    └─ module-coding: docker exec sandbox sh -c 'cd /workspace && python -m pytest ...'
       [INSIDE sandbox — test code uses druppie_sdk which calls module-ocr:9010]
       [NEEDS MODULES tier for SDK → module connectivity]
@@ -406,25 +408,26 @@ tar_proc.stdout.close()
 await docker_proc.wait()
 await tar_proc.wait()
 
-# Step 3: Strip credentials + create session branch
+# Step 3: Strip credentials + configure git (sandbox starts on main, agent decides when to branch)
 await _exec_in_container(container_id, ["git", "remote", "set-url", "origin", public_url])
-await _exec_in_container(container_id, ["git", "checkout", "-b", branch])
+await _exec_in_container(container_id, ["git", "config", "user.name", "druppie-agent"])
+await _exec_in_container(container_id, ["git", "config", "user.email", "agent@druppie.local"])
 
 # Cleanup
 await _run_subprocess(["rm", "-rf", clone_dir], timeout=10)
 ```
 
-### 6. Verify push_pr runs from module-coding (no changes expected)
+### 6. Verify push_changes + create_pr run from module-coding (no changes expected)
 
-From code analysis, push_pr already works correctly:
+From code analysis, push_changes and create_pr already work correctly:
 - `git bundle create` → inside sandbox (no network)
 - Bundle extraction → module-coding filesystem
 - `git push` → from module-coding (on app-net) ✅
-- `curl` PR creation → from module-coding (on app-net) ✅
+- `create_pr` → `curl` PR creation → from module-coding (on app-net) ✅
 
 ### 7. Fix test YAMLs
 
-Replace `coding:run_git` with `push_pr` for BA/architect in test setup YAMLs.
+Replace `coding:run_git` with `push_changes` + `create_pr` for BA/architect in test setup YAMLs.
 
 ### 8. Fix session API `_get_project_summary`
 
@@ -467,7 +470,7 @@ There are **no runtime checks** — enforcement is purely network-level. If a sa
 | Operation | How it bypasses sandbox isolation |
 |-----------|----------------------------------|
 | `git clone` (project code) | Doesn't run inside sandbox. module-coding clones to its own filesystem → tar-pipes files into sandbox. |
-| `push_pr` (git push + PR) | Doesn't run inside sandbox. Sandbox creates a git bundle → module-coding extracts it and pushes to Gitea from app-net. |
+| `push_changes` + `create_pr` (git push + PR) | Don't run inside sandbox. Sandbox creates a git bundle → module-coding extracts it and pushes to Gitea from app-net. Agent calls `push_changes` to commit+push, then `create_pr` to open a PR. |
 | `run_git` (local git ops) | Runs inside sandbox but only uses local `.git` directory. No network needed for `add`, `commit`, `status`, `diff`. |
 
 ### What CANNOT be bypassed
@@ -487,7 +490,7 @@ There are **no runtime checks** — enforcement is purely network-level. If a sa
 3. Update tools.py container creation with per-agent network connect
 4. Add `_run_subprocess` helper
 5. Proxy clone through module-coding
-6. Verify push_pr works from module-coding (not sandbox)
+6. Verify push_changes + create_pr work from module-coding (not sandbox)
 7. Fix test YAMLs
 8. Fix session API `_get_project_summary`
 9. Rebuild + E2E test

@@ -39,7 +39,7 @@ system_prompt: |
   The session_id is auto-injected into tool calls - you don't need to provide it.
 
   IMPORTANT: write_file does NOT commit or push!
-  You MUST use bash for git add/commit and push_pr to push after writing files.
+  You MUST use bash for git add/commit, then push_changes to push and create_pr to open a PR after writing files.
 
   =============================================================================
   GIT SYNC (CRITICAL — builder uses sandbox)
@@ -49,12 +49,12 @@ system_prompt: |
   You MUST sync via git so the sandbox sees your changes:
 
   BEFORE doing any work:
-    coding_bash(command="git pull")
+    coding_bash(command="git log --oneline -1")
 
   AFTER writing files:
     coding_bash(command="git add builder_plan.md")
     coding_bash(command="git commit -m 'Add builder_plan.md'")
-    coding_push_pr()
+    coding_push_changes()
 
   This ensures the sandbox (builder) always has the latest files.
 
@@ -71,7 +71,7 @@ system_prompt: |
   =============================================================================
 
   0. Pull latest changes:
-      - Call coding_bash(command="git pull") to get latest code
+      - Call coding_bash(command="git log --oneline -1") to get latest code
 
   1. Read the project structure:
      - Call coding_list_dir(path=".") to see what exists
@@ -95,7 +95,7 @@ system_prompt: |
   4. Commit and push:
        - Call coding_bash(command="git add builder_plan.md")
        - Call coding_bash(command="git commit -m 'Add builder_plan.md'")
-       - Call coding_push_pr() to push
+       - Call coding_push_changes() to push
 
   5. Call done() with summary
 
@@ -192,7 +192,7 @@ system_prompts:
 
 mcps:
   coding:
-    tools: [read_file, write_file, edit_file, bash, grep, find, ls, push_pr]
+    tools: [read_file, write_file, edit_file, bash, grep, find, ls, push_changes, create_pr]
     git: current_project
 
 llm_profile: standard

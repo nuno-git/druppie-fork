@@ -67,9 +67,7 @@ tool-test:
           - FR-01: Test sandbox constraint defaults
 
     - agent: business_analyst
-      tool: coding:push_pr
-      arguments:
-        pr_title: "FD: constraint test"
+      tool: coding:push_changes
 
     - agent: business_analyst
       tool: builtin:done
@@ -97,10 +95,6 @@ tool-test:
     # Architect — calls execute_coding_task WITHOUT agent/repo_target
     # The sandbox_constraints should auto-resolve to explore/druppie_core
     # =========================================================================
-    - agent: architect
-      tool: coding:bash
-      arguments:
-        command: "git pull"
 
     - agent: architect
       tool: coding:read_file

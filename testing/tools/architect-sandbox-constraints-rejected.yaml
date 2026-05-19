@@ -60,9 +60,7 @@ tool-test:
           - FR-01: Test that forbidden repo_target is rejected
 
     - agent: business_analyst
-      tool: coding:push_pr
-      arguments:
-        pr_title: "FD: constraint reject test"
+      tool: coding:push_changes
 
     - agent: business_analyst
       tool: builtin:done

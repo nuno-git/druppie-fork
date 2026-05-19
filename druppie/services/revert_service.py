@@ -236,12 +236,12 @@ class RevertService:
                 if result and result.get("commit_sha"):
                     commit_shas.append(result["commit_sha"])
 
-            elif tc.tool_name == "push_pr" and tc.result:
+            elif tc.tool_name == "create_pr" and tc.result:
                 result = self._parse_tool_result(tc.result)
                 if result and result.get("pr_number"):
                     pr_numbers.append(result["pr_number"])
 
-            elif tc.tool_name == "push_pr" and tc.status == "completed" and tc.result:
+            elif tc.tool_name == "create_pr" and tc.status == "completed" and tc.result:
                 result = self._parse_tool_result(tc.result)
                 if result and result.get("merged"):
                     warnings.append(

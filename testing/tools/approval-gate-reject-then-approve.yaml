@@ -103,9 +103,7 @@ tool-test:
           | (none)   |           |           |
 
     - agent: business_analyst
-      tool: coding:push_pr
-      arguments:
-        pr_title: "FD goedgekeurd na eerste rejection"
+      tool: coding:push_changes
 
     - agent: business_analyst
       tool: builtin:done

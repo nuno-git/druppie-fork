@@ -480,9 +480,7 @@ tool-test:
 
     # --- Git add/commit/push ---
     - agent: business_analyst
-      tool: coding:push_pr
-      arguments:
-        pr_title: "Functioneel ontwerp vergunningzoeker"
+      tool: coding:push_changes
 
     - agent: business_analyst
       tool: builtin:done

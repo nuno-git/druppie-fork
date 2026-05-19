@@ -34,10 +34,6 @@ tool-test:
     # =========================================================================
     # Architect -- writes TD with OCR + LLM modules + approval flow + audit
     # =========================================================================
-    - agent: architect
-      tool: coding:bash
-      arguments:
-        command: "git pull"
 
     - agent: architect
       tool: coding:read_file
@@ -175,9 +171,7 @@ tool-test:
           | (none) | | |
 
     - agent: architect
-      tool: coding:push_pr
-      arguments:
-        pr_title: "Technisch ontwerp vergunningzoeker met Druppie SDK en goedkeuringsflow"
+      tool: coding:push_changes
 
     - agent: architect
       tool: builtin:done

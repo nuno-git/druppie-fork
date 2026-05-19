@@ -71,9 +71,7 @@ tool-test:
           - Systeemlettertype
 
     - agent: business_analyst
-      tool: coding:push_pr
-      arguments:
-        pr_title: "Functioneel ontwerp portfolio website"
+      tool: coding:push_changes
 
     - agent: business_analyst
       tool: builtin:done

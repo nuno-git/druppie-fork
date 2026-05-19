@@ -95,14 +95,14 @@ done_variables:                # Optional. Custom variables for done() (beyond s
 
 mcps:                          # Required. MCP server configuration
   sandbox:                     # Sandbox MCP (file operations, per-agent containers)
-    tools: [read_file, write_file, edit_file, bash, push_pr, make_design]
+    tools: [read_file, write_file, edit_file, bash, push_changes, make_design]
     git: current_project | other_projects | update_core  # Git scope for sandbox
   core-tools: [hitl_ask_question, make_plan, set_intent]  # Core tools (list of allowed tools)
   docker: [deploy]             # Docker MCP (optional, shared infrastructure)
   web: [search_web, fetch_url] # Web MCP (optional, web access)
 
 approval_overrides:            # Override default approval behavior for specific tools. Key format: "mcp_server_name:tool_name". Only tools needing overrides need listing.
-  "sandbox:push_pr":
+  "sandbox:push_changes":
     requires_approval: true
     required_role: "architect"
   "sandbox:make_design":
@@ -191,7 +191,7 @@ system_prompts:
   - professional_tone
 mcps:
   sandbox:
-    tools: [read_file, write_file, edit_file, bash, make_design, push_pr]
+    tools: [read_file, write_file, edit_file, bash, make_design, push_changes]
     git: current_project
   docker: [build, run, compose_up]
   core-tools: [hitl_ask_question, make_plan]
@@ -222,7 +222,7 @@ system_prompts:
 skills: [git-workflow]
 mcps:
   sandbox:
-    tools: [read_file, write_file, edit_file, bash, grep, find, ls, push_pr]
+    tools: [read_file, write_file, edit_file, bash, grep, find, ls, push_changes]
     git: current_project
   core-tools: [invoke_skill]
 llm_profile: standard
@@ -232,7 +232,7 @@ completion_preconditions:
     required_tools:
       - tool_name: "write_file"
         min_calls: 1
-      - tool_name: "push_pr"
+      - tool_name: "push_changes"
         min_calls: 1
 ```
 
@@ -343,10 +343,10 @@ description: "Modifies Druppie's core codebase via GitHub PRs"
 role: subagent
 system_prompt: |
   You modify Druppie's core codebase. Work on the GitHub
-  repository cloned in your sandbox. Use push_pr to submit changes.
+  repository cloned in your sandbox. Use push_changes to submit changes.
 mcps:
   sandbox:
-    tools: [read_file, write_file, edit_file, bash, push_pr]
+    tools: [read_file, write_file, edit_file, bash, push_changes]
     git: update_core
   core-tools: [make_plan]
 llm_profile: standard
@@ -1050,7 +1050,7 @@ The sandbox MCP exposes these tools (representative list, defined during impleme
     "search_files",
     "get_file_info",
     "make_design",  # Auto-commits
-    "push_pr"       # Runs outside sandbox via ToolProvider
+    "push_changes"       # Runs outside sandbox via ToolProvider
 ]
 ```
 
@@ -1061,7 +1061,7 @@ Agents declare which sandbox tools they need in YAML:
 ```yaml
 mcps:
   sandbox:
-    tools: [read_file, write_file, edit_file, bash, make_design, push_pr]
+    tools: [read_file, write_file, edit_file, bash, make_design, push_changes]
     git: current_project
 ```
 
@@ -1111,7 +1111,7 @@ For `git: other_projects`, the `tools` list only includes read tools:
 ```yaml
 mcps:
   sandbox:
-    tools: [read_file]  # No write_file, edit_file, bash, push_pr
+    tools: [read_file]  # No write_file, edit_file, bash, push_changes
     git: other_projects
 ```
 
@@ -1626,7 +1626,7 @@ async def spawn_subagent(self, agent_def, parent_git_scope, parent_sandbox_conn)
 
 - Clones the user's project from Gitea
 - Full read/write access
-- Changes committed via `push_pr` tool (or agent commits manually)
+- Changes committed via `push_changes` tool (or agent commits manually)
 - Next agent's sandbox pulls latest from Gitea
 
 #### other_projects
@@ -1641,7 +1641,7 @@ async def spawn_subagent(self, agent_def, parent_git_scope, parent_sandbox_conn)
 
 - Clones Druppie's core repository from GitHub
 - Used for self-modification flows
-- Changes pushed via `push_pr` tool to GitHub
+- Changes pushed via `push_changes` tool to GitHub
 - Requires GitHub App authentication
 
 ### Warm Pool
@@ -1695,11 +1695,11 @@ class SandboxWarmPool:
 
 ### Push/PR Tool
 
-The `push_pr` tool is exposed on the sandbox MCP, but the actual push/PR operation runs **outside** the sandbox container.
+The `push_changes` tool is exposed on the sandbox MCP, but the actual push/PR operation runs **outside** the sandbox container.
 
 #### Flow
 
-1. Agent calls `push_pr` tool (inside sandbox)
+1. Agent calls `push_changes` tool (inside sandbox)
 2. ToolProvider routes the call to the sandbox MCP
 3. The sandbox MCP extracts changes from the sandbox via `git bundle`
 4. The sandbox MCP pushes to Gitea/GitHub directly (has credentials)

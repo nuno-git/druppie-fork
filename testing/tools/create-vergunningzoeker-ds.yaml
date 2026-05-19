@@ -25,10 +25,6 @@ tool-test:
     # =========================================================================
     # Architect — writes TD according to the provided technical design
     # =========================================================================
-    - agent: architect
-      tool: coding:bash
-      arguments:
-        command: "git pull"
 
     - agent: architect
       tool: coding:read_file
@@ -102,9 +98,7 @@ tool-test:
           (diagrams included in separate diagrams.md)
 
     - agent: architect
-      tool: coding:push_pr
-      arguments:
-        pr_title: "Technisch ontwerp vergunningzoeker met goedkeuringsflow en full-text search"
+      tool: coding:push_changes
 
     - agent: architect
       tool: builtin:done

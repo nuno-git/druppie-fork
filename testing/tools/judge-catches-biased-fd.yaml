@@ -68,9 +68,7 @@ tool-test:
           - PostgreSQL connection pooling with pg-pool
 
     - agent: business_analyst
-      tool: coding:push_pr
-      arguments:
-        pr_title: "Add biased functional design"
+      tool: coding:push_changes
 
     - agent: business_analyst
       tool: builtin:done

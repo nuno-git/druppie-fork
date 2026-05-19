@@ -68,9 +68,7 @@ tool-test:
           - { contains: "functional-design.md" }
 
     - agent: business_analyst
-      tool: coding:push_pr
-      arguments:
-        pr_title: "Functioneel ontwerp toegevoegd"
+      tool: coding:push_changes
 
     - agent: business_analyst
       tool: builtin:done
@@ -93,10 +91,6 @@ tool-test:
         summary: "Agent planner: BA approved, planned architect as next step"
 
     # --- Architect ---
-    - agent: architect
-      tool: coding:bash
-      arguments:
-        command: "git pull"
 
     - agent: architect
       tool: coding:read_file
@@ -143,9 +137,7 @@ tool-test:
           - { contains: "technical-design.md" }
 
     - agent: architect
-      tool: coding:push_pr
-      arguments:
-        pr_title: "Technisch ontwerp toegevoegd"
+      tool: coding:push_changes
 
     - agent: architect
       tool: builtin:done

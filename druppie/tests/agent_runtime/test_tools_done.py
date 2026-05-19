@@ -191,7 +191,7 @@ class TestValidatePreconditions:
             "summary_contains": "COMPLETE",
             "required_tools": [
                 {"tool_name": "write_file", "min_calls": 1},
-                {"tool_name": "push_pr", "min_calls": 1},
+                {"tool_name": "push_changes", "min_calls": 1},
             ],
             "error_message": "Must write and push",
         }])

@@ -45,7 +45,7 @@ The unified runtime (`druppie/execution/agent_runtime/`) is a Python library pro
 
 Subagents are defined in YAML (`subagents: [builder, tester]`). When an agent calls the `subagents()` tool, the runtime spawns child AgentLoop instances. Two-layer validation (schema enum + server-side), depth limit of 10, circular reference detection. Subagents run inline (parent waits), not DB-driven like planner scheduling.
 
-Each agent that needs file access gets its own sandbox container via a Sandbox MCP server. Agents sharing the same git scope share the same container. A warm pool of pre-started containers handles performance. The sandbox provides tools like `read_file`, `write_file`, `bash`, `push_pr`, and `make_design`.
+Each agent that needs file access gets its own sandbox container via a Sandbox MCP server. Agents sharing the same git scope share the same container. A warm pool of pre-started containers handles performance. The sandbox provides tools like `read_file`, `write_file`, `bash`, `push_changes`, and `make_design`.
 
 ### Goal: Coding Agents That Work
 

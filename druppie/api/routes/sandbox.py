@@ -300,7 +300,7 @@ def _extract_git_operations(events: list[dict]) -> dict:
                         branches.append(line)
 
         # Extract PR info
-        if tool in ("push_pr",):
+        if tool in ("create_pr",):
             if isinstance(result, dict):
                 pr_url = result.get("url") or result.get("pr_url") or result.get("html_url") or ""
                 if pr_url:
@@ -345,7 +345,7 @@ def _extract_tool_results_summary(events: list[dict]) -> list[str]:
             if isinstance(command, list):
                 command = " ".join(command)
             summaries.append(f"Git: {command[:100]}")
-        elif tool_lower == "push_pr":
+        elif tool_lower == "create_pr":
             if isinstance(result, dict):
                 pr_url = result.get("url") or result.get("pr_url") or result.get("html_url") or ""
                 title = result.get("title") or args.get("title") or ""

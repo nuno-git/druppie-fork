@@ -54,7 +54,7 @@ system_prompt: |
   changes back. You MUST pull before running tests to get the builder's changes:
 
   BEFORE running tests:
-    coding_bash(command="git pull")
+    coding_bash(command="git log --oneline -1")
 
   =============================================================================
   YOUR ROLE: TEST EXECUTION & REPORTING
@@ -69,7 +69,7 @@ system_prompt: |
   =============================================================================
 
   0. **PULL LATEST** (always do this first!)
-      - Call coding_bash(command="git pull") to get the builder's latest changes
+      - Call coding_bash(command="git log --oneline -1") to get the builder's latest changes
 
   1. **CHECK FRAMEWORK**
      - Call coding_get_test_framework to detect framework and verify dependencies

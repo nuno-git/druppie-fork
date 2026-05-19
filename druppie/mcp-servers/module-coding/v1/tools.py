@@ -7,7 +7,7 @@ module-coding is now a sandbox orchestrator:
 
 Each agent gets its own isolated Docker container.
 Containers have NO git credentials.
-push_pr extracts changes via git bundle, pushes externally.
+push_changes extracts changes via git bundle, pushes externally. create_pr creates a PR on Gitea.
 
 Container lifecycle:
 1. On first tool call for a session+git_scope: create container, clone repo
@@ -44,7 +44,7 @@ mcp = FastMCP(
     "Coding v1",
     version=MODULE_VERSION,
     instructions=(
-        "File operations, bash, and push_pr in isolated sandbox containers. "
+        "File operations, bash, push_changes, and create_pr in isolated sandbox containers. "
         "Each session gets its own container — no shared workspace state."
     ),
 )
@@ -111,7 +111,7 @@ BLOCKED_COMMAND_PATTERNS = [
     r"\bcurl\s+.*\|\s*sh",
     r"\bwget\s+.*\|\s*sh",
     # Sandbox-specific: block git push/remote/credential from bash
-    # Agents must use push_pr tool for pushing changes
+    # Agents must use push_changes tool for pushing, create_pr for PRs
     r"\bgit\s+push\b",
     r"\bgit\s+remote\s+",
     r"\bgit\s+config\s+credential",
@@ -328,12 +328,6 @@ async def _create_sandbox_container(
             await _docker_run(
                 ["git", "-C", tmp_dir, "remote", "set-url", "origin",
                  f"http://gitea:3000/{owner}/{repo_name}.git"],
-                timeout=10,
-            )
-
-            branch = f"session-{short_session}"
-            await _docker_run(
-                ["git", "-C", tmp_dir, "checkout", "-b", branch],
                 timeout=10,
             )
 
@@ -727,7 +721,7 @@ async def bash(
     """Execute a shell command in the sandbox container.
 
     Blocked commands: destructive operations (rm -rf /, sudo, etc.)
-    and git push/remote/credential (agents must use push_pr).
+    and git push/remote/credential (agents must use push_changes).
 
     Safe git commands are allowed: add, commit, status, log, diff, branch.
 
@@ -1066,7 +1060,7 @@ async def batch_write_files(
     """Write multiple files to workspace in a single operation.
 
     Files are written to disk only. Use bash("git add -A && git commit -m ...")
-    to commit, and push_pr to create a PR.
+    to commit, push_changes to push, and create_pr to open a PR.
 
     Args:
         files: List of file objects, each with 'path' and 'content' keys
@@ -1322,10 +1316,9 @@ async def get_git_status(
 
 
 @mcp.tool(meta={"module_id": MODULE_ID, "version": MODULE_VERSION})
-async def push_pr(
-    pr_title: str,
-    pr_body: str = "",
+async def push_changes(
     session_id: str | None = None,
+    target_branch: str | None = None,
     workspace_id: str | None = None,
     project_id: str | None = None,
     user_id: str | None = None,
@@ -1334,28 +1327,27 @@ async def push_pr(
     git_scope: str | None = None,
     sandbox_networks: list[str] | None = None,
 ) -> dict:
-    """Push changes from sandbox via git bundle and create a Pull Request.
+    """Push changes from sandbox via git bundle to Gitea.
 
     The sandbox container has NO git credentials. This tool:
     1. Auto-commits any uncommitted changes inside the container
     2. Creates a git bundle inside the container (no credentials needed)
     3. Copies the bundle to the host (module-coding container)
     4. Extracts and pushes to Gitea WITH credentials on the host side
-    5. Creates a PR via Gitea API
 
     Args:
-        pr_title: Pull request title
-        pr_body: Pull request description (optional)
         session_id: Session ID
+        target_branch: Branch to push to on Gitea (defaults to current branch)
         repo_name: Gitea repository name
         repo_owner: Gitea repository owner
         git_scope: Git scope
 
     Returns:
-        Dict with success, pr_number, pr_url, html_url, branch
+        Dict with success, branch, pushed_to
     """
     try:
         session_id = _sanitize_param(session_id)
+        target_branch = _sanitize_param(target_branch)
         repo_name = _sanitize_param(repo_name)
         repo_owner = _sanitize_param(repo_owner)
         git_scope = _sanitize_param(git_scope)
@@ -1379,7 +1371,7 @@ async def push_pr(
         resolved_repo_owner = entry.get("repo_owner") or repo_owner or GITEA_ORG
 
         if not resolved_repo_name:
-            return {"success": False, "error": "repo_name is required for push_pr"}
+            return {"success": False, "error": "repo_name is required for push_changes"}
 
         # Get current branch from container (may have changed via bash git checkout)
         rc, stdout, _ = await _exec_in_container(
@@ -1389,8 +1381,7 @@ async def push_pr(
             branch = stdout.strip()
             entry["branch"] = branch
 
-        if branch == "main":
-            return {"success": False, "error": "Cannot push_pr from main branch"}
+        push_branch = target_branch or branch
 
         # Auto-commit any uncommitted changes
         rc, status_out, _ = await _exec_in_container(
@@ -1400,7 +1391,7 @@ async def push_pr(
             await _exec_in_container(container, ["git", "add", "-A"], timeout=30)
             rc, _, stderr = await _exec_in_container(
                 container,
-                ["git", "commit", "-m", f"Auto-commit before PR: {pr_title}"],
+                ["git", "commit", "-m", f"Auto-commit: push to {push_branch}"],
                 timeout=30,
             )
             if rc != 0 and "nothing to commit" not in stderr:
@@ -1463,7 +1454,7 @@ async def push_pr(
 
             # Push to Gitea with credentials
             rc, _, stderr = await _docker_run(
-                ["git", "-C", bare_repo, "push", push_url, f"{branch}:{branch}"],
+                ["git", "-C", bare_repo, "push", push_url, f"{branch}:{push_branch}"],
                 timeout=60,
             )
             if rc != 0:
@@ -1472,92 +1463,15 @@ async def push_pr(
                     "error": f"git push to Gitea failed: {stderr}",
                 }
 
-            # Create PR via Gitea API
-            api_url = (
-                f"{GITEA_URL}/api/v1/repos/"
-                f"{resolved_repo_owner}/{resolved_repo_name}/pulls"
-            )
-            payload = json.dumps({
-                "head": branch,
-                "base": "main",
-                "title": pr_title,
-                "body": pr_body,
-            })
-
-            # Build auth header — prefer token, fall back to basic auth
-            curl_headers = ["Content-Type: application/json"]
-            if GITEA_TOKEN:
-                curl_headers.append(f"Authorization: token {GITEA_TOKEN}")
-            elif GITEA_USER and GITEA_PASSWORD:
-                import base64 as _b64
-
-                creds = _b64.b64encode(
-                    f"{GITEA_USER}:{GITEA_PASSWORD}".encode()
-                ).decode()
-                curl_headers.append(f"Authorization: Basic {creds}")
-            else:
-                return {
-                    "success": False,
-                    "error": "No Gitea credentials configured (GITEA_TOKEN or GITEA_USER+GITEA_PASSWORD)",
-                }
-
-            curl_args = ["curl", "-s", "-w", "\\n%{http_code}", "-X", "POST", api_url]
-            for h in curl_headers:
-                curl_args += ["-H", h]
-            curl_args += ["-d", payload]
-
-            proc = await asyncio.create_subprocess_exec(
-                *curl_args,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
-            if proc.returncode != 0:
-                return {
-                    "success": False,
-                    "error": f"Gitea PR creation failed (curl error): {stderr.decode()}",
-                }
-
-            # curl -w appends HTTP status code on the last line
-            raw = stdout.decode()
-            body, _, status_line = raw.rpartition("\n")
-            http_status = int(status_line.strip()) if status_line.strip().isdigit() else 0
-            pr_data = json.loads(body) if body.strip() else {}
-
-            # Check for HTTP-level errors
-            if http_status < 200 or http_status >= 300:
-                err_msg = pr_data.get("message", body[:500]) if isinstance(pr_data, dict) else body[:500]
-                logger.error(
-                    "Gitea PR creation HTTP %s: %s", http_status, err_msg,
-                )
-                return {
-                    "success": False,
-                    "error": f"Gitea PR creation HTTP {http_status}: {err_msg}",
-                }
-
-            pr_number = pr_data.get("number")
-            html_url = pr_data.get("html_url", "")
-
-            if not pr_number:
-                logger.error(
-                    "Gitea PR response missing 'number': %s", body[:500],
-                )
-                return {
-                    "success": False,
-                    "error": f"Gitea PR response missing 'number': {body[:500]}",
-                }
-
             logger.info(
-                "Created PR #%s for %s/%s branch=%s",
-                pr_number, resolved_repo_owner, resolved_repo_name, branch,
+                "Pushed %s/%s branch=%s to %s",
+                resolved_repo_owner, resolved_repo_name, branch, push_branch,
             )
 
             return {
                 "success": True,
-                "pr_number": pr_number,
-                "pr_url": html_url,
-                "html_url": html_url,
                 "branch": branch,
+                "pushed_to": push_branch,
             }
 
         finally:
@@ -1567,7 +1481,169 @@ async def push_pr(
             )
 
     except Exception as e:
-        logger.error("Error in push_pr: %s", e)
+        logger.error("Error in push_changes: %s", e)
+        return {"success": False, "error": str(e)}
+
+
+@mcp.tool(meta={"module_id": MODULE_ID, "version": MODULE_VERSION})
+async def create_pr(
+    pr_title: str,
+    pr_body: str = "",
+    head_branch: str | None = None,
+    base_branch: str = "main",
+    session_id: str | None = None,
+    workspace_id: str | None = None,
+    project_id: str | None = None,
+    user_id: str | None = None,
+    repo_name: str | None = None,
+    repo_owner: str | None = None,
+    git_scope: str | None = None,
+    sandbox_networks: list[str] | None = None,
+) -> dict:
+    """Create a Pull Request on Gitea from an existing pushed branch.
+
+    Args:
+        pr_title: Pull request title
+        pr_body: Pull request description (optional)
+        head_branch: Source branch for the PR (defaults to current branch)
+        base_branch: Target branch for the PR (default: main)
+        session_id: Session ID
+        repo_name: Gitea repository name
+        repo_owner: Gitea repository owner
+        git_scope: Git scope
+
+    Returns:
+        Dict with success, pr_number, pr_url, html_url, branch
+    """
+    try:
+        session_id = _sanitize_param(session_id)
+        head_branch = _sanitize_param(head_branch)
+        base_branch = _sanitize_param(base_branch) or "main"
+        repo_name = _sanitize_param(repo_name)
+        repo_owner = _sanitize_param(repo_owner)
+        git_scope = _sanitize_param(git_scope)
+
+        if not session_id:
+            return {"success": False, "error": "session_id is required"}
+
+        scope = git_scope or "current_project"
+        key = f"{session_id}::{scope}"
+
+        if key not in sandbox_containers:
+            return {
+                "success": False,
+                "error": "No sandbox container found for this session",
+            }
+
+        entry = sandbox_containers[key]
+        container = entry["container_name"]
+        branch = entry.get("branch", "main")
+        resolved_repo_name = entry.get("repo_name") or repo_name
+        resolved_repo_owner = entry.get("repo_owner") or repo_owner or GITEA_ORG
+
+        if not resolved_repo_name:
+            return {"success": False, "error": "repo_name is required for create_pr"}
+
+        if not head_branch:
+            rc, stdout, _ = await _exec_in_container(
+                container, ["git", "branch", "--show-current"], timeout=10
+            )
+            if rc == 0 and stdout.strip():
+                head_branch = stdout.strip()
+                entry["branch"] = head_branch
+            else:
+                head_branch = branch
+
+        # Create PR via Gitea API
+        api_url = (
+            f"{GITEA_URL}/api/v1/repos/"
+            f"{resolved_repo_owner}/{resolved_repo_name}/pulls"
+        )
+        payload = json.dumps({
+            "head": head_branch,
+            "base": base_branch,
+            "title": pr_title,
+            "body": pr_body,
+        })
+
+        # Build auth header — prefer token, fall back to basic auth
+        curl_headers = ["Content-Type: application/json"]
+        if GITEA_TOKEN:
+            curl_headers.append(f"Authorization: token {GITEA_TOKEN}")
+        elif GITEA_USER and GITEA_PASSWORD:
+            import base64 as _b64
+
+            creds = _b64.b64encode(
+                f"{GITEA_USER}:{GITEA_PASSWORD}".encode()
+            ).decode()
+            curl_headers.append(f"Authorization: Basic {creds}")
+        else:
+            return {
+                "success": False,
+                "error": "No Gitea credentials configured (GITEA_TOKEN or GITEA_USER+GITEA_PASSWORD)",
+            }
+
+        curl_args = ["curl", "-s", "-w", "\\n%{http_code}", "-X", "POST", api_url]
+        for h in curl_headers:
+            curl_args += ["-H", h]
+        curl_args += ["-d", payload]
+
+        proc = await asyncio.create_subprocess_exec(
+            *curl_args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
+        if proc.returncode != 0:
+            return {
+                "success": False,
+                "error": f"Gitea PR creation failed (curl error): {stderr.decode()}",
+            }
+
+        # curl -w appends HTTP status code on the last line
+        raw = stdout.decode()
+        body, _, status_line = raw.rpartition("\n")
+        http_status = int(status_line.strip()) if status_line.strip().isdigit() else 0
+        pr_data = json.loads(body) if body.strip() else {}
+
+        # Check for HTTP-level errors
+        if http_status < 200 or http_status >= 300:
+            err_msg = pr_data.get("message", body[:500]) if isinstance(pr_data, dict) else body[:500]
+            logger.error(
+                "Gitea PR creation HTTP %s: %s", http_status, err_msg,
+            )
+            return {
+                "success": False,
+                "error": f"Gitea PR creation HTTP {http_status}: {err_msg}",
+            }
+
+        pr_number = pr_data.get("number")
+        html_url = pr_data.get("html_url", "")
+
+        if not pr_number:
+            logger.error(
+                "Gitea PR response missing 'number': %s", body[:500],
+            )
+            return {
+                "success": False,
+                "error": f"Gitea PR response missing 'number': {body[:500]}",
+            }
+
+        logger.info(
+            "Created PR #%s for %s/%s branch=%s",
+            pr_number, resolved_repo_owner, resolved_repo_name, head_branch,
+        )
+
+        return {
+            "success": True,
+            "pr_number": pr_number,
+            "pr_url": html_url,
+            "html_url": html_url,
+            "branch": head_branch,
+        }
+
+    except Exception as e:
+        logger.error("Error in create_pr: %s", e)
         return {"success": False, "error": str(e)}
 
 
@@ -2358,7 +2434,7 @@ async def _internal_revert_to_commit(
         )
         new_head = stdout.strip()[:12] if rc == 0 else target_commit[:12]
 
-        # Force push via bundle mechanism (same as push_pr but force)
+        # Force push via bundle mechanism (same as push_changes but force)
         resolved_repo_name = entry.get("repo_name") or repo_name
         resolved_repo_owner = entry.get("repo_owner") or repo_owner or GITEA_ORG
 

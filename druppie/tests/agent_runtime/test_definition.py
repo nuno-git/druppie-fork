@@ -47,7 +47,7 @@ class TestParseDefinition:
                 "error_message": "Must call write_file",
             }],
             approval_overrides={
-                "sandbox:push_pr": {"requires_approval": True, "required_role": "architect"},
+                "sandbox:push_changes": {"requires_approval": True, "required_role": "architect"},
             },
             skills=["code-review"],
             llm_profile="standard",
@@ -60,7 +60,7 @@ class TestParseDefinition:
         assert defn.subagents == ["builder", "tester"]
         assert "next_agent" in defn.done_variables
         assert len(defn.completion_preconditions) == 1
-        assert "sandbox:push_pr" in defn.approval_overrides
+        assert "sandbox:push_changes" in defn.approval_overrides
         assert defn.skills == ["code-review"]
         assert defn.llm_profile == "standard"
         assert defn.temperature == 0.7
@@ -126,7 +126,7 @@ class TestParseDefinition:
             "unless_summary_contains": "EXCEPTION",
             "required_tools": [
                 {"tool_name": "make_design", "min_calls": 1},
-                {"tool_name": "push_pr", "min_calls": 2},
+                {"tool_name": "push_changes", "min_calls": 2},
             ],
             "error_message": "Must create design first",
         }])
@@ -149,12 +149,12 @@ class TestParseDefinition:
 
     def test_parse_approval_overrides(self):
         data = self._minimal_yaml(approval_overrides={
-            "sandbox:push_pr": {"requires_approval": True, "required_role": "architect"},
+            "sandbox:push_changes": {"requires_approval": True, "required_role": "architect"},
             "sandbox:make_design": {"requires_approval": False, "pre_validate": "validate_mermaid"},
         })
         defn = parse_definition(data)
-        assert "sandbox:push_pr" in defn.approval_overrides
-        assert defn.approval_overrides["sandbox:push_pr"]["requires_approval"] is True
+        assert "sandbox:push_changes" in defn.approval_overrides
+        assert defn.approval_overrides["sandbox:push_changes"]["requires_approval"] is True
 
     def test_parse_subagents_list(self):
         defn = parse_definition(self._minimal_yaml(subagents=["builder", "tester"]))

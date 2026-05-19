@@ -434,6 +434,12 @@ export const getActiveRun = () =>
 // Kept for backwards compat - used by Evaluations.jsx TestRunDetail
 export const getTestRunAssertionsList = getTestRunAssertions
 
+// ============ Agent Testing ============
+export const executeAgentTest = (params) =>
+  request('/api/agents/test', { method: 'POST', body: JSON.stringify(params) })
+export const getAgentTestRun = (runId) =>
+  request(`/api/agents/test/${runId}`)
+
 // ============ Cache ============
 export const getCachedPackages = () => request('/api/cache/packages')
 export const getAllProjectDependencies = () => request('/api/cache/dependencies')

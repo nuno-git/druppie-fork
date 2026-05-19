@@ -78,7 +78,7 @@ The `module-coding` MCP server exposes these tools to the agent:
 | `search_files` | Search across files |
 | `get_file_info` | Get file metadata |
 | `get_git_status` | Show working tree status |
-| `push_pr` | Extract changes via git bundle and push/PR from host |
+| `push_changes` | Extract changes via git bundle and push/PR from host |
 
 ---
 

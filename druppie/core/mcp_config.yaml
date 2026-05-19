@@ -25,23 +25,23 @@ mcps:
         hidden: true
         # Not injected into project discovery tools (list_projects, read_project_file, list_project_files)
         # — those use Gitea API directly, not workspaces
-        tools: [read_file, write_file, edit_file, bash, grep, find, ls, list_dir, batch_write_files, delete_file, make_design, push_pr, run_tests, get_test_framework, get_coverage_report, install_test_dependencies, validate_tdd, get_git_status, get_file_info, search_files]
+        tools: [read_file, write_file, edit_file, bash, grep, find, ls, list_dir, batch_write_files, delete_file, make_design, push_changes, create_pr, run_tests, get_test_framework, get_coverage_report, install_test_dependencies, validate_tdd, get_git_status, get_file_info, search_files]
       project_id:
         from: project.id
         hidden: true
-        tools: [read_file, write_file, edit_file, bash, grep, find, ls, list_dir, batch_write_files, delete_file, make_design, push_pr, run_tests, get_test_framework, get_coverage_report, install_test_dependencies, validate_tdd, get_git_status, get_file_info, search_files]
+        tools: [read_file, write_file, edit_file, bash, grep, find, ls, list_dir, batch_write_files, delete_file, make_design, push_changes, create_pr, run_tests, get_test_framework, get_coverage_report, install_test_dependencies, validate_tdd, get_git_status, get_file_info, search_files]
       repo_name:
         from: project.repo_name
         hidden: true
-        tools: [read_file, write_file, edit_file, bash, grep, find, ls, list_dir, batch_write_files, delete_file, make_design, push_pr, get_file_info, search_files]
+        tools: [read_file, write_file, edit_file, bash, grep, find, ls, list_dir, batch_write_files, delete_file, make_design, push_changes, create_pr, get_file_info, search_files]
       repo_owner:
         from: project.repo_owner
         hidden: true
-        tools: [read_file, write_file, edit_file, bash, grep, find, ls, list_dir, batch_write_files, delete_file, make_design, push_pr, get_file_info, search_files]
+        tools: [read_file, write_file, edit_file, bash, grep, find, ls, list_dir, batch_write_files, delete_file, make_design, push_changes, create_pr, get_file_info, search_files]
       git_scope:
         from: agent.git_scope
         hidden: true
-        tools: [read_file, write_file, edit_file, bash, grep, find, ls, list_dir, batch_write_files, delete_file, make_design, push_pr, run_tests, get_test_framework, get_coverage_report, install_test_dependencies, validate_tdd, get_git_status, get_file_info, search_files]
+        tools: [read_file, write_file, edit_file, bash, grep, find, ls, list_dir, batch_write_files, delete_file, make_design, push_changes, create_pr, run_tests, get_test_framework, get_coverage_report, install_test_dependencies, validate_tdd, get_git_status, get_file_info, search_files]
     tools:
       - name: read_file
         requires_approval: false
@@ -74,7 +74,7 @@ mcps:
       - name: get_coverage_report
         requires_approval: false
 
-      - name: push_pr
+      - name: push_changes, create_pr
         requires_approval: false
 
       - name: install_test_dependencies

@@ -53,7 +53,7 @@ system_prompt: |
       - Implement the described change using write_file and edit_file
       - Use bash to run tests and verify the implementation
       - Commit and push using bash
-     - Create a PR targeting colab-dev (NOT main!) using push_pr
+     - Create a PR targeting colab-dev (NOT main!) using push_changes then create_pr
      - Do NOT merge the PR
   2. Call done() with the PR URL in your summary
 
@@ -92,7 +92,7 @@ system_prompt: |
   4. Add the docker-compose service entry to docker-compose.yml using edit_file
   5. Add the mcp_config.yaml entry to druppie/core/mcp_config.yaml using edit_file
   6. Create branch core/add-module-<id> from colab-dev using bash
-  7. Commit, push using bash, and create a PR targeting colab-dev using push_pr
+   7. Commit, push using push_changes, and create a PR targeting colab-dev using create_pr
 
   You work in /workspace/druppie-core/ where the full Druppie repository
   is available. You can read docs/module-specification.md directly — you do NOT need
@@ -106,7 +106,7 @@ system_prompts:
 
 mcps:
   coding:
-    tools: [read_file, write_file, edit_file, bash, grep, find, ls, push_pr]
+    tools: [read_file, write_file, edit_file, bash, grep, find, ls, push_changes, create_pr]
     git: update_core
 
 # Strip HITL from the default builtin set. This agent runs late in the

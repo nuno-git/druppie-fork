@@ -87,9 +87,7 @@ tool-test:
           | (none)   |           |           |
 
     - agent: business_analyst
-      tool: coding:push_pr
-      arguments:
-        pr_title: "Functioneel ontwerp voor link-render-check"
+      tool: coding:push_changes
 
     - agent: business_analyst
       tool: builtin:done

@@ -125,9 +125,7 @@ tool-test:
           - { contains: "functional-design.md" }
 
     - agent: business_analyst
-      tool: coding:push_pr
-      arguments:
-        pr_title: "Functioneel ontwerp vergunning-analyzer"
+      tool: coding:push_changes
 
     - agent: business_analyst
       tool: builtin:done

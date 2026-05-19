@@ -73,9 +73,7 @@ tool-test:
           - Simple file-based output demonstrating the flow
 
     - agent: business_analyst
-      tool: coding:push_pr
-      arguments:
-        pr_title: "docs: add functional design for subagent HITL test"
+      tool: coding:push_changes
 
     - agent: business_analyst
       tool: builtin:done
@@ -98,10 +96,6 @@ tool-test:
         summary: "Agent planner: BA approved, planned architect"
 
     # --- Architect (creates TD) ---
-    - agent: architect
-      tool: coding:bash
-      arguments:
-        command: "git pull"
 
     - agent: architect
       tool: coding:read_file
@@ -141,9 +135,7 @@ tool-test:
           - Verify subagent results show "success" status
 
     - agent: architect
-      tool: coding:push_pr
-      arguments:
-        pr_title: "docs: add technical design for subagent HITL test"
+      tool: coding:push_changes
 
     - agent: architect
       tool: builtin:done

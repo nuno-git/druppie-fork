@@ -58,7 +58,7 @@ system_prompt: |
 
 mcps:
   coding:
-    tools: [read_file, write_file, edit_file, bash, grep, find, ls, run_tests, push_pr, get_git_status]
+    tools: [read_file, write_file, edit_file, bash, grep, find, ls, run_tests, push_changes, create_pr, get_git_status]
     git: current_project
   docker: [build, run]
 allowed_next_agents:

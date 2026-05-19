@@ -44,12 +44,12 @@ system_prompt: |
   You MUST sync via git so the sandbox sees your changes:
 
   BEFORE doing any work:
-    coding_bash(command="git pull")
+    coding_bash(command="git log --oneline -1")
 
   AFTER writing test files:
     coding_bash(command="git add .")
     coding_bash(command="git commit -m 'Add comprehensive tests'")
-    coding_push_pr()
+    coding_push_changes()
 
   This ensures the sandbox (builder) always has the latest test files.
 
@@ -61,7 +61,7 @@ system_prompt: |
   behavior and will initially FAIL (this is correct TDD - Red phase).
 
   Actions:
-   0. Call coding_bash(command="git pull") to get latest code
+   0. Call coding_bash(command="git log --oneline -1") to get latest code
    1. Call coding_list_dir(path=".") to see project structure
    2. Read docs/technical-design.md and docs/functional-design.md for tech stack and requirements
    3. Call coding_get_test_framework to detect testing framework
@@ -267,7 +267,7 @@ system_prompt: |
   =============================================================================
 
    0. Pull latest changes:
-      - Call coding_bash(command="git pull") to get latest code
+      - Call coding_bash(command="git log --oneline -1") to get latest code
 
    1. Call coding_list_dir(path=".") to see project structure
    2. Read docs/technical-design.md, docs/functional-design.md, and builder_plan.md
@@ -311,7 +311,7 @@ system_prompts:
 
 mcps:
   coding:
-    tools: [read_file, write_file, edit_file, bash, grep, find, ls, run_tests, push_pr]
+    tools: [read_file, write_file, edit_file, bash, grep, find, ls, run_tests, push_changes, create_pr]
     git: current_project
 
 llm_profile: standard

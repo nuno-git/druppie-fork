@@ -1645,7 +1645,7 @@ Each agent definition declares its sandbox needs in YAML:
 role: subagent
 mcps:
   sandbox:
-    tools: [read_file, write_file, edit_file, bash, push_pr]
+    tools: [read_file, write_file, edit_file, bash, push_changes]
     git: current_project
   core-tools: [make_plan]
 
@@ -1653,7 +1653,7 @@ mcps:
 role: subagent
 mcps:
   sandbox:
-    tools: [read_file, write_file, edit_file, bash, push_pr]
+    tools: [read_file, write_file, edit_file, bash, push_changes]
     git: update_core
   core-tools: [make_plan]
 
@@ -1674,14 +1674,14 @@ mcps:
 role: both
 mcps:
   sandbox:
-    tools: [read_file, write_file, edit_file, bash, push_pr]
+    tools: [read_file, write_file, edit_file, bash, push_changes]
     git: current_project
   core-tools: [make_plan, hitl_ask_question]
 ```
 
 **Key concepts**:
 
-- `mcps.sandbox.tools` — which sandbox MCP tools the agent gets. `push_pr` is a sandbox MCP tool — included for agents that can push, excluded for read-only agents. The sandbox MCP tools listed in YAML examples are representative. The full tool list will be defined during implementation based on the current coding MCP's tools (read_file, write_file, edit_file, bash, make_design, push_pr, list_dir, batch_write_files, delete_file, search_files, get_file_info, etc.).
+- `mcps.sandbox.tools` — which sandbox MCP tools the agent gets. `push_changes` is a sandbox MCP tool — included for agents that can push, excluded for read-only agents. The sandbox MCP tools listed in YAML examples are representative. The full tool list will be defined during implementation based on the current coding MCP's tools (read_file, write_file, edit_file, bash, make_design, push_changes, list_dir, batch_write_files, delete_file, search_files, get_file_info, etc.).
 - `mcps.sandbox.git` — which git scope:
    - `current_project`: The user's project being worked on (cloned from Gitea)
    - `other_projects`: Other projects for reference (read-only, all projects cloned). All projects in Gitea that the session user has access to are cloned into the sandbox. The agent receives a project listing tool to know what's available. This scales with Gitea — clone is read-only, no push.
@@ -1702,9 +1702,9 @@ mcps:
 
 **Push/PR tool behavior**:
 
-`push_pr` is a sandbox MCP tool. However, the actual push/PR operation runs **outside** the sandbox container:
+`push_changes` is a sandbox MCP tool. However, the actual push/PR operation runs **outside** the sandbox container:
 
-1. Agent calls `push_pr` tool (inside sandbox)
+1. Agent calls `push_changes` tool (inside sandbox)
 2. ToolProvider intercepts the call
 3. ToolProvider (which has git credentials) extracts changes from sandbox via `git bundle`
 4. ToolProvider pushes to Gitea/GitHub directly
@@ -1719,7 +1719,7 @@ For `git: other_projects`, the sandbox is created normally with all projects clo
 ```yaml
 mcps:
   sandbox:
-    tools: [read_file]  # No write_file, edit_file, bash, push_pr
+    tools: [read_file]  # No write_file, edit_file, bash, push_changes
     git: other_projects
 ```
 
@@ -1778,7 +1778,7 @@ D19 removes the global coding MCP and introduces "per-agent sandbox containers."
 
 D20 introduces a warm pool of sandbox containers. D29 is consistent with this — the ToolProvider pulls containers from the warm pool when creating sandboxes for agents based on their `mcps.sandbox.git` scope.
 
-User quote: "sandbox config in agent YAML under mcps.sandbox, ToolProvider handles sharing, no git:none option, push_pr as sandbox tool"
+User quote: "sandbox config in agent YAML under mcps.sandbox, ToolProvider handles sharing, no git:none option, push_changes as sandbox tool"
 
 ---
 
@@ -1794,9 +1794,9 @@ User quote: "sandbox config in agent YAML under mcps.sandbox, ToolProvider handl
 - **Auto-commits to git after writing** — design docs are architectural milestones, always saved immediately
 - Pre-validate hook: Mermaid syntax validation runs via ToolProvider (backend-side, before tool executes)
 - Approval gate: architect role requires human approval (existing behavior, configured via ToolProvider approval_overrides)
-- The git push happens via ToolProvider (same mechanism as `push_pr` — ToolProvider has credentials, extracts via git bundle, sandbox has no creds)
+- The git push happens via ToolProvider (same mechanism as `push_changes` — ToolProvider has credentials, extracts via git bundle, sandbox has no creds)
 - What it does: validates Mermaid syntax in markdown content, writes file to sandbox workspace, auto-commits and pushes
-- `make_design` is the ONLY sandbox tool that auto-commits. Regular `write_file` does NOT auto-commit — agents write many files and commit when ready via `push_pr`
+- `make_design` is the ONLY sandbox tool that auto-commits. Regular `write_file` does NOT auto-commit — agents write many files and commit when ready via `push_changes`
 - Frontend renders the design document in the approval gateway — user can see the rendered markdown + Mermaid diagrams before approving
 
 **YAML examples**:
@@ -1806,7 +1806,7 @@ User quote: "sandbox config in agent YAML under mcps.sandbox, ToolProvider handl
 role: primary
 mcps:
   sandbox:
-    tools: [read_file, write_file, edit_file, bash, make_design, push_pr]
+    tools: [read_file, write_file, edit_file, bash, make_design, push_changes]
     git: current_project
   core-tools: [hitl_ask_question, make_plan]
 
@@ -1822,7 +1822,7 @@ mcps:
 role: subagent
 mcps:
   sandbox:
-    tools: [read_file, write_file, edit_file, bash, push_pr]
+    tools: [read_file, write_file, edit_file, bash, push_changes]
     git: current_project
   core-tools: [make_plan]
 ```

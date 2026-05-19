@@ -142,9 +142,7 @@ tool-test:
           - TR-03: API rate limiting (100 req/min)
 
     - agent: architect
-      tool: coding:push_pr
-      arguments:
-        pr_title: "Technisch onderzoek recipe sharing app"
+      tool: coding:push_changes
 
     - agent: architect
       tool: coding:make_design

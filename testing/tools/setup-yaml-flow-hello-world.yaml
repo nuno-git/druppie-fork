@@ -57,9 +57,7 @@ tool-test:
           - Pure implementation task
 
     - agent: business_analyst
-      tool: coding:push_pr
-      arguments:
-        pr_title: "docs: add functional design for hello world"
+      tool: coding:push_changes
 
     - agent: business_analyst
       tool: builtin:done
@@ -82,11 +80,6 @@ tool-test:
         summary: "Agent planner: BA approved, planned architect"
 
     # --- Architect (creates TD) ---
-    - agent: architect
-      tool: coding:bash
-      arguments:
-        command: "git pull"
-
     - agent: architect
       tool: coding:read_file
       arguments:
@@ -121,9 +114,7 @@ tool-test:
           - Verify output: "Hello, World!" appears in console
 
     - agent: architect
-      tool: coding:push_pr
-      arguments:
-        pr_title: "docs: add technical design for hello world"
+      tool: coding:push_changes
 
     - agent: architect
       tool: builtin:done

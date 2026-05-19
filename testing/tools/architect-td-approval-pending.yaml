@@ -153,9 +153,7 @@ tool-test:
           - TR-02: Foto-upload ≤ 5 MB, JPEG/PNG/WebP
 
     - agent: architect
-      tool: coding:push_pr
-      arguments:
-        pr_title: "Technisch onderzoek recipe sharing app"
+      tool: coding:push_changes
 
     - agent: architect
       tool: coding:make_design
