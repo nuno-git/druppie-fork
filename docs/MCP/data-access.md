@@ -53,6 +53,16 @@ tests can assert on it.
 `*` `session_id` and `project_id` on `download_data` are auto-injected by
 the backend from the active session — agents do not supply them.
 
+### Agent access
+
+| Agent | Tools | Rationale |
+|---|---|---|
+| `business_analyst` | `list_sources`, `test_connection`, `list_available_data`, `get_schema`, `read_data` | Answers general_chat data-discovery questions ("which data is available?") and gathers data context during `create_project` / `update_project` requirements work. Read-only — no `download_data`, BA does not write files into the workspace. |
+
+Other agents have no access yet. `download_data` is intentionally
+unassigned until a workflow needs the bytes on disk (Developer / Test
+Builder when consuming sample data, most likely).
+
 `list_available_data` semantics differ per source:
 - Azure Data Lake: empty path → containers; container path → files
   (recursive walks subdirectories).
