@@ -1,0 +1,19 @@
+## Tool Test: Data Access MCP - List Sources With Data
+## Tests when at least one data source is configured
+
+tool-test:
+  name: data-access-list-sources-with-data
+  description: "List data sources when at least one is configured"
+  tags: [data-access, mcp]
+
+  chain:
+    - agent: router
+      tool: data_access:list_sources
+      assert:
+        result:
+          - json_parseable
+          - {contains: "sources"}
+          - {contains: "count"}
+
+  verify:
+    - result_contains: "success"
