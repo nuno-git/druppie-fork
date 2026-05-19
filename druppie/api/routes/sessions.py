@@ -26,7 +26,7 @@ from druppie.api.deps import (
     get_session_service,
 )
 from druppie.services import SessionService
-from druppie.domain import SessionDetail
+from druppie.domain import SessionDetail, SessionSummaryView
 from druppie.core.background_tasks import create_session_task, SessionTaskConflict, run_session_task
 
 logger = structlog.get_logger()
@@ -85,9 +85,10 @@ async def list_sessions(
 @router.get("/sessions/{session_id}")
 async def get_session(
     session_id: UUID,
+    summary: bool = Query(default=False, description="Return summary view with truncated tool calls and no LLM details"),
     service: SessionService = Depends(get_session_service),
     user: dict = Depends(get_current_user),
-) -> SessionDetail:
+) -> SessionDetail | SessionSummaryView:
     """Get complete session detail with chat timeline.
 
     Returns the full session including:
@@ -118,6 +119,10 @@ async def get_session(
         user_id=user_id,
         user_roles=user_roles,
     )
+
+    if summary:
+        from druppie.services.summary_utils import build_session_summary
+        return build_session_summary(detail)
 
     logger.info("session_retrieved", session_id=str(session_id), user_id=str(user_id))
     return detail
