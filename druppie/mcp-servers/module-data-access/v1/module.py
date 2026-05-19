@@ -8,7 +8,7 @@ from .adapter import BaseDataSourceAdapter
 from .adapter.azure_datalake import AzureDataLakeAdapter
 from .adapter.azure_sql import AzureSQLAdapter
 
-logger = logging.getLogger("data-access-mcp")
+logger = logging.getLogger("dataaccess-mcp")
 
 
 class DataAccessModule:

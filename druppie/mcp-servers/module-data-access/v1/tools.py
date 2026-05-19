@@ -15,9 +15,9 @@ from pathlib import Path
 from fastmcp import FastMCP
 from .module import DataAccessModule
 
-logger = logging.getLogger("data-access-mcp")
+logger = logging.getLogger("dataaccess-mcp")
 
-MODULE_ID = "data-access"
+MODULE_ID = "dataaccess"
 MODULE_VERSION = "1.0.0"
 
 mcp = FastMCP(

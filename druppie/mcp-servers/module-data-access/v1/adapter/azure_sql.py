@@ -10,7 +10,7 @@ import pyodbc
 
 from .base import BaseDataSourceAdapter, DataSourceInfo, DataItem, SchemaInfo
 
-logger = logging.getLogger("data-access-mcp")
+logger = logging.getLogger("dataaccess-mcp")
 
 
 class AzureSQLAdapter(BaseDataSourceAdapter):

@@ -9,7 +9,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any
 
-logger = logging.getLogger("data-access-mcp")
+logger = logging.getLogger("dataaccess-mcp")
 
 
 @dataclass
