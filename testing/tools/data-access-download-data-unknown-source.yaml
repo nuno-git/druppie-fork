@@ -1,0 +1,21 @@
+## Tool Test: Data Access MCP - download_data
+## download_data against a source_id that isn't configured must surface
+## {success: false, error: ...} rather than raising.
+
+tool-test:
+  name: data-access-download-data-unknown-source
+  description: "download_data against an unknown source returns {success: false, error}"
+  tags: [data-access, mcp, error-handling]
+
+  chain:
+    - agent: router
+      tool: data_access:download_data
+      arguments:
+        source_id: "nonexistent-source"
+        data_id: "some.table"
+        destination: "test-output.csv"
+      assert:
+        result:
+          - json_parseable
+          - {matches: "\"success\"\\s*:\\s*false"}
+          - {contains: "error"}

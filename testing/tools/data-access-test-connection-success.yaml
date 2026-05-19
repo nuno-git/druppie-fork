@@ -1,0 +1,19 @@
+## Tool Test: Data Access MCP - test_connection (live)
+## Verifies test_connection succeeds against the live Azure Data Lake source
+## configured as DATA_SOURCE_1 (account: dlspublichhrhhskexp01).
+
+tool-test:
+  name: data-access-test-connection-success
+  description: "test_connection against the configured Azure source returns success"
+  tags: [data-access, mcp, live]
+
+  chain:
+    - agent: router
+      tool: data_access:test_connection
+      arguments:
+        source_id: "dlspublichhrhhskexp01"
+      assert:
+        result:
+          - json_parseable
+          - {matches: "\"success\"\\s*:\\s*true"}
+          - {contains: "Successfully connected"}

@@ -1,0 +1,23 @@
+## Tool Test: Data Access MCP - read_data with limit (live)
+## Verifies read_data honours the limit argument and returns row data with
+## column metadata for a known CSV.
+
+tool-test:
+  name: data-access-read-data-with-limit
+  description: "read_data with limit=2 returns rows and column metadata"
+  tags: [data-access, mcp, live]
+
+  chain:
+    - agent: router
+      tool: data_access:read_data
+      arguments:
+        source_id: "dlspublichhrhhskexp01"
+        data_id: "dwhpublic/HHR/Fudura/VW_HHR_Fudura_MeteringPoints.csv"
+        limit: 2
+      assert:
+        result:
+          - json_parseable
+          - {matches: "\"success\"\\s*:\\s*true"}
+          - {matches: "\"row_count\"\\s*:\\s*2"}
+          - {matches: "\"limited\"\\s*:\\s*true"}
+          - {contains: "meteringPointId"}

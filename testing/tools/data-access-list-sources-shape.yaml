@@ -1,0 +1,18 @@
+## Tool Test: Data Access MCP - list_sources
+## Verifies list_sources returns the {success, sources, count} contract
+## regardless of whether any DATA_SOURCE_N is configured.
+
+tool-test:
+  name: data-access-list-sources-shape
+  description: "list_sources returns the documented {success, sources, count} shape"
+  tags: [data-access, mcp]
+
+  chain:
+    - agent: router
+      tool: data_access:list_sources
+      assert:
+        result:
+          - json_parseable
+          - {matches: "\"success\"\\s*:\\s*true"}
+          - {contains: "sources"}
+          - {contains: "count"}

@@ -1,0 +1,21 @@
+## Tool Test: Data Access MCP - list_available_data at root (live)
+## Verifies list_available_data with an empty path returns the lake's
+## containers as data_items with type=container.
+
+tool-test:
+  name: data-access-list-available-data-containers
+  description: "list_available_data at root lists containers from the configured Azure source"
+  tags: [data-access, mcp, live]
+
+  chain:
+    - agent: router
+      tool: data_access:list_available_data
+      arguments:
+        source_id: "dlspublichhrhhskexp01"
+        path: ""
+      assert:
+        result:
+          - json_parseable
+          - {matches: "\"success\"\\s*:\\s*true"}
+          - {matches: "\"level\"\\s*:\\s*\"containers\""}
+          - {contains: "dwhpublic"}

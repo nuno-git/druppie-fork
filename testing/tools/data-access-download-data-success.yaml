@@ -1,0 +1,22 @@
+## Tool Test: Data Access MCP - download_data success (live)
+## Verifies download_data writes a known CSV into the session workspace and
+## returns the destination path plus a non-zero size_bytes.
+
+tool-test:
+  name: data-access-download-data-success
+  description: "download_data writes a known CSV into the workspace and reports size"
+  tags: [data-access, mcp, live]
+
+  chain:
+    - agent: router
+      tool: data_access:download_data
+      arguments:
+        source_id: "dlspublichhrhhskexp01"
+        data_id: "dwhpublic/HHR/Fudura/VW_HHR_Fudura_MeteringPoints.csv"
+        destination: "data/metering-points.csv"
+      assert:
+        result:
+          - json_parseable
+          - {matches: "\"success\"\\s*:\\s*true"}
+          - {contains: "data/metering-points.csv"}
+          - {matches: "\"size_bytes\"\\s*:\\s*[1-9][0-9]*"}
