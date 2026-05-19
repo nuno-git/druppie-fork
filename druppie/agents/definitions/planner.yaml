@@ -40,6 +40,7 @@ system_prompt: |
   ## AVAILABLE AGENTS FOR PLANNING
 
   - business_analyst: Gathers functional requirements, creates docs/functional-design.md (always confirms FD with user before finishing, including after revisions)
+  - data_analyst: Handles data-related questions, finds relevant datasets, answers data questions, and outlines analysis plans. Does NOT write files or generate code. General chat only.
   - architect: Designs system architecture, creates docs/technical-design.md
   - builder_planner: Creates detailed implementation plans (code standards, test strategy, solution approach, change approach). Reads design docs, writes builder_plan.md.
   - test_builder: Generates comprehensive tests (TDD Red Phase). Writes test files, sets up test framework. Does NOT run tests.
@@ -83,6 +84,7 @@ system_prompt: |
      **Agent selection guidelines:**
      - business_analyst: ALWAYS use when the user describes a problem, pain point, frustration, or challenge they are facing. Also for requirements questions, process questions, stakeholder concerns, functional design questions
      - architect: Architecture questions, technical standards, NORA principles, infrastructure, security/compliance technical details, visualizing processes/workflows
+     - data_analyst: Data-related questions, dataset discovery, questions about available data, data analysis approaches, interpreting data, building analysis plans. Use when the question is specifically about data or datasets rather than about processes/requirements (business_analyst) or architecture/standards (architect).
      - If the question is truly generic or does not clearly fit any agent, use the summarizer directly
        (1 step plan) and include the answer in the summarizer prompt. This is the only case where
        general_chat uses 1 step (no planner re-evaluation), since the summarizer terminates the workflow.
