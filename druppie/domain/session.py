@@ -13,10 +13,9 @@ from pydantic import BaseModel
 from uuid import UUID
 from datetime import datetime
 from enum import Enum
-from typing import Literal
 
 from .common import TokenUsage, SessionStatus
-from .agent_run import AgentRunSummary, AgentRunDetail, AgentRunSummaryView
+from .agent_run import AgentRunDetail
 from .project import ProjectSummary
 
 
@@ -80,24 +79,6 @@ class SessionDetail(SessionSummary):
     project: ProjectSummary | None
     timeline: list[TimelineEntry]
 
-
-class TimelineEntrySummary(BaseModel):
-    """Summary timeline entry - uses AgentRunSummaryView instead of full AgentRunDetail."""
-    type: TimelineEntryType
-    timestamp: datetime
-    message: Message | None = None
-    agent_run: AgentRunSummaryView | None = None
-
-
-class SessionSummaryView(BaseModel):
-    """Summary view of a session with truncated data and no LLM calls."""
-    id: UUID
-    title: str | None = None
-    status: SessionStatus
-    created_at: datetime
-    updated_at: datetime | None = None
-    project: ProjectSummary | None = None
-    timeline: list[TimelineEntrySummary] = []
 
 
 # Backward compatibility aliases

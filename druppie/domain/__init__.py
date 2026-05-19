@@ -29,12 +29,10 @@ from .agent_definition import AgentDefinition, ApprovalOverride, SandboxConstrai
 from .agent_run import (
     AgentRunDetail,
     AgentRunSummary,
-    AgentRunSummaryView,
     LLMCallDetail,
     LLMRetryDetail,
     NormalizationDetail,
     ToolCallDetail,
-    ToolCallSummary,
 )
 
 # Approval models
@@ -79,9 +77,7 @@ from .session import (
     MessageSummary,
     SessionDetail,
     SessionSummary,
-    SessionSummaryView,
     TimelineEntry,
-    TimelineEntrySummary,
     TimelineEntryType,
 )
 
@@ -109,11 +105,9 @@ __all__ = [
     # Session
     "SessionSummary",
     "SessionDetail",
-    "SessionSummaryView",
     "Message",
     "TimelineEntry",
     "TimelineEntryType",
-    "TimelineEntrySummary",
     # Backward compat
     "ChatItem",
     "ChatItemType",
@@ -121,12 +115,10 @@ __all__ = [
     # Agent run
     "AgentRunSummary",
     "AgentRunDetail",
-    "AgentRunSummaryView",
     "LLMCallDetail",
     "LLMRetryDetail",
     "NormalizationDetail",
     "ToolCallDetail",
-    "ToolCallSummary",
     # Approval
     "ApprovalSummary",
     "ApprovalDetail",
@@ -168,5 +160,4 @@ __all__ = [
 # Rebuild models to resolve forward references (circular imports between session/project)
 ProjectDetail.model_rebuild()
 SessionDetail.model_rebuild()
-SessionSummaryView.model_rebuild()
 BenchmarkRunDetail.model_rebuild()

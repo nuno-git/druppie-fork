@@ -8,8 +8,7 @@ so apps don't need to handle the MCP Streamable HTTP protocol directly.
 
 Auth for /modules/{id}/call: when DRUPPIE_MODULE_API_TOKEN is set in the
 backend environment, callers must pass the matching token in the
-X-Druppie-Token header. In dev mode (token unset) the check is skipped
-with a one-time warning. The token is auto-injected into deployed apps
+X-Druppie-Token header. The token is auto-injected into deployed apps
 via compose_up, so the SDK just forwards it transparently.
 """
 
@@ -27,7 +26,6 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 _MODULE_API_TOKEN_ENV = "DRUPPIE_MODULE_API_TOKEN"
-_dev_mode_warning_logged = False
 
 
 def require_module_api_token(
@@ -35,20 +33,11 @@ def require_module_api_token(
 ) -> None:
     """Validate the X-Druppie-Token header against DRUPPIE_MODULE_API_TOKEN.
 
-    If the env var is unset, the check is skipped with a one-time warning
-    (dev/local mode). If set, requests without a matching header are
-    rejected with 401.
+    If the env var is unset, the check is skipped.
+    If set, requests without a matching header are rejected with 401.
     """
     expected = os.environ.get(_MODULE_API_TOKEN_ENV)
     if not expected:
-        global _dev_mode_warning_logged
-        if not _dev_mode_warning_logged:
-            logger.warning(
-                "%s is not set — /modules/{id}/call is UNAUTHENTICATED. "
-                "Set this env var in production.",
-                _MODULE_API_TOKEN_ENV,
-            )
-            _dev_mode_warning_logged = True
         return
 
     if not x_druppie_token or not hmac.compare_digest(x_druppie_token, expected):

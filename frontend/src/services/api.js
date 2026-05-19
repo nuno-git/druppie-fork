@@ -95,9 +95,6 @@ export const getSessions = (page = 1, limit = 20) =>
 // Get complete session with ALL data (messages, llm_calls, events, approvals, etc.)
 export const getSession = (sessionId) => request(`/api/sessions/${sessionId}`)
 
-// Get session summary (truncated tool calls, no LLM details)
-export const getSessionSummary = (sessionId) => request(`/api/sessions/${sessionId}?summary=true`)
-
 export const resumeSession = (sessionId) =>
   request(`/api/sessions/${sessionId}/resume`, { method: 'POST' })
 
