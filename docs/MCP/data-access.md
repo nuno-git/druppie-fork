@@ -7,7 +7,11 @@ tools. Replaces the standalone `module-azure-datalake` MCP.
 - Container: `druppie-module-data-access` (port `9010`)
 - Source: `druppie/mcp-servers/module-data-access/`
 - Health: `GET http://localhost:9010/health`
-- MCP id: `data-access` (tools referenced as `data_access:<tool_name>`)
+- MCP id: `data-access` (tools referenced as `dataaccess:<tool_name>` —
+  the platform alias is single-word because
+  `druppie/agents/loop.py::_parse_tool_name` splits the LLM-facing
+  `<server>_<tool>` form on the first underscore; a multi-underscore alias
+  would misroute)
 
 ## Configuration
 

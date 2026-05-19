@@ -9,7 +9,7 @@ tool-test:
 
   chain:
     - agent: router
-      tool: data_access:test_connection
+      tool: dataaccess:test_connection
       arguments:
         source_id: "nonexistent-source"
       assert:

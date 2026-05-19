@@ -9,7 +9,7 @@ tool-test:
 
   chain:
     - agent: router
-      tool: data_access:list_sources
+      tool: dataaccess:list_sources
       assert:
         result:
           - json_parseable

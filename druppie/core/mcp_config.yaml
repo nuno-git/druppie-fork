@@ -275,7 +275,7 @@ mcps:
       - name: get_skill
         requires_approval: false
 
-  data_access:
+  dataaccess:
     url: ${MCP_DATA_ACCESS_URL:-http://module-data-access:9010}
     type: module
     inject:

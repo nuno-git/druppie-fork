@@ -9,7 +9,7 @@ tool-test:
 
   chain:
     - agent: router
-      tool: data_access:list_available_data
+      tool: dataaccess:list_available_data
       arguments:
         source_id: "dlspublichhrhhskexp01"
         path: ""

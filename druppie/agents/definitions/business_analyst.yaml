@@ -117,20 +117,20 @@ system_prompt: |
   - coding_read_project_file(repo_name, path) — read FDs, source code
 
   ### Level 3: Available data sources — DIRECT tool calls (instant)
-  Call these data_access tools when the user's question or requirement
+  Call these dataaccess tools when the user's question or requirement
   touches on what data exists (general_chat questions like "which data is
   available", or create_project / update_project where the solution will
   read from an existing data lake / SQL source):
-  - data_access_list_sources() — which sources are configured (Azure Data
+  - dataaccess_list_sources() — which sources are configured (Azure Data
     Lake, Azure SQL, …)
-  - data_access_list_available_data(source_id, path, recursive) — for
+  - dataaccess_list_available_data(source_id, path, recursive) — for
     Azure Data Lake: containers / files; for Azure SQL: tables
-  - data_access_get_schema(source_id, data_id) — column metadata for a
+  - dataaccess_get_schema(source_id, data_id) — column metadata for a
     table or file
-  - data_access_read_data(source_id, data_id, limit=…) — sample rows
+  - dataaccess_read_data(source_id, data_id, limit=…) — sample rows
     (ALWAYS pass a small limit when sampling for discovery — do not pull
     the full table into context)
-  - data_access_test_connection(source_id) — verify a source is reachable
+  - dataaccess_test_connection(source_id) — verify a source is reachable
 
   IMPORTANT: These are regular MCP tool calls, NOT sandbox tasks.
 
@@ -1018,7 +1018,7 @@ mcps:
     - get_module
     - search_modules
     - list_components
-  data_access:
+  dataaccess:
     - list_sources
     - test_connection
     - list_available_data

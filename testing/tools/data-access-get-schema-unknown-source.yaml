@@ -9,7 +9,7 @@ tool-test:
 
   chain:
     - agent: router
-      tool: data_access:get_schema
+      tool: dataaccess:get_schema
       arguments:
         source_id: "nonexistent-source"
         data_id: "some.table"
