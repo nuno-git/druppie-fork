@@ -81,10 +81,16 @@ class SessionDetail(SessionSummary):
     timeline: list[TimelineEntry]
 
 
+class MessageSummary(BaseModel):
+    """Minimal message for summary view."""
+    role: str
+    content: str | None = None
+
+
 class TimelineEntrySummary(BaseModel):
     """Summary timeline entry - stripped down."""
     type: TimelineEntryType
-    message: Message | None = None
+    message: MessageSummary | None = None
     agent_run: AgentRunSummaryView | None = None
 
 
@@ -99,4 +105,3 @@ class SessionSummaryView(BaseModel):
 # Backward compatibility aliases
 ChatItemType = TimelineEntryType
 ChatItem = TimelineEntry
-MessageSummary = Message

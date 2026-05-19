@@ -41,16 +41,21 @@ def build_session_summary(detail: Any) -> "SessionSummaryView":
     - Truncates tool arguments/results to 50 words
     - Keeps error messages
     """
-    from druppie.domain.session import SessionSummaryView, TimelineEntrySummary
+    from druppie.domain.session import SessionSummaryView, TimelineEntrySummary, MessageSummary
     from druppie.domain.agent_run import AgentRunSummaryView, ToolCallSummary
 
     summary_timeline = []
     for entry in detail.timeline:
         if entry.type.value == "message" or entry.message is not None:
+            msg = entry.message
+            summary_msg = MessageSummary(
+                role=msg.role,
+                content=msg.content,
+            ) if msg else None
             summary_timeline.append(
                 TimelineEntrySummary(
                     type=entry.type,
-                    message=entry.message,
+                    message=summary_msg,
                     agent_run=None,
                 )
             )
