@@ -5,6 +5,7 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y \
     unixodbc-dev \
     gcc \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 COPY module-data-access/requirements.txt .
