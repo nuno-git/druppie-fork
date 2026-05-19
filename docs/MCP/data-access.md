@@ -76,6 +76,24 @@ Builder when consuming sample data, most likely).
 - Azure SQL: SQL `WHERE` clause fragment.
 - Azure Data Lake: pandas `DataFrame.query()` expression.
 
+### CSV robustness
+
+`read_data` and `get_schema` against CSV files in Azure Data Lake:
+
+- Open with `encoding="utf-8-sig"` so any UTF-8 BOM in the file is
+  stripped — without this the first column name comes back as
+  `﻿<name>` and `df["<name>"]` lookups fail.
+- Read with `on_bad_lines="skip"` so rows whose field count does not
+  match the header are dropped instead of failing the whole call.
+  Real-world exports often have unquoted commas in free-text columns
+  (e.g. Dutch descriptions in `Asset_Omschrijving`); this is a data
+  quality bug at source, not in the adapter.
+- The number of skipped rows is reported in two places on the success
+  response: `warnings: ["Skipped N malformed row(s) …"]` (so an agent
+  surfaces it to the user) and `metadata.skipped_rows: N` (machine
+  readable). Both are present even when zero rows were skipped
+  (warnings list is empty, count is `0`).
+
 ## Security boundaries
 
 - **Workspace escape guard** (`v1/tools.py:148-156`). `download_data`

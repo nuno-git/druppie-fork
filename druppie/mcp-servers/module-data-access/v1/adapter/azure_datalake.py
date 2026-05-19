@@ -123,7 +123,14 @@ class AzureDataLakeAdapter(BaseDataSourceAdapter):
                     ),
                 }
             elif file_type == "csv":
-                df = pd.read_csv(io.BytesIO(content), nrows=0)
+                # utf-8-sig strips a leading BOM so the first column name
+                # doesn't come back as "﻿<name>".
+                df = pd.read_csv(
+                    io.BytesIO(content),
+                    nrows=0,
+                    on_bad_lines="skip",
+                    encoding="utf-8-sig",
+                )
                 columns = [{"name": col, "type": str(dtype)} for col, dtype in df.dtypes.items()]
                 return {
                     "success": True,
@@ -157,10 +164,35 @@ class AzureDataLakeAdapter(BaseDataSourceAdapter):
 
             file_type = self._get_file_type(file_path)
 
+            warnings: list[str] = []
+            skipped_rows = 0
             if file_type == "parquet":
                 df = pd.read_parquet(io.BytesIO(content))
             elif file_type == "csv":
-                df = pd.read_csv(io.BytesIO(content))
+                # Tolerate malformed rows (mismatched field counts) so a
+                # single bad line doesn't fail the whole read. Real-world
+                # data lake CSVs often have embedded delimiters or stray
+                # rows; surfacing them as errors blocks all discovery.
+                # utf-8-sig strips any leading BOM.
+                df = pd.read_csv(
+                    io.BytesIO(content),
+                    on_bad_lines="skip",
+                    encoding="utf-8-sig",
+                )
+                # Count rows pandas skipped so the caller can see that the
+                # source CSV is malformed. content.count(b"\n") gives the
+                # number of newline-terminated lines; subtract 1 for the
+                # header. Off-by-one for files without a trailing newline
+                # is acceptable for a discovery surface.
+                total_lines = content.count(b"\n")
+                expected_data_rows = max(0, total_lines - 1)
+                skipped_rows = max(0, expected_data_rows - len(df))
+                if skipped_rows > 0:
+                    warnings.append(
+                        f"Skipped {skipped_rows} malformed row(s) in source CSV — "
+                        f"field count did not match the {len(df.columns)}-column header. "
+                        "Common cause: unquoted commas in free-text columns at the source."
+                    )
             else:
                 return {
                     "success": False,
@@ -181,11 +213,13 @@ class AzureDataLakeAdapter(BaseDataSourceAdapter):
                 "data": df.to_dict(orient="records"),
                 "row_count": len(df),
                 "columns": list(df.columns),
+                "warnings": warnings,
                 "metadata": {
                     "file_type": file_type,
                     "filtered": filter_expr is not None,
                     "limited": limit is not None,
                     "offset": offset,
+                    "skipped_rows": skipped_rows,
                 },
             }
         except Exception as e:
