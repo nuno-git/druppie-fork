@@ -289,7 +289,7 @@ class BoundedOrchestrator:
         """Handle HITL questions and approval gates during agent execution.
 
         Loops until the session is no longer paused (completed, failed, or
-        all real agents done). Has a 10-minute wall-clock timeout to prevent
+        all real agents done). Has a 30-minute wall-clock timeout to prevent
         hanging on stalled LLM calls.
         """
         from druppie.db.models import Session as DBSession

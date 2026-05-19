@@ -4,7 +4,7 @@ How to evaluate the Business Analyst agent using the standardized test suite.
 
 ## Overview
 
-Run the full BA test suite (13 tests) to measure how well the BA agent performs
+Run the full BA test suite (11 tests) to measure how well the BA agent performs
 across a range of expected behaviors. Each evaluation run consists of 5 iterations
 to account for LLM non-determinism. Results reveal which behaviors are reliable,
 which are flaky, and which consistently fail.
@@ -36,7 +36,7 @@ consistent scoring:
 
 ## Test suite
 
-All 13 tests are tagged `business_analyst` and can be run as a batch:
+All 11 tests are tagged `business_analyst` and can be run as a batch:
 
 | Test | What it checks |
 |------|---------------|
@@ -44,13 +44,11 @@ All 13 tests are tagged `business_analyst` and can be run as a batch:
 | ba-chat-routes-to-architect | Hands off to architect when user pivots to technical question |
 | ba-clarifies-vague-terms | Asks user to clarify vague terms instead of inventing numbers |
 | ba-context-gathering | Calls registry/project tools before starting elicitation |
-| ba-cooperative-full-fd | Happy path: produces complete FD with cooperative user |
+| ba-cooperative-full-fd | Happy path: produces complete FD with cooperative user. Also checks no technical jargon in user questions and platform standards not restated as project-specific NFRs |
 | ba-design-no-bias | Writes WHAT not HOW — no solution/technology bias |
 | ba-fd-reject-then-approve | Handles FD rejection, revises, gets approval |
 | ba-general-chat-advice | Gives advice in general_chat without starting project intake |
 | ba-no-fd-for-bugfix | Identifies bug report as NO_FD_CHANGE |
-| ba-no-technical-jargon | Avoids technical jargon in user-facing questions |
-| ba-platform-standards-not-restated | Does not restate platform defaults as project-specific NFRs |
 | ba-refuses-skip-questions | Refuses when user tries to skip all questions |
 | ba-unpacks-solution-speak | Digs into underlying problem behind solution-speak |
 
@@ -115,7 +113,7 @@ curl -s "http://localhost:8000/api/evaluations/run-status/$RUN_ID" \
   -H "Authorization: Bearer $TOKEN" | jq .
 ```
 
-A full batch takes approximately 2-3 hours (13 tests, ~10-15 min average each).
+A full batch takes approximately 2-3 hours (11 tests, ~10-15 min average each).
 
 ### 4. Repeat 5 times
 
@@ -161,7 +159,7 @@ curl -s "http://localhost:8000/api/evaluations/batch/$BATCH_ID/assertions" \
 
 For each evaluation (5 iterations), compute:
 
-1. **Aggregate pass rate**: total tests passed / total tests run (out of 65)
+1. **Aggregate pass rate**: total tests passed / total tests run (out of 55)
 2. **Per-test pass rate**: how often each test passes across 5 runs (out of 5)
 3. **Consistency**: standard deviation of pass rate across iterations
 4. **Duration**: average time per test and per batch
@@ -190,11 +188,9 @@ LLMs), use this template:
 | ba-fd-reject-then-approve | /5 | /5 | |
 | ba-general-chat-advice | /5 | /5 | |
 | ba-no-fd-for-bugfix | /5 | /5 | |
-| ba-no-technical-jargon | /5 | /5 | |
-| ba-platform-standards-not-restated | /5 | /5 | |
 | ba-refuses-skip-questions | /5 | /5 | |
 | ba-unpacks-solution-speak | /5 | /5 | |
-| **Total** | **/65** | **/65** | |
+| **Total** | **/55** | **/55** | |
 
 ## Notes
 

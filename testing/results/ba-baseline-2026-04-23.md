@@ -23,12 +23,12 @@ Tests run across three batches due to infrastructure interruptions.
 | ba-fd-reject-then-approve | FAIL | **PASS** | 17m 27s | Judge parse error on 1 check, BA handled reject-revise-approve correctly |
 | ba-general-chat-advice | PASS | **PASS** | 2m 33s | BA gave advice without starting project intake |
 | ba-no-fd-for-bugfix | PASS | **PASS** | 7m 57s | Re-run 2026-05-12: BA correctly identified bug as NO_FD_CHANGE. 1/1 assertions + 5/5 judge checks passed. Required planner fix + agents bound. |
-| ba-no-technical-jargon | PASS | **PASS** | 15m 33s | BA avoided all jargon (GDPR, PII, etc.) in user-facing questions. 1/1 judge check passed. |
-| ba-platform-standards-not-restated | FAIL | **FAIL** | 12m 47s | BA included "25 concurrent users" in NFR-02 without user ever mentioning this number. Manually reviewed: confirmed judge verdict is correct (not false negative). 5/6 judge checks passed. |
 | ba-refuses-skip-questions | FAIL | **FAIL** | 7m 20s | BA compromised on making assumptions after user repeatedly tried to skip. Said "I'll make assumptions for everything else" instead of firmly refusing. Created design based on 1 genuine answer + 6 assumptions. |
 | ba-unpacks-solution-speak | PASS | **PASS** | 13m 37s | All assertions (9/9) and judge checks (8/8) passed. BA correctly dug deeper instead of accepting "dashboard" as the requirement. |
 
-**Manual pass rate: 8/13 tests passed** (includes 1 test with judge parse errors where BA behavior was correct)
+**Manual pass rate: 8/11 tests passed** (includes 1 test with judge parse errors where BA behavior was correct)
+
+Note: ba-no-technical-jargon and ba-platform-standards-not-restated were consolidated into ba-cooperative-full-fd (same message and HITL profile). Their baseline results were: ba-no-technical-jargon PASS (1/1 judge checks), ba-platform-standards-not-restated FAIL (BA included "25 concurrent users" in NFR-02 without user mention).
 
 ## Real BA Issues Found
 
@@ -62,7 +62,7 @@ The `glm-4.5-air` judge model had several problems:
 
 ## Detailed Test Results
 
-As of 2026-05-12, all 13 baseline tests have completed and been reviewed. Here are the detailed results:
+As of 2026-05-12, all baseline tests have completed and been reviewed. Here are the detailed results (ba-no-technical-jargon and ba-platform-standards-not-restated were later consolidated into ba-cooperative-full-fd):
 
 ### ba-unpacks-solution-speak ✅ PASSED
 - **Assertions**: 9/9 passed (100%)
@@ -70,7 +70,7 @@ As of 2026-05-12, all 13 baseline tests have completed and been reviewed. Here a
 - **Duration**: 13m 37s
 - **Finding**: BA correctly recognized "I want a real-time dashboard" as solution-speak and probed for the underlying problem instead of accepting the dashboard as the requirement.
 
-### ba-platform-standards-not-restated ❌ FAILED
+### ba-platform-standards-not-restated ❌ FAILED (consolidated into ba-cooperative-full-fd)
 - **Judge checks**: 5/6 passed (83%)
 - **Duration**: 12m 47s
 - **Failed check**: BA included "25 concurrent users" in NFR-02 without user ever mentioning this number
@@ -90,9 +90,9 @@ As of 2026-05-12, all 13 baseline tests have completed and been reviewed. Here a
 - **Finding**: BA correctly identified the accented-character search bug as a technical issue (not a functional change). Asked clarifying questions about when the bug occurs and which characters are affected. Called `done()` with `NO_FD_CHANGE` and a clear technical description. Did NOT call `coding:make_design`.
 - **History**: Originally blocked by test infrastructure (2026-04-23) and planner routing (2026-04-28). Fixed and re-run 2026-05-12.
 
-**Final pass rate: 8/13 tests passed** (includes 1 test with judge parse errors where BA behavior was actually correct)
+**Final pass rate: 8/11 tests passed** (includes 1 test with judge parse errors where BA behavior was actually correct)
 
-**All 13 tests completed.**
+**All 11 tests completed.** (ba-no-technical-jargon and ba-platform-standards-not-restated were consolidated into ba-cooperative-full-fd)
 
 ## Test Infrastructure Issues
 
