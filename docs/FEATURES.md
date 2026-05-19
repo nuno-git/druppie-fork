@@ -591,3 +591,17 @@ The Settings page displays system configuration and status (read-only). This pag
 - Environment, version, and LLM provider/model info
 - Configured MCP servers with their available tools
 - Configured agents with model parameters (model, temperature, max tokens) and MCP access
+
+---
+
+## LLM Performance Benchmarking
+
+A standalone CLI benchmark runner (`benchmarks/`) measures LLM performance across models deployed on OpenAI-compatible endpoints (Ollama, vLLM, TGI on Nutanix/Kubernetes).
+
+- **Scenario categories**: latency, generation speed, context scaling (256 → 256K tokens), tool calling overhead, stress/consistency
+- **Metrics**: total latency, time-to-first-token (TTFT), tokens/sec, prompt eval rate
+- **Model configuration tracking**: quantization method, KV cache quant, flash attention, GPU layers — stored with results for reproducibility
+- **Export**: console tables, JSON, CSV
+- **Multi-endpoint support**: configure multiple OpenAI-compatible APIs in `benchmarks/config.yaml`
+
+See [BENCHMARKING.md](BENCHMARKING.md) for usage and [LLM-SELECTION.md](LLM-SELECTION.md) for model selection criteria.

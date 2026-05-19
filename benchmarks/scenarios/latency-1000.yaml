@@ -1,0 +1,71 @@
+scenario:
+  name: latency-1000
+  description: "Latency met ~1000 tokens input"
+  category: latency
+
+  system_prompt: |
+    Je bent een senior software architect die adviseert over het ontwerp van enterprise
+    software systemen. Je hebt diepgaande kennis van microservices, event-driven architectuur,
+    domain-driven design, en cloud-native patterns. Antwoord altijd in het Nederlands.
+  user_prompt: |
+    We hebben een complex waterbeheer systeem dat bestaat uit meerdere subsystemen.
+    Hieronder volgt een gedetailleerde beschrijving van de huidige architectuur en onze
+    uitdagingen.
+
+    Het huidige systeem bestaat uit de volgende componenten:
+
+    1. SCADA Systeem (Supervisory Control and Data Acquisition)
+       - Monitort 2.500+ sensoren verspreid over het beheergebied
+       - Leest elke 5 seconden waterstanden, debieten, en kwaliteitsmetingen
+       - Stuurt gemalen, stuwen, en sluizen aan
+       - Draait op een on-premise Windows Server cluster
+       - Communicatie via OPC-UA protocol
+
+    2. GIS Platform (Geografisch Informatie Systeem)
+       - Bevat alle ruimtelijke data: watergangen, kunstwerken, percelen
+       - PostgreSQL/PostGIS database met 50+ lagen
+       - QGIS Server voor kaartservices (WMS/WFS)
+       - ~500GB aan geodata inclusief luchtfoto's en hoogtemetingen
+
+    3. Asset Management Systeem
+       - Registratie van 15.000+ assets (gemalen, stuwen, duikers, beschoeiingen)
+       - Onderhoudsplanning en -historie
+       - Conditiemetingen en inspecties
+       - SAP-gebaseerd met maatwerk modules
+
+    4. Vergunningen en Handhaving
+       - Vergunningaanvragen voor lozingen, onttrekkingen, en werkzaamheden
+       - Toezicht en handhaving workflows
+       - Zaaksysteem gebaseerd op de GEMMA standaard
+       - Koppeling met het Digitaal Stelsel Omgevingswet (DSO)
+
+    5. Financieel Systeem
+       - Zuiveringsheffing en watersysteemheffing berekeningen
+       - 300.000+ belastingplichtigen
+       - Koppeling met BAG, BRK, en WOZ basisregistraties
+       - Facturering en incasso via SEPA
+
+    6. Hydrologisch Model
+       - Sobek/D-Hydro model van het complete watersysteem
+       - Realtime voorspellingen op basis van neerslagdata van KNMI
+       - Scenario berekeningen voor klimaatadaptatie
+       - Draait op een HPC cluster met 128 cores
+
+    Onze uitdagingen:
+    - De systemen zijn grotendeels silo's met point-to-point integraties
+    - Er zijn 47 verschillende koppelingen die regelmatig onderhoud vragen
+    - Realtime data uit SCADA is moeilijk te combineren met GIS en asset data
+    - Het hydrologisch model heeft actuele asset data nodig maar krijgt die met vertraging
+    - De vergunningverlening heeft geen directe toegang tot waterkwaliteitsdata
+    - Er is geen centraal dataplatform voor analyses en rapportages
+    - De IT-afdeling bestaat uit 8 mensen die al deze systemen beheren
+
+    We willen een integratiestrategie ontwikkelen die:
+    a) De silo's doorbreekt zonder alle systemen te vervangen
+    b) Realtime data beschikbaar maakt voor alle systemen die het nodig hebben
+    c) Een data mesh of data platform opzet voor analyses
+    d) De operationele last voor het IT-team niet significant verhoogt
+    e) Past binnen een budget van 2 miljoen euro over 3 jaar
+    f) Voldoet aan de Baseline Informatiebeveiliging Overheid (BIO)
+
+    Geef een architectuurvoorstel met concrete technologiekeuzes en een fasering.

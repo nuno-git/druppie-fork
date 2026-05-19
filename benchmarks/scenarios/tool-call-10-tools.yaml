@@ -1,0 +1,113 @@
+scenario:
+  name: tool-call-10-tools
+  description: "Tool calling overhead met 10 tools"
+  category: tool_overhead
+
+  system_prompt: "Je bent een assistent die taken uitvoert via tools. Gebruik de beschikbare tools."
+  user_prompt: "Zoek alle projecten die te maken hebben met waterkwaliteit"
+
+  tools:
+    - type: function
+      function:
+        name: create_project
+        description: "Maak een nieuw project aan"
+        parameters:
+          type: object
+          properties:
+            name: { type: string }
+            description: { type: string }
+          required: [name]
+    - type: function
+      function:
+        name: search_projects
+        description: "Zoek bestaande projecten op basis van een zoekterm"
+        parameters:
+          type: object
+          properties:
+            query: { type: string }
+            status: { type: string, enum: [active, archived, all] }
+          required: [query]
+    - type: function
+      function:
+        name: delete_project
+        description: "Verwijder een project permanent"
+        parameters:
+          type: object
+          properties:
+            project_id: { type: string }
+          required: [project_id]
+    - type: function
+      function:
+        name: update_project
+        description: "Werk de details van een project bij"
+        parameters:
+          type: object
+          properties:
+            project_id: { type: string }
+            name: { type: string }
+            description: { type: string }
+          required: [project_id]
+    - type: function
+      function:
+        name: list_users
+        description: "Toon alle gebruikers in het systeem"
+        parameters:
+          type: object
+          properties:
+            role: { type: string, enum: [admin, developer, analyst, user] }
+    - type: function
+      function:
+        name: assign_user
+        description: "Wijs een gebruiker toe aan een project"
+        parameters:
+          type: object
+          properties:
+            project_id: { type: string }
+            user_id: { type: string }
+            role: { type: string }
+          required: [project_id, user_id]
+    - type: function
+      function:
+        name: create_task
+        description: "Maak een nieuwe taak aan binnen een project"
+        parameters:
+          type: object
+          properties:
+            project_id: { type: string }
+            title: { type: string }
+            description: { type: string }
+            priority: { type: string, enum: [low, medium, high, critical] }
+          required: [project_id, title]
+    - type: function
+      function:
+        name: get_metrics
+        description: "Haal performance metrics op voor een project"
+        parameters:
+          type: object
+          properties:
+            project_id: { type: string }
+            metric_type: { type: string, enum: [latency, throughput, errors, uptime] }
+            period: { type: string, enum: [hour, day, week, month] }
+          required: [project_id, metric_type]
+    - type: function
+      function:
+        name: send_notification
+        description: "Stuur een notificatie naar een gebruiker of team"
+        parameters:
+          type: object
+          properties:
+            recipient: { type: string }
+            message: { type: string }
+            channel: { type: string, enum: [email, slack, teams] }
+          required: [recipient, message]
+    - type: function
+      function:
+        name: generate_report
+        description: "Genereer een rapport voor een project"
+        parameters:
+          type: object
+          properties:
+            project_id: { type: string }
+            report_type: { type: string, enum: [status, progress, quality, security] }
+            format: { type: string, enum: [pdf, html, markdown] }
+          required: [project_id, report_type]

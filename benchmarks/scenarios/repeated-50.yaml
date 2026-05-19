@@ -1,0 +1,8 @@
+scenario:
+  name: repeated-50
+  description: "Consistentie/stabiliteit: zelfde korte prompt 10x achter elkaar"
+  category: stress
+  repeat: 10
+
+  system_prompt: "Je bent een behulpzame assistent. Antwoord kort in het Nederlands."
+  user_prompt: "Wat is de hoofdstad van Nederland?"
