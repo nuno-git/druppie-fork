@@ -1,0 +1,95 @@
+## Tool Tests: Data Access MCP
+## Tests all 6 data_access tools
+
+tool-test:
+  name: data-access-list-sources
+  description: "List all configured data sources"
+  tags: [data-access, mcp]
+
+  chain:
+    - agent: router
+      tool: data_access:list_sources
+      assert:
+        result:
+          - json_parseable
+          - {contains: "sources"}
+          - {contains: "count"}
+
+tool-test:
+  name: data-access-test-connection-unknown
+  description: "Test connection to unknown source returns error"
+  tags: [data-access, mcp, error-handling]
+
+  chain:
+    - agent: router
+      tool: data_access:test_connection
+      arguments:
+        source_id: "nonexistent-source"
+      assert:
+        result:
+          - json_parseable
+          - {contains: "error"}
+
+tool-test:
+  name: data-access-list-data-unknown
+  description: "List available data from unknown source returns error"
+  tags: [data-access, mcp, error-handling]
+
+  chain:
+    - agent: router
+      tool: data_access:list_available_data
+      arguments:
+        source_id: "nonexistent-source"
+      assert:
+        result:
+          - json_parseable
+          - {contains: "error"}
+
+tool-test:
+  name: data-access-get-schema-unknown
+  description: "Get schema from unknown source returns error"
+  tags: [data-access, mcp, error-handling]
+
+  chain:
+    - agent: router
+      tool: data_access:get_schema
+      arguments:
+        source_id: "nonexistent-source"
+        data_id: "some.table"
+      assert:
+        result:
+          - json_parseable
+          - {contains: "error"}
+
+tool-test:
+  name: data-access-read-data-unknown
+  description: "Read data from unknown source returns error"
+  tags: [data-access, mcp, error-handling]
+
+  chain:
+    - agent: router
+      tool: data_access:read_data
+      arguments:
+        source_id: "nonexistent-source"
+        data_id: "some.table"
+      assert:
+        result:
+          - json_parseable
+          - {contains: "error"}
+
+tool-test:
+  name: data-access-download-data-unknown
+  description: "Download data from unknown source returns error"
+  tags: [data-access, mcp, error-handling]
+
+  chain:
+    - agent: router
+      tool: data_access:download_data
+      arguments:
+        source_id: "nonexistent-source"
+        data_id: "some.table"
+        destination: "test-output.csv"
+      assert:
+        result:
+          - json_parseable
+          - {contains: "error"}
