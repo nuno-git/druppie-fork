@@ -116,6 +116,7 @@ class AgentRunDetail(AgentRunSummary):
 
     # The execution trace - each LLM call includes its tool executions
     llm_calls: list[LLMCallDetail] = []
+    subagent_runs: list[AgentRunDetail] = []
 
 
 class ToolCallSummary(BaseModel):
