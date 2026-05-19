@@ -32,7 +32,7 @@ SessionDetail
 **Summary mode behavior:**
 - Remove `llm_calls` entirely (no LLM prompt/completion details)
 - Show `agent_run.status`, `agent_run.agent_id`, `agent_run.agent_name`
-- Extract tool calls from the first LLM call (if any) and lift them to the agent_run level
+- Extract tool calls from ALL LLM calls and lift them to the agent_run level
 - Truncate `tool_call.arguments` and `tool_call.result` to 50 words
 - Keep all other fields as-is
 
