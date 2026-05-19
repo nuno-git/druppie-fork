@@ -35,9 +35,11 @@ def truncate_value(value: Any, max_words: int = 50) -> str | None:
 def build_session_summary(detail: Any) -> "SessionSummaryView":
     """Build a summary view from a full SessionDetail.
 
-    - Strips llm_calls entirely
-    - Extracts tool_calls from LLM calls and lifts to agent_run level
+    - Strips all IDs, timestamps, token usage
+    - Strips LLM calls entirely
+    - Extracts tool calls from LLM calls and lifts to agent_run level
     - Truncates tool arguments/results to 50 words
+    - Keeps error messages
     """
     from druppie.domain.session import SessionSummaryView, TimelineEntrySummary
     from druppie.domain.agent_run import AgentRunSummaryView, ToolCallSummary
@@ -48,7 +50,6 @@ def build_session_summary(detail: Any) -> "SessionSummaryView":
             summary_timeline.append(
                 TimelineEntrySummary(
                     type=entry.type,
-                    timestamp=entry.timestamp,
                     message=entry.message,
                     agent_run=None,
                 )
@@ -64,7 +65,6 @@ def build_session_summary(detail: Any) -> "SessionSummaryView":
                         for tc in llm_call.tool_calls:
                             tool_call_summaries.append(
                                 ToolCallSummary(
-                                    id=str(tc.id),
                                     name=tc.tool_name,
                                     server_name=tc.mcp_server,
                                     status=tc.status.value
@@ -77,41 +77,31 @@ def build_session_summary(detail: Any) -> "SessionSummaryView":
                             )
 
             summary_ar = AgentRunSummaryView(
-                id=ar.id,
                 agent_id=ar.agent_id,
                 status=ar.status.value
                 if hasattr(ar.status, "value")
                 else str(ar.status),
                 error_message=ar.error_message,
-                token_usage=ar.token_usage,
-                started_at=ar.started_at,
-                completed_at=ar.completed_at,
                 tool_calls=tool_call_summaries,
             )
 
             summary_timeline.append(
                 TimelineEntrySummary(
                     type=entry.type,
-                    timestamp=entry.timestamp,
                     message=None,
                     agent_run=summary_ar,
                 )
             )
         else:
-            # Fallback: keep entry as-is with minimal data
             summary_timeline.append(
                 TimelineEntrySummary(
                     type=entry.type,
-                    timestamp=entry.timestamp,
                 )
             )
 
     return SessionSummaryView(
-        id=detail.id,
         title=detail.title,
         status=detail.status,
-        created_at=detail.created_at,
-        updated_at=detail.updated_at,
         project=detail.project,
         timeline=summary_timeline,
     )

@@ -120,8 +120,6 @@ class AgentRunDetail(AgentRunSummary):
 
 class ToolCallSummary(BaseModel):
     """Truncated tool call for summary view."""
-
-    id: str
     name: str
     server_name: str | None = None
     status: str
@@ -131,13 +129,8 @@ class ToolCallSummary(BaseModel):
 
 
 class AgentRunSummaryView(BaseModel):
-    """Summary view of agent run - no LLM calls, truncated tool results."""
-
-    id: UUID
+    """Summary view of agent run - minimal overview."""
     agent_id: str
     status: str
     error_message: str | None = None
-    token_usage: TokenUsage
-    started_at: datetime | None = None
-    completed_at: datetime | None = None
     tool_calls: list[ToolCallSummary] = []

@@ -82,20 +82,16 @@ class SessionDetail(SessionSummary):
 
 
 class TimelineEntrySummary(BaseModel):
-    """Summary timeline entry - uses AgentRunSummaryView instead of full AgentRunDetail."""
+    """Summary timeline entry - stripped down."""
     type: TimelineEntryType
-    timestamp: datetime
     message: Message | None = None
     agent_run: AgentRunSummaryView | None = None
 
 
 class SessionSummaryView(BaseModel):
-    """Summary view of a session with truncated data and no LLM calls."""
-    id: UUID
+    """Minimal summary view of a session."""
     title: str | None = None
     status: SessionStatus
-    created_at: datetime
-    updated_at: datetime | None = None
     project: ProjectSummary | None = None
     timeline: list[TimelineEntrySummary] = []
 

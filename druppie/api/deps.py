@@ -309,7 +309,40 @@ async def get_optional_user(
     auth: AuthService = Depends(get_auth),
 ) -> dict | None:
     """Get current user if authenticated, or None."""
-    return auth.validate_request(authorization)
+    user = auth.validate_request(authorization)
+    if not user:
+        return None
+
+    # Sync user to database (creates if doesn't exist)
+    # This is critical - many operations require user to exist in DB
+    user_id = user.get("sub")
+    if user_id:
+        from druppie.repositories import UserRepository
+        db = SessionLocal()
+        try:
+            user_repo = UserRepository(db)
+            # Use username from token, fall back to user_id if not present
+            username = user.get("preferred_username") or user.get("email") or user_id
+            user_repo.get_or_create(
+                user_id=UUID(user_id),
+                username=username,
+                email=user.get("email"),
+                display_name=user.get("name"),
+            )
+            db.commit()
+            logger.debug("user_synced", user_id=user_id, username=username)
+        except Exception as e:
+            db.rollback()
+            logger.error(
+                "user_sync_failed",
+                user_id=user_id,
+                error=str(e),
+                exc_info=True,
+            )
+        finally:
+            db.close()
+
+    return user
 
 
 # Internal API key for MCP servers to call backend.
