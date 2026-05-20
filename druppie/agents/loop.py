@@ -370,6 +370,9 @@ class AgentLoop:
             duration_ms=duration_ms,
             actual_provider=response.provider,
             actual_model=response.model,
+            thinking_content=response.thinking_content,
+            raw_request=response.raw_request,
+            raw_response=response.raw_response,
         )
         self.db.commit()
 

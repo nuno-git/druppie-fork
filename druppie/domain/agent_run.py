@@ -84,7 +84,10 @@ class LLMCallDetail(BaseModel):
 
     # What the LLM returned (text + raw tool call requests)
     response_content: str | None = None
+    thinking_content: str | None = None
     response_tool_calls: list[dict] | None = None
+    raw_request: dict | None = None
+    raw_response: dict | None = None
 
     # Retry audit trail
     retries: list[LLMRetryDetail] = []
@@ -97,6 +100,7 @@ class AgentRunSummary(BaseModel):
     """Lightweight agent run for chat timeline."""
     id: UUID
     session_id: UUID
+    parent_run_id: UUID | None = None
     agent_id: str
     status: AgentRunStatus
     error_message: str | None = None

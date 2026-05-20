@@ -10,26 +10,34 @@ profiles:
   standard:
     - provider: zai
       model: glm-5
+      thinking: enabled
     - provider: deepinfra
       model: moonshotai/Kimi-K2.5-Turbo
+      thinking: enabled
     - provider: zai
       model: glm-4.7
+      thinking: enabled
     - provider: ollama
       model: gpt-oss:120b
     - provider: azure_foundry
       model: GPT-5-MINI
+      reasoning_effort: low
 
   cheap:
     - provider: zai
       model: glm-5
+      thinking: disabled
     - provider: deepinfra
       model: moonshotai/Kimi-K2.5-Turbo
+      thinking: disabled
     - provider: zai
       model: glm-4.7
+      thinking: disabled
     - provider: ollama
       model: gpt-oss:20b
     - provider: azure_foundry
       model: GPT-5-MINI
+      reasoning_effort: low
 
 
   ollama:

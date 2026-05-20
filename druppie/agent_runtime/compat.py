@@ -42,6 +42,8 @@ async def adapt_llm(old_llm) -> Callable:
         response = await old_llm.achat(messages, tools, max_tokens=max_tokens)
 
         message: dict[str, Any] = {"role": "assistant", "content": response.content}
+        if response.thinking_content:
+            message["reasoning_content"] = response.thinking_content
         if response.tool_calls:
             # Convert internal tool_calls format to OpenAI wire format.
             # Internal: {"id": ..., "name": ..., "args": dict}
@@ -60,7 +62,7 @@ async def adapt_llm(old_llm) -> Callable:
                 for tc in response.tool_calls
             ]
 
-        return {
+        result = {
             "choices": [{"message": message, "finish_reason": response.finish_reason or "stop"}],
             "usage": {
                 "prompt_tokens": response.prompt_tokens or 0,
@@ -69,6 +71,11 @@ async def adapt_llm(old_llm) -> Callable:
             },
             "model": response.model or "",
         }
+        if response.raw_request:
+            result["raw_request"] = response.raw_request
+        if response.raw_response:
+            result["raw_response"] = response.raw_response
+        return result
 
     return new_llm
 
@@ -439,6 +446,8 @@ def create_event_persister(
                 response_content = msg.get("content") or ""
                 finish_reason = choice.get("finish_reason", "")
 
+                thinking_content = msg.get("reasoning_content") or msg.get("thinking") or None
+
                 raw_response_json = json.dumps({
                     "content": response_content,
                     "tool_calls": [
@@ -475,6 +484,9 @@ def create_event_persister(
                     completion_tokens=completion_tokens,
                     duration_ms=duration_ms,
                     actual_model=model,
+                    thinking_content=thinking_content,
+                    raw_request=data.get("raw_request"),
+                    raw_response=data.get("raw_response"),
                 )
                 execution_repo.db.commit()
                 logger.warning("LLM_RESPONSE update_llm_response OK [llm_call=%s]", llm_call_id)

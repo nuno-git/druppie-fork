@@ -408,7 +408,10 @@ class SessionRepository(BaseRepository):
                 messages=messages,
                 tools_provided=llm.tools_provided,
                 response_content=response_content,
+                thinking_content=llm.thinking_content,
                 response_tool_calls=response_tool_calls,
+                raw_request=llm.raw_request if llm.raw_request else None,
+                raw_response=llm.raw_response if llm.raw_response else None,
                 retries=[
                     LLMRetryDetail(
                         attempt=r.attempt,

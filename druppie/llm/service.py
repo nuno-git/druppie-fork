@@ -117,6 +117,10 @@ class LLMService:
 
         resolved = resolve_model(agent_def)
 
+        # Merge agent-level > profile-level thinking config
+        effective_thinking = agent_def.thinking or resolved.thinking
+        effective_effort = agent_def.reasoning_effort or resolved.reasoning_effort
+
         # Validate API key for the resolved provider
         api_key_env = self.PROVIDERS.get(resolved.provider)
         if api_key_env and not os.getenv(api_key_env):
@@ -129,6 +133,8 @@ class LLMService:
             provider=resolved.provider,
             model=resolved.model,
             temperature=agent_def.temperature,
+            thinking=effective_thinking,
+            reasoning_effort=effective_effort,
         )
 
         has_fallback = False
@@ -141,6 +147,8 @@ class LLMService:
                     provider=resolved.fallback_provider,
                     model=resolved.fallback_model,
                     temperature=agent_def.temperature,
+                    thinking=effective_thinking,
+                    reasoning_effort=effective_effort,
                 )
                 result = FallbackLLM(primary, fallback)
                 has_fallback = True

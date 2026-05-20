@@ -128,6 +128,8 @@ class AgentDefinition(BaseModel):
     temperature: float = 0.1
     max_tokens: int = 4096
     max_iterations: int = 10
+    thinking: str | None = None
+    reasoning_effort: str | None = None
 
     def get_mcp_names(self) -> list[str]:
         """Get list of MCP server names this agent can use."""

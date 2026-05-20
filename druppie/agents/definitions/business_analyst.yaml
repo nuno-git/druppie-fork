@@ -1062,7 +1062,7 @@ completion_preconditions:
       Do NOT output markdown text — you must use the coding_make_design TOOL.
       Do NOT call done() again until both tool calls have completed successfully.
 
-llm_profile: cheap
+llm_profile: standard
 temperature: 0.2
 max_tokens: 100000
 max_iterations: 50

@@ -376,6 +376,25 @@ const LlmCallSection = ({ llm, index, isOnly }) => {
   const tokens = llm.token_usage?.total_tokens || 0
   const dur = formatDuration(llm.duration_ms)
   const toolCount = llm.tool_calls?.length || 0
+  const [responseMode, setResponseMode] = useState('parsed')
+  const [requestMode, setRequestMode] = useState('parsed')
+
+  const Toggle = ({ value, onChange }) => (
+    <span className="inline-flex rounded overflow-hidden border border-gray-200">
+      <button
+        onClick={() => onChange('parsed')}
+        className={`px-1.5 py-0.5 text-[10px] font-medium transition-colors ${
+          value === 'parsed' ? 'bg-gray-700 text-white' : 'bg-white text-gray-500 hover:bg-gray-50'
+        }`}
+      >Parsed</button>
+      <button
+        onClick={() => onChange('raw')}
+        className={`px-1.5 py-0.5 text-[10px] font-medium transition-colors ${
+          value === 'raw' ? 'bg-gray-700 text-white' : 'bg-white text-gray-500 hover:bg-gray-50'
+        }`}
+      >Raw</button>
+    </span>
+  )
 
   return (
     <div className={!isOnly ? 'border-t border-gray-100 pt-3' : undefined}>
@@ -389,16 +408,44 @@ const LlmCallSection = ({ llm, index, isOnly }) => {
         </div>
       )}
 
-      {/* Response — always visible */}
-      {llm.response_content && (
+      {/* Thinking — collapsible, only if present */}
+      {llm.thinking_content && (
+        <div className="mb-3">
+          <details open>
+            <summary className="cursor-pointer flex items-center gap-1.5 mb-1 select-none">
+              <span className="text-xs font-medium text-amber-600 dark:text-amber-400">💭 Thinking</span>
+              <CopyButton text={llm.thinking_content} label="Copy" className={copyBtnClass} />
+            </summary>
+            <pre className="bg-amber-50/50 border border-amber-100 p-2.5 rounded overflow-auto max-h-64 whitespace-pre-wrap text-xs text-gray-700 leading-relaxed">
+              {llm.thinking_content}
+            </pre>
+          </details>
+        </div>
+      )}
+
+      {/* Response — always visible, with Raw/Parsed toggle */}
+      {(llm.response_content || llm.raw_response) && (
         <div className="mb-3">
           <div className="flex items-center gap-2 mb-1">
             <span className="text-xs font-medium text-gray-500">Response</span>
-            <CopyButton text={llm.response_content} label="Copy" className={copyBtnClass} />
+            {llm.raw_response && <Toggle value={responseMode} onChange={setResponseMode} />}
+            <CopyButton
+              text={responseMode === 'raw' ? JSON.stringify(llm.raw_response, null, 2) : llm.response_content}
+              label="Copy"
+              className={copyBtnClass}
+            />
           </div>
-          <pre className="bg-blue-50/40 border border-blue-100 p-2.5 rounded overflow-auto max-h-64 whitespace-pre-wrap text-xs text-gray-700 leading-relaxed">
-            {llm.response_content}
-          </pre>
+          {responseMode === 'raw' && llm.raw_response ? (
+            <pre className="bg-gray-50 border border-gray-200 p-2.5 rounded overflow-auto max-h-64 whitespace-pre-wrap text-xs text-gray-700 leading-relaxed">
+              {JSON.stringify(llm.raw_response, null, 2)}
+            </pre>
+          ) : (
+            llm.response_content && (
+              <pre className="bg-blue-50/40 border border-blue-100 p-2.5 rounded overflow-auto max-h-64 whitespace-pre-wrap text-xs text-gray-700 leading-relaxed">
+                {llm.response_content}
+              </pre>
+            )
+          )}
         </div>
       )}
 
@@ -420,19 +467,26 @@ const LlmCallSection = ({ llm, index, isOnly }) => {
         <div className="mt-3 flex flex-wrap gap-1.5 text-xs">
           {llm.messages?.length > 0 && (
             <details>
-              <summary className="cursor-pointer text-gray-400 hover:text-gray-600 px-1.5 py-0.5 rounded hover:bg-gray-100 transition-colors select-none">
-                Messages ({llm.messages.length})
+              <summary className="cursor-pointer text-gray-400 hover:text-gray-600 px-1.5 py-0.5 rounded hover:bg-gray-100 transition-colors select-none flex items-center gap-2">
+                <span>Messages ({llm.messages.length})</span>
+                {llm.raw_request && <Toggle value={requestMode} onChange={setRequestMode} />}
               </summary>
-              <div className="mt-1 space-y-2 ml-1">
-                {llm.messages.map((msg, idx) => (
-                  <div key={idx} className="border-l-2 border-gray-300 pl-2">
-                    <span className="font-medium text-gray-500">{msg.role}</span>
-                    <pre className="bg-gray-50 border border-gray-200 p-2 mt-0.5 rounded overflow-auto max-h-32 whitespace-pre-wrap text-gray-700">
-                      {typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content, null, 2)}
-                    </pre>
-                  </div>
-                ))}
-              </div>
+              {requestMode === 'raw' && llm.raw_request ? (
+                <pre className="mt-1 bg-gray-50 border border-gray-200 p-2 rounded overflow-auto max-h-64 whitespace-pre-wrap text-gray-700">
+                  {JSON.stringify(llm.raw_request, null, 2)}
+                </pre>
+              ) : (
+                <div className="mt-1 space-y-2 ml-1">
+                  {llm.messages.map((msg, idx) => (
+                    <div key={idx} className="border-l-2 border-gray-300 pl-2">
+                      <span className="font-medium text-gray-500">{msg.role}</span>
+                      <pre className="bg-gray-50 border border-gray-200 p-2 mt-0.5 rounded overflow-auto max-h-32 whitespace-pre-wrap text-gray-700">
+                        {typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content, null, 2)}
+                      </pre>
+                    </div>
+                  ))}
+                </div>
+              )}
             </details>
           )}
           {llm.tools_provided?.length > 0 && (

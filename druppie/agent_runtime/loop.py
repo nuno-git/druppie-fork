@@ -145,6 +145,8 @@ class AgentLoop:
                 "messages_snapshot": list(messages),
                 "tools_snapshot": list(tools_for_call or []),
                 "duration_ms": _llm_duration_ms,
+                "raw_request": response.get("raw_request"),
+                "raw_response": response.get("raw_response"),
             }))
 
             messages.append(message)

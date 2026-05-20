@@ -63,15 +63,7 @@ class DruppieLogger(CustomLogger if LITELLM_AVAILABLE else object):
 
     def log_pre_api_call(self, model, messages, kwargs):
         """Capture raw request before sending to API."""
-        self.last_request = {
-            "model": model,
-            "messages": messages,
-            "tools": kwargs.get("tools"),
-            "tool_choice": kwargs.get("tool_choice"),
-            "temperature": kwargs.get("temperature"),
-            "max_tokens": kwargs.get("max_tokens"),
-            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        }
+        self.last_request = kwargs
 
     def log_success_event(self, kwargs, response_obj, start_time, end_time):
         """Capture successful response."""
@@ -119,6 +111,7 @@ class DruppieLogger(CustomLogger if LITELLM_AVAILABLE else object):
                 "completion_tokens": response_obj.usage.completion_tokens if response_obj.usage else 0,
                 "total_tokens": response_obj.usage.total_tokens if response_obj.usage else 0,
             },
+            "headers": dict(getattr(response_obj, "_hidden_params", {}).get("additional_headers", {})) if hasattr(response_obj, "_hidden_params") else None,
         }
 
         self.call_history.append(call_record)
@@ -242,6 +235,8 @@ class ChatLiteLLM(BaseLLM):
         max_tokens: int = 16384,
         timeout: float = 300.0,
         max_retries: int = 3,
+        thinking: str | None = None,
+        reasoning_effort: str | None = None,
     ):
         """Initialize LiteLLM provider.
 
@@ -279,6 +274,8 @@ class ChatLiteLLM(BaseLLM):
         self.max_tokens = max_tokens
         self.timeout = timeout
         self.max_retries = max_retries
+        self.thinking = thinking
+        self.reasoning_effort = reasoning_effort
 
         # Model name (user-friendly, e.g., "glm-4.7")
         self._model = model or os.getenv(config["model_env"], "") or config["default_model"]
@@ -349,6 +346,8 @@ class ChatLiteLLM(BaseLLM):
             max_tokens=self.max_tokens,
             timeout=self.timeout,
             max_retries=self.max_retries,
+            thinking=self.thinking,
+            reasoning_effort=self.reasoning_effort,
         )
         new_instance._bound_tools = tools
         return new_instance
@@ -379,6 +378,19 @@ class ChatLiteLLM(BaseLLM):
 
         if self._extra_headers:
             kwargs["extra_headers"] = self._extra_headers
+
+        # Thinking/reasoning — provider-specific dispatch
+        if self.thinking == "enabled":
+            if self.provider in ("zai", "deepinfra"):
+                kwargs.setdefault("extra_body", {})["thinking"] = {"type": "enabled"}
+            elif self.provider == "anthropic":
+                kwargs["thinking"] = {"type": "enabled", "budget_tokens": 10000}
+        elif self.thinking == "disabled":
+            if self.provider in ("zai", "deepinfra"):
+                kwargs.setdefault("extra_body", {})["thinking"] = {"type": "disabled"}
+
+        if self.reasoning_effort:
+            kwargs["reasoning_effort"] = self.reasoning_effort
 
         if effective_tools:
             kwargs["tools"] = effective_tools
@@ -433,7 +445,18 @@ class ChatLiteLLM(BaseLLM):
 
         try:
             response = await acompletion(**kwargs)
-            return self._parse_response(response)
+            _sensitive_keys = {"api_key", "key", "authorization", "token"}
+            raw_request = json.loads(json.dumps(kwargs, default=str)) if kwargs else None
+            if raw_request:
+                for k in _sensitive_keys:
+                    raw_request.pop(k, None)
+            parsed = self._parse_response(response)
+            parsed.raw_request = raw_request
+            try:
+                parsed.raw_response = json.loads(json.dumps(response.model_dump(), default=str))
+            except Exception:
+                parsed.raw_response = None
+            return parsed
         except Exception as e:
             raise self._convert_exception(e)
 
@@ -443,6 +466,12 @@ class ChatLiteLLM(BaseLLM):
         message = choice.message
 
         content = message.content or ""
+
+        thinking_content = None
+        if hasattr(message, 'reasoning_content') and message.reasoning_content:
+            thinking_content = message.reasoning_content
+        elif hasattr(message, 'thinking') and message.thinking:
+            thinking_content = message.thinking
 
         tool_calls = []
         raw_tool_calls = []  # Keep original for debugging
@@ -501,6 +530,7 @@ class ChatLiteLLM(BaseLLM):
             total_tokens=usage.total_tokens if usage else 0,
             model=self.model,  # User-friendly: "zai/glm-4.7"
             provider=self.provider,
+            thinking_content=thinking_content,
         )
 
     def _convert_exception(self, e: Exception) -> LLMError:

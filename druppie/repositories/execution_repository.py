@@ -504,11 +504,15 @@ class ExecutionRepository(BaseRepository):
         duration_ms: int,
         actual_provider: str | None = None,
         actual_model: str | None = None,
+        thinking_content: str | None = None,
+        raw_request: dict | None = None,
+        raw_response: dict | None = None,
     ) -> None:
         """Update LLM call response."""
         llm_call = self.db.query(LlmCall).filter(LlmCall.id == llm_call_id).first()
         if llm_call:
             llm_call.response_content = response_content
+            llm_call.thinking_content = thinking_content
             llm_call.response_tool_calls = response_tool_calls
             llm_call.prompt_tokens = prompt_tokens
             llm_call.completion_tokens = completion_tokens
@@ -518,6 +522,8 @@ class ExecutionRepository(BaseRepository):
                 llm_call.provider = actual_provider
             if actual_model:
                 llm_call.model = actual_model
+            llm_call.raw_request = raw_request
+            llm_call.raw_response = raw_response
             self.db.flush()
 
     def update_llm_error(
