@@ -401,11 +401,13 @@ class GiteaClient:
         repo: str,
         path: str,
         branch: str = "main",
+        owner: str | None = None,
     ) -> dict[str, Any]:
         """Get file contents and SHA from a repository."""
+        repo_owner = owner or self.org
         result = await self._request(
             "GET",
-            f"/repos/{self.org}/{repo}/contents/{path}",
+            f"/repos/{repo_owner}/{repo}/contents/{path}",
             params={"ref": branch},
         )
 
@@ -433,9 +435,11 @@ class GiteaClient:
         repo: str,
         path: str = "",
         branch: str = "main",
+        owner: str | None = None,
     ) -> dict[str, Any]:
         """List files in a directory of a repository."""
-        endpoint = f"/repos/{self.org}/{repo}/contents"
+        repo_owner = owner or self.org
+        endpoint = f"/repos/{repo_owner}/{repo}/contents"
         if path:
             endpoint = f"{endpoint}/{path}"
 
