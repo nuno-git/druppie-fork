@@ -1,0 +1,22 @@
+## Tool Test: Data Access MCP - get_schema on a CSV (live)
+## Verifies get_schema returns column metadata for a known CSV in the
+## configured lake.
+
+tool-test:
+  name: data-access-get-schema-csv
+  description: "get_schema on a known CSV returns column metadata"
+  tags: [data-access, mcp, live]
+
+  chain:
+    - agent: router
+      tool: dataaccess:get_schema
+      arguments:
+        source_id: "dlspublichhrhhskexp01"
+        data_id: "dwhpublic/HHR/Fudura/VW_HHR_Fudura_MeteringPoints.csv"
+      assert:
+        result:
+          - json_parseable
+          - {matches: "\"success\"\\s*:\\s*true"}
+          - {contains: "columns"}
+          - {contains: "meteringPointId"}
+          - {contains: "channelId"}
