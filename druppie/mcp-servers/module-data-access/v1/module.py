@@ -25,11 +25,16 @@ class DataAccessModule:
     def _load_data_sources(self):
         """Load data sources from environment variables.
 
-        Format: DATA_SOURCE_1=type:name:config_parts...
+        Format: DATA_SOURCE_1=type:name:config_blob
 
-        Azure Data Lake: azure-datalake:name:account_name:key
+        Only the type and name are split off the front (split(":", 2)); the
+        remaining config_blob keeps every internal colon. This matters for
+        Azure SQL — connection strings contain colons (e.g. Server=tcp:host)
+        that a naive split would shred.
+
+        Azure Data Lake: azure-datalake:name:account_name[:key]
         Azure SQL (conn string): azure-sql:name:connection_string
-        Azure SQL (OBO): azure-sql-obo:name:tenant_id:client_id:client_secret:scope:server:database
+        Azure SQL (OBO): azure-sql-obo:name:tenant:client:secret:scope:server:database
         """
         for i in range(1, 10):
             config_str = os.getenv(f"DATA_SOURCE_{i}")
@@ -37,39 +42,56 @@ class DataAccessModule:
                 continue
 
             try:
-                parts = config_str.split(":")
-                source_type = parts[0]
-                name = parts[1]
+                head = config_str.split(":", 2)
+                if len(head) < 3:
+                    raise ValueError(
+                        "expected 'type:name:config_blob' (at least 3 "
+                        "colon-separated parts)"
+                    )
+                source_type, name, config_blob = head
 
                 if source_type == "azure-datalake":
+                    # config_blob is account_name[:key]; neither contains a
+                    # colon, so a single maxsplit recovers both.
+                    dl_parts = config_blob.split(":", 1)
                     config = {
                         "source_id": name,
                         "name": name,
-                        "account_name": parts[2],
-                        "key": parts[3] if len(parts) > 3 else None,
+                        "account_name": dl_parts[0],
+                        "key": dl_parts[1] if len(dl_parts) > 1 else None,
                     }
                     adapter = AzureDataLakeAdapter(config)
 
                 elif source_type == "azure-sql":
+                    # config_blob is the full ODBC connection string,
+                    # colons and all.
                     config = {
                         "source_id": name,
                         "name": name,
-                        "connection_string": parts[2],
+                        "connection_string": config_blob,
                     }
                     adapter = AzureSQLAdapter(config)
 
                 elif source_type == "azure-sql-obo":
+                    # Interim client_credentials flow — true on-behalf-of and
+                    # a colon-safe config format are a separate follow-up.
+                    obo = config_blob.split(":")
+                    if len(obo) < 6:
+                        raise ValueError(
+                            "azure-sql-obo expects "
+                            "tenant:client:secret:scope:server:database"
+                        )
                     config = {
                         "source_id": name,
                         "name": name,
                         "use_obo": True,
                         "obo_config": {
-                            "tenant_id": parts[2],
-                            "client_id": parts[3],
-                            "client_secret": parts[4],
-                            "scope": parts[5],
-                            "server": parts[6],
-                            "database": parts[7],
+                            "tenant_id": obo[0],
+                            "client_id": obo[1],
+                            "client_secret": obo[2],
+                            "scope": obo[3],
+                            "server": obo[4],
+                            "database": obo[5],
                         },
                     }
                     adapter = AzureSQLAdapter(config)

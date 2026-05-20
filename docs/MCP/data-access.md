@@ -16,28 +16,76 @@ tools. Replaces the standalone `module-azure-datalake` MCP.
 ## Configuration
 
 Data sources are declared via `DATA_SOURCE_1` … `DATA_SOURCE_9` in `.env`.
-Each entry is a single colon-delimited string: `type:name:config_parts...`.
-The MCP loads them at container startup (see
-`v1/module.py::_load_data_sources`); changes require a `docker compose up -d
---force-recreate --no-deps module-data-access` — a plain `restart` does not
-re-read `.env`.
+Each entry is a colon-delimited string `type:name:config_blob`. Only the
+leading `type` and `name` are split off (`split(":", 2)`); the remaining
+`config_blob` keeps every internal colon, so an ODBC connection string
+(`Server=tcp:host,1433;…`) survives intact. The MCP loads them at container
+startup (see `v1/module.py::_load_data_sources`); changes require a
+`docker compose up -d --force-recreate --no-deps module-data-access` — a
+plain `restart` does not re-read `.env`.
 
 | Source type | Format |
 |---|---|
 | Azure Data Lake (key) | `azure-datalake:<source_id>:<account_name>:<storage_key>` |
 | Azure Data Lake (public) | `azure-datalake:<source_id>:<account_name>` |
-| Azure SQL (connection string) | `azure-sql:<source_id>:<connection_string>` |
-| Azure SQL (OBO token) | `azure-sql-obo:<source_id>:<tenant_id>:<client_id>:<client_secret>:<scope>:<server>:<database>` |
+| Azure SQL (connection string) | `azure-sql:<source_id>:<odbc_connection_string>` |
+| Azure SQL (OBO token — interim) | `azure-sql-obo:<source_id>:<tenant_id>:<client_id>:<client_secret>:<scope>:<server>:<database>` |
 
-`<source_id>` is the handle agents pass back to every other tool. OBO tokens
-are fetched fresh per request and are **never** cached or persisted (see
-`adapter/base.py`).
+`<source_id>` is the handle agents pass back to every other tool.
 
-Example:
+> **Auth status.** `azure-datalake` (key / public) and `azure-sql`
+> (connection string, incl. service-principal auth) are supported and
+> tested. `azure-sql-obo` is **interim**: it currently runs an OAuth
+> `client_credentials` grant (one shared service identity), not a true
+> per-user on-behalf-of exchange — true OBO is a separate follow-up.
+
+Examples:
 
 ```dotenv
 DATA_SOURCE_1=azure-datalake:dlspublichhrhhskexp01:dlspublichhrhhskexp01:<base64-storage-key>
+DATA_SOURCE_3=azure-sql:synapsedwh:Driver={ODBC Driver 18 for SQL Server};Server=<ws>-ondemand.sql.azuresynapse.net;Database=<db>;Authentication=ActiveDirectoryServicePrincipal;UID=<client-id>;PWD=<client-secret>;Encrypt=yes;TrustServerCertificate=no;
 ```
+
+See [Azure SQL setup (Synapse serverless)](#azure-sql-setup-synapse-serverless)
+below for how to provision the endpoint and service principal.
+
+## Azure SQL setup (Synapse serverless)
+
+The `azure-sql` source type connects through `pyodbc` + the Microsoft
+**ODBC Driver 18** (installed in the MCP image — see `Dockerfile`). Steps to
+provision a serverless endpoint and a service principal for it:
+
+1. **Synapse workspace.** Create an Azure Synapse Analytics workspace (or
+   reuse one). The *serverless* SQL pool is built in; its endpoint is
+   `<workspace-name>-ondemand.sql.azuresynapse.net`.
+2. **Service principal.** In Microsoft Entra ID, register an application,
+   then create a client secret. Record the **tenant id**, **client (app)
+   id**, and **secret value**.
+3. **Database + grant.** In the serverless pool create a database, then
+   grant the service principal read access:
+   ```sql
+   -- run on the serverless endpoint, master context
+   CREATE LOGIN [<sp-display-name>] FROM EXTERNAL PROVIDER;
+   -- run in the target database
+   CREATE USER  [<sp-display-name>] FROM LOGIN [<sp-display-name>];
+   ALTER ROLE   db_datareader ADD MEMBER [<sp-display-name>];
+   ```
+   Grant **`db_datareader` only** — read-only is also what bounds the
+   `filter_expr` injection surface (see [Security boundaries](#security-boundaries)).
+4. **Storage access.** If the serverless pool reads lake data via
+   `OPENROWSET` / external tables, give the service principal
+   **Storage Blob Data Reader** on the backing ADLS account.
+5. **Firewall.** On the Synapse workspace, allow the Druppie host's IP (or
+   enable "Allow Azure services").
+6. **Configure the source.** Add to `.env` (single line):
+   ```dotenv
+   DATA_SOURCE_3=azure-sql:synapsedwh:Driver={ODBC Driver 18 for SQL Server};Server=<ws>-ondemand.sql.azuresynapse.net;Database=<db>;Authentication=ActiveDirectoryServicePrincipal;UID=<client-id>;PWD=<client-secret>;Encrypt=yes;TrustServerCertificate=no;
+   ```
+   `Authentication=ActiveDirectoryServicePrincipal` lets ODBC Driver 18 do
+   the token exchange — no manual token code runs for this path. Recreate
+   the container (`docker compose up -d --force-recreate --no-deps
+   module-data-access`) and confirm the startup log shows
+   `Loaded data source: synapsedwh (azure-sql)`.
 
 ## Tools
 
@@ -73,8 +121,21 @@ Builder when consuming sample data, most likely).
 - Azure SQL: empty path → tables; schema path → table list filtered.
 
 `read_data` filter syntax:
-- Azure SQL: SQL `WHERE` clause fragment.
+- Azure SQL: a SQL `WHERE`-clause **fragment** only (e.g. `Status = 'open'
+  AND Year >= 2020`). Statement terminators, comment markers and
+  stored-procedure calls are rejected — see [Security boundaries](#security-boundaries).
 - Azure Data Lake: pandas `DataFrame.query()` expression.
+
+### Azure SQL row caps
+
+`read_data` against Azure SQL caps unbounded reads so an agent cannot pull a
+whole Synapse table into the LLM context:
+
+- With no `limit`, the result is capped at **1000 rows**; `metadata.capped`
+  is `true` and `warnings[]` says so. Pass an explicit `limit` to read more.
+- `download_data` streams the full table to CSV in 5000-row batches (no
+  in-memory materialisation) with a hard **1,000,000-row** ceiling; if hit,
+  the CSV is truncated and `warnings[]` reports it.
 
 ### CSV robustness
 
@@ -103,17 +164,24 @@ Builder when consuming sample data, most likely).
   guard fires before the adapter is touched, so it does not depend on the
   source being reachable. Pinned by
   `testing/tools/data-access-download-data-path-traversal.yaml`.
+- **`filter_expr` is a WHERE-clause fragment, not arbitrary SQL.** The
+  Azure SQL adapter rejects a `filter_expr` containing statement
+  terminators (`;`), comment markers (`--`, `/*`), batch separators
+  (`GO`) or stored-procedure calls (`xp_`, `sp_`, `EXEC`) before it is
+  appended to the query (`AzureSQLAdapter._validate_filter`). Defence in
+  depth — the configured SQL principal should also be `db_datareader`
+  only, which bounds anything that slips through to read-only.
 - **No OBO token caching**. Azure SQL OBO adapters obtain a fresh token per
   call. There is no persistence layer or in-memory cache. Reviewers should
   treat any change to that behavior as a security-sensitive diff.
 - **Secrets in `.env`**. Storage keys and client secrets live only in the
   process environment; they are not stored in the database or surfaced to
-  agents. `list_sources` returns `auth_type` (`key`, `connection-string`,
+  agents. `list_sources` returns `auth_type` (`key`, `connection_string`,
   `obo`) but not the credential itself.
 
 ## Testing
 
-The MCP is covered by 13 YAML tool tests in `testing/tools/data-access-*.yaml`.
+The MCP is covered by 16 YAML tool tests in `testing/tools/data-access-*.yaml`.
 Run them via the evaluations endpoint (admin token required):
 
 ```bash
@@ -151,6 +219,19 @@ Azure Data Lake account, with the seeded `dwhpublic/HHR/` content present.
 | `data-access-get-schema-csv` | Schema for `VW_HHR_Fudura_MeteringPoints.csv` exposes `meteringPointId`, `channelId`, etc. |
 | `data-access-read-data-with-limit` | `limit: 2` returns 2 rows with `"limited": true` and the column metadata. |
 | `data-access-download-data-success` | The CSV lands in `/workspaces/default/<project_id>/<session_id>/data/metering-points.csv` with non-zero `size_bytes`. |
+
+### Azure SQL (3, tagged `live` + `azure-sql`)
+
+These need an `azure-sql` source named `synapsedwh` configured via
+`DATA_SOURCE_N` (see [Azure SQL setup](#azure-sql-setup-synapse-serverless)).
+`data-access-sql-filter-rejected` passes even if the endpoint is
+unreachable — the filter guard runs before the connection is opened.
+
+| Test | What it pins |
+|---|---|
+| `data-access-sql-test-connection` | `test_connection` actually reaches the SQL endpoint and runs `SELECT 1`. |
+| `data-access-sql-list-tables` | `list_available_data` enumerates tables from `INFORMATION_SCHEMA.TABLES`. |
+| `data-access-sql-filter-rejected` | `read_data` rejects a `filter_expr` containing `;` with a `WHERE-clause` error. |
 
 All assertions use `{matches: "\"success\"\\s*:\\s*(true|false)"}` so they
 remain robust to JSON whitespace.

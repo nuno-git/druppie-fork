@@ -4,6 +4,7 @@ Supports OBO token authentication via Keycloak.
 """
 
 import logging
+import re
 from typing import Any
 
 import pyodbc
@@ -11,6 +12,26 @@ import pyodbc
 from .base import BaseDataSourceAdapter, DataSourceInfo, DataItem, SchemaInfo
 
 logger = logging.getLogger("dataaccess-mcp")
+
+# When read_data is called without an explicit limit, cap the result so an
+# agent can't pull an entire Synapse table into the LLM context by accident.
+DEFAULT_ROW_CAP = 1000
+
+# Hard ceiling for download_data so a runaway table can't exhaust memory /
+# disk in the MCP container.
+DOWNLOAD_ROW_CAP = 1_000_000
+
+# Rows fetched per round-trip while streaming a download.
+DOWNLOAD_BATCH_SIZE = 5000
+
+# filter_expr is a WHERE-clause fragment, not arbitrary SQL. Reject tokens
+# that would let it break out of the clause (statement terminators, comment
+# markers, batch separators, extended stored procedures). Defence in depth —
+# the configured SQL principal should also be db_datareader only.
+_FILTER_FORBIDDEN = re.compile(
+    r";|--|/\*|\*/|\bxp_|\bsp_|\bexec\b|\bexecute\b|\bgo\b",
+    re.IGNORECASE,
+)
 
 
 class AzureSQLAdapter(BaseDataSourceAdapter):
@@ -63,6 +84,32 @@ class AzureSQLAdapter(BaseDataSourceAdapter):
 
         self._connection = pyodbc.connect(conn_str)
         return self._connection
+
+    async def _ensure_connection(self):
+        """Prove connectivity for the inherited test_connection().
+
+        The base class test_connection() only awaits _ensure_connection();
+        without this override it would hit the base no-op and report success
+        even when the database is unreachable. Open a real connection and run
+        a trivial query so a failure surfaces honestly.
+        """
+        conn = await self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT 1")
+        cursor.fetchone()
+
+    @staticmethod
+    def _validate_filter(filter_expr: str) -> None:
+        """Reject a filter_expr that tries to break out of the WHERE clause.
+
+        Raises ValueError on a forbidden token.
+        """
+        if _FILTER_FORBIDDEN.search(filter_expr):
+            raise ValueError(
+                "filter_expr must be a plain WHERE-clause fragment — "
+                "statement terminators, comments and stored-procedure "
+                "calls are not allowed"
+            )
 
     async def _fetch_obo_token(self) -> str:
         """Fetch fresh OBO token from Keycloak.
@@ -179,48 +226,61 @@ class AzureSQLAdapter(BaseDataSourceAdapter):
         limit: int | None = None,
         offset: int | None = None,
     ) -> dict:
-        """Read data from a table with optional filtering and limiting."""
+        """Read data from a table with optional filtering and limiting.
+
+        When no limit is given the result is capped at DEFAULT_ROW_CAP so an
+        agent cannot accidentally pull an entire table into context; the cap
+        is reported in warnings[] and metadata.capped.
+        """
         try:
             schema, table_name = data_id.split(".", 1)
+            if filter_expr:
+                self._validate_filter(filter_expr)
+
+            warnings: list[str] = []
+            capped = limit is None
+            effective_limit = limit if limit is not None else DEFAULT_ROW_CAP
+
             conn = await self._get_connection()
             cursor = conn.cursor()
 
             query = f"SELECT * FROM [{schema}].[{table_name}]"
-            params = []
+            params: list = []
 
             if filter_expr:
                 query += f" WHERE {filter_expr}"
 
-            if limit is not None:
-                if offset is not None:
-                    query += f" ORDER BY (SELECT NULL) OFFSET ? ROWS FETCH NEXT ? ROWS ONLY"
-                    params.extend([offset, limit])
-                else:
-                    query += f" ORDER BY (SELECT NULL) OFFSET 0 ROWS FETCH NEXT ? ROWS ONLY"
-                    params.append(limit)
-            elif offset is not None:
-                query += f" ORDER BY (SELECT NULL) OFFSET ? ROWS"
-                params.append(offset)
+            query += " ORDER BY (SELECT NULL) OFFSET ? ROWS FETCH NEXT ? ROWS ONLY"
+            params.extend([offset or 0, effective_limit])
 
             cursor.execute(query, params)
 
             columns = [desc[0] for desc in cursor.description]
             rows = cursor.fetchall()
-
             data = [{col: value for col, value in zip(columns, row)} for row in rows]
+
+            if capped and len(data) == effective_limit:
+                warnings.append(
+                    f"No limit was given — result capped at {DEFAULT_ROW_CAP} "
+                    "rows. Pass an explicit 'limit' to read more."
+                )
 
             return {
                 "success": True,
                 "data": data,
                 "row_count": len(data),
                 "columns": columns,
+                "warnings": warnings,
                 "metadata": {
                     "table": f"{schema}.{table_name}",
                     "filtered": filter_expr is not None,
                     "limited": limit is not None,
                     "offset": offset,
+                    "capped": capped and len(data) == effective_limit,
                 },
             }
+        except ValueError as e:
+            return {"success": False, "error": str(e)}
         except Exception as e:
             return {"success": False, "error": str(e)}
 
@@ -229,24 +289,51 @@ class AzureSQLAdapter(BaseDataSourceAdapter):
         data_id: str,
         destination_path: str,
     ) -> dict:
-        """Download table data as CSV."""
+        """Download a full table to CSV, streaming in batches.
+
+        Rows are fetched DOWNLOAD_BATCH_SIZE at a time and written
+        incrementally so a large table does not have to be materialised in
+        memory. A hard DOWNLOAD_ROW_CAP guards against a runaway table.
+        """
         try:
             import csv
 
-            result = await self.read_data(data_id)
+            schema, table_name = data_id.split(".", 1)
+            conn = await self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute(f"SELECT * FROM [{schema}].[{table_name}]")
 
-            if not result["success"]:
-                return result
+            columns = [desc[0] for desc in cursor.description]
+            row_count = 0
+            truncated = False
+            warnings: list[str] = []
 
             with open(destination_path, "w", newline="") as f:
-                writer = csv.DictWriter(f, fieldnames=result["columns"])
-                writer.writeheader()
-                writer.writerows(result["data"])
+                writer = csv.writer(f)
+                writer.writerow(columns)
+                while True:
+                    batch = cursor.fetchmany(DOWNLOAD_BATCH_SIZE)
+                    if not batch:
+                        break
+                    if row_count + len(batch) > DOWNLOAD_ROW_CAP:
+                        batch = batch[: DOWNLOAD_ROW_CAP - row_count]
+                        truncated = True
+                    writer.writerows(batch)
+                    row_count += len(batch)
+                    if truncated:
+                        break
+
+            if truncated:
+                warnings.append(
+                    f"Table exceeded the {DOWNLOAD_ROW_CAP}-row download cap; "
+                    "the CSV is truncated."
+                )
 
             return {
                 "success": True,
                 "destination": destination_path,
-                "row_count": result["row_count"],
+                "row_count": row_count,
+                "warnings": warnings,
             }
         except Exception as e:
             return {"success": False, "error": str(e)}

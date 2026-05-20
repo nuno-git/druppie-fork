@@ -1,0 +1,21 @@
+## Tool Test: Data Access MCP - list_available_data against Azure SQL (live)
+## Verifies list_available_data enumerates tables from
+## INFORMATION_SCHEMA.TABLES on the configured Azure SQL source.
+## Requires DATA_SOURCE_N=azure-sql:synapsedwh:<connection-string>.
+
+tool-test:
+  name: data-access-sql-list-tables
+  description: "list_available_data lists tables from the configured Azure SQL source"
+  tags: [data-access, mcp, azure-sql, live]
+
+  chain:
+    - agent: router
+      tool: dataaccess:list_available_data
+      arguments:
+        source_id: "synapsedwh"
+      assert:
+        result:
+          - json_parseable
+          - {matches: "\"success\"\\s*:\\s*true"}
+          - {contains: "data_items"}
+          - {contains: "count"}
