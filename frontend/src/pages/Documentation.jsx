@@ -18,7 +18,7 @@ function DocCard({ entry }) {
     },
       React.createElement('div', { className: 'flex items-center gap-2' },
         React.createElement(FileText, { className: 'w-4 h-4 text-blue-500' }),
-        React.createElement('span', { className: 'font-medium text-gray-900' }, entry.project_name)
+        React.createElement('span', { className: 'font-medium text-gray-900' }, entry.title)
       ),
       React.createElement('span', { className: 'text-gray-400' }, icon)
     ),
@@ -79,7 +79,7 @@ function Documentation() {
 
   const entries = docs || []
   const appCards = entries.map(function(e) {
-    return React.createElement(DocCard, { key: e.project_id, entry: e })
+    return React.createElement(DocCard, { key: e.source_id, entry: e })
   })
 
   return React.createElement('div', { className: 'space-y-8' },
