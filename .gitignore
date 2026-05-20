@@ -65,6 +65,13 @@ druppie-app/
 docker-compose.robbe.yml
 testing/reports/*.md
 
+# graphify — keep essential outputs, skip local-only files
+graphify-out/manifest.json
+graphify-out/cost.json
+graphify-out/batch*.txt
+graphify-out/.graphify_*
+graphify-out/cache/
+
 # Debug/temp files
 debug_*.png
 debug_*.js
