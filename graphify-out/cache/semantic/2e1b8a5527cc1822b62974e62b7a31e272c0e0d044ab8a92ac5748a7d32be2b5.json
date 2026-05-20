@@ -1,0 +1,1 @@
+{"nodes": [{"id": "sysprompt_summary_relay", "label": "System Prompt: Summary Relay", "file_type": "code", "source_file": "druppie/agents/definitions/system_prompts/summary_relay.yaml", "source_location": null}], "edges": [], "hyperedges": []}

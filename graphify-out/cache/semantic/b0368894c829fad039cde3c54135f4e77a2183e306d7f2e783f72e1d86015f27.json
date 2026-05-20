@@ -1,0 +1,1 @@
+{"nodes": [{"id": "sysprompt_workspace_state", "label": "System Prompt: Workspace State", "file_type": "code", "source_file": "druppie/agents/definitions/system_prompts/workspace_state.yaml", "source_location": null}], "edges": [], "hyperedges": []}

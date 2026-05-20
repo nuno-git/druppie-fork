@@ -1,0 +1,1 @@
+{"nodes": [{"id": "sysprompt_tool_only_communication", "label": "System Prompt: Tool-Only Communication", "file_type": "code", "source_file": "druppie/agents/definitions/system_prompts/tool_only_communication.yaml", "source_location": null}], "edges": [], "hyperedges": []}

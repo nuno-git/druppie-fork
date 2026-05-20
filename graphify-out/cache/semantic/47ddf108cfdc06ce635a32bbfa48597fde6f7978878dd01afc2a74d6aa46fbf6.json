@@ -1,0 +1,1 @@
+{"nodes": [{"id": "sysprompt_done_tool_format", "label": "System Prompt: Done Tool Format", "file_type": "code", "source_file": "druppie/agents/definitions/system_prompts/done_tool_format.yaml", "source_location": null}], "edges": [], "hyperedges": []}
