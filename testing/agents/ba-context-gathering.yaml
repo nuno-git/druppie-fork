@@ -1,0 +1,21 @@
+## Agent test: BA performs mandatory context gathering before elicitation
+##
+## In create_project mode, the BA must check existing modules and projects
+## before starting elicitation. This test verifies the BA calls registry
+## and coding tools to understand what already exists on the platform.
+
+agent-test:
+  name: ba-context-gathering
+  description: "BA performs mandatory context gathering (registry + project check) before elicitation"
+  tags: [business_analyst, context-gathering]
+
+  message: "Ik wil een applicatie bouwen voor het bijhouden van waterkwaliteitsmetingen per locatie"
+  agents: [router, planner, business_analyst]
+  hitl: cooperative-user
+
+  judge:
+    context: business_analyst
+    checks:
+      - "The BA must have called at least one registry tool (registry:list_modules, registry:search_modules, or registry:list_components) BEFORE starting HITL elicitation. This context gathering is mandatory in create_project mode. Check that registry tool calls appear before the first hitl_ask_multiple_choice_question or hitl_ask_question call."
+      - "The BA must have called coding:list_projects BEFORE starting HITL elicitation, to check what projects already exist. This is part of mandatory context gathering."
+      - "The BA must have mentioned platform defaults to the user in its first HITL message — a brief note that platform standards apply automatically, pointing the user to docs/platform-functional-standards.md."

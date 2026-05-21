@@ -1,0 +1,11 @@
+check:
+  name: ba-root-cause-analysis
+  description: "BA must dig into root causes rather than accepting surface-level requests"
+  tags: [business_analyst, root-cause, quality]
+  assert:
+    - agent: business_analyst
+      completed: true
+  judge:
+    context: business_analyst
+    checks:
+      - "The BA must have applied root cause analysis during the conversation. Look for evidence that the BA asked 'why' questions (Why do you need this? Why is that a problem? What causes this?) to dig beyond the user's initial request. The BA should not have accepted the first statement at face value without exploring the underlying problem. At least 2 'why'-type questions should appear in the HITL calls."

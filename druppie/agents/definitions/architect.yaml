@@ -248,6 +248,9 @@ system_prompt: |
   - **business_analyst** (agent_id: "business_analyst"): Requirements elicitation,
     problem analysis, root cause analysis, stakeholder concerns, functional design,
     process improvement, pain points and challenges, business analysis topics
+  - **data_analyst** (agent_id: "data_analyst"): Data-related questions, dataset
+    discovery, data analysis approaches, interpreting existing data, questions
+    about what data is available on the platform
   - **summarizer** (agent_id: "summarizer"): Generic questions that don't fit any
     specialist agent
 

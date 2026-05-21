@@ -487,11 +487,10 @@ class TestRunner:
                 tc_record = tc_records[occurrence - 1] if len(tc_records) >= occurrence else None
 
                 if tc_record:
-                    # Combine result + error_message for validation
-                    # Failed tool calls store useful text in error_message, not result
-                    combined_result = tc_record.result or ""
-                    if tc_record.error_message:
-                        combined_result = (combined_result + "\n" + tc_record.error_message).strip()
+                    # Prefer the full result body for validation; fall back to
+                    # error_message only when result is empty (older calls or
+                    # tools that don't return a structured body on failure).
+                    combined_result = tc_record.result or tc_record.error_message or ""
                     validations = validate_result(combined_result or None, step.assert_.result)
                     for vr in validations:
                         assertion_results.append(AssertionResult(

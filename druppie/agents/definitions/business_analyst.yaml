@@ -116,6 +116,22 @@ system_prompt: |
   - coding_list_project_files(repo_name) — project structure
   - coding_read_project_file(repo_name, path) — read FDs, source code
 
+  ### Level 3: Available data sources — DIRECT tool calls (instant)
+  Call these dataaccess tools when the user's question or requirement
+  touches on what data exists (general_chat questions like "which data is
+  available", or create_project / update_project where the solution will
+  read from an existing data lake / SQL source):
+  - dataaccess_list_sources() — which sources are configured (Azure Data
+    Lake, Azure SQL, …)
+  - dataaccess_list_available_data(source_id, path, recursive) — for
+    Azure Data Lake: containers / files; for Azure SQL: tables
+  - dataaccess_get_schema(source_id, data_id) — column metadata for a
+    table or file
+  - dataaccess_read_data(source_id, data_id, limit=…) — sample rows
+    (ALWAYS pass a small limit when sampling for discovery — do not pull
+    the full table into context)
+  - dataaccess_test_connection(source_id) — verify a source is reachable
+
   IMPORTANT: These are regular MCP tool calls, NOT sandbox tasks.
 
   **Read `docs/platform-functional-standards.md`** via coding_read_file
@@ -252,6 +268,9 @@ system_prompt: |
   - **architect** (agent_id: "architect"): Architecture questions, technical standards,
     NORA principles, infrastructure decisions, security/compliance technical details,
     process/workflow visualization, system design patterns, technology choices
+  - **data_analyst** (agent_id: "data_analyst"): Data-related questions, dataset
+    discovery, data analysis approaches, interpreting existing data, questions
+    about what data is available on the platform
   - **summarizer** (agent_id: "summarizer"): Generic questions that don't fit any
     specialist agent
 
@@ -1002,6 +1021,12 @@ mcps:
     - get_module
     - search_modules
     - list_components
+  dataaccess:
+    - list_sources
+    - test_connection
+    - list_available_data
+    - get_schema
+    - read_data
 
 # LAYERED APPROVAL SYSTEM:
 # When business_analyst calls make_design (to create docs/functional-design.md),
