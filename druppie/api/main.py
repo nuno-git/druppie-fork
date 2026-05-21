@@ -166,7 +166,7 @@ def create_app() -> FastAPI:
     app.include_router(agents.router, prefix="/api", tags=["Agents"])
     app.include_router(mcps.router, prefix="/api", tags=["MCPs"])
     app.include_router(mcp_bridge.router, prefix="/api/mcp", tags=["MCP Bridge"])
-        app.include_router(evaluations.router, prefix="/api", tags=["Evaluations"])
+    app.include_router(evaluations.router, prefix="/api", tags=["Evaluations"])
     app.include_router(cache.router, prefix="/api", tags=["Cache"])
     app.include_router(modules.router, prefix="/api", tags=["Modules"])
     app.include_router(agent_test.router, prefix="/api", tags=["Agent Test"])
