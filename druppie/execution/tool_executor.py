@@ -962,11 +962,13 @@ class ToolExecutor:
             # Check if result indicates failure
             is_success = result.get("success", True)
 
-            # Update tool call with result
+            # Update tool call with result. Preserve the full result body on
+            # failure too so test assertions and downstream callers can inspect
+            # the structured error payload, not just the error message string.
             self.execution_repo.update_tool_call(
                 tool_call.id,
                 status=ToolCallStatus.COMPLETED if is_success else ToolCallStatus.FAILED,
-                result=result if is_success else None,
+                result=result,
                 error=result.get("error") if not is_success else None,
             )
             self.db.commit()

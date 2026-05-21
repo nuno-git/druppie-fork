@@ -1,0 +1,19 @@
+## Tool Test: Data Access MCP - list_available_data
+## list_available_data against a source_id that isn't configured must
+## surface {success: false, error: ...} rather than raising.
+
+tool-test:
+  name: data-access-list-available-data-unknown-source
+  description: "list_available_data against an unknown source returns {success: false, error}"
+  tags: [data-access, mcp, error-handling]
+
+  chain:
+    - agent: router
+      tool: dataaccess:list_available_data
+      arguments:
+        source_id: "nonexistent-source"
+      assert:
+        result:
+          - json_parseable
+          - {matches: "\"success\"\\s*:\\s*false"}
+          - {contains: "error"}
