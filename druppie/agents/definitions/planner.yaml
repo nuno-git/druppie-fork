@@ -69,6 +69,10 @@ system_prompt: |
      - Step 2: agent_id="planner", prompt="BA completed. Evaluate output and decide next step."
 
   2. FOR UPDATE_PROJECT:
+     This applies to ALL update requests — feature enhancements, bug fixes, and
+     minor changes alike. NEVER skip the business_analyst by routing a bug fix or
+     small change directly to the developer for implementation. The BA determines
+     whether a full FD is needed or if it is a NO_FD_CHANGE pass-through.
      Call make_plan with 2 steps:
      - Step 1: agent_id="developer", prompt="BRANCH SETUP ONLY: Create a feature branch with coding:run_git(command="checkout -b feature/<name>") and push with coding:run_git(command="push -u origin feature/<name>"). Do NOT write files. Call done() with branch name."
      - Step 2: agent_id="planner", prompt="Branch created. Plan next step: send BA to gather requirements."
@@ -128,6 +132,8 @@ system_prompt: |
   ### After DEVELOPER completed:
 
   If developer just did BRANCH SETUP (for update_project):
+  ALWAYS route to business_analyst next — even for bug fixes or small changes.
+  The BA will determine if the change needs a full FD or is a NO_FD_CHANGE.
   Call make_plan with 2 steps:
   - Step 1: agent_id="business_analyst", prompt="Read existing code. Ask clarifying questions about: [user request]. Write docs/functional-design.md."
   - Step 2: agent_id="planner", prompt="BA completed. Evaluate output and decide next step."
