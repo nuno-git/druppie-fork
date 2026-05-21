@@ -592,6 +592,8 @@ class SubagentsMCPConnection:
         parent_git_scope=None,
         cancellation_token=None,
         child_tool_provider_factory=None,
+        current_depth: int = 0,
+        agent_chain: list[str] | None = None,
     ) -> None:
         from druppie.agent_runtime.subagents import SubagentsMCP
 
@@ -608,8 +610,8 @@ class SubagentsMCPConnection:
         self._parent_agent_def = parent_agent_def
         self._parent_git_scope = parent_git_scope
         self._cancellation_token = cancellation_token
-        self._current_depth = 0
-        self._agent_chain: list[str] = []
+        self._current_depth = current_depth
+        self._agent_chain: list[str] = agent_chain or []
 
     def get_tools(self, allowed_agents: list[str]) -> list[dict]:
         return [self._mcp.build_schema(allowed_agents)]

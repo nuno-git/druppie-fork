@@ -402,7 +402,7 @@ class AgentV2:
         subagents_conn = None
         if getattr(self.definition, "subagents", []):
 
-            def _child_tp_factory(*, child_defn, child_sandbox_conn, parent_tool_provider, spawning_tool_call_id=None):
+            def _child_tp_factory(*, child_defn, child_sandbox_conn, parent_tool_provider, spawning_tool_call_id=None, current_depth=0, agent_chain=None, _parent_run_id=None):
                 from druppie.domain.common import AgentRunStatus
                 from druppie.repositories import ExecutionRepository
                 child_repo = ExecutionRepository(self.db)
@@ -411,7 +411,7 @@ class AgentV2:
                     agent_id=child_defn.id,
                     status=AgentRunStatus.RUNNING,
                     planned_prompt="",
-                    parent_run_id=agent_run_id,
+                    parent_run_id=_parent_run_id or agent_run_id,
                     spawning_tool_call_id=spawning_tool_call_id,
                 )
                 self.db.flush()
@@ -427,6 +427,30 @@ class AgentV2:
                     child_repo, session_id, child_agent_run.id, child_tp,
                     provider_name=provider_name,
                 )
+                # If the child agent itself has subagents (self-referencing
+                # recursion or branching), register a nested SubagentsMCPConnection
+                # so the child can also spawn subagents.
+                child_subagents = getattr(child_defn, 'subagents', None) or getattr(self._load_definition(child_defn.id), 'subagents', [])
+                if child_subagents:
+                    child_subagents_conn = SubagentsMCPConnection(
+                        agent_loader=lambda agent_id: old_definition_to_new(
+                            self._load_definition(agent_id)
+                        ),
+                        sandbox_resolver=None,
+                        loop_runner=self._agent_loop.run,
+                        llm=adapted_llm,
+                        config=loop_config,
+                        event_callback=create_event_persister(
+                            child_repo, session_id, child_agent_run.id, child_tp,
+                            provider_name=provider_name,
+                        ),
+                        parent_tool_provider=child_tp,
+                        parent_agent_def=old_definition_to_new(child_defn),
+                        child_tool_provider_factory=lambda **kw: _child_tp_factory(**{**kw, '_parent_run_id': child_agent_run.id}),
+                        current_depth=current_depth,
+                        agent_chain=agent_chain,
+                    )
+                    child_tp.set_subagents_connection(child_subagents_conn)
                 return child_tp
 
             subagents_conn = SubagentsMCPConnection(

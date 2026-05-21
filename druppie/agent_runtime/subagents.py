@@ -136,7 +136,7 @@ class SubagentsMCP:
             config: Loop configuration
             event_callback: Callback for events
             current_depth: Current recursion depth
-            agent_chain: List of agent IDs in the chain (for circular detection)
+            agent_chain: List of agent IDs in the chain (informational, depth-limited)
             cancellation_token: Cancellation token
 
         Returns:
@@ -166,14 +166,6 @@ class SubagentsMCP:
                     "error": f"Maximum subagent depth ({config.max_subagent_depth}) exceeded",
                 }
 
-            if agent_id in chain:
-                return {
-                    "agent": agent_id,
-                    "status": "error",
-                    "result": None,
-                    "error": f"Circular reference detected: agent '{agent_id}' already in chain {chain}",
-                }
-
             try:
                 child_defn = self._agent_loader(agent_id)
             except Exception as e:
@@ -196,6 +188,8 @@ class SubagentsMCP:
                     child_sandbox_conn=child_sandbox_conn,
                     parent_tool_provider=parent_tool_provider,
                     spawning_tool_call_id=spawning_tool_call_id,
+                    current_depth=new_depth,
+                    agent_chain=chain + [parent_agent.id],
                 )
             elif child_sandbox_conn is not None:
                 child_tool_provider = MCPToolProvider(
