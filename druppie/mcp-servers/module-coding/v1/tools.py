@@ -1731,7 +1731,45 @@ async def create_pr(
             body, _, status_line = raw.rpartition("\n")
             http_status = int(status_line.strip()) if status_line.strip().isdigit() else 0
             pr_data = json.loads(body) if body.strip() else {}
-            if http_status 
+            # Check for HTTP-level errors
+            if http_status < 200 or http_status >= 300:
+                err_msg = pr_data.get("message", body[:500]) if isinstance(pr_data, dict) else body[:500]
+                logger.error(
+                    "GitHub PR creation HTTP %s: %s", http_status, err_msg,
+                )
+                return {
+                    "success": False,
+                    "error": f"GitHub PR creation HTTP {http_status}: {err_msg}",
+                }
+
+            pr_number = pr_data.get("number")
+            html_url = pr_data.get("html_url", "")
+
+            if not pr_number:
+                logger.error(
+                    "GitHub PR response missing 'number': %s", body[:500],
+                )
+                return {
+                    "success": False,
+                    "error": f"GitHub PR response missing 'number': {body[:500]}",
+                }
+
+            logger.info(
+                "Created GitHub PR #%s for %s/%s branch=%s",
+                pr_number, owner, repo, head_branch,
+            )
+
+            return {
+                "success": True,
+                "pr_number": pr_number,
+                "pr_url": html_url,
+                "html_url": html_url,
+                "branch": head_branch,
+            }
+
+        # --- Gitea PR path ---
+        curl_headers = ["Content-Type: application/json"]
+        if GITEA_TOKEN:
             curl_headers.append(f"Authorization: token {GITEA_TOKEN}")
         elif GITEA_USER and GITEA_PASSWORD:
             import base64 as _b64
