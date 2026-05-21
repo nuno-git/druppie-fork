@@ -418,7 +418,7 @@ export const extractSurfacedFileWrites = (agentRun) => {
       const toolName = tc.tool_name || ''
       const args = tc.arguments || {}
 
-      if (toolName.includes('write_file') && !toolName.includes('batch')) {
+      if ((toolName.includes('write_file') || toolName.includes('make_design')) && !toolName.includes('batch')) {
         if (args.path && args.content) {
           files.push({ path: args.path, content: args.content })
         }

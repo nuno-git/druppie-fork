@@ -17,8 +17,8 @@ import {
 export const AGENT_CONFIG = {
   router: { name: 'Router', icon: Brain, color: 'purple', description: 'Intent analysis', thinkingLabel: 'Analyzing intent...' },
   planner: { name: 'Planner', icon: Clock, color: 'blue', description: 'Execution planning', thinkingLabel: 'Planning execution...' },
-  business_analyst: { name: 'Business Analyst', icon: ClipboardList, color: 'teal', description: 'Requirements gathering', thinkingLabel: 'Creating functional design...' },
-  architect: { name: 'Architect', icon: Brain, color: 'indigo', description: 'System design', thinkingLabel: 'Creating technical design...' },
+  business_analyst: { name: 'Business Analyst', icon: ClipboardList, color: 'teal', description: 'Requirements gathering', thinkingLabel: 'Creating functional design...', surfaceFileWrites: true },
+  architect: { name: 'Architect', icon: Brain, color: 'indigo', description: 'System design', thinkingLabel: 'Creating technical design...', surfaceFileWrites: true },
   developer: { name: 'Developer', icon: FileCode, color: 'green', description: 'Code generation', thinkingLabel: 'Writing code...' },
   code_generator: { name: 'Code Generator', icon: FileCode, color: 'green', description: 'Code generation', thinkingLabel: 'Writing code...' },
   devops: { name: 'DevOps', icon: Hammer, color: 'orange', description: 'Build & deploy', thinkingLabel: 'Preparing deployment...' },
