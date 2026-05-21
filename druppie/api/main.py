@@ -5,6 +5,7 @@ Main entry point for the API.
 
 import os
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -286,6 +287,15 @@ def create_app() -> FastAPI:
             "agents_count": len(agents),
             "llm_provider": llm_provider,
             "llm_profiles": llm_profiles,
+        }
+
+    @app.get("/api/test-health-check")
+    async def test_health_check():
+        """Test health check endpoint for verifying Druppie service status."""
+        return {
+            "status": "ok",
+            "service": "druppie",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         }
 
     @app.get("/")
