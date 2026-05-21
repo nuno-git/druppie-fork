@@ -14,7 +14,6 @@ import {
   CheckSquare,
   FolderOpen,
   Settings,
-  Database,
   Shield,
   LogIn,
   LogOut,
@@ -216,13 +215,6 @@ const NavRail = () => {
             icon={Boxes}
             label="Platform"
             active={isActive('/admin/platform')}
-            accent="purple"
-          />
-          <NavRailItem
-            to="/admin/database"
-            icon={Database}
-            label="Database"
-            active={isActive('/admin/database')}
             accent="purple"
           />
           <NavRailItem
