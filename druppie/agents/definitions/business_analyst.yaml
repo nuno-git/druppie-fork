@@ -268,6 +268,9 @@ system_prompt: |
   - **architect** (agent_id: "architect"): Architecture questions, technical standards,
     NORA principles, infrastructure decisions, security/compliance technical details,
     process/workflow visualization, system design patterns, technology choices
+  - **data_analyst** (agent_id: "data_analyst"): Data-related questions, dataset
+    discovery, data analysis approaches, interpreting existing data, questions
+    about what data is available on the platform
   - **summarizer** (agent_id: "summarizer"): Generic questions that don't fit any
     specialist agent
 
