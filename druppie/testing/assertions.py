@@ -192,22 +192,59 @@ def _check_tool(
     mcp_server = parts[0]
     tool_name = parts[1] if len(parts) > 1 else parts[0]
 
-    # Find tool call
-    tc = (
+    # Merge external expected with inline assertion.arguments (inline wins
+    # on key collision — assertions that hard-code a path should not be
+    # overridden by a generic expected dict from the test).
+    merged_expected: dict[str, object] = {**expected, **(assertion.arguments or {})}
+
+    # Find all tool calls of this type; pick one matching merged_expected.
+    # With only expected={} and multiple calls, we fall back to .first()
+    # behaviour by using the first call. With expected, we filter.
+    tool_calls = (
         db.query(ToolCall)
         .filter(
             ToolCall.agent_run_id == agent_run.id,
             ToolCall.mcp_server == mcp_server,
             ToolCall.tool_name == tool_name,
         )
-        .first()
+        .all()
     )
-    if tc is None:
+    if not tool_calls:
         return AssertionResult(
             f"{assertion.agent}.tool({assertion.tool})",
             False,
             f"Tool {assertion.tool} not found in agent run",
         )
+
+    if merged_expected:
+        matching = [
+            t for t in tool_calls
+            if all(
+                _match_value(v, (t.arguments or {}).get(k))
+                for k, v in merged_expected.items()
+            )
+        ]
+        if not matching:
+            # Report against the first call for diagnostics
+            first = tool_calls[0]
+            actual_first = first.arguments or {}
+            mismatches = [
+                f"'{k}': expected {v}, got {actual_first.get(k)}"
+                for k, v in merged_expected.items()
+                if not _match_value(v, actual_first.get(k))
+            ]
+            return AssertionResult(
+                f"{assertion.agent}.tool({assertion.tool}).args",
+                False,
+                (
+                    f"No {assertion.tool} call matched expected arguments "
+                    f"across {len(tool_calls)} call(s). First call mismatches: "
+                    f"{'; '.join(mismatches)}"
+                ),
+            )
+        tc = matching[0]
+    else:
+        tc = tool_calls[0]
 
     # Check tool call status if assertion specifies one
     if assertion.status:
@@ -245,25 +282,12 @@ def _check_tool(
                 f"Invalid regex pattern '{assertion.error_matches}': {exc}",
             )
 
-    # Match expected arguments — report all mismatches, not just the first
-    if expected:
-        actual_args = tc.arguments or {}
-        mismatches = []
-        for key, expected_val in expected.items():
-            actual_val = actual_args.get(key)
-            if not _match_value(expected_val, actual_val):
-                mismatches.append(f"'{key}': expected {expected_val}, got {actual_val}")
-        if mismatches:
-            return AssertionResult(
-                f"{assertion.agent}.tool({assertion.tool}).args",
-                False,
-                f"Argument mismatches: {'; '.join(mismatches)}",
-            )
-
+    # Arguments already matched above when picking `tc` from tool_calls.
     return AssertionResult(
         f"{assertion.agent}.tool({assertion.tool})",
         True,
-        f"Tool called with status={tc.status}" + (" and matching arguments" if expected else ""),
+        f"Tool called with status={tc.status}"
+        + (" and matching arguments" if merged_expected else ""),
     )
 
 

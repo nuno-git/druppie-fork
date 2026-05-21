@@ -1,0 +1,11 @@
+check:
+  name: ba-git-commit
+  description: "BA must commit and push the functional design to git after approval"
+  tags: [business_analyst, git, quality]
+  assert:
+    - agent: business_analyst
+      completed: true
+    - agent: business_analyst
+      tool: coding:make_design
+    - agent: business_analyst
+      tool: coding:run_git

@@ -27,6 +27,9 @@
 #   MCP File Search:9004
 #   MCP Web:        9005
 #   MCP Registry:   9007
+#   MCP LLM:        9008
+#   MCP Data Access:9010
+#   MCP Vision:     9011
 #   Adminer:        8081
 
 services:
@@ -377,6 +380,31 @@ services:
       - druppie-new-network
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9011/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  module-data-access:
+    build:
+      context: ./druppie/mcp-servers
+      dockerfile: module-data-access/Dockerfile
+    container_name: druppie-module-data-access
+    profiles: [infra, dev, prod]
+    environment:
+      MCP_PORT: "9010"
+      WORKSPACE_ROOT: /workspaces
+      DATA_SOURCE_1: ${DATA_SOURCE_1:-}
+      DATA_SOURCE_2: ${DATA_SOURCE_2:-}
+      DATA_SOURCE_3: ${DATA_SOURCE_3:-}
+    volumes:
+      - druppie_new_workspace:/workspaces
+    ports:
+      - "${MCP_DATA_ACCESS_PORT:-9010}:9010"
+    networks:
+      - druppie-new-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9010/health"]
       interval: 10s
       timeout: 5s
       retries: 5
