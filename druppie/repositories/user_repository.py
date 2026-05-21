@@ -13,6 +13,10 @@ class UserRepository(BaseRepository):
         """Get user by ID."""
         return self.db.query(User).filter_by(id=user_id).first()
 
+    def get_by_username(self, username: str) -> User | None:
+        """Get user by username."""
+        return self.db.query(User).filter_by(username=username).first()
+
     def get_or_create(
         self,
         user_id: UUID,
@@ -38,6 +42,18 @@ class UserRepository(BaseRepository):
             # Update fields if changed
             if username and user.username != username:
                 user.username = username
+            if email and user.email != email:
+                user.email = email
+            if display_name and user.display_name != display_name:
+                user.display_name = display_name
+            self.db.flush()
+            return user
+
+        # Fallback: check by username (handles dev-mode users with different UUIDs)
+        user = self.get_by_username(username)
+        if user:
+            # Update existing user with new Keycloak UUID and fields
+            user.id = user_id
             if email and user.email != email:
                 user.email = email
             if display_name and user.display_name != display_name:

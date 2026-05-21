@@ -24,13 +24,14 @@ import os
 from functools import wraps
 from typing import Callable, Generator
 
-from fastapi import Depends, HTTPException, Header
+from fastapi import Depends, HTTPException, Header, Request
 from sqlalchemy.orm import Session
 import structlog
 
 logger = structlog.get_logger()
 
 from druppie.core.auth import get_auth_service, AuthService
+from druppie.core.config import get_settings
 from druppie.db.database import get_db, init_db, SessionLocal, engine
 from uuid import UUID
 
@@ -177,6 +178,7 @@ def get_auth() -> AuthService:
 
 
 async def get_current_user(
+    request: Request,
     authorization: str | None = Header(None),
     auth: AuthService = Depends(get_auth),
 ) -> dict:
@@ -185,6 +187,79 @@ async def get_current_user(
     Returns user info dict or raises 401 if not authenticated.
     Also syncs user to database from Keycloak on first login.
     """
+    settings = get_settings()
+
+    # Dev mode bypass - skip Keycloak entirely
+    if settings.api.dev_mode:
+        dev_user = request.headers.get("X-Dev-User", settings.api.dev_mode_default_user)
+
+        DEV_USER_MAP = {
+            "admin": {
+                "sub": "2bf317e1-99f1-50b5-82b6-a00a576f1d06",
+                "email": "admin@druppie.dev",
+                "preferred_username": "admin",
+                "name": "Dev Admin",
+                "realm_access": {"roles": ["admin"]},
+            },
+            "architect": {
+                "sub": "a039fe5f-4398-52f3-8045-1d492187cc0a",
+                "email": "architect@druppie.dev",
+                "preferred_username": "architect",
+                "name": "Dev Architect",
+                "realm_access": {"roles": ["architect"]},
+            },
+            "developer": {
+                "sub": "b7722e8d-e97c-57d2-8de7-6ab1f51ccbab",
+                "email": "developer@druppie.dev",
+                "preferred_username": "developer",
+                "name": "Dev Developer",
+                "realm_access": {"roles": ["developer"]},
+            },
+            "analyst": {
+                "sub": "f4f33e22-9cd1-57cc-bff9-11cbc7d61542",
+                "email": "analyst@druppie.dev",
+                "preferred_username": "analyst",
+                "name": "Dev Analyst",
+                "realm_access": {"roles": ["business_analyst"]},
+            },
+            "normal_user": {
+                "sub": "92fd9058-2317-5834-bbfb-bb35a18deb16",
+                "email": "user@druppie.dev",
+                "preferred_username": "normal_user",
+                "name": "Dev User",
+                "realm_access": {"roles": ["user"]},
+            },
+        }
+
+        if dev_user not in DEV_USER_MAP:
+            raise HTTPException(
+                status_code=401,
+                detail=f"Unknown dev user: {dev_user}. Available: {list(DEV_USER_MAP.keys())}",
+            )
+
+        user_info = DEV_USER_MAP[dev_user]
+        logger.info("dev_auth_bypass", user=dev_user, roles=user_info["realm_access"]["roles"])
+
+        user_id = user_info["sub"]
+        from druppie.repositories import UserRepository
+        db = SessionLocal()
+        try:
+            user_repo = UserRepository(db)
+            user_repo.get_or_create(
+                user_id=UUID(user_id),
+                username=user_info["preferred_username"],
+                email=user_info["email"],
+                display_name=user_info["name"],
+            )
+            db.commit()
+        except Exception as e:
+            db.rollback()
+            logger.error("dev_user_sync_failed", user_id=user_id, error=str(e), exc_info=True)
+        finally:
+            db.close()
+
+        return user_info
+
     user = auth.validate_request(authorization)
     if not user:
         raise HTTPException(
@@ -234,7 +309,40 @@ async def get_optional_user(
     auth: AuthService = Depends(get_auth),
 ) -> dict | None:
     """Get current user if authenticated, or None."""
-    return auth.validate_request(authorization)
+    user = auth.validate_request(authorization)
+    if not user:
+        return None
+
+    # Sync user to database (creates if doesn't exist)
+    # This is critical - many operations require user to exist in DB
+    user_id = user.get("sub")
+    if user_id:
+        from druppie.repositories import UserRepository
+        db = SessionLocal()
+        try:
+            user_repo = UserRepository(db)
+            # Use username from token, fall back to user_id if not present
+            username = user.get("preferred_username") or user.get("email") or user_id
+            user_repo.get_or_create(
+                user_id=UUID(user_id),
+                username=username,
+                email=user.get("email"),
+                display_name=user.get("name"),
+            )
+            db.commit()
+            logger.debug("user_synced", user_id=user_id, username=username)
+        except Exception as e:
+            db.rollback()
+            logger.error(
+                "user_sync_failed",
+                user_id=user_id,
+                error=str(e),
+                exc_info=True,
+            )
+        finally:
+            db.close()
+
+    return user
 
 
 # Internal API key for MCP servers to call backend.

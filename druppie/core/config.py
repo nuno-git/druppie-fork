@@ -250,6 +250,11 @@ class APISettings(BaseSettings):
         alias="DEV_MODE",
         description="Enable development mode (bypasses auth)",
     )
+    dev_mode_default_user: str = Field(
+        default="admin",
+        alias="DEV_MODE_DEFAULT_USER",
+        description="Default user for dev mode auth bypass",
+    )
 
     @property
     def cors_origins_list(self) -> list[str]:

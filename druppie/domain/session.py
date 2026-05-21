@@ -16,7 +16,7 @@ from enum import Enum
 from typing import Literal
 
 from .common import TokenUsage, SessionStatus
-from .agent_run import AgentRunSummary, AgentRunDetail
+from .agent_run import AgentRunSummary, AgentRunDetail, AgentRunSummaryView
 from .project import ProjectSummary
 
 
@@ -81,7 +81,27 @@ class SessionDetail(SessionSummary):
     timeline: list[TimelineEntry]
 
 
+class MessageSummary(BaseModel):
+    """Minimal message for summary view."""
+    role: str
+    content: str | None = None
+
+
+class TimelineEntrySummary(BaseModel):
+    """Summary timeline entry - stripped down."""
+    type: TimelineEntryType
+    message: MessageSummary | None = None
+    agent_run: AgentRunSummaryView | None = None
+
+
+class SessionSummaryView(BaseModel):
+    """Minimal summary view of a session."""
+    title: str | None = None
+    status: SessionStatus
+    project: ProjectSummary | None = None
+    timeline: list[TimelineEntrySummary] = []
+
+
 # Backward compatibility aliases
 ChatItemType = TimelineEntryType
 ChatItem = TimelineEntry
-MessageSummary = Message

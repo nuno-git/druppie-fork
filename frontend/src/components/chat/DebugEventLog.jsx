@@ -25,7 +25,7 @@ import {
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { getAgentConfig, getAgentMessageColors, formatToolName } from '../../utils/agentConfig'
 import { formatDuration, formatTokens } from '../../utils/tokenUtils'
-import { retryFromRun, getSandboxEvents } from '../../services/api'
+import { retryFromRun, getSandboxEvents, getSessionSummary } from '../../services/api'
 import CopyButton from '../shared/CopyButton'
 import ContainerLogsModal from '../shared/ContainerLogsModal'
 
@@ -716,6 +716,9 @@ const DebugEventLog = ({ data, sessionId, sessionStatus }) => {
   const [selection, setSelection] = useState(null) // { type: 'agent'|'tool', agentRun, toolCall? }
   const [showJson, setShowJson] = useState(false)
   const [showLogs, setShowLogs] = useState(false)
+  const [showSummaryJson, setShowSummaryJson] = useState(false)
+  const [summaryData, setSummaryData] = useState(null)
+  const [summaryLoading, setSummaryLoading] = useState(false)
   const detailRef = useRef(null)
   const [leftWidth, setLeftWidth] = useState(288)
   const isDragging = useRef(false)
@@ -733,6 +736,8 @@ const DebugEventLog = ({ data, sessionId, sessionStatus }) => {
     setSelection(null)
     setShowJson(false)
     setShowLogs(false)
+    setShowSummaryJson(false)
+    setSummaryData(null)
   }, [sessionId])
 
   useEffect(() => {
@@ -751,11 +756,12 @@ const DebugEventLog = ({ data, sessionId, sessionStatus }) => {
       if (e.key === 'Escape') {
         if (showLogs) setShowLogs(false)
         else if (showJson) setShowJson(false)
+        else if (showSummaryJson) setShowSummaryJson(false)
       }
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [showJson, showLogs])
+  }, [showJson, showLogs, showSummaryJson])
 
   const handleDragStart = useCallback((e) => {
     isDragging.current = true
@@ -787,6 +793,23 @@ const DebugEventLog = ({ data, sessionId, sessionStatus }) => {
     }
   }, [])
 
+  const handleShowSummaryJson = useCallback(async () => {
+    if (summaryData) {
+      setShowSummaryJson(true)
+      return
+    }
+    setSummaryLoading(true)
+    try {
+      const data = await getSessionSummary(sessionId)
+      setSummaryData(data)
+      setShowSummaryJson(true)
+    } catch (err) {
+      console.error('Failed to fetch summary:', err)
+    } finally {
+      setSummaryLoading(false)
+    }
+  }, [sessionId, summaryData])
+
   const selectAgent = useCallback((run) => setSelection({ type: 'agent', agentRun: run }), [])
   const selectTool = useCallback((tc, run) => setSelection({ type: 'tool', agentRun: run, toolCall: tc }), [])
 
@@ -799,6 +822,9 @@ const DebugEventLog = ({ data, sessionId, sessionStatus }) => {
       <div className="flex items-center gap-1 px-3 py-1.5 border-b bg-gray-50 flex-shrink-0">
         <button onClick={() => setShowJson(true)} className="flex items-center gap-1.5 px-2 py-1 text-xs text-gray-500 rounded hover:bg-gray-200 transition-colors" title="View full JSON">
           <Braces className="w-3.5 h-3.5" /><span>View JSON</span>
+        </button>
+        <button onClick={handleShowSummaryJson} disabled={summaryLoading} className="flex items-center gap-1.5 px-2 py-1 text-xs text-gray-500 rounded hover:bg-gray-200 transition-colors disabled:opacity-50" title="Summary view (truncated tool calls, no LLM details)">
+          <Braces className="w-3.5 h-3.5" /><span>{summaryLoading ? 'Loading...' : 'Summary JSON'}</span>
         </button>
         <button onClick={() => setShowLogs(true)} className="flex items-center gap-1.5 px-2 py-1 text-xs text-gray-500 rounded hover:bg-gray-200 transition-colors" title="Backend logs">
           <Terminal className="w-3.5 h-3.5" /><span>Backend Logs</span>
@@ -870,6 +896,13 @@ const DebugEventLog = ({ data, sessionId, sessionStatus }) => {
       </div>
 
       {showJson && <JsonViewerModal data={data} title={data.title || 'Session'} onClose={() => setShowJson(false)} />}
+      {showSummaryJson && (
+        <JsonViewerModal
+          data={summaryData}
+          onClose={() => setShowSummaryJson(false)}
+          title="Session Summary JSON"
+        />
+      )}
       {showLogs && <ContainerLogsModal containerName="druppie-new-backend" onClose={() => setShowLogs(false)} />}
     </div>
   )

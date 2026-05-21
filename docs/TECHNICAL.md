@@ -1071,3 +1071,47 @@ The `sandbox_sessions` table maps control plane session IDs to Druppie users:
 
 The `tool_call_id` FK enables direct lookup from webhook → tool call without table scans. Events proxy (`GET /api/sandbox-sessions/{id}/events`) enforces ownership — non-owners get 403, admins bypass.
 
+---
+
+## 11. Session Inspection (Debugging Features)
+
+### 11.1 Summary Mode
+
+Summary mode is implemented in `druppie/core/summary_utils.py`. When the `?summary=true` query parameter is passed to `GET /sessions/{id}`, the session service calls the summary transformation function before returning the domain model.
+
+**What gets transformed:**
+
+- **LLM calls**: Removed entirely from agent run details. The `llm_calls` list on each `AgentRunDetail` is set to an empty list.
+- **Tool call arguments and results**: Truncated to 50 words. The truncation works as follows:
+  - String values are split on whitespace, the first 50 words are kept, and `"..."` is appended if truncation occurred.
+  - Dictionary and list values are first serialized to JSON, then truncated as strings, and the result is stored as a plain string (not parsed back). This avoids losing structure information while keeping the output compact.
+  - `None` values are left as-is.
+
+**Architecture:**
+
+The summary transformation operates on the domain model level, not the database level. The repository builds the full `SessionDetail` as usual, then the summary utility walks the timeline and produces a modified copy. This keeps the summary logic separate from data access and avoids maintaining separate database queries.
+
+**Integration point:**
+
+In `druppie/api/routes/sessions.py`, the `get_session` endpoint checks for the `summary` query parameter. If present and truthy, it passes the fully constructed `SessionDetail` through `to_summary()` before returning it. The transformation is a pure function with no side effects.
+
+### 11.2 Developer Auth Bypass
+
+The developer auth bypass is implemented in `druppie/core/auth.py`, inside the `get_current_user` dependency function.
+
+**How it works:**
+
+1. When `DEV_MODE=true` is set in the environment, the auth function checks for an `X-Dev-User` header on every request.
+2. If the header is present, the function looks up the username in the database (the user must exist, synced from Keycloak).
+3. If found, it returns a `UserInfo` object with the user's roles and permissions, identical to what would be returned from a validated JWT.
+4. If the user is not found, the request fails with a 401 error.
+5. If `DEV_MODE` is not set or is `false`, the `X-Dev-User` header is ignored and standard Keycloak JWT validation proceeds.
+
+**Design rationale:**
+
+The bypass is intentionally placed inside the existing `get_current_user` function rather than as a separate middleware. This ensures all downstream code receives the same `UserInfo` type regardless of auth method. There are no special code paths, no alternate dependencies, and no way to accidentally bypass the bypass. When `DEV_MODE` is off, the header code path is unreachable.
+
+**Security:**
+
+The `DEV_MODE` flag is read from `druppie/core/config.py` as a boolean environment variable. It defaults to `false`. The flag should only ever be set in local development environments. The `.env.example` file documents it with a clear warning. Production deployments should never include this variable.
+

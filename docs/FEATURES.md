@@ -591,3 +591,93 @@ The Settings page displays system configuration and status (read-only). This pag
 - Environment, version, and LLM provider/model info
 - Configured MCP servers with their available tools
 - Configured agents with model parameters (model, temperature, max tokens) and MCP access
+
+---
+
+## Session Inspection
+
+Session inspection is a debugging feature for developers who need to quickly check what an agent is doing without wading through pages of LLM call data. It combines two capabilities: summary mode and developer auth bypass.
+
+### Session Summary Mode
+
+The `GET /sessions/{id}?summary=true` endpoint returns a session with its verbose data stripped down. LLM calls are removed entirely from the timeline, and tool call arguments and results are truncated to 50 words. This makes the response compact enough to read in a terminal without scrolling through thousands of lines of prompt completions and file contents.
+
+**When to use it:**
+- Checking which agent runs have completed and which are pending
+- Inspecting tool call arguments without the noise of full LLM input/output
+- Quick debugging during development, when you want a high-level view of session state
+- Any situation where the full session detail is too large to be useful
+
+**Example curl commands:**
+
+```bash
+# Get a session in summary mode
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "http://localhost:10222/api/sessions/SESSION_ID?summary=true" | jq .
+
+# Check agent run statuses in a session
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "http://localhost:10222/api/sessions/SESSION_ID?summary=true" | \
+  jq '.timeline[] | select(.type == "agent_run") | {agent: .agent_run.agent_id, status: .agent_run.status}'
+
+# See all tool calls (truncated) across agent runs
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "http://localhost:10222/api/sessions/SESSION_ID?summary=true" | \
+  jq '[.timeline[] | select(.type == "agent_run") | .agent_run.tool_calls[] | {tool: .tool_name, status: .status}]'
+```
+
+### Developer Auth Bypass
+
+When `DEV_MODE=true` is set in `.env`, the backend accepts an `X-Dev-User` header that short-circuits Keycloak authentication entirely. You pass a username, and the backend treats you as that user with all their roles and permissions. No token fetch, no login form, no expired token errors.
+
+**How to enable:**
+
+Add to your `.env` file:
+```
+DEV_MODE=true
+```
+
+Then restart the backend container.
+
+**How to use:**
+
+Pass the `X-Dev-User` header with any username from the test users table:
+
+```bash
+# Act as admin
+curl -s -H "X-Dev-User: admin" "http://localhost:10222/api/sessions" | jq .
+
+# Act as developer
+curl -s -H "X-Dev-User: developer" "http://localhost:10222/api/sessions/SESSION_ID" | jq .
+
+# Act as architect
+curl -s -H "X-Dev-User: architect" "http://localhost:10222/api/approvals/pending" | jq .
+```
+
+**Available users:** admin, architect, developer, analyst, normal_user (see the Test Users table above for full list with roles).
+
+**Security note:** Developer auth bypass is strictly for local development. The `DEV_MODE` flag must never be enabled in staging or production environments. When `DEV_MODE` is off, the `X-Dev-User` header is silently ignored and standard Keycloak authentication is required.
+
+### Combined Usage
+
+The recommended debugging workflow is to use dev auth and summary mode together. This gives you a single curl command that returns a compact, readable view of any session without needing to fetch a token first:
+
+```bash
+# Quick session inspection (no Keycloak token needed, compact output)
+curl -s -H "X-Dev-User: admin" \
+  "http://localhost:10222/api/sessions/SESSION_ID?summary=true" | jq .
+
+# List all sessions with just titles
+curl -s -H "X-Dev-User: admin" \
+  "http://localhost:10222/api/sessions" | jq '.[].title'
+
+# Find a session by title fragment, then inspect it
+SESSION_ID=$(curl -s -H "X-Dev-User: admin" \
+  "http://localhost:10222/api/sessions" | \
+  jq -r '.[] | select(.title | test("hello")) | .id' | head -1)
+
+curl -s -H "X-Dev-User: admin" \
+  "http://localhost:10222/api/sessions/$SESSION_ID?summary=true" | jq .
+```
+
+This combination is the fastest way to debug agent pipelines during development. No token management, no verbose LLM data, just the structure and status you need.

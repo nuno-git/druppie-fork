@@ -134,3 +134,26 @@ LLM_PROVIDER=zai
 ZAI_API_KEY=your_key
 GITEA_TOKEN=your_token
 ```
+
+## Quick Session Inspection (Dev Mode)
+
+For fast debugging without Keycloak tokens:
+
+```bash
+# Enable dev mode (set in .env)
+DEV_MODE=true
+
+# Inspect any session quickly - no Keycloak needed
+curl -s -H "X-Dev-User: admin" "http://localhost:10222/api/sessions/{SESSION_ID}?summary=true" | jq .
+
+# List all sessions
+curl -s -H "X-Dev-User: admin" "http://localhost:10222/api/sessions" | jq '.[].title'
+
+# Check agent run statuses in a session
+curl -s -H "X-Dev-User: admin" \
+  "http://localhost:10222/api/sessions/{SESSION_ID}?summary=true" | \
+  jq '[.timeline[] | select(.type == "agent_run") | {agent: .agent_run.agent_id, status: .agent_run.status}]'
+```
+
+Summary mode (`?summary=true`) strips LLM calls and truncates tool args/results to 50 words.
+Dev auth (`X-Dev-User` header) skips Keycloak entirely when `DEV_MODE=true`.
