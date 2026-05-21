@@ -42,23 +42,10 @@ class GiteaClient:
         self.admin_user = admin_user or GITEA_ADMIN_USER
         self.admin_password = admin_password or GITEA_ADMIN_PASSWORD
         self.org = org or GITEA_ORG
-        self._client: httpx.AsyncClient | None = None
-
-    async def _get_client(self) -> httpx.AsyncClient:
-        """Get or create async HTTP client."""
-        if self._client is None or self._client.is_closed:
-            self._client = httpx.AsyncClient(
-                base_url=f"{self.base_url}/api/v1",
-                auth=(self.admin_user, self.admin_password),
-                timeout=30.0,
-            )
-        return self._client
 
     async def close(self):
-        """Close the HTTP client."""
-        if self._client and not self._client.is_closed:
-            await self._client.aclose()
-            self._client = None
+        """Close the HTTP client. No-op with per-request clients."""
+        pass
 
     async def _request(
         self,
@@ -67,45 +54,86 @@ class GiteaClient:
         json_data: dict | None = None,
         params: dict | None = None,
     ) -> dict[str, Any]:
-        """Make an API request to Gitea."""
-        client = await self._get_client()
+        max_attempts = 2
+        last_exception: Exception | None = None
 
-        try:
-            response = await client.request(
-                method=method,
-                url=endpoint,
-                json=json_data,
-                params=params,
-            )
+        for attempt in range(1, max_attempts + 1):
+            try:
+                async with httpx.AsyncClient(
+                    base_url=f"{self.base_url}/api/v1",
+                    auth=(self.admin_user, self.admin_password),
+                    timeout=30.0,
+                ) as client:
+                    response = await client.request(
+                        method=method,
+                        url=endpoint,
+                        json=json_data,
+                        params=params,
+                    )
 
-            result = {
-                "success": response.status_code in (200, 201, 204),
-                "status_code": response.status_code,
-            }
+                result = {
+                    "success": response.status_code in (200, 201, 204),
+                    "status_code": response.status_code,
+                }
 
-            if response.text:
-                try:
-                    result["data"] = response.json()
-                except ValueError:
-                    result["data"] = response.text
+                if response.text:
+                    try:
+                        result["data"] = response.json()
+                    except ValueError:
+                        result["data"] = response.text
 
-            if not result["success"]:
-                logger.warning(
-                    "gitea_api_error",
+                if not result["success"]:
+                    logger.warning(
+                        "gitea_api_error",
+                        method=method,
+                        endpoint=endpoint,
+                        status=response.status_code,
+                        response=result.get("data"),
+                    )
+
+                return result
+
+            except httpx.RequestError as e:
+                last_exception = e
+                if attempt < max_attempts:
+                    logger.warning(
+                        "gitea_request_retry",
+                        method=method,
+                        endpoint=endpoint,
+                        attempt=attempt,
+                        error=str(e),
+                    )
+                    continue
+                logger.error(
+                    "gitea_request_error",
                     method=method,
                     endpoint=endpoint,
-                    status=response.status_code,
-                    response=result.get("data"),
+                    error=str(e),
+                    exc_info=True,
                 )
+                return {"success": False, "error": str(e)}
 
-            return result
+            except RuntimeError as e:
+                last_exception = e
+                if attempt < max_attempts and ("event loop" in str(e).lower() or "closed" in str(e).lower()):
+                    logger.warning(
+                        "gitea_runtime_retry",
+                        method=method,
+                        endpoint=endpoint,
+                        attempt=attempt,
+                        error=str(e),
+                    )
+                    continue
+                logger.error(
+                    "gitea_runtime_error",
+                    method=method,
+                    endpoint=endpoint,
+                    error=str(e),
+                    exc_info=True,
+                )
+                return {"success": False, "error": str(e)}
 
-        except httpx.RequestError as e:
-            logger.error("gitea_request_error", method=method, endpoint=endpoint, error=str(e), exc_info=True)
-            return {
-                "success": False,
-                "error": str(e),
-            }
+        return {"success": False, "error": str(last_exception)}
 
     # =========================================================================
     # User Operations
