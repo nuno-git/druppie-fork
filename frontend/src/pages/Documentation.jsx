@@ -1,9 +1,81 @@
 import React, { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import { BookOpen, AlertCircle, Loader2, ChevronDown, ChevronRight, FileText, Puzzle, Bot, Cable, Wrench } from 'lucide-react'
 
 import { getDocumentation } from '../services/api'
 import PageHeader from '../components/shared/PageHeader'
+import CodeBlock from '../components/CodeBlock'
+import MermaidBlock from '../components/MermaidBlock'
+
+const docComponents = {
+  pre({ children }) {
+    return React.createElement('div', { className: 'my-2' }, children)
+  },
+  code({ className, children, ...props }) {
+    const match = /language-(\w+)/.exec(className || '')
+    const codeString = String(children).replace(/\n$/, '')
+    if (match && match[1] === 'mermaid') {
+      return React.createElement(MermaidBlock, { code: codeString })
+    }
+    if (match || codeString.includes('\n')) {
+      return React.createElement(CodeBlock, {
+        code: codeString,
+        language: match ? match[1] : 'text',
+        showLineNumbers: codeString.split('\n').length > 10
+      })
+    }
+    return React.createElement('code', { className: 'px-1.5 py-0.5 bg-gray-100 text-gray-800 rounded text-[13px] font-mono' }, children)
+  },
+  table({ children }) {
+    return React.createElement('div', { className: 'overflow-x-auto my-4' },
+      React.createElement('table', { className: 'min-w-full text-sm border border-gray-200 rounded-lg overflow-hidden' }, children)
+    )
+  },
+  thead({ children }) {
+    return React.createElement('thead', { className: 'bg-gray-50' }, children)
+  },
+  th({ children }) {
+    return React.createElement('th', { className: 'px-3 py-2 text-left text-xs font-semibold text-gray-600 uppercase tracking-wide border-b border-gray-200' }, children)
+  },
+  td({ children }) {
+    return React.createElement('td', { className: 'px-3 py-2 text-sm text-gray-700 border-b border-gray-100' }, children)
+  },
+  h1({ children }) {
+    return React.createElement('h1', { className: 'text-2xl font-bold text-gray-900 mt-8 mb-4 pb-2 border-b border-gray-200' }, children)
+  },
+  h2({ children }) {
+    return React.createElement('h2', { className: 'text-xl font-semibold text-gray-900 mt-8 mb-3 pb-1.5 border-b border-gray-100' }, children)
+  },
+  h3({ children }) {
+    return React.createElement('h3', { className: 'text-lg font-semibold text-gray-900 mt-6 mb-2' }, children)
+  },
+  p({ children }) {
+    return React.createElement('p', { className: 'text-sm text-gray-700 leading-relaxed mb-3' }, children)
+  },
+  ul({ children }) {
+    return React.createElement('ul', { className: 'list-disc list-outside ml-5 mb-3 space-y-1 text-sm text-gray-700' }, children)
+  },
+  ol({ children }) {
+    return React.createElement('ol', { className: 'list-decimal list-outside ml-5 mb-3 space-y-1 text-sm text-gray-700' }, children)
+  },
+  li({ children }) {
+    return React.createElement('li', { className: 'leading-relaxed' }, children)
+  },
+  blockquote({ children }) {
+    return React.createElement('blockquote', { className: 'border-l-4 border-blue-300 bg-blue-50/50 pl-4 py-2 my-3 text-sm text-gray-700 italic rounded-r' }, children)
+  },
+  hr() {
+    return React.createElement('hr', { className: 'my-6 border-gray-200' })
+  },
+  a({ href, children }) {
+    return React.createElement('a', { href: href, className: 'text-blue-600 hover:text-blue-800 underline decoration-blue-300', target: '_blank', rel: 'noopener noreferrer' }, children)
+  },
+  strong({ children }) {
+    return React.createElement('strong', { className: 'font-semibold text-gray-900' }, children)
+  },
+}
 
 function DocCard({ entry }) {
   const [expanded, setExpanded] = useState(false)
@@ -22,8 +94,8 @@ function DocCard({ entry }) {
       ),
       React.createElement('span', { className: 'text-gray-400' }, icon)
     ),
-    expanded ? React.createElement('div', { className: 'border-t border-gray-100 p-4 bg-gray-50' },
-      React.createElement('pre', { className: 'text-sm text-gray-700 whitespace-pre-wrap font-mono leading-relaxed' }, entry.content)
+    expanded ? React.createElement('div', { className: 'border-t border-gray-100 p-6 bg-white max-w-none' },
+      React.createElement(ReactMarkdown, { remarkPlugins: [remarkGfm], components: docComponents }, entry.content)
     ) : null
   )
 }
