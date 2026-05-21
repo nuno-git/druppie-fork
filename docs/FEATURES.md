@@ -168,7 +168,7 @@ Users can hold multiple roles. For example, the `architect` test user has both `
 
 ### Frontend Authentication
 
-- Protected routes with role-based guards (e.g., admin-only database page)
+- Protected routes with role-based guards (e.g., admin-only platform page)
 - JWT Bearer token injected on all API requests
 - Silent SSO check on page load; automatic token refresh on expiry
 - User profile and role display on the Settings page

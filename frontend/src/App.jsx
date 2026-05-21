@@ -20,7 +20,6 @@ import DebugProjects from './pages/DebugProjects'
 import Projects from './pages/Projects'
 import ProjectDetail from './pages/ProjectDetail'
 import Settings from './pages/Settings'
-import AdminDatabase from './pages/AdminDatabase'
 import Platform from './pages/Platform'
 import Evaluations from './pages/Evaluations'
 import Analytics from './pages/Analytics'
@@ -240,14 +239,6 @@ function App() {
                             element={
                               <ProtectedRoute>
                                 <Settings />
-                              </ProtectedRoute>
-                            }
-                          />
-                          <Route
-                            path="/admin/database"
-                            element={
-                              <ProtectedRoute requiredRole="admin">
-                                <AdminDatabase />
                               </ProtectedRoute>
                             }
                           />

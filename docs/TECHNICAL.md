@@ -223,7 +223,6 @@ druppie/
 | Project Detail | `ProjectDetail.jsx` | Single project view with deployments |
 | Plans | `Plans.jsx` | Execution plan viewer |
 | Settings | `Settings.jsx` | User preferences |
-| Admin Database | `AdminDatabase.jsx` | Database inspection |
 | Debug | `Debug.jsx`, `DebugChat.jsx`, `DebugApprovals.jsx`, `DebugMCP.jsx`, `DebugProjects.jsx` | Development debugging tools |
 
 ### 3.3 Real-time Updates
