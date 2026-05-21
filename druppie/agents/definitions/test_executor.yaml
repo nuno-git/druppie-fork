@@ -1,5 +1,3 @@
-sandbox:
-  networks: [modules]
 id: test_executor
 name: Test Executor Agent
 description: Runs tests and reports results (Green Phase verification)
@@ -175,6 +173,7 @@ extra_builtin_tools:
 
 mcps:
   coding:
+    networks: [modules]
     tools: [read_file, bash, grep, find, ls, run_tests, get_test_framework, get_coverage_report]
     git: current_project
 

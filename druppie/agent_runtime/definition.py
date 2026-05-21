@@ -54,9 +54,6 @@ def parse_definition(data: dict[str, Any]) -> AgentDefinition:
 
     approval_overrides = data.get("approval_overrides", {})
 
-    sandbox_raw = data.get("sandbox", {})
-    sandbox = SandboxConfig(networks=sandbox_raw.get("networks", []))
-
     return AgentDefinition(
         id=data["id"],
         name=data["name"],
@@ -75,7 +72,6 @@ def parse_definition(data: dict[str, Any]) -> AgentDefinition:
         done_variables=done_variables,
         mcps=mcps,
         approval_overrides=approval_overrides,
-        sandbox=sandbox,
         extra_builtin_tools=data.get("extra_builtin_tools", []),
         excluded_builtin_tools=data.get("excluded_builtin_tools", []),
         sandbox_constraints=data.get("sandbox_constraints"),
@@ -207,11 +203,6 @@ def _parse_summary_status(status_raw: dict[str, Any] | None) -> dict[str, Any] |
 
 
 @dataclass
-class SandboxConfig:
-    networks: list[str] = field(default_factory=list)
-
-
-@dataclass
 class AgentDefinition:
     """Agent definition parsed from YAML.
 
@@ -241,8 +232,6 @@ class AgentDefinition:
     mcps: dict[str, Any] = field(default_factory=dict)
 
     approval_overrides: dict[str, dict[str, Any]] = field(default_factory=dict)
-
-    sandbox: SandboxConfig = field(default_factory=SandboxConfig)
 
     # Legacy fields from old schema — kept for compatibility during migration
     extra_builtin_tools: list[str] = field(default_factory=list)
@@ -275,6 +264,8 @@ class AgentDefinition:
         return None
 
     @property
-    def sandbox_networks(self) -> list[str]:
-        """Get the sandbox networks from the sandbox config."""
-        return self.sandbox.networks
+    def coding_networks(self) -> list[str]:
+        coding_config = self.mcps.get("coding")
+        if isinstance(coding_config, dict):
+            return coding_config.get("networks", [])
+        return []

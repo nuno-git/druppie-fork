@@ -1,5 +1,3 @@
-sandbox:
-  networks: []
 id: reviewer
 name: Reviewer Agent
 description: Reviews code and provides feedback

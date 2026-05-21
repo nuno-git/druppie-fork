@@ -42,6 +42,10 @@ mcps:
         from: agent.git_scope
         hidden: true
         tools: [read_file, write_file, edit_file, bash, grep, find, ls, list_dir, batch_write_files, delete_file, make_design, push_changes, create_pr, run_tests, get_test_framework, get_coverage_report, install_test_dependencies, validate_tdd, get_git_status, get_file_info, search_files]
+      sandbox_networks:
+        from: agent.coding_networks
+        hidden: true
+        tools: [read_file, write_file, edit_file, bash, grep, find, ls, list_dir, batch_write_files, delete_file, make_design, push_changes, create_pr, run_tests, get_test_framework, get_coverage_report, install_test_dependencies, validate_tdd, get_git_status, get_file_info, search_files]
     tools:
       - name: read_file
         requires_approval: false

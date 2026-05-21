@@ -1,5 +1,3 @@
-sandbox:
-  networks: [internet, modules]
 id: test_builder
 name: Test Builder Agent
 description: Generates comprehensive tests following TDD methodology (Red Phase)
@@ -311,6 +309,7 @@ system_prompts:
 
 mcps:
   coding:
+    networks: [internet]
     tools: [read_file, write_file, edit_file, bash, grep, find, ls, run_tests, push_changes, create_pr]
     git: current_project
 

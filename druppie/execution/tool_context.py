@@ -160,12 +160,12 @@ class ToolContext:
                             return config["git"]
             return None
 
-        if obj_name == "agent" and attr_name == "sandbox_networks":
+        if obj_name == "agent" and attr_name == "coding_networks":
             agent = self.agent
             if agent:
-                sandbox = getattr(agent, 'sandbox', None)
-                if sandbox is not None:
-                    networks = getattr(sandbox, 'networks', [])
+                coding_config = getattr(agent, 'mcps', {}).get("coding")
+                if isinstance(coding_config, dict):
+                    networks = coding_config.get("networks", [])
                     if networks:
                         return networks
             return None

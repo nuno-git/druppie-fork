@@ -1,5 +1,3 @@
-sandbox:
-  networks: []
 id: architect
 name: Architect Agent
 description: Designs system architecture, validates functional designs against NORA and Water Authority principles, and creates technical specifications

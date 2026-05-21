@@ -1,5 +1,3 @@
-sandbox:
-  networks: [internet]
 id: builder
 name: Builder Agent
 description: Implements code to make tests pass following TDD methodology
@@ -172,6 +170,7 @@ system_prompts:
 
 mcps:
   coding:
+    networks: [internet]
     tools: [read_file, write_file, edit_file, bash, grep, find, ls]
     git: current_project
 

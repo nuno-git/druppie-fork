@@ -1,5 +1,3 @@
-sandbox:
-  networks: []
 id: explorer
 name: Explorer
 description: Reads design docs and explores existing codebase for context

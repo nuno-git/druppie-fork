@@ -1,5 +1,3 @@
-sandbox:
-  networks: [internet]
 id: builder_planner
 name: Builder Planner Agent
 description: Creates detailed implementation plans (code standards, test strategy, solution approach, change approach). Reads design docs, writes builder_plan.md.
@@ -192,6 +190,7 @@ system_prompts:
 
 mcps:
   coding:
+    networks: [internet]
     tools: [read_file, write_file, edit_file, bash, grep, find, ls, push_changes, create_pr]
     git: current_project
 

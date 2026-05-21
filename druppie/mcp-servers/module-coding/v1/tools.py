@@ -29,6 +29,8 @@ import time
 import uuid
 from pathlib import Path
 
+import jwt
+
 from fastmcp import FastMCP
 
 from .mermaid_validator import validate_mermaid_in_markdown
@@ -59,7 +61,57 @@ GITEA_TOKEN = os.getenv("GITEA_TOKEN", "")
 GITEA_USER = os.getenv("GITEA_USER", "gitea_admin")
 GITEA_PASSWORD = os.getenv("GITEA_PASSWORD", "")
 DRUPPIE_CORE_REPO_URL = os.getenv("DRUPPIE_CORE_REPO_URL", "")
-DRUPPIE_CORE_REPO_BRANCH = os.getenv("DRUPPIE_CORE_REPO_BRANCH", "main")
+DRUPPIE_CORE_REPO_BRANCH = os.getenv("DRUPPIE_CORE_REPO_BRANCH", "colab-dev")
+GITHUB_APP_ID = os.environ.get("GITHUB_APP_ID", "")
+GITHUB_APP_PRIVATE_KEY_PATH = os.environ.get("GITHUB_APP_PRIVATE_KEY_PATH", "")
+GITHUB_APP_INSTALLATION_ID = os.environ.get("GITHUB_APP_INSTALLATION_ID", "")
+GITHUB_REPO_OWNER = os.getenv("GITHUB_REPO_OWNER", "")
+GITHUB_REPO_NAME = os.getenv("GITHUB_REPO_NAME", "")
+
+_github_installation_token: str | None = None
+_github_token_expires_at: float = 0.0
+
+
+def _generate_github_app_jwt() -> str:
+    now = int(time.time())
+    payload = {
+        "iss": GITHUB_APP_ID,
+        "iat": now - 60,
+        "exp": now + (9 * 60),
+    }
+    with open(GITHUB_APP_PRIVATE_KEY_PATH) as f:
+        private_key = f.read()
+    return jwt.encode(payload, private_key, algorithm="RS256")
+
+
+def _get_github_token() -> str:
+    global _github_installation_token, _github_token_expires_at
+    if _github_installation_token and time.time() < _github_token_expires_at - 60:
+        return _github_installation_token
+    import httpx
+    from datetime import datetime
+    app_jwt = _generate_github_app_jwt()
+    resp = httpx.post(
+        f"https://api.github.com/app/installations/{GITHUB_APP_INSTALLATION_ID}/access_tokens",
+        headers={
+            "Authorization": f"Bearer {app_jwt}",
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+        },
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    _github_installation_token = data["token"]
+    _github_token_expires_at = datetime.fromisoformat(
+        data["expires_at"].replace("Z", "+00:00")
+    ).timestamp()
+    return _github_installation_token
+
+
+def _get_github_push_url() -> str:
+    token = _get_github_token()
+    return f"https://x-access-token:{token}@github.com/{GITHUB_REPO_OWNER}/{GITHUB_REPO_NAME}.git"
+
 
 SANDBOX_IMAGE = os.getenv("DRUPPIE_SANDBOX_IMAGE", "druppie-sandbox:latest")
 SANDBOX_MEMORY = os.getenv("DRUPPIE_DOCKER_MEMORY_LIMIT", "4g")
@@ -287,6 +339,28 @@ async def _create_sandbox_container(
             ],
             timeout=60,
         )
+        if rc != 0 and "already in use" in stderr:
+            logger.warning("Container name conflict for %s, forcing cleanup and retrying", container_name)
+            await _docker_run(["docker", "rm", "-f", container_name], timeout=10)
+            await asyncio.sleep(1)
+            rc, stdout, stderr = await _docker_run(
+                [
+                    "docker", "run", "-d",
+                    "--name", container_name,
+                    "--network", SANDBOX_NETWORK,
+                    "--security-opt", "no-new-privileges",
+                    "--cap-drop", "ALL",
+                    "--cap-add", "NET_RAW",
+                    "--memory", SANDBOX_MEMORY,
+                    "--pids-limit", str(SANDBOX_PIDS_LIMIT),
+                    "--cpus", SANDBOX_CPU,
+                    "--tmpfs", "/tmp:size=512m",
+                    "-w", "/workspace",
+                    SANDBOX_IMAGE,
+                    "sleep", "infinity",
+                ],
+                timeout=60,
+            )
         if rc != 0:
             raise RuntimeError(f"docker run failed: {stderr}")
 
@@ -1416,6 +1490,73 @@ async def push_changes(
         if rc != 0:
             return {"success": False, "error": f"git bundle create failed: {stderr}"}
 
+        if scope == "update_core":
+            token = _get_github_token()
+            if not token:
+                return {"success": False, "error": "GitHub App token not available for update_core push"}
+
+            bundle_name = f"changes-{uuid.uuid4().hex[:8]}.bundle"
+            bundle_container_path = f"/tmp/{bundle_name}"
+
+            rc, _, stderr = await _exec_in_container(
+                container,
+                ["git", "bundle", "create", bundle_container_path, "HEAD", "^origin/main"],
+                timeout=120,
+            )
+            if rc != 0:
+                rc, _, stderr = await _exec_in_container(
+                    container,
+                    ["git", "bundle", "create", bundle_container_path, "--all"],
+                    timeout=120,
+                )
+            if rc != 0:
+                return {"success": False, "error": f"git bundle create failed: {stderr}"}
+
+            tmpdir = tempfile.mkdtemp(prefix="druppie-git-")
+            try:
+                bundle_host_path = os.path.join(tmpdir, bundle_name)
+                await _copy_from_container(container, bundle_container_path, bundle_host_path)
+
+                bare_repo = os.path.join(tmpdir, "bare")
+                rc, _, stderr = await _docker_run(
+                    ["git", "init", "--bare", bare_repo], timeout=30,
+                )
+                if rc != 0:
+                    return {"success": False, "error": f"git init --bare failed: {stderr}"}
+
+                github_url = _get_github_push_url()
+                base_branch = DRUPPIE_CORE_REPO_BRANCH or "colab-dev"
+                await _docker_run(
+                    ["git", "-C", bare_repo, "fetch", github_url,
+                     f"{base_branch}:refs/heads/{base_branch}"],
+                    timeout=60,
+                )
+
+                rc, _, stderr = await _docker_run(
+                    ["git", "-C", bare_repo, "fetch", bundle_host_path,
+                     f"HEAD:refs/heads/{branch}"],
+                    timeout=60,
+                )
+                if rc != 0:
+                    return {"success": False, "error": f"git fetch from bundle failed: {stderr}"}
+
+                rc, _, stderr = await _docker_run(
+                    ["git", "-C", bare_repo, "push", github_url,
+                     f"{branch}:{push_branch}"],
+                    timeout=60,
+                )
+                if rc != 0:
+                    return {"success": False, "error": f"GitHub push failed: {stderr}"}
+
+                logger.info("Pushed to GitHub branch=%s", push_branch)
+                return {"success": True, "branch": branch, "pushed_to": push_branch, "stdout": f"Pushed to GitHub: {push_branch}"}
+
+            finally:
+                shutil.rmtree(tmpdir, ignore_errors=True)
+                await _exec_in_container(
+                    container, ["rm", "-f", bundle_container_path], timeout=10
+                )
+
         # Copy bundle from sandbox container to host
         tmpdir = tempfile.mkdtemp(prefix="druppie-git-")
         try:
@@ -1554,21 +1695,43 @@ async def create_pr(
             else:
                 head_branch = branch
 
-        # Create PR via Gitea API
-        api_url = (
-            f"{GITEA_URL}/api/v1/repos/"
-            f"{resolved_repo_owner}/{resolved_repo_name}/pulls"
-        )
-        payload = json.dumps({
-            "head": head_branch,
-            "base": base_branch,
-            "title": pr_title,
-            "body": pr_body,
-        })
-
-        # Build auth header — prefer token, fall back to basic auth
-        curl_headers = ["Content-Type: application/json"]
-        if GITEA_TOKEN:
+        if scope == "update_core":
+            token = _get_github_token()
+            if not token:
+                return {"success": False, "error": "GitHub App token not available for update_core PR"}
+            owner = GITHUB_REPO_OWNER
+            repo = GITHUB_REPO_NAME
+            if not owner or not repo:
+                return {"success": False, "error": "GITHUB_REPO_OWNER and GITHUB_REPO_NAME not configured"}
+            target_base = base_branch or DRUPPIE_CORE_REPO_BRANCH or "colab-dev"
+            api_url = f"https://api.github.com/repos/{owner}/{repo}/pulls"
+            pr_body_clean = pr_body.replace("\\n", "\n")
+            payload = json.dumps({
+                "head": head_branch,
+                "base": target_base,
+                "title": pr_title,
+                "body": pr_body_clean,
+            })
+            curl_args = [
+                "curl", "-s", "-w", "\\n%{http_code}", "-X", "POST", api_url,
+                "-H", "Accept: application/vnd.github+json",
+                "-H", f"Authorization: Bearer {token}",
+                "-H", "Content-Type: application/json",
+                "-d", payload,
+            ]
+            proc = await asyncio.create_subprocess_exec(
+                *curl_args,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
+            if proc.returncode != 0:
+                return {"success": False, "error": f"GitHub PR creation failed (curl error): {stderr.decode()}"}
+            raw = stdout.decode()
+            body, _, status_line = raw.rpartition("\n")
+            http_status = int(status_line.strip()) if status_line.strip().isdigit() else 0
+            pr_data = json.loads(body) if body.strip() else {}
+            if http_status 
             curl_headers.append(f"Authorization: token {GITEA_TOKEN}")
         elif GITEA_USER and GITEA_PASSWORD:
             import base64 as _b64

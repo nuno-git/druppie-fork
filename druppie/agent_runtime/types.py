@@ -39,8 +39,6 @@ class LoopConfig:
     respect_retry_after: bool = True
     max_context_tokens: int = 150000
     max_subagent_depth: int = 10
-    sandbox_pool_size: int = 3
-    sandbox_pool_recycle_s: int = 3600
 
 
 @dataclass

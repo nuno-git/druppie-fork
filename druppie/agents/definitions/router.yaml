@@ -1,5 +1,3 @@
-sandbox:
-  networks: []
 id: router
 name: Router Agent
 description: Analyzes user intent and routes to appropriate action

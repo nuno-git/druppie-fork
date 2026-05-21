@@ -8,7 +8,7 @@ import { Send, CheckCircle, XCircle, Shield, ShieldOff, Loader2, ExternalLink, M
 import { Link } from 'react-router-dom'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { getSession, sendChat, cancelChat, resumeSession, approveApproval, rejectApproval, answerQuestion, getSandboxEvents } from '../../services/api'
+import { getSession, sendChat, cancelChat, resumeSession, approveApproval, rejectApproval, answerQuestion } from '../../services/api'
 import { getUserInfo } from '../../services/keycloak'
 import { useAuth } from '../../App'
 import { getAgentConfig, getAgentMessageColors, formatToolName } from '../../utils/agentConfig'
@@ -29,16 +29,6 @@ import {
   ProjectRepoContext,
 } from './ChatHelpers'
 import TestResultCard from './TestResultCard'
-import SandboxEventCard, {
-  processEvents,
-  groupBySubagent,
-  SubagentGroup,
-  EventItem,
-  AgentTextBlock,
-  ConversationTimeline,
-  toolCategoryConfig,
-  getToolCategory,
-} from './SandboxEventCard'
 
 // --- Tool label helper ---
 
@@ -485,13 +475,6 @@ const AgentRunItem = ({ run, timelineIndex, sessionId, hasFollowingMessage, sess
             </div>
           )
         }
-        if (item.type === 'sandbox') {
-          return (
-            <div key={i} className="mt-2">
-              <SandboxEventCard sandboxResult={item.data} />
-            </div>
-          )
-        }
         if (item.type === 'subagents') {
           return (
             <div key={i} className="mt-2 border-l-2 border-gray-200/80 pl-2">
@@ -582,157 +565,6 @@ const MessageItem = ({ message, agentRun, sessionId }) => {
 }
 
 // --- Sandbox Live Progress ---
-
-/** Extract sandbox_session_id from a waiting_sandbox tool call in the timeline */
-const findWaitingSandboxId = (timeline) => {
-  if (!timeline) return null
-  for (let i = timeline.length - 1; i >= 0; i--) {
-    const entry = timeline[i]
-    if (entry.type !== 'agent_run' || !entry.agent_run) continue
-    for (const llm of (entry.agent_run.llm_calls || [])) {
-      for (const tc of (llm.tool_calls || [])) {
-        if (tc.tool_name === 'execute_coding_task' && tc.status === 'waiting_sandbox') {
-          let result = tc.result
-          if (typeof result === 'string') {
-            try { result = JSON.parse(result) } catch { continue }
-          }
-          if (result?.sandbox_session_id) return result.sandbox_session_id
-        }
-      }
-    }
-  }
-  return null
-}
-
-const SandboxLiveProgress = ({ sandboxSessionId }) => {
-  const [expanded, setExpanded] = useState(true)
-  const [filterTool, setFilterTool] = useState(null)
-
-  const { data: eventsData } = useQuery({
-    queryKey: ['sandbox-events-live', sandboxSessionId],
-    queryFn: () => getSandboxEvents(sandboxSessionId),
-    refetchInterval: 3000,
-    enabled: !!sandboxSessionId,
-  })
-
-  const rawEvents = eventsData?.events || (Array.isArray(eventsData) ? eventsData : [])
-  // API returns newest-first; reverse for chronological display, then process
-  const events = processEvents([...rawEvents].reverse())
-
-  // Compute tool stats for filter buttons
-  const toolCounts = events.reduce((acc, e) => {
-    if (e.type === 'tool_call') {
-      const tool = (e.data?.tool || 'unknown').toLowerCase()
-      acc[tool] = (acc[tool] || 0) + 1
-    }
-    return acc
-  }, {})
-
-  const filteredEvents = filterTool
-    ? events.filter((e) => e.type === 'tool_call' && (e.data?.tool || '').toLowerCase() === filterTool)
-    : events
-
-  // Group events by subagent when not filtering
-  const grouped = !filterTool ? groupBySubagent(events) : null
-  const hasSubagents = grouped?.some((g) => g.type === 'subagent')
-
-  // Latest event for header summary
-  const lastToolEvent = [...events].reverse().find(e => e.type === 'tool_call')
-  const latestLabel = lastToolEvent?.data?.tool
-
-  if (!sandboxSessionId) return null
-
-  const renderGroupedEvents = () => {
-    let idx = 0
-    return grouped.map((g, i) => {
-      if (g.type === 'subagent') {
-        const startIdx = idx
-        idx += g.events.length
-        return <SubagentGroup key={g.taskId || `sg-${i}`} group={g} startIndex={startIdx} />
-      }
-      if (g.event.type === 'token') {
-        return <AgentTextBlock key={g.event.id || `t-${i}`} event={g.event} />
-      }
-      return <EventItem key={g.event.id || `e-${i}`} event={g.event} index={idx++} />
-    })
-  }
-
-  return (
-    <div className="pl-8 mt-1">
-      <div className="border border-blue-200 rounded-lg bg-blue-50/50 overflow-hidden">
-        {/* Header */}
-        <button
-          onClick={() => setExpanded(!expanded)}
-          className="w-full flex items-center gap-2 px-3 py-2 text-xs hover:bg-blue-100/50 transition-colors"
-        >
-          <Terminal className="w-3.5 h-3.5 text-blue-500 flex-shrink-0" />
-          <Loader2 className="w-3 h-3 text-blue-400 animate-spin flex-shrink-0" />
-          <span className="text-blue-600 font-medium">Sandbox Agent</span>
-          {latestLabel && (
-            <span className="text-blue-400 truncate">— {latestLabel}</span>
-          )}
-          <span className="ml-auto text-blue-300 flex-shrink-0">
-            {events.length > 0 && <span className="mr-1">{events.length} events</span>}
-            {expanded ? <ChevronDown className="w-3 h-3 inline" /> : <ChevronRight className="w-3 h-3 inline" />}
-          </span>
-        </button>
-
-        {/* Expanded: full event timeline (same as completed view) */}
-        {expanded && (
-          <div className="border-t border-blue-200 px-3 py-1.5">
-            {events.length === 0 ? (
-              <span className="text-xs text-blue-400 italic">Starting up…</span>
-            ) : (
-              <>
-                {/* Conversation timeline */}
-                <ConversationTimeline events={events} />
-
-                {/* Tool filter bar */}
-                {Object.keys(toolCounts).length > 1 && (
-                  <div className="mt-1 mb-1 flex flex-wrap gap-1 items-center">
-                    <button
-                      onClick={() => setFilterTool(null)}
-                      className={`text-[10px] px-1.5 py-0.5 rounded transition-colors ${!filterTool ? 'bg-gray-700 text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}
-                    >
-                      all ({events.length})
-                    </button>
-                    {Object.entries(toolCounts).sort((a, b) => b[1] - a[1]).map(([tool, count]) => {
-                      const cat = getToolCategory(tool)
-                      const { colors } = toolCategoryConfig[cat]
-                      const isActive = filterTool === tool
-                      return (
-                        <button
-                          key={tool}
-                          onClick={() => setFilterTool(isActive ? null : tool)}
-                          className={`text-[10px] px-1.5 py-0.5 rounded transition-colors ${isActive ? 'bg-gray-700 text-white' : colors + ' hover:opacity-80'}`}
-                        >
-                          {tool} ({count})
-                        </button>
-                      )
-                    })}
-                  </div>
-                )}
-
-                {/* Events timeline */}
-                <div className="max-h-[500px] overflow-y-auto">
-                  {hasSubagents && !filterTool ? (
-                    renderGroupedEvents()
-                  ) : (
-                    filteredEvents.map((event, i) => (
-                      event.type === 'token'
-                        ? <AgentTextBlock key={event.id || `t-${i}`} event={event} />
-                        : <EventItem key={event.id || i} event={event} index={i} />
-                    ))
-                  )}
-                </div>
-              </>
-            )}
-          </div>
-        )}
-      </div>
-    </div>
-  )
-}
 
 // --- Main SessionDetail ---
 
@@ -1234,15 +1066,11 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
                   </div>
                   <span className={`text-sm font-medium ${colors.accent}`}>{config.name}</span>
                 </div>
-                {isSandboxWaiting ? (
-                  <SandboxLiveProgress sandboxSessionId={findWaitingSandboxId(data.timeline)} />
-                ) : (
                   <div className="pl-8 flex items-center gap-1.5 py-1">
                     <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce [animation-delay:0ms]" />
                     <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce [animation-delay:150ms]" />
                     <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce [animation-delay:300ms]" />
                   </div>
-                )}
               </div>
             )
           })()}

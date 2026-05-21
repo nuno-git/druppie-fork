@@ -1,5 +1,3 @@
-sandbox:
-  networks: []
 id: planner
 name: Planner Agent
 description: Creates execution plans and re-evaluates progress in a loop

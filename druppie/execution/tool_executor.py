@@ -833,21 +833,13 @@ class ToolExecutor:
                 self.execution_repo.update_tool_call(
                     tool_call.id,
                     status=ToolCallStatus.WAITING_SANDBOX,
-                    result=result,  # Store sandbox_session_id for resume
-                    sandbox_waiting_at=datetime.now(timezone.utc),  # For accurate watchdog timeout
+                    result=result,
+                    sandbox_waiting_at=datetime.now(timezone.utc),
                 )
-                # Link the SandboxSession record to this tool call for direct lookup
-                # (avoids full table scan + JSON parsing in the webhook handler)
-                sandbox_session_id = result.get("sandbox_session_id")
-                if sandbox_session_id:
-                    from druppie.repositories import SandboxSessionRepository
-                    sandbox_repo = SandboxSessionRepository(self.db)
-                    sandbox_repo.update_tool_call_id(sandbox_session_id, tool_call.id)
                 self.db.commit()
                 logger.info(
                     "builtin_tool_waiting_sandbox",
                     tool_call_id=str(tool_call.id),
-                    sandbox_session_id=sandbox_session_id,
                 )
                 return ToolCallStatus.WAITING_SANDBOX
 
