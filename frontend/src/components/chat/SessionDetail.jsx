@@ -365,6 +365,13 @@ const SubagentToolCall = ({ tc }) => {
   )
 }
 
+const DEPTH_STYLES = [
+  { border: 'border-blue-200', bg: 'bg-blue-50/40' },
+  { border: 'border-purple-200', bg: 'bg-purple-50/40' },
+  { border: 'border-amber-200', bg: 'bg-amber-50/40' },
+  { border: 'border-gray-300', bg: 'bg-gray-50/40' },
+]
+
 const SubagentRunCard = ({ subagentRun, depth = 0, sessionId }) => {
   const [expanded, setExpanded] = useState(depth < 1)
   const queryClient = useQueryClient()
@@ -379,11 +386,12 @@ const SubagentRunCard = ({ subagentRun, depth = 0, sessionId }) => {
   })
 
   const hasContent = allToolCalls.length > 0 || (subagentRun.subagent_runs?.length > 0)
+  const depthStyle = DEPTH_STYLES[Math.min(depth, DEPTH_STYLES.length - 1)]
 
   return (
     <div
-      className="mt-1.5 rounded-lg border border-gray-200/70 bg-white/60"
-      style={{ marginLeft: depth > 0 ? 12 : 0 }}
+      className={`mt-1.5 rounded-lg border ${depthStyle.border} ${depthStyle.bg}`}
+      style={{ marginLeft: depth * 16 }}
     >
       <button
         onClick={() => setExpanded(!expanded)}
@@ -408,20 +416,31 @@ const SubagentRunCard = ({ subagentRun, depth = 0, sessionId }) => {
 
       {expanded && hasContent && (
         <div className="px-3 pb-2 pt-0.5 space-y-0.5">
-          {allToolCalls.map((tc, i) =>
-            tc.tool_name?.includes('hitl_ask') ? (
-              <TimelineQuestion key={tc.id || i} tc={tc} agentId={subagentRun.agent_id} sessionId={sessionId} />
-            ) : (
-              <SubagentToolCall key={tc.id || i} tc={tc} />
-            )
-          )}
-          {subagentRun.subagent_runs?.length > 0 && (
-            <div className="mt-1.5 border-l-2 border-gray-200/80 pl-2">
-              {subagentRun.subagent_runs.map((sa, i) => (
-                <SubagentRunCard key={sa.id || i} subagentRun={sa} depth={depth + 1} sessionId={sessionId} />
-              ))}
-            </div>
-          )}
+          {(() => {
+            const toolSubagentMap = {}
+            for (const tc of allToolCalls) {
+              if (tc.tool_name === 'subagents' && subagentRun.subagent_runs?.length > 0) {
+                const linked = subagentRun.subagent_runs.filter(
+                  sa => sa.spawning_tool_call_id === tc.id
+                )
+                if (linked.length > 0) {
+                  toolSubagentMap[tc.id] = linked
+                }
+              }
+            }
+            return allToolCalls.map((tc, i) => (
+              <div key={tc.id || i}>
+                {tc.tool_name?.includes('hitl_ask') ? (
+                  <TimelineQuestion tc={tc} agentId={subagentRun.agent_id} sessionId={sessionId} />
+                ) : (
+                  <SubagentToolCall tc={tc} />
+                )}
+                {toolSubagentMap[tc.id]?.map((sa, si) => (
+                  <SubagentRunCard key={sa.id || si} subagentRun={sa} depth={depth + 1} sessionId={sessionId} />
+                ))}
+              </div>
+            ))
+          })()}
         </div>
       )}
     </div>
@@ -477,7 +496,7 @@ const AgentRunItem = ({ run, timelineIndex, sessionId, hasFollowingMessage, sess
         }
         if (item.type === 'subagents') {
           return (
-            <div key={i} className="mt-2 border-l-2 border-gray-200/80 pl-2">
+            <div key={i} className="mt-2 border-l-2 border-blue-200 pl-2">
               {item.subagentRuns.map((sa, si) => (
                 <SubagentRunCard key={sa.id || si} subagentRun={sa} depth={0} sessionId={sessionId} />
               ))}

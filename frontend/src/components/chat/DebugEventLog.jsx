@@ -181,7 +181,7 @@ const OutlineAgentHeader = ({ agentRun, selected, onClick }) => {
       }`}
     >
       <AgentIcon className={`w-3.5 h-3.5 flex-shrink-0 ${colors.accent}`} />
-      <span className={`text-xs font-semibold truncate ${selected ? colors.accent : 'text-gray-700'}`}>
+      <span className={`text-xs font-semibold whitespace-nowrap ${selected ? colors.accent : 'text-gray-700'}`}>
         {config.name}
       </span>
       <span className="ml-auto flex items-center gap-1.5 flex-shrink-0">
@@ -826,7 +826,7 @@ const DebugEventLog = ({ data, sessionId, sessionStatus }) => {
       {/* Split layout */}
       <div className="flex-1 flex min-h-0">
         {/* Left: outline */}
-        <div style={{ width: leftWidth }} className="flex-shrink-0 overflow-y-auto border-r border-gray-200 bg-white">
+        <div style={{ width: leftWidth }} className="flex-shrink-0 overflow-y-auto overflow-x-auto border-r border-gray-200 bg-white">
           {agentRuns.length === 0 && (
             <div className="flex flex-col items-center justify-center py-12 text-gray-400 gap-2">
               <MessageSquare className="w-8 h-8 opacity-30" />
@@ -835,41 +835,52 @@ const DebugEventLog = ({ data, sessionId, sessionStatus }) => {
           )}
           {agentRuns.map((run) => {
             const allTools = []
-            const linkedSubIds = new Set()
-            const subagentToolMap = {}
             for (const llm of run.llm_calls || []) {
               for (const tc of llm.tool_calls || []) {
                 allTools.push(tc)
-                if (tc.tool_name === 'subagents' && run.subagent_runs?.length > 0) {
-                  const linked = run.subagent_runs.filter(
+              }
+            }
+            const DEPTH_COLORS = [
+              'border-blue-300',
+              'border-purple-300',
+              'border-amber-300',
+              'border-gray-300',
+            ]
+            const linkSubagents = (tools, subagentRuns) => {
+              const toolMap = {}
+              for (const tc of tools) {
+                if (tc.tool_name === 'subagents' && subagentRuns?.length > 0) {
+                  const linked = subagentRuns.filter(
                     sub => sub.spawning_tool_call_id === tc.id
                   )
                   if (linked.length > 0) {
-                    subagentToolMap[tc.id] = linked
-                    linked.forEach(sub => linkedSubIds.add(sub.id))
+                    toolMap[tc.id] = linked
                   }
                 }
               }
+              return toolMap
             }
-            const unlinkedSubs = (run.subagent_runs || []).filter(
-              sub => !linkedSubIds.has(sub.id)
-            )
-            const renderSubBlock = (subRun) => {
+            const subagentToolMap = linkSubagents(allTools, run.subagent_runs)
+            const renderSubBlock = (subRun, depth = 0) => {
               const subTools = (subRun.llm_calls || []).flatMap(llm => llm.tool_calls || [])
+              const borderColor = DEPTH_COLORS[Math.min(depth, DEPTH_COLORS.length - 1)]
+              const subToolMap = linkSubagents(subTools, subRun.subagent_runs)
               return (
-                <div key={subRun.id} className="pl-4 border-l-2 border-gray-100 ml-3">
+                <div key={subRun.id} className={`border-l-2 ${borderColor}`} style={{ marginLeft: 12 + depth * 16, minWidth: 'fit-content' }}>
                   <OutlineAgentHeader
                     agentRun={subRun}
                     selected={isAgentSelected(subRun) && selection?.type === 'agent'}
                     onClick={() => selectAgent(subRun)}
                   />
                   {subTools.map((stc, sti) => (
-                    <OutlineToolLine
-                      key={stc.id || sti}
-                      tc={stc}
-                      selected={isToolSelected(stc)}
-                      onClick={() => selectTool(stc, subRun)}
-                    />
+                    <div key={stc.id || sti}>
+                      <OutlineToolLine
+                        tc={stc}
+                        selected={isToolSelected(stc)}
+                        onClick={() => selectTool(stc, subRun)}
+                      />
+                      {subToolMap[stc.id]?.map(sa => renderSubBlock(sa, depth + 1))}
+                    </div>
                   ))}
                 </div>
               )
@@ -888,10 +899,9 @@ const DebugEventLog = ({ data, sessionId, sessionStatus }) => {
                       selected={isToolSelected(tc)}
                       onClick={() => selectTool(tc, run)}
                     />
-                    {subagentToolMap[tc.id]?.map(renderSubBlock)}
+                    {subagentToolMap[tc.id]?.map(sa => renderSubBlock(sa, 0))}
                   </div>
                 ))}
-                {unlinkedSubs.map(renderSubBlock)}
               </div>
             )
           })}
