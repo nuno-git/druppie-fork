@@ -61,7 +61,7 @@ def load_config() -> dict:
         return yaml.safe_load(f)
 
 
-def parse_config(raw: dict) -> tuple[list[ModelConfig], dict]:
+def parse_config(raw: dict) -> tuple[list[ModelConfig], dict[str, EndpointConfig], dict]:
     endpoints = {}
     for name, ep_data in raw.get("endpoints", {}).items():
         endpoints[name] = EndpointConfig(
@@ -92,7 +92,7 @@ def parse_config(raw: dict) -> tuple[list[ModelConfig], dict]:
         ))
 
     settings = raw.get("settings", {})
-    return models, settings
+    return models, endpoints, settings
 
 
 def load_scenarios(
@@ -208,15 +208,7 @@ def main():
     args = parser.parse_args()
 
     raw_config = load_config()
-    models, settings = parse_config(raw_config)
-    endpoints = {}
-    for name, ep_data in raw_config.get("endpoints", {}).items():
-        endpoints[name] = EndpointConfig(
-            base_url=ep_data["base_url"],
-            api_key=ep_data.get("api_key", ""),
-            ssl_verify=ep_data.get("ssl_verify", True),
-            auth_type=ep_data.get("auth_type", "bearer"),
-        )
+    models, endpoints, settings = parse_config(raw_config)
 
     if args.fetch_models:
         ep_name = args.fetch_models
