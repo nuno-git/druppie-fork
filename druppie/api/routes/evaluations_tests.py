@@ -22,10 +22,7 @@ from druppie.services import EvaluationService
 logger = structlog.get_logger()
 router = APIRouter()
 
-# In-memory tracking of currently running tests per batch run.
-# Key: run_id (str), Value: set of test names currently executing.
-_active_runs: dict[str, set[str]] = {}
-_active_lock = threading.Lock()
+_running_lock = threading.Lock()
 
 
 class RunTestsRequest(BaseModel):
@@ -270,16 +267,25 @@ async def run_tests(
         completed_count = 0
 
         def _sync_running_tests():
-            with _active_lock:
-                names = list(_active_runs.get(run_id, set()))
+            _sync_db = SessionLocal()
+            try:
+                _sync_repo = EvaluationRepository(_sync_db)
+                names = _sync_repo.get_running_tests(run_id)
+            finally:
+                _sync_db.close()
             _update_batch(
                 current_test=names[0] if len(names) == 1 else f"{len(names)} tests",
                 message=f"Running {completed_count + len(names)}/{total}: {', '.join(names[:3])}{'...' if len(names) > 3 else ''}",
             )
 
         def _run_single_test(name, test_def):
-            with _active_lock:
-                _active_runs.setdefault(run_id, set()).add(name)
+            with _running_lock:
+                _add_db = SessionLocal()
+                try:
+                    EvaluationRepository(_add_db).add_running_test(run_id, name)
+                    _add_db.commit()
+                finally:
+                    _add_db.close()
             _sync_running_tests()
             try:
                 def _execute():
@@ -308,10 +314,13 @@ async def run_tests(
                             duration_ms=test_timeout * 1000,
                         )]
             finally:
-                with _active_lock:
-                    active = _active_runs.get(run_id)
-                    if active:
-                        active.discard(name)
+                with _running_lock:
+                    _rem_db = SessionLocal()
+                    try:
+                        EvaluationRepository(_rem_db).remove_running_test(run_id, name)
+                        _rem_db.commit()
+                    finally:
+                        _rem_db.close()
                 _sync_running_tests()
 
         with ThreadPoolExecutor(max_workers=max_workers) as pool:
@@ -343,7 +352,12 @@ async def run_tests(
             message=f"{passed}/{len(all_results)} passed",
             completed_at=datetime.now(timezone.utc),
         )
-        _active_runs.pop(run_id, None)
+        _clr_db = SessionLocal()
+        try:
+            EvaluationRepository(_clr_db).clear_running_tests(run_id)
+            _clr_db.commit()
+        finally:
+            _clr_db.close()
 
     thread = threading.Thread(target=_run, daemon=True, name=f"test-run-{run_id}")
     thread.start()
@@ -369,7 +383,7 @@ async def get_run_status(
 
         completed_tests = repo.get_completed_test_runs(run_id)
 
-        running_tests = list(_active_runs.get(run_id, set()))
+        running_tests = repo.get_running_tests(run_id)
 
         return {
             "status": batch.status,
@@ -404,7 +418,7 @@ async def get_active_run(user: dict = Depends(require_admin)):
             return {"active": False}
 
         completed_tests = repo.get_completed_test_runs(active.id)
-        running_tests = list(_active_runs.get(active.id, set()))
+        running_tests = repo.get_running_tests(active.id)
         return {
             "active": True,
             "run_id": active.id,
