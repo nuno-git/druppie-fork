@@ -334,7 +334,7 @@ class SessionRepository(BaseRepository):
         llm_calls = self._build_llm_calls(run.id)
 
         subagent_runs: list[AgentRunDetail] = []
-        if _depth < 3:
+        if _depth < 10:
             child_runs = (
                 self.db.query(AgentRun)
                 .filter_by(parent_run_id=run.id)

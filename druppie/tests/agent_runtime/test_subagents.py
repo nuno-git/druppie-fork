@@ -7,6 +7,7 @@ import pytest
 from druppie.agent_runtime.definition import AgentDefinition
 from druppie.agent_runtime.subagents import SubagentsMCP
 from druppie.agent_runtime.tools.mcp import MCPConnection
+from druppie.agent_runtime.tools.provider import MCPToolProvider
 from druppie.agent_runtime.types import AgentResult, LoopConfig
 
 
@@ -532,3 +533,173 @@ class TestResolveSandboxDirect:
         mcp = SubagentsMCP(agent_loader=lambda x: None, sandbox_resolver=resolver)
         await mcp._resolve_sandbox("current_project", "current_project", None)
         resolver.assert_called_once_with("current_project")
+
+
+class TestRecursiveSubagents:
+    """Tests for self-referencing agent spawning (core_explorer spawning itself)."""
+
+    @pytest.mark.asyncio
+    async def test_self_referencing_spawn_succeeds(self):
+        """An agent with subagents=[self_id] can spawn itself when not already in the chain."""
+        explorer = _make_agent("core_explorer", "Explores", subagents=["core_explorer"], role="subagent")
+        call_count = 0
+
+        async def counting_runner(**kwargs) -> AgentResult:
+            nonlocal call_count
+            call_count += 1
+            return AgentResult(status="completed", done_result={"summary": f"run_{call_count}"})
+
+        mcp = SubagentsMCP(
+            agent_loader=_make_agent_loader({"core_explorer": explorer}),
+            loop_runner=counting_runner,
+        )
+
+        results = await mcp.execute(
+            agents=[{"agent": "core_explorer", "prompt": "explore recursively"}],
+            parent_agent=explorer,
+            parent_tool_provider=MagicMock(),
+            parent_git_scope=None,
+            parent_sandbox_conn=None,
+            llm=AsyncMock(),
+            config=LoopConfig(),
+            current_depth=0,
+            agent_chain=["ultimate_dev_core"],
+        )
+
+        assert results[0]["status"] == "success"
+        assert call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_circular_self_spawn_blocked(self):
+        """An agent spawning itself when it IS already in the chain is blocked."""
+        explorer = _make_agent("core_explorer", "Explores", subagents=["core_explorer"], role="subagent")
+        mcp = SubagentsMCP(
+            agent_loader=_make_agent_loader({"core_explorer": explorer}),
+            loop_runner=_make_loop_runner(),
+        )
+
+        results = await mcp.execute(
+            agents=[{"agent": "core_explorer", "prompt": "circular"}],
+            parent_agent=explorer,
+            parent_tool_provider=MagicMock(),
+            parent_git_scope=None,
+            parent_sandbox_conn=None,
+            llm=AsyncMock(),
+            config=LoopConfig(),
+            current_depth=1,
+            agent_chain=["core_explorer"],
+        )
+
+        assert results[0]["status"] == "error"
+        assert "Circular reference" in results[0]["error"]
+
+    @pytest.mark.asyncio
+    async def test_depth_propagates_to_child(self):
+        """Depth limit blocks recursive spawn when max depth is reached."""
+        explorer = _make_agent("core_explorer", "Explores", subagents=["core_explorer"], role="subagent")
+        mcp = SubagentsMCP(
+            agent_loader=_make_agent_loader({"core_explorer": explorer}),
+            loop_runner=_make_loop_runner(),
+        )
+
+        config = LoopConfig(max_subagent_depth=2)
+        results = await mcp.execute(
+            agents=[{"agent": "core_explorer", "prompt": "deep"}],
+            parent_agent=explorer,
+            parent_tool_provider=MagicMock(),
+            parent_git_scope=None,
+            parent_sandbox_conn=None,
+            llm=AsyncMock(),
+            config=config,
+            current_depth=2,
+            agent_chain=["ultimate_dev_core"],
+        )
+
+        assert results[0]["status"] == "error"
+        assert "Maximum subagent depth" in results[0]["error"]
+
+    @pytest.mark.asyncio
+    async def test_factory_receives_depth_and_chain(self):
+        """Child tool provider factory receives current_depth and agent_chain kwargs."""
+        explorer = _make_agent("core_explorer", "Explores", subagents=["core_explorer"], role="subagent")
+        received_kwargs = {}
+
+        def capturing_factory(*, child_defn, child_sandbox_conn, parent_tool_provider,
+                              spawning_tool_call_id=None, current_depth=0, agent_chain=None):
+            received_kwargs["current_depth"] = current_depth
+            received_kwargs["agent_chain"] = agent_chain
+            tp = MCPToolProvider({})
+            return tp
+
+        mcp = SubagentsMCP(
+            agent_loader=_make_agent_loader({"core_explorer": explorer}),
+            loop_runner=_make_loop_runner(),
+            child_tool_provider_factory=capturing_factory,
+        )
+
+        await mcp.execute(
+            agents=[{"agent": "core_explorer", "prompt": "check kwargs"}],
+            parent_agent=explorer,
+            parent_tool_provider=MagicMock(),
+            parent_git_scope=None,
+            parent_sandbox_conn=None,
+            llm=AsyncMock(),
+            config=LoopConfig(),
+            current_depth=3,
+            agent_chain=["ultimate_dev_core", "planner"],
+        )
+
+        assert received_kwargs["current_depth"] == 4
+        assert received_kwargs["agent_chain"] == ["ultimate_dev_core", "planner", "core_explorer"]
+
+    @pytest.mark.asyncio
+    async def test_chain_tracks_full_ancestor_path(self):
+        """Agent chain includes all ancestors, preventing any ancestor from re-spawning."""
+        explorer = _make_agent("core_explorer", "Explores", subagents=["core_explorer"], role="subagent")
+        mcp = SubagentsMCP(
+            agent_loader=_make_agent_loader({"core_explorer": explorer}),
+            loop_runner=_make_loop_runner(),
+        )
+
+        results = await mcp.execute(
+            agents=[{"agent": "core_explorer", "prompt": "deep chain"}],
+            parent_agent=explorer,
+            parent_tool_provider=MagicMock(),
+            parent_git_scope=None,
+            parent_sandbox_conn=None,
+            llm=AsyncMock(),
+            config=LoopConfig(),
+            current_depth=5,
+            agent_chain=["dev", "core_explorer", "core_explorer"],
+        )
+
+        assert results[0]["status"] == "error"
+        assert "Circular reference" in results[0]["error"]
+        assert "core_explorer" in results[0]["error"]
+
+    @pytest.mark.asyncio
+    async def test_recursive_within_depth_limit(self):
+        """Self-referencing spawn works at various depths within the limit."""
+        explorer = _make_agent("core_explorer", "Explores", subagents=["core_explorer"], role="subagent")
+        mcp = SubagentsMCP(
+            agent_loader=_make_agent_loader({"core_explorer": explorer}),
+            loop_runner=_make_loop_runner(),
+        )
+
+        config = LoopConfig(max_subagent_depth=10)
+        for depth in range(9):
+            chain = ["core_explorer"] * depth + ["ultimate_dev_core"]
+            results = await mcp.execute(
+                agents=[{"agent": "core_explorer", "prompt": f"depth_{depth}"}],
+                parent_agent=explorer,
+                parent_tool_provider=MagicMock(),
+                parent_git_scope=None,
+                parent_sandbox_conn=None,
+                llm=AsyncMock(),
+                config=config,
+                current_depth=depth,
+                agent_chain=chain,
+            )
+
+            if "core_explorer" not in chain:
+                assert results[0]["status"] == "success", f"Failed at depth {depth}"

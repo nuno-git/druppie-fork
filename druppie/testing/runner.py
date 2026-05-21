@@ -387,7 +387,13 @@ class TestRunner:
                 approval_action=approval_action,
             )
 
-            if step.agent != current_agent:
+            # Split into a new agent run when agent changes OR parent_agent
+            # changes (supports same-agent recursive nesting where the same
+            # agent appears at different depths of the subagent tree).
+            agent_changed = step.agent != current_agent
+            parent_changed = step.parent_agent != current_parent_agent
+
+            if agent_changed or parent_changed:
                 # Flush previous agent run
                 if current_agent is not None and current_tools:
                     # Agent status: completed only if last tool is done

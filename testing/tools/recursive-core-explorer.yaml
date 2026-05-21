@@ -1,0 +1,177 @@
+## Tool test: recursive core_explorer spawning
+## Tests that core_explorer can recursively spawn itself as a subagent.
+## The chain: ultimate_dev_core → core_explorer → core_explorer (recursive).
+## Both the first and second core_explorer run as child agent runs under
+## their respective parents, verified by the parent_agent field.
+
+tool-test:
+  name: recursive-core-explorer
+  description: "Core explorer recursively spawns itself as a subagent (2 levels of nesting)"
+  tags: [subagent, recursive]
+
+  chain:
+    # --- Router ---
+    - agent: router
+      tool: builtin:set_intent
+      arguments:
+        intent: create_project
+        project_name: recursive-explorer-test
+        description: "A test project for verifying recursive core_explorer subagent spawning"
+
+    - agent: router
+      tool: builtin:done
+      arguments:
+        summary: "Agent router: Classified as create_project"
+
+    # --- Planner → BA ---
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: business_analyst
+            prompt: "Gather requirements and create functional design for recursive explorer test"
+          - agent_id: planner
+            prompt: "Re-evaluate after business_analyst completes"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: Planned business_analyst"
+
+    # --- Business Analyst (creates FD) ---
+    - agent: business_analyst
+      tool: coding:make_design
+      approval:
+        status: approved
+      arguments:
+        path: docs/functional-design.md
+        content: |
+          # Functional Design: Recursive Explorer Test
+
+          ## Requirements
+          - FR-01: The system must support recursive subagent spawning
+          - FR-02: core_explorer must be able to spawn itself as a subagent
+          - FR-03: Recursive depth must be limited to 10 levels
+
+    - agent: business_analyst
+      tool: coding:push_changes
+
+    - agent: business_analyst
+      tool: builtin:done
+      arguments:
+        summary: "Agent business_analyst: DESIGN_APPROVED - Functional design created and approved"
+
+    # --- Planner → Architect ---
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: architect
+            prompt: "Create technical design for recursive explorer test"
+          - agent_id: planner
+            prompt: "Re-evaluate after architect completes"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: BA approved, planned architect"
+
+    # --- Architect (creates TD) ---
+    - agent: architect
+      tool: coding:read_file
+      mock: true
+      mock_result: "# Functional Design: Recursive Explorer Test\n## Requirements\n- FR-01: Recursive subagent spawning\n- FR-02: core_explorer self-spawn\n- FR-03: Depth limit 10"
+      arguments:
+        path: docs/functional-design.md
+
+    - agent: architect
+      tool: coding:make_design
+      approval:
+        status: approved
+        by: architect
+      arguments:
+        path: docs/technical-design.md
+        content: |
+          # Technical Design: Recursive Explorer Test
+
+          ## Scope
+          Test recursive core_explorer subagent spawning through the
+          ultimate_dev_core agent pipeline.
+
+          ## Implementation Plan
+          1. ultimate_dev_core spawns core_explorer
+          2. core_explorer recursively spawns another core_explorer
+          3. Both levels complete and report findings
+
+    - agent: architect
+      tool: coding:push_changes
+
+    - agent: architect
+      tool: builtin:done
+      arguments:
+        summary: "Agent architect: TECHNICAL_DESIGN_APPROVED - Technical design created and approved"
+
+    # --- Planner → ultimate_dev_core ---
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: ultimate_dev_core
+            prompt: "Explore the project structure. Use core_explorer recursively to map the codebase."
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: Planned ultimate_dev_core"
+
+    # --- Ultimate Dev Core (calls subagents tool — mocked) ---
+    - agent: ultimate_dev_core
+      tool: builtin:subagents
+      mock: true
+      mock_result: '{"status": "success", "agents": ["core_explorer"]}'
+      arguments:
+        agents:
+          - agent: core_explorer
+            prompt: "Explore the druppie/ directory structure. Use recursive subagents for deep exploration."
+
+    # --- First Core Explorer (spawns itself recursively) ---
+    - agent: core_explorer
+      parent_agent: ultimate_dev_core
+      tool: builtin:subagents
+      mock: true
+      mock_result: '{"status": "success", "agents": ["core_explorer"]}'
+      arguments:
+        agents:
+          - agent: core_explorer
+            prompt: "Read the content of druppie/agent_runtime/ subdirectory in detail."
+
+    # --- Recursive Core Explorer (spawned by core_explorer) ---
+    - agent: core_explorer
+      parent_agent: core_explorer
+      tool: coding:read_file
+      mock: true
+      mock_result: "# druppie/agent_runtime/\n\n## Modules\n- subagents.py\n- compat.py\n- types.py\n\nMax subagent depth: 10"
+      arguments:
+        path: druppie/agent_runtime/README.md
+
+    - agent: core_explorer
+      parent_agent: core_explorer
+      tool: builtin:done
+      arguments:
+        summary: "Agent core_explorer: Explored druppie/agent_runtime/ directory. Found subagent spawning, MCP compatibility, and type definition modules. Max subagent depth is 10."
+
+    # --- First Core Explorer (resumes after recursive subagent completes) ---
+    - agent: core_explorer
+      parent_agent: ultimate_dev_core
+      tool: builtin:done
+      arguments:
+        summary: "Agent core_explorer: Explored druppie/ directory via recursive subagent. Found agent runtime modules with depth limit of 10."
+
+    # --- Ultimate Dev Core (resumes after all subagents complete) ---
+    - agent: ultimate_dev_core
+      tool: builtin:done
+      arguments:
+        summary: "Agent ultimate_dev_core: Explored codebase via recursive core_explorer. All subagent runs completed successfully."
+
+  assert:
+    - check: all-agents-completed
