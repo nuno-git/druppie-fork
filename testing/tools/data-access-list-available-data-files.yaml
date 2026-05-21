@@ -1,0 +1,22 @@
+## Tool Test: Data Access MCP - list_available_data inside a container (live)
+## Verifies recursive listing inside dwhpublic/HHR returns the seeded CSV
+## files. Pins both the descent into a subdirectory and recursive=true.
+
+tool-test:
+  name: data-access-list-available-data-files
+  description: "list_available_data recursive inside a container returns file items"
+  tags: [data-access, mcp, live]
+
+  chain:
+    - agent: router
+      tool: dataaccess:list_available_data
+      arguments:
+        source_id: "dlspublichhrhhskexp01"
+        path: "dwhpublic/HHR"
+        recursive: true
+      assert:
+        result:
+          - json_parseable
+          - {matches: "\"success\"\\s*:\\s*true"}
+          - {matches: "\"level\"\\s*:\\s*\"files\""}
+          - {contains: "VW_HHR_Fudura_MeteringPoints.csv"}
