@@ -27,6 +27,7 @@ export const AGENT_CONFIG = {
   tester: { name: 'Tester', icon: CheckCircle, color: 'cyan', description: 'Testing', thinkingLabel: 'Running tests...' },
   builder: { name: 'Builder', icon: Hammer, color: 'green', description: 'TDD cycle + branch setup, improvements, and merges (via OpenCode)', thinkingLabel: 'Running build task...' },
   builder_planner: { name: 'Builder Planner', icon: ClipboardList, color: 'indigo', description: 'Implementation planning', thinkingLabel: 'Creating implementation plan...', surfaceFileWrites: true },
+  data_analyst: { name: 'Data Analyst', icon: ClipboardList, color: 'teal', description: 'Data analysis', thinkingLabel: 'Analyzing data...' },
 }
 
 export const getAgentConfig = (agentId) => {

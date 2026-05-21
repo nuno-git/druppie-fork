@@ -44,7 +44,7 @@ from druppie.testing.assertions import AssertionResult, match_assertions
 from druppie.testing.bounded_orchestrator import BoundedOrchestrator
 from druppie.testing.hitl_simulator import HITLSimulator
 from druppie.testing.judge_runner import JudgeCheckResult, JudgeRunner
-from druppie.testing.loaders import CheckLoader, ProfileLoader, ToolTestLoader
+from druppie.testing.loaders import CheckLoader, ProfileLoader, ToolTestLoader, YAMLLoadError, _load_yaml_file
 from druppie.testing.schema import (
     AgentTestDefinition,
     AgentTestFile,
@@ -118,16 +118,16 @@ class TestRunner:
         return clone
 
     def load_agent_test(self, path: Path) -> AgentTestDefinition:
-        data = yaml.safe_load(path.read_text())
+        data = _load_yaml_file(path)
         return AgentTestFile(**data).agent_test
 
     def load_tool_test(self, path: Path) -> ToolTestDefinition:
-        data = yaml.safe_load(path.read_text())
+        data = _load_yaml_file(path)
         return ToolTestFile(**data).tool_test
 
     def load_test(self, path: Path) -> AgentTestDefinition | ToolTestDefinition:
         """Load a test from any path, detecting type from content."""
-        data = yaml.safe_load(path.read_text())
+        data = _load_yaml_file(path)
         if "tool-test" in data:
             return ToolTestFile(**data).tool_test
         elif "agent-test" in data:
@@ -487,11 +487,10 @@ class TestRunner:
                 tc_record = tc_records[occurrence - 1] if len(tc_records) >= occurrence else None
 
                 if tc_record:
-                    # Combine result + error_message for validation
-                    # Failed tool calls store useful text in error_message, not result
-                    combined_result = tc_record.result or ""
-                    if tc_record.error_message:
-                        combined_result = (combined_result + "\n" + tc_record.error_message).strip()
+                    # Prefer the full result body for validation; fall back to
+                    # error_message only when result is empty (older calls or
+                    # tools that don't return a structured body on failure).
+                    combined_result = tc_record.result or tc_record.error_message or ""
                     validations = validate_result(combined_result or None, step.assert_.result)
                     for vr in validations:
                         assertion_results.append(AssertionResult(

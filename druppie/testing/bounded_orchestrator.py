@@ -1,6 +1,7 @@
 """Bounded orchestrator that wraps the real Orchestrator to stop after specified agents."""
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from uuid import UUID
@@ -181,8 +182,9 @@ class BoundedOrchestrator:
                 # Check if this agent was already completed (e.g. by
                 # _bounded_execute during a pause loop — when the architect
                 # pauses for approval, resume triggers execute_pending_runs
-                # which may run the build_classifier that done(next_agent=...)
-                # created). Skip it to avoid running the same agent twice.
+                # which may run the builder_planner / update_core_builder
+                # that done(next_agent=...) created). Skip it to avoid
+                # running the same agent twice.
                 self._db.expire_all()
                 completed_ids = {
                     r.agent_id
@@ -200,7 +202,8 @@ class BoundedOrchestrator:
 
                 # Reuse an existing pending run if one was created by a
                 # previous agent's done(next_agent=...) — e.g. architect
-                # creates a pending build_classifier via next_agent routing.
+                # creates a pending builder_planner or update_core_builder
+                # via next_agent routing.
                 existing = execution_repo.get_pending_by_agent_id(session_id, agent_id)
                 if existing:
                     agent_run = existing
@@ -286,13 +289,21 @@ class BoundedOrchestrator:
         """Handle HITL questions and approval gates during agent execution.
 
         Loops until the session is no longer paused (completed, failed, or
-        all real agents done).
+        all real agents done). Has a 30-minute wall-clock timeout to prevent
+        hanging on stalled LLM calls.
         """
         from druppie.db.models import Session as DBSession
         from druppie.db.models import Approval
         from druppie.db.models.base import utcnow
 
+        deadline = time.monotonic() + 1800  # 30 minute wall-clock timeout
         for iteration in range(MAX_HITL_INTERACTIONS * 2):
+            if time.monotonic() > deadline:
+                logger.error(
+                    "Pause loop timed out after 1800s: session=%s iteration=%d",
+                    session_id, iteration,
+                )
+                break
             self._db.expire_all()
             session = self._db.query(DBSession).filter(DBSession.id == session_id).first()
             if not session:
@@ -413,15 +424,29 @@ class BoundedOrchestrator:
                 )
                 continue
 
-            # Not paused — check for unexpected states
-            if status not in (
-                SessionStatus.ACTIVE.value,
-                SessionStatus.COMPLETED.value,
-            ):
-                logger.warning(
-                    "Pause loop: unexpected session status=%s, stopping: session=%s",
-                    status, session_id,
+            # Handle sandbox pause — wait for webhook to resume
+            if status == SessionStatus.PAUSED_SANDBOX.value:
+                logger.info(
+                    "Pause loop: waiting for sandbox to complete: session=%s",
+                    session_id,
                 )
+                await asyncio.sleep(5)
+                continue
+
+            # Session is active (agents still running) — wait briefly
+            if status == SessionStatus.ACTIVE.value:
+                await asyncio.sleep(2)
+                continue
+
+            # Completed or other terminal state — exit
+            if status == SessionStatus.COMPLETED.value:
+                break
+
+            # Unexpected state
+            logger.warning(
+                "Pause loop: unexpected session status=%s, stopping: session=%s",
+                status, session_id,
+            )
             break
 
         return session_id
