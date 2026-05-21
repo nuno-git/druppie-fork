@@ -438,3 +438,16 @@ export const getPackageProjects = (manager, name) =>
   request(`/api/cache/packages/${encodeURIComponent(manager)}/${encodeURIComponent(name)}/projects`)
 export const getProjectDependencies = (projectId) =>
   request(`/api/projects/${projectId}/dependencies`)
+
+// ============ pi_agent (execute_coding_task_pi live view) ============
+export const getPiCodingRun = (runId, since = 0) =>
+  request(`/api/pi-agent-runs/${runId}?since=${since}`)
+
+export const getPiCodingRunByToolCall = (toolCallId, since = 0) =>
+  request(`/api/pi-agent-runs/by-tool-call/${toolCallId}?since=${since}`)
+
+export const executeDeveloperTask = (payload) =>
+  request('/api/developer/execute', { method: 'POST', body: JSON.stringify(payload) })
+
+export const getPiCodingRunBySession = (sessionId, since = 0) =>
+  request(`/api/pi-agent-runs/by-session/${sessionId}?since=${since}`)

@@ -1,0 +1,119 @@
+## Agent test: Developer uses YAML flow, receives all agent summaries
+##
+## Setup: tool test creates a project with FD + TD for hello world
+##   (ready for developer to implement using execute_coding_task_pi)
+##
+## continue_session: true — developer runs in the SAME session as setup.
+##   Developer reads FD and TD from the workspace, then uses execute_coding_task_pi.
+##
+## This test verifies that when the developer agent calls execute_coding_task_pi
+## with the new YAML-based TDD flow, it receives summaries from all agents in the tool result.
+##
+## Key differences from legacy flow:
+## - Tool result includes "summaries" object with entries for each agent
+## - Each agent (analyst, planner, wave-orchestrator, verifier, pr-author) produces a summary
+## - Summaries explain what each agent did (not just deliverables)
+
+agent-test:
+  name: yaml-flow-agent-summaries
+  description: "Developer agent uses YAML flow and receives all agent summaries in tool result"
+  tags: [yaml-flow, tdd, summaries, developer, e2e]
+
+  setup:
+    - setup-yaml-flow-hello-world    # creates session with FD + TD + developer pending run
+
+  continue_session: true              # developer runs in the SAME session
+
+  message: |
+    Please implement the hello world function as described in the technical design.
+    Use the execute_coding_task_pi tool with flow='tdd' to implement this.
+
+    The technical design is in docs/technical-design.md and specifies:
+    - TypeScript hello-world.ts file
+    - Function that logs 'Hello, World!' to console
+    - Verify compilation locally (no PR needed)
+
+    After the flow completes, please report back what each agent did based on the summaries you receive in the tool result.
+
+  agents: [developer]                  # developer executes the YAML flow
+
+  assert:
+    # Verify the tool was called with the correct parameters
+    - check: tool-called-execute-coding-task-pi
+
+    # Verify the result contains summaries from all agents
+    - check: result-has-all-summaries
+
+    # Verify each summary is properly formatted
+    - check: analyst-summary-formatted
+    - check: planner-summary-formatted
+    - check: wave-orchestrator-summary-formatted
+    - check: verifier-summary-formatted
+
+  checks:
+    tool-called-execute-coding-task-pi:
+      description: "Developer agent called execute_coding_task_pi with flow=tdd"
+      evaluate: |
+        The tool call should include:
+        - flow: "tdd"
+        - task: description of implementing hello world based on TD
+        - repo_target: "project"
+        - No language parameter (YAML flow infers from files/context)
+
+    result-has-all-summaries:
+      description: "Tool result contains summaries from all 5 agents"
+      evaluate: |
+        The tool result should have a "summaries" object with keys:
+        - "analyst" - non-empty string explaining task analysis
+        - "planner" - non-empty string explaining build plan
+        - "wave-orchestrator" - non-empty string explaining execution
+        - "verifier" - non-empty string explaining verification
+        - "pr-author" - non-empty string (may indicate skipped)
+
+    analyst-summary-formatted:
+      description: "Analyst summary follows expected format"
+      evaluate: |
+        The analyst summary should:
+        - Mention what was asked (task analysis)
+        - Mention approach taken
+        - Mention key decisions (TypeScript, console logging)
+        - Be 2-5 sentences long
+        - NOT be empty or just "Done"
+
+    planner-summary-formatted:
+      description: "Planner summary follows expected format"
+      evaluate: |
+        The planner summary should:
+        - Mention the build plan (wave count)
+        - Mention what will be implemented
+        - Mention the approach (simple, direct)
+        - Be 2-5 sentences long
+
+    wave-orchestrator-summary-formatted:
+      description: "Wave orchestrator summary follows expected format"
+      evaluate: |
+        The wave orchestrator summary should:
+        - Mention how many waves were executed
+        - Mention step results (succeeded/failed)
+        - Mention what was built (hello-world.ts)
+        - Be 2-5 sentences long
+
+    verifier-summary-formatted:
+      description: "Verifier summary follows expected format"
+      evaluate: |
+        The verifier summary should:
+        - Mention what was verified (compilation, manual check)
+        - Mention test results (pass/fail)
+        - Be 2-5 sentences long
+
+  judge:
+    context: [developer]
+    checks:
+      - "The developer agent should have called the execute_coding_task_pi tool with flow='tdd'. Check the tool_calls in the session."
+      - "The tool result should contain a 'summaries' object. Verify it has keys for all 5 agents: analyst, planner, wave-orchestrator, verifier, pr-author."
+      - "Each summary should be a non-empty string. Check that none of the summaries are empty strings or just whitespace."
+      - "The analyst summary should explain what the task analysis determined. It should mention: what was asked, the approach, and key decisions like language selection."
+      - "The planner summary should explain the build plan. It should mention: wave structure and what will be implemented."
+      - "The wave orchestrator summary should explain execution. It should mention: how many waves, step results, and what was built."
+      - "The verifier summary should explain verification. It should mention: what was checked (compilation, tests) and the outcome."
+      - "The summaries should NOT contain raw JSON output. They should be free-text summaries that explain what each agent did, not just JSON structures."

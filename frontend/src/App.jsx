@@ -25,6 +25,7 @@ import Platform from './pages/Platform'
 import Evaluations from './pages/Evaluations'
 import Analytics from './pages/Analytics'
 import BatchDetail from './pages/BatchDetail'
+import DeveloperPage from './pages/DeveloperPage'
 import CachedDependencies from './pages/CachedDependencies'
 
 // Auth context
@@ -280,6 +281,14 @@ function App() {
                             element={
                               <ProtectedRoute requiredRole="admin">
                                 <BatchDetail />
+                              </ProtectedRoute>
+                            }
+                          />
+                          <Route
+                            path="/tools/developer"
+                            element={
+                              <ProtectedRoute>
+                                <DeveloperPage />
                               </ProtectedRoute>
                             }
                           />

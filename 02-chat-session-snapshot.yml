@@ -1,0 +1,801 @@
+- generic [ref=e8]:
+  - navigation [ref=e9]:
+    - img [ref=e11]
+    - link [ref=e14] [cursor=pointer]:
+      - /url: /
+      - img [ref=e15]
+    - link [ref=e19] [cursor=pointer]:
+      - /url: /chat
+      - img [ref=e20]
+    - link "4" [ref=e23] [cursor=pointer]:
+      - /url: /tasks
+      - img [ref=e24]
+      - generic [ref=e27]: "4"
+    - link [ref=e29] [cursor=pointer]:
+      - /url: /projects
+      - img [ref=e30]
+    - link [ref=e34] [cursor=pointer]:
+      - /url: /tools/mcp
+      - img [ref=e35]
+    - link [ref=e38] [cursor=pointer]:
+      - /url: /tools/infrastructure
+      - img [ref=e39]
+    - link [ref=e43] [cursor=pointer]:
+      - /url: /tools/cache
+      - img [ref=e44]
+    - link [ref=e50] [cursor=pointer]:
+      - /url: /admin/platform
+      - img [ref=e51]
+    - link [ref=e62] [cursor=pointer]:
+      - /url: /admin/database
+      - img [ref=e63]
+    - link [ref=e68] [cursor=pointer]:
+      - /url: /admin/evaluations
+      - img [ref=e69]
+    - button "A" [ref=e72] [cursor=pointer]
+  - generic [ref=e73]:
+    - generic [ref=e76]:
+      - generic [ref=e77]:
+        - heading "Sessions" [level=2] [ref=e78]
+        - generic [ref=e79]:
+          - button "New chat" [ref=e80] [cursor=pointer]:
+            - img [ref=e81]
+          - button "Collapse sidebar" [ref=e82] [cursor=pointer]:
+            - img [ref=e83]
+      - generic [ref=e87]:
+        - img [ref=e88]
+        - textbox "Search sessions..." [ref=e91]
+      - generic [ref=e92]:
+        - generic [ref=e93]:
+          - generic [ref=e94]: Today
+          - generic [ref=e95] [cursor=pointer]:
+            - generic [ref=e98]: "Tool test: setup-yaml-flow-hello-world"
+            - generic [ref=e99]:
+              - generic [ref=e100]: t-a522edd6d823
+              - generic [ref=e101]: hello-world-yaml-flow
+              - generic [ref=e102]: 3m ago
+            - 'button "Delete session Tool test: setup-yaml-flow-hello-world" [ref=e103]':
+              - img [ref=e104]
+          - generic [ref=e107] [cursor=pointer]:
+            - generic [ref=e110]: "Tool test: setup-yaml-flow-hello-world"
+            - generic [ref=e111]:
+              - generic [ref=e112]: t-76f85afa7563
+              - generic [ref=e113]: hello-world-yaml-flow
+              - generic [ref=e114]: 6m ago
+            - 'button "Delete session Tool test: setup-yaml-flow-hello-world" [ref=e115]':
+              - img [ref=e116]
+          - generic [ref=e119] [cursor=pointer]:
+            - generic [ref=e121]: "Tool test: setup-yaml-flow-hello-world"
+            - generic [ref=e122]:
+              - generic [ref=e123]: t-f203fc591882
+              - generic [ref=e124]: hello-world-yaml-flow
+              - generic [ref=e125]: 59m ago
+            - 'button "Delete session Tool test: setup-yaml-flow-hello-world" [ref=e126]':
+              - img [ref=e127]
+          - generic [ref=e130] [cursor=pointer]:
+            - generic [ref=e132]: "Tool test: setup-yaml-flow-hello-world"
+            - generic [ref=e133]:
+              - generic [ref=e134]: t-a63765341ac6
+              - generic [ref=e135]: hello-world-yaml-flow
+              - generic [ref=e136]: 1h ago
+            - 'button "Delete session Tool test: setup-yaml-flow-hello-world" [ref=e137]':
+              - img [ref=e138]
+          - generic [ref=e141] [cursor=pointer]:
+            - generic [ref=e143]: "Tool test: setup-yaml-flow-hello-world"
+            - generic [ref=e144]:
+              - generic [ref=e145]: t-3fb1e9aed902
+              - generic [ref=e146]: hello-world-yaml-flow
+              - generic [ref=e147]: 1h ago
+            - 'button "Delete session Tool test: setup-yaml-flow-hello-world" [ref=e148]':
+              - img [ref=e149]
+          - generic [ref=e152] [cursor=pointer]:
+            - generic [ref=e154]: "Tool test: setup-yaml-flow-hello-world"
+            - generic [ref=e155]:
+              - generic [ref=e156]: t-1103d2119fc5
+              - generic [ref=e157]: hello-world-yaml-flow
+              - generic [ref=e158]: 1h ago
+            - 'button "Delete session Tool test: setup-yaml-flow-hello-world" [ref=e159]':
+              - img [ref=e160]
+          - generic [ref=e163] [cursor=pointer]:
+            - generic [ref=e165]: "Tool test: setup-yaml-flow-hello-world"
+            - generic [ref=e166]:
+              - generic [ref=e167]: t-4922da5cb5f5
+              - generic [ref=e168]: hello-world-yaml-flow
+              - generic [ref=e169]: 2h ago
+            - 'button "Delete session Tool test: setup-yaml-flow-hello-world" [ref=e170]':
+              - img [ref=e171]
+        - generic [ref=e174]:
+          - generic [ref=e175]: Yesterday
+          - generic [ref=e176] [cursor=pointer]:
+            - generic [ref=e178]: "Tool test: setup-yaml-flow-hello-world"
+            - generic [ref=e179]:
+              - generic [ref=e180]: t-fafb47824420
+              - generic [ref=e181]: hello-world-yaml-flow
+              - generic [ref=e182]: 9h ago
+            - 'button "Delete session Tool test: setup-yaml-flow-hello-world" [ref=e183]':
+              - img [ref=e184]
+          - generic [ref=e187] [cursor=pointer]:
+            - generic [ref=e189]: "Tool test: setup-yaml-flow-hello-world"
+            - generic [ref=e190]:
+              - generic [ref=e191]: t-35fd9ce41154
+              - generic [ref=e192]: hello-world-yaml-flow
+              - generic [ref=e193]: 9h ago
+            - 'button "Delete session Tool test: setup-yaml-flow-hello-world" [ref=e194]':
+              - img [ref=e195]
+          - generic [ref=e198] [cursor=pointer]:
+            - generic [ref=e200]: "Tool test: setup-yaml-flow-hello-world"
+            - generic [ref=e201]:
+              - generic [ref=e202]: t-e9ab6409f953
+              - generic [ref=e203]: hello-world-yaml-flow
+              - generic [ref=e204]: 9h ago
+            - 'button "Delete session Tool test: setup-yaml-flow-hello-world" [ref=e205]':
+              - img [ref=e206]
+          - generic [ref=e209] [cursor=pointer]:
+            - generic [ref=e211]: "Tool test: setup-yaml-flow-hello-world"
+            - generic [ref=e212]:
+              - generic [ref=e213]: t-860ca1094d75
+              - generic [ref=e214]: hello-world-yaml-flow
+              - generic [ref=e215]: 9h ago
+            - 'button "Delete session Tool test: setup-yaml-flow-hello-world" [ref=e216]':
+              - img [ref=e217]
+          - generic [ref=e220] [cursor=pointer]:
+            - generic [ref=e222]: "Tool test: setup-yaml-flow-hello-world"
+            - generic [ref=e223]:
+              - generic [ref=e224]: t-6333fda3c41f
+              - generic [ref=e225]: hello-world-yaml-flow
+              - generic [ref=e226]: 9h ago
+            - 'button "Delete session Tool test: setup-yaml-flow-hello-world" [ref=e227]':
+              - img [ref=e228]
+          - generic [ref=e231] [cursor=pointer]:
+            - generic [ref=e234]: "Tool test: setup-project-with-fd"
+            - generic [ref=e235]:
+              - generic [ref=e236]: t-0d0818299413
+              - generic [ref=e237]: recipe-sharing-app
+              - generic [ref=e238]: 9h ago
+            - 'button "Delete session Tool test: setup-project-with-fd" [ref=e239]':
+              - img [ref=e240]
+          - generic [ref=e243] [cursor=pointer]:
+            - generic [ref=e245]: "Tool test: setup-yaml-flow-hello-world"
+            - generic [ref=e246]:
+              - generic [ref=e247]: t-25e40292e66c
+              - generic [ref=e248]: hello-world-yaml-flow
+              - generic [ref=e249]: 9h ago
+            - 'button "Delete session Tool test: setup-yaml-flow-hello-world" [ref=e250]':
+              - img [ref=e251]
+          - generic [ref=e254] [cursor=pointer]:
+            - generic [ref=e256]: "Tool test: setup-yaml-flow-hello-world"
+            - generic [ref=e257]:
+              - generic [ref=e258]: t-bdef7749e260
+              - generic [ref=e259]: hello-world-yaml-flow
+              - generic [ref=e260]: 9h ago
+            - 'button "Delete session Tool test: setup-yaml-flow-hello-world" [ref=e261]':
+              - img [ref=e262]
+          - generic [ref=e265] [cursor=pointer]:
+            - generic [ref=e267]: "Tool test: setup-yaml-flow-hello-world"
+            - generic [ref=e268]:
+              - generic [ref=e269]: t-0a21299d9ff1
+              - generic [ref=e270]: hello-world-yaml-flow
+              - generic [ref=e271]: 10h ago
+            - 'button "Delete session Tool test: setup-yaml-flow-hello-world" [ref=e272]':
+              - img [ref=e273]
+          - generic [ref=e276] [cursor=pointer]:
+            - generic [ref=e278]: "Tool test: setup-yaml-flow-hello-world"
+            - generic [ref=e279]:
+              - generic [ref=e280]: t-dfcc8d43776f
+              - generic [ref=e281]: hello-world-yaml-flow
+              - generic [ref=e282]: 10h ago
+            - 'button "Delete session Tool test: setup-yaml-flow-hello-world" [ref=e283]':
+              - img [ref=e284]
+          - generic [ref=e287] [cursor=pointer]:
+            - generic [ref=e289]: "Tool test: setup-yaml-flow-hello-world"
+            - generic [ref=e290]:
+              - generic [ref=e291]: t-a3170dfccb1c
+              - generic [ref=e292]: hello-world-yaml-flow
+              - generic [ref=e293]: 10h ago
+            - 'button "Delete session Tool test: setup-yaml-flow-hello-world" [ref=e294]':
+              - img [ref=e295]
+          - generic [ref=e298] [cursor=pointer]:
+            - generic [ref=e300]: "Tool test: setup-yaml-flow-hello-world"
+            - generic [ref=e301]:
+              - generic [ref=e302]: t-7a521747fcb3
+              - generic [ref=e303]: hello-world-yaml-flow
+              - generic [ref=e304]: 11h ago
+            - 'button "Delete session Tool test: setup-yaml-flow-hello-world" [ref=e305]':
+              - img [ref=e306]
+          - generic [ref=e309] [cursor=pointer]:
+            - generic [ref=e312]: "Tool test: setup-yaml-flow-hello-world"
+            - generic [ref=e313]:
+              - generic [ref=e314]: t-dc3034771c77
+              - generic [ref=e315]: hello-world-yaml-flow
+              - generic [ref=e316]: 11h ago
+            - 'button "Delete session Tool test: setup-yaml-flow-hello-world" [ref=e317]':
+              - img [ref=e318]
+          - generic [ref=e321] [cursor=pointer]:
+            - generic [ref=e323]: "Tool test: setup-yaml-flow-hello-world"
+            - generic [ref=e324]:
+              - generic [ref=e325]: t-cce0adf5b4ca
+              - generic [ref=e326]: hello-world-yaml-flow
+              - generic [ref=e327]: 11h ago
+            - 'button "Delete session Tool test: setup-yaml-flow-hello-world" [ref=e328]':
+              - img [ref=e329]
+          - generic [ref=e332] [cursor=pointer]:
+            - generic [ref=e334]: "Tool test: setup-yaml-flow-hello-world"
+            - generic [ref=e335]:
+              - generic [ref=e336]: t-52887bc0e65f
+              - generic [ref=e337]: hello-world-yaml-flow
+              - generic [ref=e338]: 11h ago
+            - 'button "Delete session Tool test: setup-yaml-flow-hello-world" [ref=e339]':
+              - img [ref=e340]
+          - generic [ref=e343] [cursor=pointer]:
+            - generic [ref=e345]: "Tool test: setup-yaml-flow-hello-world"
+            - generic [ref=e346]:
+              - generic [ref=e347]: t-d509f02fd345
+              - generic [ref=e348]: hello-world-yaml-flow
+              - generic [ref=e349]: 12h ago
+            - 'button "Delete session Tool test: setup-yaml-flow-hello-world" [ref=e350]':
+              - img [ref=e351]
+          - generic [ref=e354] [cursor=pointer]:
+            - generic [ref=e356]: "Tool test: setup-yaml-flow-hello-world"
+            - generic [ref=e357]:
+              - generic [ref=e358]: t-fd901e252773
+              - generic [ref=e359]: hello-world-yaml-flow
+              - generic [ref=e360]: 13h ago
+            - 'button "Delete session Tool test: setup-yaml-flow-hello-world" [ref=e361]':
+              - img [ref=e362]
+          - generic [ref=e365] [cursor=pointer]:
+            - generic [ref=e368]: "Tool test: setup-yaml-flow-hello-world"
+            - generic [ref=e369]:
+              - generic [ref=e370]: t-e25b3eff90bf
+              - generic [ref=e371]: hello-world-yaml-flow
+              - generic [ref=e372]: 13h ago
+            - 'button "Delete session Tool test: setup-yaml-flow-hello-world" [ref=e373]':
+              - img [ref=e374]
+          - generic [ref=e377] [cursor=pointer]:
+            - generic [ref=e379]: "Tool test: setup-yaml-flow-hello-world"
+            - generic [ref=e380]:
+              - generic [ref=e381]: t-a8124b089e2d
+              - generic [ref=e382]: hello-world-yaml-flow
+              - generic [ref=e383]: 14h ago
+            - 'button "Delete session Tool test: setup-yaml-flow-hello-world" [ref=e384]':
+              - img [ref=e385]
+          - generic [ref=e388] [cursor=pointer]:
+            - generic [ref=e391]: "Tool test: setup-yaml-flow-hello-world"
+            - generic [ref=e392]:
+              - generic [ref=e393]: t-285be21bec95
+              - generic [ref=e394]: hello-world-yaml-flow
+              - generic [ref=e395]: 15h ago
+            - 'button "Delete session Tool test: setup-yaml-flow-hello-world" [ref=e396]':
+              - img [ref=e397]
+          - generic [ref=e400] [cursor=pointer]:
+            - generic [ref=e402]: "Tool test: setup-yaml-flow-hello-world"
+            - generic [ref=e403]:
+              - generic [ref=e404]: t-df10fdd5e3a4
+              - generic [ref=e405]: hello-world-yaml-flow
+              - generic [ref=e406]: 17h ago
+            - 'button "Delete session Tool test: setup-yaml-flow-hello-world" [ref=e407]':
+              - img [ref=e408]
+          - generic [ref=e411] [cursor=pointer]:
+            - generic [ref=e414]: "Tool test: setup-yaml-flow-hello-world"
+            - generic [ref=e415]:
+              - generic [ref=e416]: t-dc9f2cb30852
+              - generic [ref=e417]: hello-world-yaml-flow
+              - generic [ref=e418]: 18h ago
+            - 'button "Delete session Tool test: setup-yaml-flow-hello-world" [ref=e419]':
+              - img [ref=e420]
+        - generic [ref=e423]:
+          - generic [ref=e424]: Last 7 days
+          - generic [ref=e425] [cursor=pointer]:
+            - generic [ref=e427]: "Tool test: setup-yaml-flow-hello-world"
+            - generic [ref=e428]:
+              - generic [ref=e429]: t-35436396c79e
+              - generic [ref=e430]: hello-world-yaml-flow
+              - generic [ref=e431]: 3d ago
+            - 'button "Delete session Tool test: setup-yaml-flow-hello-world" [ref=e432]':
+              - img [ref=e433]
+          - generic [ref=e436] [cursor=pointer]:
+            - generic [ref=e439]: "Tool test: setup-yaml-flow-hello-world"
+            - generic [ref=e440]:
+              - generic [ref=e441]: t-782ad93f6cc8
+              - generic [ref=e442]: hello-world-yaml-flow
+              - generic [ref=e443]: 4d ago
+            - 'button "Delete session Tool test: setup-yaml-flow-hello-world" [ref=e444]':
+              - img [ref=e445]
+          - generic [ref=e448] [cursor=pointer]:
+            - generic [ref=e451]: "Tool test: setup-yaml-flow-hello-world"
+            - generic [ref=e452]:
+              - generic [ref=e453]: t-c89ea59787ad
+              - generic [ref=e454]: hello-world-yaml-flow
+              - generic [ref=e455]: 4d ago
+            - 'button "Delete session Tool test: setup-yaml-flow-hello-world" [ref=e456]':
+              - img [ref=e457]
+          - generic [ref=e460] [cursor=pointer]:
+            - generic [ref=e462]: "Tool test: create-vergunningzoeker"
+            - generic [ref=e463]:
+              - generic [ref=e464]: t-deca9c3967b6
+              - generic [ref=e465]: vergunningzoeker
+              - generic [ref=e466]: 4d ago
+            - 'button "Delete session Tool test: create-vergunningzoeker" [ref=e467]':
+              - img [ref=e468]
+          - generic [ref=e471] [cursor=pointer]:
+            - generic [ref=e473]: "Tool test: create-vergunningzoeker"
+            - generic [ref=e474]:
+              - generic [ref=e475]: t-9e140cfee680
+              - generic [ref=e476]: vergunningzoeker
+              - generic [ref=e477]: 4d ago
+            - 'button "Delete session Tool test: create-vergunningzoeker" [ref=e478]':
+              - img [ref=e479]
+          - generic [ref=e482] [cursor=pointer]:
+            - generic [ref=e484]: "Tool test: create-vergunningzoeker"
+            - generic [ref=e485]:
+              - generic [ref=e486]: t-2de2c9330377
+              - generic [ref=e487]: vergunningzoeker
+              - generic [ref=e488]: 4d ago
+            - 'button "Delete session Tool test: create-vergunningzoeker" [ref=e489]':
+              - img [ref=e490]
+          - generic [ref=e493] [cursor=pointer]:
+            - generic [ref=e495]: "Tool test: create-vergunningzoeker"
+            - generic [ref=e496]:
+              - generic [ref=e497]: t-7a29c7c26a3b
+              - generic [ref=e498]: vergunningzoeker
+              - generic [ref=e499]: 4d ago
+            - 'button "Delete session Tool test: create-vergunningzoeker" [ref=e500]':
+              - img [ref=e501]
+          - generic [ref=e504] [cursor=pointer]:
+            - generic [ref=e506]: "Tool test: create-vergunningzoeker"
+            - generic [ref=e507]:
+              - generic [ref=e508]: t-17ac9f720ae8
+              - generic [ref=e509]: vergunningzoeker
+              - generic [ref=e510]: 4d ago
+            - 'button "Delete session Tool test: create-vergunningzoeker" [ref=e511]':
+              - img [ref=e512]
+          - generic [ref=e515] [cursor=pointer]:
+            - generic [ref=e517]: "Tool test: create-todo-app"
+            - generic [ref=e518]:
+              - generic [ref=e519]: t-3265d805d099
+              - generic [ref=e520]: todo-app
+              - generic [ref=e521]: 4d ago
+            - 'button "Delete session Tool test: create-todo-app" [ref=e522]':
+              - img [ref=e523]
+          - generic [ref=e526] [cursor=pointer]:
+            - generic [ref=e528]: "Tool test: setup-todo-app-pipeline"
+            - generic [ref=e529]:
+              - generic [ref=e530]: t-006711d09e14
+              - generic [ref=e531]: todo-app
+              - generic [ref=e532]: 4d ago
+            - 'button "Delete session Tool test: setup-todo-app-pipeline" [ref=e533]':
+              - img [ref=e534]
+          - generic [ref=e537] [cursor=pointer]:
+            - generic [ref=e540]: "Tool test: ba-paused-on-requirement-challenge"
+            - generic [ref=e541]:
+              - generic [ref=e542]: t-d8ef544b6349
+              - generic [ref=e543]: vergunning-analyzer
+              - generic [ref=e544]: 4d ago
+            - 'button "Delete session Tool test: ba-paused-on-requirement-challenge" [ref=e545]':
+              - img [ref=e546]
+          - generic [ref=e549] [cursor=pointer]:
+            - generic [ref=e551]: "Tool test: agent-without-done-fails"
+            - generic [ref=e552]:
+              - generic [ref=e553]: t-1eb0ed0412e9
+              - generic [ref=e554]: 4d ago
+            - 'button "Delete session Tool test: agent-without-done-fails" [ref=e555]':
+              - img [ref=e556]
+          - generic [ref=e559] [cursor=pointer]:
+            - generic [ref=e561]: "Tool test: setup-project-with-fd"
+            - generic [ref=e562]:
+              - generic [ref=e563]: t-588d022a700d
+              - generic [ref=e564]: recipe-sharing-app
+              - generic [ref=e565]: 4d ago
+            - 'button "Delete session Tool test: setup-project-with-fd" [ref=e566]':
+              - img [ref=e567]
+          - generic [ref=e570] [cursor=pointer]:
+            - generic [ref=e572]: "Tool test: setup-project-with-fd"
+            - generic [ref=e573]:
+              - generic [ref=e574]: t-e4364309057d
+              - generic [ref=e575]: recipe-sharing-app
+              - generic [ref=e576]: 4d ago
+            - 'button "Delete session Tool test: setup-project-with-fd" [ref=e577]':
+              - img [ref=e578]
+          - generic [ref=e581] [cursor=pointer]:
+            - generic [ref=e584]: "Tool test: architect-td-approval-pending"
+            - generic [ref=e585]:
+              - generic [ref=e586]: t-3a768a60f667
+              - generic [ref=e587]: recipe-sharing-app
+              - generic [ref=e588]: 4d ago
+            - 'button "Delete session Tool test: architect-td-approval-pending" [ref=e589]':
+              - img [ref=e590]
+          - generic [ref=e593] [cursor=pointer]:
+            - generic [ref=e595]: "Tool test: architect-sandbox-constraints"
+            - generic [ref=e596]:
+              - generic [ref=e597]: t-0ba2df687b32
+              - generic [ref=e598]: constraint-test
+              - generic [ref=e599]: 4d ago
+            - 'button "Delete session Tool test: architect-sandbox-constraints" [ref=e600]':
+              - img [ref=e601]
+          - generic [ref=e604] [cursor=pointer]:
+            - generic [ref=e606]: "Tool test: architect-sandbox-constraints-rejected"
+            - generic [ref=e607]:
+              - generic [ref=e608]: t-8208911f68c8
+              - generic [ref=e609]: constraint-reject-test
+              - generic [ref=e610]: 4d ago
+            - 'button "Delete session Tool test: architect-sandbox-constraints-rejected" [ref=e611]':
+              - img [ref=e612]
+          - generic [ref=e615] [cursor=pointer]:
+            - generic [ref=e618]: "Tool test: architect-paused-mid-run"
+            - generic [ref=e619]:
+              - generic [ref=e620]: t-1ead11d31c09
+              - generic [ref=e621]: recipe-sharing-app
+              - generic [ref=e622]: 4d ago
+            - 'button "Delete session Tool test: architect-paused-mid-run" [ref=e623]':
+              - img [ref=e624]
+          - generic [ref=e627] [cursor=pointer]:
+            - generic [ref=e629]: "Tool test: architect-challenges-unrealistic-nfr"
+            - generic [ref=e630]:
+              - generic [ref=e631]: t-f115b17ad49c
+              - generic [ref=e632]: slimme-vergunning-analyzer
+              - generic [ref=e633]: 4d ago
+            - 'button "Delete session Tool test: architect-challenges-unrealistic-nfr" [ref=e634]':
+              - img [ref=e635]
+          - generic [ref=e638] [cursor=pointer]:
+            - generic [ref=e640]: "Tool test: approval-gate-reject-then-approve"
+            - generic [ref=e641]:
+              - generic [ref=e642]: t-0ceb18b4ad79
+              - generic [ref=e643]: approval-gate-test
+              - generic [ref=e644]: 4d ago
+            - 'button "Delete session Tool test: approval-gate-reject-then-approve" [ref=e645]':
+              - img [ref=e646]
+          - generic [ref=e649] [cursor=pointer]:
+            - generic [ref=e651]: "Tool test: agent-without-done-fails"
+            - generic [ref=e652]:
+              - generic [ref=e653]: t-f75068451fbc
+              - generic [ref=e654]: 4d ago
+            - 'button "Delete session Tool test: agent-without-done-fails" [ref=e655]':
+              - img [ref=e656]
+    - generic [ref=e660]:
+      - generic [ref=e662]:
+        - 'heading "Tool test: setup-yaml-flow-hello-world" [level=2] [ref=e664]'
+        - generic [ref=e665]:
+          - button "Stop" [ref=e666] [cursor=pointer]:
+            - img [ref=e667]
+            - text: Stop
+          - generic [ref=e670]:
+            - button "Chat" [ref=e671] [cursor=pointer]
+            - button "Annotated" [ref=e672] [cursor=pointer]
+            - button "Inspect" [ref=e673] [cursor=pointer]
+          - link "hello-world-yaml-flow" [ref=e674] [cursor=pointer]:
+            - /url: /projects/51eefa64-affd-4399-b2f3-303c85926002
+          - button "Copy JSON" [ref=e675] [cursor=pointer]:
+            - img [ref=e676]
+            - text: Copy JSON
+      - generic [ref=e680]:
+        - generic [ref=e681]:
+          - img [ref=e682]
+          - text: Router
+        - generic [ref=e684]: →
+        - generic [ref=e685]:
+          - img [ref=e686]
+          - text: Planner
+        - generic [ref=e688]: →
+        - generic [ref=e689]:
+          - img [ref=e690]
+          - text: Business Analyst
+        - generic [ref=e692]: →
+        - generic [ref=e693]:
+          - img [ref=e694]
+          - text: Planner
+        - generic [ref=e696]: →
+        - generic [ref=e697]:
+          - img [ref=e698]
+          - text: Architect
+        - generic [ref=e700]: →
+        - generic [ref=e701]:
+          - img [ref=e702]
+          - text: Planner
+        - generic [ref=e704]: →
+        - generic [ref=e705]:
+          - img [ref=e706]
+          - text: Developer
+      - generic [ref=e709]:
+        - generic [ref=e711]:
+          - generic [ref=e712]: 6:13:13 AM
+          - generic [ref=e714]: "Tool test: setup-yaml-flow-hello-world"
+        - generic [ref=e718]:
+          - img [ref=e720]
+          - generic [ref=e723]: Router
+        - generic [ref=e727]:
+          - img [ref=e729]
+          - generic [ref=e732]: Planner
+        - generic [ref=e734]:
+          - generic [ref=e736]:
+            - img [ref=e738]
+            - generic [ref=e741]: Business Analyst
+          - generic [ref=e743]:
+            - generic [ref=e744]:
+              - img [ref=e746]
+              - generic [ref=e748]: System
+              - generic [ref=e749]: 6:13:14 AM
+            - generic [ref=e751]:
+              - generic [ref=e753]: Approved
+              - generic [ref=e754]: Make Design
+              - generic "docs/functional-design.md" [ref=e755]
+              - button "View docs/functional-design.md" [ref=e757] [cursor=pointer]:
+                - img [ref=e758]
+                - text: View docs/functional-design.md
+              - link "View full details" [ref=e761] [cursor=pointer]:
+                - /url: /tasks
+                - text: View full details
+                - img [ref=e762]
+        - generic [ref=e769]:
+          - img [ref=e771]
+          - generic [ref=e774]: Planner
+        - generic [ref=e776]:
+          - generic [ref=e778]:
+            - img [ref=e780]
+            - generic [ref=e783]: Architect
+          - generic [ref=e785]:
+            - generic [ref=e786]:
+              - img [ref=e788]
+              - generic [ref=e790]: System
+              - generic [ref=e791]: 6:13:16 AM
+            - generic [ref=e793]:
+              - generic [ref=e795]: Approved
+              - generic [ref=e796]: Make Design
+              - generic "docs/technical-design.md" [ref=e797]
+              - button "View docs/technical-design.md" [ref=e799] [cursor=pointer]:
+                - img [ref=e800]
+                - text: View docs/technical-design.md
+              - link "View full details" [ref=e803] [cursor=pointer]:
+                - /url: /tasks
+                - text: View full details
+                - img [ref=e804]
+        - generic [ref=e811]:
+          - img [ref=e813]
+          - generic [ref=e816]: Planner
+        - generic [ref=e820]:
+          - button "pi coding run · tdd 1m 10s project 124 events" [ref=e821] [cursor=pointer]:
+            - img [ref=e822]
+            - img [ref=e824]
+            - generic [ref=e830]:
+              - text: pi coding run
+              - generic [ref=e831]: · tdd
+            - generic [ref=e832]:
+              - img [ref=e833]
+              - text: 1m 10s
+            - generic [ref=e836]:
+              - img [ref=e837]
+              - text: project
+            - generic [ref=e841]: 124 events
+          - generic [ref=e842]:
+            - generic [ref=e843]:
+              - generic [ref=e844]: sandbox
+              - generic [ref=e845]: pending
+            - generic [ref=e846]:
+              - generic [ref=e847]:
+                - img [ref=e848]
+                - text: agents (1 active / 1 total)
+              - button "planner-1 zai/glm-5.1 0t · 5tc" [ref=e853] [cursor=pointer]:
+                - img [ref=e854]
+                - img [ref=e856]
+                - generic [ref=e858]: planner-1
+                - generic [ref=e859]: zai/glm-5.1
+                - generic [ref=e860]: 0t · 5tc
+            - generic [ref=e861]:
+              - generic [ref=e862]:
+                - img [ref=e863]
+                - text: timeline
+                - button "show all 72" [ref=e869] [cursor=pointer]
+              - generic [ref=e870]:
+                - generic [ref=e871]:
+                  - generic [ref=e872]: 06:17:33 AM
+                  - generic [ref=e873]: run_end
+                  - generic [ref=e874]: run ended (success)
+                - generic [ref=e875]:
+                  - generic [ref=e876]: 06:17:33 AM
+                  - generic [ref=e877]: subagent_end
+                  - generic [ref=e878]: builder-2-1 done · 9t 8tc 1m 12s
+                - generic [ref=e879]:
+                  - generic [ref=e880]: 06:17:33 AM
+                  - generic [ref=e881]: subagent_narrative
+                  - generic [ref=e882]: builder-2 narrative (436 chars)
+                - button "06:17:42 AM builder-1-1 done 1ms" [ref=e884] [cursor=pointer]:
+                  - generic [ref=e885]: 06:17:42 AM
+                  - img [ref=e886]
+                  - generic [ref=e888]: builder-1-1
+                  - img [ref=e889]
+                  - generic [ref=e891]: done
+                  - generic [ref=e892]: 1ms
+                  - img [ref=e894]
+                - generic [ref=e896]:
+                  - generic [ref=e897]: 06:17:52 AM
+                  - generic [ref=e898]: subagent_narrative
+                  - generic [ref=e899]: builder-1 narrative (324 chars)
+                - generic [ref=e900]:
+                  - generic [ref=e901]: 06:17:52 AM
+                  - generic [ref=e902]: subagent_end
+                  - generic [ref=e903]: builder-1-1 done · 15t 14tc 1m 30s
+                - generic [ref=e904]:
+                  - generic [ref=e905]: 06:17:52 AM
+                  - generic [ref=e906]: run_end
+                  - generic [ref=e907]: run ended (success)
+                - button "06:17:56 AM planner-1 read 23ms" [ref=e909] [cursor=pointer]:
+                  - generic [ref=e910]: 06:17:56 AM
+                  - img [ref=e911]
+                  - generic [ref=e913]: planner-1
+                  - img [ref=e914]
+                  - generic [ref=e916]: read
+                  - generic [ref=e917]: 23ms
+                  - img [ref=e919]
+                - button "06:17:56 AM planner-1 read 24ms" [ref=e922] [cursor=pointer]:
+                  - generic [ref=e923]: 06:17:56 AM
+                  - img [ref=e924]
+                  - generic [ref=e926]: planner-1
+                  - img [ref=e927]
+                  - generic [ref=e929]: read
+                  - generic [ref=e930]: 24ms
+                  - img [ref=e932]
+                - button "06:17:56 AM planner-1 read 23ms" [ref=e935] [cursor=pointer]:
+                  - generic [ref=e936]: 06:17:56 AM
+                  - img [ref=e937]
+                  - generic [ref=e939]: planner-1
+                  - img [ref=e940]
+                  - generic [ref=e942]: read
+                  - generic [ref=e943]: 23ms
+                  - img [ref=e945]
+                - button "06:18:06 AM planner-1 subagents" [ref=e948] [cursor=pointer]:
+                  - generic [ref=e949]: 06:18:06 AM
+                  - img [ref=e950]
+                  - generic [ref=e952]: planner-1
+                  - img [ref=e953]
+                  - generic [ref=e955]: subagents
+                  - img [ref=e957]
+                - generic [ref=e959]:
+                  - generic [ref=e960]: 06:18:06 AM
+                  - generic [ref=e961]: run_start
+                  - generic [ref=e962]: run started
+                - generic [ref=e963]:
+                  - generic [ref=e964]: 06:18:06 AM
+                  - generic [ref=e965]: subagent_start
+                  - generic [ref=e966]: pusher started (pusher-1)
+                - button "06:18:13 AM pusher-1 bash 15ms" [ref=e968] [cursor=pointer]:
+                  - generic [ref=e969]: 06:18:13 AM
+                  - img [ref=e970]
+                  - generic [ref=e972]: pusher-1
+                  - img [ref=e973]
+                  - generic [ref=e975]: bash
+                  - generic [ref=e976]: 15ms
+                  - img [ref=e978]
+                - button "06:18:13 AM pusher-1 bash 16ms" [ref=e981] [cursor=pointer]:
+                  - generic [ref=e982]: 06:18:13 AM
+                  - img [ref=e983]
+                  - generic [ref=e985]: pusher-1
+                  - img [ref=e986]
+                  - generic [ref=e988]: bash
+                  - generic [ref=e989]: 16ms
+                  - img [ref=e991]
+                - button "06:18:13 AM pusher-1 bash 16ms" [ref=e994] [cursor=pointer]:
+                  - generic [ref=e995]: 06:18:13 AM
+                  - img [ref=e996]
+                  - generic [ref=e998]: pusher-1
+                  - img [ref=e999]
+                  - generic [ref=e1001]: bash
+                  - generic [ref=e1002]: 16ms
+                  - img [ref=e1004]
+                - button "06:18:17 AM pusher-1 read 29ms" [ref=e1007] [cursor=pointer]:
+                  - generic [ref=e1008]: 06:18:17 AM
+                  - img [ref=e1009]
+                  - generic [ref=e1011]: pusher-1
+                  - img [ref=e1012]
+                  - generic [ref=e1014]: read
+                  - generic [ref=e1015]: 29ms
+                  - img [ref=e1017]
+                - button "06:18:17 AM pusher-1 bash 28ms" [ref=e1020] [cursor=pointer]:
+                  - generic [ref=e1021]: 06:18:17 AM
+                  - img [ref=e1022]
+                  - generic [ref=e1024]: pusher-1
+                  - img [ref=e1025]
+                  - generic [ref=e1027]: bash
+                  - generic [ref=e1028]: 28ms
+                  - img [ref=e1030]
+                - button "06:18:17 AM pusher-1 read 27ms" [ref=e1033] [cursor=pointer]:
+                  - generic [ref=e1034]: 06:18:17 AM
+                  - img [ref=e1035]
+                  - generic [ref=e1037]: pusher-1
+                  - img [ref=e1038]
+                  - generic [ref=e1040]: read
+                  - generic [ref=e1041]: 27ms
+                  - img [ref=e1043]
+                - button "06:18:17 AM pusher-1 read 27ms" [ref=e1046] [cursor=pointer]:
+                  - generic [ref=e1047]: 06:18:17 AM
+                  - img [ref=e1048]
+                  - generic [ref=e1050]: pusher-1
+                  - img [ref=e1051]
+                  - generic [ref=e1053]: read
+                  - generic [ref=e1054]: 27ms
+                  - img [ref=e1056]
+                - button "06:18:23 AM pusher-1 bash 8ms" [ref=e1059] [cursor=pointer]:
+                  - generic [ref=e1060]: 06:18:23 AM
+                  - img [ref=e1061]
+                  - generic [ref=e1064]: pusher-1
+                  - img [ref=e1065]
+                  - generic [ref=e1067]: bash
+                  - generic [ref=e1068]: 8ms
+                  - img [ref=e1070]
+                - button "06:18:31 AM pusher-1 bash 19ms" [ref=e1073] [cursor=pointer]:
+                  - generic [ref=e1074]: 06:18:31 AM
+                  - img [ref=e1075]
+                  - generic [ref=e1077]: pusher-1
+                  - img [ref=e1078]
+                  - generic [ref=e1080]: bash
+                  - generic [ref=e1081]: 19ms
+                  - img [ref=e1083]
+                - button "06:18:36 AM pusher-1 bash 21ms" [ref=e1086] [cursor=pointer]:
+                  - generic [ref=e1087]: 06:18:36 AM
+                  - img [ref=e1088]
+                  - generic [ref=e1090]: pusher-1
+                  - img [ref=e1091]
+                  - generic [ref=e1093]: bash
+                  - generic [ref=e1094]: 21ms
+                  - img [ref=e1096]
+                - button "06:18:41 AM pusher-1 bash 23ms" [ref=e1099] [cursor=pointer]:
+                  - generic [ref=e1100]: 06:18:41 AM
+                  - img [ref=e1101]
+                  - generic [ref=e1104]: pusher-1
+                  - img [ref=e1105]
+                  - generic [ref=e1107]: bash
+                  - generic [ref=e1108]: 23ms
+                  - img [ref=e1110]
+                - button "06:18:46 AM pusher-1 bash 16ms" [ref=e1113] [cursor=pointer]:
+                  - generic [ref=e1114]: 06:18:46 AM
+                  - img [ref=e1115]
+                  - generic [ref=e1117]: pusher-1
+                  - img [ref=e1118]
+                  - generic [ref=e1120]: bash
+                  - generic [ref=e1121]: 16ms
+                  - img [ref=e1123]
+                - button "06:18:52 AM pusher-1 bash 23ms" [ref=e1126] [cursor=pointer]:
+                  - generic [ref=e1127]: 06:18:52 AM
+                  - img [ref=e1128]
+                  - generic [ref=e1130]: pusher-1
+                  - img [ref=e1131]
+                  - generic [ref=e1133]: bash
+                  - generic [ref=e1134]: 23ms
+                  - img [ref=e1136]
+                - button "06:18:56 AM pusher-1 bash 11ms" [ref=e1139] [cursor=pointer]:
+                  - generic [ref=e1140]: 06:18:56 AM
+                  - img [ref=e1141]
+                  - generic [ref=e1143]: pusher-1
+                  - img [ref=e1144]
+                  - generic [ref=e1146]: bash
+                  - generic [ref=e1147]: 11ms
+                  - img [ref=e1149]
+                - button "06:19:01 AM pusher-1 bash 18ms" [ref=e1152] [cursor=pointer]:
+                  - generic [ref=e1153]: 06:19:01 AM
+                  - img [ref=e1154]
+                  - generic [ref=e1156]: pusher-1
+                  - img [ref=e1157]
+                  - generic [ref=e1159]: bash
+                  - generic [ref=e1160]: 18ms
+                  - img [ref=e1162]
+                - button "06:19:05 AM pusher-1 bash 12ms" [ref=e1165] [cursor=pointer]:
+                  - generic [ref=e1166]: 06:19:05 AM
+                  - img [ref=e1167]
+                  - generic [ref=e1169]: pusher-1
+                  - img [ref=e1170]
+                  - generic [ref=e1172]: bash
+                  - generic [ref=e1173]: 12ms
+                  - img [ref=e1175]
+                - button "06:19:10 AM pusher-1 bash 17ms" [ref=e1178] [cursor=pointer]:
+                  - generic [ref=e1179]: 06:19:10 AM
+                  - img [ref=e1180]
+                  - generic [ref=e1182]: pusher-1
+                  - img [ref=e1183]
+                  - generic [ref=e1185]: bash
+                  - generic [ref=e1186]: 17ms
+                  - img [ref=e1188]
+        - generic [ref=e1191]:
+          - img [ref=e1193]
+          - generic [ref=e1198]: Developer
+      - generic [ref=e1205]:
+        - textbox "Chat message input" [ref=e1206]:
+          - /placeholder: Type a message...
+        - button "Stop agent" [ref=e1207] [cursor=pointer]:
+          - img [ref=e1208]

@@ -1,0 +1,7 @@
+{
+  "description": "Build a REST API for managing a todo list with CRUD operations, input validation, and persistent storage using SQLite",
+  "language": "typescript",
+  "skills": ["api-design", "security-review"],
+  "testCommand": "npm test",
+  "buildCommand": "npm run build"
+}

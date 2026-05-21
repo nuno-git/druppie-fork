@@ -31,18 +31,36 @@ system_prompt: |
   TASK TYPES
   =============================================================================
 
-  Call execute_coding_task with a prompt like:
-    "Create a new git branch named 'feature/<description>' and push it."
+  IMPORTANT — how execute_coding_task_pi works:
+    - ONE call = ONE full flow (analyze → plan → build → verify → push → PR).
+    - The tool ALREADY creates a feature branch, commits the work, pushes,
+      and opens a PR on its own. You do NOT invoke it for "just make a
+      branch" — the sandbox has no git credentials and can't push directly;
+      pi_agent handles pushing via a separate credentialed container, and
+      only when there are real commits to push.
+    - Runs with no code changes produce no commits and therefore no PR,
+      which is a wasted sandbox spawn. Always give it real implementation
+      work, or use read-only tools instead.
 
   **IMPLEMENTATION** (normal coding task):
-  Call execute_coding_task with a prompt describing:
+  Call execute_coding_task_pi ONCE with a prompt describing:
     - What files to create/modify
     - Architecture or specs to follow
-    - Commit and push all changes
+    - Which tests should pass (for flow=tdd)
+  pi_agent returns the branch name, commits, and PR URL in its result.
 
   **IMPROVEMENT TASK** (if your prompt contains "IMPROVEMENT TASK"):
-  Call execute_coding_task with a prompt including the user's feedback
-  and instructions to make targeted changes, commit, and push.
+  Call execute_coding_task_pi ONCE with a prompt including the user's
+  feedback and instructions to make the targeted changes. The tool
+  will commit and push its own branch.
+
+  **READ-ONLY EXPLORATION**:
+  If you only need to understand the code (no changes), call
+  execute_coding_task_pi with flow="explore" — it will not commit or push.
+
+  Do NOT split a coding task into multiple execute_coding_task_pi calls
+  (one for the branch, one for the code, etc.). Each call spawns a fresh
+  sandbox that knows nothing about the previous one.
 
   =============================================================================
   CODE QUALITY
@@ -88,13 +106,13 @@ system_prompts:
   - workspace_state
 
 # MCP tools this agent can use
-# Write operations delegated via execute_coding_task (sandbox).
+# Write operations delegated via execute_coding_task_pi (sandbox).
 # Read-only tools kept so the agent can inspect context without sandbox overhead.
 mcps:
   coding: [read_file, list_dir, get_git_status]
 
 extra_builtin_tools:
-  - execute_coding_task
+  - execute_coding_task_pi
 
 # NO approval_overrides needed!
 # Per goal.md:

@@ -43,7 +43,7 @@ system_prompt: |
   You receive a CORE CHANGE task from the Planner (based on the Architect's
   technical design). Your job:
 
-  1. Call execute_coding_task with ALL THREE required parameters:
+  1. Call execute_coding_task_pi with ALL THREE required parameters:
        agent="druppie-core-builder"
        repo_target="druppie_core"    ← THIS IS MANDATORY, DO NOT OMIT OR CHANGE
        task="..."
@@ -86,7 +86,7 @@ system_prompt: |
   =============================================================================
 
   When the task prompt from the planner contains "NEW MODULE", you are creating
-  a new Druppie MCP module. Your execute_coding_task prompt MUST instruct the
+  a new Druppie MCP module. Your execute_coding_task_pi prompt MUST instruct the
   sandbox agent to:
 
   1. Read docs/module-specification.md from /workspace/druppie-core/ — this contains
@@ -115,7 +115,7 @@ mcps:
   coding: [read_file, list_dir]
 
 extra_builtin_tools:
-  - execute_coding_task
+  - execute_coding_task_pi
 
 # Strip HITL from the default builtin set. This agent runs late in the
 # pipeline, long after the user approved FD + TD; asking the user again is

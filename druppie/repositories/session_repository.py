@@ -221,6 +221,11 @@ class SessionRepository(BaseRepository):
             user = self.db.query(UserModel).filter_by(id=session.user_id).first()
             if user:
                 username = user.username
+        project_name = None
+        if session.project_id:
+            project = self.db.query(Project).filter_by(id=session.project_id).first()
+            if project:
+                project_name = project.name
         return SessionSummary(
             id=session.id,
             title=session.title or "Untitled",
@@ -228,6 +233,7 @@ class SessionRepository(BaseRepository):
             error_message=session.error_message,
             project_id=session.project_id,
             username=username,
+            project_name=project_name,
             token_usage=TokenUsage(
                 prompt_tokens=session.prompt_tokens or 0,
                 completion_tokens=session.completion_tokens or 0,
