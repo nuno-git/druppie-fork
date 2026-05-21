@@ -1,0 +1,259 @@
+## End-to-end: create a to-do app with REAL deploy
+## Extends setup-todo-app-pipeline, adds: builder (real code) + test_executor + deployer (REAL) + summarizer
+
+tool-test:
+  name: create-todo-app
+  description: "Full pipeline with real deploy"
+  tags: [e2e, create-project, real-deploy]
+  extends: setup-todo-app-pipeline
+
+  chain:
+    # --- Builder (mocked — no sandbox, outcome overwrites scaffold with real todo app) ---
+    - agent: builder
+      tool: coding:execute_coding_task
+      arguments:
+        task: "Build the todo app to pass the tests"
+      mock: true
+      mock_result: "All files created successfully"
+      outcome:
+        files:
+          - path: frontend/src/App.tsx
+            content: |
+              import { useState, useEffect } from "react"
+              import { Button } from "@/components/ui/button"
+              import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+              import { Input } from "@/components/ui/input"
+
+              interface Todo {
+                id: string
+                title: string
+                completed: boolean
+              }
+
+              function App() {
+                const [todos, setTodos] = useState<Todo[]>(() => {
+                  const saved = localStorage.getItem("todos")
+                  return saved ? JSON.parse(saved) : []
+                })
+                const [input, setInput] = useState("")
+                const [filter, setFilter] = useState<"all" | "active" | "completed">("all")
+
+                useEffect(() => {
+                  localStorage.setItem("todos", JSON.stringify(todos))
+                }, [todos])
+
+                const addTodo = () => {
+                  if (!input.trim()) return
+                  setTodos([...todos, { id: Date.now().toString(), title: input.trim(), completed: false }])
+                  setInput("")
+                }
+
+                const toggleTodo = (id: string) => {
+                  setTodos(todos.map(t => t.id === id ? { ...t, completed: !t.completed } : t))
+                }
+
+                const deleteTodo = (id: string) => {
+                  setTodos(todos.filter(t => t.id !== id))
+                }
+
+                const filtered = todos.filter(t => {
+                  if (filter === "active") return !t.completed
+                  if (filter === "completed") return t.completed
+                  return true
+                })
+
+                const remaining = todos.filter(t => !t.completed).length
+
+                return (
+                  <div className="min-h-screen bg-background">
+                    <header className="border-b">
+                      <div className="container mx-auto flex h-16 items-center px-4">
+                        <h1 className="text-xl font-bold">Todo App</h1>
+                      </div>
+                    </header>
+                    <main className="container mx-auto px-4 py-8 max-w-2xl">
+                      <Card>
+                        <CardHeader>
+                          <CardTitle>What needs to be done?</CardTitle>
+                        </CardHeader>
+                        <CardContent className="space-y-4">
+                          <div className="flex gap-2">
+                            <Input
+                              value={input}
+                              onChange={e => setInput(e.target.value)}
+                              onKeyDown={e => e.key === "Enter" && addTodo()}
+                              placeholder="Add a new todo..."
+                            />
+                            <Button onClick={addTodo}>Add</Button>
+                          </div>
+
+                          <div className="flex gap-2">
+                            {(["all", "active", "completed"] as const).map(f => (
+                              <Button
+                                key={f}
+                                variant={filter === f ? "default" : "outline"}
+                                size="sm"
+                                onClick={() => setFilter(f)}
+                              >
+                                {f.charAt(0).toUpperCase() + f.slice(1)}
+                              </Button>
+                            ))}
+                          </div>
+
+                          <ul className="space-y-2">
+                            {filtered.map(todo => (
+                              <li key={todo.id} className="flex items-center gap-3 p-2 rounded border">
+                                <input
+                                  type="checkbox"
+                                  checked={todo.completed}
+                                  onChange={() => toggleTodo(todo.id)}
+                                  className="h-4 w-4"
+                                />
+                                <span className={`flex-1 ${todo.completed ? "line-through text-muted-foreground" : ""}`}>
+                                  {todo.title}
+                                </span>
+                                <Button variant="ghost" size="sm" onClick={() => deleteTodo(todo.id)}>
+                                  ✕
+                                </Button>
+                              </li>
+                            ))}
+                          </ul>
+
+                          {todos.length > 0 && (
+                            <p className="text-sm text-muted-foreground">{remaining} item{remaining !== 1 ? "s" : ""} left</p>
+                          )}
+                        </CardContent>
+                      </Card>
+                    </main>
+                  </div>
+                )
+              }
+
+              export default App
+
+    - agent: builder
+      tool: builtin:done
+      arguments:
+        summary: "Agent builder: Implemented todo app with 5 components on branch main."
+
+    # --- Planner (after builder → test_executor) ---
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: test_executor
+            prompt: "Run all tests with coverage"
+          - agent_id: planner
+            prompt: "Re-evaluate after test_executor completes"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: Planned test_executor"
+
+    # --- Test Executor (mocked — no real tests to run) ---
+    - agent: test_executor
+      tool: coding:run_tests
+      mock: true
+      mock_result: '{"success": true, "output": "4 passed, 0 failed", "exit_code": 0}'
+
+    - agent: test_executor
+      tool: coding:get_coverage_report
+      mock: true
+      mock_result: '{"coverage": 87, "lines_covered": 174, "lines_total": 200}'
+
+    - agent: test_executor
+      tool: builtin:test_report
+      mock: true
+      mock_result: '{"status": "ok"}'
+      arguments:
+        total: 4
+        passed: 4
+        failed: 0
+        coverage: 87
+        summary: "Agent test_executor: All 4 tests passed with 87% coverage"
+
+    - agent: test_executor
+      tool: builtin:done
+      arguments:
+        summary: "Agent test_executor: TEST RESULT: PASS — 4/4 tests passed, 87% coverage."
+
+    # --- Planner (after test_executor → deployer) ---
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: deployer
+            prompt: "Deploy the todo app from main branch"
+          - agent_id: planner
+            prompt: "Re-evaluate after deployer completes"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: Tests passed, planned deployer"
+
+    # --- Deployer (REAL — actually deploys the app) ---
+    - agent: deployer
+      tool: docker:list_containers
+
+    - agent: deployer
+      tool: docker:compose_up
+      approval:
+        status: approved
+        by: developer
+      arguments:
+        compose_project_name: todo-app
+        branch: main
+      assert:
+        result:
+          - not_empty
+          - { contains: "success" }
+
+    - agent: deployer
+      tool: builtin:done
+      arguments:
+        summary: "Agent deployer: Deployed todo-app from main."
+
+    # --- Planner (after deployer → summarizer) ---
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: summarizer
+            prompt: "Summarize what was accomplished for the user"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: Planned summarizer"
+
+    # --- Summarizer ---
+    - agent: summarizer
+      tool: builtin:create_message
+      arguments:
+        content: |
+          Your todo app has been built and deployed!
+
+          **What was created:**
+          - React app with add, complete, delete, and filter functionality
+          - localStorage persistence
+          - 4 tests, all passing (87% coverage)
+
+          The app is now running. Check the deployer tool call for the URL.
+
+    - agent: summarizer
+      tool: builtin:done
+      arguments:
+        summary: "Agent summarizer: Presented completion summary to user."
+      assert:
+        completed: true
+
+  # Verify side-effects in Gitea
+  verify:
+    - gitea_repo_exists: true
+    - file_exists: docs/functional-design.md
+    - file_exists: docs/technical-design.md
+    - file_exists: docs/builder-plan.md
+    - file_not_empty: docs/functional-design.md
+    - file_not_empty: docs/technical-design.md

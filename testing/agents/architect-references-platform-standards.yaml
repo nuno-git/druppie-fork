@@ -1,0 +1,31 @@
+## Agent test: the architect's docs/technical-design.md must reference
+## docs/platform-technical-standards.md (as a markdown link, with the
+## revision string) and MUST NOT restate anything that file already
+## covers (stack defaults, Druppie auth, cost tracking, deployment
+## framework, chat template scaffold, etc.).
+##
+## Setup reuses setup-project-with-fd which runs create_project (pushing
+## the template that contains both platform standards files), then BA
+## writes functional-design.md. continue_session lets the architect run
+## in the same session so it can read the seeded standards file.
+
+agent-test:
+  name: architect-references-platform-standards
+  description: "Architect TD cites platform-technical-standards.md and avoids restating its defaults"
+  tags: [architect, platform-standards, judge, e2e]
+
+  setup:
+    - setup-project-with-fd
+  continue_session: true
+
+  message: "Review the functional design and produce the technical design. Follow the platform technical standards document from docs/ — reference it by revision and only document project-specific design on top."
+  agents: [architect]
+  hitl: non-technical-pm
+
+  judge:
+    context: [architect]
+    checks:
+      - "The architect MUST have called coding_read_project_file (or an equivalent read) for `docs/platform-technical-standards.md` before writing the technical design. If not, this check fails."
+      - "The docs/technical-design.md must contain near the top of the document (before any substantive section content) a visible markdown link pointing to docs/platform-technical-standards.md in the form `[docs/platform-technical-standards.md](./platform-technical-standards.md)`, together with the revision string from the standards file. A heading (e.g. `# Technisch Ontwerp`) above the link line is fine — what matters is that the link and revision are clearly visible near the top, not buried deep in the document. A TD without this visible link header fails the check."
+      - "The docs/technical-design.md must NOT restate topics that are already platform-level defaults. In particular, it should NOT contain its own Authentication section describing login/Keycloak/password policy (Druppie handles auth at the platform). It should NOT describe cost tracking or LLM-spend accounting. It should NOT describe the chat UI scaffold, session framework, agent loop, or SDK setup as if they were new components — those come from the template. If the TD reads like it was written without knowledge of the standards file, fail this check."
+      - "If the architect deviates from any platform technical standard, it must list the deviation(s) under a `Platform standard deviations` section with a short rationale. If there are no deviations, either an empty deviations table or an explicit note is acceptable."

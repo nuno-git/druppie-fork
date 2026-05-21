@@ -104,6 +104,11 @@ class DockerContainerManager:
         if cache_volume:
             volume_flags.extend(["-v", f"{cache_volume}:/cache:rw"])
 
+        # Optional Druppie SDK volume (host path → /druppie-sdk:ro in sandbox)
+        sdk_host_path = config.SANDBOX_SDK_HOST_PATH
+        if sdk_host_path:
+            volume_flags.extend(["-v", f"{sdk_host_path}:/druppie-sdk:ro"])
+
         cmd = [
             "docker", "run",
             "-d",  # detach

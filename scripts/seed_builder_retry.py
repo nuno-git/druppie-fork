@@ -136,7 +136,7 @@ Agent router: Classified intent as create_project, created project "todo-app".
 Agent planner: Created plan: business_analyst → architect → tester → builder → deployer.
 Agent business_analyst: Defined requirements for todo app with CRUD operations, persistence, and responsive design. Created SPEC.md.
 Agent planner: Updated plan after BA completion. Next: architect.
-Agent architect: Designed React+Vite architecture with component structure, state management via custom hook, and REST-ready data layer. Created architecture.md and technical_design.md.
+Agent architect: Designed React+Vite architecture with component structure, state management via custom hook, and REST-ready data layer. Created architecture.md and docs/technical-design.md.
 Agent planner: Updated plan after architect completion. Next: tester.
 Agent tester: Generated 12 test files covering App integration, TodoItem unit tests, and TodoForm unit tests. All tests initially fail (TDD red phase). Created test infrastructure with vitest config.
 Agent planner: Updated plan after tester completion. Next: builder."""
@@ -608,7 +608,7 @@ def _agent_summary(agent_id: str, session: dict, planner_count: int) -> str:
         "router": f"Agent router: Classified intent as {session.get('intent', 'general_chat')}, project '{name}'.",
         "planner": f"Agent planner: Updated execution plan (iteration {planner_count}). Proceeding to next agent.",
         "business_analyst": f"Agent business_analyst: Analyzed requirements for '{title}'. Created SPEC.md with user stories and acceptance criteria.",
-        "architect": f"Agent architect: Designed architecture for {name}. Created architecture.md and technical_design.md.",
+        "architect": f"Agent architect: Designed architecture for {name}. Created architecture.md and docs/technical-design.md.",
         "tester": f"Agent tester: Generated test suite for {name}. All tests initially fail (TDD red phase).",
         "builder": f"Agent builder: Implemented {name}, all tests passing. Code committed and pushed.",
         "deployer": f"Agent deployer: Deployed {name} container. Application is running.",

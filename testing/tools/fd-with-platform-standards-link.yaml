@@ -1,0 +1,118 @@
+## Tool test: BA produces a docs/functional-design.md that includes the mandated
+## markdown link to docs/platform-functional-standards.md. Primary purpose
+## is MANUAL VERIFICATION in the UI — open the resulting session, view the
+## rendered FD in the chat, and confirm the link resolves to the Gitea file
+## (not a 404 in the app).
+##
+## Verifications:
+##   - the FD file is committed to Gitea
+##   - the seeded platform-functional-standards.md file is present
+##   - the FD contains the expected markdown link to the standards file
+##
+## The chain is deterministic (no LLM) so the FD contents are predictable
+## for UI inspection.
+
+tool-test:
+  name: fd-with-platform-standards-link
+  description: "Deterministic chain that writes an FD containing the platform-standards link — used to verify chat link rewriting in the UI"
+  tags: [platform-standards, frontend, setup, create-project]
+
+  chain:
+    # --- Router ---
+    - agent: router
+      tool: builtin:set_intent
+      arguments:
+        intent: create_project
+        project_name: link-render-check
+        description: "Project used to verify chat link rewriting in the UI"
+      assert:
+        result:
+          - not_empty
+
+    - agent: router
+      tool: builtin:done
+      arguments:
+        summary: "Agent router: Classified as create_project (link render check)"
+      assert:
+        completed: true
+
+    # --- Planner → BA ---
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: business_analyst
+            prompt: "Write a functional design that links to the platform-functional-standards.md file"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: Planned business_analyst"
+
+    # --- Business Analyst ---
+    - agent: business_analyst
+      tool: coding:make_design
+      approval:
+        status: approved
+      arguments:
+        path: docs/functional-design.md
+        content: |
+          # Functioneel Ontwerp — Link Render Check
+
+          > Platform standards applied: [docs/platform-functional-standards.md](./platform-functional-standards.md) rev `2026-04-20`.
+          > Only deviations are listed in section "Platform standard deviations" below.
+
+          ## 1. Probleemsamenvatting
+
+          Dit ontwerp bestaat puur om te controleren of markdown-links in het
+          functionele ontwerp correct naar Gitea worden doorgelinkt wanneer
+          het ontwerp in de chat wordt gerenderd. Zie
+          [docs/platform-functional-standards.md](./platform-functional-standards.md)
+          voor alle platform-defaults.
+
+          ## 2. Functionele Eisen
+
+          | ID | Bron | Eis | Verificatiemethode |
+          |----|------|-----|--------------------|
+          | FR-01 | BA | De link naar het platform-standards document moet klikbaar zijn in de chat-render en openen in Gitea | Handmatig openen in de UI en klikken op de link |
+
+          ## 3. Out of Scope
+
+          - Echte productfunctionaliteit — dit is alleen een testproject.
+
+          ## 14. Platform standard deviations
+
+          | Standard | Deviation | Rationale |
+          |----------|-----------|-----------|
+          | (none)   |           |           |
+
+    - agent: business_analyst
+      tool: coding:run_git
+      arguments:
+        command: "add docs/functional-design.md"
+
+    - agent: business_analyst
+      tool: coding:run_git
+      arguments:
+        command: "commit -m 'Functioneel ontwerp voor link-render-check'"
+
+    - agent: business_analyst
+      tool: coding:run_git
+      arguments:
+        command: "push"
+
+    - agent: business_analyst
+      tool: builtin:done
+      arguments:
+        summary: "Agent business_analyst: DESIGN_APPROVED. Wrote FD that links to docs/platform-functional-standards.md for UI link-rewrite verification."
+      assert:
+        completed: true
+
+  verify:
+    - gitea_repo_exists: true
+    - file_exists: docs/functional-design.md
+    - file_not_empty: docs/functional-design.md
+    - file_exists: docs/platform-functional-standards.md
+    - file_contains:
+        path: docs/functional-design.md
+        content: "[docs/platform-functional-standards.md](./platform-functional-standards.md)"

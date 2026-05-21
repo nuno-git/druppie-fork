@@ -27,6 +27,9 @@
 #   MCP File Search:9004
 #   MCP Web:        9005
 #   MCP Registry:   9007
+#   MCP LLM:        9008
+#   MCP Data Access:9010
+#   MCP Vision:     9011
 #   Adminer:        8081
 
 services:
@@ -222,10 +225,17 @@ services:
       MCP_PORT: "9002"
       WORKSPACE_ROOT: /workspaces
       DOCKER_NETWORK: druppie-new-network
+      DRUPPIE_URL: ${DRUPPIE_URL:-http://druppie-new-backend:8000}
+      DRUPPIE_MODULE_API_TOKEN: ${DRUPPIE_MODULE_API_TOKEN:-}
       DEEPINFRA_API_KEY: ${DEEPINFRA_API_KEY:-}
     volumes:
       - druppie_new_workspace:/workspaces
-      - ${DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock
+      - type: bind
+        source: ${DOCKER_SOCK:-/var/run/docker.sock}
+        target: /var/run/docker.sock
+        bind:
+          create_host_path: false
+      - ./druppie/sdk:/druppie-sdk:ro
     ports:
       - "${MCP_DOCKER_PORT:-9002}:9002"
     networks:
@@ -329,6 +339,77 @@ services:
       retries: 5
       start_period: 10s
 
+  module-llm:
+    build:
+      context: ./druppie/mcp-servers
+      dockerfile: module-llm/Dockerfile
+    container_name: druppie-module-llm
+    profiles: [infra, dev, prod]
+    environment:
+      MCP_PORT: "9008"
+      ZAI_API_KEY: ${ZAI_API_KEY:-}
+      ZAI_BASE_URL: ${ZAI_BASE_URL:-}
+      ZAI_MODEL: ${ZAI_MODEL:-}
+      DEEPINFRA_API_KEY: ${DEEPINFRA_API_KEY:-}
+    ports:
+      - "${MCP_LLM_PORT:-9008}:9008"
+    networks:
+      - druppie-new-network
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9008/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  module-vision:
+    build:
+      context: ./druppie/mcp-servers
+      dockerfile: module-vision/Dockerfile
+    container_name: druppie-module-vision
+    profiles: [infra, dev, prod]
+    environment:
+      MCP_PORT: "9011"
+      ZAI_API_KEY: ${ZAI_API_KEY:-}
+      ZAI_BASE_URL: ${ZAI_BASE_URL:-}
+      ZAI_VISION_MODEL: ${ZAI_VISION_MODEL:-}
+      DEEPINFRA_API_KEY: ${DEEPINFRA_API_KEY:-}
+    ports:
+      - "${MCP_VISION_PORT:-9011}:9011"
+    networks:
+      - druppie-new-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9011/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  module-data-access:
+    build:
+      context: ./druppie/mcp-servers
+      dockerfile: module-data-access/Dockerfile
+    container_name: druppie-module-data-access
+    profiles: [infra, dev, prod]
+    environment:
+      MCP_PORT: "9010"
+      WORKSPACE_ROOT: /workspaces
+      DATA_SOURCE_1: ${DATA_SOURCE_1:-}
+      DATA_SOURCE_2: ${DATA_SOURCE_2:-}
+      DATA_SOURCE_3: ${DATA_SOURCE_3:-}
+    volumes:
+      - druppie_new_workspace:/workspaces
+    ports:
+      - "${MCP_DATA_ACCESS_PORT:-9010}:9010"
+    networks:
+      - druppie-new-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9010/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
   # ===========================================================================
   # SANDBOX INFRASTRUCTURE (background-agents)
   # ===========================================================================
@@ -374,12 +455,17 @@ services:
       CONTAINERD_NAMESPACE: ${CONTAINERD_NAMESPACE:-default}
       DOCKER_NETWORK: druppie-sandbox-network  # Isolated network — sandboxes can only reach control plane
       DOCKER_MEMORY_LIMIT: ${SANDBOX_MEMORY_LIMIT:-4g}
-      DOCKER_CPU_LIMIT: ${SANDBOX_CPU_LIMIT:-}
+      DOCKER_CPU_LIMIT: ${SANDBOX_CPU_LIMIT:-0}
       SANDBOX_CACHE_VOLUME: druppie_sandbox_dep_cache
+      SANDBOX_SDK_HOST_PATH: ${PWD}/druppie/sdk
       # LLM API keys and proxy URLs no longer needed here.
       # Credentials flow per-session from Druppie -> Control Plane -> Sandbox.
     volumes:
-      - ${DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock
+      - type: bind
+        source: ${DOCKER_SOCK:-/var/run/docker.sock}
+        target: /var/run/docker.sock
+        bind:
+          create_host_path: false
       - sandbox_snapshots:/data/snapshots
     networks:
       - druppie-new-network
@@ -458,7 +544,11 @@ services:
       ENV_FILE: /project/.env
     volumes:
       - druppie_init_marker:/init-marker
-      - ${DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock
+      - type: bind
+        source: ${DOCKER_SOCK:-/var/run/docker.sock}
+        target: /var/run/docker.sock
+        bind:
+          create_host_path: false
       - .:/project
     depends_on:
       keycloak:
@@ -479,7 +569,7 @@ services:
       dockerfile: Dockerfile
     container_name: druppie-new-backend
     profiles: [dev]
-    command: ["uvicorn", "druppie.api.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload", "--reload-include", "*.py"]
+    command: ["uvicorn", "druppie.api.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload", "--reload-dir", "druppie", "--reload-dir", "testing"]
     environment:
       DATABASE_URL: postgresql://druppie:${DRUPPIE_DB_PASSWORD:-druppie_secret}@druppie-db:5432/druppie
       DEV_MODE: ${DEV_MODE:-false}
@@ -511,6 +601,7 @@ services:
       GITEA_ORG: druppie
       WORKSPACE_PATH: /app/workspace
       INTERNAL_API_KEY: ${INTERNAL_API_KEY:-druppie-internal-secret-key}
+      DRUPPIE_MODULE_API_TOKEN: ${DRUPPIE_MODULE_API_TOKEN:-}
       USE_MCP_MICROSERVICES: "true"
       MCP_CODING_URL: ${MCP_CODING_URL:-http://module-coding:9001}
       MCP_DOCKER_URL: ${MCP_DOCKER_URL:-http://module-docker:9002}
@@ -530,10 +621,14 @@ services:
       DRUPPIE_REPO_NAME: ${DRUPPIE_REPO_NAME:-}
     volumes:
       - ./druppie:/app/druppie
-      - ./docs:/app/docs:ro
+      - ./testing:/app/testing:ro
       - ./secrets:/app/secrets:ro
       - druppie_new_workspace:/app/workspace
-      - ${DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock
+      - type: bind
+        source: ${DOCKER_SOCK:-/var/run/docker.sock}
+        target: /var/run/docker.sock
+        bind:
+          create_host_path: false
     ports:
       - "${BACKEND_PORT:-8100}:8000"
     depends_on:
@@ -593,6 +688,7 @@ services:
       GITEA_ORG: druppie
       WORKSPACE_PATH: /app/workspace
       INTERNAL_API_KEY: ${INTERNAL_API_KEY:-druppie-internal-secret-key}
+      DRUPPIE_MODULE_API_TOKEN: ${DRUPPIE_MODULE_API_TOKEN:-}
       USE_MCP_MICROSERVICES: "true"
       MCP_CODING_URL: ${MCP_CODING_URL:-http://module-coding:9001}
       MCP_DOCKER_URL: ${MCP_DOCKER_URL:-http://module-docker:9002}
@@ -612,7 +708,11 @@ services:
     volumes:
       - ./secrets:/app/secrets:ro
       - druppie_new_workspace:/app/workspace
-      - ${DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock
+      - type: bind
+        source: ${DOCKER_SOCK:-/var/run/docker.sock}
+        target: /var/run/docker.sock
+        bind:
+          create_host_path: false
     ports:
       - "${BACKEND_PORT:-8100}:8000"
     depends_on:
@@ -697,7 +797,11 @@ services:
     environment:
       PGPASSWORD: ${DRUPPIE_DB_PASSWORD:-druppie_secret}
     volumes:
-      - ${DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock
+      - type: bind
+        source: ${DOCKER_SOCK:-/var/run/docker.sock}
+        target: /var/run/docker.sock
+        bind:
+          create_host_path: false
     entrypoint: ["sh", "-c"]
     command:
       - |
@@ -761,7 +865,11 @@ services:
       KEYCLOAK_REALM: druppie
       ENV_FILE: /project/.env
     volumes:
-      - ${DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock
+      - type: bind
+        source: ${DOCKER_SOCK:-/var/run/docker.sock}
+        target: /var/run/docker.sock
+        bind:
+          create_host_path: false
       - .:/project
 
   # Full nuke & rebuild - destroys EVERYTHING (containers, volumes, images) and rebuilds from scratch
@@ -782,7 +890,11 @@ services:
       KEYCLOAK_PORT: ${KEYCLOAK_PORT:-8180}
       GITEA_PORT: ${GITEA_PORT:-3100}
     volumes:
-      - ${DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock
+      - type: bind
+        source: ${DOCKER_SOCK:-/var/run/docker.sock}
+        target: /var/run/docker.sock
+        bind:
+          create_host_path: false
       - .:/project
     entrypoint: ["/app/scripts/nuke.sh"]
 
@@ -836,7 +948,11 @@ services:
         echo ""
         echo "=== Purge Complete ==="
     volumes:
-      - ${DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock
+      - type: bind
+        source: ${DOCKER_SOCK:-/var/run/docker.sock}
+        target: /var/run/docker.sock
+        bind:
+          create_host_path: false
 
   # OSV vulnerability scanner for the shared dependency cache
   # Usage: docker compose --profile scan-cache run --rm cache-scanner

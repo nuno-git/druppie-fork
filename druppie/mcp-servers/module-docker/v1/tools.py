@@ -73,6 +73,7 @@ GITEA_PASSWORD = os.getenv("GITEA_PASSWORD", "")
 used_ports: set[int] = set()
 _port_lock = asyncio.Lock()
 
+
 # Track compose project -> port mapping for clean teardown.
 # In-memory only: after MCP server restart this dict is empty, but compose_down
 # has a fallback that discovers ports from running containers via docker ps.
@@ -113,6 +114,40 @@ def get_used_host_ports() -> set[int]:
         return set()
 
 
+def _is_port_free_on_host(port: int) -> bool:
+    """Check if a host port is free by asking the Docker daemon to bind it.
+
+    Starts a throwaway container with the candidate port mapping. The port
+    bind happens at start time (not create time), so we must actually start
+    the container to detect conflicts. This correctly catches orphaned
+    docker-proxy processes from any Docker daemon on the host — including
+    the system daemon when we run under rootless Docker.
+    """
+    probe_name = f"port-probe-{port}"
+    try:
+        result = subprocess.run(
+            ["docker", "run", "--rm", "-d", "--name", probe_name,
+             "-p", f"{port}:80", "alpine", "sleep", "5"],
+            capture_output=True, text=True, timeout=10,
+        )
+        if result.returncode != 0:
+            return False
+        # Port bound successfully — clean up and report free
+        subprocess.run(
+            ["docker", "rm", "-f", probe_name],
+            capture_output=True, text=True, timeout=5,
+        )
+        return True
+    except Exception as e:
+        logger.warning("Port probe failed for %d: %s", port, e)
+        return False
+    finally:
+        subprocess.run(
+            ["docker", "rm", "-f", probe_name],
+            capture_output=True, text=True, timeout=5,
+        )
+
+
 def is_port_available(port: int) -> bool:
     """Check if a port is available for binding on the Docker host."""
     docker_ports = get_used_host_ports()
@@ -126,17 +161,21 @@ def is_port_available(port: int) -> bool:
 async def get_next_port() -> int:
     """Get next available port from the configured range.
 
-    Checks both Docker's currently bound ports and our internal tracking.
-    Queries Docker once upfront to avoid N subprocess calls.
+    Checks Docker containers, internal tracking, AND actual host port
+    availability via the Docker daemon (catches orphaned docker-proxy processes).
     Uses _port_lock to prevent TOCTOU races on concurrent compose_up calls.
     """
     async with _port_lock:
         docker_ports = get_used_host_ports()
         for port in range(PORT_RANGE_START, PORT_RANGE_END):
-            if port not in docker_ports and port not in used_ports:
-                used_ports.add(port)
-                logger.info("Auto-selected available port %d", port)
-                return port
+            if port in docker_ports or port in used_ports:
+                continue
+            if not _is_port_free_on_host(port):
+                logger.info("Port %d is bound on host (orphaned proxy?), skipping", port)
+                continue
+            used_ports.add(port)
+            logger.info("Auto-selected available port %d", port)
+            return port
         raise RuntimeError(f"No available ports in range {PORT_RANGE_START}-{PORT_RANGE_END}")
 
 
@@ -278,6 +317,60 @@ def check_and_remove_existing_container(container_name: str) -> dict | None:
     except Exception as e:
         logger.warning("Error checking/removing existing container: %s", e)
         return {"removed": False, "error": str(e)}
+
+
+def parse_container_line(line: str) -> dict | None:
+    """Parse a single `docker ps` tab-delimited line into a container dict.
+
+    Factored out for unit-testing without a live Docker daemon.
+    Returns None when the line is empty or malformed.
+    """
+    if not line:
+        return None
+    parts = line.split("\t")
+    if len(parts) < 4:
+        return None
+
+    labels_str = parts[5] if len(parts) > 5 else ""
+    labels: dict[str, str] = {}
+    if labels_str:
+        for label in labels_str.split(","):
+            if "=" in label:
+                k, v = label.split("=", 1)
+                if k.startswith("druppie."):
+                    labels[k] = v
+
+    status_str = parts[3]
+    if "(healthy)" in status_str:
+        health = "healthy"
+    elif "(unhealthy)" in status_str:
+        health = "unhealthy"
+    elif "(health: starting)" in status_str:
+        health = "starting"
+    else:
+        health = "none"
+
+    if status_str.startswith("Up"):
+        state = "running"
+    elif status_str.startswith("Restarting"):
+        state = "restarting"
+    elif status_str.startswith("Paused"):
+        state = "paused"
+    elif status_str.startswith("Created"):
+        state = "created"
+    else:
+        state = "exited"
+
+    return {
+        "id": parts[0],
+        "name": parts[1],
+        "image": parts[2],
+        "status": status_str,
+        "state": state,
+        "health": health,
+        "ports": parts[4] if len(parts) > 4 else "",
+        "labels": labels,
+    }
 
 
 def _discover_container_port(compose_file: Path) -> int:
@@ -583,6 +676,13 @@ async def compose_up(
             shutil.rmtree(clone_path, ignore_errors=True)
             return {"success": False, "error": "No docker-compose.yaml found in repository"}
 
+        # Step 2b: Inject Druppie SDK (if mounted)
+        sdk_source = Path("/druppie-sdk")
+        if sdk_source.is_dir():
+            sdk_dest = clone_path / "druppie-sdk"
+            shutil.copytree(sdk_source, sdk_dest)
+            logger.info("compose_up: injected druppie-sdk into build context")
+
         # All remaining steps wrapped in try/finally to guarantee clone_path cleanup
         host_port = None
         project_name = None
@@ -637,7 +737,15 @@ async def compose_up(
 
             # Step 6: Run docker compose up
             logger.info("compose_up: starting project %s on port %d", project_name, host_port)
-            env = {**os.environ, "APP_PORT": str(host_port)}
+            env = {
+                **os.environ,
+                "APP_PORT": str(host_port),
+                "DRUPPIE_URL": os.environ.get("DRUPPIE_URL", "http://druppie-backend:8000"),
+                # Shared secret for the /api/modules/{id}/call proxy. Apps
+                # forward this back via the X-Druppie-Token header through
+                # the Druppie SDK. Empty string = dev mode / no auth.
+                "DRUPPIE_MODULE_API_TOKEN": os.environ.get("DRUPPIE_MODULE_API_TOKEN", ""),
+            }
             compose_result = await asyncio.to_thread(
                 subprocess.run,
                 ["docker", "compose", "-p", project_name, "up", "-d", "--build"],
@@ -1027,26 +1135,9 @@ async def list_containers(
 
         containers = []
         for line in result.stdout.strip().split("\n"):
-            if line:
-                parts = line.split("\t")
-                if len(parts) >= 4:
-                    labels_str = parts[5] if len(parts) > 5 else ""
-                    labels = {}
-                    if labels_str:
-                        for label in labels_str.split(","):
-                            if "=" in label:
-                                k, v = label.split("=", 1)
-                                if k.startswith("druppie."):
-                                    labels[k] = v
-
-                    containers.append({
-                        "id": parts[0],
-                        "name": parts[1],
-                        "image": parts[2],
-                        "status": parts[3],
-                        "ports": parts[4] if len(parts) > 4 else "",
-                        "labels": labels,
-                    })
+            parsed = parse_container_line(line)
+            if parsed is not None:
+                containers.append(parsed)
 
         return {"success": True, "containers": containers, "count": len(containers)}
 
@@ -1156,5 +1247,163 @@ async def exec_command(
 
     except subprocess.TimeoutExpired:
         return {"success": False, "error": "Command timed out"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@mcp.tool(
+    name="start",
+    description="Start a stopped Docker container.",
+    meta={"module_id": MODULE_ID, "version": MODULE_VERSION},
+)
+async def start(container_name: str) -> dict:
+    """Start a stopped container."""
+    try:
+        err = _validate_name(container_name, "container_name")
+        if err:
+            return {"success": False, "error": err}
+
+        result = subprocess.run(
+            ["docker", "start", container_name],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+
+        if result.returncode != 0:
+            return {"success": False, "error": f"Failed to start: {result.stderr}"}
+
+        return {"success": True, "started": container_name}
+
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@mcp.tool(
+    name="restart",
+    description="Restart a Docker container.",
+    meta={"module_id": MODULE_ID, "version": MODULE_VERSION},
+)
+async def restart(container_name: str, timeout: int = 10) -> dict:
+    """Restart a container."""
+    try:
+        err = _validate_name(container_name, "container_name")
+        if err:
+            return {"success": False, "error": err}
+
+        # Clamp so a caller can't pin the MCP worker on a runaway timeout.
+        timeout = max(1, min(timeout, 300))
+
+        result = subprocess.run(
+            ["docker", "restart", "-t", str(timeout), container_name],
+            capture_output=True,
+            text=True,
+            timeout=timeout + 20,
+        )
+
+        if result.returncode != 0:
+            return {"success": False, "error": f"Failed to restart: {result.stderr}"}
+
+        return {"success": True, "restarted": container_name}
+
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@mcp.tool(
+    name="list_volumes",
+    description="List Docker volumes, optionally filtered by druppie labels or compose project.",
+    meta={"module_id": MODULE_ID, "version": MODULE_VERSION},
+)
+async def list_volumes(
+    project_id: str | None = None,
+    compose_project: str | None = None,
+    druppie_only: bool = True,
+) -> dict:
+    """List Docker volumes with optional filtering.
+
+    Args:
+        project_id: Filter by druppie.project_id label
+        compose_project: Filter by compose project label (com.docker.compose.project)
+        druppie_only: If True, only return volumes tied to druppie.* labels or compose projects
+            that also carry a druppie label on any container
+
+    Returns:
+        Dict with volumes list (name, driver, labels, size if available)
+    """
+    try:
+        cmd = ["docker", "volume", "ls", "--format",
+               "{{.Name}}\t{{.Driver}}\t{{.Labels}}"]
+        if project_id:
+            cmd.extend(["--filter", f"label=druppie.project_id={project_id}"])
+        if compose_project:
+            cmd.extend(["--filter", f"label=com.docker.compose.project={compose_project}"])
+
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+        if result.returncode != 0:
+            return {"success": False, "error": result.stderr}
+
+        volumes = []
+        for line in result.stdout.strip().split("\n"):
+            if not line:
+                continue
+            parts = line.split("\t")
+            if len(parts) < 2:
+                continue
+            name, driver = parts[0], parts[1]
+            labels_str = parts[2] if len(parts) > 2 else ""
+            labels: dict[str, str] = {}
+            if labels_str and labels_str != "<no value>":
+                for label in labels_str.split(","):
+                    if "=" in label:
+                        k, v = label.split("=", 1)
+                        labels[k] = v
+
+            # Keep only druppie-linked volumes when requested. A volume is
+            # druppie-linked if it carries a druppie.* label directly OR belongs
+            # to a compose project whose name starts with a druppie-managed prefix.
+            if druppie_only:
+                has_druppie_label = any(k.startswith("druppie.") for k in labels)
+                if not has_druppie_label:
+                    continue
+
+            volumes.append({
+                "name": name,
+                "driver": driver,
+                "labels": labels,
+                "project_id": labels.get("druppie.project_id"),
+                "session_id": labels.get("druppie.session_id"),
+                "compose_project": labels.get("com.docker.compose.project"),
+            })
+
+        return {"success": True, "volumes": volumes, "count": len(volumes)}
+
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@mcp.tool(
+    name="remove_volume",
+    description="Remove a Docker volume.",
+    meta={"module_id": MODULE_ID, "version": MODULE_VERSION},
+)
+async def remove_volume(volume_name: str, force: bool = False) -> dict:
+    """Remove a volume. Fails if the volume is in use unless force=True."""
+    try:
+        err = _validate_name(volume_name, "volume_name")
+        if err:
+            return {"success": False, "error": err}
+
+        cmd = ["docker", "volume", "rm"]
+        if force:
+            cmd.append("-f")
+        cmd.append(volume_name)
+
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        if result.returncode != 0:
+            return {"success": False, "error": result.stderr.strip()}
+
+        return {"success": True, "removed": volume_name}
+
     except Exception as e:
         return {"success": False, "error": str(e)}

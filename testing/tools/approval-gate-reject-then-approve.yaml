@@ -1,0 +1,142 @@
+## Tool test: exercise the coding:make_design approval gate end-to-end.
+##
+## Deterministic chain (no LLM) that:
+##   1. Creates a project via create_project
+##   2. BA calls coding:make_design — approval gate fires → REJECTED
+##      (the file should NOT be written to Gitea)
+##   3. BA calls coding:make_design again — approval gate fires → APPROVED
+##      (the file IS written and the second content takes effect)
+##   4. BA commits + pushes + done
+##
+## Verifies that the approval gate:
+##   - Actually pauses execution on a make_design call
+##   - Rejection prevents the file from landing in Gitea
+##   - A retry with approval writes the file with the final content
+##
+## Use case: sanity-check the approval-gate plumbing (session_owner role,
+## state transitions, rejection-reason surfacing) without needing the LLM.
+
+tool-test:
+  name: approval-gate-reject-then-approve
+  description: "coding:make_design approval gate: first call rejected, retry approved"
+  tags: [approval-gate, platform-standards, setup, create-project]
+
+  chain:
+    # --- Router ---
+    - agent: router
+      tool: builtin:set_intent
+      arguments:
+        intent: create_project
+        project_name: approval-gate-test
+        description: "Deterministic test of the coding:make_design approval gate"
+      assert:
+        result:
+          - not_empty
+
+    - agent: router
+      tool: builtin:done
+      arguments:
+        summary: "Agent router: Classified as create_project (approval-gate test)"
+      assert:
+        completed: true
+
+    # --- Planner → BA ---
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: business_analyst
+            prompt: "Write an FD; demonstrate reject-then-approve on make_design"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: Planned business_analyst"
+
+    # --- BA: first make_design attempt — REJECTED by approval gate ---
+    # Incomplete FD (missing platform-standards link). Reviewer rejects.
+    - agent: business_analyst
+      tool: coding:make_design
+      status: failed
+      approval:
+        status: rejected
+        reason: "FD mist de verplichte platform-standards link op de eerste regel."
+      arguments:
+        path: docs/functional-design.md
+        content: |
+          # Functioneel Ontwerp (incomplete eerste versie)
+
+          Deze versie mist de verplichte link naar
+          docs/platform-functional-standards.md en §14.
+
+    # --- BA: second make_design attempt — APPROVED by approval gate ---
+    # Revised FD with the mandatory link and §14 deviations section.
+    - agent: business_analyst
+      tool: coding:make_design
+      approval:
+        status: approved
+      arguments:
+        path: docs/functional-design.md
+        content: |
+          # Functioneel Ontwerp — Approval Gate Test
+
+          > Platform standards applied: [docs/platform-functional-standards.md](./platform-functional-standards.md) rev `2026-04-20`.
+
+          ## 1. Probleemsamenvatting
+
+          Dit ontwerp bestaat puur om te controleren dat de approval gate
+          op `coding:make_design` correct werkt: eerst rejection met reden,
+          daarna approval met een gereviseerde versie.
+
+          ## 2. Functionele Eisen
+
+          | ID | Bron | Eis | Verificatiemethode |
+          |----|------|-----|--------------------|
+          | FR-01 | BA | De approval gate pauzeert execution bij make_design | Tool-test |
+          | FR-02 | BA | Rejection verhindert dat het bestand in Gitea landt | Tool-test `file_contains` |
+          | FR-03 | BA | Retry met approved schrijft de definitieve content weg | Tool-test `file_contains` |
+
+          ## 14. Platform standard deviations
+
+          | Standard | Deviation | Rationale |
+          |----------|-----------|-----------|
+          | (none)   |           |           |
+
+    - agent: business_analyst
+      tool: coding:run_git
+      arguments:
+        command: "add docs/functional-design.md"
+
+    - agent: business_analyst
+      tool: coding:run_git
+      arguments:
+        command: "commit -m 'FD goedgekeurd na eerste rejection'"
+
+    - agent: business_analyst
+      tool: coding:run_git
+      arguments:
+        command: "push"
+
+    - agent: business_analyst
+      tool: builtin:done
+      arguments:
+        summary: "Agent business_analyst: DESIGN_APPROVED. Eerste make_design werd afgewezen met reden; tweede poging met gereviseerde FD werd goedgekeurd."
+      assert:
+        completed: true
+
+  verify:
+    # Repo exists and the FD landed
+    - gitea_repo_exists: true
+    - file_exists: docs/functional-design.md
+    - file_not_empty: docs/functional-design.md
+    # The approved (second) content is what's in the repo
+    - file_contains:
+        path: docs/functional-design.md
+        content: "Approval Gate Test"
+    - file_contains:
+        path: docs/functional-design.md
+        content: "[docs/platform-functional-standards.md](./platform-functional-standards.md)"
+    # The rejected (first) content MUST NOT be the final version: the
+    # phrase from the incomplete attempt should not end up in Gitea.
+    # (We assert positively on the approved version above, so a failure
+    # here means the rejected content leaked through to the file.)

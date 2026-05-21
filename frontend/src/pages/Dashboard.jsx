@@ -136,9 +136,16 @@ const Dashboard = () => {
                 >
                   <div className="min-w-0 flex-1 mr-3">
                     <p className="font-medium truncate">{plan.title || 'Untitled session'}</p>
-                    <p className="text-sm text-gray-500">
-                      {new Date(plan.created_at).toLocaleDateString()}
-                    </p>
+                    <div className="flex items-center gap-2 text-sm text-gray-500">
+                      {plan.username && (
+                        <span className={`text-xs font-medium ${
+                          plan.username.startsWith('t-') ? 'text-orange-500' : 'text-blue-400'
+                        }`}>
+                          {plan.username}
+                        </span>
+                      )}
+                      <span>{new Date(plan.created_at).toLocaleDateString()}</span>
+                    </div>
                   </div>
                   <span
                     className={`flex-shrink-0 px-2 py-1 text-xs rounded-full ${

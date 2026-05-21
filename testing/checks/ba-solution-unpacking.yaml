@@ -1,0 +1,12 @@
+check:
+  name: ba-solution-unpacking
+  description: "BA must unpack solution-speak into underlying problems"
+  tags: [business_analyst, solution-unpacking, quality]
+  assert:
+    - agent: business_analyst
+      completed: true
+  judge:
+    context: business_analyst
+    checks:
+      - "The user presented a solution (described WHAT they want built rather than WHAT problem they have). The BA must have recognized this as solution-speak and asked questions to uncover the underlying problem — e.g., 'What would this enable you to do that you can't do today?' or 'What's happening now that made you think of this?' The BA should NOT have simply accepted the solution description and turned it into requirements without understanding the problem first."
+      - "The final functional design should address the underlying PROBLEM that was uncovered, not just mirror the solution the user originally described. The requirements should be framed around the need (e.g., 'timely visibility into measurements') rather than the requested solution (e.g., 'a dashboard')."

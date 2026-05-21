@@ -1,0 +1,36 @@
+## Agent test: BA produces a complete, well-structured FD with a cooperative user
+##
+## Happy path test. The user cooperates fully and gives clear answers.
+## Tests the full elicitation → FD flow and validates the output quality.
+## Also verifies: no technical jargon in user questions, platform standards
+## not restated as project-specific NFRs.
+
+agent-test:
+  name: ba-cooperative-full-fd
+  description: "BA produces complete FD with cooperative user — full quality check"
+  tags: [business_analyst, happy-path, quality, comprehensive, communication, platform-standards]
+
+  message: "Ik wil een applicatie voor het registreren en opvolgen van klachten over waterkwaliteit van burgers"
+  agents: [router, planner, business_analyst]
+  hitl: cooperative-user
+
+  assert:
+    - check: ba-mandatory-elicitation
+    - check: ba-no-fabricated-requirements
+    - check: ba-no-solution-bias
+    - check: ba-fd-in-dutch
+    - check: ba-fd-complete-structure
+    - check: ba-git-commit
+    - check: ba-uses-multiple-choice
+    - check: ba-stays-in-scope
+
+  judge:
+    context: business_analyst
+    checks:
+      - "The BA must have asked about data sensitivity — the app involves personal citizen data (names, addresses, phone numbers). Check that the BA asked about this in user-friendly terms (e.g., 'Will this involve personal information about people?') and that the FD's Security & Compliance section reflects the user's answers."
+      - "The BA must have asked about access control — the user specified that only complaints desk staff should see details while management sees only aggregated statistics. Check that this distinction is captured in the functional requirements."
+      - "The BA must have asked about data retention — the user specified 5 years. Check that the FD reflects this."
+      - "The functional requirements in the FD must trace back to the conversation. Spot-check at least 3 FR items and verify each corresponds to something the user said or confirmed."
+      - "Review ALL hitl_ask_multiple_choice_question and hitl_ask_question calls from the BA. None of them should contain technical or regulatory jargon that a non-technical user would not understand. Specifically check for: GDPR, AVG, BIO, NIS2, PII, AES, TLS, SSL, encryption, audit trail, data sovereignty, compliance framework, authentication protocol, authorization model. If any of these terms appear in a question to the user, this check fails. Note: the FD itself may contain some of these in the Security & Compliance section as documentation — that is acceptable. Only HITL questions to the user are checked."
+      - "The functional design must NOT restate platform standards as project-specific NFRs. Check the Non-Functional Requirements section for items that duplicate platform defaults: page load times (2 seconds), responsive design, WCAG accessibility, keyboard navigation, error message language, Keycloak authentication. If any of these appear as NFR entries in the FD without the user having explicitly requested different values, this check fails. The FD should only contain project-SPECIFIC non-functional requirements that go beyond the platform defaults."
+      - "The FD must contain the platform standards reference line at the top, linking to docs/platform-functional-standards.md with a revision number. This line IS the mechanism for inheriting the defaults — if it is missing, the platform standards are not applied."

@@ -602,7 +602,7 @@ async def make_design(
     contains syntax errors, the file is NOT written and errors are returned.
 
     Args:
-        path: File path relative to workspace (e.g. technical_design.md)
+        path: File path relative to workspace (e.g. docs/technical-design.md)
         content: Full markdown content for the design document
         session_id: Session ID (auto-creates workspace if needed)
         workspace_id: Legacy workspace ID (optional)
@@ -1259,7 +1259,7 @@ async def get_test_framework(
             return {
                 "success": True,
                 "framework": "unknown",
-                "message": "No test framework detected yet. This is normal for new projects. Read technical_design.md to determine the tech stack and set up the appropriate test framework.",
+                "message": "No test framework detected yet. This is normal for new projects. Read docs/technical-design.md to determine the tech stack and set up the appropriate test framework.",
             }
 
         return {"success": True, **framework_info}
@@ -2094,7 +2094,7 @@ async def list_projects() -> dict:
     name="read_project_file",
     description=(
         "Read a file from any project repository in Gitea. "
-        "Use this to inspect technical_design.md, Dockerfiles, or source "
+        "Use this to inspect docs/technical-design.md, Dockerfiles, or source "
         "code from existing projects to understand patterns and reuse opportunities."
     ),
     meta={"module_id": MODULE_ID, "version": MODULE_VERSION},

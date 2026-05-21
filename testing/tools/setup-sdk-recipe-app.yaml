@@ -1,0 +1,377 @@
+## Shared base: SDK-aware recipe analyzer app pipeline
+## Router → Planner → BA (FD with AI/OCR needs) → Planner → Architect (TD with druppie modules)
+## → Planner → Builder Planner (plan includes Module Integration) → Planner → Test Builder
+## Ends after test_builder completes — no trailing planner.
+##
+## Used by: create-sdk-recipe-app, builder-uses-sdk agent test
+
+tool-test:
+  name: setup-sdk-recipe-app
+  description: "Pipeline for app that requires Druppie SDK (LLM + OCR via modules)"
+  tags: [setup, create-project, sdk]
+
+  chain:
+    # --- Router ---
+    - agent: router
+      tool: builtin:set_intent
+      arguments:
+        intent: create_project
+        project_name: recipe-analyzer
+        description: "A recipe analyzer that uses AI to analyze recipe images (OCR) and suggest improvements"
+      assert:
+        result:
+          - not_empty
+          - { contains: "recipe-analyzer" }
+
+    - agent: router
+      tool: builtin:done
+      arguments:
+        summary: "Agent router: Classified as create_project for recipe-analyzer"
+      assert:
+        completed: true
+
+    # --- Planner → BA ---
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: business_analyst
+            prompt: "Gather requirements for the recipe analyzer and create functional design"
+          - agent_id: planner
+            prompt: "Re-evaluate after business_analyst completes"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: Planned business_analyst"
+
+    # --- Business Analyst ---
+    - agent: business_analyst
+      tool: builtin:hitl_ask_multiple_choice_question
+      arguments:
+        question: "Welke AI-functies wilt u in de recipe analyzer?"
+        choices:
+          - "Basis: alleen recepttekst analyseren"
+          - "Uitgebreid: tekst + afbeelding OCR"
+          - "Volledig: tekst + OCR + suggesties genereren"
+      mock: true
+      mock_result: "Uitgebreid: tekst + afbeelding OCR"
+
+    - agent: business_analyst
+      tool: coding:make_design
+      approval:
+        status: approved
+        by: analyst
+      arguments:
+        path: docs/functional-design.md
+        content: |
+          # Functioneel Ontwerp: Recipe Analyzer
+
+          ## Vereisten
+          - FR-01: Gebruiker kan een foto van een recept uploaden
+          - FR-02: App extraheert tekst uit de afbeelding via OCR
+          - FR-03: App analyseert het recept met AI (ingredienten, stappen, voedingswaarden)
+          - FR-04: Gebruiker kan vragen stellen over het recept via een chatfunctie
+          - FR-05: App geeft AI-gestuurde suggesties voor receptverbeteringen
+          - FR-06: Recepten worden opgeslagen in een database
+
+          ## AI-Capabilities
+          - LLM chat: recept analyseren, vragen beantwoorden, suggesties genereren
+          - Vision/OCR: tekst extraheren uit receptfoto's
+
+          ## Gebruikersinterface
+          - Upload-pagina voor receptfoto's
+          - Analysepagina met geextraheerde tekst en AI-analyse
+          - Chat-interface voor vragen over het recept
+      assert:
+        result:
+          - not_empty
+          - { contains: "functional-design.md" }
+
+    - agent: business_analyst
+      tool: coding:run_git
+      arguments:
+        command: "add docs/functional-design.md"
+
+    - agent: business_analyst
+      tool: coding:run_git
+      arguments:
+        command: "commit -m 'Functioneel ontwerp recipe analyzer'"
+
+    - agent: business_analyst
+      tool: coding:run_git
+      arguments:
+        command: "push"
+
+    - agent: business_analyst
+      tool: builtin:done
+      arguments:
+        summary: "Agent business_analyst: DESIGN_APPROVED"
+
+    # --- Planner → Architect ---
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: architect
+            prompt: "Create technical design for the recipe analyzer — must use Druppie modules for AI"
+          - agent_id: planner
+            prompt: "Re-evaluate after architect completes"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: BA approved, planned architect"
+
+    # --- Architect (TD explicitly mentions druppie modules + SDK) ---
+    - agent: architect
+      tool: coding:run_git
+      arguments:
+        command: "pull"
+
+    - agent: architect
+      tool: coding:read_file
+      arguments:
+        path: docs/functional-design.md
+      assert:
+        result:
+          - not_empty
+          - { contains: "Functioneel Ontwerp" }
+
+    - agent: architect
+      tool: coding:make_design
+      approval:
+        status: approved
+        by: architect
+      arguments:
+        path: docs/technical-design.md
+        content: |
+          # Technisch Ontwerp: Recipe Analyzer
+
+          ## Stack
+          - Backend: Python Flask (project template)
+          - Frontend: React met Vite
+          - Database: PostgreSQL
+          - AI: Druppie platform modules via SDK
+
+          ## Druppie Modules
+          De app gebruikt de Druppie SDK (`druppie_sdk`) om platformmodules aan te roepen.
+          Geen directe API-keys of externe provider-calls in de app.
+
+          | Module | Tool | Gebruik |
+          |--------|------|---------|
+          | llm | chat | Recept analyseren, vragen beantwoorden, suggesties |
+          | vision | ocr | OCR: tekst extraheren uit receptfoto's |
+
+          Gebruik:
+          ```python
+          from druppie_sdk import DruppieClient
+          druppie = DruppieClient()
+          result = druppie.call("llm", "chat", {"prompt": "Analyseer dit recept: ..."})
+          result = druppie.call("vision", "ocr", {"image_source": "https://..."})
+          ```
+
+          ## Componenten
+          - UploadHandler: verwerkt receptfoto uploads, slaat op in DB
+          - RecipeAnalyzer: roept druppie vision/ocr aan voor analyse
+          - ChatHandler: LLM chat via druppie SDK voor vragen
+          - RecipeStore: PostgreSQL repository voor recepten
+
+          ## API Endpoints
+          - POST /api/recipes/upload — upload foto, start OCR + analyse
+          - GET /api/recipes/:id — haal recept met analyse op
+          - POST /api/recipes/:id/chat — stel vraag over recept
+          - GET /api/recipes — lijst van alle recepten
+
+          ## Belangrijk
+          - GEEN hardcoded API keys in de app
+          - GEEN openai package — gebruik druppie_sdk
+          - DRUPPIE_URL wordt automatisch geïnjecteerd bij deploy
+      assert:
+        result:
+          - { contains: "technical-design.md" }
+
+    - agent: architect
+      tool: coding:run_git
+      arguments:
+        command: "add docs/technical-design.md"
+
+    - agent: architect
+      tool: coding:run_git
+      arguments:
+        command: "commit -m 'Technisch ontwerp recipe analyzer met Druppie SDK'"
+
+    - agent: architect
+      tool: coding:run_git
+      arguments:
+        command: "push"
+
+    - agent: architect
+      tool: builtin:done
+      arguments:
+        summary: "Agent architect: DESIGN_APPROVED"
+
+    # --- Planner → Builder Planner ---
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: builder_planner
+            prompt: "Create a builder plan for the recipe analyzer"
+          - agent_id: planner
+            prompt: "Re-evaluate after builder_planner completes"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: Architect approved, planned builder_planner"
+
+    # --- Builder Planner (plan includes Module Integration section) ---
+    - agent: builder_planner
+      tool: coding:run_git
+      arguments:
+        command: "pull"
+
+    - agent: builder_planner
+      tool: coding:read_file
+      arguments:
+        path: docs/functional-design.md
+
+    - agent: builder_planner
+      tool: coding:read_file
+      arguments:
+        path: docs/technical-design.md
+
+    - agent: builder_planner
+      tool: coding:write_file
+      arguments:
+        path: docs/builder-plan.md
+        content: |
+          # Builder Plan: Recipe Analyzer
+
+          ## Solution Strategy
+          Flask backend met React frontend. AI via Druppie SDK.
+
+          ## Module Integration
+          - **SDK**: `druppie_sdk` is pre-installed (pip package)
+          - **Usage**: `from druppie_sdk import DruppieClient; druppie = DruppieClient()`
+          - **Modules Used**:
+            - `llm/chat` — recept analyseren, vragen beantwoorden, suggesties
+            - `vision/ocr` — OCR: tekst extraheren uit receptfoto's
+          - **Example Calls**:
+            ```python
+            result = druppie.call("llm", "chat", {"prompt": "Analyseer: ...", "system": "Je bent een chef-kok"})
+            result = druppie.call("vision", "ocr", {"image_source": url})
+            ```
+          - **No API Keys**: app gebruikt GEEN hardcoded API keys
+          - **No openai package**: gebruik `druppie.call("llm", ...)`, `druppie.call("vision", ...)` etc.
+
+          ## Code Standards
+          - Python 3.11, Flask
+          - ESM imports, React functional components
+          - SQLAlchemy voor database
+
+          ## Test Framework
+          pytest voor backend, Vitest voor frontend
+
+          ## Files to Create/Modify
+          - app/routes.py — API endpoints met druppie SDK calls
+          - app/models.py — SQLAlchemy Recipe model
+          - frontend/src/App.jsx — upload + analyse UI
+          - frontend/src/components/RecipeUpload.jsx
+          - frontend/src/components/RecipeChat.jsx
+
+    - agent: builder_planner
+      tool: coding:run_git
+      arguments:
+        command: "add docs/builder-plan.md"
+
+    - agent: builder_planner
+      tool: coding:run_git
+      arguments:
+        command: "commit -m 'Add builder plan with SDK module integration'"
+
+    - agent: builder_planner
+      tool: coding:run_git
+      arguments:
+        command: "push"
+
+    - agent: builder_planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent builder_planner: Created builder-plan.md with module integration section for llm/chat and vision/ocr."
+
+    # --- Planner → Test Builder ---
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: test_builder
+            prompt: "Write tests for the recipe analyzer based on the builder plan"
+          - agent_id: planner
+            prompt: "Re-evaluate after test_builder completes"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: Planned test_builder"
+
+    # --- Test Builder ---
+    - agent: test_builder
+      tool: coding:run_git
+      arguments:
+        command: "pull"
+
+    - agent: test_builder
+      tool: coding:read_file
+      arguments:
+        path: docs/builder-plan.md
+
+    - agent: test_builder
+      tool: coding:get_test_framework
+      mock: true
+      mock_result: '{"framework": "pytest", "config_file": "pytest.ini"}'
+
+    - agent: test_builder
+      tool: coding:write_file
+      arguments:
+        path: tests/test_routes.py
+        content: |
+          import pytest
+          from unittest.mock import patch, MagicMock
+
+          def test_upload_recipe(client):
+              """Upload should trigger OCR + analysis via SDK."""
+              with patch("app.routes.druppie") as mock_druppie:
+                  mock_druppie.call.return_value = {"text": "2 eggs, 100g flour"}
+                  resp = client.post("/api/recipes/upload", json={"image_url": "https://example.com/recipe.jpg"})
+                  assert resp.status_code == 200
+                  mock_druppie.call.assert_called_with("vision", "ocr", {"image_url": "https://example.com/recipe.jpg"})
+
+          def test_chat_recipe(client):
+              """Chat should use LLM via SDK."""
+              with patch("app.routes.druppie") as mock_druppie:
+                  mock_druppie.call.return_value = {"answer": "Dit recept bevat 350 calorieen."}
+                  resp = client.post("/api/recipes/1/chat", json={"prompt": "Hoeveel calorieen?"})
+                  assert resp.status_code == 200
+                  mock_druppie.call.assert_called_with("llm", "chat", {"prompt": "Hoeveel calorieen?", "system": pytest.approx(str, abs=100)})
+
+    - agent: test_builder
+      tool: coding:run_git
+      arguments:
+        command: "add tests/test_routes.py"
+
+    - agent: test_builder
+      tool: coding:run_git
+      arguments:
+        command: "commit -m 'Add recipe analyzer tests (Red phase)'"
+
+    - agent: test_builder
+      tool: coding:run_git
+      arguments:
+        command: "push"
+
+    - agent: test_builder
+      tool: builtin:done
+      arguments:
+        summary: "Agent test_builder: Wrote 2 tests in tests/test_routes.py (pytest)."

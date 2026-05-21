@@ -189,7 +189,7 @@ mcps:
 
   web:
     url: ${MCP_WEB_URL:-http://module-web:9005}
-    type: core
+    type: both
     tools:
       - name: search_files
         requires_approval: false
@@ -237,6 +237,22 @@ mcps:
       - name: get_impact
         requires_approval: false
 
+  llm:
+    url: ${MCP_LLM_URL:-http://module-llm:9008}
+    type: both
+    tools:
+      - name: chat
+        requires_approval: false
+
+  vision:
+    url: ${MCP_VISION_URL:-http://module-vision:9011}
+    type: module
+    tools:
+      - name: ocr
+        requires_approval: false
+      - name: analyze
+        requires_approval: false
+
   registry:
     url: ${MCP_REGISTRY_URL:-http://module-registry:9007}
     type: core
@@ -257,4 +273,35 @@ mcps:
         requires_approval: false
 
       - name: get_skill
+        requires_approval: false
+
+  dataaccess:
+    url: ${MCP_DATA_ACCESS_URL:-http://module-data-access:9010}
+    type: module
+    inject:
+      session_id:
+        from: session.id
+        hidden: true
+        tools: [download_data]
+      project_id:
+        from: project.id
+        hidden: true
+        tools: [download_data]
+    tools:
+      - name: list_sources
+        requires_approval: false
+
+      - name: test_connection
+        requires_approval: false
+
+      - name: list_available_data
+        requires_approval: false
+
+      - name: get_schema
+        requires_approval: false
+
+      - name: read_data
+        requires_approval: false
+
+      - name: download_data
         requires_approval: false

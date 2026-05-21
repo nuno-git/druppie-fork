@@ -1,0 +1,62 @@
+## Test: git commit with nothing staged should fail
+## Verifies that run_git properly fails when there's nothing to commit.
+
+tool-test:
+  name: git-commit-empty-fails
+  description: "Git commit with no staged changes should fail"
+  tags: [git, failure, negative]
+
+  chain:
+    # Create a project first so we have a repo
+    - agent: router
+      tool: builtin:set_intent
+      arguments:
+        intent: create_project
+        project_name: empty-commit-test
+        description: "Test project for empty commit"
+
+    - agent: router
+      tool: builtin:done
+      arguments:
+        summary: "Agent router: Project created"
+
+    # Planner creates builder via make_plan (matches production flow)
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: builder
+            prompt: "Verify git edge cases"
+          - agent_id: planner
+            prompt: "Re-evaluate after builder completes"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: Planned builder"
+
+    # Try to commit with nothing staged — should fail with error message
+    - agent: builder
+      tool: coding:run_git
+      arguments:
+        command: "commit -m 'This should fail'"
+      assert:
+        result:
+          - { contains: "Command failed" }
+
+    # Push with nothing new — should succeed (everything up-to-date)
+    - agent: builder
+      tool: coding:run_git
+      arguments:
+        command: "push"
+      assert:
+        result:
+          - not_empty
+          - { contains: "up-to-date" }
+
+    - agent: builder
+      tool: builtin:done
+      arguments:
+        summary: "Agent builder: Verified git edge cases"
+      assert:
+        completed: true

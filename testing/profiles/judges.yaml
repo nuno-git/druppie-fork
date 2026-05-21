@@ -1,0 +1,12 @@
+profiles:
+  default:
+    model: glm-5
+    provider: zai
+
+  strict:
+    model: glm-5
+    provider: zai
+
+  fast:
+    model: glm-5
+    provider: zai
