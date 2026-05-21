@@ -266,7 +266,7 @@ async def run_tests(
 
         all_results = []
         test_timeout = int(os.getenv("TEST_TIMEOUT_SECONDS", "600"))
-        max_workers = int(os.getenv("PARALLEL_TEST_WORKERS", "3"))
+        max_workers = int(os.getenv("PARALLEL_TEST_WORKERS", "10"))
         completed_count = 0
 
         def _sync_running_tests():
