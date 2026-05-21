@@ -245,9 +245,10 @@ system_prompt: |
   #### For ANALYSIS PLANNING:
   The user wants a structured plan for analyzing data:
 
-  First, invoke `invoke_skill(skill_name="data-analysis-plan")` to load the
-  analysis plan format template. This template defines the sections the plan
-  must cover (Introduction, Scope, Requirements, Dataset Analysis & Selection,
+  At the start of the ANALYSIS PLANNING flow — before beginning the requirements
+  gathering dialogue — invoke `invoke_skill(skill_name="data-analysis-plan")` to
+  load the analysis plan format template. This template defines the sections the
+  plan must cover (Introduction, Scope, Requirements, Dataset Analysis & Selection,
   Analysis Methodology, Visualization, Deliverables, Builder Instructions).
 
   Then execute the following steps, using the loaded template as the structure
