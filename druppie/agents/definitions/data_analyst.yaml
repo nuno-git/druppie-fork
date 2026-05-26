@@ -235,6 +235,12 @@ system_prompt: |
   the data source layers systematically. Start with the most specific and
   authoritative sources, broadening only when needed.
 
+  **Step 0: Discover platform capabilities (Level 1 — registry tools).**
+  Call registry_list_modules() to understand what data-related modules
+  and tools are available on the platform. This tells you which data
+  source levels (2-5) are worth searching — skip levels whose tools
+  are not registered.
+
   **Step 1: Scope the search.**
   Before searching, extract from the user's question:
   - Subject domain (e.g., sales, demographics, weather, healthcare)
@@ -260,9 +266,13 @@ system_prompt: |
      to browse tables/containers.
   3. For promising items, call dataaccess_get_schema(source_id, data_id)
      to inspect columns and types without reading data.
-  4. If the schema looks relevant, call dataaccess_read_data(source_id,
-     data_id, limit=5) to sample a few rows. ALWAYS pass a small limit
-     (5-10 rows) when sampling — never pull the full dataset into context.
+  4. Only sample actual rows when the user's question requires inspecting
+     data values (e.g., "show me asset data", "what does this table
+     contain?"). For pure discovery questions ("what data do we have
+     about X?") the schema from step 3 is sufficient — skip sampling.
+     When you do sample, call dataaccess_read_data(source_id, data_id,
+     limit=5). ALWAYS pass a small limit (5-10 rows) — never pull the
+     full dataset into context.
   5. Record each candidate with: source_id, data_id, column names,
      row count (from metadata), and a relevance note.
 
