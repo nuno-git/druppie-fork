@@ -1,0 +1,165 @@
+## Test: docker compose in the coding sandbox
+##
+## Verifies that the coding sandbox provides:
+## - docker compose CLI (v2 plugin)
+## - Ability to create compose files in workspace
+## - docker compose up -d (pull and start containers)
+## - docker compose ps (verify running containers)
+## - docker compose down (cleanup)
+## - Full docker-in-docker via Sysbox
+##
+## Run: POST /api/evaluations/run-tests {"test_name": "test-sandbox-docker-compose"}
+
+tool-test:
+  name: test-sandbox-docker-compose
+  description: |
+    Tests docker compose functionality in the coding sandbox via router→planner→builder pipeline.
+    Verifies: compose CLI, compose file creation, docker compose up -d, container verification, cleanup.
+  tags: [sandbox, docker-compose, e2e]
+
+  chain:
+    # =========================================================================
+    # Router — create project for sandbox context
+    # =========================================================================
+    - agent: router
+      tool: builtin:set_intent
+      arguments:
+        intent: create_project
+        project_name: sandbox-compose-test
+        description: "Test project for sandbox docker compose verification"
+      assert:
+        result:
+          - not_empty
+
+    - agent: router
+      tool: builtin:done
+      arguments:
+        summary: "Agent router: Classified as create_project for sandbox-compose-test"
+
+    # =========================================================================
+    # Planner → Builder
+    # =========================================================================
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: builder
+            prompt: "Run docker compose commands to verify sandbox Docker-in-Docker capabilities"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: Planned builder for sandbox docker compose test"
+
+    # =========================================================================
+    # Builder — docker compose tests
+    # =========================================================================
+
+    # Test 1: docker compose version — verify compose v2 plugin is available
+    - agent: builder
+      tool: coding:bash
+      arguments:
+        command: "docker compose version"
+        timeout: 30
+        git_scope: "current_project"
+      assert:
+        result:
+          - { contains: "Docker Compose version" }
+
+    # Test 2: Create a minimal docker-compose.yml in workspace
+    - agent: builder
+      tool: coding:bash
+      arguments:
+        command: |
+          mkdir -p /workspace/test-compose && cat > /workspace/test-compose/docker-compose.yml << 'EOF'
+          services:
+            hello:
+              image: hello-world
+          EOF
+          cat /workspace/test-compose/docker-compose.yml
+        timeout: 30
+        git_scope: "current_project"
+      assert:
+        result:
+          - { contains: "hello-world" }
+
+    # Test 3: docker compose up -d — pull and start the hello-world service
+    - agent: builder
+      tool: coding:bash
+      arguments:
+        command: "cd /workspace/test-compose && docker compose up -d --pull always 2>&1"
+        timeout: 120
+        git_scope: "current_project"
+      assert:
+        result:
+          - not_empty
+
+    # Test 4: Verify container ran with docker compose ps (hello-world exits immediately)
+    - agent: builder
+      tool: coding:bash
+      arguments:
+        command: "cd /workspace/test-compose && docker compose ps -a 2>&1"
+        timeout: 30
+        git_scope: "current_project"
+      assert:
+        result:
+          - { contains: "hello" }
+
+    # Test 5: docker compose down — cleanup
+    - agent: builder
+      tool: coding:bash
+      arguments:
+        command: "cd /workspace/test-compose && docker compose down --rmi local --remove-orphans 2>&1"
+        timeout: 60
+        git_scope: "current_project"
+      assert:
+        result:
+          - not_empty
+
+    # Test 6: Create a long-running service and verify it stays running
+    - agent: builder
+      tool: coding:bash
+      arguments:
+        command: |
+          cat > /workspace/test-compose/docker-compose.yml << 'EOF'
+          services:
+            alpine:
+              image: alpine:latest
+              command: ["sleep", "60"]
+          EOF
+          cd /workspace/test-compose && docker compose up -d 2>&1
+        timeout: 120
+        git_scope: "current_project"
+      assert:
+        result:
+          - not_empty
+
+    # Test 7: Verify the container is running
+    - agent: builder
+      tool: coding:bash
+      arguments:
+        command: "cd /workspace/test-compose && docker compose ps 2>&1"
+        timeout: 30
+        git_scope: "current_project"
+      assert:
+        result:
+          - { contains: "alpine" }
+
+    # Test 8: Cleanup — remove everything
+    - agent: builder
+      tool: coding:bash
+      arguments:
+        command: "cd /workspace/test-compose && docker compose down --rmi local --remove-orphans 2>&1"
+        timeout: 60
+        git_scope: "current_project"
+      assert:
+        result:
+          - not_empty
+
+    # Done
+    - agent: builder
+      tool: builtin:done
+      arguments:
+        summary: "Sandbox docker compose tests completed: version, compose file creation, up -d, ps, down, multi-service"
+      assert:
+        completed: true
