@@ -111,9 +111,13 @@ def _extract_agent_definition(
     Otherwise return the full system_prompt.
     """
     definitions_dir = Path(__file__).resolve().parents[1] / "agents" / "definitions"
-    yaml_path = definitions_dir / f"{agent_id}.yaml"
+    yaml_path = None
+    for candidate in definitions_dir.glob(f"**/{agent_id}.yaml"):
+        if "system_prompts" not in candidate.parts:
+            yaml_path = candidate
+            break
 
-    if not yaml_path.exists():
+    if not yaml_path or not yaml_path.exists():
         return f"<agent definition not found: {agent_id}>"
 
     with open(yaml_path) as f:

@@ -4,7 +4,6 @@ Endpoints for listing available agents and their configuration.
 Provides transparency about which models each agent uses.
 """
 
-import os
 from pathlib import Path
 
 import structlog
@@ -76,7 +75,11 @@ def load_agent_definitions() -> list[AgentResponse]:
         logger.warning("agent_definitions_dir_not_found", path=str(definitions_dir))
         return agents
 
-    for yaml_file in definitions_dir.glob("*.yaml"):
+    for yaml_file in sorted(definitions_dir.glob("**/*.yaml")):
+        if yaml_file.name == "llm_profiles.yaml":
+            continue
+        if "system_prompts" in yaml_file.parts:
+            continue
         try:
             with open(yaml_file, "r") as f:
                 data = yaml.safe_load(f)
