@@ -158,55 +158,66 @@ class AzureDataLakeAdapter(BaseDataSourceAdapter):
         try:
             container, file_path = self._parse_path(data_id)
             file_client = self._client.get_file_client(container, file_path)
-
-            download = file_client.download_file()
-            content = download.readall()
-
             file_type = self._get_file_type(file_path)
 
-            warnings: list[str] = []
-            skipped_rows = 0
-            if file_type == "parquet":
-                df = pd.read_parquet(io.BytesIO(content))
-            elif file_type == "csv":
-                # Tolerate malformed rows (mismatched field counts) so a
-                # single bad line doesn't fail the whole read. Real-world
-                # data lake CSVs often have embedded delimiters or stray
-                # rows; surfacing them as errors blocks all discovery.
-                # utf-8-sig strips any leading BOM.
-                df = pd.read_csv(
-                    io.BytesIO(content),
-                    on_bad_lines="skip",
-                    encoding="utf-8-sig",
-                )
-                # Count rows pandas skipped so the caller can see that the
-                # source CSV is malformed. content.count(b"\n") gives the
-                # number of newline-terminated lines; subtract 1 for the
-                # header. Off-by-one for files without a trailing newline
-                # is acceptable for a discovery surface.
-                total_lines = content.count(b"\n")
-                expected_data_rows = max(0, total_lines - 1)
-                skipped_rows = max(0, expected_data_rows - len(df))
-                if skipped_rows > 0:
-                    warnings.append(
-                        f"Skipped {skipped_rows} malformed row(s) in source CSV — "
-                        f"field count did not match the {len(df.columns)}-column header. "
-                        "Common cause: unquoted commas in free-text columns at the source."
-                    )
-            else:
+            if file_type not in ("csv", "parquet"):
                 return {
                     "success": False,
                     "error": f"Unsupported file type: {file_path}. Supported: .csv, .parquet",
                 }
 
-            if filter_expr:
-                df = df.query(filter_expr)
+            warnings: list[str] = []
+            skipped_rows = 0
 
-            if offset is not None:
-                df = df.iloc[offset:]
+            # Optimisation: when the caller only needs a handful of rows
+            # from a CSV and there is no server-side filter, stream just
+            # the head of the file instead of downloading the whole blob.
+            # This turns a multi-GB download into a few-MB range read.
+            can_stream = (
+                file_type == "csv"
+                and limit is not None
+                and filter_expr is None
+            )
 
-            if limit is not None:
-                df = df.head(limit)
+            if can_stream:
+                df, warnings = await self._read_csv_head(
+                    file_client, limit, offset,
+                )
+            else:
+                download = file_client.download_file()
+                content = download.readall()
+
+                if file_type == "parquet":
+                    df = pd.read_parquet(io.BytesIO(content))
+                else:
+                    # Tolerate malformed rows (mismatched field counts) so a
+                    # single bad line doesn't fail the whole read. Real-world
+                    # data lake CSVs often have embedded delimiters or stray
+                    # rows; surfacing them as errors blocks all discovery.
+                    # utf-8-sig strips any leading BOM.
+                    df = pd.read_csv(
+                        io.BytesIO(content),
+                        on_bad_lines="skip",
+                        encoding="utf-8-sig",
+                    )
+                    # Count rows pandas skipped so the caller can see that
+                    # the source CSV is malformed.
+                    total_lines = content.count(b"\n")
+                    expected_data_rows = max(0, total_lines - 1)
+                    skipped_rows = max(0, expected_data_rows - len(df))
+                    if skipped_rows > 0:
+                        warnings.append(
+                            f"Skipped {skipped_rows} malformed row(s) in source CSV — "
+                            f"field count did not match the {len(df.columns)}-column header. "
+                            "Common cause: unquoted commas in free-text columns at the source."
+                        )
+
+                if filter_expr:
+                    df = df.query(filter_expr)
+                if offset is not None:
+                    df = df.iloc[offset:]
+                if limit is not None:
+                    df = df.head(limit)
 
             return {
                 "success": True,
@@ -224,6 +235,67 @@ class AzureDataLakeAdapter(BaseDataSourceAdapter):
             }
         except Exception as e:
             return {"success": False, "error": str(e)}
+
+    async def _read_csv_head(
+        self,
+        file_client,
+        limit: int,
+        offset: int | None = None,
+    ) -> tuple[pd.DataFrame, list[str]]:
+        """Read the first rows of a CSV via an Azure range-read.
+
+        Downloads only enough bytes to satisfy *limit* (+ *offset*) rows,
+        avoiding multi-GB transfers when the agent only needs a small sample.
+        """
+        rows_needed = limit + (offset or 0)
+        warnings: list[str] = []
+
+        # Heuristic: ~2 KB per row covers most enterprise CSVs.
+        # Floor at 1 MB so the header + a few rows always fit.
+        chunk_size = max(1 * 1024 * 1024, rows_needed * 2048)
+        max_bytes = 50 * 1024 * 1024  # safety cap
+
+        chunk_size = min(chunk_size, max_bytes)
+
+        while True:
+            download = file_client.download_file(offset=0, length=chunk_size)
+            content = download.readall()
+            is_complete = len(content) < chunk_size
+
+            # Trim to last complete line so a range-read that cuts
+            # mid-row (or mid-quoted-field) doesn't cause a parse error.
+            if not is_complete:
+                last_newline = content.rfind(b"\n")
+                if last_newline > 0:
+                    content = content[: last_newline + 1]
+
+            df = pd.read_csv(
+                io.BytesIO(content),
+                nrows=rows_needed,
+                on_bad_lines="skip",
+                encoding="utf-8-sig",
+            )
+
+            if len(df) >= rows_needed or is_complete:
+                break
+
+            # Not enough rows in this chunk — double and retry
+            if chunk_size >= max_bytes:
+                warnings.append(
+                    f"Streamed first {chunk_size // (1024 * 1024)} MB but only "
+                    f"found {len(df)} rows (requested {rows_needed}). "
+                    "The file may have very wide rows or many malformed lines."
+                )
+                break
+
+            chunk_size = min(chunk_size * 2, max_bytes)
+
+        # Apply offset and limit on the parsed subset
+        if offset is not None:
+            df = df.iloc[offset:]
+        df = df.head(limit)
+
+        return df, warnings
 
     async def download_data(
         self,
