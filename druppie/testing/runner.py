@@ -222,7 +222,7 @@ class TestRunner:
             )
         try:
             replay_session_id, chain_results = self._replay_chain(merged_test, user.id, run_namespace)
-            self._db.commit()
+            self._db.commit()  # Commit the full replay so assertions can query committed data
             all_assertion_results.extend(chain_results)
         except Exception as e:
             self._db.rollback()  # Roll back partial replay state on failure
@@ -495,6 +495,7 @@ class TestRunner:
                     .order_by(ToolCall.created_at.asc())
                     .all()
                 )
+                # Pick the Nth occurrence (1-indexed)
                 tc_record = tc_records[occurrence - 1] if len(tc_records) >= occurrence else None
 
                 if tc_record:
