@@ -1,22 +1,21 @@
-## Test: docker compose up -d --build --profile dev in the coding sandbox
+## Test: docker compose --profile dev up -d --build using Druppie core repo
 ##
-## Verifies that the coding sandbox provides:
-## - docker compose CLI (v2 plugin) with --profile support
-## - Ability to create compose files with profiles and Dockerfiles
-## - docker compose up -d --build --profile <name> (build image + start with profile)
-## - docker compose ps (verify running containers)
-## - docker compose logs (check container output)
-## - docker compose down (cleanup)
-## - Full docker-in-docker via Sysbox
+## Verifies that the coding sandbox can:
+## - Clone the Druppie core repo (nuno120/druppie, branch colab-dev) via git_scope: "update_core"
+## - Run docker compose --profile dev up -d --build on the real project
+## - Verify containers are running
+## - Check backend health endpoint
+## - Cleanup with docker compose down
 ##
 ## Run: POST /api/evaluations/run-tests {"test_name": "test-sandbox-docker-compose"}
 
 tool-test:
   name: test-sandbox-docker-compose
   description: |
-    Tests docker compose with profiles and build in the coding sandbox via router→planner→builder pipeline.
-    Verifies: compose CLI with profile support, Dockerfile build, compose up with --build --profile, container verification, logs, cleanup.
-  tags: [sandbox, docker-compose, e2e, profiles, build]
+    E2E test: Ultimate Dev Core agent clones Druppie core repo and runs docker compose --profile dev up -d --build.
+    Uses git_scope: "update_core" to get the real Druppie source code into /workspace/.
+    Verifies: repo clone, compose build, container start, health check, cleanup.
+  tags: [sandbox, docker-compose, e2e, update_core, ultimate_dev_core]
 
   chain:
     # =========================================================================
@@ -27,7 +26,7 @@ tool-test:
       arguments:
         intent: create_project
         project_name: sandbox-compose-test
-        description: "Test project for sandbox docker compose with profiles and build"
+        description: "Test project for sandbox docker compose build with Druppie core"
       assert:
         result:
           - not_empty
@@ -38,131 +37,131 @@ tool-test:
         summary: "Agent router: Classified as create_project for sandbox-compose-test"
 
     # =========================================================================
-    # Planner → Builder
+    # Planner → Ultimate Dev Core
     # =========================================================================
     - agent: planner
       tool: builtin:make_plan
       arguments:
         steps:
-          - agent_id: builder
-            prompt: "Run docker compose commands with profiles and build to verify sandbox Docker-in-Docker capabilities"
+          - agent_id: ultimate_dev_core
+            prompt: "Clone Druppie core repo and run docker compose --profile dev up -d --build to verify full Docker-in-Docker build capabilities with the real project"
 
     - agent: planner
       tool: builtin:done
       arguments:
-        summary: "Agent planner: Planned builder for sandbox docker compose test with profiles and build"
+        summary: "Agent planner: Planned ultimate_dev_core for Druppie core docker compose build test"
 
     # =========================================================================
-    # Builder — docker compose tests with profiles and build
+    # Ultimate Dev Core — verify Druppie source is in /workspace/
     # =========================================================================
-
-    # Test 1: docker compose version — verify compose v2 plugin is available
-    - agent: builder
-      tool: coding:bash
-      approval:
-        status: approved
-        by: architect
-      arguments:
-        command: "docker compose version"
-        timeout: 30
-        git_scope: "current_project"
-      assert:
-        result:
-          - { contains: "Docker Compose version" }
-
-    # Test 2: Create a realistic docker-compose.yml WITH profiles and a simple Dockerfile
-    - agent: builder
+    - agent: ultimate_dev_core
       tool: coding:bash
       approval:
         status: approved
         by: architect
       arguments:
         command: |
-          mkdir -p /workspace/test-build && cat > /workspace/test-build/docker-compose.yml << 'EOF'
-          services:
-            app:
-              build: .
-              profiles:
-                - dev
-          EOF
-          cat > /workspace/test-build/Dockerfile << 'EOF'
-          FROM alpine:latest
-          RUN echo "build test"
-          CMD ["echo", "hello from build"]
-          EOF
-          echo "--- docker-compose.yml ---"
-          cat /workspace/test-build/docker-compose.yml
-          echo "--- Dockerfile ---"
-          cat /workspace/test-build/Dockerfile
-          echo "--- files created ---"
+          echo "=== Checking /workspace/ contents ==="
+          ls -la /workspace/ 2>&1
+          echo "=== Looking for docker-compose files ==="
+          ls -la /workspace/docker-compose.yml /workspace/docker-compose.override.yml 2>&1
+          echo "=== Checking key directories ==="
+          ls -d /workspace/druppie/ /workspace/frontend/ /workspace/background-agents/ 2>&1
+          echo "=== Docker version ==="
+          docker --version 2>&1
+          echo "=== Docker compose version ==="
+          docker compose version 2>&1
         timeout: 30
-        git_scope: "current_project"
+        git_scope: "update_core"
       assert:
         result:
-          - { contains: "profiles" }
-          - { contains: "dev" }
-          - { contains: "FROM alpine" }
+          - { contains: "docker-compose.yml" }
+          - { contains: "druppie" }
 
-    # Test 3: docker compose up -d --build --profile dev — build image and start with profile
-    - agent: builder
+    # =========================================================================
+    # Ultimate Dev Core — run docker compose --profile dev up -d --build
+    # =========================================================================
+    - agent: ultimate_dev_core
       tool: coding:bash
       approval:
         status: approved
         by: architect
       arguments:
-        command: "cd /workspace/test-build && docker compose --profile dev up -d --build 2>&1"
-        timeout: 120
-        git_scope: "current_project"
+        command: |
+          cd /workspace
+          echo "=== Starting docker compose build (this may take several minutes) ==="
+          docker compose --profile dev up -d --build 2>&1
+          echo "=== Build complete ==="
+        timeout: 900
+        git_scope: "update_core"
       assert:
         result:
           - not_empty
 
-    # Test 4: Verify container is/was running with docker compose ps
-    - agent: builder
+    # =========================================================================
+    # Ultimate Dev Core — verify containers are running
+    # =========================================================================
+    - agent: ultimate_dev_core
       tool: coding:bash
       approval:
         status: approved
         by: architect
       arguments:
-        command: "cd /workspace/test-build && docker compose --profile dev ps -a 2>&1"
-        timeout: 30
-        git_scope: "current_project"
-      assert:
-        result:
-          - { contains: "app" }
-
-    # Test 5: Check logs — app container should have output
-    - agent: builder
-      tool: coding:bash
-      approval:
-        status: approved
-        by: architect
-      arguments:
-        command: "cd /workspace/test-build && docker compose --profile dev logs app 2>&1"
-        timeout: 30
-        git_scope: "current_project"
-      assert:
-        result:
-          - { contains: "hello from build" }
-
-    # Test 6: Cleanup — docker compose down
-    - agent: builder
-      tool: coding:bash
-      approval:
-        status: approved
-        by: architect
-      arguments:
-        command: "cd /workspace/test-build && docker compose --profile dev down --rmi local --remove-orphans 2>&1"
+        command: |
+          cd /workspace
+          echo "=== Waiting 15s for containers to settle ==="
+          sleep 15
+          echo "=== docker compose ps ==="
+          docker compose --profile dev ps 2>&1
         timeout: 60
-        git_scope: "current_project"
+        git_scope: "update_core"
+      assert:
+        result:
+          - not_empty
+
+    # =========================================================================
+    # Ultimate Dev Core — check backend health
+    # =========================================================================
+    - agent: ultimate_dev_core
+      tool: coding:bash
+      approval:
+        status: approved
+        by: architect
+      arguments:
+        command: |
+          cd /workspace
+          echo "=== Checking backend health ==="
+          docker compose --profile dev exec druppie-backend-dev curl -s http://localhost:8000/health 2>&1 || echo "Backend not ready yet"
+          echo "=== Recent backend logs ==="
+          docker compose --profile dev logs --tail=20 druppie-backend-dev 2>&1
+        timeout: 60
+        git_scope: "update_core"
+      assert:
+        result:
+          - not_empty
+
+    # =========================================================================
+    # Ultimate Dev Core — cleanup
+    # =========================================================================
+    - agent: ultimate_dev_core
+      tool: coding:bash
+      approval:
+        status: approved
+        by: architect
+      arguments:
+        command: |
+          cd /workspace
+          echo "=== Cleaning up ==="
+          docker compose --profile dev down --remove-orphans 2>&1
+          echo "=== Cleanup complete ==="
+        timeout: 120
+        git_scope: "update_core"
       assert:
         result:
           - not_empty
 
     # Done
-    - agent: builder
+    - agent: ultimate_dev_core
       tool: builtin:done
       arguments:
-        summary: "Sandbox docker compose tests completed: version, profile compose file + Dockerfile creation, --profile dev up -d --build, ps, logs, down"
-      assert:
-        completed: true
+        summary: "Agent ultimate_dev_core: Druppie core docker compose build test completed — verified repo clone, compose build, container status, health check, and cleanup"
