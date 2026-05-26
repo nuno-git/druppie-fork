@@ -67,7 +67,29 @@ tool-test:
         result:
           - { contains: "root" }
 
-    # Test 2: uv package manager available
+    # Test 2: Docker CLI available
+    - agent: builder
+      tool: coding:bash
+      arguments:
+        command: "docker --version"
+        timeout: 30
+        git_scope: "current_project"
+      assert:
+        result:
+          - { contains: "Docker version" }
+
+    # Test 3: Nested Docker daemon works (docker ps inside sandbox)
+    - agent: builder
+      tool: coding:bash
+      arguments:
+        command: "docker ps"
+        timeout: 60
+        git_scope: "current_project"
+      assert:
+        result:
+          - { contains: "CONTAINER" }
+
+    # Test 4: uv package manager available
     - agent: builder
       tool: coding:bash
       arguments:

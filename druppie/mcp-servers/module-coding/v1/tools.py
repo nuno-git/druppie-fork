@@ -335,23 +335,18 @@ async def _create_sandbox_container(
             "docker", "run", "-d",
             "--name", container_name,
             "--network", SANDBOX_NETWORK,
-            "--security-opt", "no-new-privileges",
-            "--cap-drop", "ALL",
-            "--cap-add", "NET_RAW",
             "--memory", SANDBOX_MEMORY,
             "--pids-limit", str(SANDBOX_PIDS_LIMIT),
             "--cpus", SANDBOX_CPU,
             "--tmpfs", "/tmp:size=512m",
             "-w", "/workspace",
-        ]
-        cmd.extend(["--runtime", SANDBOX_RUNTIME])
-        cmd.extend([
+            "--runtime", SANDBOX_RUNTIME,
             "-v", f"{SANDBOX_CACHE_VOLUME}:/cache",
             "-e", "UV_CACHE_DIR=/cache/uv",
             "-e", "PIP_CACHE_DIR=/cache/pip",
             SANDBOX_IMAGE,
-            "bash", "-c", "dockerd >/dev/null 2>&1 & sleep infinity",
-        ])
+            "bash", "-c", "dockerd --iptables=false --bridge=none > /var/log/dockerd.log 2>&1 & sleep infinity",
+        ]
         rc, stdout, stderr = await _docker_run(cmd, timeout=60)
         if rc != 0 and "already in use" in stderr:
             logger.warning("Container name conflict for %s, forcing cleanup and retrying", container_name)
@@ -361,23 +356,18 @@ async def _create_sandbox_container(
                 "docker", "run", "-d",
                 "--name", container_name,
                 "--network", SANDBOX_NETWORK,
-                "--security-opt", "no-new-privileges",
-                "--cap-drop", "ALL",
-                "--cap-add", "NET_RAW",
                 "--memory", SANDBOX_MEMORY,
                 "--pids-limit", str(SANDBOX_PIDS_LIMIT),
                 "--cpus", SANDBOX_CPU,
                 "--tmpfs", "/tmp:size=512m",
                 "-w", "/workspace",
-            ]
-            cmd.extend(["--runtime", SANDBOX_RUNTIME])
-            cmd.extend([
+                "--runtime", SANDBOX_RUNTIME,
                 "-v", f"{SANDBOX_CACHE_VOLUME}:/cache",
                 "-e", "UV_CACHE_DIR=/cache/uv",
                 "-e", "PIP_CACHE_DIR=/cache/pip",
                 SANDBOX_IMAGE,
-                "bash", "-c", "dockerd >/dev/null 2>&1 & sleep infinity",
-            ])
+                "bash", "-c", "dockerd --iptables=false --bridge=none > /var/log/dockerd.log 2>&1 & sleep infinity",
+            ]
             rc, stdout, stderr = await _docker_run(cmd, timeout=60)
         if rc != 0:
             raise RuntimeError(f"docker run failed: {stderr}")
@@ -387,6 +377,19 @@ async def _create_sandbox_container(
         raise
 
     logger.info("Sandbox container created: %s (%s)", container_name, container_id)
+
+    if SANDBOX_RUNTIME == "sysbox-runc":
+        for _ in range(20):
+            rc, stdout, stderr = await _docker_run(
+                ["docker", "exec", container_name, "test", "-S", "/var/run/docker.sock"],
+                timeout=5,
+            )
+            if rc == 0:
+                logger.info("Docker daemon ready in sandbox %s", container_name)
+                break
+            await asyncio.sleep(0.5)
+        else:
+            logger.warning("Docker daemon not ready in sandbox %s after 10s", container_name)
 
     if agent_networks:
         for tier in agent_networks:
