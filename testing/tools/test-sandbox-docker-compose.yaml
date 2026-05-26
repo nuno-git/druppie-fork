@@ -157,6 +157,8 @@ tool-test:
           for svc in services:
               override_lines.append(f'  {svc}:')
               override_lines.append('    network_mode: host')
+              override_lines.append('    build:')
+              override_lines.append('      network: host')
               override_lines.append('    networks: !reset')
           with open('docker-compose.override.yml', 'w') as f:
               f.write('\n'.join(override_lines) + '\n')
