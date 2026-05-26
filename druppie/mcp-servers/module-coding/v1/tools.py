@@ -120,6 +120,9 @@ SANDBOX_PIDS_LIMIT = int(os.getenv("DRUPPIE_DOCKER_PIDS_LIMIT", "8192"))
 SANDBOX_NETWORK = os.getenv("DRUPPIE_SANDBOX_NETWORK", "bridge")
 SANDBOX_INET_NETWORK = os.getenv("DRUPPIE_SANDBOX_INET_NETWORK", "")
 SANDBOX_MODULES_NETWORK = os.getenv("DRUPPIE_SANDBOX_MODULES_NETWORK", "")
+SANDBOX_RUNTIME = os.getenv("DRUPPIE_SANDBOX_RUNTIME", "sysbox-runc")
+SANDBOX_CACHE_VOLUME = os.getenv("DRUPPIE_SANDBOX_CACHE_VOLUME", "sandbox_dep_cache")
+SANDBOX_USER = os.getenv("DRUPPIE_SANDBOX_USER", "druppie")
 
 # Sandbox container registry
 # Key: "{session_id}::{git_scope}"
@@ -127,6 +130,13 @@ SANDBOX_MODULES_NETWORK = os.getenv("DRUPPIE_SANDBOX_MODULES_NETWORK", "")
 #          "session_id": str, "branch": str, "created_at": float,
 #          "repo_name": str, "repo_owner": str}
 sandbox_containers: dict[str, dict] = {}
+_container_locks: dict[str, asyncio.Lock] = {}
+
+
+def _get_container_lock(key: str) -> asyncio.Lock:
+    if key not in _container_locks:
+        _container_locks[key] = asyncio.Lock()
+    return _container_locks[key]
 
 # =============================================================================
 # SECURITY: COMMAND BLOCKLIST
@@ -321,8 +331,33 @@ async def _create_sandbox_container(
     try:
         await _docker_run(["docker", "rm", "-f", container_name], timeout=10)
 
-        rc, stdout, stderr = await _docker_run(
-            [
+        cmd = [
+            "docker", "run", "-d",
+            "--name", container_name,
+            "--network", SANDBOX_NETWORK,
+            "--security-opt", "no-new-privileges",
+            "--cap-drop", "ALL",
+            "--cap-add", "NET_RAW",
+            "--memory", SANDBOX_MEMORY,
+            "--pids-limit", str(SANDBOX_PIDS_LIMIT),
+            "--cpus", SANDBOX_CPU,
+            "--tmpfs", "/tmp:size=512m",
+            "-w", "/workspace",
+        ]
+        cmd.extend(["--runtime", SANDBOX_RUNTIME])
+        cmd.extend([
+            "-v", f"{SANDBOX_CACHE_VOLUME}:/cache",
+            "-e", "UV_CACHE_DIR=/cache/uv",
+            "-e", "PIP_CACHE_DIR=/cache/pip",
+            SANDBOX_IMAGE,
+            "bash", "-c", "dockerd >/dev/null 2>&1 & sleep infinity",
+        ])
+        rc, stdout, stderr = await _docker_run(cmd, timeout=60)
+        if rc != 0 and "already in use" in stderr:
+            logger.warning("Container name conflict for %s, forcing cleanup and retrying", container_name)
+            await _docker_run(["docker", "rm", "-f", container_name], timeout=10)
+            await asyncio.sleep(1)
+            cmd = [
                 "docker", "run", "-d",
                 "--name", container_name,
                 "--network", SANDBOX_NETWORK,
@@ -334,33 +369,16 @@ async def _create_sandbox_container(
                 "--cpus", SANDBOX_CPU,
                 "--tmpfs", "/tmp:size=512m",
                 "-w", "/workspace",
+            ]
+            cmd.extend(["--runtime", SANDBOX_RUNTIME])
+            cmd.extend([
+                "-v", f"{SANDBOX_CACHE_VOLUME}:/cache",
+                "-e", "UV_CACHE_DIR=/cache/uv",
+                "-e", "PIP_CACHE_DIR=/cache/pip",
                 SANDBOX_IMAGE,
-                "sleep", "infinity",
-            ],
-            timeout=60,
-        )
-        if rc != 0 and "already in use" in stderr:
-            logger.warning("Container name conflict for %s, forcing cleanup and retrying", container_name)
-            await _docker_run(["docker", "rm", "-f", container_name], timeout=10)
-            await asyncio.sleep(1)
-            rc, stdout, stderr = await _docker_run(
-                [
-                    "docker", "run", "-d",
-                    "--name", container_name,
-                    "--network", SANDBOX_NETWORK,
-                    "--security-opt", "no-new-privileges",
-                    "--cap-drop", "ALL",
-                    "--cap-add", "NET_RAW",
-                    "--memory", SANDBOX_MEMORY,
-                    "--pids-limit", str(SANDBOX_PIDS_LIMIT),
-                    "--cpus", SANDBOX_CPU,
-                    "--tmpfs", "/tmp:size=512m",
-                    "-w", "/workspace",
-                    SANDBOX_IMAGE,
-                    "sleep", "infinity",
-                ],
-                timeout=60,
-            )
+                "bash", "-c", "dockerd >/dev/null 2>&1 & sleep infinity",
+            ])
+            rc, stdout, stderr = await _docker_run(cmd, timeout=60)
         if rc != 0:
             raise RuntimeError(f"docker run failed: {stderr}")
 
@@ -428,12 +446,17 @@ async def _create_sandbox_container(
 
     elif scope == "update_core":
         core_url = DRUPPIE_CORE_REPO_URL or "https://github.com/nuno120/druppie.git"
+        token = _get_github_token()
+        if token and core_url.startswith("https://github.com"):
+            auth_url = core_url.replace("https://", f"https://x-access-token:{token}@")
+        else:
+            auth_url = core_url
         tmp_dir = f"/tmp/sandbox-clone-{short_session}-core"
         await _docker_run(["rm", "-rf", tmp_dir], timeout=5)
 
         rc, _, err = await _docker_run(
             ["git", "clone", "--branch", DRUPPIE_CORE_REPO_BRANCH,
-             "--depth=50", core_url, tmp_dir],
+             "--depth=50", auth_url, tmp_dir],
             timeout=120,
         )
         if rc == 0:
@@ -501,21 +524,20 @@ async def _resolve_container(
 
     scope = git_scope or "current_project"
     key = f"{session_id}::{scope}"
+    lock = _get_container_lock(key)
 
-    # Check if we already have a container
-    if key in sandbox_containers:
-        entry = sandbox_containers[key]
-        container_id = entry.get("container_id", entry["container_name"])
-        if await _is_container_running(container_id):
-            return entry["container_name"]
-        # Container died — remove from registry and recreate
-        logger.warning("Container %s not running, recreating", entry["container_name"])
-        del sandbox_containers[key]
+    async with lock:
+        if key in sandbox_containers:
+            entry = sandbox_containers[key]
+            container_id = entry.get("container_id", entry["container_name"])
+            if await _is_container_running(container_id):
+                return entry["container_name"]
+            logger.warning("Container %s not running, recreating", entry["container_name"])
+            del sandbox_containers[key]
 
-    # Create new container
-    return await _create_sandbox_container(
-        session_id, scope, repo_name, repo_owner, agent_networks=agent_networks
-    )
+        return await _create_sandbox_container(
+            session_id, scope, repo_name, repo_owner, agent_networks=agent_networks
+        )
 
 
 async def _destroy_container(session_id: str, git_scope: str) -> None:
@@ -782,7 +804,7 @@ async def edit_file(
 @mcp.tool(meta={"module_id": MODULE_ID, "version": MODULE_VERSION})
 async def bash(
     command: str,
-    timeout: int = 60,
+    timeout: int = 120,
     session_id: str | None = None,
     workspace_id: str | None = None,
     project_id: str | None = None,

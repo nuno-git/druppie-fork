@@ -190,7 +190,7 @@ services:
       BACKEND_URL: http://backend:8000
       INTERNAL_API_KEY: ${INTERNAL_API_KEY:-druppie-internal-secret-key}
       # Sandbox container management
-      DRUPPIE_SANDBOX_RUNTIME: ${DRUPPIE_SANDBOX_RUNTIME:-docker}
+      DRUPPIE_SANDBOX_RUNTIME: ${DRUPPIE_SANDBOX_RUNTIME:-sysbox-runc}
       DRUPPIE_SANDBOX_CACHE_VOLUME: ${DRUPPIE_INSTANCE:-druppie}_sandbox_dep_cache
       DRUPPIE_SANDBOX_USER: ${DRUPPIE_SANDBOX_USER:-druppie}
       DRUPPIE_SANDBOX_IMAGE: ${DRUPPIE_SANDBOX_IMAGE:-druppie-sandbox:latest}

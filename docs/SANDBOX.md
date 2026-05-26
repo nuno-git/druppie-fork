@@ -27,7 +27,7 @@ git push from module-coding host (has credentials)
 | Component | Location | Role |
 |-----------|----------|------|
 | **ContainerManager ABC** | `druppie/sandbox/` | Abstract container lifecycle interface |
-| **Docker / Sysbox / Kata implementations** | `druppie/sandbox/` | Runtime-specific container management |
+| **Sysbox / Kata implementations** | `druppie/sandbox/` | Runtime-specific container management |
 | **SandboxWarmPool** | `druppie/sandbox/` | Pre-warms containers to reduce startup latency |
 | **MCP tools (orchestrator)** | `druppie/mcp-servers/module-coding/v1/tools.py` | Spawns containers, proxies file/bash operations |
 | **Sandbox base image** | `druppie/mcp-servers/module-coding/Dockerfile.sandbox` | Python 3.12 + git + Node + ripgrep + jq |
@@ -88,9 +88,8 @@ The container runtime is configurable via `DRUPPIE_SANDBOX_RUNTIME`:
 
 | Runtime | Isolation | Use Case |
 |---------|-----------|----------|
-| **docker** (default) | Container-level (cgroups, namespaces) | Development |
-| **sysbox** | Hardened container-level (nested containers, stronger isolation) | Hardened development |
-| **kata** | VM-level (lightweight QEMU VMs) | Production, untrusted code |
+| **sysbox-runc** (default) | Hardened container-level (nested containers, stronger isolation) | Development |
+| **kata-runtime** | VM-level (lightweight QEMU VMs) | Production, untrusted code |
 
 The runtime swap is entirely within the `ContainerManager` -- the MCP tools and rest of the stack are unchanged.
 
@@ -133,7 +132,7 @@ docker compose --profile reset-cache run --rm reset-cache
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `DRUPPIE_SANDBOX_IMAGE` | `druppie-sandbox:latest` | Sandbox container base image |
-| `DRUPPIE_SANDBOX_RUNTIME` | `docker` | Container runtime (`docker`, `sysbox`, `kata`) |
+| `DRUPPIE_SANDBOX_RUNTIME` | `sysbox-runc` | Container runtime (`sysbox-runc`, `kata-runtime`) |
 | `SANDBOX_MEMORY_LIMIT` | `4g` | Docker memory limit per sandbox |
 | `SANDBOX_CPU_LIMIT` | `2` | Docker CPU limit per sandbox |
 

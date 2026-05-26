@@ -75,6 +75,14 @@ LONG_RUNNING_TOOLS = {
 }
 LONG_RUNNING_TIMEOUT = 1200.0  # 20 minutes
 
+# Tools where the LLM controls the timeout via an argument.
+# The agent specifies how long it expects the command to take,
+# clamped to a maximum to prevent abuse.
+CUSTOM_TIMEOUT_TOOLS = {"bash"}
+CUSTOM_TIMEOUT_ARG = "timeout"
+CUSTOM_TIMEOUT_DEFAULT = 120.0   # 2 min if LLM doesn't specify
+CUSTOM_TIMEOUT_MAX = 3600.0      # 60 min hard cap
+
 
 class ToolExecutor:
     """Executes all tools (builtin and MCP).
@@ -939,7 +947,16 @@ class ToolExecutor:
             # generous 20-min client timeout. Server-side subprocess timeouts
             # (300s/180s) should fire first, but this prevents infinite hangs
             # if the MCP server crashes or the network drops.
-            timeout = LONG_RUNNING_TIMEOUT if tool_call.tool_name in LONG_RUNNING_TOOLS else 60.0
+            if tool_call.tool_name in CUSTOM_TIMEOUT_TOOLS:
+                try:
+                    requested = float(args.get(CUSTOM_TIMEOUT_ARG, CUSTOM_TIMEOUT_DEFAULT))
+                except (TypeError, ValueError):
+                    requested = CUSTOM_TIMEOUT_DEFAULT
+                timeout = min(requested, CUSTOM_TIMEOUT_MAX)
+            elif tool_call.tool_name in LONG_RUNNING_TOOLS:
+                timeout = LONG_RUNNING_TIMEOUT
+            else:
+                timeout = 60.0
 
             result = await self.mcp_http.call(
                 tool_call.mcp_server,
