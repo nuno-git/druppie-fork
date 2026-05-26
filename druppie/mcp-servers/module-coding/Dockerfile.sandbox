@@ -32,6 +32,9 @@ RUN DOCKER_COMPOSE_VERSION=5.1.4 && \
 
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel uv
 
+RUN pip install playwright && \
+    playwright install --with-deps chromium
+
 RUN groupadd -g 1000 druppie \
     && useradd -m -u 1000 -g druppie -s /bin/bash druppie \
     && usermod -aG root druppie \

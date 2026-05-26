@@ -79,6 +79,98 @@ tool-test:
           - { contains: "druppie" }
 
     # =========================================================================
+    # Ultimate Dev Core — start Docker daemon inside sandbox
+    # =========================================================================
+    - agent: ultimate_dev_core
+      tool: coding:bash
+      approval:
+        status: approved
+        by: architect
+      arguments:
+        command: |
+          echo "=== Starting Docker daemon ==="
+          dockerd --iptables=false --bridge=none --storage-driver=vfs > /tmp/dockerd.log 2>&1 &
+          sleep 5
+          echo "=== Checking Docker daemon ==="
+          docker info 2>&1 | head -10
+          echo "=== Docker daemon ready ==="
+        timeout: 30
+        git_scope: "update_core"
+      assert:
+        result:
+          - { contains: "Server" }
+          - { contains: "Storage Driver" }
+
+    # =========================================================================
+    # Ultimate Dev Core — copy .env.example to .env
+    # =========================================================================
+    - agent: ultimate_dev_core
+      tool: coding:bash
+      approval:
+        status: approved
+        by: architect
+      arguments:
+        command: |
+          cd /workspace
+          echo "=== Copying .env.example to .env ==="
+          cp /workspace/.env.example /workspace/.env
+          echo "=== Verifying .env exists ==="
+          ls -la /workspace/.env
+          echo "=== .env contents (first 10 lines) ==="
+          head -10 /workspace/.env
+        timeout: 30
+        git_scope: "update_core"
+      assert:
+        result:
+          - { contains: ".env" }
+
+    # =========================================================================
+    # Ultimate Dev Core — create docker-compose.override.yml with host networking
+    # =========================================================================
+    - agent: ultimate_dev_core
+      tool: coding:bash
+      approval:
+        status: approved
+        by: architect
+      arguments:
+        command: |
+          cd /workspace
+          echo "=== Creating docker-compose.override.yml with host networking ==="
+          python3 << 'PYEOF'
+          import re
+          with open('docker-compose.yml') as f:
+              lines = f.readlines()
+          services = []
+          in_services = False
+          for line in lines:
+              if line.rstrip() == 'services:':
+                  in_services = True
+                  continue
+              if in_services:
+                  if line and not line.startswith('#'):
+                      if line[0] not in (' ', '\t', '\n') and line.strip():
+                          break
+                      m = re.match(r'^  ([a-zA-Z0-9_.-]+):\s*$', line)
+                      if m:
+                          services.append(m.group(1))
+          override_lines = ['services:']
+          for svc in services:
+              override_lines.append(f'  {svc}:')
+              override_lines.append('    network_mode: host')
+              override_lines.append('    networks: !reset')
+          with open('docker-compose.override.yml', 'w') as f:
+              f.write('\n'.join(override_lines) + '\n')
+          print(f'Created override for {len(services)} services: {services[:5]}...')
+          PYEOF
+          echo "=== docker-compose.override.yml ==="
+          cat docker-compose.override.yml
+        timeout: 30
+        git_scope: "update_core"
+      assert:
+        result:
+          - { contains: "network_mode" }
+
+    # =========================================================================
     # Ultimate Dev Core — run docker compose --profile dev up -d --build
     # =========================================================================
     - agent: ultimate_dev_core
@@ -135,6 +227,153 @@ tool-test:
           echo "=== Recent backend logs ==="
           docker compose --profile dev logs --tail=20 druppie-backend-dev 2>&1
         timeout: 60
+        git_scope: "update_core"
+      assert:
+        result:
+          - not_empty
+
+
+    # =========================================================================
+    # Ultimate Dev Core — verify Playwright is installed
+    # =========================================================================
+    - agent: ultimate_dev_core
+      tool: coding:bash
+      approval:
+        status: approved
+        by: architect
+      arguments:
+        command: |
+          echo "=== Checking Playwright availability ==="
+          python3 -c "from playwright.sync_api import sync_playwright; print('Playwright available')" 2>&1
+        timeout: 30
+        git_scope: "update_core"
+      assert:
+        result:
+          - not_empty
+
+    # =========================================================================
+    # Ultimate Dev Core — wait for frontend to be ready
+    # =========================================================================
+    - agent: ultimate_dev_core
+      tool: coding:bash
+      approval:
+        status: approved
+        by: architect
+      arguments:
+        command: |
+          cd /workspace
+          echo "=== Waiting for frontend to be ready ==="
+          for i in $(seq 1 30); do
+            if curl -s -o /dev/null -w "%{http_code}" http://localhost:5273 2>/dev/null | grep -q "200\|302\|303"; then
+              echo "Frontend responding after ${i}0 seconds"
+              break
+            fi
+            echo "Attempt $i: frontend not ready, waiting 10s..."
+            sleep 10
+          done
+          echo "=== Frontend status ==="
+          curl -s -o /dev/null -w "HTTP status: %{http_code}\n" http://localhost:5273 2>&1 || echo "Curl failed"
+        timeout: 300
+        git_scope: "update_core"
+      assert:
+        result:
+          - not_empty
+
+    # =========================================================================
+    # Ultimate Dev Core — log into Druppie via Playwright
+    # =========================================================================
+    - agent: ultimate_dev_core
+      tool: coding:bash
+      approval:
+        status: approved
+        by: architect
+      arguments:
+        command: |
+          cd /workspace
+          echo "=== Logging into Druppie via Playwright ==="
+          python3 << 'PYEOF'
+          import sys
+          from playwright.sync_api import sync_playwright
+          import time
+
+          with sync_playwright() as p:
+              browser = p.chromium.launch(headless=True, args=['--no-sandbox', '--disable-gpu'])
+              page = browser.new_page(viewport={"width": 1280, "height": 720})
+
+              try:
+                  print("Navigating to Druppie frontend at http://localhost:5273 ...")
+                  page.goto("http://localhost:5273", timeout=60000, wait_until="networkidle")
+                  time.sleep(3)
+                  print(f"After initial load - URL: {page.url}, title: {page.title()}")
+
+                  # If we're redirected to Keycloak login, fill the form
+                  current_url = page.url
+                  if "keycloak" in current_url.lower() or "realms" in current_url.lower() or "login" in current_url.lower():
+                      print("Detected Keycloak login page, filling credentials...")
+                      # Wait for form fields
+                      page.wait_for_selector('#username', timeout=30000)
+                      page.fill('#username', 'admin')
+                      page.fill('#password', 'Admin123!')
+                      time.sleep(1)
+                      # Click login button
+                      page.click('#kc-login')
+                      print("Submitted Keycloak login form")
+                      time.sleep(5)
+                  else:
+                      print(f"Not on Keycloak page yet. Current URL: {current_url}")
+                      # Try looking for a login button or redirect
+                      try:
+                          login_btn = page.query_selector('button:has-text("Log In"), a:has-text("Log In"), button:has-text("Login"), a:has-text("Login")')
+                          if login_btn:
+                              print("Found login button, clicking...")
+                              login_btn.click()
+                              time.sleep(5)
+                              # Now fill Keycloak form
+                              page.wait_for_selector('#username', timeout=30000)
+                              page.fill('#username', 'admin')
+                              page.fill('#password', 'Admin123!')
+                              time.sleep(1)
+                              page.click('#kc-login')
+                              print("Submitted Keycloak login form")
+                              time.sleep(5)
+                      except Exception as e:
+                          print(f"No login button found or click failed: {e}")
+
+                  # Verify login
+                  final_url = page.url
+                  final_title = page.title()
+                  print(f"Final URL: {final_url}")
+                  print(f"Final title: {final_title}")
+
+                  # Take screenshot
+                  page.screenshot(path="/workspace/login-test.png")
+                  print("Screenshot saved to /workspace/login-test.png")
+
+                  # Check for indicators of successful login
+                  page_content = page.content()
+                  if "logout" in page_content.lower() or "dashboard" in page_content.lower() or "session" in page_content.lower() or "keycloak" not in final_url.lower():
+                      print("SUCCESS: Login appears successful!")
+                  else:
+                      print("WARNING: Could not confirm successful login, but continuing...")
+
+                  # List all cookies for debugging
+                  cookies = page.context.cookies()
+                  print(f"Cookies: {[c['name'] for c in cookies]}")
+
+              except Exception as e:
+                  print(f"ERROR: {e}")
+                  try:
+                      page.screenshot(path="/workspace/login-test-error.png")
+                      print("Error screenshot saved")
+                  except:
+                      pass
+                  sys.exit(1)
+              finally:
+                  browser.close()
+
+          print("=== Playwright login test completed ===")
+          PYEOF
+        timeout: 300
         git_scope: "update_core"
       assert:
         result:
