@@ -808,10 +808,26 @@ services:
         echo "=== Resetting Druppie Application Database ==="
         echo "Preserving user tables (users, user_roles, user_tokens)"
         echo ""
+        HOSTNAME="$${HOSTNAME:-}"
+        PROJECT=""
+        if [ -n "$$HOSTNAME" ]; then
+          PROJECT=$$(docker inspect $$HOSTNAME --format '{{index .Config.Labels "com.docker.compose.project"}}' 2>/dev/null || true)
+        fi
+        DB_FILTER="--filter=label=com.docker.compose.service=druppie-db"
+        BACKEND_FILTER="--filter=label=com.docker.compose.service=druppie-backend-dev"
+        if [ -n "$$PROJECT" ]; then
+          DB_FILTER="$$DB_FILTER --filter=label=com.docker.compose.project=$$PROJECT"
+          BACKEND_FILTER="$$BACKEND_FILTER --filter=label=com.docker.compose.project=$$PROJECT"
+        fi
+        DB_CONTAINER=$$(docker ps -q --format '{{.Names}}' $$DB_FILTER | head -1)
+        if [ -z "$$DB_CONTAINER" ]; then
+          echo "ERROR: druppie-db container not found" >&2; exit 1
+        fi
+        echo "Found database container: $$DB_CONTAINER"
         echo "Waiting for database..."
-        until docker exec druppie-new-db pg_isready -U druppie; do sleep 1; done
+        until docker exec $$DB_CONTAINER pg_isready -U druppie; do sleep 1; done
         echo "Dropping application tables..."
-        docker exec druppie-new-db psql -U druppie -d druppie -c "
+        docker exec $$DB_CONTAINER psql -U druppie -d druppie -c "
           DROP TABLE IF EXISTS sandbox_sessions CASCADE;
           DROP TABLE IF EXISTS tool_call_normalizations CASCADE;
           DROP TABLE IF EXISTS llm_retries CASCADE;
@@ -826,7 +842,18 @@ services:
         "
         echo ""
         echo "Restarting backend to recreate tables..."
-        docker restart druppie-new-backend 2>/dev/null || echo "Backend not running"
+        BACKEND_CONTAINER=$$(docker ps --format '{{.Names}}' $$BACKEND_FILTER | head -1)
+        if [ -z "$$BACKEND_CONTAINER" ]; then
+          BACKEND_FILTER="--filter=label=com.docker.compose.service=druppie-backend"
+          [ -n "$$PROJECT" ] && BACKEND_FILTER="$$BACKEND_FILTER --filter=label=com.docker.compose.project=$$PROJECT"
+          BACKEND_CONTAINER=$$(docker ps --format '{{.Names}}' $$BACKEND_FILTER | head -1)
+        fi
+        if [ -n "$$BACKEND_CONTAINER" ]; then
+          echo "Restarting backend: $$BACKEND_CONTAINER"
+          docker restart $$BACKEND_CONTAINER
+        else
+          echo "Backend not running"
+        fi
         echo ""
         echo "=== Database reset complete ==="
         echo "Application tables dropped. User accounts preserved."
