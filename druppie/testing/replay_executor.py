@@ -303,13 +303,16 @@ class ReplayExecutor:
                 "project_id": None,
             }
 
-        # Create initial pending runs: router + planner, matching
-        # process_message().  All subsequent runs are created by
-        # make_plan() during execution — just like production.
+        # Create initial pending runs.
+        # For production-like sessions (router→planner→builder), create router+planner.
+        # For tool tests that use a different first agent, create that agent directly.
         user_msg = fixture.messages[0].content if fixture.messages else ""
-        initial_ids = ["router", "planner"]
+        first_agent = agents_with_tools[0].id if agents_with_tools else None
+        if first_agent and first_agent not in ("router", "planner"):
+            initial_ids = [first_agent]
+        else:
+            initial_ids = ["router", "planner"]
         for i, agent_id in enumerate(initial_ids):
-            # Find the matching fixture agent for planned_prompt (if any)
             fix_match = next((a for a in agents_with_tools if a.id == agent_id), None)
             prompt = (fix_match.planned_prompt if fix_match and fix_match.planned_prompt
                       else f"USER REQUEST:\n{user_msg}")
