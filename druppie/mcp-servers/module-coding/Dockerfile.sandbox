@@ -23,7 +23,7 @@ RUN DOCKER_VERSION=20.10.24 && \
     curl -fsSL "https://download.docker.com/linux/static/stable/x86_64/docker-${DOCKER_VERSION}.tgz" | tar xz --strip-components=1 -C /usr/bin/ && \
     dockerd --version
 
-RUN DOCKER_COMPOSE_VERSION=2.33.1 && \
+RUN DOCKER_COMPOSE_VERSION=5.1.4 && \
     mkdir -p /usr/local/lib/docker/cli-plugins && \
     curl -fsSL "https://github.com/docker/compose/releases/download/v${DOCKER_COMPOSE_VERSION}/docker-compose-linux-x86_64" \
     -o /usr/local/lib/docker/cli-plugins/docker-compose && \
@@ -32,4 +32,8 @@ RUN DOCKER_COMPOSE_VERSION=2.33.1 && \
 
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel uv
 
-RUN mkdir -p /workspace /cache
+RUN groupadd -g 1000 druppie \
+    && useradd -m -u 1000 -g druppie -s /bin/bash druppie \
+    && usermod -aG root druppie \
+    && mkdir -p /workspace /cache \
+    && chown druppie:druppie /workspace /cache
