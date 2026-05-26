@@ -14,6 +14,17 @@ fi
 OFFSET="$(grep '^PORT_OFFSET=' "$ENV_FILE" 2>/dev/null | head -1 | cut -d= -f2- || true)"
 OFFSET="${OFFSET:-0}"
 
+if ! echo "$OFFSET" | grep -qE '^-?[0-9]+$'; then
+  echo "ERROR: PORT_OFFSET='$OFFSET' is not a valid integer" >&2
+  exit 1
+fi
+
+MAX_OFFSET=$((65535 - 9009))
+if [ "$OFFSET" -lt 0 ] || [ "$OFFSET" -gt "$MAX_OFFSET" ]; then
+  echo "ERROR: PORT_OFFSET=$OFFSET out of range (0..$MAX_OFFSET)" >&2
+  exit 1
+fi
+
 if [ "$OFFSET" -eq 0 ]; then
   echo "PORT_OFFSET=0 — nothing to do."
   exit 0
