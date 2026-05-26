@@ -306,6 +306,7 @@ system_prompts:
   - summary_relay
   - done_tool_format
   - workspace_state
+  - bash_timeout
 
 mcps:
   coding:

@@ -1,5 +1,3 @@
-sandbox:
-  networks: []
 id: core_explorer
 name: Core Explorer
 description: Explores Druppie's core codebase and design documents for context
@@ -60,4 +58,4 @@ system_prompt: |
 mcps:
   coding:
     tools: [read_file, grep, find, ls]
-    git: current_project
+    git: update_core

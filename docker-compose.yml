@@ -191,15 +191,27 @@ services:
       INTERNAL_API_KEY: ${INTERNAL_API_KEY:-druppie-internal-secret-key}
       # Sandbox container management
       DRUPPIE_SANDBOX_RUNTIME: ${DRUPPIE_SANDBOX_RUNTIME:-docker}
+      DRUPPIE_SANDBOX_CACHE_VOLUME: ${DRUPPIE_INSTANCE:-druppie}_sandbox_dep_cache
+      DRUPPIE_SANDBOX_USER: ${DRUPPIE_SANDBOX_USER:-druppie}
       DRUPPIE_SANDBOX_IMAGE: ${DRUPPIE_SANDBOX_IMAGE:-druppie-sandbox:latest}
       DRUPPIE_SANDBOX_NETWORK: ${DRUPPIE_INSTANCE:-druppie}-sandbox-net
       DRUPPIE_SANDBOX_INET_NETWORK: ${DRUPPIE_INSTANCE:-druppie}-sandbox-inet
       DRUPPIE_SANDBOX_MODULES_NETWORK: ${DRUPPIE_INSTANCE:-druppie}-sandbox-modules
       DRUPPIE_DOCKER_MEMORY_LIMIT: ${DRUPPIE_SANDBOX_MEMORY_LIMIT:-4g}
       DRUPPIE_DOCKER_CPU_LIMIT: ${DRUPPIE_SANDBOX_CPU_LIMIT:-2}
+      # Core repo config (for update_core git scope)
+      DRUPPIE_CORE_REPO_URL: ${DRUPPIE_CORE_REPO_URL:-}
+      DRUPPIE_CORE_REPO_BRANCH: ${DRUPPIE_CORE_REPO_BRANCH:-colab-dev}
+      # GitHub App (for cloning/authenticating against private GitHub repos)
+      GITHUB_APP_ID: ${GITHUB_APP_ID:-}
+      GITHUB_APP_PRIVATE_KEY_PATH: ${GITHUB_APP_PRIVATE_KEY_PATH:-}
+      GITHUB_APP_INSTALLATION_ID: ${GITHUB_APP_INSTALLATION_ID:-}
+      GITHUB_REPO_OWNER: ${GITHUB_REPO_OWNER:-}
+      GITHUB_REPO_NAME: ${GITHUB_REPO_NAME:-}
       DOCKER_HOST: unix:///var/run/docker.sock
     volumes:
       - workspace:/workspaces
+      - ./secrets:/app/secrets:ro
       - type: bind
         source: ${DOCKER_SOCK:-/var/run/docker.sock}
         target: /var/run/docker.sock

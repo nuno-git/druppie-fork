@@ -1,5 +1,3 @@
-sandbox:
-  networks: [internet]
 id: ultimate_dev_core
 name: Ultimate Developer Core
 description: Orchestrates core platform changes using subagents for exploration and implementation
@@ -58,8 +56,12 @@ system_prompt: |
 
   Or sequentially if the builder depends on the explorer's findings.
 
+system_prompts:
+  - bash_timeout
+
 mcps:
   coding:
+    networks: [internet]
     tools: [read_file, write_file, edit_file, bash, grep, find, ls, run_tests, push_changes, create_pr, get_git_status]
-    git: current_project
+    git: update_core
   docker: [build, run]

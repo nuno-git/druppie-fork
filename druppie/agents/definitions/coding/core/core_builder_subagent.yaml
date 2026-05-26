@@ -1,5 +1,3 @@
-sandbox:
-  networks: [internet]
 id: core_builder_subagent
 name: Core Builder Subagent
 description: Implements changes to Druppie's core codebase using direct MCP tools
@@ -43,8 +41,12 @@ system_prompt: |
      (NOT main!) using create_pr.
   7. Call done() immediately with a summary including the PR URL.
 
+system_prompts:
+  - bash_timeout
+
 mcps:
   coding:
+    networks: [internet]
     tools: [read_file, write_file, edit_file, bash, grep, find, ls, run_tests, push_changes, create_pr, get_git_status]
-    git: current_project
+    git: update_core
   docker: [build, run]

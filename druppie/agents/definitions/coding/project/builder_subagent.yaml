@@ -36,6 +36,9 @@ system_prompt: |
   6. When implementation is complete, call done() immediately with a
      summary of what was implemented.
 
+system_prompts:
+  - bash_timeout
+
 mcps:
   coding:
     networks: [internet]

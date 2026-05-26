@@ -54,6 +54,9 @@ system_prompt: |
 
   Or sequentially if the builder_subagent depends on explorer's findings.
 
+system_prompts:
+  - bash_timeout
+
 mcps:
   coding:
     networks: [internet]
