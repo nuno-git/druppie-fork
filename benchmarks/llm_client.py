@@ -7,6 +7,7 @@ Supports streaming for TTFT measurement.
 import json
 import os
 import ssl
+import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -118,12 +119,12 @@ def fetch_models(endpoint: EndpointConfig, timeout: float = 30.0) -> list[dict]:
             data = resp.json()
             if "data" in data:
                 return data["data"]
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"Warning: failed to fetch models from {base_url}/models: {e}", file=sys.stderr)
 
         # Fallback: Ollama /api/tags
         try:
-            ollama_base = base_url.replace("/v1", "")
+            ollama_base = base_url.removesuffix("/v1")
             url = f"{ollama_base}/api/tags"
             resp = client.get(url, headers=headers)
             resp.raise_for_status()
@@ -139,8 +140,8 @@ def fetch_models(endpoint: EndpointConfig, timeout: float = 30.0) -> list[dict]:
                     "family": m.get("details", {}).get("family", ""),
                 })
             return models
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"Warning: failed to fetch models from Ollama at {ollama_base}/api/tags: {e}", file=sys.stderr)
 
     return []
 
@@ -163,8 +164,9 @@ def _compute_rates(result: BenchmarkResult) -> None:
     latency_sec = result.total_latency_ms / 1000
     if latency_sec > 0 and result.completion_tokens > 0:
         result.tokens_per_second = result.completion_tokens / latency_sec
-    if latency_sec > 0 and result.prompt_tokens > 0:
-        result.prompt_eval_rate = result.prompt_tokens / latency_sec
+    if result.time_to_first_token_ms and result.time_to_first_token_ms > 0 and result.prompt_tokens > 0:
+        ttft_sec = result.time_to_first_token_ms / 1000
+        result.prompt_eval_rate = result.prompt_tokens / ttft_sec
 
 
 def call_llm(

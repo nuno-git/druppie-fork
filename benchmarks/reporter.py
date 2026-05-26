@@ -118,7 +118,6 @@ def print_report(
             print(row)
 
     _print_ttft_section(results, models, model_col_width)
-    _print_summary(results, models, model_col_width)
 
 
 def _print_ttft_section(
@@ -162,58 +161,6 @@ def _print_ttft_section(
                     cells.append(_pad(_fmt_ttft(_mean(ttfts)), model_col_width))
             row += " | ".join(cells)
             print(row)
-
-
-def _print_summary(
-    results: CategoryResults,
-    models: list[ModelConfig],
-    model_col_width: int,
-) -> None:
-    """Print overall summary per model."""
-    print(f"\n{'=' * 80}")
-    print("  SUMMARY")
-    print(f"{'=' * 80}")
-
-    header = (
-        _pad("Model", 22)
-        + " | " + _pad("Avg Latency", 12)
-        + " | " + _pad("Avg Tok/s", 10)
-        + " | " + _pad("Avg TTFT", 10)
-        + " | " + _pad("Errors", 8)
-    )
-    print(header)
-    print("-" * len(header))
-
-    for m in models:
-        all_latencies = []
-        all_tps = []
-        all_ttft = []
-        error_count = 0
-        total_count = 0
-
-        for scenarios in results.values():
-            for model_results in scenarios.values():
-                runs = model_results.get(m.display_name, [])
-                for r in runs:
-                    total_count += 1
-                    if r.error:
-                        error_count += 1
-                    else:
-                        all_latencies.append(r.total_latency_ms)
-                        if r.tokens_per_second > 0:
-                            all_tps.append(r.tokens_per_second)
-                        if r.time_to_first_token_ms:
-                            all_ttft.append(r.time_to_first_token_ms)
-
-        row = (
-            _pad(m.display_name, 22)
-            + " | " + _pad(_fmt_latency(_mean(all_latencies)), 12)
-            + " | " + _pad(_fmt_tps(_mean(all_tps)), 10)
-            + " | " + _pad(_fmt_ttft(_mean(all_ttft)) if all_ttft else "-", 10)
-            + " | " + _pad(f"{error_count}/{total_count}", 8)
-        )
-        print(row)
-    print()
 
 
 def export_json(

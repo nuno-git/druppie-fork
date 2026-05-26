@@ -66,7 +66,7 @@ Meet consistentie en stabiliteit bij herhaalde aanroepen.
 | `prompt_tokens` | Aantal input tokens (van API response) |
 | `completion_tokens` | Aantal output tokens |
 | `tokens_per_second` | Generatiesnelheid (completion_tokens / latency) |
-| `prompt_eval_rate` | Prompt processing snelheid (prompt_tokens / latency) |
+| `prompt_eval_rate` | Prompt processing snelheid (prompt_tokens / TTFT, alleen bij streaming) |
 
 ## Modellen Ontdekken
 

@@ -122,9 +122,9 @@ def load_scenarios(
 def _generate_filler_text(target_tokens: int) -> str:
     """Generate filler text of approximately the target token count.
 
-    Rough estimate: 1 token ≈ 4 characters for Dutch text.
+    Rough estimate: 1 token ≈ 3 characters for Dutch text.
     """
-    target_chars = target_tokens * 4
+    target_chars = target_tokens * 3
     repetitions = (target_chars // len(FILLER_PARAGRAPH)) + 1
     full_text = FILLER_PARAGRAPH * repetitions
     return full_text[:target_chars]
