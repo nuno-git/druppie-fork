@@ -968,12 +968,11 @@ class ToolExecutor:
             # Check if result indicates failure
             is_success = result.get("success", True)
 
-            # Update tool call with result
             self.execution_repo.update_tool_call(
                 tool_call.id,
                 status=ToolCallStatus.COMPLETED if is_success else ToolCallStatus.FAILED,
-                result=result if is_success else None,
-                error=result.get("error") if not is_success else None,
+                result=result,
+                error=result.get("error") or result.get("stderr") if not is_success else None,
             )
             self.db.commit()
 
