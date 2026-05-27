@@ -345,7 +345,7 @@ async def _create_sandbox_container(
             "-e", "UV_CACHE_DIR=/cache/uv",
             "-e", "PIP_CACHE_DIR=/cache/pip",
             SANDBOX_IMAGE,
-            "bash", "-c", "dockerd --iptables=false --bridge=none > /var/log/dockerd.log 2>&1 & sleep infinity",
+            "bash", "-c", "dockerd > /var/log/dockerd.log 2>&1 & sleep infinity",
         ]
         rc, stdout, stderr = await _docker_run(cmd, timeout=60)
         if rc != 0 and "already in use" in stderr:
@@ -366,7 +366,7 @@ async def _create_sandbox_container(
                 "-e", "UV_CACHE_DIR=/cache/uv",
                 "-e", "PIP_CACHE_DIR=/cache/pip",
                 SANDBOX_IMAGE,
-                "bash", "-c", "dockerd --iptables=false --bridge=none > /var/log/dockerd.log 2>&1 & sleep infinity",
+                "bash", "-c", "dockerd > /var/log/dockerd.log 2>&1 & sleep infinity",
             ]
             rc, stdout, stderr = await _docker_run(cmd, timeout=60)
         if rc != 0:
