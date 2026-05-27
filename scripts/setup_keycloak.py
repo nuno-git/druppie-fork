@@ -206,6 +206,10 @@ class KeycloakAdmin:
         return None
 
     def set_realm_frontend_url(self, realm: str, frontend_url: str):
+        if not frontend_url:
+            print("[SKIP] No frontend URL configured, skipping frontendUrl attribute")
+            return True
+
         url = f"{self.base_url}/admin/realms/{realm}"
         response = requests.get(url, headers=self._headers())
         if response.status_code != 200:
