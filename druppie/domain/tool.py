@@ -348,7 +348,8 @@ class ToolDefinition(BaseModel):
                     normalized[key] = value
             else:
                 normalized[key] = value
-        return normalized
+        # Strip null values - LLMs send null instead of omitting optional params
+        return {k: v for k, v in normalized.items() if v is not None}
 
     def validate_arguments(self, arguments: dict | None) -> tuple[bool, str | None, dict | None, dict | None]:
         """Validate arguments against JSON schema.
