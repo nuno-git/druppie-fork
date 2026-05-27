@@ -31,7 +31,7 @@ import structlog
 from druppie.api.deps import get_current_user, get_question_service, get_user_roles
 from druppie.services import QuestionService
 from druppie.domain import QuestionDetail
-from druppie.core.background_tasks import create_session_task, run_session_task, SessionTaskConflict
+from druppie.core.background_tasks import create_tracked_task, run_session_task
 
 logger = structlog.get_logger()
 
@@ -140,8 +140,7 @@ async def answer_question(
 
     # Step 2: Spawn background task to resume workflow
     try:
-        create_session_task(
-            question.session_id,
+        create_tracked_task(
             _resume_workflow_after_answer(
                 session_id=question.session_id,
                 question_id=question_id,
@@ -149,10 +148,10 @@ async def answer_question(
             ),
             name=f"resume-answer-{question_id}",
         )
-    except SessionTaskConflict:
+    except Exception:
         raise HTTPException(
-            status_code=409,
-            detail="A task is already running for this session",
+            status_code=500,
+            detail="Failed to start background task",
         )
 
     logger.info(

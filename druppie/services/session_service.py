@@ -129,3 +129,26 @@ class SessionService:
 
         session.status = SessionStatus.ACTIVE.value
         self.session_repo.commit()  # Lock released here
+
+    def lock_for_continuation(self, session_id: UUID) -> None:
+        session = self.session_repo.get_by_id_for_update(session_id)
+        if not session:
+            raise NotFoundError("session", str(session_id))
+        if session.status != SessionStatus.COMPLETED.value:
+            raise ValueError(f"Cannot continue session with status '{session.status}'")
+        session.status = SessionStatus.ACTIVE.value
+        self.session_repo.commit()
+
+    def lock_for_hitl_resume(self, session_id: UUID) -> None:
+        session = self.session_repo.get_by_id_for_update(session_id)
+        if not session:
+            raise NotFoundError("session", str(session_id))
+        resumable = {
+            SessionStatus.PAUSED_HITL.value,
+            SessionStatus.PAUSED_APPROVAL.value,
+            SessionStatus.PAUSED_SANDBOX.value,
+        }
+        if session.status not in resumable:
+            raise ValueError(f"Cannot resume HITL for session with status '{session.status}'")
+        session.status = SessionStatus.ACTIVE.value
+        self.session_repo.commit()

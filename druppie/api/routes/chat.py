@@ -37,7 +37,7 @@ from druppie.api.deps import (
     get_user_roles,
 )
 from druppie.api.errors import AuthorizationError, NotFoundError
-from druppie.core.background_tasks import SessionTaskConflict, create_session_task, run_session_task
+from druppie.core.background_tasks import create_tracked_task, run_session_task
 from druppie.domain.common import SessionStatus
 from druppie.repositories import SessionRepository
 
@@ -158,7 +158,7 @@ async def chat(
     try:
         # Step 1: Get or create session (fast, synchronous)
         if session_id_param:
-            existing = session_repo.get_by_id(session_id_param)
+            existing = session_repo.get_by_id_for_update(session_id_param)
             if not existing:
                 return ChatResponse(
                     success=False,
@@ -166,13 +166,11 @@ async def chat(
                     status="error",
                     message=f"Session {session_id_param} not found",
                 )
-            # Only owner or admin can continue a session
             user_roles = get_user_roles(user)
             is_owner = existing.user_id == user_id
             is_admin = "admin" in user_roles
             if not is_owner and not is_admin:
                 raise AuthorizationError("Cannot continue this session")
-            # Only allow continuing a completed session
             if existing.status != SessionStatus.COMPLETED.value:
                 return ChatResponse(
                     success=False,
@@ -180,6 +178,7 @@ async def chat(
                     status="error",
                     message=f"Cannot continue session: status is '{existing.status}', must be 'completed'",
                 )
+            session_repo.commit()
             current_session_id = session_id_param
         else:
             session = session_repo.create(
@@ -198,8 +197,7 @@ async def chat(
 
         # Step 2: Spawn background task (does NOT block)
         try:
-            create_session_task(
-                current_session_id,
+            create_tracked_task(
                 _run_orchestrator_background(
                     message=request.message,
                     user_id=user_id,
@@ -208,10 +206,10 @@ async def chat(
                 ),
                 name=f"orchestrator-{current_session_id}",
             )
-        except SessionTaskConflict:
+        except Exception:
             raise HTTPException(
-                status_code=409,
-                detail="A task is already running for this session",
+                status_code=500,
+                detail="Failed to start background task",
             )
 
         # Step 3: Return immediately

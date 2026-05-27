@@ -28,7 +28,7 @@ import structlog
 from druppie.api.deps import get_current_user, get_user_roles, get_approval_service
 from druppie.services import ApprovalService
 from druppie.domain import ApprovalDetail, ApprovalHistoryList, PendingApprovalList
-from druppie.core.background_tasks import create_session_task, run_session_task, SessionTaskConflict
+from druppie.core.background_tasks import create_tracked_task, run_session_task
 
 logger = structlog.get_logger()
 
@@ -164,18 +164,17 @@ async def approve(
 
     # Step 2: Spawn background task to resume workflow
     try:
-        create_session_task(
-            approval.session_id,
+        create_tracked_task(
             _resume_workflow_after_approval(
                 session_id=approval.session_id,
                 approval_id=approval_id,
             ),
             name=f"resume-approve-{approval_id}",
         )
-    except SessionTaskConflict:
+    except Exception:
         raise HTTPException(
-            status_code=409,
-            detail="A task is already running for this session",
+            status_code=500,
+            detail="Failed to start background task",
         )
 
     logger.info(
@@ -237,18 +236,17 @@ async def reject(
 
     # Step 2: Spawn background task to resume workflow
     try:
-        create_session_task(
-            approval.session_id,
+        create_tracked_task(
             _resume_workflow_after_approval(
                 session_id=approval.session_id,
                 approval_id=approval_id,
             ),
             name=f"resume-reject-{approval_id}",
         )
-    except SessionTaskConflict:
+    except Exception:
         raise HTTPException(
-            status_code=409,
-            detail="A task is already running for this session",
+            status_code=500,
+            detail="Failed to start background task",
         )
 
     logger.info(
