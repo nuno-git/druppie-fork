@@ -33,24 +33,32 @@ All containers start on `sandbox-net`. The agent's `networks` list adds tiers on
 
 ## Per-Agent Network Profiles
 
+**Key design principle: defer module data access as late as possible.** All coding, testing, dependency installation, and internet research happens FIRST with internet access. Module data enters only at the integration step — after all code is written and tested with mocks. This minimizes re-planning (costly due to clean room process) because the developer has internet throughout the coding phase.
+
 | Agent | Networks | Rationale |
 |-------|----------|-----------|
-| installer | `[internet]` | Install dependencies before any data access |
-| developer | `[internet]` | May need pip/docs, but NO module data access |
-| builder_planner | `[internet]` | Plans code, may need docs |
-| test_builder | `[internet]` | Only creates tests, no need for modules. Might need to install packages. |
-| test_executor | `[modules]` | Runs tests against modules, NO internet |
-| deployer | `[]` (isolated) | Just pushes code, no network needed |
+| installer | `[internet]` | Install all dependencies before any work |
+| data_fetcher | `[internet]` | Fetch public data (CBS, APIs), browse docs |
+| developer | `[internet]` | Write code with mocks for module APIs, has internet for docs/packages |
+| test_builder | `[internet]` | Write tests using mocks, can verify with real libs |
+| module_integrator | `[modules]` | Swap mocks for real module SDK calls, NO internet |
+| module_tester | `[modules]` | Run integration tests against real module servers |
+| deployer | `[]` (isolated) | Push code via proxy, no network needed |
 | ultimate_dev_core | `[internet]` | Core platform work, no module data |
 | business_analyst | `[]` (isolated) | Reads/writes markdown only |
 
 ### Pipeline Flow
 
 ```
-installer (internet) → developer (internet) → test_builder (modules) → test_executor (modules) → deployer (isolated)
+installer (internet) → data_fetcher (internet) → developer (internet) → test_builder (internet) → module_integrator (modules) → module_tester (modules) → deployer (isolated)
 ```
 
-The rule: **internet agents always come before module agents. After the first module agent, no more internet.**
+**Why this ordering minimizes re-planning:**
+- Developer has internet for the ENTIRE coding phase — can pip install, browse docs, fetch APIs at any time
+- All dependencies are resolved while internet is available
+- Code is tested with mocks — if tests pass with mocks, they'll likely pass with real modules
+- Module integration is just "swap mock imports for real imports" — rarely needs new packages
+- Only ONE network transition (internet → modules) instead of back-and-forth
 
 ## Dynamic Network Enforcement
 
@@ -209,12 +217,15 @@ The key insight: **internet agents and module agents never share a context windo
 │    population.json                                         │
 │    employment.csv                                          │
 │                                                                 │
-│  src/               ← written by developer (modules)           │
+│  src/               ← written by developer (internet, mocks)   │
+│    mocks/                                                     │
+│      demographics_mock.py  ← mock module clients               │
+│      geo_mock.py                                            │
 │    dashboard.py                                            │
-│    data_combine.py   ← reads BOTH local CBS files AND module  │
-│    models.py            SDK output, combines them              │
+│    data_combine.py   ← reads local CBS files + mock module    │
+│    models.py            output, combines them                   │
 │                                                                 │
-│  tests/             ← written by test_builder (modules)        │
+│  tests/             ← written by test_builder (internet, mocks)│
 │    test_dashboard.py                                       │
 │                                                                 │
 └─────────────────────────────────────────────────────────────────┘
@@ -238,7 +249,7 @@ The key insight: **internet agents and module agents never share a context windo
 ┌──────────────────────────────────────────────────────────────────────┐
 │ Phase 2: DATA FETCH (internet)                                      │
 │                                                                      │
-│  data_fetcher (or developer in internet mode) ─────────────────────  │
+│  data_fetcher ────────────────────────────────────────────────────── │
 │    • Fetch CBS data: curl/requests to opendata.cbs.nl               │
 │    • Save raw data to /workspace/data/cbs/*.json                     │
 │    • Write data fetching scripts (src/fetch_cbs.py)                  │
@@ -257,26 +268,75 @@ The key insight: **internet agents and module agents never share a context windo
 │  └──────────────────────────────────────────────────────────────┘   │
 └──────────────────────────────────────────────────────────────────────┘
                                     │
+                                    ▼
+┌──────────────────────────────────────────────────────────────────────┐
+│ Phase 3: DEVELOP (internet — uses mocks, NOT modules)               │
+│                                                                      │
+│  developer ──────────────────────────────────────────────────────── │
+│    • Read CBS data from /workspace/data/cbs/ (local files)          │
+│    • Write mock module clients (src/mocks/demographics_mock.py,     │
+│      src/mocks/geo_mock.py) based on API specs from the plan        │
+│    • Write src/data_combine.py: merges CBS data + mock module data  │
+│    • Write src/dashboard.py: renders Plotly dashboard                │
+│    • Networks: [internet]                                            │
+│    • Context: CBS data (from local files), plan text with module    │
+│              API specs, mock response definitions                    │
+│    • Internet available — can pip install, browse docs, curl APIs    │
+│    • Workspace: contains CBS data + dashboard code + mock clients    │
+│                                                                      │
+│  ┌─── Security Guarantee ───────────────────────────────────────┐   │
+│  │ Agent has internet but NO module data.                         │   │
+│  │ Developer uses mocks — proprietary module APIs never accessed. │   │
+│  │ Even if CBS data contains prompt injection:                    │   │
+│  │   → Agent has no proprietary data to steal (mocks only)        │   │
+│  │   → Worst case: malicious code written to src/ files           │   │
+│  │     (caught in code review / testing phase)                    │   │
+│  │ Re-planning is almost never needed — developer has internet    │   │
+│  │ for the entire coding phase (pip install, browse docs freely)  │   │
+│  └──────────────────────────────────────────────────────────────┘   │
+└──────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+┌──────────────────────────────────────────────────────────────────────┐
+│ Phase 4: TEST (internet — uses mocks)                               │
+│                                                                      │
+│  test_builder ───────────────────────────────────────────────────── │
+│    • Write unit tests using mock module clients                      │
+│    • Write integration tests (CBS data + mock modules)               │
+│    • Test error handling, edge cases                                 │
+│    • Verify dashboard renders correctly with mock data               │
+│    • Networks: [internet]                                            │
+│    • Context: test requirements, mock API specs                      │
+│    • Internet still available — can install test deps if needed       │
+│    • NO module data — tests validate logic with mocks only           │
+│                                                                      │
+│  ┌─── Security Guarantee ───────────────────────────────────────┐   │
+│  │ Same as Phase 3: internet available, but NO proprietary data. │   │
+│  │ Tests exercise logic without touching real module APIs.        │   │
+│  └──────────────────────────────────────────────────────────────┘   │
+└──────────────────────────────────────────────────────────────────────┘
+                                    │
                           ┌─────────┴──────────┐
                           │ NETWORK TRANSITION │
                           │ disconnect: inet   │
                           │ connect: modules   │
+                          │ (ONE-WAY, no back) │
                           └─────────┬──────────┘
                                     │
                                     ▼
 ┌──────────────────────────────────────────────────────────────────────┐
-│ Phase 3: DEVELOP (modules — NO internet)                            │
+│ Phase 5: MODULE INTEGRATION (modules — NO internet)                 │
 │                                                                      │
-│  developer ──────────────────────────────────────────────────────── │
-│    • Read CBS data from /workspace/data/cbs/ (local files)          │
-│    • Read module APIs via SDK (demographics, geo modules)            │
-│    • Write src/data_combine.py: merges CBS + module data            │
-│    • Write src/dashboard.py: renders Plotly dashboard                │
+│  module_integrator ──────────────────────────────────────────────── │
+│    • Replace mock imports with real SDK calls                        │
+│    • from src.mocks.demographics_mock → from druppie_sdk            │
+│    • Remove mock files                                               │
+│    • Adjust code if real SDK returns different field names           │
 │    • Networks: [modules]                                             │
-│    • Context: CBS data (from local files, NOT from internet),       │
-│              module API specs (from module servers)                  │
+│    • Context: existing code (from workspace), module API specs      │
+│              (from module servers), CBS data (from local files)      │
 │    • NO internet — cannot reach external servers                     │
-│    • Workspace: contains CBS data + module integration code          │
+│    • Workspace: contains CBS data + real module integration code     │
 │                                                                      │
 │  ┌─── Security Guarantee ───────────────────────────────────────┐   │
 │  │ Agent has module access but ZERO internet.                    │   │
@@ -287,31 +347,28 @@ The key insight: **internet agents and module agents never share a context windo
 │  │   → DNS queries don't leave the sandbox network               │   │
 │  │ The trifecta is broken: data access ✓, untrusted content ✓,  │   │
 │  │ BUT no outbound network ✗                                     │   │
+│  │ Re-planning is rare here — developer already installed all    │   │
+│  │ packages during Phase 3. Integration is just "swap imports."  │   │
 │  └──────────────────────────────────────────────────────────────┘   │
 └──────────────────────────────────────────────────────────────────────┘
                                     │
                                     ▼
 ┌──────────────────────────────────────────────────────────────────────┐
-│ Phase 4: TEST (modules — NO internet)                               │
+│ Phase 6: MODULE TESTING (modules)                                   │
 │                                                                      │
-│  test_builder ───────────────────────────────────────────────────── │
-│    • Write integration tests against real module servers             │
-│    • Test data combination logic with real CBS fixtures              │
-│    • Verify dashboard renders correctly                              │
+│  module_tester ──────────────────────────────────────────────────── │
+│    • Run existing tests against real module servers                  │
+│    • SDK calls hit real APIs via sandbox-modules network             │
+│    • Fix any issues (field name mismatches, edge cases)              │
+│    • All tests pass with real module data                            │
 │    • Networks: [modules]                                             │
-│    • Context: test requirements, module API specs                    │
-│    • NO internet                                                     │
-│                                                                      │
-│  test_executor ──────────────────────────────────────────────────── │
-│    • Run pytest / unit tests                                         │
-│    • Verify module SDK calls return expected data                    │
-│    • Networks: [modules]                                             │
+│    • Context: test results, module API responses                    │
 │    • NO internet                                                     │
 └──────────────────────────────────────────────────────────────────────┘
                                     │
                                     ▼
 ┌──────────────────────────────────────────────────────────────────────┐
-│ Phase 5: DEPLOY (isolated)                                          │
+│ Phase 7: DEPLOY (isolated)                                          │
 │                                                                      │
 │  deployer ───────────────────────────────────────────────────────── │
 │    • Push code to Git (via module-coding proxy, not direct git)      │
@@ -324,12 +381,12 @@ The key insight: **internet agents and module agents never share a context windo
 
 ### How the Data Combination Works Without the Trifecta
 
-The critical question: if the developer can't access the internet, how does it get CBS data?
+The critical question: how do internet-sourced CBS data and proprietary module data get combined without any agent ever having both simultaneously?
 
-**Answer: the CBS data is already in the workspace from Phase 2.** The developer reads it as local files:
+**Answer: the developer writes code using MOCKS for module APIs. Real module data enters only at the integration step (Phase 5), when internet is already disconnected.**
 
 ```python
-# src/data_combine.py — written by developer (modules network, no internet)
+# src/data_combine.py — written by developer (internet network, using mocks)
 
 import json
 from pathlib import Path
@@ -337,7 +394,25 @@ from pathlib import Path
 # CBS data: read from local files saved by data_fetcher in Phase 2
 cbs_population = json.loads(Path("data/cbs/population.json").read_text())
 
-# Module data: fetched via SDK from module servers on sandbox-modules network
+# Module data: uses MOCK during development (Phase 3)
+# Real SDK swap happens in Phase 5 by module_integrator
+from src.mocks.demographics_mock import MockDemographicsModule
+from src.mocks.geo_mock import MockGeoModule
+
+demo = MockDemographicsModule()
+geo = MockGeoModule()
+
+demographics = demo.get_statistics(region="amsterdam")
+geo_data = geo.get_boundaries(level="municipality")
+
+# Combine: public CBS data + mock module data
+combined = merge_datasets(cbs_population, demographics, geo_data)
+```
+
+Then in Phase 5, the module_integrator swaps mocks for real SDK calls:
+
+```python
+# After integration (Phase 5, modules network, no internet):
 from druppie_sdk import DemographicsModule, GeoModule
 
 demo = DemographicsModule()
@@ -346,48 +421,51 @@ geo = GeoModule()
 demographics = demo.get_statistics(region="amsterdam")
 geo_data = geo.get_boundaries(level="municipality")
 
-# Combine: public CBS data + proprietary module data
 combined = merge_datasets(cbs_population, demographics, geo_data)
 ```
 
-The agent that writes this code:
-- Reads CBS data from **local files** (saved by a previous internet agent)
-- Reads module data from **module servers** (via sandbox-modules network)
-- Has **NO internet** — even if CBS data contained a prompt injection, there's no channel to exfiltrate through
+The data flow:
+- **Phase 2** (internet): CBS data fetched, saved as local files
+- **Phase 3** (internet): Developer reads CBS files, writes code using MOCK module clients
+- **Phase 4** (internet): Tests exercise logic with mock data
+- **Phase 5** (modules, NO internet): Real module SDK calls replace mocks. Agent now has BOTH CBS data (from files) AND module data (from APIs) in context — but NO internet to exfiltrate through
 
 ### Security Invariants Maintained
 
 | Invariant | How |
 |-----------|-----|
-| CBS data never reaches internet-connected agent alongside module data | CBS is fetched in Phase 2 (no module access). Used in Phase 3 (no internet). |
-| Module data never reaches an internet-connected agent | Module access only in Phase 3-4 (no internet). Phase 5 has neither. |
-| Workspace files from module phase are never read by internet agents | Pipeline ordering enforced by make_plan: internet phases come first. |
-| Prompt injection in CBS data cannot exfiltrate module data | When CBS data enters agent context (Phase 3), internet is disconnected. |
-| Developer has enough context to write correct code | CBS data from files + module APIs from servers + plan text from planner. |
+| CBS data never reaches internet-connected agent alongside module data | CBS is fetched in Phase 2 (no module access). Used in Phase 3-4 with mocks (no real module data). Module data enters only in Phase 5 (no internet). |
+| Module data never reaches an internet-connected agent | Module access only in Phase 5-6 (no internet). Phase 7 has neither. Developer (Phase 3-4) uses mocks only. |
+| Workspace files from module phase are never read by internet agents | Pipeline ordering enforced by make_plan: all internet phases (1-4) come first. Module phases (5-6) come after the irreversible network transition. |
+| Prompt injection in CBS data cannot exfiltrate module data | When module data enters agent context (Phase 5), internet is disconnected. Developer (Phase 3) has CBS data but uses mocks — no proprietary data to steal. |
+| Developer has enough context to write correct code | CBS data from files + mock module clients based on API specs in plan + internet for docs/packages. Real module APIs swapped in at integration. |
+| Re-planning is minimized | Developer has internet for entire coding phase (Phase 3-4). Need a package? pip install. Need docs? Browse freely. Only the module_integrator (Phase 5) has no internet, and it rarely needs new packages. |
 
 ### What If the Developer Discovers It Needs Another Dependency?
 
-When the developer (in modules-only phase) discovers it needs an additional package:
+With the deferred-modules ordering, the developer has **internet for the entire coding phase**. Need `scipy`? Just `pip install scipy` — no re-plan, no approval gate, no clean room process. The developer can browse docs, install packages, and fetch APIs freely during Phases 3-4.
 
-1. **Developer signals via `done()`** — "Agent developer: Need scipy for statistical analysis. Requesting re-plan with additional dependency."
-2. **Orchestrator creates an approval gate** — the developer/architect role (technical expert, NOT the end user) receives the request with the current git diff showing all code written so far.
+Re-planning is only needed if the **module_integrator** (Phase 5, modules network, NO internet) discovers that the real SDK requires an additional package that wasn't installed during the internet phase. This is rare because:
+- The developer already installed likely-needed packages during Phase 3
+- Module integration is typically just "swap mock imports for real imports" — rarely needs new packages
+- If the plan includes module SDK specs, the installer can pre-install SDK dependencies
+
+If re-planning IS needed from the module phase:
+
+1. **Module integrator signals via `done()`** — "Agent module_integrator: Need aiohttp for real SDK. Requesting re-plan with additional dependency."
+2. **Orchestrator creates an approval gate** — the developer/architect role reviews the request with the current git diff.
 3. **Dev/architect reviews the git diff** — checks that no prompt injection payload has been injected into the codebase. This is the security checkpoint before re-enabling internet.
-4. **If approved: internet re-enablement via git-based re-creation**
+4. **If approved: clean room re-enablement**
    - Current container is destroyed
-   - New container is created with `[internet]` network
-   - Git clone restores the workspace (all previous code + committed state)
+   - Workspace volume DESTROYED (contains module data — must not reach internet)
+   - Fresh workspace volume created (empty)
+   - Transfer volume created
+   - New container created with `[internet]`, EMPTY workspace, transfer volume mounted
    - `pip install` runs for the additional dependency
-   - Package caches persist via `/cache` Docker volume across recreations
-5. **After install: back to modules-only phase**
-   - Container destroyed again
-   - New container created with `[modules]` network
-   - Git clone restores workspace (now with all deps installed in the venv... wait)
-
-**The pip install problem:** pip installs go into the container's writable layer, which is destroyed with the container. A fresh `git clone` only restores source code, not installed packages.
-
-**Solution: commit the virtual environment?** No — that's huge and bad practice.
-
-**Better solution: persistent workspace volume per session+scope.** See "Sandbox Persistence" below.
+   - Internet container destroyed
+   - Fresh workspace volume created, git clone restores code
+   - Transfer volume contents (installed packages) extracted into workspace
+   - New container with `[modules]` network, full workspace restored
 
 ### What About Runtime Data Fetching?
 
@@ -419,7 +497,7 @@ Git preserves source code across container recreations, but NOT:
 - Running processes (dev servers, databases)
 - Environment state (shell history, temp files, build artifacts)
 
-If the installer installs `pandas` in Phase 1, then the container is recreated for Phase 2 (modules), the developer's code `import pandas` will fail because pandas isn't installed in the new container.
+If the installer installs `pandas` in Phase 1, then the network transitions to modules for Phase 5, the module_integrator's code `import pandas` still works because the workspace volume persists across network transitions.
 
 ### Solution: Per-Session Workspace Volume
 
@@ -461,44 +539,61 @@ cmd = [
 │                                                              │
 │  1. Volume created: druppie-ws-{session}-{scope}             │
 │                                                              │
-│  2. Phase 1 (internet):                                      │
+│  2. Phases 1-4 (ALL internet):                               │
 │     Container A created                                      │
 │     Networks: sandbox-net + sandbox-inet                     │
 │     Mounts: workspace volume + cache volume                  │
-│     Installer runs: pip install pandas plotly dash            │
-│     Git clone: check out project branch                      │
-│     Container A destroyed (or kept if next phase matches)    │
 │                                                              │
-│  3. Phase 2 (modules):                                       │
-│     Container B created (or A reused if networks match)      │
+│     Phase 1 - installer:                                     │
+│       pip install pandas plotly dash requests httpx scipy    │
+│       Git clone: check out project branch                    │
+│                                                              │
+│     Phase 2 - data_fetcher:                                  │
+│       Fetch CBS data, save to /workspace/data/cbs/           │
+│       Browse docs, write research notes                      │
+│                                                              │
+│     Phase 3 - developer:                                     │
+│       Write dashboard code using mock module clients          │
+│       Read CBS data from local files                         │
+│       Need a package? Just pip install (internet available)  │
+│                                                              │
+│     Phase 4 - test_builder:                                  │
+│       Write and run tests using mocks                        │
+│       Need test deps? pip install (still internet)           │
+│                                                              │
+│     Container A reused across ALL four phases (same network) │
+│                                                              │
+│  3. NETWORK TRANSITION (ONE-WAY, irreversible):              │
+│     _sync_networks():                                        │
+│       docker network disconnect sandbox-inet container-A     │
+│       docker network connect sandbox-modules container-A     │
+│                                                              │
+│  4. Phases 5-6 (modules — NO internet):                      │
+│     Container A (network switched to modules)                │
 │     Networks: sandbox-net + sandbox-modules                  │
 │     Mounts: SAME workspace volume + cache volume             │
 │     pip packages still installed (on volume)                 │
 │     Git state intact (on volume)                             │
-│     Developer writes code using module APIs                  │
-│     Developer needs extra dep → signals done()               │
 │                                                              │
-│  4. Dev/architect approval gate:                              │
-│     Reviews git diff for prompt injection                    │
-│     Approves re-plan with scipy                              │
+│     Phase 5 - module_integrator:                             │
+│       Replace mock imports with real SDK calls               │
+│       Adjust code for real API responses                     │
 │                                                              │
-│  5. Phase 3 (internet, re-plan):                             │
-│     Container C created                                      │
-│     Networks: sandbox-net + sandbox-inet                     │
-│     Mounts: SAME workspace volume + cache volume             │
-│     All previous code + installed packages intact            │
-│     pip install scipy                                        │
-│     Container C destroyed                                    │
+│     Phase 6 - module_tester:                                 │
+│       Run tests against real module servers                  │
+│       Fix field name mismatches                              │
 │                                                              │
-│  6. Phase 4 (modules, continue):                             │
-│     Container D created                                      │
-│     Networks: sandbox-net + sandbox-modules                  │
-│     Mounts: SAME workspace volume + cache volume             │
-│     scipy now available                                      │
-│     Developer continues with scipy                           │
+│  5. Phase 7 (isolated):                                      │
+│     Container A (network switched to isolated)               │
+│     _sync_networks():                                        │
+│       docker network disconnect sandbox-modules container-A  │
+│     Networks: sandbox-net only                               │
 │                                                              │
-│  7. Session ends:                                            │
-│     Final container destroyed                                │
+│     Phase 7 - deployer:                                      │
+│       Push to git, create PR                                 │
+│                                                              │
+│  6. Session ends:                                            │
+│     Container A destroyed                                    │
 │     Workspace volume destroyed                               │
 │     Cache volume kept (shared across sessions)               │
 └──────────────────────────────────────────────────────────────┘
@@ -584,7 +679,7 @@ Internet agent fetches data first → saves to workspace → modules agent reads
 
 **Shortcoming:** The workspace files written by the internet agent (CBS data, documentation, examples) are read by the modules agent. If any of these files contain prompt injection payloads (from a malicious website, a poisoned README, crafted CSV headers), the modules agent gets injected. With no internet, it can't exfiltrate — but it could write malicious code, corrupt data, or sabotage the build. The trifecta is partially broken (no network channel) but the injection still affects agent behavior.
 
-**Re-planning problem:** When the modules agent needs a new dependency, re-enabling internet requires careful handling. Even with workspace sanitization (destroy volume, clone from git), git commits can contain sensitive data. The internet container would see the full git history including module-derived code.
+**Re-planning problem:** When the modules agent needs a new dependency, re-enabling internet requires careful handling. Even with workspace sanitization (destroy volume, clone from git), git commits could contain sensitive data. The internet container would see the full git history including module-derived code.
 
 #### S2: Structured Data Transfer
 
@@ -677,6 +772,348 @@ Dev/architect reviews all files before they cross from internet container to mod
 
 ## Open Questions
 
-1. **Developer needs modules?** Currently developer has `[internet]`. If the developer needs to read module SDKs to write code, it would need `[modules]` too — which violates the trifecta rule. Alternative: planner reads module APIs and includes them in the plan text. Developer works from plan text, not module access.
+1. ~~**Developer needs modules?**~~ ANSWERED: Developer uses mocks for module APIs. Real module access deferred to `module_integrator` agent. Developer has `[internet]` for the entire coding phase. See "Per-Agent Network Profiles" and "Complete End-to-End Flow."
 2. **DNS filtering:** Even with internet access restricted, DNS exfiltration is possible. Should we add DNS allowlisting in a future iteration?
-3. **Network switch latency:** `_sync_networks` adds ~1-2s per call. Acceptable?
+3. **Network switch latency:** `_sync_networks` adds ~1-2s per call. With deferred-modules ordering there's only ONE transition (internet → modules), so this is minimal impact. Acceptable?
+
+---
+
+## Complete End-to-End Flow: How Everything Fits Together
+
+This section shows how all the recommended solutions combine into one coherent system. We use the same scenario throughout: **building a dashboard that combines CBS public data with proprietary module data**.
+
+### The Key Insight: Defer Module Access
+
+Module data access is deferred to the **latest possible point** in the pipeline. The developer writes and tests all code using **mocks** for module APIs. This means:
+
+- The developer has internet access for the **entire coding phase** (pip install, browse docs, fetch CBS data, test with real libraries)
+- Re-planning is almost never needed because all dependencies are installed while internet is available
+- Module data enters the picture only at the integration step — just "swap mock imports for real imports"
+
+### The Cast of Characters
+
+| Role | Who | Network Access | Has Module Data? | Has Internet? |
+|------|-----|---------------|------------------|---------------|
+| **End User** | Non-technical business person | N/A | No | No |
+| **Dev/Architect** | Technical expert (approves things) | N/A | Can review | Can review |
+| **Installer Agent** | Automated | `[internet]` | No | Yes |
+| **Data Fetcher Agent** | Automated | `[internet]` | No | Yes |
+| **Developer Agent** | Automated | `[internet]` | No (uses mocks) | Yes |
+| **Test Builder Agent** | Automated | `[internet]` | No (uses mocks) | Yes |
+| **Module Integrator Agent** | Automated | `[modules]` | Yes | No |
+| **Module Tester Agent** | Automated | `[modules]` | Yes | No |
+| **Deployer Agent** | Automated | `[]` isolated | No | No |
+
+### The Infrastructure
+
+```
+Docker Networks:
+  sandbox-net        — base network, no internet, no modules (all containers get this)
+  sandbox-inet       — outbound internet (NAT)
+  sandbox-modules    — can reach module MCP servers only
+
+Docker Volumes per session:
+  druppie-ws-{session}-{scope}       — persistent workspace (code, data files)
+  druppie-transfer-{session}-{scope} — clean room transfer volume (only if re-plan needed)
+  sandbox_dep_cache                  — shared package cache (pip, npm) — persists across sessions
+```
+
+### Step-by-Step Flow
+
+```
+═══════════════════════════════════════════════════════════════════
+STEP 1: PLANNING
+═══════════════════════════════════════════════════════════════════
+
+  Router agent classifies the user's request.
+  Planner agent creates a plan:
+  
+  Plan:
+    1. installer:       "Install pandas, plotly, dash, requests, httpx, 
+                         scipy (for statistical analysis)"
+    2. data_fetcher:    "Fetch CBS population data from opendata.cbs.nl,
+                         save to /workspace/data/cbs/"
+    3. developer:       "Build dashboard combining CBS data with module 
+                         data. Use mocks for DemographicsModule and 
+                         GeoModule. Write mock responses based on the 
+                         module API specs in the plan."
+    4. test_builder:    "Write tests using the same mocks. Test data 
+                         processing, chart rendering, API error handling."
+    5. module_integrator:"Replace mock imports with real Druppie SDK 
+                         calls. Wire up real DemographicsModule and 
+                         GeoModule."
+    6. module_tester:   "Run integration tests against real module servers"
+    7. deployer:        "Push to git, create PR"
+  
+  make_plan validates:
+    ✅ Steps 1-4 have [internet], come first
+    ✅ Steps 5-6 have [modules], come after internet steps
+    ✅ Step 7 has [] (isolated), comes last
+    ✅ No internet step follows a modules step — PASS
+
+═══════════════════════════════════════════════════════════════════
+STEP 2: INSTALL DEPENDENCIES (INTERNET)
+═══════════════════════════════════════════════════════════════════
+
+  Agent: installer
+  Container: A
+  Networks: sandbox-net + sandbox-inet
+  Workspace volume: druppie-ws-{session}-{scope} (empty)
+  
+  What happens:
+    1. Container created, git clone into /workspace
+    2. pip install pandas plotly dash requests httpx scipy
+       (generous install — includes likely-needed packages to avoid re-plan)
+    3. Agent calls done()
+
+  Security:
+    Container has internet ✅, NO module access ✅
+    Workspace is nearly empty — nothing to steal ✅
+
+═══════════════════════════════════════════════════════════════════
+STEP 3: FETCH PUBLIC DATA (INTERNET)
+═══════════════════════════════════════════════════════════════════
+
+  Agent: data_fetcher
+  Container: A (reused — same [internet] network)
+  Workspace volume: has installed packages
+  
+  What happens:
+    1. Fetch CBS data via curl/requests
+    2. Save to /workspace/data/cbs/population.json, employment.json
+    3. Browse plotly.com, dash docs for API reference
+    4. Save research notes to /workspace/research/
+    5. Agent calls done()
+
+  Security:
+    Internet access ✅, NO module access ✅
+    CBS data saved to workspace (may contain injection, but container 
+    is about to be destroyed anyway — module agents will read these files 
+    later WITHOUT internet)
+
+═══════════════════════════════════════════════════════════════════
+STEP 4: DEVELOP DASHBOARD WITH MOCKS (INTERNET)
+═══════════════════════════════════════════════════════════════════
+
+  Agent: developer
+  Container: A (reused — still on [internet])
+  Workspace volume: has packages + CBS data + research notes
+  
+  What happens:
+    1. Read CBS data from /workspace/data/cbs/
+    2. Read research notes from /workspace/research/
+    3. Write mock module clients:
+    
+       # src/mocks/demographics_mock.py
+       class MockDemographicsModule:
+           def get_statistics(self, region):
+               return {"region": region, "population": 900000, 
+                       "age_groups": {"0-18": 0.2, "18-65": 0.6, "65+": 0.2}}
+       
+       # src/mocks/geo_mock.py
+       class MockGeoModule:
+           def get_boundaries(self, level):
+               return {"type": "FeatureCollection", "features": [...]}
+    
+    4. Write dashboard code using mocks:
+       # src/dashboard.py
+       from src.mocks.demographics_mock import MockDemographicsModule
+       from src.mocks.geo_mock import MockGeoModule
+       import plotly.express as px
+       import pandas as pd
+       
+       # Load CBS data
+       cbs = pd.read_json("data/cbs/population.json")
+       
+       # Use mock module data
+       demo = MockDemographicsModule()
+       geo = GeoMockModule()
+       ...
+    
+    5. Discover need for another package? Just pip install it — 
+       internet is available! No re-plan needed.
+    6. Need to look up Plotly docs? Just curl them — internet available!
+    7. Agent calls done():
+       "Agent developer: Dashboard implemented with mock module clients.
+        CBS data loaded, charts render correctly. Used mocks for 
+        DemographicsModule and GeoModule. Ready for integration."
+
+  Security:
+    Internet access ✅ (developer can pip install, browse freely)
+    NO module data in context ✅ (using mocks, not real modules)
+    CBS data in workspace — but developer doesn't have module data, 
+    so even if CBS data has injection, there's nothing proprietary to steal
+
+  WHY THIS IS THE KEY INSIGHT:
+    The developer has internet for the ENTIRE coding phase.
+    Need scipy? pip install scipy. No re-plan, no approval gate.
+    Need to check Stack Overflow? Browse freely.
+    The only thing the developer can't do is access real module APIs —
+    but mocks work fine for writing the code structure.
+
+═══════════════════════════════════════════════════════════════════
+STEP 5: TEST WITH MOCKS (INTERNET)
+═══════════════════════════════════════════════════════════════════
+
+  Agent: test_builder
+  Container: A (reused — still on [internet])
+  Workspace volume: has everything from previous steps
+  
+  What happens:
+    1. Write unit tests using mocks
+    2. Write integration tests (CBS data + mock modules)
+    3. Test error handling, edge cases
+    4. Run pytest — all tests pass with mocks
+    5. Agent calls done()
+
+  Security:
+    Still on internet ✅, still NO module data ✅
+    Tests validate the logic without touching proprietary APIs
+
+═══════════════════════════════════════════════════════════════════
+NETWORK TRANSITION: INTERNET → MODULES (ONE-WAY, NO GOING BACK)
+═══════════════════════════════════════════════════════════════════
+
+  Container A still exists. All internet work is done.
+  This is the ONE AND ONLY network transition.
+  
+  _sync_networks() is called:
+    docker network disconnect sandbox-inet container-A
+    docker network connect sandbox-modules container-A
+  
+  After this: container has NO internet. Module access enabled.
+  This transition is IRREVERSIBLE — no more internet for this session.
+
+═══════════════════════════════════════════════════════════════════
+STEP 6: INTEGRATE REAL MODULES (MODULES — NO INTERNET)
+═══════════════════════════════════════════════════════════════════
+
+  Agent: module_integrator
+  Container: A (network switched to modules)
+  Networks: sandbox-net + sandbox-modules
+  Workspace volume: has all code, tests, CBS data, installed packages
+  
+  What happens:
+    1. Replace mock imports with real SDK calls:
+    
+       # Before (written by developer with mocks):
+       from src.mocks.demographics_mock import MockDemographicsModule
+       demo = MockDemographicsModule()
+       
+       # After (written by module_integrator):
+       from druppie_sdk import DemographicsModule
+       demo = DemographicsModule()
+    
+    2. This is typically a search-and-replace operation:
+       - Find all mock imports
+       - Replace with real SDK imports
+       - Remove mock files
+    3. Real SDK calls may return different field names or structures —
+       agent adjusts the code to match
+    4. Agent calls done()
+
+  Security:
+    Module access ✅ (reads proprietary APIs)
+    NO internet ✅ (sandbox-inet disconnected)
+    Agent now has BOTH CBS data (from workspace files) AND module data 
+    (from SDK) in its context.
+    
+    IF CBS data contained prompt injection:
+      → Agent might be influenced to write incorrect code
+      → But it CANNOT exfiltrate module data (no internet) ✅
+      → Malicious code visible in git diff / PR review ✅
+
+  WHY RE-PLANNING IS RARE HERE:
+    The integration step is just "swap imports." It almost never needs
+    new packages. The developer already installed everything needed
+    during Step 4 (with internet). If by some rare chance a new package
+    IS needed, the clean room re-plan process applies (see below).
+
+═══════════════════════════════════════════════════════════════════
+STEP 7: TEST WITH REAL MODULES (MODULES — NO INTERNET)
+═══════════════════════════════════════════════════════════════════
+
+  Agent: module_tester
+  Container: A (reused — still on [modules])
+  
+  What happens:
+    1. Run existing tests against real module servers
+    2. SDK calls hit real APIs via sandbox-modules network
+    3. Fix any issues (field name mismatches, etc.)
+    4. All tests pass
+    5. Agent calls done()
+
+═══════════════════════════════════════════════════════════════════
+STEP 8: DEPLOY (ISOLATED)
+═══════════════════════════════════════════════════════════════════
+
+  Agent: deployer
+  Container: A (network switched to isolated)
+  
+  _sync_networks():
+    docker network disconnect sandbox-modules container-A
+  
+  Networks: sandbox-net only
+  1. git push (via module-coding proxy)
+  2. create PR
+  3. Dev/architect reviews PR (final code review)
+  4. Agent calls done()
+
+═══════════════════════════════════════════════════════════════════
+CLEANUP
+═══════════════════════════════════════════════════════════════════
+
+  1. Container A destroyed
+  2. Workspace volume destroyed
+  3. Package cache volume KEPT (shared across sessions)
+```
+
+### Re-Planning: The Rare Case
+
+With the deferred-modules ordering, re-planning is **rare** because the developer has internet for the entire coding phase. But if the module_integrator (Step 6) discovers it needs a new package:
+
+1. **Module integrator calls `done()`** with structured reason:
+   ```
+   "Agent module_integrator: [REPLAN NEEDED] Real DemographicsModule SDK 
+    requires aiohttp. Requesting: pip install aiohttp==3.9.5"
+   ```
+
+2. **Dev/architect approval gate** shows:
+   - Exact command: `pip install aiohttp==3.9.5`
+   - Git diff of all changes (including integration code)
+   - Agent making the request and why
+
+3. **If approved — clean room process:**
+   - Container destroyed
+   - Workspace volume DESTROYED (contains module data — must not reach internet)
+   - Fresh workspace volume created (empty)
+   - Transfer volume created
+   - New container created with [internet], EMPTY workspace, transfer volume mounted
+   - `pip install aiohttp==3.9.5` into transfer volume
+   - Internet container destroyed
+   - Fresh workspace volume created, git clone restores code
+   - Transfer volume contents extracted into workspace
+   - New container with [modules] network, full workspace restored
+
+4. **If rejected:** module_integrator works around it (use stdlib, find alternative).
+
+### Security Guarantees Summary
+
+| Threat | How We Prevent It |
+|--------|-------------------|
+| Malicious pip package steals workspace data | Internet container has empty workspace (clean room) or no module data (Steps 2-5) |
+| Prompt injection in CBS data exfiltrates module data | Module data only accessible when internet is disconnected |
+| Prompt injection causes malicious code in repo | All code visible in git diff / PR for dev/architect review |
+| Re-enablement gives internet access to module data | Workspace destroyed before internet container starts — clean room |
+| DNS exfiltration | sandbox-modules has no internet — DNS queries don't route |
+| Agent sneaks internet access after modules phase | Network transition is irreversible — make_plan enforces ordering |
+
+### Why This Ordering Is Better Than "Internet → Modules → Internet"
+
+| Concern | Old ordering (modules early) | New ordering (modules late) |
+|---------|------------------------------|----------------------------|
+| Re-planning frequency | High — developer often needs new packages during coding | Low — developer has internet for entire coding phase |
+| Clean room cost | Paid every time re-plan is needed | Rarely needed |
+| Number of network transitions | Multiple (internet → modules → internet → modules) | ONE (internet → modules, irreversible) |
+| Developer productivity | High friction — can't pip install or browse docs | Low friction — full internet access while coding |
+| Module data exposure | Module data in context during coding → larger window | Module data in context only during integration → minimal window |
