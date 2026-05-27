@@ -57,6 +57,7 @@ secrets
 .playwright-mcp/
 .claude/
 .worktrees/
+.azure/
 
 # Docker volumes
 druppie-app/

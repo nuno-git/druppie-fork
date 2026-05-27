@@ -1,6 +1,6 @@
 # Platform Technical Standards
 
-**Revision:** 2026-04-20
+**Revision:** 2026-04-29
 
 Every Druppie-created application follows these technical defaults. The
 Architect treats them as givens when writing `docs/technical-design.md` and only
@@ -126,7 +126,33 @@ Programming style — follow the Druppie core:
 The user-facing side of auth (no login screen, no role-admin UI) lives
 in the functional standards file.
 
-## 9. Explicitly out of scope (for now)
+## 9. Alternative deployment: Azure AI Foundry agents
+
+Not every project needs a custom backend, database, and frontend. When the
+project's core value is **LLM agent behavior** — conversation, reasoning, and
+tool use — and it does not require custom API endpoints, a project-specific
+database, or a bespoke UI, it should be deployed as an **Azure AI Foundry
+agent** instead of the standard stack above.
+
+Foundry agents are defined by a YAML spec (name, model, system prompt, tool
+selection) and deployed via the Azure AI Projects SDK. The Architect uses
+`foundry:list_foundry_tools` to check which tools and models are available.
+
+| Aspect | Standard PROJECT | Foundry agent |
+|---|---|---|
+| Stack | React + FastAPI + Postgres | Azure AI Foundry (hosted) |
+| Custom backend | Yes | No — agent behavior lives in the system prompt |
+| Database | Project-specific Postgres | No — Foundry manages state |
+| Frontend | React app | Foundry chat interface or API |
+| Tools | Druppie MCP modules via SDK | Foundry built-in: code_interpreter, file_search, bing_grounding, azure_ai_search, sharepoint_grounding, etc. |
+| Deployment | Docker Compose + Druppie pipeline | Azure AI Projects SDK |
+| TD format | Component architecture + requirements | Agent spec: name, model, system prompt, tool selection |
+
+When the Architect classifies BUILD_PATH (Step 2b), the tie-breaker is: if the
+project needs custom endpoints, a database, or a bespoke UI → PROJECT. If the
+project's only custom logic is its system prompt and tool selection → FOUNDRY_AGENT.
+
+## 10. Explicitly out of scope (for now)
 
 The following are platform concerns and should NOT appear in individual
 project TDs:
@@ -144,7 +170,7 @@ If a project has a genuine reason to do any of these itself (e.g. a
 compliance-driven exception), the Architect documents it as a platform-
 standard deviation with rationale.
 
-## 10. Deployment
+## 11. Deployment
 
 - Each app ships a `Dockerfile` and a `docker-compose.yaml` in the same
   shape as the template.
@@ -154,7 +180,7 @@ standard deviation with rationale.
 - Prod deployment is via the Druppie deploy pipeline; the TD does not
   describe Kubernetes manifests or cloud infra.
 
-## 11. Git
+## 12. Git
 
 - Conventional commits (`feat:`, `fix:`, `refactor:`, `docs:`, `test:`,
   `chore:`).
@@ -162,10 +188,10 @@ standard deviation with rationale.
 - One logical change per commit.
 - Every PR description states the why, not just the what.
 
-## 12. Referencing this file in the TD
+## 13. Referencing this file in the TD
 
 Every `technical-design.md` starts with a **Platform standards** line
 linking back here with the revision the TD was written against:
 
-> Platform standards: conforms to [docs/platform-technical-standards.md](./platform-technical-standards.md) rev 2026-04-20.
+> Platform standards: conforms to [docs/platform-technical-standards.md](./platform-technical-standards.md) rev 2026-04-29.
 > Only deviations are documented below.

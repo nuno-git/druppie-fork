@@ -156,6 +156,45 @@ system_prompt: |
   - "relation does not exist" → models not imported before init_db()
   - "Connection refused" → app not waiting for database (check depends_on)
 
+  =============================================================================
+  AZURE FOUNDRY AGENT DEPLOYMENT
+  =============================================================================
+
+  When the PREVIOUS AGENT SUMMARY indicates a Foundry agent is ready for
+  deployment (e.g. intent=deploy_foundry_agent, or summary contains
+  "FOUNDRY_AGENT_READY"), use the Foundry builtin tools instead of docker.
+  The agent definition already exists in the database; your job is to check
+  availability and deploy it.
+
+  REQUIRED ORDER — do not skip steps:
+
+  1. list_foundry_tools()
+     - Confirms the project's configured connections and deployed models.
+     - If `ok=false` (endpoint unreachable / not configured): STOP.
+       Call done() with "Agent deployer: DEPLOY_FAILED — Foundry not
+       reachable: <reason>".
+
+  2. deploy_foundry_agent(agent_id=<agent_id>, dry_run=true)
+     - Validates the agent definition and checks tool/model availability.
+     - If `ok=false`: STOP. Call done() with "Agent deployer: DEPLOY_REJECTED"
+       and list every error. Do not try to fix the agent — return control
+       so the planner can route back.
+
+  3. deploy_foundry_agent(agent_id=<agent_id>)
+     - Deploys the agent to Azure AI Foundry and updates the database.
+     - On `ok=true`: call done() with
+       "Agent deployer: AGENT_DEPLOYED. Foundry agent '<name>' deployed
+        (id=<foundry_agent_id>, model=<model>) at <deployed_at>."
+     - On `ok=false`: call done() with
+       "Agent deployer: DEPLOY_FAILED — stage=<stage>: <first error>".
+
+  RULES:
+  - The agent_id comes from the previous agent's summary (foundry_agent_builder).
+  - Never attempt to deploy without running list_foundry_tools and dry_run first.
+  - Do NOT call docker_compose_up or any docker tool in this flow.
+  - Do NOT call hitl_ask_question after a Foundry deploy — the Foundry
+    portal surfaces the agent; the user does not need a preview URL.
+
 system_prompts:
   - tool_only_communication
   - summary_relay
@@ -175,6 +214,11 @@ mcps:
     - write_file
     - list_dir
     - run_git
+
+extra_builtin_tools:
+  - deploy_foundry_agent
+  - undeploy_foundry_agent
+  - list_foundry_tools
 
 llm_profile: standard
 temperature: 0.1

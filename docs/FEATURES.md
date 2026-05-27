@@ -8,7 +8,7 @@ Druppie is a governance platform where users describe what they want built in na
 
 Every action an agent takes goes through a **tool call** -- either an **MCP tool** provided by an external server, or a **builtin tool** provided by the platform itself.
 
-**Builtin tools** are provided by the platform to every agent: `done` (signal completion and pass a summary to the next agent), `hitl_ask_question` (pause and ask the user a free-form question), and `hitl_ask_multiple_choice_question` (pause and present choices). Additional builtins are restricted to specific agents: `set_intent` (Router only -- declares the session intent and creates the project/repo), `make_plan` (Planner only -- creates an ordered list of agent steps to execute), `test_report` (Test Executor only -- structured test iteration reporting), `invoke_skill` (agents with skills configured -- invokes a predefined skill and gains temporary tool access), and `execute_coding_task` (Developer/Update Core Builder -- delegates coding to an isolated sandbox).
+**Builtin tools** are provided by the platform to every agent: `done` (signal completion and pass a summary to the next agent), `hitl_ask_question` (pause and ask the user a free-form question), and `hitl_ask_multiple_choice_question` (pause and present choices). Additional builtins are restricted to specific agents: `set_intent` (Router only -- declares the session intent and creates the project/repo), `make_plan` (Planner only -- creates an ordered list of agent steps to execute), `test_report` (Test Executor only -- structured test iteration reporting), `invoke_skill` (agents with skills configured -- invokes a predefined skill and gains temporary tool access), `execute_coding_task` (Developer/Update Core Builder -- delegates coding to an isolated sandbox), `create_foundry_agent` and `update_foundry_agent` (Agent Builder -- creates and updates Foundry agent definitions), `deploy_foundry_agent` and `undeploy_foundry_agent` (Deployer -- deploys/undeploys agents to Azure AI Foundry), `list_foundry_tools` (Architect/Agent Builder/Deployer -- queries available Foundry tools and models), and `list_custom_agents` (Architect/Agent Builder -- lists existing custom agents to check for duplicates).
 
 **MCP tools** are provided by external MCP servers over HTTP (e.g., `read_file`, `write_file`, `docker:build`). Which tools each agent can call is configured in its YAML definition.
 
@@ -18,23 +18,24 @@ Because all actions are tool calls, every action can be logged, inspected, and g
 
 ## Agent Pipeline
 
-Thirteen agents are defined. Twelve are functional; one is a stub.
+Fourteen agents are defined. Thirteen are functional; one is a stub.
 
 ### Functional Agents
 
 
 | Agent | Purpose | Key Behavior |
 |-------|---------|--------------|
-| **Router** | Classifies user intent | Determines whether the request is `create_project`, `update_project`, or `general_chat`. Can ask clarifying questions. Has web search access. |
+| **Router** | Classifies user intent | Determines whether the request is `create_project`, `update_project`, or `general_chat`. Agent creation requests are classified as `create_project` — the Architect decides whether it becomes a Foundry agent. Can ask clarifying questions. Has web search access. |
 | **Planner** | Orchestrates the pipeline | Creates execution plans as ordered sequences of agent steps. Re-evaluates after each major phase. Manages design loops (BA/Architect) and execution loops (Developer/Deployer). Max 15 iterations. |
 | **Business Analyst** | Gathers requirements | Engages the user in structured dialogue using a funnel approach (max 1 question at a time, almost always multiple choice). Produces `docs/functional-design.md` via the `make_design` tool with built-in Mermaid validation. Considers security and compliance by design. Handles revision cycles when the Architect sends feedback. Supports `NO_FD_CHANGE` pass-through for technical fixes. Max 50 iterations. |
-| **Architect** | Designs system architecture | Reviews the functional design against NORA standards and water authority architecture principles. Four outcomes: APPROVE (writes `docs/technical-design.md` via `make_design`), APPROVE_CORE_UPDATE (same, but signals the project modifies Druppie's own codebase), FEEDBACK (sends specific items back to BA), or REJECT (communicates directly with user). Has access to ArchiMate models via MCP. Can create Mermaid diagrams with built-in syntax validation. Applies Security by Design and Compliance by Design. Max 50 iterations. |
+| **Architect** | Designs system architecture | Reviews the functional design against NORA standards and water authority architecture principles. Five outcomes: APPROVE (writes `docs/technical-design.md` via `make_design`), APPROVE_CORE_UPDATE (signals the project modifies Druppie's own codebase), APPROVE_FOUNDRY_AGENT (signals a standalone AI agent should be created for Azure AI Foundry), FEEDBACK (sends specific items back to BA), or REJECT (communicates directly with user). Can list existing custom agents to avoid duplicates. Has access to ArchiMate models via MCP. Can create Mermaid diagrams with built-in syntax validation. Applies Security by Design and Compliance by Design. Max 50 iterations. |
 | **Builder Planner** | Creates implementation plans | Reads `docs/functional-design.md` and `docs/technical-design.md`, writes `builder_plan.md` with code standards, test framework, test strategy, solution strategy, and change approach. Guides downstream test_builder and builder agents. Max 30 iterations. |
 | **Test Builder** | Generates tests (TDD Red Phase) | Writes comprehensive test suites based on functional and technical design documents and builder_plan.md. Sets up test frameworks and dependencies. Does NOT run tests. Max 30 iterations. |
 | **Builder** | Implements code (TDD Green Phase) | Reads tests written by test_builder and implements source code to pass them. Follows TDD methodology. Max 100 iterations. |
 | **Test Executor** | Runs and fixes tests iteratively | Executes tests, diagnoses failures, applies fixes, and re-runs in an internal loop. Reports structured PASS/FAIL results via `test_report` builtin tool. Max 100 iterations. |
 | **Update Core Builder** | Implements Druppie core changes | Delegates coding to a dual-repo sandbox via `execute_coding_task` with the `druppie-core-builder` sandbox agent. The sandbox clones Druppie's GitHub repo into `/workspace/druppie-core/` and the project repo (with FD/TD) into `/workspace/project-<name>/`. Creates a PR targeting `colab-dev` on GitHub. The `done()` tool requires approval from a user with the `developer` role — the reviewer merges the PR on GitHub before approving. Max 100 iterations. |
 | **Developer** | Writes and modifies code | Implements features in git-managed workspaces. Handles branch creation, file writes, commits, pull requests, and merges. Can delegate to sandbox agents via `execute_coding_task`. For `create_project`, works on main; for `update_project`, works on feature branches. Max 100 iterations. |
+| **Agent Builder** | Creates Foundry agent definitions | Reads functional and technical design docs, discovers available platform capabilities via `list_foundry_tools` builtin, reasons about which tools the agent needs, and calls `create_foundry_agent` or `update_foundry_agent` with a complete specification. Both built-in tools pre-validate the agent spec against Foundry constraints (name format, description length, instruction bounds, duplicate tools, connection requirements, vector store IDs) before persisting — invalid specs are rejected with structured errors. Only used when the Architect signals `DESIGN_APPROVED_FOUNDRY_AGENT`. Max 50 iterations. |
 | **Deployer** | Builds and deploys via Docker | Clones from git, builds Docker images, runs containers with auto-assigned ports (9100-9199). Verifies health via container logs. For preview deploys, asks the user for feedback before finalizing. Max 100 iterations. |
 | **Reviewer** | Code review | Reviews code for quality, security, and best practices. |
 | **Tester** | Testing | Writes and runs tests to validate implementations. |
@@ -128,6 +129,66 @@ The session intent stays `create_project` or `update_project` throughout — the
 - No deploy or merge step for core changes — PRs are always reviewed and merged by humans on GitHub
 
 **Prerequisites:** Requires a GitHub App configured with Contents R/W, Pull Requests R/W, and Metadata R permissions, plus `DRUPPIE_REPO_OWNER` and `DRUPPIE_REPO_NAME` env vars pointing to the Druppie repo.
+
+### Foundry Agent Creation
+
+When a project involves creating a standalone AI agent (chatbot, assistant, monitor), the Architect classifies it as `BUILD_PATH=FOUNDRY_AGENT` and routes to `foundry_agent_builder` via `next_agent`. The agent definition is stored in the database and can be deployed to Azure AI Foundry from the Agents page.
+
+The session intent stays `create_project` throughout — there is no separate `create_agent` intent. The Architect classifies the build path (STANDALONE, CORE_UPDATE, or FOUNDRY_AGENT) after reviewing the design.
+
+**Pipeline:**
+
+1. **Router** classifies intent as `create_project` (a project record and Gitea repo are created as usual)
+2. **Business Analyst** gathers requirements, writes `functional_design.md`
+3. **Architect** reviews the design, writes `technical_design.md`, classifies build path, signals `DESIGN_APPROVED` with `next_agent="foundry_agent_builder"`
+4. **Foundry Agent Builder** reads design documents, selects Foundry-native tools (code_interpreter, file_search, bing_grounding, etc.), calls `create_foundry_agent` with a complete specification (automatically validated against Foundry constraints before persisting)
+5. **Business Analyst** (review) shows the agent definition to the user, asks for confirmation
+   - If approved: Planner routes to Summarizer
+   - If changes requested: Planner routes back to Foundry Agent Builder, then BA review again
+6. **Summarizer** creates the final user-facing summary
+
+**Key characteristics:**
+- The Architect decides the build path — it reads the functional and technical design to determine if the project is a Foundry agent, core update, or standalone project
+- The Foundry Agent Builder selects from Foundry-native tools only (code_interpreter, file_search, bing_grounding, browser_automation, deep_research)
+- Druppie's own MCPs are not available in Foundry agents (future: a bridge may expose them)
+- `create_foundry_agent` accepts: agent_id, name, description, instructions, model, foundry_tools
+- Temperature is NOT supported by Foundry's `PromptAgentDefinition` — the API rejects it
+- Agents are stored in the database and can be refined/deployed via the Agents page UI
+
+**Deployment lifecycle:**
+
+| State | Badge | Meaning |
+|-------|-------|---------|
+| Not deployed | Gray | Agent exists in Druppie only |
+| Deployed | Green | Agent is live in Azure Foundry |
+| Edits pending | Amber | Agent was edited after last deploy — Foundry is running a stale version |
+| Failed | Red | Last deploy attempt failed |
+
+- Only users with `developer` or `admin` role can deploy/undeploy
+- Other users can create and edit agents but cannot push to Foundry
+- Admin/developer users see all custom agents; other users see only their own
+- A `deployed_spec_hash` (SHA-256 of model + instructions + tools) is persisted on each deploy to detect drift
+- `deployed_version` from Foundry is stored for traceability
+
+**Deployment details:**
+- Clicking "Deploy to Foundry" on the Agents page calls `FoundryService.deploy_agent()`
+- Foundry receives ONLY: model (mapped from llm_profile), instructions (system prompt), and tools
+- Tool SDK support: `code_interpreter`, `file_search` are deployed; `browser_automation`, `deep_research`, etc. are stored in DB but not yet sent (SDK lacks classes)
+- Authentication uses `DefaultAzureCredential` (NOT API key — `AIProjectClient` requires `TokenCredential`)
+- For Docker: set `AZURE_CLIENT_ID` + `AZURE_CLIENT_SECRET` + `AZURE_TENANT_ID` (service principal)
+- For local dev: `az login` or `azd auth login` works
+
+### Foundry builtin tools
+
+Foundry operations are available as builtin tools (no separate MCP server):
+- `list_foundry_tools()` — live query against the configured project for available tools, connections, and deployed models.
+- `deploy_foundry_agent(agent_id, dry_run?)` — validates the agent definition, checks tool/model availability, deploys to Azure AI Foundry, and updates the DB with deployment status. `dry_run=true` validates without deploying.
+- `undeploy_foundry_agent(agent_id)` — removes the agent from Azure AI Foundry and clears deployment status in the DB.
+
+Agent access:
+- `deployer` — `deploy_foundry_agent`, `undeploy_foundry_agent`, `list_foundry_tools`
+- `foundry_agent_builder` — `list_foundry_tools` for pre-flight checks while building the design
+- `architect` — `list_foundry_tools` for tool availability checks before writing the TD
 
 ### general_chat
 

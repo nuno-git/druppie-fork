@@ -140,3 +140,83 @@ full module convention from docs/module-specification.md.
   |-----------|-------------|
   | tool_1 | Wat deze tool doet |
   | tool_2 | Wat deze tool doet |
+
+---
+
+## FOUNDRY_AGENT TD Format (alternative structure)
+
+When BUILD_PATH=FOUNDRY_AGENT, use this alternative TD structure instead
+of the standard PROJECT/CORE_UPDATE format above. Foundry agents are
+standalone AI agents deployed to Azure AI Foundry — they have no custom
+backend, database, or frontend.
+
+# Technical Design — Foundry Agent
+
+> Platform standards: conforms to [docs/platform-technical-standards.md](./platform-technical-standards.md) rev `<revision>`.
+
+## Introduction
+
+### Subject
+[Brief description of the agent]
+
+### Problem Summary
+[What problem does this agent solve?]
+
+### Functional Question (from FD by Business Analyst)
+[What is the business question?]
+
+### Research
+Gebaseerd op [docs/technical-research.md](./technical-research.md). Gekozen
+benadering: **[A / B / C — naam]**. Zie het onderzoeksdocument voor de
+vergelijking van alternatieven.
+
+## Agent Specification
+
+### Agent Identity
+* **Agent name:** [max 64 chars, alphanumeric + hyphens]
+* **Description:** [what the agent does, for the Foundry portal]
+
+### System Prompt Outline
+[Detailed system prompt outline, minimum 1500 words. Cover: identity,
+role, behavioral guidelines, tone, constraints, tool usage instructions,
+response format, edge case handling.]
+
+### Foundry Tools
+Design ONLY with tools confirmed by list_foundry_tools() (called
+during the Step 3 proactive check). Note which need portal connections.
+
+| Tool | Status | Justification | Portal setup needed? |
+|------|--------|---------------|----------------------|
+| [tool_name] | AVAILABLE / PORTAL_SETUP_NEEDED | [why this tool is needed] | yes / no |
+
+Do NOT reference Druppie MCPs or registry modules — they are unavailable
+in Foundry.
+
+### Model Recommendation
+* **Model:** [deployment name from list_foundry_tools]
+* **Justification:** [why this model fits the agent's task]
+
+Do NOT recommend temperature — Foundry's PromptAgentDefinition rejects it.
+
+## Requirements
+| ID | Source | Requirement | Verification Method |
+|----|--------|-------------|---------------------|
+| FR-01 | BA | [Functional requirement from FD] | Behavioral test |
+| NFR-01 | BA | [Non-functional requirement from FD] | Observation |
+| TR-01 | AR | [Technical requirement — agent behavior] | Prompt review |
+
+Requirements focus on agent behavior, personality, and tool usage
+constraints rather than system architecture.
+
+### Security & Compliance (if applicable)
+Only include when the agent handles sensitive data (PII, confidential
+documents, etc.).
+
+| Aspect | Measure | Explanation |
+|--------|---------|-------------|
+| Data Protection | ... | ... |
+
+### Platform standard deviations
+| Section | Deviation | Rationale |
+|---------|-----------|-----------|
+| (none) | | |

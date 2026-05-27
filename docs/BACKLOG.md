@@ -42,6 +42,9 @@ Last updated: 2026-03-24
 - Update Core Flow — End-to-End Improvements
 - ~~Update Core — Technical Basis~~ ✅ DONE
 - ~~Update Core — Architect Signal & Dual-Repo Sandbox~~ ✅ DONE
+- Foundry — Agent Sharing & Access Model
+- Foundry — Full Deploy Approval Workflow
+- Foundry — Version History UI
 - Dependency Cache — Remote/Distributed Caching
 - Dependency Cache — Pre-Populated Common Packages
 - Dependency Cache — Automated Periodic Vulnerability Scanning
@@ -343,3 +346,44 @@ Last updated: 2026-03-24
   - Optional policy: auto-purge packages with critical vulnerabilities
   - Dashboard or log aggregation for scan results over time
 - **Priority:** Medium — important for continuous security posture in production environments.
+
+### Foundry — Bing Grounding Portal Connection
+
+- **Current state:** `bing_grounding` is a supported Foundry tool but requires a Bing connection configured in the Azure AI Foundry portal. The `druppie-resource` project does not have this connection yet. Deploying an agent with `bing_grounding` fails with: `"Required properties [\"bing_grounding\"] are not present"`.
+- **Desired improvement:** Configure the Bing Grounding connection in the Foundry portal so agents can use web search.
+- **Priority:** High — blocks the Vergunning Vinder agent and any other agent using web search.
+
+### Foundry — Dynamic Tool Discovery
+
+- **Current state:** The list of available Foundry tools in `get_metadata()` is hardcoded. The SDK has `client.connections.list()` which can discover configured connections (e.g., Bing Grounding, Azure AI Search), but zero-config tools (code_interpreter, file_search) don't appear as connections.
+- **Desired improvement:** Call `FoundryService.list_available_tools()` from `get_metadata()` to dynamically discover connection-based tools, merged with the hardcoded zero-config tools. Graceful fallback to hardcoded list if Foundry is not configured.
+- **Priority:** Low — hardcoded list works fine for now, dynamic discovery is a nice-to-have.
+
+### Foundry — Additional SDK Tool Mappings
+
+- **Current state:** Only `code_interpreter`, `file_search`, and `bing_grounding` are mapped to Azure SDK classes in `FoundryService._build_foundry_tools()`. Other tools (`browser_automation`, `deep_research`, `bing_custom_search`, `azure_ai_search`, `microsoft_fabric`) are stored in the DB but skipped during deployment because the SDK doesn't have classes for them yet.
+- **Desired improvement:** As the `azure-ai-projects` SDK adds new tool classes, map them in `_build_foundry_tools()` so they get deployed.
+- **Priority:** Low — monitor SDK releases and add mappings as they become available.
+
+### Foundry — Agent Sharing & Access Model
+
+- **Current state:** Custom agents have an owner (creator). Only the owner can edit/delete. Admin/developer can see all agents. There is no way to share an agent with another user or team, transfer ownership, or grant access to a deployed Foundry agent.
+- **Desired improvement:** Implement a sharing model:
+  - Team ownership — agents belong to a team, not just a user
+  - Access grants — grant specific users or roles access to view/edit an agent
+  - Ownership transfer — allow transferring ownership to another user
+  - Consumer access — define how end-users discover and invoke deployed Foundry agents (Druppie chat tab, Azure portal, Copilot integration)
+  - Role separation: creator (edits definition) vs deployer (pushes to Azure) vs consumer (uses the deployed agent)
+- **Priority:** Medium — blocks team adoption of Foundry agents.
+
+### Foundry — Full Deploy Approval Workflow
+
+- **Current state:** Deploy/undeploy is role-gated (developer/admin only). There is no approval queue — authorized users deploy directly.
+- **Desired improvement:** Introduce a `deploy_foundry_agent` approval type using the existing approval infrastructure. Non-deployer roles can request deployment; developers/admins approve from an approval queue. The approval payload should show the diff vs the currently deployed spec.
+- **Priority:** Low — current role-gating is sufficient for small teams.
+
+### Foundry — Version History UI
+
+- **Current state:** `deployed_version` is persisted on deploy but there is no UI to view deployment history or roll back to a previous version.
+- **Desired improvement:** Show deployment history (version, timestamp, who deployed, spec hash) on the agent detail page. Allow redeploying a previous version.
+- **Priority:** Low — nice-to-have for auditability.
