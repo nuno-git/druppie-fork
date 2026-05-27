@@ -812,6 +812,8 @@ async def edit_file(
 async def bash(
     command: str,
     timeout: int = 120,
+    max_output_bytes: int = 8192,
+    output_side: str = "tail",
     session_id: str | None = None,
     workspace_id: str | None = None,
     project_id: str | None = None,
@@ -831,7 +833,12 @@ async def bash(
 
     Args:
         command: Shell command to execute
-        timeout: Command timeout in seconds (default 60)
+        timeout: Command timeout in seconds (default 120)
+        max_output_bytes: Max bytes to return. Output exceeding this is truncated
+            and full output saved to /workspace/.bash_outputs/{id}.log.
+            Set to 0 for unlimited (dangerous with long-running commands).
+        output_side: Which part to keep when truncating: "tail" (last N bytes)
+            or "head" (first N bytes). Default "tail".
         session_id: Session ID
         project_id: Project ID (optional)
         user_id: User ID (optional)
@@ -859,17 +866,38 @@ async def bash(
             session_id, git_scope, repo_name, repo_owner,
             agent_networks=sandbox_networks,
         )
+
+        save_file = output_file or f"/tmp/bash_{tool_call_id or 'out'}.out"
         rc, stdout, stderr = await _exec_bash_in_container(
-            container, command, timeout=timeout, output_file=output_file
+            container, command, timeout=timeout, output_file=save_file
         )
+
+        combined = (stdout or "") + (stderr or "")
+        combined_bytes = combined.encode()
+        truncated = max_output_bytes > 0 and len(combined_bytes) > max_output_bytes
+
+        if truncated:
+            full_path = f"/workspace/.bash_outputs/{tool_call_id or 'output'}.log"
+            await _exec_in_container(
+                container,
+                ["bash", "-c", f"mkdir -p /workspace/.bash_outputs && cp {shlex.quote(save_file)} {shlex.quote(full_path)}"],
+                timeout=5,
+            )
+            if output_side == "head":
+                snippet = combined_bytes[:max_output_bytes].decode(errors="replace")
+            else:
+                snippet = combined_bytes[-max_output_bytes:].decode(errors="replace")
+            display = f"... [OUTPUT TRUNCATED ({len(combined_bytes)} bytes) - full output saved to {full_path}, use search_file or read_file to examine it]\n\n{snippet}"
+        else:
+            display = combined
 
         if output_file:
             await _exec_in_container(container, ["rm", "-f", output_file], timeout=5)
 
         return {
             "success": rc == 0,
-            "stdout": stdout,
-            "stderr": stderr,
+            "stdout": display if truncated else stdout,
+            "stderr": "" if truncated else stderr,
             "return_code": rc,
         }
 
