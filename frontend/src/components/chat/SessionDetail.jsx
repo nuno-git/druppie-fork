@@ -8,7 +8,7 @@ import { Send, CheckCircle, XCircle, Shield, ShieldOff, Loader2, ExternalLink, M
 import { Link } from 'react-router-dom'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { getSession, sendChat, cancelChat, resumeSession, approveApproval, rejectApproval, answerQuestion } from '../../services/api'
+import { getSession, sendChat, cancelChat, resumeSession, approveApproval, rejectApproval, answerQuestion, getToolCallLiveOutput } from '../../services/api'
 import { getUserInfo } from '../../services/keycloak'
 import { useAuth } from '../../App'
 import { getAgentConfig, getAgentMessageColors, formatToolName } from '../../utils/agentConfig'
@@ -319,6 +319,29 @@ const StatusBadge = ({ status }) => {
   )
 }
 
+// --- Bash Live Output ---
+
+const BashLiveOutput = ({ tc }) => {
+  const { data } = useQuery({
+    queryKey: ['bash-live-output', tc.id],
+    queryFn: () => getToolCallLiveOutput(tc.id),
+    refetchInterval: (query) => {
+      if (!query.state.data || query.state.data.status !== 'executing') return false
+      return 2000
+    },
+    enabled: tc.status === 'executing',
+    retry: false,
+  })
+
+  if (!data?.output) return null
+
+  return (
+    <div className="ml-4.5 mt-0.5 p-2 rounded bg-gray-900 border border-gray-700 text-xs text-green-400 whitespace-pre-wrap break-all max-h-40 overflow-auto font-mono">
+      {data.output.length > 5000 ? data.output.slice(-5000) : data.output}
+    </div>
+  )
+}
+
 const SubagentToolCall = ({ tc }) => {
   const [expanded, setExpanded] = useState(false)
   const hasResult = tc.result && tc.status === 'completed'
@@ -360,6 +383,9 @@ const SubagentToolCall = ({ tc }) => {
         <div className="ml-4.5 mt-0.5 p-2 rounded bg-gray-50 border border-gray-100 text-xs text-gray-700 whitespace-pre-wrap break-all max-h-40 overflow-auto font-mono">
           {resultStr.length > 2000 ? resultStr.slice(0, 2000) + '…' : resultStr}
         </div>
+      )}
+      {tc.status === 'executing' && tc.tool_name === 'bash' && (
+        <BashLiveOutput tc={tc} />
       )}
     </div>
   )

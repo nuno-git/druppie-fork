@@ -943,6 +943,9 @@ class ToolExecutor:
             )
             self.db.commit()
 
+            if tool_call.tool_name == "bash":
+                args["tool_call_id"] = str(tool_call.id)
+
             # Long-running tools (run_tests, install_test_dependencies) get a
             # generous 20-min client timeout. Server-side subprocess timeouts
             # (300s/180s) should fire first, but this prevents infinite hangs

@@ -107,6 +107,9 @@ export const retryFromRun = (sessionId, agentRunId, plannedPrompt = null) =>
     body: plannedPrompt !== null ? JSON.stringify({ planned_prompt: plannedPrompt }) : JSON.stringify({}),
   })
 
+export const getToolCallLiveOutput = (toolCallId) =>
+  request(`/api/tool-calls/${toolCallId}/live-output`)
+
 // Legacy aliases (use getSession instead - it returns everything)
 export const getSessionTrace = (sessionId) => request(`/api/sessions/${sessionId}`)
 export const getPlans = (page = 1, limit = 20) => request(`/api/sessions?page=${page}&limit=${limit}`)

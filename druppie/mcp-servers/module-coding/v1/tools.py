@@ -219,9 +219,13 @@ async def _exec_in_container(
 
 
 async def _exec_bash_in_container(
-    container_id: str, command: str, timeout: float = 120
+    container_id: str, command: str, timeout: float = 120, output_file: str | None = None
 ) -> tuple[int, str, str]:
-    full_cmd = ["docker", "exec", container_id, "bash", "-c", command]
+    if output_file:
+        wrapped = f"set -o pipefail; {{ {command} ; }} 2>&1 | tee {shlex.quote(output_file)}"
+        full_cmd = ["docker", "exec", container_id, "bash", "-c", wrapped]
+    else:
+        full_cmd = ["docker", "exec", container_id, "bash", "-c", command]
     return await _docker_run(full_cmd, timeout=timeout)
 
 
@@ -816,6 +820,7 @@ async def bash(
     repo_owner: str | None = None,
     git_scope: str | None = None,
     sandbox_networks: list[str] | None = None,
+    tool_call_id: str | None = None,
 ) -> dict:
     """Execute a shell command in the sandbox container.
 
@@ -837,6 +842,7 @@ async def bash(
     Returns:
         Dict with success, stdout, stderr, return_code
     """
+    output_file = f"/tmp/bash_{tool_call_id}.out" if tool_call_id else None
     try:
         blocked, pattern = _is_command_blocked(command)
         if blocked:
@@ -854,8 +860,11 @@ async def bash(
             agent_networks=sandbox_networks,
         )
         rc, stdout, stderr = await _exec_bash_in_container(
-            container, command, timeout=timeout
+            container, command, timeout=timeout, output_file=output_file
         )
+
+        if output_file:
+            await _exec_in_container(container, ["rm", "-f", output_file], timeout=5)
 
         return {
             "success": rc == 0,
@@ -881,6 +890,21 @@ async def bash(
             "stderr": "",
             "return_code": -1,
         }
+
+
+@mcp.tool(meta={"module_id": MODULE_ID, "version": MODULE_VERSION})
+async def get_partial_output(
+    tool_call_id: str,
+    session_id: str | None = None,
+    git_scope: str | None = None,
+) -> dict:
+    """Get partial output from a running bash command."""
+    container = await _resolve_container(session_id, git_scope, None, None)
+    output_file = f"/tmp/bash_{tool_call_id}.out"
+    rc, stdout, stderr = await _exec_in_container(
+        container, ["cat", output_file], timeout=5
+    )
+    return {"output": stdout, "exists": rc == 0}
 
 
 @mcp.tool(meta={"module_id": MODULE_ID, "version": MODULE_VERSION})
