@@ -1117,3 +1117,384 @@ With the deferred-modules ordering, re-planning is **rare** because the develope
 | Number of network transitions | Multiple (internet → modules → internet → modules) | ONE (internet → modules, irreversible) |
 | Developer productivity | High friction — can't pip install or browse docs | Low friction — full internet access while coding |
 | Module data exposure | Module data in context during coding → larger window | Module data in context only during integration → minimal window |
+
+---
+
+## Open Design Question: Research & Exploration Phase
+
+### The Problem
+
+In the current pipeline design (deferred-modules ordering), module data is accessed only at the very end — during the module_integrator step, with no internet. This is secure but creates a problem for the **research/exploration phase**.
+
+Before the user decides what to build, agents need to explore what's possible:
+- What modules are available?
+- What data do they provide?
+- What APIs do they expose?
+- What can you build by combining module X with public data source Y?
+
+This research phase currently (in development branches) involves a BA/data analyst agent that reads real module APIs and data to write a functional design that tells the user: "here's what you could build." The user then picks a direction.
+
+**The tension:** This research requires module data access, but the research phase also benefits from internet access (browsing public data sources, checking CBS APIs, reading documentation). Under our security model, no single agent should have both.
+
+### Why This Matters
+
+If we defer module access to the end, the planner writes a plan based on GUESSES about what modules can do. The plan might be wrong — "combine demographics module with CBS data" when the demographics module doesn't actually provide the fields the plan assumes. This wastes the entire pipeline's time.
+
+The research phase is where we learn what's actually possible. It's upstream of everything else. Getting it wrong cascades into wasted work.
+
+### Solutions
+
+#### RS1: Static Module Catalog
+
+Module capabilities are documented in a **static catalog** — a curated file that describes each module's API schema, available data fields, and example responses. This is NOT live module data — it's a human-maintained reference document.
+
+```
+docs/module-catalog.yaml (or similar):
+
+modules:
+  demographics:
+    description: "Provides population statistics by region"
+    api_version: "v1"
+    endpoints:
+      - name: get_statistics
+        params: {region: string, year?: int}
+        returns: {region: string, population: int, age_groups: dict}
+        example: {region: "amsterdam", population: 900000, age_groups: {"0-18": 0.2}}
+  
+  geo:
+    description: "Provides geographic boundaries and spatial data"
+    endpoints:
+      - name: get_boundaries
+        params: {level: string}
+        returns: {type: "FeatureCollection", features: [...]}
+```
+
+The catalog is included in the BA/planner agent's system prompt or loaded as a tool context. The agent knows what modules CAN do without ever calling them.
+
+**How the flow works:**
+1. BA agent reads the static catalog (in prompt, no sandbox needed)
+2. BA agent also browses internet (CBS APIs, public data sources) — has internet
+3. BA writes functional design: "Combine CBS population data with demographics module (which provides regional statistics) and geo module (which provides municipal boundaries)"
+4. The FD references module capabilities from the catalog, not live data
+5. The builder later confirms these capabilities match reality during module_integrator step
+
+| Criterion | Assessment |
+|-----------|-----------|
+| Security | ✅ No live module data accessed during research. Catalog is curated, static, contains no proprietary runtime data |
+| Accuracy | ⚠️ Catalog might be outdated or incomplete. Module APIs may have changed since last catalog update |
+| Effort | ⚠️ Catalog must be maintained manually. Every module API change requires catalog update |
+| User experience | ✅ BA can freely combine module knowledge with internet research in one agent |
+| Internet needed? | ✅ BA has internet for public data, catalog is in prompt (no module network needed) |
+
+**Shortcoming:** The catalog is a abstraction layer between the agent and reality. If the catalog says a module provides field X but it actually provides field Y, the plan is wrong. The module_integrator step catches this, but only after the entire pipeline has run.
+
+---
+
+#### RS2: Dual-Agent Research (Modules Agent + Internet Agent)
+
+Two separate agents research in parallel:
+- **Modules researcher** (sandbox with [modules], no internet) — calls real module APIs, explores actual capabilities, writes a capabilities report
+- **Internet researcher** (sandbox with [internet], no modules) — browses CBS, public APIs, docs, writes a data availability report
+
+The planner combines both reports to write the functional design.
+
+```
+Internet researcher:
+  Networks: [internet]
+  Explores: CBS APIs, public data sources, documentation
+  Output: /workspace/research/public-data-report.md
+    "CBS provides population data via opendata.cbs.nl/ODataFeed/...
+     Fields: Region, Year, Population, Age_Group
+     Format: JSON, paginated, free access"
+
+Modules researcher:
+  Networks: [modules]
+  Explores: DemographicsModule.get_statistics(), GeoModule.get_boundaries()
+  Output: /workspace/research/module-capabilities.md
+    "Demographics module provides: regional population stats, age distributions
+     Geo module provides: municipal boundaries as GeoJSON
+     Combined: can map demographics data onto geographic regions"
+
+Planner (no sandbox):
+  Reads both reports
+  Writes functional design combining findings
+```
+
+**How the flow works:**
+1. Router spawns both researchers in parallel
+2. Modules researcher calls real APIs, gets actual responses, writes accurate report
+3. Internet researcher browses real public data, writes data availability report
+4. Both reports go to planner (no sandbox, no network access — just reads files)
+5. Planner writes FD based on both reports
+6. Neither researcher ever has both module data AND internet
+
+| Criterion | Assessment |
+|-----------|-----------|
+| Security | ✅ Clean separation — modules researcher has no internet, internet researcher has no module data |
+| Accuracy | ✅ Modules researcher calls REAL APIs — capabilities are accurate, not from a stale catalog |
+| Effort | ✅ No manual maintenance — agent discovers capabilities by calling real APIs |
+| User experience | ✅ Accurate FD based on real capabilities and real public data |
+| Internet needed? | ✅ Internet researcher has internet. Modules researcher has modules. Neither has both. |
+
+**Shortcoming:** The planner reads both reports and combines them in its prompt. If the modules researcher's report contains prompt injection (from malicious module data — unlikely since modules are internal, but possible), the planner could be influenced. But the planner has NO sandbox, NO tools, NO network — it only produces text. Blast radius is limited instruction other agents to exfiltrate.
+
+The bigger shortcoming: the modules researcher has module data in its context but no internet. It writes a capabilities report. That report is then read by agents with internet access later (the developer). If the report contains injection payloads from module data... but module data is OUR data, not untrusted external data. The injection threat comes from PUBLIC data (internet), not from our own modules.
+
+---
+
+#### RS3: Modules-First Research Phase (Separate Sandbox)
+
+The research phase runs BEFORE the main pipeline, in a completely separate sandbox session. A research agent gets [modules] access, explores capabilities, writes a capabilities document. This document is then included in the main pipeline's agent prompts. The main pipeline never accesses modules during the research phase.
+
+```
+Research session (separate, isolated):
+  Agent: modules_explorer
+  Networks: [modules]
+  Task: "Explore all available module APIs and document their capabilities"
+  Output: capabilities-report.json
+    {modules: [{name: "demographics", endpoints: [...], fields: [...]}]}
+
+Main pipeline session:
+  BA agent has capabilities-report.json in prompt (from research session)
+  BA agent has [internet] for public data research
+  BA writes FD using catalog + internet research
+  Main pipeline proceeds with deferred-modules ordering
+```
+
+| Criterion | Assessment |
+|-----------|-----------|
+| Security | ✅ Complete separation — research session and main pipeline are different sandboxes |
+| Accuracy | ✅ Real API calls in research session |
+| Effort | ⚠️ Two sessions per project — more infrastructure complexity |
+| User experience | ⚠️ Slower — research session must complete before main pipeline starts |
+| Internet needed? | ⚠️ Research session has NO internet (only modules). Can't combine with public data research in same agent. |
+
+**Shortcoming:** The research agent can explore module APIs but can't simultaneously check public data sources to see what's combinable. The BA still needs internet for that. So the flow becomes: modules exploration → capabilities report → BA reads report + browses internet → FD. This works but is sequential and slower.
+
+---
+
+#### RS4: Module API Specs in Agent System Prompt (Baked Knowledge)
+
+Module API specifications are baked into the agent's system prompt at load time. When an agent is initialized, the system injects a "module capabilities" section listing all available modules, their endpoints, parameter schemas, and return types.
+
+This is similar to RS1 (static catalog) but the "catalog" is auto-generated from the module MCP server's tool schemas — not manually maintained.
+
+```
+Agent system prompt injection:
+  "You have access to the following Druppie modules:
+   
+   DemographicsModule:
+     get_statistics(region: str, year?: int) → 
+       {region: str, population: int, age_groups: {group: str, percentage: float}}
+     
+   GeoModule:
+     get_boundaries(level: str) → 
+       {type: str, features: [{geometry: GeoJSON, properties: dict}]}
+   
+   These modules will be available during the module integration step.
+   During development, use mocks based on these schemas."
+```
+
+| Criterion | Assessment |
+|-----------|-----------|
+| Security | ✅ Schema metadata, not live data — no proprietary runtime values |
+| Accuracy | ✅ Auto-generated from real MCP tool schemas — always up to date |
+| Effort | ✅ No manual maintenance — schemas come from the module MCP servers |
+| User experience | ✅ Agent knows what's possible from the start |
+| Internet needed? | ✅ No network needed — schemas are in the prompt |
+
+**Shortcoming:** Schemas describe the API shape (parameters, return types) but NOT the actual data available. The agent knows DemographicsModule has `get_statistics(region)` but doesn't know what regions are available, what years have data, or what the actual values look like. This is enough for planning ("I'll use demographics data by region") but not for data exploration ("the demographics module shows Amsterdam has 900K population, we could highlight that").
+
+---
+
+### Recommendation
+
+| Scenario | Recommended Solution | Why |
+|----------|---------------------|-----|
+| API shape discovery (what endpoints exist, what params) | **RS4** (auto-generated schemas in prompt) | Zero maintenance, always accurate, no network needed |
+| Data exploration (what actual values are available) | **RS2** (dual-agent research) | Real API calls, accurate data, clean security separation |
+| Quick prototyping (just need module names + descriptions) | **RS1** (static catalog) | Simplest, good enough for initial planning |
+| Maximum security (no trust in module data at all) | **RS3** (separate research session) | Complete isolation between research and main pipeline |
+
+**Practical recommendation: RS4 + RS2 combined.**
+
+1. **RS4** provides the baseline — auto-generated API schemas in every agent's prompt. All agents know what modules CAN do from the start, without any network access.
+
+2. **RS2** provides the deep exploration — when the BA needs to know what actual data is available (not just the API shape), the modules researcher explores real APIs and writes a capabilities report.
+
+The flow becomes:
+```
+1. Agent initialized with RS4 schemas in prompt (auto-generated)
+2. BA/planner already knows module API shapes → can propose rough ideas
+3. If user wants detailed exploration: dual-agent research (RS2)
+   - Modules researcher explores real data (modules network)
+   - Internet researcher explores public data (internet network)
+   - Planner combines into FD
+4. Main pipeline proceeds with deferred-modules ordering
+```
+
+This is secure because:
+- RS4 schemas are metadata, not data — no exfiltration value
+- RS2 modules researcher has no internet — can't exfiltrate even if module data is injected
+- RS2 internet researcher has no modules — can't access proprietary data
+- The planner has no sandbox/tools — can only produce text, can't exfiltrate
+
+---
+
+## Honest Assessment: The Unresolved Tension
+
+### Why All Research Phase Solutions Fall Short
+
+The previous section proposed four solutions (RS1-RS4) for the research/exploration phase. On closer analysis, they all share the same fundamental problem.
+
+#### The Data Flow Problem
+
+Information from modules must somehow reach the developer agent (which has internet). Every solution creates a "bridge" — a file, a report, a prompt injection — that carries module-derived information into an internet-connected context.
+
+```
+Modules (sensitive) → [BRIDGE] → Internet-connected agent
+
+The bridge is always the leak path.
+```
+
+| Solution | What crosses the bridge | Why it's a problem |
+|----------|------------------------|-------------------|
+| RS1 (static catalog) | Module names, API schemas, descriptions | Reveals what data assets and capabilities we have — competitively sensitive |
+| RS2 (dual-agent) | Capabilities report with real API responses | Contains actual module data. Report flows to planner → plan text → developer (internet) |
+| RS3 (separate session) | Capabilities report file | Same as RS2 — the report file is the bridge |
+| RS4 (schemas in prompt) | API shapes, parameter names, return types | Even API shapes reveal capabilities. "get_financial_metrics(company_id)" tells you we have financial data |
+
+#### Why RS4 Is Not Safe
+
+API schemas look harmless but they are intelligence:
+- `DemographicsModule.get_statistics(region, year)` → "we have demographic data by region"
+- `FinancialModule.get_metrics(company_id)` → "we have company financial data"
+- `RiskModule.calculate_score(entity, category)` → "we have risk scoring capabilities"
+
+This metadata tells a competitor or attacker exactly what our platform can do. It's the same reason AWS doesn't publish all its internal service APIs — the API surface IS the product intelligence.
+
+#### Why RS2 Is Not Safe
+
+The capabilities report flows through this chain:
+
+```
+modules_researcher (modules, no internet)
+  → writes capabilities_report.md
+  → planner reads it (no sandbox, but produces text)
+  → plan text goes into developer prompt
+  → developer has internet
+
+If capabilities_report.md contains: "Demographics module returns 
+{region: 'amsterdam', population: 900000, gdp_per_capita: 52000}"
+
+Then the developer's context (with internet) contains this data.
+A prompt injection from a browsed website could exfiltrate it.
+```
+
+The bridge is the plan text itself. Once module-derived information enters the developer's prompt, the trifecta is re-established: the developer holds module data AND has internet AND processes untrusted content (from browsed websites, CBS data files, etc.).
+
+### The Fundamental Constraint
+
+**If we define module-derived information as sensitive, then NO agent with internet access can ever receive ANY information derived from modules.** Not schemas, not reports, not summaries, not even "you could build X with module Y."
+
+This creates a paradox:
+- The BA needs module knowledge to write a useful functional design
+- The developer needs the functional design to write code
+- The developer needs internet to write and test code
+- Therefore: module-derived information reaches an internet-connected agent
+
+### Three Ways To Resolve The Paradox
+
+#### Resolution A: Accept That API Schemas Are Not Sensitive
+
+**Redefine what "sensitive" means.** API schemas (endpoint names, parameter types, return shapes) are treated as non-sensitive — like public API documentation. Only the actual DATA returned by the APIs is considered sensitive.
+
+This is how most platforms work:
+- Stripe publishes its API docs publicly (schemas, endpoints, parameters)
+- The actual transaction data is sensitive and access-controlled
+- Knowing Stripe has a `GET /charges` endpoint is not a security risk
+
+If we adopt this model:
+- RS4 (schemas in prompt) is safe — schemas are public knowledge
+- RS2 (dual-agent) is needed only for data exploration, not schema discovery
+- The developer knows module API shapes but not actual data values
+- Actual data values only enter context during module_integrator step (no internet)
+
+**What this means for Druppie:** Module API schemas become part of the platform documentation. They're designed to be public. Proprietary value is in the DATA the modules provide, not the fact that they exist.
+
+**Accepted risk:** Competitors learn what modules we offer. But this is standard in SaaS — your product page already lists capabilities. The API schema is just a more detailed version of that.
+
+#### Resolution B: Two Fully Separate Pipelines
+
+Run two completely independent pipelines that never share information:
+
+```
+Pipeline A: Module Exploration Pipeline
+  Networks: [modules] only (NO internet, ever)
+  Agents: modules_researcher → module_designer
+  Output: functional_design.md (written WITHOUT internet knowledge)
+  The FD contains module capabilities + proposed application design
+  This FD is delivered to the dev/architect (human) for review
+
+Pipeline B: Implementation Pipeline  
+  Networks: [internet] then [modules]
+  Agents: installer → developer → tester → module_integrator → deployer
+  Input: functional_design.md (from Pipeline A, but...)
+  
+  Problem: if the FD contains module knowledge, Pipeline B's 
+  developer (internet) receives module-derived information.
+```
+
+This doesn't actually solve the problem — the FD is still the bridge. Unless the FD is written WITHOUT referencing specific module capabilities, in which case... what was the point of Pipeline A?
+
+The only way this works: Pipeline A produces an FD that describes the APPLICATION (user-facing features) without describing the MODULES that power it. The developer then implements the application based on the feature description, and the module_integrator connects it to the actual modules.
+
+**This is actually viable:** "Build a dashboard showing regional population comparison with age distribution charts" (application description) vs. "Use DemographicsModule.get_statistics() which returns {region, population, age_groups}" (module knowledge). The developer can build the first without the second — using mocks with reasonable assumptions about data shape.
+
+#### Resolution C: Human-In-The-Loop At The Research Boundary
+
+The dev/architect (human) acts as the bridge. No agent ever crosses the boundary.
+
+```
+Module exploration:
+  modules_researcher agent (modules, no internet)
+  explores real module APIs
+  writes capabilities report
+  → dev/architect reviews the report (human reads it)
+
+Public data exploration:
+  internet_researcher agent (internet, no modules)
+  explores CBS, public APIs
+  writes data availability report
+  → dev/architect reviews the report (human reads it)
+
+Functional design:
+  dev/architect (human) writes the FD themselves
+  using knowledge from both reports
+  The FD contains human-curated module + public data knowledge
+  
+Implementation:
+  developer agent receives the human-written FD
+  The FD may contain module knowledge, but the dev/architect 
+  decided what to include — it's a human-controlled information flow
+```
+
+**The security model:** The human is the trusted information channel. They read both reports and write an FD that contains only what they consider safe to share with an internet-connected agent. They're the security boundary.
+
+**Accepted risk:** The human might include too much module detail in the FD, effectively leaking it to the developer's internet-connected context. But this is a HUMAN decision, not an automated leak. The human is accountable.
+
+### Assessment
+
+| Resolution | Security | Practicality | Accuracy |
+|------------|----------|-------------|----------|
+| A: Schemas are non-sensitive | ⚠️ Depends on what you consider sensitive | ✅ Simple, automated | ✅ Always up to date |
+| B: Separate pipelines + feature-only FD | ✅ Developer never sees module knowledge | ⚠️ FD must be written without module references | ⚠️ Developer guesses data shapes from feature description |
+| C: Human as the bridge | ✅ Human controls information flow | ❌ Manual FD writing for every project | ✅ Human ensures accuracy |
+
+### No Clean Answer
+
+The research phase exposes a genuine architectural tension that network-level isolation cannot fully resolve. Information must flow from modules to internet-connected agents for the pipeline to work. The question is: **what information, and who controls the flow?**
+
+Resolution A (accept schemas as non-sensitive) is the most pragmatic if the business model allows it — most SaaS platforms treat their API docs as public. Resolution C (human bridge) is the most secure but requires manual work for every project. Resolution B (feature-only FD) is theoretically clean but practically fragile.
+
+This decision is a **product/architecture decision**, not a security decision. It depends on: what is Druppie's competitive moat? Is it the existence of the modules (known to customers), or the data they return (only accessible through the platform)?
