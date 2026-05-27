@@ -88,13 +88,13 @@ tool-test:
         by: architect
       arguments:
         command: |
-          echo "=== Starting Docker daemon ==="
-          dockerd --iptables=false --bridge=none --storage-driver=vfs > /tmp/dockerd.log 2>&1 &
+          echo "=== Docker daemon status ==="
+          docker info 2>&1 | grep -E "Server Version|Storage Driver"
           sleep 5
           echo "=== Checking Docker daemon ==="
           docker info 2>&1 | head -10
           echo "=== Docker daemon ready ==="
-        timeout: 30
+        timeout: 15
         git_scope: "update_core"
       assert:
         result:
