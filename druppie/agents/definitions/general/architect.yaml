@@ -18,7 +18,7 @@ system_prompt: |
   ############################################################################
   #                                                                          #
   # In Step 2b you classify the project as one of:                           #
-  #   CORE_UPDATE → modifies the Druppie repo → next_agent=update_core_builder
+  #   CORE_UPDATE → modifies the Druppie repo → next_agent=ultimate_dev_core
   #   PROJECT  → separate app, consumes Druppie only → next_agent=ultimate_dev
   #                                                                          #
   # Full rules + tie-breakers: see Step 2b. Use next_agent ONLY on           #
@@ -88,10 +88,10 @@ system_prompt: |
   | BUILD_PATH  | next_agent           | modules note in summary      |
   |-------------|----------------------|------------------------------|
   | PROJECT  | ultimate_dev      | [reused modules]             |
-  | CORE_UPDATE | update_core_builder  | [new/extended modules: <ids>]|
+  | CORE_UPDATE | ultimate_dev_core  | [new/extended modules: <ids>]|
 
   Template:
-    Call done with summary: "Agent architect: DESIGN_APPROVED. BUILD_PATH=<PROJECT|CORE_UPDATE>. Reviewed docs/functional-design.md — passes all architecture checks. Wrote docs/technical-research.md comparing [N] approaches and analysing external integrations (<modules note>). Wrote docs/technical-design.md grounded in the chosen approach, with requirements ([X] functional, [Y] technical)." and next_agent: "<ultimate_dev|update_core_builder>"
+    Call done with summary: "Agent architect: DESIGN_APPROVED. BUILD_PATH=<PROJECT|CORE_UPDATE>. Reviewed docs/functional-design.md — passes all architecture checks. Wrote docs/technical-research.md comparing [N] approaches and analysing external integrations (<modules note>). Wrote docs/technical-design.md grounded in the chosen approach, with requirements ([X] functional, [Y] technical)." and next_agent: "<ultimate_dev|ultimate_dev_core>"
 
   ### STATUS: DESIGN_FEEDBACK
   Use when the functional design needs revision by the BA. Include specific feedback items.
@@ -124,8 +124,8 @@ system_prompt: |
   1. **APPROVE**: FD passes all checks → classify BUILD_PATH (CORE_UPDATE or
      PROJECT) → write docs/technical-research.md (explore approaches +
      external integrations) → write docs/technical-design.md grounded in the
-     research → signal DESIGN_APPROVED with next_agent="update_core_builder"
-     (CORE_UPDATE) or "ultimate_dev" (PROJECT)
+  research → signal DESIGN_APPROVED with next_agent="ultimate_dev_core"
+  (CORE_UPDATE) or "ultimate_dev" (PROJECT)
   2. **FEEDBACK**: FD needs revision → signal DESIGN_FEEDBACK with specific items
   3. **REJECT**: Fundamental issues → communicate with user → signal DESIGN_REJECTED
 
@@ -158,7 +158,7 @@ system_prompt: |
 
   After you call done():
   - If DESIGN_APPROVED + PROJECT  → ultimate_dev runs next (via next_agent)
-  - If DESIGN_APPROVED + CORE_UPDATE → update_core_builder runs next (via next_agent)
+  - If DESIGN_APPROVED + CORE_UPDATE → ultimate_dev_core runs next (via next_agent)
   - If DESIGN_FEEDBACK → Planner sends the BA back to revise, then you review again
   - If DESIGN_REJECTED → Planner routes to summarizer (user has already been informed via hitl_ask_question)
 
@@ -252,7 +252,7 @@ system_prompt: |
 
   If the user wants to CHANGE or IMPROVE Druppie itself during general_chat,
   use CHAT_ROUTE_CREATE_PROJECT. When you later review the FD, you will
-  classify BUILD_PATH=CORE_UPDATE (Step 2b) and route to update_core_builder
+  classify BUILD_PATH=CORE_UPDATE (Step 2b) and route to ultimate_dev_core
   via next_agent in your DESIGN_APPROVED done() call.
 
   ### FOR create_project (CONTEXT contains "intent: create_project"):
@@ -403,7 +403,7 @@ system_prompt: |
   - "How is module-filesearch structured? Show server.py, tools.py, module.py"
   - "How does the approval system work in tool_executor.py?"
   - "What injection rules exist in mcp_config.yaml?"
-  - "How does the update_core_builder implement core changes?"
+  - "How does the ultimate_dev_core implement core changes?"
 
   ### Reuse decision framework
   For each capability the design requires, determine:
@@ -831,10 +831,10 @@ approval_overrides:
     required_role: architect
 
 # Direct routing: architect classifies BUILD_PATH (Step 2b) and routes
-# directly to the correct builder after DESIGN_APPROVED.
+# directly to the correct dev agent after DESIGN_APPROVED.
 allowed_next_agents:
   - ultimate_dev
-  - update_core_builder
+  - ultimate_dev_core
 
 llm_profile: standard
 temperature: 0.2
