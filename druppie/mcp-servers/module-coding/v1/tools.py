@@ -222,7 +222,7 @@ async def _exec_bash_in_container(
     container_id: str, command: str, timeout: float = 120, output_file: str | None = None
 ) -> tuple[int, str, str]:
     if output_file:
-        wrapped = f"set -o pipefail; {{ {command} ; }} 2>&1 | tee {shlex.quote(output_file)}"
+        wrapped = f"set -o pipefail; ({command}) 2>&1 | tee {shlex.quote(output_file)}"
         full_cmd = ["docker", "exec", container_id, "bash", "-c", wrapped]
     else:
         full_cmd = ["docker", "exec", container_id, "bash", "-c", command]
