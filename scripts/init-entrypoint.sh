@@ -25,8 +25,13 @@ python /app/scripts/setup_keycloak.py
 echo ""
 
 # Step 2: Configure Gitea
-echo "--- Step 2/2: Configuring Gitea ---"
+echo "--- Step 2/3: Configuring Gitea ---"
 python /app/scripts/setup_gitea.py
+echo ""
+
+# Step 3: Configure Security Gate (druppie-gate realm for oauth2-proxy)
+echo "--- Step 3/3: Configuring Security Gate ---"
+python /app/scripts/setup_gate.py
 echo ""
 
 # Mark initialization as complete

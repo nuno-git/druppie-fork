@@ -96,6 +96,54 @@ The backend stores only `repo_name` and `repo_owner` in the database (not full U
 
 The `iac/users.yaml` file uses `${FRONTEND_PUBLIC_URL}` and `${GITEA_PUBLIC_URL}` as template variables. The `setup_keycloak.py` script substitutes them at init time. No manual editing needed.
 
+### Security Gate (druppie-gate realm)
+
+Production uses a **two-layer auth** architecture:
+
+| Layer | Realm | Purpose | Login |
+|-------|-------|---------|-------|
+| 1 - Gate | `druppie-gate` | oauth2-proxy protects all endpoints via nginx `auth_request` | `druppie_team` / `Druppie2026!SecureGate` |
+| 2 - App | `druppie` | Backend JWT validation for RBAC (roles, approvals) | `admin` / `Admin123!` |
+
+The gate is configured by `scripts/setup_gate.py` which runs automatically during init. It creates:
+
+- **Realm**: `druppie-gate` (isolated from the app realm)
+- **Client**: `druppie-proxy` (used by oauth2-proxy, secret from `OAUTH2_PROXY_CLIENT_SECRET`)
+- **User**: `druppie_team` (the shared team credential for the gate)
+
+To re-run the gate setup manually (e.g., after Keycloak data loss):
+
+```bash
+python3 scripts/setup_gate.py
+docker compose --profile prod restart oauth2-proxy
+```
+
+To customize the gate user/domain, set env vars before running:
+
+```bash
+GATE_DOMAIN=druppie.example.com \
+OAUTH2_PROXY_CLIENT_SECRET=your-secret \
+python3 scripts/setup_gate.py
+```
+
+## Recovery: Lost Keycloak Realms
+
+If Keycloak data is lost (e.g., volume deleted, `docker compose down` with `-v`):
+
+```bash
+# 1. Remove the init marker so init re-runs
+docker volume rm druppie_init_marker
+
+# 2. Rebuild with init profile
+docker compose --profile prod --profile init up -d --build
+
+# Or run individual setup scripts manually:
+python3 scripts/setup_keycloak.py
+python3 scripts/setup_gate.py
+python3 scripts/setup_gitea.py
+docker compose --profile prod restart oauth2-proxy
+```
+
 ## First-Time Production Setup
 
 ### 1. Prepare .env

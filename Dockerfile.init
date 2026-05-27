@@ -17,6 +17,7 @@ RUN pip install --no-cache-dir requests pyyaml
 # Copy setup scripts and IAC configuration
 COPY scripts/setup_keycloak.py /app/scripts/setup_keycloak.py
 COPY scripts/setup_gitea.py /app/scripts/setup_gitea.py
+COPY scripts/setup_gate.py /app/scripts/setup_gate.py
 COPY scripts/init-entrypoint.sh /app/scripts/init-entrypoint.sh
 COPY iac/ /app/iac/
 
