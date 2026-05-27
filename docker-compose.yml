@@ -508,8 +508,9 @@ services:
       - --login-url=https://druppie.notitiemaker.nl/realms/druppie-gate/protocol/openid-connect/auth
       - --redeem-url=http://keycloak:8080/realms/druppie-gate/protocol/openid-connect/token
       - --oidc-jwks-url=http://keycloak:8080/realms/druppie-gate/protocol/openid-connect/certs
-      - --profile-url=http://keycloak:8080/realms/druppie-gate/protocol/openid-connect/userinfo
+      - --profile-url=
       - --oidc-issuer-url=https://druppie.notitiemaker.nl/realms/druppie-gate
+      - --insecure-oidc-skip-issuer-verification=true
       - --client-id=druppie-proxy
       - --client-secret=${OAUTH2_PROXY_CLIENT_SECRET}
       - --cookie-secret=${OAUTH2_PROXY_COOKIE_SECRET}
@@ -518,6 +519,7 @@ services:
       - --cookie-samesite=lax
       - --redirect-url=https://druppie.notitiemaker.nl/oauth2/callback
       - --email-domain=*
+      - --insecure-oidc-allow-unverified-email=true
       - --skip-provider-button=true
       - --upstream=static://200
       - --http-address=0.0.0.0:4180
