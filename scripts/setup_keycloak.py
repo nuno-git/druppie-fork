@@ -205,6 +205,24 @@ class KeycloakAdmin:
                     return client["id"]
         return None
 
+    def set_realm_frontend_url(self, realm: str, frontend_url: str):
+        url = f"{self.base_url}/admin/realms/{realm}"
+        response = requests.get(url, headers=self._headers())
+        if response.status_code != 200:
+            print(f"[ERROR] Failed to get realm '{realm}': {response.text}")
+            return False
+
+        realm_data = response.json()
+        realm_data.setdefault("attributes", {})["frontendUrl"] = frontend_url
+
+        update = requests.put(url, json=realm_data, headers=self._headers())
+        if update.status_code == 204:
+            print(f"[OK] Set realm frontendUrl to '{frontend_url}'")
+            return True
+        else:
+            print(f"[ERROR] Failed to set frontendUrl: {update.text}")
+            return False
+
     def create_client(self, realm: str, client_config: dict):
         """Create or update an OAuth2 client."""
         url = f"{self.base_url}/admin/realms/{realm}/clients"
@@ -348,6 +366,10 @@ def main():
             client["rootUrl"] = substitute_env(client["rootUrl"])
 
         kc.create_client(REALM_NAME, client)
+
+    # Set realm frontendUrl so tokens always have the correct HTTPS issuer
+    print("\n[STEP 5] Setting realm frontend URL...")
+    kc.set_realm_frontend_url(REALM_NAME, keycloak_public_url)
 
     print("\n" + "=" * 60)
     print("[DONE] Keycloak setup complete!")
