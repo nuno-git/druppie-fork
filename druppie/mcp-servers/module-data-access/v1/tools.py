@@ -125,6 +125,34 @@ async def read_data(
 
 
 @mcp.tool()
+async def execute_query(
+    source_id: str,
+    query: str,
+    limit: int | None = None,
+) -> dict:
+    """Run a free-form read-only SQL query against a SQL data source.
+
+    Only supported for SQL sources (e.g. azure-sql). The query must be a
+    single SELECT or WITH (CTE) statement — DML/DDL, comments, batch
+    separators and stored-procedure calls are rejected. Results are capped
+    at 1000 rows by default; pass an explicit 'limit' to read more, or
+    paginate via ORDER BY/OFFSET in the query itself.
+
+    For file-based sources (Azure Data Lake) this returns a clear
+    'unsupported' error — use read_data instead.
+
+    Args:
+        source_id: Source ID from list_sources()
+        query: Read-only SELECT or WITH statement
+        limit: Optional maximum rows to return
+
+    Returns:
+        Dict with data records, row_count, columns, warnings and metadata.
+    """
+    return await module.execute_query(source_id, query, limit)
+
+
+@mcp.tool()
 async def download_data(
     source_id: str,
     data_id: str,

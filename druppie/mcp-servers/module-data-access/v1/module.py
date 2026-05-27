@@ -181,6 +181,19 @@ class DataAccessModule:
         except ValueError as e:
             return {"success": False, "error": str(e)}
 
+    async def execute_query(
+        self,
+        source_id: str,
+        query: str,
+        limit: int | None = None,
+    ) -> dict:
+        """Run a free-form read-only query against a SQL source."""
+        try:
+            adapter = self.get_adapter(source_id)
+            return await adapter.execute_query(query, limit)
+        except ValueError as e:
+            return {"success": False, "error": str(e)}
+
     async def download_data(
         self,
         source_id: str,

@@ -100,6 +100,7 @@ tests can assert on it.
 | `list_available_data` | `source_id`, `path?`, `recursive?` | `{success, data_items: [{item_id, name, type, metadata}], count, level, container?, path?}` |
 | `get_schema` | `source_id`, `data_id` | `{success, schema: {columns: [{name, type}], metadata}}` |
 | `read_data` | `source_id`, `data_id`, `filter_expr?`, `limit?`, `offset?` | `{success, data: [...], row_count, columns, metadata}` |
+| `execute_query` | `source_id`, `query`, `limit?` | `{success, data: [...], row_count, columns, warnings, metadata}` |
 | `download_data` | `source_id`, `data_id`, `destination`, `session_id*`, `project_id*` | `{success, destination, size_bytes}` |
 
 `*` `session_id` and `project_id` on `download_data` are auto-injected by
@@ -125,6 +126,20 @@ Builder when consuming sample data, most likely).
   AND Year >= 2020`). Statement terminators, comment markers and
   stored-procedure calls are rejected — see [Security boundaries](#security-boundaries).
 - Azure Data Lake: pandas `DataFrame.query()` expression.
+
+`execute_query` (Azure SQL only):
+- Accepts a **single** read-only statement that must start with `SELECT`
+  or `WITH` (CTE). DML/DDL verbs, comments, batch separators (`GO`),
+  stored-proc calls and additional `;` separators are rejected before the
+  query reaches the database. The configured `db_datareader` principal is
+  the real hard line; this validator just makes the contract explicit.
+- Same 1000-row default cap as `read_data`. The cap is enforced by
+  fetching one extra row from the cursor — if the query produced more,
+  `metadata.truncated` is `true` and `warnings[]` says so. Paginate via
+  `ORDER BY ... OFFSET ... ROWS FETCH NEXT ... ROWS ONLY` in the query
+  itself.
+- For file-based sources (Azure Data Lake) the tool returns a clear
+  "unsupported" error — use `read_data` instead.
 
 ### Azure SQL row caps
 
@@ -232,6 +247,8 @@ unreachable — the filter guard runs before the connection is opened.
 | `data-access-sql-test-connection` | `test_connection` actually reaches the SQL endpoint and runs `SELECT 1`. |
 | `data-access-sql-list-tables` | `list_available_data` enumerates tables from `INFORMATION_SCHEMA.TABLES`. |
 | `data-access-sql-filter-rejected` | `read_data` rejects a `filter_expr` containing `;` with a `WHERE-clause` error. |
+| `data-access-sql-execute-query` | `execute_query` runs a `SELECT` and returns rows. |
+| `data-access-sql-execute-query-rejected` | `execute_query` rejects a non-SELECT statement with a `SELECT or WITH` error. |
 
 All assertions use `{matches: "\"success\"\\s*:\\s*(true|false)"}` so they
 remain robust to JSON whitespace.
