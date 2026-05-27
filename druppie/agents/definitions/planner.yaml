@@ -232,6 +232,17 @@ system_prompt: |
   Call make_plan with 2 steps depending on project type:
 
   For create_project:
+  - Step 1: agent_id="documenter", prompt="Create or update docs/documentation.md for the project that was just built. Read the workspace, functional design, and technical design. Write plain-language end-user documentation in both Dutch and English. Commit and push."
+  - Step 2: agent_id="planner", prompt="Documenter completed. Route to deployer for build and deploy."
+
+  For update_project:
+  - Step 1: agent_id="documenter", prompt="Create or update docs/documentation.md for the project. Read the workspace, functional design, technical design, and builder_plan.md. Write plain-language end-user documentation in both Dutch and English. Commit and push."
+  - Step 2: agent_id="planner", prompt="Documenter completed. Route to deployer for preview deploy."
+
+  ### After DOCUMENTER completed:
+
+  For create_project:
+  Call make_plan with 2 steps:
   - Step 1: agent_id="deployer", prompt="Build and deploy. Ask user if it looks good via hitl_ask_question. Include feedback in done() as 'USER FEEDBACK: <response>'."
   - Step 2: agent_id="planner", prompt="Deployer completed. Evaluate user feedback and decide next step."
 
@@ -302,16 +313,20 @@ system_prompt: |
   **For CREATE_PROJECT:**
 
   If user APPROVED:
-  Call make_plan with 2 steps:
-  - Step 1: agent_id="documenter", prompt="Create or update docs/documentation.md for the project that was just built. Read the workspace, functional design, and technical design. Write plain-language end-user documentation in both Dutch and English. Commit and push."
-  - Step 2: agent_id="summarizer", prompt="Summarize what was accomplished for the user. Mention that documentation was created at docs/documentation.md."
+  Documentation was already created before deployment.
+  Call make_plan with 1 step:
+  - agent_id="summarizer", prompt="Summarize what was accomplished for the user. Mention that documentation was created at docs/documentation.md."
 
   If user wants CHANGES:
   Call make_plan with 2 steps:
   - Step 1: agent_id="developer", prompt="IMPROVEMENT TASK: [paste the specific user feedback here]. Commit and push."
-  - Step 2: agent_id="planner", prompt="Developer completed improvements. Evaluate and decide next step."
+  - Step 2: agent_id="planner", prompt="Developer completed improvements. Evaluate and decide next step. After improvements, re-run documenter then re-deploy."
 
   **For UPDATE_PROJECT:**
+
+  If deployer summary contains '-preview' (this is the PREVIEW deployer):
+  Documentation was already created before preview deploy. Skip re-documenting.
+  Look for USER FEEDBACK:
 
   If user APPROVED:
   Call make_plan with 2 steps:
@@ -321,18 +336,26 @@ system_prompt: |
   If user wants CHANGES:
   Call make_plan with 2 steps:
   - Step 1: agent_id="developer", prompt="IMPROVEMENT TASK: [paste the specific user feedback here]. Commit and push to feature branch."
-  - Step 2: agent_id="planner", prompt="Developer completed improvements. Evaluate and decide next step."
+  - Step 2: agent_id="planner", prompt="Developer completed improvements. Evaluate and decide next step. After improvements, re-run documenter then re-deploy."
 
-  If this is a FINAL deploy (deployer summary indicates final deploy from main):
+  If deployer summary does NOT contain '-preview' (this is the FINAL deployer):
+  Documentation was already created before preview deploy. Skip re-documenting.
+  Look for USER FEEDBACK:
+
+  If user APPROVED or no feedback:
+  Call make_plan with 1 step:
+  - agent_id="summarizer", prompt="Summarize what was accomplished for the user."
+
+  If user wants CHANGES:
   Call make_plan with 2 steps:
-  - Step 1: agent_id="documenter", prompt="Create or update docs/documentation.md for the project that was just built. Read the workspace, functional design, and technical design. Write plain-language end-user documentation in both Dutch and English. Commit and push."
-  - Step 2: agent_id="summarizer", prompt="Summarize what was accomplished for the user. Mention that documentation was created at docs/documentation.md."
+  - Step 1: agent_id="developer", prompt="IMPROVEMENT TASK: [paste the specific user feedback here]. Commit and push."
+  - Step 2: agent_id="planner", prompt="Developer completed improvements. Evaluate and decide next step."
 
   If deployer summary does NOT contain "USER FEEDBACK:" at all:
   The deployer completed without collecting user feedback. Treat as approved.
-  Call make_plan with 2 steps:
-  - Step 1: agent_id="documenter", prompt="Create or update docs/documentation.md for the project that was just built. Read the workspace, functional design, and technical design. Write plain-language end-user documentation in both Dutch and English. Commit and push."
-  - Step 2: agent_id="summarizer", prompt="Summarize what was accomplished for the user. Mention that documentation was created at docs/documentation.md."
+  Documentation was already created before deployment. Skip re-documenting.
+  Call make_plan with 1 step:
+  - agent_id="summarizer", prompt="Summarize what was accomplished for the user. Mention that documentation was created at docs/documentation.md."
 
   ### FALLBACK: Unrecognized agent summary (no known signal found)
 

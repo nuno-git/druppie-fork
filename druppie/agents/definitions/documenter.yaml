@@ -160,7 +160,6 @@ mcps:
   coding:
     - read_file
     - write_file
-    - list_dir
     - run_git
 
 # No allowed_next_agents — documenter is always the final step

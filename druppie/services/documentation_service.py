@@ -1,5 +1,9 @@
 import structlog
+from datetime import datetime, timezone
+
+from ..core.background_tasks import create_tracked_task
 from ..core.gitea import get_gitea_client
+from ..domain import DocumentationEntry, ProjectSummary
 from ..repositories import ProjectRepository, DocumentationCacheRepository
 
 logger = structlog.get_logger()
@@ -7,28 +11,43 @@ logger = structlog.get_logger()
 DOC_PATH = 'docs/documentation.md'
 DEFAULT_BRANCH = 'main'
 CACHE_TTL_SECONDS = 60
+STALE_CLEANUP_INTERVAL_SECONDS = 60  # Rate-limit stale cleanup to align with cache TTL
 
 SOURCE_TYPE_GITEA = 'gitea'
 
 
 class DocumentationService:
+    _last_stale_cleanup: datetime | None = None
 
     def __init__(self, project_repo: ProjectRepository, cache_repo: DocumentationCacheRepository):
         self.project_repo = project_repo
         self.cache_repo = cache_repo
 
-    async def get_all_documentation(self) -> list[dict]:
-        entries = []
+    async def get_all_documentation(self) -> list[DocumentationEntry]:
+        entries: list[DocumentationEntry] = []
 
-        gitea_entries = await self._fetch_gitea_docs()
+        projects, _ = self.project_repo.list_all(limit=1000)
+
+        gitea_entries = await self._fetch_gitea_docs(projects)
         entries.extend(gitea_entries)
 
-        await self._cleanup_stale_gitea_cache()
+        # Run cleanup in the background — do not block the HTTP response
+        create_tracked_task(
+            self._cleanup_stale_gitea_cache(projects),
+            name="doc-stale-cache-cleanup",
+        )
 
         return entries
 
-    async def _cleanup_stale_gitea_cache(self) -> None:
-        projects = self.project_repo.list_all(limit=1000)[0]
+    async def _cleanup_stale_gitea_cache(self, projects: list[ProjectSummary]) -> None:
+        now = datetime.now(timezone.utc)
+        last = self.__class__._last_stale_cleanup
+        if last is not None and (now - last).total_seconds() < STALE_CLEANUP_INTERVAL_SECONDS:
+            logger.debug("stale_cleanup_skipped", reason="rate_limited")
+            return
+
+        self.__class__._last_stale_cleanup = now
+
         active_ids = {str(p.id) for p in projects if p.repo_url}
 
         cached = self.cache_repo.list_by_source_type(SOURCE_TYPE_GITEA)
@@ -37,16 +56,14 @@ class DocumentationService:
                 self.cache_repo.delete_by_source(SOURCE_TYPE_GITEA, entry.source_id)
                 logger.info('cleaned_stale_doc_cache', source_id=entry.source_id, title=entry.title)
 
-    async def _fetch_gitea_docs(self) -> list[dict]:
+    async def _fetch_gitea_docs(self, projects: list[ProjectSummary]) -> list[DocumentationEntry]:
         gitea = get_gitea_client()
-        projects = self.project_repo.list_all(limit=1000)[0]
-        entries = []
+        entries: list[DocumentationEntry] = []
 
         for project in projects:
             if not project.repo_url:
                 continue
-            project_model = self.project_repo.get_by_id(project.id)
-            if not project_model or not project_model.repo_name:
+            if not project.repo_name:
                 continue
 
             source_id = str(project.id)
@@ -55,24 +72,24 @@ class DocumentationService:
                 SOURCE_TYPE_GITEA, source_id, DOC_PATH, max_age_seconds=CACHE_TTL_SECONDS
             )
             if cached is not None and cached.content:
-                entries.append({
-                    'source_type': SOURCE_TYPE_GITEA,
-                    'source_id': source_id,
-                    'title': project.name,
-                    'content': cached.content,
-                })
+                entries.append(DocumentationEntry(
+                    source_type=SOURCE_TYPE_GITEA,
+                    source_id=source_id,
+                    title=project.name,
+                    content=cached.content,
+                ))
                 continue
 
             try:
                 result = await gitea.get_file(
-                    repo=project_model.repo_name,
+                    repo=project.repo_name,
                     path=DOC_PATH,
                     branch=DEFAULT_BRANCH,
-                    owner=project_model.repo_owner,
+                    owner=project.repo_owner,
                 )
 
                 if not result.get('success') or not result.get('content'):
-                    logger.warning('doc_not_found', project_id=source_id, repo=project_model.repo_name)
+                    logger.warning('doc_not_found', project_id=source_id, repo=project.repo_name)
                     continue
 
                 content = result['content']
@@ -90,14 +107,14 @@ class DocumentationService:
                 )
                 self.cache_repo.commit()
 
-                entries.append({
-                    'source_type': SOURCE_TYPE_GITEA,
-                    'source_id': source_id,
-                    'title': project.name,
-                    'content': content,
-                })
+                entries.append(DocumentationEntry(
+                    source_type=SOURCE_TYPE_GITEA,
+                    source_id=source_id,
+                    title=project.name,
+                    content=content,
+                ))
 
             except Exception as e:
-                logger.warning('doc_fetch_failed', project_id=source_id, repo=project_model.repo_name, error=str(e))
+                logger.warning('doc_fetch_failed', project_id=source_id, repo=project.repo_name, error=str(e))
 
         return entries
