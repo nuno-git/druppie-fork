@@ -1,0 +1,58 @@
+tool-test:
+  name: test-sandbox-bash-curl
+  description: |
+    Tests internet access via curl in the coding sandbox via router→planner→builder pipeline.
+  tags: [sandbox, bash, curl, e2e]
+
+  chain:
+    # Router — create project
+    - agent: router
+      tool: builtin:set_intent
+      arguments:
+        intent: create_project
+        project_name: sandbox-curl-test
+        description: "Test project for sandbox curl verification"
+      assert:
+        result:
+          - not_empty
+
+    - agent: router
+      tool: builtin:done
+      arguments:
+        summary: "Agent router: Classified as create_project"
+
+    # Planner → Builder
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: builder
+            prompt: "Test curl availability and internet access in the sandbox"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: Planned builder for sandbox curl test"
+
+    # Builder — check curl is available
+    - agent: builder
+      tool: coding:bash
+      arguments:
+        command: "which curl && curl --version | head -1"
+        timeout: 30
+        git_scope: "current_project"
+      assert:
+        result:
+          - { contains: "curl" }
+
+    # Builder — test actual internet access via http
+    - agent: builder
+      tool: coding:bash
+      arguments:
+        command: "curl -s http://httpbin.org/get"
+        timeout: 60
+        git_scope: "current_project"
+        sandbox_networks: ["internet"]
+      assert:
+        result:
+          - { contains: "httpbin.org" }

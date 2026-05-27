@@ -821,6 +821,11 @@ mcps:
     - search_model
     - get_impact
 
+  web:
+    - search_web
+    - fetch_url
+    - get_page_info
+
 # LAYERED APPROVAL SYSTEM:
 # Override the default (no approval) for make_design when used by architect.
 # When architect calls make_design (e.g., to create docs/technical-design.md),

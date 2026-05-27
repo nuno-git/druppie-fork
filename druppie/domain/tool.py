@@ -376,6 +376,11 @@ class ToolDefinition(BaseModel):
             # No schema to validate against - accept everything
             return True, None, arguments, None
 
+        # Strip None values — strict mode schema tells LLM all fields are required
+        # with nullable types, so LLMs send null for optional params. The raw
+        # schema may not have nullable types, so strip before validating.
+        arguments = {k: v for k, v in arguments.items() if v is not None}
+
         # First try with original arguments
         try:
             jsonschema.validate(instance=arguments, schema=self.json_schema)

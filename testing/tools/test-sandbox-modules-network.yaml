@@ -1,0 +1,111 @@
+## Test: sandbox container network connectivity to MCP modules
+##
+## Verifies that a sandbox container with networks: [modules] can reach
+## MCP module services on the sandbox-modules Docker network.
+##
+## The test_executor agent has networks: [modules] in its YAML definition.
+## The sandbox_networks parameter is injected via mcp_config.yaml from
+## agent.coding_networks. This test proves the full chain works:
+##   YAML networks → context injection → docker network connect → module reachable
+##
+## Run: POST /api/evaluations/run-tests {"test_name": "test-sandbox-modules-network"}
+
+tool-test:
+  name: test-sandbox-modules-network
+  description: |
+    E2E test: Verifies that a sandbox container connected to the modules network
+    can reach MCP module services (module-filesearch health endpoint).
+    Uses test_executor agent which has networks: [modules] configured.
+  tags: [sandbox, network, modules, e2e]
+
+  chain:
+    # =========================================================================
+    # Router — create project for sandbox context
+    # =========================================================================
+    - agent: router
+      tool: builtin:set_intent
+      arguments:
+        intent: create_project
+        project_name: sandbox-modules-network-test
+        description: "Test project for sandbox modules network connectivity"
+      assert:
+        result:
+          - not_empty
+
+    - agent: router
+      tool: builtin:done
+      arguments:
+        summary: "Agent router: Classified as create_project for sandbox-modules-network-test"
+
+    # =========================================================================
+    # Planner → test_executor
+    # =========================================================================
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: test_executor
+            prompt: "Test network connectivity from the sandbox to MCP modules"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: Planned test_executor for sandbox modules network test"
+
+    # =========================================================================
+    # test_executor — test modules network connectivity
+    # =========================================================================
+
+    # Test 1: Verify curl is available in the sandbox
+    - agent: test_executor
+      tool: coding:bash
+      arguments:
+        command: "which curl || echo 'curl not found'"
+        timeout: 10
+        git_scope: "current_project"
+      assert:
+        result:
+          - { contains: "curl" }
+
+    # Test 2: Reach module-filesearch health endpoint via modules network
+    # module-filesearch runs on port 9004 and is connected to sandbox-modules network
+    # Docker DNS resolves "module-filesearch" to the container IP on shared networks
+    - agent: test_executor
+      tool: coding:bash
+      arguments:
+        command: "curl -s -o /dev/null -w '%{http_code}' http://module-filesearch:9004/health --max-time 5"
+        timeout: 15
+        git_scope: "current_project"
+      assert:
+        result:
+          - { contains: "200" }
+
+    # Test 3: Reach module-registry health endpoint via modules network
+    # module-registry runs on port 9007
+    - agent: test_executor
+      tool: coding:bash
+      arguments:
+        command: "curl -s -o /dev/null -w '%{http_code}' http://module-registry:9007/health --max-time 5"
+        timeout: 15
+        git_scope: "current_project"
+      assert:
+        result:
+          - { contains: "200" }
+
+    # Test 4: Verify sandbox cannot reach internet (sandbox-modules is internal: true)
+    # This should fail/timeout — no external internet access
+    - agent: test_executor
+      tool: coding:bash
+      arguments:
+        command: "curl -s -o /dev/null -w '%{http_code}' https://www.google.com --max-time 3 || echo 'no-internet'"
+        timeout: 10
+        git_scope: "current_project"
+      assert:
+        result:
+          - { contains: "no-internet" }
+
+    # Done
+    - agent: test_executor
+      tool: builtin:done
+      arguments:
+        summary: "Agent test_executor: Sandbox modules network test completed. module-filesearch:9004 reachable (200), module-registry:9007 reachable (200), internet blocked (expected)."

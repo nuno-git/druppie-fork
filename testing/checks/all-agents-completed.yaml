@@ -7,5 +7,5 @@ check:
       completed: true
     - agent: explorer
       completed: true
-    - agent: builder_subagent
+    - agent: developer
       completed: true

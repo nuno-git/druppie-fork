@@ -1,10 +1,10 @@
 ## Tool test: ultimate_dev spawns 2 subagents
 ## Tests the subagent replay flow where ultimate_dev calls the subagents tool
-## to spawn explorer and builder_subagent, both of which complete their work.
+## to spawn explorer and developer, both of which complete their work.
 
 tool-test:
   name: ultimate-dev-subagents
-  description: "Ultimate dev spawns 2 subagents (explorer + builder_subagent)"
+  description: "Ultimate dev spawns 2 subagents (explorer + developer)"
   tags: [subagent]
 
   chain:
@@ -115,7 +115,7 @@ tool-test:
       arguments:
         steps:
           - agent_id: ultimate_dev
-            prompt: "Implement the greeting app. Use the explorer subagent to read design docs, then builder_subagent to implement."
+            prompt: "Implement the greeting app. Use the explorer subagent to read design docs, then developer to implement."
 
     - agent: planner
       tool: builtin:done
@@ -126,12 +126,12 @@ tool-test:
     - agent: ultimate_dev
       tool: builtin:subagents
       mock: true
-      mock_result: '{"status": "success", "agents": ["explorer", "builder_subagent"]}'
+      mock_result: '{"status": "success", "agents": ["explorer", "developer"]}'
       arguments:
         agents:
           - agent: explorer
             prompt: "Read docs/functional-design.md and docs/technical-design.md. Report what needs to be built."
-          - agent: builder_subagent
+          - agent: developer
             prompt: "Implement the greeting app described in the design docs."
 
     # --- Explorer subagent (mocked read, then done) ---
@@ -148,8 +148,8 @@ tool-test:
       arguments:
         summary: "Agent explorer: Read functional design and technical design. Found greeting app requirements with configurable greeting and TypeScript stack."
 
-    # --- Builder subagent (mocked read, then done) ---
-    - agent: builder_subagent
+    # --- Developer subagent (mocked read, then done) ---
+    - agent: developer
       parent_agent: ultimate_dev
       tool: coding:read_file
       mock: true
@@ -157,16 +157,16 @@ tool-test:
       arguments:
         path: docs/technical-design.md
 
-    - agent: builder_subagent
+    - agent: developer
       tool: builtin:done
       arguments:
-        summary: "Agent builder_subagent: Implemented src/greeting.ts with configurable greeting function. All files committed."
+        summary: "Agent developer: Implemented src/greeting.ts with configurable greeting function. All files committed."
 
     # --- Ultimate Dev (done after subagents) ---
     - agent: ultimate_dev
       tool: builtin:done
       arguments:
-        summary: "Agent ultimate_dev: Explored design docs via explorer, implemented greeting app via builder_subagent. Application ready."
+        summary: "Agent ultimate_dev: Explored design docs via explorer, implemented greeting app via developer. Application ready."
 
   assert:
     - check: all-agents-completed

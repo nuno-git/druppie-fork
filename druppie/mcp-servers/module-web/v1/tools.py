@@ -16,7 +16,7 @@ MODULE_VERSION = "1.0.0"
 mcp = FastMCP(
     "Web v1",
     version=MODULE_VERSION,
-    instructions="Local file search and web browsing. Use for fetching web content, searching the web, and searching local datasets.",
+    instructions="Local file search and web browsing. Use for fetching web content and searching local datasets.",
 )
 
 SEARCH_ROOT = os.getenv("SEARCH_ROOT", "/dataset")
@@ -77,15 +77,6 @@ async def read_file(path: str) -> dict:
 )
 async def fetch_url(url: str) -> dict:
     return await module.fetch_url(url=url)
-
-
-@mcp.tool(
-    name="search_web",
-    description="Search web for information.",
-    meta={"module_id": MODULE_ID, "version": MODULE_VERSION},
-)
-async def search_web(query: str, num_results: int = 5) -> dict:
-    return await module.search_web(query=query, num_results=num_results)
 
 
 @mcp.tool(

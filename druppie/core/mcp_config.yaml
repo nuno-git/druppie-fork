@@ -227,9 +227,6 @@ mcps:
       - name: fetch_url
         requires_approval: false
 
-      - name: search_web
-        requires_approval: false
-
       - name: get_page_info
         requires_approval: false
 

@@ -64,4 +64,8 @@ mcps:
     networks: [internet]
     tools: [read_file, write_file, edit_file, bash, grep, find, ls, run_tests, push_changes, create_pr, get_git_status]
     git: update_core
+  web:
+    - search_web
+    - fetch_url
+    - get_page_info
   #docker: [build, run]

@@ -1011,6 +1011,10 @@ mcps:
     - get_module
     - search_modules
     - list_components
+  web:
+    - search_web
+    - fetch_url
+    - get_page_info
 
 # LAYERED APPROVAL SYSTEM:
 # When business_analyst calls make_design (to create docs/functional-design.md),

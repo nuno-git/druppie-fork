@@ -99,17 +99,35 @@ class ReplayExecutor:
         self._db.add(tc_record)
         self._db.flush()
 
+        # Save ID before execute — the commit inside execute() expires
+        # tc_record, and in some flows (e.g. subagent done) the ToolCall
+        # may be removed from the session identity map entirely.
+        tc_id = tc_record.id
+
         executor = self._get_executor()
-        result_status = await executor.execute(tc_record.id)
+        result_status = await executor.execute(tc_id)
+
+        # Re-query: executor.execute() commits the session internally,
+        # which detaches tc_record. Use the saved ID, not tc_record.id,
+        # because tc_record may be expired or gone from the identity map.
+        tc_record = self._db.get(ToolCall, tc_id)
 
         # Handle approval gate
-        if result_status == "waiting_approval":
+        if result_status == "waiting_approval" and tc_record is not None:
             result_status = await self._handle_approval(
                 tc_record, approval_action,
             )
 
-        # Refresh to get updated fields
-        self._db.refresh(tc_record)
+        # Re-query to get updated fields
+        tc_record = self._db.get(ToolCall, tc_id)
+        if tc_record is None:
+            logger.warning(
+                "tool_call_not_found_after_execute: tc_id=%s tool_name=%s result_status=%s",
+                tc_id,
+                tool_call.tool_name,
+                result_status,
+            )
+            return "", result_status
         return tc_record.result or "", result_status
 
     async def _handle_approval(

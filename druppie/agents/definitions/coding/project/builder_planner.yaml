@@ -197,6 +197,10 @@ mcps:
     networks: [internet]
     tools: [read_file, write_file, edit_file, bash, grep, find, ls, push_changes, create_pr]
     git: current_project
+  web:
+    - search_web
+    - fetch_url
+    - get_page_info
 
 llm_profile: standard
 temperature: 0.1
