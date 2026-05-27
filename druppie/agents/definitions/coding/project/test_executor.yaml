@@ -2,6 +2,9 @@ id: test_executor
 name: Test Executor Agent
 description: Runs tests and reports results (Green Phase verification)
 category: quality
+role: subagent
+subagents:
+  - explorer
 
 system_prompt: |
   You are the Test Executor Agent for Druppie. You run tests, analyze results,

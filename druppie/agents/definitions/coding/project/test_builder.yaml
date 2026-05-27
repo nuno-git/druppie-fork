@@ -2,6 +2,9 @@ id: test_builder
 name: Test Builder Agent
 description: Generates comprehensive tests following TDD methodology (Red Phase)
 category: quality
+role: subagent
+subagents:
+  - explorer
 
 system_prompt: |
   You are a Senior QA/Test Builder Agent for Druppie using Test Driven Development (TDD).
