@@ -102,13 +102,11 @@ class AzureDataLakeAdapter(BaseDataSourceAdapter):
         try:
             container, file_path = self._parse_path(data_id)
             file_client = self._client.get_file_client(container, file_path)
-
-            download = file_client.download_file(max_concurrency=1)
-            content = download.readall()
-
             file_type = self._get_file_type(file_path)
 
             if file_type == "parquet":
+                download = file_client.download_file(max_concurrency=1)
+                content = download.readall()
                 pf = pq.ParquetFile(io.BytesIO(content))
                 schema = pf.schema_arrow
                 columns = [{"name": field.name, "type": str(field.type)} for field in schema]
@@ -123,8 +121,15 @@ class AzureDataLakeAdapter(BaseDataSourceAdapter):
                     ),
                 }
             elif file_type == "csv":
+                # Only the header row is needed for schema — range-read
+                # 64 KB instead of downloading multi-GB files.
+                download = file_client.download_file(offset=0, length=64 * 1024)
+                content = download.readall()
+                last_newline = content.rfind(b"\n")
+                if last_newline > 0:
+                    content = content[: last_newline + 1]
                 # utf-8-sig strips a leading BOM so the first column name
-                # doesn't come back as "﻿<name>".
+                # doesn't come back as "\ufeff<name>".
                 df = pd.read_csv(
                     io.BytesIO(content),
                     nrows=0,
@@ -176,7 +181,7 @@ class AzureDataLakeAdapter(BaseDataSourceAdapter):
             can_stream = (
                 file_type == "csv"
                 and limit is not None
-                and filter_expr is None
+                and not filter_expr
             )
 
             if can_stream:
