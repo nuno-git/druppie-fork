@@ -1,20 +1,32 @@
-## Setup: create a project with a waterschap-context FD ready for the
-## architect to produce an ArchiMate technical design.
+## Setup: project with a waterschap-context FD pending at the
+## approval gate, ready for a human reviewer.
 ##
-## Differs from setup-project-with-fd in that the FD describes a
-## structural / cross-layer use case (burger overlast-meldportaal) where
-## the architect will (a) hit WILMA reference matches, (b) produce
-## ArchiMate views, and (c) probably also add a Mermaid sequence
-## diagram for the meld-flow — exercising the hybrid notation choice
-## documented in making-archimate-diagrams.
+## The chain runs router → planner → BA → make_design and STOPS at
+## the make_design approval gate (status: pending). The session lands
+## in paused_approval state with the FD awaiting a real human
+## decision in the UI.
 ##
-## Used by:
-##   - agents/architect-produces-archimate-td.yaml
+## What happens when you approve the FD in the UI:
+##   1. The approval-resume kicks the BA back to finish (run_git × 3
+##      + done with DESIGN_APPROVED).
+##   2. The planner re-evaluates and schedules the architect (real
+##      LLM, real plan — no test injection beyond this point).
+##   3. The architect picks up, reads the FD, runs WILMA search,
+##      produces docs/technical-research.md and docs/technical-design.md
+##      with an ArchiMate view in architecture.archimate.
+##   4. Each archimate_* write tool fires an architect-role approval
+##      gate that you also approve in the UI — that is the actual end-
+##      to-end demo of the ArchiMate flow.
+##
+## So this single test on the Tests page lands you exactly where you
+## want to be: in front of a pending FD approval, with a project ready
+## to grow an ArchiMate plate once you say "go".
 
 tool-test:
-  name: setup-project-with-archimate-fd
-  description: "Project + FD ready for the architect to produce an ArchiMate TD"
-  tags: [setup, archimate]
+  name: archimate-e2e-paused-at-fd-approval
+  description: "Project + FD ready, paused at the FD approval gate — approve in the UI and the architect produces an ArchiMate TD"
+  tags: [archimate, e2e, paused, manual-followup]
+  session_status: paused
 
   chain:
     # --- Router ---
@@ -49,10 +61,12 @@ tool-test:
         summary: "Agent planner: Planned business_analyst to gather requirements and create the functional design"
 
     # --- Business Analyst writes the FD ---
+    # Approval gate is left PENDING. The chain stops here; the session
+    # lands in paused_approval state for the human reviewer to resolve.
     - agent: business_analyst
       tool: coding:make_design
       approval:
-        status: approved
+        status: pending
       arguments:
         path: docs/functional-design.md
         content: |
@@ -118,47 +132,3 @@ tool-test:
           - Hosting binnen Nederland (data-residency).
           - Geen vendor-lock-in op het zaaksysteem — koppeling via
             standaard ZGW-API.
-
-      assert:
-        result:
-          - { contains: "functional-design.md" }
-
-    - agent: business_analyst
-      tool: coding:run_git
-      arguments:
-        command: "add docs/functional-design.md"
-
-    - agent: business_analyst
-      tool: coding:run_git
-      arguments:
-        command: "commit -m 'Functioneel ontwerp overlast-meldportaal'"
-
-    - agent: business_analyst
-      tool: coding:run_git
-      arguments:
-        command: "push"
-
-    - agent: business_analyst
-      tool: builtin:done
-      arguments:
-        summary: "Agent business_analyst: DESIGN_APPROVED. Wrote docs/functional-design.md for the overlast-meldportaal with 6 FRs, 4 NFRs, 3 roles, and 4 external integrations (zaaksysteem, notification, kaart, object-opslag)."
-
-    # --- Planner re-evaluates and schedules the architect ---
-    # This mirrors the production flow: after BA delivers DESIGN_APPROVED,
-    # the planner runs again and decides who handles the FD next. By
-    # scheduling the architect here, the agent test does not need to
-    # inject an artificial user message — the architect picks up the
-    # next-agent slot naturally.
-    - agent: planner
-      tool: builtin:make_plan
-      arguments:
-        steps:
-          - agent_id: architect
-            prompt: "Review docs/functional-design.md and produce the technical design (research + TD). Cross-layer blueprint should be an ArchiMate view; behavioural diagrams may use Mermaid per the making-archimate-diagrams skill."
-
-    - agent: planner
-      tool: builtin:done
-      arguments:
-        summary: "Agent planner: Scheduled architect to produce the technical design from docs/functional-design.md."
-      assert:
-        completed: true
