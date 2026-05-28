@@ -134,11 +134,83 @@ def _make_id() -> str:
     return f"id-{uuid.uuid4().hex}"
 
 
+# --- Text sanitisation ----------------------------------------------------
+# Centralised because every text field written to the XML (element / view /
+# relationship name + documentation) flows through _text_child. Two reasons
+# to clean here rather than at the call sites:
+#  - WILMA-sourced documentation contains NBSP, narrow-NBSP, smart-quotes and
+#    occasional encoding artefacts; copy_element_from would otherwise leak
+#    these into every project file and trigger Gitea's "invisible Unicode"
+#    warning.
+#  - LLM-authored text is just as likely to contain smart-quotes (model
+#    autocorrects ASCII quotes) and zero-width junk (copy-paste from the web).
+# Letting both paths share one normaliser keeps the XML stable for diff,
+# grep, and Archi-import regardless of where the text originated.
+
+_SMART_QUOTE_MAP = {
+    "‘": "'",  # LEFT SINGLE QUOTATION MARK
+    "’": "'",  # RIGHT SINGLE QUOTATION MARK / apostrophe
+    "‚": "'",  # SINGLE LOW-9 QUOTATION MARK
+    "‛": "'",  # SINGLE HIGH-REVERSED-9
+    "“": '"',  # LEFT DOUBLE QUOTATION MARK
+    "”": '"',  # RIGHT DOUBLE QUOTATION MARK
+    "„": '"',  # DOUBLE LOW-9
+    "‟": '"',  # DOUBLE HIGH-REVERSED-9
+    " ": " ",  # NO-BREAK SPACE
+    " ": " ",  # NARROW NO-BREAK SPACE
+    " ": " ",  # FIGURE SPACE
+    " ": " ",  # THIN SPACE
+}
+
+# Codepoints to drop entirely (zero-width, BOM, soft hyphen, joiners, box-drawing).
+_STRIP_RANGES = (
+    (0x200B, 0x200F),  # zero-width space/joiner/non-joiner + LRM/RLM
+    (0x2028, 0x202E),  # line/paragraph separators + bidi overrides (keep 0x202F space)
+    (0x2060, 0x206F),  # word joiner + invisible operators
+    (0xFEFF, 0xFEFF),  # BOM
+    (0x00AD, 0x00AD),  # SOFT HYPHEN
+    (0x180E, 0x180E),  # MONGOLIAN VOWEL SEPARATOR
+    (0x034F, 0x034F),  # COMBINING GRAPHEME JOINER
+    (0x2500, 0x257F),  # Box-drawing block — appears in WILMA as encoding artefacts
+)
+
+
+def _sanitize_text(text: str) -> str:
+    """Normalise text destined for the .archimate XML.
+
+    Replaces NBSP variants with regular spaces, smart-quotes with their
+    ASCII equivalents, and strips zero-width / control / box-drawing
+    junk. Returns a clean string safe to commit to git without tripping
+    Gitea's invisible-Unicode warning. Preserves legitimate diacritics
+    (é, ö, ä, …) and dashes (–, —).
+    """
+    if not text:
+        return text
+    out_chars: list[str] = []
+    for ch in text:
+        cp = ord(ch)
+        if ch in _SMART_QUOTE_MAP:
+            out_chars.append(_SMART_QUOTE_MAP[ch])
+            continue
+        if any(lo <= cp <= hi for lo, hi in _STRIP_RANGES):
+            continue
+        # Strip control chars except whitespace we actually want
+        if cp < 0x20 and ch not in ("\t", "\n", "\r"):
+            continue
+        out_chars.append(ch)
+    return "".join(out_chars)
+
+
 def _text_child(parent: ET.Element, tag: str, text: str, lang: str = "en") -> ET.Element:
-    """Append a namespaced child element with xml:lang and text."""
+    """Append a namespaced child element with xml:lang and text.
+
+    All text passes through ``_sanitize_text`` so the XML stays free of
+    invisible / lookalike characters regardless of whether the caller is
+    the LLM, a WILMA import, or a programmatic update.
+    """
     el = ET.SubElement(parent, _q(tag))
     el.set(_qxml("lang"), lang)
-    el.text = text
+    el.text = _sanitize_text(text)
     return el
 
 
