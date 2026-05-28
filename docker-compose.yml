@@ -277,9 +277,11 @@ services:
     profiles: [infra, dev, prod]
     environment:
       MODELS_DIR: /models
+      WORKSPACE_ROOT: /workspaces
       MCP_PORT: "9006"
     volumes:
       - ./druppie/mcp-servers/module-archimate/models:/models:ro
+      - druppie_new_workspace:/workspaces
     ports:
       - "${MCP_ARCHIMATE_PORT:-9006}:9006"
     networks:

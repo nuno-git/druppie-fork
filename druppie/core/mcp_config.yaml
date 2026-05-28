@@ -212,7 +212,30 @@ mcps:
   archimate:
     url: ${MCP_ARCHIMATE_URL:-http://module-archimate:9006}
     type: core
+    # Write-tools operate on per-project archimate files in the session workspace.
+    # Inject session_id so the MCP can resolve the workspace path.
+    inject:
+      session_id:
+        from: session.id
+        hidden: true
+        tools:
+          - create_element
+          - update_element
+          - delete_element
+          - create_relationship
+          - update_relationship
+          - delete_relationship
+          - create_view
+          - delete_view
+          - add_to_view
+          - add_connection_to_view
+          - remove_from_view
+          - get_or_create_wilma_reference
+          - save_model
+          - request_full_relayout
+          - assess_layout
     tools:
+      # --- Read-only WILMA reference tools ---
       - name: list_models
         requires_approval: false
 
@@ -236,6 +259,70 @@ mcps:
 
       - name: get_impact
         requires_approval: false
+
+      # --- Read-only introspection on project model ---
+      - name: assess_layout
+        requires_approval: false
+
+      # --- WRITE tools on per-project architecture.archimate ---
+      # Per AC5: ALL write tools require architect approval. May be relaxed
+      # to "destructive-only" in v2 (see docs/BACKLOG.md) if iteration proves
+      # too slow under all-tools-gated.
+      - name: create_element
+        requires_approval: true
+        required_role: architect
+
+      - name: update_element
+        requires_approval: true
+        required_role: architect
+
+      - name: delete_element
+        requires_approval: true
+        required_role: architect
+
+      - name: create_relationship
+        requires_approval: true
+        required_role: architect
+
+      - name: update_relationship
+        requires_approval: true
+        required_role: architect
+
+      - name: delete_relationship
+        requires_approval: true
+        required_role: architect
+
+      - name: create_view
+        requires_approval: true
+        required_role: architect
+
+      - name: delete_view
+        requires_approval: true
+        required_role: architect
+
+      - name: add_to_view
+        requires_approval: true
+        required_role: architect
+
+      - name: add_connection_to_view
+        requires_approval: true
+        required_role: architect
+
+      - name: remove_from_view
+        requires_approval: true
+        required_role: architect
+
+      - name: get_or_create_wilma_reference
+        requires_approval: true
+        required_role: architect
+
+      - name: save_model
+        requires_approval: true
+        required_role: architect
+
+      - name: request_full_relayout
+        requires_approval: true
+        required_role: architect
 
   llm:
     url: ${MCP_LLM_URL:-http://module-llm:9008}
