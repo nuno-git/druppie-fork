@@ -141,6 +141,41 @@ def _auto_width_for(name: str) -> int:
     return max(DEFAULT_NODE_W, estimated)
 
 
+# Viewpoint detection — maps loose view-name patterns onto the recipe
+# names the layout-service knows. The keys are normalised to lower-case
+# for matching, the values are the viewpoint identifiers layout-service
+# understands. Order matters (most specific first) so "ApplicationCooperation"
+# wins over "Application" alone. Falls back to "Layered" — a safe default
+# that gives a usable plate for almost any reasonable view.
+_VIEWPOINT_PATTERNS: list[tuple[str, str]] = [
+    ("application cooperation", "ApplicationCooperation"),
+    ("application-cooperation", "ApplicationCooperation"),
+    ("information structure", "InformationStructure"),
+    ("information-structure", "InformationStructure"),
+    ("organization", "Organization"),
+    ("organisatie", "Organization"),
+    ("layered", "Layered"),
+    ("gelaagd", "Layered"),
+]
+
+
+def _detect_viewpoint(view: ET.Element) -> str:
+    """Pick a viewpoint identifier from a view's name + documentation.
+
+    Heuristic: match well-known viewpoint phrases (English + Dutch) in
+    the view's metadata. Default to Layered when nothing matches — it is
+    the most permissive recipe and produces a usable plate for any
+    cross-layer view, which is what we get from the architect by default.
+    """
+    name = _find_text(view, "name") or ""
+    doc = _find_text(view, "documentation") or ""
+    haystack = f"{name} {doc}".lower()
+    for needle, viewpoint in _VIEWPOINT_PATTERNS:
+        if needle in haystack:
+            return viewpoint
+    return "Layered"
+
+
 def _q(tag: str) -> str:
     """Return a namespaced tag name for ElementTree."""
     return f"{{{ARCHIMATE_NS}}}{tag}"
@@ -760,10 +795,15 @@ class ArchiMateDocument:
         if all(n["fixed"] for n in nodes_payload):
             return
 
+        viewpoint = _detect_viewpoint(view)
         try:
             response = httpx.post(
                 f"{LAYOUT_SERVICE_URL}/layout",
-                json={"nodes": nodes_payload, "edges": edges_payload},
+                json={
+                    "nodes": nodes_payload,
+                    "edges": edges_payload,
+                    "viewpoint": viewpoint,
+                },
                 timeout=LAYOUT_SERVICE_TIMEOUT_S,
             )
             response.raise_for_status()
