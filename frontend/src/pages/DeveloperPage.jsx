@@ -123,7 +123,7 @@ export default function DeveloperPage() {
       const response = await executeAgentTest({
         agent_id: selectedAgentId,
         prompt: taskPrompt.trim(),
-        project_id: needsProject ? selectedProjectId : undefined,
+        project_id: selectedProjectId || undefined,
       })
       if (!response.success) throw new Error(response.message || "Execution failed")
       setAgentRunId(response.agent_run_id)
@@ -218,15 +218,20 @@ export default function DeveloperPage() {
               </div>
             )}
 
-            {needsProject && (
+            {selectedAgentId && (
               <div>
-                <label className="block text-xs text-gray-500 mb-1">Project</label>
+                <label className="block text-xs text-gray-500 mb-1">
+                  Project{" "}
+                  <span className={needsProject ? "text-red-500 font-medium" : "text-gray-400"}>
+                    ({needsProject ? "required" : "optional"})
+                  </span>
+                </label>
                 <select
                   className="w-full px-3 py-2 border rounded text-sm"
                   value={selectedProjectId}
                   onChange={(e) => setSelectedProjectId(e.target.value)}
                 >
-                  <option value="">Select a project...</option>
+                  <option value="">{needsProject ? "Select a project..." : "No project"}</option>
                   {projectList.map((p) => (
                     <option key={p.id} value={p.id}>{p.name || p.id}</option>
                   ))}

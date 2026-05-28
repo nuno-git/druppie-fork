@@ -342,8 +342,12 @@ const BashLiveOutput = ({ tc }) => {
   )
 }
 
-const SubagentToolCall = ({ tc }) => {
+const SubagentToolCall = ({ tc, sessionId, sessionUserId }) => {
   const [expanded, setExpanded] = useState(false)
+  const queryClient = useQueryClient()
+  const [rejectMode, setRejectMode] = useState(false)
+  const [rejectReason, setRejectReason] = useState('')
+
   const hasResult = tc.result && tc.status === 'completed'
   const parsedResult = (() => {
     if (!hasResult) return null
@@ -363,22 +367,70 @@ const SubagentToolCall = ({ tc }) => {
       ? 'text-red-600'
       : 'text-gray-400'
 
+  const hasApproval = !!tc.approval
+  const isPending = hasApproval && tc.approval.status === 'pending'
+  const isApproved = hasApproval && tc.approval.status === 'approved'
+  const isRejected = hasApproval && tc.approval.status === 'rejected'
+
+  const invalidate = () => {
+    queryClient.invalidateQueries({ queryKey: ['session', sessionId] })
+    queryClient.invalidateQueries({ queryKey: ['tasks'] })
+    queryClient.invalidateQueries({ queryKey: ['approvalHistory'] })
+    queryClient.invalidateQueries({ queryKey: ['pending-approvals-count'] })
+  }
+
+  const approveMut = useMutation({
+    mutationFn: (approvalId) => approveApproval(approvalId, ''),
+    onSuccess: invalidate,
+  })
+
+  const rejectMut = useMutation({
+    mutationFn: ({ approvalId, reason }) => rejectApproval(approvalId, reason || ''),
+    onSuccess: () => {
+      invalidate()
+      setRejectMode(false)
+      setRejectReason('')
+    },
+  })
+
+  const isProcessing = approveMut.isPending || rejectMut.isPending
+
+  const user = getUserInfo()
+  const userRoles = user?.roles || []
+  const requiredRoles = tc.approval?.required_role ? [tc.approval.required_role] : ['admin']
+  const isSessionOwnerApproval = requiredRoles.includes('session_owner')
+  const userCanApprove = isSessionOwnerApproval
+    ? (user?.id === sessionUserId || userRoles.includes('admin'))
+    : (userRoles.includes('admin') || requiredRoles.some((r) => userRoles.includes(r)))
+
   return (
     <div className="flex flex-col">
-      <button
-        onClick={() => hasResult && setExpanded(!expanded)}
-        className={`flex items-center gap-1.5 text-xs py-0.5 ${hasResult ? 'cursor-pointer hover:text-gray-900' : 'cursor-default'}`}
-      >
-        {hasResult ? (
-          expanded ? <ChevronDown className="w-3 h-3 flex-shrink-0" /> : <ChevronRight className="w-3 h-3 flex-shrink-0" />
-        ) : (
-          <span className="w-3" />
+      <div className="flex items-center gap-1.5">
+        <button
+          onClick={() => hasResult && setExpanded(!expanded)}
+          className={`flex items-center gap-1.5 text-xs py-0.5 ${hasResult ? 'cursor-pointer hover:text-gray-900' : 'cursor-default'}`}
+        >
+          {hasResult ? (
+            expanded ? <ChevronDown className="w-3 h-3 flex-shrink-0" /> : <ChevronRight className="w-3 h-3 flex-shrink-0" />
+          ) : (
+            <span className="w-3" />
+          )}
+          <span className={`font-mono ${tcStatusColors}`}>{getToolLabel(tc.tool_name)}</span>
+          {!hasResult && tc.status && (
+            <span className="text-[10px] text-gray-400">{tc.status}</span>
+          )}
+        </button>
+        {/* Approval status badge */}
+        {hasApproval && (
+          <span className={`text-[10px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded ${
+            isApproved ? 'text-green-700 bg-green-50'
+              : isRejected ? 'text-red-700 bg-red-50'
+              : 'text-amber-700 bg-amber-50'
+          }`}>
+            {isApproved ? 'Approved' : isRejected ? 'Rejected' : 'Approval Required'}
+          </span>
         )}
-        <span className={`font-mono ${tcStatusColors}`}>{getToolLabel(tc.tool_name)}</span>
-        {!hasResult && tc.status && (
-          <span className="text-[10px] text-gray-400">{tc.status}</span>
-        )}
-      </button>
+      </div>
       {expanded && resultStr && (
         <div className="ml-4.5 mt-0.5 p-2 rounded bg-gray-50 border border-gray-100 text-xs text-gray-700 whitespace-pre-wrap break-all max-h-40 overflow-auto font-mono">
           {resultStr.length > 2000 ? resultStr.slice(0, 2000) + '…' : resultStr}
@@ -386,6 +438,72 @@ const SubagentToolCall = ({ tc }) => {
       )}
       {tc.status === 'executing' && tc.tool_name === 'bash' && (
         <BashLiveOutput tc={tc} />
+      )}
+      {/* Approve/reject buttons for pending approvals */}
+      {isPending && (
+        <div className="ml-4.5 mt-1">
+          {userCanApprove ? (
+            !rejectMode ? (
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => approveMut.mutate(tc.approval.id)}
+                  disabled={isProcessing}
+                  className="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50 transition-colors"
+                >
+                  {isProcessing ? <Loader2 className="w-3 h-3 animate-spin" /> : <CheckCircle className="w-3 h-3" />}
+                  Approve
+                </button>
+                <button
+                  onClick={() => setRejectMode(true)}
+                  disabled={isProcessing}
+                  className="px-2 py-0.5 text-xs text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-md transition-colors"
+                >
+                  Reject
+                </button>
+              </div>
+            ) : (
+              <div className="flex items-center gap-1.5">
+                <input
+                  type="text"
+                  value={rejectReason}
+                  onChange={(e) => setRejectReason(e.target.value)}
+                  placeholder="Reason..."
+                  aria-label="Rejection reason"
+                  className="flex-1 min-w-0 px-2 py-0.5 text-xs border border-gray-200 rounded-md focus:outline-none focus:ring-1 focus:ring-red-400"
+                  autoFocus
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && rejectReason.trim()) {
+                      rejectMut.mutate({ approvalId: tc.approval.id, reason: rejectReason })
+                    }
+                    if (e.key === 'Escape') {
+                      setRejectMode(false)
+                      setRejectReason('')
+                    }
+                  }}
+                />
+                <button
+                  onClick={() => rejectMut.mutate({ approvalId: tc.approval.id, reason: rejectReason })}
+                  disabled={isProcessing || !rejectReason.trim()}
+                  className="px-2 py-0.5 text-xs bg-red-600 text-white rounded-md hover:bg-red-700 disabled:opacity-50 transition-colors"
+                >
+                  Reject
+                </button>
+                <button
+                  onClick={() => { setRejectMode(false); setRejectReason('') }}
+                  className="px-2 py-0.5 text-xs text-gray-400 hover:text-gray-600 transition-colors"
+                >
+                  Cancel
+                </button>
+              </div>
+            )
+          ) : (
+            <span className="text-[10px] text-amber-600">
+              {isSessionOwnerApproval
+                ? 'Waiting for your approval'
+                : `Waiting for ${requiredRoles.join(' or ')} approval`}
+            </span>
+          )}
+        </div>
       )}
     </div>
   )
@@ -398,7 +516,7 @@ const DEPTH_STYLES = [
   { border: 'border-gray-300', bg: 'bg-gray-50/40' },
 ]
 
-const SubagentRunCard = ({ subagentRun, depth = 0, sessionId }) => {
+const SubagentRunCard = ({ subagentRun, depth = 0, sessionId, sessionUserId }) => {
   const [expanded, setExpanded] = useState(depth < 1)
   const queryClient = useQueryClient()
   const config = getAgentConfig(subagentRun.agent_id)
@@ -459,10 +577,10 @@ const SubagentRunCard = ({ subagentRun, depth = 0, sessionId }) => {
                 {tc.tool_name?.includes('hitl_ask') ? (
                   <TimelineQuestion tc={tc} agentId={subagentRun.agent_id} sessionId={sessionId} />
                 ) : (
-                  <SubagentToolCall tc={tc} />
+                  <SubagentToolCall tc={tc} sessionId={sessionId} sessionUserId={sessionUserId} />
                 )}
                 {toolSubagentMap[tc.id]?.map((sa, si) => (
-                  <SubagentRunCard key={sa.id || si} subagentRun={sa} depth={depth + 1} sessionId={sessionId} />
+                  <SubagentRunCard key={sa.id || si} subagentRun={sa} depth={depth + 1} sessionId={sessionId} sessionUserId={sessionUserId} />
                 ))}
               </div>
             ))
@@ -524,7 +642,7 @@ const AgentRunItem = ({ run, timelineIndex, sessionId, hasFollowingMessage, sess
           return (
             <div key={i} className="mt-2 border-l-2 border-blue-200 pl-2">
               {item.subagentRuns.map((sa, si) => (
-                <SubagentRunCard key={sa.id || si} subagentRun={sa} depth={0} sessionId={sessionId} />
+                <SubagentRunCard key={sa.id || si} subagentRun={sa} depth={0} sessionId={sessionId} sessionUserId={sessionUserId} />
               ))}
             </div>
           )
@@ -1122,15 +1240,19 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
           {/* Pending approvals */}
           {(() => {
             const pending = []
-            data.timeline?.forEach((entry) => {
-              if (entry.type !== 'agent_run' || !entry.agent_run) return
-              entry.agent_run.llm_calls?.forEach((llm) => {
+            const scanRun = (run) => {
+              run?.llm_calls?.forEach((llm) => {
                 llm.tool_calls?.forEach((tc) => {
                   if (tc.approval?.status === 'pending') {
                     pending.push(tc)
                   }
                 })
               })
+              run?.subagent_runs?.forEach(scanRun)
+            }
+            data.timeline?.forEach((entry) => {
+              if (entry.type !== 'agent_run' || !entry.agent_run) return
+              scanRun(entry.agent_run)
             })
             if (pending.length === 0) return null
             return (

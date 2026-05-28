@@ -27,6 +27,7 @@ import shutil
 import tempfile
 import time
 import uuid
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 import jwt
@@ -131,12 +132,19 @@ SANDBOX_USER = os.getenv("DRUPPIE_SANDBOX_USER", "druppie")
 #          "repo_name": str, "repo_owner": str}
 sandbox_containers: dict[str, dict] = {}
 _container_locks: dict[str, asyncio.Lock] = {}
+_network_locks: dict[str, asyncio.Lock] = {}
 
 
 def _get_container_lock(key: str) -> asyncio.Lock:
     if key not in _container_locks:
         _container_locks[key] = asyncio.Lock()
     return _container_locks[key]
+
+
+def _get_network_lock(key: str) -> asyncio.Lock:
+    if key not in _network_locks:
+        _network_locks[key] = asyncio.Lock()
+    return _network_locks[key]
 
 # =============================================================================
 # SECURITY: COMMAND BLOCKLIST
@@ -509,6 +517,50 @@ async def _create_sandbox_container(
     return container_name
 
 
+async def _sync_networks(container_name: str, requested_networks: list[str]) -> None:
+    """Dynamically adjust container networks to match the agent's profile.
+
+    Connects networks the agent needs but container doesn't have.
+    Disconnects networks the container has but agent doesn't need.
+    The base SANDBOX_NETWORK is always kept (never disconnected).
+    """
+    NETWORK_MAP = {
+        "internet": SANDBOX_INET_NETWORK,
+        "modules": SANDBOX_MODULES_NETWORK,
+    }
+
+    desired = set()
+    for tier in requested_networks:
+        net_name = NETWORK_MAP.get(tier)
+        if net_name:
+            desired.add(net_name)
+
+    rc, stdout, _ = await _docker_run(
+        ["docker", "inspect", container_name, "--format", "{{json .NetworkSettings.Networks}}"],
+        timeout=10,
+    )
+    if rc != 0:
+        logger.warning("Failed to inspect networks for %s", container_name)
+        return
+
+    try:
+        current_networks = set(json.loads(stdout).keys())
+    except (json.JSONDecodeError, AttributeError):
+        logger.warning("Failed to parse network info for %s", container_name)
+        return
+
+    to_connect = desired - current_networks
+    to_disconnect = current_networks - desired - {SANDBOX_NETWORK}
+
+    for net in to_connect:
+        logger.info("Connecting network %s to container %s", net, container_name)
+        await _docker_run(["docker", "network", "connect", net, container_name], timeout=10)
+
+    for net in to_disconnect:
+        logger.info("Disconnecting network %s from container %s", net, container_name)
+        await _docker_run(["docker", "network", "disconnect", net, container_name], timeout=10)
+
+
 async def _resolve_container(
     session_id: str | None,
     git_scope: str | None,
@@ -545,6 +597,24 @@ async def _resolve_container(
         return await _create_sandbox_container(
             session_id, scope, repo_name, repo_owner, agent_networks=agent_networks
         )
+
+
+@asynccontextmanager
+async def _sandbox_session(
+    session_id: str | None,
+    git_scope: str | None,
+    repo_name: str | None = None,
+    repo_owner: str | None = None,
+    agent_networks: list[str] | None = None,
+):
+    container = await _resolve_container(session_id, git_scope, repo_name, repo_owner, agent_networks)
+    sid = _sanitize_param(session_id) or "unknown"
+    scope = _sanitize_param(git_scope) or "current_project"
+    key = f"{sid}::{scope}"
+    net_lock = _get_network_lock(key)
+    async with net_lock:
+        await _sync_networks(container, agent_networks or [])
+        yield container
 
 
 async def _destroy_container(session_id: str, git_scope: str) -> None:
@@ -654,25 +724,25 @@ async def read_file(
         Dict with success, content, path, size
     """
     try:
-        container = await _resolve_container(
+        async with _sandbox_session(
             session_id, git_scope, repo_name, repo_owner,
             agent_networks=sandbox_networks,
-        )
-        cpath = _container_path(path)
+        ) as container:
+            cpath = _container_path(path)
 
-        rc, stdout, stderr = await _exec_in_container(
-            container, ["cat", cpath], timeout=30
-        )
-        if rc != 0:
-            return {"success": False, "error": f"File not found: {path}"}
+            rc, stdout, stderr = await _exec_in_container(
+                container, ["cat", cpath], timeout=30
+            )
+            if rc != 0:
+                return {"success": False, "error": f"File not found: {path}"}
 
-        logger.info("Read file: %s (%d bytes)", path, len(stdout))
-        return {
-            "success": True,
-            "content": stdout,
-            "path": path,
-            "size": len(stdout),
-        }
+            logger.info("Read file: %s (%d bytes)", path, len(stdout))
+            return {
+                "success": True,
+                "content": stdout,
+                "path": path,
+                "size": len(stdout),
+            }
 
     except ValueError as e:
         return {"success": False, "error": str(e)}
@@ -691,25 +761,25 @@ async def _write_file_impl(
     sandbox_networks: list[str] | None = None,
 ) -> dict:
     try:
-        container = await _resolve_container(
+        async with _sandbox_session(
             session_id, git_scope, repo_name, repo_owner,
             agent_networks=sandbox_networks,
-        )
-        cpath = _container_path(path)
+        ) as container:
+            cpath = _container_path(path)
 
-        parent = str(Path(cpath).parent)
-        await _exec_in_container(container, ["mkdir", "-p", parent])
+            parent = str(Path(cpath).parent)
+            await _exec_in_container(container, ["mkdir", "-p", parent])
 
-        rc, stderr = await _write_to_container(container, cpath, content)
-        if rc != 0:
-            return {"success": False, "error": f"Write failed: {stderr}"}
+            rc, stderr = await _write_to_container(container, cpath, content)
+            if rc != 0:
+                return {"success": False, "error": f"Write failed: {stderr}"}
 
-        logger.info("Wrote file: %s (%d bytes)", path, len(content))
-        return {
-            "success": True,
-            "path": path,
-            "size": len(content),
-        }
+            logger.info("Wrote file: %s (%d bytes)", path, len(content))
+            return {
+                "success": True,
+                "path": path,
+                "size": len(content),
+            }
 
     except ValueError as e:
         return {"success": False, "error": str(e)}
@@ -718,7 +788,6 @@ async def _write_file_impl(
         return {"success": False, "error": str(e)}
 
 
-@mcp.tool(meta={"module_id": MODULE_ID, "version": MODULE_VERSION})
 async def write_file(
     path: str,
     content: str,
@@ -765,41 +834,39 @@ async def edit_file(
         Dict with success, path, replaced
     """
     try:
-        container = await _resolve_container(
+        async with _sandbox_session(
             session_id, git_scope, repo_name, repo_owner,
             agent_networks=sandbox_networks,
-        )
-        cpath = _container_path(path)
+        ) as container:
+            cpath = _container_path(path)
 
-        # Read current content
-        rc, stdout, stderr = await _exec_in_container(
-            container, ["cat", cpath], timeout=30
-        )
-        if rc != 0:
-            return {"success": False, "error": f"File not found: {path}"}
+            rc, stdout, stderr = await _exec_in_container(
+                container, ["cat", cpath], timeout=30
+            )
+            if rc != 0:
+                return {"success": False, "error": f"File not found: {path}"}
 
-        content = stdout
-        count = content.count(old_string)
-        if count == 0:
-            return {"success": False, "error": f"old_string not found in {path}"}
-        if count > 1:
-            return {
-                "success": False,
-                "error": (
-                    f"old_string appears {count} times in {path}, "
-                    "expected exactly 1 — add more context to make it unique"
-                ),
-            }
+            content = stdout
+            count = content.count(old_string)
+            if count == 0:
+                return {"success": False, "error": f"old_string not found in {path}"}
+            if count > 1:
+                return {
+                    "success": False,
+                    "error": (
+                        f"old_string appears {count} times in {path}, "
+                        "expected exactly 1 — add more context to make it unique"
+                    ),
+                }
 
-        new_content = content.replace(old_string, new_string, 1)
+            new_content = content.replace(old_string, new_string, 1)
 
-        # Write back
-        rc, stderr = await _write_to_container(container, cpath, new_content)
-        if rc != 0:
-            return {"success": False, "error": f"Write failed: {stderr}"}
+            rc, stderr = await _write_to_container(container, cpath, new_content)
+            if rc != 0:
+                return {"success": False, "error": f"Write failed: {stderr}"}
 
-        logger.info("Edited file: %s", path)
-        return {"success": True, "path": path, "replaced": True}
+            logger.info("Edited file: %s", path)
+            return {"success": True, "path": path, "replaced": True}
 
     except ValueError as e:
         return {"success": False, "error": str(e)}
@@ -862,44 +929,44 @@ async def bash(
                 "return_code": -1,
             }
 
-        container = await _resolve_container(
+        async with _sandbox_session(
             session_id, git_scope, repo_name, repo_owner,
             agent_networks=sandbox_networks,
-        )
+        ) as container:
 
-        save_file = output_file or f"/tmp/bash_{tool_call_id or 'out'}.out"
-        rc, stdout, stderr = await _exec_bash_in_container(
-            container, command, timeout=timeout, output_file=save_file
-        )
-
-        combined = (stdout or "") + (stderr or "")
-        combined_bytes = combined.encode()
-        truncated = max_output_bytes > 0 and len(combined_bytes) > max_output_bytes
-
-        if truncated:
-            full_path = f"/workspace/.bash_outputs/{tool_call_id or 'output'}.log"
-            await _exec_in_container(
-                container,
-                ["bash", "-c", f"mkdir -p /workspace/.bash_outputs && cp {shlex.quote(save_file)} {shlex.quote(full_path)}"],
-                timeout=5,
+            save_file = output_file or f"/tmp/bash_{tool_call_id or 'out'}.out"
+            rc, stdout, stderr = await _exec_bash_in_container(
+                container, command, timeout=timeout, output_file=save_file
             )
-            if output_side == "head":
-                snippet = combined_bytes[:max_output_bytes].decode(errors="replace")
+
+            combined = (stdout or "") + (stderr or "")
+            combined_bytes = combined.encode()
+            truncated = max_output_bytes > 0 and len(combined_bytes) > max_output_bytes
+
+            if truncated:
+                full_path = f"/workspace/.bash_outputs/{tool_call_id or 'output'}.log"
+                await _exec_in_container(
+                    container,
+                    ["bash", "-c", f"mkdir -p /workspace/.bash_outputs && cp {shlex.quote(save_file)} {shlex.quote(full_path)}"],
+                    timeout=5,
+                )
+                if output_side == "head":
+                    snippet = combined_bytes[:max_output_bytes].decode(errors="replace")
+                else:
+                    snippet = combined_bytes[-max_output_bytes:].decode(errors="replace")
+                display = f"... [OUTPUT TRUNCATED ({len(combined_bytes)} bytes) - full output saved to {full_path}, use search_file or read_file to examine it]\n\n{snippet}"
             else:
-                snippet = combined_bytes[-max_output_bytes:].decode(errors="replace")
-            display = f"... [OUTPUT TRUNCATED ({len(combined_bytes)} bytes) - full output saved to {full_path}, use search_file or read_file to examine it]\n\n{snippet}"
-        else:
-            display = combined
+                display = combined
 
-        if output_file:
-            await _exec_in_container(container, ["rm", "-f", output_file], timeout=5)
+            if output_file:
+                await _exec_in_container(container, ["rm", "-f", output_file], timeout=5)
 
-        return {
-            "success": rc == 0,
-            "stdout": display if truncated else stdout,
-            "stderr": "" if truncated else stderr,
-            "return_code": rc,
-        }
+            return {
+                "success": rc == 0,
+                "stdout": display if truncated else stdout,
+                "stderr": "" if truncated else stderr,
+                "return_code": rc,
+            }
 
     except ValueError as e:
         return {
@@ -964,30 +1031,28 @@ async def grep(
         Dict with success, matches, count
     """
     try:
-        container = await _resolve_container(
+        async with _sandbox_session(
             session_id, git_scope, repo_name, repo_owner,
             agent_networks=sandbox_networks,
-        )
-        cpath = _container_path(path)
+        ) as container:
+            cpath = _container_path(path)
 
-        cmd = ["grep", "-rn", "-E", "--binary-files=without-match", pattern, cpath]
-        if include:
-            cmd.extend(["--include", include])
+            cmd = ["grep", "-rn", "-E", "--binary-files=without-match", pattern, cpath]
+            if include:
+                cmd.extend(["--include", include])
 
-        rc, stdout, stderr = await _exec_in_container(container, cmd, timeout=60)
+            rc, stdout, stderr = await _exec_in_container(container, cmd, timeout=60)
 
-        # grep returns 1 when no matches found — not an error
-        if rc == 2:
-            return {"success": False, "error": f"grep error: {stderr}", "matches": [], "count": 0}
+            if rc == 2:
+                return {"success": False, "error": f"grep error: {stderr}", "matches": [], "count": 0}
 
-        # Strip /workspace/ prefix from matches for readability
-        matches = []
-        for line in stdout.strip().split("\n"):
-            if line.strip():
-                rel = line.strip().replace("/workspace/", "", 1)
-                matches.append(rel)
+            matches = []
+            for line in stdout.strip().split("\n"):
+                if line.strip():
+                    rel = line.strip().replace("/workspace/", "", 1)
+                    matches.append(rel)
 
-        return {"success": True, "matches": matches, "count": len(matches)}
+            return {"success": True, "matches": matches, "count": len(matches)}
 
     except ValueError as e:
         return {"success": False, "error": str(e), "matches": [], "count": 0}
@@ -1025,43 +1090,41 @@ async def find(
         Dict with success, files, count
     """
     try:
-        container = await _resolve_container(
+        async with _sandbox_session(
             session_id, git_scope, repo_name, repo_owner,
             agent_networks=sandbox_networks,
-        )
-        cpath = _container_path(path)
+        ) as container:
+            cpath = _container_path(path)
 
-        cmd = ["find", cpath]
-        if name:
-            cmd.extend(["-name", name])
-        if type == "file":
-            cmd.extend(["-type", "f"])
-        elif type == "dir":
-            cmd.extend(["-type", "d"])
+            cmd = ["find", cpath]
+            if name:
+                cmd.extend(["-name", name])
+            if type == "file":
+                cmd.extend(["-type", "f"])
+            elif type == "dir":
+                cmd.extend(["-type", "d"])
 
-        # Exclude common noise directories
-        cmd.extend([
-            "-not", "-path", "*/.git/*",
-            "-not", "-path", "*/node_modules/*",
-            "-not", "-path", "*/__pycache__/*",
-            "-not", "-path", "*/.venv/*",
-        ])
+            cmd.extend([
+                "-not", "-path", "*/.git/*",
+                "-not", "-path", "*/node_modules/*",
+                "-not", "-path", "*/__pycache__/*",
+                "-not", "-path", "*/.venv/*",
+            ])
 
-        rc, stdout, stderr = await _exec_in_container(container, cmd, timeout=60)
+            rc, stdout, stderr = await _exec_in_container(container, cmd, timeout=60)
 
-        if rc != 0:
-            return {"success": False, "error": stderr, "files": [], "count": 0}
+            if rc != 0:
+                return {"success": False, "error": stderr, "files": [], "count": 0}
 
-        # Strip /workspace/ prefix
-        results = []
-        for line in stdout.strip().split("\n"):
-            stripped = line.strip()
-            if stripped and stripped != "/workspace" and stripped != cpath:
-                rel = stripped.replace("/workspace/", "", 1)
-                if rel:
-                    results.append(rel)
+            results = []
+            for line in stdout.strip().split("\n"):
+                stripped = line.strip()
+                if stripped and stripped != "/workspace" and stripped != cpath:
+                    rel = stripped.replace("/workspace/", "", 1)
+                    if rel:
+                        results.append(rel)
 
-        return {"success": True, "files": results, "count": len(results)}
+            return {"success": True, "files": results, "count": len(results)}
 
     except ValueError as e:
         return {"success": False, "error": str(e), "files": [], "count": 0}
@@ -1095,20 +1158,20 @@ async def ls(
         Dict with success, files, count
     """
     try:
-        container = await _resolve_container(
+        async with _sandbox_session(
             session_id, git_scope, repo_name, repo_owner,
             agent_networks=sandbox_networks,
-        )
-        cpath = _container_path(path)
+        ) as container:
+            cpath = _container_path(path)
 
-        rc, stdout, stderr = await _exec_in_container(
-            container, ["ls", "-1", cpath], timeout=30
-        )
-        if rc != 0:
-            return {"success": False, "error": f"Path not found: {path}"}
+            rc, stdout, stderr = await _exec_in_container(
+                container, ["ls", "-1", cpath], timeout=30
+            )
+            if rc != 0:
+                return {"success": False, "error": f"Path not found: {path}"}
 
-        files = [f for f in stdout.strip().split("\n") if f.strip()]
-        return {"success": True, "files": files, "count": len(files)}
+            files = [f for f in stdout.strip().split("\n") if f.strip()]
+            return {"success": True, "files": files, "count": len(files)}
 
     except ValueError as e:
         return {"success": False, "error": str(e)}
@@ -1144,50 +1207,50 @@ async def list_dir(
         Dict with success, entries, count
     """
     try:
-        container = await _resolve_container(
+        async with _sandbox_session(
             session_id, git_scope, repo_name, repo_owner,
             agent_networks=sandbox_networks,
-        )
-        cpath = _container_path(path)
+        ) as container:
+            cpath = _container_path(path)
 
-        if recursive:
-            cmd = [
-                "find", cpath,
-                "-not", "-path", "*/.git/*",
-                "-not", "-path", "*/node_modules/*",
-            ]
-            rc, stdout, stderr = await _exec_in_container(container, cmd, timeout=60)
-            if rc != 0:
-                return {"success": False, "error": stderr}
+            if recursive:
+                cmd = [
+                    "find", cpath,
+                    "-not", "-path", "*/.git/*",
+                    "-not", "-path", "*/node_modules/*",
+                ]
+                rc, stdout, stderr = await _exec_in_container(container, cmd, timeout=60)
+                if rc != 0:
+                    return {"success": False, "error": stderr}
 
-            entries = []
-            for line in stdout.strip().split("\n"):
-                stripped = line.strip()
-                if stripped and stripped != cpath:
-                    rel = stripped.replace("/workspace/", "", 1)
-                    if rel:
-                        entries.append(rel)
-        else:
-            cmd = ["ls", "-la", cpath]
-            rc, stdout, stderr = await _exec_in_container(container, cmd, timeout=30)
-            if rc != 0:
-                return {"success": False, "error": f"Path not found: {path}"}
+                entries = []
+                for line in stdout.strip().split("\n"):
+                    stripped = line.strip()
+                    if stripped and stripped != cpath:
+                        rel = stripped.replace("/workspace/", "", 1)
+                        if rel:
+                            entries.append(rel)
+            else:
+                cmd = ["ls", "-la", cpath]
+                rc, stdout, stderr = await _exec_in_container(container, cmd, timeout=30)
+                if rc != 0:
+                    return {"success": False, "error": f"Path not found: {path}"}
 
-            entries = []
-            for line in stdout.strip().split("\n"):
-                line = line.strip()
-                if not line or line.startswith("total"):
-                    continue
-                parts = line.split()
-                if len(parts) >= 9:
-                    entries.append({
-                        "name": " ".join(parts[8:]),
-                        "permissions": parts[0],
-                        "size": parts[4],
-                        "type": "dir" if parts[0].startswith("d") else "file",
-                    })
+                entries = []
+                for line in stdout.strip().split("\n"):
+                    line = line.strip()
+                    if not line or line.startswith("total"):
+                        continue
+                    parts = line.split()
+                    if len(parts) >= 9:
+                        entries.append({
+                            "name": " ".join(parts[8:]),
+                            "permissions": parts[0],
+                            "size": parts[4],
+                            "type": "dir" if parts[0].startswith("d") else "file",
+                        })
 
-        return {"success": True, "entries": entries, "count": len(entries)}
+            return {"success": True, "entries": entries, "count": len(entries)}
 
     except ValueError as e:
         return {"success": False, "error": str(e)}
@@ -1233,46 +1296,46 @@ async def batch_write_files(
         )
     """
     try:
-        container = await _resolve_container(
+        async with _sandbox_session(
             session_id, git_scope, repo_name, repo_owner,
             agent_networks=sandbox_networks,
-        )
+        ) as container:
 
-        files_created = []
-        errors = []
+            files_created = []
+            errors = []
 
-        for file_entry in files:
-            fpath = file_entry.get("path")
-            content = file_entry.get("content")
-            if not fpath or content is None:
-                errors.append({"path": fpath, "error": "Missing path or content"})
-                continue
+            for file_entry in files:
+                fpath = file_entry.get("path")
+                content = file_entry.get("content")
+                if not fpath or content is None:
+                    errors.append({"path": fpath, "error": "Missing path or content"})
+                    continue
 
-            try:
-                cpath = _container_path(fpath)
-                parent = str(Path(cpath).parent)
-                await _exec_in_container(container, ["mkdir", "-p", parent])
+                try:
+                    cpath = _container_path(fpath)
+                    parent = str(Path(cpath).parent)
+                    await _exec_in_container(container, ["mkdir", "-p", parent])
 
-                rc, stderr = await _write_to_container(container, cpath, content)
-                if rc == 0:
-                    files_created.append(fpath)
-                else:
-                    errors.append({"path": fpath, "error": stderr})
+                    rc, stderr = await _write_to_container(container, cpath, content)
+                    if rc == 0:
+                        files_created.append(fpath)
+                    else:
+                        errors.append({"path": fpath, "error": stderr})
 
-            except Exception as e:
-                errors.append({"path": fpath, "error": str(e)})
+                except Exception as e:
+                    errors.append({"path": fpath, "error": str(e)})
 
-        if not files_created:
-            return {"success": False, "error": "No files were created", "errors": errors}
+            if not files_created:
+                return {"success": False, "error": "No files were created", "errors": errors}
 
-        result = {
-            "success": True,
-            "files_created": files_created,
-            "file_count": len(files_created),
-        }
-        if errors:
-            result["errors"] = errors
-        return result
+            result = {
+                "success": True,
+                "files_created": files_created,
+                "file_count": len(files_created),
+            }
+            if errors:
+                result["errors"] = errors
+            return result
 
     except ValueError as e:
         return {"success": False, "error": str(e)}
@@ -1305,20 +1368,20 @@ async def delete_file(
         Dict with success, path
     """
     try:
-        container = await _resolve_container(
+        async with _sandbox_session(
             session_id, git_scope, repo_name, repo_owner,
             agent_networks=sandbox_networks,
-        )
-        cpath = _container_path(path)
+        ) as container:
+            cpath = _container_path(path)
 
-        rc, _, stderr = await _exec_in_container(
-            container, ["rm", "-f", cpath], timeout=10
-        )
-        if rc != 0:
-            return {"success": False, "error": f"Delete failed: {stderr}"}
+            rc, _, stderr = await _exec_in_container(
+                container, ["rm", "-f", cpath], timeout=10
+            )
+            if rc != 0:
+                return {"success": False, "error": f"Delete failed: {stderr}"}
 
-        logger.info("Deleted file: %s", path)
-        return {"success": True, "path": path}
+            logger.info("Deleted file: %s", path)
+            return {"success": True, "path": path}
 
     except ValueError as e:
         return {"success": False, "error": str(e)}
@@ -1395,19 +1458,19 @@ async def get_file_info(
         Dict with success, stat (raw stat output)
     """
     try:
-        container = await _resolve_container(
+        async with _sandbox_session(
             session_id, git_scope, repo_name, repo_owner,
             agent_networks=sandbox_networks,
-        )
-        cpath = _container_path(path)
+        ) as container:
+            cpath = _container_path(path)
 
-        rc, stdout, stderr = await _exec_in_container(
-            container, ["stat", cpath], timeout=10
-        )
-        if rc != 0:
-            return {"success": False, "error": f"File not found: {path}"}
+            rc, stdout, stderr = await _exec_in_container(
+                container, ["stat", cpath], timeout=10
+            )
+            if rc != 0:
+                return {"success": False, "error": f"File not found: {path}"}
 
-        return {"success": True, "path": path, "stat": stdout.strip()}
+            return {"success": True, "path": path, "stat": stdout.strip()}
 
     except ValueError as e:
         return {"success": False, "error": str(e)}
@@ -1447,17 +1510,17 @@ async def get_git_status(
         Dict with success, output (git status output)
     """
     try:
-        container = await _resolve_container(
+        async with _sandbox_session(
             session_id, git_scope, repo_name, repo_owner,
             agent_networks=sandbox_networks,
-        )
-        rc, stdout, stderr = await _exec_in_container(
-            container, ["git", "status"], timeout=15
-        )
-        if rc != 0:
-            return {"success": False, "error": stderr}
+        ) as container:
+            rc, stdout, stderr = await _exec_in_container(
+                container, ["git", "status"], timeout=15
+            )
+            if rc != 0:
+                return {"success": False, "error": stderr}
 
-        return {"success": True, "output": stdout}
+            return {"success": True, "output": stdout}
 
     except ValueError as e:
         return {"success": False, "error": str(e)}
@@ -2166,24 +2229,24 @@ async def get_test_framework(
 ) -> dict:
     """Auto-detect test framework in sandbox workspace (pytest, vitest, jest)."""
     try:
-        container = await _resolve_container(
+        async with _sandbox_session(
             session_id, git_scope, repo_name, repo_owner,
             agent_networks=sandbox_networks,
-        )
-        info = await _detect_test_framework(container)
+        ) as container:
+            info = await _detect_test_framework(container)
 
-        if info["framework"] == "unknown":
-            return {
-                "success": True,
-                "framework": "unknown",
-                "message": (
-                    "No test framework detected yet. This is normal for new projects. "
-                    "Read docs/technical-design.md to determine the tech stack and set up "
-                    "the appropriate test framework."
-                ),
-            }
+            if info["framework"] == "unknown":
+                return {
+                    "success": True,
+                    "framework": "unknown",
+                    "message": (
+                        "No test framework detected yet. This is normal for new projects. "
+                        "Read docs/technical-design.md to determine the tech stack and set up "
+                        "the appropriate test framework."
+                    ),
+                }
 
-        return {"success": True, **info}
+            return {"success": True, **info}
 
     except ValueError as e:
         return {"success": False, "error": str(e)}
@@ -2209,39 +2272,38 @@ async def run_tests(
     Auto-detects the test framework and runs the appropriate command.
     """
     try:
-        container = await _resolve_container(
+        async with _sandbox_session(
             session_id, git_scope, repo_name, repo_owner,
             agent_networks=sandbox_networks,
-        )
-        info = await _detect_test_framework(container)
-        framework = info["framework"]
+        ) as container:
+            info = await _detect_test_framework(container)
+            framework = info["framework"]
 
-        if framework == "unknown":
+            if framework == "unknown":
+                return {
+                    "success": False,
+                    "error": "No test framework detected. Install one first.",
+                }
+
+            path_arg = test_path or ""
+            if framework == "pytest":
+                cmd = f"cd /workspace && python -m pytest {shlex.quote(path_arg)} -v --tb=short 2>&1"
+            elif framework in ("vitest", "jest", "npm"):
+                cmd = f"cd /workspace && npm test -- {shlex.quote(path_arg)} 2>&1"
+            else:
+                return {"success": False, "error": f"Unsupported framework: {framework}"}
+
+            rc, stdout, stderr = await _exec_bash_in_container(container, cmd, timeout=300)
+
+            results = _parse_test_output(framework, stdout, stderr)
+            results["framework"] = framework
+            results["raw_output"] = (stdout + stderr)[:5000]
+
             return {
-                "success": False,
-                "error": "No test framework detected. Install one first.",
+                "success": rc == 0,
+                "results": results,
+                "framework": framework,
             }
-
-        # Build test command
-        path_arg = test_path or ""
-        if framework == "pytest":
-            cmd = f"cd /workspace && python -m pytest {shlex.quote(path_arg)} -v --tb=short 2>&1"
-        elif framework in ("vitest", "jest", "npm"):
-            cmd = f"cd /workspace && npm test -- {shlex.quote(path_arg)} 2>&1"
-        else:
-            return {"success": False, "error": f"Unsupported framework: {framework}"}
-
-        rc, stdout, stderr = await _exec_bash_in_container(container, cmd, timeout=300)
-
-        results = _parse_test_output(framework, stdout, stderr)
-        results["framework"] = framework
-        results["raw_output"] = (stdout + stderr)[:5000]
-
-        return {
-            "success": rc == 0,
-            "results": results,
-            "framework": framework,
-        }
 
     except ValueError as e:
         return {"success": False, "error": str(e)}
@@ -2263,40 +2325,38 @@ async def get_coverage_report(
 ) -> dict:
     """Get test coverage report from the sandbox workspace."""
     try:
-        container = await _resolve_container(
+        async with _sandbox_session(
             session_id, git_scope, repo_name, repo_owner,
             agent_networks=sandbox_networks,
-        )
-        info = await _detect_test_framework(container)
-        framework = info["framework"]
+        ) as container:
+            info = await _detect_test_framework(container)
+            framework = info["framework"]
 
-        if framework == "pytest":
-            # Check for coverage.json
-            rc, stdout, _ = await _exec_in_container(
-                container, ["cat", "/workspace/coverage.json"], timeout=10
-            )
-            if rc == 0:
-                try:
-                    return {"success": True, "coverage": json.loads(stdout), "framework": framework}
-                except json.JSONDecodeError:
-                    pass
-            return {"success": False, "error": "No coverage data found. Run tests with coverage first."}
+            if framework == "pytest":
+                rc, stdout, _ = await _exec_in_container(
+                    container, ["cat", "/workspace/coverage.json"], timeout=10
+                )
+                if rc == 0:
+                    try:
+                        return {"success": True, "coverage": json.loads(stdout), "framework": framework}
+                    except json.JSONDecodeError:
+                        pass
+                return {"success": False, "error": "No coverage data found. Run tests with coverage first."}
 
-        elif framework in ("vitest", "jest"):
-            # Check for coverage directory
-            rc, stdout, _ = await _exec_in_container(
-                container,
-                ["cat", "/workspace/coverage/coverage-summary.json"],
-                timeout=10,
-            )
-            if rc == 0:
-                try:
-                    return {"success": True, "coverage": json.loads(stdout), "framework": framework}
-                except json.JSONDecodeError:
-                    pass
-            return {"success": False, "error": "No coverage data found. Run tests with coverage first."}
+            elif framework in ("vitest", "jest"):
+                rc, stdout, _ = await _exec_in_container(
+                    container,
+                    ["cat", "/workspace/coverage/coverage-summary.json"],
+                    timeout=10,
+                )
+                if rc == 0:
+                    try:
+                        return {"success": True, "coverage": json.loads(stdout), "framework": framework}
+                    except json.JSONDecodeError:
+                        pass
+                return {"success": False, "error": "No coverage data found. Run tests with coverage first."}
 
-        return {"success": False, "error": f"Coverage not supported for framework: {framework}"}
+            return {"success": False, "error": f"Coverage not supported for framework: {framework}"}
 
     except ValueError as e:
         return {"success": False, "error": str(e)}
@@ -2330,64 +2390,61 @@ async def install_test_dependencies(
         Dict with success, results
     """
     try:
-        container = await _resolve_container(
+        async with _sandbox_session(
             session_id, git_scope, repo_name, repo_owner,
             agent_networks=sandbox_networks,
-        )
-        info = await _detect_test_framework(container)
-        framework = info["framework"]
+        ) as container:
+            info = await _detect_test_framework(container)
+            framework = info["framework"]
 
-        results = []
+            results = []
 
-        # Install project dependencies first
-        if framework in ("vitest", "jest", "npm"):
-            rc, stdout, stderr = await _exec_bash_in_container(
-                container, "cd /workspace && npm install 2>&1", timeout=300
-            )
-            results.append({
-                "dependency": "npm install (all)",
-                "success": rc == 0,
-                "output": (stdout + stderr)[:1000],
-            })
-        elif framework == "pytest":
-            # Install requirements if present
-            rc, _, _ = await _exec_in_container(
-                container, ["test", "-f", "/workspace/requirements.txt"]
-            )
-            if rc == 0:
+            if framework in ("vitest", "jest", "npm"):
                 rc, stdout, stderr = await _exec_bash_in_container(
-                    container, "cd /workspace && pip install -r requirements.txt 2>&1",
-                    timeout=300,
+                    container, "cd /workspace && npm install 2>&1", timeout=300
                 )
                 results.append({
-                    "dependency": "requirements.txt",
+                    "dependency": "npm install (all)",
                     "success": rc == 0,
                     "output": (stdout + stderr)[:1000],
                 })
-
-        # Install specific dependencies if requested
-        if dependencies:
-            for dep in dependencies:
-                if framework in ("vitest", "jest", "npm"):
+            elif framework == "pytest":
+                rc, _, _ = await _exec_in_container(
+                    container, ["test", "-f", "/workspace/requirements.txt"]
+                )
+                if rc == 0:
                     rc, stdout, stderr = await _exec_bash_in_container(
-                        container,
-                        f"cd /workspace && npm install --save-dev {shlex.quote(dep)} 2>&1",
-                        timeout=120,
+                        container, "cd /workspace && pip install -r requirements.txt 2>&1",
+                        timeout=300,
                     )
-                else:
-                    rc, stdout, stderr = await _exec_bash_in_container(
-                        container,
-                        f"pip install {shlex.quote(dep)} 2>&1",
-                        timeout=120,
-                    )
-                results.append({
-                    "dependency": dep,
-                    "success": rc == 0,
-                    "output": (stdout + stderr)[:500],
-                })
+                    results.append({
+                        "dependency": "requirements.txt",
+                        "success": rc == 0,
+                        "output": (stdout + stderr)[:1000],
+                    })
 
-        all_success = all(r["success"] for r in results) if results else True
-        return {"success": all_success, "results": results}
+            if dependencies:
+                for dep in dependencies:
+                    if framework in ("vitest", "jest", "npm"):
+                        rc, stdout, stderr = await _exec_bash_in_container(
+                            container,
+                            f"cd /workspace && npm install --save-dev {shlex.quote(dep)} 2>&1",
+                            timeout=120,
+                        )
+                    else:
+                        rc, stdout, stderr = await _exec_bash_in_container(
+                            container,
+                            f"pip install {shlex.quote(dep)} 2>&1",
+                            timeout=120,
+                        )
+                    results.append({
+                        "dependency": dep,
+                        "success": rc == 0,
+                        "output": (stdout + stderr)[:500],
+                    })
+
+            all_success = all(r["success"] for r in results) if results else True
+            return {"success": all_success, "results": results}
 
     except ValueError as e:
         return {"success": False, "error": str(e)}

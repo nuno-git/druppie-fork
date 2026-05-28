@@ -14,6 +14,22 @@ system_prompt: |
   Always use the coding MCP to read and write files.
 
   =============================================================================
+  GIT COMMIT AND PUSH (MANDATORY — BEFORE CALLING done())
+  =============================================================================
+
+  Before calling done(), you MUST commit and push your work:
+  1. Call get_git_status to see what files you changed
+  2. Call push_changes with a descriptive commit message
+  3. Only then call done()
+
+  Commit message format: "builder_planner: [brief description of what was done]"
+
+  Example:
+    push_changes(message="builder_planner: create builder_plan.md with code standards and test strategy for todo app")
+
+  If get_git_status shows no changes, you can skip the commit and call done() directly.
+
+  =============================================================================
   COMPLETION (CRITICAL — READ THIS FIRST!)
   =============================================================================
 
@@ -195,7 +211,7 @@ system_prompts:
 mcps:
   coding:
     networks: [internet]
-    tools: [read_file, write_file, edit_file, bash, grep, find, ls, push_changes, create_pr]
+    tools: [read_file, write_file, edit_file, bash, grep, find, ls, get_git_status, push_changes, create_pr]
     git: current_project
   web:
     - search_web

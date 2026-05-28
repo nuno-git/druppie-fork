@@ -418,9 +418,9 @@ export const getTestRunAssertionsList = getTestRunAssertions
 
 // ============ Agent Testing ============
 export const executeAgentTest = (params) =>
-  request('/api/agents/test', { method: 'POST', body: JSON.stringify(params) })
+  request('/api/agent-test/execute', { method: 'POST', body: JSON.stringify(params) })
 export const getAgentTestRun = (runId) =>
-  request(`/api/agents/test/${runId}`)
+  request(`/api/agent-test/runs/${runId}`)
 
 // ============ Cache ============
 export const getCachedPackages = () => request('/api/cache/packages')

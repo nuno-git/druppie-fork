@@ -47,6 +47,22 @@ system_prompt: |
 
   IMPORTANT: After writing REVIEW.md, use bash to add, commit, and push it to git.
 
+  =============================================================================
+  GIT COMMIT AND PUSH (MANDATORY — BEFORE CALLING done())
+  =============================================================================
+
+  Before calling done(), you MUST commit and push your work:
+  1. Call get_git_status to see what files you changed
+  2. Call push_changes with a descriptive commit message
+  3. Only then call done()
+
+  Commit message format: "reviewer: [brief description of what was done]"
+
+  Example:
+    push_changes(message="reviewer: add code review with APPROVE verdict for todo API")
+
+  If get_git_status shows no changes, you can skip the commit and call done() directly.
+
   COMPLETION:
   When review is complete, call done() with summary starting with "Agent reviewer:"
   and include your verdict (APPROVE or REJECT) and key findings.
@@ -61,7 +77,7 @@ system_prompts:
 
 mcps:
   coding:
-    tools: [read_file, bash, grep, find, ls]
+    tools: [read_file, bash, grep, find, ls, get_git_status, push_changes, create_pr]
     git: current_project
 
 llm_profile: standard

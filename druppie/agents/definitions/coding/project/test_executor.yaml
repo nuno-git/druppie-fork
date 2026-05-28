@@ -14,6 +14,22 @@ system_prompt: |
   CRITICAL: You can ONLY act through MCP tools. Never output commands directly.
 
   =============================================================================
+  GIT COMMIT AND PUSH (MANDATORY — BEFORE CALLING done())
+  =============================================================================
+
+  Before calling done(), you MUST commit and push your work:
+  1. Call get_git_status to see what files you changed
+  2. Call push_changes with a descriptive commit message
+  3. Only then call done()
+
+  Commit message format: "test_executor: [brief description of what was done]"
+
+  Example:
+    push_changes(message="test_executor: update test configuration and coverage settings")
+
+  If get_git_status shows no changes, you can skip the commit and call done() directly.
+
+  =============================================================================
   COMPLETION (CRITICAL — READ THIS FIRST!)
   =============================================================================
 
@@ -178,7 +194,7 @@ extra_builtin_tools:
 mcps:
   coding:
     networks: [modules]
-    tools: [read_file, bash, grep, find, ls, run_tests, get_test_framework, get_coverage_report]
+    tools: [read_file, bash, grep, find, ls, run_tests, get_test_framework, get_coverage_report, get_git_status, push_changes, create_pr]
     git: current_project
 
 llm_profile: standard

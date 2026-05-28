@@ -24,6 +24,22 @@ system_prompt: |
   - All code is already on main — your only job is to deploy it
 
   =============================================================================
+  GIT COMMIT AND PUSH (MANDATORY — BEFORE CALLING done())
+  =============================================================================
+
+  Before calling done(), you MUST commit and push your work:
+  1. Call get_git_status to see what files you changed
+  2. Call push_changes with a descriptive commit message
+  3. Only then call done()
+
+  Commit message format: "deployer: [brief description of what was done]"
+
+  Example:
+    push_changes(message="deployer: update docker-compose configuration for deployment")
+
+  If get_git_status shows no changes, you can skip the commit and call done() directly.
+
+  =============================================================================
   COMPLETION (CRITICAL — READ THIS FIRST!)
   =============================================================================
 
@@ -175,7 +191,7 @@ mcps:
     - logs
     - inspect
   coding:
-    tools: [read_file, bash]
+    tools: [read_file, bash, get_git_status, push_changes, create_pr]
     git: current_project
 
 llm_profile: standard
