@@ -189,7 +189,8 @@ class AgentLoop:
                     }))
 
                     if truncation_retries >= max_truncation_retries:
-                        summary = message.get("content", "") or "Response truncated (max retries)"
+                        original_content = message.get("content", "") or ""
+                        summary = f"[AUTO-DONE: Response truncated {truncation_retries}x (max_tokens)] {original_content}" if original_content else f"[AUTO-DONE: Response truncated {truncation_retries}x (max_tokens)]"
                         done_result = {
                             "summary": summary,
                             "variables": {},
@@ -220,7 +221,8 @@ class AgentLoop:
                     continue
 
                 if context_overflow:
-                    summary = message.get("content", "") or "Context limit reached"
+                    original_content = message.get("content", "") or ""
+                    summary = f"[AUTO-DONE: Context limit reached] {original_content}" if original_content else "[AUTO-DONE: Context limit reached]"
                     done_result = {
                         "summary": summary,
                         "variables": {},
@@ -244,7 +246,8 @@ class AgentLoop:
                 }))
 
                 if enforcement_retries >= max_enforcement_retries:
-                    summary = message.get("content", "") or "Agent did not call done()"
+                    original_content = message.get("content", "") or ""
+                    summary = f"[AUTO-DONE: Agent did not call done() after {enforcement_retries} retries] {original_content}" if original_content else f"[AUTO-DONE: Agent did not call done() after {enforcement_retries} retries]"
                     done_result = {
                         "summary": summary,
                         "variables": {},
@@ -316,7 +319,8 @@ class AgentLoop:
             if done_info is not None:
                 return done_info
 
-        auto_summary = self._last_assistant_content(messages) or "Max turns reached"
+        auto_summary = self._last_assistant_content(messages) or ""
+        summary = f"[AUTO-DONE: Max turns reached ({turn})] {auto_summary}" if auto_summary else f"[AUTO-DONE: Max turns reached ({turn})]"
         done_result = {
             "summary": auto_summary,
             "variables": {},
