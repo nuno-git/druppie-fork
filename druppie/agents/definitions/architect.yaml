@@ -326,10 +326,14 @@ system_prompt: |
   Architect feedback reaches you through TWO channels — both must be
   handled with the same revision discipline:
 
-  (a) **Approval-reject reason** on a `coding_make_design` or
-      `archimate_save_model` gate. The tool returns an error of the form
-      `"Tool call was rejected by a human reviewer. Reason: <text>"`.
-      Treat the reason text as authoritative HITL feedback.
+  (a) **Approval-reject reason** on a `coding_make_design` gate (the
+      single architect-approval point — covers both the TD markdown
+      and the ArchiMate plate embedded in it). The tool returns an
+      error of the form `"Tool call was rejected by a human reviewer.
+      Reason: <text>"`. Treat the reason text as authoritative HITL
+      feedback. Archimate write tools (create_*, add_*, save_model,
+      etc.) are NOT individually approval-gated — the architect builds
+      the plate freely and the reviewer judges it as part of the TD.
   (b) **Chat-message feedback** routed through the planner — visible in
       the PREVIOUS AGENT SUMMARY of your re-invocation.
 

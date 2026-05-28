@@ -508,7 +508,7 @@ Read tools (WILMA + project model):
 | `list_models` / `get_statistics` / `list_elements` / `get_element` / `list_views` / `get_view` / `search_model` / `get_impact` | None | Query WILMA elements, relationships, views, and impact paths |
 | `assess_layout` | None | Element/connection count + density recommendation for a view (used to decide when to recommend `request_full_relayout`) |
 
-Write tools (per-project `docs/architecture.archimate`, all approval-gated on the **architect** role):
+Write tools (per-project `docs/architecture.archimate`, **all ungated** — the architect builds the plate freely; the single human review point is the `coding:make_design` gate on `docs/technical-design.md` where the reviewer sees the markdown + embedded plate as one artifact):
 
 | Tool | Description |
 |------|-------------|

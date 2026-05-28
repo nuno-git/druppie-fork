@@ -98,12 +98,18 @@ view-connections reference relationships:
    `archimate_add_connection_to_view(view_id, relationship_id)`. Both
    endpoint elements must already be on the view (step 5).
 
-7. **Persist** via `archimate_save_model()`. This is the
-   architect-approval gate — the save will pause for explicit approval
-   before the file lands on disk.
+7. **Persist** via `archimate_save_model()` — writes the file to
+   the workspace; no approval gate fires (the architect builds the
+   plate freely; the review point is the TD itself, not each MCP
+   call).
 
 8. **Embed the view id** in the TD as the ```archimate code block
-   shown above, then call `coding_make_design(path, content)`.
+   shown above, then call `coding_make_design(path, content)` for
+   `docs/technical-design.md`. **This is the architect-approval gate.**
+   The reviewer sees the markdown + the embedded plate (rendered from
+   the just-saved view-id) in one place and approves the TD as a
+   whole — including the diagram. Feedback on either the text or the
+   plate flows back through this gate.
 
 9. **Commit + push** via `coding_run_git(command="add ...")`,
    `coding_run_git(command="commit ...")`, `coding_run_git(command="push")`

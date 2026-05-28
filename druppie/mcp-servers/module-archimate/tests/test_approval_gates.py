@@ -1,13 +1,21 @@
-"""Verify that every ArchiMate write-tool is approval-gated on the architect role.
+"""Verify the ArchiMate write-tool approval-gating contract.
 
-Covers AC5 from the Archimate-end-to-end user story:
-    "Approval-gates: delete_element, update_element en save_model
-     weigeren zonder goedkeuring volgens mcp_config.yaml."
+The architect builds up the ArchiMate plate freely through the
+archimate MCP write tools — none of them are individually
+approval-gated. The single architect-approval point is the
+``coding:make_design`` call on ``docs/technical-design.md`` (gated
+via the architect agent's ``approval_overrides``). At that moment the
+reviewer sees the markdown + the embedded plate as one artifact and
+approves the TD as a whole. Approving each MCP call separately is
+meaningless because the reviewer cannot visualise individual
+mutations.
 
-Test is intentionally static — it parses the YAML config and inspects
-the declared gates, which is exactly what the runtime approval system
-uses to decide whether to pause for HITL. No transport round-trip
-needed.
+This test pins both halves of that contract:
+  1. ALL archimate write tools are ungated in mcp_config.yaml.
+  2. ALL read tools stay ungated.
+  3. session_id is injected for every write tool + assess_layout.
+  4. The architect agent overrides coding:make_design to
+     requires_approval=true with required_role=architect.
 
 Run with:
     python druppie/mcp-servers/module-archimate/tests/test_approval_gates.py
@@ -22,8 +30,10 @@ import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 CONFIG_PATH = REPO_ROOT / "druppie" / "core" / "mcp_config.yaml"
+ARCHITECT_YAML = REPO_ROOT / "druppie" / "agents" / "definitions" / "architect.yaml"
 
-# Tools that mutate the project model — must all be approval-gated.
+# Tools that mutate the project model — must all be UNGATED (the TD
+# review handles approval of the resulting plate).
 WRITE_TOOLS = {
     "create_element",
     "update_element",
@@ -70,22 +80,19 @@ def main() -> int:
     tools = {t["name"]: t for t in archimate_cfg.get("tools", [])}
     failures: list[str] = []
 
-    # All write tools must be approval-gated on the architect role
+    # Write tools must NOT be individually approval-gated.
     for name in sorted(WRITE_TOOLS):
         tool = tools.get(name)
         if not tool:
             failures.append(f"missing write tool: {name}")
             continue
-        if not tool.get("requires_approval"):
-            failures.append(f"{name} is a write tool but requires_approval is not true")
-        if tool.get("required_role") != "architect":
+        if tool.get("requires_approval"):
             failures.append(
-                f"{name} is gated but required_role is "
-                f"{tool.get('required_role')!r} (expected 'architect')"
+                f"{name} is approval-gated; archimate write tools must be ungated "
+                f"(approval lives on coding:make_design for the TD instead)"
             )
 
-    # All read tools must be ungated (would otherwise trip the agent's
-    # information-gathering loop unnecessarily)
+    # Read tools must also stay ungated.
     for name in sorted(READ_TOOLS):
         tool = tools.get(name)
         if not tool:
@@ -94,18 +101,28 @@ def main() -> int:
         if tool.get("requires_approval"):
             failures.append(f"{name} is a read tool but is approval-gated")
 
-    # All write tools must be in the session_id injection list so the MCP
-    # can resolve the per-project workspace
+    # session_id must be injected for every write tool (resolves workspace).
     inject = archimate_cfg.get("inject", {})
     session_inject = inject.get("session_id", {})
     inject_tools = set(session_inject.get("tools", []))
     missing_inject = WRITE_TOOLS - inject_tools
-    # assess_layout also needs session_id (reads the project model)
     if "assess_layout" not in inject_tools:
         missing_inject.add("assess_layout")
     if missing_inject:
         failures.append(
             "session_id injection missing for: " + ", ".join(sorted(missing_inject))
+        )
+
+    # The architect agent must gate coding:make_design.
+    with ARCHITECT_YAML.open() as f:
+        architect = yaml.safe_load(f)
+    override = architect.get("approval_overrides", {}).get("coding:make_design", {})
+    if not override.get("requires_approval"):
+        failures.append("architect.yaml: coding:make_design override must set requires_approval=true")
+    if override.get("required_role") != "architect":
+        failures.append(
+            "architect.yaml: coding:make_design required_role must be 'architect', "
+            f"got {override.get('required_role')!r}"
         )
 
     if failures:
@@ -114,9 +131,10 @@ def main() -> int:
             print(f"    - {f}")
         return 1
 
-    print(f"OK — {len(WRITE_TOOLS)} write tools gated on architect, "
-          f"{len(READ_TOOLS)} read tools ungated")
+    print(f"OK — {len(WRITE_TOOLS)} archimate write tools are ungated")
+    print(f"OK — {len(READ_TOOLS)} archimate read tools are ungated")
     print(f"OK — session_id injected for all write tools + assess_layout")
+    print(f"OK — architect agent gates coding:make_design (the TD-review point)")
     print("=" * 50)
     print("All checks passed.")
     return 0

@@ -372,11 +372,13 @@ Branch `Archimate-end-to-end` delivers ArchiMate generation, rendering, and incr
 - **Constraint:** Only viable with local LLMs (data-residency). With Foundry-hosted LLMs depends on the data-residency policy per organization.
 - **Priority:** Low — conditional on customer demand and LLM-hosting strategy.
 
-### Approval-Gate Relaxation
+### Approval-Gate Relaxation — DONE in v1
 
-- **Current state (v1):** All ArchiMate write tools (create_*, update_*, delete_*, save_model, request_full_relayout) require architect approval per AC5.
-- **Desired improvement:** If iteration with all-tools-gated proves too slow in practice, relax `create_*` and `add_to_view` to ungated (keep delete_*, update_*, save_model gated for destructive/overwriting ops).
-- **Priority:** Medium — revisit after first real architect uses the v1 flow.
+- ~~All ArchiMate write tools approval-gated~~ → archimate_* writes are
+  ungated; the single review point is `coding:make_design` on
+  `docs/technical-design.md` (architect-gated via the architect agent's
+  approval_overrides). The reviewer sees the markdown + the embedded
+  plate as one artifact and approves the TD as a whole.
 
 ### Interactive Editing in TD Viewer
 
