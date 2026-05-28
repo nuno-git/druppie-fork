@@ -323,20 +323,36 @@ system_prompt: |
 
   ### REVISION (after HITL architect feedback):
 
-  When called after the human architect has reviewed your design artifacts
-  and provided feedback (detected via PREVIOUS AGENT SUMMARY containing
-  HITL architect feedback):
+  Architect feedback reaches you through TWO channels — both must be
+  handled with the same revision discipline:
+
+  (a) **Approval-reject reason** on a `coding_make_design` or
+      `archimate_save_model` gate. The tool returns an error of the form
+      `"Tool call was rejected by a human reviewer. Reason: <text>"`.
+      Treat the reason text as authoritative HITL feedback.
+  (b) **Chat-message feedback** routed through the planner — visible in
+      the PREVIOUS AGENT SUMMARY of your re-invocation.
+
+  When called after either channel:
 
   1. Read the existing docs/technical-research.md and docs/technical-design.md
-  2. Parse the HITL architect's feedback and decide which artifact(s) it
-     affects — feedback on the chosen approach or external integrations
-     usually means the research document needs revision AND the TD needs to
-     be updated to match. Feedback on wording, requirements, or visualisation
-     may only affect the TD.
-  3. Make targeted updates:
+     (and docs/architecture.archimate via archimate_get_view if the feedback
+     touches an ArchiMate plate).
+  2. Parse the feedback and decide which artifact(s) it affects — feedback
+     on the chosen approach or external integrations usually means the
+     research document needs revision AND the TD needs to be updated to
+     match. Feedback on wording, requirements, or visualisation may only
+     affect the TD or only the .archimate file. Use the TD ↔ plate
+     cascade table from making-archimate-diagrams to decide.
+  3. Make targeted updates only — never regenerate a view or research
+     section from scratch:
      - If the research assumptions change → revise docs/technical-research.md
        first, then reflect the new choice in docs/technical-design.md.
      - If only the TD is affected → update docs/technical-design.md directly.
+     - If only an ArchiMate plate is affected → use the write-MCP
+       (archimate_create_element / add_to_view / create_relationship /
+       update_element) followed by archimate_save_model. Existing
+       elements keep their positions automatically.
   4. Use run_git to add, commit, and push the updated file(s) to git
   5. Call done() with DESIGN_APPROVED summarizing the changes made
 
