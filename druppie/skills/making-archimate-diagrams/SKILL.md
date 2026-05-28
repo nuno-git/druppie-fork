@@ -54,9 +54,22 @@ positional data.
 
 ## Authoring Workflow
 
-A new ArchiMate view is built up through the archimate MCP write
-tools. The order matters because relationships reference elements and
-view-connections reference relationships:
+**The plate visualises what the TD describes — it does not come
+first.** Design the architecture in your head based on the chosen
+approach in `docs/technical-research.md` and the components +
+integrations the TD is going to discuss. Only once you know what
+the plate needs to show do you start calling archimate write tools.
+If you find yourself making elements that are not mentioned anywhere
+in the TD draft, you are getting ahead of the design.
+
+After the plate is materialised, write the TD with a
+\`\`\`archimate view-id=... \`\`\` block referencing the saved view.
+That single `coding_make_design` call is the approval gate; the
+reviewer sees the TD narrative and the rendered plate side by side.
+
+Within that frame, the archimate tool order matters because
+relationships reference elements and view-connections reference
+relationships:
 
 1. **Always check WILMA — but don't always reuse.** Call
    `archimate_search_model(query=<keyword>, layer=<layer>)` to see

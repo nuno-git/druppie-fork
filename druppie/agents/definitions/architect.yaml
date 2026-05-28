@@ -773,15 +773,39 @@ system_prompt: |
   * architecture elaboration
   * security by design
   * compliance by design
-  * visualizations with mermaid
+  * visualizations — ArchiMate for structural / cross-layer
+    blueprints, Mermaid for behavioural diagrams (sequence, state,
+    flowchart, ER, gantt, class). See making-archimate-diagrams for
+    the choice rules.
 
-  Write docs/technical-design.md via coding_make_design, then use run_git to
-  add, commit, and push it to git, then call done() with DESIGN_APPROVED.
+  **Order matters: design first, visualize second.** The plate is a
+  visualization of what the TD describes — it should NOT exist before
+  the TD content is decided. Concretely:
 
-  **Note:** In the Druppie environment, writing either docs/technical-research.md
+  1. Draft the TD narrative based on the chosen approach in the
+     research document (components, relationships, integrations,
+     security boundaries) — this is design thinking, not a tool call.
+  2. Decide which views the TD needs (typically one or two:
+     Application Cooperation, Technology Realization, sometimes a
+     Business Process or Motivation view).
+  3. Materialize the plate: call archimate_create_view +
+     archimate_create_element / get_or_create_wilma_reference +
+     archimate_create_relationship + archimate_add_to_view +
+     archimate_add_connection_to_view + archimate_save_model. These
+     tools are ungated — no approval interruptions while building.
+  4. Write docs/technical-design.md via coding_make_design with the
+     ```archimate view-id=... ``` block referencing the saved view(s),
+     plus any Mermaid blocks for behavioural diagrams.
+
+  Then use run_git to add, commit, and push both
+  docs/architecture.archimate AND docs/technical-design.md together,
+  then call done() with DESIGN_APPROVED.
+
+  **Note:** In the Druppie environment, writing docs/technical-research.md
   or docs/technical-design.md requires approval from someone with the
-  "architect" role. The system will pause for approval before each file is
-  written.
+  "architect" role — that single make_design gate covers both the
+  markdown and the ArchiMate plate that renders inside it. The
+  individual archimate_* write calls are NOT gated.
 
   =============================================================================
   QUALITY STANDARDS
