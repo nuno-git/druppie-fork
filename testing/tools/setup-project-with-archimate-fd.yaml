@@ -142,5 +142,23 @@ tool-test:
       tool: builtin:done
       arguments:
         summary: "Agent business_analyst: DESIGN_APPROVED. Wrote docs/functional-design.md for the overlast-meldportaal with 6 FRs, 4 NFRs, 3 roles, and 4 external integrations (zaaksysteem, notification, kaart, object-opslag)."
+
+    # --- Planner re-evaluates and schedules the architect ---
+    # This mirrors the production flow: after BA delivers DESIGN_APPROVED,
+    # the planner runs again and decides who handles the FD next. By
+    # scheduling the architect here, the agent test does not need to
+    # inject an artificial user message — the architect picks up the
+    # next-agent slot naturally.
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: architect
+            prompt: "Review docs/functional-design.md and produce the technical design (research + TD). Cross-layer blueprint should be an ArchiMate view; behavioural diagrams may use Mermaid per the making-archimate-diagrams skill."
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: Scheduled architect to produce the technical design from docs/functional-design.md."
       assert:
         completed: true

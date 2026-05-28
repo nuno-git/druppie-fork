@@ -2,10 +2,12 @@
 ## produces a technical design that contains an ArchiMate context view.
 ##
 ## Setup: tool test creates a project with the overlast-meldportaal FD
-##   already committed in Gitea (router → planner → BA → FD).
+##   committed in Gitea AND the planner has already scheduled the
+##   architect as the next agent (production-like).
 ##
-## continue_session: true → architect runs in the same session and can
-##   read the FD from the workspace.
+## continue_session: true → architect runs in the same session and
+##   picks up its work from the planner's plan — no synthetic user
+##   chat message needed.
 ##
 ## What we exercise end-to-end:
 ##   - Hybrid notation choice (architect picks ArchiMate for structure,
@@ -28,13 +30,8 @@ agent-test:
     - setup-project-with-archimate-fd
   continue_session: true
 
-  message: |
-    Lees docs/functional-design.md en produceer de technical design.
-    Maak ten minste één ArchiMate-view voor de hoofdcomponenten (cross-layer
-    blueprint). Mermaid mag je gebruiken voor behavioural diagrammen die
-    ArchiMate niet ondersteunt (zoals een sequence diagram van de
-    meld-flow). Pas de hybride keuze toe zoals beschreven in
-    making-archimate-diagrams.
+  # No message: planner scheduled architect in the setup; architect
+  # runs from that plan exactly as in production.
   agents: [architect]
   hitl: non-technical-pm
 
