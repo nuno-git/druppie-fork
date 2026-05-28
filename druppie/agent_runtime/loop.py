@@ -7,9 +7,12 @@ context limits, cancellation, retries, and event emission.
 from __future__ import annotations
 
 import asyncio
+import logging
 import random
 import traceback
 from typing import Any, Awaitable, Callable
+
+logger = logging.getLogger(__name__)
 
 from druppie.agent_runtime.definition import AgentDefinition
 from druppie.agent_runtime.events import EventEmitter
@@ -54,6 +57,12 @@ _CONTEXT_LIMIT_MSG = (
     "You have reached the context limit. Call done() NOW with a summary."
 )
 
+_TRUNCATION_NUDGE_MSG = (
+    "Your previous response was truncated because it hit the maximum output token limit. "
+    "Be more concise and call your tools instead of writing long text responses. "
+    "Continue with your task."
+)
+
 
 class AgentLoop:
     """Core execution loop that drives an LLM agent through tool-call turns."""
@@ -90,6 +99,8 @@ class AgentLoop:
         expanded_tools: set[str] = set()
         enforcement_retries = 0
         max_enforcement_retries = 3
+        truncation_retries = 0
+        max_truncation_retries = 5
 
         for turn in range(1, config.max_turns + 1):
             if cancellation_token and cancellation_token.is_cancelled:
@@ -160,9 +171,66 @@ class AgentLoop:
             tool_calls = message.get("tool_calls")
 
             if not tool_calls:
+                finish_reason = choice.get("finish_reason")
+
+                if finish_reason == "length":
+                    truncation_retries += 1
+                    logger.warning(
+                        "llm_response_truncated",
+                        extra={
+                            "agent_id": agent.id,
+                            "finish_reason": "length",
+                            "completion_tokens": usage.get("completion_tokens"),
+                        },
+                    )
+                    emitter.emit(AgentEvent.now("enforcement_retry", {
+                        "reason": "max_tokens_truncated",
+                        "truncation_retries": truncation_retries,
+                    }))
+
+                    if truncation_retries >= max_truncation_retries:
+                        summary = message.get("content", "") or "Response truncated (max retries)"
+                        done_result = {
+                            "summary": summary,
+                            "variables": {},
+                            "completion_meta": {
+                                "reason": "max_tokens_truncated",
+                                "turn": turn,
+                                "enforcement_retries": enforcement_retries,
+                                "truncation_retries": truncation_retries,
+                            },
+                        }
+                        emitter.emit(AgentEvent.now("done", done_result))
+                        return AgentResult(
+                            status="completed",
+                            done_result=done_result,
+                            events=emitter.get_events(),
+                        )
+
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": "truncation-nudge",
+                        "content": _TRUNCATION_NUDGE_MSG,
+                    })
+
+                    emitter.emit(AgentEvent.now("turn_end", {
+                        "turn_number": turn,
+                        "tokens_used": usage,
+                    }))
+                    continue
+
                 if context_overflow:
                     summary = message.get("content", "") or "Context limit reached"
-                    done_result = {"summary": summary, "variables": {}}
+                    done_result = {
+                        "summary": summary,
+                        "variables": {},
+                        "completion_meta": {
+                            "reason": "context_overflow",
+                            "turn": turn,
+                            "enforcement_retries": enforcement_retries,
+                            "truncation_retries": truncation_retries,
+                        },
+                    }
                     emitter.emit(AgentEvent.now("done", done_result))
                     return AgentResult(
                         status="completed",
@@ -177,7 +245,16 @@ class AgentLoop:
 
                 if enforcement_retries >= max_enforcement_retries:
                     summary = message.get("content", "") or "Agent did not call done()"
-                    done_result = {"summary": summary, "variables": {}}
+                    done_result = {
+                        "summary": summary,
+                        "variables": {},
+                        "completion_meta": {
+                            "reason": "enforcement_retries_exhausted",
+                            "turn": turn,
+                            "enforcement_retries": enforcement_retries,
+                            "truncation_retries": truncation_retries,
+                        },
+                    }
                     emitter.emit(AgentEvent.now("done", done_result))
                     return AgentResult(
                         status="completed",
@@ -198,6 +275,7 @@ class AgentLoop:
                 continue
 
             enforcement_retries = 0
+            truncation_retries = 0
 
             pending_found = False
 
@@ -239,7 +317,16 @@ class AgentLoop:
                 return done_info
 
         auto_summary = self._last_assistant_content(messages) or "Max turns reached"
-        done_result = {"summary": auto_summary, "variables": {}}
+        done_result = {
+            "summary": auto_summary,
+            "variables": {},
+            "completion_meta": {
+                "reason": "max_turns_reached",
+                "turn": turn,
+                "enforcement_retries": enforcement_retries,
+                "truncation_retries": truncation_retries,
+            },
+        }
         emitter.emit(AgentEvent.now("done", done_result))
         return AgentResult(
             status="completed",
