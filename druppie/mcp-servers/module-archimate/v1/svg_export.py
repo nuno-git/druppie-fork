@@ -39,6 +39,19 @@ LAYER_COLORS = {
     "Unknown": "#FFFFFF",
 }
 
+# Single-letter layer badge — Wierda / Open Group convention.
+# Replaces the previous 4-char truncated type-name ("Acto" / "Inte" /
+# "Comp") which was unreadable.
+LAYER_LETTER = {
+    "Business": "B",
+    "Application": "A",
+    "Technology": "T",
+    "Motivation": "M",
+    "Strategy": "S",
+    "Implementation": "I",
+    "Physical": "P",
+}
+
 CONNECTION_STYLE = {
     "Composition":    {"line": "solid",  "start": "diamond-filled", "end": None},
     "Aggregation":    {"line": "solid",  "start": "diamond-open",   "end": None},
@@ -179,15 +192,15 @@ def render_view_svg(root: ET.Element, view: ET.Element) -> str | None:
         layer = info.get("layer", "Unknown")
         fill = LAYER_COLORS.get(layer, LAYER_COLORS["Unknown"])
         name = info.get("name") or "(unnamed)"
-        type_short = re.sub(r"^(Application|Business|Technology|Motivation)", "", info.get("type", ""))[:4]
+        layer_letter = LAYER_LETTER.get(layer, "")
         x = p["x"] + offset_x
         y = p["y"] + offset_y
         node_xml_parts.append(
             f'<g class="am-node">'
             f'<rect x="{x}" y="{y}" width="{p["w"]}" height="{p["h"]}" '
             f'rx="3" ry="3" fill="{fill}" stroke="#444" stroke-width="1.2"/>'
-            f'<text x="{x + 8}" y="{y + 14}" font-family="Segoe UI,sans-serif" '
-            f'font-size="9" fill="#666">{_escape(type_short)}</text>'
+            f'<text x="{x + p["w"] - 8}" y="{y + 14}" font-family="Segoe UI,sans-serif" '
+            f'font-size="10" font-weight="bold" fill="#888" text-anchor="end">{_escape(layer_letter)}</text>'
             f'<text x="{x + p["w"] // 2}" y="{y + p["h"] // 2 + 4}" '
             f'font-family="Segoe UI,sans-serif" font-size="11" fill="#222" '
             f'text-anchor="middle">{_escape(name)}</text>'

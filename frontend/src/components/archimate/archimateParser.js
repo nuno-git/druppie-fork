@@ -22,6 +22,20 @@ export const LAYER_COLORS = {
   Unknown: '#FFFFFF',
 }
 
+// --- Layer letter (Wierda / Open Group convention) ---
+// Single-letter badge in the top-right corner so the reader can identify
+// the layer without relying solely on colour. Replaces the old 4-char
+// truncated type-name ("Acto" / "Inte" / "Comp") which was unreadable.
+export const LAYER_LETTER = {
+  Business: 'B',
+  Application: 'A',
+  Technology: 'T',
+  Motivation: 'M',
+  Strategy: 'S',
+  Implementation: 'I',
+  Physical: 'P',
+}
+
 // --- Element type → layer (must match writer.py / module.py LAYER_MAP) ---
 export const ELEMENT_LAYER = {
   // Business
@@ -394,7 +408,7 @@ export function renderViewToSVG(view, model, opts = {}) {
     const layer = el?.layer || 'Unknown'
     const fill = LAYER_COLORS[layer] || LAYER_COLORS.Unknown
     const name = el?.name || '(unnamed)'
-    const typeShort = (el?.type || '').replace(/^Application|^Business|^Technology|^Motivation/, '').slice(0, 4) || ''
+    const layerLetter = LAYER_LETTER[layer] || ''
     const isNew = highlight.has(n.elementRef) || highlight.has(n.id)
     const stroke = isNew ? '#1d4ed8' : '#444'
     const strokeWidth = isNew ? 2.5 : 1.2
@@ -404,7 +418,7 @@ export function renderViewToSVG(view, model, opts = {}) {
       <g class="am-node" data-element-id="${escapeXml(n.elementRef)}">
         <rect x="${n.x + offsetX}" y="${n.y + offsetY}" width="${n.w}" height="${n.h}"
               rx="3" ry="3" fill="${fill}" stroke="${stroke}" stroke-width="${strokeWidth}" />
-        <text x="${n.x + offsetX + 8}" y="${n.y + offsetY + 14}" font-family="Segoe UI, sans-serif" font-size="9" fill="#666">${escapeXml(typeShort)}</text>
+        <text x="${n.x + offsetX + n.w - 8}" y="${n.y + offsetY + 14}" font-family="Segoe UI, sans-serif" font-size="10" font-weight="bold" fill="#888" text-anchor="end">${escapeXml(layerLetter)}</text>
         <text x="${n.x + offsetX + n.w / 2}" y="${n.y + offsetY + n.h / 2 + 4}" font-family="Segoe UI, sans-serif" font-size="11" fill="#222" text-anchor="middle">${escapeXml(name)}</text>
       </g>
     `

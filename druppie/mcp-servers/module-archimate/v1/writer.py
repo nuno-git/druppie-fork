@@ -116,11 +116,29 @@ VALID_RELATIONSHIP_TYPES = {
     "Association",
 }
 
-# Default visual styling (matches Archi defaults for clean rendering)
-DEFAULT_NODE_W = 120
+# Default visual styling.
+# Min width is generous enough to fit short ASCII labels; auto-width
+# below grows boxes for longer Dutch / compound names so the text stops
+# overflowing the rectangle. Height stays fixed at one text-line plus
+# the type-letter corner; multi-line labels are wrapped at render time.
+DEFAULT_NODE_W = 140
 DEFAULT_NODE_H = 55
 DEFAULT_GRID_SPACING_X = 160
 DEFAULT_GRID_SPACING_Y = 90
+
+# Rough character pixel-width for the 11px Segoe-UI / sans-serif label
+# font the renderer uses. Used to auto-size boxes that would otherwise
+# clip "Notificatierouteringcomponent" or "Zaaktype-mapping configuratie".
+_LABEL_CHAR_PX = 7
+_LABEL_HORIZONTAL_PADDING = 24
+
+
+def _auto_width_for(name: str) -> int:
+    """Pick a box width that fits ``name`` at the default label font."""
+    if not name:
+        return DEFAULT_NODE_W
+    estimated = len(name) * _LABEL_CHAR_PX + _LABEL_HORIZONTAL_PADDING
+    return max(DEFAULT_NODE_W, estimated)
 
 
 def _q(tag: str) -> str:
@@ -505,13 +523,17 @@ class ArchiMateDocument:
 
         node_id = _make_id()
         nx, ny = self._next_free_position(view) if (x is None or y is None) else (x, y)
+        if w is None:
+            element = self.find_element(element_id)
+            element_name = _find_text(element, "name") if element is not None else ""
+            w = _auto_width_for(element_name)
         node = ET.SubElement(view, _q("node"))
         node.set("identifier", node_id)
         node.set("elementRef", element_id)
         node.set(_qxsi("type"), "Element")
         node.set("x", str(nx))
         node.set("y", str(ny))
-        node.set("w", str(w if w is not None else DEFAULT_NODE_W))
+        node.set("w", str(w))
         node.set("h", str(h if h is not None else DEFAULT_NODE_H))
         self.dirty = True
         return node_id
