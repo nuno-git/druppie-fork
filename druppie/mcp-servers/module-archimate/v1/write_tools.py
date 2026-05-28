@@ -413,6 +413,86 @@ def register_write_tools(mcp, *, module_id: str, module_version: str) -> None:
         except ArchiMateWriteError as e:
             return _error(str(e))
 
+    # --- Composite viewpoint builders ---
+
+    @mcp.tool(
+        name="add_layered_view",
+        description=(
+            "Build a complete Layered viewpoint in one call: creates the "
+            "view, the listed elements grouped by ArchiMate layer, and the "
+            "given relationships between them. Returns view_id + maps of "
+            "element name → id and relationship key → id. Use this when "
+            "the plate fits the Layered convention (Business on top, "
+            "Application middle, Technology bottom). For non-standard "
+            "viewpoints or fine-grained editing, fall back to the primitive "
+            "create_* / add_to_view tools.\n\n"
+            "Element specs: {name, type, documentation?}. Relationship "
+            "specs: {source, target, type, access_type?} where source / "
+            "target are element NAMES from the lists below (no need to "
+            "track IDs). Composition / Aggregation relations automatically "
+            "become visual nesting in the rendered plate."
+        ),
+        meta=meta,
+    )
+    async def add_layered_view(
+        session_id: str,
+        name: str,
+        business: list[dict] | None = None,
+        application: list[dict] | None = None,
+        technology: list[dict] | None = None,
+        motivation: list[dict] | None = None,
+        relationships: list[dict] | None = None,
+        documentation: str = "",
+        model_path: str = DEFAULT_MODEL_PATH,
+    ) -> dict:
+        return await _build_composite_view(
+            session_id=session_id,
+            view_name=name,
+            view_documentation=documentation,
+            groups={
+                "Motivation": motivation or [],
+                "Business": business or [],
+                "Application": application or [],
+                "Technology": technology or [],
+            },
+            relationships=relationships or [],
+            model_path=model_path,
+        )
+
+    @mcp.tool(
+        name="add_cooperation_view",
+        description=(
+            "Build a complete Application Cooperation viewpoint in one "
+            "call: peer application components are laid out side-by-side, "
+            "shared services in the middle. Returns view_id + name → id "
+            "maps. Use when the plate is about how application components "
+            "collaborate via shared services (horizontal flow). For "
+            "cross-layer blueprints, use add_layered_view instead.\n\n"
+            "Element specs: {name, type, documentation?}. Relationship "
+            "specs: {source, target, type, access_type?}."
+        ),
+        meta=meta,
+    )
+    async def add_cooperation_view(
+        session_id: str,
+        name: str,
+        peers: list[dict] | None = None,
+        shared_services: list[dict] | None = None,
+        relationships: list[dict] | None = None,
+        documentation: str = "",
+        model_path: str = DEFAULT_MODEL_PATH,
+    ) -> dict:
+        return await _build_composite_view(
+            session_id=session_id,
+            view_name=f"{name} — Application Cooperation",
+            view_documentation=documentation,
+            groups={
+                "Application": (peers or []) + (shared_services or []),
+            },
+            relationships=relationships or [],
+            model_path=model_path,
+        )
+
     # --- Validation ---
 
     @mcp.tool(
@@ -492,6 +572,124 @@ def register_write_tools(mcp, *, module_id: str, module_version: str) -> None:
 def _ns() -> dict[str, str]:
     """Return the ArchiMate namespace mapping for ElementTree queries."""
     return {"am": "http://www.opengroup.org/xsd/archimate/3.0/"}
+
+
+# --- Composite-view helper -------------------------------------------------
+# Shared implementation for add_layered_view / add_cooperation_view. Builds
+# a complete view from a flat description (groups of element specs +
+# relationship specs by element name) in one call, so the architect can
+# express "make this view" instead of orchestrating ~30 primitive calls.
+# Element creation honours the architect's choice of name as the primary
+# key — duplicate names within a group are not allowed, but reusing an
+# existing element name from elsewhere in the model is fine (lookup-first,
+# create-if-missing). Returns a name→id map so subsequent edits don't need
+# to grep the XML for identifiers.
+
+
+async def _build_composite_view(
+    *,
+    session_id: str,
+    view_name: str,
+    view_documentation: str,
+    groups: dict[str, list[dict]],
+    relationships: list[dict],
+    model_path: str,
+) -> dict[str, Any]:
+    """Materialise a viewpoint from a flat element + relationship spec.
+
+    ``groups`` maps an ArchiMate layer label to a list of element specs.
+    Each element spec is {name, type, documentation?}. ``relationships``
+    is a list of {source, target, type, access_type?} where source and
+    target reference element names from the groups.
+    """
+    try:
+        doc = _registry().get(session_id, model_path)
+
+        # Step 1: create the view itself.
+        view_id = doc.create_view(name=view_name, documentation=view_documentation)
+
+        # Step 2: ensure every element exists, indexing by name.
+        element_id_by_name: dict[str, str] = {}
+        for layer, specs in groups.items():
+            for spec in specs:
+                name = (spec.get("name") or "").strip()
+                if not name:
+                    return _error(f"Element in layer '{layer}' is missing a name")
+                element_type = spec.get("type") or ""
+                if not element_type:
+                    return _error(f"Element '{name}' is missing 'type'")
+                if element_type not in ELEMENT_TYPE_LAYER:
+                    return _error(
+                        f"Element '{name}': unsupported type '{element_type}'. "
+                        f"Allowed: {sorted(ELEMENT_TYPE_LAYER)}"
+                    )
+                actual_layer = ELEMENT_TYPE_LAYER[element_type]
+                if actual_layer != layer and layer != "Other":
+                    return _error(
+                        f"Element '{name}' has type '{element_type}' "
+                        f"(layer {actual_layer}) but was placed in group "
+                        f"'{layer}'. Move it to the matching group."
+                    )
+                if name in element_id_by_name:
+                    return _error(f"Element name '{name}' appears twice")
+                element_id_by_name[name] = doc.create_element(
+                    element_type=element_type,
+                    name=name,
+                    documentation=spec.get("documentation", ""),
+                )
+
+        # Step 3: create relationships by resolving names → ids.
+        relationship_ids: list[dict[str, str]] = []
+        for rel_spec in relationships:
+            src_name = (rel_spec.get("source") or "").strip()
+            tgt_name = (rel_spec.get("target") or "").strip()
+            rel_type = rel_spec.get("type") or ""
+            if rel_type not in VALID_RELATIONSHIP_TYPES:
+                return _error(
+                    f"Relationship type '{rel_type}' not supported. "
+                    f"Allowed: {sorted(VALID_RELATIONSHIP_TYPES)}"
+                )
+            if src_name not in element_id_by_name:
+                return _error(
+                    f"Relationship source '{src_name}' not found in element groups"
+                )
+            if tgt_name not in element_id_by_name:
+                return _error(
+                    f"Relationship target '{tgt_name}' not found in element groups"
+                )
+            rel_kwargs = {
+                "relationship_type": rel_type,
+                "source_id": element_id_by_name[src_name],
+                "target_id": element_id_by_name[tgt_name],
+            }
+            access_type = rel_spec.get("access_type") or rel_spec.get("accessType")
+            if rel_type == "Access" and access_type:
+                rel_kwargs["access_type"] = access_type
+            rel_id = doc.create_relationship(**rel_kwargs)
+            relationship_ids.append({
+                "source": src_name,
+                "target": tgt_name,
+                "type": rel_type,
+                "relationship_id": rel_id,
+            })
+
+        # Step 4: place every element on the view (auto-width per name).
+        for element_id in element_id_by_name.values():
+            doc.add_to_view(view_id, element_id)
+
+        # Step 5: connect every relationship on the view.
+        for rel in relationship_ids:
+            doc.add_connection_to_view(view_id, rel["relationship_id"])
+
+        return _result({
+            "view_id": view_id,
+            "element_ids": element_id_by_name,
+            "relationship_ids": relationship_ids,
+            "element_count": len(element_id_by_name),
+            "relationship_count": len(relationship_ids),
+        })
+    except ArchiMateWriteError as e:
+        return _error(str(e))
 
 
 # --- View validation -------------------------------------------------------

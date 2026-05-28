@@ -235,6 +235,8 @@ mcps:
           - request_full_relayout
           - assess_layout
           - validate_view
+          - add_layered_view
+          - add_cooperation_view
     tools:
       # --- Read-only WILMA reference tools ---
       - name: list_models
@@ -266,6 +268,16 @@ mcps:
         requires_approval: false
 
       - name: validate_view
+        requires_approval: false
+
+      # --- Composite viewpoint builders ---
+      # One call builds a whole view (elements + relationships + add_to_view +
+      # add_connection_to_view). Ungated like the underlying primitives —
+      # the architect's review point is the TD itself.
+      - name: add_layered_view
+        requires_approval: false
+
+      - name: add_cooperation_view
         requires_approval: false
 
       # --- WRITE tools on per-project architecture.archimate ---

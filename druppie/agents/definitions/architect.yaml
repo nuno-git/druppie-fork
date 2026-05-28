@@ -792,11 +792,22 @@ system_prompt: |
   2. Decide which views the TD needs (typically one or two:
      Application Cooperation, Technology Realization, sometimes a
      Business Process or Motivation view).
-  3. Materialize the plate: call archimate_create_view +
-     archimate_create_element / get_or_create_wilma_reference +
-     archimate_create_relationship + archimate_add_to_view +
-     archimate_add_connection_to_view + archimate_save_model. These
-     tools are ungated — no approval interruptions while building.
+  3. Materialize the plate. Two paths, pick the cheaper one:
+     - **Composite (preferred for standard viewpoints):** if the plate
+       fits Layered or Application Cooperation, use
+       `archimate_add_layered_view(name, business=[…], application=[…],
+       technology=[…], relationships=[…])` or `add_cooperation_view`.
+       One call creates the view, the elements, the relationships, and
+       wires everything up. Saves ~15-30 iterations vs primitives.
+       Elements are passed as {name, type, documentation?}; relationships
+       as {source, target, type, access_type?} using element NAMES (no
+       id-tracking).
+     - **Primitives (for non-standard or incremental edits):**
+       `archimate_create_view` + `archimate_create_element` /
+       `get_or_create_wilma_reference` + `archimate_create_relationship`
+       + `archimate_add_to_view` + `archimate_add_connection_to_view`.
+     End either path with `archimate_save_model`. All ungated — no
+     approval interruptions while building.
   4. **Validate the plate** before moving on: call
      archimate_validate_view(view_id) for each view you built. The
      response lists concrete errors (self-loops, reversed Realization,
@@ -938,6 +949,11 @@ mcps:
     - get_or_create_wilma_reference
     - save_model
     - request_full_relayout
+    # Composite viewpoint builders — prefer these when the plate fits a
+    # standard ArchiMate viewpoint (Layered / Application Cooperation).
+    # One call replaces ~15-30 primitive create_* / add_* calls.
+    - add_layered_view
+    - add_cooperation_view
 
 extra_builtin_tools:
   - execute_coding_task
