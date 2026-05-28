@@ -1011,7 +1011,7 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
               </span>
             )}
             {/* Continue button — when fully stopped, crashed, or failed */}
-            {['paused', 'paused_crashed', 'failed'].includes(data.status) && !isStopping && (
+            {['paused', 'paused_hitl', 'paused_crashed', 'failed'].includes(data.status) && !isStopping && (
               <button
                 onClick={() => resumeMutation.mutate()}
                 disabled={resumeMutation.isPending}
@@ -1328,7 +1328,7 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
                     <StopCircle className="w-4 h-4" />
                   )}
                 </button>
-              ) : ['paused', 'paused_crashed', 'failed'].includes(data.status) ? (
+              ) : ['paused', 'paused_hitl', 'paused_crashed', 'failed'].includes(data.status) ? (
                 <button
                   onClick={() => resumeMutation.mutate()}
                   disabled={resumeMutation.isPending}

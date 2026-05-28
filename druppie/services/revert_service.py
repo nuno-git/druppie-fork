@@ -12,7 +12,7 @@ from uuid import UUID
 import structlog
 
 from druppie.db.models.project import Project as ProjectModel
-from druppie.domain.common import SessionStatus
+from druppie.domain.common import AgentRunStatus, SessionStatus
 from druppie.repositories.execution_repository import ExecutionRepository
 from druppie.repositories.session_repository import SessionRepository
 
@@ -216,6 +216,50 @@ class RevertService:
             "prs_closed": git_analysis["pr_numbers"],
             "warnings": git_analysis.get("warnings", []),
         }
+
+    async def retry_subagent_run(
+        self, session_id: UUID, agent_run_id: UUID, planned_prompt: str | None = None
+    ) -> dict:
+        """Retry a single subagent run (standalone re-execution).
+
+        Phase 1: Parent stays COMPLETED. Subagent re-runs independently.
+        Its results are updated in-place.
+        """
+        # Validate target is a subagent
+        target = self.execution_repo.get_by_id_for_session(agent_run_id, session_id)
+        if not target:
+            raise ValueError(f"Agent run {agent_run_id} not found in session {session_id}")
+        if not target.parent_run_id:
+            raise ValueError("Agent run is not a subagent — use retry-from instead")
+
+        logger.info(
+            "retry_subagent_run_start",
+            session_id=str(session_id),
+            agent_run_id=str(agent_run_id),
+        )
+
+        # Clear execution artifacts (llm_calls, tool_calls, events)
+        self.execution_repo.clear_execution_artifacts([agent_run_id])
+
+        # Reset all fields (status→PENDING, clear timestamps/tokens/error)
+        self.execution_repo.reset_runs_to_pending([agent_run_id])
+
+        # Set to RUNNING (also sets started_at = now)
+        self.execution_repo.update_status(agent_run_id, AgentRunStatus.RUNNING)
+
+        # Apply edited planned_prompt if provided
+        if planned_prompt is not None:
+            self.execution_repo.update_planned_prompt(agent_run_id, planned_prompt)
+
+        self.execution_repo.commit()
+
+        logger.info(
+            "retry_subagent_run_complete",
+            session_id=str(session_id),
+            agent_run_id=str(agent_run_id),
+        )
+
+        return {"status": "reset", "agent_run_id": str(agent_run_id)}
 
     def _analyze_git_side_effects(
         self,

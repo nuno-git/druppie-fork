@@ -26,7 +26,7 @@ from druppie.api.deps import (
     get_session_service,
 )
 from druppie.services import SessionService
-from druppie.domain import SessionDetail
+from druppie.domain import SessionDetail, SessionStatus
 from druppie.core.background_tasks import create_tracked_task, run_session_task
 
 logger = structlog.get_logger()
@@ -267,6 +267,111 @@ async def retry_from_run(
         "success": True,
         "session_id": str(session_id),
         "message": "Retry started",
+    }
+
+
+# =============================================================================
+# RETRY SUBAGENT RUN
+# =============================================================================
+
+
+async def _run_subagent_retry_background(
+    session_id: UUID,
+    agent_run_id: UUID,
+    planned_prompt: str | None = None,
+) -> None:
+    """Re-execute a single subagent run (standalone, parent stays COMPLETED)."""
+
+    async def task(ctx):
+        from druppie.core.mcp_config import get_mcp_config
+        from druppie.execution.mcp_http import MCPHttp
+        from druppie.services import RevertService
+
+        # Step 1: Reset the subagent run (clear artifacts, set to RUNNING)
+        mcp_http = MCPHttp(get_mcp_config())
+        revert_service = RevertService(ctx.execution_repo, ctx.session_repo, mcp_http)
+        result = await revert_service.retry_subagent_run(
+            session_id, agent_run_id, planned_prompt=planned_prompt,
+        )
+
+        logger.info(
+            "subagent_retry_reset_complete",
+            session_id=str(session_id),
+            result=result,
+        )
+
+        # Step 2: Execute the subagent using orchestrator.run_agent directly
+        agent_run = ctx.execution_repo.get_by_id_for_session(agent_run_id, session_id)
+        context = ctx.orchestrator.build_project_context(session_id)
+
+        await ctx.orchestrator.run_agent(
+            session_id=session_id,
+            agent_run_id=agent_run_id,
+            agent_id=agent_run.agent_id,
+            prompt=planned_prompt or agent_run.planned_prompt or "",
+            context=context,
+        )
+
+        # Step 3: Mark session completed
+        ctx.session_repo.update_status(session_id, SessionStatus.COMPLETED)
+        ctx.session_repo.commit()
+
+    await run_session_task(session_id, task, "subagent_retry_background")
+
+
+@router.post("/sessions/{session_id}/retry-subagent/{agent_run_id}")
+async def retry_subagent_run(
+    session_id: UUID,
+    agent_run_id: UUID,
+    body: RetryRequest | None = Body(None),
+    service: SessionService = Depends(get_session_service),
+    user: dict = Depends(get_current_user),
+):
+    """Retry a single subagent run (standalone re-execution).
+
+    The parent agent stays COMPLETED. The subagent re-runs independently.
+    Use this for debugging/inspection of subagent behavior.
+    """
+    user_id = UUID(user["sub"])
+    user_roles = get_user_roles(user)
+
+    # Validate session exists and user has access (raises on failure)
+    service.get_detail(
+        session_id=session_id,
+        user_id=user_id,
+        user_roles=user_roles,
+    )
+
+    # Atomically lock and transition session to ACTIVE
+    try:
+        service.lock_for_retry(session_id)
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+
+    logger.info(
+        "retry_subagent_requested",
+        session_id=str(session_id),
+        agent_run_id=str(agent_run_id),
+        user_id=str(user_id),
+    )
+
+    try:
+        create_tracked_task(
+            _run_subagent_retry_background(
+                session_id=session_id,
+                agent_run_id=agent_run_id,
+                planned_prompt=body.planned_prompt if body else None,
+            ),
+            name=f"subagent-retry-{session_id}",
+        )
+    except Exception:
+        service.mark_failed(session_id, "Failed to start subagent retry background task")
+        raise
+
+    return {
+        "success": True,
+        "session_id": str(session_id),
+        "message": "Subagent retry started",
     }
 
 

@@ -109,8 +109,10 @@ class SessionService:
         concurrent resume requests both read status=paused and both
         spawn background tasks.
 
-        Allows both paused and failed sessions (failed sessions may have
-        orphaned running agent runs after infrastructure crashes).
+        Allows paused, paused_hitl, paused_crashed, and failed sessions
+        (failed sessions may have orphaned running agent runs after
+        infrastructure crashes; paused_hitl sessions can be resumed when
+        no HITL question is pending).
 
         Raises:
             NotFoundError: Session not found
@@ -122,6 +124,7 @@ class SessionService:
         resumable = {
             SessionStatus.PAUSED.value,
             SessionStatus.PAUSED_CRASHED.value,
+            SessionStatus.PAUSED_HITL.value,
             SessionStatus.FAILED.value,
         }
         if session.status not in resumable:

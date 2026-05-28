@@ -25,7 +25,7 @@ import {
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { getAgentConfig, getAgentMessageColors, formatToolName } from '../../utils/agentConfig'
 import { formatDuration, formatTokens } from '../../utils/tokenUtils'
-import { retryFromRun } from '../../services/api'
+import { retryFromRun, retrySubagentRun } from '../../services/api'
 import CopyButton from '../shared/CopyButton'
 import ContainerLogsModal from '../shared/ContainerLogsModal'
 
@@ -221,7 +221,7 @@ const OutlineToolLine = ({ tc, selected, onClick }) => {
 
 // ─── Retry Confirmation Dialog ──────────────────────────────────────────────
 
-const RetryConfirmDialog = ({ agentName, plannedPrompt, onConfirm, onCancel, isPending, error }) => {
+const RetryConfirmDialog = ({ agentName, plannedPrompt, onConfirm, onCancel, isPending, error, isSubagent }) => {
   const [editedPrompt, setEditedPrompt] = useState(plannedPrompt || '')
 
   return (
@@ -230,11 +230,20 @@ const RetryConfirmDialog = ({ agentName, plannedPrompt, onConfirm, onCancel, isP
       <div className={`fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-40 bg-white rounded-lg shadow-2xl border border-gray-200 p-5 ${plannedPrompt ? 'w-[32rem]' : 'w-96'}`}>
         <div className="flex items-center gap-2 mb-3">
           <RotateCcw className="w-5 h-5 text-amber-600" />
-          <h3 className="text-sm font-semibold text-gray-900">Retry from here</h3>
+          <h3 className="text-sm font-semibold text-gray-900">{isSubagent ? 'Retry subagent' : 'Retry from here'}</h3>
         </div>
         <div className="text-sm text-gray-600 space-y-2 mb-4">
-          <p>This will revert <strong>{agentName}</strong> and all subsequent agents.</p>
-          <p>Git commits will be reset and force-pushed.</p>
+          {isSubagent ? (
+            <>
+              <p>This will re-run <strong>{agentName}</strong> independently.</p>
+              <p className="text-xs text-blue-600 bg-blue-50 border border-blue-200 rounded px-2 py-1">Subagent will re-run independently. Parent results will not be updated.</p>
+            </>
+          ) : (
+            <>
+              <p>This will revert <strong>{agentName}</strong> and all subsequent agents.</p>
+              <p>Git commits will be reset and force-pushed.</p>
+            </>
+          )}
         </div>
         {plannedPrompt && (
           <div className="mb-4">
@@ -271,7 +280,7 @@ const RetryConfirmDialog = ({ agentName, plannedPrompt, onConfirm, onCancel, isP
             ) : (
               <RotateCcw className="w-3.5 h-3.5" />
             )}
-            Retry from here
+            {isSubagent ? 'Retry subagent' : 'Retry from here'}
           </button>
         </div>
       </div>
@@ -291,7 +300,12 @@ const AgentDetailPanel = ({ agentRun, sessionId, sessionStatus }) => {
   const queryClient = useQueryClient()
 
   const retryMutation = useMutation({
-    mutationFn: (editedPrompt) => retryFromRun(sessionId, agentRun.id, editedPrompt),
+    mutationFn: (editedPrompt) => {
+      if (agentRun.parent_run_id) {
+        return retrySubagentRun(sessionId, agentRun.id, editedPrompt)
+      }
+      return retryFromRun(sessionId, agentRun.id, editedPrompt)
+    },
     onSuccess: () => {
       setShowRetryConfirm(false)
       queryClient.invalidateQueries({ queryKey: ['session', sessionId] })
@@ -344,6 +358,7 @@ const AgentDetailPanel = ({ agentRun, sessionId, sessionStatus }) => {
           onCancel={() => setShowRetryConfirm(false)}
           isPending={retryMutation.isPending}
           error={retryMutation.isError ? retryMutation.error.message : null}
+          isSubagent={!!agentRun.parent_run_id}
         />
       )}
 

@@ -107,6 +107,12 @@ export const retryFromRun = (sessionId, agentRunId, plannedPrompt = null) =>
     body: plannedPrompt !== null ? JSON.stringify({ planned_prompt: plannedPrompt }) : JSON.stringify({}),
   })
 
+export const retrySubagentRun = (sessionId, agentRunId, plannedPrompt = null) =>
+  request(`/api/sessions/${sessionId}/retry-subagent/${agentRunId}`, {
+    method: 'POST',
+    body: plannedPrompt !== null ? JSON.stringify({ planned_prompt: plannedPrompt }) : JSON.stringify({}),
+  })
+
 export const getToolCallLiveOutput = (toolCallId) =>
   request(`/api/tool-calls/${toolCallId}/live-output`)
 
