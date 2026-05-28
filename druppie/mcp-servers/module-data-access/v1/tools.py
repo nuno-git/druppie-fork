@@ -20,8 +20,11 @@ from .charts import (
     aggregate_rows,
     build_chart_spec,
     build_multi_series_chart_spec,
+    build_sql_aggregation_query,
     spec_to_markdown,
 )
+
+_SQL_SOURCE_TYPES = {"azure-sql", "azure-sql-obo"}
 from .module import DataAccessModule
 
 logger = logging.getLogger("dataaccess-mcp")
@@ -269,7 +272,7 @@ async def create_chart_from_source(
     filter_expr: str | None = None,
     top_n: int | None = 20,
     max_series: int | None = 10,
-    read_limit: int = 5000,
+    read_limit: int | None = None,
     title: str = "",
     x_label: str | None = None,
     y_label: str | None = None,
@@ -280,6 +283,13 @@ async def create_chart_from_source(
     table or Azure Data Lake file). The raw rows NEVER enter the conversation
     — the data is read inside this MCP server, aggregated, and only the small
     per-category summary + chart spec is returned to you.
+
+    The aggregation runs over the ENTIRE dataset:
+      - SQL sources: the GROUP BY is pushed into the database, so all rows
+        are aggregated and only the grouped result is transferred.
+      - Data Lake files: the whole file is read server-side and aggregated.
+    `read_limit` defaults to None (no cap). Only set it if you deliberately
+    want a sampled approximation of a very large Data Lake file.
 
     PREFER THIS over read_data + create_chart for any non-trivial dataset.
     Calling read_data with many rows pulls megabytes of JSON into your
@@ -310,15 +320,16 @@ async def create_chart_from_source(
         filter_expr:   Optional pre-aggregation filter
         top_n:         Keep only top N x_column values by total aggregated value (default 20)
         max_series:    For multi-series only — cap the number of series kept (default 10)
-        read_limit:    Hard cap on rows fetched from source (default 5000)
+        read_limit:    Data Lake only — optional cap on rows read before aggregation
+                       (default None = read the whole file). Ignored for SQL.
         title:         Optional chart title
         x_label:       Optional x-axis label
         y_label:       Optional y-axis label
 
     Returns:
         On success: {"success": True, "spec": ..., "markdown": "```chart...",
-                     "row_count_read": int, "category_count": int,
-                     "series_count": int (multi-series only)}.
+                     "rows_scanned": int, "full_dataset": bool,
+                     "category_count": int, "series_count": int (multi only)}.
         On failure: {"success": False, "error": "<reason>"}.
     """
     normalized_filter = filter_expr
@@ -334,19 +345,6 @@ async def create_chart_from_source(
             "error": f"chart_type={chart_type!r} requires series_column",
         }
 
-    read_result = await module.read_data(
-        source_id, data_id, filter_expr=normalized_filter, limit=read_limit
-    )
-    if not read_result.get("success"):
-        return {
-            "success": False,
-            "error": f"read_data failed: {read_result.get('error', 'unknown error')}",
-        }
-
-    rows = read_result.get("data", [])
-    if not isinstance(rows, list) or not rows:
-        return {"success": False, "error": "source returned no rows"}
-
     default_title = title or (
         f"{aggregation}({y_column or '*'}) by {x_column}"
         + (f" / {series_column}" if is_multi else "")
@@ -355,83 +353,121 @@ async def create_chart_from_source(
         "count" if aggregation == "count" else f"{aggregation}({y_column})"
     )
 
-    if is_multi:
+    # Identify the source type so we can aggregate the FULL dataset:
+    #   SQL  -> push GROUP BY into the database (no row transfer)
+    #   else -> read the whole file server-side and aggregate in Python
+    src_type = None
+    for s in module.list_sources().get("sources", []):
+        if s.get("source_id") == source_id:
+            src_type = s.get("source_type")
+            break
+    is_sql = src_type in _SQL_SOURCE_TYPES
+
+    rows_scanned = 0
+    full_dataset = True
+
+    if is_sql:
         try:
-            aggregated, series_keys = aggregate_multi_series(
-                data=rows,
+            query = build_sql_aggregation_query(
+                data_id=data_id,
                 x_column=x_column,
-                series_column=series_column,  # type: ignore[arg-type]
                 y_column=y_column,
                 aggregation=aggregation,
-                top_n=top_n,
-                max_series=max_series,
+                series_column=series_column if is_multi else None,
+                filter_expr=normalized_filter,
+                top_n=None if is_multi else top_n,
             )
         except ValueError as exc:
             return {"success": False, "error": str(exc)}
 
-        if not aggregated:
+        # High limit guards the grouped result only (categories × series),
+        # not the source rows — the DB already aggregated those.
+        q_result = await module.execute_query(source_id, query, limit=100000)
+        if not q_result.get("success"):
             return {
                 "success": False,
-                "error": "aggregation produced no rows (check x_column/series_column have non-null values)",
+                "error": f"aggregation query failed: {q_result.get('error', 'unknown error')}",
             }
+        grouped = q_result.get("data", [])
+        if not grouped:
+            return {"success": False, "error": "aggregation produced no rows"}
+
+        if is_multi:
+            # grouped rows are [{x, s, y}] already aggregated — pivot only
+            # (sum pass-through, since each (x, s) appears once).
+            aggregated, series_keys = aggregate_multi_series(
+                data=grouped, x_column="x", series_column="s",
+                y_column="y", aggregation="sum",
+                top_n=top_n, max_series=max_series,
+            )
+            agg_x_col, agg_y_col = "x", "y"
+        else:
+            aggregated = grouped  # [{x, y}]
+            agg_x_col, agg_y_col = "x", "y"
+    else:
+        read_result = await module.read_data(
+            source_id, data_id, filter_expr=normalized_filter, limit=read_limit
+        )
+        if not read_result.get("success"):
+            return {
+                "success": False,
+                "error": f"read_data failed: {read_result.get('error', 'unknown error')}",
+            }
+        rows = read_result.get("data", [])
+        if not isinstance(rows, list) or not rows:
+            return {"success": False, "error": "source returned no rows"}
+        rows_scanned = len(rows)
+        full_dataset = not read_result.get("metadata", {}).get("capped", False)
 
         try:
-            spec = build_multi_series_chart_spec(
-                data=aggregated,
-                chart_type=chart_type,
-                x_column=x_column,
-                series=series_keys,
-                title=default_title,
-                x_label=x_label or x_column,
-                y_label=default_y_label,
-            )
+            if is_multi:
+                aggregated, series_keys = aggregate_multi_series(
+                    data=rows, x_column=x_column, series_column=series_column,  # type: ignore[arg-type]
+                    y_column=y_column, aggregation=aggregation,
+                    top_n=top_n, max_series=max_series,
+                )
+                agg_x_col = x_column
+            else:
+                aggregated, agg_col = aggregate_rows(
+                    data=rows, x_column=x_column, y_column=y_column,
+                    aggregation=aggregation, top_n=top_n,
+                )
+                agg_x_col, agg_y_col = x_column, agg_col
         except ValueError as exc:
             return {"success": False, "error": str(exc)}
-
-        return {
-            "success": True,
-            "spec": spec,
-            "markdown": spec_to_markdown(spec),
-            "row_count_read": len(rows),
-            "category_count": len(aggregated),
-            "series_count": len(series_keys),
-        }
-
-    # Single-series path
-    try:
-        aggregated, agg_column = aggregate_rows(
-            data=rows,
-            x_column=x_column,
-            y_column=y_column,
-            aggregation=aggregation,
-            top_n=top_n,
-        )
-    except ValueError as exc:
-        return {"success": False, "error": str(exc)}
 
     if not aggregated:
         return {
             "success": False,
-            "error": f"aggregation produced no rows (x_column={x_column!r} may be missing or all null)",
+            "error": "aggregation produced no rows (check x_column / series_column have non-null values)",
         }
 
     try:
-        spec = build_chart_spec(
-            data=aggregated,
-            chart_type=chart_type,
-            x_column=x_column,
-            y_column=agg_column,
-            title=default_title,
-            x_label=x_label or x_column,
-            y_label=default_y_label,
-        )
+        if is_multi:
+            spec = build_multi_series_chart_spec(
+                data=aggregated, chart_type=chart_type, x_column=agg_x_col,
+                series=series_keys, title=default_title,
+                x_label=x_label or x_column, y_label=default_y_label,
+            )
+        else:
+            spec = build_chart_spec(
+                data=aggregated, chart_type=chart_type, x_column=agg_x_col,
+                y_column=agg_y_col, title=default_title,
+                x_label=x_label or x_column, y_label=default_y_label,
+            )
     except ValueError as exc:
         return {"success": False, "error": str(exc)}
 
-    return {
+    result = {
         "success": True,
         "spec": spec,
         "markdown": spec_to_markdown(spec),
-        "row_count_read": len(rows),
         "category_count": len(aggregated),
+        "full_dataset": full_dataset,
+        "aggregated_in": "database" if is_sql else "server",
     }
+    if not is_sql:
+        result["rows_scanned"] = rows_scanned
+    if is_multi:
+        result["series_count"] = len(series_keys)
+    return result

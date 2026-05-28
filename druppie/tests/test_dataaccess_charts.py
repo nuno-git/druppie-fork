@@ -502,3 +502,106 @@ def test_aggregate_multi_series_requires_y_for_non_count():
             y_column=None,
             aggregation="sum",
         )
+
+
+# ---------------------------------------------------------------------------
+# build_sql_aggregation_query — full-dataset GROUP BY pushdown
+# ---------------------------------------------------------------------------
+
+
+def test_sql_query_count_single_series():
+    q = charts.build_sql_aggregation_query(
+        data_id="dbo.users",
+        x_column="country",
+        y_column=None,
+        aggregation="count",
+        top_n=20,
+    )
+    assert q == (
+        "SELECT TOP 20 [country] AS x, COUNT(*) AS y "
+        "FROM [dbo].[users] "
+        "GROUP BY [country] "
+        "ORDER BY COUNT(*) DESC"
+    )
+
+
+def test_sql_query_sum_with_y_column():
+    q = charts.build_sql_aggregation_query(
+        data_id="dbo.sales",
+        x_column="region",
+        y_column="amount",
+        aggregation="sum",
+        top_n=10,
+    )
+    assert q == (
+        "SELECT TOP 10 [region] AS x, SUM([amount]) AS y "
+        "FROM [dbo].[sales] "
+        "GROUP BY [region] "
+        "ORDER BY SUM([amount]) DESC"
+    )
+
+
+def test_sql_query_with_filter():
+    q = charts.build_sql_aggregation_query(
+        data_id="dbo.sales",
+        x_column="region",
+        y_column=None,
+        aggregation="count",
+        filter_expr="year = 2025",
+        top_n=5,
+    )
+    assert "WHERE year = 2025" in q
+    assert "GROUP BY [region]" in q
+
+
+def test_sql_query_multi_series_no_top():
+    q = charts.build_sql_aggregation_query(
+        data_id="dbo.sales",
+        x_column="region",
+        y_column="revenue",
+        aggregation="sum",
+        series_column="product",
+        top_n=20,  # ignored for multi-series (caller pivots)
+    )
+    assert q == (
+        "SELECT [region] AS x, [product] AS s, SUM([revenue]) AS y "
+        "FROM [dbo].[sales] "
+        "GROUP BY [region], [product]"
+    )
+    assert "TOP" not in q
+
+
+def test_sql_query_table_without_schema():
+    q = charts.build_sql_aggregation_query(
+        data_id="users",
+        x_column="country",
+        y_column=None,
+        aggregation="count",
+        top_n=10,
+    )
+    assert "FROM [users]" in q
+
+
+def test_sql_query_escapes_bracket_in_identifier():
+    q = charts.build_sql_aggregation_query(
+        data_id="dbo.weird",
+        x_column="col]name",
+        y_column=None,
+        aggregation="count",
+    )
+    # ] doubled to ]] inside the brackets
+    assert "[col]]name]" in q
+
+
+def test_sql_query_rejects_bad_aggregation():
+    with pytest.raises(ValueError, match="unsupported aggregation"):
+        charts.build_sql_aggregation_query(
+            data_id="dbo.t", x_column="a", y_column="b", aggregation="median"
+        )
+
+
+def test_sql_query_requires_y_for_non_count():
+    with pytest.raises(ValueError, match="requires y_column"):
+        charts.build_sql_aggregation_query(
+            data_id="dbo.t", x_column="a", y_column=None, aggregation="avg"
+        )

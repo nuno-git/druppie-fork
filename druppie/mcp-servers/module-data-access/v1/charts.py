@@ -191,6 +191,71 @@ def spec_to_markdown(spec: dict) -> str:
     return "```chart\n" + json.dumps(spec, ensure_ascii=False) + "\n```"
 
 
+def _quote_ident(ident: str) -> str:
+    """Quote a T-SQL identifier with brackets, escaping embedded ]."""
+    return "[" + str(ident).replace("]", "]]") + "]"
+
+
+def build_sql_aggregation_query(
+    data_id: str,
+    x_column: str,
+    y_column: str | None,
+    aggregation: str,
+    series_column: str | None = None,
+    filter_expr: str | None = None,
+    top_n: int | None = None,
+) -> str:
+    """Build a GROUP BY aggregation query for a SQL source.
+
+    Pushes the aggregation into the database so it runs over the FULL table
+    and returns only the small grouped result (no row-cap truncation).
+
+    `data_id` is "schema.table" (or just "table"). Output columns are
+    aliased to `x`/`y` (single-series) or `x`/`s`/`y` (multi-series) so the
+    caller can build the spec without knowing the original column names.
+    """
+    if aggregation not in SUPPORTED_AGGREGATIONS:
+        raise ValueError(
+            f"unsupported aggregation {aggregation!r}; "
+            f"expected one of {', '.join(SUPPORTED_AGGREGATIONS)}"
+        )
+    if aggregation != "count" and not y_column:
+        raise ValueError(f"aggregation={aggregation!r} requires y_column")
+    if not x_column:
+        raise ValueError("x_column is required")
+
+    if "." in data_id:
+        schema, table = data_id.split(".", 1)
+        table_ref = f"{_quote_ident(schema)}.{_quote_ident(table)}"
+    else:
+        table_ref = _quote_ident(data_id)
+
+    if aggregation == "count":
+        agg_expr = "COUNT(*)"
+    else:
+        fn = {"sum": "SUM", "avg": "AVG", "min": "MIN", "max": "MAX"}[aggregation]
+        agg_expr = f"{fn}({_quote_ident(y_column)})"
+
+    where = f" WHERE {filter_expr}" if filter_expr else ""
+
+    if series_column:
+        # Multi-series: group by both dimensions; caller pivots + trims.
+        return (
+            f"SELECT {_quote_ident(x_column)} AS x, "
+            f"{_quote_ident(series_column)} AS s, {agg_expr} AS y "
+            f"FROM {table_ref}{where} "
+            f"GROUP BY {_quote_ident(x_column)}, {_quote_ident(series_column)}"
+        )
+
+    top = f"TOP {int(top_n)} " if top_n else ""
+    return (
+        f"SELECT {top}{_quote_ident(x_column)} AS x, {agg_expr} AS y "
+        f"FROM {table_ref}{where} "
+        f"GROUP BY {_quote_ident(x_column)} "
+        f"ORDER BY {agg_expr} DESC"
+    )
+
+
 SUPPORTED_AGGREGATIONS: tuple[str, ...] = ("count", "sum", "avg", "min", "max")
 
 

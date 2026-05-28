@@ -428,6 +428,16 @@ system_prompt: |
   shows the most information without distortion: bar for ≤15 categories,
   horizontal_bar for longer names, treemap for >15 categories.
 
+  **Choosing good columns (check get_schema first):**
+  - Pick a CATEGORICAL column for x_column (names, types, statuses, years).
+    Avoid raw date-key integers like 20190101 (YYYYMMDD) — they render as
+    meaningless numbers. If only a date-key exists and the user wants a
+    trend, say so rather than charting the raw key.
+  - The tool aggregates over the ENTIRE dataset (SQL via GROUP BY pushdown,
+    Data Lake by reading the whole file), so counts/sums are exact — you do
+    NOT need to read rows first or worry about row limits. Check the result's
+    `full_dataset` flag; if false, mention to the user that it is a sample.
+
   ###### Calling the tool
 
   Call `dataaccess_create_chart_from_source` with:
