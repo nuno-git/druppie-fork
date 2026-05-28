@@ -111,10 +111,13 @@ relationships:
    `archimate_add_connection_to_view(view_id, relationship_id)`. Both
    endpoint elements must already be on the view (step 5).
 
-7. **Persist** via `archimate_save_model()` — writes the file to
-   the workspace; no approval gate fires (the architect builds the
-   plate freely; the review point is the TD itself, not each MCP
-   call).
+7. **Persist** via `archimate_save_model()` — writes the
+   `architecture.archimate` XML AND a rendered SVG per view to
+   `docs/diagrams/` in the workspace; no approval gate fires (the
+   architect builds the plate freely; the review point is the TD
+   itself, not each MCP call). The SVGs are what Gitea-browsing
+   reviewers actually see — the raw XML is source-of-truth but Gitea
+   flags its invisible Unicode and humans don't read XML.
 
 8. **Embed the view id** in the TD as the ```archimate code block
    shown above, then call `coding_make_design(path, content)` for
@@ -125,9 +128,12 @@ relationships:
    plate flows back through this gate.
 
 9. **Commit + push** via `coding_run_git(command="add ...")`,
-   `coding_run_git(command="commit ...")`, `coding_run_git(command="push")`
-   so both `docs/architecture.archimate` and `docs/technical-design.md`
-   reach Gitea atomically.
+   `coding_run_git(command="commit ...")`, `coding_run_git(command="push")`.
+   Stage three things together: `docs/architecture.archimate`,
+   `docs/diagrams/` (the SVG per-view exports written by save_model —
+   these are the human-readable view in Gitea), and
+   `docs/technical-design.md`. Omitting `docs/diagrams/` leaves
+   reviewers staring at raw XML with an invisible-Unicode warning.
 
 ## Updating an Existing View (Feedback Iteration)
 
@@ -147,7 +153,10 @@ diagram the reviewer cannot recognize. Instead:
    `archimate_update_element` / `archimate_update_relationship`.
 3. **Existing elements keep their position.** The write-MCP
    automatically preserves x/y of any element already on the view.
-4. **Save** with `archimate_save_model()`.
+4. **Save** with `archimate_save_model()` — re-renders all SVGs in
+   `docs/diagrams/` too, so the committed SVG matches the new state.
+   Don't forget to `git add docs/diagrams/` alongside the .archimate
+   file when you push the revision.
 5. **Full relayout** is an explicit, approval-gated action via
    `archimate_request_full_relayout(view_id)`. Only use it if the
    architect explicitly asks for a fresh layout — it destroys their
