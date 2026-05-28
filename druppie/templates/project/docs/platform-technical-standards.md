@@ -1,6 +1,6 @@
 # Platform Technical Standards
 
-**Revision:** 2026-04-20
+**Revision:** 2026-05-27
 
 Every Druppie-created application follows these technical defaults. The
 Architect treats them as givens when writing `docs/technical-design.md` and only
@@ -49,11 +49,30 @@ registry:
 - File search inside a codebase → `module-filesearch`
 - ArchiMate / architecture reasoning → `module-archimate`
 - Shell / coding execution → `module-coding`
+- Semantic search / document Q&A / RAG → `module-vectorstore`
 
 If an existing module covers the capability, the TD references the module
 and the SDK call pattern — it does not design an alternative. Building a
 new capability is only valid if no matching module exists; the Architect
 notes this in the TD with a short justification.
+
+### RAG defaults
+
+When a project needs retrieval-augmented generation (document search,
+knowledge bases, source-referenced answers):
+
+- **Use `module-vectorstore`** — do not build a custom vector store.
+- **Embedding model:** platform default (configured centrally on `module-llm`).
+- **Chunk size:** 1000 characters with 200 overlap (module default).
+- **Index scoping:** one index per logical document collection, scoped to
+  `project_id`. Do not share indices across projects.
+- **Search pattern:** hybrid (vector similarity + metadata filters) by default.
+- **Citation format:** always use the `source_name`, `source_page`, and
+  `source_section` fields from search results to provide citations.
+- **Index updates:** re-index on document change, not on a periodic schedule.
+
+The Architect loads the `rag-patterns` skill for the full decision guide
+when a functional design involves RAG.
 
 ## 4. Database & persistence
 

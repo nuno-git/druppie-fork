@@ -502,7 +502,23 @@ ArchiMate model operations. Reads `.archimate` files from a mounted models direc
 | `search_model` | None | Search for elements by query |
 | `export_view` | None | Export an ArchiMate view |
 
-### 6.8 Declarative Parameter Injection
+### 6.8 Vector Store Server (port 9012)
+
+Semantic search over document collections using pgvector embeddings. First module with its own database (`module-vectorstore-db`).
+
+| Tool | Approval | Description |
+|------|----------|-------------|
+| `search` | None | Semantic search over an index — embeds query via module-llm, returns top-k chunks by cosine similarity |
+| `get_chunk` | None | Retrieve a specific chunk by ID with full source metadata |
+| `list_indices` | None | List all indices for the current project |
+| `index_documents` | None | Chunk text, embed via module-llm, store in pgvector with HNSW index |
+| `delete_index` | Developer | Delete an entire index and all its documents/chunks |
+
+Dependencies: `module-llm` (for embeddings), `module-vectorstore-db` (pgvector/pg16).
+
+All data is scoped to `project_id` (injected, hidden from LLM). Platform knowledge uses project ID `__platform__`.
+
+### 6.9 Declarative Parameter Injection
 
 MCP tools can have parameters auto-injected from the session/project context. Injected parameters are marked `hidden: true` and are removed from the LLM-visible tool schema. This prevents the LLM from needing to know internal IDs.
 
@@ -519,7 +535,7 @@ inject:
     tools: [read_file, write_file, list_dir, ...]
 ```
 
-### 6.9 Layered Approval System
+### 6.10 Layered Approval System
 
 Approvals have two layers:
 
@@ -557,6 +573,9 @@ module-filesearch   FastMCP           :9004   File search
 module-web          FastMCP           :9005   Web browsing
 module-archimate    FastMCP           :9006   ArchiMate models
 module-registry     FastMCP           :9007   Platform catalog/discovery
+module-llm          FastMCP           :9008   LLM chat + embeddings
+module-vectorstore  FastMCP           :9012   Semantic search (pgvector)
+module-vectorstore-db  pgvector/pg16  -       Vector store database (internal)
 adminer             Adminer           :8081   DB admin UI
 sandbox-control-plane  Node.js        :8787   Sandbox session/event management
 sandbox-manager     Node.js           :8000   Sandbox container lifecycle

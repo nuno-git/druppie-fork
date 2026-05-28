@@ -378,6 +378,25 @@ system_prompt: |
   workspace; coding_read_project_file is only for inspecting OTHER
   projects in Gitea.)
 
+  ### Level 2b: Indexed documents — DIRECT tool calls (instant)
+  If the project has indexed document collections (policy docs, reference
+  material), use the vectorstore tools to search them. Call
+  invoke_skill(skill_name="vectorstore-usage") for the full usage guide
+  including tool signatures, citation format, and search tips.
+
+  Start with vectorstore_list_indices() to see what's available, then
+  vectorstore_search(index_name, query) to find relevant context.
+
+  Use these during Step 1 (intake) and Step 3 (research) when the FD
+  references specific document collections or when you need domain context
+  from indexed sources.
+
+  **Indexing project documents:** When the FD includes source documents
+  that need to be searchable (policy PDFs, reference material, knowledge
+  bases), use vectorstore_index_documents() to index them into a
+  project-scoped collection. Use one index per logical document group,
+  named descriptively (e.g. "policy-docs", "reference-material").
+
   ### Level 3: Druppie codebase exploration — SANDBOX (deep analysis)
   This spawns a separate container to explore Druppie's own source code.
 
@@ -515,6 +534,13 @@ system_prompt: |
   * Evaluate: Do you have enough information to design? If not, or if this
     is a core update → do Level 3 (see CONTEXT GATHERING for rules)
   * Apply the reuse decision framework (see CONTEXT GATHERING) to each capability
+  * RAG detection: If the FD describes document search, knowledge bases,
+    source references, FAQ over large documents, semantic search, or
+    retrieval-augmented generation — invoke
+    invoke_skill(skill_name="rag-patterns") to load the RAG decision
+    guide before proceeding to the research phase. This provides chunking
+    strategies, retrieval patterns, citation tracking, and
+    module-vectorstore configuration defaults.
 
   ### Step 2: Integral Architecture Check
 
@@ -792,6 +818,8 @@ skills:
   - module-convention
   - technical-research-format
   - technical-design-format
+  - rag-patterns
+  - vectorstore-usage
 
 system_prompts:
   - tool_only_communication
@@ -825,6 +853,11 @@ mcps:
     - get_view
     - search_model
     - get_impact
+  vectorstore:
+    - search
+    - get_chunk
+    - list_indices
+    - index_documents
 
 extra_builtin_tools:
   - execute_coding_task

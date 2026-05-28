@@ -506,10 +506,87 @@ The Builder and Reviewer agents use skills to enforce project-specific coding st
 | `project-coding-standards` | Builder, Reviewer | Python/React code style, naming conventions, formatting rules, import conventions, and critical project rules |
 | `fullstack-architecture` | Builder | Clean architecture patterns (Summary/Detail, Repository, Service, Route) and code templates for all component types |
 | `standards-validation` | Reviewer | Structured validation checklist for architecture compliance and standards compliance |
+| `rag-patterns` | Architect | RAG design decision guide — when to use RAG, pattern catalog, chunking strategies, retrieval patterns, citation tracking |
+| `vectorstore-usage` | Architect | Operational guide for module-vectorstore tools — tool signatures, citation format, search tips |
 
 **Builder behavior**: Before writing code for the Druppie codebase, the Builder invokes `fullstack-architecture` and `project-coding-standards` to load the architecture patterns and coding standards. New components are scaffolded from embedded templates (domain models with Summary/Detail pattern, repositories extending BaseRepository, services with constructor injection, thin API routes with Depends injection, and React pages with React Query).
 
 **Reviewer behavior**: Before reviewing code, the Reviewer invokes `project-coding-standards` and `standards-validation` to load the validation checklist. Reviews include explicit architecture compliance and standards compliance sections, with critical violations (e.g., JSON/JSONB columns, business logic in routes) resulting in an automatic FAIL verdict.
+
+---
+
+## Vector Store / RAG (module-vectorstore)
+
+`module-vectorstore` gives agents semantic search over document collections. It stores text as vector embeddings in PostgreSQL (pgvector) and retrieves relevant chunks by cosine similarity.
+
+### What is stored
+
+Two categories of documents are indexed:
+
+**Platform knowledge** (index: `platform-knowledge`, project: `__platform__`) — indexed automatically on every platform startup by the `platform-knowledge-init` service:
+
+| Source | Directory | What it contains |
+|--------|-----------|-----------------|
+| Skills | `druppie/skills/*/SKILL.md` | Reusable skill instructions (rag-patterns, vectorstore-usage, etc.) |
+| Standards | `druppie/templates/project/docs/*.md` | Platform technical standards, coding standards templates |
+| Module specs | `druppie/mcp-servers/module-*/MODULE.yaml` + `v1/tools.py` | Module metadata and tool definitions |
+| Agent definitions | `druppie/agents/definitions/*.yaml` | Agent system prompts, tool access, skills |
+| Documentation | `docs/**/*.md` | Platform documentation (FEATURES, TECHNICAL, etc.) |
+| MCP config | `druppie/core/mcp_config.yaml` | Tool approval rules, parameter injection, module URLs |
+
+**Project documents** (index: per-project, project-scoped) — indexed by the Architect agent during workflow execution when the functional design references searchable document collections (policy documents, reference material, knowledge bases).
+
+### How data flows in
+
+```
+Source files → collect & chunk (1000 chars, 200 overlap)
+            → embed via module-llm (Z.AI embedding-3 / DeepInfra bge-m3)
+            → store in PostgreSQL with pgvector HNSW index
+```
+
+Each document is split into overlapping text chunks. Each chunk gets an embedding vector from `module-llm`'s `embed` tool and is stored with source metadata (`source_name`, `source_page`, `source_section`) and caller-defined metadata (JSONB) for filtering.
+
+### How agents search
+
+Agents call `vectorstore_search(index_name, query, top_k=5)`. The query is embedded via `module-llm`, then matched against stored chunks using cosine distance. Results include the chunk text, similarity score, and source metadata for citation.
+
+Available tools (5 total):
+
+| Tool | Purpose | Approval |
+|------|---------|----------|
+| `search` | Semantic search over an index | No |
+| `get_chunk` | Retrieve a specific chunk by ID | No |
+| `list_indices` | List all indices for the current project | No |
+| `index_documents` | Index new documents into a collection | No |
+| `delete_index` | Delete an entire index (irreversible) | Yes (developer) |
+
+### Agent access
+
+| Agent | Tools | Purpose |
+|-------|-------|---------|
+| Architect | search, get_chunk, list_indices, index_documents | Search platform knowledge, index project documents |
+
+The Architect uses two skills for guidance: `rag-patterns` (design decision guide) and `vectorstore-usage` (tool usage, citation format, search tips).
+
+### Infrastructure
+
+| Service | Image/Build | Port | Purpose |
+|---------|-------------|------|---------|
+| `module-vectorstore` | `druppie/mcp-servers/module-vectorstore/Dockerfile` | 9012 | MCP server with 5 tools |
+| `module-vectorstore-db` | `pgvector/pgvector:pg16` | internal | PostgreSQL with pgvector extension |
+| `platform-knowledge-init` | `Dockerfile.platform-knowledge` | — | Indexes platform docs on startup |
+
+### Database schema
+
+Three tables in `module_vectorstore` database:
+
+| Table | Purpose | Key columns |
+|-------|---------|-------------|
+| `indices` | Document collections | `project_id` + `name` (unique), `embedding_model`, `dimensions`, `chunk_size` |
+| `documents` | Ingested source docs | `index_id` (FK), `source_name`, `source_type`, `metadata` (JSONB) |
+| `chunks` | Text + vectors | `document_id` (FK), `content`, `embedding` (vector), `source_name`, `source_page`, `source_section` |
+
+All data is scoped to `project_id` — agents can only search indices belonging to their current project. The `platform-knowledge` index uses a special `__platform__` project ID and is readable by all agents.
 
 ---
 

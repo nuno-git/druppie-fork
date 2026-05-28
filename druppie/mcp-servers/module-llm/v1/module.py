@@ -1,6 +1,6 @@
 """LLM MCP Server - Business Logic Module.
 
-Wraps Z.AI GLM (OpenAI-compatible) API for chat completion.
+Wraps Z.AI GLM (OpenAI-compatible) API for chat completion and embeddings.
 Falls back to DeepInfra if ZAI_API_KEY is not set.
 """
 
@@ -14,10 +14,12 @@ logger = logging.getLogger("llm-mcp")
 # Z.AI GLM defaults
 ZAI_DEFAULT_MODEL = "glm-4.7"
 ZAI_DEFAULT_BASE_URL = "https://api.z.ai/api/coding/paas/v4"
+ZAI_DEFAULT_EMBEDDING_MODEL = "embedding-3"
 
 # DeepInfra fallback
 DEEPINFRA_DEFAULT_MODEL = "meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8"
 DEEPINFRA_BASE_URL = "https://api.deepinfra.com/v1/openai"
+DEEPINFRA_DEFAULT_EMBEDDING_MODEL = "BAAI/bge-m3"
 
 
 class LLMModule:
@@ -35,7 +37,8 @@ class LLMModule:
                 base_url=os.environ.get("ZAI_BASE_URL", ZAI_DEFAULT_BASE_URL),
             )
             self._default_model = os.environ.get("ZAI_MODEL") or ZAI_DEFAULT_MODEL
-            logger.info("LLM provider: Z.AI (model=%s)", self._default_model)
+            self._default_embedding_model = os.environ.get("ZAI_EMBEDDING_MODEL") or ZAI_DEFAULT_EMBEDDING_MODEL
+            logger.info("LLM provider: Z.AI (model=%s, embedding=%s)", self._default_model, self._default_embedding_model)
         elif deepinfra_key:
             self._provider = "deepinfra"
             self._client = OpenAI(
@@ -43,12 +46,14 @@ class LLMModule:
                 base_url=DEEPINFRA_BASE_URL,
             )
             self._default_model = DEEPINFRA_DEFAULT_MODEL
-            logger.info("LLM provider: DeepInfra (model=%s)", self._default_model)
+            self._default_embedding_model = DEEPINFRA_DEFAULT_EMBEDDING_MODEL
+            logger.info("LLM provider: DeepInfra (model=%s, embedding=%s)", self._default_model, self._default_embedding_model)
         else:
             self._provider = "none"
             self._client = None
             self._default_model = ""
-            logger.warning("No LLM API key set (ZAI_API_KEY or DEEPINFRA_API_KEY) — chat calls will fail")
+            self._default_embedding_model = ""
+            logger.warning("No LLM API key set (ZAI_API_KEY or DEEPINFRA_API_KEY) — chat/embed calls will fail")
 
     @property
     def provider(self) -> str:
@@ -67,3 +72,14 @@ class LLMModule:
             ],
         )
         return response.choices[0].message.content
+
+    def embed(self, texts: list[str], model: str | None = None) -> list[list[float]]:
+        """Generate embeddings for a list of texts."""
+        if not self._client:
+            raise RuntimeError("No LLM provider configured — set ZAI_API_KEY or DEEPINFRA_API_KEY")
+
+        response = self._client.embeddings.create(
+            model=model or self._default_embedding_model,
+            input=texts,
+        )
+        return [item.embedding for item in response.data]

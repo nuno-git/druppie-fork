@@ -1,0 +1,17 @@
+# Platform Knowledge Indexer
+# Indexes skills, standards, module specs, agent definitions, and docs
+# into module-vectorstore for agent semantic search.
+# Runs on every startup (idempotent — re-indexes safely via ON CONFLICT).
+FROM python:3.11-slim
+
+WORKDIR /app
+
+RUN pip install --no-cache-dir fastmcp>=2.0.0 httpx>=0.25.0
+
+COPY scripts/index_platform_knowledge.py /app/index_platform_knowledge.py
+COPY druppie/ /app/druppie/
+COPY docs/ /app/docs/
+
+ENV PYTHONUNBUFFERED=1
+
+CMD ["python", "/app/index_platform_knowledge.py"]
