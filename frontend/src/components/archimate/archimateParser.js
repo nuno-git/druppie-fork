@@ -433,6 +433,22 @@ export function renderViewToSVG(view, model, opts = {}) {
     })
     .join('')
 
+  // Containers: any node whose bbox fully encloses at least one other
+  // node is treated as a visual parent. Its label moves to a header
+  // strip at the top — centring it would overlap the children's labels.
+  const containerIds = new Set()
+  for (const a of view.nodes) {
+    for (const b of view.nodes) {
+      if (a.id === b.id) continue
+      if (a.x <= b.x && a.y <= b.y
+          && a.x + a.w >= b.x + b.w
+          && a.y + a.h >= b.y + b.h) {
+        containerIds.add(a.id)
+        break
+      }
+    }
+  }
+
   // Element nodes
   const nodeXML = view.nodes.map((n) => {
     const el = model.elements.get(n.elementRef)
@@ -441,16 +457,21 @@ export function renderViewToSVG(view, model, opts = {}) {
     const name = el?.name || '(unnamed)'
     const layerLetter = LAYER_LETTER[layer] || ''
     const isNew = highlight.has(n.elementRef) || highlight.has(n.id)
+    const isContainer = containerIds.has(n.id)
     const stroke = isNew ? '#1d4ed8' : '#444'
     const strokeWidth = isNew ? 2.5 : 1.2
     const accent = isNew ? `<rect x="${n.x + offsetX - 3}" y="${n.y + offsetY - 3}" width="${n.w + 6}" height="${n.h + 6}" rx="10" fill="none" stroke="#1d4ed8" stroke-width="1" stroke-dasharray="3,3" opacity="0.7"/>` : ''
+    const labelX = isContainer ? n.x + offsetX + 12 : n.x + offsetX + n.w / 2
+    const labelY = isContainer ? n.y + offsetY + 16 : n.y + offsetY + n.h / 2 + 4
+    const labelAnchor = isContainer ? 'start' : 'middle'
+    const labelWeight = isContainer ? 'bold' : 'normal'
     return `
       ${accent}
       <g class="am-node" data-element-id="${escapeXml(n.elementRef)}">
         <rect x="${n.x + offsetX}" y="${n.y + offsetY}" width="${n.w}" height="${n.h}"
               rx="3" ry="3" fill="${fill}" stroke="${stroke}" stroke-width="${strokeWidth}" />
         <text x="${n.x + offsetX + n.w - 8}" y="${n.y + offsetY + 14}" font-family="Segoe UI, sans-serif" font-size="10" font-weight="bold" fill="#888" text-anchor="end">${escapeXml(layerLetter)}</text>
-        <text x="${n.x + offsetX + n.w / 2}" y="${n.y + offsetY + n.h / 2 + 4}" font-family="Segoe UI, sans-serif" font-size="11" fill="#222" text-anchor="middle">${escapeXml(name)}</text>
+        <text x="${labelX}" y="${labelY}" font-family="Segoe UI, sans-serif" font-size="11" font-weight="${labelWeight}" fill="#222" text-anchor="${labelAnchor}">${escapeXml(name)}</text>
       </g>
     `
   }).join('')

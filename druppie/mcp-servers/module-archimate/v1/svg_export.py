@@ -215,6 +215,21 @@ def render_view_svg(root: ET.Element, view: ET.Element) -> str | None:
             f'rx="6" ry="6" fill="{fill}" fill-opacity="0.18" stroke="none"/>'
         )
 
+    # Containers: any node whose bbox fully encloses at least one other
+    # node is treated as a visual parent (composition nesting). Its label
+    # has to render at the top — centring it would put it on top of the
+    # children's labels and make both unreadable.
+    container_ids: set[str] = set()
+    for a in positioned:
+        for b in positioned:
+            if a["id"] == b["id"]:
+                continue
+            if (a["x"] <= b["x"] and a["y"] <= b["y"]
+                    and a["x"] + a["w"] >= b["x"] + b["w"]
+                    and a["y"] + a["h"] >= b["y"] + b["h"]):
+                container_ids.add(a["id"])
+                break
+
     # Nodes
     node_xml_parts: list[str] = []
     node_by_id = {p["id"]: p for p in positioned}
@@ -226,15 +241,21 @@ def render_view_svg(root: ET.Element, view: ET.Element) -> str | None:
         layer_letter = LAYER_LETTER.get(layer, "")
         x = p["x"] + offset_x
         y = p["y"] + offset_y
+        is_container = p["id"] in container_ids
+        # Container labels go in a header strip at the top; leaf labels stay centred.
+        label_x = x + 12 if is_container else x + p["w"] // 2
+        label_y = y + 16 if is_container else y + p["h"] // 2 + 4
+        label_anchor = "start" if is_container else "middle"
         node_xml_parts.append(
             f'<g class="am-node">'
             f'<rect x="{x}" y="{y}" width="{p["w"]}" height="{p["h"]}" '
             f'rx="3" ry="3" fill="{fill}" stroke="#444" stroke-width="1.2"/>'
             f'<text x="{x + p["w"] - 8}" y="{y + 14}" font-family="Segoe UI,sans-serif" '
             f'font-size="10" font-weight="bold" fill="#888" text-anchor="end">{_escape(layer_letter)}</text>'
-            f'<text x="{x + p["w"] // 2}" y="{y + p["h"] // 2 + 4}" '
-            f'font-family="Segoe UI,sans-serif" font-size="11" fill="#222" '
-            f'text-anchor="middle">{_escape(name)}</text>'
+            f'<text x="{label_x}" y="{label_y}" '
+            f'font-family="Segoe UI,sans-serif" font-size="11" '
+            f'font-weight="{"bold" if is_container else "normal"}" fill="#222" '
+            f'text-anchor="{label_anchor}">{_escape(name)}</text>'
             f'</g>'
         )
 
