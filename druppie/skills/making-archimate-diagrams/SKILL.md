@@ -1,0 +1,292 @@
+---
+name: making-archimate-diagrams
+description: >
+  Use this skill when creating or updating an ArchiMate view inside a
+  technical-design document. Covers when to pick ArchiMate over Mermaid,
+  the embed syntax for ```archimate code blocks, element and relationship
+  vocabulary per ArchiMate layer, WILMA reference reuse, and the
+  incremental write workflow that preserves existing layout on revision.
+---
+
+# Making ArchiMate Diagrams
+
+ArchiMate is the right tool for **structural enterprise-architecture
+views** — components, the layers they live on, and how they relate.
+Mermaid stays the right tool for **behavioral diagrams** ArchiMate
+cannot express. The two are complementary; this skill teaches when
+ArchiMate wins and how to author a view correctly.
+
+## Choose: ArchiMate or Mermaid?
+
+| Visualisation goal | Pick |
+|--------------------|------|
+| High-level architecture across Business/App/Technology layers | **ArchiMate** |
+| Reuse of WILMA reference elements | **ArchiMate** |
+| Cross-layer blueprint that an architect will peer-review | **ArchiMate** |
+| Components + relationships with formal semantics (Realization, Serving, Flow, ...) | **ArchiMate** |
+| Sequence of messages / API calls over time | **Mermaid** (`sequenceDiagram`) |
+| State machine / lifecycle | **Mermaid** (`stateDiagram-v2`) |
+| Decision tree / flowchart logic | **Mermaid** (`flowchart`) |
+| Entity-relationship data model | **Mermaid** (`erDiagram`) |
+| Gantt / timeline | **Mermaid** (`gantt`) |
+| Class hierarchy | **Mermaid** (`classDiagram`) |
+
+If a diagram needs both — for example, an Application-Cooperation view
+plus an interaction sequence — write two code-blocks, one of each type.
+Do not try to express behavior in ArchiMate.
+
+## The Embed Syntax
+
+ArchiMate diagrams live in `docs/architecture.archimate` (Open Exchange
+XML). Inside `docs/technical-design.md`, a view is referenced by id:
+
+````
+```archimate
+view-id: <uuid>
+file: docs/architecture.archimate
+```
+````
+
+Both keys are required. The TD viewer fetches the .archimate file from
+the project's Gitea repo and renders the named view interactively
+(pan/zoom). Nothing else goes between the backticks — no XML, no
+positional data.
+
+## Authoring Workflow
+
+A new ArchiMate view is built up through the archimate MCP write
+tools. The order matters because relationships reference elements and
+view-connections reference relationships:
+
+1. **Look up WILMA references first.** For every element that already
+   exists in the WILMA reference model, call
+   `archimate_get_or_create_wilma_reference(wilma_element_id)` — it
+   imports the element into the project model with the original WILMA
+   identifier preserved. Find candidates via
+   `archimate_search_model(query=...)`.
+
+2. **Create project-specific elements** that are not in WILMA via
+   `archimate_create_element(element_type, name, documentation)`. Save
+   the returned `element_id` for the next steps.
+
+3. **Create the relationships** between elements via
+   `archimate_create_relationship(relationship_type, source_id,
+   target_id, name?, access_type?)`. Pick a valid relationship type
+   (table below). Save the returned `relationship_id`.
+
+4. **Create the view** via `archimate_create_view(name,
+   documentation)`. Save the returned `view_id`.
+
+5. **Place every element on the view** via
+   `archimate_add_to_view(view_id, element_id)`. Omit x/y/w/h — the
+   write-MCP places new elements in a free region while keeping any
+   already-placed elements at their existing positions.
+
+6. **Wire connections on the view** via
+   `archimate_add_connection_to_view(view_id, relationship_id)`. Both
+   endpoint elements must already be on the view (step 5).
+
+7. **Persist** via `archimate_save_model()`. This is the
+   architect-approval gate — the save will pause for explicit approval
+   before the file lands on disk.
+
+8. **Embed the view id** in the TD as the ```archimate code block
+   shown above, then call `coding_make_design(path, content)`.
+
+9. **Commit + push** via `coding_run_git(command="add ...")`,
+   `coding_run_git(command="commit ...")`, `coding_run_git(command="push")`
+   so both `docs/architecture.archimate` and `docs/technical-design.md`
+   reach Gitea atomically.
+
+## Updating an Existing View (Feedback Iteration)
+
+When the architect gives feedback on an existing TD, **never call
+`archimate_delete_view` + `archimate_create_view` on a view that
+already exists**. That blows away every position and produces a
+diagram the reviewer cannot recognize. Instead:
+
+1. **Read the current state**: `archimate_get_view(view_id)` and
+   `archimate_get_element(element_id)` for the elements you may touch.
+   `archimate_assess_layout(view_id)` is useful for crowded views — it
+   reports element count and density.
+2. **Apply only the requested delta**: add new elements with
+   `archimate_create_element` + `archimate_add_to_view`. Add new
+   relationships with `archimate_create_relationship` +
+   `archimate_add_connection_to_view`. Update labels with
+   `archimate_update_element` / `archimate_update_relationship`.
+3. **Existing elements keep their position.** The write-MCP
+   automatically preserves x/y of any element already on the view.
+4. **Save** with `archimate_save_model()`.
+5. **Full relayout** is an explicit, approval-gated action via
+   `archimate_request_full_relayout(view_id)`. Only use it if the
+   architect explicitly asks for a fresh layout — it destroys their
+   manual position tweaks.
+
+## TD ↔ Plate Cascade Decisions
+
+A change to the TD does not automatically mean a change to the plate,
+and vice versa. Classify the feedback before acting:
+
+| Feedback example | TD edit? | Plate edit? |
+|------------------|----------|-------------|
+| "Typo in the introduction" | yes | no |
+| "Rewrite the trade-off paragraph" | yes | no |
+| "Sequence between A and B is wrong" | yes (update mermaid) | no |
+| "The message bus is missing from the Application view" | maybe | **yes** (add_to_view) |
+| "Relation between Portal and Customer should be Serving, not Flow" | maybe | **yes** (delete_relationship + create_relationship) |
+| "Add a Trust Boundary group around Portal and Auth" | yes (note it) | yes (create_view group or add_to_view of a Grouping) |
+| "Section X mentions a new component Y" | yes | yes (also add Y to the relevant ArchiMate view) |
+
+If you are unsure whether the cascade applies, ask the architect via
+`hitl_ask_question(question="...")` rather than guessing.
+
+## ArchiMate Element Vocabulary (v1 supported types)
+
+ArchiMate has many element types; this skill ships with the four
+layers we support in v1 — Business, Application, Technology,
+Motivation — plus the cross-layer "Grouping" / "Junction" /
+"Location". Pick the most specific type that fits.
+
+### Business Layer (yellow `#FFFFB5`)
+
+| Element | When to use |
+|---------|-------------|
+| BusinessActor | External party or organisation unit (a person, team, company) |
+| BusinessRole | A role someone plays in a process |
+| BusinessProcess | A sequence of business activities producing a service |
+| BusinessFunction | A coherent grouping of business activities (capability-style) |
+| BusinessService | An externally-visible service delivered to a consumer |
+| BusinessObject | A unit of information at the business level (Customer, Invoice) |
+| BusinessEvent | Something that triggers behavior (Application Received) |
+| BusinessInterface | Channel through which a service is offered (counter, website) |
+| Contract | Formal agreement specifying rights and obligations |
+| Product | Bundle of services + contract offered to customers |
+
+### Application Layer (cyan `#B5FFFF`)
+
+| Element | When to use |
+|---------|-------------|
+| ApplicationComponent | A modular, replaceable software unit (Customer Portal) |
+| ApplicationService | Behavior exposed by a component to consumers |
+| ApplicationInterface | A point of access to an application service |
+| ApplicationFunction | Internal behavior of a component |
+| ApplicationProcess | Application-level sequence of behaviors |
+| ApplicationEvent | Event affecting application behavior |
+| DataObject | A unit of data manipulated by the application (User, Order) |
+| ApplicationCollaboration | Aggregation of two or more components acting together |
+| ApplicationInteraction | Behavior of an ApplicationCollaboration |
+
+### Technology Layer (green `#C9E7B7`)
+
+| Element | When to use |
+|---------|-------------|
+| Node | Computational or physical resource that hosts software (Server) |
+| Device | Physical IT resource (Database Server, Load Balancer) |
+| SystemSoftware | Software environment hosting components (PostgreSQL, Linux) |
+| TechnologyService | Service offered by tech nodes (DNS, Storage) |
+| TechnologyInterface | Access point to a TechnologyService |
+| Artifact | Physical piece of data (deployable file, container image) |
+| CommunicationNetwork | Communication links between nodes |
+| Path | Logical path that connects two nodes |
+
+### Motivation (purple `#CCCCFF`)
+
+| Element | When to use |
+|---------|-------------|
+| Stakeholder | Someone with an interest in the outcome |
+| Driver | External or internal condition motivating change |
+| Goal | High-level statement of intent |
+| Outcome | An end result that has been achieved |
+| Requirement | Statement of need that must be realized |
+| Constraint | Restriction on how requirements may be realized |
+| Principle | Generally-applicable property of the architecture |
+| Assessment | Result of analysis of a driver |
+| Value | Relative worth or importance |
+| Meaning | Knowledge/expertise associated with a concept |
+
+### Cross-layer
+
+| Element | When to use |
+|---------|-------------|
+| Grouping | Aggregation of elements that belong together but lack a stronger relationship (often for trust-boundaries / domains) |
+| Location | A conceptual or physical place where elements reside |
+| Junction | A connector that joins or splits relationships of the same type |
+
+## ArchiMate Relationship Vocabulary
+
+ArchiMate relationships have precise semantics. Pick the right one —
+the renderer draws each with a distinctive arrow.
+
+| Relationship | Semantics | Visual |
+|--------------|-----------|--------|
+| Composition | Strong "consists of" — child cannot exist without parent | filled diamond at source |
+| Aggregation | Weak "groups" — child may exist independently | open diamond at source |
+| Assignment | An active element performs / is responsible for a behavior | line, filled circles at endpoints |
+| Realization | An element produces or realizes the behavior of another | dashed line, open triangle at target |
+| Serving | Source provides functionality to target (used-by) | solid line, open arrow at target |
+| Access | Behavior accesses a data object; `access_type` = Read / Write / ReadWrite / Access | dashed line, filled arrow at target |
+| Triggering | Source triggers target (temporal / causal) | solid line, filled arrow at target |
+| Flow | Data or information flows from source to target | dashed line, filled arrow at target |
+| Influence | Source affects achievement of target (motivation layer) | dashed line, open arrow at target |
+| Specialization | Source is a kind of target | solid line, open triangle at target |
+| Association | Generic catch-all when no other relationship fits | solid line, no arrowhead |
+
+Reach for **Association** only when no other type genuinely fits.
+Vague Associations weaken the model. The most-used types for software
+designs are Serving, Access, Composition, Realization, and Triggering
+or Flow.
+
+## WILMA Reuse — How and Why
+
+WILMA is the waterschappen reference architecture. If a concept
+(BusinessProcess, BusinessObject, etc.) exists there, **reuse it**
+rather than minting a project-specific duplicate. The write-MCP makes
+this trivial:
+
+1. `archimate_search_model(query="<keyword>", layer="Business")` →
+   find candidates in WILMA.
+2. `archimate_get_element(element_name=...)` → confirm the right one.
+3. `archimate_get_or_create_wilma_reference(wilma_element_id=...)` →
+   imports the element into `architecture.archimate` with the original
+   WILMA identifier preserved and a `wilma-source=true` property.
+4. Use the returned `element_id` in `add_to_view` and
+   `create_relationship` calls as you would any project element.
+
+Do **not** call `archimate_update_element` on a WILMA-sourced element
+— they are read-only. If WILMA's definition is wrong for your context,
+create a project-specific element with a more accurate name and link
+it to the WILMA element via a Realization or Specialization
+relationship.
+
+## View Sizing
+
+Keep individual views under ~20 elements. Bigger views become hard to
+read regardless of layout quality. Call
+`archimate_assess_layout(view_id)` after big edits — it reports an
+`ok` or `consider_relayout` recommendation based on element count and
+density. If a view grows past ~30 elements, split it into two views
+(e.g., "Customer Portal — Application Cooperation" and "Customer
+Portal — Technology Realization").
+
+## Self-Verification (run before save_model)
+
+Walk through this checklist before calling `archimate_save_model`. If
+any item fails, fix it first.
+
+1. **Element types** are all from the v1-supported set in this skill
+   (Business / Application / Technology / Motivation, plus Grouping /
+   Junction / Location).
+2. **Layers are consistent** with the view's purpose. A view that
+   claims to be Application Cooperation should be ≥80% Application-
+   layer elements; cross-layer relationships are fine, mixed soup is
+   not.
+3. **Relationships use the most specific type** that fits — Association
+   only when nothing else does.
+4. **Every relationship's source and target exist** as elements in
+   the same model (the writer will reject otherwise, but checking
+   first saves a round-trip).
+5. **WILMA elements have been imported by reference**, not copied with
+   fresh ids.
+6. **Embed block** in the TD has both `view-id` and `file` keys.
+7. **No regenerate-from-scratch** on a view that already existed in
+   the previous TD revision. Mutations only.

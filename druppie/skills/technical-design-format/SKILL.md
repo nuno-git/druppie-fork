@@ -115,6 +115,19 @@ empty list if there are no deviations:
 | (none) | | |
 
 ### Visualization
+
+Use **ArchiMate** for structural / cross-layer views (Application
+Cooperation, Technology Realization, Business Process). Embed by view
+id; the diagram is rendered from `docs/architecture.archimate`:
+
+```archimate
+view-id: <uuid-from-archimate_save_model>
+file: docs/architecture.archimate
+```
+
+Use **Mermaid** for behavioral diagrams (sequence, state, flowchart,
+ER) ArchiMate cannot express:
+
 ```mermaid
 flowchart TD
   A["Input"] --> B["Processing"]
@@ -122,7 +135,9 @@ flowchart TD
 ```
 
 Include: Overview, Components, File Structure, Technology Choices.
-Only use diagram types covered by the making-mermaid-diagrams skill.
+For each diagram, pick the notation per the choice rule in the
+making-archimate-diagrams skill, and follow the corresponding skill's
+syntax exactly (making-archimate-diagrams or making-mermaid-diagrams).
 Detailed enough for builder_planner to plan implementation — framework, versions, endpoint signatures and file layout are their call, not the TD's.
 
 ### Module Samenvatting (alleen bij een nieuwe module)

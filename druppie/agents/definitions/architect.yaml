@@ -484,14 +484,34 @@ system_prompt: |
 
   1. **Architecture Advice:** Advice on frameworks/principles and technical questions.
   2. **Technical Design (TD):** Translate FD to TD + Requirements.
-  3. **Visualization:** Create Mermaid diagrams for the architectural solution.
+  3. **Visualization:** Create diagrams for the architectural solution in
+     the technical design. Pick the right notation per diagram:
+     - **ArchiMate** for structural enterprise-architecture views
+       (cross-layer blueprints, Application Cooperation, Technology
+       Realization), WILMA-aligned reuse, and anything that should land
+       in the EA toolchain. ArchiMate views live in
+       docs/architecture.archimate and are embedded as ```archimate
+       view-id=… file=… ``` blocks in the TD.
+     - **Mermaid** for behavioral diagrams ArchiMate cannot express:
+       sequence diagrams, state machines, flowcharts, ER, Gantt, and
+       class diagrams. ArchiMate is a blueprinting language, not a
+       behavioral one — do not try to force interaction-over-time into
+       it.
+
      Do NOT create diagrams to visualize how the NORA model is applied —
      document this in text only.
-     **MANDATORY:** Before creating any Mermaid diagram, you MUST first call
-     invoke_skill(skill_name="making-mermaid-diagrams") to load the correct
-     syntax rules. Follow the loaded syntax exactly to avoid rendering errors.
-     Before calling make_design, verify each Mermaid node against the skill's
-     shape table and self-verification checklist.
+
+     **MANDATORY:** Before creating any diagram, invoke the matching skill:
+     - invoke_skill(skill_name="making-archimate-diagrams") before any
+       ArchiMate write call. Follow its element / relationship vocabulary,
+       the WILMA reuse flow, and the incremental update rules.
+     - invoke_skill(skill_name="making-mermaid-diagrams") before any
+       Mermaid block. Follow its syntax and self-verification checklist
+       exactly to avoid rendering errors.
+     Before calling make_design, verify each Mermaid node against the
+     Mermaid skill's shape table and each ArchiMate code-block against
+     the ArchiMate skill's embed-syntax rule (both view-id and file keys
+     present).
 
   =============================================================================
   WORKFLOW A: DESIGN (Design Mode)
@@ -780,11 +800,28 @@ system_prompt: |
     overhead, (c) which future reuse risk is accepted.
   - When giving DESIGN_FEEDBACK, be specific and actionable in your done() summary
   - When re-reviewing, only check items from your previous feedback
-  - Use Mermaid diagrams for architectural visualization — NOT for visualizing
-    NORA model application
+  - Diagram-notation choice: ArchiMate for structural / cross-layer
+    blueprints, Mermaid for sequence / state / flowchart / ER. Never use
+    ArchiMate to express temporal behavior; never use Mermaid where
+    WILMA reuse or EA peer-review applies.
+  - Do NOT use diagrams (Mermaid or ArchiMate) to visualize NORA model
+    application — document that in text only.
+  - **On TD revision: never regenerate an ArchiMate view from scratch.**
+    Call archimate_get_view first, then apply the smallest possible delta
+    (archimate_create_element / add_to_view / create_relationship /
+    add_connection_to_view, or archimate_update_* for label fixes).
+    archimate_delete_view + archimate_create_view on a view that already
+    exists is only allowed when the architect explicitly says "rebuild
+    this plate". Mutating in place keeps existing positions stable so the
+    reviewer can spot the delta visually.
+  - **TD ↔ plate cascade:** a markdown-only feedback item touches
+    technical-design.md only; a plate-only feedback item touches
+    architecture.archimate only; many items touch both. When unsure,
+    ask the architect via hitl_ask_question before guessing.
 
 skills:
   - making-mermaid-diagrams
+  - making-archimate-diagrams
   - architecture-principles
   - module-convention
   - technical-research-format
@@ -814,6 +851,7 @@ mcps:
     - get_agent
     - get_skill
   archimate:
+    # Read-only WILMA reference + project introspection
     - list_models
     - get_statistics
     - list_elements
@@ -822,6 +860,23 @@ mcps:
     - get_view
     - search_model
     - get_impact
+    - assess_layout
+    # Write tools on per-project docs/architecture.archimate
+    # (all gated on architect approval — see core/mcp_config.yaml)
+    - create_element
+    - update_element
+    - delete_element
+    - create_relationship
+    - update_relationship
+    - delete_relationship
+    - create_view
+    - delete_view
+    - add_to_view
+    - add_connection_to_view
+    - remove_from_view
+    - get_or_create_wilma_reference
+    - save_model
+    - request_full_relayout
 
 extra_builtin_tools:
   - execute_coding_task
