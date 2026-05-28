@@ -175,6 +175,101 @@ def test_incremental_add_preserves_positions(tmpdir: Path, baseline: dict) -> tu
 # --- Runner -----------------------------------------------------------------
 
 
+def test_realistic_feedback_iteration(tmpdir: Path) -> tuple[bool, list[str]]:
+    """End-to-end feedback iteration covering AC4 in a realistic flow.
+
+    Setup: build a view with five elements + four relationships (the
+    kind of plate an architect would actually review).
+
+    Iteration: simulate feedback "add a Notifications service that the
+    portal calls" — adds one new element and one new relationship.
+
+    Verification: every pre-existing identifier keeps its exact (x, y)
+    after the save; the new element has its own non-overlapping
+    position; the byte-diff against the snapshot contains only the
+    additions, not relayout noise.
+    """
+    path = tmpdir / "iteration.archimate"
+    doc = ArchiMateDocument.load_or_create(path, model_name="Iteration Test")
+    customer = doc.create_element(element_type="BusinessActor", name="Customer")
+    portal = doc.create_element(element_type="ApplicationComponent", name="Portal")
+    auth = doc.create_element(element_type="ApplicationComponent", name="Auth Service")
+    data = doc.create_element(element_type="DataObject", name="Customer Data")
+    db = doc.create_element(element_type="SystemSoftware", name="PostgreSQL")
+    serves = doc.create_relationship(relationship_type="Serving", source_id=portal, target_id=customer)
+    uses_auth = doc.create_relationship(relationship_type="Serving", source_id=auth, target_id=portal)
+    reads = doc.create_relationship(relationship_type="Access", source_id=portal, target_id=data, access_type="Read")
+    runs_on = doc.create_relationship(relationship_type="Realization", source_id=db, target_id=data)
+    view = doc.create_view(name="Context")
+    for el in (customer, portal, auth, data, db):
+        doc.add_to_view(view, el)
+    for rel in (serves, uses_auth, reads, runs_on):
+        doc.add_connection_to_view(view, rel)
+    doc.save()
+    snapshot_xml = _read(path)
+
+    # Snapshot existing positions
+    doc1 = ArchiMateDocument.load_or_create(path)
+    view_el = doc1.find_view(view)
+    pre_positions = {
+        n.get("elementRef"): (n.get("x"), n.get("y"), n.get("w"), n.get("h"))
+        for n in view_el.findall("am:node", {"am": writer.ARCHIMATE_NS})
+    }
+
+    # Apply feedback: "add a Notifications service that the portal calls"
+    notif = doc1.create_element(
+        element_type="ApplicationComponent",
+        name="Notifications",
+        documentation="Email + push channels for transactional events.",
+    )
+    triggers = doc1.create_relationship(
+        relationship_type="Triggering", source_id=portal, target_id=notif,
+    )
+    doc1.add_to_view(view, notif)
+    doc1.add_connection_to_view(view, triggers)
+    doc1.save()
+
+    # Verify no drift on pre-existing nodes
+    doc2 = ArchiMateDocument.load_or_create(path)
+    view2 = doc2.find_view(view)
+    post_positions = {
+        n.get("elementRef"): (n.get("x"), n.get("y"), n.get("w"), n.get("h"))
+        for n in view2.findall("am:node", {"am": writer.ARCHIMATE_NS})
+    }
+    drift: list[str] = []
+    for el_id, original in pre_positions.items():
+        if el_id not in post_positions:
+            drift.append(f"existing element {el_id} disappeared")
+            continue
+        if post_positions[el_id] != original:
+            drift.append(
+                f"existing element {el_id} moved {original} -> {post_positions[el_id]}"
+            )
+    if notif not in post_positions:
+        drift.append("new Notifications element was not placed")
+    else:
+        # New element must not overlap any existing node bbox
+        nx, ny, nw, nh = post_positions[notif]
+        nx, ny, nw, nh = int(nx), int(ny), int(nw), int(nh)
+        for el_id, (ex, ey, ew, eh) in pre_positions.items():
+            ex, ey, ew, eh = int(ex), int(ey), int(ew), int(eh)
+            overlaps = not (nx + nw <= ex or ex + ew <= nx or ny + nh <= ey or ey + eh <= ny)
+            if overlaps:
+                drift.append(f"new Notifications node overlaps existing {el_id}")
+
+    # Byte-diff scope check: number of changed lines should reflect ONLY
+    # added structure (~1 element + 1 relationship + 1 node + 1 connection
+    # = roughly 8-16 added lines depending on attributes; zero removed).
+    change_count, diff = _diff_summary(snapshot_xml, _read(path))
+    removed = [ln for ln in diff if ln.startswith('-') and not ln.startswith('---')]
+    if removed:
+        drift.append(f"unexpected removed lines in diff: {len(removed)}")
+    if change_count > 25:
+        drift.append(f"diff larger than expected: {change_count} changed lines")
+
+    return (len(drift) == 0), drift
+
+
 def main() -> int:
     print("ArchiMate writer round-trip smoke-test")
     print("=" * 50)
@@ -182,17 +277,14 @@ def main() -> int:
     with tempfile.TemporaryDirectory() as td:
         tmpdir = Path(td)
 
-        print("\n[1/3] Create + save initial model...")
+        print("\n[1/4] Create + save initial model...")
         baseline = test_create_save_roundtrip(tmpdir)
         initial_bytes = baseline["path"].stat().st_size
         print(f"    OK — wrote {initial_bytes} bytes to {baseline['path'].name}")
 
-        print("\n[2/3] Load + modify one element + save (AC1: byte-diff)...")
+        print("\n[2/4] Load + modify one element + save (AC1: byte-diff)...")
         change_count, diff = test_load_modify_save_byte_diff(tmpdir, baseline)
         print(f"    Changed lines in unified-diff: {change_count}")
-        # Expect a tiny diff — the element name change touches one <name> line.
-        # Some additional whitespace lines may show if indent differs, but for
-        # a single name-update we should be well under 5 changed lines.
         if change_count > 6:
             print(f"    FAIL — expected ≤6 change lines, got {change_count}")
             print("    Diff:")
@@ -201,7 +293,7 @@ def main() -> int:
             return 1
         print("    OK — byte-diff scoped to the requested change")
 
-        print("\n[3/3] Add new element to view — verify existing positions preserved...")
+        print("\n[3/4] Add new element to view — verify existing positions preserved...")
         ok, drift = test_incremental_add_preserves_positions(tmpdir, baseline)
         if not ok:
             print("    FAIL — existing positions drifted:")
@@ -209,6 +301,15 @@ def main() -> int:
                 print(f"        {d}")
             return 1
         print("    OK — existing nodes unchanged, new node placed")
+
+        print("\n[4/4] Realistic feedback iteration (AC4: 5-element view + 1-element delta)...")
+        ok, drift = test_realistic_feedback_iteration(tmpdir)
+        if not ok:
+            print("    FAIL — feedback iteration produced unexpected drift:")
+            for d in drift:
+                print(f"        {d}")
+            return 1
+        print("    OK — feedback-only edits, existing positions stable, no overlap")
 
     print("\n" + "=" * 50)
     print("All checks passed.")
