@@ -1,0 +1,51 @@
+## Agent test: real architect reviews a waterschap-context FD and
+## produces a technical design that contains an ArchiMate context view.
+##
+## Setup: tool test creates a project with the overlast-meldportaal FD
+##   already committed in Gitea (router → planner → BA → FD).
+##
+## continue_session: true → architect runs in the same session and can
+##   read the FD from the workspace.
+##
+## What we exercise end-to-end:
+##   - Hybrid notation choice (architect picks ArchiMate for structure,
+##     may add Mermaid for the meld-flow sequence).
+##   - WILMA search even when reuse is conditional.
+##   - Write-MCP path: create_element → create_relationship → create_view
+##     → add_to_view → add_connection_to_view → save_model (architect-
+##     approved).
+##   - TD ```archimate code block referencing the saved view-id.
+##
+## HITL persona auto-approves architect-role gates so the test runs
+## unattended.
+
+agent-test:
+  name: architect-produces-archimate-td
+  description: "Architect produces a TD with an ArchiMate view for the overlast-meldportaal — judge evaluates hybrid notation choice + WILMA consultation"
+  tags: [architect, archimate, e2e, judge]
+
+  setup:
+    - setup-project-with-archimate-fd
+  continue_session: true
+
+  message: |
+    Lees docs/functional-design.md en produceer de technical design.
+    Maak ten minste één ArchiMate-view voor de hoofdcomponenten (cross-layer
+    blueprint). Mermaid mag je gebruiken voor behavioural diagrammen die
+    ArchiMate niet ondersteunt (zoals een sequence diagram van de
+    meld-flow). Pas de hybride keuze toe zoals beschreven in
+    making-archimate-diagrams.
+  agents: [architect]
+  hitl: non-technical-pm
+
+  assert:
+    - check: architect-produces-research
+    - check: architect-produces-archimate
+
+  judge:
+    context: [architect]
+    checks:
+      - "The architect should have approved the design (done summary should contain DESIGN_APPROVED) or given DESIGN_FEEDBACK — either is acceptable, but a decision must have been made."
+      - "The architect must have invoked both making-archimate-diagrams and (optionally) making-mermaid-diagrams via registry_get_skill. The ArchiMate skill is mandatory; the Mermaid skill is only required if the architect actually wrote a Mermaid block."
+      - "If the architect wrote a Mermaid block in the TD, the block must be a behavioural diagram (sequenceDiagram, stateDiagram-v2, flowchart for decision logic, erDiagram for data). A Mermaid block describing static architecture components is a misuse of the notation — ArchiMate is the correct choice for that."
+      - "The architecture.archimate file referenced from the TD must include at least one element from the Application layer (e.g. ApplicationComponent for Portal, ApplicationService for the zaaksysteem integration). A view that contains only Business-layer or only Motivation-layer elements does not match the FD's focus on the portal application."

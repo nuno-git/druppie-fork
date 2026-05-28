@@ -1,0 +1,146 @@
+## Setup: create a project with a waterschap-context FD ready for the
+## architect to produce an ArchiMate technical design.
+##
+## Differs from setup-project-with-fd in that the FD describes a
+## structural / cross-layer use case (burger overlast-meldportaal) where
+## the architect will (a) hit WILMA reference matches, (b) produce
+## ArchiMate views, and (c) probably also add a Mermaid sequence
+## diagram for the meld-flow — exercising the hybrid notation choice
+## documented in making-archimate-diagrams.
+##
+## Used by:
+##   - agents/architect-produces-archimate-td.yaml
+
+tool-test:
+  name: setup-project-with-archimate-fd
+  description: "Project + FD ready for the architect to produce an ArchiMate TD"
+  tags: [setup, archimate]
+
+  chain:
+    # --- Router ---
+    - agent: router
+      tool: builtin:set_intent
+      arguments:
+        intent: create_project
+        project_name: overlast-meldportaal
+        description: "Burger-portaal voor het melden van overlast (stank, water, vis, vervuiling) aan het waterschap. Meldingen worden vastgelegd in het zaaksysteem en de juiste behandelteams genotificeerd."
+      assert:
+        result:
+          - not_empty
+
+    - agent: router
+      tool: builtin:done
+      arguments:
+        summary: "Agent router: Classified as create_project for overlast-meldportaal"
+
+    # --- Planner ---
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: business_analyst
+            prompt: "Gather requirements and create functional design for the overlast-meldportaal"
+          - agent_id: planner
+            prompt: "Re-evaluate after business analyst completes"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: Planned business_analyst to gather requirements and create the functional design"
+
+    # --- Business Analyst writes the FD ---
+    - agent: business_analyst
+      tool: coding:make_design
+      approval:
+        status: approved
+      arguments:
+        path: docs/functional-design.md
+        content: |
+          # Functioneel Ontwerp — Burger Overlast-meldportaal
+
+          ## 1. Subject
+          Een waterschap wil burgers een online portaal bieden waar zij
+          overlast kunnen melden (stankoverlast, wateroverlast, dode vis,
+          vervuiling) op locaties die het waterschap beheert. Meldingen
+          moeten landen in het bestaande zaaksysteem (DSP) en het juiste
+          behandelteam moet automatisch worden genotificeerd.
+
+          ## 2. Huidige vs Gewenste Situatie
+          Op dit moment komen meldingen via telefoon, e-mail en social
+          media binnen bij verschillende afdelingen. Daardoor: geen
+          centraal overzicht, geen statusterugkoppeling aan de burger,
+          gemiste meldingen buiten kantooruren, geen rapportage op
+          trends.
+
+          Gewenst: één digitaal kanaal voor burgers met automatische
+          zaakregistratie, automatische team-notificatie en
+          statusterugkoppeling.
+
+          ## 3. Functionele Vereisten
+          - FR-01: Burger kan zonder account een melding indienen met
+            locatie (kaartprik), type overlast, beschrijving en optioneel
+            foto.
+          - FR-02: Bij indienen krijgt de burger een meldingsnummer en
+            kan hij via dezelfde browser of een e-maillink de status
+            opvragen.
+          - FR-03: Iedere melding wordt automatisch geregistreerd als
+            zaak in het zaaksysteem (DSP) met de juiste
+            zaaktype-classificatie.
+          - FR-04: Het verantwoordelijke behandelteam ontvangt direct na
+            registratie een notificatie (e-mail of push).
+          - FR-05: Statusupdates die het behandelteam in het zaaksysteem
+            zet, zijn binnen 1 minuut zichtbaar voor de burger.
+          - FR-06: De zaakcoördinator kan een dashboard raadplegen met
+            meldingen per type, locatie en doorlooptijd.
+
+          ## 4. Niet-Functionele Vereisten
+          - NFR-01: 95% van indien-acties verwerkt binnen 2 seconden.
+          - NFR-02: Beschikbaarheid 99.5% kantooruren, 99% buiten.
+          - NFR-03: Persoonsgegevens (e-mailadres) AVG-conform — alleen
+            bewaard zolang melding open is, daarna gepseudonimiseerd.
+          - NFR-04: Conformeer aan BIO-baseline voor publieke
+            webapplicaties.
+
+          ## 5. Gebruikersrollen
+          - Burger: meldt overlast en volgt status
+          - Behandelteam: behandelt meldingen, werkt status bij
+          - Zaakcoördinator: overzicht en rapportage
+
+          ## 6. Externe koppelingen
+          - Zaaksysteem (DSP) — organizational, ZGW-API
+          - Notificatieservice — organizational, e-mail/push
+          - Kaartservice (PDOK BAG/BGT) — other, locatie-validatie
+          - Object-opslag voor foto's — other
+
+          ## 7. Constraints
+          - Geen account voor de burger; meldingsnummer + e-maillink
+            volstaan.
+          - Hosting binnen Nederland (data-residency).
+          - Geen vendor-lock-in op het zaaksysteem — koppeling via
+            standaard ZGW-API.
+
+      assert:
+        result:
+          - { contains: "functional-design.md" }
+
+    - agent: business_analyst
+      tool: coding:run_git
+      arguments:
+        command: "add docs/functional-design.md"
+
+    - agent: business_analyst
+      tool: coding:run_git
+      arguments:
+        command: "commit -m 'Functioneel ontwerp overlast-meldportaal'"
+
+    - agent: business_analyst
+      tool: coding:run_git
+      arguments:
+        command: "push"
+
+    - agent: business_analyst
+      tool: builtin:done
+      arguments:
+        summary: "Agent business_analyst: DESIGN_APPROVED. Wrote docs/functional-design.md for the overlast-meldportaal with 6 FRs, 4 NFRs, 3 roles, and 4 external integrations (zaaksysteem, notification, kaart, object-opslag)."
+      assert:
+        completed: true

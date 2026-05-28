@@ -1,0 +1,35 @@
+check:
+  name: architect-produces-archimate
+  description: "Architect produces a TD with at least one ArchiMate code block + a committed docs/architecture.archimate file"
+  tags: [architect, archimate, quality]
+  assert:
+    # Architect must complete the design loop
+    - agent: architect
+      completed: true
+    # Architect must have invoked the new skill (proves the prompt routes correctly)
+    - agent: architect
+      tool: registry:get_skill
+      arguments:
+        skill_name: making-archimate-diagrams
+    # At least one create_view must have happened
+    - agent: architect
+      tool: archimate:create_view
+    # archimate_save_model must have been called (and approved)
+    - agent: architect
+      tool: archimate:save_model
+      approval:
+        status: approved
+    # The TD itself is committed via coding.make_design
+    - agent: architect
+      tool: coding:make_design
+      arguments:
+        path: docs/technical-design.md
+  judge:
+    context: architect
+    checks:
+      - "The architect must have called archimate_search_model at least once. WILMA-consultation is mandatory even when reuse is not (per making-archimate-diagrams). Fail this check if no search happened."
+      - "The architect must have created at least one ArchiMate element via archimate_create_element AND placed it on a view via archimate_add_to_view. A view with zero elements does not count."
+      - "The architect must have created at least one ArchiMate relationship via archimate_create_relationship. A view that is only a heap of disconnected nodes does not satisfy this check."
+      - "docs/technical-design.md must contain at least one fenced code block with the language tag 'archimate' (i.e. starting with three backticks followed by 'archimate' on the same line). The block body must contain a 'view-id:' line referencing the id returned by an earlier archimate_create_view call. A TD without an ```archimate block fails the check."
+      - "The architect should NOT regenerate views by deleting and recreating them in a single run. Check that no archimate_delete_view + archimate_create_view pair appears for the same view_id."
+      - "If the FD describes a waterschap context (it does — overlast-meldportaal mentions zaaksysteem and behandelteam), the architect should either import at least one WILMA element via archimate_get_or_create_wilma_reference OR explain in the TD why project-specific modeling was chosen instead. Pure silence on WILMA after the search counts as a fail."
