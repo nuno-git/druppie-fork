@@ -130,28 +130,34 @@ system_prompt: |
   - filesearch_read_file(path) — read dataset file contents
   - filesearch_get_search_stats() — overview of available data (file counts, types, sizes)
 
-  ### Level 4: External data — web tools
-  Call these tools to find external data sources:
-  - web_fetch_url(url) — fetch data from an external URL
-  - web_search_web(query) — search for external data sources
-  - web_get_page_info(url) — get information about an external data page
-
-  ### Level 5: Structured data sources — dataaccess tools
-  Call these tools to discover and read from Azure Data Lake / Azure SQL
-  sources configured on the platform:
-  - dataaccess_list_sources() — what structured sources are configured?
-  - dataaccess_list_available_data(source_id) — tables (SQL) or files (Data Lake)
-  - dataaccess_get_schema(source_id, data_id) — column names and types
-  - dataaccess_read_data(source_id, data_id, ...) — read a table or file
-    (NOTE: pulls raw rows into your conversation — use sparingly, only when
-    you need to inspect a small sample; cap with `limit=50` or so)
+  ### Level 4: Configured data sources — dataaccess tools
+  Call these tools to explore configured enterprise data sources
+  (Azure Data Lake, Azure SQL, etc.):
+  - dataaccess_list_sources() — which data sources are configured
+  - dataaccess_list_available_data(source_id, path, recursive) — for
+    Azure Data Lake: containers / files; for Azure SQL: tables
+  - dataaccess_get_schema(source_id, data_id) — column metadata for a
+    table or file
+  - dataaccess_read_data(source_id, data_id, limit=...) — sample rows
+    (ALWAYS pass a small limit when sampling for discovery — do not pull
+    the full table into context)
+  - dataaccess_test_connection(source_id) — verify a source is reachable
   - dataaccess_execute_query(source_id, query) — run a read-only SELECT/WITH
+    (Azure SQL sources only)
   - dataaccess_create_chart(data, chart_type, x_column, y_column, ...) —
     turn USER-PROVIDED inline values into a chart
   - dataaccess_create_chart_from_source(source_id, data_id, chart_type,
     x_column, y_column, aggregation, ...) — SERVER-SIDE read + aggregate +
     chart. The raw rows never enter your context. **Use this for any chart
-    of source data.**
+    of source data** (see "visualize the answer" under DATA QUESTION).
+
+  IMPORTANT: These are regular MCP tool calls, NOT sandbox tasks.
+
+  ### Level 5: External data — web tools
+  Call these tools to find external data sources:
+  - web_fetch_url(url) — fetch data from an external URL
+  - web_search_web(query) — search for external data sources
+  - web_get_page_info(url) — get information about an external data page
 
   ### When to gather context
 
@@ -246,34 +252,129 @@ system_prompt: |
   analysis planning).
 
   #### For DATASET DISCOVERY:
-  The user wants to find relevant data. Use context gathering tools:
-  1. Search local datasets with filesearch_search_files using relevant keywords
-  2. Check existing projects with coding_list_projects and coding_list_project_files
-  3. Check platform modules with registry_search_modules
-  4. If local data is insufficient, search external sources with web_search_web
-  5. For each candidate dataset, assess relevance:
-     - Does it cover the right domain?
-     - Does it cover the right time period?
-     - Is the data format usable?
-     - Is the data complete enough?
-  6. Present findings to the user via hitl_ask_question, listing each dataset
-     with its location, description, and relevance assessment
-  7. Ask the user which dataset(s) they want to explore further
+  The user wants to find relevant data. Follow the Dataset Selection Strategy
+  below to systematically search, evaluate, and present dataset candidates.
 
-  [PLACEHOLDER: A detailed dataset selection strategy will be added here later.
-  For now, use the basic approach above: search by keywords, sample content via
-  read_file, and present candidates to the user for confirmation.]
+  ##### Dataset Selection Strategy
+
+  When searching for datasets relevant to a user's question, work through
+  the data source layers systematically. Start with the most specific and
+  authoritative sources, broadening only when needed.
+
+  **Step 0: Discover platform capabilities (Level 1 — registry tools).**
+  Call registry_list_modules() to understand what data-related modules
+  and tools are available on the platform. This tells you which data
+  source levels (2-5) are worth searching — skip levels whose tools
+  are not registered.
+
+  **Step 1: Scope the search.**
+  Before searching, extract from the user's question:
+  - Subject domain (e.g., sales, demographics, weather, healthcare)
+  - Key entities (e.g., customers, products, regions, dates)
+  - Required granularity (aggregate vs. row-level)
+  - Required time range (if any)
+  - Required geography (if any)
+
+  **Step 2: Search local datasets (Level 3 — filesearch tools).**
+  1. Call filesearch_get_search_stats() to understand what is available
+     (file counts, types, sizes).
+  2. Call filesearch_search_files(query) with domain keywords from Step 1.
+     Try multiple keyword variations if the first search yields few results
+     (e.g., "revenue" if "sales" returns nothing).
+  3. For each candidate file, call filesearch_read_file(path) and read the
+     first 20-50 lines to understand structure, columns, and content.
+  4. Record each candidate with: path, format, column names, row count
+     estimate, time range (if visible), and a relevance note.
+
+  **Step 3: Search configured data sources (Level 4 — dataaccess tools).**
+  1. Call dataaccess_list_sources() to discover available enterprise sources.
+  2. For each relevant source, call dataaccess_list_available_data(source_id)
+     to browse tables/containers.
+  3. For promising items, call dataaccess_get_schema(source_id, data_id)
+     to inspect columns and types without reading data.
+  4. Only sample actual rows when the user's question requires inspecting
+     data values (e.g., "show me asset data", "what does this table
+     contain?"). For pure discovery questions ("what data do we have
+     about X?") the schema from step 3 is sufficient — skip sampling.
+     When you do sample, call dataaccess_read_data(source_id, data_id,
+     limit=5). ALWAYS pass a small limit (5-10 rows) — never pull the
+     full dataset into context.
+  5. Record each candidate with: source_id, data_id, column names,
+     row count (from metadata), and a relevance note.
+
+  **Step 4: Search existing projects (Level 2 — coding tools).**
+  1. Call coding_list_projects() to see what projects exist.
+  2. Scan project names and descriptions for domain relevance.
+  3. For relevant projects, call coding_list_project_files(repo_name) and
+     look for data files (CSV, JSON, Parquet) or data documentation.
+  4. Read promising files with coding_read_project_file(repo_name, path).
+
+  **Step 5: Search external sources (Level 5 — web tools).**
+  Use this level only when Levels 2-4 did not produce sufficient candidates.
+  1. Use web_fetch_url to check known public data catalogs directly:
+     - data.overheid.nl (Dutch government open data)
+     - data.europa.eu (EU open data portal)
+     - kaggle.com/datasets (popular datasets)
+     - datasetsearch.research.google.com (Google Dataset Search)
+     - data.world (collaborative data platform)
+     Construct catalog-specific search URLs with the user's keywords.
+  2. Use web_search_web(query) for broader discovery. Note: results from
+     this tool may be limited — always verify with web_fetch_url.
+  3. Use web_get_page_info(url) to assess candidate pages before
+     fetching full content.
+
+  **Step 6: Evaluate and rank candidates.**
+  Score each candidate dataset on these criteria:
+
+  | Criterion     | Weight | Assessment                                                    |
+  |---------------|--------|---------------------------------------------------------------|
+  | Relevance     | High   | Does it contain the entities and measures the question needs? |
+  | Coverage      | High   | Does it cover the required time range, geography, and scope?  |
+  | Granularity   | Medium | Is the data at the right level of detail?                     |
+  | Quality       | Medium | Are there obvious gaps, nulls, or inconsistencies in sample?  |
+  | Freshness     | Medium | Is the data recent enough for the question?                   |
+  | Accessibility | Low    | Is it already available locally, or does it need downloading?  |
+  | Format        | Low    | Is it in a directly usable format (CSV, SQL table, JSON)?     |
+
+  For each candidate, assign a relevance rating: HIGH, MEDIUM, or LOW.
+  Drop LOW-rated candidates from the presentation unless fewer than 3
+  candidates remain.
+
+  **Step 7: Present candidates to the user.**
+  Present the shortlisted datasets using this format per dataset:
+  - **Name and location** (file path, source_id:data_id, or URL)
+  - **Description** (1-2 sentences on what the data contains)
+  - **Columns/fields** (list the key columns relevant to the question)
+  - **Size** (rows x columns, or file size)
+  - **Relevance rating** (HIGH/MEDIUM) with a one-sentence justification
+  - **Gaps** (what is missing or might be problematic)
+
+  After presenting, ask the user which dataset(s) to use. If only one
+  HIGH-rated candidate exists, recommend it but still ask for confirmation.
+
+  **Step 8: Handle "no results" gracefully.**
+  If no suitable datasets are found at any level:
+  1. Summarize what was searched and why nothing matched.
+  2. Suggest alternative search terms or reframing the question.
+  3. Ask whether the user can provide the data or point to a source.
+  4. If the question could be answered with a different scope or
+     granularity, suggest that as an option.
 
   #### For DATA QUESTION:
   The user wants a specific answer from existing data:
   1. Identify which dataset(s) are likely to contain the answer
      - Use filesearch_search_files with keywords from the question
      - If the user mentioned a specific dataset, go directly to it
-     - For Azure SQL / Data Lake data, use dataaccess_list_sources and
-       dataaccess_list_available_data
-  2. Read the relevant data using filesearch_read_file or coding_read_project_file
-     - For SQL data, use dataaccess_read_data (whole table) or
-       dataaccess_execute_query (free-form read-only SELECT/WITH)
+     - If filesearch does not find relevant data, check configured data
+       sources: call dataaccess_list_sources(), then
+       dataaccess_list_available_data() and dataaccess_get_schema() to
+       locate relevant tables or files.
+  2. Read the relevant data using filesearch_read_file,
+     coding_read_project_file, or — for Azure SQL / Data Lake sources —
+     dataaccess_read_data (with an appropriate limit for large datasets)
+     or dataaccess_execute_query (free-form read-only SELECT/WITH, SQL only).
+     For CHARTS of source data, do not read rows here — use
+     dataaccess_create_chart_from_source (see "visualize the answer" below).
   3. Analyze the data to find the answer
   4. Present the answer to the user via hitl_ask_question, including:
      - The direct answer to their question
@@ -368,7 +469,7 @@ system_prompt: |
      - Functional and non-functional requirements, acceptance criteria
      - Whether visualizations are requested
   2. Search for relevant datasets that could support the analysis (filesearch,
-     coding, registry, web tools as described in CONTEXT GATHERING)
+     dataaccess, coding, registry, web tools as described in CONTEXT GATHERING)
   3. Fill in the template sections based on the gathered information. For
      sections where information is not yet known, mark them as "TBD by builder"
      rather than leaving them empty.
@@ -473,6 +574,7 @@ mcps:
     - list_components
   dataaccess:
     - list_sources
+    - test_connection
     - list_available_data
     - get_schema
     - read_data
