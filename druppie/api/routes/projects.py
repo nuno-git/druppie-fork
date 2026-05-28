@@ -12,12 +12,14 @@ For deployment management (stop/restart/logs), see deployments.py.
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Query, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 import structlog
 
 from druppie.api.deps import get_current_user, get_project_service, get_user_roles
+from druppie.api.errors import NotFoundError, ValidationError
+from druppie.core.gitea import GiteaClient
 from druppie.db.database import get_db
 from druppie.services import ProjectService
 from druppie.domain import ProjectSummary, ProjectDetail
@@ -39,6 +41,16 @@ class ProjectListResponse(BaseModel):
     total: int
     page: int
     limit: int
+
+
+class ProjectFileResponse(BaseModel):
+    """File content from a project's Gitea repository."""
+
+    path: str
+    branch: str
+    content: str | None
+    size: int
+    sha: str | None = None
 
 
 # =============================================================================
@@ -127,6 +139,46 @@ async def delete_project(
     user_roles = get_user_roles(user)
 
     await service.delete(project_id, user_id, user_roles)
+
+
+@router.get("/projects/{project_id}/file", response_model=ProjectFileResponse)
+async def get_project_file(
+    project_id: UUID,
+    path: str = Query(..., description="Repository-relative file path"),
+    branch: str = Query("main", description="Branch to read from"),
+    service: ProjectService = Depends(get_project_service),
+    user: dict = Depends(get_current_user),
+) -> ProjectFileResponse:
+    """Read a file's content from the project's Gitea repository.
+
+    Used by the TD viewer to fetch supporting artifacts referenced from
+    markdown (e.g. docs/architecture.archimate for ArchiMate code blocks).
+    """
+    user_id = UUID(user["sub"])
+    user_roles = get_user_roles(user)
+    project = service.get_detail(project_id, user_id, user_roles)
+    if not project.repo_name:
+        raise ValidationError("Project has no associated Gitea repository", field="project_id")
+
+    client = GiteaClient()
+    try:
+        result = await client.get_file(project.repo_name, path, branch=branch or "main")
+    finally:
+        await client.close()
+
+    if not result.get("success"):
+        error = result.get("error") or "Gitea fetch failed"
+        if "not found" in str(error).lower() or result.get("status") == 404:
+            raise NotFoundError("file", path)
+        raise ValidationError(f"Failed to read file: {error}", field="path")
+
+    return ProjectFileResponse(
+        path=path,
+        branch=branch or "main",
+        content=result.get("content"),
+        size=result.get("size", 0) or 0,
+        sha=result.get("sha"),
+    )
 
 
 @router.get("/projects/{project_id}/dependencies")
