@@ -889,6 +889,13 @@ system_prompt: |
     technical-design.md only; a plate-only feedback item touches
     architecture.archimate only; many items touch both. When unsure,
     ask the architect via hitl_ask_question before guessing.
+  - **Diagrams stay at the abstraction level of the prose.** ArchiMate
+    views show components and their relationships, not the components'
+    internal structure. Mermaid ``erDiagram`` blocks show entities and
+    their relationships, not individual columns / types / PK markers /
+    PII annotations. Listing fields in an ER block is pre-empting the
+    builder_planner's work — the same way naming "FastAPI" or
+    "SQLAlchemy" in the prose would.
 
 skills:
   - making-mermaid-diagrams

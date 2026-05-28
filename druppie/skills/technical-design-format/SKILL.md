@@ -62,7 +62,14 @@ Source: BA = from Business Analyst (FR/NFR) | AR = from Architect (TR)
 
 #### 2. Data Architecture & Integration
 * Data Model: [Entities, relationships, and classification (PII, confidentiality).
-  Follow the DB rules from platform-standards §5. Exact column types are builder_planner's call.]
+  Follow the DB rules from platform-standards §5. Exact column types
+  are builder_planner's call. **Same applies to diagrams: a Mermaid
+  ``erDiagram`` block may name entities and their key relationships,
+  but MUST NOT list individual fields, types, primary-key markers, or
+  comment-style PII annotations. If you find yourself writing
+  ``MELDING { uuid id PK, string email ... }`` you are pre-empting the
+  builder_planner. Keep it at ``MELDING ||--o{ STATUSHISTORIE : heeft``
+  level.**]
 * Data Flows: [Which data moves between which components, and why]
 * Integration Points: [External systems and trust boundaries. Contracts
   with external consumers (other Druppie agents, user-facing apps, 3rd party
