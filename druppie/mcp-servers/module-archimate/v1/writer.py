@@ -19,7 +19,14 @@ from pathlib import Path
 from typing import Any
 from xml.etree import ElementTree as ET
 
+import httpx
+
 logger = logging.getLogger("archimate-writer")
+
+# URL of the layout-service microservice. Set via env in docker-compose;
+# falls back to localhost for unit tests that spin up the service directly.
+LAYOUT_SERVICE_URL = os.getenv("LAYOUT_SERVICE_URL", "http://layout-service:8090")
+LAYOUT_SERVICE_TIMEOUT_S = 10.0
 
 ARCHIMATE_NS = "http://www.opengroup.org/xsd/archimate/3.0/"
 XSI_NS = "http://www.w3.org/2001/XMLSchema-instance"
@@ -574,35 +581,16 @@ class ArchiMateDocument:
         return None
 
     def _next_free_position(self, view: ET.Element) -> tuple[int, int]:
-        """Pick a default coordinate for a newly added node.
+        """Return the sentinel (0, 0) for a newly added node.
 
-        Strategy: place the new node to the right of the existing bbox,
-        on a horizontal strip below the bbox bottom — keeps existing
-        positions untouched while making the new addition obvious.
+        Layout happens server-side via the layout-service on save: that
+        service knows ArchiMate layers and edge topology and produces a
+        coherent plate. The writer just stamps a sentinel so save_model
+        knows there are unpositioned nodes worth re-laying out. The old
+        naïve "place right of bbox, wrap at x=1400" heuristic produced
+        the degenerate single-column layouts that this redesign fixes.
         """
-        nodes = view.findall("am:node", NS)
-        if not nodes:
-            return (40, 40)
-        max_x = 0
-        max_y = 0
-        for n in nodes:
-            try:
-                nx = int(n.get("x", "0"))
-                ny = int(n.get("y", "0"))
-                nw = int(n.get("w", str(DEFAULT_NODE_W)))
-                nh = int(n.get("h", str(DEFAULT_NODE_H)))
-            except ValueError:
-                continue
-            if nx + nw > max_x:
-                max_x = nx + nw
-            if ny + nh > max_y:
-                max_y = ny + nh
-        new_x = max_x + DEFAULT_GRID_SPACING_X
-        new_y = max_y - DEFAULT_NODE_H
-        if new_x > 1400:
-            new_x = 40
-            new_y = max_y + DEFAULT_GRID_SPACING_Y
-        return (max(40, new_x), max(40, new_y))
+        return (0, 0)
 
     # --- WILMA references ------------------------------------------------
 
@@ -691,12 +679,115 @@ class ArchiMateDocument:
             return
         _text_child(parent, tag, text)
 
+    # --- ELK layout via layout-service ---------------------------------
+
+    def _layout_view_via_service(self, view: ET.Element) -> None:
+        """Recompute coordinates for every node on ``view`` via layout-service.
+
+        Existing positions (x > 0 and y > 0) are sent with ``fixed=true`` so
+        ELK respects them; freshly-added nodes (x ≤ 0) get fresh
+        coordinates. The ArchiMate layer is passed as a partition hint so
+        the resulting plate keeps Business above Application above
+        Technology. Failures are logged but never abort the save — a stale
+        layout is preferable to a lost edit.
+        """
+        nodes_payload: list[dict[str, Any]] = []
+        node_elements: dict[str, ET.Element] = {}
+        for node in view.findall("am:node", NS):
+            node_id = node.get("identifier", "")
+            element_ref = node.get("elementRef", "")
+            if not node_id or not element_ref:
+                continue
+            el = self.find_element(element_ref)
+            element_type = el.get(_qxsi("type"), "") if el is not None else ""
+            layer = ELEMENT_TYPE_LAYER.get(element_type, "Other")
+            try:
+                x = int(node.get("x", "0"))
+                y = int(node.get("y", "0"))
+                w = int(node.get("w", str(DEFAULT_NODE_W)))
+                h = int(node.get("h", str(DEFAULT_NODE_H)))
+            except ValueError:
+                x, y, w, h = 0, 0, DEFAULT_NODE_W, DEFAULT_NODE_H
+            fixed = x > 0 and y > 0
+            nodes_payload.append({
+                "id": node_id,
+                "w": w if w > 0 else DEFAULT_NODE_W,
+                "h": h if h > 0 else DEFAULT_NODE_H,
+                "x": x,
+                "y": y,
+                "fixed": fixed,
+                "layer": layer,
+            })
+            node_elements[node_id] = node
+
+        edges_payload: list[dict[str, str]] = []
+        for conn in view.findall("am:connection", NS):
+            conn_id = conn.get("identifier", "")
+            src = conn.get("source", "")
+            tgt = conn.get("target", "")
+            if conn_id and src in node_elements and tgt in node_elements:
+                edges_payload.append({"id": conn_id, "source": src, "target": tgt})
+
+        if not nodes_payload:
+            return
+
+        # If every node already has positive coordinates, the view is
+        # fully laid out from a previous save — skip the round-trip.
+        # Pure label updates and relationship-only edits flow through
+        # this branch and leave geometry untouched.
+        if all(n["fixed"] for n in nodes_payload):
+            return
+
+        try:
+            response = httpx.post(
+                f"{LAYOUT_SERVICE_URL}/layout",
+                json={"nodes": nodes_payload, "edges": edges_payload},
+                timeout=LAYOUT_SERVICE_TIMEOUT_S,
+            )
+            response.raise_for_status()
+            data = response.json()
+        except Exception as exc:  # network / json / status — all best-effort
+            logger.warning(
+                "layout_service_unreachable; keeping current positions: %s", exc
+            )
+            return
+
+        if not data.get("success"):
+            logger.warning("layout_service_failed: %s", data.get("error"))
+            return
+
+        for entry in data.get("nodes", []):
+            node = node_elements.get(entry.get("id", ""))
+            if node is None:
+                continue
+            node.set("x", str(int(entry.get("x", 0))))
+            node.set("y", str(int(entry.get("y", 0))))
+            if "w" in entry:
+                node.set("w", str(int(entry["w"])))
+            if "h" in entry:
+                node.set("h", str(int(entry["h"])))
+
+    def _layout_all_views(self) -> None:
+        """Run ELK on every diagram-view in the model."""
+        for view in self.root.findall("am:views/am:diagrams/am:view", NS):
+            self._layout_view_via_service(view)
+
+    # --- Save -----------------------------------------------------------
+
     def save(self) -> Path:
         """Write the in-memory tree to disk as canonical Open Exchange XML.
+
+        Before serialising, calls the layout-service so every view's
+        coordinates reflect the latest ELK result. This is what unifies
+        the three rendering surfaces (interactive viewer, server-side
+        SVG export, Archi-import) — all of them just read positions from
+        the XML, so as long as the XML has good positions they all look
+        the same.
 
         Uses ``ET.indent`` to produce stable, diff-friendly formatting.
         Does nothing if not dirty (idempotent saves are no-ops).
         """
+        self._layout_all_views()
         self.path.parent.mkdir(parents=True, exist_ok=True)
         ET.indent(self.tree, space="  ", level=0)
         # ET writes the namespace via the prior register_namespace call,

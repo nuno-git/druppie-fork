@@ -225,19 +225,23 @@ export function viewHasGeometry(view) {
 }
 
 /**
- * Compute auto-layout for a view that lacks geometry (or has partial
- * geometry). Uses ELK Layered + BRANDES_KOEPF + ORTHOGONAL with the
- * spacing chosen in planning (60-80px) for clean separation.
+ * Compute auto-layout for a view that lacks geometry. In the current
+ * pipeline the server-side layout-service runs on every save_model, so
+ * positions are present in the .archimate XML the browser fetches and
+ * this short-circuit is the hot path. The in-browser elkjs path stays
+ * as a fallback for legacy files written before layout-service existed,
+ * and for any view where the server fallback (layout-service down)
+ * left some nodes at (0, 0).
  *
- * Pre-existing positions are honored — nodes that already have valid
- * (x, y, w, h) are marked as fixed via 'org.eclipse.elk.position' +
- * 'org.eclipse.elk.fixed = true'. New nodes get fresh coordinates.
+ * Pre-existing positions are honored — nodes with valid (x, y, w, h)
+ * are pinned via 'org.eclipse.elk.position'. New nodes get fresh
+ * coordinates.
  *
  * Returns a new view object with updated coordinates; does not mutate.
  */
 export async function computeLayout(view) {
   if (viewHasGeometry(view) && view.nodes.every((n) => n.x > 0 && n.y > 0)) {
-    return view  // fully laid out already
+    return view  // fully laid out already (server-side ELK has run)
   }
 
   // Lazy-load elkjs only when auto-layout is actually needed
