@@ -53,6 +53,23 @@ class ProjectFileResponse(BaseModel):
     sha: str | None = None
 
 
+class ProjectFileChangesResponse(BaseModel):
+    """Identifier-level changes in the last commit that touched a file.
+
+    Used by the ArchiMate TD viewer to highlight elements that were
+    added or modified in the most recent revision, so reviewers can
+    spot their feedback in the next iteration.
+    """
+
+    path: str
+    branch: str
+    last_commit_sha: str | None = None
+    last_commit_message: str | None = None
+    previous_commit_sha: str | None = None
+    added_identifiers: list[str]
+    removed_identifiers: list[str]
+
+
 # =============================================================================
 # ROUTES
 # =============================================================================
@@ -178,6 +195,78 @@ async def get_project_file(
         content=result.get("content"),
         size=result.get("size", 0) or 0,
         sha=result.get("sha"),
+    )
+
+
+@router.get("/projects/{project_id}/file/changes", response_model=ProjectFileChangesResponse)
+async def get_project_file_changes(
+    project_id: UUID,
+    path: str = Query(..., description="Repository-relative file path"),
+    branch: str = Query("main", description="Branch to read from"),
+    service: ProjectService = Depends(get_project_service),
+    user: dict = Depends(get_current_user),
+) -> ProjectFileChangesResponse:
+    """Return identifiers added or removed in the most recent commit on ``path``.
+
+    Fetches the last two commits that touched the file, diffs the
+    ``identifier="..."`` attributes between them, and returns the
+    differences. Used to highlight elements that landed in the latest
+    revision so a reviewer can recognise their own feedback.
+    """
+    import re
+
+    user_id = UUID(user["sub"])
+    user_roles = get_user_roles(user)
+    project = service.get_detail(project_id, user_id, user_roles)
+    if not project.repo_name:
+        raise ValidationError("Project has no associated Gitea repository", field="project_id")
+
+    client = GiteaClient()
+    try:
+        commits_result = await client.list_commits_for_path(
+            project.repo_name, path, branch=branch or "main", limit=2,
+        )
+        commits = commits_result.get("commits") if commits_result.get("success") else []
+        if not commits:
+            return ProjectFileChangesResponse(
+                path=path, branch=branch or "main",
+                added_identifiers=[], removed_identifiers=[],
+            )
+
+        # Read at the latest commit
+        latest = commits[0]
+        current = await client.get_file(project.repo_name, path, branch=latest["sha"])
+        if not current.get("success") or not current.get("content"):
+            return ProjectFileChangesResponse(
+                path=path, branch=branch or "main",
+                last_commit_sha=latest["sha"],
+                last_commit_message=latest["message"],
+                added_identifiers=[], removed_identifiers=[],
+            )
+
+        # Read at the previous commit (if any)
+        previous_content: str | None = None
+        previous_sha: str | None = None
+        if len(commits) > 1:
+            previous_sha = commits[1]["sha"]
+            previous = await client.get_file(project.repo_name, path, branch=previous_sha)
+            if previous.get("success"):
+                previous_content = previous.get("content")
+    finally:
+        await client.close()
+
+    id_pattern = re.compile(r'identifier="([^"]+)"')
+    current_ids = set(id_pattern.findall(current["content"] or ""))
+    previous_ids = set(id_pattern.findall(previous_content or ""))
+
+    return ProjectFileChangesResponse(
+        path=path,
+        branch=branch or "main",
+        last_commit_sha=latest["sha"],
+        last_commit_message=latest["message"],
+        previous_commit_sha=previous_sha,
+        added_identifiers=sorted(current_ids - previous_ids),
+        removed_identifiers=sorted(previous_ids - current_ids),
     )
 
 

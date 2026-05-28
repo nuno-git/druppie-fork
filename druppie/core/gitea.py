@@ -428,6 +428,41 @@ class GiteaClient:
 
         return result
 
+    async def list_commits_for_path(
+        self,
+        repo: str,
+        path: str,
+        branch: str = "main",
+        limit: int = 2,
+    ) -> dict[str, Any]:
+        """List the most recent commits that touched ``path``.
+
+        Returns ``result["commits"]`` as a list of
+        ``{sha, message, author, timestamp}`` dicts, newest first.
+        """
+        result = await self._request(
+            "GET",
+            f"/repos/{self.org}/{repo}/commits",
+            params={"sha": branch, "path": path, "limit": limit},
+        )
+
+        if result["success"] and "data" in result:
+            data = result["data"] or []
+            commits = []
+            for c in data:
+                commit_payload = c.get("commit") or {}
+                author = commit_payload.get("author") or {}
+                commits.append({
+                    "sha": c.get("sha"),
+                    "message": commit_payload.get("message", "").strip(),
+                    "author": author.get("name"),
+                    "timestamp": author.get("date"),
+                })
+            result["commits"] = commits
+            result["count"] = len(commits)
+
+        return result
+
     async def list_files(
         self,
         repo: str,

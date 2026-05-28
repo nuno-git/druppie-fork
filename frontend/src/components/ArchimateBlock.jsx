@@ -18,7 +18,7 @@
 import { useEffect, useState, useRef, useCallback, useContext } from 'react'
 import { AlertTriangle, Code, Eye, ZoomIn, ZoomOut, Maximize2 } from 'lucide-react'
 import { ProjectRepoContext } from './chat/ChatHelpers'
-import { getProjectFile } from '../services/api'
+import { getProjectFile, getProjectFileChanges } from '../services/api'
 import {
   parseEmbedSpec,
   parseArchimateXML,
@@ -135,7 +135,13 @@ const ArchimateBlock = ({ code, highlightIds }) => {
 
     ;(async () => {
       try {
-        const response = await getProjectFile(repo.id, spec.file, branch)
+        // Fetch the current file and the last-commit identifier-diff in parallel.
+        // The diff feeds delta-highlighting: any element/connection whose
+        // identifier appeared in the latest commit is rendered with an accent.
+        const [response, changes] = await Promise.all([
+          getProjectFile(repo.id, spec.file, branch),
+          getProjectFileChanges(repo.id, spec.file, branch).catch(() => null),
+        ])
         const xml = response?.content ?? response
         if (typeof xml !== 'string') {
           throw new Error('Unexpected response shape from project file API')
@@ -146,11 +152,22 @@ const ArchimateBlock = ({ code, highlightIds }) => {
           throw new Error(`View '${spec.viewId}' not found in ${spec.file}`)
         }
         const laidOut = await computeLayout(view)
+        const deltaIds = new Set([
+          ...(highlightIds || []),
+          ...((changes?.added_identifiers) || []),
+        ])
         const svg = renderViewToSVG(laidOut, model, {
-          highlightIds: highlightIds ? new Set(highlightIds) : undefined,
+          highlightIds: deltaIds.size ? deltaIds : undefined,
         })
         if (!cancelled) {
-          setState({ status: 'ready', svg, error: null, viewName: view.name })
+          setState({
+            status: 'ready',
+            svg,
+            error: null,
+            viewName: view.name,
+            changeCount: (changes?.added_identifiers || []).length,
+            lastCommitMessage: changes?.last_commit_message,
+          })
         }
       } catch (err) {
         if (!cancelled) {
@@ -172,6 +189,14 @@ const ArchimateBlock = ({ code, highlightIds }) => {
           {state.viewName && (
             <span className="text-xs text-gray-500 truncate max-w-xs" title={state.viewName}>
               · {state.viewName}
+            </span>
+          )}
+          {state.changeCount > 0 && (
+            <span
+              className="inline-flex items-center gap-1 text-xs text-blue-700 bg-blue-50 border border-blue-200 px-1.5 py-0.5 rounded"
+              title={state.lastCommitMessage || 'Elements highlighted are new in the last commit'}
+            >
+              {state.changeCount} new
             </span>
           )}
           {state.status === 'error' && (
