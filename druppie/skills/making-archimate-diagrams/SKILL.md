@@ -58,14 +58,26 @@ A new ArchiMate view is built up through the archimate MCP write
 tools. The order matters because relationships reference elements and
 view-connections reference relationships:
 
-1. **Look up WILMA references first.** For every element that already
-   exists in the WILMA reference model, call
-   `archimate_get_or_create_wilma_reference(wilma_element_id)` — it
-   imports the element into the project model with the original WILMA
-   identifier preserved. Find candidates via
-   `archimate_search_model(query=...)`.
+1. **Always check WILMA — but don't always reuse.** Call
+   `archimate_search_model(query=<keyword>, layer=<layer>)` to see
+   which reference elements exist for the concepts you're about to
+   model. The search is cheap and the results often improve naming,
+   documentation, or surface a missing relationship.
 
-2. **Create project-specific elements** that are not in WILMA via
+   Reuse via `archimate_get_or_create_wilma_reference(wilma_element_id)`
+   only when **both** apply:
+   - the project sits in the waterschap context that WILMA models
+     (the FD references waterschappen, bronsystemen, zaaksysteem,
+     DMS, archiefsysteem, drinkwater/waterkeringen/heffingen, etc.), AND
+   - the WILMA element genuinely matches the role you need.
+
+   Reasons NOT to reuse: the project is unrelated to waterschappen,
+   the WILMA element is too coarse/fine, or the name/responsibilities
+   would mislead readers. In those cases, note the WILMA match in the
+   TD (so the link is visible) but model with project-specific
+   elements.
+
+2. **Create project-specific elements** for the rest via
    `archimate_create_element(element_type, name, documentation)`. Save
    the returned `element_id` for the next steps.
 
@@ -238,10 +250,14 @@ or Flow.
 
 ## WILMA Reuse — How and Why
 
-WILMA is the waterschappen reference architecture. If a concept
-(BusinessProcess, BusinessObject, etc.) exists there, **reuse it**
-rather than minting a project-specific duplicate. The write-MCP makes
-this trivial:
+WILMA is the waterschappen reference architecture. **Always search
+it** when starting a view (cheap, informs design), but reuse
+selectively — only when the project is in the waterschap context AND
+the WILMA element fits cleanly. For a generic SaaS, an internal
+tooling project, or any non-waterschap domain, WILMA reuse is
+usually inappropriate; create project-specific elements instead.
+
+When reuse is the right call:
 
 1. `archimate_search_model(query="<keyword>", layer="Business")` →
    find candidates in WILMA.
@@ -257,6 +273,11 @@ Do **not** call `archimate_update_element` on a WILMA-sourced element
 create a project-specific element with a more accurate name and link
 it to the WILMA element via a Realization or Specialization
 relationship.
+
+When reuse is **not** the right call: still mention in the TD which
+WILMA concepts you considered and why you chose project-specific
+modeling. This keeps the rationale visible for peer review without
+forcing inappropriate reuse.
 
 ## View Sizing
 
@@ -285,8 +306,12 @@ any item fails, fix it first.
 4. **Every relationship's source and target exist** as elements in
    the same model (the writer will reject otherwise, but checking
    first saves a round-trip).
-5. **WILMA elements have been imported by reference**, not copied with
-   fresh ids.
+5. **WILMA search was performed** (always). If the project sits in
+   the waterschap context and a WILMA element fits, it was imported
+   via `get_or_create_wilma_reference` (preserving the identifier),
+   not duplicated with a fresh id. If WILMA was not applicable, the
+   TD names which WILMA concepts were considered and why
+   project-specific modeling was chosen.
 6. **Embed block** in the TD has both `view-id` and `file` keys.
 7. **No regenerate-from-scratch** on a view that already existed in
    the previous TD revision. Mutations only.

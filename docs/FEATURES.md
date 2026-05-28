@@ -591,3 +591,21 @@ The Settings page displays system configuration and status (read-only). This pag
 - Environment, version, and LLM provider/model info
 - Configured MCP servers with their available tools
 - Configured agents with model parameters (model, temperature, max tokens) and MCP access
+
+## ArchiMate Diagrams in Technical Designs
+
+The Architect agent produces structural enterprise-architecture views as ArchiMate plates, embedded in `docs/technical-design.md` and persisted as Open Exchange XML in `docs/architecture.archimate` (one file per project, committed to Gitea). Mermaid stays in use for behavioral diagrams (sequence, state, flowchart, ER, Gantt, class) that ArchiMate cannot express — the two notations coexist and the agent picks per diagram-type.
+
+What the architect can do:
+
+- **Consult WILMA selectively.** The `archimate` MCP loads the waterschappen WILMA model read-only. The architect always searches WILMA to inform the design, but only reuses elements (via `get_or_create_wilma_reference`, which preserves the original identifier) when the project sits in the waterschap context and the WILMA element fits — otherwise the TD names the considered WILMA concepts and proceeds with project-specific modeling.
+- **Author project-specific views.** `create_element`, `create_relationship`, `create_view`, `add_to_view`, and `add_connection_to_view` build plates incrementally. All write tools are approval-gated on the architect role.
+- **Incremental revision.** On feedback rounds the agent reads the existing view, applies only the requested delta, and saves; element positions stay put so the reviewer sees a recognisable diff rather than a re-shuffled layout.
+
+What the reviewer sees:
+
+- **Interactive ArchiMate views** rendered inline in the TD viewer (pan/zoom, layer colors, relationship markers per ArchiMate spec). Auto-layout via ELK runs in the browser for views that lack geometry.
+- **Delta highlighting.** Elements added in the most recent commit on `architecture.archimate` are accented in blue, and the block header shows an "N new" badge — making it immediately obvious where the latest feedback was acted on.
+- **Per-view SVG exports** are written to `docs/diagrams/<view-name>.svg` on every save, so the plates are also visible directly in Gitea's file preview without opening Druppie.
+
+The choice between ArchiMate and Mermaid, plus the full element/relationship vocabulary, lives in the `making-archimate-diagrams` skill at `druppie/skills/making-archimate-diagrams/SKILL.md`.
