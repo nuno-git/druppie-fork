@@ -217,6 +217,17 @@ class SubagentsMCP:
 
                 child_event_cb = getattr(child_tool_provider, 'event_callback', None) or event_callback
 
+                # Build child-specific config using the child's max_iterations
+                # instead of inheriting the parent's max_turns.
+                child_config = LoopConfig(
+                    max_turns=getattr(child_defn, 'max_iterations', None) or config.max_turns,
+                    max_retries=config.max_retries,
+                    retry_base_delay=config.retry_base_delay,
+                    respect_retry_after=config.respect_retry_after,
+                    max_context_tokens=config.max_context_tokens,
+                    max_subagent_depth=config.max_subagent_depth,
+                )
+
                 child_result = await self._loop_runner(
                     agent=child_defn,
                     agent_loader=self._agent_loader,
@@ -225,7 +236,7 @@ class SubagentsMCP:
                     llm=llm,
                     sandbox_resolver=self._sandbox_resolver,
                     event_callbacks=[child_event_cb] if child_event_cb else [],
-                    config=config,
+                    config=child_config,
                     cancellation_token=cancellation_token,
                 )
 

@@ -127,7 +127,7 @@ class AgentDefinition(BaseModel):
     llm_profile: str = "standard"
     temperature: float = 0.1
     max_tokens: int = 4096
-    max_iterations: int = 10
+    max_iterations: int = 1000
     thinking: str | None = None
     reasoning_effort: str | None = None
 
