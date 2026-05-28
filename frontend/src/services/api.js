@@ -418,6 +418,10 @@ export const getActiveRun = () =>
 // Kept for backwards compat - used by Evaluations.jsx TestRunDetail
 export const getTestRunAssertionsList = getTestRunAssertions
 
+
+// ============ Documentation ============
+export const getDocumentation = () => request("/api/documentation")
+
 // ============ Cache ============
 export const getCachedPackages = () => request('/api/cache/packages')
 export const getAllProjectDependencies = () => request('/api/cache/dependencies')

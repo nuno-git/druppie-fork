@@ -49,6 +49,9 @@ from .evaluation import (
     TestRunSummary,
 )
 
+# Documentation models
+from .documentation import DocumentationEntry
+
 # Common models
 from .common import (
     AgentRunStatus,
@@ -135,6 +138,8 @@ __all__ = [
     "DeploymentSummary",
     # User
     "UserInfo",
+    # Documentation
+    "DocumentationEntry",
     # Agent definition
     "AgentDefinition",
     "ApprovalOverride",

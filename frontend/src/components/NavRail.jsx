@@ -21,6 +21,7 @@ import {
   Server,
   FlaskConical,
   Package,
+  BookOpen,
   Boxes,
 } from 'lucide-react'
 
@@ -205,6 +206,10 @@ const NavRail = () => {
       <NavRailItem to="/tools/mcp" icon={Wrench} label="MCP Tools" active={isActive('/tools/mcp')} />
       <NavRailItem to="/tools/infrastructure" icon={Server} label="Infrastructure" active={isActive('/tools/infrastructure')} />
       <NavRailItem to="/tools/cache" icon={Package} label="Dep Cache" active={isActive('/tools/cache')} />
+
+      {/* Doc Portal */}
+      <div className='mt-1 pt-1 border-t border-gray-800 w-8'></div>
+      <NavRailItem to='/documentation' icon={BookOpen} label='Documentation Portal' active={isActive('/documentation')} />
 
       {/* Admin */}
       {user?.roles?.includes('admin') && (

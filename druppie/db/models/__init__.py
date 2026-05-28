@@ -51,6 +51,9 @@ from .llm_retry import LlmRetry
 from .project import Project
 from .project_dependency import ProjectDependency
 
+# Documentation cache
+from .documentation_cache import DocumentationCache
+
 # Question model (HITL questions from agents)
 from .question import Question
 
@@ -77,6 +80,8 @@ __all__ = [
     # Project
     "Project",
     "ProjectDependency",
+    # Documentation cache
+    "DocumentationCache",
     # Session
     "Session",
     # Agent execution
