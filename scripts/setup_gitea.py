@@ -73,7 +73,7 @@ def _find_compose_container(service_name: str) -> str | None:
 
     try:
         result = subprocess.run(
-            ["docker", "ps", "-q", "--format", "{{.Names}}"] + filters,
+            ["docker", "ps", "--format", "{{.Names}}"] + filters,
             capture_output=True, text=True, timeout=10,
         )
         names = [n for n in result.stdout.strip().split("\n") if n]

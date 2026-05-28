@@ -41,7 +41,7 @@ PROJECT="${COMPOSE_PROJECT_NAME:-druppie}"
 for vol in ${PROJECT}_postgres ${PROJECT}_keycloak_postgres ${PROJECT}_gitea_postgres \
            ${PROJECT}_gitea_data ${PROJECT}_workspace ${PROJECT}_dataset \
            ${PROJECT}_init_marker ${PROJECT}_sandbox_dep_cache ${PROJECT}_sandbox_data \
-           ${PROJECT}_sandbox_snapshots; do
+           ${PROJECT}_sandbox_snapshots ${PROJECT}_cache_scan_results; do
     if docker volume inspect "$vol" >/dev/null 2>&1; then
         echo "  Removing volume: $vol"
         docker volume rm "$vol" 2>/dev/null || echo "  Warning: Could not remove $vol"
