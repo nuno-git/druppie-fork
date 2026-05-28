@@ -102,15 +102,21 @@ tests can assert on it.
 | `read_data` | `source_id`, `data_id`, `filter_expr?`, `limit?`, `offset?` | `{success, data: [...], row_count, columns, metadata}` |
 | `execute_query` | `source_id`, `query`, `limit?` | `{success, data: [...], row_count, columns, warnings, metadata}` |
 | `download_data` | `source_id`, `data_id`, `destination`, `session_id*`, `project_id*` | `{success, destination, size_bytes}` |
+| `create_chart` | `data`, `chart_type`, `x_column`, `y_column`, `title?`, `x_label?`, `y_label?` | `{success, spec, markdown}` |
+| `create_chart_from_source` | `source_id`, `data_id`, `chart_type`, `x_column`, `y_column?`, `series_column?`, `aggregation?`, `filter_expr?`, `top_n?`, `max_series?`, `read_limit?`, `title?`, `x_label?`, `y_label?` | `{success, spec, markdown, category_count, full_dataset, aggregated_in, rows_scanned?, series_count?}` |
 
 `*` `session_id` and `project_id` on `download_data` are auto-injected by
 the backend from the active session — agents do not supply them.
+
+The last two tools (`create_chart`, `create_chart_from_source`) render
+charts inline in the chat — see [Visualization](#visualization) below.
 
 ### Agent access
 
 | Agent | Tools | Rationale |
 |---|---|---|
 | `business_analyst` | `list_sources`, `test_connection`, `list_available_data`, `get_schema`, `read_data` | Answers general_chat data-discovery questions ("which data is available?") and gathers data context during `create_project` / `update_project` requirements work. Read-only — no `download_data`, BA does not write files into the workspace. |
+| `data_analyst` | `list_sources`, `test_connection`, `list_available_data`, `get_schema`, `read_data`, `execute_query`, `create_chart`, `create_chart_from_source` | Answers data questions and **renders charts inline in chat**. Uses discovery tools to locate a dataset, then `create_chart_from_source` to visualize it. Read-only — no `download_data`. |
 
 Other agents have no access yet. `download_data` is intentionally
 unassigned until a workflow needs the bytes on disk (Developer / Test
@@ -140,6 +146,101 @@ Builder when consuming sample data, most likely).
   itself.
 - For file-based sources (Azure Data Lake) the tool returns a clear
   "unsupported" error — use `read_data` instead.
+
+## Visualization
+
+`create_chart` and `create_chart_from_source` turn data into a chart that
+renders **inline in the chat**. The design principle: the LLM decides *what*
+to plot (chart type, columns, aggregation); the data is aggregated
+server-side and **never enters the model context**. Only a small JSON spec
+travels back.
+
+### Data flow
+
+```
+agent picks type + columns
+        │
+        ▼
+create_chart_from_source ──► SQL source:  GROUP BY pushed into the database
+        │                    Data Lake:   whole file read into MCP memory, aggregated
+        ▼
+{spec, markdown}  ◄── only the aggregated result (~hundreds of bytes)
+        │
+        ▼
+agent embeds the `markdown` (a ```chart fenced block) in hitl_ask_question
+        │
+        ▼
+frontend ChartBlock.jsx parses the spec → renders with recharts
+```
+
+No file is written for a chart — Data Lake blobs are read into memory
+(`io.BytesIO`) and discarded; SQL aggregation happens in the database. The
+only persisted artifact is the spec itself, stored in the chat `messages`
+row, which is what lets the chart re-render on session reload.
+
+### The chart spec
+
+A small JSON object wrapped in a ` ```chart ` fenced code block:
+
+```json
+{
+  "type": "bar",
+  "title": "Assets per category",
+  "x_label": "Category",
+  "y_label": "count",
+  "data": [{"x": "Afsluiter", "y": 9230}, {"x": "Elektromotor", "y": 3624}]
+}
+```
+
+Multi-series specs additionally carry a `series` array, and `data` rows are
+flat (`{x, <series_key>: value, ...}`).
+
+### Chart types
+
+13 types in three families (which columns each needs):
+
+| Family | Types | Columns |
+|---|---|---|
+| XY | `bar`, `line`, `area`, `horizontal_bar`, `scatter` | `x_column` + `y_column` |
+| Proportion | `pie`, `donut`, `treemap`, `funnel` | `x_column` (name) + `y_column` (value) |
+| Multi-series | `stacked_bar`, `grouped_bar`, `stacked_area`, `multi_line` | `x_column` + `y_column` + `series_column` |
+
+### `create_chart` vs `create_chart_from_source`
+
+- **`create_chart`** charts **inline values** the agent already holds (e.g.
+  the user typed "chart A=10, B=25"). Single-series + proportion types only.
+- **`create_chart_from_source`** reads + aggregates a configured source. Use
+  this for any real dataset. Key behaviors:
+  - **Full-dataset aggregation.** SQL sources push `GROUP BY` into the
+    database (`build_sql_aggregation_query`, `aggregated_in: "database"`);
+    Data Lake files are read in full and aggregated server-side
+    (`aggregated_in: "server"`). `read_limit` defaults to `None` (no cap) —
+    set it only to deliberately sample a very large Data Lake file. The
+    response carries `full_dataset` (false if a cap truncated the read) and,
+    for the server path, `rows_scanned`.
+  - **`aggregation`**: `count` (default, ignores `y_column`) or
+    `sum`/`avg`/`min`/`max` over `y_column`.
+  - **`series_column`** is required for multi-series types; it is the second
+    grouping dimension (each distinct value becomes a series). Capped by
+    `max_series` (default 10); categories capped by `top_n` (default 20).
+  - On invalid input returns `{success: false, error}` (unsupported
+    chart_type, missing column, non-numeric `y` values, empty result).
+
+> **Aggregation correctness.** Early versions aggregated over a row-capped
+> read, which silently skewed charts of large tables (a 279k-row source was
+> charted from its first 5000 rows). The current full-dataset behavior — DB
+> pushdown for SQL, full-file read for Data Lake — fixes this; `full_dataset`
+> signals when a result is nonetheless a sample.
+
+### Frontend rendering
+
+The chat already renders assistant / HITL message text through
+`react-markdown` with custom code-block handlers (the same mechanism that
+renders ` ```mermaid ` via `MermaidBlock`). `frontend/src/components/ChartBlock.jsx`
+is registered for the `chart` language in
+`frontend/src/components/chat/ChatHelpers.jsx`: it parses the spec, validates
+it, and renders the matching `recharts` component inside a `ResponsiveContainer`,
+falling back to an inline error card if the spec is malformed.
 
 ### Azure SQL row caps
 
