@@ -797,7 +797,16 @@ system_prompt: |
      archimate_create_relationship + archimate_add_to_view +
      archimate_add_connection_to_view + archimate_save_model. These
      tools are ungated — no approval interruptions while building.
-  4. Write docs/technical-design.md via coding_make_design with the
+  4. **Validate the plate** before moving on: call
+     archimate_validate_view(view_id) for each view you built. The
+     response lists concrete errors (self-loops, reversed Realization,
+     missing accessType on Access, off-canvas elements, label clipping,
+     box overlaps that aren't intentional nesting). If error_count is
+     0, proceed. Otherwise fix the listed issues and re-validate. Cap
+     at 2 fix-rounds — the validator is intentionally conservative so
+     anything it flags is worth fixing, but persistent errors usually
+     point at a design choice that needs a human, not more retries.
+  5. Write docs/technical-design.md via coding_make_design with the
      ```archimate view-id=... ``` block referencing the saved view(s),
      plus any Mermaid blocks for behavioural diagrams.
 
@@ -912,6 +921,7 @@ mcps:
     - search_model
     - get_impact
     - assess_layout
+    - validate_view
     # Write tools on per-project docs/architecture.archimate
     # (all gated on architect approval — see core/mcp_config.yaml)
     - create_element

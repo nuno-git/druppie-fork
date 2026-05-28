@@ -234,6 +234,7 @@ mcps:
           - save_model
           - request_full_relayout
           - assess_layout
+          - validate_view
     tools:
       # --- Read-only WILMA reference tools ---
       - name: list_models
@@ -262,6 +263,9 @@ mcps:
 
       # --- Read-only introspection on project model ---
       - name: assess_layout
+        requires_approval: false
+
+      - name: validate_view
         requires_approval: false
 
       # --- WRITE tools on per-project architecture.archimate ---

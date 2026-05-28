@@ -413,6 +413,43 @@ def register_write_tools(mcp, *, module_id: str, module_version: str) -> None:
         except ArchiMateWriteError as e:
             return _error(str(e))
 
+    # --- Validation ---
+
+    @mcp.tool(
+        name="validate_view",
+        description=(
+            "Run metamodel + layout checks on a view and return a list of "
+            "concrete errors. Call this before done() to catch issues the "
+            "architect can fix in one round. Returns success=true with an "
+            "empty errors list when the view is clean. Each error has a "
+            "code, a message, and an optional element_id / relationship_id "
+            "so the agent can target the fix. Conservative by design: "
+            "only flags things that are almost certainly wrong (self-loops, "
+            "obvious metamodel violations, overlapping boxes that aren't "
+            "nesting, labels that don't fit their box). Routine concerns "
+            "like 'too many edges' are not errors here."
+        ),
+        meta=meta,
+    )
+    async def validate_view(
+        session_id: str,
+        view_id: str,
+        model_path: str = DEFAULT_MODEL_PATH,
+    ) -> dict:
+        try:
+            doc = _registry().get(session_id, model_path, create_if_missing=False)
+            view = doc.find_view(view_id)
+            if view is None:
+                return _error(f"View '{view_id}' not found")
+            errors = _validate_view_impl(doc, view)
+            return _result({
+                "view_id": view_id,
+                "error_count": len(errors),
+                "errors": errors,
+            })
+        except ArchiMateWriteError as e:
+            return _error(str(e))
+
     # --- Introspection ---
 
     @mcp.tool(
@@ -455,3 +492,169 @@ def register_write_tools(mcp, *, module_id: str, module_version: str) -> None:
 def _ns() -> dict[str, str]:
     """Return the ArchiMate namespace mapping for ElementTree queries."""
     return {"am": "http://www.opengroup.org/xsd/archimate/3.0/"}
+
+
+# --- View validation -------------------------------------------------------
+# Deliberately conservative: only catches things that are almost certainly
+# wrong. False positives drive the LLM to "fix" things that aren't broken
+# and degrade output quality (see the Snorkel self-critique-paradox
+# research note). Each error has a stable code so prompt rules can target
+# specific ones without parsing message text.
+
+# Layer ordering for cross-layer rule checks. Higher number = more abstract.
+_LAYER_ORDER = {
+    "Motivation": 4,
+    "Business": 3,
+    "Application": 2,
+    "Technology": 1,
+    "Other": 0,
+}
+
+
+def _validate_view_impl(doc, view) -> list[dict[str, Any]]:
+    """Return a list of concrete error dicts for the given view."""
+    from xml.etree import ElementTree as ET  # local import to keep top clean
+
+    ns = _ns()
+    xsi_type = "{http://www.w3.org/2001/XMLSchema-instance}type"
+
+    errors: list[dict[str, Any]] = []
+
+    # Index nodes on this view by element-ref so we can resolve connections.
+    nodes_on_view: dict[str, ET.Element] = {}
+    node_geom: dict[str, tuple[int, int, int, int]] = {}
+    for node in view.findall("am:node", ns):
+        ref = node.get("elementRef") or ""
+        if ref:
+            nodes_on_view[ref] = node
+            try:
+                node_geom[ref] = (
+                    int(node.get("x", "0")),
+                    int(node.get("y", "0")),
+                    int(node.get("w", "0")),
+                    int(node.get("h", "0")),
+                )
+            except ValueError:
+                pass
+
+    # --- Metamodel checks (only on relationships visible in this view) ---
+
+    visible_rels: list[ET.Element] = []
+    for conn in view.findall("am:connection", ns):
+        rel_id = conn.get("relationshipRef") or ""
+        if not rel_id:
+            continue
+        rel = doc.find_relationship(rel_id)
+        if rel is not None:
+            visible_rels.append(rel)
+
+    for rel in visible_rels:
+        rel_id = rel.get("identifier", "")
+        rel_type = rel.get(xsi_type, "")
+        src_id = rel.get("source", "")
+        tgt_id = rel.get("target", "")
+
+        # Self-loop — almost always a modelling mistake.
+        if src_id and src_id == tgt_id:
+            errors.append({
+                "code": "self_relationship",
+                "message": f"Relationship '{rel_type}' has the same source and target ({src_id}). Remove or repoint one end.",
+                "relationship_id": rel_id,
+            })
+            continue
+
+        src_el = doc.find_element(src_id) if src_id else None
+        tgt_el = doc.find_element(tgt_id) if tgt_id else None
+        if src_el is None or tgt_el is None:
+            continue  # dangling refs are caught at create-time
+
+        src_type = src_el.get(xsi_type, "")
+        tgt_type = tgt_el.get(xsi_type, "")
+        src_layer = ELEMENT_TYPE_LAYER.get(src_type, "Other")
+        tgt_layer = ELEMENT_TYPE_LAYER.get(tgt_type, "Other")
+
+        # Realization direction: the source provides a realization for the
+        # target. Typically source is *more concrete* (lower layer) than
+        # the target. "Business realizes Application" is the reverse of
+        # what the standard documents.
+        if rel_type == "Realization":
+            if _LAYER_ORDER.get(src_layer, 0) > _LAYER_ORDER.get(tgt_layer, 0):
+                errors.append({
+                    "code": "realization_direction",
+                    "message": (
+                        f"Realization is reversed: '{src_type}' ({src_layer}) "
+                        f"realizes '{tgt_type}' ({tgt_layer}). Source should be "
+                        f"the more concrete element. Swap source and target, "
+                        f"or pick a different relationship type."
+                    ),
+                    "relationship_id": rel_id,
+                })
+
+        # Access must have an accessType (Read / Write / ReadWrite / Access)
+        if rel_type == "Access":
+            access_type = rel.get("accessType") or ""
+            if access_type not in {"Read", "Write", "ReadWrite", "Access"}:
+                errors.append({
+                    "code": "access_missing_type",
+                    "message": (
+                        f"Access relationship is missing an accessType (got "
+                        f"'{access_type or 'none'}'). Set Read / Write / "
+                        f"ReadWrite / Access."
+                    ),
+                    "relationship_id": rel_id,
+                })
+
+    # --- Layout checks ---
+
+    # Off-canvas elements.
+    for ref, (x, y, _w, _h) in node_geom.items():
+        if x < 0 or y < 0:
+            errors.append({
+                "code": "off_canvas",
+                "message": f"Element placed at negative coordinates ({x}, {y}). Re-run layout or move it on-canvas.",
+                "element_id": ref,
+            })
+
+    # Overlapping boxes — but containment (visual nesting) is fine.
+    geom_items = list(node_geom.items())
+    for i, (id_a, (ax, ay, aw, ah)) in enumerate(geom_items):
+        for id_b, (bx, by, bw, bh) in geom_items[i + 1:]:
+            overlaps = not (
+                ax + aw <= bx or bx + bw <= ax
+                or ay + ah <= by or by + bh <= ay
+            )
+            if not overlaps:
+                continue
+            contains_ab = (ax <= bx and ay <= by
+                           and ax + aw >= bx + bw and ay + ah >= by + bh)
+            contains_ba = (bx <= ax and by <= ay
+                           and bx + bw >= ax + aw and by + bh >= ay + ah)
+            if contains_ab or contains_ba:
+                continue
+            errors.append({
+                "code": "overlap",
+                "message": f"Elements overlap on the view: {id_a} and {id_b}. Trigger a relayout or remove one.",
+                "element_id": id_a,
+            })
+
+    # Label clipping — estimated label pixel-width vs box width.
+    for ref, (_x, _y, w, _h) in node_geom.items():
+        el = doc.find_element(ref)
+        if el is None:
+            continue
+        name_el = el.find("am:name", ns)
+        name = (name_el.text or "") if name_el is not None else ""
+        # Same heuristic as writer._auto_width_for, kept in sync manually.
+        needed = len(name) * 7 + 24
+        if w > 0 and needed > w + 8:  # 8 px tolerance
+            errors.append({
+                "code": "label_clipping",
+                "message": (
+                    f"Label '{name}' likely clips its box (needs ~{needed}px, "
+                    f"has {w}px). The auto-width on add_to_view should have "
+                    f"caught this — call update_element or readd with explicit w."
+                ),
+                "element_id": ref,
+            })
+
+    return errors
