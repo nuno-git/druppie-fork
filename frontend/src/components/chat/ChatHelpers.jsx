@@ -8,11 +8,12 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import CodeBlock from '../CodeBlock'
 import MermaidBlock from '../MermaidBlock'
+import ArchimateBlock from '../ArchimateBlock'
 import { getAgentConfig } from '../../utils/agentConfig'
 
 // --- Contexts for rewriting relative links in rendered markdown ---
 //
-// ProjectRepoContext  — set by SessionDetail to {repo_url, default_branch}
+// ProjectRepoContext  — set by SessionDetail to {id, repo_url, default_branch}
 // SourceFileContext   — set per file preview (e.g. `docs/functional-design.md`)
 //                       so `./foo.md` in that file resolves relative to the
 //                       file's directory, like Gitea/GitHub do.
@@ -95,6 +96,9 @@ export const chatMarkdownComponents = {
     const codeString = String(children).replace(/\n$/, '')
     if (match?.[1] === 'mermaid') {
       return <MermaidBlock code={codeString} />
+    }
+    if (match?.[1] === 'archimate') {
+      return <ArchimateBlock code={codeString} />
     }
     if (match || codeString.includes('\n')) {
       return (

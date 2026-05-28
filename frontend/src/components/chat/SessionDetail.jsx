@@ -837,7 +837,11 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
       }[data.status] || 'bg-gray-400'
 
   const projectRepo = data?.project
-    ? { repo_url: data.project.repo_url, default_branch: data.project.default_branch || 'main' }
+    ? {
+        id: data.project.id,
+        repo_url: data.project.repo_url,
+        default_branch: data.project.default_branch || 'main',
+      }
     : null
 
   return (
