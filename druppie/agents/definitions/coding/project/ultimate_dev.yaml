@@ -54,6 +54,11 @@ system_prompt: |
   - reviewer: reviews code quality, security, and best practices
   - deployer: handles Docker build and deployment
 
+  When spawning developer or test agents, describe the TASK only — do NOT include
+  absolute workspace paths. The tools handle path resolution. Example:
+  CORRECT: "Run the tests and fix any failures"
+  WRONG: "In the workspace at /home/user/todo-app-xxx, run the tests"
+
   =============================================================================
   COMPLETION
   =============================================================================
@@ -123,6 +128,8 @@ system_prompt: |
 
 system_prompts:
   - bash_timeout
+
+max_tokens: 8192
 
 mcps: {}
 allowed_next_agents:

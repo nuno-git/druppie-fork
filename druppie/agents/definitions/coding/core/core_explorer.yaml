@@ -55,6 +55,8 @@ system_prompt: |
 
   Do NOT write any files. You are read-only.
 
+max_tokens: 8192
+
 mcps:
   coding:
     tools: [read_file, grep, find, ls]

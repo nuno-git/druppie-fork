@@ -59,6 +59,8 @@ system_prompt: |
 system_prompts:
   - bash_timeout
 
+max_tokens: 8192
+
 mcps:
   coding:
     networks: [internet]
