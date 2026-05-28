@@ -305,3 +305,228 @@ mcps:
 
       - name: download_data
         requires_approval: false
+
+  # ===========================================================================
+  # MODULES — Overlast-meldportaal
+  # ===========================================================================
+
+  dsp-zgw:
+    url: ${MCP_DSP_ZGW_URL:-http://module-dsp-zgw:9020}
+    type: module
+    inject:
+      session_id:
+        from: session.id
+        hidden: true
+      user_id:
+        from: session.user_id
+        hidden: true
+      project_id:
+        from: project.id
+        hidden: true
+    tools:
+      - name: create_zaak
+        description: "Maak een zaak aan in DSP met zaaktype, beschrijving, locatie en metadata"
+        requires_approval: false
+        parameters:
+          type: object
+          properties:
+            zaaktype_url:
+              type: string
+              description: "URL van het zaaktype in de DSP-catalogus"
+            beschrijving:
+              type: string
+              description: "Beschrijving van de zaak"
+            locatie:
+              type: string
+              description: "Locatie als JSON (RD of WGS84 coördinaten)"
+            metadata:
+              type: string
+              description: "Optionele metadata als JSON"
+          required: [zaaktype_url, beschrijving]
+
+      - name: get_zaak_status
+        description: "Haal actuele zaakstatus op inclusief laatste opmerking en historie"
+        requires_approval: false
+        parameters:
+          type: object
+          properties:
+            zaak_url:
+              type: string
+              description: "URL van de zaak in DSP"
+          required: [zaak_url]
+
+      - name: list_zaaktypen
+        description: "Geef beschikbare zaaktypen terug uit de DSP-catalogus"
+        requires_approval: false
+        parameters:
+          type: object
+          properties:
+            catalogus_url:
+              type: string
+              description: "Optioneel: filter op catalogus-URL"
+
+      - name: link_zaak_document
+        description: "Koppel een document (bijv. foto) aan een bestaande zaak"
+        requires_approval: false
+        parameters:
+          type: object
+          properties:
+            zaak_url:
+              type: string
+              description: "URL van de zaak"
+            document_url:
+              type: string
+              description: "URL van het document in de document-API"
+            titel:
+              type: string
+              description: "Optionele titel voor het document"
+          required: [zaak_url, document_url]
+
+  notificatie:
+    url: ${MCP_NOTIFICATIE_URL:-http://module-notificatie:9021}
+    type: module
+    inject:
+      session_id:
+        from: session.id
+        hidden: true
+      user_id:
+        from: session.user_id
+        hidden: true
+      project_id:
+        from: project.id
+        hidden: true
+    tools:
+      - name: send_email
+        description: "Verstuur e-mail naar één of meer ontvangers met onderwerp, body en optionele bijlage-link"
+        requires_approval: false
+        parameters:
+          type: object
+          properties:
+            ontvangers:
+              type: string
+              description: "E-mailadressen, komma-gescheiden of JSON-array"
+            onderwerp:
+              type: string
+              description: "Onderwerp van de e-mail"
+            body:
+              type: string
+              description: "HTML-body van de e-mail"
+            bijlage_link:
+              type: string
+              description: "Optionele URL voor een bijlage"
+          required: [ontvangers, onderwerp, body]
+
+      - name: send_push
+        description: "Stuur push-notificatie naar een behandelteam-groep"
+        requires_approval: false
+        parameters:
+          type: object
+          properties:
+            team_groep:
+              type: string
+              description: "Naam van de behandelteam-groep"
+            bericht:
+              type: string
+              description: "Push-bericht inhoud"
+            titel:
+              type: string
+              description: "Optionele titel van de push-notificatie"
+          required: [team_groep, bericht]
+
+  pdok:
+    url: ${MCP_PDOK_URL:-http://module-pdok:9022}
+    type: module
+    inject:
+      session_id:
+        from: session.id
+        hidden: true
+      user_id:
+        from: session.user_id
+        hidden: true
+      project_id:
+        from: project.id
+        hidden: true
+    tools:
+      - name: reverse_geocode
+        description: "Vertaal RD- of WGS84-coördinaten naar een BAG-adres"
+        requires_approval: false
+        parameters:
+          type: object
+          properties:
+            coordinaat:
+              type: string
+              description: "Coördinaat als 'lat,lon' (WGS84) of 'x,y' (RD)"
+            coord_systeem:
+              type: string
+              description: "Coördinaatsysteem: 'wgs84' of 'rd'"
+          required: [coordinaat]
+
+      - name: search_address
+        description: "Zoek adressen op tekstinput (type-ahead)"
+        requires_approval: false
+        parameters:
+          type: object
+          properties:
+            zoekterm:
+              type: string
+              description: "Zoekterm (minimaal 2 tekens)"
+            max_resultaten:
+              type: integer
+              description: "Maximum aantal resultaten (default 5)"
+          required: [zoekterm]
+
+  objectstorage:
+    url: ${MCP_OBJECTSTORAGE_URL:-http://module-objectstorage:9023}
+    type: module
+    inject:
+      session_id:
+        from: session.id
+        hidden: true
+      user_id:
+        from: session.user_id
+        hidden: true
+      project_id:
+        from: project.id
+        hidden: true
+    tools:
+      - name: upload_object
+        description: "Upload een bestand naar S3 en retourneer Object-Key"
+        requires_approval: false
+        parameters:
+          type: object
+          properties:
+            bestand_pad:
+              type: string
+              description: "Pad naar het lokale bestand"
+            bestandsnaam:
+              type: string
+              description: "Optionele bestandsnaam (default: naam van bestand_pad)"
+            content_type:
+              type: string
+              description: "MIME-type van het bestand (default: application/octet-stream)"
+          required: [bestand_pad]
+
+      - name: get_object_url
+        description: "Genereer tijdelijke signed URL voor download"
+        requires_approval: false
+        parameters:
+          type: object
+          properties:
+            object_key:
+              type: string
+              description: "S3 object key"
+            geldigheid_seconden:
+              type: integer
+              description: "Geldigheid van de URL in seconden (default: 3600)"
+          required: [object_key]
+
+      - name: delete_object
+        description: "Verwijder een object uit de bucket"
+        requires_approval: false
+        parameters:
+          type: object
+          properties:
+            object_key:
+              type: string
+              description: "S3 object key"
+          required: [object_key]

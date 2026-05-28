@@ -27,9 +27,12 @@
 #   MCP File Search:9004
 #   MCP Web:        9005
 #   MCP Registry:   9007
-#   MCP LLM:        9008
 #   MCP Data Access:9010
 #   MCP Vision:     9011
+#   MCP DSP-ZGW:    9020
+#   MCP Notificatie:9021
+#   MCP PDOK:       9022
+#   MCP ObjectStorage: 9023
 #   Adminer:        8081
 
 services:
@@ -409,6 +412,105 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
+
+  # ===========================================================================
+  # MODULES — Overlast-meldportaal (stateless)
+  # ===========================================================================
+
+  module-dsp-zgw:
+    build:
+      context: ./druppie/mcp-servers
+      dockerfile: module-dsp-zgw/Dockerfile
+    container_name: druppie-module-dsp-zgw
+    profiles: [infra, dev, prod]
+    environment:
+      MCP_PORT: "9020"
+      DSP_ZGW_BASE_URL: ${DSP_ZGW_BASE_URL:-}
+      DSP_ZGW_CLIENT_ID: ${DSP_ZGW_CLIENT_ID:-}
+      DSP_ZGW_CLIENT_SECRET: ${DSP_ZGW_CLIENT_SECRET:-}
+      DSP_ZGW_CATALOGI_URL: ${DSP_ZGW_CATALOGI_URL:-}
+      DSP_ZGW_BRONORGANISATIE: ${DSP_ZGW_BRONORGANISATIE:-}
+      DSP_ZGW_VERANTWOORDELIJKE_ORGANISATIE: ${DSP_ZGW_VERANTWOORDELIJKE_ORGANISATIE:-}
+    ports:
+      - "${MCP_DSP_ZGW_PORT:-9020}:9020"
+    networks:
+      - druppie-new-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9020/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  module-notificatie:
+    build:
+      context: ./druppie/mcp-servers
+      dockerfile: module-notificatie/Dockerfile
+    container_name: druppie-module-notificatie
+    profiles: [infra, dev, prod]
+    environment:
+      MCP_PORT: "9021"
+      NOTIFICATIE_SMTP_HOST: ${NOTIFICATIE_SMTP_HOST:-}
+      NOTIFICATIE_SMTP_PORT: ${NOTIFICATIE_SMTP_PORT:-587}
+      NOTIFICATIE_SMTP_USER: ${NOTIFICATIE_SMTP_USER:-}
+      NOTIFICATIE_SMTP_PASS: ${NOTIFICATIE_SMTP_PASS:-}
+      NOTIFICATIE_SMTP_FROM: ${NOTIFICATIE_SMTP_FROM:-}
+      NOTIFICATIE_PUSH_URL: ${NOTIFICATIE_PUSH_URL:-}
+      NOTIFICATIE_PUSH_API_KEY: ${NOTIFICATIE_PUSH_API_KEY:-}
+    ports:
+      - "${MCP_NOTIFICATIE_PORT:-9021}:9021"
+    networks:
+      - druppie-new-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9021/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  module-pdok:
+    build:
+      context: ./druppie/mcp-servers
+      dockerfile: module-pdok/Dockerfile
+    container_name: druppie-module-pdok
+    profiles: [infra, dev, prod]
+    environment:
+      MCP_PORT: "9022"
+    ports:
+      - "${MCP_PDOK_PORT:-9022}:9022"
+    networks:
+      - druppie-new-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9022/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  module-objectstorage:
+    build:
+      context: ./druppie/mcp-servers
+      dockerfile: module-objectstorage/Dockerfile
+    container_name: druppie-module-objectstorage
+    profiles: [infra, dev, prod]
+    environment:
+      MCP_PORT: "9023"
+      OBJECTSTORAGE_ENDPOINT_URL: ${OBJECTSTORAGE_ENDPOINT_URL:-}
+      OBJECTSTORAGE_ACCESS_KEY: ${OBJECTSTORAGE_ACCESS_KEY:-}
+      OBJECTSTORAGE_SECRET_KEY: ${OBJECTSTORAGE_SECRET_KEY:-}
+      OBJECTSTORAGE_BUCKET: ${OBJECTSTORAGE_BUCKET:-}
+      OBJECTSTORAGE_REGION: ${OBJECTSTORAGE_REGION:-}
+      OBJECTSTORAGE_PREFIX: ${OBJECTSTORAGE_PREFIX:-}
+    ports:
+      - "${MCP_OBJECTSTORAGE_PORT:-9023}:9023"
+    networks:
+      - druppie-new-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9023/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
 
   # ===========================================================================
   # SANDBOX INFRASTRUCTURE (background-agents)
