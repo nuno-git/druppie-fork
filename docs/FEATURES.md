@@ -234,6 +234,22 @@ The primary interface is a chat page where users submit natural language request
 
 ---
 
+## Data Visualizations
+
+The Data Analyst agent can render charts **inline in the chat** from data in the configured sources (Azure SQL, Azure Data Lake), via the Data Access MCP.
+
+- **Ask in natural language**: "Show me a chart of assets per category", "visualize subscriptions by type as a donut", "break it down by year". The agent picks an appropriate chart type, aggregates the data, and shows the result inline.
+- **13 chart types**: bar, line, area, horizontal bar, scatter, pie, donut, treemap, funnel, and multi-series stacked bar / grouped bar / stacked area / multi-line.
+- **Deliberate type selection**: the agent follows a decision matrix — counts per category → bar, long category names → horizontal bar, long-tail distributions → treemap, proportions → pie/donut, breakdowns by a second dimension → stacked/grouped, trends → line/area, correlation → scatter.
+- **Whole-dataset accuracy**: aggregation runs over the **entire** dataset (the database does it for SQL; the whole file is read server-side for Data Lake), so counts and sums are exact rather than sampled. The agent flags when a result is ever a sample.
+- **Data stays private**: raw rows never enter the LLM context and nothing is written to the workspace — only a compact chart spec is produced, stored in the chat transcript so charts survive a reload.
+- **Inline values too**: if the user types the numbers directly ("chart A=10, B=25, C=7"), the agent charts them immediately without touching a data source.
+- **Graceful failure**: a malformed chart renders as a small inline error card rather than breaking the message.
+
+The Data Analyst is read-only: it visualizes and explains data but does not build dashboards or write files (creating a persistent dashboard project is a separate `create_project` path).
+
+---
+
 ## Session Control
 
 ### Stop & Resume

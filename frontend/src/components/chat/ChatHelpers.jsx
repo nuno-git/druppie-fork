@@ -7,6 +7,7 @@ import { Copy, Check } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import CodeBlock from '../CodeBlock'
+import ChartBlock from '../ChartBlock'
 import MermaidBlock from '../MermaidBlock'
 import { getAgentConfig } from '../../utils/agentConfig'
 
@@ -95,6 +96,9 @@ export const chatMarkdownComponents = {
     const codeString = String(children).replace(/\n$/, '')
     if (match?.[1] === 'mermaid') {
       return <MermaidBlock code={codeString} />
+    }
+    if (match?.[1] === 'chart') {
+      return <ChartBlock code={codeString} />
     }
     if (match || codeString.includes('\n')) {
       return (
