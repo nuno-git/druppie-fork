@@ -4,11 +4,11 @@ services:
     ports:
       - "${APP_PORT:-8000}:8000"
     depends_on:
-      db:
+      database:
         condition: service_healthy
     environment:
       - APP_NAME=${APP_NAME:-My App}
-      - DATABASE_URL=postgresql://${POSTGRES_USER:-app}:${POSTGRES_PASSWORD:-app}@db:5432/${POSTGRES_DB:-app}
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-app}:${POSTGRES_PASSWORD:-app}@database:5432/${POSTGRES_DB:-app}
       - DRUPPIE_URL=${DRUPPIE_URL:-http://druppie-backend:8000}
       - DRUPPIE_MODULE_API_TOKEN=${DRUPPIE_MODULE_API_TOKEN:-}
       - DEBUG=${DEBUG:-false}
@@ -19,11 +19,9 @@ services:
       retries: 5
       start_period: 10s
 
-  db:
+  database:
     image: postgres:15-alpine
     environment:
-      # NOTE: These are dev-only defaults. Production deployments should
-      # inject unique credentials via environment variables.
       POSTGRES_USER: ${POSTGRES_USER:-app}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-app}
       POSTGRES_DB: ${POSTGRES_DB:-app}
