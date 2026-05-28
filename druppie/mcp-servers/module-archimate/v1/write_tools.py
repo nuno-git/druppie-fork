@@ -12,6 +12,7 @@ buffer in memory; ``save_model`` writes to disk.
 import logging
 from typing import Any
 
+from .svg_export import export_all_views
 from .writer import (
     ELEMENT_TYPE_LAYER,
     VALID_RELATIONSHIP_TYPES,
@@ -366,7 +367,18 @@ def register_write_tools(mcp, *, module_id: str, module_version: str) -> None:
             if not doc.dirty:
                 return _result({"path": str(doc.path), "written": False, "reason": "no_changes"})
             path = doc.save()
-            return _result({"path": str(path), "written": True})
+            # Also export an SVG per positioned view to docs/diagrams/
+            # so the plates are visible directly in Gitea's file preview
+            # (Gitea renders SVG inline, ArchiMate XML it doesn't).
+            diagrams_dir = path.parent / "diagrams"
+            svg_paths: list[str] = []
+            try:
+                svg_paths = [str(p) for p in export_all_views(doc.root, diagrams_dir)]
+            except Exception as exc:  # noqa: BLE001 — never block save on SVG export
+                logger.warning("SVG export failed for %s: %s", path, exc)
+            return _result(
+                {"path": str(path), "written": True, "svg_exports": svg_paths}
+            )
         except ArchiMateWriteError as e:
             return _error(str(e))
 
