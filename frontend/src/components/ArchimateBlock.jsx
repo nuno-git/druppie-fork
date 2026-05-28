@@ -18,7 +18,7 @@
 import { useEffect, useState, useRef, useCallback, useContext } from 'react'
 import { AlertTriangle, Code, Eye, ZoomIn, ZoomOut, Maximize2 } from 'lucide-react'
 import { ProjectRepoContext } from './chat/ChatHelpers'
-import { getProjectFile, getProjectFileChanges } from '../services/api'
+import { getProjectFile, getProjectFileFromWorkspace, getProjectFileChanges } from '../services/api'
 import {
   parseEmbedSpec,
   parseArchimateXML,
@@ -133,13 +133,30 @@ const ArchimateBlock = ({ code, highlightIds }) => {
     const branch = repo.default_branch || 'main'
     setState({ status: 'loading', svg: null, error: null })
 
+    // Source the .archimate file from the session workspace when we have
+    // one — the architect's commit may not have reached Gitea yet during
+    // an approval preview. Fall back to the Gitea ref when the workspace
+    // copy is missing (e.g. older sessions or post-merge browsing).
+    const fetchArchimateFile = async () => {
+      if (repo.session_id) {
+        try {
+          return await getProjectFileFromWorkspace(repo.id, repo.session_id, spec.file)
+        } catch (err) {
+          if (err.status && err.status !== 404) throw err
+        }
+      }
+      return getProjectFile(repo.id, spec.file, branch)
+    }
+
     ;(async () => {
       try {
         // Fetch the current file and the last-commit identifier-diff in parallel.
         // The diff feeds delta-highlighting: any element/connection whose
         // identifier appeared in the latest commit is rendered with an accent.
+        // The diff is Gitea-only — if the file isn't committed yet there is
+        // nothing to diff against, hence the silent catch.
         const [response, changes] = await Promise.all([
-          getProjectFile(repo.id, spec.file, branch),
+          fetchArchimateFile(),
           getProjectFileChanges(repo.id, spec.file, branch).catch(() => null),
         ])
         const xml = response?.content ?? response
@@ -179,7 +196,7 @@ const ArchimateBlock = ({ code, highlightIds }) => {
     return () => { cancelled = true }
     // intentionally not depending on highlightIds — would re-fetch on identity change
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [code, repo?.id, repo?.default_branch])
+  }, [code, repo?.id, repo?.default_branch, repo?.session_id])
 
   return (
     <div className="my-3 rounded-lg overflow-hidden border border-gray-200">

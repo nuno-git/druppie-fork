@@ -227,6 +227,8 @@ export const getProjectFiles = (projectId, path = '', branch = 'main') =>
   request(`/api/projects/${projectId}/files?path=${encodeURIComponent(path)}&branch=${branch}`)
 export const getProjectFile = (projectId, path, branch = 'main') =>
   request(`/api/projects/${projectId}/file?path=${encodeURIComponent(path)}&branch=${branch}`)
+export const getProjectFileFromWorkspace = (projectId, sessionId, path) =>
+  request(`/api/projects/${projectId}/file/workspace?session_id=${sessionId}&path=${encodeURIComponent(path)}`)
 export const getProjectFileChanges = (projectId, path, branch = 'main') =>
   request(`/api/projects/${projectId}/file/changes?path=${encodeURIComponent(path)}&branch=${branch}`)
 

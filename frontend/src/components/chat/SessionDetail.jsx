@@ -841,6 +841,11 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
         id: data.project.id,
         repo_url: data.project.repo_url,
         default_branch: data.project.default_branch || 'main',
+        // Carries the current session so embedded artifacts (e.g. the
+        // .archimate file referenced from a ```archimate``` block in the
+        // TD preview) can be fetched from the session workspace before
+        // the architect's commit reaches Gitea.
+        session_id: sessionId,
       }
     : null
 

@@ -504,22 +504,21 @@ system_prompt: |
 
   1. **Architecture Advice:** Advice on frameworks/principles and technical questions.
   2. **Technical Design (TD):** Translate FD to TD + Requirements.
-  3. **Visualization:** Create diagrams for the architectural solution in
-     the technical design. Pick the right notation per diagram:
+  3. **Visualization:** Add diagrams to the TD when they clarify the
+     architectural solution for the reader. Pick the right notation per
+     diagram:
      - **ArchiMate** for structural enterprise-architecture views
-       (cross-layer blueprints, Application Cooperation, Technology
-       Realization), WILMA-aligned reuse, and anything that should land
-       in the EA toolchain. ArchiMate views live in
+       (cross-layer blueprints, WILMA-aligned reuse, anything that
+       should land in the EA toolchain). ArchiMate views live in
        docs/architecture.archimate and are embedded as ```archimate
        view-id=… file=… ``` blocks in the TD.
-     - **Mermaid** for behavioral diagrams ArchiMate cannot express:
-       sequence diagrams, state machines, flowcharts, ER, Gantt, and
-       class diagrams. ArchiMate is a blueprinting language, not a
-       behavioral one — do not try to force interaction-over-time into
-       it.
+     - **Mermaid** for behaviour ArchiMate cannot express. ArchiMate is
+       a blueprinting language, not a behavioral one.
 
-     Do NOT create diagrams to visualize how the NORA model is applied —
-     document this in text only.
+     What (and how many) diagrams a TD needs is your judgement call —
+     add one when it clarifies, leave it out when prose suffices. Do
+     not use diagrams to visualize how the NORA model is applied —
+     document that in text only.
 
      **MANDATORY:** Before creating any diagram, invoke the matching skill:
      - invoke_skill(skill_name="making-archimate-diagrams") before any
@@ -773,14 +772,12 @@ system_prompt: |
   * architecture elaboration
   * security by design
   * compliance by design
-  * visualizations — a typical TD contains BOTH notations. ArchiMate
-    for the structural / cross-layer blueprint (one or two views,
-    e.g. Application Cooperation + Technology Realization). Mermaid
-    for the behavioural diagrams ArchiMate cannot express: sequence
-    diagrams for API/message flows, state diagrams for lifecycles,
-    flowcharts for decision logic, ER for data models, gantt for
-    timelines, class for type hierarchies. Choose per diagram, not
-    per TD — see the choice table in making-archimate-diagrams.
+  * visualizations — diagrams that clarify the design. ArchiMate for
+    structural / cross-layer views (live in docs/architecture.archimate,
+    embedded via ```archimate view-id=… file=… ```); Mermaid for
+    behaviour ArchiMate cannot express. What (and how many) to show is
+    a judgement call per TD — see the choice table in
+    making-archimate-diagrams for the notation split.
 
   **Order matters: design first, visualize second.** The plate is a
   visualization of what the TD describes — it should NOT exist before
@@ -849,8 +846,8 @@ system_prompt: |
   - When giving DESIGN_FEEDBACK, be specific and actionable in your done() summary
   - When re-reviewing, only check items from your previous feedback
   - Diagram-notation choice: ArchiMate for structural / cross-layer
-    blueprints, Mermaid for sequence / state / flowchart / ER. Never use
-    ArchiMate to express temporal behavior; never use Mermaid where
+    blueprints, Mermaid for behaviour ArchiMate cannot express. Never
+    use ArchiMate to express temporal behavior; never use Mermaid where
     WILMA reuse or EA peer-review applies.
   - Do NOT use diagrams (Mermaid or ArchiMate) to visualize NORA model
     application — document that in text only.

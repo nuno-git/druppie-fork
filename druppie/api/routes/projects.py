@@ -19,8 +19,10 @@ import structlog
 
 from druppie.api.deps import get_current_user, get_project_service, get_user_roles
 from druppie.api.errors import NotFoundError, ValidationError
+from druppie.core.config import get_settings
 from druppie.core.gitea import GiteaClient
 from druppie.db.database import get_db
+from druppie.db.models import Session as SessionModel
 from druppie.services import ProjectService
 from druppie.domain import ProjectSummary, ProjectDetail
 
@@ -195,6 +197,63 @@ async def get_project_file(
         content=result.get("content"),
         size=result.get("size", 0) or 0,
         sha=result.get("sha"),
+    )
+
+
+@router.get("/projects/{project_id}/file/workspace", response_model=ProjectFileResponse)
+async def get_project_file_from_workspace(
+    project_id: UUID,
+    session_id: UUID = Query(..., description="Session whose workspace holds the file"),
+    path: str = Query(..., description="Workspace-relative file path"),
+    db: Session = Depends(get_db),
+    service: ProjectService = Depends(get_project_service),
+    user: dict = Depends(get_current_user),
+) -> ProjectFileResponse:
+    """Read a file from a session's workspace (not Gitea).
+
+    Used by the TD viewer during approval-preview: the .archimate file
+    referenced from an embedded code block only exists in the session
+    workspace until the TD itself is approved and the architect commits
+    + pushes both files. Reading from the workspace lets reviewers see
+    the rendered plate before the commit lands in Gitea.
+    """
+    user_id = UUID(user["sub"])
+    user_roles = get_user_roles(user)
+    # Authorisation: must be able to see the project.
+    service.get_detail(project_id, user_id, user_roles)
+
+    # Confirm the session belongs to this project.
+    session = (
+        db.query(SessionModel)
+        .filter(SessionModel.id == session_id, SessionModel.project_id == project_id)
+        .first()
+    )
+    if session is None:
+        raise NotFoundError("session", str(session_id))
+
+    workspace_root = get_settings().workspace.root
+    # Coding MCP layout: <root>/<user>/<project>/<session>/<file>
+    matches = list(workspace_root.glob(f"*/*/{session_id}"))
+    if not matches:
+        raise NotFoundError("workspace", str(session_id))
+    workspace_dir = matches[0].resolve()
+
+    # Path-traversal guard.
+    candidate = (workspace_dir / path).resolve()
+    try:
+        candidate.relative_to(workspace_dir)
+    except ValueError:
+        raise ValidationError("Path escapes the workspace", field="path")
+    if not candidate.is_file():
+        raise NotFoundError("file", path)
+
+    content = candidate.read_text(encoding="utf-8")
+    return ProjectFileResponse(
+        path=path,
+        branch=f"workspace:{session_id}",
+        content=content,
+        size=candidate.stat().st_size,
+        sha=None,
     )
 
 
