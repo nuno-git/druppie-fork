@@ -402,6 +402,37 @@ export function renderViewToSVG(view, model, opts = {}) {
 
   const idPrefix = `am-${view.id?.slice(-8) || Math.random().toString(36).slice(2, 8)}`
 
+  // Layer bands — subtle background per ArchiMate layer so the reader
+  // spots the canonical stack (Motivation top → Business → Application
+  // → Technology) at a glance. Drawn before nodes and edges so they
+  // paint on top.
+  const layerBboxes = new Map()
+  for (const n of view.nodes) {
+    const el = model.elements.get(n.elementRef)
+    const layer = el?.layer || 'Unknown'
+    if (layer === 'Unknown' || layer === 'Other') continue
+    const x = n.x + offsetX
+    const y = n.y + offsetY
+    const bb = layerBboxes.get(layer)
+    if (!bb) {
+      layerBboxes.set(layer, [x, y, x + n.w, y + n.h])
+    } else {
+      bb[0] = Math.min(bb[0], x)
+      bb[1] = Math.min(bb[1], y)
+      bb[2] = Math.max(bb[2], x + n.w)
+      bb[3] = Math.max(bb[3], y + n.h)
+    }
+  }
+  const bandXML = Array.from(layerBboxes.entries())
+    .map(([layer, [lx, ly, rx, ry]]) => {
+      const fill = LAYER_COLORS[layer] || '#FFFFFF'
+      const bw = rx - lx + 36
+      const bh = ry - ly + 28
+      return `<rect x="${lx - 18}" y="${ly - 14}" width="${bw}" height="${bh}"
+              rx="6" ry="6" fill="${fill}" fill-opacity="0.18" stroke="none" />`
+    })
+    .join('')
+
   // Element nodes
   const nodeXML = view.nodes.map((n) => {
     const el = model.elements.get(n.elementRef)
@@ -467,6 +498,7 @@ export function renderViewToSVG(view, model, opts = {}) {
 
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
     ${markerDefs(idPrefix)}
+    ${bandXML}
     ${connXML}
     ${nodeXML}
   </svg>`

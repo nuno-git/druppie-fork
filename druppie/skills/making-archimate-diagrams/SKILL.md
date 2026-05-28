@@ -180,6 +180,36 @@ and vice versa. Classify the feedback before acting:
 If you are unsure whether the cascade applies, ask the architect via
 `hitl_ask_question(question="...")` rather than guessing.
 
+## Picking the right type for external systems
+
+Before reaching for the vocabulary tables, three questions in this
+order — they almost always pick the right type:
+
+1. **Do WE build / deploy / control it?** (it lives in our repo, on
+   our infra, the team can change it) → `ApplicationComponent`.
+2. **Is it infrastructure we consume but don't build?** (database
+   engines, message queues, IAM platforms, object stores) →
+   `SystemSoftware` for the engine itself, `TechnologyService` for
+   the service it offers. Examples: Postgres, Redis, Kafka, MinIO,
+   Keycloak, ELK stack.
+3. **Does it belong to a different organisation that exposes an
+   API/service?** (government registers, partner systems, public
+   services) → `BusinessActor` for the organisation + `TechnologyService`
+   or `ApplicationInterface` for the API surface. Examples: PDOK, KvK,
+   BAG, BRP, partner zaaksystemen, Belastingdienst, third-party
+   payment providers.
+
+Common mis-typings to avoid:
+- PDOK / KvK / BAG / BRP / external SaaS modelled as
+  `ApplicationComponent` — they are not your component, you don't
+  deploy them. Model the organisation + the service they offer.
+- Postgres / S3 / Redis modelled as `ApplicationComponent` — they are
+  infrastructure (`SystemSoftware`), not application logic.
+- WILMA-imported elements: keep the type WILMA gives them. Most are
+  `ApplicationComponent` because they represent waterschap-shared
+  building blocks (Zaakbeheercomponent, Notificatierouteringcomponent),
+  which is intentional — the waterschap *does* build those.
+
 ## ArchiMate Element Vocabulary (v1 supported types)
 
 ArchiMate has many element types; this skill ships with the four

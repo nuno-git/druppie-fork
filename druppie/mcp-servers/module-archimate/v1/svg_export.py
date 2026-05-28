@@ -184,6 +184,37 @@ def render_view_svg(root: ET.Element, view: ET.Element) -> str | None:
     view_id = _attr(view, "identifier") or "view"
     prefix = f"am-{view_id[-8:]}"
 
+    # Layer bands — subtle horizontal background per ArchiMate layer
+    # that contains elements. Helps the reader spot the canonical stack
+    # (Motivation top, then Business → Application → Technology) at a
+    # glance, without having to read every box colour. Drawn first so
+    # nodes and edges paint on top.
+    band_xml_parts: list[str] = []
+    layer_bboxes: dict[str, list[int]] = {}
+    for p in positioned:
+        info = elements_by_id.get(p["ref"], {})
+        layer = info.get("layer", "Unknown")
+        if layer in ("Unknown", "Other"):
+            continue
+        x = p["x"] + offset_x
+        y = p["y"] + offset_y
+        bb = layer_bboxes.get(layer)
+        if bb is None:
+            layer_bboxes[layer] = [x, y, x + p["w"], y + p["h"]]
+        else:
+            bb[0] = min(bb[0], x)
+            bb[1] = min(bb[1], y)
+            bb[2] = max(bb[2], x + p["w"])
+            bb[3] = max(bb[3], y + p["h"])
+    for layer, (lx, ly, rx, ry) in layer_bboxes.items():
+        fill = LAYER_COLORS.get(layer, "#FFFFFF")
+        bw = rx - lx + 2 * 18
+        bh = ry - ly + 2 * 14
+        band_xml_parts.append(
+            f'<rect x="{lx - 18}" y="{ly - 14}" width="{bw}" height="{bh}" '
+            f'rx="6" ry="6" fill="{fill}" fill-opacity="0.18" stroke="none"/>'
+        )
+
     # Nodes
     node_xml_parts: list[str] = []
     node_by_id = {p["id"]: p for p in positioned}
@@ -246,6 +277,7 @@ def render_view_svg(root: ET.Element, view: ET.Element) -> str | None:
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" '
         f'viewBox="0 0 {width} {height}">'
         f'{_marker_defs(prefix)}'
+        f'{"".join(band_xml_parts)}'
         f'{"".join(conn_xml_parts)}'
         f'{"".join(node_xml_parts)}'
         f'</svg>'
