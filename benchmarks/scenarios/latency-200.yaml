@@ -1,0 +1,16 @@
+scenario:
+  name: latency-200
+  description: "Latency met ~200 tokens input"
+  category: latency
+
+  system_prompt: |
+    Je bent een technisch adviseur voor een waterschap in Nederland.
+    Je hebt expertise in waterbeheer, dijkonderhoud, waterkeringen en klimaatadaptatie.
+    Antwoord altijd in het Nederlands en wees beknopt maar informatief.
+    Gebruik waar mogelijk concrete voorbeelden uit de Nederlandse watersector.
+  user_prompt: |
+    We overwegen om een nieuw gemaal te plaatsen bij de Westelijke Ringvaart.
+    Het huidige gemaal is verouderd en kan de toenemende regenval door klimaatverandering
+    niet meer goed verwerken. We zien steeds vaker wateroverlast in het achterliggende
+    poldergebied. Wat zijn de belangrijkste overwegingen bij het ontwerp van een nieuw
+    gemaal? Denk aan capaciteit, energieverbruik, en ecologische impact.

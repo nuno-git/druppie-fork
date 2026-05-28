@@ -1,0 +1,8 @@
+scenario:
+  name: generate-100
+  description: "Generatiesnelheid met ~100 tokens output"
+  category: generation
+  max_output_tokens: 100
+
+  system_prompt: "Je bent een behulpzame assistent. Antwoord in het Nederlands."
+  user_prompt: "Geef een korte samenvatting van de voordelen van containerisatie met Docker."

@@ -1,0 +1,94 @@
+# LLM Performance Benchmark Configuration
+# Endpoints and models for benchmarking on Nutanix/Kubernetes infrastructure.
+
+endpoints:
+  azure_foundry:
+    base_url: "https://druppie-resource.openai.azure.com/openai/v1"
+    api_key: "${FOUNDRY_API_KEY}"
+    ssl_verify: true
+    auth_type: "bearer"
+
+  # Ollama — momenteel offline
+  # ollama:
+  #   base_url: "https://ollama.waterschap.org/v1"
+  #   api_key: ""
+  #   ssl_verify: false
+
+  # Toekomstige endpoints op Nutanix/K8s:
+  # vllm:
+  #   base_url: "https://vllm.nutanix.internal/v1"
+  #   api_key: "${VLLM_API_KEY}"
+  #   ssl_verify: true
+
+models:
+  - endpoint: azure_foundry
+    model: GPT-5-MINI
+    display_name: "GPT-5 Mini"
+    max_context: 131072
+    parameters: "unknown"
+    quantization: null
+    kv_cache_quant: null
+    flash_attention: false
+    gpu_layers: -1
+    notes: "Azure AI Foundry hosted, temperature forced to 1.0"
+
+  # Ollama modellen — activeer wanneer endpoint beschikbaar is
+  # - endpoint: ollama
+  #   model: gpt-oss:120b
+  #   display_name: "GPT-OSS 120B"
+  #   max_context: 32768
+  #   parameters: "120B"
+  #   quantization: "Q4_K_M"
+  #   kv_cache_quant: null
+  #   flash_attention: true
+  #   gpu_layers: -1
+  #   notes: ""
+
+  # - endpoint: ollama
+  #   model: gpt-oss:20b
+  #   display_name: "GPT-OSS 20B"
+  #   max_context: 32768
+  #   parameters: "20B"
+  #   quantization: "Q4_K_M"
+  #   kv_cache_quant: null
+  #   flash_attention: true
+  #   gpu_layers: -1
+  #   notes: ""
+
+  # - endpoint: ollama
+  #   model: qwen3-coder:30b
+  #   display_name: "Qwen3 Coder 30B"
+  #   max_context: 131072
+  #   parameters: "30B"
+  #   quantization: "Q4_K_M"
+  #   kv_cache_quant: null
+  #   flash_attention: true
+  #   gpu_layers: -1
+  #   notes: ""
+
+  # - endpoint: ollama
+  #   model: deepseek-r1:32b
+  #   display_name: "DeepSeek R1 32B"
+  #   max_context: 131072
+  #   parameters: "32B"
+  #   quantization: "Q4_K_M"
+  #   kv_cache_quant: null
+  #   flash_attention: true
+  #   gpu_layers: -1
+  #   notes: ""
+
+  # - endpoint: ollama
+  #   model: gemma3:27b
+  #   display_name: "Gemma3 27B"
+  #   max_context: 131072
+  #   parameters: "27B"
+  #   quantization: "Q4_K_M"
+  #   kv_cache_quant: null
+  #   flash_attention: true
+  #   gpu_layers: -1
+  #   notes: ""
+
+settings:
+  runs_per_test: 3
+  warmup_runs: 1
+  timeout_seconds: 300

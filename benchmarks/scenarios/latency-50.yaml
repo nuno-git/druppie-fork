@@ -1,0 +1,7 @@
+scenario:
+  name: latency-50
+  description: "Latency met ~50 tokens input"
+  category: latency
+
+  system_prompt: "Je bent een behulpzame assistent. Geef een kort antwoord."
+  user_prompt: "Wat is waterbeheer en waarom is het belangrijk voor Nederland?"

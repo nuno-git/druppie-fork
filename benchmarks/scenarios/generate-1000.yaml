@@ -1,0 +1,16 @@
+scenario:
+  name: generate-1000
+  description: "Generatiesnelheid met ~1000 tokens output"
+  category: generation
+  max_output_tokens: 1000
+
+  system_prompt: "Je bent een senior software architect. Antwoord in het Nederlands met gedetailleerde uitleg."
+  user_prompt: |
+    Schrijf een gedetailleerd technisch ontwerp voor een event-driven microservices
+    architectuur voor een waterbeheer organisatie. Behandel de volgende onderdelen:
+    - Event bus keuze (Kafka vs RabbitMQ vs NATS)
+    - Service decomposition strategie
+    - Data consistency patterns (saga, outbox)
+    - Monitoring en observability
+    - Deployment strategie op Kubernetes
+    Geef per onderdeel concrete technologiekeuzes met motivatie.
