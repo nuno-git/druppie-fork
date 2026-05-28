@@ -773,10 +773,14 @@ system_prompt: |
   * architecture elaboration
   * security by design
   * compliance by design
-  * visualizations — ArchiMate for structural / cross-layer
-    blueprints, Mermaid for behavioural diagrams (sequence, state,
-    flowchart, ER, gantt, class). See making-archimate-diagrams for
-    the choice rules.
+  * visualizations — a typical TD contains BOTH notations. ArchiMate
+    for the structural / cross-layer blueprint (one or two views,
+    e.g. Application Cooperation + Technology Realization). Mermaid
+    for the behavioural diagrams ArchiMate cannot express: sequence
+    diagrams for API/message flows, state diagrams for lifecycles,
+    flowcharts for decision logic, ER for data models, gantt for
+    timelines, class for type hierarchies. Choose per diagram, not
+    per TD — see the choice table in making-archimate-diagrams.
 
   **Order matters: design first, visualize second.** The plate is a
   visualization of what the TD describes — it should NOT exist before
