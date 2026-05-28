@@ -343,3 +343,85 @@ Last updated: 2026-03-24
   - Optional policy: auto-purge packages with critical vulnerabilities
   - Dashboard or log aggregation for scan results over time
 - **Priority:** Medium — important for continuous security posture in production environments.
+
+---
+
+## ArchiMate End-to-End — Deferred Items (v2+)
+
+Branch `Archimate-end-to-end` delivers ArchiMate generation, rendering, and incremental feedback. The following items were explicitly deferred during planning and are tracked here for future iterations.
+
+### Edge-Routing Upgrade: Server-Side libavoid
+
+- **Current state (v1):** Client-side `elkjs` orthogonal routing with `spacing.edgeNode` 60-80px. "Good enough" but can still produce lines through elements in dense views.
+- **Desired improvement:** Server-side ELK Java microservice with `org.eclipse.elk.alg.libavoid` integration (Adaptagrams, LGPL). libavoid does A*-based orthogonal routing through a visibility-graph, guarantees object avoidance, and supports fixed node positions. Service returns edge-paths as JSON; client renders.
+- **Priority:** Medium — only when the v1 routing visibly fails on common architect workloads.
+- **Alternative:** Investigate WASM-port of libavoid if one materializes — keeps client-side rendering with libavoid quality.
+
+### Full 7-Layer ArchiMate Support
+
+- **Current state (v1):** Business, Application, Technology, Motivation layers covered by the write-MCP and renderer.
+- **Desired improvement:** Add Strategy, Physical, Implementation & Migration layers (Capability, Resource, Equipment, Facility, WorkPackage, Plateau, Gap, etc.). Each new element type needs (a) write-tool validation, (b) renderer-shape, (c) correct layer-color in archimate-js.
+- **Priority:** Medium — depends on demand from architects beyond software-architecture TDs.
+
+### Bizzdesign Integration
+
+- **Current state (v1):** Out-of-scope. ArchiMate lives in Gitea per project + WILMA read-only reference. No connection to a central EA repository.
+- **Desired improvement:** Conditional Bizzdesign-koppeling:
+  - **(a) Context import:** read views/elements from other Bizzdesign-modellen as additional reference context (similar to how WILMA works today)
+  - **(b) Write-back:** push project views to a central Bizzdesign EA repository on demand
+- **Constraint:** Only viable with local LLMs (data-residency). With Foundry-hosted LLMs depends on the data-residency policy per organization.
+- **Priority:** Low — conditional on customer demand and LLM-hosting strategy.
+
+### Approval-Gate Relaxation
+
+- **Current state (v1):** All ArchiMate write tools (create_*, update_*, delete_*, save_model, request_full_relayout) require architect approval per AC5.
+- **Desired improvement:** If iteration with all-tools-gated proves too slow in practice, relax `create_*` and `add_to_view` to ungated (keep delete_*, update_*, save_model gated for destructive/overwriting ops).
+- **Priority:** Medium — revisit after first real architect uses the v1 flow.
+
+### Interactive Editing in TD Viewer
+
+- **Current state (v1):** archimate-js renders ArchiMate views read-only with pan/zoom in the Druppie TD viewer.
+- **Desired improvement:** Enable archimate-js's drag-to-reposition and inline-edit features so architects can fine-tune layouts without leaving the browser. Changes flow back to `docs/architecture.archimate` via a new "save edits" action.
+- **Priority:** Medium — significantly improves architect ergonomics once core flow works.
+
+### Webhook-Based SVG Regeneration
+
+- **Current state (v1):** Architect-agent generates SVG-exports to `docs/diagrams/*.svg` on every `save_model` call.
+- **Desired improvement:** Gitea webhook that triggers a renderer-service on every commit touching `*.archimate`, regenerating SVGs automatically. Decouples SVG-generation from the agent — survives manual edits to `.archimate` files outside Druppie.
+- **Priority:** Low — only useful when architects edit `.archimate` outside the agent flow.
+
+### ArchiMate Specializations (Custom Element Types)
+
+- **Current state (v1):** Only standard ArchiMate 3.2 element types supported.
+- **Desired improvement:** Support custom specializations (e.g., a `BusinessActor` specialized as "Customer" or "Supplier"). Requires write-MCP tools for `create_specialization`, `update_specialization`, plus renderer support for stereotype-rendering on the canvas.
+- **Priority:** Low — most TDs work with standard types.
+
+### Custom Viewpoints
+
+- **Current state (v1):** Generic views (no viewpoint filter).
+- **Desired improvement:** ArchiMate's viewpoint mechanism — a viewpoint defines which element-types and relationship-types are relevant for a specific stakeholder concern (e.g., Information Structure Viewpoint, Application Cooperation Viewpoint). Write-MCP would validate that elements added to a view conform to its viewpoint.
+- **Priority:** Low — advanced ArchiMate feature, useful for compliance-heavy contexts.
+
+### Cross-Project View References
+
+- **Current state (v1):** Each project's `architecture.archimate` is self-contained (WILMA references are copied in).
+- **Desired improvement:** Federate — agent can reference a view from another project's `architecture.archimate` (e.g., a shared core-platform view used by multiple application projects). Requires resolution mechanism + read-only access cross-project.
+- **Priority:** Low — relevant once multiple coupled projects exist in the same Druppie instance.
+
+### Concurrent-Edit Conflict Resolution
+
+- **Current state (v1):** Architect saves via `save_model` → write goes through; if two sessions edit the same `.archimate` concurrently the second push gets a git-conflict error and the architect must resolve manually.
+- **Desired improvement:** Detect concurrent edits at `save_model` time, present a diff-UI in the TD viewer showing the conflicting nodes/edges, let architect choose per-element which version wins.
+- **Priority:** Low — concurrent architect edits on the same project are rare.
+
+### WILMA Version Pinning
+
+- **Current state (v1):** Single WILMA model loaded in module-archimate; all projects reference the same version.
+- **Desired improvement:** Per-project pin: `project.archimate-config.yaml` declares `wilma_version: 1.2.3` and the MCP serves the pinned snapshot. Allows projects to upgrade WILMA on their own schedule without breaking stable references.
+- **Priority:** Low — only relevant once WILMA receives versioned releases.
+
+### Property Definitions in Write-MCP
+
+- **Current state (v1):** Write-MCP creates elements with inline properties using existing propertyDefinitions from the loaded file (or skips properties).
+- **Desired improvement:** Full `propertyDefinition` management — `create_property_definition`, `update_property_definition`, validation that properties on elements reference valid definitions.
+- **Priority:** Medium — needed once architects define organization-specific properties (e.g., "Compliance-status", "Owner-department").
