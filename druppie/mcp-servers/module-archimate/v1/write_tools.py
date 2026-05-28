@@ -801,6 +801,51 @@ def _validate_view_impl(doc, view) -> list[dict[str, Any]]:
                     ),
                     "relationship_id": rel_id,
                 })
+            # Access targets a passive data element in ArchiMate.
+            # ApplicationComponent → ApplicationComponent via Access is the
+            # most common mis-use we've seen; the architect probably meant
+            # Serving (caller is served by callee) or Used-By.
+            if tgt_type not in {"DataObject", "BusinessObject", "Artifact", "Representation", "Contract"}:
+                errors.append({
+                    "code": "access_target_not_passive",
+                    "message": (
+                        f"Access targets '{tgt_type}', but Access is for "
+                        f"passive data elements (DataObject, BusinessObject, "
+                        f"Artifact, Representation, Contract). For active "
+                        f"elements use Serving (callee → caller) or Triggering."
+                    ),
+                    "relationship_id": rel_id,
+                })
+
+    # --- Element-type sanity checks ---
+
+    # Databases / persistent stores modelled as ApplicationComponent are a
+    # frequent class of error: a Postgres / Mongo / etc. is either a
+    # SystemSoftware (the engine, Technology layer) or a DataObject (the
+    # logical data, Application layer). Naming gives us a strong hint.
+    _STORAGE_HINTS = ("database", "datastore", "data store", "postgres",
+                      "postgresql", "mysql", "mongodb", "mongo", "redis",
+                      "kafka", "elasticsearch", "-db", " db ", "(db)")
+    for ref in nodes_on_view:
+        el = doc.find_element(ref)
+        if el is None:
+            continue
+        el_type = el.get(xsi_type, "")
+        name_el = el.find("am:name", ns)
+        name = (name_el.text or "") if name_el is not None else ""
+        name_lc = name.lower()
+        looks_like_storage = any(hint in name_lc for hint in _STORAGE_HINTS)
+        if looks_like_storage and el_type not in {"SystemSoftware", "DataObject", "Artifact", "Node", "Device"}:
+            errors.append({
+                "code": "storage_as_application_component",
+                "message": (
+                    f"Element '{name}' looks like a database / persistent "
+                    f"store but is typed as '{el_type}'. Use SystemSoftware "
+                    f"(Technology layer) for the engine, or DataObject "
+                    f"(Application layer) for the logical data."
+                ),
+                "element_id": ref,
+            })
 
     # --- Layout checks ---
 
