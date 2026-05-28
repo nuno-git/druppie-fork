@@ -1498,3 +1498,513 @@ The research phase exposes a genuine architectural tension that network-level is
 Resolution A (accept schemas as non-sensitive) is the most pragmatic if the business model allows it — most SaaS platforms treat their API docs as public. Resolution C (human bridge) is the most secure but requires manual work for every project. Resolution B (feature-only FD) is theoretically clean but practically fragile.
 
 This decision is a **product/architecture decision**, not a security decision. It depends on: what is Druppie's competitive moat? Is it the existence of the modules (known to customers), or the data they return (only accessible through the platform)?
+
+---
+
+## Revised Architecture: Clean Room Research + Offline Build + Internal Registry
+
+> **Note:** This section describes an evolved architecture that changes the pipeline from the earlier sections above. The earlier sections describe a model where developers have internet access during the coding phase. This section proposes removing internet from developers entirely — front-loading internet access into dedicated research steps with human approval gates.
+
+### Why This Change
+
+The earlier "deferred-modules" model still had a fundamental weakness: the developer (with internet) received information derived from modules (via the research phase, plan text, or API schemas). Every bridge between module knowledge and internet-connected agents was a potential exfiltration path.
+
+The new model eliminates the premise entirely: **no build agent ever has internet access.** Internet access is reserved for dedicated research and acquisition steps in ephemeral clean rooms, with human review at the boundary.
+
+### Core Principle
+
+**Developers NEVER have internet. Period.**
+
+Internet access is ONLY for dedicated research and acquisition agents running in ephemeral clean rooms. An expert (dev/architect role) reviews all gathered materials at approval gates. Approved packages are pushed to an internal mirror registry. Approved data is transferred to the shared session volume. (/registry is available from developer sandbox) All subsequent build/develop/test agents work fully offline.
+
+### New Per-Agent Network Profiles
+
+#### Clean Room Agents (internet, ephemeral, NO shared volume)
+
+| Agent | Networks | Rationale |
+|-------|----------|-----------|
+| research_agent | `[internet]` | Browse internet for package research, documentation, data sources, code examples. Produces research report + package list + data source list. Ephemeral clean room. |
+| package_agent | `[internet]` | Download approved packages from internet, push to internal mirror registry. Ephemeral clean room. |
+| data_fetch_agent | `[internet]` | Fetch approved public data (CBS, APIs), write to staging volume. Ephemeral clean room. |
+
+#### Build Agents (shared volume, NO internet, internal registry)
+
+| Agent | Networks | Rationale |
+|-------|----------|-----------|
+| installer | `[]` (isolated) | Install all approved dependencies from internal mirror registry. No internet needed. |
+| developer | `[]` (isolated) | Write code using research report as context. Install from internal registry if needed. NO internet. |
+| test_builder | `[]` (isolated) | Write tests. Install from internal registry if needed. NO internet. |
+| module_integrator | `[modules]` | Swap mocks for real module SDK calls. Has module data, NO internet. |
+| module_tester | `[modules]` | Run integration tests against real module servers. NO internet. |
+| deployer | `[]` (isolated) | Final build, push code via proxy. No network needed. |
+
+### New Pipeline Flow
+
+```
+research_agent (clean room, internet)
+  → produces: research report, package list, data source list
+  → expert approval gate (Gate 1: review research)
+
+package_agent (clean room, internet)
+  → downloads approved packages
+  → pushes to internal mirror registry
+  → expert approval gate (Gate 2: verify packages match what was approved)
+
+data_fetch_agent (clean room, internet)
+  → fetches approved public data
+  → writes to staging volume
+  → expert approval gate (Gate 3: verify data matches what was approved)
+
+installer (shared volume, NO internet, internal registry)
+  → pip install --index-url http://registry:8080/ ...
+
+developer (shared volume, NO internet, internal registry)
+  → writes code using research report as context
+  → installs from internal registry if needed
+  → NO internet, NO browsing docs
+
+test_builder (shared volume, NO internet, internal registry)
+  → writes tests
+  → NO internet
+
+module_integrator (shared volume, modules network, NO internet)
+  → swaps mocks for real module SDK calls
+  → has module data, no internet
+
+module_tester (shared volume, modules network, NO internet)
+  → runs integration tests
+
+deployer (shared volume, isolated, NO internet, NO modules)
+  → final build
+```
+
+### Architecture Overview
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                     DRUPPIE SANDBOX ARCHITECTURE                     │
+│                                                                      │
+│  ┌──────────────────────┐     ┌──────────────────────┐              │
+│  │  CLEAN ROOM PHASE    │     │  BUILD PHASE          │              │
+│  │                      │     │                       │              │
+│  │  research_agent ──┐  │     │  installer ──────────┐│              │
+│  │  package_agent ───┤  │     │  developer ──────────┤│              │
+│  │  data_fetch_agent ┘  │     │  test_builder ───────┘│              │
+│  │                      │     │                       │              │
+│  │  Networks: internet  │     │  Networks: isolated   │              │
+│  │  Volume: ephemeral   │     │  Volume: shared       │              │
+│  │  Staging: read/write │     │  Registry: internal   │              │
+│  └──────────┬───────────┘     └───────────────────────┘              │
+│             │                          ▲                              │
+│             │  Approval Gates          │                              │
+│             │  (dev/architect)         │                              │
+│             │                          │                              │
+│             ▼                          │                              │
+│  ┌──────────────────────┐     ┌───────┴──────────────┐              │
+│  │  STAGING VOLUME      │────▶│  SHARED VOLUME        │              │
+│  │                      │     │                       │              │
+│  │  MANIFEST.json       │     │  /workspace/          │              │
+│  │  research/           │     │    research/          │              │
+│  │  data/               │     │    data/cbs/          │              │
+│  │  packages/           │     │    src/               │              │
+│  │                      │     │    tests/             │              │
+│  └──────────────────────┘     └───────────────────────┘              │
+│                                                                      │
+│  ┌──────────────────────┐     ┌──────────────────────┐              │
+│  │  INTEGRATION PHASE   │     │  DEPLOY PHASE         │              │
+│  │                      │     │                       │              │
+│  │  module_integrator   │     │  deployer             │              │
+│  │  module_tester       │     │                       │              │
+│  │                      │     │  Networks: isolated   │              │
+│  │  Networks: modules   │     │  Volume: shared       │              │
+│  │  Volume: shared      │     │                       │              │
+│  └──────────────────────┘     └───────────────────────┘              │
+│                                                                      │
+│  ┌──────────────────────┐                                            │
+│  │  INTERNAL REGISTRY   │  sandbox-net only, NO internet             │
+│  │  (pypiserver/devpi)  │  Accessible by build + integration agents  │
+│  │  Port: 8080          │  Populated by package_agent (clean room)   │
+│  └──────────────────────┘                                            │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+### Volume Architecture
+
+Three types of volumes with strict access controls:
+
+```
+Docker Volumes per session:
+  druppie-ws-{session}-{scope}       — shared workspace (code, approved data, research reports)
+  druppie-staging-{session}-{scope}  — staging volume (transfers between clean room and shared volume)
+  druppie-registry-cache             — internal mirror registry data (persists across sessions)
+  sandbox_dep_cache                  — shared package cache (pip, npm) — persists across sessions
+
+Internal Services:
+  druppie-internal-registry          — private PyPI/npm mirror on sandbox-net (NO internet)
+```
+
+#### Volume Access Rules
+
+| Volume | Who Can Mount | Who Can Write | Who Can Read |
+|--------|--------------|--------------|-------------|
+| `druppie-ws-{session}-{scope}` | Build agents (installer, developer, test_builder, module_integrator, module_tester, deployer) | Build agents | Build agents |
+| `druppie-staging-{session}-{scope}` | Clean room agents OR build agents (never simultaneously) | Clean room agents write, build agents validate+copy | Both (alternating) |
+| `druppie-registry-cache` | Internal registry service | Internal registry service | Internal registry service |
+| `sandbox_dep_cache` | Build agents | Build agents | Build agents |
+
+**Critical rule:** Clean room agents NEVER mount the shared workspace volume. Build agents NEVER mount the internet network.
+
+### Internal Mirror Registry
+
+The internal mirror registry is a private package registry running inside the Druppie infrastructure on `sandbox-net` (no internet):
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  INTERNAL MIRROR REGISTRY (sandbox-net, NO internet)            │
+│                                                                  │
+│  Services:                                                       │
+│    • pypiserver or devpi on port 8080 (sandbox-net only)        │
+│    • Optional: verdaccio for npm packages                       │
+│                                                                  │
+│  Storage:                                                        │
+│    druppie-registry-cache volume                                 │
+│    Contains all approved packages for all sessions               │
+│                                                                  │
+│  Access:                                                         │
+│    pip install --index-url http://registry:8080/simple/ ...     │
+│    npm install --registry http://registry:8080/ ...             │
+│                                                                  │
+│  How packages get in:                                            │
+│    1. package_agent downloads from PyPI in clean room            │
+│    2. Expert reviews package list (Gate 2)                      │
+│    3. Approved packages pushed to registry via sandbox-net       │
+│    4. Registry verifies package integrity (hash check)           │
+│                                                                  │
+│  How packages get out:                                           │
+│    Build agents pip install from registry on sandbox-net         │
+│    No internet needed — registry is local                        │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Clean Room Pattern
+
+Clean rooms are ephemeral containers with internet access but NO shared volume and NO module data:
+
+```
+Clean Room Container:
+  ┌─────────────────────────────────────────────┐
+  │  Ephemeral workspace (/)                     │
+  │    - NOT a named Docker volume               │
+  │    - Destroyed when container stops          │
+  │                                              │
+  │  Staging mount (/staging)                    │
+  │    - Named Docker volume                     │
+  │    - ONLY way data leaves the clean room     │
+  │    - Must include MANIFEST.json              │
+  │                                              │
+  │  Networks:                                   │
+  │    - sandbox-net (base)                      │
+  │    - sandbox-inet (internet)                 │
+  │    - NOT sandbox-modules                     │
+  │                                              │
+  │  NOT mounted:                                │
+  │    - Shared workspace volume                 │
+  │    - Module data volumes                     │
+  └─────────────────────────────────────────────┘
+```
+
+**Lifecycle:**
+1. Container created with ephemeral workspace + staging mount
+2. Agent performs task (research, download packages, fetch data)
+3. Agent writes outputs + MANIFEST to staging
+4. Agent calls done()
+5. Container destroyed
+6. Ephemeral workspace destroyed (data gone)
+7. Staging volume survives for validation
+
+### Staging Volume + MANIFEST Transfer
+
+The staging volume is the ONLY bridge between clean rooms and the shared volume:
+
+```
+Transfer Flow:
+
+  1. Production step:
+     a. Clean room agent writes outputs to /staging/
+        - /staging/research/report.md
+        - /staging/data/cbs/population.json
+        - /staging/packages/numpy-1.26.0.whl
+     b. Clean room agent writes MANIFEST.json to /staging/
+        - Lists all files, checksums, sizes, types
+        - Declares source agent, source network, target
+     c. Container stops → ephemeral workspace destroyed
+        → Only what's in /staging/ survives
+
+  2. Validation step (by receiving agent or orchestration):
+     a. Read MANIFEST.json from staging
+     b. Verify all declared files exist
+     c. Verify all checksums match
+     d. Verify no extra files (not in MANIFEST)
+     e. Verify no excluded patterns (.git, node_modules, __pycache__)
+     f. Verify file type + size limits
+
+  3. Transfer step:
+     a. Copy validated files from staging to shared volume /workspace/
+     b. Log transfer (audit trail)
+     c. Purge staging volume
+```
+
+#### MANIFEST Schema
+
+```json
+{
+  "version": "1.0",
+  "source_agent": "data_fetch_agent",
+  "source_network": "internet",
+  "target_agent": "installer",
+  "target_network": "isolated",
+  "timestamp": "2026-05-28T10:30:00Z",
+  "files": [
+    {
+      "path": "data/cbs/population.json",
+      "checksum_sha256": "a1b2c3...",
+      "size_bytes": 4096,
+      "type": "data"
+    },
+    {
+      "path": "research/report.md",
+      "checksum_sha256": "d4e5f6...",
+      "size_bytes": 8192,
+      "type": "research"
+    }
+  ],
+  "excluded_patterns": [
+    ".git/**",
+    "node_modules/**",
+    "__pycache__/**",
+    "*.pyc",
+    ".env"
+  ]
+}
+```
+
+#### Transfer Validation Rules
+
+1. **MANIFEST must be valid JSON** with all required fields
+2. **Every file in MANIFEST must exist** in staging volume
+3. **Every file checksum must match** — tampered files are rejected
+4. **No files outside MANIFEST** — extra files in staging are flagged and deleted
+5. **No excluded patterns** — files matching excluded patterns are rejected
+6. **File type validation** — only declared types (source, config, data, test, research) allowed
+7. **Size limits** — individual file max 10MB, total transfer max 100MB (configurable)
+
+If ANY validation fails:
+- Transfer is rejected
+- Staging volume is purged
+- Alert is logged
+- Pipeline pauses for dev/architect review
+
+### Approval Gate Process
+
+Three approval gates separate the clean room phase from the build phase:
+
+```
+Gate 1: Research Review
+  After: research_agent completes
+  Reviewer: dev/architect (human)
+  What they see:
+    - Research report (package recommendations, data sources, architecture)
+    - Package list with versions and justification
+    - Data source URLs and access methods
+  What they approve/reject:
+    - Approve: proceed to package download
+    - Reject with feedback: research_agent re-runs with corrections
+    - Partial approve: approve specific packages/data, reject others
+
+Gate 2: Package Verification
+  After: package_agent downloads and pushes to registry
+  Reviewer: dev/architect (human)
+  What they see:
+    - Package list (from Gate 1 approval)
+    - Actual packages downloaded (names, versions, hashes)
+    - Diff: any packages differ from what was approved?
+  What they verify:
+    - Package names + versions match Gate 1 approval
+    - No extra packages added
+    - Package hashes match PyPI published hashes (tamper check)
+
+Gate 3: Data Verification
+  After: data_fetch_agent fetches public data
+  Reviewer: dev/architect (human)
+  What they see:
+    - Data source list (from Gate 1 approval)
+    - Actual data files fetched (names, sizes, checksums)
+    - Sample of data content (first 50 lines per file)
+  What they verify:
+    - Data matches what was described in research report
+    - No unexpected files
+    - File sizes are reasonable
+```
+
+### Research Step Design
+
+The research step is the foundation of the clean room architecture. It replaces live internet browsing during development with a curated, human-reviewed knowledge artifact.
+
+The research agent gathers everything the developer will need:
+1. **Package research** — "what libraries do I need?" → package list with exact versions
+2. **Documentation lookup** — "how does library X work?" → key docs excerpts in research report
+3. **Data source discovery** — "what public data is available?" → data sources with URLs, formats, schemas
+4. **Code pattern examples** — "how do I implement Y?" → code snippets in research report
+5. **Architecture recommendations** — "what's the best approach?" → architecture section in research report
+
+#### Research Report Structure
+
+```markdown
+# Research Report: [Application Title]
+
+## Executive Summary
+[2-3 sentences: what we're building, what we found, recommended approach]
+
+## Required Packages
+| Package | Version | Purpose | Notes |
+|---------|---------|---------|-------|
+| pandas  | 2.2.0   | Data manipulation | Core dependency |
+| plotly  | 5.18.0  | Interactive charts | ... |
+| dash    | 2.14.0  | Dashboard framework | ... |
+
+## Data Sources
+| Source | URL | Format | Fields | Access |
+|--------|-----|--------|--------|--------|
+| CBS Population | https://opendata.cbs.nl/... | JSON | Region, Year, Population | Free, no auth |
+
+## API Documentation Summary
+[pandas DataFrame]: table operations, filtering, groupby, merge
+[Plotly Express]: bar charts, scatter plots, choropleth maps
+[Dash Framework]: layout components, callbacks, deployment
+
+## Code Patterns
+### Data Fetching Pattern
+` ` `python
+import requests
+response = requests.get("https://opendata.cbs.nl/...")
+data = response.json()
+df = pd.DataFrame(data["value"])
+` ` `
+
+### Dashboard Pattern
+` ` `python
+app = dash.Dash(__name__)
+app.layout = html.Div([...])
+@app.callback(...)
+def update_chart(...):
+    ...
+` ` `
+
+## Architecture Recommendation
+[Recommended approach with justification]
+```
+
+#### Why Research Reports Replace Live Browsing
+
+The developer doesn't need to browse the internet because:
+- **All docs are in the report** — key API references, code examples, patterns
+- **All packages are pre-approved** — no need to search for alternatives
+- **All data sources are documented** — URLs, schemas, access methods
+- **If something's missing** → re-plan triggers additional research (new clean room cycle)
+
+### How This Resolves the Tensions from Earlier Sections
+
+The earlier sections in this document wrestled with a fundamental tension: the developer needs internet access for a productive coding experience, but giving internet to any agent that also has (or will have) module data creates an exfiltration risk.
+
+**This new model resolves the tension by eliminating the premise:** developers never have internet access, period. Instead, internet access is front-loaded into dedicated research and acquisition steps in ephemeral clean rooms, with human review at the boundary.
+
+**Previously unresolved questions — now resolved:**
+
+| Question | Answer in the new model |
+|----------|------------------------|
+| How does the developer browse docs? | Research report. Research agent gathers docs. Developer reads the curated report. |
+| How does the developer install packages? | Internal mirror registry. Pre-downloaded, pre-approved. `pip install --index-url http://registry:8080/` |
+| How does data get from internet to build? | data_fetch_agent fetches in clean room → staging → human review → shared volume |
+| What if module info needs to reach developer? | Module API schemas go in the research report (Resolution A: schemas as non-sensitive platform docs) |
+| Isn't this slower? | Slightly. But approval gates are quick, registry is cached, and security is absolute. |
+
+### Container Configuration
+
+```yaml
+# Clean room agent (ephemeral, internet)
+research_agent:
+  container:
+    image: "druppie-sandbox:latest"
+    workspace: "ephemeral"  # no named volume
+    staging: "druppie-staging-{session}-{scope}"  # mounted at /staging
+    networks:
+      - internet
+    environment:
+      - WORKSPACE_MODE=clean_room
+      - STAGING_PATH=/staging
+
+# Build agent (shared volume, offline)
+developer:
+  container:
+    image: "druppie-sandbox:latest"
+    workspace: "druppie-ws-{session}-{scope}"  # mounted at /workspace
+    networks:
+      - isolated
+    environment:
+      - WORKSPACE_MODE=shared
+      - REGISTRY_URL=http://registry:8080/
+
+# Module-facing agent (shared volume, modules)
+module_integrator:
+  container:
+    image: "druppie-sandbox:latest"
+    workspace: "druppie-ws-{session}-{scope}"
+    networks:
+      - modules
+    environment:
+      - WORKSPACE_MODE=shared
+```
+
+### Security Properties
+
+| Property | How It's Enforced |
+|----------|-------------------|
+| Clean room agents cannot read shared volume | Shared volume is never mounted on clean room containers |
+| Clean room agent data is ephemeral | No named volume — container-local filesystem destroyed on stop |
+| Build agents cannot reach internet | No sandbox-inet network on build agent containers |
+| Module data cannot reach internet | Module containers have no internet network |
+| Packages come from trusted source | Internal registry populated only by approved package_agent |
+| Transfer is explicit | MANIFEST + staging volume — no implicit file sharing |
+| Transfer is validated | Checksums, file type checks, size limits |
+| Transfer is auditable | MANIFEST is a complete record of what crossed the boundary |
+| Transfer is human-reviewed | Approval gates between every phase boundary |
+| No data residue from internet agents | Ephemeral workspace destroyed when container stops |
+| Staging is unidirectional per phase | Clean room writes → staging → shared volume. Never backwards simultaneously. |
+
+### Re-Planning
+
+When a build agent needs something that wasn't in the original research:
+
+1. **Build agent requests re-plan** (from shared volume — NO internet)
+2. **Dev/architect approves** the re-plan request
+3. **Determine re-plan type:**
+   - **Missing package:** `package_agent` runs in clean room, pushes to registry, developer resumes
+   - **Missing research:** `research_agent` runs in clean room, produces targeted research, approval gate, transferred to shared volume
+   - **Missing data:** `data_fetch_agent` runs in clean room, fetches additional data, approval gate, transferred to shared volume
+4. **Shared volume is NEVER at risk** — clean room agents never mount it
+5. **Pipeline resumes** from the requesting agent's step
+
+### Comparison: Previous Design vs Clean Room Architecture
+
+| Aspect | Previous (developer has internet) | New (developers never have internet) |
+|--------|-----------------------------------|--------------------------------------|
+| Developer network | `[internet]` — can browse freely | `[]` (isolated) — fully offline |
+| Package source | Live PyPI (internet) | Internal mirror registry (sandbox-net) |
+| Documentation | Live browsing | Research report (human-reviewed) |
+| Data fetching | Agent fetches directly from internet | Dedicated clean room agent + approval gate |
+| Data residue risk | High — internet agent's files persist in shared volume | None — clean room is ephemeral, staging is purged |
+| Module data exposure | Internet agent could read files left by module agents | Internet agent never sees shared volume |
+| Transfer mechanism | Implicit (shared filesystem) | Explicit (staging + MANIFEST + approval gate) |
+| Validation | None | Checksums, type checks, size limits, human review |
+| Re-planning safety | Must destroy workspace to re-enable internet | New clean room cycle — shared volume never at risk |
+| Security guarantee | Module data not exfiltrated (no network when module data present) | ABSOLUTE — no agent ever has both internet and shared volume |
