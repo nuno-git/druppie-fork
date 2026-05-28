@@ -30,6 +30,10 @@
 #   MCP LLM:        9008
 #   MCP Data Access:9010
 #   MCP Vision:     9011
+#   MCP DSP ZGW:    9201
+#   MCP Notificatie:9202
+#   MCP PDOK Geo:   9203
+#   MCP Objectstore:9204
 #   Adminer:        8081
 
 services:
@@ -405,6 +409,94 @@ services:
       - druppie-new-network
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9010/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  module-dsp-zgw:
+    build:
+      context: ./druppie/mcp-servers
+      dockerfile: module-dsp-zgw/Dockerfile
+    container_name: druppie-module-dsp-zgw
+    profiles: [infra, dev, prod]
+    environment:
+      MCP_PORT: "9201"
+      ZGW_BASE_URL: ${ZGW_BASE_URL:-https://zaken.example.com}
+      ZGW_CLIENT_ID: ${ZGW_CLIENT_ID:-}
+      ZGW_CLIENT_SECRET: ${ZGW_CLIENT_SECRET:-}
+      ZGW_BRONORGANISATIE: ${ZGW_BRONORGANISATIE:-}
+      ZWG_VERANTWOORDELIJKE_ORGANISATIE: ${ZWG_VERANTWOORDELIJKE_ORGANISATIE:-}
+    ports:
+      - "${MCP_DSP_ZGW_PORT:-9201}:9201"
+    networks:
+      - druppie-new-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9201/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  module-notificatie:
+    build:
+      context: ./druppie/mcp-servers
+      dockerfile: module-notificatie/Dockerfile
+    container_name: druppie-module-notificatie
+    profiles: [infra, dev, prod]
+    environment:
+      MCP_PORT: "9202"
+      NOTIFICATIE_BASE_URL: ${NOTIFICATIE_BASE_URL:-http://localhost:25}
+      SMTP_FROM: ${SMTP_FROM:-noreply@example.com}
+    ports:
+      - "${MCP_NOTIFICATIE_PORT:-9202}:9202"
+    networks:
+      - druppie-new-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9202/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  module-pdok-geocode:
+    build:
+      context: ./druppie/mcp-servers
+      dockerfile: module-pdok-geocode/Dockerfile
+    container_name: druppie-module-pdok-geocode
+    profiles: [infra, dev, prod]
+    environment:
+      MCP_PORT: "9203"
+    ports:
+      - "${MCP_PDOK_GEOCODE_PORT:-9203}:9203"
+    networks:
+      - druppie-new-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9203/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  module-objectstore:
+    build:
+      context: ./druppie/mcp-servers
+      dockerfile: module-objectstore/Dockerfile
+    container_name: druppie-module-objectstore
+    profiles: [infra, dev, prod]
+    environment:
+      MCP_PORT: "9204"
+      S3_ENDPOINT_URL: ${S3_ENDPOINT_URL:-http://localhost:9000}
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY:-minioadmin}
+      S3_SECRET_KEY: ${S3_SECRET_KEY:-minioadmin}
+      S3_BUCKET_NAME: ${S3_BUCKET_NAME:-druppie-objects}
+      S3_REGION: ${S3_REGION:-us-east-1}
+    ports:
+      - "${MCP_OBJECTSTORE_PORT:-9204}:9204"
+    networks:
+      - druppie-new-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9204/health"]
       interval: 10s
       timeout: 5s
       retries: 5

@@ -314,3 +314,92 @@ mcps:
 
       - name: create_chart_from_source
         requires_approval: false
+
+  dsp-zgw:
+    url: ${MCP_DSP_ZGW_URL:-http://module-dsp-zgw:9201}
+    type: module
+    inject:
+      session_id:
+        from: session.id
+        hidden: true
+      user_id:
+        from: session.user_id
+        hidden: true
+      project_id:
+        from: project.id
+        hidden: true
+    tools:
+      - name: create_zaak
+        requires_approval: false
+
+      - name: get_zaak_status
+        requires_approval: false
+
+      - name: get_zaaktypen
+        requires_approval: false
+
+      - name: link_document_to_zaak
+        requires_approval: false
+
+  notificatie:
+    url: ${MCP_NOTIFICATIE_URL:-http://module-notificatie:9202}
+    type: module
+    inject:
+      session_id:
+        from: session.id
+        hidden: true
+      user_id:
+        from: session.user_id
+        hidden: true
+      project_id:
+        from: project.id
+        hidden: true
+    tools:
+      - name: send_email
+        requires_approval: false
+
+      - name: send_push
+        requires_approval: false
+
+  pdok-geocode:
+    url: ${MCP_PDOK_GEOCODE_URL:-http://module-pdok-geocode:9203}
+    type: module
+    inject:
+      session_id:
+        from: session.id
+        hidden: true
+      user_id:
+        from: session.user_id
+        hidden: true
+      project_id:
+        from: project.id
+        hidden: true
+    tools:
+      - name: reverse_geocode
+        requires_approval: false
+
+      - name: search_address
+        requires_approval: false
+
+  objectstore:
+    url: ${MCP_OBJECTSTORE_URL:-http://module-objectstore:9204}
+    type: module
+    inject:
+      session_id:
+        from: session.id
+        hidden: true
+      user_id:
+        from: session.user_id
+        hidden: true
+      project_id:
+        from: project.id
+        hidden: true
+    tools:
+      - name: upload_object
+        requires_approval: false
+
+      - name: get_object_url
+        requires_approval: false
+
+      - name: delete_object
+        requires_approval: false
