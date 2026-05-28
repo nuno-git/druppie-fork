@@ -247,15 +247,24 @@ def test_realistic_feedback_iteration(tmpdir: Path) -> tuple[bool, list[str]]:
     if notif not in post_positions:
         drift.append("new Notifications element was not placed")
     else:
-        # No bounding-box overlaps anywhere in the post-layout view
+        # No bounding-box overlaps anywhere in the post-layout view —
+        # except containment (one box entirely inside another), which is
+        # how visual nesting from composition/aggregation looks.
         items = [(eid, *map(int, vals)) for eid, vals in post_positions.items()]
         for i, (id_a, ax, ay, aw, ah) in enumerate(items):
             for id_b, bx, by, bw, bh in items[i + 1:]:
                 overlaps = not (
                     ax + aw <= bx or bx + bw <= ax or ay + ah <= by or by + bh <= ay
                 )
-                if overlaps:
-                    drift.append(f"layout produced overlap: {id_a} ∩ {id_b}")
+                if not overlaps:
+                    continue
+                contains_ab = (ax <= bx and ay <= by
+                               and ax + aw >= bx + bw and ay + ah >= by + bh)
+                contains_ba = (bx <= ax and by <= ay
+                               and bx + bw >= ax + aw and by + bh >= ay + ah)
+                if contains_ab or contains_ba:
+                    continue
+                drift.append(f"layout produced overlap: {id_a} ∩ {id_b}")
 
     # The snapshot_xml reference is kept above so the diff machinery is
     # still wired in if a future iteration wants byte-level invariants.

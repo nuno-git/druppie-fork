@@ -215,7 +215,21 @@ def render_view_svg(root: ET.Element, view: ET.Element) -> str | None:
         rel = relationships_by_id.get(_attr(c, "relationshipRef"))
         if not src or not tgt:
             continue
-        style = CONNECTION_STYLE.get(rel["type"] if rel else "Association", CONNECTION_STYLE["Association"])
+        rel_type = rel["type"] if rel else "Association"
+        # Skip Composition / Aggregation when one node visually contains
+        # the other — the nesting *is* the relationship, drawing the
+        # diamond marker inside the parent looks redundant and noisy.
+        if rel_type in ("Composition", "Aggregation"):
+            def _contains(a, b):
+                return (
+                    a["x"] <= b["x"]
+                    and a["y"] <= b["y"]
+                    and a["x"] + a["w"] >= b["x"] + b["w"]
+                    and a["y"] + a["h"] >= b["y"] + b["h"]
+                )
+            if _contains(src, tgt) or _contains(tgt, src):
+                continue
+        style = CONNECTION_STYLE.get(rel_type, CONNECTION_STYLE["Association"])
         sx = src["x"] + src["w"] // 2 + offset_x
         sy = src["y"] + src["h"] // 2 + offset_y
         tx = tgt["x"] + tgt["w"] // 2 + offset_x

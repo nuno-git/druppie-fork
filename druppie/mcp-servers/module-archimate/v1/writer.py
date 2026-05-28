@@ -738,6 +738,45 @@ class ArchiMateDocument:
 
     # --- ELK layout via layout-service ---------------------------------
 
+    def _detect_nesting_for_view(
+        self, view: ET.Element, node_id_by_element: dict[str, str]
+    ) -> dict[str, str]:
+        """Build a child-node → parent-node map for the view.
+
+        Composition and Aggregation relationships in ArchiMate semantically
+        mean "the target is part of the source". Visually that should
+        nest the target inside the source rather than draw a diamond-
+        ended edge between them — the nesting *is* the relationship
+        (this is Bizzdesign / Wierda guidance and matches what Archi
+        users do manually). We only nest when both endpoints are
+        actually on this view and the child has no other parent yet
+        (composition is a tree, not a graph).
+        """
+        parent_of: dict[str, str] = {}
+        for rel in self.root.findall("am:relationships/am:relationship", NS):
+            rel_type = rel.get(_qxsi("type"), "")
+            if rel_type not in ("Composition", "Aggregation"):
+                continue
+            src_el = rel.get("source", "")
+            tgt_el = rel.get("target", "")
+            src_node = node_id_by_element.get(src_el)
+            tgt_node = node_id_by_element.get(tgt_el)
+            if not src_node or not tgt_node or src_node == tgt_node:
+                continue
+            if tgt_node in parent_of:
+                continue  # already nested under something — keep first parent
+            # Guard against cycles (rare but possible with mutual compositions)
+            cursor = src_node
+            in_cycle = False
+            while cursor in parent_of:
+                if parent_of[cursor] == tgt_node:
+                    in_cycle = True
+                    break
+                cursor = parent_of[cursor]
+            if not in_cycle:
+                parent_of[tgt_node] = src_node
+        return parent_of
+
     def _layout_view_via_service(self, view: ET.Element) -> None:
         """Recompute coordinates for every node on ``view`` via layout-service.
 
@@ -750,6 +789,7 @@ class ArchiMateDocument:
         """
         nodes_payload: list[dict[str, Any]] = []
         node_elements: dict[str, ET.Element] = {}
+        node_id_by_element: dict[str, str] = {}
         for node in view.findall("am:node", NS):
             node_id = node.get("identifier", "")
             element_ref = node.get("elementRef", "")
@@ -776,6 +816,7 @@ class ArchiMateDocument:
                 "layer": layer,
             })
             node_elements[node_id] = node
+            node_id_by_element[element_ref] = node_id
 
         edges_payload: list[dict[str, str]] = []
         for conn in view.findall("am:connection", NS):
@@ -794,6 +835,21 @@ class ArchiMateDocument:
         # this branch and leave geometry untouched.
         if all(n["fixed"] for n in nodes_payload):
             return
+
+        # Visual nesting: composition/aggregation relationships become
+        # parent → child containment instead of edges. Pass the parent
+        # map to layout-service so ELK uses a compound graph (children
+        # inside the parent's bounding box) rather than flat nodes.
+        nesting = self._detect_nesting_for_view(view, node_id_by_element)
+        for child_id, parent_id in nesting.items():
+            for node in nodes_payload:
+                if node["id"] == child_id:
+                    node["parent"] = parent_id
+                    # Children with sentinel coords always get re-laid-out
+                    # by ELK because their position is relative to a parent
+                    # that may have moved.
+                    node["fixed"] = False
+                    break
 
         viewpoint = _detect_viewpoint(view)
         try:
@@ -828,6 +884,29 @@ class ArchiMateDocument:
                 node.set("w", str(int(entry["w"])))
             if "h" in entry:
                 node.set("h", str(int(entry["h"])))
+
+        # Z-order matters for visual nesting: parents must be drawn
+        # before their children, otherwise the parent's background
+        # rectangle covers the children. Both renderers iterate
+        # nodes in document order, so we sort by area (largest first)
+        # which naturally puts compound parents before their children.
+        nodes_sorted = sorted(
+            view.findall("am:node", NS),
+            key=lambda n: int(n.get("w", "0")) * int(n.get("h", "0")),
+            reverse=True,
+        )
+        # Re-insert in sorted order; ET preserves child order.
+        for n in nodes_sorted:
+            view.remove(n)
+        # Re-append: nodes before connections so connection markers
+        # render on top.
+        connections = list(view.findall("am:connection", NS))
+        for c in connections:
+            view.remove(c)
+        for n in nodes_sorted:
+            view.append(n)
+        for c in connections:
+            view.append(c)
 
     def _layout_all_views(self) -> None:
         """Run ELK on every diagram-view in the model."""

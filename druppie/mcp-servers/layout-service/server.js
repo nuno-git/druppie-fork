@@ -79,9 +79,84 @@ const VIEWPOINT_RECIPES = {
 
 const DEFAULT_VIEWPOINT = 'Layered'
 
+// Build a single ELK child-node object (without nesting wired yet —
+// callers attach the `children` array if any).
+function buildElkNode(n, { partitioningOn }) {
+  const node = {
+    id: n.id,
+    width: n.w > 0 ? n.w : DEFAULT_NODE_W,
+    height: n.h > 0 ? n.h : DEFAULT_NODE_H,
+    layoutOptions: {
+      // Children of a compound node inherit the layered algorithm too,
+      // so siblings inside a composition stack are laid out cleanly.
+      'elk.algorithm': 'layered',
+    },
+  }
+  const partition = LAYER_PARTITION[n.layer]
+  if (partitioningOn && partition !== undefined) {
+    node.layoutOptions['elk.partitioning.partition'] = String(partition)
+  }
+  if (n.fixed && n.x >= 0 && n.y >= 0) {
+    node.x = n.x
+    node.y = n.y
+    node.layoutOptions['elk.position'] = `(${n.x},${n.y})`
+  }
+  return node
+}
+
+// Visual nesting: when a node carries `parent: <other-id>`, ELK treats
+// it as a child of that parent (compound graph). Edges between the
+// parent and child are dropped because the nesting *is* the
+// relationship. Parents auto-size to contain their children.
 function buildElkGraph({ nodes, edges, viewpoint }) {
   const recipe = VIEWPOINT_RECIPES[viewpoint] || VIEWPOINT_RECIPES[DEFAULT_VIEWPOINT]
   const partitioningOn = recipe['elk.partitioning.activate'] === 'true'
+
+  const nodesById = new Map(nodes.map((n) => [n.id, n]))
+  const childrenByParent = new Map()
+  const rootNodes = []
+  for (const n of nodes) {
+    if (n.parent && nodesById.has(n.parent)) {
+      const list = childrenByParent.get(n.parent) || []
+      list.push(n)
+      childrenByParent.set(n.parent, list)
+    } else {
+      rootNodes.push(n)
+    }
+  }
+
+  function attachChildren(elkNode, sourceNode) {
+    const kids = childrenByParent.get(sourceNode.id)
+    if (!kids || !kids.length) return
+    elkNode.children = kids.map((k) => {
+      const child = buildElkNode(k, { partitioningOn })
+      attachChildren(child, k)
+      return child
+    })
+    // Compound nodes need their own layout config; let ELK size them
+    // around their children with comfortable padding.
+    elkNode.layoutOptions = {
+      ...elkNode.layoutOptions,
+      'elk.padding': '[top=30,left=15,bottom=15,right=15]',
+      'elk.spacing.nodeNode': '20',
+    }
+    // Drop the fixed size — let ELK compute the bounding box.
+    delete elkNode.width
+    delete elkNode.height
+  }
+
+  // Edges that cross a nesting boundary in the same direction as the
+  // composition (parent → child) are redundant with the visual nesting
+  // and would draw an ugly diamond inside the parent. Strip them.
+  const compositionPairs = new Set()
+  for (const n of nodes) {
+    if (n.parent) compositionPairs.add(`${n.parent}->${n.id}`)
+  }
+  const filteredEdges = edges.filter(
+    (e) => !compositionPairs.has(`${e.source}->${e.target}`)
+            && !compositionPairs.has(`${e.target}->${e.source}`)
+  )
+
   return {
     id: 'root',
     layoutOptions: {
@@ -89,27 +164,15 @@ function buildElkGraph({ nodes, edges, viewpoint }) {
       'elk.edgeRouting': 'ORTHOGONAL',
       'elk.padding': '[top=20,left=20,bottom=20,right=20]',
       'elk.spacing.edgeNode': '30',
+      'elk.hierarchyHandling': 'INCLUDE_CHILDREN',
       ...recipe,
     },
-    children: nodes.map((n) => {
-      const node = {
-        id: n.id,
-        width: n.w > 0 ? n.w : DEFAULT_NODE_W,
-        height: n.h > 0 ? n.h : DEFAULT_NODE_H,
-        layoutOptions: {},
-      }
-      const partition = LAYER_PARTITION[n.layer]
-      if (partitioningOn && partition !== undefined) {
-        node.layoutOptions['elk.partitioning.partition'] = String(partition)
-      }
-      if (n.fixed && n.x >= 0 && n.y >= 0) {
-        node.x = n.x
-        node.y = n.y
-        node.layoutOptions['elk.position'] = `(${n.x},${n.y})`
-      }
+    children: rootNodes.map((n) => {
+      const node = buildElkNode(n, { partitioningOn })
+      attachChildren(node, n)
       return node
     }),
-    edges: edges.map((e) => ({
+    edges: filteredEdges.map((e) => ({
       id: e.id,
       sources: [e.source],
       targets: [e.target],
@@ -118,6 +181,28 @@ function buildElkGraph({ nodes, edges, viewpoint }) {
 }
 
 app.get('/health', (_req, res) => res.status(200).json({ status: 'ok' }))
+
+// ELK returns child coordinates relative to their parent. The writer
+// wants flat absolute positions, so we walk the tree and accumulate
+// offsets. Compound parents stay in the result because the renderer
+// draws them as background rectangles for the visual nesting.
+function flattenElkResult(elkNodes, offsetX = 0, offsetY = 0, out = []) {
+  for (const c of elkNodes || []) {
+    const x = Math.round((c.x ?? 0) + offsetX)
+    const y = Math.round((c.y ?? 0) + offsetY)
+    out.push({
+      id: c.id,
+      x,
+      y,
+      w: Math.round(c.width ?? DEFAULT_NODE_W),
+      h: Math.round(c.height ?? DEFAULT_NODE_H),
+    })
+    if (c.children && c.children.length) {
+      flattenElkResult(c.children, x, y, out)
+    }
+  }
+  return out
+}
 
 app.post('/layout', async (req, res) => {
   try {
@@ -129,13 +214,7 @@ app.post('/layout', async (req, res) => {
     }
     const graph = buildElkGraph({ nodes, edges, viewpoint })
     const result = await elk.layout(graph)
-    const laidOut = (result.children || []).map((c) => ({
-      id: c.id,
-      x: Math.round(c.x ?? 0),
-      y: Math.round(c.y ?? 0),
-      w: Math.round(c.width ?? DEFAULT_NODE_W),
-      h: Math.round(c.height ?? DEFAULT_NODE_H),
-    }))
+    const laidOut = flattenElkResult(result.children)
     res.json({ success: true, nodes: laidOut, viewpoint: viewpoint || DEFAULT_VIEWPOINT })
   } catch (err) {
     console.error('layout_failed', err)

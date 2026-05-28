@@ -430,12 +430,21 @@ export function renderViewToSVG(view, model, opts = {}) {
     (view._elkResult?.edges || []).map((e) => [e.id, e])
   )
 
+  // Skip composition/aggregation connections when the visual nesting
+  // already expresses the relationship (one node's bbox contains the
+  // other). Otherwise we'd draw a diamond pointing inside its own parent.
+  const contains = (a, b) =>
+    a.x <= b.x && a.y <= b.y && a.x + a.w >= b.x + b.w && a.y + a.h >= b.y + b.h
+
   const connXML = view.connections.map((c) => {
     const rel = model.relationships.get(c.relationshipRef)
-    const style = CONNECTION_STYLE[rel?.type] || CONNECTION_STYLE.Association
     const src = nodeById.get(c.source)
     const tgt = nodeById.get(c.target)
     if (!src || !tgt) return ''
+    if (rel?.type === 'Composition' || rel?.type === 'Aggregation') {
+      if (contains(src, tgt) || contains(tgt, src)) return ''
+    }
+    const style = CONNECTION_STYLE[rel?.type] || CONNECTION_STYLE.Association
     const elkEdge = elkEdgesById.get(c.id)
     const points = lineEdgeSegments(src, tgt, elkEdge)
     const polyPoints = points
