@@ -274,3 +274,43 @@ mcps:
 
       - name: get_skill
         requires_approval: false
+
+  dataaccess:
+    url: ${MCP_DATA_ACCESS_URL:-http://module-data-access:9010}
+    type: module
+    inject:
+      session_id:
+        from: session.id
+        hidden: true
+        tools: [download_data]
+      project_id:
+        from: project.id
+        hidden: true
+        tools: [download_data]
+    tools:
+      - name: list_sources
+        requires_approval: false
+
+      - name: test_connection
+        requires_approval: false
+
+      - name: list_available_data
+        requires_approval: false
+
+      - name: get_schema
+        requires_approval: false
+
+      - name: read_data
+        requires_approval: false
+
+      - name: execute_query
+        requires_approval: false
+
+      - name: download_data
+        requires_approval: false
+
+      - name: create_chart
+        requires_approval: false
+
+      - name: create_chart_from_source
+        requires_approval: false

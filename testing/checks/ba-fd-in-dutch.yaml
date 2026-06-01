@@ -1,0 +1,11 @@
+check:
+  name: ba-fd-in-dutch
+  description: "Functional design document must be written in Dutch"
+  tags: [business_analyst, language, quality]
+  assert:
+    - agent: business_analyst
+      tool: coding:make_design
+  judge:
+    context: business_analyst
+    checks:
+      - "The functional design content passed to coding:make_design must be written in Dutch (Nederlands). All section headings, requirement descriptions, user journeys, and business rules must be in Dutch. A few English technical terms are acceptable (e.g., 'stakeholder', 'dashboard') but the body text must be Dutch."

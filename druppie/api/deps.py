@@ -41,6 +41,7 @@ from druppie.repositories import (
     QuestionRepository,
     ProjectRepository,
     EvaluationRepository,
+    DocumentationCacheRepository,
 )
 from druppie.services import (
     SessionService,
@@ -49,6 +50,7 @@ from druppie.services import (
     ProjectService,
     WorkflowService,
     EvaluationService,
+    DocumentationService,
 )
 
 # Initialize database tables on import
@@ -84,6 +86,11 @@ def get_project_repository(db: Session = Depends(get_db)) -> ProjectRepository:
 def get_evaluation_repository(db: Session = Depends(get_db)) -> EvaluationRepository:
     """Get EvaluationRepository with DB session injected."""
     return EvaluationRepository(db)
+
+
+def get_doc_cache_repository(db: Session = Depends(get_db)) -> DocumentationCacheRepository:
+    """Get DocumentationCacheRepository with DB session injected."""
+    return DocumentationCacheRepository(db)
 
 
 # =============================================================================
@@ -158,6 +165,14 @@ def get_orchestrator(
     """
     from druppie.execution import Orchestrator
     return Orchestrator(session_repo, execution_repo, project_repo, question_repo)
+
+
+def get_documentation_service(
+    project_repo: ProjectRepository = Depends(get_project_repository),
+    cache_repo: DocumentationCacheRepository = Depends(get_doc_cache_repository),
+) -> DocumentationService:
+    """Get DocumentationService with repositories injected."""
+    return DocumentationService(project_repo, cache_repo)
 
 
 def get_workflow_service(

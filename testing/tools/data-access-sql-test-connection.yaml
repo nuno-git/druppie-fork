@@ -1,0 +1,20 @@
+## Tool Test: Data Access MCP - test_connection against Azure SQL (live)
+## Verifies test_connection actually reaches an Azure SQL / Synapse
+## serverless endpoint configured as an azure-sql DATA_SOURCE_N.
+## Requires DATA_SOURCE_N=azure-sql:synapsedwh:<connection-string>.
+
+tool-test:
+  name: data-access-sql-test-connection
+  description: "test_connection against the configured Azure SQL source returns success"
+  tags: [data-access, mcp, azure-sql, live]
+
+  chain:
+    - agent: router
+      tool: dataaccess:test_connection
+      arguments:
+        source_id: "synapsedwh"
+      assert:
+        result:
+          - json_parseable
+          - {matches: "\"success\"\\s*:\\s*true"}
+          - {contains: "Successfully connected"}

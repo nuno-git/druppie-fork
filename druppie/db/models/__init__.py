@@ -43,12 +43,16 @@ from .test_assertion_result import TestAssertionResult
 from .test_batch_run import TestBatchRun
 from .test_run import TestRun
 from .test_run_tag import TestRunTag
+from .test_running_status import TestRunningStatus
 from .llm_call import LlmCall
 from .llm_retry import LlmRetry
 
 # Project model
 from .project import Project
 from .project_dependency import ProjectDependency
+
+# Documentation cache
+from .documentation_cache import DocumentationCache
 
 # Question model (HITL questions from agents)
 from .question import Question
@@ -76,6 +80,8 @@ __all__ = [
     # Project
     "Project",
     "ProjectDependency",
+    # Documentation cache
+    "DocumentationCache",
     # Session
     "Session",
     # Agent execution
@@ -99,4 +105,5 @@ __all__ = [
     "TestRun",
     "TestRunTag",
     "TestAssertionResult",
+    "TestRunningStatus",
 ]

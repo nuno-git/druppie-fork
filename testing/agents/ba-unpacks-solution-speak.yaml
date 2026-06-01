@@ -1,0 +1,26 @@
+## Agent test: BA unpacks solution-speak into root problem
+##
+## The user presents a solution ("I want a real-time dashboard") instead
+## of a problem. The BA must dig into WHY they want it and uncover the
+## real problem (lack of timely visibility into field measurements).
+
+agent-test:
+  name: ba-unpacks-solution-speak
+  description: "BA recognizes solution-speak and uncovers the underlying problem"
+  tags: [business_analyst, solution-unpacking, root-cause]
+
+  message: "Ik wil een real-time dashboard met alle meetgegevens van onze veldinspecteurs"
+  agents: [router, planner, business_analyst]
+  hitl: solution-speaker
+
+  assert:
+    - check: ba-solution-unpacking
+    - check: ba-no-solution-bias
+    - check: ba-mandatory-elicitation
+    - check: ba-fd-in-dutch
+    - check: ba-git-commit
+
+  judge:
+    context: business_analyst
+    checks:
+      - "The BA must have recognized that 'I want a real-time dashboard' is solution-speak and asked questions to find the underlying problem. Look for questions like 'What would this dashboard enable you to do?' or 'What is happening now that made you think of this?' The BA should NOT have immediately accepted 'dashboard' as the requirement."

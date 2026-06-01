@@ -149,6 +149,8 @@ class ProjectRepository(BaseRepository):
             name=project.name,
             description=project.description,
             repo_url=project.repo_url,
+            repo_name=project.repo_name,
+            repo_owner=project.repo_owner,
             username=username,
             created_at=project.created_at,
         )
