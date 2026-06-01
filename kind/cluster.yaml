@@ -1,0 +1,37 @@
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: druppie
+nodes:
+  - role: control-plane
+    kubeadmConfigPatches:
+      - |
+        kind: InitConfiguration
+        nodeRegistration:
+          kubeletExtraArgs:
+            node-labels: "ingress-ready=true"
+    extraPortMappings:
+      - containerPort: 80
+        hostPort: 80
+        protocol: TCP
+      - containerPort: 443
+        hostPort: 443
+        protocol: TCP
+      # Direct port mappings for development (no ingress needed)
+      - containerPort: 30000  # backend NodePort
+        hostPort: 8000
+        protocol: TCP
+      - containerPort: 30001  # frontend NodePort
+        hostPort: 5173
+        protocol: TCP
+      - containerPort: 30002  # keycloak NodePort
+        hostPort: 8080
+        protocol: TCP
+      - containerPort: 30003  # gitea HTTP NodePort
+        hostPort: 3000
+        protocol: TCP
+  - role: worker
+  - role: worker
+networking:
+  podSubnet: "10.244.0.0/16"
+  serviceSubnet: "10.96.0.0/12"
+  disableDefaultCNI: false

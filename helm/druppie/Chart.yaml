@@ -1,0 +1,7 @@
+apiVersion: v2
+name: druppie
+description: Druppie Governance Platform - Kubernetes Helm Chart
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+kubeVersion: ">=1.27.0-0"

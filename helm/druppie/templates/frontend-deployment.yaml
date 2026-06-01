@@ -1,0 +1,79 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "druppie.fullname" . }}-frontend
+  labels:
+    {{- include "druppie.labels" . | nindent 4 }}
+    app.kubernetes.io/component: frontend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "druppie.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: frontend
+  template:
+    metadata:
+      labels:
+        {{- include "druppie.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: frontend
+    spec:
+      initContainers:
+        - name: wait-for-backend
+          image: curlimages/curl:latest
+          command:
+            - sh
+            - -c
+            - |
+              until curl -sf http://{{ include "druppie.fullname" . }}-backend:{{ .Values.backend.port }}/health; do
+                echo "Waiting for backend..."
+                sleep 5
+              done
+          resources:
+            requests:
+              memory: "32Mi"
+              cpu: "50m"
+            limits:
+              memory: "64Mi"
+              cpu: "100m"
+      containers:
+        - name: frontend
+          image: {{ include "druppie.image" (dict "Values" .Values "image" .Values.frontend.image) }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          env:
+            - name: VITE_API_URL
+              value: "http://localhost:9080"
+            - name: VITE_KEYCLOAK_URL
+              value: "http://localhost:9080"
+            - name: VITE_KEYCLOAK_REALM
+              value: {{ .Values.frontend.vite.keycloakRealm | quote }}
+            - name: VITE_KEYCLOAK_CLIENT_ID
+              value: {{ .Values.frontend.vite.keycloakClientId | quote }}
+            - name: VITE_GITEA_URL
+              value: "http://localhost:9080/git"
+          ports:
+            - name: http
+              containerPort: {{ .Values.frontend.port }}
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /
+              port: {{ .Values.frontend.port }}
+            initialDelaySeconds: 15
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 6
+          readinessProbe:
+            httpGet:
+              path: /
+              port: {{ .Values.frontend.port }}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "256Mi"
+              cpu: "500m"

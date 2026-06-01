@@ -1,0 +1,64 @@
+{{- if .Values.modules.filesearch.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "druppie.fullname" . }}-module-filesearch
+  labels:
+    {{- include "druppie.labels" . | nindent 4 }}
+    app.kubernetes.io/component: module-filesearch
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "druppie.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: module-filesearch
+  template:
+    metadata:
+      labels:
+        {{- include "druppie.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: module-filesearch
+    spec:
+      containers:
+        - name: module-filesearch
+          image: {{ include "druppie.image" (dict "Values" .Values "image" .Values.modules.filesearch.image) }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          env:
+            - name: SEARCH_ROOT
+              value: "/dataset"
+            - name: MCP_PORT
+              value: {{ .Values.modules.filesearch.port | quote }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.modules.filesearch.port }}
+              protocol: TCP
+          volumeMounts:
+            - name: dataset
+              mountPath: /dataset
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.modules.filesearch.port }}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 5
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.modules.filesearch.port }}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 5
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "256Mi"
+              cpu: "500m"
+      volumes:
+        - name: dataset
+          persistentVolumeClaim:
+            claimName: {{ include "druppie.fullname" . }}-dataset
+{{- end }}
