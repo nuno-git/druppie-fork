@@ -503,7 +503,18 @@ ArchiMate model operations. Reads `.archimate` files from a mounted models direc
 | `search_model` | None | Search for elements by query |
 | `export_view` | None | Export an ArchiMate view |
 
-### 6.8 Declarative Parameter Injection
+### 6.8 RAG Server (port 9012, planned)
+
+Document-retrieval-as-a-service for doc-heavy applications. Spec
+landed in [`docs/RAG/module-rag-spec.md`](RAG/module-rag-spec.md);
+implementation is a follow-up story. Will expose: `index_documents`,
+`search`, `get_chunk`, `delete_documents`, `list_indices`,
+`delete_index`. Stateful (own Postgres with pgvector). The
+`rag-patterns` skill captures the design decisions the Architect
+makes when wiring this into a TD; defaults are seeded into every
+project via §5 of the platform technical standards.
+
+### 6.9 Declarative Parameter Injection
 
 MCP tools can have parameters auto-injected from the session/project context. Injected parameters are marked `hidden: true` and are removed from the LLM-visible tool schema. This prevents the LLM from needing to know internal IDs.
 
@@ -520,7 +531,7 @@ inject:
     tools: [read_file, write_file, list_dir, ...]
 ```
 
-### 6.9 Layered Approval System
+### 6.10 Layered Approval System
 
 Approvals have two layers:
 

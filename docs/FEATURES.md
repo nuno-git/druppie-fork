@@ -28,7 +28,7 @@ Thirteen agents are defined. Twelve are functional; one is a stub.
 | **Router** | Classifies user intent | Determines whether the request is `create_project`, `update_project`, or `general_chat`. Can ask clarifying questions. Has web search access. |
 | **Planner** | Orchestrates the pipeline | Creates execution plans as ordered sequences of agent steps. Re-evaluates after each major phase. Manages design loops (BA/Architect) and execution loops (Developer/Deployer). Max 15 iterations. |
 | **Business Analyst** | Gathers requirements | Engages the user in structured dialogue using a funnel approach (max 1 question at a time, almost always multiple choice). Produces `docs/functional-design.md` via the `make_design` tool with built-in Mermaid validation. Considers security and compliance by design. Handles revision cycles when the Architect sends feedback. Supports `NO_FD_CHANGE` pass-through for technical fixes. Max 50 iterations. |
-| **Architect** | Designs system architecture | Reviews the functional design against NORA standards and water authority architecture principles. Four outcomes: APPROVE (writes `docs/technical-design.md` via `make_design`), APPROVE_CORE_UPDATE (same, but signals the project modifies Druppie's own codebase), FEEDBACK (sends specific items back to BA), or REJECT (communicates directly with user). Has access to ArchiMate models via MCP. Can create Mermaid diagrams with built-in syntax validation. Applies Security by Design and Compliance by Design. Max 50 iterations. |
+| **Architect** | Designs system architecture | Reviews the functional design against NORA standards and water authority architecture principles. Four outcomes: APPROVE (writes `docs/technical-design.md` via `make_design`), APPROVE_CORE_UPDATE (same, but signals the project modifies Druppie's own codebase), FEEDBACK (sends specific items back to BA), or REJECT (communicates directly with user). Has access to ArchiMate models via MCP. Can create Mermaid diagrams with built-in syntax validation. For doc-heavy FDs (knowledge bases, citation-backed Q&A, large-document retrieval) invokes the `rag-patterns` skill in Step 1 to land per-layer choices and TR-RAG NFRs in the TD. Applies Security by Design and Compliance by Design. Max 50 iterations. |
 | **Builder Planner** | Creates implementation plans | Reads `docs/functional-design.md` and `docs/technical-design.md`, writes `builder_plan.md` with code standards, test framework, test strategy, solution strategy, and change approach. Guides downstream test_builder and builder agents. Max 30 iterations. |
 | **Test Builder** | Generates tests (TDD Red Phase) | Writes comprehensive test suites based on functional and technical design documents and builder_plan.md. Sets up test frameworks and dependencies. Does NOT run tests. Max 30 iterations. |
 | **Builder** | Implements code (TDD Green Phase) | Reads tests written by test_builder and implements source code to pass them. Follows TDD methodology. Max 100 iterations. |
@@ -510,6 +510,15 @@ The Builder and Reviewer agents use skills to enforce project-specific coding st
 **Builder behavior**: Before writing code for the Druppie codebase, the Builder invokes `fullstack-architecture` and `project-coding-standards` to load the architecture patterns and coding standards. New components are scaffolded from embedded templates (domain models with Summary/Detail pattern, repositories extending BaseRepository, services with constructor injection, thin API routes with Depends injection, and React pages with React Query).
 
 **Reviewer behavior**: Before reviewing code, the Reviewer invokes `project-coding-standards` and `standards-validation` to load the validation checklist. Reviews include explicit architecture compliance and standards compliance sections, with critical violations (e.g., JSON/JSONB columns, business logic in routes) resulting in an automatic FAIL verdict.
+
+### Architect-Side Skills
+
+| Skill | Used By | Purpose |
+|-------|---------|---------|
+| `architecture-principles` | Architect | NORA / water-authority principles for FD assessment and TD design. |
+| `making-mermaid-diagrams` | Architect | Diagram-type selection and Mermaid syntax for TD visualizations. |
+| `rag-patterns` | Architect | Decision guides for doc-heavy applications: chunking, retrieval, embedding, vector store, re-ranking, advanced patterns, citation strategy, and TR-RAG NFRs. Invoked in Step 1 when the FD describes knowledge-base search, citation-backed Q&A, large-document retrieval, or multi-document corpora. Backed by `module-rag` (spec only — implementation in a follow-up story) and the platform-standards §5 RAG defaults. |
+| `technical-research-format` / `technical-design-format` | Architect | Format templates for the research and design documents. |
 
 ---
 
