@@ -49,7 +49,11 @@ registry:
 - File search inside a codebase → `module-filesearch`
 - ArchiMate / architecture reasoning → `module-archimate`
 - Shell / coding execution → `module-coding`
-- Document-heavy retrieval, knowledge-base search, citation-backed Q&A → `module-rag`
+- Document-heavy retrieval, knowledge-base search, citation-backed Q&A
+  → `module-vectorstore` (storage + semantic search primitive, today)
+  and `module-llm` `embed` tool (embeddings). A `module-rag`
+  orchestrator that wraps these into high-level RAG tools is planned
+  for Story B.
 
 If an existing module covers the capability, the TD references the module
 and the SDK call pattern — it does not design an alternative. Building a
@@ -87,18 +91,19 @@ citation-backed Q&A, large-document retrieval) the platform defaults are:
 
 | Topic | Default |
 |---|---|
-| Module | `module-rag` — never reimplement chunking, embedding, or vector search |
-| Embedding model | `multilingual-e5-large-instruct` (MIT, multilingual, CPU-feasible) |
-| Vector store | pgvector (inside `module-rag`'s own Postgres) |
-| Retrieval | Hybrid (BM25 + dense) with RRF k=60 |
-| BM25 analyzer | Language-specific (`to_tsvector('<corpus-language>', ...)`) per field |
-| Chunking | Recursive 512-token, 10–20% overlap |
-| Re-ranking | BGE-reranker-v2-m3 (on by default in `module-rag`) |
-| Citation metadata | Content-hash chunk-IDs + `page_no` + `section_title` + `parent_chunk_id` per chunk |
+| Modules | `module-vectorstore` (storage + retrieval primitive) + `module-llm` (`embed` tool for embeddings). `module-rag` orchestrator (Story B) wraps these. Never reimplement chunking, embedding, or vector search in application code. |
+| Embedding model | Platform default via `module-llm` `embed` tool. Research recommends `multilingual-e5-large-instruct` (MIT, multilingual, CPU-feasible); `module-llm` config pins the active default. |
+| Vector store | pgvector (inside `module-vectorstore`'s own Postgres) |
+| Retrieval | Semantic (cosine similarity) via `module-vectorstore.search`. Hybrid (BM25 + dense) with RRF k=60 is the Story B target — application-layer BM25 fusion until then. |
+| BM25 analyzer | Language-specific (`to_tsvector('<corpus-language>', ...)`) per field — application-layer until Story B bakes it into `module-rag` |
+| Chunking | Recursive splitter, default `chunk_size=2048` / `chunk_overlap=256` characters (≈ 512 tokens, per the 2026 benchmarks in `docs/RAG/rag-patterns.md`) |
+| Re-ranking | BGE-reranker-v2-m3 self-hosted — application layer today, baked into `module-rag` in Story B |
+| Citation metadata | `source_name` + `source_page` + `source_section` + `chunk_id` returned by every search result. Story B adds content-hash chunk-IDs + `parent_chunk_id` for stable, hierarchical citations. |
 | Citation format | Footnote style in formal Markdown output + anchor tags for interactive UI |
-| Document extraction | Caller-side; `module-rag` accepts pre-extracted text + metadata |
-| Index updates | Idempotent on `(source_id, version)`; deletes via `delete_documents` |
-| Tenant isolation | Logical via `tenant_id` on every call; physical isolation via separate `module-rag` instances when required |
+| Document extraction | Caller-side; `module-vectorstore.index_documents` accepts pre-extracted text + metadata |
+| Index scoping | Per-`project_id` (auto-injected via MCP). Cross-project sharing is not allowed. |
+| Index updates | Re-index on document change via `index_documents`. Story B adds `delete_documents` + idempotency on `(source_id, version)`. |
+| Tenant isolation | Logical via `project_id`. Physical isolation (separate `module-vectorstore` instance per tenant) is a Story B add-on if required. |
 
 Mandatory NFRs in the TD for any RAG component: retrieval latency,
 recall on a gold-set, faithfulness, citation precision, hallucination

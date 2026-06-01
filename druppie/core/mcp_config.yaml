@@ -243,6 +243,8 @@ mcps:
     tools:
       - name: chat
         requires_approval: false
+      - name: embed
+        requires_approval: false
 
   vision:
     url: ${MCP_VISION_URL:-http://module-vision:9011}
@@ -304,4 +306,34 @@ mcps:
         requires_approval: false
 
       - name: download_data
+        requires_approval: false
+
+  vectorstore:
+    url: ${MCP_VECTORSTORE_URL:-http://module-vectorstore:9012}
+    type: both
+    inject:
+      user_id:
+        from: session.user_id
+        hidden: true
+      project_id:
+        from: project.id
+        hidden: true
+      session_id:
+        from: session.id
+        hidden: true
+    tools:
+      - name: index_documents
+        requires_approval: false
+
+      - name: search
+        requires_approval: false
+
+      - name: get_chunk
+        requires_approval: false
+
+      - name: delete_index
+        requires_approval: true
+        required_role: developer
+
+      - name: list_indices
         requires_approval: false

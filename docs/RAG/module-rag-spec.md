@@ -1,13 +1,44 @@
-# MODULE_SPEC — `module-rag`
+# MODULE_SPEC — `module-rag` (orchestrator, Story B)
 
-> Status: design document. No implementation — this is the outline that
-> Story B (the working module) will build on.
-> Predecessor: [rag-patterns.md](./rag-patterns.md) (research foundation
-> with per-layer choices, in Dutch).
+> Status: design document for the future `module-rag` orchestration
+> module. **Not yet implemented.** Today the storage/retrieval primitive
+> (`module-vectorstore`) and the embedding tool (`module-llm.embed`)
+> are available; the application layer composes them. `module-rag` is
+> the Story B work that wraps those primitives plus chunking, rerank,
+> query rewriting, and citation formatting into high-level tools so
+> the application no longer wires the pipeline itself.
+>
+> Predecessor: [rag-patterns.md](./rag-patterns.md) — research
+> foundation with the per-layer choices that `module-rag` will
+> implement as defaults.
 > Convention: follows
 > [`module-convention`](../../druppie/skills/module-convention/SKILL.md).
+> Today's primitive lives at
+> [`druppie/mcp-servers/module-vectorstore/`](../../druppie/mcp-servers/module-vectorstore/).
 
-## 1. Identity
+## 1. Why this module
+
+In v1 (today), an application that wants to do RAG must compose:
+- `module-vectorstore.index_documents` — chunk + embed + store
+- `module-vectorstore.search` — semantic retrieval
+- BM25 / lexical search — application-layer
+- Re-ranking — application-layer (e.g. BGE-reranker-v2-m3)
+- Query expansion / decomposition / HyDE — application-layer
+- Citation formatting (footnotes, anchor tags) — application-layer
+- `module-llm.embed` for query embeddings, `module-llm.chat` for the
+  generation step
+
+That works but pushes a lot of policy into every application. Every
+project has to remember the platform-default chunk size, hybrid-search
+parameters, reranker model, citation style, NFR-archetype-driven
+budget for retrieval latency, and so on.
+
+`module-rag` lifts those defaults into a single MCP module. The
+application gets one tool call per RAG pattern; the module enforces
+the defaults from the `rag-patterns` skill and the platform standards
+§5 RAG defaults.
+
+## 2. Identity
 
 | Field | Value |
 |---|---|
@@ -15,351 +46,144 @@
 | Directory | `druppie/mcp-servers/module-rag/` |
 | Container | `druppie-module-rag` |
 | Compose service | `module-rag` |
-| Type | Stateful (own Postgres DB with pgvector extension) |
-| Latest version | `1.0.0` |
+| Type | Mostly stateless (does not own storage — delegates to `module-vectorstore` for index + chunks, and to `module-llm` for embeddings + generation). May hold a small Postgres for query-log / audit / freshness-tracking. |
+| Latest version | `1.0.0` (planned) |
 | Endpoint | `/v1/mcp`, `/mcp` (latest), `/health` |
-| Port | `9012` (next free in the 9010-9099 range; in use: 9001 coding, 9002 docker, 9008 llm, 9010 data-access, 9011 vision) |
-| DB container | `druppie-module-rag-db` |
-| DB name | `module_rag` |
+| Port | `9013` (next free after `module-vectorstore` at 9012) |
 
-## 2. Purpose & scope
+## 3. Tool surface — the four RAG patterns
 
-`module-rag` provides **document-retrieval-as-a-service** to any
-Druppie application that builds doc-heavy use-cases (knowledge bases,
-legal search, compliance search, customer-contact Q&A, policy
-documents, product documentation). The module covers the **R** in RAG
-— indexing, storage, retrieval — not the **G** (generation, which
-remains `module-llm`).
+The four tools below correspond to the four patterns covered in the
+`rag-patterns` skill. Each tool is a fully-composed pipeline; the
+application picks the tool that fits its query type.
 
-**In scope (v1):**
-- Indexing pre-extracted text chunks with metadata.
-- Hybrid search (BM25 + dense vector) with RRF fusion.
-- Metadata filtering (`doc_type`, `date`, `status`, `tenant`, free
-  keys).
-- Optional in-pipeline re-ranking (BGE-reranker-v2-m3 self-hosted).
-- Citation metadata: content-hash chunk ID, page/paragraph,
-  parent-section title.
-- Logical tenant isolation via `tenant_id`.
-- Index management (list, delete).
-- Multilingual retrieval (NL, EN, and the broader set covered by the
-  embedding model).
-
-**Out of scope (v1, possibly v2):**
-- **Document extraction** (PDF/Word/HTML → text). The caller is
-  responsible; a separate extractor skill or module can fill this in
-  later.
-- **Embedding generation** itself — `module-rag` consumes embeddings
-  via `module-llm` (see §6 Dependencies).
-- **GraphRAG, agentic RAG, query rewriting**. These patterns live in
-  the `rag-patterns` skill; the architect orchestrates them in the
-  application layer above this module.
-- **Generation / augmentation**: composing prompts with retrieved
-  chunks happens in the application layer.
-- **Physical per-tenant index isolation** as a layered feature — in
-  v1 this is achieved by running multiple `module-rag` instances with
-  separate databases when required.
-
-## 3. Tool surface
-
-| Tool | Purpose |
-|---|---|
-| `index_documents` | Chunk, embed, and store documents in an index. |
-| `search` | Hybrid retrieval over an index, optionally with rerank. |
-| `get_chunk` | Fetch one chunk + metadata (for citation resolution in UI). |
-| `delete_documents` | Remove documents (and their chunks) from an index — needed for freshness updates. |
-| `list_indices` | Discoverability — which indices exist for a tenant. |
-| `delete_index` | Drop a full index. |
-
-### 3.1 `index_documents`
-
-Indexes one or more pre-extracted documents into an index.
-
-```
-Input:
-  tenant_id:   str                                 # Required, isolation key
-  index_name:  str                                 # Required, namespace within tenant (e.g. "policies-2024")
-  documents:   list[
-    {
-      source_id:    str,                            # App-defined stable ID of the source document
-      source_uri:   str,                            # Reference back to the source (URL, Gitea path, etc.)
-      version:      str,                            # Version tag, e.g. SHA or timestamp
-      text:         str,                            # Full pre-extracted text
-      language:     str | None,                     # BCP-47 (e.g. "nl", "en"); None = auto-detect
-      metadata:     dict[str, str | int | bool],    # Free metadata: doc_type, date, status, section info, ...
-      pages:        list[ { page_no: int, text_offset: int } ] | None  # Optional: page mapping for citations
-    }, ...
-  ]
-  chunking:    {
-    strategy:      "recursive" | "parent_document",  # Default: "recursive"
-    chunk_size:    int = 512,                        # Tokens
-    chunk_overlap: int = 64,                         # Tokens
-    parent_size:   int = 2048                        # Only for parent_document
-  } | None
-  embedding_model: str | None                       # Override; default from module config
-
-Output:
-  index_name:        str
-  documents_indexed: int
-  chunks_created:    int
-  cost_cents:        float                          # Embedding cost
-  processing_ms:     int
-```
-
-**Behavior:**
-- Chunks each document according to `chunking.strategy` (default:
-  recursive 512-token with tiktoken encoder).
-- Generates content-hash chunk IDs
-  (`source_id + version + hash(span_text)`) — stable across
-  re-indexing.
-- Requests embeddings via `module-llm` (see §6).
-- Writes per chunk: dense vector, BM25 tsvector (with language
-  analyzer based on `language`), metadata.
-- Idempotent on `(source_id, version)`: indexing the same document
-  twice overwrites the existing chunks.
-
-### 3.2 `search`
-
-Performs hybrid retrieval, optionally with rerank.
-
-```
-Input:
-  tenant_id:           str
-  index_name:          str
-  query:               str
-  query_language:      str | None                  # Default: auto-detect; selects BM25 analyzer
-  top_k:               int = 8                     # Number of chunks returned
-  search_mode:         "hybrid" | "vector_only" | "lexical_only" = "hybrid"
-  rrf_k:               int = 60                    # RRF fusion parameter
-  filters:             dict[str, str | int | bool] | None  # Match on metadata fields
-  rerank:              bool = True                 # Rerank after retrieval
-  rerank_candidates:   int = 50                    # N candidates before rerank (only when rerank=True)
-  include_parent_text: bool = False                # For parent_document chunking: also return parent text
-
-Output:
-  results: list[
-    {
-      chunk_id:         str,
-      source_id:        str,
-      source_uri:       str,
-      version:          str,
-      score:            float,                      # Final score (after rerank if active)
-      retrieval_scores: { vector: float, lexical: float, rrf: float, rerank: float | None },
-      text:             str,                        # Chunk text (child chunk for hierarchical)
-      parent_text:      str | None,                 # Only if include_parent_text=True
-      metadata:         dict                        # Full — incl. page_no, section_title, etc.
-    }, ...
-  ]
-  processing_ms: int
-  rerank_used:   bool
-```
-
-### 3.3 `get_chunk`
-
-```
-Input:
-  tenant_id: str
-  chunk_id:  str
-
-Output:
-  chunk: { chunk_id, source_id, source_uri, version, text, parent_text, metadata }
-```
-
-Intended for citation resolution in a UI ("click the footnote → show
-chunk + parent").
-
-### 3.4 `delete_documents`
-
-```
-Input:
-  tenant_id:  str
-  index_name: str
-  source_ids: list[str]                            # Remove all versions of these source IDs
-  versions:   list[str] | None                     # Optional: only specific versions
-
-Output:
-  documents_deleted: int
-  chunks_deleted:    int
-```
-
-### 3.5 `list_indices`
-
-```
-Input:
-  tenant_id: str
-
-Output:
-  indices: list[
-    {
-      index_name:      str,
-      documents_count: int,
-      chunks_count:    int,
-      created_at:      ISO8601,
-      last_indexed_at: ISO8601,
-      languages:       list[str]                   # Languages present in the index
-    }, ...
-  ]
-```
-
-### 3.6 `delete_index`
-
-```
-Input:
-  tenant_id:  str
-  index_name: str
-
-Output:
-  index_name:        str
-  chunks_deleted:    int
-  documents_deleted: int
-```
-
-## 4. Data model
-
-Two primary tables plus the pgvector extension. Stable,
-content-addressable IDs; no positional indices that break on
-re-ingest.
-
-```sql
--- 001_initial.sql (outline, not final)
-
-CREATE EXTENSION IF NOT EXISTS vector;
-
-CREATE TABLE documents (
-    chunk_id        TEXT PRIMARY KEY,              -- content-hash, stable across reindex
-    tenant_id       TEXT NOT NULL,
-    index_name      TEXT NOT NULL,
-    source_id       TEXT NOT NULL,
-    source_uri      TEXT NOT NULL,
-    version         TEXT NOT NULL,
-    parent_chunk_id TEXT,                          -- for hierarchical chunking
-    chunk_text      TEXT NOT NULL,
-    chunk_tokens    INT  NOT NULL,
-    page_no         INT,
-    section_title   TEXT,
-    language        TEXT NOT NULL,                 -- BCP-47
-    metadata        JSONB NOT NULL DEFAULT '{}',   -- Free fields (exception to no-JSONB rule: this is search payload, not a domain model)
-    embedding       vector(1024) NOT NULL,         -- Default: multilingual-e5-large-instruct (1024 dims)
-    text_search     tsvector,                      -- BM25 / lexical search column
-    created_at      TIMESTAMPTZ DEFAULT NOW(),
-    UNIQUE (tenant_id, index_name, source_id, version, chunk_id)
-);
-
-CREATE INDEX idx_documents_tenant_index
-    ON documents (tenant_id, index_name);
-CREATE INDEX idx_documents_source
-    ON documents (tenant_id, index_name, source_id, version);
-CREATE INDEX idx_documents_metadata
-    ON documents USING GIN (metadata jsonb_path_ops);
-CREATE INDEX idx_documents_text_search
-    ON documents USING GIN (text_search);
-CREATE INDEX idx_documents_embedding
-    ON documents USING hnsw (embedding vector_cosine_ops);
-
-CREATE TABLE index_registry (
-    tenant_id        TEXT NOT NULL,
-    index_name       TEXT NOT NULL,
-    created_at       TIMESTAMPTZ DEFAULT NOW(),
-    last_indexed_at  TIMESTAMPTZ,
-    embedding_model  TEXT NOT NULL,
-    embedding_dims   INT  NOT NULL,
-    chunking_config  JSONB NOT NULL,
-    PRIMARY KEY (tenant_id, index_name)
-);
-```
-
-> **JSONB exception**: the Druppie convention says "no JSONB" for
-> domain models. Here JSONB is used deliberately for `metadata`
-> because it is search payload with an unknown schema (different per
-> use-case). This is a retrieval index, not a normalized domain model.
-> To be confirmed in review.
-
-## 5. Configuration
-
-Environment variables (see the
-[module-convention skill](../../druppie/skills/module-convention/SKILL.md)
-for the Docker Compose service template pattern):
-
-```
-MCP_PORT=9012
-MODULE_DB_URL=postgresql://module_rag:<pw>@module-rag-db:5432/module_rag
-
-# Embedding (default — overridable per call via index_documents.embedding_model)
-RAG_EMBEDDING_MODEL=multilingual-e5-large-instruct
-RAG_EMBEDDING_DIMS=1024
-RAG_EMBEDDING_MCP_URL=http://module-llm:9008/mcp   # module-llm endpoint that exposes the embedding tool
-
-# Re-ranking (default — overridable per search call)
-RAG_RERANKER_ENABLED=true
-RAG_RERANKER_MODEL=BAAI/bge-reranker-v2-m3
-RAG_RERANKER_DEVICE=cpu                              # cpu | cuda
-```
-
-## 6. Dependencies
-
-| Dependency | Type | Reason |
+| Tool | What it does | Internally |
 |---|---|---|
-| Postgres 16+ with the `pgvector` extension | Own DB container | Storage + ANN + lexical search in one engine |
-| `module-llm` (port 9008) | Sibling MCP module | Embedding generation. Requires a new `embed` or `embeddings` tool in `module-llm` (see open question in research doc). |
-| Reranker runtime | In-container (FastEmbed / sentence-transformers) | Run BGE-reranker-v2-m3 locally; no extra service. Switchable via `RAG_RERANKER_ENABLED=false`. |
-| `module-convention` skill | Convention | Directory layout, MODULE.yaml, server routing, tools.py pattern. |
+| `rag_query` | Simple RAG — one question, one answer with citations. | Hybrid retrieve (vectorstore + BM25) → rerank → generate with citations |
+| `rag_conversational_query` | Multi-turn Q&A; resolves pronouns and context against chat history. | Query rewrite using history → `rag_query` |
+| `rag_agentic_query` | Adaptive routing; lets a small LLM classify the question (factual / synthesis / multi-hop) and pick the right retrieval strategy. | Router → one of: `rag_query`, plan-and-execute, self-RAG loop, multi-hop. Hard cap on iterations + latency circuit-breaker. |
+| `rag_graph_query` | Multi-entity / synthesis questions over a corpus where entity relations matter. | LightRAG-style parallel retriever fused with `rag_query`, gated on a query classifier. |
+
+Plus the corpus-management tools:
+
+| Tool | What it does |
+|---|---|
+| `rag_ingest` | High-level wrapper around `module-vectorstore.index_documents` that applies the platform-default chunking strategy per content type (recursive 512-token by default, parent-document for long structured docs, late chunking when anaphora-heavy). |
+| `rag_delete_documents` | Forget documents (and their chunks). Needed for freshness updates. Maps to `module-vectorstore.delete_index` plus a future granular delete on the primitive. |
+| `rag_list_corpora` | Discoverability — which corpora exist for the current project. Wraps `module-vectorstore.list_indices` with corpus-level metadata (last indexed, doc count, freshness SLA). |
+
+### 3.1 `rag_query`
+
+```
+Input:
+  corpus:               str                          # The named corpus (index) to search
+  question:             str
+  question_language:    str | None                   # Default: auto-detect; selects BM25 analyzer
+  top_k:                int = 8                      # Chunks passed to the LLM
+  filters:              dict | None                  # Metadata filters (doc_type, date, status, …)
+  rerank:               bool = True
+  citation_style:       "footnotes" | "anchors" | "inline" = "footnotes"
+  archetype:            "LS" | "HS" | "B" = "HS"     # Drives NFR targets (latency/faithfulness budget)
+
+Output:
+  answer:   str                                       # Markdown with citations
+  citations: list[{ chunk_id, source_name, page, section, span: { start, end } | None }]
+  meta:     { retrieval_ms, rerank_ms, generation_ms, ttft_ms, ttc_ms,
+              chunks_retrieved, chunks_used, faithfulness_score | None }
+```
+
+### 3.2 `rag_conversational_query`
+
+Same shape as `rag_query`, plus `history: list[{role, text}]`. Internally:
+1. Rewrite the user's question using history (calls `module-llm.chat`).
+2. Pass the rewritten query to `rag_query` machinery.
+
+### 3.3 `rag_agentic_query`
+
+Same input shape as `rag_query`, plus a `max_iterations` cap and
+`router_model: str | None`. Internally:
+1. Adaptive Router classifies the question into one of four buckets.
+2. Dispatches to the matching retrieval strategy.
+3. Optionally invokes Self-RAG / CRAG grading on synthesis paths.
+4. Plan-and-execute on research-style questions, capped at four
+   sub-goals.
+
+### 3.4 `rag_graph_query`
+
+Same shape as `rag_query`. Activates a LightRAG parallel retriever
+that runs alongside vector + BM25, with results fused via RRF.
+Reserved for corpora where the architect's gold-set shows
+multi-entity / synthesis improvement.
+
+## 4. Defaults the module enforces
+
+The module enforces the platform defaults from
+[`rag-patterns.md`](./rag-patterns.md) and platform standards §5:
+
+- Chunking: recursive, `chunk_size=2048` / `chunk_overlap=256` characters
+  (≈ 512 tokens) as default; `parent_document` strategy for long
+  structured docs; `late_chunking` for anaphora-heavy text.
+- Retrieval: hybrid (BM25 + dense) with RRF k=60.
+- BM25 analyzer: language-specific (`to_tsvector('<lang>', ...)`) per
+  field, derived from `question_language` and corpus metadata.
+- Embedding: whatever `module-llm.embed` returns (platform default).
+- Re-ranking: BGE-reranker-v2-m3 self-hosted, default on, candidate
+  count N=50 → top-5..8.
+- Citations: content-hash chunk IDs (`source_id + version + hash(span)`),
+  with `page` / `section` / `parent_section_title` metadata. Footnote
+  style in the answer Markdown; anchor tags for interactive UIs.
+- NFR archetype targets (LS / HS / B) from the TR-RAG-XX table in the
+  `rag-patterns` skill drive the internal latency / cost budgets.
+
+## 5. Dependencies
+
+| Dependency | Reason |
+|---|---|
+| `module-vectorstore` | Index + chunk storage + semantic search. The module-rag orchestrator never owns chunks; it always calls vectorstore. |
+| `module-llm` | Embeddings (`embed` tool) for queries, generation (`chat` tool) for answers, classification / rewriting for the conversational and agentic patterns. |
+| `module-convention` skill | Directory layout, MODULE.yaml, server-routing, tools.py pattern. |
 
 **Not** a dependency:
-- Document extraction libraries (PyPDF, Tika, Unstructured): caller
-  responsibility.
-- LangChain / LlamaIndex as a framework: heavy dependency, not needed
-  — chunking + RRF + pgvector queries are a few hundred lines of own
-  code.
+- Document extraction libraries — caller-side, same as for
+  `module-vectorstore`.
 
-## 7. Non-functional requirements
+## 6. Open questions for the Story B implementation
 
-Follow the NFR table in
-[rag-patterns.md → Default-NFR-tabel](./rag-patterns.md#default-nfr-tabel).
-Specific to `module-rag` as a subsystem:
+1. **State**: does the orchestrator own a tiny Postgres for query
+   audit / freshness tracking / gold-set runs, or is it fully
+   stateless (delegating audit to a sidecar logger)?
+2. **Reranker location**: bake the BGE-reranker model into the
+   container (≈ +600 MB image) or run a sibling `module-reranker`?
+   Sibling keeps the orchestrator slim and allows reranker
+   swap-out per use-case.
+3. **Hybrid BM25**: implement BM25 inside `module-rag` and merge with
+   vectorstore results, or push BM25 into `module-vectorstore` as a
+   capability extension?
+4. **Streaming**: does `rag_query` stream its answer (TTFT-focused)
+   or return the full answer (TTC-focused)? Likely both via two
+   tool variants.
+5. **Gold-set evaluation**: is the gold-set a `module-rag` concern
+   (built-in evaluation tool) or a Druppie-platform concern
+   (separate eval pipeline)? Strong case for the latter to keep the
+   module focused on serving queries.
+6. **Multilingual analyzers**: how are analyzer mappings configured —
+   per corpus, per project, or globally?
+7. **Module-vectorstore evolution**: which capabilities should move
+   from `module-rag` orchestration back into the primitive? Hybrid
+   BM25, in-graph metadata filtering, parent-section metadata are
+   candidates that fit naturally in the primitive once stable.
 
-| Requirement | Target |
-|---|---|
-| `search` p95 (no rerank) | < 200 ms @ 10⁵ chunks |
-| `search` p95 (with rerank, 50 candidates) | < 500 ms @ 10⁵ chunks |
-| `index_documents` throughput | ≥ 100 chunks/sec @ batched embeddings |
-| `delete_documents` consistency | within a single Postgres transaction |
-| Pipeline uptime | 99.5% (interactive), 99.9% (high-stakes) |
-| Degraded mode on reranker failure | `search` keeps working without rerank; flag in response |
+## 7. Validation scenarios
 
-## 8. Versioning & migration
+When `module-rag` lands, at minimum cover:
 
-- v1 supports one embedding model per index (fixed on first
-  `index_documents` call, stored in `index_registry`).
-- Switching the embedding model = create a new index (re-embed all
-  documents). No in-place migration in v1.
-- v2 (potential): hot-swap of the embedding model with dual-write
-  during migration. Out of scope for v1.
-
-## 9. Open questions for implementation (Story B)
-
-1. **Embedding tool in `module-llm`**: needs its own story/PR. Which
-   embedding-tool interface (`embed_texts(list[str]) → list[vector]`?).
-   Caching strategy inside `module-llm` or at the caller?
-2. **Reranker loading**: bake BGE-reranker-v2-m3 into the container
-   image (increases image size by ~600 MB) or pull on startup?
-   Bake-in seems simpler for reproducibility.
-3. **Index-level vs chunk-level language**: one index with multiple
-   languages (per-chunk language field → analyzer per search side) or
-   one index per language? Proposal: allow multiple languages per
-   index, per-chunk language analyzer for BM25.
-4. **JSONB metadata policy**: confirm in review that this is
-   acceptable within the Druppie convention (see note under §4).
-5. **Auth & RLS**: do we use Postgres row-level security for tenant
-   isolation (extra defense-in-depth), or do we rely on
-   application-level `tenant_id` filtering?
-
-## 10. Validation scenarios
-
-Story A's e2e test and Story B's HDSR-notas validation must at
-minimum cover:
-- Indexing a Dutch-language document with hierarchical chunking.
-- Hybrid search with metadata filter and rerank.
-- Citation resolution via `get_chunk` with parent-section title.
-- Multilingual: one NL and one EN document in the same index, both
-  findable in their own language.
-- Re-index stability: `chunk_id`s remain identical across a second
-  `index_documents` call of the same document.
+- A Dutch-language doc-heavy use-case (e.g. HDSR-notas validation
+  scenario from `docs/RAG/testing.md`) end-to-end via `rag_query`.
+- Multilingual corpus: same corpus with NL and EN documents, each
+  findable in its own language with `question_language` auto-detect.
+- Conversational follow-up resolution via `rag_conversational_query`.
+- Adaptive routing on a mixed query stream that includes factual,
+  synthesis, and multi-hop questions.
+- Hard-cap enforcement on `rag_agentic_query` — no infinite loops.
+- Citation stability across re-indexing: identical content-hash IDs
+  for chunks whose text didn't change.

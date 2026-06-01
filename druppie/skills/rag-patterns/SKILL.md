@@ -6,17 +6,35 @@ description: >
   or any other doc-heavy use-case. It covers when an in-app LLM + RAG
   pipeline is a valid building block, how to choose chunking, retrieval,
   embedding, vector store, re-ranking and advanced patterns, which NFRs
-  to put in the TD, and how to reference module-rag.
+  to put in the TD, and how to reference module-vectorstore.
 ---
 
 # RAG Patterns for Doc-Heavy Applications
 
 RAG (Retrieval-Augmented Generation) is a **first-class building block**
-in Druppie. Just as you would compose `module-data-access` or
-`module-llm` into a design, you may use `module-rag` for retrieval
-needs. Be aware: when a use-case deals with many or large documents,
-RAG is often the right answer — not stuffing the documents into the
-prompt, and not forcing the user to search manually.
+in Druppie. When a use-case deals with many or large documents, RAG is
+often the right answer — not stuffing the documents into the prompt,
+and not forcing the user to search manually.
+
+## Two modules involved
+
+- **`module-vectorstore`** *(primitive, available today)* — stores
+  chunks + embeddings, performs semantic search, returns chunks with
+  source metadata for citations. Pgvector-backed. Tools:
+  `index_documents`, `search`, `get_chunk`, `list_indices`,
+  `delete_index`.
+- **`module-rag`** *(orchestrator, Story B — not yet built)* — will
+  wrap `module-vectorstore` + `module-llm` + chunking strategy
+  selection + re-ranking + query rewriting + citation formatting into
+  high-level RAG tools (e.g. `rag_query`, `rag_conversational_query`,
+  `rag_agentic_query`, `rag_graph_query`). Spec lives in
+  [`docs/RAG/module-rag-spec.md`](../../../docs/RAG/module-rag-spec.md).
+
+Until `module-rag` exists, the application layer composes
+`module-vectorstore` + `module-llm` directly using the per-layer
+decisions below. After Story B, the architect can call `module-rag` as
+a single building block and the application no longer wires the pieces
+itself.
 
 ## When to use RAG
 
@@ -39,11 +57,12 @@ Use RAG when at least one of these holds:
 
 ## Stop — do not reinvent the RAG pipeline
 
-Reference `module-rag` (see
-[module-rag-spec](../../../docs/RAG/module-rag-spec.md)) instead of
-designing chunking, embedding, or vector-search components from
-scratch. The defaults below are platform-level; the architect motivates
-in the TD which layer deviates and why.
+Reference `module-vectorstore` (primitive) and `module-llm` (embeddings
+via the `embed` tool) instead of designing chunking, embedding, or
+vector-search components from scratch. The defaults below are
+platform-level; the architect motivates in the TD which layer deviates
+and why. Once `module-rag` lands (Story B), TDs target it as the
+single building block instead of composing primitives.
 
 ## Platform default stack
 
@@ -57,8 +76,8 @@ explicit trigger from the per-layer decision guides below.
 | BM25 analyzer | Postgres `to_tsvector('<corpus-language>')` per field | Mixed-language corpus → analyzer per field or multilingual analyzer |
 | Metadata filter | SQL filter on `doc_type`, `date`, `status`, `tenant_id` | n/a — mandatory once the corpus has more than one doc-type |
 | Embedding | `multilingual-e5-large-instruct` (MIT, CPU-feasible) | ≥8 GB GPU budget + quality requirement → Qwen3-Embedding-4B |
-| Vector store | pgvector (inside `module-rag`'s own Postgres) | >10M chunks or hard p95 filtered-ANN requirement → escape to Qdrant via v2 |
-| Re-ranking | BGE-reranker-v2-m3 self-hosted (inside `module-rag`) | Use-case gold-set ≥5 nDCG points better with Cohere → switch (Bedrock EU) |
+| Vector store | pgvector (inside `module-vectorstore`'s own Postgres) | >10M chunks or hard p95 filtered-ANN requirement → escape to Qdrant via Story B |
+| Re-ranking | BGE-reranker-v2-m3 self-hosted (application layer today; baked into `module-rag` orchestrator in Story B) | Use-case gold-set ≥5 nDCG points better with Cohere → switch (Bedrock EU) |
 | Query transformation | Query expansion + classifier-gated decomposition | HyDE for short/vague queries with style gap to the corpus |
 | GraphRAG | **Not default** | ≥30% of queries multi-entity/synthesis → LightRAG as parallel retriever |
 | Agentic loop | **Not default** | Adaptive Router as first agentic step; Self-RAG only in the synthesis path |
@@ -108,20 +127,22 @@ Selection criteria, in order:
   jina-v3 (non-commercial license).
 
 ### Vector store
-- **Default = pgvector inside `module-rag`.** Postgres already runs in
-  the Druppie stack; up to ~10M chunks this delivers sub-100ms search
-  latency with SQL filtering and transactional consistency.
+- **Default = pgvector inside `module-vectorstore`.** Postgres already
+  runs in the Druppie stack; up to ~10M chunks this delivers sub-100ms
+  search latency with SQL filtering and transactional consistency.
 - **Move to Qdrant** once: corpus exceeds 10M chunks, hard p95 on
   filtered ANN is required, or native ColBERT/sparse vectors are
-  needed. This is a v2 path for `module-rag`; design the MCP interface
-  so the migration does not force an embedding rebuild.
+  needed. This is a Story B path on top of `module-vectorstore`; the
+  MCP interface is designed so the migration does not force an
+  embedding rebuild.
 - **Weaviate / Milvus / Chroma / LanceDB**: only consider with an
   explicit use-case driver (multimodal, billions of vectors,
   embedded-only). Not a default.
 
 ### Re-ranking
-- **On by default** in `module-rag` with BGE-reranker-v2-m3 — free,
-  sovereign, broad language coverage.
+- **Today**: application-layer reranking with BGE-reranker-v2-m3 — free,
+  sovereign, broad language coverage. **Story B**: baked into the
+  `module-rag` orchestrator as a default-on step inside `rag_query`.
 - **Switch to Cohere Rerank** (Bedrock EU) once a use-case gold-set
   shows ≥5 nDCG points improvement and data egress is acceptable.
 - **Turn it off** if latency budget < 500ms p95 without GPU, or
@@ -209,13 +230,18 @@ needed.
 
 In the Technical Design of a RAG project:
 
-1. **Section "Solution direction"** — reference `module-rag`
-   explicitly as the building block, and motivate why RAG (rather than
-   classification, in-prompt context, or a structured DB query).
+1. **Section "Solution direction"** — reference `module-vectorstore`
+   explicitly as the storage/retrieval building block and `module-llm`
+   for embeddings + generation, and motivate why RAG (rather than
+   classification, in-prompt context, or a structured DB query). If
+   `module-rag` is available (Story B), reference it as the single
+   orchestrator building block instead.
 2. **Section "Architecture"** — show the pipeline steps: ingest →
    chunk → embed → store → search → rerank → generate. Mark which
-   steps `module-rag` performs, which `module-llm`, and which the
-   application itself.
+   steps `module-vectorstore` performs, which `module-llm`, and which
+   the application itself. After Story B, `module-rag` collapses
+   chunk → embed → store on one side and search → rerank on the other
+   into single tool calls.
 3. **Section "Choices per layer"** — for chunking, retrieval,
    embedding, vector store, rerank, query transformation, and
    advanced patterns, state whether you follow the platform default
@@ -239,20 +265,24 @@ In the Technical Design of a RAG project:
 - **GraphRAG or agentic RAG** without a proven problem they solve —
   adds latency and cost without quality gain.
 - **Custom vector store** (Qdrant, Weaviate, etc.) without a concrete
-  trigger from the decision guide. Default = pgvector via `module-rag`.
+  trigger from the decision guide. Default = pgvector via
+  `module-vectorstore`.
 - **Citations as "source list at the bottom"** instead of per-claim
   binding — a blocker for regulated use-cases.
 - **Embedding model picked from the MTEB-EN leaderboard** without
   checking multilingual / NL benchmarks and license.
-- **Document extraction hidden inside `module-rag`** — the caller is
-  responsible for PDF/Word → text; `module-rag` accepts pre-extracted
-  text + metadata.
+- **Document extraction hidden inside the module** — the caller is
+  responsible for PDF/Word → text; `module-vectorstore` accepts
+  pre-extracted text + metadata. Same expectation for `module-rag`
+  when it lands (Story B).
 
 ## References
 
 - Research foundation with full comparison + trade-off tables:
   [`docs/RAG/rag-patterns.md`](../../../docs/RAG/rag-patterns.md)
-- Module spec (tool surface + data model):
+- Module-rag orchestrator spec (Story B):
   [`docs/RAG/module-rag-spec.md`](../../../docs/RAG/module-rag-spec.md)
+- Module-vectorstore primitive (v1, code):
+  [`druppie/mcp-servers/module-vectorstore/`](../../mcp-servers/module-vectorstore/)
 - Platform standards RAG section (defaults seeded into every project):
   [`druppie/templates/project/docs/platform-technical-standards.md`](../../templates/project/docs/platform-technical-standards.md) §5 RAG defaults
