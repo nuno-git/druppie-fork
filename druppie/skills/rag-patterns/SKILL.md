@@ -9,153 +9,250 @@ description: >
   to put in the TD, and how to reference module-rag.
 ---
 
-# RAG-patronen voor doc-heavy applicaties
+# RAG Patterns for Doc-Heavy Applications
 
-RAG (Retrieval-Augmented Generation) is een **eerste-klas bouwblok** in Druppie. Net zoals je `module-data-access` of `module-llm` inzet als bouwsteen, mag je RAG via `module-rag` inzetten in een ontwerp. Wees je hiervan bewust: als een use-case grote of veel documenten betreft, is RAG vaak het juiste antwoord — niet zelf de inhoud van die documenten in een prompt proppen, en niet de gebruiker dwingen zelf te zoeken.
+RAG (Retrieval-Augmented Generation) is a **first-class building block**
+in Druppie. Just as you would compose `module-data-access` or
+`module-llm` into a design, you may use `module-rag` for retrieval
+needs. Be aware: when a use-case deals with many or large documents,
+RAG is often the right answer — not stuffing the documents into the
+prompt, and not forcing the user to search manually.
 
-## Wanneer RAG inzetten
+## When to use RAG
 
-Pak RAG als minimaal één van deze waar is:
-- Het corpus is **te groot voor de prompt-context** (meerdere documenten, of één document van >20 pagina's).
-- De gebruiker stelt **vragen waarvan het antwoord verspreid in documenten staat**.
-- De toepassing moet **antwoord met bronverwijzing** geven (juridisch, compliance, beleid, klantcontact in regulated domeinen).
-- Het corpus **muteert vaker dan een release-cyclus** — fine-tuning zou achterlopen.
+Use RAG when at least one of these holds:
+- The corpus is **too large for the prompt context window** (multiple
+  documents, or a single document over 20 pages).
+- The user asks **questions whose answers are spread across documents**.
+- The application must produce **answers with source citations**
+  (legal, compliance, policy, regulated customer-contact).
+- The corpus **mutates faster than the release cycle** — fine-tuning
+  would always be stale.
 
-**Pak géén RAG als:**
-- Het corpus past in één LLM-context-window en muteert zelden → gewoon meegeven in de prompt is goedkoper en exacter.
-- De use-case is een **classificatie of structured extraction** zonder open-eind vraag — RAG voegt complexiteit toe zonder kwaliteitswinst.
-- De vraag is een **single-fact lookup in een gestructureerde bron** (database, API) — `module-data-access` is dan de juiste keuze, niet RAG.
+**Do not use RAG when:**
+- The corpus fits in one LLM context window and rarely changes — just
+  put it in the prompt; cheaper and more precise.
+- The use-case is **classification or structured extraction** without
+  an open-ended question — RAG adds complexity without quality gain.
+- The question is a **single-fact lookup in a structured source**
+  (database, API) — `module-data-access` is the right choice, not RAG.
 
-## Stop — verzin niet zelf de RAG-logica
+## Stop — do not reinvent the RAG pipeline
 
-Verwijs naar `module-rag` (zie [module-rag-spec](../../../docs/RAG/module-rag-spec.md)) in plaats van zelf chunking-, embedding- of vector-search-componenten te ontwerpen. De keuzes hieronder zijn platform-defaults; de architect motiveert in de TD welke laag eventueel afwijkt en waarom.
+Reference `module-rag` (see
+[module-rag-spec](../../../docs/RAG/module-rag-spec.md)) instead of
+designing chunking, embedding, or vector-search components from
+scratch. The defaults below are platform-level; the architect motivates
+in the TD which layer deviates and why.
 
-## Platform-default-stack
+## Platform default stack
 
-Begin elk RAG-ontwerp met deze defaults. Wijk alleen af met een expliciete trigger uit de decision-guides hieronder.
+Start every RAG design from these defaults. Deviate only with an
+explicit trigger from the per-layer decision guides below.
 
-| Laag | Default | Wanneer afwijken |
+| Layer | Default | When to deviate |
 |---|---|---|
-| Chunking | Recursive 512-token, 10–20% overlap | Lange gestructureerde docs → parent-document; anafoor-zware tekst → late chunking |
-| Retrieval | Hybrid (BM25 + dense) met RRF k=60 | Pure-vector alleen tijdelijk; ColBERT bij gemeten gat op out-of-domain |
-| BM25-analyzer | Postgres `to_tsvector('<corpus-taal>')` per veld | Mixed-language corpus → analyzer per veld of multilingual analyzer |
-| Metadata-filter | SQL-filter op `doc_type`, `datum`, `status`, `tenant_id` | n.v.t. — verplicht zodra er meer dan één doctype is |
-| Embedding | `multilingual-e5-large-instruct` (MIT, CPU-haalbaar) | ≥8 GB GPU-budget + kwaliteitseis → Qwen3-Embedding-4B |
-| Vector-store | pgvector (in `module-rag`'s eigen Postgres) | >10M chunks of hard p95-eis filtered ANN → escape naar Qdrant via v2 |
-| Re-ranking | BGE-reranker-v2-m3 self-hosted (in `module-rag`) | Use-case-gold-set ≥5 nDCG-punten beter met Cohere → switch (Bedrock EU) |
-| Query-transformatie | Query expansion + classifier-gated decomposition | HyDE bij korte/vage queries met stijlverschil |
-| GraphRAG | **Niet default** | ≥30% van queries multi-entity/synthesis → LightRAG als parallelle retriever |
-| Agentic loop | **Niet default** | Adaptive Router als eerste agentic-stap; Self-RAG alleen in synthesis-pad |
-| Citaties | Content-hash chunk-IDs + page/paragraph + parent-section-titel; footnote-style in formele output | Juridische precisie → sentence-level span-tracking (Claude Citations API) |
+| Chunking | Recursive 512-token, 10–20% overlap | Long structured docs → parent-document; anaphora-heavy text → late chunking |
+| Retrieval | Hybrid (BM25 + dense) with RRF k=60 | Pure-vector only as a stopgap; ColBERT on measured out-of-domain gap |
+| BM25 analyzer | Postgres `to_tsvector('<corpus-language>')` per field | Mixed-language corpus → analyzer per field or multilingual analyzer |
+| Metadata filter | SQL filter on `doc_type`, `date`, `status`, `tenant_id` | n/a — mandatory once the corpus has more than one doc-type |
+| Embedding | `multilingual-e5-large-instruct` (MIT, CPU-feasible) | ≥8 GB GPU budget + quality requirement → Qwen3-Embedding-4B |
+| Vector store | pgvector (inside `module-rag`'s own Postgres) | >10M chunks or hard p95 filtered-ANN requirement → escape to Qdrant via v2 |
+| Re-ranking | BGE-reranker-v2-m3 self-hosted (inside `module-rag`) | Use-case gold-set ≥5 nDCG points better with Cohere → switch (Bedrock EU) |
+| Query transformation | Query expansion + classifier-gated decomposition | HyDE for short/vague queries with style gap to the corpus |
+| GraphRAG | **Not default** | ≥30% of queries multi-entity/synthesis → LightRAG as parallel retriever |
+| Agentic loop | **Not default** | Adaptive Router as first agentic step; Self-RAG only in the synthesis path |
+| Citations | Content-hash chunk IDs + page/paragraph + parent-section title; footnote style in formal output | Legal precision → sentence-level span tracking (Claude Citations API) |
 
-## Decision-guides per laag
+## Per-layer decision guides
 
 ### Chunking
-- **Recursive 512** is de safe default — 2026-benchmarks zetten dit consistent op #1 van token-based strategieën. Gebruik tiktoken-encoder, niet character-count.
-- **Parent-document/hierarchical** zodra antwoorden kloppen maar citaten ofwel te smal ("halve zin uit context") ofwel te breed ("hele sectie als bron") zijn.
-- **Late chunking** bij documenten met veel verwijswoorden ("dit besluit", "voornoemde partij") — vereist long-context embedding-model (8K+ tokens).
-- **Mijd fixed-size** in productie tenzij het corpus echt homogeen is (logs, transcripts).
+- **Recursive 512** is the safe default — 2026 benchmarks consistently
+  rank it #1 among token-based strategies. Use a tiktoken encoder, not
+  character count.
+- **Parent-document / hierarchical** once answers are correct but
+  citations are either too narrow ("half a sentence out of context") or
+  too broad ("entire section as source").
+- **Late chunking** for documents with many anaphora ("this decision",
+  "the aforementioned party") — requires a long-context embedding model
+  (8K+ tokens).
+- **Avoid fixed-size** in production unless the corpus is truly
+  homogeneous (logs, transcripts).
 
 ### Retrieval
-- **Hybrid is de defensieve default.** Pure dense laat in formele/technische tekst structureel jargon liggen.
-- **Configureer een taal-specifieke BM25-analyzer per corpus-taal.** Zonder NL/EN-analyzer levert lexical maar de helft van zijn waarde.
-- **Metadata-filtering altijd toevoegen** zodra het corpus meer dan één doctype, jaar of categorie bevat.
-- **ColBERT/multi-vector** alleen bij gemeten gat op out-of-domain queries én opslag-budget; voor de meeste use-cases is hybrid+rerank goedkoper en effectiever.
+- **Hybrid is the defensive default.** Pure dense systematically leaves
+  jargon and proper nouns on the table in formal/technical text.
+- **Configure a language-specific BM25 analyzer per corpus language.**
+  Without one, lexical retrieval delivers half its value.
+- **Always add metadata filtering** once the corpus has more than one
+  doc-type, year, or category.
+- **ColBERT / multi-vector** only when you measure a gap on
+  out-of-domain queries and have the storage budget; for most
+  use-cases, hybrid + rerank is cheaper and more effective.
 
-### Embedding-model
-Selectiecriteria in volgorde:
-1. Brede multilingual coverage (NL én EN minimaal).
-2. Self-host-haalbaarheid (data-residency); API-only is een blocker tenzij EU-gehost en juridisch afgedekt.
-3. Permissieve licentie (MIT of Apache 2.0). Non-commercial (jina-v3) is een blocker.
-4. Bewezen kwaliteit op multilingual en taal-specifieke benchmarks.
+### Embedding model
+Selection criteria, in order:
+1. Broad multilingual coverage (at minimum NL and EN).
+2. Self-host feasibility (data residency); API-only is a blocker
+   unless EU-hosted and legally cleared.
+3. Permissive license (MIT or Apache 2.0). Non-commercial (jina-v3)
+   is a blocker.
+4. Proven quality on multilingual and language-specific benchmarks.
 
-- **Default**: `multilingual-e5-large-instruct` — MIT, ~2 GB, CPU-haalbaar, brede coverage.
-- **Upgrade**: Qwen3-Embedding-4B als ≥8 GB GPU-budget; BGE-M3 als hybrid-met-één-model voorkeur.
-- **Vermijd**: OpenAI text-embedding-3-* (zwak NL + API-only), mxbai/nomic-v2 (EN-only), jina-v3 (non-commercial license).
+- **Default**: `multilingual-e5-large-instruct` — MIT, ~2 GB,
+  CPU-feasible, broad coverage.
+- **Upgrade**: Qwen3-Embedding-4B if ≥8 GB GPU budget; BGE-M3 if you
+  want hybrid-with-one-model.
+- **Avoid**: OpenAI text-embedding-3-* (weak on non-English European
+  languages + API-only), mxbai / nomic-v2 (English-only in practice),
+  jina-v3 (non-commercial license).
 
-### Vector-store
-- **Default = pgvector via `module-rag`.** Postgres draait al in de Druppie-stack; tot ~10M chunks geeft dit sub-100ms search-latency met SQL-filtering en transactionele consistentie.
-- **Schuif naar Qdrant** zodra: corpus >10M chunks, hard p95-eis op filtered ANN, of native ColBERT/sparse vereist. Dit is een v2-pad voor `module-rag`; bouw je MCP-interface zo dat deze migratie geen embedding-rebuild forceert.
-- **Weaviate / Milvus / Chroma / LanceDB**: alleen overwegen met expliciete use-case-driver (multimodal, miljarden vectors, embedded-only). Geen default.
+### Vector store
+- **Default = pgvector inside `module-rag`.** Postgres already runs in
+  the Druppie stack; up to ~10M chunks this delivers sub-100ms search
+  latency with SQL filtering and transactional consistency.
+- **Move to Qdrant** once: corpus exceeds 10M chunks, hard p95 on
+  filtered ANN is required, or native ColBERT/sparse vectors are
+  needed. This is a v2 path for `module-rag`; design the MCP interface
+  so the migration does not force an embedding rebuild.
+- **Weaviate / Milvus / Chroma / LanceDB**: only consider with an
+  explicit use-case driver (multimodal, billions of vectors,
+  embedded-only). Not a default.
 
 ### Re-ranking
-- **Default aan** in `module-rag` met BGE-reranker-v2-m3 — gratis, soeverein, brede taaldekking.
-- **Switch naar Cohere Rerank** (Bedrock EU) zodra een use-case-gold-set ≥5 nDCG-punten verschil laat zien én data-egress acceptabel is.
-- **Schakel uit** als latency-budget <500ms p95 en je geen GPU hebt, óf recall@10 al >85% zonder rerank.
-- **Kandidaten**: standaard N=50 → top-5..8; lange docs N=80–100; latency-kritisch N=30 → top-3.
+- **On by default** in `module-rag` with BGE-reranker-v2-m3 — free,
+  sovereign, broad language coverage.
+- **Switch to Cohere Rerank** (Bedrock EU) once a use-case gold-set
+  shows ≥5 nDCG points improvement and data egress is acceptable.
+- **Turn it off** if latency budget < 500ms p95 without GPU, or
+  recall@10 is already >85% without rerank.
+- **Candidate count**: standard N=50 → top-5..8; long docs N=80–100;
+  latency-critical N=30 → top-3.
 
-### Query-transformatie
-- **Query expansion** is de cheap default — een project-glossary met domein-jargon/synoniemen.
-- **Decomposition** alleen wanneer een lichte classifier conjuncties detecteert ("en", "verschil tussen", "hoe verhoudt zich"). Cap op N=3 sub-vragen.
-- **HyDE** alleen bij korte/vage queries met stijlverschil naar het corpus.
-- **Step-back** als optionele stap binnen een agentic-loop bij hyper-specifieke vragen.
-- **Anti-patroon**: multi-query + decomposition tegelijk → latency-explosie zonder meerwaarde.
+### Query transformation
+- **Query expansion** is the cheap default — a project glossary of
+  domain jargon and synonyms.
+- **Decomposition** only when a light classifier detects conjunctions
+  ("and", "difference between", "how does X relate to Y"). Cap at
+  N=3 sub-questions.
+- **HyDE** only for short/vague queries with a style gap to the
+  corpus.
+- **Step-back** as an optional step inside an agentic loop for very
+  specific questions.
+- **Anti-pattern**: multi-query + decomposition at the same time →
+  latency explosion without added value.
 
-### Geavanceerde patronen
-- **GraphRAG niet default.** Voeg toe (LightRAG als parallelle retriever in een Adaptive Router) zodra ≥30% van de queries multi-entity/synthesis-vragen zijn. Volledig Microsoft GraphRAG alleen bij expliciete corpus-brede synthese-projecten.
-- **Agentic loop niet default.** Stappenplan: (1) baseline + rerank werkend → (2) Adaptive Router (3-4 klassen classifier) → (3) Self-RAG/CRAG in synthesis-pad → (4) Plan-and-execute alleen voor research-vragen. Altijd met hard cap op iteraties + latency-circuit-breaker.
+### Advanced patterns
+- **GraphRAG is not default.** Add it (LightRAG as a parallel
+  retriever inside an Adaptive Router) once ≥30% of queries are
+  multi-entity / synthesis. Full Microsoft GraphRAG only for explicit
+  corpus-wide synthesis projects.
+- **Agentic loops are not default.** Progression: (1) get baseline +
+  rerank working → (2) Adaptive Router (3–4 class classifier) →
+  (3) Self-RAG / CRAG in the synthesis path → (4) plan-and-execute
+  only for research-style questions. Always with hard iteration caps
+  and a latency circuit-breaker.
 
-## Citaties
+## Citations
 
-Voor doc-heavy applicaties waar gebruikers de bron moeten kunnen verifiëren is citatie-tracking **geen feature maar een eis**. Verplicht in de pipeline:
+For doc-heavy applications where users must verify the source,
+citation tracking is **not a feature but a requirement**. Mandatory
+in the pipeline:
 
-1. **Content-hash chunk-IDs** (`source_id + version + hash(span_text)`) — stabiel over re-indexering.
-2. **Page/paragraph metadata** — gebruikers moeten naar de bron-passage kunnen springen.
-3. **Parent-section-titel** als metadata bij hierarchical chunking — context-rijke citaten.
-4. **Footnote-style in formele Markdown-output** + parallel **anchor-tags** (`<cite chunk_id="..." span="...">tekst</cite>`) voor interactieve UI met klikbare bron-preview.
-5. **Sentence-level span-tracking** als juridische/compliance-precisie nodig is — Claude Citations API of post-hoc matching.
+1. **Content-hash chunk IDs** (`source_id + version + hash(span_text)`)
+   — stable across re-indexing.
+2. **Page / paragraph metadata** — users must be able to jump to the
+   source passage.
+3. **Parent-section title** as metadata when using hierarchical
+   chunking — context-rich citations.
+4. **Footnote style in formal Markdown output** plus parallel
+   **anchor tags** (`<cite chunk_id="..." span="...">text</cite>`) for
+   interactive UI with a clickable source preview.
+5. **Sentence-level span tracking** if legal/compliance precision is
+   required — Claude Citations API or post-hoc matching.
 
-Citaten verifiëren dat de **bron bestaat**, niet dat de **claim klopt**. Houd die scheiding helder in UX en in evaluatie.
+Citations verify that the **source exists**, not that the **claim is
+correct**. Keep that distinction visible in UX and in evaluation.
 
-## NFRs voor RAG in de TD
+## NFRs for RAG in the TD
 
-Plak deze TR-xx requirements in elke RAG-TD. Volledige tabel met defaults per archetype staat in [rag-patterns research → Default-NFR-tabel](../../../docs/RAG/rag-patterns.md#default-nfr-tabel). Verplicht minimaal:
+Paste these TR-xx requirements into every RAG TD. The full table with
+defaults per archetype lives in
+[rag-patterns research → Default-NFR-tabel](../../../docs/RAG/rag-patterns.md#default-nfr-tabel).
+At a minimum include:
 
-| TR | Onderwerp | Default-archetype gebruiken |
+| TR | Topic | Archetype default |
 |---|---|---|
-| TR-RAG-01/02 | Retrieval-latency P95 / P99 | LS / HS / Batch |
-| TR-RAG-03/04/05 | Recall@10, nDCG@5, MRR op gold-set | LS / HS / Batch |
-| TR-RAG-06 | Faithfulness (claim-support) | ≥0.85 LS, ≥0.90 HS |
+| TR-RAG-01/02 | Retrieval latency P95 / P99 | LS / HS / Batch |
+| TR-RAG-03/04/05 | Recall@10, nDCG@5, MRR on gold-set | LS / HS / Batch |
+| TR-RAG-06 | Faithfulness (claim support) | ≥0.85 LS, ≥0.90 HS |
 | TR-RAG-07 | Citation precision | ≥0.85 LS, ≥0.95 HS |
-| TR-RAG-08 | Hallucination-rate | ≤10% LS, ≤3% HS |
-| TR-RAG-09/10/11 | Freshness SLA per decay-tier | per content-type |
-| TR-RAG-12 | Named content owner per domein | verplicht |
+| TR-RAG-08 | Hallucination rate | ≤10% LS, ≤3% HS |
+| TR-RAG-09/10/11 | Freshness SLA per decay tier | per content type |
+| TR-RAG-12 | Named content owner per domain | mandatory |
 | TR-RAG-13/14 | End-to-end latency (TTC, TTFT) | LS / HS / Batch |
-| TR-RAG-15 | Pipeline-uptime | 99.5% LS, 99.9% HS |
-| TR-RAG-19 | CI-gate op faithfulness en latency-regressies | verplicht |
-| TR-RAG-21 | PII / classificatie-tagging vóór indexing | verplicht |
-| TR-RAG-22 | Lineage per chunk (`source_id`, `version`, `ingested_at`) | verplicht |
+| TR-RAG-15 | Pipeline uptime | 99.5% LS, 99.9% HS |
+| TR-RAG-19 | CI gate on faithfulness and latency regressions | mandatory |
+| TR-RAG-21 | PII / classification tagging before indexing | mandatory |
+| TR-RAG-22 | Lineage per chunk (`source_id`, `version`, `ingested_at`) | mandatory |
 
 **Archetypes:**
-- **LS (Low-stakes interactief)**: chatbot, FAQ, snelle Q&A.
-- **HS (High-stakes interactief)**: bestuurlijk advies, juridisch, compliance, regulated klantcontact.
-- **B (Batch)**: nightly digests, research-summaries.
+- **LS (Low-stakes interactive)**: chatbot, FAQ, quick Q&A.
+- **HS (High-stakes interactive)**: governance advice, legal,
+  compliance, regulated customer contact.
+- **B (Batch)**: nightly digests, research summaries.
 
-Kies één archetype als basis en pas waar nodig aan per requirement.
+Pick one archetype as your baseline and adjust per requirement where
+needed.
 
-## Hoe je dit in een TD verwerkt
+## How to land this in a TD
 
-In de Technical Design van een RAG-projekt:
+In the Technical Design of a RAG project:
 
-1. **Sectie "Oplossingsrichting"** — verwijs expliciet naar `module-rag` als bouwblok en motiveer waarom RAG (i.p.v. classificatie, in-prompt context, of gestructureerde DB-query).
-2. **Sectie "Architectuur"** — toon de pipeline-stappen: ingest → chunk → embed → store → search → rerank → generate. Markeer welke stappen `module-rag` doet, welke `module-llm`, welke de applicatie zelf.
-3. **Sectie "Keuzes per laag"** — vermeld voor chunking, retrieval, embedding, vector-store, rerank, query-transformatie en geavanceerde patronen of je de platform-default volgt, en zo niet: welke afwijking en met welke trigger.
-4. **Sectie "Citatie-strategie"** — beschrijf welke citation-style in de output verschijnt, welke metadata in de index, en wat de gebruiker in de UI ziet.
-5. **Sectie "Non-functional requirements"** — neem de TR-RAG-XX requirements op met use-case-specifieke targets (kies archetype, pas zo nodig aan).
-6. **Sectie "Open vraagstukken / out-of-scope"** — wat doe je in v1 niet (geavanceerde patronen, multi-tenant fysieke separatie, fancy reranking) en wat zou een v2-trigger zijn.
+1. **Section "Solution direction"** — reference `module-rag`
+   explicitly as the building block, and motivate why RAG (rather than
+   classification, in-prompt context, or a structured DB query).
+2. **Section "Architecture"** — show the pipeline steps: ingest →
+   chunk → embed → store → search → rerank → generate. Mark which
+   steps `module-rag` performs, which `module-llm`, and which the
+   application itself.
+3. **Section "Choices per layer"** — for chunking, retrieval,
+   embedding, vector store, rerank, query transformation, and
+   advanced patterns, state whether you follow the platform default
+   or deviate (and with which trigger).
+4. **Section "Citation strategy"** — describe which citation style
+   appears in the output, which metadata lives in the index, and what
+   the user sees in the UI.
+5. **Section "Non-functional requirements"** — include the
+   TR-RAG-XX requirements with use-case-specific targets (pick an
+   archetype and adjust as needed).
+6. **Section "Open questions / out-of-scope"** — what v1 does not do
+   (advanced patterns, multi-tenant physical isolation, fancy
+   reranking) and what would trigger v2.
 
-## Anti-patronen om te herkennen in een ontwerp
+## Anti-patterns to catch in a design
 
-- **"We gebruiken RAG"** zonder te benoemen welke pipeline-stappen, embedding-model of vector-store. Onder-spec; vraagt om TD-revisie.
-- **Pure-vector search** als enige retrieval-strategie in productie — laat structureel jargon en eigennamen liggen.
-- **GraphRAG of agentic RAG** zonder bewezen probleem dat het oplost — voegt latency en kosten toe zonder kwaliteitswinst.
-- **Eigen vector-store-keuze** (Qdrant, Weaviate, etc.) zonder concrete trigger uit de decision-guide. Default = pgvector via `module-rag`.
-- **Citaties als "bronnenlijst onderaan"** in plaats van per-claim-binding — voor regulated use-cases een blocker.
-- **Embedding-model-keuze gebaseerd op MTEB-EN-leaderboard** zonder te kijken naar NL/multilingual benchmarks en licentie.
-- **Document-extractie verstoppen in `module-rag`** — caller is verantwoordelijk voor PDF/Word → tekst; `module-rag` accepteert pre-extraheerde text+metadata.
+- **"We use RAG"** without naming pipeline steps, embedding model, or
+  vector store. Under-specified; requires TD revision.
+- **Pure-vector search** as the only retrieval strategy in production
+  — systematically loses jargon and proper nouns.
+- **GraphRAG or agentic RAG** without a proven problem they solve —
+  adds latency and cost without quality gain.
+- **Custom vector store** (Qdrant, Weaviate, etc.) without a concrete
+  trigger from the decision guide. Default = pgvector via `module-rag`.
+- **Citations as "source list at the bottom"** instead of per-claim
+  binding — a blocker for regulated use-cases.
+- **Embedding model picked from the MTEB-EN leaderboard** without
+  checking multilingual / NL benchmarks and license.
+- **Document extraction hidden inside `module-rag`** — the caller is
+  responsible for PDF/Word → text; `module-rag` accepts pre-extracted
+  text + metadata.
 
-## Referenties
+## References
 
-- Research-fundament met volledige vergelijking + trade-off-tabellen: [`docs/RAG/rag-patterns.md`](../../../docs/RAG/rag-patterns.md)
-- Module-spec (tool-surface + datamodel): [`docs/RAG/module-rag-spec.md`](../../../docs/RAG/module-rag-spec.md)
-- Platform-standards RAG-sectie (defaults voor nieuwe projecten): [`docs/specs/platform-standards.md`](../../../docs/specs/platform-standards.md) — RAG-sectie
+- Research foundation with full comparison + trade-off tables:
+  [`docs/RAG/rag-patterns.md`](../../../docs/RAG/rag-patterns.md)
+- Module spec (tool surface + data model):
+  [`docs/RAG/module-rag-spec.md`](../../../docs/RAG/module-rag-spec.md)
+- Platform standards RAG section (defaults for new projects):
+  [`docs/specs/platform-standards.md`](../../../docs/specs/platform-standards.md)
