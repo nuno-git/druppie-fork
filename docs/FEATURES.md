@@ -511,6 +511,18 @@ The Builder and Reviewer agents use skills to enforce project-specific coding st
 
 **Reviewer behavior**: Before reviewing code, the Reviewer invokes `project-coding-standards` and `standards-validation` to load the validation checklist. Reviews include explicit architecture compliance and standards compliance sections, with critical violations (e.g., JSON/JSONB columns, business logic in routes) resulting in an automatic FAIL verdict.
 
+### Architect Decision-Guide Skills
+
+The Architect agent uses pattern-detecting skills that fire proactively in Step 1 intake when the FD describes a specific design challenge:
+
+| Skill | Trigger signal | Output |
+|-------|----------------|--------|
+| `llm-orchestration-in-apps` | FD describes a multi-step LLM workflow inside the built app (chains, evaluation loops, agents with tools, stateful/durable workflows, multi-agent) | Decision-guide across plain Python, LangGraph, Pydantic-AI, DSPy, CrewAI, MAF, Claude Agent SDK, LlamaIndex Workflows; scoped to in-app workflows, not new Druppie agents |
+
+Each decision-guide skill is backed by a platform-research document under `docs/<topic>/` that grounds the trade-offs (e.g. `docs/LLM-orchestration/llm-orchestration-in-apps.md`). The Architect calls `invoke_skill(...)` itself when the FD signals match — the user doesn't have to ask.
+
+**End-to-end verification (UI test loop):** to confirm a decision-guide skill fires, run the matching seed tool test from `/evaluations` (e.g. `architect-fd-llm-chain-pending`), log in as `analyst`, approve the pending FD on `/tasks`, then resume the session and watch the architect's tool calls — `invoke_skill(skill_name="<skill>")` must appear in Step 1 before the technical research is written. Alternatively, write your own FD with the relevant trigger signal and run the planner → BA → architect flow manually.
+
 ---
 
 ## Shared Dependency Cache

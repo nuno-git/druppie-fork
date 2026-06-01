@@ -888,6 +888,8 @@ Skills are reusable prompt/instruction packages stored as Markdown files in `dru
    - The skill's Markdown body is returned as the tool result (instructions for the LLM).
 4. `ToolExecutor` checks `_is_tool_allowed_via_skill()` to permit tools granted by active skills.
 
+**Decision-guide skills.** The Architect's Step 1 intake (in `druppie/agents/definitions/architect.yaml`) contains pattern-detection trigger lines that instruct the agent to call `invoke_skill(...)` proactively when specific FD signals match — before research is written. Example: when the FD describes a multi-step in-app LLM workflow (chain, evaluation loop, agent with tools, stateful workflow, multi-agent), the architect invokes `llm-orchestration-in-apps` to load the framework decision-guide. Each decision-guide skill has its own trigger line (additive — triggers do not replace each other) and is paired with a platform-research document under `docs/<topic>/` that grounds the trade-offs. End-to-end verification runs via seed tool tests (`testing/tools/architect-fd-*.yaml`) that pause on the FD-approval gate so an analyst can drive the loop manually from `/evaluations` + `/tasks`.
+
 ### 8.8 Orchestrator
 
 `druppie/execution/orchestrator.py` is the main entry point for processing user messages. The flow:
