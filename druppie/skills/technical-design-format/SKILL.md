@@ -94,8 +94,11 @@ Invoke the `rag-patterns` skill for the decision guides. Cite
 platform-standards §5 (RAG defaults) and state per layer — chunking,
 retrieval, embedding, vector store, rerank, query transformation,
 advanced patterns, citation strategy — whether you follow the default
-or deviate (with the trigger). Add the mandatory TR-RAG NFRs as
-TR-rows in the Requirements table with archetype targets (LS / HS / B).
+or deviate (with the trigger). Keep this subsection compact: per-layer
+targets and any RAG-specific NFRs stay **inside this subsection**. Do
+**not** dump TR-RAG-XX rows into the global Requirements table — that
+table is for FR/NFR/TR at the project level, not RAG implementation
+detail. Reference the rag-patterns research doc for the full NFR menu.
 
 (Deployment / hosting / infra is the platform default — do not restate it
 unless this project deviates.)

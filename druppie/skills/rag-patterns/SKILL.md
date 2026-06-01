@@ -197,34 +197,26 @@ correct**. Keep that distinction visible in UX and in evaluation.
 
 ## NFRs for RAG in the TD
 
-Paste these TR-xx requirements into every RAG TD. The full table with
-defaults per archetype lives in
-[rag-patterns research → Default-NFR-tabel](../../../docs/RAG/rag-patterns.md#default-nfr-tabel).
-At a minimum include:
+RAG quality and latency targets belong **inside the RAG subsection**
+of the TD, not in the global Requirements table. Keep it compact —
+typically one short paragraph or table covering the targets that
+actually drive design decisions for this use-case. Common picks
+(non-exhaustive): faithfulness, citation precision, hallucination
+rate, end-to-end latency. Pick the ones that matter for the chosen
+archetype and skip the rest.
 
-| TR | Topic | Archetype default |
-|---|---|---|
-| TR-RAG-01/02 | Retrieval latency P95 / P99 | LS / HS / Batch |
-| TR-RAG-03/04/05 | Recall@10, nDCG@5, MRR on gold-set | LS / HS / Batch |
-| TR-RAG-06 | Faithfulness (claim support) | ≥0.85 LS, ≥0.90 HS |
-| TR-RAG-07 | Citation precision | ≥0.85 LS, ≥0.95 HS |
-| TR-RAG-08 | Hallucination rate | ≤10% LS, ≤3% HS |
-| TR-RAG-09/10/11 | Freshness SLA per decay tier | per content type |
-| TR-RAG-12 | Named content owner per domain | mandatory |
-| TR-RAG-13/14 | End-to-end latency (TTC, TTFT) | LS / HS / Batch |
-| TR-RAG-15 | Pipeline uptime | 99.5% LS, 99.9% HS |
-| TR-RAG-19 | CI gate on faithfulness and latency regressions | mandatory |
-| TR-RAG-21 | PII / classification tagging before indexing | mandatory |
-| TR-RAG-22 | Lineage per chunk (`source_id`, `version`, `ingested_at`) | mandatory |
-
-**Archetypes:**
+**Archetypes** (used to set numeric targets):
 - **LS (Low-stakes interactive)**: chatbot, FAQ, quick Q&A.
 - **HS (High-stakes interactive)**: governance advice, legal,
-  compliance, regulated customer contact.
-- **B (Batch)**: nightly digests, research summaries.
+  compliance, regulated customer contact. Stricter
+  faithfulness/citation/hallucination thresholds.
+- **B (Batch)**: nightly digests, research summaries. Latency is
+  loose, quality strict.
 
-Pick one archetype as your baseline and adjust per requirement where
-needed.
+The full menu of TR-RAG-XX requirements with per-archetype defaults
+lives in
+[rag-patterns research → Default-NFR-tabel](../../../docs/RAG/rag-patterns.md#default-nfr-tabel).
+Cite from it as needed — do not paste the entire table into every TD.
 
 ## How to land this in a TD
 
