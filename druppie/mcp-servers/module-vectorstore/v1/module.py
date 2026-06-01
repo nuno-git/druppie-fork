@@ -81,63 +81,65 @@ class VectorStoreModule:
 
         effective_chunk_size = chunk_size - chunk_overlap
 
-        for doc in documents:
-            content = doc["content"]
-            source_name = doc.get("source_name", "unknown")
-            source_type = doc.get("source_type", "text")
-            doc_metadata = doc.get("metadata", {})
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                for doc in documents:
+                    content = doc["content"]
+                    source_name = doc.get("source_name", "unknown")
+                    source_type = doc.get("source_type", "text")
+                    doc_metadata = doc.get("metadata", {})
 
-            chunks = self._chunk_text(content, effective_chunk_size, chunk_overlap)
+                    chunks = self._chunk_text(content, effective_chunk_size, chunk_overlap)
 
-            async with pool.acquire() as conn:
-                doc_row = await conn.fetchrow(
-                    """
-                    INSERT INTO documents (index_id, source_name, source_type,
-                                           chunk_count, metadata)
-                    VALUES ($1, $2, $3, $4, $5::jsonb)
-                    RETURNING id
-                    """,
-                    index_id, source_name, source_type,
-                    len(chunks), _to_json(doc_metadata),
-                )
-                document_id = doc_row["id"]
-
-                for i, chunk_text in enumerate(chunks):
-                    chunk_row = await conn.fetchrow(
+                    doc_row = await conn.fetchrow(
                         """
-                        INSERT INTO chunks (index_id, document_id, chunk_index,
-                                            content, source_name, source_page,
-                                            source_section, metadata)
-                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)
+                        INSERT INTO documents (index_id, source_name, source_type,
+                                               chunk_count, metadata)
+                        VALUES ($1, $2, $3, $4, $5::jsonb)
                         RETURNING id
                         """,
-                        index_id, document_id, i, chunk_text,
-                        source_name, doc.get("source_page"),
-                        doc.get("source_section"), _to_json(doc_metadata),
+                        index_id, source_name, source_type,
+                        len(chunks), _to_json(doc_metadata),
                     )
-                    all_chunk_ids.append(chunk_row["id"])
-                    all_texts.append(chunk_text)
+                    document_id = doc_row["id"]
 
-            total_chunks += len(chunks)
+                    for i, chunk_text in enumerate(chunks):
+                        chunk_row = await conn.fetchrow(
+                            """
+                            INSERT INTO chunks (index_id, document_id, chunk_index,
+                                                content, source_name, source_page,
+                                                source_section, metadata)
+                            VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)
+                            RETURNING id
+                            """,
+                            index_id, document_id, i, chunk_text,
+                            source_name, doc.get("source_page"),
+                            doc.get("source_section"), _to_json(doc_metadata),
+                        )
+                        all_chunk_ids.append(chunk_row["id"])
+                        all_texts.append(chunk_text)
+
+                    total_chunks += len(chunks)
 
         if all_texts:
             embeddings = await self._get_embeddings(all_texts, embedding_model)
             dimensions = len(embeddings[0]) if embeddings else 0
 
             async with pool.acquire() as conn:
-                if current_dimensions == 0 and dimensions > 0:
-                    await conn.execute(
-                        "UPDATE indices SET dimensions = $1 WHERE id = $2",
-                        dimensions, index_id,
-                    )
+                async with conn.transaction():
+                    if current_dimensions == 0 and dimensions > 0:
+                        await conn.execute(
+                            "UPDATE indices SET dimensions = $1 WHERE id = $2",
+                            dimensions, index_id,
+                        )
 
-                for chunk_id, embedding in zip(all_chunk_ids, embeddings):
-                    await conn.execute(
-                        "UPDATE chunks SET embedding = $1 WHERE id = $2",
-                        str(embedding), chunk_id,
-                    )
+                    for chunk_id, embedding in zip(all_chunk_ids, embeddings):
+                        await conn.execute(
+                            "UPDATE chunks SET embedding = $1 WHERE id = $2",
+                            str(embedding), chunk_id,
+                        )
 
-                await self._ensure_vector_index(conn, index_id, dimensions)
+                    await self._ensure_vector_index(conn, index_id, dimensions)
 
         return {
             "index_id": str(index_id),
