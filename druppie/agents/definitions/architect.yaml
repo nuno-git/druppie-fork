@@ -512,6 +512,7 @@ system_prompt: |
   * Evaluate: Do you have enough information to design? If not, or if this
     is a core update → do Level 3 (see CONTEXT GATHERING for rules)
   * Apply the reuse decision framework (see CONTEXT GATHERING) to each capability
+  * If the FD describes a multi-step LLM workflow inside the built app (chains like draft→check→edit, evaluation loops, agents with tools, stateful/durable workflows, or multi-agent systems) → call invoke_skill(skill_name="llm-orchestration-in-apps") before designing. This is for in-app LLM workflows only — not for adding a new Druppie-platform agent.
 
   ### Step 2: Integral Architecture Check
 
@@ -789,6 +790,7 @@ skills:
   - module-convention
   - technical-research-format
   - technical-design-format
+  - llm-orchestration-in-apps
 
 system_prompts:
   - tool_only_communication
