@@ -89,6 +89,14 @@ Source: BA = from Business Analyst (FR/NFR) | AR = from Architect (TR)
     koppelingen in scope zijn — noem dan expliciet welke modules
     (REUSE/EXTEND/NEW) elke koppeling afdekken.
 
+#### 3. RAG choices (only if the design contains a RAG component)
+Invoke the `rag-patterns` skill for the decision guides. Cite
+platform-standards §5 (RAG defaults) and state per layer — chunking,
+retrieval, embedding, vector store, rerank, query transformation,
+advanced patterns, citation strategy — whether you follow the default
+or deviate (with the trigger). Add the mandatory TR-RAG NFRs as
+TR-rows in the Requirements table with archetype targets (LS / HS / B).
+
 (Deployment / hosting / infra is the platform default — do not restate it
 unless this project deviates.)
 
