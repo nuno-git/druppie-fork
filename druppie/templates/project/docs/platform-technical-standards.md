@@ -1,6 +1,6 @@
 # Platform Technical Standards
 
-**Revision:** 2026-04-20
+**Revision:** 2026-06-01
 
 Every Druppie-created application follows these technical defaults. The
 Architect treats them as givens when writing `docs/technical-design.md` and only
@@ -49,6 +49,7 @@ registry:
 - File search inside a codebase → `module-filesearch`
 - ArchiMate / architecture reasoning → `module-archimate`
 - Shell / coding execution → `module-coding`
+- Document-heavy retrieval, knowledge-base search, citation-backed Q&A → `module-rag`
 
 If an existing module covers the capability, the TD references the module
 and the SDK call pattern — it does not design an alternative. Building a
@@ -79,7 +80,40 @@ Programming style — follow the Druppie core:
 - **Services compose repositories.** Services hold business logic; they
   never touch the DB directly. Route handlers call services.
 
-## 5. API conventions
+## 5. RAG defaults
+
+For doc-heavy applications (knowledge bases, document search,
+citation-backed Q&A, large-document retrieval) the platform defaults are:
+
+| Topic | Default |
+|---|---|
+| Module | `module-rag` — never reimplement chunking, embedding, or vector search |
+| Embedding model | `multilingual-e5-large-instruct` (MIT, multilingual, CPU-feasible) |
+| Vector store | pgvector (inside `module-rag`'s own Postgres) |
+| Retrieval | Hybrid (BM25 + dense) with RRF k=60 |
+| BM25 analyzer | Language-specific (`to_tsvector('<corpus-language>', ...)`) per field |
+| Chunking | Recursive 512-token, 10–20% overlap |
+| Re-ranking | BGE-reranker-v2-m3 (on by default in `module-rag`) |
+| Citation metadata | Content-hash chunk-IDs + `page_no` + `section_title` + `parent_chunk_id` per chunk |
+| Citation format | Footnote style in formal Markdown output + anchor tags for interactive UI |
+| Document extraction | Caller-side; `module-rag` accepts pre-extracted text + metadata |
+| Index updates | Idempotent on `(source_id, version)`; deletes via `delete_documents` |
+| Tenant isolation | Logical via `tenant_id` on every call; physical isolation via separate `module-rag` instances when required |
+
+Mandatory NFRs in the TD for any RAG component: retrieval latency,
+recall on a gold-set, faithfulness, citation precision, hallucination
+rate, freshness SLA, named content owner per domain, PII tagging
+before indexing, lineage per chunk. Use the `LS / HS / Batch`
+archetype defaults from the `rag-patterns` skill.
+
+The TD does not restate these defaults. It only documents deviations
+and the trigger that justifies them.
+
+For deeper guidance — chunking variants, advanced patterns
+(re-ranking, query rewriting, GraphRAG, agentic), NFR archetypes,
+anti-patterns — see the `rag-patterns` skill in the Druppie core.
+
+## 6. API conventions
 
 - FastAPI routers under `app/api/routes/`.
 - Routes are thin: validate input, call a service, return a domain model.
@@ -90,7 +124,7 @@ Programming style — follow the Druppie core:
 - All domain types are Pydantic models in `app/domain/`, exported from
   `app/domain/__init__.py`.
 
-## 6. Frontend conventions
+## 7. Frontend conventions
 
 - TypeScript, strict mode on.
 - Pages under `src/pages/`, reusable components under `src/components/`.
@@ -100,7 +134,7 @@ Programming style — follow the Druppie core:
   `druppie/templates/project/frontend/src/components/chat/`). Do not
   roll a new chat UI.
 
-## 7. Testing
+## 8. Testing
 
 - Backend: pytest. Integration tests target a real Postgres (via the
   template's `docker-compose.yaml`). Mocks only for external third-party
@@ -110,7 +144,7 @@ Programming style — follow the Druppie core:
 - The TD names the scenarios that need tests; test implementation
   details live in the repo, not the TD.
 
-## 8. Security (technical)
+## 9. Security (technical)
 
 - **Auth is handled by Druppie.** Every app is deployed behind the
   Druppie platform, which already does Keycloak-based auth. Apps read
@@ -126,7 +160,7 @@ Programming style — follow the Druppie core:
 The user-facing side of auth (no login screen, no role-admin UI) lives
 in the functional standards file.
 
-## 9. Explicitly out of scope (for now)
+## 10. Explicitly out of scope (for now)
 
 The following are platform concerns and should NOT appear in individual
 project TDs:
@@ -144,7 +178,7 @@ If a project has a genuine reason to do any of these itself (e.g. a
 compliance-driven exception), the Architect documents it as a platform-
 standard deviation with rationale.
 
-## 10. Deployment
+## 11. Deployment
 
 - Each app ships a `Dockerfile` and a `docker-compose.yaml` in the same
   shape as the template.
@@ -154,7 +188,7 @@ standard deviation with rationale.
 - Prod deployment is via the Druppie deploy pipeline; the TD does not
   describe Kubernetes manifests or cloud infra.
 
-## 11. Git
+## 12. Git
 
 - Conventional commits (`feat:`, `fix:`, `refactor:`, `docs:`, `test:`,
   `chore:`).
@@ -162,10 +196,10 @@ standard deviation with rationale.
 - One logical change per commit.
 - Every PR description states the why, not just the what.
 
-## 12. Referencing this file in the TD
+## 13. Referencing this file in the TD
 
 Every `technical-design.md` starts with a **Platform standards** line
 linking back here with the revision the TD was written against:
 
-> Platform standards: conforms to [docs/platform-technical-standards.md](./platform-technical-standards.md) rev 2026-04-20.
+> Platform standards: conforms to [docs/platform-technical-standards.md](./platform-technical-standards.md) rev 2026-06-01.
 > Only deviations are documented below.

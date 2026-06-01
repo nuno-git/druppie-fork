@@ -254,5 +254,5 @@ In the Technical Design of a RAG project:
   [`docs/RAG/rag-patterns.md`](../../../docs/RAG/rag-patterns.md)
 - Module spec (tool surface + data model):
   [`docs/RAG/module-rag-spec.md`](../../../docs/RAG/module-rag-spec.md)
-- Platform standards RAG section (defaults for new projects):
-  [`docs/specs/platform-standards.md`](../../../docs/specs/platform-standards.md)
+- Platform standards RAG section (defaults seeded into every project):
+  [`druppie/templates/project/docs/platform-technical-standards.md`](../../templates/project/docs/platform-technical-standards.md) §5 RAG defaults
