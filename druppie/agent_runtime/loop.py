@@ -304,6 +304,13 @@ class AgentLoop:
                     pending_found = True
                 messages.append(result)
 
+            # Check if cancelled after tool execution
+            if cancellation_token and cancellation_token.is_cancelled:
+                return AgentResult(
+                    status="cancelled",
+                    events=emitter.get_events(),
+                )
+
             emitter.emit(AgentEvent.now("turn_end", {
                 "turn_number": turn,
                 "tokens_used": usage,

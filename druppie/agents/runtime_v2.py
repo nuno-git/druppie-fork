@@ -380,6 +380,16 @@ class AgentV2:
             max_turns=self.definition.max_iterations or 20,
         )
 
+        from druppie.agent_runtime.types import SessionPauseToken
+
+        # Create cancellation token that polls for session PAUSED status
+        cancellation_token = SessionPauseToken(
+            db_session_factory=None,  # uses SessionLocal internally
+            session_id=session_id,
+            poll_interval=2.0,
+        )
+        cancellation_token.start_polling()
+
         adapted_llm = await adapt_llm(self.llm)
         new_def = old_definition_to_new(self.definition)
 
@@ -449,6 +459,7 @@ class AgentV2:
                         child_tool_provider_factory=lambda **kw: _child_tp_factory(**{**kw, '_parent_run_id': child_agent_run.id}),
                         current_depth=current_depth,
                         agent_chain=agent_chain,
+                        cancellation_token=cancellation_token,
                     )
                     child_tp.set_subagents_connection(child_subagents_conn)
                 return child_tp
@@ -465,20 +476,25 @@ class AgentV2:
                 parent_tool_provider=tool_provider,
                 parent_agent_def=new_def,
                 child_tool_provider_factory=_child_tp_factory,
+                cancellation_token=cancellation_token,
             )
             tool_provider.set_subagents_connection(subagents_conn)
 
-        agent_result: AgentResult = await self._agent_loop.run(
-            agent=new_def,
-            agent_loader=lambda _: new_def,
-            tool_provider=tool_provider,
-            prompt=prompt,
-            initial_messages=messages,
-            llm=adapted_llm,
-            event_callbacks=[event_persister],
-            config=loop_config,
-            tool_call_history=tool_call_history,
-        )
+        try:
+            agent_result: AgentResult = await self._agent_loop.run(
+                agent=new_def,
+                agent_loader=lambda _: new_def,
+                tool_provider=tool_provider,
+                prompt=prompt,
+                initial_messages=messages,
+                llm=adapted_llm,
+                event_callbacks=[event_persister],
+                config=loop_config,
+                tool_call_history=tool_call_history,
+                cancellation_token=cancellation_token,
+            )
+        finally:
+            await cancellation_token.cleanup()
 
         return self._convert_result(
             agent_result, messages, prompt, context, start_iteration,

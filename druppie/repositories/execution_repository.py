@@ -150,17 +150,39 @@ class ExecutionRepository(BaseRepository):
         )
         return self._to_summary(agent_run) if agent_run else None
 
-    def get_user_paused_run(self, session_id: UUID) -> AgentRunSummary | None:
-        """Get the user-paused agent run for a session."""
-        agent_run = (
+    def get_user_paused_leaves(self, session_id: UUID) -> list[AgentRunSummary]:
+        """Get the leaf-most user-paused agent runs in the chain.
+
+        Returns all PAUSED_USER runs that have no PAUSED_USER children.
+        For a tree: A→[B,C]→[D,E,F,G], if all are paused, returns [D,E,F,G].
+        For a chain: A→B→C, returns [C].
+        For a single: A, returns [A].
+        """
+        paused_runs = (
             self.db.query(AgentRun)
             .filter(
                 AgentRun.session_id == session_id,
                 AgentRun.status == AgentRunStatus.PAUSED_USER.value,
             )
-            .first()
+            .all()
         )
-        return self._to_summary(agent_run) if agent_run else None
+        if not paused_runs:
+            return []
+
+        paused_ids = {r.id for r in paused_runs}
+        leaves = []
+        for run in paused_runs:
+            has_paused_child = any(
+                r.parent_run_id == run.id and r.id in paused_ids
+                for r in paused_runs
+            )
+            if not has_paused_child:
+                leaves.append(self._to_summary(run))
+        return leaves if leaves else [self._to_summary(paused_runs[-1])]
+
+    def get_user_paused_run(self, session_id: UUID) -> AgentRunSummary | None:
+        leaves = self.get_user_paused_leaves(session_id)
+        return leaves[0] if leaves else None
 
     def get_running_run(self, session_id: UUID) -> AgentRunSummary | None:
         """Get a running agent run for a session.

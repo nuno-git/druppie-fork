@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import threading
+
+import asyncio
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Literal
@@ -87,6 +89,52 @@ class CancellationToken:
     def is_cancelled(self) -> bool:
         """Check if cancelled."""
         return self._cancelled
+
+
+class SessionPauseToken(CancellationToken):
+    """CancellationToken that polls the DB for session PAUSED status."""
+
+    def __init__(self, db_session_factory, session_id, poll_interval: float = 2.0):
+        super().__init__()
+        self._db_factory = db_session_factory
+        self._session_id = session_id
+        self._poll_interval = poll_interval
+        self._poll_task: asyncio.Task | None = None
+
+    def start_polling(self):
+        """Start background polling task."""
+        if self._poll_task is None:
+            self._poll_task = asyncio.create_task(self._poll_loop())
+
+    async def _poll_loop(self):
+        from druppie.domain.common import SessionStatus
+
+        while not self._cancelled:
+            await asyncio.sleep(self._poll_interval)
+            if self._cancelled:
+                break
+            try:
+                from druppie.db.database import SessionLocal
+                from druppie.db.models.session import Session as SessionModel
+
+                db = SessionLocal()
+                try:
+                    session = db.query(SessionModel).filter(SessionModel.id == self._session_id).first()
+                    if session and session.status == SessionStatus.PAUSED.value:
+                        self.cancel()
+                        return
+                finally:
+                    db.close()
+            except Exception:
+                pass  # Don't crash the polling loop
+
+    async def cleanup(self):
+        if self._poll_task and not self._poll_task.done():
+            self._poll_task.cancel()
+            try:
+                await self._poll_task
+            except asyncio.CancelledError:
+                pass
 
 
 class AgentLoopError(Exception):

@@ -261,8 +261,11 @@ async def stop_session(
     user_id = UUID(user["sub"])
     user_roles = user.get("realm_access", {}).get("roles", [])
 
-    # Lock the row to prevent race with concurrent operations
-    session = session_repo.get_by_id_for_update(session_id)
+    # Read without row lock — avoid deadlocking with the background task's
+    # long-running transaction (agent execution holds an open DB session).
+    # Setting PAUSED is a "fire and forget" flag; the background task's
+    # SessionPauseToken polls for it cooperatively.
+    session = session_repo.get_by_id(session_id)
     if not session:
         raise NotFoundError("session", str(session_id))
 
@@ -279,9 +282,16 @@ async def stop_session(
         )
 
     # Set session status to paused — the background task will detect this
-    # Agent runs are NOT touched: they keep their current status
-    session_repo.update_status(session_id, SessionStatus.PAUSED)
-    session_repo.commit()
+    # via its SessionPauseToken polling. Use a fresh DB session to avoid
+    # blocking on the background task's open transaction.
+    from druppie.db.database import SessionLocal
+    _db = SessionLocal()
+    try:
+        _repo = SessionRepository(_db)
+        _repo.update_status(session_id, SessionStatus.PAUSED)
+        _db.commit()
+    finally:
+        _db.close()
 
     try:
         import os

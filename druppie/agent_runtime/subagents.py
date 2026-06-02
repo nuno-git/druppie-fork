@@ -243,6 +243,16 @@ class SubagentsMCP:
                 child_repo = getattr(child_tool_provider, '_execution_repo', None)
                 child_run_id = getattr(child_tool_provider, '_agent_run_id', None)
 
+                if cancellation_token and cancellation_token.is_cancelled:
+                    if child_repo is not None and child_run_id is not None:
+                        child_repo.update_status(child_run_id, AgentRunStatus.PAUSED_USER)
+                    return {
+                        "agent": agent_id,
+                        "status": "cancelled",
+                        "result": None,
+                        "error": None,
+                    }
+
                 if child_result.status == "paused":
                     if child_repo is not None and child_run_id is not None:
                         pause_status = _resolve_pause_status(child_result)
@@ -304,9 +314,31 @@ class SubagentsMCP:
                     "error": str(e),
                 }
 
-        tasks = [spawn_one(spec) for spec in agents]
-        results = await asyncio.gather(*tasks)
-        results_list = list(results)
+        tasks = [asyncio.ensure_future(spawn_one(spec)) for spec in agents]
+        try:
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+        except Exception:
+            for t in tasks:
+                if not t.done():
+                    t.cancel()
+            raise
+        finally:
+            if cancellation_token and cancellation_token.is_cancelled:
+                for t in tasks:
+                    if not t.done():
+                        t.cancel()
+
+        results_list = []
+        for r in results:
+            if isinstance(r, Exception):
+                results_list.append({
+                    "agent": "unknown",
+                    "status": "cancelled",
+                    "result": None,
+                    "error": None,
+                })
+            else:
+                results_list.append(r)
         any_paused = any(r.get("status") == "paused" for r in results_list)
         if any_paused:
             return {"results": results_list, "_pending": True}

@@ -597,7 +597,7 @@ class Orchestrator:
             .filter(
                 ToolCallModel.agent_run_id == parent_run_id,
                 ToolCallModel.tool_name == "subagents",
-                ToolCallModel.status == "paused",
+                ToolCallModel.status.in_(["paused", "completed"]),
             )
             .order_by(ToolCallModel.created_at.desc())
             .first()
@@ -605,7 +605,6 @@ class Orchestrator:
         if not paused_tc:
             return
 
-        # Collect results from ALL siblings spawned by this specific tool call
         children = (
             db.query(AgentRun)
             .filter(
@@ -948,6 +947,7 @@ class Orchestrator:
         }
         current_run = completed_run
         while current_run.parent_run_id:
+            self.execution_repo.db.expire_all()
             parent_run = self.execution_repo.get_by_id(current_run.parent_run_id)
             if not parent_run or AgentRunStatus(parent_run.status) not in paused_statuses:
                 logger.info(
@@ -1014,10 +1014,9 @@ class Orchestrator:
         logger.info("resume_paused_session", session_id=str(session_id))
 
         # Session is already set to ACTIVE by the endpoint's lock_for_resume()
-        # Find the paused agent run
-        paused_run = self.execution_repo.get_user_paused_run(session_id)
+        paused_leaves = self.execution_repo.get_user_paused_leaves(session_id)
 
-        if not paused_run:
+        if not paused_leaves:
             # Check if there's a run waiting for approval/answer — if so,
             # restore the session to its waiting status and let the
             # approval/answer flow handle it naturally
@@ -1094,16 +1093,52 @@ class Orchestrator:
             return session_id
 
         logger.info(
+            "resuming_user_paused_leaves",
+            count=len(paused_leaves),
+            agents=[l.agent_id for l in paused_leaves],
+        )
+
+        if len(paused_leaves) == 1:
+            await self._resume_single_paused_leaf(session_id, paused_leaves[0])
+        else:
+            import asyncio as _asyncio
+            await _asyncio.gather(*[
+                self._resume_leaf_with_own_db(session_id, leaf)
+                for leaf in paused_leaves
+            ])
+
+        return session_id
+
+    async def _resume_leaf_with_own_db(self, session_id: UUID, leaf) -> None:
+        from druppie.db.database import SessionLocal
+        from druppie.repositories import ExecutionRepository, SessionRepository
+
+        db = SessionLocal()
+        try:
+            leaf_orchestrator = Orchestrator(
+                session_repo=SessionRepository(db),
+                execution_repo=ExecutionRepository(db),
+                project_repo=self.project_repo,
+                question_repo=self.question_repo,
+            )
+            await leaf_orchestrator._resume_single_paused_leaf(session_id, leaf)
+        finally:
+            db.close()
+
+    async def _resume_single_paused_leaf(
+        self, session_id: UUID, paused_run,
+    ) -> None:
+        from druppie.agents.runtime_v2 import AgentV2 as Agent
+
+        logger.info(
             "resuming_user_paused_agent",
             agent_run_id=str(paused_run.id),
             agent_id=paused_run.agent_id,
         )
 
-        # Mark agent run as running
         self.execution_repo.update_status(paused_run.id, AgentRunStatus.RUNNING)
         self.execution_repo.commit()
 
-        # Build fresh context and continue the agent
         db = self.execution_repo.db
         context = self.build_project_context(session_id)
         agent = Agent(paused_run.agent_id, db=db)
@@ -1123,7 +1158,6 @@ class Orchestrator:
             self.execution_repo.commit()
             raise
 
-        # Handle result (correctly handles user_paused, cancelled, etc.)
         status = self._handle_agent_resume_result(session_id, paused_run.id, result, agent_id=paused_run.agent_id)
 
         if status == "completed":
