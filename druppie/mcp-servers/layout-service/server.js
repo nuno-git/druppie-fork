@@ -39,12 +39,16 @@ const DEFAULT_NODE_H = 55
 // viewpoint has a canonical layout shape that ELK won't infer on its
 // own. The default falls back to Layered.
 //
-// 'Layered'           — Motivation/Business/Application/Technology
-//                       stacked top-to-bottom; realize-stack points up.
-// 'ApplicationCooperation' — peer components side-by-side, horizontal
-//                       flow with shared services in the middle.
-// 'Organization'      — actors/roles in a chart-like hierarchy.
-// 'InformationStructure' — data-object composition tree, top-down.
+// All viewpoints partition by ArchiMate layer and lay out top-to-bottom
+// (DOWN), so every plate keeps the canonical Motivation → Business →
+// Application → Technology stack in clean horizontal bands — matching the
+// Rijnland tekenafspraken and avoiding the overlapping-colour-band result
+// that topology-only layouts produced.
+//
+// 'Layered'           — generic cross-layer stack.
+// 'ApplicationCooperation' — app components + their actors/infra, banded.
+// 'Organization'      — actors/roles, banded.
+// 'InformationStructure' — data-object composition, banded.
 const VIEWPOINT_RECIPES = {
   Layered: {
     'elk.direction': 'DOWN',
@@ -55,25 +59,26 @@ const VIEWPOINT_RECIPES = {
     'elk.partitioning.activate': 'true',
   },
   ApplicationCooperation: {
-    'elk.direction': 'RIGHT',
+    'elk.direction': 'DOWN',
     'elk.spacing.nodeNode': '60',
     'elk.layered.spacing.nodeNodeBetweenLayers': '90',
-    'elk.layered.nodePlacement.strategy': 'NETWORK_SIMPLEX',
-    'elk.partitioning.activate': 'false',
+    'elk.layered.nodePlacement.strategy': 'BRANDES_KOEPF',
+    'elk.layered.nodePlacement.bk.fixedAlignment': 'BALANCED',
+    'elk.partitioning.activate': 'true',
   },
   Organization: {
     'elk.direction': 'DOWN',
     'elk.spacing.nodeNode': '40',
     'elk.layered.spacing.nodeNodeBetweenLayers': '60',
     'elk.layered.nodePlacement.strategy': 'BRANDES_KOEPF',
-    'elk.partitioning.activate': 'false',
+    'elk.partitioning.activate': 'true',
   },
   InformationStructure: {
     'elk.direction': 'DOWN',
     'elk.spacing.nodeNode': '40',
     'elk.layered.spacing.nodeNodeBetweenLayers': '50',
     'elk.layered.nodePlacement.strategy': 'BRANDES_KOEPF',
-    'elk.partitioning.activate': 'false',
+    'elk.partitioning.activate': 'true',
   },
 }
 

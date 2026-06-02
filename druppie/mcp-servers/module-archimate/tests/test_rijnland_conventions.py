@@ -65,7 +65,7 @@ def _fail(msg: str):
 
 
 def test_stereotype_persists_on_correct_type():
-    print("[1/6] stereotype persists on the prescribed type...")
+    print("[1/8] stereotype persists on the prescribed type...")
     doc = _fresh_doc()
     eid = doc.create_element(
         element_type="BusinessRole", name="Watersysteembeheer", stereotype="Account"
@@ -80,7 +80,7 @@ def test_stereotype_persists_on_correct_type():
 
 
 def test_stereotype_rejected_on_wrong_type():
-    print("[2/6] stereotype rejected on the wrong type...")
+    print("[2/8] stereotype rejected on the wrong type...")
     doc = _fresh_doc()
     try:
         # Account must be a BusinessRole, not a BusinessActor.
@@ -94,7 +94,7 @@ def test_stereotype_rejected_on_wrong_type():
 
 
 def test_ownership_behavior_type_accepted():
-    print("[3/6] consumed concept on a behavior type is accepted...")
+    print("[3/8] consumed concept on a behavior type is accepted...")
     doc = _fresh_doc()
     # 'Applicatie als service' (SaaS we consume) -> ApplicationService.
     eid = doc.create_element(
@@ -108,7 +108,7 @@ def test_ownership_behavior_type_accepted():
 
 
 def test_plateau_implementation_layer():
-    print("[4/6] Plateau (Implementation layer) is creatable...")
+    print("[4/8] Plateau (Implementation layer) is creatable...")
     doc = _fresh_doc()
     eid = doc.create_element(element_type="Plateau", name="SOLL 2026-Q1")
     if doc.find_element(eid) is None:
@@ -119,7 +119,7 @@ def test_plateau_implementation_layer():
 
 
 def test_security_domain_without_trust_is_flagged():
-    print("[5/6] validate_view flags a Beveiligingsdomein with no trust level...")
+    print("[5/8] validate_view flags a Beveiligingsdomein with no trust level...")
     doc = _fresh_doc()
     gid = doc.create_element(
         element_type="Grouping", name="DMZ Servers", stereotype="Beveiligingsdomein"
@@ -148,8 +148,34 @@ def test_security_domain_without_trust_is_flagged():
     print("    OK — missing trust flagged, present trust clears it")
 
 
+def test_account_on_plain_role_is_flagged():
+    print("[7/8] validate_view warns about «Account» on an ordinary role...")
+    doc = _fresh_doc()
+    # Misapplied: a handling team stereotyped as Account.
+    rid = doc.create_element(
+        element_type="BusinessRole", name="Behandelteam", stereotype="Account"
+    )
+    vid = doc.create_view(name="Org", documentation="")
+    doc.add_to_view(vid, rid)
+    errors = write_tools._validate_view_impl(doc, doc.find_view(vid))
+    if "account_likely_plain_role" not in {e["code"] for e in errors}:
+        _fail("expected account_likely_plain_role for 'Behandelteam'")
+
+    # A genuine governance account is not flagged.
+    doc2 = _fresh_doc()
+    aid = doc2.create_element(
+        element_type="BusinessRole", name="Watersysteembeheer", stereotype="Account"
+    )
+    vid2 = doc2.create_view(name="Org", documentation="")
+    doc2.add_to_view(vid2, aid)
+    errors2 = write_tools._validate_view_impl(doc2, doc2.find_view(vid2))
+    if "account_likely_plain_role" in {e["code"] for e in errors2}:
+        _fail("a genuine account name should not be flagged")
+    print("    OK — misapplied Account flagged, genuine account clean")
+
+
 def test_clean_plate_has_no_rijnland_noise():
-    print("[6/6] a non-stereotyped plate gets no Rijnland errors...")
+    print("[8/8] a non-stereotyped plate gets no Rijnland errors...")
     doc = _fresh_doc()
     a = doc.create_element(element_type="ApplicationComponent", name="Portal")
     b = doc.create_element(element_type="DataObject", name="Customer")
@@ -179,6 +205,7 @@ if __name__ == "__main__":
     test_ownership_behavior_type_accepted()
     test_plateau_implementation_layer()
     test_security_domain_without_trust_is_flagged()
+    test_account_on_plain_role_is_flagged()
     test_clean_plate_has_no_rijnland_noise()
     print("=" * 50)
     print("All checks passed.")

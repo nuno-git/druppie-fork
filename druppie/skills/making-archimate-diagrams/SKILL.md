@@ -373,6 +373,16 @@ re-checks it.
 | Beveiligingsdomein | Grouping | `Beveiligingsdomein` | Security zone — a group of systems with the same trust level |
 | Plateau | Plateau | `Plateau` | A future (SOLL) situation; carries the i-aanvraag/wijziging number |
 
+> **`«Account»` is NOT a generic role.** An Account is a specific
+> governance construct: an internal collaboration (accountmanager + ICO/
+> AVIM) that coordinates the information provision of one or more WILMA
+> business (sub)functions and aggregates an "Account Applicatie Groep".
+> Do **not** stereotype ordinary handling roles, teams or people
+> (Behandelteam, Zaakcoördinator, Beheerder, Burger, …) as `«Account»` —
+> those are a plain `BusinessRole` / `BusinessActor` **without** a
+> stereotype. Only use `«Account»` when the element genuinely *governs* a
+> set of WILMA functions + an application group.
+
 ### The ownership rule (active vs behavior shape)
 
 The single most-checked rule: **ownership decides the shape.**

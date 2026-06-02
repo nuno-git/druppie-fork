@@ -720,6 +720,15 @@ _LAYER_ORDER = {
     "Other": 0,
 }
 
+# Name tokens that strongly signal an ordinary handling role / team / person
+# rather than a Rijnland "Account" (a governance construct). Used to warn on a
+# misapplied «Account» stereotype. Kept narrow to avoid false positives — none
+# of these belong to a genuine account name.
+_ACCOUNT_NOT_HINTS = (
+    "team", "coördinator", "coordinator", "medewerker", "behandel",
+    "beheerder", "gebruiker", "burger", "klant", "inwoner", "aanvrager",
+)
+
 
 def _read_property(doc, el, prop_name: str) -> str:
     """Return the value of a named property marker on an element, or ''.
@@ -911,6 +920,26 @@ def _validate_view_impl(doc, view) -> list[dict[str, Any]]:
                 ),
                 "element_id": ref,
             })
+
+        # 1b. «Account» is a governance construct (coordinates WILMA functions
+        #     + an application group), not a generic role. Warn when it's
+        #     applied to an ordinary handling role / team / person.
+        if stereotype == "Account":
+            name_el = el.find("am:name", ns)
+            nm = ((name_el.text or "") if name_el is not None else "").lower()
+            if any(hint in nm for hint in _ACCOUNT_NOT_HINTS):
+                errors.append({
+                    "code": "account_likely_plain_role",
+                    "message": (
+                        f"'{nm or ref}' is stereotyped «Account», but its name "
+                        f"reads like an ordinary role/team/person. An Account "
+                        f"is a governance construct (coordinates WILMA functions "
+                        f"+ an application group). If this is just a role, drop "
+                        f"the «Account» stereotype and use a plain BusinessRole/"
+                        f"BusinessActor."
+                    ),
+                    "element_id": ref,
+                })
 
         # 2. A Beveiligingsdomein (security zone) must carry a NORA/IEC-62443
         #    trust level — the whole point of the concept is its security
