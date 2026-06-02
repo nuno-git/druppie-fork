@@ -13,6 +13,8 @@ import { getUserInfo } from '../../services/keycloak'
 import { useAuth } from '../../App'
 import { getAgentConfig, getAgentMessageColors, formatToolName } from '../../utils/agentConfig'
 import { FilePreviewModal } from './ApprovalCard'
+import DownloadMenu from './DownloadMenu'
+import { downloadAsMarkdown, downloadContentAsPdf } from '../../utils/downloadDesign'
 import HITLQuestionMessage from './HITLQuestionMessage'
 import WorkflowPipeline from './WorkflowPipeline'
 import DebugEventLog from './DebugEventLog'
@@ -65,6 +67,7 @@ const InlineApproval = ({ tc, sessionId, sessionUserId }) => {
   const [rejectMode, setRejectMode] = useState(false)
   const [rejectReason, setRejectReason] = useState('')
   const [showFilePreview, setShowFilePreview] = useState(false)
+  const [pdfDownloading, setPdfDownloading] = useState(false)
 
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ['session', sessionId] })
@@ -151,13 +154,27 @@ const InlineApproval = ({ tc, sessionId, sessionUserId }) => {
               : [{ path: filePath || 'file', content }]
             return (
               <div className="mt-1.5">
-                <button
-                  onClick={() => setShowFilePreview(true)}
-                  className="flex items-center gap-1.5 text-xs text-blue-600 hover:text-blue-800 transition-colors"
-                >
-                  {isBatchWrite ? <FileCode className="w-3.5 h-3.5" /> : <FilePlus className="w-3.5 h-3.5" />}
-                  View {isBatchWrite ? `${files.length} files` : filePath || 'file'}
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setShowFilePreview(true)}
+                    className="flex items-center gap-1.5 text-xs text-blue-600 hover:text-blue-800 transition-colors"
+                  >
+                    {isBatchWrite ? <FileCode className="w-3.5 h-3.5" /> : <FilePlus className="w-3.5 h-3.5" />}
+                    View {isBatchWrite ? `${files.length} files` : filePath || 'file'}
+                  </button>
+                  {!isBatchWrite && content && (
+                    <DownloadMenu
+                      variant="light"
+                      loading={pdfDownloading}
+                      onDownloadMd={() => downloadAsMarkdown(content, filePath)}
+                      onDownloadPdf={async () => {
+                        setPdfDownloading(true)
+                        try { await downloadContentAsPdf(content, filePath) }
+                        finally { setPdfDownloading(false) }
+                      }}
+                    />
+                  )}
+                </div>
                 {showFilePreview && (
                   <FilePreviewModal files={files} onClose={() => setShowFilePreview(false)} />
                 )}
