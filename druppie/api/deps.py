@@ -42,6 +42,7 @@ from druppie.repositories import (
     ProjectRepository,
     EvaluationRepository,
     DocumentationCacheRepository,
+    JobRepository,
 )
 from druppie.services import (
     SessionService,
@@ -51,6 +52,7 @@ from druppie.services import (
     WorkflowService,
     EvaluationService,
     DocumentationService,
+    JobService,
 )
 
 # Initialize database tables on import
@@ -93,10 +95,15 @@ def get_doc_cache_repository(db: Session = Depends(get_db)) -> DocumentationCach
     return DocumentationCacheRepository(db)
 
 
+def get_job_repository(db: Session = Depends(get_db)) -> JobRepository:
+    """Get JobRepository with DB session injected."""
+    return JobRepository(db)
+
+
 # =============================================================================
 # SERVICE DEPENDENCIES
 # =============================================================================
-# Services handle business logic. Each service gets its required repositories.
+# Services handle business logic. Each service gets their required repositories.
 
 
 def get_session_service(
@@ -146,6 +153,16 @@ def get_execution_repository(db: Session = Depends(get_db)) -> "ExecutionReposit
     """Get ExecutionRepository with DB session injected."""
     from druppie.repositories import ExecutionRepository
     return ExecutionRepository(db)
+
+
+def get_job_service(
+    job_repo: JobRepository = Depends(get_job_repository),
+    session_repo: SessionRepository = Depends(get_session_repository),
+    execution_repo: "ExecutionRepository" = Depends(get_execution_repository),
+    approval_repo: ApprovalRepository = Depends(get_approval_repository),
+) -> JobService:
+    """Get JobService with repositories injected."""
+    return JobService(job_repo, session_repo, execution_repo, approval_repo)
 
 
 def get_orchestrator(

@@ -45,7 +45,7 @@ from uuid import UUID
 import structlog
 
 from druppie.agents.prompt_builder import DEFAULT_LANGUAGE
-from druppie.domain.common import AgentRunStatus, SessionStatus
+from druppie.domain.common import AgentRunStatus, SessionStatus, ApprovalStatus
 from druppie.core.language_detection import LanguageDetector
 from druppie.execution.human_input import HumanInput
 
@@ -620,6 +620,53 @@ class Orchestrator:
         if not approval or not approval.agent_run_id:
             logger.error("approval_missing_agent_run", approval_id=str(approval_id))
             await self.execute_pending_runs(session_id)
+            return session_id
+
+        # Job-level approval: no tool to execute, just resume agent run
+        if not approval.tool_call_id:
+            if approval.status == ApprovalStatus.REJECTED.value:
+                logger.info(
+                    "job_rejected",
+                    session_id=str(session_id),
+                    approval_id=str(approval_id),
+                )
+                self.session_repo.update_status(session_id, SessionStatus.FAILED, error_message="Job approval rejected")
+                self.execution_repo.update_status(approval.agent_run_id, AgentRunStatus.FAILED)
+                self.execution_repo.commit()
+
+                from druppie.db.models.job import JobRun
+                db = self.execution_repo.db
+                job_run = db.query(JobRun).filter_by(agent_run_id=approval.agent_run_id).first()
+                if job_run:
+                    job_run.status = "failed"
+                    job_run.completed_at = utcnow()
+                    db.commit()
+
+                return session_id
+            logger.info(
+                "resuming_job_after_approval",
+                session_id=str(session_id),
+                approval_id=str(approval_id),
+            )
+            self.session_repo.update_status(session_id, SessionStatus.ACTIVE)
+            self.execution_repo.update_status(approval.agent_run_id, AgentRunStatus.PENDING)
+            self.execution_repo.commit()
+            await self.execute_pending_runs(session_id)
+
+            # Sync job_run status for approval-gated jobs
+            from druppie.db.models.job import JobRun
+            from druppie.db.models.base import utcnow
+            db = self.execution_repo.db
+            job_run = db.query(JobRun).filter_by(agent_run_id=approval.agent_run_id).first()
+            if job_run:
+                final_session = self.session_repo.get_by_id(session_id)
+                if final_session and final_session.status == SessionStatus.COMPLETED:
+                    job_run.status = "completed"
+                    job_run.completed_at = utcnow()
+                else:
+                    job_run.status = "failed"
+                    job_run.completed_at = utcnow()
+                db.commit()
             return session_id
 
         # Step 2: Execute the approved tool

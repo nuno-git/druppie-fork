@@ -1,0 +1,15 @@
+id: test_approval_job
+name: Test Approval Pipeline
+description: A test job that requires approval before execution. Use this to verify the job approval flow works end-to-end.
+schedule: "0 0 31 2 *"
+agent_id: summarizer
+prompt: |
+  This is a test of the job approval pipeline.
+
+  Please create a friendly message confirming that the approval-based
+  job execution pipeline is working correctly.
+approval_required: true
+required_role: admin
+config:
+  dry_run: false
+enabled: true

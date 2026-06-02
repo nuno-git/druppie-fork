@@ -1,0 +1,16 @@
+id: test_pipeline_job
+name: Test Pipeline
+description: A lightweight test job that verifies the cron pipeline works end-to-end.
+schedule: "0 0 31 2 *"
+agent_id: summarizer
+prompt: |
+  This is an automated test of the cron job pipeline.
+
+  There are no previous agent summaries to process.
+  Please create a friendly test-completion message confirming that
+  the scheduled job pipeline is working correctly.
+approval_required: false
+required_role: null
+config:
+  dry_run: false
+enabled: true

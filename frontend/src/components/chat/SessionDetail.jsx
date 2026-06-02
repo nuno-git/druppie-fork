@@ -4,7 +4,7 @@
 
 import { useState, useRef, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Send, CheckCircle, XCircle, Shield, ShieldOff, Loader2, ExternalLink, MessageSquare, FileCode, FilePlus, StopCircle, PlayCircle, ArrowUp, AlertTriangle, Terminal, ChevronDown, ChevronRight } from 'lucide-react'
+import { Send, CheckCircle, XCircle, Shield, ShieldOff, Loader2, ExternalLink, MessageSquare, FileCode, FilePlus, StopCircle, PlayCircle, ArrowUp, AlertTriangle, Terminal, ChevronDown, ChevronRight, Calendar } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -850,6 +850,12 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
           <h2 className="text-sm font-medium text-gray-900 truncate">
             {data.title || 'Untitled Session'}
           </h2>
+          {data.intent === 'scheduled_job' && (
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium text-purple-600 bg-purple-50 border border-purple-200 rounded-full">
+              <Calendar className="w-3 h-3" />
+              Scheduled Job
+            </span>
+          )}
           <div className="ml-auto flex items-center gap-3 flex-shrink-0">
             {/* Stopping indicator — session is paused but agent still finishing */}
             {isStopping && (

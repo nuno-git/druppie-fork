@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import httpx
 import structlog
 
-from druppie.api.routes import agents, approvals, cache, chat, deployments, documentation, evaluations, mcp_bridge, mcps, modules, projects, questions, sandbox, sessions, workspace
+from druppie.api.routes import agents, approvals, cache, chat, deployments, documentation, evaluations, jobs, mcp_bridge, mcps, modules, projects, questions, sandbox, sessions, workspace
 from druppie.api.errors import register_exception_handlers
 from druppie.core.auth import get_auth_service
 from druppie.core.config import get_settings
@@ -128,7 +128,35 @@ async def lifespan(app: FastAPI):
     from druppie.api.routes.sandbox import sandbox_watchdog_loop
     create_tracked_task(sandbox_watchdog_loop(), name="sandbox-watchdog")
 
+    from druppie.db.database import SessionLocal
+    from druppie.repositories import JobRepository, SessionRepository, ExecutionRepository, ApprovalRepository
+    from druppie.services import JobService
+    from druppie.services.job_service import JobScheduler
+
+    job_db = SessionLocal()
+    try:
+        job_service = JobService(
+            job_repo=JobRepository(job_db),
+            session_repo=SessionRepository(job_db),
+            execution_repo=ExecutionRepository(job_db),
+            approval_repo=ApprovalRepository(job_db),
+        )
+        job_service.load_definitions_from_yaml()
+        job_db.commit()
+        logger.info("job_definitions_loaded")
+    except Exception as e:
+        job_db.rollback()
+        logger.error("job_definitions_load_failed", error=str(e))
+    finally:
+        job_db.close()
+
+    app.state.job_scheduler = JobScheduler(job_service)
+    app.state.job_scheduler.start()
+
     yield
+
+    if hasattr(app.state, "job_scheduler"):
+        app.state.job_scheduler.stop()
 
     # Shutdown — wait for background tasks before exiting
     await shutdown_background_tasks(timeout=30.0)
@@ -179,6 +207,7 @@ def create_app() -> FastAPI:
     app.include_router(cache.router, prefix="/api", tags=["Cache"])
     app.include_router(modules.router, prefix="/api", tags=["Modules"])
     app.include_router(documentation.router, prefix="/api", tags=["Documentation"])
+    app.include_router(jobs.router, prefix="/api/jobs", tags=["Jobs"])
 
     @app.get("/health")
     async def health_check():

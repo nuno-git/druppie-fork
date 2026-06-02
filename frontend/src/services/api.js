@@ -422,6 +422,20 @@ export const getTestRunAssertionsList = getTestRunAssertions
 // ============ Documentation ============
 export const getDocumentation = () => request("/api/documentation")
 
+// ============ Jobs (Scheduled / Cron) ============
+export const getJobs = () => request('/api/jobs')
+export const triggerJob = (jobDefinitionId) =>
+  request(`/api/jobs/${jobDefinitionId}/trigger`, { method: 'POST' })
+export const getJobRuns = (jobDefinitionId = null, status = null, page = 1, limit = 20) => {
+  const params = new URLSearchParams({ page, limit })
+  if (status) params.append('status', status)
+  const qs = params.toString()
+  if (jobDefinitionId) {
+    return request(`/api/jobs/${jobDefinitionId}/runs?${qs}`)
+  }
+  return request(`/api/jobs/runs?${qs}`)
+}
+
 // ============ Cache ============
 export const getCachedPackages = () => request('/api/cache/packages')
 export const getAllProjectDependencies = () => request('/api/cache/dependencies')

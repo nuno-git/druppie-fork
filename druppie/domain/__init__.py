@@ -19,6 +19,8 @@ Naming convention:
 - Question → QuestionDetail
 - Project → ProjectSummary, ProjectDetail
 - User → UserInfo
+- JobDefinition → JobDefinitionSummary, JobDefinitionDetail
+- JobRun → JobRunSummary, JobRunDetail
 """
 
 # Enums
@@ -83,6 +85,8 @@ from .session import (
     TimelineEntry,
     TimelineEntryType,
 )
+
+from .job import JobDefinitionDetail, JobDefinitionList, JobDefinitionSummary, JobRunDetail, JobRunList, JobRunSummary
 
 # Skill models
 from .skill import SkillDetail, SkillSummary
@@ -160,6 +164,12 @@ __all__ = [
     "TestRunSummary",
     "TestRunDetail",
     "TestAssertionResultSummary",
+    "JobDefinitionSummary",
+    "JobDefinitionDetail",
+    "JobDefinitionList",
+    "JobRunSummary",
+    "JobRunDetail",
+    "JobRunList",
 ]
 
 # Rebuild models to resolve forward references (circular imports between session/project)
