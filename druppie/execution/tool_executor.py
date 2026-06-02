@@ -656,14 +656,18 @@ class ToolExecutor:
             return await self._execute_builtin_tool(tool_call)
         return await self._execute_mcp_tool(tool_call)
 
-    async def complete_after_answer(self, question_id: UUID, answer: str) -> str:
+    async def complete_after_answer(
+        self, question_id: UUID, answer: str, display_answer: str | None = None
+    ) -> str:
         """Complete a HITL tool after the user answers.
 
         Called when user submits an answer to a question in the UI.
 
         Args:
             question_id: ID of the answered Question record
-            answer: User's answer
+            answer: User's answer (translated to English for the agent)
+            display_answer: Original answer in user's language (for UI display).
+                            If None, uses answer for both.
 
         Returns:
             Final status: completed
@@ -674,8 +678,8 @@ class ToolExecutor:
             logger.error("question_not_found", question_id=str(question_id))
             return ToolCallStatus.FAILED
 
-        # Update question with answer
-        self.question_repo.update_answer(question_id, answer)
+        # Update question with the display answer (user's original language)
+        self.question_repo.update_answer(question_id, display_answer or answer)
 
         # Get associated tool call
         tool_call_id = question.tool_call_id
@@ -683,10 +687,11 @@ class ToolExecutor:
             logger.error("question_missing_tool_call_id", question_id=str(question_id))
             return ToolCallStatus.FAILED
 
-        # Build result that will be passed back to agent
+        # Build result — agent sees 'answer' (English), frontend sees 'display_answer' (user's language)
         result = {
             "status": "answered",
             "answer": answer,
+            "display_answer": display_answer or answer,
             "question": question.question,
             "question_type": question.question_type,
         }
@@ -751,6 +756,7 @@ class ToolExecutor:
         """Execute a HITL tool by creating a Question record.
 
         HITL (Human-in-the-Loop) tools pause execution to ask the user a question.
+        Translates English agent output to the user's language before storing.
         Creates a Question record via QuestionRepository.
 
         Args:
@@ -761,20 +767,50 @@ class ToolExecutor:
         """
         args = tool_call.arguments or {}
 
+        question_text = args.get("question", "")
+
         # Determine question type from tool name
         if tool_call.tool_name == "hitl_ask_multiple_choice_question":
             question_type = "choice"
-            choices = [{"text": c} for c in args.get("choices", [])]
+            raw_choices = args.get("choices", [])
         else:
             question_type = "text"
-            choices = None
+            raw_choices = []
+
+        # Translate question and choices to the user's language
+        try:
+            from druppie.repositories import SessionRepository
+            from druppie.core.translation import get_translation_service
+            session_repo = SessionRepository(self.db)
+            session = session_repo.get_by_id(tool_call.session_id)
+            if session and session.language and session.language != "en":
+                translator = get_translation_service()
+                question_text = await translator.translate_from_english(
+                    question_text, session.language
+                )
+                if raw_choices:
+                    translated_choices = []
+                    for c in raw_choices:
+                        translated_choices.append(
+                            await translator.translate_from_english(c, session.language)
+                        )
+                    raw_choices = translated_choices
+                logger.info(
+                    "hitl_question_translated",
+                    tool_call_id=str(tool_call.id),
+                    target_language=session.language,
+                )
+        except Exception as e:
+            logger.warning("hitl_question_translation_failed", error=str(e))
+
+        choices = [{"text": c} for c in raw_choices] if raw_choices else None
 
         # Create question record via repository
         question = self.question_repo.create(
             session_id=tool_call.session_id,
             agent_run_id=tool_call.agent_run_id,
             tool_call_id=tool_call.id,
-            question=args.get("question", ""),
+            question=question_text,
             question_type=question_type,
             choices=choices,
         )

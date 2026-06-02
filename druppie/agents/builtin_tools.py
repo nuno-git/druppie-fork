@@ -717,6 +717,7 @@ async def create_message(
     """Create a visible message in the chat timeline.
 
     Called by the summarizer agent to post a user-friendly completion message.
+    Translates English agent output to the user's language before storing.
 
     Args:
         content: Message content to display
@@ -727,13 +728,33 @@ async def create_message(
     Returns:
         Success status
     """
+    display_content = content
+    try:
+        from druppie.repositories import SessionRepository
+        from druppie.core.translation import get_translation_service
+        session_repo = SessionRepository(execution_repo.db)
+        session = session_repo.get_by_id(session_id)
+        if session and session.language and session.language != "en":
+            translator = get_translation_service()
+            display_content = await translator.translate_from_english(
+                content, session.language
+            )
+            if display_content != content:
+                logger.info(
+                    "create_message_translated",
+                    session_id=str(session_id),
+                    target_language=session.language,
+                )
+    except Exception as e:
+        logger.warning("create_message_translation_failed", error=str(e))
+
     # Get next unique sequence number so message never collides with agent_run
     seq = execution_repo.get_next_sequence_number(session_id)
 
     execution_repo.create_message(
         session_id=session_id,
         role="assistant",
-        content=content,
+        content=display_content,
         agent_run_id=agent_run_id,
         agent_id="summarizer",
         sequence_number=seq,
@@ -744,7 +765,7 @@ async def create_message(
         "create_message",
         session_id=str(session_id),
         agent_run_id=str(agent_run_id),
-        content_preview=content[:100] if content else "",
+        content_preview=display_content[:100] if display_content else "",
     )
 
     return {"status": "created", "message": "Message added to timeline"}

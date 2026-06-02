@@ -264,7 +264,7 @@ const TimelineQuestion = ({ tc, agentId, sessionId }) => {
   if (isAnswered && tc.result) {
     try {
       const parsed = typeof tc.result === 'string' ? JSON.parse(tc.result) : tc.result
-      displayAnswer = parsed.answer || parsed.text || (typeof parsed === 'string' ? parsed : tc.result)
+      displayAnswer = parsed.display_answer || parsed.answer || parsed.text || (typeof parsed === 'string' ? parsed : tc.result)
     } catch {
       displayAnswer = tc.result
     }
