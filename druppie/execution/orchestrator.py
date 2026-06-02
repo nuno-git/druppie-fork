@@ -679,6 +679,7 @@ class Orchestrator:
         session_id: UUID,
         question_id: UUID,
         answer: str,
+        selected_choices: list[int] | None = None,
     ) -> UUID:
         """Resume execution after a HITL question is answered.
 
@@ -714,7 +715,7 @@ class Orchestrator:
             return session_id
 
         # Step 2: Complete the HITL tool call (saves answer to DB)
-        status = await tool_executor.complete_after_answer(question_id, answer)
+        status = await tool_executor.complete_after_answer(question_id, answer, selected_choices)
 
         # Step 2.5: Detect and update language from HITL answer (only if detection succeeds)
         human_input = HumanInput(answer, self.language_detector)
