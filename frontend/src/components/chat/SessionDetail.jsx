@@ -290,8 +290,7 @@ const TimelineQuestion = ({ tc, agentId, sessionId }) => {
     <>
       <HITLQuestionMessage
         question={questionData}
-        onChoiceSelect={(answer) => answerMut.mutate({ questionId: tc.question_id, answer })}
-        onSubmitChoices={({ indices, answerText }) => answerMut.mutate({ questionId: tc.question_id, answer: answerText, selectedChoices: indices })}
+        onSubmitAnswer={({ indices, answerText }) => answerMut.mutate({ questionId: tc.question_id, answer: answerText, selectedChoices: indices })}
         isAnswering={answerMut.isPending}
         answered={isAnswered}
       />
