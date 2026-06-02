@@ -337,6 +337,94 @@ WILMA concepts you considered and why you chose project-specific
 modeling. This keeps the rationale visible for peer review without
 forcing inappropriate reuse.
 
+## Rijnland / Waterschap Tekenafspraken
+
+When the project sits in the **waterschap context** (the same gate as
+WILMA reuse — the FD references waterschappen, bronsystemen,
+zaaksysteem, DMS, etc.), the plate must follow the HHR/Rijnland
+*tekenafspraken*. These pin each domain concept to a specific ArchiMate
+type and a `«stereotype»` label so the plate is peer-review-conform with
+the EA-toolchain (Bizzdesign/HoriZZon). Outside the waterschap context,
+ignore this section and use plain ArchiMate.
+
+Carry the concept on the element via the `stereotype` parameter of
+`archimate_create_element` — e.g. `create_element(element_type=
+"BusinessRole", name="Watersysteembeheer", stereotype="Account")`. The
+write-MCP rejects a stereotype on the wrong type, and `validate_view`
+re-checks it.
+
+### Concept vocabulary (concept → type + stereotype)
+
+| Concept | ArchiMate type | `stereotype` | When |
+|---------|----------------|--------------|------|
+| Account | BusinessRole | `Account` | Internal collaboration coordinating the info provision of WILMA business (sub)functions |
+| Bedrijfsfunctie | BusinessFunction | — | Capability ("what the org can do"), taken from WILMA |
+| Applicatie | ApplicationComponent | `Applicatie` | App we **maintain** that does CRUD on business data (incl. web app) |
+| 'Eigen' Portaal | ApplicationCollaboration | `'Eigen' Portaal` | Portal for third parties; **we own** the content |
+| Website | ApplicationCollaboration | `Website` | A public website we run |
+| 'Extern' Portaal | ApplicationInteraction | `'Extern' Portaal` | Third-party portal/app we only **use** |
+| 'Externe' informatiebron | ApplicationInteraction | `'Externe' informatiebron` | External data source we read; no waterschap data stored |
+| Applicatie als service | ApplicationService | `Applicatie als service` | SaaS consumed from a supplier |
+| Applicatiefunctie (bouwblok) | ApplicationFunction | `Applicatiefunctie` | Demarcated functionality, mainly in doel-architectuur; links to WILMA referentiecomponenten |
+| Dataobject | DataObject | — | Organised dataset, CRUD-used by ≥1 app/portal |
+| Systeem software | SystemSoftware | — | Platform to run apps; no business-data processing (OS, DBMS, middleware) |
+| Programmeeromgeving | SystemSoftware | `Programmeeromgeving` | Tool to make reusable scripts; a specialisation of Systeem software |
+| Deployed Resource | TechnologyService | `Deployed Resource` | A configured/activated MS Azure resource; specialisation of an Azure ResourceType |
+| Beveiligingsdomein | Grouping | `Beveiligingsdomein` | Security zone — a group of systems with the same trust level |
+| Plateau | Plateau | `Plateau` | A future (SOLL) situation; carries the i-aanvraag/wijziging number |
+
+### The ownership rule (active vs behavior shape)
+
+The single most-checked rule: **ownership decides the shape.**
+- What **we (technically) maintain** → an *active-structure* type
+  (`ApplicationComponent` / `ApplicationCollaboration`): Applicatie,
+  'Eigen' Portaal, Website.
+- What we **consume from a third party / as SaaS** → a *behavior* type
+  (`ApplicationService` / `ApplicationInteraction`): 'Extern' Portaal,
+  'Externe' informatiebron, Applicatie als service.
+
+A process is typed by whether it touches business data:
+`ApplicationProcess` **does** process business data; `TechnologyProcess`
+does **not**.
+
+### Relationship conventions (per situation)
+
+| Situation | Relationship |
+|-----------|--------------|
+| Functional data flow between apps/services or to/from an external Actor | **Flow** |
+| Data transfer between DataObjects via a TechnologyProcess | **Access** Read (source) + **Access** Write (target DataObject) |
+| A waterschap (Actor/tenant) uses an app/service/portal | **Association** ("gebruikt/wordt gebruikt") |
+| Generic ↔ specific application (specific inherits the couplings) | **Specialization** |
+| App/diensten/portalen grouped under an Account Applicatie Groep | **Aggregation** |
+| Artefact (CMDB installset/licentie) → the app it realises | **Realization** |
+| Programma/Project → Plateau, Account Applicatie Groep → Bedrijfsfunctie | **Realization** |
+| Account → Bedrijfsfunctie (assignment of a function) | **Assignment** |
+| Bedrijfsfunctie → Bedrijfssubfunctie | **Composition** |
+| Principe / Wet & regelgeving affecting a function | **Influence** |
+
+### View organisation (IST / SOLL / doel)
+
+Mirror the Bizzdesign map structure when deciding what a view shows:
+- **Doel-architectuur** (visie): Applicatiefunctie/bouwblokken — how
+  building blocks *should* cooperate.
+- **IST** (informatiesysteem-architectuur): the application-landscape —
+  all used apps + their data flows.
+- **SOLL** (kansen & oplossingen): a project model with **Plateau**(s)
+  for the change vs the IST. Aggregation links a Plateau to the elements
+  it touches; the relation name says new/wijzigt/vervalt.
+
+### Security zones (NORA / IEC-62443)
+
+Model a security zone as a **Grouping** with `stereotype=
+"Beveiligingsdomein"`. It **must** carry a trust level — either a NORA
+level in the name (`niet-vertrouwd`, `semi-vertrouwd`, `vertrouwd`,
+`zeer-vertrouwd`), an IEC-62443 `Level Lx`, or a `trust-level` property.
+Systems inside the zone are placed in a nested Grouping linked by
+**Composition**. A security zone (and a security `Constraint`) renders
+in **NORA colours**, not the standard Motivation purple — the renderer
+does this automatically from the trust level. `validate_view` flags a
+Beveiligingsdomein with no trust level (`security_domain_missing_trust`).
+
 ## View Sizing
 
 Keep individual views under ~20 elements. Bigger views become hard to
@@ -373,3 +461,10 @@ any item fails, fix it first.
 6. **Embed block** in the TD has both `view-id` and `file` keys.
 7. **No regenerate-from-scratch** on a view that already existed in
    the previous TD revision. Mutations only.
+8. **Rijnland tekenafspraken** (waterschap context only): domain concepts
+   carry the right `stereotype` on the prescribed type (Account →
+   BusinessRole, Applicatie als service → ApplicationService, …); the
+   ownership rule holds (maintained → active shape, consumed → behavior
+   shape); every Beveiligingsdomein has a trust level. Run
+   `archimate_validate_view` — it returns `rijnland_stereotype_type` and
+   `security_domain_missing_trust` codes when these are off.

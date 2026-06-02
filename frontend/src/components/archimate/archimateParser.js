@@ -22,6 +22,30 @@ export const LAYER_COLORS = {
   Unknown: '#FFFFFF',
 }
 
+// --- NORA / IEC-62443 trust-level colours (Rijnland tekenafspraken) ---
+// A Beveiligingsdomein (security zone) or a security Constraint carries a
+// trust level and is coloured by the NORA beschouwingsmodel instead of the
+// standard Motivation purple, so reviewers read the zone's trust at a glance.
+// Hexes follow the green-for-trusted ordering seen in the tekenafspraken and
+// can be tuned to an exact NORA palette later.
+export const TRUST_COLORS = {
+  'niet-vertrouwd': '#F4B6B6',
+  'semi-vertrouwd': '#A6D785',
+  'vertrouwd': '#F6D365',
+  'zeer-vertrouwd': '#6FB04A',
+}
+
+// Detect a NORA trust level from an element's stereotype, trust-level
+// property, or name. Returns '' when none is present.
+export function trustLevelOf(el) {
+  if (!el) return ''
+  const hay = `${el.trustLevel || ''} ${el.name || ''}`.toLowerCase()
+  for (const level of Object.keys(TRUST_COLORS)) {
+    if (hay.includes(level)) return level
+  }
+  return ''
+}
+
 // --- Layer letter (Wierda / Open Group convention) ---
 // Single-letter badge in the top-right corner so the reader can identify
 // the layer without relying solely on colour. Replaces the old 4-char
@@ -156,6 +180,26 @@ export function parseArchimateXML(xmlString) {
     throw new Error('Expected <model> root element, got <' + (root?.localName || 'null') + '>')
   }
 
+  // Map propertyDefinition id -> name, so we can read back the Rijnland
+  // `stereotype` / `trust-level` markers written by writer._add_property_marker.
+  const propDefName = new Map()
+  const propDefsSection = findLocal(root, 'propertyDefinitions')
+  if (propDefsSection) {
+    for (const pd of findAllLocal(propDefsSection, 'propertyDefinition')) {
+      propDefName.set(attr(pd, 'identifier'), textOf(pd, 'name'))
+    }
+  }
+  const readProp = (el, propName) => {
+    const props = findLocal(el, 'properties')
+    if (!props) return ''
+    for (const p of findAllLocal(props, 'property')) {
+      if (propDefName.get(attr(p, 'propertyDefinitionRef')) === propName) {
+        return (textOf(p, 'value') || '').trim()
+      }
+    }
+    return ''
+  }
+
   const elements = new Map()
   const elsSection = findLocal(root, 'elements')
   if (elsSection) {
@@ -167,6 +211,8 @@ export function parseArchimateXML(xmlString) {
         type,
         name: textOf(el, 'name'),
         layer: ELEMENT_LAYER[type] || 'Unknown',
+        stereotype: readProp(el, 'stereotype'),
+        trustLevel: readProp(el, 'trust-level'),
       })
     }
   }
@@ -453,8 +499,15 @@ export function renderViewToSVG(view, model, opts = {}) {
   const nodeXML = view.nodes.map((n) => {
     const el = model.elements.get(n.elementRef)
     const layer = el?.layer || 'Unknown'
-    const fill = LAYER_COLORS[layer] || LAYER_COLORS.Unknown
+    // NORA exception: a security zone / security Constraint is coloured by its
+    // trust level, not by the standard layer colour (Rijnland tekenafspraken).
+    const trust = trustLevelOf(el)
+    const isSecurity = el?.stereotype === 'Beveiligingsdomein' || el?.type === 'Constraint'
+    const fill = (trust && isSecurity)
+      ? TRUST_COLORS[trust]
+      : (LAYER_COLORS[layer] || LAYER_COLORS.Unknown)
     const name = el?.name || '(unnamed)'
+    const stereotype = el?.stereotype || ''
     const layerLetter = LAYER_LETTER[layer] || ''
     const isNew = highlight.has(n.elementRef) || highlight.has(n.id)
     const isContainer = containerIds.has(n.id)
@@ -462,15 +515,23 @@ export function renderViewToSVG(view, model, opts = {}) {
     const strokeWidth = isNew ? 2.5 : 1.2
     const accent = isNew ? `<rect x="${n.x + offsetX - 3}" y="${n.y + offsetY - 3}" width="${n.w + 6}" height="${n.h + 6}" rx="10" fill="none" stroke="#1d4ed8" stroke-width="1" stroke-dasharray="3,3" opacity="0.7"/>` : ''
     const labelX = isContainer ? n.x + offsetX + 12 : n.x + offsetX + n.w / 2
-    const labelY = isContainer ? n.y + offsetY + 16 : n.y + offsetY + n.h / 2 + 4
+    // Nudge the name down when a «stereotype» line sits above it, so the two
+    // don't collide inside the box.
+    const baseY = isContainer ? n.y + offsetY + 16 : n.y + offsetY + n.h / 2 + 4
+    const labelY = stereotype && !isContainer ? baseY + 6 : baseY
+    const stereoY = isContainer ? n.y + offsetY + 30 : labelY - 12
     const labelAnchor = isContainer ? 'start' : 'middle'
     const labelWeight = isContainer ? 'bold' : 'normal'
+    const stereoXML = stereotype
+      ? `<text x="${labelX}" y="${stereoY}" font-family="Segoe UI, sans-serif" font-size="9" font-style="italic" fill="#555" text-anchor="${labelAnchor}">«${escapeXml(stereotype)}»</text>`
+      : ''
     return `
       ${accent}
       <g class="am-node" data-element-id="${escapeXml(n.elementRef)}">
         <rect x="${n.x + offsetX}" y="${n.y + offsetY}" width="${n.w}" height="${n.h}"
               rx="3" ry="3" fill="${fill}" stroke="${stroke}" stroke-width="${strokeWidth}" />
         <text x="${n.x + offsetX + n.w - 8}" y="${n.y + offsetY + 14}" font-family="Segoe UI, sans-serif" font-size="10" font-weight="bold" fill="#888" text-anchor="end">${escapeXml(layerLetter)}</text>
+        ${stereoXML}
         <text x="${labelX}" y="${labelY}" font-family="Segoe UI, sans-serif" font-size="11" font-weight="${labelWeight}" fill="#222" text-anchor="${labelAnchor}">${escapeXml(name)}</text>
       </g>
     `

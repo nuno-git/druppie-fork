@@ -16,6 +16,7 @@ import {
   computeLayout,
   renderViewToSVG,
   LAYER_COLORS,
+  TRUST_COLORS,
 } from './archimateParser'
 
 beforeAll(() => {
@@ -205,5 +206,61 @@ describe('renderViewToSVG', () => {
     const view = model.views.get('v-1')
     const svg = renderViewToSVG(view, model)
     expect(svg).toContain('View has no elements')
+  })
+})
+
+// --- Rijnland / waterschap tekenafspraken ---------------------------------
+
+const SAMPLE_XML_RIJNLAND = `<?xml version="1.0" encoding="UTF-8"?>
+<model xmlns="http://www.opengroup.org/xsd/archimate/3.0/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" identifier="id-rijnland">
+  <name xml:lang="en">Rijnland</name>
+  <propertyDefinitions>
+    <propertyDefinition identifier="propid-stereo" type="string"><name>stereotype</name></propertyDefinition>
+    <propertyDefinition identifier="propid-trust" type="string"><name>trust-level</name></propertyDefinition>
+  </propertyDefinitions>
+  <elements>
+    <element identifier="el-acc" xsi:type="BusinessRole">
+      <name xml:lang="en">Watersysteembeheer</name>
+      <properties><property propertyDefinitionRef="propid-stereo"><value xml:lang="en">Account</value></property></properties>
+    </element>
+    <element identifier="el-zone" xsi:type="Grouping">
+      <name xml:lang="en">DMZ</name>
+      <properties>
+        <property propertyDefinitionRef="propid-stereo"><value xml:lang="en">Beveiligingsdomein</value></property>
+        <property propertyDefinitionRef="propid-trust"><value xml:lang="en">semi-vertrouwd</value></property>
+      </properties>
+    </element>
+  </elements>
+  <relationships/>
+  <views>
+    <diagrams>
+      <view identifier="v-r"><name xml:lang="en">Zones</name>
+        <node identifier="n-acc" elementRef="el-acc" x="40" y="40" w="140" h="55"/>
+        <node identifier="n-zone" elementRef="el-zone" x="240" y="40" w="160" h="80"/>
+      </view>
+    </diagrams>
+  </views>
+</model>`
+
+describe('Rijnland tekenafspraken', () => {
+  it('parses the stereotype and trust-level property markers', () => {
+    const model = parseArchimateXML(SAMPLE_XML_RIJNLAND)
+    expect(model.elements.get('el-acc').stereotype).toBe('Account')
+    expect(model.elements.get('el-zone').stereotype).toBe('Beveiligingsdomein')
+    expect(model.elements.get('el-zone').trustLevel).toBe('semi-vertrouwd')
+  })
+
+  it('renders the «stereotype» label above the element name', () => {
+    const model = parseArchimateXML(SAMPLE_XML_RIJNLAND)
+    const svg = renderViewToSVG(model.views.get('v-r'), model)
+    expect(svg).toContain('«Account»')
+    expect(svg).toContain('«Beveiligingsdomein»')
+  })
+
+  it('colours a security zone by NORA trust level, not Motivation/Other', () => {
+    const model = parseArchimateXML(SAMPLE_XML_RIJNLAND)
+    const svg = renderViewToSVG(model.views.get('v-r'), model)
+    // The Beveiligingsdomein (semi-vertrouwd) must use the NORA colour.
+    expect(svg).toContain(TRUST_COLORS['semi-vertrouwd'])
   })
 })

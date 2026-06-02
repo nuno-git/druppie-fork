@@ -42,7 +42,55 @@ ET.register_namespace("xsi", XSI_NS)
 NS = {"am": ARCHIMATE_NS}
 
 
-VALID_LAYERS_V1 = {"Business", "Application", "Technology", "Motivation"}
+VALID_LAYERS_V1 = {"Business", "Application", "Technology", "Motivation", "Implementation"}
+
+# --- Rijnland / waterschap "tekenafspraken" -------------------------------
+# Each domain concept from the HHR/Rijnland ArchiMate tekenafspraken is pinned
+# to exactly one ArchiMate type, with an optional ownership semantic. This is
+# the single source of truth shared by the validator and documented in the
+# making-archimate-diagrams skill. Concepts are carried on elements as a
+# ``stereotype`` property (see create_element); validation only fires when a
+# stereotype is actually present, so non-waterschap models stay unaffected.
+#
+# ``ownership``: "active"   = we (technically) maintain it -> active-structure
+#                             shape (Component / Collaboration);
+#                "behavior" = consumed from a third party / SaaS -> behavior
+#                             shape (Service / Interaction);
+#                None       = ownership rule does not apply.
+RIJNLAND_CONCEPTS: dict[str, dict[str, Any]] = {
+    # Business
+    "Account": {"type": "BusinessRole", "ownership": None},
+    # Application — ownership drives the active-vs-behavior shape choice
+    "Applicatie": {"type": "ApplicationComponent", "ownership": "active"},
+    "'Eigen' Portaal": {"type": "ApplicationCollaboration", "ownership": "active"},
+    "Website": {"type": "ApplicationCollaboration", "ownership": "active"},
+    "'Extern' Portaal": {"type": "ApplicationInteraction", "ownership": "behavior"},
+    "'Externe' informatiebron": {"type": "ApplicationInteraction", "ownership": "behavior"},
+    "Applicatie als service": {"type": "ApplicationService", "ownership": "behavior"},
+    "Applicatiefunctie": {"type": "ApplicationFunction", "ownership": None},
+    # Technology
+    "Programmeeromgeving": {"type": "SystemSoftware", "ownership": None},
+    "Deployed Resource": {"type": "TechnologyService", "ownership": None},
+    # Cross-layer / security
+    "Beveiligingsdomein": {"type": "Grouping", "ownership": None},
+    # Implementation
+    "Plateau": {"type": "Plateau", "ownership": None},
+}
+
+# Active-structure vs behavior ArchiMate types in the Application layer, used
+# to check the Rijnland "ownership decides the shape" rule.
+_APP_ACTIVE_TYPES = {"ApplicationComponent", "ApplicationCollaboration"}
+_APP_BEHAVIOR_TYPES = {"ApplicationService", "ApplicationInteraction", "ApplicationFunction", "ApplicationProcess"}
+
+# NORA / IEC-62443 trust levels a Beveiligingsdomein (security zone) can carry.
+# Used by the renderer to colour a security Constraint with NORA colours
+# instead of the standard Motivation purple.
+RIJNLAND_TRUST_LEVELS = {
+    "niet-vertrouwd",
+    "semi-vertrouwd",
+    "vertrouwd",
+    "zeer-vertrouwd",
+}
 
 # Element types supported in v1 (per planning decision Q6).
 # Each maps to the layer it belongs to.
@@ -96,6 +144,12 @@ ELEMENT_TYPE_LAYER = {
     "Constraint": "Motivation",
     "Meaning": "Motivation",
     "Value": "Motivation",
+    # Implementation & Migration (needed for Rijnland SOLL / project plates)
+    "Plateau": "Implementation",
+    "WorkPackage": "Implementation",
+    "Deliverable": "Implementation",
+    "ImplementationEvent": "Implementation",
+    "Gap": "Implementation",
     # Cross-layer
     "Grouping": "Other",
     "Location": "Other",
@@ -372,6 +426,7 @@ class ArchiMateDocument:
         element_type: str,
         name: str,
         documentation: str = "",
+        stereotype: str = "",
         identifier: str | None = None,
     ) -> str:
         if element_type not in ELEMENT_TYPE_LAYER:
@@ -382,8 +437,19 @@ class ArchiMateDocument:
         layer = ELEMENT_TYPE_LAYER[element_type]
         if layer not in VALID_LAYERS_V1 and layer != "Other":
             raise ArchiMateWriteError(
-                f"Layer '{layer}' not supported in v1 (Business/Application/Technology/Motivation only)"
+                f"Layer '{layer}' not supported in v1 "
+                f"(Business/Application/Technology/Motivation/Implementation only)"
             )
+        # A Rijnland concept stereotype must sit on the type the tekenafspraken
+        # prescribe — reject at create-time so the agent fixes it immediately
+        # rather than after a validate_view round-trip.
+        if stereotype and stereotype in RIJNLAND_CONCEPTS:
+            expected = RIJNLAND_CONCEPTS[stereotype]["type"]
+            if element_type != expected:
+                raise ArchiMateWriteError(
+                    f"Rijnland concept '{stereotype}' must be modelled as "
+                    f"'{expected}', not '{element_type}'."
+                )
         ident = identifier or _make_id()
         if self.find_element(ident) is not None:
             raise ArchiMateWriteError(f"Element identifier '{ident}' already exists")
@@ -395,6 +461,8 @@ class ArchiMateDocument:
         _text_child(el, "name", name)
         if documentation:
             _text_child(el, "documentation", documentation)
+        if stereotype:
+            self._add_property_marker(el, "stereotype", stereotype)
         self.dirty = True
         return ident
 

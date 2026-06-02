@@ -39,6 +39,16 @@ LAYER_COLORS = {
     "Unknown": "#FFFFFF",
 }
 
+# NORA / IEC-62443 trust-level colours (Rijnland tekenafspraken). A security
+# zone / security Constraint is coloured by its trust level instead of the
+# standard layer colour. Kept in sync with the frontend renderer.
+TRUST_COLORS = {
+    "niet-vertrouwd": "#F4B6B6",
+    "semi-vertrouwd": "#A6D785",
+    "vertrouwd": "#F6D365",
+    "zeer-vertrouwd": "#6FB04A",
+}
+
 # Single-letter layer badge — Wierda / Open Group convention.
 # Replaces the previous 4-char truncated type-name ("Acto" / "Inte" /
 # "Comp") which was unreadable.
@@ -94,6 +104,39 @@ def _attr(el: ET.Element, name: str) -> str:
     return el.get(name) or ""
 
 
+def _build_propdef_names(root: ET.Element) -> dict[str, str]:
+    """Map propertyDefinition identifier -> name (for stereotype/trust read-back)."""
+    out: dict[str, str] = {}
+    for pd in root.findall("am:propertyDefinitions/am:propertyDefinition", NS):
+        ident = pd.get("identifier") or ""
+        name_el = pd.find("am:name", NS)
+        if ident and name_el is not None:
+            out[ident] = name_el.text or ""
+    return out
+
+
+def _read_property(el: ET.Element, prop_name: str, propdef_names: dict[str, str]) -> str:
+    """Return the value of a named property marker on an element, or ''."""
+    props = el.find("am:properties", NS)
+    if props is None:
+        return ""
+    for prop in props.findall("am:property", NS):
+        if propdef_names.get(prop.get("propertyDefinitionRef") or "") == prop_name:
+            val = prop.find("am:value", NS)
+            if val is not None:
+                return (val.text or "").strip()
+    return ""
+
+
+def _trust_level_of(info: dict[str, str]) -> str:
+    """Detect a NORA trust level from an element's trust-level property or name."""
+    hay = f"{info.get('trust', '')} {info.get('name', '')}".lower()
+    for level in TRUST_COLORS:
+        if level in hay:
+            return level
+    return ""
+
+
 def _xsi_type(el: ET.Element) -> str:
     return el.get(f"{{{XSI}}}type", "") or "Unknown"
 
@@ -135,6 +178,7 @@ def render_view_svg(root: ET.Element, view: ET.Element) -> str | None:
         return None
 
     # Build element + relationship lookup tables
+    propdef_names = _build_propdef_names(root)
     elements_by_id: dict[str, dict[str, str]] = {}
     for el in root.findall("am:elements/am:element", NS):
         ident = _attr(el, "identifier")
@@ -143,6 +187,8 @@ def render_view_svg(root: ET.Element, view: ET.Element) -> str | None:
                 "name": _text_child(el, "name"),
                 "type": _xsi_type(el),
                 "layer": ELEMENT_TYPE_LAYER.get(_xsi_type(el), "Unknown"),
+                "stereotype": _read_property(el, "stereotype", propdef_names),
+                "trust": _read_property(el, "trust-level", propdef_names),
             }
 
     relationships_by_id: dict[str, dict[str, str]] = {}
@@ -236,22 +282,35 @@ def render_view_svg(root: ET.Element, view: ET.Element) -> str | None:
     for p in positioned:
         info = elements_by_id.get(p["ref"], {})
         layer = info.get("layer", "Unknown")
-        fill = LAYER_COLORS.get(layer, LAYER_COLORS["Unknown"])
         name = info.get("name") or "(unnamed)"
+        stereotype = info.get("stereotype", "")
         layer_letter = LAYER_LETTER.get(layer, "")
+        # NORA exception: a security zone / Constraint is coloured by trust level.
+        trust = _trust_level_of(info)
+        is_security = stereotype == "Beveiligingsdomein" or info.get("type") == "Constraint"
+        fill = TRUST_COLORS[trust] if (trust and is_security) else LAYER_COLORS.get(layer, LAYER_COLORS["Unknown"])
         x = p["x"] + offset_x
         y = p["y"] + offset_y
         is_container = p["id"] in container_ids
         # Container labels go in a header strip at the top; leaf labels stay centred.
         label_x = x + 12 if is_container else x + p["w"] // 2
-        label_y = y + 16 if is_container else y + p["h"] // 2 + 4
+        base_y = y + 16 if is_container else y + p["h"] // 2 + 4
+        label_y = base_y + 6 if (stereotype and not is_container) else base_y
+        stereo_y = y + 30 if is_container else label_y - 12
         label_anchor = "start" if is_container else "middle"
+        stereo_xml = (
+            f'<text x="{label_x}" y="{stereo_y}" font-family="Segoe UI,sans-serif" '
+            f'font-size="9" font-style="italic" fill="#555" '
+            f'text-anchor="{label_anchor}">«{_escape(stereotype)}»</text>'
+            if stereotype else ""
+        )
         node_xml_parts.append(
             f'<g class="am-node">'
             f'<rect x="{x}" y="{y}" width="{p["w"]}" height="{p["h"]}" '
             f'rx="3" ry="3" fill="{fill}" stroke="#444" stroke-width="1.2"/>'
             f'<text x="{x + p["w"] - 8}" y="{y + 14}" font-family="Segoe UI,sans-serif" '
             f'font-size="10" font-weight="bold" fill="#888" text-anchor="end">{_escape(layer_letter)}</text>'
+            f'{stereo_xml}'
             f'<text x="{label_x}" y="{label_y}" '
             f'font-family="Segoe UI,sans-serif" font-size="11" '
             f'font-weight="{"bold" if is_container else "normal"}" fill="#222" '

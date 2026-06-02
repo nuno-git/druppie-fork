@@ -526,7 +526,15 @@ system_prompt: |
      **MANDATORY:** Before creating any diagram, invoke the matching skill:
      - invoke_skill(skill_name="making-archimate-diagrams") before any
        ArchiMate write call. Follow its element / relationship vocabulary,
-       the WILMA reuse flow, and the incremental update rules.
+       the WILMA reuse flow, and the incremental update rules. In the
+       waterschap context, also follow the Rijnland tekenafspraken in that
+       skill: pin each concept to its prescribed type via the `stereotype`
+       parameter (Account → BusinessRole, Applicatie als service →
+       ApplicationService, Beveiligingsdomein → Grouping with a trust
+       level, …) and respect the ownership rule (maintained → active
+       shape, consumed → behavior shape). archimate_validate_view returns
+       `rijnland_stereotype_type` / `security_domain_missing_trust` when
+       these are off — fix them before make_design.
      - invoke_skill(skill_name="making-mermaid-diagrams") before any
        Mermaid block. Follow its syntax and self-verification checklist
        exactly to avoid rendering errors.

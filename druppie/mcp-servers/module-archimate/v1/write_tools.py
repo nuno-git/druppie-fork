@@ -15,6 +15,8 @@ from typing import Any
 from .svg_export import export_all_views
 from .writer import (
     ELEMENT_TYPE_LAYER,
+    RIJNLAND_CONCEPTS,
+    RIJNLAND_TRUST_LEVELS,
     VALID_RELATIONSHIP_TYPES,
     ArchiMateWriteError,
     get_registry,
@@ -52,7 +54,13 @@ def register_write_tools(mcp, *, module_id: str, module_version: str) -> None:
         description=(
             "Create a new ArchiMate element in the project model. "
             "Returns the element identifier. Buffered: call save_model "
-            "to persist. Supported element types in v1: see element_type_layer."
+            "to persist. Supported element types in v1: see element_type_layer.\n\n"
+            "For waterschap/Rijnland plates, pass a `stereotype` to pin the "
+            "element to a tekenafspraken concept (e.g. stereotype='Account' on "
+            "a BusinessRole, 'Applicatie als service' on an ApplicationService, "
+            "'Beveiligingsdomein' on a Grouping). The stereotype must match the "
+            "ArchiMate type the tekenafspraken prescribe, or creation is "
+            "rejected. It renders as a «stereotype» label above the name."
         ),
         meta=meta,
     )
@@ -61,6 +69,7 @@ def register_write_tools(mcp, *, module_id: str, module_version: str) -> None:
         element_type: str,
         name: str,
         documentation: str = "",
+        stereotype: str = "",
         model_path: str = DEFAULT_MODEL_PATH,
     ) -> dict:
         try:
@@ -69,6 +78,7 @@ def register_write_tools(mcp, *, module_id: str, module_version: str) -> None:
                 element_type=element_type,
                 name=name,
                 documentation=documentation,
+                stereotype=stereotype,
             )
             return _result({"element_id": ident, "layer": ELEMENT_TYPE_LAYER[element_type]})
         except ArchiMateWriteError as e:
@@ -636,6 +646,7 @@ async def _build_composite_view(
                     element_type=element_type,
                     name=name,
                     documentation=spec.get("documentation", ""),
+                    stereotype=spec.get("stereotype", ""),
                 )
 
         # Step 3: create relationships by resolving names → ids.
@@ -705,8 +716,34 @@ _LAYER_ORDER = {
     "Business": 3,
     "Application": 2,
     "Technology": 1,
+    "Implementation": 0,
     "Other": 0,
 }
+
+
+def _read_property(doc, el, prop_name: str) -> str:
+    """Return the value of a named property marker on an element, or ''.
+
+    Mirrors writer._add_property_marker: the value lives in
+    ``properties/property/value`` and is linked to a ``propertyDefinition``
+    whose ``name`` is ``prop_name``. Used to read the Rijnland ``stereotype``
+    marker back out during validation and rendering.
+    """
+    ns = _ns()
+    pd_id = ""
+    for pd in doc.root.findall("am:propertyDefinitions/am:propertyDefinition", ns):
+        name_el = pd.find("am:name", ns)
+        if name_el is not None and (name_el.text or "") == prop_name:
+            pd_id = pd.get("identifier", "")
+            break
+    if not pd_id:
+        return ""
+    for prop in el.findall("am:properties/am:property", ns):
+        if prop.get("propertyDefinitionRef") == pd_id:
+            val = prop.find("am:value", ns)
+            if val is not None:
+                return (val.text or "").strip()
+    return ""
 
 
 def _validate_view_impl(doc, view) -> list[dict[str, Any]]:
@@ -846,6 +883,59 @@ def _validate_view_impl(doc, view) -> list[dict[str, Any]]:
                 ),
                 "element_id": ref,
             })
+
+    # --- Rijnland / waterschap tekenafspraken checks ---
+    # Conservative by design: every check below only fires on an element that
+    # actually carries a Rijnland `stereotype`. A generic (non-waterschap)
+    # plate has no stereotypes and is therefore never flagged here.
+    for ref in nodes_on_view:
+        el = doc.find_element(ref)
+        if el is None:
+            continue
+        stereotype = _read_property(doc, el, "stereotype")
+        if not stereotype:
+            continue
+        el_type = el.get(xsi_type, "")
+
+        # 1. A known concept must sit on the prescribed ArchiMate type.
+        #    create_element enforces this too, but WILMA-imports and
+        #    hand-edited XML can bypass create-time — re-check here.
+        concept = RIJNLAND_CONCEPTS.get(stereotype)
+        if concept is not None and el_type != concept["type"]:
+            errors.append({
+                "code": "rijnland_stereotype_type",
+                "message": (
+                    f"Rijnland concept «{stereotype}» must be modelled as "
+                    f"'{concept['type']}', but is typed '{el_type}'. "
+                    f"Re-create it with the correct type."
+                ),
+                "element_id": ref,
+            })
+
+        # 2. A Beveiligingsdomein (security zone) must carry a NORA/IEC-62443
+        #    trust level — the whole point of the concept is its security
+        #    property. Accept it either as a trust-level property or as a
+        #    recognised token in the element name.
+        if stereotype == "Beveiligingsdomein":
+            name_el = el.find("am:name", ns)
+            name_lc = ((name_el.text or "") if name_el is not None else "").lower()
+            trust_prop = _read_property(doc, el, "trust-level").lower()
+            has_trust = (
+                trust_prop in RIJNLAND_TRUST_LEVELS
+                or any(level in name_lc for level in RIJNLAND_TRUST_LEVELS)
+                or "level " in name_lc  # IEC-62443 "Level L4" style
+            )
+            if not has_trust:
+                errors.append({
+                    "code": "security_domain_missing_trust",
+                    "message": (
+                        f"Beveiligingsdomein '{name_lc or ref}' has no trust "
+                        f"level. Add a NORA level (niet-/semi-/vertrouwd/"
+                        f"zeer-vertrouwd) or an IEC-62443 'Level Lx' to the "
+                        f"name, or set a 'trust-level' property."
+                    ),
+                    "element_id": ref,
+                })
 
     # --- Layout checks ---
 
