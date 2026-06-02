@@ -168,7 +168,7 @@ def main():
     admin_user = os.getenv("KEYCLOAK_ADMIN", "admin")
     admin_password = os.getenv("KEYCLOAK_ADMIN_PASSWORD", "kc-admin-N8rF2pL5xQ9w")
     client_secret = os.getenv("OAUTH2_PROXY_CLIENT_SECRET", "tqHSSTX1ECvxkd5VRkeLbgtJa807RVHD")
-    domain = os.getenv("GATE_DOMAIN", "druppie.notitiemaker.nl")
+    domain = os.getenv("GATE_DOMAIN", "localhost")
     gate_realm = "druppie-gate"
     gate_client = "druppie-proxy"
     gate_user = "druppie_team"

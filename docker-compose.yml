@@ -502,29 +502,31 @@ services:
   oauth2-proxy:
     image: quay.io/oauth2-proxy/oauth2-proxy:v7.8.1
     profiles: [infra, dev, prod]
+    environment:
+      DRUPPIE_DOMAIN: ${DRUPPIE_DOMAIN:-localhost}
     command:
       - --provider=keycloak-oidc
       - --skip-oidc-discovery=true
-      - --login-url=https://druppie.notitiemaker.nl/realms/druppie-gate/protocol/openid-connect/auth
+      - --login-url=https://${DRUPPIE_DOMAIN:-localhost}/realms/druppie-gate/protocol/openid-connect/auth
       - --redeem-url=http://keycloak:8080/realms/druppie-gate/protocol/openid-connect/token
       - --oidc-jwks-url=http://keycloak:8080/realms/druppie-gate/protocol/openid-connect/certs
       - --profile-url=
-      - --oidc-issuer-url=https://druppie.notitiemaker.nl/realms/druppie-gate
+      - --oidc-issuer-url=https://${DRUPPIE_DOMAIN:-localhost}/realms/druppie-gate
       - --insecure-oidc-skip-issuer-verification=true
       - --client-id=druppie-proxy
       - --client-secret=${OAUTH2_PROXY_CLIENT_SECRET}
       - --cookie-secret=${OAUTH2_PROXY_COOKIE_SECRET}
-      - --cookie-domain=.notitiemaker.nl
+      - --cookie-domain=.${DRUPPIE_DOMAIN:-localhost}
       - --cookie-secure=true
       - --cookie-samesite=lax
-      - --redirect-url=https://druppie.notitiemaker.nl/oauth2/callback
+      - --redirect-url=https://${DRUPPIE_DOMAIN:-localhost}/oauth2/callback
       - --email-domain=*
       - --insecure-oidc-allow-unverified-email=true
       - --skip-provider-button=true
       - --upstream=static://200
       - --http-address=0.0.0.0:4180
       - --reverse-proxy=true
-      - --whitelist-domain=.druppie.notitiemaker.nl
+      - --whitelist-domain=.${DRUPPIE_DOMAIN:-localhost}
       - --allowed-role=platform-access
       - --oidc-groups-claim=realm_access.roles
       - --session-cookie-minimal=true

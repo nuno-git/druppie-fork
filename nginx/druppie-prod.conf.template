@@ -1,27 +1,30 @@
 # Druppie Production - Nginx Reverse Proxy
 # ============================================================
+# GENERATED FILE — do not edit directly.
+# Use: nginx/generate-config.sh to regenerate.
+#
 # Install: sudo cp druppie-prod.conf /etc/nginx/sites-available/
 #           sudo ln -s /etc/nginx/sites-available/druppie-prod.conf /etc/nginx/sites-enabled/
 #           sudo nginx -t && sudo systemctl reload nginx
 #
-# Requires: /etc/letsencrypt/live/notitiemaker.nl/ (wildcard cert)
-# Requires: oauth2-proxy running on 127.0.0.1:4180 (docker compose)
+# Requires: __SSL_CERT_PATH__ (SSL certificate directory)
+# Requires: oauth2-proxy running on 127.0.0.1:__OAUTH2_PROXY_PORT__ (docker compose)
 
-# Frontend + Backend + Keycloak — all on druppie.notitiemaker.nl
+# Frontend + Backend + Keycloak — all on __DRUPPIE_DOMAIN__
 server {
     listen 80;
     listen [::]:80;
-    server_name druppie.notitiemaker.nl;
+    server_name __DRUPPIE_DOMAIN__;
     return 301 https://$host$request_uri;
 }
 
 server {
     listen 443 ssl http2;
     listen [::]:443 ssl http2;
-    server_name druppie.notitiemaker.nl;
+    server_name __DRUPPIE_DOMAIN__;
 
-    ssl_certificate /etc/letsencrypt/live/notitiemaker.nl/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/notitiemaker.nl/privkey.pem;
+    ssl_certificate __SSL_CERT_PATH__/fullchain.pem;
+    ssl_certificate_key __SSL_CERT_PATH__/privkey.pem;
     ssl_protocols TLSv1.2 TLSv1.3;
     ssl_ciphers HIGH:!aNULL:!MD5;
     ssl_prefer_server_ciphers on;
@@ -35,7 +38,7 @@ server {
     # --- oauth2-proxy auth gate ---
     location = /oauth2/auth {
         internal;
-        proxy_pass http://127.0.0.1:4180/oauth2/auth;
+        proxy_pass http://127.0.0.1:__OAUTH2_PROXY_PORT__/oauth2/auth;
         proxy_pass_request_body off;
         proxy_set_header Content-Length "";
         proxy_set_header X-Real-IP $remote_addr;
@@ -44,7 +47,7 @@ server {
     }
 
     location /oauth2/ {
-        proxy_pass http://127.0.0.1:4180;
+        proxy_pass http://127.0.0.1:__OAUTH2_PROXY_PORT__;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -53,7 +56,7 @@ server {
 
     # --- Keycloak endpoints (NO auth_request — needed for login flow) ---
     location ~ ^/(realms|resources|protocol|jk) {
-        proxy_pass http://127.0.0.1:10080;
+        proxy_pass http://127.0.0.1:__KEYCLOAK_PORT__;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -67,7 +70,7 @@ server {
     location /api/ {
         auth_request /oauth2/auth;
         error_page 401 = /oauth2/sign_in;
-        proxy_pass http://127.0.0.1:10000;
+        proxy_pass http://127.0.0.1:__BACKEND_PORT__;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -79,7 +82,7 @@ server {
     location /health {
         auth_request /oauth2/auth;
         error_page 401 = /oauth2/sign_in;
-        proxy_pass http://127.0.0.1:10000;
+        proxy_pass http://127.0.0.1:__BACKEND_PORT__;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-Proto $scheme;
@@ -88,7 +91,7 @@ server {
     location /ws/ {
         auth_request /oauth2/auth;
         error_page 401 = /oauth2/sign_in;
-        proxy_pass http://127.0.0.1:10000;
+        proxy_pass http://127.0.0.1:__BACKEND_PORT__;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
@@ -102,7 +105,7 @@ server {
     location / {
         auth_request /oauth2/auth;
         error_page 401 = /oauth2/sign_in;
-        proxy_pass http://127.0.0.1:7173;
+        proxy_pass http://127.0.0.1:__FRONTEND_PORT__;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -114,17 +117,17 @@ server {
 server {
     listen 80;
     listen [::]:80;
-    server_name gitea.notitiemaker.nl;
+    server_name __GITEA_DOMAIN__;
     return 301 https://$host$request_uri;
 }
 
 server {
     listen 443 ssl http2;
     listen [::]:443 ssl http2;
-    server_name gitea.notitiemaker.nl;
+    server_name __GITEA_DOMAIN__;
 
-    ssl_certificate /etc/letsencrypt/live/notitiemaker.nl/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/notitiemaker.nl/privkey.pem;
+    ssl_certificate __SSL_CERT_PATH__/fullchain.pem;
+    ssl_certificate_key __SSL_CERT_PATH__/privkey.pem;
     ssl_protocols TLSv1.2 TLSv1.3;
     ssl_ciphers HIGH:!aNULL:!MD5;
 
@@ -136,7 +139,7 @@ server {
     # oauth2-proxy auth (internal subrequest)
     location = /oauth2/auth {
         internal;
-        proxy_pass http://127.0.0.1:4180/oauth2/auth;
+        proxy_pass http://127.0.0.1:__OAUTH2_PROXY_PORT__/oauth2/auth;
         proxy_pass_request_body off;
         proxy_set_header Content-Length "";
         proxy_set_header X-Real-IP $remote_addr;
@@ -144,10 +147,18 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
     }
 
+    location /oauth2/ {
+        proxy_pass http://127.0.0.1:__OAUTH2_PROXY_PORT__;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
     location / {
         auth_request /oauth2/auth;
-        error_page 401 = https://druppie.notitiemaker.nl/oauth2/sign_in?rd=$scheme://$host$request_uri;
-        proxy_pass http://127.0.0.1:5000;
+        error_page 401 = https://__DRUPPIE_DOMAIN__/oauth2/sign_in?rd=$scheme://$host$request_uri;
+        proxy_pass http://127.0.0.1:__GITEA_PORT__;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
