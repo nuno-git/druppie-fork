@@ -353,6 +353,16 @@ Carry the concept on the element via the `stereotype` parameter of
 write-MCP rejects a stereotype on the wrong type, and `validate_view`
 re-checks it.
 
+**Be consistent.** If an element maps to a concept in the table below,
+stereotype it — do not tag only some. A plate where one
+`ApplicationComponent` is `«Applicatie»` and three others are bare reads
+as half-finished. Every component the waterschap builds/maintains is
+`«Applicatie»`; only tag something `«Applicatiefunctie»` instead when it
+is genuinely a demarcated building block (bouwblok) in a doel-architectuur,
+not a deployable app. Elements that map to no concept (e.g. a generic
+`DataObject`, `SystemSoftware`) carry no stereotype — that is fine, but the
+choice should be deliberate, not accidental.
+
 ### Concept vocabulary (concept → type + stereotype)
 
 | Concept | ArchiMate type | `stereotype` | When |
@@ -411,6 +421,25 @@ does **not**.
 | Account → Bedrijfsfunctie (assignment of a function) | **Assignment** |
 | Bedrijfsfunctie → Bedrijfssubfunctie | **Composition** |
 | Principe / Wet & regelgeving affecting a function | **Influence** |
+
+**Direction matters — point the arrow the right way.** A relationship is
+read source → target; getting it backwards inverts the meaning.
+- **Serving** points from the **provider to the consumer**: the
+  application serves the user, so the arrow is `app → Burger`, never
+  `Burger → app`. A portal serves the citizen; a backend serves the
+  frontend; an infra service serves the app that calls it.
+- A person/actor **using** an app is a **tenant-style Association**
+  (`Burger — Overlast-meldportaal`, no arrowhead), or model it as the app
+  Serving the actor — but do not draw Serving *from* the actor *into* the
+  app.
+- **Realization** points from the **concrete to the abstract**: a module
+  realizes a function (`module-notificatie → Notificatieservice`), an
+  Artefact realizes the app it deploys. Source is always the more concrete
+  element (`validate_view` flags a reversed Realization).
+- **Access** read = data flows **out** of the DataObject into the
+  behavior (DataObject is the source side semantics-wise but the arrow
+  points at the DataObject); write = into the DataObject. When unsure
+  which way a data exchange goes, prefer **Flow** with an explicit name.
 
 ### View organisation (IST / SOLL / doel)
 
