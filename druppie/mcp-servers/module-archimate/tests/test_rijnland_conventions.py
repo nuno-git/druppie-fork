@@ -196,6 +196,89 @@ def test_clean_plate_has_no_rijnland_noise():
     print("    OK — no Rijnland false positives on a generic plate")
 
 
+def _view_with_rel(doc, src_type, src_name, tgt_type, tgt_name, rel_type, **rel_kw):
+    """Helper: a one-relationship view, returns its validation error codes."""
+    a = doc.create_element(element_type=src_type, name=src_name)
+    b = doc.create_element(element_type=tgt_type, name=tgt_name)
+    rid = doc.create_relationship(
+        relationship_type=rel_type, source_id=a, target_id=b, **rel_kw
+    )
+    vid = doc.create_view(name="V", documentation="")
+    doc.add_to_view(vid, a)
+    doc.add_to_view(vid, b)
+    doc.add_connection_to_view(vid, rid)
+    errors = write_tools._validate_view_impl(doc, doc.find_view(vid))
+    return {e["code"] for e in errors}
+
+
+def test_triggering_from_active_structure_is_flagged():
+    print("[9/12] validate_view flags an actor triggering a process...")
+    codes = _view_with_rel(
+        _fresh_doc(), "BusinessActor", "Burger",
+        "BusinessProcess", "Melding indienen", "Triggering",
+    )
+    if "triggering_from_active_structure" not in codes:
+        _fail(f"expected triggering_from_active_structure, got {codes}")
+    # The same shape as Assignment is clean.
+    codes_ok = _view_with_rel(
+        _fresh_doc(), "BusinessActor", "Burger",
+        "BusinessProcess", "Melding indienen", "Assignment",
+    )
+    if "triggering_from_active_structure" in codes_ok or "assignment_from_behavior" in codes_ok:
+        _fail(f"actor → process Assignment should be clean, got {codes_ok}")
+    print("    OK — actor→process Triggering flagged, Assignment clean")
+
+
+def test_cross_aspect_flow_is_flagged():
+    print("[10/12] validate_view flags a process flowing into a component...")
+    codes = _view_with_rel(
+        _fresh_doc(), "BusinessProcess", "Melding indienen",
+        "ApplicationComponent", "Meldportaal", "Flow",
+    )
+    if "flow_invalid_endpoints" not in codes:
+        _fail(f"expected flow_invalid_endpoints, got {codes}")
+    # Flow between two services (behaviour↔behaviour) is fine.
+    codes_ok = _view_with_rel(
+        _fresh_doc(), "ApplicationService", "A",
+        "ApplicationService", "B", "Flow",
+    )
+    if "flow_invalid_endpoints" in codes_ok:
+        _fail(f"service→service Flow should be clean, got {codes_ok}")
+    print("    OK — cross-aspect Flow flagged, behaviour↔behaviour clean")
+
+
+def test_serving_direction_is_flagged():
+    print("[11/12] validate_view flags Application serving Technology...")
+    codes = _view_with_rel(
+        _fresh_doc(), "ApplicationComponent", "Meldportaal",
+        "SystemSoftware", "PostgreSQL", "Serving",
+    )
+    if "serving_direction" not in codes:
+        _fail(f"expected serving_direction, got {codes}")
+    # Technology serving Application is the correct direction.
+    codes_ok = _view_with_rel(
+        _fresh_doc(), "SystemSoftware", "PostgreSQL",
+        "ApplicationComponent", "Meldportaal", "Serving",
+    )
+    if "serving_direction" in codes_ok:
+        _fail(f"Technology→Application Serving should be clean, got {codes_ok}")
+    print("    OK — App→Tech Serving flagged, Tech→App clean")
+
+
+def test_name_type_mismatch_is_flagged():
+    print("[12/12] validate_view flags a service named '…component'...")
+    doc = _fresh_doc()
+    eid = doc.create_element(
+        element_type="ApplicationService", name="Notificatieroutering component"
+    )
+    vid = doc.create_view(name="V", documentation="")
+    doc.add_to_view(vid, eid)
+    codes = {e["code"] for e in write_tools._validate_view_impl(doc, doc.find_view(vid))}
+    if "name_type_mismatch" not in codes:
+        _fail(f"expected name_type_mismatch, got {codes}")
+    print("    OK — service named like a component is flagged")
+
+
 if __name__ == "__main__":
     print("=" * 50)
     print("Rijnland tekenafspraken — convention tests")
@@ -207,5 +290,9 @@ if __name__ == "__main__":
     test_security_domain_without_trust_is_flagged()
     test_account_on_plain_role_is_flagged()
     test_clean_plate_has_no_rijnland_noise()
+    test_triggering_from_active_structure_is_flagged()
+    test_cross_aspect_flow_is_flagged()
+    test_serving_direction_is_flagged()
+    test_name_type_mismatch_is_flagged()
     print("=" * 50)
     print("All checks passed.")

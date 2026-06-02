@@ -380,8 +380,16 @@ choice should be deliberate, not accidental.
 | Systeem software | SystemSoftware | — | Platform to run apps; no business-data processing (OS, DBMS, middleware) |
 | Programmeeromgeving | SystemSoftware | `Programmeeromgeving` | Tool to make reusable scripts; a specialisation of Systeem software |
 | Deployed Resource | TechnologyService | `Deployed Resource` | A configured/activated MS Azure resource; specialisation of an Azure ResourceType |
+| Account Applicatie Groep | Grouping | `Account Applicatie Groep` | Aggregates the apps/services/portals of one Account; realises a Bedrijfsfunctie |
+| Hostingdienst | TechnologyService | `Hostingdienst` | Hosting service that serves a Website |
+| Domein registratie | TechnologyService | `Domein registratie` | Domain-registration service; a specialisation of Hostingdienst |
+| Hosting partij | BusinessActor | `Hosting partij` | The party that provides a Hostingdienst |
+| Registrar | BusinessActor | `Registrar` | The party behind a Domein registratie |
+| Artefact | Artifact | `Artefact` | CMDB installset/licentie; realises the app/system software it deploys |
+| Locatie | Location | `Locatie` | Exploitation environment grouping (on-prem / cloud / DMZ) — generic, not an exact address |
 | Beveiligingsdomein | Grouping | `Beveiligingsdomein` | Security zone — a group of systems with the same trust level |
 | Plateau | Plateau | `Plateau` | A future (SOLL) situation; carries the i-aanvraag/wijziging number |
+| Programma/Project | WorkPackage | `Programma/Project` | A change initiative; realises a Plateau |
 
 > **`«Account»` is NOT a generic role.** An Account is a specific
 > governance construct: an internal collaboration (accountmanager + ICO/
@@ -440,6 +448,38 @@ read source → target; getting it backwards inverts the meaning.
   behavior (DataObject is the source side semantics-wise but the arrow
   points at the DataObject); write = into the DataObject. When unsure
   which way a data exchange goes, prefer **Flow** with an explicit name.
+
+### Relationship direction — the rules `validate_view` enforces
+
+Getting the *type* right is half the job; the *direction* is the other half.
+These are the metamodel rules the validator now hard-gates — follow them up
+front so you don't get bounced:
+
+- **An active element performing a behaviour is `Assignment`, never
+  `Triggering`.** Burger → "Melding indienen" is Assignment (actor performs
+  process). Triggering is strictly behaviour → behaviour (process triggers
+  process, event triggers process). `validate_view` →
+  `triggering_from_active_structure`.
+- **`Flow` connects two behaviours, or two active-structure elements — never
+  a mix, and never data/motivation.** A process does not "flow" into an
+  application component; the component (or its service) **serves** the
+  process, or the process **accesses** a DataObject. →
+  `flow_invalid_endpoints`.
+- **Serving points from concrete to abstract: Technology serves Application
+  serves Business.** A database/SystemSoftware serves the app; the app serves
+  the business process. Never draw the app "serving" its database. →
+  `serving_direction`.
+- **`Assignment` goes active-structure → behaviour**, not the reverse. →
+  `assignment_from_behavior`.
+
+### Apply stereotypes consistently
+
+In a waterschap plate, if one application component carries «Applicatie», the
+*other* application components that are also applications must carry it too —
+don't stereotype one and leave its siblings bare. The stereotype is what makes
+the plate peer-review-conform in the EA-toolchain; a half-stereotyped plate
+reads as half-finished. Likewise, name a service for the behaviour it offers
+(not "…component") — `validate_view` flags `name_type_mismatch`.
 
 ### View organisation (IST / SOLL / doel)
 

@@ -209,6 +209,38 @@ function flattenElkResult(elkNodes, offsetX = 0, offsetY = 0, out = []) {
   return out
 }
 
+// ELK computes orthogonal edge routing (elk.edgeRouting=ORTHOGONAL) and
+// returns it as edge `sections` with a startPoint, optional bendPoints and
+// an endPoint. We used to discard this and let the renderers draw straight
+// center-to-center lines — the single biggest reason the exported plates
+// looked like spaghetti. Now we flatten the routing to an absolute polyline
+// per edge so the writer can persist it as <bendpoint>s and both renderers
+// draw clean orthogonal lines that already terminate on the node borders.
+//
+// Edges live at the hierarchy level of their lowest common ancestor; their
+// section coordinates are relative to that container. We walk the same tree
+// as flattenElkResult, accumulating the parent offset so the points come out
+// in the same absolute space as the node coordinates.
+function flattenElkEdges(elkNode, offsetX = 0, offsetY = 0, out = []) {
+  for (const e of elkNode.edges || []) {
+    const section = (e.sections || [])[0]
+    if (!section) continue
+    const pts = [
+      section.startPoint,
+      ...(section.bendPoints || []),
+      section.endPoint,
+    ].filter(Boolean).map((p) => ({
+      x: Math.round((p.x ?? 0) + offsetX),
+      y: Math.round((p.y ?? 0) + offsetY),
+    }))
+    if (pts.length >= 2) out.push({ id: e.id, points: pts })
+  }
+  for (const c of elkNode.children || []) {
+    flattenElkEdges(c, Math.round((c.x ?? 0) + offsetX), Math.round((c.y ?? 0) + offsetY), out)
+  }
+  return out
+}
+
 app.post('/layout', async (req, res) => {
   try {
     const { nodes, edges, viewpoint } = req.body || {}
@@ -220,7 +252,8 @@ app.post('/layout', async (req, res) => {
     const graph = buildElkGraph({ nodes, edges, viewpoint })
     const result = await elk.layout(graph)
     const laidOut = flattenElkResult(result.children)
-    res.json({ success: true, nodes: laidOut, viewpoint: viewpoint || DEFAULT_VIEWPOINT })
+    const routedEdges = flattenElkEdges(result)
+    res.json({ success: true, nodes: laidOut, edges: routedEdges, viewpoint: viewpoint || DEFAULT_VIEWPOINT })
   } catch (err) {
     console.error('layout_failed', err)
     res.status(500).json({

@@ -108,6 +108,147 @@ export const CONNECTION_STYLE = {
   Association:    { line: 'solid',  startMarker: null,             endMarker: null },
 }
 
+// --- ArchiMate shape + icon vocabulary --------------------------------------
+// Mirrors svg_export.py 1:1 so the Gitea preview and the in-app viewer look
+// identical. Box shape varies by ArchiMate category (service=stadium,
+// behaviour=rounded, grouping=dashed, structure=square) and a small standard
+// type-icon sits top-right — making element types and the Rijnland
+// "ownership decides the shape" rule visible at a glance.
+const SERVICE_TYPES = new Set(['BusinessService', 'ApplicationService', 'TechnologyService'])
+const BEHAVIOR_TYPES = new Set([
+  'BusinessProcess', 'BusinessFunction', 'BusinessInteraction', 'BusinessEvent',
+  'ApplicationFunction', 'ApplicationInteraction', 'ApplicationProcess',
+  'ApplicationEvent', 'TechnologyFunction', 'TechnologyProcess',
+  'TechnologyInteraction', 'TechnologyEvent',
+])
+const MOTIVATION_TYPES = new Set([
+  'Stakeholder', 'Driver', 'Assessment', 'Goal', 'Outcome', 'Principle',
+  'Requirement', 'Constraint', 'Meaning', 'Value',
+])
+const GROUPING_TYPES = new Set(['Grouping', 'Location'])
+
+export function nodeRadius(elType, h) {
+  if (SERVICE_TYPES.has(elType)) return { rx: Math.max(4, h / 2), dashed: false }
+  if (BEHAVIOR_TYPES.has(elType)) return { rx: 10, dashed: false }
+  if (MOTIVATION_TYPES.has(elType)) return { rx: 9, dashed: false }
+  if (GROUPING_TYPES.has(elType)) return { rx: 4, dashed: true }
+  return { rx: 2, dashed: false }
+}
+
+function iconKind(t) {
+  if (t === 'ApplicationCollaboration' || t === 'BusinessCollaboration' || t === 'TechnologyCollaboration') return 'collab'
+  if (t === 'ApplicationComponent') return 'component'
+  if (t === 'BusinessActor') return 'actor'
+  if (t === 'BusinessRole' || t === 'Stakeholder') return 'role'
+  if (SERVICE_TYPES.has(t)) return 'service'
+  if (t.endsWith('Interface')) return 'interface'
+  if (t.endsWith('Process')) return 'process'
+  if (t.endsWith('Function')) return 'function'
+  if (t.endsWith('Event')) return 'event'
+  if (t === 'DataObject' || t === 'BusinessObject') return 'object'
+  if (t === 'Artifact') return 'artifact'
+  if (t === 'Node') return 'node'
+  if (t === 'Device') return 'device'
+  if (t === 'SystemSoftware') return 'syssoft'
+  if (t === 'Driver') return 'driver'
+  if (t === 'Goal' || t === 'Outcome') return 'goal'
+  if (t === 'Principle') return 'principle'
+  if (t === 'Requirement') return 'requirement'
+  if (t === 'Constraint') return 'constraint'
+  if (t === 'Plateau') return 'plateau'
+  return ''
+}
+
+export function typeIconSVG(elType, ix, iy) {
+  const kind = iconKind(elType)
+  if (!kind) return ''
+  const s = 'fill="none" stroke="#555" stroke-width="1.1"'
+  const sf = 'fill="#fff" stroke="#555" stroke-width="1.1"'
+  switch (kind) {
+    case 'component':
+      return `<rect x="${ix + 3}" y="${iy}" width="11" height="14" ${sf}/>`
+        + `<rect x="${ix}" y="${iy + 2}" width="5" height="3.5" ${sf}/>`
+        + `<rect x="${ix}" y="${iy + 8}" width="5" height="3.5" ${sf}/>`
+    case 'collab':
+      return `<circle cx="${ix + 5}" cy="${iy + 7}" r="4.5" ${s}/>`
+        + `<circle cx="${ix + 10}" cy="${iy + 7}" r="4.5" ${s}/>`
+    case 'actor':
+      return `<circle cx="${ix + 7}" cy="${iy + 2}" r="2.2" ${s}/>`
+        + `<line x1="${ix + 7}" y1="${iy + 4}" x2="${ix + 7}" y2="${iy + 10}" ${s}/>`
+        + `<line x1="${ix + 2}" y1="${iy + 6}" x2="${ix + 12}" y2="${iy + 6}" ${s}/>`
+        + `<line x1="${ix + 7}" y1="${iy + 10}" x2="${ix + 3}" y2="${iy + 14}" ${s}/>`
+        + `<line x1="${ix + 7}" y1="${iy + 10}" x2="${ix + 11}" y2="${iy + 14}" ${s}/>`
+    case 'role':
+      return `<circle cx="${ix + 9}" cy="${iy + 7}" r="4" ${s}/>`
+        + `<line x1="${ix + 1}" y1="${iy + 4}" x2="${ix + 1}" y2="${iy + 10}" ${s}/>`
+        + `<line x1="${ix + 1}" y1="${iy + 7}" x2="${ix + 5}" y2="${iy + 7}" ${s}/>`
+    case 'service':
+      return `<rect x="${ix}" y="${iy + 3}" width="15" height="9" rx="4.5" ry="4.5" ${s}/>`
+    case 'interface':
+      return `<line x1="${ix}" y1="${iy + 7}" x2="${ix + 7}" y2="${iy + 7}" ${s}/>`
+        + `<circle cx="${ix + 10}" cy="${iy + 7}" r="3.2" ${s}/>`
+    case 'process':
+      return `<path d="M ${ix} ${iy + 3} L ${ix + 8} ${iy + 3} L ${ix + 8} ${iy} L ${ix + 14} ${iy + 7} L ${ix + 8} ${iy + 14} L ${ix + 8} ${iy + 11} L ${ix} ${iy + 11} Z" ${s}/>`
+    case 'function':
+      return `<path d="M ${ix + 7} ${iy} L ${ix + 14} ${iy + 5} L ${ix + 11} ${iy + 14} L ${ix + 3} ${iy + 14} L ${ix} ${iy + 5} Z" ${s}/>`
+    case 'event':
+      return `<path d="M ${ix} ${iy + 2} L ${ix + 10} ${iy + 2} L ${ix + 14} ${iy + 7} L ${ix + 10} ${iy + 12} L ${ix} ${iy + 12} L ${ix + 3} ${iy + 7} Z" ${s}/>`
+    case 'object':
+      return `<rect x="${ix}" y="${iy + 1}" width="14" height="12" ${s}/>`
+        + `<line x1="${ix}" y1="${iy + 5}" x2="${ix + 14}" y2="${iy + 5}" ${s}/>`
+    case 'artifact':
+      return `<path d="M ${ix + 1} ${iy} L ${ix + 9} ${iy} L ${ix + 13} ${iy + 4} L ${ix + 13} ${iy + 14} L ${ix + 1} ${iy + 14} Z" ${s}/>`
+        + `<path d="M ${ix + 9} ${iy} L ${ix + 9} ${iy + 4} L ${ix + 13} ${iy + 4}" ${s}/>`
+    case 'node':
+      return `<rect x="${ix}" y="${iy + 4}" width="10" height="10" ${s}/>`
+        + `<path d="M ${ix} ${iy + 4} L ${ix + 4} ${iy} L ${ix + 14} ${iy} L ${ix + 10} ${iy + 4}" ${s}/>`
+        + `<path d="M ${ix + 10} ${iy + 14} L ${ix + 14} ${iy + 10} L ${ix + 14} ${iy}" ${s}/>`
+    case 'device':
+      return `<rect x="${ix + 1}" y="${iy + 1}" width="12" height="8" rx="1.5" ${s}/>`
+        + `<path d="M ${ix - 1} ${iy + 13} L ${ix + 15} ${iy + 13} L ${ix + 12} ${iy + 9} L ${ix + 2} ${iy + 9} Z" ${s}/>`
+    case 'syssoft':
+      return `<ellipse cx="${ix + 7}" cy="${iy + 4}" rx="6.5" ry="3" ${s}/>`
+        + `<path d="M ${ix + 0.5} ${iy + 4} L ${ix + 0.5} ${iy + 10}" ${s}/>`
+        + `<path d="M ${ix + 13.5} ${iy + 4} L ${ix + 13.5} ${iy + 10}" ${s}/>`
+        + `<path d="M ${ix + 0.5} ${iy + 10} A 6.5 3 0 0 0 ${ix + 13.5} ${iy + 10}" ${s}/>`
+    case 'driver':
+      return `<circle cx="${ix + 7}" cy="${iy + 7}" r="6" ${s}/>`
+        + `<circle cx="${ix + 7}" cy="${iy + 7}" r="1.6" ${s}/>`
+        + `<line x1="${ix + 7}" y1="${iy + 1}" x2="${ix + 7}" y2="${iy + 13}" ${s}/>`
+        + `<line x1="${ix + 1}" y1="${iy + 7}" x2="${ix + 13}" y2="${iy + 7}" ${s}/>`
+    case 'goal':
+      return `<circle cx="${ix + 7}" cy="${iy + 7}" r="6" ${s}/>`
+        + `<circle cx="${ix + 7}" cy="${iy + 7}" r="2.5" ${s}/>`
+    case 'principle':
+      return `<circle cx="${ix + 7}" cy="${iy + 7}" r="6" ${s}/>`
+        + `<line x1="${ix + 7}" y1="${iy + 3}" x2="${ix + 7}" y2="${iy + 11}" ${s}/>`
+        + `<line x1="${ix + 7}" y1="${iy + 3}" x2="${ix + 4.5}" y2="${iy + 6}" ${s}/>`
+        + `<line x1="${ix + 7}" y1="${iy + 3}" x2="${ix + 9.5}" y2="${iy + 6}" ${s}/>`
+    case 'requirement':
+      return `<path d="M ${ix + 3} ${iy + 1} L ${ix + 14} ${iy + 1} L ${ix + 11} ${iy + 13} L ${ix} ${iy + 13} Z" ${s}/>`
+    case 'constraint':
+      return `<path d="M ${ix + 3} ${iy + 1} L ${ix + 14} ${iy + 1} L ${ix + 11} ${iy + 13} L ${ix} ${iy + 13} Z" ${s}/>`
+        + `<line x1="${ix + 2}" y1="${iy + 7}" x2="${ix + 12}" y2="${iy + 7}" ${s}/>`
+    case 'plateau':
+      return `<rect x="${ix}" y="${iy + 1}" width="14" height="3" ${sf}/>`
+        + `<rect x="${ix}" y="${iy + 6}" width="14" height="3" ${sf}/>`
+        + `<rect x="${ix}" y="${iy + 11}" width="14" height="3" ${sf}/>`
+    default:
+      return ''
+  }
+}
+
+// Point where the line from box-centre (cx,cy) toward (tx,ty) exits the box.
+function borderPoint(cx, cy, w, h, tx, ty) {
+  const dx = tx - cx
+  const dy = ty - cy
+  if (dx === 0 && dy === 0) return [cx, cy]
+  const sx = dx ? (w / 2) / Math.abs(dx) : Infinity
+  const sy = dy ? (h / 2) / Math.abs(dy) : Infinity
+  const sc = Math.min(sx, sy)
+  return [cx + dx * sc, cy + dy * sc]
+}
+
 // --- Spec parsing -----------------------------------------------------------
 
 /**
@@ -258,6 +399,11 @@ export function parseArchimateXML(xmlString) {
             relationshipRef: attr(c, 'relationshipRef'),
             source: attr(c, 'source'),
             target: attr(c, 'target'),
+            // ELK's orthogonal routing, persisted server-side by writer.py.
+            bendpoints: findAllLocal(c, 'bendpoint').map((b) => ({
+              x: parseInt(attr(b, 'x') || '0', 10),
+              y: parseInt(attr(b, 'y') || '0', 10),
+            })),
           })
         }
         views.set(id, {
@@ -313,7 +459,9 @@ export async function computeLayout(view) {
     id: 'root',
     layoutOptions: {
       'elk.algorithm': 'layered',
-      'elk.direction': 'RIGHT',
+      // DOWN to match the server-side layout-service so the in-browser
+      // fallback produces the same canonical Motivation→…→Technology stack.
+      'elk.direction': 'DOWN',
       'elk.spacing.nodeNode': '60',
       'elk.layered.spacing.nodeNodeBetweenLayers': '70',
       'elk.spacing.edgeNode': '30',
@@ -373,8 +521,13 @@ function escapeXml(s) {
     .replace(/"/g, '&quot;').replace(/'/g, '&apos;')
 }
 
-function lineEdgeSegments(srcNode, tgtNode, elkEdge) {
-  // Prefer ELK-routed sections (orthogonal bendpoints) if present
+function lineEdgeSegments(srcNode, tgtNode, elkEdge, conn) {
+  // Prefer the orthogonal routing persisted server-side (writer.py) — the
+  // canonical source once layout-service has run.
+  if (conn && conn.bendpoints && conn.bendpoints.length >= 2) {
+    return conn.bendpoints.map((b) => [b.x, b.y])
+  }
+  // Then in-browser ELK-routed sections (legacy / fallback layout path).
   if (elkEdge && elkEdge.sections && elkEdge.sections.length) {
     const points = []
     for (const sec of elkEdge.sections) {
@@ -384,12 +537,15 @@ function lineEdgeSegments(srcNode, tgtNode, elkEdge) {
     }
     return points
   }
-  // Fallback: straight line center-to-center, clipped to box edges
-  const sx = srcNode.x + srcNode.w / 2
-  const sy = srcNode.y + srcNode.h / 2
-  const tx = tgtNode.x + tgtNode.w / 2
-  const ty = tgtNode.y + tgtNode.h / 2
-  return [[sx, sy], [tx, ty]]
+  // Last resort: straight line, clipped to both box borders so the
+  // arrowhead lands on the edge instead of hiding under the target.
+  const scx = srcNode.x + srcNode.w / 2
+  const scy = srcNode.y + srcNode.h / 2
+  const tcx = tgtNode.x + tgtNode.w / 2
+  const tcy = tgtNode.y + tgtNode.h / 2
+  const start = borderPoint(scx, scy, srcNode.w, srcNode.h, tcx, tcy)
+  const end = borderPoint(tcx, tcy, tgtNode.w, tgtNode.h, scx, scy)
+  return [start, end]
 }
 
 function markerDefs(idPrefix) {
@@ -448,34 +604,31 @@ export function renderViewToSVG(view, model, opts = {}) {
 
   const idPrefix = `am-${view.id?.slice(-8) || Math.random().toString(36).slice(2, 8)}`
 
-  // Layer bands — subtle background per ArchiMate layer so the reader
-  // spots the canonical stack (Motivation top → Business → Application
-  // → Technology) at a glance. Drawn before nodes and edges so they
-  // paint on top.
-  const layerBboxes = new Map()
+  // Layer bands — a full-width horizontal stripe per ArchiMate layer. Every
+  // band spans the whole canvas width and only varies in y, so they read as
+  // clean Motivation → Business → Application → Technology stripes instead of
+  // the ragged per-layer bounding boxes we drew before. A faded uppercase
+  // caption sits in the band's top padding.
+  const layerYRanges = new Map()
   for (const n of view.nodes) {
     const el = model.elements.get(n.elementRef)
     const layer = el?.layer || 'Unknown'
     if (layer === 'Unknown' || layer === 'Other') continue
-    const x = n.x + offsetX
     const y = n.y + offsetY
-    const bb = layerBboxes.get(layer)
-    if (!bb) {
-      layerBboxes.set(layer, [x, y, x + n.w, y + n.h])
-    } else {
-      bb[0] = Math.min(bb[0], x)
-      bb[1] = Math.min(bb[1], y)
-      bb[2] = Math.max(bb[2], x + n.w)
-      bb[3] = Math.max(bb[3], y + n.h)
-    }
+    const yr = layerYRanges.get(layer)
+    if (!yr) layerYRanges.set(layer, [y, y + n.h])
+    else { yr[0] = Math.min(yr[0], y); yr[1] = Math.max(yr[1], y + n.h) }
   }
-  const bandXML = Array.from(layerBboxes.entries())
-    .map(([layer, [lx, ly, rx, ry]]) => {
+  const bandLeft = PAD - 8
+  const bandW = (width - 2 * PAD) + 16
+  const BAND_ORDER = { Motivation: 0, Strategy: 1, Business: 2, Application: 3, Technology: 4, Physical: 5, Implementation: 6 }
+  const bandXML = Array.from(layerYRanges.entries())
+    .sort((a, b) => (BAND_ORDER[a[0]] ?? 9) - (BAND_ORDER[b[0]] ?? 9))
+    .map(([layer, [ly, ry]]) => {
       const fill = LAYER_COLORS[layer] || '#FFFFFF'
-      const bw = rx - lx + 36
-      const bh = ry - ly + 28
-      return `<rect x="${lx - 18}" y="${ly - 14}" width="${bw}" height="${bh}"
+      return `<rect x="${bandLeft}" y="${ly - 14}" width="${bandW}" height="${ry - ly + 28}"
               rx="6" ry="6" fill="${fill}" fill-opacity="0.18" stroke="none" />`
+        + `<text x="${bandLeft + 8}" y="${ly - 4}" font-family="Segoe UI, sans-serif" font-size="9" font-weight="bold" letter-spacing="1" fill="#888" fill-opacity="0.7">${escapeXml(layer.toUpperCase())}</text>`
     })
     .join('')
 
@@ -508,13 +661,20 @@ export function renderViewToSVG(view, model, opts = {}) {
       : (LAYER_COLORS[layer] || LAYER_COLORS.Unknown)
     const name = el?.name || '(unnamed)'
     const stereotype = el?.stereotype || ''
-    const layerLetter = LAYER_LETTER[layer] || ''
+    const elType = el?.type || ''
     const isNew = highlight.has(n.elementRef) || highlight.has(n.id)
     const isContainer = containerIds.has(n.id)
     const stroke = isNew ? '#1d4ed8' : '#444'
     const strokeWidth = isNew ? 2.5 : 1.2
+    const { rx, dashed } = nodeRadius(elType, n.h)
+    const nodeDash = dashed ? ' stroke-dasharray="6,4"' : ''
+    // Type icon top-right; fall back to the single-letter layer badge.
+    const icon = typeIconSVG(elType, n.x + offsetX + n.w - 21, n.y + offsetY + 5)
+    const corner = icon
+      || `<text x="${n.x + offsetX + n.w - 8}" y="${n.y + offsetY + 14}" font-family="Segoe UI, sans-serif" font-size="10" font-weight="bold" fill="#888" text-anchor="end">${escapeXml(LAYER_LETTER[layer] || '')}</text>`
     const accent = isNew ? `<rect x="${n.x + offsetX - 3}" y="${n.y + offsetY - 3}" width="${n.w + 6}" height="${n.h + 6}" rx="10" fill="none" stroke="#1d4ed8" stroke-width="1" stroke-dasharray="3,3" opacity="0.7"/>` : ''
-    const labelX = isContainer ? n.x + offsetX + 12 : n.x + offsetX + n.w / 2
+    // Leave room on the right so a long centred label doesn't run under the icon.
+    const labelX = isContainer ? n.x + offsetX + 12 : n.x + offsetX + (n.w - 18) / 2
     // Nudge the name down when a «stereotype» line sits above it, so the two
     // don't collide inside the box.
     const baseY = isContainer ? n.y + offsetY + 16 : n.y + offsetY + n.h / 2 + 4
@@ -529,8 +689,8 @@ export function renderViewToSVG(view, model, opts = {}) {
       ${accent}
       <g class="am-node" data-element-id="${escapeXml(n.elementRef)}">
         <rect x="${n.x + offsetX}" y="${n.y + offsetY}" width="${n.w}" height="${n.h}"
-              rx="3" ry="3" fill="${fill}" stroke="${stroke}" stroke-width="${strokeWidth}" />
-        <text x="${n.x + offsetX + n.w - 8}" y="${n.y + offsetY + 14}" font-family="Segoe UI, sans-serif" font-size="10" font-weight="bold" fill="#888" text-anchor="end">${escapeXml(layerLetter)}</text>
+              rx="${rx}" ry="${rx}" fill="${fill}" stroke="${stroke}" stroke-width="${strokeWidth}"${nodeDash} />
+        ${corner}
         ${stereoXML}
         <text x="${labelX}" y="${labelY}" font-family="Segoe UI, sans-serif" font-size="11" font-weight="${labelWeight}" fill="#222" text-anchor="${labelAnchor}">${escapeXml(name)}</text>
       </g>
@@ -549,6 +709,7 @@ export function renderViewToSVG(view, model, opts = {}) {
   const contains = (a, b) =>
     a.x <= b.x && a.y <= b.y && a.x + a.w >= b.x + b.w && a.y + a.h >= b.y + b.h
 
+  const labelParts = []
   const connXML = view.connections.map((c) => {
     const rel = model.relationships.get(c.relationshipRef)
     const src = nodeById.get(c.source)
@@ -559,16 +720,26 @@ export function renderViewToSVG(view, model, opts = {}) {
     }
     const style = CONNECTION_STYLE[rel?.type] || CONNECTION_STYLE.Association
     const elkEdge = elkEdgesById.get(c.id)
-    const points = lineEdgeSegments(src, tgt, elkEdge)
-    const polyPoints = points
-      .map(([px, py]) => `${px + offsetX},${py + offsetY}`)
-      .join(' ')
+    const points = lineEdgeSegments(src, tgt, elkEdge, c)
+    const placed = points.map(([px, py]) => [px + offsetX, py + offsetY])
+    const polyPoints = placed.map(([px, py]) => `${px},${py}`).join(' ')
     const dasharray = style.line === 'dashed' ? '5,4' : ''
     const markerStart = style.startMarker ? `marker-start="url(#${idPrefix}-${style.startMarker})"` : ''
     const markerEnd = style.endMarker ? `marker-end="url(#${idPrefix}-${style.endMarker})"` : ''
     const isNew = highlight.has(c.relationshipRef) || highlight.has(c.id)
     const stroke = isNew ? '#1d4ed8' : '#222'
     const strokeWidth = isNew ? 2 : 1.2
+    // Edge label (relationship name) at the polyline midpoint, on a faint
+    // backplate so it stays legible where it crosses a band.
+    const relName = rel?.name || ''
+    if (relName) {
+      const [lx, ly] = placed[Math.floor(placed.length / 2)]
+      const tw = relName.length * 5.4 + 6
+      labelParts.push(
+        `<rect x="${lx - tw / 2}" y="${ly - 7}" width="${tw}" height="13" rx="2" fill="#fff" fill-opacity="0.72" stroke="none" />`
+        + `<text x="${lx}" y="${ly + 3}" font-family="Segoe UI, sans-serif" font-size="9" fill="#444" text-anchor="middle">${escapeXml(relName)}</text>`
+      )
+    }
     return `
       <polyline class="am-connection" data-relationship-id="${escapeXml(c.relationshipRef)}"
         points="${polyPoints}" fill="none"
@@ -583,5 +754,6 @@ export function renderViewToSVG(view, model, opts = {}) {
     ${bandXML}
     ${connXML}
     ${nodeXML}
+    ${labelParts.join('')}
   </svg>`
 }

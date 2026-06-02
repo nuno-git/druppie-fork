@@ -68,13 +68,23 @@ RIJNLAND_CONCEPTS: dict[str, dict[str, Any]] = {
     "'Externe' informatiebron": {"type": "ApplicationInteraction", "ownership": "behavior"},
     "Applicatie als service": {"type": "ApplicationService", "ownership": "behavior"},
     "Applicatiefunctie": {"type": "ApplicationFunction", "ownership": None},
+    "Account Applicatie Groep": {"type": "Grouping", "ownership": None},
+    # Business actors with a fixed tekenafspraken role
+    "Hosting partij": {"type": "BusinessActor", "ownership": None},
+    "Registrar": {"type": "BusinessActor", "ownership": None},
     # Technology
     "Programmeeromgeving": {"type": "SystemSoftware", "ownership": None},
     "Deployed Resource": {"type": "TechnologyService", "ownership": None},
-    # Cross-layer / security
+    "Hostingdienst": {"type": "TechnologyService", "ownership": None},
+    "Domein registratie": {"type": "TechnologyService", "ownership": None},
+    "Artefact": {"type": "Artifact", "ownership": None},
+    # Cross-layer / security / exploitation
     "Beveiligingsdomein": {"type": "Grouping", "ownership": None},
-    # Implementation
+    "Locatie": {"type": "Location", "ownership": None},
+    # Implementation & migration
     "Plateau": {"type": "Plateau", "ownership": None},
+    "Programma/Project": {"type": "WorkPackage", "ownership": None},
+    "Wijziging/project": {"type": "WorkPackage", "ownership": None},
 }
 
 # Active-structure vs behavior ArchiMate types in the Application layer, used
@@ -952,6 +962,25 @@ class ArchiMateDocument:
                 node.set("w", str(int(entry["w"])))
             if "h" in entry:
                 node.set("h", str(int(entry["h"])))
+
+        # Persist ELK's orthogonal edge routing as <bendpoint> children on
+        # each connection. The points are in the same coordinate space as the
+        # node x/y above, so both renderers apply the same canvas offset. Old
+        # bendpoints are cleared first: a relayout invalidates the previous
+        # routing, and stale points would draw lines to nowhere.
+        conn_by_id = {
+            c.get("identifier", ""): c for c in view.findall("am:connection", NS)
+        }
+        for edge in data.get("edges", []):
+            conn = conn_by_id.get(edge.get("id", ""))
+            if conn is None:
+                continue
+            for old in list(conn.findall("am:bendpoint", NS)):
+                conn.remove(old)
+            for pt in edge.get("points", []):
+                bp = ET.SubElement(conn, _q("bendpoint"))
+                bp.set("x", str(int(pt.get("x", 0))))
+                bp.set("y", str(int(pt.get("y", 0))))
 
         # Z-order matters for visual nesting: parents must be drawn
         # before their children, otherwise the parent's background

@@ -729,6 +729,46 @@ _ACCOUNT_NOT_HINTS = (
     "beheerder", "gebruiker", "burger", "klant", "inwoner", "aanvrager",
 )
 
+# ArchiMate element categories — coarse buckets driving the relationship
+# metamodel checks. Active structure *performs* behaviour; behaviour *is*
+# performed; passive structure is *acted on*; motivation expresses intent.
+# Anything else (Grouping/Location/Junction/Plateau/WorkPackage/…) is "other"
+# and treated permissively so we never fire on composite/aggregation glue.
+_ACTIVE_STRUCTURE_TYPES = {
+    "BusinessActor", "BusinessRole", "BusinessCollaboration", "BusinessInterface",
+    "ApplicationComponent", "ApplicationCollaboration", "ApplicationInterface",
+    "Node", "Device", "SystemSoftware", "TechnologyCollaboration",
+    "TechnologyInterface", "Path", "CommunicationNetwork",
+    "Equipment", "Facility", "DistributionNetwork",
+}
+_BEHAVIOR_TYPES = {
+    "BusinessProcess", "BusinessFunction", "BusinessInteraction", "BusinessEvent",
+    "BusinessService", "ApplicationFunction", "ApplicationInteraction",
+    "ApplicationProcess", "ApplicationEvent", "ApplicationService",
+    "TechnologyFunction", "TechnologyProcess", "TechnologyInteraction",
+    "TechnologyEvent", "TechnologyService",
+}
+_PASSIVE_STRUCTURE_TYPES = {
+    "BusinessObject", "Contract", "Representation", "DataObject", "Artifact",
+    "Deliverable", "Material",
+}
+_MOTIVATION_TYPES = {
+    "Stakeholder", "Driver", "Assessment", "Goal", "Outcome", "Principle",
+    "Requirement", "Constraint", "Meaning", "Value",
+}
+
+
+def _category(t: str) -> str:
+    if t in _ACTIVE_STRUCTURE_TYPES:
+        return "active"
+    if t in _BEHAVIOR_TYPES:
+        return "behavior"
+    if t in _PASSIVE_STRUCTURE_TYPES:
+        return "passive"
+    if t in _MOTIVATION_TYPES:
+        return "motivation"
+    return "other"
+
 
 def _read_property(doc, el, prop_name: str) -> str:
     """Return the value of a named property marker on an element, or ''.
@@ -863,6 +903,79 @@ def _validate_view_impl(doc, view) -> list[dict[str, Any]]:
                     "relationship_id": rel_id,
                 })
 
+        # --- ArchiMate relationship metamodel (category-level) ---
+        src_cat = _category(src_type)
+        tgt_cat = _category(tgt_type)
+
+        # Triggering is a dynamic relationship between behaviour elements. An
+        # active-structure source (actor / role / component / node) does not
+        # "trigger" a behaviour — it is *assigned to* the behaviour it
+        # performs. This is the most common mis-draw (actor → process).
+        if rel_type == "Triggering" and src_cat == "active":
+            errors.append({
+                "code": "triggering_from_active_structure",
+                "message": (
+                    f"Triggering runs from '{src_type}' (active structure). An "
+                    f"active element performing a behaviour is an Assignment, not "
+                    f"a Triggering. Use Assignment (active → behaviour), or make "
+                    f"the source the behaviour element that does the triggering."
+                ),
+                "relationship_id": rel_id,
+            })
+
+        # Flow moves information/value between two behaviour elements (or two
+        # active-structure elements). Mixing an active-structure end with a
+        # behaviour end — or touching passive/motivation — is a metamodel
+        # error (e.g. a BusinessProcess "flowing" into an ApplicationComponent).
+        if rel_type == "Flow":
+            cats = {src_cat, tgt_cat}
+            if (cats & {"passive", "motivation"}) or cats == {"active", "behavior"}:
+                errors.append({
+                    "code": "flow_invalid_endpoints",
+                    "message": (
+                        f"Flow connects '{src_type}' and '{tgt_type}', which mix "
+                        f"incompatible kinds. Flow is for two behaviour elements "
+                        f"or two active-structure elements. For an app/service "
+                        f"supporting a process use Serving; for reading or writing "
+                        f"data use Access."
+                    ),
+                    "relationship_id": rel_id,
+                })
+
+        # Assignment goes from active structure to the behaviour it performs
+        # (or actor → role, role → interface). A behaviour source is reversed.
+        if rel_type == "Assignment" and src_cat == "behavior":
+            errors.append({
+                "code": "assignment_from_behavior",
+                "message": (
+                    f"Assignment runs from '{src_type}' (behaviour). Assignment "
+                    f"goes from an active-structure element to the behaviour it "
+                    f"performs — swap source and target."
+                ),
+                "relationship_id": rel_id,
+            })
+
+        # Serving direction across the Business/Application/Technology stack:
+        # the more concrete layer serves the more abstract one (Technology
+        # serves Application serves Business). The reverse — e.g. an
+        # ApplicationComponent "serving" a database/SystemSoftware — is almost
+        # always a mis-drawn dependency.
+        if rel_type == "Serving":
+            _BAT = {"Business", "Application", "Technology"}
+            if (src_layer in _BAT and tgt_layer in _BAT
+                    and _LAYER_ORDER.get(src_layer, 0) > _LAYER_ORDER.get(tgt_layer, 0)):
+                errors.append({
+                    "code": "serving_direction",
+                    "message": (
+                        f"Serving is reversed: '{src_type}' ({src_layer}) serves "
+                        f"'{tgt_type}' ({tgt_layer}). The more concrete layer "
+                        f"serves the more abstract one "
+                        f"(Technology → Application → Business). Swap source and "
+                        f"target."
+                    ),
+                    "relationship_id": rel_id,
+                })
+
     # --- Element-type sanity checks ---
 
     # Databases / persistent stores modelled as ApplicationComponent are a
@@ -889,6 +1002,41 @@ def _validate_view_impl(doc, view) -> list[dict[str, Any]]:
                     f"store but is typed as '{el_type}'. Use SystemSoftware "
                     f"(Technology layer) for the engine, or DataObject "
                     f"(Application layer) for the logical data."
+                ),
+                "element_id": ref,
+            })
+
+    # Name vs type: a service named "...component" — or a component named
+    # "...service" / "...dienst" — signals a typing mistake, usually the
+    # ownership/active-vs-behaviour choice made on the wrong axis (the
+    # Rijnland §3 rule). High-confidence and cheap.
+    for ref in nodes_on_view:
+        el = doc.find_element(ref)
+        if el is None:
+            continue
+        el_type = el.get(xsi_type, "")
+        name_el = el.find("am:name", ns)
+        name = (name_el.text or "") if name_el is not None else ""
+        nl = name.lower()
+        if el_type.endswith("Service") and "component" in nl:
+            errors.append({
+                "code": "name_type_mismatch",
+                "message": (
+                    f"'{name}' is typed '{el_type}' (a service) but is named like "
+                    f"a component. A service is named for the behaviour it offers, "
+                    f"not '…component'. Re-type as the component, or rename."
+                ),
+                "element_id": ref,
+            })
+        elif el_type.endswith("Component") and (
+            nl.endswith("service") or nl.endswith("dienst")
+        ):
+            errors.append({
+                "code": "name_type_mismatch",
+                "message": (
+                    f"'{name}' is typed '{el_type}' (an active component) but is "
+                    f"named like a service. If it is consumed as a service / SaaS, "
+                    f"re-type as ApplicationService (a behaviour shape)."
                 ),
                 "element_id": ref,
             })
