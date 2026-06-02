@@ -3,7 +3,7 @@
 # Druppie API Test Script
 # =============================================================================
 # Tests the backend API endpoints with curl commands.
-# Requires: backend running on localhost:8100, Keycloak on localhost:8180
+# Requires: backend running on localhost:$BACKEND_PORT, Keycloak on localhost:$KEYCLOAK_PORT
 #
 # Usage: ./scripts/test_api.sh
 # =============================================================================
@@ -22,8 +22,8 @@ success() { echo -e "${GREEN}[PASS]${NC} $1"; }
 fail() { echo -e "${RED}[FAIL]${NC} $1"; }
 warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 
-BACKEND_URL="http://localhost:8100"
-KEYCLOAK_URL="http://localhost:8180"
+BACKEND_URL="http://localhost:${BACKEND_PORT:-8100}"
+KEYCLOAK_URL="http://localhost:${KEYCLOAK_PORT:-8180}"
 KEYCLOAK_REALM="druppie"
 KEYCLOAK_CLIENT="druppie-frontend"
 
@@ -265,11 +265,11 @@ echo "=============================================="
 log "Querying database tables..."
 
 # Query via docker exec
-docker exec druppie-new-db psql -U druppie -d druppie -c "\dt" 2>/dev/null || warn "Could not query tables"
+docker compose exec -T druppie-db psql -U druppie -d druppie -c "\dt" 2>/dev/null || warn "Could not query tables"
 
 echo ""
 log "Row counts per table:"
-docker exec druppie-new-db psql -U druppie -d druppie -c "
+docker compose exec -T druppie-db psql -U druppie -d druppie -c "
 SELECT
     schemaname,
     relname AS table_name,
@@ -280,16 +280,16 @@ ORDER BY relname;
 
 echo ""
 log "Users table content:"
-docker exec druppie-new-db psql -U druppie -d druppie -c "SELECT id, username, email FROM users LIMIT 5;" 2>/dev/null || warn "Could not query users"
+docker compose exec -T druppie-db psql -U druppie -d druppie -c "SELECT id, username, email FROM users LIMIT 5;" 2>/dev/null || warn "Could not query users"
 
 if [ -n "$SESSION_ID" ]; then
     echo ""
     log "Sessions table content:"
-    docker exec druppie-new-db psql -U druppie -d druppie -c "SELECT id, title, user_id, status, created_at FROM sessions LIMIT 5;" 2>/dev/null || warn "Could not query sessions"
+    docker compose exec -T druppie-db psql -U druppie -d druppie -c "SELECT id, title, user_id, status, created_at FROM sessions LIMIT 5;" 2>/dev/null || warn "Could not query sessions"
 
     echo ""
     log "Messages table content:"
-    docker exec druppie-new-db psql -U druppie -d druppie -c "SELECT id, session_id, role, content FROM messages LIMIT 5;" 2>/dev/null || warn "Could not query messages"
+    docker compose exec -T druppie-db psql -U druppie -d druppie -c "SELECT id, session_id, role, content FROM messages LIMIT 5;" 2>/dev/null || warn "Could not query messages"
 fi
 
 # =============================================================================
