@@ -11,6 +11,8 @@
  * never enter the initial bundle.
  */
 
+import { getAgentConfig } from './agentConfig'
+
 const basename = (path) => path?.split('/').pop() || 'document'
 
 export function downloadAsMarkdown(content, path) {
@@ -70,6 +72,115 @@ export async function downloadElementAsPdf(element, path) {
   }
 
   pdf.save(filename)
+}
+
+/**
+ * Build a markdown transcript of the full chat session.
+ *
+ * Two visual levels:
+ * - "## Conversation" entries (### headings): messages the user sees and
+ *   participates in — user messages, agent chat messages, and HITL
+ *   questions with answers.
+ * - "Agent output" entries (blockquotes): internal agent actions that
+ *   drive the session forward — completion summaries, approval gates,
+ *   and tool results.  These are rendered as indented blockquotes so
+ *   a reader can scan the conversation flow without getting lost in
+ *   agent internals.
+ */
+export function buildChatTranscript(sessionData) {
+  const title = sessionData.title || 'Untitled Session'
+  const lines = [`# ${title}\n`]
+
+  const created = sessionData.created_at
+    ? new Date(sessionData.created_at).toLocaleString()
+    : null
+  if (created) lines.push(`**Session started:** ${created}\n`)
+  if (sessionData.status) lines.push(`**Status:** ${sessionData.status}\n`)
+
+  lines.push('---\n')
+
+  for (const entry of sessionData.timeline || []) {
+    // ── Conversation messages (user + agent chat bubbles) ──
+    if (entry.type === 'message' && entry.message) {
+      const msg = entry.message
+      const time = msg.created_at
+        ? new Date(msg.created_at).toLocaleTimeString()
+        : ''
+
+      if (msg.role === 'user') {
+        lines.push(`### User\n`)
+        lines.push(`${msg.content}\n`)
+      } else {
+        const config = msg.agent_id ? getAgentConfig(msg.agent_id) : null
+        const sender = config ? config.name : 'System'
+        lines.push(`### ${sender}  —  ${time}\n`)
+        lines.push(`${msg.content}\n`)
+      }
+      lines.push('---\n')
+      continue
+    }
+
+    // ── Agent runs (tool calls, approvals, done summaries) ──
+    if (entry.type === 'agent_run' && entry.agent_run) {
+      const run = entry.agent_run
+      const config = getAgentConfig(run.agent_id)
+      const agentName = config.name
+      const runTime = run.started_at
+        ? new Date(run.started_at).toLocaleTimeString()
+        : ''
+      const doneTime = run.completed_at
+        ? new Date(run.completed_at).toLocaleTimeString()
+        : runTime
+
+      for (const llm of run.llm_calls || []) {
+        for (const tc of llm.tool_calls || []) {
+          const toolName = tc.tool_name || ''
+
+          // HITL questions are conversation — the user interacts with them
+          if (toolName.includes('hitl_ask')) {
+            const q = tc.arguments?.question || tc.arguments?.message || ''
+            const choices = tc.arguments?.choices
+            lines.push(`### ${agentName}  —  ${runTime}\n`)
+            lines.push(`${q}\n`)
+            if (choices?.length) {
+              for (const c of choices) lines.push(`- ${c}`)
+              lines.push('')
+            }
+            if (tc.result) {
+              let answer = ''
+              try {
+                const parsed = typeof tc.result === 'string' ? JSON.parse(tc.result) : tc.result
+                answer = parsed?.answer || ''
+              } catch { answer = tc.result }
+              if (answer) lines.push(`### User\n\n${answer}\n`)
+            }
+            lines.push('---\n')
+            continue
+          }
+
+          // Everything below is agent output — rendered as blockquotes
+          if (tc.approval) {
+            const path = tc.arguments?.path || ''
+            const status = tc.approval.status || 'pending'
+            const reason = tc.approval.reason || ''
+            lines.push(`> **${agentName}** *(${runTime})* — approval gate (${status})`)
+            if (path) lines.push(`> File: \`${path}\``)
+            if (reason) lines.push(`> Reason: ${reason}`)
+            lines.push('\n')
+            continue
+          }
+
+          if (toolName.endsWith('done') && tc.arguments?.summary) {
+            lines.push(`> **${agentName}** *(${doneTime})* — completed`)
+            lines.push(`> ${tc.arguments.summary}\n`)
+            continue
+          }
+        }
+      }
+    }
+  }
+
+  return lines.join('\n')
 }
 
 export async function downloadContentAsPdf(markdownContent, path) {

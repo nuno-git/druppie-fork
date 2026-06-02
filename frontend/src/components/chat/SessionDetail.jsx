@@ -14,7 +14,7 @@ import { useAuth } from '../../App'
 import { getAgentConfig, getAgentMessageColors, formatToolName } from '../../utils/agentConfig'
 import { FilePreviewModal } from './ApprovalCard'
 import DownloadMenu from './DownloadMenu'
-import { downloadAsMarkdown, downloadContentAsPdf } from '../../utils/downloadDesign'
+import { downloadAsMarkdown, downloadContentAsPdf, buildChatTranscript } from '../../utils/downloadDesign'
 import HITLQuestionMessage from './HITLQuestionMessage'
 import WorkflowPipeline from './WorkflowPipeline'
 import DebugEventLog from './DebugEventLog'
@@ -941,6 +941,18 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
                 {data.project.name}
               </a>
             )}
+            <DownloadMenu
+              onDownloadMd={() => {
+                const md = buildChatTranscript(data)
+                const slug = (data.title || 'chat').replace(/[^a-z0-9]+/gi, '-').toLowerCase()
+                downloadAsMarkdown(md, `${slug}.md`)
+              }}
+              onDownloadPdf={() => {
+                const md = buildChatTranscript(data)
+                const slug = (data.title || 'chat').replace(/[^a-z0-9]+/gi, '-').toLowerCase()
+                downloadContentAsPdf(md, `${slug}.pdf`)
+              }}
+            />
             <CopyJsonButton
               getData={() => buildVisibleJson(data, timelineRef.current)}
               label="Copy JSON"

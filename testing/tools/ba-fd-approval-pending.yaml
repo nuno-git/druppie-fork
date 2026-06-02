@@ -1,0 +1,118 @@
+## Seeded session: BA wrote a Functional Design, approval gate PENDING.
+##
+## Starting point for manually testing the session-owner approval flow
+## for functional designs. When this test finishes, the session is paused
+## with a pending `coding:make_design` approval for
+## `docs/functional-design.md` that requires the `session_owner` role
+## to resolve.
+##
+## To test:
+##   1. Run this test from the evaluations page → green.
+##   2. Log in as the session owner (admin by default, or whichever user
+##      you seeded the test with).
+##   3. Go to /tasks — you should see a pending approval for
+##      docs/functional-design.md on a session named "recipe-sharing-app".
+##   4. Click "View file" to inspect the FD content.
+##   5. Approve or reject to exercise the session-owner approval flow.
+##      After approval, resume the session to let the BA commit, push,
+##      and call done().
+##
+## Chain: router → planner → BA calls coding:make_design → PENDING.
+## Deterministic (no LLM).
+
+tool-test:
+  name: ba-fd-approval-pending
+  description: "BA wrote FD — paused on session-owner approval gate, ready for manual approval"
+  tags: [seed, paused, business_analyst, approval-gate, platform-standards]
+  session_status: paused
+
+  chain:
+    # --- Router ---
+    - agent: router
+      tool: builtin:set_intent
+      arguments:
+        intent: create_project
+        project_name: recipe-sharing-app
+        description: "A recipe sharing platform where users can share and rate recipes"
+      assert:
+        result:
+          - not_empty
+
+    - agent: router
+      tool: builtin:done
+      arguments:
+        summary: "Agent router: Classified as create_project for recipe-sharing-app"
+      assert:
+        completed: true
+
+    # --- Planner → BA ---
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: business_analyst
+            prompt: "Gather requirements and create functional design"
+          - agent_id: planner
+            prompt: "Re-evaluate after business analyst completes"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: Planned business_analyst to gather requirements and create functional design"
+
+    # --- BA writes the FD — approval gate PENDING ---
+    # The session_owner approval must be resolved manually through the
+    # UI. After approval the session can be resumed to let the BA
+    # git commit + push + done.
+    - agent: business_analyst
+      tool: coding:make_design
+      approval:
+        status: pending
+      arguments:
+        path: docs/functional-design.md
+        content: |
+          # Functioneel Ontwerp: Recipe Sharing App
+
+          > Platform standards applied: [docs/platform-functional-standards.md](./platform-functional-standards.md) rev `2026-04-20`.
+
+          ## 1. Huidige vs Gewenste Situatie
+          Gebruikers willen recepten delen en beoordelen binnen een
+          vrienden- en familiekring. Er is geen bestaande oplossing.
+
+          ## 2. Functionele Vereisten
+          - FR-01: Gebruiker kan een recept aanmaken met titel, ingrediënten,
+            bereidingswijze en foto
+          - FR-02: Gebruiker kan recepten van anderen bekijken
+          - FR-03: Gebruiker kan recepten beoordelen (1-5 sterren)
+          - FR-04: Gebruiker kan commentaar geven op recepten
+          - FR-05: Gebruiker kan recepten zoeken op ingrediënt of naam
+          - FR-06: Gebruiker kan favoriete recepten opslaan
+
+          ## 3. Niet-Functionele Vereisten
+          - NFR-01: Applicatie laadt binnen 2 seconden
+          - NFR-02: Ondersteunt minimaal 100 gelijktijdige gebruikers
+          - NFR-03: Gegevens worden veilig opgeslagen
+
+          ## 4. Gebruikersrollen
+          - Thuiskok: kan recepten aanmaken, bekijken, beoordelen
+          - Beheerder: kan gebruikers en content modereren
+
+          ## 5. Gebruikersinteractie
+          - Homepage met nieuwste en best beoordeelde recepten
+          - Recept-detailpagina met ingrediënten, stappen, beoordelingen
+          - Profielpagina met eigen recepten en favorieten
+          - Zoekfunctie met filters
+
+          ## 14. Platform standard deviations
+
+          | Standard | Deviation | Rationale |
+          |----------|-----------|-----------|
+          | (none)   |           |           |
+
+    # No more steps — the chain ends with the BA paused on the
+    # pending approval. After a human resolves the approval through the
+    # UI and resumes the session, the BA will git add/commit/push
+    # and call done() against the approved FD content.
+
+  verify:
+    - gitea_repo_exists: true
