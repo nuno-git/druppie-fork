@@ -1,62 +1,57 @@
 ---
 name: llm-orchestration-in-apps
 description: >
-  This skill should be used when designing an application that contains
-  multi-step LLM workflows inside the built app itself — chains,
+  This skill should be used by the architect when a functional design
+  describes multi-step LLM logic INSIDE a generated application — chains,
   evaluation loops, agents with tools, stateful/durable workflows, or
-  multi-agent systems. It positions in-app LLM workflows as a legitimate
-  building block (distinct from Druppie's own agent stack) and provides
-  a decision-guide between plain Python, LangGraph, Pydantic-AI, DSPy,
-  CrewAI, MAF, Claude Agent SDK, and LlamaIndex Workflows.
+  multi-agent systems. It helps the architect decide the WHAT: which
+  workflow pattern applies, how much agency the problem actually needs,
+  and whether the capability should live in the app, in an extended
+  module, or in a new module. It does NOT name frameworks or libraries —
+  that HOW-decision belongs to the builder_planner (see the
+  `llm-orchestration-standard` skill).
 ---
 
-# LLM Orchestration in Built Apps
+# LLM Orchestration in Built Apps (Architect — WHAT)
 
-When a Druppie-built application contains its **own** LLM workflow —
-not just calling out to a Druppie-agent, but running multi-step LLM
-logic inside the app — the architect needs an explicit framework
-choice. Without that choice, the team falls back to "use what we
-know" and either over-engineers (LangGraph for a `for`-loop) or
-under-engineers (Python spaghetti for what wants to be an agent).
+When a Druppie-built application contains its **own** LLM workflow — not
+just calling out to a Druppie agent, but running multi-step LLM logic
+inside the app — the architect must decide **how much agency the problem
+needs** and **where the capability lives**. The architect names the
+*pattern* and the *structural shape*; the builder_planner later picks the
+concrete library from the platform standard.
 
-## Scope — Druppie-agent vs in-app LLM-workflow
+This keeps the role boundary intact: the architect decides WHAT and WHY,
+**never** names concrete frameworks or libraries in the TD.
 
-| Aspect | Druppie-agent | In-app LLM-workflow |
-|---|---|---|
-| Who builds | Druppie platform team | The customer application |
-| Code location | `druppie/agents/definitions/*.yaml` + Orchestrator | Inside the generated app |
-| Runtime | Druppie Orchestrator + ToolExecutor | App's own control flow + framework choice |
-| Governance | Approvals, HITL, role-based MCP permissions, audit | App handles its own logging/auth/errors |
-| Tool access | MCP-tools via tool_executor | Direct LLM-call (`module-llm.chat` or provider SDK) |
-| Activation | Scheduled by the planner | Called by an app endpoint or batch job |
-| Skill triggers | `module-convention` skill | **This skill** |
+## Scope (one line)
 
-**This skill applies only to the right column.** If the user is asking
-for a new Druppie agent (a new platform role like "summarizer-agent"),
-that is a different design — use `module-convention` instead.
+This skill is for an in-app LLM workflow (the app runs its own LLM logic);
+it is **not** for building a new Druppie platform agent — that is
+`module-convention`.
 
 ## When to invoke this skill
 
 Trigger on these signals in the FD:
 - **Chains**: "draft → check → edit", "extract → classify → enrich"
-- **Evaluation loops**: nightly digest scoring, gold-set runs,
-  iterative quality checks
-- **Agentic patterns**: the app gives an LLM tools and lets it decide
-  what to call (search, fetch, validate, persist)
-- **Stateful workflows**: multi-day approval flows, HITL pauses,
-  resumable state machines
+- **Evaluation loops**: nightly digest scoring, gold-set runs, iterative
+  quality checks
+- **Agentic patterns**: the app gives an LLM tools and lets it decide what
+  to call (search, fetch, validate, persist)
+- **Stateful workflows**: multi-day approval flows, HITL pauses, resumable
+  state machines
 - **Multi-agent**: explicit role decomposition (researcher + writer +
   reviewer), parallel verification, agent handoffs
 
 **Do not invoke** for:
-- A single LLM call ("summarise this ticket") — no framework choice
-  to make; just call `module-llm.chat`.
+- A single LLM call ("summarise this ticket") — no orchestration decision
+  to make; the app just calls `module-llm.chat`.
 - RAG-only workflows — use the `rag-patterns` skill instead.
-- New Druppie agents — use `module-convention` instead.
+- New Druppie platform agents — use `module-convention` instead.
 
-## Workflow patterns
+## Step 1 — Name the workflow pattern
 
-The pattern — not the use-case domain — determines the framework.
+The pattern — not the use-case domain — drives every downstream decision.
 
 | # | Pattern | Example | Characteristic |
 |---|---------|---------|----------------|
@@ -67,117 +62,103 @@ The pattern — not the use-case domain — determines the framework.
 | 5 | Stateful / durable | multi-day approval flow with HITL pause | Persistent state, pause/resume, conditional branching. |
 | 6 | Multi-agent | researcher + writer + reviewer | Multiple agents with roles, handoff or orchestrator-worker. |
 
-**2026 consensus:** pattern #4 is the surviving default for multi-step
-work. Multi-agent (#6) costs 58–285% more tokens in production and
-degrades quality on benchmarks when applied prematurely. **Default to
-#4; escalate to #6 only with measured single-agent saturation.**
+State which pattern the FD matches in **one sentence**.
 
-## The defining axis — `module-llm.chat` vs direct SDK
+## Step 2 — The agency decision hierarchy
 
-Today's `module-llm.chat` is **single prompt → single answer**, no
-streaming, no tool-use, no structured output, no multi-turn history.
-This makes the access-pattern decision structural — not all frameworks
-work through it.
+Standardisation beats per-project cleverness: the architect must resolve
+the requirements against this hierarchy **in order** and stop at the first
+rule that fits. The output is a *structural* decision (no-agent /
+single-agent / multi-agent), not a library.
 
-| Framework | Works on `module-llm.chat`? | What you lose |
-|-----------|----------------------------|---------------|
-| Plain Python | ✅ Native | Nothing — design point |
-| DSPy | ✅ Native (unique) | Nothing — paradigm fits |
-| LangChain LCEL | ✅ Linear only | Tool-use, structured output |
-| LlamaIndex Workflows | 🟡 Partial | `FunctionAgent`/multi-agent need SDK; `ReActAgent` + `@step` work |
-| LangGraph / Pydantic-AI / CrewAI / MAF | ❌ | ~80% of the value (agentic loop, streaming, tool-use) |
-| Claude Agent SDK | ❌ | Wire-format incompatible — speaks Anthropic Messages API |
+- **Rule 1 — Simplicity first.** Always design the simplest shape that
+  satisfies the FD. Added agency is a cost (latency, tokens, failure
+  modes, audit surface), not a feature. Justify any escalation explicitly.
+- **Rule 2 — The "LLM + UI" baseline.** If the task is one LLM call
+  followed by a simple human action (Approve / Reject / edit), **do not
+  use an agent.** This is a direct LLM call plus a UI gate — patterns
+  #1–#2. Most "AI features" land here.
+- **Rule 3 — Introduce a single agent.** If the task needs multiple
+  distinct actions or tool use beyond generate-and-approve — the LLM must
+  decide *which* steps/tools to run — use **one agent with tools**
+  (pattern #4). This is the default ceiling for non-trivial in-app work.
+- **Rule 4 — Scale to multi-agent only on evidence.** Escalate to multiple
+  agents (pattern #6) only when the FD shows **measured** single-agent
+  saturation: the information volume exceeds a single context window, OR
+  the problem genuinely needs distinct, concurrent domains of expertise.
+  Premature multi-agent is an industry anti-pattern (higher cost, worse
+  quality on benchmarks). Name the saturation evidence, or do not escalate.
 
-**Implication:** decide first **how the app reaches an LLM**, then pick
-the framework. State this choice explicitly in the TD with the reason
-(governance/consistency via `module-llm`, framework features via
-direct SDK).
+> These rules are the starting hierarchy. Extend them with concrete,
+> project-grounded thresholds as the platform learns — but keep them a
+> *strict order*, not a menu.
 
-## Decision guide — pattern → framework
+## Step 3 — Where does the capability live? (modules vs app)
 
-| Pattern | Default (via `module-llm`) | Alternative (direct SDK) | Avoid |
-|---------|----------------------------|--------------------------|-------|
-| #1 single-shot | **Plain Python** | — | Any framework (overhead) |
-| #2 sequential | **Plain Python** | LangChain LCEL (only if already in use) | LangGraph (overkill) |
-| #3 evaluation loop | **Plain Python** (DSPy if a quality metric drives the design) | DSPy + direct SDK | LangGraph (overkill) |
-| #4 single agent + tools | not feasible — requires tool-use | **Pydantic-AI** (default) | CrewAI/MAF (premature multi-agent) |
-| #5 stateful durable | not feasible — requires persistent state + tool-use | **LlamaIndex Workflows** (light) or **LangGraph** (heavy, durable execution) | Plain Python (rebuilds LangGraph badly) |
-| #6 multi-agent (justified) | not feasible + strongly discouraged for v1 | **CrewAI** (Python stack) or **MAF** (Microsoft/.NET stack) | AutoGen (maintenance), Semantic Kernel (greenfield) |
-| Anthropic-native autonomous | — | **Claude Agent SDK** | Anywhere a portable provider matters |
+Before any "how to build it" question, decide where the abstraction
+belongs. This is a reuse/architecture decision — squarely the architect's
+WHAT — and it reuses the standard reuse decision framework:
 
-## Stop — do not reinvent the orchestrator
+1. **In the app (project-local).** The LLM logic is project-specific and
+   unlikely to recur. Keep it inside the generated app. *(No platform
+   change.)*
+2. **Extend the project template.** A default pattern that recurs across
+   projects but still needs high per-project adaptability, and is most
+   efficient living close to the application. *(Template change.)*
+3. **Evolve a module.** The capability recurs across projects and benefits
+   from centralisation/governance — e.g. growing `module-llm` toward
+   richer in-app primitives so apps stay on `druppie.call("llm", …)`
+   instead of each app importing its own stack. *(Module change — a
+   platform-roadmap item; see the module-llm v2 handoff in the research
+   doc. Do not design module internals here.)*
+4. **New module.** The functionality is fundamentally distinct or broadly
+   reusable. *(New module — platform-roadmap item.)*
 
-If the workflow shape calls for a framework, use one of the choices
-above instead of building a half-baked custom state-machine. The 80-line
-"plain Python orchestrator" is a defended position **for patterns #1–#3
-and simple variants of #4**, not for genuine durable agentic workflows.
+State which path applies and why, in one sentence. For paths 3–4 the
+architect flags the platform need; it does **not** specify the module's
+internals (that is a separate core-update design).
 
-Equally: if the workflow is one prompt → one answer, do **not** reach
-for LangGraph "because we may need it later." Add the framework when
-the workflow actually grows past linear control flow.
+## What to write in the TD (compact — WHAT only)
 
-## Framework picks at a glance
+Keep this to one subsection in the architectural solution. Include:
 
-| Framework | Sweet spot | Status (2026) |
-|-----------|------------|---------------|
-| **Plain Python** | Patterns #1–#3; simple #4 | Always available; industry default for the 80% case |
-| **LangChain LCEL** | Linear pipelines with output parsers | 1.0 stable; legacy chains EOL Dec 2026 |
-| **LangGraph** | Durable stateful workflows; complex multi-agent | 1.0 LTS; production-proven |
-| **Pydantic-AI** | Type-safe single agent with tools | V1 stable; V2 beta (H2 2026) |
-| **DSPy** | Metric-driven multi-stage pipelines | 3.x; PyPI still flags "Alpha" despite production use |
-| **CrewAI** | Role-based multi-agent (non-Microsoft) | 1.x stable |
-| **MAF** | Multi-agent on Microsoft/.NET/Foundry | 1.0 GA April 2026 |
-| **Claude Agent SDK** | App = autonomous Anthropic agent | 0.x; Python still alpha-labelled |
-| **LlamaIndex Workflows** | Event-driven multi-step with provider portability | 1.0 stable; lighter than LangGraph |
-| **AutoGen** | — | **Maintenance only; do not pick for greenfield** |
-| **Semantic Kernel** | Existing SK codebases only | Officially superseded by MAF for new work |
-| **Mirascope** | Anti-framework Pydantic ergonomics, single calls | Small community; Pydantic-AI is usually better |
+1. **Workflow pattern** — which of #1–#6, in one sentence.
+2. **Agency decision** — no-agent (LLM + UI) / single agent / multi-agent,
+   with the rule that decided it and (for multi-agent) the saturation
+   evidence.
+3. **Capability placement** — in-app / extend-template / evolve-module /
+   new-module, with a one-line reason.
+4. **Workflow-specific NFRs** — only when they actually drive design:
+   end-to-end latency budget, fallback on LLM failure, retry policy, max
+   iterations for an agent loop.
+5. **Evaluation hook** — how the team will know the choice was right (one
+   sentence — metric + source).
 
-## How to land this in a TD
-
-Keep this **compact** — one subsection in the architectural solution,
-not a takeover.
-
-1. **Workflow pattern**: state which of #1–#6 the in-app LLM workflow
-   matches, in one sentence.
-2. **Framework choice**: framework (or plain Python) + one-line
-   rationale tied to the pattern.
-3. **Access pattern**: via `module-llm.chat` or direct SDK + reason
-   (governance/consistency vs framework features).
-4. **Workflow-specific NFRs** (only when they actually drive design):
-   end-to-end latency budget, fallback on LLM failure, retry policy,
-   max iterations for agent loops.
-5. **Evaluation hook**: how will the team know the choice was right
-   (one sentence — metric + source).
-
-Do **not** produce a 12-row TR-LLM-XX dump in the Requirements table.
-Keep LLM-orchestration specifics inside this subsection.
+**Do not** name a framework or library, and **do not** produce a
+multi-row TR-LLM-XX requirements dump. The concrete library and the
+access-pattern (`module-llm` vs direct SDK) are the builder_planner's
+call, made against the platform standard.
 
 ## Anti-patterns to catch in a design
 
-- **"We use LangGraph"** without naming the pattern, the state shape,
-  or why a `for`-loop wouldn't do. Under-specified — request the pattern
-  and the durability requirement.
-- **Multi-agent for a problem that fits in a single context window**
-  with 1–2 tools. SWE-bench Verified shows degradation up to 19% on
-  centralized multi-agent for tasks single-agent already saturates.
-- **Routing LangGraph / Pydantic-AI / CrewAI through `module-llm.chat`**
-  — you pay the framework cost for ~20% of the value. Either commit to
-  a direct SDK or pick a framework that actually fits the chat-only
-  contract (DSPy, LlamaIndex Workflows with `@step`+ReAct, plain Python).
-- **Picking AutoGen for greenfield in 2026** — Microsoft moved investment
-  to MAF; AutoGen receives only bug fixes.
-- **Custom durable state machine** ("we'll just persist to Postgres
-  between steps") when the workflow is genuinely #5 — you are rebuilding
-  LangGraph's checkpointer. Pick the framework instead.
-- **Claude Agent SDK as a generic LLM framework** — it's vendor-locked
-  to Anthropic; only choose when the app is *meant* to be an Anthropic
-  agent.
+- **Reaching for an agent when LLM + UI suffices** (Rule 2 violated) — a
+  generate-and-approve feature does not need an agentic loop.
+- **Multi-agent for a problem that fits one context window** with 1–2
+  tools — escalation without saturation evidence (Rule 4 violated).
+- **Naming a framework in the FD/TD** — that pre-empts the builder_planner
+  and breaks the architect's role boundary.
+- **Re-inventing a durable state machine** ("we'll just persist to
+  Postgres between steps") for a genuine pattern #5 — flag the durability
+  requirement; let the builder_planner pick the standard tool.
+- **Skipping the placement decision** — defaulting to in-app code for
+  something that clearly recurs and should evolve a module.
 
 ## References
 
-- Research foundation with the full per-framework comparison, sources,
-  and 2026 industry developments:
+- The platform standard the builder_planner applies (library + code
+  placement): `llm-orchestration-standard` skill.
+- Research foundation, the module-llm capability gap, and the module-llm
+  v2 handoff:
   [`docs/LLM-orchestration/llm-orchestration-in-apps.md`](../../../docs/LLM-orchestration/llm-orchestration-in-apps.md)
 - `module-llm` interface (current `chat` tool):
   [`druppie/mcp-servers/module-llm/v1/tools.py`](../../mcp-servers/module-llm/v1/tools.py)
