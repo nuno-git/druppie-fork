@@ -624,6 +624,7 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
   const prevLengthRef = useRef(0)
   const inputRef = useRef(null)
   const [continueInput, setContinueInput] = useState('')
+  const [transcriptPdfLoading, setTranscriptPdfLoading] = useState(false)
   const savedInspectScroll = useRef(0)
   const [viewMode, _setViewMode] = useState(() => {
     if (initialViewMode && VALID_VIEW_MODES.has(initialViewMode)) return initialViewMode
@@ -942,15 +943,21 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
               </a>
             )}
             <DownloadMenu
+              loading={transcriptPdfLoading}
               onDownloadMd={() => {
                 const md = buildChatTranscript(data)
                 const slug = (data.title || 'chat').replace(/[^a-z0-9]+/gi, '-').toLowerCase()
                 downloadAsMarkdown(md, `${slug}.md`)
               }}
-              onDownloadPdf={() => {
-                const md = buildChatTranscript(data)
-                const slug = (data.title || 'chat').replace(/[^a-z0-9]+/gi, '-').toLowerCase()
-                downloadContentAsPdf(md, `${slug}.pdf`)
+              onDownloadPdf={async () => {
+                setTranscriptPdfLoading(true)
+                try {
+                  const md = buildChatTranscript(data)
+                  const slug = (data.title || 'chat').replace(/[^a-z0-9]+/gi, '-').toLowerCase()
+                  await downloadContentAsPdf(md, `${slug}.pdf`)
+                } finally {
+                  setTranscriptPdfLoading(false)
+                }
               }}
             />
             <CopyJsonButton

@@ -6,7 +6,7 @@
  * a contact popup to find users who can approve.
  */
 
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -32,7 +32,7 @@ import {
 import { getUsersByRole } from '../../services/api'
 import { chatMarkdownComponents, SourceFileContext } from './ChatHelpers'
 import DownloadMenu from './DownloadMenu'
-import { downloadAsMarkdown, downloadElementAsPdf, downloadContentAsPdf } from '../../utils/downloadDesign'
+import { downloadAsMarkdown, downloadContentAsPdf } from '../../utils/downloadDesign'
 
 // Helper to check if a file path is a markdown file
 const isMarkdownFile = (path) => {
@@ -45,7 +45,6 @@ const FilePreviewModal = ({ files, onClose }) => {
   // files: [{ path, content }]
   const [rawOverrides, setRawOverrides] = useState({})
   const [pdfLoading, setPdfLoading] = useState({})
-  const contentRefs = useRef({})
 
   const toggleRaw = (path) => {
     setRawOverrides((prev) => ({ ...prev, [path]: !prev[path] }))
@@ -118,12 +117,7 @@ const FilePreviewModal = ({ files, onClose }) => {
                       onDownloadPdf={async () => {
                         setPdfLoading((prev) => ({ ...prev, [path]: true }))
                         try {
-                          const el = contentRefs.current[path]
-                          if (el && !isRaw(path)) {
-                            await downloadElementAsPdf(el, path)
-                          } else {
-                            await downloadContentAsPdf(content, path)
-                          }
+                          await downloadContentAsPdf(content, path)
                         } finally {
                           setPdfLoading((prev) => ({ ...prev, [path]: false }))
                         }
@@ -133,7 +127,7 @@ const FilePreviewModal = ({ files, onClose }) => {
                   </div>
                 </div>
                 {/* Content */}
-                <div ref={(el) => { if (el) contentRefs.current[path] = el }}>
+                <div>
                   {isMarkdownFile(path) && !isRaw(path) ? (
                     <div className="p-6 markdown-content text-sm bg-white text-gray-900 rounded-b-lg">
                       <SourceFileContext.Provider value={path}>

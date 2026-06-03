@@ -9,7 +9,9 @@ description: >
 
 > Platform standards: conforms to [docs/platform-technical-standards.md](./platform-technical-standards.md) rev `<revision>`.
 
-**First line is MANDATORY.** Copy the revision from the standards file. Do not restate anything it covers (stack, template, modules, DB, API layering, frontend conventions, testing, Druppie auth, deployment, git) — those are givens.
+> **Disclaimer:** Dit document is gegenereerd met behulp van AI. Controleer de inhoud zorgvuldig voor gebruik. / This document was generated with the help of AI. Please review the content carefully before use.
+
+**First two lines are MANDATORY.** Copy the revision from the standards file. Do not restate anything it covers (stack, template, modules, DB, API layering, frontend conventions, testing, Druppie auth, deployment, git) — those are givens.
 
 ## Introduction
 

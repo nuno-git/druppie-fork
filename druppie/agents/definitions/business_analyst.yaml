@@ -810,6 +810,10 @@ system_prompt: |
 
     > Platform standards applied: [docs/platform-functional-standards.md](./platform-functional-standards.md) rev `<revision>`.
 
+  **Second line of the FD (MANDATORY) — AI disclaimer:**
+
+    > **Disclaimer:** Dit document is gegenereerd met behulp van AI. Controleer de inhoud zorgvuldig voor gebruik. / This document was generated with the help of AI. Please review the content carefully before use.
+
   Copy the revision from the standards file. Only write FR/NFR entries
   for project-specific topics or explicit deviations (listed in §14).
 
