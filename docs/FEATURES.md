@@ -511,17 +511,18 @@ The Builder and Reviewer agents use skills to enforce project-specific coding st
 
 **Reviewer behavior**: Before reviewing code, the Reviewer invokes `project-coding-standards` and `standards-validation` to load the validation checklist. Reviews include explicit architecture compliance and standards compliance sections, with critical violations (e.g., JSON/JSONB columns, business logic in routes) resulting in an automatic FAIL verdict.
 
-### Architect Decision-Guide Skills
+### Architect & Builder-Planner Decision-Guide Skills
 
-The Architect agent uses pattern-detecting skills that fire proactively in Step 1 intake when the FD describes a specific design challenge:
+The Architect and Builder-Planner use pattern-detecting skills that fire proactively when the design describes a specific challenge. For in-app LLM workflows the responsibility is **split along the role boundary** — the Architect decides the WHAT, the Builder-Planner the HOW — so the Architect never names a concrete framework (per its own role definition):
 
-| Skill | Trigger signal | Output |
-|-------|----------------|--------|
-| `llm-orchestration-in-apps` | FD describes a multi-step LLM workflow inside the built app (chains, evaluation loops, agents with tools, stateful/durable workflows, multi-agent) | Decision-guide across plain Python, LangGraph, Pydantic-AI, DSPy, CrewAI, MAF, Claude Agent SDK, LlamaIndex Workflows; scoped to in-app workflows, not new Druppie agents |
+| Skill | Agent | Trigger signal | Output |
+|-------|-------|----------------|--------|
+| `llm-orchestration-in-apps` | Architect (Step 1) | FD describes a multi-step LLM workflow inside the built app (chains, evaluation loops, agents with tools, stateful/durable workflows, multi-agent) | The WHAT: workflow pattern (#1–#6), agency decision via a strict hierarchy (LLM + UI / single agent / multi-agent), and capability placement (in-app / extend template / evolve or new module). No framework names. |
+| `llm-orchestration-standard` | Builder-Planner | TD describes an in-app LLM workflow | The HOW: the single platform standard (plain Python baseline + Pydantic-AI for single-agent), access-pattern (`module-llm.chat` vs direct SDK), and code placement. One standard, not a per-project framework menu. |
 
-Each decision-guide skill is backed by a platform-research document under `docs/<topic>/` that grounds the trade-offs (e.g. `docs/LLM-orchestration/llm-orchestration-in-apps.md`). The Architect calls `invoke_skill(...)` itself when the FD signals match — the user doesn't have to ask.
+Both skills are backed by one platform-research document, `docs/LLM-orchestration/llm-orchestration-in-apps.md`, which leads with the standard and keeps the framework survey as a considered-alternatives appendix. Each agent calls `invoke_skill(...)` itself when the signals match — the user doesn't have to ask.
 
-**End-to-end verification (UI test loop):** to confirm a decision-guide skill fires, run the matching seed tool test from `/evaluations` (e.g. `architect-fd-llm-chain-pending`), log in as `analyst`, approve the pending FD on `/tasks`, then resume the session and watch the architect's tool calls — `invoke_skill(skill_name="<skill>")` must appear in Step 1 before the technical research is written. Alternatively, write your own FD with the relevant trigger signal and run the planner → BA → architect flow manually.
+**End-to-end verification (UI test loop):** to confirm the skills fire, run the seed tool test `architect-fd-llm-chain-pending` from `/evaluations`, log in as `analyst`, approve the pending FD on `/tasks`, then resume the session and watch the tool calls — `invoke_skill(skill_name="llm-orchestration-in-apps")` must appear in the architect's Step 1 (and the TD must name the pattern/agency/placement but **no** framework), and `invoke_skill(skill_name="llm-orchestration-standard")` appears when the builder_planner runs. Alternatively, write your own FD with the relevant trigger signal and run the planner → BA → architect → builder_planner flow manually.
 
 ---
 
