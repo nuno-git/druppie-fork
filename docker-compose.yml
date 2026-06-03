@@ -416,57 +416,6 @@ services:
       start_period: 10s
 
   # ===========================================================================
-  # MODULE: VECTOR STORE — port 9012
-  # Primitive for vector + chunk storage and semantic search. The Story B
-  # `module-rag` orchestrator (not yet built) will sit on top of this plus
-  # module-llm to offer high-level RAG tools.
-  # ===========================================================================
-
-  module-vectorstore-db:
-    image: pgvector/pgvector:pg16
-    container_name: druppie-module-vectorstore-db
-    profiles: [infra, dev, prod]
-    environment:
-      POSTGRES_DB: module_vectorstore
-      POSTGRES_USER: module_vectorstore
-      POSTGRES_PASSWORD: ${MODULE_VECTORSTORE_DB_PASSWORD:-module_vectorstore_dev}
-    volumes:
-      - module-vectorstore-db-data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U module_vectorstore"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    networks:
-      - druppie-new-network
-
-  module-vectorstore:
-    build:
-      context: ./druppie/mcp-servers
-      dockerfile: module-vectorstore/Dockerfile
-    container_name: druppie-module-vectorstore
-    profiles: [infra, dev, prod]
-    environment:
-      MCP_PORT: "9012"
-      MODULE_DB_URL: postgresql://module_vectorstore:${MODULE_VECTORSTORE_DB_PASSWORD:-module_vectorstore_dev}@module-vectorstore-db:5432/module_vectorstore
-      MODULE_LLM_URL: http://module-llm:9008
-    ports:
-      - "${MCP_VECTORSTORE_PORT:-9012}:9012"
-    networks:
-      - druppie-new-network
-    depends_on:
-      module-vectorstore-db:
-        condition: service_healthy
-      module-llm:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9012/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-      start_period: 30s
-
-  # ===========================================================================
   # SANDBOX INFRASTRUCTURE (background-agents)
   # ===========================================================================
 
@@ -1047,8 +996,6 @@ volumes:
     name: druppie_sandbox_snapshots
   sandbox_dep_cache:
     name: druppie_sandbox_dep_cache
-  module-vectorstore-db-data:
-    name: druppie_module_vectorstore_db_data
   cache_scan_results:
     name: druppie_cache_scan_results
 

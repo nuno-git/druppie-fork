@@ -135,8 +135,8 @@ targets (`LS` / `HS` / `B`). At minimum expect to see:
 - `TR-RAG-21` — PII tagging before indexing
 - `TR-RAG-22` — lineage per chunk
 
-The TD should reference **`module-vectorstore`** explicitly as the
-storage + retrieval building block (today) and **`module-llm`**'s
+The TD should reference **app-local pgvector** (`app/rag.py`) as the
+storage + retrieval building block and **`module-llm`**'s
 `embed` tool for embeddings. If the TD mentions `module-rag`, it
 should be framed as "Story B orchestrator — not yet implemented".
 The TD must cite **platform-standards §5 RAG defaults**.

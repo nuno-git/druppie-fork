@@ -502,28 +502,19 @@ ArchiMate model operations. Reads `.archimate` files from a mounted models direc
 | `search_model` | None | Search for elements by query |
 | `export_view` | None | Export an ArchiMate view |
 
-### 6.8 Vector Store Server (port 9012)
+### 6.8 RAG Architecture (Distributed Vector Storage)
 
-`module-vectorstore` — storage and retrieval primitive for doc-heavy
-applications. Stateful (own Postgres with pgvector). Embeddings come
-from `module-llm.embed` (centrally configured).
+Vector storage for RAG lives in each app's own database, not in a
+central module. Every app template ships with `pgvector/pgvector:pg16`
+and an `app/rag.py` helper that provides `index_documents()` and
+`search()` against the app's own Postgres. Embeddings are generated
+via the stateless `module-llm` `embed` tool (called through the SDK).
 
-| Tool | Approval | Description |
-|------|----------|-------------|
-| `index_documents` | None | Chunk + embed + store documents in a project-scoped index |
-| `search` | None | Semantic search returning chunks ranked by similarity, with source metadata |
-| `get_chunk` | None | Fetch a specific chunk by ID (for citation resolution) |
-| `list_indices` | None | Discover indices for the current project |
-| `delete_index` | Developer role | Drop a full index |
-
-A higher-level `module-rag` orchestrator is planned (Story B — see
-[`docs/RAG/story-b.md`](RAG/story-b.md)) and will wrap
-`module-vectorstore` + `module-llm` + chunking + re-ranking + query
-rewriting into single tool calls (`rag_query`,
-`rag_conversational_query`, `rag_agentic_query`, `rag_graph_query`).
-The `rag-patterns` skill captures the per-layer design decisions the
-Architect documents in a TD; platform defaults are seeded into every
-project via §5 of the platform technical standards.
+This gives each app full data isolation — no shared database, no
+cross-project access. The `rag-patterns` skill captures the per-layer
+design decisions the Architect documents in a TD; platform defaults
+are seeded into every project via §5 of the platform technical
+standards.
 
 ### 6.9 Data Access Server (port 9010)
 

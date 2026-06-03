@@ -1,8 +1,11 @@
 # MODULE_SPEC — `module-rag` (orchestrator, Story B)
 
 > Status: design document for the future `module-rag` orchestration
-> module. **Not yet implemented.** Today the storage/retrieval primitive
-> (`module-vectorstore`) and the embedding tool (`module-llm.embed`)
+> module. **Not yet implemented.** Today the storage/retrieval lives in
+> each app's own database via `app/rag.py` (pgvector) and `module-llm.embed`.
+> **Note:** this spec references `module-vectorstore` which has been
+> replaced by distributed app-local pgvector. Story B should build on
+> `rag.py` rather than a central vectorstore module.
 > are available; the application layer composes them. `module-rag` is
 > the Story B work that wraps those primitives plus chunking, rerank,
 > query rewriting, and citation formatting into high-level tools so

@@ -9,7 +9,7 @@
 ## 1. Goal in one sentence
 
 Build a new MCP module `module-rag` that wraps the existing
-`module-vectorstore` primitive + `module-llm` (chat + embed) +
+`app-local pgvector (`rag.py`)` primitive + `module-llm` (chat + embed) +
 chunking strategy selection + re-ranking + query rewriting + citation
 formatting into a small set of high-level RAG tools, so an
 application no longer has to compose the pipeline itself.
@@ -18,8 +18,8 @@ application no longer has to compose the pipeline itself.
 
 Right now, an application that wants RAG must compose six things by
 hand: chunk text correctly, call `module-llm.embed`, store via
-`module-vectorstore.index_documents`, search via
-`module-vectorstore.search`, rerank, format citations, then call
+`app-local pgvector (`rag.py`).index_documents`, search via
+`app-local pgvector (`rag.py`).search`, rerank, format citations, then call
 `module-llm.chat` for the answer. That's a lot of policy to repeat
 across projects. Every project re-decides the chunk size, the rerank
 threshold, the citation style — drift is guaranteed.
@@ -36,7 +36,7 @@ ready to consume from inside `module-rag`:
 
 | Building block | Where | What it gives you |
 |---|---|---|
-| `module-vectorstore` | `druppie/mcp-servers/module-vectorstore/` (port 9012, pgvector) | `index_documents`, `search`, `get_chunk`, `list_indices`, `delete_index`. Char-based recursive chunker with `chunk_size=2048` / `chunk_overlap=256` defaults (≈ 512 tokens). |
+| `app-local pgvector (`rag.py`)` | `druppie/mcp-servers/app-local pgvector (`rag.py`)/` (port 9012, pgvector) | `index_documents`, `search`, `get_chunk`, `list_indices`, `delete_index`. Char-based recursive chunker with `chunk_size=2048` / `chunk_overlap=256` defaults (≈ 512 tokens). |
 | `module-llm.embed` | `druppie/mcp-servers/module-llm/v1/tools.py` (`embed` tool) | Wraps the OpenAI-compatible embeddings endpoint (Z.AI / DeepInfra / etc., configured centrally). Returns vectors for one or more texts. |
 | `module-llm.chat` | same file (`chat` tool) | The generation step. |
 | `rag-patterns` skill | `druppie/skills/rag-patterns/SKILL.md` | The architect's decision guide. Read it — `module-rag` defaults must match what the skill promises. |
@@ -46,7 +46,7 @@ ready to consume from inside `module-rag`:
 
 A new MCP module at `druppie/mcp-servers/module-rag/` following the
 `module-convention` skill. Port `9013`. Mostly stateless (delegates
-storage to `module-vectorstore`); may carry a tiny Postgres for query
+storage to `app-local pgvector (`rag.py`)`); may carry a tiny Postgres for query
 audit / freshness tracking — see open question §1 in the spec.
 
 The seven tools to expose are spelled out in
@@ -58,7 +58,7 @@ The seven tools to expose are spelled out in
   multi-hop / conversational paths with hard caps.
 - `rag_graph_query` — GraphRAG-style retrieval (LightRAG-flavoured)
   fused with hybrid retrieval, gated on the router.
-- `rag_ingest` — wraps `module-vectorstore.index_documents` with the
+- `rag_ingest` — wraps `app-local pgvector (`rag.py`).index_documents` with the
   right chunking strategy per content type.
 - `rag_delete_documents` — granular delete for freshness updates.
 - `rag_list_corpora` — corpus discoverability with freshness metadata.
@@ -137,7 +137,7 @@ your reference; do not re-derive.
 - **`docs/FEATURES.md`** — Architect-Side Skills table mentions
   `rag-patterns`; update with `module-rag` once built.
 - **`docs/TECHNICAL.md`** §6.8 — RAG server section. Currently
-  documents `module-vectorstore`; add a §6.9 for `module-rag` when
+  documents `app-local pgvector (`rag.py`)`; add a §6.9 for `module-rag` when
   built.
 
 ### Robbe's predecessor PR
@@ -158,7 +158,7 @@ From spec §6:
 2. **Reranker placement**: bake the BGE-reranker model into the
    container (+600 MB image), or run a sibling `module-reranker`?
 3. **Hybrid BM25**: implement inside `module-rag` (orchestrator
-   merges) or push down into `module-vectorstore` as a primitive
+   merges) or push down into `app-local pgvector (`rag.py`)` as a primitive
    capability?
 4. **Streaming**: TTFT-focused `rag_query` (stream) vs TTC-focused
    (return whole answer) — likely both, as two tools.
@@ -168,7 +168,7 @@ From spec §6:
    configuration?
 7. **Primitive evolution**: should hybrid BM25 / in-graph metadata
    filter / parent-section metadata move down into
-   `module-vectorstore` once stable?
+   `app-local pgvector (`rag.py`)` once stable?
 
 ## 8. Suggested step-by-step plan
 
@@ -177,12 +177,12 @@ From spec §6:
    /v1/mcp routing, `v1/__init__.py`, `v1/module.py`, `v1/tools.py`.
    Decide on statefulness — likely stateless to start.
 2. **`rag_ingest`** — simplest tool. Wraps
-   `module-vectorstore.index_documents` with chunking-strategy
+   `app-local pgvector (`rag.py`).index_documents` with chunking-strategy
    selection per content type. Get this working first; it's the
    foundation.
 3. **`rag_query`** — the bread and butter. Implement the full
    pipeline: parse question → embed (via `module-llm.embed`) →
-   vector search (`module-vectorstore.search`) → BM25 search → RRF
+   vector search (`app-local pgvector (`rag.py`).search`) → BM25 search → RRF
    fusion → rerank (BGE-reranker-v2-m3) → assemble prompt with
    citation instructions → call `module-llm.chat` → return answer
    with parsed citations.
@@ -199,7 +199,7 @@ From spec §6:
    separable.
 8. **Citation stability** — implement content-hash chunk IDs in the
    orchestrator (since the v1 primitive uses UUID). Optionally push
-   this down into `module-vectorstore` as part of this story.
+   this down into `app-local pgvector (`rag.py`)` as part of this story.
 9. **Tests** — unit per tool, plus an end-to-end test similar to
    `testing/tools/architect-fd-rag-pending.yaml` but going one step
    further: simulate the built application calling `rag_query`
@@ -215,7 +215,7 @@ From spec §6:
 Reference points:
 - Story A (research + skill + spec + standards + architect trigger +
   seed test) — landed in 9 commits, mostly markdown + minimal YAML.
-- Robbe's `module-vectorstore` v1 — ~500 lines of Python in
+- Robbe's `app-local pgvector (`rag.py`)` v1 — ~500 lines of Python in
   `v1/module.py` plus the surrounding scaffolding, took one focused
   PR (PR #214).
 
@@ -225,7 +225,7 @@ Story B is bigger than either:
 - NFR tracking + content-hash IDs add another layer.
 
 Rough estimate: **5–8 story points**, depending on how much of the
-reranker / BM25 work is pushed down into `module-vectorstore` (which
+reranker / BM25 work is pushed down into `app-local pgvector (`rag.py`)` (which
 would split this into two PRs).
 
 ## 10. Definition of done

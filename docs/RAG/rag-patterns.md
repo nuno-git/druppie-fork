@@ -1,8 +1,9 @@
 # Technisch Onderzoek — RAG-patronen als platform-bouwblok
 
-> Status: Research-fundament voor de skill `rag-patterns`, het bestaande
-> `module-vectorstore`-primitive (v1 — `druppie/mcp-servers/module-vectorstore/`),
-> en de MODULE_SPEC `module-rag` (Story B-orchestrator — zie `module-rag-spec.md`).
+> Status: Research-fundament voor de skill `rag-patterns` en de
+> app-local pgvector aanpak (`app/rag.py` + `module-llm` embed).
+> **Note:** dit document verwijst historisch naar `module-vectorstore`;
+> die is vervangen door gedistribueerde opslag in elke app's eigen database.
 > Onderdeel van Story A — RAG als ontwerp-bouwblok voor de Architect.
 > Datum: 2026-06-01.
 

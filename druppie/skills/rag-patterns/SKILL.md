@@ -6,7 +6,7 @@ description: >
   or any other doc-heavy use-case. It covers when an in-app LLM + RAG
   pipeline is a valid building block, how to choose chunking, retrieval,
   embedding, vector store, re-ranking and advanced patterns, which NFRs
-  to put in the TD, and how to reference module-vectorstore.
+  to put in the TD, and how to use app-local pgvector with module-llm.
 ---
 
 # RAG Patterns for Doc-Heavy Applications
@@ -16,25 +16,21 @@ in Druppie. When a use-case deals with many or large documents, RAG is
 often the right answer — not stuffing the documents into the prompt,
 and not forcing the user to search manually.
 
-## Two modules involved
+## Architecture: distributed vector storage
 
-- **`module-vectorstore`** *(primitive, available today)* — stores
-  chunks + embeddings, performs semantic search, returns chunks with
-  source metadata for citations. Pgvector-backed. Tools:
-  `index_documents`, `search`, `get_chunk`, `list_indices`,
-  `delete_index`.
-- **`module-rag`** *(orchestrator, Story B — not yet built)* — will
-  wrap `module-vectorstore` + `module-llm` + chunking strategy
-  selection + re-ranking + query rewriting + citation formatting into
-  high-level RAG tools (e.g. `rag_query`, `rag_conversational_query`,
-  `rag_agentic_query`, `rag_graph_query`). Spec lives in
-  [`docs/RAG/module-rag-spec.md`](../../../docs/RAG/module-rag-spec.md).
+- **`app/rag.py`** *(in every app template)* — stores chunks +
+  embeddings in the app's own Postgres (pgvector), performs semantic
+  search, returns chunks with source metadata for citations. Functions:
+  `create_index`, `index_documents`, `search`, `delete_index`,
+  `list_indices`.
+- **`module-llm`** `embed` tool *(stateless, shared)* — generates
+  embeddings via the Druppie SDK. The app never calls an embedding
+  API directly.
 
-Until `module-rag` exists, the application layer composes
-`module-vectorstore` + `module-llm` directly using the per-layer
-decisions below. After Story B, the architect can call `module-rag` as
-a single building block and the application no longer wires the pieces
-itself.
+Each app owns its own vectors in its own database. There is no shared
+vectorstore — this gives physical data isolation per app.  The
+application layer composes `rag.py` + `module-llm` using the per-layer
+decisions below.
 
 ## When to use RAG
 
@@ -57,7 +53,7 @@ Use RAG when at least one of these holds:
 
 ## Stop — do not reinvent the RAG pipeline
 
-Reference `module-vectorstore` (primitive) and `module-llm` (embeddings
+Reference `app-local pgvector (`rag.py`)` (primitive) and `module-llm` (embeddings
 via the `embed` tool) instead of designing chunking, embedding, or
 vector-search components from scratch. The defaults below are
 platform-level; the architect motivates in the TD which layer deviates
@@ -76,7 +72,7 @@ explicit trigger from the per-layer decision guides below.
 | BM25 analyzer | Postgres `to_tsvector('<corpus-language>')` per field | Mixed-language corpus → analyzer per field or multilingual analyzer |
 | Metadata filter | SQL filter on `doc_type`, `date`, `status`, `tenant_id` | n/a — mandatory once the corpus has more than one doc-type |
 | Embedding | `multilingual-e5-large-instruct` (MIT, CPU-feasible) | ≥8 GB GPU budget + quality requirement → Qwen3-Embedding-4B |
-| Vector store | pgvector (inside `module-vectorstore`'s own Postgres) | >10M chunks or hard p95 filtered-ANN requirement → escape to Qdrant via Story B |
+| Vector store | pgvector (inside `app-local pgvector (`rag.py`)`'s own Postgres) | >10M chunks or hard p95 filtered-ANN requirement → escape to Qdrant via Story B |
 | Re-ranking | BGE-reranker-v2-m3 self-hosted (application layer today; baked into `module-rag` orchestrator in Story B) | Use-case gold-set ≥5 nDCG points better with Cohere → switch (Bedrock EU) |
 | Query transformation | Query expansion + classifier-gated decomposition | HyDE for short/vague queries with style gap to the corpus |
 | GraphRAG | **Not default** | ≥30% of queries multi-entity/synthesis → LightRAG as parallel retriever |
@@ -127,12 +123,12 @@ Selection criteria, in order:
   jina-v3 (non-commercial license).
 
 ### Vector store
-- **Default = pgvector inside `module-vectorstore`.** Postgres already
+- **Default = pgvector inside `app-local pgvector (`rag.py`)`.** Postgres already
   runs in the Druppie stack; up to ~10M chunks this delivers sub-100ms
   search latency with SQL filtering and transactional consistency.
 - **Move to Qdrant** once: corpus exceeds 10M chunks, hard p95 on
   filtered ANN is required, or native ColBERT/sparse vectors are
-  needed. This is a Story B path on top of `module-vectorstore`; the
+  needed. This is a Story B path on top of `app-local pgvector (`rag.py`)`; the
   MCP interface is designed so the migration does not force an
   embedding rebuild.
 - **Weaviate / Milvus / Chroma / LanceDB**: only consider with an
@@ -222,7 +218,7 @@ Cite from it as needed — do not paste the entire table into every TD.
 
 In the Technical Design of a RAG project:
 
-1. **Section "Solution direction"** — reference `module-vectorstore`
+1. **Section "Solution direction"** — reference `app-local pgvector (`rag.py`)`
    explicitly as the storage/retrieval building block and `module-llm`
    for embeddings + generation, and motivate why RAG (rather than
    classification, in-prompt context, or a structured DB query). If
@@ -230,7 +226,7 @@ In the Technical Design of a RAG project:
    orchestrator building block instead.
 2. **Section "Architecture"** — show the pipeline steps: ingest →
    chunk → embed → store → search → rerank → generate. Mark which
-   steps `module-vectorstore` performs, which `module-llm`, and which
+   steps `app-local pgvector (`rag.py`)` performs, which `module-llm`, and which
    the application itself. After Story B, `module-rag` collapses
    chunk → embed → store on one side and search → rerank on the other
    into single tool calls.
@@ -258,13 +254,13 @@ In the Technical Design of a RAG project:
   adds latency and cost without quality gain.
 - **Custom vector store** (Qdrant, Weaviate, etc.) without a concrete
   trigger from the decision guide. Default = pgvector via
-  `module-vectorstore`.
+  `app-local pgvector (`rag.py`)`.
 - **Citations as "source list at the bottom"** instead of per-claim
   binding — a blocker for regulated use-cases.
 - **Embedding model picked from the MTEB-EN leaderboard** without
   checking multilingual / NL benchmarks and license.
 - **Document extraction hidden inside the module** — the caller is
-  responsible for PDF/Word → text; `module-vectorstore` accepts
+  responsible for PDF/Word → text; `app-local pgvector (`rag.py`)` accepts
   pre-extracted text + metadata. Same expectation for `module-rag`
   when it lands (Story B).
 
@@ -275,6 +271,6 @@ In the Technical Design of a RAG project:
 - Module-rag orchestrator spec (Story B):
   [`docs/RAG/module-rag-spec.md`](../../../docs/RAG/module-rag-spec.md)
 - Module-vectorstore primitive (v1, code):
-  [`druppie/mcp-servers/module-vectorstore/`](../../mcp-servers/module-vectorstore/)
+  [`druppie/mcp-servers/app-local pgvector (`rag.py`)/`](../../mcp-servers/app-local pgvector (`rag.py`)/)
 - Platform standards RAG section (defaults seeded into every project):
   [`druppie/templates/project/docs/platform-technical-standards.md`](../../templates/project/docs/platform-technical-standards.md) §5 RAG defaults
