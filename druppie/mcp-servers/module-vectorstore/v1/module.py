@@ -11,6 +11,7 @@ import re
 import uuid
 from typing import Any
 
+import numpy as np
 from fastmcp import Client
 from fastmcp.client.transports import StreamableHttpTransport
 
@@ -136,7 +137,7 @@ class VectorStoreModule:
                     for chunk_id, embedding in zip(all_chunk_ids, embeddings):
                         await conn.execute(
                             "UPDATE chunks SET embedding = $1 WHERE id = $2",
-                            str(embedding), chunk_id,
+                            np.array(embedding), chunk_id,
                         )
 
                     await self._ensure_vector_index(conn, index_id, dimensions)
@@ -196,7 +197,7 @@ class VectorStoreModule:
                 WHERE c.index_id = $2
                   AND c.embedding IS NOT NULL
             """
-            params: list[Any] = [str(query_embedding), index_id]
+            params: list[Any] = [np.array(query_embedding), index_id]
             param_idx = 3
 
             if similarity_threshold > 0:
@@ -452,8 +453,9 @@ class VectorStoreModule:
         async with Client(transport) as client:
             result = await client.call_tool("embed", arguments)
 
-        if isinstance(result, list) and len(result) > 0:
-            first_item = result[0]
+        content = result.content if hasattr(result, "content") else result
+        if isinstance(content, list) and len(content) > 0:
+            first_item = content[0]
             if hasattr(first_item, "text"):
                 data = json.loads(first_item.text)
                 return data.get("embeddings", [])

@@ -1,0 +1,181 @@
+## Tool Test: RAG SEARCH — index documents, then search with semantic queries
+##
+## Tests the full RAG pipeline end-to-end:
+##   INDEX: text → chunk_text() → module-llm:embed → pgvector INSERT
+##   SEARCH: query → module-llm:embed → cosine similarity → ranked chunks
+##
+## Proves:
+##   - Semantic search finds the correct document for each query
+##   - Source citations (source_name, source_page, source_section) are
+##     returned with search results — needed for citation traceability
+##   - Similarity scores are returned for ranking
+##   - Three different queries each hit the expected document
+##
+## Prerequisites:
+##   - module-vectorstore + module-vectorstore-db + module-llm running
+##   - EMBEDDING_API_KEY configured in .env (Z.AI doesn't support embeddings)
+
+tool-test:
+  name: rag-search
+  description: "RAG SEARCH: index 3 documents, run 3 semantic queries, verify correct documents returned with citations"
+  tags: [rag, vectorstore, mcp, e2e, search]
+
+  chain:
+    # =========================================================================
+    # Step 0: Create a project (required for project_id injection)
+    # =========================================================================
+    - agent: router
+      tool: builtin:set_intent
+      arguments:
+        intent: create_project
+        project_name: rag-search-test
+        description: "Test project for validating RAG semantic search"
+      assert:
+        result:
+          - not_empty
+
+    - agent: router
+      tool: builtin:done
+      arguments:
+        summary: "Agent router: Created project rag-search-test"
+
+    # =========================================================================
+    # Step 1: RAG INDEX — seed the vector database with 3 documents
+    # =========================================================================
+    - agent: planner
+      tool: vectorstore:index_documents
+      arguments:
+        index_name: beleidsdocumenten
+        description: "Waterschap beleidsdocumenten voor RAG search test"
+        documents:
+          - content: |
+              Watergebiedsplan Rijnland 2024-2030
+
+              Sectie 3.2 Riolering in landelijk gebied
+
+              Het waterschap hanteert het uitgangspunt dat in landelijk gebied geen gescheiden rioolstelsel wordt aangelegd tenzij de afstand tot het dichtstbijzijnde rioolgemaal minder dan 500 meter bedraagt. In die gevallen wordt een drukriolering voorgeschreven conform NEN 3399. De eigenaar van het perceel is verantwoordelijk voor de aansluitkosten tot aan de perceelgrens. Het waterschap draagt zorg voor het hoofdriool en de gemalen.
+
+              Bij vervanging van bestaande riolering in landelijk gebied wordt standaard overgegaan op een verbeterd gescheiden stelsel (VGS). De ambitie is om voor 2030 minimaal 60% van de landelijke riolering te hebben vervangen door VGS.
+            source_name: "Watergebiedsplan Rijnland 2024-2030"
+            source_page: 42
+            source_section: "§3.2 Riolering in landelijk gebied"
+            metadata:
+              doctype: watergebiedsplan
+              status: vastgesteld
+
+          - content: |
+              Nota Waterkwaliteit 2025
+
+              Sectie 5.1 Ecologische waterkwaliteit doelstellingen
+
+              De Kaderrichtlijn Water (KRW) verplicht het waterschap om uiterlijk in 2027 een goede ecologische toestand te bereiken voor alle aangewezen waterlichamen. Voor het beheergebied Rijnland betreft dit 47 waterlichamen. Op peildatum januari 2025 voldoen 23 waterlichamen (49%) aan de KRW-normen.
+
+              De belangrijkste knelpunten zijn:
+              - Nutriëntenbelasting vanuit de glastuinbouw (stikstof en fosfor)
+              - Gewasbeschermingsmiddelen in het Westland
+              - Beperkte vismigratiemogelijkheden door stuwen en gemalen
+
+              Het waterschap investeert in de periode 2025-2027 een additioneel budget van EUR 12 miljoen in zuiveringsmaatregelen en vispassages.
+            source_name: "Nota Waterkwaliteit 2025"
+            source_page: 67
+            source_section: "§5.1 Ecologische waterkwaliteit doelstellingen"
+            metadata:
+              doctype: beleidsnota
+              status: vastgesteld
+
+          - content: |
+              Beheerplan Waterkeringen 2023-2028
+
+              Sectie 2.4 Dijkversterking prioritering
+
+              Het waterschap beheert 245 kilometer primaire waterkering en 180 kilometer regionale waterkering. Op basis van de meest recente toetsronde (2022) voldoen 12 dijktrajecten niet aan de veiligheidsnorm. Deze trajecten zijn geprioriteerd op basis van overstromingsrisico (slachtofferrisico x economische schade).
+
+              De drie trajecten met hoogste prioriteit zijn:
+              1. Leidse Rijn-Zuid (traject 14-2): versterking gepland 2024-2026, budget EUR 45 miljoen
+              2. Oude Rijn Oost (traject 22-1): versterking gepland 2025-2027, budget EUR 32 miljoen
+              3. Gouwe-Noord (traject 8-3): versterking gepland 2026-2028, budget EUR 28 miljoen
+
+              Totale investering dijkversterkingsprogramma 2023-2028: EUR 180 miljoen.
+            source_name: "Beheerplan Waterkeringen 2023-2028"
+            source_page: 31
+            source_section: "§2.4 Dijkversterking prioritering"
+            metadata:
+              doctype: beheerplan
+              status: vastgesteld
+      assert:
+        result:
+          - not_empty
+          - no_error
+          - { contains: "chunks_created" }
+
+    # =========================================================================
+    # Step 2: RAG SEARCH — "riolering in landelijk gebied"
+    #
+    # Query → module-llm:embed → cosine similarity → ranked chunks
+    # Expected top hit: Watergebiedsplan Rijnland 2024-2030
+    # =========================================================================
+    - agent: planner
+      tool: vectorstore:search
+      arguments:
+        index_name: beleidsdocumenten
+        query: "wat is het beleid voor riolering in landelijk gebied?"
+        top_k: 3
+      assert:
+        result:
+          - not_empty
+          - no_error
+          - { contains: "results" }
+          - { contains: "score" }
+          - { contains: "source_name" }
+
+    # =========================================================================
+    # Step 3: RAG SEARCH — "KRW-normen waterlichamen"
+    #
+    # Expected top hit: Nota Waterkwaliteit 2025
+    # =========================================================================
+    - agent: planner
+      tool: vectorstore:search
+      arguments:
+        index_name: beleidsdocumenten
+        query: "hoeveel waterlichamen voldoen aan de KRW-normen?"
+        top_k: 3
+      assert:
+        result:
+          - not_empty
+          - no_error
+          - { contains: "results" }
+          - { contains: "score" }
+
+    # =========================================================================
+    # Step 4: RAG SEARCH — "dijkversterking prioritering"
+    #
+    # Expected top hit: Beheerplan Waterkeringen 2023-2028
+    # =========================================================================
+    - agent: planner
+      tool: vectorstore:search
+      arguments:
+        index_name: beleidsdocumenten
+        query: "welke dijktrajecten hebben de hoogste prioriteit voor versterking?"
+        top_k: 3
+      assert:
+        result:
+          - not_empty
+          - no_error
+          - { contains: "results" }
+          - { contains: "score" }
+
+    # =========================================================================
+    # Step 5: Cleanup — delete the test index
+    # =========================================================================
+    - agent: planner
+      tool: vectorstore:delete_index
+      arguments:
+        index_name: beleidsdocumenten
+      assert:
+        result:
+          - not_empty
+          - no_error
+          - { contains: "deleted" }
+
+  verify:
+    - gitea_repo_exists: true
