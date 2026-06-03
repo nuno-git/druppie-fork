@@ -305,7 +305,16 @@ mcps:
       - name: read_data
         requires_approval: false
 
+      - name: execute_query
+        requires_approval: false
+
       - name: download_data
+        requires_approval: false
+
+      - name: create_chart
+        requires_approval: false
+
+      - name: create_chart_from_source
         requires_approval: false
 
   vectorstore:

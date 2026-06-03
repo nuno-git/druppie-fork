@@ -223,7 +223,6 @@ druppie/
 | Project Detail | `ProjectDetail.jsx` | Single project view with deployments |
 | Plans | `Plans.jsx` | Execution plan viewer |
 | Settings | `Settings.jsx` | User preferences |
-| Admin Database | `AdminDatabase.jsx` | Database inspection |
 | Debug | `Debug.jsx`, `DebugChat.jsx`, `DebugApprovals.jsx`, `DebugMCP.jsx`, `DebugProjects.jsx` | Development debugging tools |
 
 ### 3.3 Real-time Updates
@@ -526,7 +525,25 @@ The `rag-patterns` skill captures the per-layer design decisions the
 Architect documents in a TD; platform defaults are seeded into every
 project via §5 of the platform technical standards.
 
-### 6.9 Declarative Parameter Injection
+### 6.9 Data Access Server (port 9010)
+
+Adapter-based access to heterogeneous data sources (Azure SQL, Azure Data Lake) plus inline chart generation. Full reference: [`docs/MCP/data-access.md`](MCP/data-access.md).
+
+| Tool | Approval | Description |
+|------|----------|-------------|
+| `list_sources` | None | List configured data sources |
+| `test_connection` | None | Verify a source is reachable |
+| `list_available_data` | None | List tables (SQL) or files (Data Lake) |
+| `get_schema` | None | Column metadata for a table/file |
+| `read_data` | None | Read rows (capped; goes into context) |
+| `execute_query` | None | Free-form read-only SELECT/WITH (SQL only) |
+| `download_data` | None | Stream a table/file to the workspace as CSV/Parquet |
+| `create_chart` | None | Chart inline values (returns a `chart` spec) |
+| `create_chart_from_source` | None | Read + aggregate a source server-side, return a `chart` spec |
+
+**Charting data flow.** `create_chart_from_source` keeps raw data out of the LLM context: for SQL sources the `GROUP BY` is pushed into the database (`build_sql_aggregation_query`); for Data Lake files the whole file is read into MCP-server memory and aggregated in Python. Either way only a small JSON spec (the chart) is returned — no file is written, and the aggregation covers the full dataset (`full_dataset`/`rows_scanned` report any sampling). The spec is emitted as a ` ```chart ` fenced code block; the chat frontend renders it via `frontend/src/components/ChartBlock.jsx` (registered for the `chart` language in `ChatHelpers.jsx`, mirroring how `MermaidBlock` handles `mermaid`) using `recharts`. 13 chart types span XY, proportion, and multi-series families.
+
+### 6.10 Declarative Parameter Injection
 
 MCP tools can have parameters auto-injected from the session/project context. Injected parameters are marked `hidden: true` and are removed from the LLM-visible tool schema. This prevents the LLM from needing to know internal IDs.
 
@@ -543,7 +560,7 @@ inject:
     tools: [read_file, write_file, list_dir, ...]
 ```
 
-### 6.10 Layered Approval System
+### 6.11 Layered Approval System
 
 Approvals have two layers:
 

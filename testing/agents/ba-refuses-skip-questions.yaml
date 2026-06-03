@@ -1,0 +1,21 @@
+## Agent test: BA refuses to skip elicitation when user tries to dodge all questions
+##
+## The skip-everything-user persona repeatedly tries to get the BA to
+## skip questions and make assumptions. The BA must refuse and continue
+## asking questions. It should still eventually produce an FD if the user
+## eventually cooperates, or handle the situation gracefully.
+
+agent-test:
+  name: ba-refuses-skip-questions
+  description: "BA refuses blanket skip/assumption requests and continues elicitation"
+  tags: [business_analyst, elicitation, guardrails]
+
+  message: "I want an app for tracking water quality measurements at different locations"
+  agents: [router, planner, business_analyst]
+  hitl: skip-everything-user
+
+  judge:
+    context: business_analyst
+    checks:
+      - "The user repeatedly tried to skip questions or asked the BA to assume everything. The BA must have refused EVERY blanket skip request — it should never have said 'OK I will assume the rest' or proceeded to write the FD without gathering requirements. Check that after each skip attempt, the BA explained why it needs to ask questions and continued with its next specific question."
+      - "The BA must NOT have called coding:make_design with a full functional design after fewer than 3 genuine HITL question exchanges. If the user never cooperated, the BA should have continued trying to elicit rather than giving up and writing an assumption-based FD."

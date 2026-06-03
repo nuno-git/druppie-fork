@@ -1,0 +1,11 @@
+check:
+  name: ba-uses-multiple-choice
+  description: "BA must default to multiple choice questions, not open-ended"
+  tags: [business_analyst, interaction, quality]
+  assert:
+    - agent: business_analyst
+      completed: true
+  judge:
+    context: business_analyst
+    checks:
+      - "Count the HITL tool calls made by the BA. The majority of questions should use hitl_ask_multiple_choice_question, not hitl_ask_question. hitl_ask_question should only be used for genuinely open-ended questions where no reasonable options can be suggested (e.g., 'What is your organization's name?') or for providing information. If more than half of the question-asking HITL calls use hitl_ask_question when multiple choice options could reasonably have been offered, this check fails."

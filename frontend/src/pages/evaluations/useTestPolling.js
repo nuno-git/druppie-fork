@@ -83,6 +83,7 @@ export default function useTestPolling({
           setRunMessage(status.message || 'Running tests...')
           setRunProgress({
             current_test: status.current_test,
+            running_tests: status.running_tests || [],
             completed_tests: status.completed_tests || [],
             total_tests: status.total_tests || 0,
           })

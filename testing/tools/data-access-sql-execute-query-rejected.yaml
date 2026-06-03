@@ -1,0 +1,22 @@
+## Tool Test: Data Access MCP - execute_query read-only guard (live)
+## Verifies execute_query rejects a non-SELECT statement. The guard runs
+## before the DB connection is opened, so this passes even if the Synapse
+## endpoint is unreachable — it only needs an azure-sql source named
+## "synapsedwh" to be configured.
+
+tool-test:
+  name: data-access-sql-execute-query-rejected
+  description: "execute_query rejects a non-SELECT statement"
+  tags: [data-access, mcp, azure-sql, error-handling, security, live]
+
+  chain:
+    - agent: router
+      tool: dataaccess:execute_query
+      arguments:
+        source_id: "synapsedwh"
+        query: "DROP TABLE dbo.fake_users_cetas"
+      assert:
+        result:
+          - json_parseable
+          - {matches: "\"success\"\\s*:\\s*false"}
+          - {contains: "SELECT or WITH"}

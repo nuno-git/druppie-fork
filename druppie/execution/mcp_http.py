@@ -134,6 +134,25 @@ def classify_error(error: Exception) -> tuple[str, bool, bool]:
     return MCPErrorType.FATAL, False, False
 
 
+def _format_error(error: Exception, timeout_seconds: float | None = None) -> str:
+    """Return a human-readable error message.
+
+    Some exceptions (notably ``asyncio.TimeoutError``) have an empty
+    ``str()`` representation.  This helper ensures callers always get
+    a meaningful description for logs and error propagation.
+    """
+    msg = str(error).strip()
+    if msg:
+        return msg
+    if isinstance(error, (TimeoutError, asyncio.TimeoutError)):
+        if timeout_seconds is not None:
+            return f"Request timed out after {timeout_seconds}s"
+        return "Request timed out"
+    if isinstance(error, (ConnectionError, OSError)):
+        return f"Connection failed ({type(error).__name__})"
+    return type(error).__name__
+
+
 class MCPHttpError(Exception):
     """Error communicating with MCP server."""
 
@@ -234,6 +253,8 @@ class MCPHttp:
                 error_type, retryable, _ = classify_error(e)
                 last_error = e
 
+                error_msg = _format_error(e, timeout_seconds)
+
                 if retryable and attempt < max_retries:
                     delay = base_delay * (2 ** attempt)
                     logger.warning(
@@ -244,7 +265,7 @@ class MCPHttp:
                         attempt=attempt + 1,
                         max_retries=max_retries,
                         delay=delay,
-                        error=str(e),
+                        error=error_msg,
                     )
                     await asyncio.sleep(delay)
                     continue
@@ -257,18 +278,19 @@ class MCPHttp:
                     error_type=error_type,
                     retryable=retryable,
                     attempt=attempt + 1,
-                    error=str(e),
+                    error=error_msg,
                 )
                 raise MCPHttpError(
                     server, tool,
-                    f"Error calling {server}:{tool}: {e}",
+                    f"Error calling {server}:{tool}: {error_msg}",
                     retryable=retryable,
                 )
 
         # Should not reach here, but safety net
+        last_msg = _format_error(last_error, timeout_seconds) if last_error else "unknown error"
         raise MCPHttpError(
             server, tool,
-            f"Max retries ({max_retries}) exceeded for {server}:{tool}: {last_error}",
+            f"Max retries ({max_retries}) exceeded for {server}:{tool}: {last_msg}",
             retryable=False,
         )
 

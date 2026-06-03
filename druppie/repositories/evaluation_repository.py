@@ -1,5 +1,6 @@
 """Evaluation repository for benchmark runs and evaluation results."""
 
+import uuid
 from uuid import UUID
 
 from sqlalchemy import func
@@ -646,3 +647,37 @@ class EvaluationRepository(BaseRepository):
             {"test_name": r.test_name, "status": r.status, "duration_ms": r.duration_ms}
             for r in runs
         ]
+
+    def add_running_test(self, run_id: str, test_name: str) -> None:
+        from druppie.db.models.test_running_status import TestRunningStatus
+
+        entry = TestRunningStatus(
+            id=str(uuid.uuid4()), run_id=run_id, test_name=test_name
+        )
+        self.db.add(entry)
+        self.db.flush()
+
+    def remove_running_test(self, run_id: str, test_name: str) -> None:
+        from druppie.db.models.test_running_status import TestRunningStatus
+
+        self.db.query(TestRunningStatus).filter(
+            TestRunningStatus.run_id == run_id,
+            TestRunningStatus.test_name == test_name,
+        ).delete()
+        self.db.flush()
+
+    def get_running_tests(self, run_id: str) -> list[str]:
+        from druppie.db.models.test_running_status import TestRunningStatus
+
+        rows = self.db.query(TestRunningStatus.test_name).filter(
+            TestRunningStatus.run_id == run_id
+        ).all()
+        return [r[0] for r in rows]
+
+    def clear_running_tests(self, run_id: str) -> None:
+        from druppie.db.models.test_running_status import TestRunningStatus
+
+        self.db.query(TestRunningStatus).filter(
+            TestRunningStatus.run_id == run_id
+        ).delete()
+        self.db.flush()

@@ -656,7 +656,9 @@ class ToolExecutor:
             return await self._execute_builtin_tool(tool_call)
         return await self._execute_mcp_tool(tool_call)
 
-    async def complete_after_answer(self, question_id: UUID, answer: str) -> str:
+    async def complete_after_answer(
+        self, question_id: UUID, answer: str, selected_choices: list[int] | None = None
+    ) -> str:
         """Complete a HITL tool after the user answers.
 
         Called when user submits an answer to a question in the UI.
@@ -664,6 +666,7 @@ class ToolExecutor:
         Args:
             question_id: ID of the answered Question record
             answer: User's answer
+            selected_choices: Indices of selected multiple-choice options
 
         Returns:
             Final status: completed
@@ -675,7 +678,7 @@ class ToolExecutor:
             return ToolCallStatus.FAILED
 
         # Update question with answer
-        self.question_repo.update_answer(question_id, answer)
+        self.question_repo.update_answer(question_id, answer, selected_choices)
 
         # Get associated tool call
         tool_call_id = question.tool_call_id
@@ -684,12 +687,21 @@ class ToolExecutor:
             return ToolCallStatus.FAILED
 
         # Build result that will be passed back to agent
+        choices = None
+        if question.choices:
+            try:
+                choices = [c["text"] if isinstance(c, dict) else c for c in question.choices]
+            except (TypeError, KeyError):
+                choices = question.choices
+
         result = {
             "status": "answered",
             "answer": answer,
             "question": question.question,
             "question_type": question.question_type,
         }
+        if selected_choices is not None and choices:
+            result["selected_choices"] = [choices[i] for i in selected_choices if i < len(choices)]
 
         # Update tool call with result
         self.execution_repo.update_tool_call(
