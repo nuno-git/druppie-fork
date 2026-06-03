@@ -23,11 +23,20 @@
 ##      invoke_skill(skill_name="llm-orchestration-in-apps") before
 ##      designing.
 ##   8. After research + design complete, open the produced
-##      docs/technical-design.md and confirm it contains:
+##      docs/technical-design.md and confirm the architect stayed in its
+##      WHAT-lane (no framework names):
 ##      - explicit workflow-pattern choice (#2 chain w/ loop, or #4)
-##      - framework choice + one-line rationale
-##      - access-pattern choice (via module-llm or direct SDK)
+##      - agency decision (LLM + UI / single agent / multi-agent) with the
+##        decision-hierarchy rule that decided it
+##      - capability placement (in-app / extend template / evolve or new
+##        module) with a one-line reason
 ##      - workflow-specific NFRs only where they drive design
+##      - it must NOT name a concrete framework/library (that is the
+##        builder_planner's call against the platform standard).
+##   9. When the build path runs, the builder_planner invokes
+##      invoke_skill(skill_name="llm-orchestration-standard") and its
+##      builder_plan.md names the standard library (plain Python or
+##      Pydantic-AI) + the access-pattern — not a per-project framework.
 ##
 ## This test is intentionally NOT doc-heavy so it should not trigger
 ## the `rag-patterns` skill (when that skill lands on colab-dev). The
@@ -290,11 +299,12 @@ tool-test:
           De oplossing vraagt om een **multi-step LLM-workflow binnen de
           applicatie**: classify → validate → draft → quality-check met
           een iteratie-loop. Dit is géén RAG (geen documentcorpus) en géén
-          nieuwe Druppie-agent (geen platform-rol). De Architect bepaalt
-          welke orchestratie-aanpak past — plain Python, een agent-framework
-          of een lichtere chain — en welk access-pattern naar de LLM
-          (via `module-llm.chat` of direct provider-SDK). De Architect-fase
-          maakt deze afwegingen expliciet.
+          nieuwe Druppie-agent (geen platform-rol). De Architect bepaalt het
+          WAT — welk workflow-patroon past, welk agency-niveau (LLM + UI /
+          single agent / multi-agent) en waar de capability hoort te leven —
+          zonder een concreet framework te benoemen. De builder_planner
+          kiest daarna het HOE (library + access-pattern) tegen de
+          platform-standaard.
 
           ## 14. Platform Standard Deviations
 
