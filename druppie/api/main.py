@@ -133,14 +133,17 @@ async def lifespan(app: FastAPI):
     from druppie.services import JobService
     from druppie.services.job_service import JobScheduler
 
+    def _get_job_service(db):
+        return JobService(
+            job_repo=JobRepository(db),
+            session_repo=SessionRepository(db),
+            execution_repo=ExecutionRepository(db),
+            approval_repo=ApprovalRepository(db),
+        )
+
     job_db = SessionLocal()
     try:
-        job_service = JobService(
-            job_repo=JobRepository(job_db),
-            session_repo=SessionRepository(job_db),
-            execution_repo=ExecutionRepository(job_db),
-            approval_repo=ApprovalRepository(job_db),
-        )
+        job_service = _get_job_service(job_db)
         job_service.load_definitions_from_yaml()
         job_db.commit()
         logger.info("job_definitions_loaded")
@@ -150,7 +153,7 @@ async def lifespan(app: FastAPI):
     finally:
         job_db.close()
 
-    app.state.job_scheduler = JobScheduler(job_service)
+    app.state.job_scheduler = JobScheduler(_get_job_service)
     app.state.job_scheduler.start()
 
     yield

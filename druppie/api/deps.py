@@ -170,6 +170,7 @@ def get_orchestrator(
     execution_repo: "ExecutionRepository" = Depends(get_execution_repository),
     project_repo: ProjectRepository = Depends(get_project_repository),
     question_repo: QuestionRepository = Depends(get_question_repository),
+    job_repo: JobRepository = Depends(get_job_repository),
 ):
     """Get the orchestrator for message processing.
 
@@ -181,7 +182,7 @@ def get_orchestrator(
     5. Execute pending runs
     """
     from druppie.execution import Orchestrator
-    return Orchestrator(session_repo, execution_repo, project_repo, question_repo)
+    return Orchestrator(session_repo, execution_repo, project_repo, question_repo, job_repo)
 
 
 def get_documentation_service(

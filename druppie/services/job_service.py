@@ -3,14 +3,20 @@
 import asyncio
 import os
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 from uuid import UUID
 
 import structlog
 import yaml
 
+try:
+    from croniter import croniter
+except ImportError:
+    croniter = None
+
 from ..repositories import JobRepository, SessionRepository, ExecutionRepository
 from ..domain.job import JobDefinitionList, JobDefinitionDetail, JobRunList, JobRunDetail
+from ..db.models.job import JobDefinition, JobDefinitionConfig
 from ..domain.common import AgentRunStatus, SessionStatus
 
 logger = structlog.get_logger()
@@ -84,7 +90,7 @@ class JobService:
         return self.list_definitions()
 
     def _update_definition_from_yaml(
-        self, definition: Any, data: dict, filepath: str
+        self, definition: JobDefinition, data: dict, filepath: str
     ) -> None:
         definition.name = data.get("name", definition.name)
         definition.description = data.get("description", definition.description)
@@ -93,7 +99,16 @@ class JobService:
         definition.prompt = data.get("prompt", definition.prompt)
         definition.approval_required = data.get("approval_required", definition.approval_required)
         definition.required_role = data.get("required_role", definition.required_role)
-        definition.config = data.get("config", definition.config)
+        new_config = data.get("config")
+        if new_config is not None:
+            definition.configs = []
+            for key, value in new_config.items():
+                definition.configs.append(
+                    JobDefinitionConfig(
+                        config_key=key,
+                        config_value=str(value) if value is not None else None,
+                    )
+                )
         definition.enabled = data.get("enabled", True) if data.get("enabled") is not None else definition.enabled
         definition.yaml_path = filepath
 
@@ -117,7 +132,6 @@ class JobService:
         job_run = self.job_repo.get_job_run_by_agent_run_id(agent_run_id)
         if job_run:
             self.job_repo.update_job_run_status(job_run.id, "rejected")
-            self.job_repo.commit()
         self.session_repo.update_status(
             session_id, SessionStatus.FAILED, error_message="Job approval rejected"
         )
@@ -224,8 +238,12 @@ class JobService:
                 try:
                     ctx.session_repo.update_status(session_id, SessionStatus.FAILED, error_message=error_msg[:2000])
                     ctx.session_repo.commit()
-                except Exception:
-                    pass
+                except Exception as db_err:
+                    logger.error(
+                        "job_status_update_failed_after_failure",
+                        session_id=str(session_id),
+                        error=str(db_err),
+                    )
 
             final_session = ctx.session_repo.get_by_id(session_id)
             if final_session:
@@ -243,11 +261,10 @@ class JobService:
 
 
 class JobScheduler:
-    def __init__(self, job_service: JobService):
-        self.job_service = job_service
+    def __init__(self, job_service_factory: Callable[[Any], JobService]):
+        self._job_service_factory = job_service_factory
         self._running = False
         self._task: asyncio.Task | None = None
-        self._last_run_times: dict[str, datetime] = {}
 
     def start(self) -> None:
         if self._running:
@@ -271,20 +288,33 @@ class JobScheduler:
             logger.info("job_scheduler_loop_cancelled")
 
     async def _check_jobs(self) -> None:
+        from ..db.database import SessionLocal
+        db = SessionLocal()
         try:
-            definitions = self.job_service.list_definitions()
+            job_service = self._job_service_factory(db)
+            definitions = job_service.list_definitions()
             now = datetime.now(timezone.utc)
             for definition in definitions.items:
                 if not definition.enabled:
                     continue
-                if not self._should_run(definition, now):
+                should_run, last_scheduled = self._should_run(definition, now)
+                if not should_run:
                     continue
-                self._last_run_times[definition.job_id] = now
+                claimed = job_service.job_repo.claim_job_trigger(
+                    definition.id, last_scheduled, now
+                )
+                if not claimed:
+                    logger.info(
+                        "job_scheduler_claim_lost",
+                        job_id=definition.job_id,
+                        hint="another_instance_triggered",
+                    )
+                    continue
                 logger.info("job_scheduler_triggering", job_id=definition.job_id)
                 try:
-                    run = self.job_service.trigger_job(definition.id, trigger_type="scheduled")
+                    run = job_service.trigger_job(definition.id, trigger_type="scheduled")
                     if run.session_id and run.status != "waiting_approval":
-                        self.job_service.execute_job_in_background(run.id, run.session_id)
+                        job_service.execute_job_in_background(run.id, run.session_id)
                     logger.info(
                         "job_scheduler_triggered",
                         job_id=definition.job_id,
@@ -298,21 +328,22 @@ class JobScheduler:
                     )
         except Exception as e:
             logger.error("job_scheduler_check_failed", error=str(e))
+        finally:
+            db.close()
 
-    def _should_run(self, definition: Any, now: datetime) -> bool:
-        try:
-            from croniter import croniter
-        except ImportError:
+    def _should_run(self, definition: Any, now: datetime) -> tuple[bool, datetime | None]:
+        if croniter is None:
             logger.warning("croniter_not_installed", hint="pip install croniter")
-            return False
+            return False, None
 
         try:
             itr = croniter(definition.schedule, now)
             last_scheduled = itr.get_prev(datetime)
-            last_run = self._last_run_times.get(definition.job_id)
-            if last_run is None:
-                return True
-            return last_run < last_scheduled
         except Exception as e:
             logger.error("cron_parse_failed", job_id=definition.job_id, error=str(e))
-            return False
+            return False, None
+
+        last_run = definition.last_triggered_at
+        if last_run is None:
+            return True, last_scheduled
+        return last_run < last_scheduled, last_scheduled

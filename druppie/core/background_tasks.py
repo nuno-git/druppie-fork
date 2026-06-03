@@ -224,12 +224,15 @@ async def run_session_task(
         execution_repo = ExecutionRepository(db)
         project_repo = ProjectRepository(db)
         question_repo = QuestionRepository(db)
+        from druppie.repositories import JobRepository
+        job_repo = JobRepository(db)
 
         orchestrator = Orchestrator(
             session_repo=session_repo,
             execution_repo=execution_repo,
             project_repo=project_repo,
             question_repo=question_repo,
+            job_repo=job_repo,
         )
 
         ctx = SessionTaskContext(

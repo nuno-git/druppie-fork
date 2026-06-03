@@ -424,7 +424,13 @@ const JobCard = ({ job, onTrigger, isTriggering }) => {
   const { data: runsResponse, isLoading: runsLoading } = useQuery({
     queryKey: ['jobRuns', job.id],
     queryFn: () => getJobRuns(job.id, null, 1, 5),
-    refetchInterval: 5000,
+    refetchInterval: (query) => {
+      const latestItems = query.state.data?.items || []
+      const hasActive = latestItems.some(
+        (r) => !['completed', 'failed', 'rejected', 'cancelled'].includes(r.status)
+      )
+      return hasActive ? 5000 : false
+    },
   })
   const jobRuns = runsResponse?.items || []
 
@@ -543,6 +549,13 @@ const Tasks = () => {
     queryKey: ['jobRuns'],
     queryFn: () => getJobRuns(null, null, 1, 20),
     enabled: showJobRuns && isAdmin,
+    refetchInterval: (query) => {
+      const latestItems = query.state.data?.items || []
+      const hasActive = latestItems.some(
+        (r) => !['completed', 'failed', 'rejected', 'cancelled'].includes(r.status)
+      )
+      return hasActive ? 5000 : false
+    },
   })
 
    // Fetch approval history (completed approvals)
@@ -581,6 +594,7 @@ const Tasks = () => {
     queryClient.invalidateQueries({ queryKey: ['approvalHistory'] })
     queryClient.invalidateQueries({ queryKey: ['pending-approvals-count'] })
     queryClient.invalidateQueries({ queryKey: ['jobRuns'] })
+    queryClient.invalidateQueries({ queryKey: ['jobs'] })
   }
 
   const approveMutation = useMutation({
@@ -630,7 +644,7 @@ const Tasks = () => {
         <>
       <PageHeader title="Scheduled Jobs" subtitle="Cron job definitions. Click Run Now to trigger manually.">
         <div className="flex items-center gap-2">
-          <span className="text-sm text-gray-500 text-gray-400">Jobs loaded from YAML definitions</span>
+                <span className="text-sm text-gray-400">Jobs loaded from YAML definitions</span>
         </div>
       </PageHeader>
 

@@ -1,5 +1,6 @@
 """Job repository for database access."""
 
+from datetime import datetime
 from uuid import UUID
 
 from .base import BaseRepository
@@ -9,7 +10,7 @@ from ..domain.job import (
     JobRunDetail,
     JobRunList,
 )
-from ..db.models.job import JobDefinition, JobRun
+from ..db.models.job import JobDefinition, JobDefinitionConfig, JobRun
 
 
 class JobRepository(BaseRepository):
@@ -38,12 +39,20 @@ class JobRepository(BaseRepository):
             prompt=prompt,
             approval_required=approval_required,
             required_role=required_role,
-            config=config,
             enabled=enabled,
             yaml_path=yaml_path,
         )
         self.db.add(definition)
         self.db.flush()
+        if config:
+            for key, value in config.items():
+                self.db.add(
+                    JobDefinitionConfig(
+                        job_definition_id=definition.id,
+                        config_key=key,
+                        config_value=str(value) if value is not None else None,
+                    )
+                )
         return definition
 
     def get_definition_by_job_id(self, job_id: str) -> JobDefinition | None:
@@ -60,7 +69,9 @@ class JobRepository(BaseRepository):
         )
 
     def delete_definition_by_job_id(self, job_id: str) -> None:
-        self.db.query(JobDefinition).filter(JobDefinition.job_id == job_id).delete()
+        self.db.query(JobDefinition).filter(JobDefinition.job_id == job_id).delete(
+            synchronize_session=False
+        )
 
     def create_job_run(
         self,
@@ -141,6 +152,49 @@ class JobRepository(BaseRepository):
             limit=limit,
         )
 
+    def mark_job_run_finalized_by_agent_run_id(
+        self,
+        agent_run_id: UUID,
+        status: str,
+        error_message: str | None = None,
+    ) -> None:
+        """Mark a job_run as finalized by its linked agent_run_id.
+
+        Used by the orchestrator to sync job_run status after an approval-gated
+        job completes or fails, without querying JobRun directly.
+        """
+        updates = {"status": status}
+        if error_message is not None:
+            updates["error_message"] = error_message
+        if status in ("completed", "failed", "cancelled", "rejected"):
+            from ..db.models.base import utcnow
+            updates["completed_at"] = utcnow()
+        self.db.query(JobRun).filter(JobRun.agent_run_id == agent_run_id).update(updates)
+
+    def claim_job_trigger(
+        self,
+        definition_id: UUID,
+        last_scheduled: datetime,
+        now: datetime,
+    ) -> bool:
+        """Atomically claim the right to trigger a scheduled job.
+
+        Uses an UPDATE ... WHERE compare-and-swap so only one instance
+        wins when multiple servers race for the same scheduled slot.
+        Returns True if this caller won the claim.
+        """
+        from ..db.models.job import JobDefinition
+        result = (
+            self.db.query(JobDefinition)
+            .filter(
+                JobDefinition.id == definition_id,
+                (JobDefinition.last_triggered_at == None)
+                | (JobDefinition.last_triggered_at < last_scheduled),
+            )
+            .update({"last_triggered_at": now})
+        )
+        return result == 1
+
     def _to_definition_detail(self, definition: JobDefinition) -> JobDefinitionDetail:
         return JobDefinitionDetail(
             id=definition.id,
@@ -152,9 +206,13 @@ class JobRepository(BaseRepository):
             approval_required=definition.approval_required or False,
             required_role=definition.required_role,
             prompt=definition.prompt,
-            config=definition.config,
+            config={
+                cfg.config_key: cfg.config_value
+                for cfg in (definition.configs or [])
+            } or None,
             enabled=definition.enabled if definition.enabled is not None else True,
             yaml_path=definition.yaml_path,
+            last_triggered_at=definition.last_triggered_at,
             created_at=definition.created_at,
             updated_at=definition.updated_at,
         )

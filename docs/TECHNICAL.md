@@ -993,6 +993,42 @@ On application startup, the system detects "zombie" sessions -- sessions that we
 
 Note: `CANCELLED` is never set by user actions. It is only used internally by the planner when it creates a new plan that supersedes previously pending agent runs.
 
+### 8.10 Scheduled Jobs (Cron Pipeline)
+
+The cron job pipeline lets administrators schedule recurring tasks via YAML definitions in `druppie/jobs/definitions/*.yaml`. Jobs are loaded into `job_definitions` on startup; execution instances are tracked in `job_runs`.
+
+**Architecture:**
+
+```
+YAML files  →  JobService.load_definitions_from_yaml()  →  job_definitions (DB)
+                                                   ↓
+                                        JobScheduler._check_jobs()
+                                                   ↓
+                                              job_runs (DB)
+                                                   ↓
+                                        Orchestrator.execute_pending_runs()
+```
+
+**Components:**
+
+| Layer | File | Responsibility |
+|-------|------|---------------|
+| API | `api/routes/jobs.py` | List, trigger, list runs |
+| Service | `services/job_service.py` | Load YAML, trigger, schedule |
+| Repository | `repositories/job_repository.py` | DB access + claim compare-and-swap |
+| Domain | `domain/job.py` | Pydantic models |
+| Models | `db/models/job.py` | `JobDefinition`, `JobDefinitionConfig`, `JobRun` |
+
+**Key design decisions:**
+
+1. **No pagination on `JobDefinitionList`** — Job definitions are YAML-scoped configuration objects, not growing event history. A typical deployment has < 50 definitions. `JobRunList` *does* have pagination because runs accumulate indefinitely.
+
+2. **Normalized config storage** — The `config` dict from YAML is stored as relational key-value rows in `job_definition_configs`, not JSON. This aligns with the project hard rule: *"NO JSON/JSONB columns — Normalize everything into proper relational tables."*
+
+3. **Approval-gated jobs** — Jobs with `approval_required: true` create an `Approval` record on trigger. The job_run status is set to `waiting_approval`. After approval, the Orchestrator resumes via `resume_after_approval()`, sets agent_run to PENDING, runs the agent, and syncs the final status back to the job_run on completion or failure.
+
+4. **Atomic claim via UPDATE-WHERE** — `JobRepository.claim_job_trigger()` uses an `UPDATE ... WHERE last_triggered_at < scheduled_time` so multiple backend instances can safely race for the same scheduled slot without duplicate runs.
+
 ---
 
 ## 9. Configuration

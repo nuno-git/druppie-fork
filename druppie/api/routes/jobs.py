@@ -41,6 +41,17 @@ async def trigger_job(
     return run
 
 
+@router.get("/runs")
+async def list_all_job_runs(
+    status: str | None = None,
+    page: int = 1,
+    limit: int = 20,
+    service: JobService = Depends(get_job_service),
+    user: dict = Depends(require_admin),
+) -> JobRunList:
+    return service.list_job_runs(status=status, page=page, limit=limit)
+
+
 @router.get("/{job_definition_id}/runs")
 async def list_job_runs(
     job_definition_id: UUID,
@@ -58,14 +69,3 @@ async def list_job_runs(
         page=page,
         limit=limit,
     )
-
-
-@router.get("/runs")
-async def list_all_job_runs(
-    status: str | None = None,
-    page: int = 1,
-    limit: int = 20,
-    service: JobService = Depends(get_job_service),
-    user: dict = Depends(require_admin),
-) -> JobRunList:
-    return service.list_job_runs(status=status, page=page, limit=limit)

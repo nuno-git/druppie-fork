@@ -50,7 +50,7 @@ from druppie.core.language_detection import LanguageDetector
 from druppie.execution.human_input import HumanInput
 
 if TYPE_CHECKING:
-    from druppie.repositories import SessionRepository, ExecutionRepository, ProjectRepository, QuestionRepository
+    from druppie.repositories import SessionRepository, ExecutionRepository, ProjectRepository, QuestionRepository, JobRepository
 
 logger = structlog.get_logger()
 
@@ -67,6 +67,7 @@ class Orchestrator:
         execution_repo: "ExecutionRepository",
         project_repo: "ProjectRepository",
         question_repo: "QuestionRepository",
+        job_repo: "JobRepository | None" = None,
     ):
         """Initialize orchestrator with repositories.
 
@@ -75,11 +76,13 @@ class Orchestrator:
             execution_repo: Repository for agent runs, tool calls
             project_repo: Repository for project operations
             question_repo: Repository for question operations
+            job_repo: Repository for job runs (optional, required for approval-gated jobs)
         """
         self.session_repo = session_repo
         self.execution_repo = execution_repo
         self.project_repo = project_repo
         self.question_repo = question_repo
+        self.job_repo = job_repo
         self.language_detector = LanguageDetector()
         # Updated on each user input (process_message / resume_after_answer).
         # Safe as instance state because Orchestrator is created per-request.
@@ -634,13 +637,10 @@ class Orchestrator:
                 self.execution_repo.update_status(approval.agent_run_id, AgentRunStatus.FAILED)
                 self.execution_repo.commit()
 
-                from druppie.db.models.job import JobRun
-                db = self.execution_repo.db
-                job_run = db.query(JobRun).filter_by(agent_run_id=approval.agent_run_id).first()
-                if job_run:
-                    job_run.status = "failed"
-                    job_run.completed_at = utcnow()
-                    db.commit()
+                if self.job_repo:
+                    self.job_repo.mark_job_run_finalized_by_agent_run_id(
+                        approval.agent_run_id, "failed", error_message="Job approval rejected"
+                    )
 
                 return session_id
             logger.info(
@@ -651,22 +651,29 @@ class Orchestrator:
             self.session_repo.update_status(session_id, SessionStatus.ACTIVE)
             self.execution_repo.update_status(approval.agent_run_id, AgentRunStatus.PENDING)
             self.execution_repo.commit()
-            await self.execute_pending_runs(session_id)
+
+            try:
+                await self.execute_pending_runs(session_id)
+            except Exception:
+                if self.job_repo:
+                    self.job_repo.mark_job_run_finalized_by_agent_run_id(
+                        approval.agent_run_id, "failed"
+                    )
+                    self.execution_repo.commit()
+                raise
 
             # Sync job_run status for approval-gated jobs
-            from druppie.db.models.job import JobRun
-            from druppie.db.models.base import utcnow
-            db = self.execution_repo.db
-            job_run = db.query(JobRun).filter_by(agent_run_id=approval.agent_run_id).first()
-            if job_run:
+            if self.job_repo:
                 final_session = self.session_repo.get_by_id(session_id)
                 if final_session and final_session.status == SessionStatus.COMPLETED:
-                    job_run.status = "completed"
-                    job_run.completed_at = utcnow()
+                    self.job_repo.mark_job_run_finalized_by_agent_run_id(
+                        approval.agent_run_id, "completed"
+                    )
                 else:
-                    job_run.status = "failed"
-                    job_run.completed_at = utcnow()
-                db.commit()
+                    self.job_repo.mark_job_run_finalized_by_agent_run_id(
+                        approval.agent_run_id, "failed"
+                    )
+            self.execution_repo.commit()
             return session_id
 
         # Step 2: Execute the approved tool

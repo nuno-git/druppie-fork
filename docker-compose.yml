@@ -821,6 +821,8 @@ services:
           DROP TABLE IF EXISTS tool_calls CASCADE;
           DROP TABLE IF EXISTS messages CASCADE;
           DROP TABLE IF EXISTS agent_runs CASCADE;
+          DROP TABLE IF EXISTS job_runs CASCADE;
+          DROP TABLE IF EXISTS job_definitions CASCADE;
           DROP TABLE IF EXISTS sessions CASCADE;
           DROP TABLE IF EXISTS projects CASCADE;
         "
