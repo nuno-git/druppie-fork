@@ -3,18 +3,20 @@
 import asyncio
 import os
 from datetime import datetime, timezone
-from typing import Any, Callable, Optional
+from typing import Callable
 from uuid import UUID
 
 import structlog
 import yaml
 
 from croniter import croniter
+from sqlalchemy.orm import Session
 
-from ..repositories import JobRepository, SessionRepository, ExecutionRepository
+from ..repositories import JobRepository, SessionRepository, ExecutionRepository, ApprovalRepository
 from ..domain.job import JobDefinitionList, JobDefinitionDetail, JobRunList, JobRunDetail
 from ..db.models.job import JobDefinition, JobDefinitionConfig
 from ..domain.common import AgentRunStatus, SessionStatus, JobRunStatus
+from ..core.background_tasks import create_session_task, run_session_task
 
 logger = structlog.get_logger()
 
@@ -27,7 +29,7 @@ class JobService:
         job_repo: JobRepository,
         session_repo: SessionRepository,
         execution_repo: ExecutionRepository,
-        approval_repo: Optional["ApprovalRepository"] = None,
+        approval_repo: ApprovalRepository | None = None,
     ):
         self.job_repo = job_repo
         self.session_repo = session_repo
@@ -127,7 +129,6 @@ class JobService:
         return self.job_repo.to_job_run_detail(run)
 
     def handle_rejected_job_approval(self, agent_run_id: UUID, session_id: UUID) -> None:
-        from ..domain.common import AgentRunStatus, SessionStatus
         job_run = self.job_repo.get_job_run_by_agent_run_id(agent_run_id)
         if job_run:
             self.job_repo.update_job_run_status(job_run.id, JobRunStatus.REJECTED)
@@ -147,6 +148,26 @@ class JobService:
         return self.job_repo.list_job_runs(job_definition_id, status, page, limit)
 
     def trigger_job(self, definition_id: UUID, user_id: UUID | None = None, trigger_type: str = "manual") -> JobRunDetail:
+        """Create a new job run, session, and agent run for a job definition.
+
+        If the job requires approval, an approval record is created and the
+        agent run is paused until a user with the required role approves it.
+        Otherwise, the caller must invoke execute_job_in_background() to run
+        the agent in a background task.
+
+        Args:
+            definition_id: The UUID of the job definition to trigger.
+            user_id: Optional user ID (e.g. admin who clicked "Run Now").
+                     Scheduled triggers pass None.
+            trigger_type: "manual" or "scheduled".
+
+        Returns:
+            JobRunDetail for the newly created run.
+
+        Raises:
+            NotFoundError: If the job definition does not exist.
+            RuntimeError: If approval is required but no approval_repo is wired.
+        """
         definition = self.job_repo.get_definition_by_id(definition_id)
         if not definition:
             from ..api.errors import NotFoundError
@@ -205,6 +226,9 @@ class JobService:
             )
             return self.job_repo.to_job_run_detail(run)
 
+        self.job_repo.touch_definition_trigger_time(definition_id)
+        self.job_repo.commit()
+
         logger.info(
             "job_triggered",
             job_run_id=str(run.id),
@@ -216,10 +240,7 @@ class JobService:
         return self.job_repo.to_job_run_detail(run)
 
     def execute_job_in_background(self, job_run_id: UUID, session_id: UUID) -> None:
-        from ..core.background_tasks import create_session_task, run_session_task
-
         async def _execute(ctx):
-            from ..repositories import JobRepository
             job_repo = JobRepository(ctx.db)
             job_repo.update_job_run_status(job_run_id, JobRunStatus.RUNNING)
             job_repo.commit()
@@ -247,9 +268,17 @@ class JobService:
                     )
 
             final_session = ctx.session_repo.get_by_id(session_id)
-            if final_session:
-                final_status = JobRunStatus.COMPLETED if final_session.status == SessionStatus.COMPLETED else JobRunStatus.FAILED
-                job_repo.update_job_run_status(job_run_id, final_status)
+            if final_session and final_session.status in {
+                SessionStatus.COMPLETED.value, SessionStatus.FAILED.value
+            }:
+                final_status = (
+                    JobRunStatus.COMPLETED
+                    if final_session.status == SessionStatus.COMPLETED.value
+                    else JobRunStatus.FAILED
+                )
+                job_repo.update_job_run_status(
+                    job_run_id, final_status, error_message=final_session.error_message
+                )
                 job_repo.commit()
 
         create_session_task(
@@ -260,7 +289,7 @@ class JobService:
 
 
 class JobScheduler:
-    def __init__(self, job_service_factory: Callable[[Any], JobService]):
+    def __init__(self, job_service_factory: Callable[[Session], JobService]):
         self._job_service_factory = job_service_factory
         self._running = False
         self._task: asyncio.Task | None = None
@@ -281,12 +310,17 @@ class JobScheduler:
     async def _loop(self) -> None:
         try:
             while self._running:
-                await self._check_jobs()
+                await asyncio.to_thread(self._check_jobs)
                 await asyncio.sleep(60)
         except asyncio.CancelledError:
             logger.info("job_scheduler_loop_cancelled")
 
-    async def _check_jobs(self) -> None:
+    def _check_jobs(self) -> None:
+        """Synchronous check for jobs that should run now.
+
+        Called from the async scheduler loop via asyncio.to_thread so
+        synchronous DB calls don't block the event loop.
+        """
         from ..db.database import SessionLocal
         db = SessionLocal()
         try:
@@ -330,7 +364,7 @@ class JobScheduler:
         finally:
             db.close()
 
-    def _should_run(self, definition: Any, now: datetime) -> tuple[bool, datetime | None]:
+    def _should_run(self, definition: JobDefinitionDetail, now: datetime) -> tuple[bool, datetime | None]:
         try:
             itr = croniter(definition.schedule, now)
             last_scheduled = itr.get_prev(datetime)

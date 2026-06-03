@@ -625,24 +625,11 @@ class Orchestrator:
             await self.execute_pending_runs(session_id)
             return session_id
 
-        # Job-level approval: no tool to execute, just resume agent run
+        # Job-level approval: no tool to execute, just resume agent run.
+        # Rejections are already handled upstream in the approvals endpoint
+        # (approvals.py) before this method is called, so no REJECTED
+        # branch is needed here.
         if not approval.tool_call_id:
-            if approval.status == ApprovalStatus.REJECTED.value:
-                logger.info(
-                    "job_rejected",
-                    session_id=str(session_id),
-                    approval_id=str(approval_id),
-                )
-                self.session_repo.update_status(session_id, SessionStatus.FAILED, error_message="Job approval rejected")
-                self.execution_repo.update_status(approval.agent_run_id, AgentRunStatus.FAILED)
-                self.execution_repo.commit()
-
-                if self.job_repo:
-                    self.job_repo.mark_job_run_finalized_by_agent_run_id(
-                        approval.agent_run_id, "failed", error_message="Job approval rejected"
-                    )
-
-                return session_id
             logger.info(
                 "resuming_job_after_approval",
                 session_id=str(session_id),

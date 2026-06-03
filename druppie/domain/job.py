@@ -5,6 +5,8 @@ from uuid import UUID
 
 from pydantic import BaseModel
 
+from ..domain.common import JobRunStatus
+
 
 class JobDefinitionSummary(BaseModel):
     """Lightweight job definition for lists."""
@@ -36,7 +38,7 @@ class JobRunSummary(BaseModel):
     session_id: UUID | None = None
     agent_run_id: UUID | None = None
     trigger_type: str
-    status: str
+    status: JobRunStatus
     error_message: str | None = None
     started_at: datetime | None = None
     completed_at: datetime | None = None

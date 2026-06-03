@@ -17,6 +17,14 @@ import PageHeader from '../components/shared/PageHeader'
 import { SkeletonTaskCard } from '../components/shared/Skeleton'
 import EmptyState from '../components/shared/EmptyState'
 
+const activeRunPolling = (query) => {
+  const latestItems = query.state.data?.items || []
+  const hasActive = latestItems.some(
+    (r) => !['completed', 'failed', 'rejected', 'cancelled'].includes(r.status)
+  )
+  return hasActive ? 5000 : false
+}
+
 // Helper to check if a file path is a markdown file
 const isMarkdownFile = (path) => {
   if (!path) return false
@@ -424,13 +432,7 @@ const JobCard = ({ job, onTrigger, isTriggering }) => {
   const { data: runsResponse, isLoading: runsLoading } = useQuery({
     queryKey: ['jobRuns', job.id],
     queryFn: () => getJobRuns(job.id, null, 1, 5),
-    refetchInterval: (query) => {
-      const latestItems = query.state.data?.items || []
-      const hasActive = latestItems.some(
-        (r) => !['completed', 'failed', 'rejected', 'cancelled'].includes(r.status)
-      )
-      return hasActive ? 5000 : false
-    },
+    refetchInterval: activeRunPolling,
   })
   const jobRuns = runsResponse?.items || []
 
@@ -549,13 +551,7 @@ const Tasks = () => {
     queryKey: ['jobRuns'],
     queryFn: () => getJobRuns(null, null, 1, 20),
     enabled: showJobRuns && isAdmin,
-    refetchInterval: (query) => {
-      const latestItems = query.state.data?.items || []
-      const hasActive = latestItems.some(
-        (r) => !['completed', 'failed', 'rejected', 'cancelled'].includes(r.status)
-      )
-      return hasActive ? 5000 : false
-    },
+    refetchInterval: activeRunPolling,
   })
 
    // Fetch approval history (completed approvals)

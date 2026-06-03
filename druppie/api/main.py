@@ -145,7 +145,6 @@ async def lifespan(app: FastAPI):
     try:
         job_service = _get_job_service(job_db)
         job_service.load_definitions_from_yaml()
-        job_db.commit()
         logger.info("job_definitions_loaded")
     except Exception as e:
         job_db.rollback()

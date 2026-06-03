@@ -110,7 +110,7 @@ class JobRepository(BaseRepository):
             updates["error_message"] = error_message
         if logs is not None:
             updates["logs"] = logs
-        if status in (s.value for s in (JobRunStatus.COMPLETED, JobRunStatus.FAILED, JobRunStatus.CANCELLED, JobRunStatus.REJECTED)):
+        if status in {JobRunStatus.COMPLETED.value, JobRunStatus.FAILED.value, JobRunStatus.CANCELLED.value, JobRunStatus.REJECTED.value}:
             from ..db.models.base import utcnow
             updates["completed_at"] = utcnow()
         self.db.query(JobRun).filter(JobRun.id == run_id).update(updates)
@@ -168,7 +168,7 @@ class JobRepository(BaseRepository):
         updates = {"status": status}
         if error_message is not None:
             updates["error_message"] = error_message
-        if status in (s.value for s in (JobRunStatus.COMPLETED, JobRunStatus.FAILED, JobRunStatus.CANCELLED, JobRunStatus.REJECTED)):
+        if status in {JobRunStatus.COMPLETED.value, JobRunStatus.FAILED.value, JobRunStatus.CANCELLED.value, JobRunStatus.REJECTED.value}:
             from ..db.models.base import utcnow
             updates["completed_at"] = utcnow()
         self.db.query(JobRun).filter(JobRun.agent_run_id == agent_run_id).update(updates)
@@ -196,6 +196,13 @@ class JobRepository(BaseRepository):
             .update({"last_triggered_at": now})
         )
         return result == 1
+
+    def touch_definition_trigger_time(self, definition_id: UUID) -> None:
+        """Update last_triggered_at to now (for manual or post-approval triggers)."""
+        from ..db.models.base import utcnow
+        self.db.query(JobDefinition).filter(
+            JobDefinition.id == definition_id
+        ).update({"last_triggered_at": utcnow()})
 
     def to_definition_detail(self, definition: JobDefinition) -> JobDefinitionDetail:
         return JobDefinitionDetail(

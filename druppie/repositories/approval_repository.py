@@ -19,7 +19,7 @@ class ApprovalRepository(BaseRepository):
         self,
         session_id: UUID,
         agent_run_id: UUID,
-        tool_call_id: UUID,
+        tool_call_id: UUID | None,
         mcp_server: str,
         tool_name: str,
         arguments: dict,

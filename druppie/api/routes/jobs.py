@@ -30,7 +30,7 @@ async def trigger_job(
     service: JobService = Depends(get_job_service),
     user: dict = Depends(require_admin),
 ) -> JobRunDetail:
-    user_id = UUID(user["sub"]) if user else None
+    user_id = UUID(user["sub"])
 
     definition = service.get_definition(job_definition_id)
     if not definition:
@@ -44,7 +44,7 @@ async def trigger_job(
 
 @router.get("/runs")
 async def list_all_job_runs(
-    status: str | None = None,
+    status: JobRunStatus | None = None,
     page: int = 1,
     limit: int = 20,
     service: JobService = Depends(get_job_service),

@@ -93,6 +93,7 @@ class JobRun(Base):
     __tablename__ = "job_runs"
     __table_args__ = (
         Index("idx_job_runs_job_definition_id", "job_definition_id"),
+        Index("idx_job_runs_agent_run_id", "agent_run_id"),
         Index("idx_job_runs_status", "status"),
         Index("idx_job_runs_created_at", "created_at"),
     )
