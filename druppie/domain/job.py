@@ -50,7 +50,7 @@ class JobRunDetail(JobRunSummary):
 
 class JobRunList(BaseModel):
     """Paginated list of job runs."""
-    items: list[JobRunDetail]
+    items: list[JobRunSummary]
     total: int
     page: int
     limit: int

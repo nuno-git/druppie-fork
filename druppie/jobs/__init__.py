@@ -1,5 +1,5 @@
 """Job scheduler module."""
 
-from .scheduler import JobScheduler
+from druppie.services.job_service import JobScheduler
 
 __all__ = ["JobScheduler"]

@@ -688,7 +688,7 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
   // When session has pending approvals, keep the tasks/badge cache fresh
   useEffect(() => {
     const status = data?.status
-    if (status === 'paused_approval' || status === 'waiting_approval') {
+    if (status === 'paused_approval') {
       queryClient.invalidateQueries({ queryKey: ['tasks'] })
       queryClient.invalidateQueries({ queryKey: ['pending-approvals-count'] })
     }
@@ -832,7 +832,6 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
         paused_tool: 'bg-amber-500 animate-pulse',
         paused_sandbox: 'bg-blue-500 animate-pulse',
         paused_approval: 'bg-amber-500 animate-pulse',
-        waiting_approval: 'bg-amber-500 animate-pulse',
         waiting_answer: 'bg-amber-500 animate-pulse',
       }[data.status] || 'bg-gray-400'
 

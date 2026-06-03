@@ -9,6 +9,7 @@ from druppie.api.deps import get_job_service, require_admin
 from druppie.api.errors import NotFoundError
 from druppie.services import JobService
 from druppie.domain import JobDefinitionList, JobRunList, JobRunDetail
+from druppie.domain.common import JobRunStatus
 
 logger = structlog.get_logger()
 
@@ -36,7 +37,7 @@ async def trigger_job(
         raise NotFoundError("job_definition", str(job_definition_id))
 
     run = service.trigger_job(job_definition_id, user_id=user_id)
-    if run.session_id and run.status != "waiting_approval":
+    if run.session_id and run.status != JobRunStatus.WAITING_APPROVAL:
         service.execute_job_in_background(run.id, run.session_id)
     return run
 

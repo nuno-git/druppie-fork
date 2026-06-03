@@ -542,7 +542,7 @@ const Tasks = () => {
   const { data: tasksResponse, isLoading, isError, error, refetch: refetchTasks } = useQuery({
     queryKey: ['tasks'],
     queryFn: getTasks,
-    refetchInterval: 1000,
+    refetchInterval: 5000,
   })
  
   const { data: jobRunsResponse, isLoading: jobRunsLoading } = useQuery({

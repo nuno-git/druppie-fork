@@ -9,8 +9,10 @@ from ..domain.job import (
     JobDefinitionList,
     JobRunDetail,
     JobRunList,
+    JobRunSummary,
 )
 from ..db.models.job import JobDefinition, JobDefinitionConfig, JobRun
+from ..domain.common import JobRunStatus
 
 
 class JobRepository(BaseRepository):
@@ -64,7 +66,7 @@ class JobRepository(BaseRepository):
     def list_definitions(self) -> JobDefinitionList:
         definitions = self.db.query(JobDefinition).order_by(JobDefinition.name).all()
         return JobDefinitionList(
-            items=[self._to_definition_detail(d) for d in definitions],
+            items=[self.to_definition_detail(d) for d in definitions],
             total=len(definitions),
         )
 
@@ -108,7 +110,7 @@ class JobRepository(BaseRepository):
             updates["error_message"] = error_message
         if logs is not None:
             updates["logs"] = logs
-        if status in ("completed", "failed", "cancelled", "rejected"):
+        if status in (s.value for s in (JobRunStatus.COMPLETED, JobRunStatus.FAILED, JobRunStatus.CANCELLED, JobRunStatus.REJECTED)):
             from ..db.models.base import utcnow
             updates["completed_at"] = utcnow()
         self.db.query(JobRun).filter(JobRun.id == run_id).update(updates)
@@ -146,7 +148,7 @@ class JobRepository(BaseRepository):
             .all()
         )
         return JobRunList(
-            items=[self._to_job_run_detail(r) for r in runs],
+            items=[self.to_job_run_summary(r) for r in runs],
             total=total,
             page=page,
             limit=limit,
@@ -166,7 +168,7 @@ class JobRepository(BaseRepository):
         updates = {"status": status}
         if error_message is not None:
             updates["error_message"] = error_message
-        if status in ("completed", "failed", "cancelled", "rejected"):
+        if status in (s.value for s in (JobRunStatus.COMPLETED, JobRunStatus.FAILED, JobRunStatus.CANCELLED, JobRunStatus.REJECTED)):
             from ..db.models.base import utcnow
             updates["completed_at"] = utcnow()
         self.db.query(JobRun).filter(JobRun.agent_run_id == agent_run_id).update(updates)
@@ -195,7 +197,7 @@ class JobRepository(BaseRepository):
         )
         return result == 1
 
-    def _to_definition_detail(self, definition: JobDefinition) -> JobDefinitionDetail:
+    def to_definition_detail(self, definition: JobDefinition) -> JobDefinitionDetail:
         return JobDefinitionDetail(
             id=definition.id,
             job_id=definition.job_id,
@@ -217,7 +219,21 @@ class JobRepository(BaseRepository):
             updated_at=definition.updated_at,
         )
 
-    def _to_job_run_detail(self, run: JobRun) -> JobRunDetail:
+    def to_job_run_summary(self, run: JobRun) -> JobRunSummary:
+        return JobRunSummary(
+            id=run.id,
+            job_definition_id=run.job_definition_id,
+            session_id=run.session_id,
+            agent_run_id=run.agent_run_id,
+            trigger_type=run.trigger_type,
+            status=run.status,
+            error_message=run.error_message,
+            started_at=run.started_at,
+            completed_at=run.completed_at,
+            created_at=run.created_at,
+        )
+
+    def to_job_run_detail(self, run: JobRun) -> JobRunDetail:
         return JobRunDetail(
             id=run.id,
             job_definition_id=run.job_definition_id,

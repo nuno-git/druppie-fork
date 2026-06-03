@@ -9,15 +9,12 @@ from uuid import UUID
 import structlog
 import yaml
 
-try:
-    from croniter import croniter
-except ImportError:
-    croniter = None
+from croniter import croniter
 
 from ..repositories import JobRepository, SessionRepository, ExecutionRepository
 from ..domain.job import JobDefinitionList, JobDefinitionDetail, JobRunList, JobRunDetail
 from ..db.models.job import JobDefinition, JobDefinitionConfig
-from ..domain.common import AgentRunStatus, SessionStatus
+from ..domain.common import AgentRunStatus, SessionStatus, JobRunStatus
 
 logger = structlog.get_logger()
 
@@ -109,6 +106,8 @@ class JobService:
                         config_value=str(value) if value is not None else None,
                     )
                 )
+        else:
+            definition.configs = []
         definition.enabled = data.get("enabled", True) if data.get("enabled") is not None else definition.enabled
         definition.yaml_path = filepath
 
@@ -119,19 +118,19 @@ class JobService:
         definition = self.job_repo.get_definition_by_id(definition_id)
         if not definition:
             return None
-        return self.job_repo._to_definition_detail(definition)
+        return self.job_repo.to_definition_detail(definition)
 
     def get_job_run(self, run_id: UUID) -> JobRunDetail | None:
         run = self.job_repo.get_job_run_by_id(run_id)
         if not run:
             return None
-        return self.job_repo._to_job_run_detail(run)
+        return self.job_repo.to_job_run_detail(run)
 
     def handle_rejected_job_approval(self, agent_run_id: UUID, session_id: UUID) -> None:
         from ..domain.common import AgentRunStatus, SessionStatus
         job_run = self.job_repo.get_job_run_by_agent_run_id(agent_run_id)
         if job_run:
-            self.job_repo.update_job_run_status(job_run.id, "rejected")
+            self.job_repo.update_job_run_status(job_run.id, JobRunStatus.REJECTED)
         self.session_repo.update_status(
             session_id, SessionStatus.FAILED, error_message="Job approval rejected"
         )
@@ -157,7 +156,7 @@ class JobService:
             job_definition_id=definition_id,
             session_id=None,
             trigger_type=trigger_type,
-            status="pending",
+            status=JobRunStatus.PENDING,
         )
         self.job_repo.commit()
 
@@ -196,7 +195,7 @@ class JobService:
             self.execution_repo.update_status(agent_run.id, AgentRunStatus.PAUSED_TOOL)
             self.session_repo.update_status(session.id, SessionStatus.PAUSED_APPROVAL)
             self.execution_repo.commit()
-            self.job_repo.update_job_run_status(run.id, "waiting_approval")
+            self.job_repo.update_job_run_status(run.id, JobRunStatus.WAITING_APPROVAL)
             self.job_repo.commit()
             logger.info(
                 "job_approval_required",
@@ -204,7 +203,7 @@ class JobService:
                 approval_id=str(approval.id),
                 required_role=definition.required_role,
             )
-            return self.job_repo._to_job_run_detail(run)
+            return self.job_repo.to_job_run_detail(run)
 
         logger.info(
             "job_triggered",
@@ -214,7 +213,7 @@ class JobService:
             trigger_type=trigger_type,
         )
 
-        return self.job_repo._to_job_run_detail(run)
+        return self.job_repo.to_job_run_detail(run)
 
     def execute_job_in_background(self, job_run_id: UUID, session_id: UUID) -> None:
         from ..core.background_tasks import create_session_task, run_session_task
@@ -222,7 +221,7 @@ class JobService:
         async def _execute(ctx):
             from ..repositories import JobRepository
             job_repo = JobRepository(ctx.db)
-            job_repo.update_job_run_status(job_run_id, "running")
+            job_repo.update_job_run_status(job_run_id, JobRunStatus.RUNNING)
             job_repo.commit()
 
             try:
@@ -236,6 +235,8 @@ class JobService:
                     error=error_msg,
                 )
                 try:
+                    job_repo.update_job_run_status(job_run_id, JobRunStatus.FAILED, error_message=error_msg[:2000])
+                    job_repo.commit()
                     ctx.session_repo.update_status(session_id, SessionStatus.FAILED, error_message=error_msg[:2000])
                     ctx.session_repo.commit()
                 except Exception as db_err:
@@ -247,9 +248,7 @@ class JobService:
 
             final_session = ctx.session_repo.get_by_id(session_id)
             if final_session:
-                final_status = "completed" if final_session.status == SessionStatus.COMPLETED else "failed"
-                from ..repositories import JobRepository
-                job_repo = JobRepository(ctx.db)
+                final_status = JobRunStatus.COMPLETED if final_session.status == SessionStatus.COMPLETED else JobRunStatus.FAILED
                 job_repo.update_job_run_status(job_run_id, final_status)
                 job_repo.commit()
 
@@ -313,7 +312,7 @@ class JobScheduler:
                 logger.info("job_scheduler_triggering", job_id=definition.job_id)
                 try:
                     run = job_service.trigger_job(definition.id, trigger_type="scheduled")
-                    if run.session_id and run.status != "waiting_approval":
+                    if run.session_id and run.status != JobRunStatus.WAITING_APPROVAL:
                         job_service.execute_job_in_background(run.id, run.session_id)
                     logger.info(
                         "job_scheduler_triggered",
@@ -332,10 +331,6 @@ class JobScheduler:
             db.close()
 
     def _should_run(self, definition: Any, now: datetime) -> tuple[bool, datetime | None]:
-        if croniter is None:
-            logger.warning("croniter_not_installed", hint="pip install croniter")
-            return False, None
-
         try:
             itr = croniter(definition.schedule, now)
             last_scheduled = itr.get_prev(datetime)

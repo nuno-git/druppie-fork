@@ -103,7 +103,7 @@ class JobRun(Base):
     agent_run_id = Column(UUID(as_uuid=True), ForeignKey("agent_runs.id", ondelete="SET NULL"))
 
     trigger_type = Column(String(20), default="scheduled")
-    status = Column(String(20), default="pending")
+    status = Column(String(20), default="pending")  # pending, running, waiting_approval, completed, failed, cancelled, rejected
     error_message = Column(Text)
     logs = Column(Text)
 

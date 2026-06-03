@@ -583,6 +583,42 @@ docker compose --profile scan-cache run --rm cache-scanner
 
 ---
 
+## Scheduled Jobs
+
+Recurring cron jobs can be defined in YAML files under `druppie/jobs/definitions/`. Each job specifies an agent, a natural-language prompt, a cron schedule, and optional approval workflows.
+
+**Key capabilities:**
+
+- **YAML-driven configuration**: Jobs are loaded from `*.yaml` files at startup. Adding, updating, or removing files automatically syncs the database definitions.
+- **Cron scheduling**: Standard cron expressions determine when jobs trigger. Uses `croniter` for reliable scheduling.
+- **Approval gating**: Jobs can require human approval before execution (`approval_required: true`). Approval follows the same role-based rules as MCP tool approvals.
+- **Manual triggers**: Admins can trigger any job on demand from the Tasks page, bypassing the schedule.
+- **Execution tracking**: Every run is recorded with status (`pending`, `running`, `waiting_approval`, `completed`, `failed`, `rejected`, `cancelled`), session linkage, and logs.
+- **Claim-based concurrency**: Multiple backend instances can coexist safely — a compare-and-swap database claim ensures only one instance triggers a given scheduled slot.
+
+**Example definition (`druppie/jobs/definitions/nightly-report.yaml`):**
+
+```yaml
+id: nightly-report
+name: Nightly Summary Report
+schedule: "0 2 * * *"
+agent_id: summarizer
+prompt: "Generate a summary of today's activity."
+approval_required: true
+required_role: admin
+config:
+  dry_run: false
+enabled: true
+```
+
+**Frontend integration:**
+
+- The Tasks page (`/tasks`) shows all job definitions with their latest runs.
+- Job run cards display status badges, trigger type, timestamps, error messages, and a link to the associated session.
+- Active runs are polled every 5 seconds; inactive sections stop polling automatically.
+
+---
+
 ## Dashboard
 
 The dashboards goal is to provide an overview of platform activity. This page is a prototype and might not work correctly.
