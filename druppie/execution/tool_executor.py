@@ -566,7 +566,8 @@ class ToolExecutor:
                 agent_definition=agent_definition,
             )
             if needs_approval:
-                # Create Approval record and pause execution
+                # Translate design content before showing the approval card
+                await self._translate_design_content(tool_call)
                 return await self._create_approval_and_wait(tool_call, required_role)
 
         # Step 3.5: Check approval for builtin tools (via agent approval_overrides)
@@ -711,6 +712,103 @@ class ToolExecutor:
         )
 
         return ToolCallStatus.COMPLETED
+
+    # Dutch file path mapping for design documents
+    DESIGN_TRANSLATION_PATHS = {
+        "docs/functional-design.md": "docs/functioneel-ontwerp.md",
+        "docs/technical-design.md": "docs/technisch-ontwerp.md",
+        "docs/technical-research.md": "docs/technisch-onderzoek.md",
+    }
+
+    async def _translate_design_content(self, tool_call) -> None:
+        """Translate design content to Dutch before the approval gate.
+
+        For make_design calls in Dutch sessions, translates the English content
+        and adds translated_content/translated_path to tool_call.arguments.
+        The approval card shows the Dutch version; the MCP tool writes both files.
+        """
+        if tool_call.tool_name != "make_design":
+            return
+
+        from druppie.repositories import SessionRepository
+        session_repo = SessionRepository(self.db)
+        session = session_repo.get_by_id(tool_call.session_id)
+
+        if not session or not session.language or session.language != "nl":
+            return
+
+        args = tool_call.arguments or {}
+        content = args.get("content")
+        path = args.get("path")
+        if not content or not path:
+            return
+
+        translated_path = self.DESIGN_TRANSLATION_PATHS.get(path)
+        if not translated_path:
+            return
+
+        try:
+            from druppie.core.translation import get_translation_service
+            translator = get_translation_service()
+            translated_content = await self._translate_long_content(
+                translator, content, "nl"
+            )
+            if translated_content and translated_content != content:
+                enriched_args = dict(args)
+                enriched_args["translated_content"] = translated_content
+                enriched_args["translated_path"] = translated_path
+                tool_call.arguments = enriched_args
+                self.execution_repo.update_tool_call_arguments(
+                    tool_call.id, enriched_args
+                )
+                self.db.flush()
+                logger.info(
+                    "design_content_translated",
+                    tool_call_id=str(tool_call.id),
+                    path=path,
+                    translated_path=translated_path,
+                )
+        except Exception as e:
+            logger.warning(
+                "design_translation_failed",
+                tool_call_id=str(tool_call.id),
+                path=path,
+                error=str(e),
+            )
+
+    async def _translate_long_content(
+        self, translator, content: str, target_language: str
+    ) -> str:
+        """Translate long markdown by splitting on heading boundaries."""
+        import re
+
+        if len(content) < 3000:
+            return await translator.translate_from_english(content, target_language)
+
+        sections = re.split(r"(^#{1,3}\s+.+$)", content, flags=re.MULTILINE)
+
+        chunks = []
+        current = ""
+        for part in sections:
+            if re.match(r"^#{1,3}\s+", part):
+                if current:
+                    chunks.append(current)
+                current = part
+            else:
+                current += part
+        if current:
+            chunks.append(current)
+
+        translated = []
+        for chunk in chunks:
+            if chunk.strip():
+                translated.append(
+                    await translator.translate_from_english(chunk, target_language)
+                )
+            else:
+                translated.append(chunk)
+
+        return "\n".join(translated)
 
     async def _create_approval_and_wait(self, tool_call, required_role: str | None) -> str:
         """Create an Approval record and set tool call to waiting.
@@ -939,6 +1037,10 @@ class ToolExecutor:
         """
         args = tool_call.arguments or {}
 
+        # Extract platform-injected translation fields before sending to MCP
+        translated_content = args.pop("translated_content", None)
+        translated_path = args.pop("translated_path", None)
+
         logger.info(
             "mcp_tool_pre_injection",
             tool_call_id=str(tool_call.id),
@@ -989,6 +1091,28 @@ class ToolExecutor:
 
             # Check if result indicates failure
             is_success = result.get("success", True)
+
+            # Write translated design file after English original succeeds
+            if is_success and translated_content and translated_path:
+                try:
+                    await self.mcp_http.call(
+                        tool_call.mcp_server,
+                        "write_file",
+                        {**args, "path": translated_path, "content": translated_content},
+                        timeout_seconds=60.0,
+                    )
+                    logger.info(
+                        "translated_design_written",
+                        tool_call_id=str(tool_call.id),
+                        translated_path=translated_path,
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "translated_design_write_failed",
+                        tool_call_id=str(tool_call.id),
+                        translated_path=translated_path,
+                        error=str(e),
+                    )
 
             # Update tool call with result. Preserve the full result body on
             # failure too so test assertions and downstream callers can inspect

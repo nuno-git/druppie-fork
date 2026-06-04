@@ -24,6 +24,7 @@ import {
   extractSurfacedApprovals,
   extractOrderedItems,
   extractSurfacedFileWrites,
+  buildApprovalFileList,
   extractDependencyInstalls,
   findPendingQuestion,
   ProjectRepoContext,
@@ -140,23 +141,17 @@ const InlineApproval = ({ tc, sessionId, sessionUserId }) => {
 
           {/* File preview for write operations */}
           {(() => {
-            const filePath = args.path || args.file_path
-            const content = args.content
-            const batchFiles = args.files
-            const isBatchWrite = !!batchFiles && Object.keys(batchFiles).length > 0
-            const hasFile = !!(content || isBatchWrite)
-            if (!hasFile) return null
-            const files = isBatchWrite
-              ? Object.entries(batchFiles).map(([p, c]) => ({ path: p, content: c }))
-              : [{ path: filePath || 'file', content }]
+            const files = buildApprovalFileList(args)
+            if (!files) return null
+            const displayPath = args.translated_path || args.path || args.file_path || 'file'
             return (
               <div className="mt-1.5">
                 <button
                   onClick={() => setShowFilePreview(true)}
                   className="flex items-center gap-1.5 text-xs text-blue-600 hover:text-blue-800 transition-colors"
                 >
-                  {isBatchWrite ? <FileCode className="w-3.5 h-3.5" /> : <FilePlus className="w-3.5 h-3.5" />}
-                  View {isBatchWrite ? `${files.length} files` : filePath || 'file'}
+                  {files.length > 1 && !args.translated_content ? <FileCode className="w-3.5 h-3.5" /> : <FilePlus className="w-3.5 h-3.5" />}
+                  View {files.length > 1 && !args.translated_content ? `${files.length} files` : displayPath}
                 </button>
                 {showFilePreview && (
                   <FilePreviewModal files={files} onClose={() => setShowFilePreview(false)} />

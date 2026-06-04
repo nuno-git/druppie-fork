@@ -17,7 +17,7 @@ agent-test:
     - check: ba-vague-terms-clarified
     - check: ba-no-fabricated-requirements
     - check: ba-mandatory-elicitation
-    - check: ba-fd-in-dutch
+    - check: ba-fd-in-english
 
   judge:
     context: business_analyst

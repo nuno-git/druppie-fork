@@ -333,6 +333,12 @@ class ExecutionRepository(BaseRepository):
             .first()
         )
 
+    def update_tool_call_arguments(self, tool_call_id: UUID, arguments: dict) -> None:
+        """Update tool call arguments (e.g. to add translated design content)."""
+        self.db.query(ToolCall).filter(ToolCall.id == tool_call_id).update(
+            {"arguments": arguments}
+        )
+
     def get_tool_calls_for_run(self, agent_run_id: UUID) -> list[ToolCall]:
         """Get all tool calls for an agent run."""
         return (
