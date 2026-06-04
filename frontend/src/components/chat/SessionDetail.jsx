@@ -547,7 +547,7 @@ const DEPTH_STYLES = [
   { border: 'border-gray-300', bg: 'bg-gray-50/40' },
 ]
 
-const SubagentRunCard = ({ subagentRun, depth = 0, sessionId, sessionUserId }) => {
+const SubagentRunCard = ({ subagentRun, depth = 0, sessionId, sessionUserId, isOwner, isAdmin, userRoles }) => {
   const [expanded, setExpanded] = useState(depth < 1)
   const queryClient = useQueryClient()
   const config = getAgentConfig(subagentRun.agent_id)
@@ -606,12 +606,12 @@ const SubagentRunCard = ({ subagentRun, depth = 0, sessionId, sessionUserId }) =
             return allToolCalls.map((tc, i) => (
               <div key={tc.id || i}>
                 {tc.tool_name?.includes('hitl_ask') ? (
-                  <TimelineQuestion tc={tc} agentId={subagentRun.agent_id} sessionId={sessionId} />
+                  <TimelineQuestion tc={tc} agentId={subagentRun.agent_id} sessionId={sessionId} isOwner={isOwner} isAdmin={isAdmin} userRoles={userRoles} />
                 ) : (
                   <SubagentToolCall tc={tc} sessionId={sessionId} sessionUserId={sessionUserId} />
                 )}
                 {toolSubagentMap[tc.id]?.map((sa, si) => (
-                  <SubagentRunCard key={sa.id || si} subagentRun={sa} depth={depth + 1} sessionId={sessionId} sessionUserId={sessionUserId} />
+                  <SubagentRunCard key={sa.id || si} subagentRun={sa} depth={depth + 1} sessionId={sessionId} sessionUserId={sessionUserId} isOwner={isOwner} isAdmin={isAdmin} userRoles={userRoles} />
                 ))}
               </div>
             ))
@@ -680,7 +680,7 @@ const AgentRunItem = ({ run, timelineIndex, sessionId, hasFollowingMessage, sess
           return (
             <div key={i} className="mt-2 border-l-2 border-blue-200 pl-2">
               {item.subagentRuns.map((sa, si) => (
-                <SubagentRunCard key={sa.id || si} subagentRun={sa} depth={0} sessionId={sessionId} sessionUserId={sessionUserId} />
+                <SubagentRunCard key={sa.id || si} subagentRun={sa} depth={0} sessionId={sessionId} sessionUserId={sessionUserId} isOwner={isOwner} isAdmin={isAdmin} userRoles={userRoles} />
               ))}
             </div>
           )

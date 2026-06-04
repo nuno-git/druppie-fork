@@ -136,6 +136,12 @@ class DruppieToolProvider:
         extra = list(self._old_def.extra_builtin_tools or [])
         builtin_names = [t for t in DEFAULT_BUILTIN_TOOLS if t not in excluded] + extra
 
+        # Auto-enable ask_expert tools when experts is declared
+        if getattr(self._old_def, 'experts', None):
+            for name in ("ask_expert_question", "ask_expert_multiple_choice_question"):
+                if name not in builtin_names:
+                    builtin_names.append(name)
+
         tools = self._tool_registry.get_tools_for_agent(
             agent_mcps=self._old_def.mcps,
             builtin_tool_names=builtin_names,
