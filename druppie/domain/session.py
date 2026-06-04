@@ -65,6 +65,10 @@ class SessionSummary(BaseModel):
     status: SessionStatus
     error_message: str | None = None
     project_id: UUID | None
+    # Username of the session owner. Sidebar uses this to flag sessions
+    # that belong to someone else (e.g. an architect viewing a session
+    # they were pulled into as an expert).
+    username: str | None = None
     token_usage: TokenUsage
     created_at: datetime
     updated_at: datetime | None

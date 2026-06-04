@@ -367,16 +367,81 @@ def _extract_cache_packages(events: list[dict]) -> list[dict]:
     return []
 
 
+def _diagnose_sandbox_failure(
+    events: list[dict],
+    sandbox_agent: str | None,
+) -> str:
+    """Inspect sandbox events to produce a clear failure diagnosis.
+
+    The control plane emits richer signals than the bare `success: false` on
+    the webhook payload. This walks the event list looking for the most
+    actionable failure cause and turns it into a one-block message the
+    calling Druppie agent can act on (retry / pick a different sandbox
+    agent / surface to the user).
+    """
+    error_messages: list[str] = []
+    llm_provider_errors: dict[str, int] = {}  # provider -> count
+
+    for event in events or []:
+        etype = event.get("type")
+        # Explicit sandbox_error events carry the most useful context
+        if etype == "sandbox_error":
+            err = event.get("error") or (event.get("data") or {}).get("error") or ""
+            if err and err not in error_messages:
+                error_messages.append(str(err))
+        elif etype == "error":
+            data = event.get("data") or {}
+            msg = data.get("message") or data.get("error") or event.get("message") or ""
+            if msg and msg not in error_messages:
+                error_messages.append(str(msg))
+        elif etype in ("llm_error", "provider_error"):
+            data = event.get("data") or {}
+            provider = data.get("provider") or "unknown"
+            llm_provider_errors[provider] = llm_provider_errors.get(provider, 0) + 1
+
+    parts: list[str] = []
+    agent_label = sandbox_agent or "(unknown sandbox agent)"
+    parts.append(f"Sandbox subagent: {agent_label}")
+
+    if error_messages:
+        parts.append("Failure cause(s):")
+        for m in error_messages[:5]:
+            parts.append(f"  - {m}")
+
+    if llm_provider_errors:
+        details = ", ".join(f"{p}: {n} error(s)" for p, n in llm_provider_errors.items())
+        parts.append(f"LLM provider failures observed during the run: {details}")
+        parts.append(
+            "  → Often a transient rate-limit or upstream outage. Consider "
+            "waiting and retrying, or routing to a different model."
+        )
+
+    if not error_messages and not llm_provider_errors:
+        parts.append(
+            "No explicit error event was emitted by the control plane. The "
+            "sandbox container likely crashed, ran out of resources, or its "
+            "primary agent terminated without producing output. Check the "
+            "sandbox session events for raw logs."
+        )
+
+    return "\n".join(parts)
+
+
 def _build_agent_result_text(
     success: bool,
     changed_files: list[dict],
     agent_output: str,
     git_info: dict,
     tool_summaries: list[str],
+    events: list[dict] | None = None,
+    sandbox_agent: str | None = None,
 ) -> str:
     """Build a structured, human-readable result for the Druppie agent.
 
     This replaces the raw JSON blob with clear text the LLM can understand.
+    On failure, leads with a diagnosis of WHY the sandbox failed (which
+    sandbox subagent ran, what the control plane reported, what the LLM
+    proxy saw) so the calling agent doesn't just see "SANDBOX TASK FAILED".
     """
     lines = []
 
@@ -384,6 +449,10 @@ def _build_agent_result_text(
         lines.append("SANDBOX TASK COMPLETED SUCCESSFULLY")
     else:
         lines.append("SANDBOX TASK FAILED")
+        # Lead with diagnosis — the calling agent needs to know which
+        # subagent ran and why it died before it can decide what to do next.
+        lines.append("")
+        lines.append(_diagnose_sandbox_failure(events or [], sandbox_agent))
 
     # PR info (most important for the agent)
     if git_info.get("pr_urls"):
@@ -554,13 +623,17 @@ async def sandbox_complete_webhook(
     # Clean up the per-sandbox Gitea service accounts
     await _cleanup_gitea_users(sandbox_mapping)
 
-    # Build structured result text for the agent (readable by LLM)
+    # Build structured result text for the agent (readable by LLM).
+    # On failure we also pass `events` and `sandbox_agent` so the diagnosis
+    # block can tell the calling agent which subagent ran and why it died.
     agent_result_text = _build_agent_result_text(
         success=body.success,
         changed_files=changed_files,
         agent_output=agent_output,
         git_info=git_info,
         tool_summaries=tool_summaries,
+        events=events,
+        sandbox_agent=sandbox_mapping.agent_name if sandbox_mapping else None,
     )
 
     # Also store structured data for the frontend/API
@@ -733,11 +806,25 @@ async def sandbox_watchdog_loop() -> None:
                 try:
                     sandbox_mapping = sandbox_repo.get_by_tool_call_id(tc.id)
 
-                    # Fail the stuck tool call
+                    # Fail the stuck tool call with a diagnostic message
+                    # that names the subagent, so the calling agent can decide
+                    # whether to retry or switch approaches.
+                    subagent = sandbox_mapping.agent_name if sandbox_mapping else "(unknown)"
                     execution_repo.update_tool_call(
                         tc.id,
                         status=ToolCallStatus.FAILED,
-                        error=f"Sandbox timed out after {SANDBOX_TIMEOUT_MINUTES} minutes (no webhook received)",
+                        error=(
+                            f"SANDBOX TASK FAILED\n\n"
+                            f"Sandbox subagent: {subagent}\n"
+                            f"Failure cause(s):\n"
+                            f"  - No webhook received from the sandbox control plane "
+                            f"within {SANDBOX_TIMEOUT_MINUTES} minutes.\n"
+                            f"  → The sandbox container is likely stuck on upstream "
+                            f"calls (LLM provider unresponsive, network partition) or "
+                            f"crashed without emitting a completion event. Consider "
+                            f"retrying later, or routing the task through a different "
+                            f"approach that doesn't need a sandbox."
+                        ),
                     )
 
                     if tc.agent_run_id:

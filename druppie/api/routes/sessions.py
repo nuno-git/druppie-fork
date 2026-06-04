@@ -72,6 +72,7 @@ async def list_sessions(
         page=page,
         limit=limit,
         status=status,
+        user_roles=user_roles,
     )
 
     return {
@@ -230,8 +231,9 @@ async def retry_from_run(
     user_id = UUID(user["sub"])
     user_roles = get_user_roles(user)
 
-    # Validate session exists and user has access (raises on failure)
-    service.get_detail(
+    # Only the session owner or an admin can control the session.
+    # Non-owner experts have read access via get_detail but cannot retry.
+    service.require_owner_or_admin(
         session_id=session_id,
         user_id=user_id,
         user_roles=user_roles,
@@ -316,8 +318,8 @@ async def resume_session(
     user_id = UUID(user["sub"])
     user_roles = get_user_roles(user)
 
-    # Validate session exists and user has access
-    service.get_detail(
+    # Only the session owner or an admin can control the session.
+    service.require_owner_or_admin(
         session_id=session_id,
         user_id=user_id,
         user_roles=user_roles,

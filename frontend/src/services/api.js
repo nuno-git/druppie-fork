@@ -160,10 +160,15 @@ export const getMCPPermissions = () => request('/api/mcps')
 export const checkMCPPermission = (tool) =>
   request('/api/mcps/check', { method: 'POST', body: JSON.stringify({ tool }) })
 
-// ============ Questions (HITL - Human in the Loop) ============
+// ============ Questions (HITL - Human in the Loop, ask_expert) ============
 export const getQuestions = (sessionId = null) =>
   request(`/api/questions${sessionId ? `?session_id=${sessionId}` : ''}`)
 export const getQuestion = (questionId) => request(`/api/questions/${questionId}`)
+// All pending questions the current user can answer:
+//   - regular HITL questions for sessions the user owns
+//   - ask_expert questions targeted at one of the user's roles
+//   - admins see every pending question
+export const getPendingQuestions = () => request('/api/questions/pending')
 export const answerQuestion = (questionId, answer, selectedChoices = null) =>
   request(`/api/questions/${questionId}/answer`, {
     method: 'POST',
