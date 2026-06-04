@@ -11,10 +11,14 @@ description: >
 
 # RAG Patterns for Doc-Heavy Applications
 
-RAG (Retrieval-Augmented Generation) is a **first-class building block**
-in Druppie. When a use-case deals with many or large documents, RAG is
-often the right answer — not stuffing the documents into the prompt,
-and not forcing the user to search manually.
+RAG (Retrieval-Augmented Generation) is **one** of Druppie's building
+blocks for grounding answers in a document corpus — not a reflex to
+reach for whenever an app touches documents. It earns its place when
+the bottleneck is *finding the right passage in a large, changing
+corpus*. When the corpus fits the context window, or the real work is
+reasoning and tool-orchestration rather than retrieval, a plain prompt
+or an agent-with-tools is the better tool — see *When to use RAG* and
+the **Do not use RAG** list below.
 
 ## Architecture: distributed vector storage
 
@@ -50,24 +54,31 @@ Use RAG when at least one of these holds:
   an open-ended question — RAG adds complexity without quality gain.
 - The question is a **single-fact lookup in a structured source**
   (database, API) — `module-data-access` is the right choice, not RAG.
+- The real work is **multi-step reasoning or tool-orchestration** and
+  retrieval is incidental — an agent with the right tools (data-access,
+  web, code) fits better. RAG grounds answers; it does not reason.
 
 ### Plain RAG vs agentic search
 
 Both retrieve before generating; the difference is **who decides how
-often to search**.
+often and how to search** — a fixed pipeline, or the agent itself.
 
-- **Plain (single-shot) RAG** — one retrieval, then generate. The
-  **default**. Use it when a question maps to one retrieval pass:
-  factual Q&A, policy/citation lookups, "what does document X say
-  about Y". Predictable latency and cost.
+- **Plain (single-shot) RAG** — one retrieval, then generate. Fits when
+  a question maps to one retrieval pass: factual Q&A, policy/citation
+  lookups, "what does document X say about Y". Predictable latency and
+  cost, trivial to evaluate.
 - **Agentic search** — the agent retrieves **in a loop**: reformulate,
-  judge sufficiency, fetch more, possibly decompose, then answer. Use
-  it only when a single pass demonstrably cannot answer: **multi-hop**
-  questions, iterative refinement, or research-style synthesis.
+  judge sufficiency, fetch more, decompose, then answer. On **multi-hop
+  and research-style** questions it consistently beats single-shot in
+  recent benchmarks — the gain is real, not marginal. The price is
+  latency, token spend and non-determinism, so it needs hard iteration
+  caps + a latency circuit-breaker.
 
-**Start with plain RAG;** escalate to agentic only when an eval set
-shows single-shot retrieval missing multi-step answers — never
-pre-emptively (agentic loops multiply latency/cost; see *Advanced
+Pick by **use-case fit, not by cost reflex**: if the questions are
+genuinely multi-step, start agentic. The rule that survives is a
+*measurement* one, not a cost gate — **stand up a single-shot baseline
+first**, so the agentic uplift is measured on your own eval set rather
+than assumed, and so you have something to debug against (see *Advanced
 patterns → Agentic loops*).
 
 ## Stop — do not reinvent the RAG pipeline
@@ -95,7 +106,7 @@ explicit trigger from the per-layer decision guides below.
 | Re-ranking | BGE-reranker-v2-m3 self-hosted (application layer today; baked into `module-rag` orchestrator in Story B) | Use-case gold-set ≥5 nDCG points better with Cohere → switch (Bedrock EU) |
 | Query transformation | Query expansion + classifier-gated decomposition | HyDE for short/vague queries with style gap to the corpus |
 | GraphRAG | **Not default** | ≥30% of queries multi-entity/synthesis → LightRAG as parallel retriever |
-| Agentic loop | **Not default** | Adaptive Router as first agentic step; Self-RAG only in the synthesis path |
+| Agentic loop | **Use-case driven** | Single-shot for one-pass Q&A; go agentic for multi-hop/research and measure the uplift against a baseline |
 | Citations | Content-hash chunk IDs + page/paragraph + parent-section title; footnote style in formal output | Legal precision → sentence-level span tracking (Claude Citations API) |
 
 ## Per-layer decision guides
@@ -183,11 +194,14 @@ Selection criteria, in order:
   retriever inside an Adaptive Router) once ≥30% of queries are
   multi-entity / synthesis. Full Microsoft GraphRAG only for explicit
   corpus-wide synthesis projects.
-- **Agentic loops are not default.** Progression: (1) get baseline +
-  rerank working → (2) Adaptive Router (3–4 class classifier) →
-  (3) Self-RAG / CRAG in the synthesis path → (4) plan-and-execute
-  only for research-style questions. Always with hard iteration caps
-  and a latency circuit-breaker.
+- **Agentic loops: choose by use-case, prove with eval.** For multi-hop
+  and research-style questions they typically beat single-shot — adopt
+  them there rather than treating them as a last resort. Adoption
+  ladder, each rung measured against the previous: (1) single-shot
+  baseline + rerank → (2) Adaptive Router (3–4 class classifier) →
+  (3) Self-RAG / CRAG in the synthesis path → (4) plan-and-execute for
+  research-style questions. Always with hard iteration caps and a
+  latency circuit-breaker.
 
 ## Citations
 
@@ -269,8 +283,10 @@ In the Technical Design of a RAG project:
   vector store. Under-specified; requires TD revision.
 - **Pure-vector search** as the only retrieval strategy in production
   — systematically loses jargon and proper nouns.
-- **GraphRAG or agentic RAG** without a proven problem they solve —
-  adds latency and cost without quality gain.
+- **GraphRAG or agentic loops on single-pass questions** — or adopted
+  without measuring the uplift on an eval set. On genuine
+  multi-hop/synthesis they earn their keep; on simple lookups they only
+  add latency and cost.
 - **Custom vector store** (Qdrant, Weaviate, etc.) without a concrete
   trigger from the decision guide. Default = pgvector via
   `app-local pgvector (`rag.py`)`.
