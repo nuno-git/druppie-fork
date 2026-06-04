@@ -31,25 +31,4 @@ agent-test:
   agents: [ultimate_dev]
 
   assert:
-    - check: ultimate-dev-completed
-    - check: todo-app-files-created
-    - check: code-pushed-to-git
-
-  checks:
-    ultimate-dev-completed:
-      description: "ultimate_dev agent completed successfully"
-      evaluate: |
-        The ultimate_dev agent should have status "completed" (not "failed").
-        It should have called done() with a summary describing the implementation.
-
-    todo-app-files-created:
-      description: "Todo app source files were created in the repo"
-      evaluate: |
-        The repo should contain React component files for the todo app.
-        At minimum, an App component or index.html with the todo app logic.
-
-    code-pushed-to-git:
-      description: "Implementation was committed and pushed to git"
-      evaluate: |
-        The ultimate_dev agent should have used run_git to commit and push
-        the implementation code to the main branch.
+    - check: all-agents-completed
