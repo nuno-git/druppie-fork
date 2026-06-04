@@ -51,6 +51,25 @@ Use RAG when at least one of these holds:
 - The question is a **single-fact lookup in a structured source**
   (database, API) — `module-data-access` is the right choice, not RAG.
 
+### Plain RAG vs agentic search
+
+Both retrieve before generating; the difference is **who decides how
+often to search**.
+
+- **Plain (single-shot) RAG** — one retrieval, then generate. The
+  **default**. Use it when a question maps to one retrieval pass:
+  factual Q&A, policy/citation lookups, "what does document X say
+  about Y". Predictable latency and cost.
+- **Agentic search** — the agent retrieves **in a loop**: reformulate,
+  judge sufficiency, fetch more, possibly decompose, then answer. Use
+  it only when a single pass demonstrably cannot answer: **multi-hop**
+  questions, iterative refinement, or research-style synthesis.
+
+**Start with plain RAG;** escalate to agentic only when an eval set
+shows single-shot retrieval missing multi-step answers — never
+pre-emptively (agentic loops multiply latency/cost; see *Advanced
+patterns → Agentic loops*).
+
 ## Stop — do not reinvent the RAG pipeline
 
 Reference `app-local pgvector (`rag.py`)` (primitive) and `module-llm` (embeddings

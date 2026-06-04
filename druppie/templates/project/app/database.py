@@ -29,6 +29,7 @@ def init_db():
     gunicorn workers start simultaneously.
     """
     import app.models  # noqa: F401
+    import app.rag  # noqa: F401 — register vector_* tables (pgvector)
     try:
         import app.chat  # noqa: F401 — register chat models
     except ImportError:
