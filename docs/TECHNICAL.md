@@ -1017,17 +1017,15 @@ YAML files  →  JobService.load_definitions_from_yaml()  →  job_definitions (
 | Service | `services/job_service.py` | Load YAML, trigger, schedule |
 | Repository | `repositories/job_repository.py` | DB access + claim compare-and-swap |
 | Domain | `domain/job.py` | Pydantic models |
-| Models | `db/models/job.py` | `JobDefinition`, `JobDefinitionConfig`, `JobRun` |
+| Models | `db/models/job.py` | `JobDefinition`, `JobRun` |
 
 **Key design decisions:**
 
 1. **No pagination on `JobDefinitionList`** — Job definitions are YAML-scoped configuration objects, not growing event history. A typical deployment has < 50 definitions. `JobRunList` *does* have pagination because runs accumulate indefinitely.
 
-2. **Normalized config storage** — The `config` dict from YAML is stored as relational key-value rows in `job_definition_configs`, not JSON. This aligns with the project hard rule: *"NO JSON/JSONB columns — Normalize everything into proper relational tables."*
+2. **Atomic claim via UPDATE-WHERE** — `JobRepository.claim_job_trigger()` uses an `UPDATE ... WHERE last_triggered_at < scheduled_time` so multiple backend instances can safely race for the same scheduled slot without duplicate runs.
 
-3. **Approval-gated jobs** — Jobs with `approval_required: true` create an `Approval` record on trigger. The job_run status is set to `waiting_approval`. After approval, the Orchestrator resumes via `resume_after_approval()`, sets agent_run to PENDING, runs the agent, and syncs the final status back to the job_run on completion or failure.
-
-4. **Atomic claim via UPDATE-WHERE** — `JobRepository.claim_job_trigger()` uses an `UPDATE ... WHERE last_triggered_at < scheduled_time` so multiple backend instances can safely race for the same scheduled slot without duplicate runs.
+3. **YAML validation at load time** — `JobService.load_definitions_from_yaml()` validates each file before DB insertion: required fields (`name`, `schedule`, `agent_id`, `prompt`), cron syntax (via `croniter`), and agent existence (via filesystem check). Invalid files are logged and skipped entirely; no broken definitions are recorded.
 
 ---
 

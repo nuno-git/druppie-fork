@@ -585,37 +585,173 @@ docker compose --profile scan-cache run --rm cache-scanner
 
 ## Scheduled Jobs
 
-Recurring cron jobs can be defined in YAML files under `druppie/jobs/definitions/`. Each job specifies an agent, a natural-language prompt, a cron schedule, and optional approval workflows.
+Recurring cron jobs can be defined in YAML files under `druppie/jobs/definitions/`. Each job specifies a cron schedule for when to run, a natural-language prompt that tells the agent what to do, and an optional approval gate before execution.
 
-**Key capabilities:**
+YAML definitions are auto-synced at application startup: new files are created in the database, updated files replace their previous values, and removed files are deleted from the database.
 
-- **YAML-driven configuration**: Jobs are loaded from `*.yaml` files at startup. Adding, updating, or removing files automatically syncs the database definitions.
-- **Cron scheduling**: Standard cron expressions determine when jobs trigger. Uses `croniter` for reliable scheduling.
-- **Approval gating**: Jobs can require human approval before execution (`approval_required: true`). Approval follows the same role-based rules as MCP tool approvals.
-- **Manual triggers**: Admins can trigger any job on demand from the Tasks page, bypassing the schedule.
-- **Execution tracking**: Every run is recorded with status (`pending`, `running`, `waiting_approval`, `completed`, `failed`, `rejected`, `cancelled`), session linkage, and logs.
-- **Claim-based concurrency**: Multiple backend instances can coexist safely — a compare-and-swap database claim ensures only one instance triggers a given scheduled slot.
+### Job YAML Schema
 
-**Example definition (`druppie/jobs/definitions/nightly-report.yaml`):**
+| Field | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `id` | **Yes** | — | Unique identifier for the job. Used as the DB key and in log lines. Alphanumeric and hyphens recommended. |
+| `name` | **Yes** | — | Human-readable display name shown in the Tasks page. |
+| `schedule` | **Yes** | — | Cron expression. See [Cron Syntax](#cron-syntax) below. |
+| `agent_id` | **Yes** | — | Agent to run the task. Must be a valid agent YAML file in `agents/definitions/{agent_id}.yaml`. See [Available Agents](#available-agents). |
+| `prompt` | **Yes** | — | Natural-language instructions sent to the agent. Can be multiline YAML (`\|`) for longer prompts. |
+| `description` | No | — | Optional description shown in the job card. |
+| `approval_required` | No | `false` | If `true`, the job pauses at trigger time and requires a human with `required_role` to approve before the agent starts. |
+| `required_role` | No | `admin` | The Keycloak role required to approve/reject a gated job. Only checked when `approval_required: true`. |
+| `enabled` | No | `true` | If `false`, the job is visible in the UI but excluded from the scheduler. |
+
+### Cron Syntax
+
+The `schedule` field uses standard cron expressions parsed by `croniter`. Both 5-field (minute hour day month weekday) and 6-field (seconds minute hour day month weekday) formats are accepted.
+
+**5-field format** (minute hour day month weekday):
+
+| Position | Field | Range | `N` (fixed) vs `*/N` (interval) |
+|----------|-------|-------|-----------------------------------|
+| 1 | **Minute** | `0-59` | `30` = exact minute 30. `*/5` = every 5 minutes (0, 5, 10, ..., 55). |
+| 2 | **Hour** | `0-23` | `2` = exactly 02:00. `*/6` = every 6 hours (00:00, 06:00, 12:00, 18:00). |
+| 3 | **Day of month** | `1-31` | `1` = 1st of the month. `*/2` = every 2 days (1, 3, 5, ...). `*` = every day. |
+| 4 | **Month** | `1-12` or `*` | `1` = January only. `*` = every month. `*/3` = every 3 months. |
+| 5 | **Day of week** | `0-6` (Sun=0) | `0` = Sunday only. `1,3,5` = Mon, Wed, Fri. `*` = every day. |
+
+**6-field format** (seconds minute hour day month weekday):
+
+| Position | Field | Range | `N` (fixed) vs `*/N` (interval) |
+|----------|-------|-------|-----------------------------------|
+| 1 | **Seconds** | `0-59` | `0` = exact top of the minute. `*/30` = every 30 seconds. |
+| 2 | **Minute** | `0-59` | `30` = exact minute 30. `*/5` = every 5 minutes (0, 5, 10, ..., 55). |
+| 3 | **Hour** | `0-23` | `2` = exactly 02:00. `*/6` = every 6 hours (00:00, 06:00, 12:00, 18:00). |
+| 4 | **Day of month** | `1-31` | `1` = 1st of the month. `*/2` = every 2 days (1, 3, 5, ...). `*` = every day. |
+| 5 | **Month** | `1-12` or `*` | `1` = January only. `*` = every month. `*/3` = every 3 months. |
+| 6 | **Day of week** | `0-6` (Sun=0) | `0` = Sunday only. `1,3,5` = Mon, Wed, Fri. `*` = every day. |
+
+**`N` vs `*/N` by field (5-field examples):**
+
+- `schedule: "30 2 * * *"` → At **02:30** every day (fixed minute and hour).
+- `schedule: "*/30 2 * * *"` → Every **30 minutes** starting at 02:00, once per day (02:00, 02:30 only).
+- `schedule: "0 */6 * * *"` → Every **6 hours** on the hour (00:00, 06:00, 12:00, 18:00).
+- `schedule: "0 0 */7 * *"` → Every **7th day** of the month (1st, 8th, 15th, 22nd, 29th).
+- `schedule: "0 0 * * 1/2"` → Every **second Monday** starting from the first Monday (croniter-specific; replaces complex expressions).
+
+**`N` vs `*/N` by field (6-field examples):**
+
+- `schedule: "0 30 2 * * *"` → At **02:30:00** every day (5-field equivalent: `"30 2 * * *"`).
+- `schedule: "*/30 0 2 * * *"` → Every **30 seconds** during the 02:00 minute (02:00:00, 02:00:30).
+- `schedule: "0 */5 * * * *"` → Every **5 minutes** on the minute (equivalent to `"0 */5 * * *"` in 5-field).
+- `schedule: "0 0 0 */7 * *"` → Same as 5-field `"0 0 */7 * *"` but with seconds=0 explicit.
+
+| Example | Meaning |
+|---------|---------|
+| `0 2 * * *` | Daily at 02:00 (5-field) |
+| `0 */6 * * *` | Every 6 hours at :00 (5-field) |
+| `0 0 * * 0` | Weekly on Sunday at 00:00 (5-field) |
+| `0 0 1 * *` | Monthly on the 1st at 00:00 (5-field) |
+| `0 0 31 2 *` | 31 February — **never triggers** (5-field, used in tests to prevent accidental execution) |
+| `0 */5 * * *` | Every 5 minutes at :00 (5-field) |
+| `30 9 * * 1,3,5` | At 09:30 on Monday, Wednesday, Friday (5-field) |
+| `0 0 * * 1-5` | Every weekday at 00:00 (5-field) |
+| `0 0 L * *` | Last day of every month at 00:00 (5-field; `L` supported by croniter) |
+| `0 */5 * * * *` | Every 5 minutes at :00 (6-field, seconds=0) |
+| `0 0 2 * * *` | Daily at 02:00:00 (6-field, equivalent to `"0 2 * * *"`) |
+| `*/30 0 2 * * *` | Every 30 seconds during 02:00 (6-field) |
+
+### Special Characters
+
+`croniter` supports several non-obvious extensions beyond basic `*` and `*/N` notation:
+
+| Character | Field(s) | Meaning | Example |
+|-----------|----------|---------|---------|
+| `L` | Day-of-month | **Last** day of the month | `0 0 L * *` → Last day of every month at 00:00 |
+| `W` | Day-of-month | **Weekday** — nearest weekday to the given date | `0 0 15W * *` → Nearest weekday to the 15th at 00:00. If the 15th is Saturday, it fires Friday the 14th; if Sunday, Monday the 16th. |
+| `#` | Day-of-week | **Nth occurrence** of a weekday in the month | `0 0 * * 2#3` → Third Tuesday of every month at 00:00 |
+| `,` | All | **List** of values | `0 0 * * 1,3,5` → Monday, Wednesday, Friday |
+| `-` | All | **Range** of values | `0 0 * * 1-5` → Monday through Friday |
+
+**Note on `W`**: If the target date falls on a Saturday, it shifts backwards to Friday. If Sunday, forwards to Monday. It never crosses month boundaries (e.g., `1W` on a Saturday will fire on Monday the 3rd, not Friday the 31st of the previous month).
+
+**Invalid expressions** (the scheduler logs an error and skips the file at load time):
+- `not a cron` — rejected by `croniter`
+- `0 0 * *` — only 4 fields
+- `0 0 31 2 * *` — 7 fields (6-field + extra)
+
+**Testing tip:** For jobs that should not auto-trigger (e.g., jobs intended only for manual "Run Now"), set the schedule to a date that never occurs, or set `enabled: false`.
+
+### Available Agents
+
+The `agent_id` field must match one of the agent definitions in `druppie/agents/definitions/*.yaml` (without the `.yaml` extension):
+
+| Agent ID | Purpose |
+|---------|---------|
+| `summarizer` | Creates concise summaries from session context |
+| `developer` | Writes code, manages git, creates PRs |
+| `deployer` | Builds Docker images and runs containers |
+| `builder` | Implements code from test suites (TDD Green Phase) |
+| `test_builder` | Generates tests from design documents (TDD Red Phase) |
+| `test_executor` | Runs tests iteratively and fixes failures |
+| `builder_planner` | Creates implementation plans from design docs |
+| `business_analyst` | Gathers requirements, writes functional design |
+| `architect` | Designs system architecture, writes technical design |
+| `planner` | Creates multi-agent execution plans |
+| `router` | Classifies user intent |
+| `reviewer` | Reviews code quality |
+| `data_analyst` | Renders charts from data sources |
+| `documenter` | Writes documentation |
+| `update_core_builder` | Modifies Druppie's own codebase |
+
+If an `agent_id` does not match a known agent file, the YAML file is **rejected at load time** with a clear error log (e.g., `agent_id 'summarizerr' not found`).
+
+### Example Definition
 
 ```yaml
 id: nightly-report
 name: Nightly Summary Report
+description: Generates a daily summary of platform activity
 schedule: "0 2 * * *"
 agent_id: summarizer
-prompt: "Generate a summary of today's activity."
+prompt: "Generate a summary of today's activity, including sessions created, approvals resolved, and deployments made."
 approval_required: true
 required_role: admin
-config:
-  dry_run: false
 enabled: true
 ```
 
-**Frontend integration:**
+The `id` is the stable key; `name` is what users see in the UI; `prompt` is what the agent receives as its task. The `description` is optional but useful for long job lists.
+
+### Validation at Load Time
+
+`JobService.load_definitions_from_yaml()` validates every YAML file before creating or updating a database record. A file that fails validation is **skipped entirely** and its errors are logged:
+
+```
+job_yaml_validation_failed   file=test_approval_job.yaml  job_id=test_approval_job  error=invalid cron schedule: 'not a schedule'
+job_yaml_validation_failed   file=test_approval_job.yaml  job_id=test_approval_job  error=agent_id 'summarizerr' not found
+job_yaml_validation_failed   file=test_approval_job.yaml  job_id=test_approval_job  error=name is required and must be non-empty
+```
+
+Skipping (rather than creating a broken record) means:
+- The scheduler never tries to trigger a job with an invalid cron
+- The Tasks page never shows a card for a job whose agent does not exist
+- Operators can fix the YAML and restart; the job will be picked up on the next load cycle
+
+### Frontend Integration
 
 - The Tasks page (`/tasks`) shows all job definitions with their latest runs.
 - Job run cards display status badges, trigger type, timestamps, error messages, and a link to the associated session.
+- Admins can click **Run Now** to trigger a job immediately, bypassing the cron schedule.
 - Active runs are polled every 5 seconds; inactive sections stop polling automatically.
+
+### Job Run Lifecycle
+
+| Status | Meaning | Next Step |
+|--------|---------|-----------|
+| `pending` | Created but not yet triggered | Scheduler claims and triggers |
+| `waiting_approval` | Paused at trigger time, awaiting human approval | Admin approves/rejects |
+| `running` | Agent is executing | Completes or fails |
+| `completed` | Agent finished successfully | Finalized |
+| `failed` | Agent encountered an error (or was rejected) | Finalized |
+| `rejected` | A human rejected the approval gate | Finalized |
+| `cancelled` | Superseded by a new plan | Finalized |
 
 ---
 
