@@ -1,4 +1,31 @@
-# Manual E2E Test — RAG Detection by the Architect
+# RAG Testing
+
+## Automated E2E: deploy an app and prove the RAG pipeline works
+
+The `rag-app-deploy-e2e` tool test deploys the bare project template
+(which includes `app/rag.py` + pgvector) and validates the full
+index → embed → store → search loop against real Dutch policy documents.
+
+Run it from the Evaluations page or via the API:
+
+```bash
+# From the evaluations UI: pick "rag-app-deploy-e2e" and run.
+```
+
+What it proves:
+- `docker:compose_up` deploys the template with a working pgvector database
+- `POST /api/rag/index` chunks text, calls `module-llm` embed, stores vectors
+- `POST /api/rag/search` embeds the query, runs cosine similarity, returns ranked chunks
+- Source metadata (`source_name`, `source_page`, `score`) is preserved through the pipeline
+- Two different queries return the correct documents (not just the same chunk every time)
+
+Related tool tests:
+- `rag-embed-pipeline` — validates `module-llm` embed in isolation
+- `platform-standards-rag-defaults` — validates the seeded standards contain §5 RAG defaults
+
+---
+
+## Manual E2E: RAG Detection by the Architect
 
 > Validates Story A end-to-end: an FD that obviously needs RAG triggers
 > the Architect's `rag-patterns` skill in Step 1 and lands a RAG choices

@@ -34,11 +34,16 @@ expliciete trigger (zie de `rag-patterns` skill / `rag-patterns.md`).
 - **Vector store:** pgvector in de eigen app-database.
 - **Rerank:** BGE-reranker-v2-m3 (applicatielaag).
 - **Citations:** content-hash chunk-IDs + pagina/paragraaf.
-- **GraphRAG / agentic loops:** géén default — alleen op bewezen behoefte.
+- **GraphRAG:** géén default — alleen op bewezen behoefte (≥30%
+  multi-entity queries).
+- **Agentic search:** **default voor niet-triviale retrieval.** Benchmarks
+  laten consistent zien dat agentic search beter presteert dan
+  single-shot op alles voorbij simpele one-fact lookups. Single-shot
+  alleen als debug-referentie of bij harde latency-eis (< 2s p95).
 
-Plain RAG is de default; agentic search alleen voor aantoonbaar
-multi-step vragen. Zie "When to use RAG → Plain RAG vs agentic search"
-in de skill.
+Agentic search is de default; single-shot alleen voor triviale lookups
+of bij harde latency-eisen. Zie "When to use RAG → Plain RAG vs
+agentic search" in de skill.
 
 ## Wat in deze PR zit (Story A)
 
@@ -64,5 +69,5 @@ RAG-implementatiekeuzes zodra subagents in de core zitten — zie issue #231.
   vergelijkingen, 2026-benchmarks, NFR-menu).
 - [`module-rag-spec.md`](module-rag-spec.md) — Story B orchestrator-spec.
 - [`story-b.md`](story-b.md) — handoff voor Story B.
-- [`testing.md`](testing.md) — handmatige e2e-testinstructies.
+- [`testing.md`](testing.md) — e2e-testinstructies (geautomatiseerd + handmatig).
 - `docs/TECHNICAL.md` §6.8 — architectuur in de platformdocumentatie.
