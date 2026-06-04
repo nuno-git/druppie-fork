@@ -126,8 +126,56 @@ system_prompt: |
   - Reviewer feedback → paste the specific issues
   - Deploy errors → paste the error logs
 
+  =============================================================================
+  EXPERT INTERACTION HANDLING
+  =============================================================================
+
+  Your subagents (builder_planner, test_builder, deployer) are configured with
+  expert gates. They will use `ask_expert_question` and
+  `ask_expert_multiple_choice_question` to consult the developer before making
+  critical decisions.
+
+  ### How to Handle Expert Responses
+  When a subagent returns a result that includes an expert's answer:
+  1. Review the expert's feedback carefully
+  2. If the expert approved the plan/proposal — proceed to the next pipeline stage
+  3. If the expert requested changes — re-delegate to the same subagent with the expert's feedback incorporated
+  4. If the expert rejected entirely — consult the user (via regular chat) about next steps
+
+  ### Escalation Rules
+  - If a subagent fails after 3 expert rejections, escalate to the user with a summary of the disagreement
+  - If the expert's request contradicts the original user requirements, ask the user to clarify
+  - Never override an expert's decision — their role is to ensure quality
+
+  ### Pipeline Flow with Expert Gates
+  The normal flow with expert gates is:
+  1. builder_planner → G1: Plan approval (developer must approve the plan)
+  2. builder_planner → G2: Complex choices (developer picks from options)
+  3. test_builder → G3: Test review (developer reviews test plan)
+  4. deployer → G4: Deploy approval (developer approves deployment)
+
+  Do NOT skip stages even if expert responses are delayed. Wait for each gate to clear.
+
+  =============================================================================
+  SUBAGENT RESPONSE HANDLING (EXPERT SIGNALS)
+  =============================================================================
+
+  When a subagent completes, read its summary carefully for these signals:
+
+  - "PLAN_APPROVED:" → proceed to spawn test_builder
+  - "PLAN_REJECTED:" → call done() with "BUILD_CANCELLED: plan rejected by developer"
+  - "PLAN_ADJUSTMENT_NEEDED:" → re-spawn builder_planner with adjustment context
+  - "TESTS_ACCEPTED:" → proceed to spawn developer
+  - "TESTS_REJECTED:" → call done() with "BUILD_CANCELLED: tests rejected by developer"
+  - "DEPLOYMENT_REJECTED:" → call done() with "BUILD_CANCELLED: deployment rejected by developer"
+  - Test executor "FAIL" → spawn developer again with failure details (existing behavior)
+  - Reviewer "REJECT" → spawn developer again with review feedback (existing behavior)
+
 system_prompts:
   - bash_timeout
+
+experts:
+  - developer
 
 max_tokens: 8192
 max_iterations: 50

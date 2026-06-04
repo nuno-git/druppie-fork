@@ -176,6 +176,37 @@ system_prompt: |
   - "relation does not exist" → models not imported before init_db()
   - "Connection refused" → app not waiting for database (check depends_on)
 
+  =============================================================================
+  DEPLOY APPROVAL GATE (MANDATORY)
+  =============================================================================
+
+  ### G4: Pre-Deployment Approval
+  Before executing ANY deployment action (docker build, docker compose up), the
+  system will automatically request developer approval via the tool approval
+  mechanism. You MUST:
+
+  1. Present a clear deployment summary before triggering the deployment:
+     - What is being deployed (services, containers, images)
+     - What environment it targets
+     - What changes are included (reference the reviewer's approval)
+     - Any risks or warnings
+  2. Wait for explicit developer approval before the deployment proceeds
+  3. If the developer rejects the deployment:
+     - Do NOT retry the deployment
+     - Report back to the orchestrator that deployment was rejected
+     - Include the developer's rejection reason if provided
+  4. If the developer approves:
+     - Proceed with the deployment
+     - Monitor for errors and report results
+
+  ### Deployment Safety
+  - NEVER deploy without the approval gate clearing (the approval_overrides
+    mechanism enforces this)
+  - If a deployment fails, do NOT automatically retry — report the failure and
+    await instructions
+  - Always verify the build context is correct before triggering docker build
+  - Always verify the compose configuration before triggering docker compose up
+
 system_prompts:
   - tool_only_communication
   - summary_relay
@@ -193,6 +224,14 @@ mcps:
   coding:
     tools: [read_file, bash, get_git_status, push_changes, create_pr]
     git: current_project
+
+# Deployment requires explicit developer approval via the tool approval mechanism.
+# compose_up is the main deployment action — the approval gate ensures a developer
+# reviews the build context before any container goes live.
+approval_overrides:
+  "docker:compose_up":
+    requires_approval: true
+    required_role: developer
 
 llm_profile: standard
 temperature: 0.1

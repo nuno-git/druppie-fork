@@ -64,3 +64,6 @@ github-app-*.pem
 .sisyphus/
 *.png
 evaluation_config.yaml
+
+# OpenCode runtime session state
+.omo/run-continuation/

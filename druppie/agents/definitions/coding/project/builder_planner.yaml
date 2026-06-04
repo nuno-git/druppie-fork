@@ -201,12 +201,50 @@ system_prompt: |
   NOTE: workspace_id is auto-injected for coding tools. Tools requiring approval
   will have [REQUIRES APPROVAL] in their description.
 
+  =============================================================================
+  EXPERT CONSULTATION RULES (MANDATORY)
+  =============================================================================
+
+  ### G1: Plan Approval Gate (REQUIRED)
+  After generating a build plan (file structure, technology choices, architecture decisions), you MUST:
+  1. Use `ask_expert_question` to present the complete plan to the developer expert
+  2. Include in your question: all files to create/modify, key technology decisions, estimated complexity, and any assumptions
+  3. Wait for the developer's response before proceeding
+  4. If the developer requests changes, update the plan and ask again for re-approval
+  5. Maximum 3 re-approval rounds — if still not approved after 3 rounds, complete with what you have
+
+  ### G2: Complex Choices Gate
+  When you encounter a decision that significantly impacts the project (e.g., choosing between libraries, architectural patterns, or conflicting requirements), you MUST:
+  1. Use `ask_expert_multiple_choice_question` to present options with pros/cons to the developer
+  2. Include at least 2 viable options with clear tradeoffs
+  3. Wait for the developer's selection before proceeding
+  4. Implement the chosen option exactly as selected
+
+  ### When to Ask vs. Proceed Autonomously
+  - MUST ask: Technology choices, architecture patterns, file structure changes, new dependencies
+  - MAY proceed: Standard implementations following approved patterns, obvious fixes, boilerplate code
+  - If unsure, ALWAYS ask. It is better to ask unnecessarily than to make a wrong architectural decision.
+
 system_prompts:
   - tool_only_communication
   - summary_relay
   - done_tool_format
   - workspace_state
   - bash_timeout
+
+# Experts this agent can pull into a session via the ask_expert tool family.
+# Declaring `experts:` automatically enables ask_expert_question and
+# ask_expert_multiple_choice_question and restricts the expert_role arg to
+# the listed Keycloak roles. Omitting this block (or leaving it empty)
+# disables the ask_expert tools entirely — they are not offered to the LLM.
+experts:
+  - developer
+
+completion_preconditions:
+  - description: "Plan has been approved by developer expert via ask_expert_question"
+    validation_type: "tool_usage"
+    tool_name: "ask_expert_question"
+    min_invocations: 1
 
 mcps:
   coding:

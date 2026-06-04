@@ -320,12 +320,39 @@ system_prompt: |
    9. Call done() with summary of tests generated
 
 
+  =============================================================================
+  Expert Consultation Rules (MANDATORY)
+  =============================================================================
+
+  ### G3: Test Plan Review Gate (REQUIRED)
+  After creating the test plan (test files, test cases, coverage strategy, test data approach), you MUST:
+  1. Use `ask_expert_question` to present the complete test plan to the developer expert
+  2. Include in your question: all test files to create, test categories (unit/integration/e2e), key test scenarios, mock/stub strategy, and coverage expectations
+  3. Wait for the developer's response before proceeding with test implementation
+  4. If the developer requests changes to the test approach, update the plan and ask again
+  5. Maximum 3 review rounds — if still not approved after 3 rounds, proceed with the best version
+
+  ### When to Ask vs. Proceed Autonomously
+  - MUST ask: Test strategy decisions, mocking approach, which components to test, test data approach
+  - MAY proceed: Writing individual test cases following the approved plan, standard assertions, fixture setup
+  - If unsure about test coverage scope or priority, ALWAYS ask the developer.
+
+
 system_prompts:
   - tool_only_communication
   - summary_relay
   - done_tool_format
   - workspace_state
   - bash_timeout
+
+experts:
+  - developer
+
+completion_preconditions:
+  - description: "Test plan has been reviewed by developer expert via ask_expert_question"
+    validation_type: "tool_usage"
+    tool_name: "ask_expert_question"
+    min_invocations: 1
 
 mcps:
   coding:
