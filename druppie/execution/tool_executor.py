@@ -799,16 +799,15 @@ class ToolExecutor:
         if current:
             chunks.append(current)
 
-        translated = []
-        for chunk in chunks:
-            if chunk.strip():
-                translated.append(
-                    await translator.translate_from_english(chunk, target_language)
-                )
-            else:
-                translated.append(chunk)
+        import asyncio
 
-        return "\n".join(translated)
+        async def _translate_chunk(chunk):
+            if chunk.strip():
+                return await translator.translate_from_english(chunk, target_language)
+            return chunk
+
+        translated = await asyncio.gather(*[_translate_chunk(c) for c in chunks])
+        return "".join(translated)
 
     async def _create_approval_and_wait(self, tool_call, required_role: str | None) -> str:
         """Create an Approval record and set tool call to waiting.
@@ -1035,7 +1034,8 @@ class ToolExecutor:
         Returns:
             ToolCallStatus.COMPLETED or ToolCallStatus.FAILED
         """
-        args = tool_call.arguments or {}
+        # Copy to avoid mutating the ORM model's JSON dict in-place
+        args = dict(tool_call.arguments or {})
 
         # Extract platform-injected translation fields before sending to MCP
         translated_content = args.pop("translated_content", None)

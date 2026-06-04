@@ -31,6 +31,7 @@ jsonschema>=4.0.0
 
 # Language Detection
 langdetect>=1.0.9
+pycountry>=24.6.1
 
 # Logging
 structlog>=24.1.0

@@ -8,12 +8,16 @@ import structlog
 
 logger = structlog.get_logger()
 
-LANGUAGE_NAMES = {
-    "nl": "Dutch",
-    "en": "English",
-    "de": "German",
-    "fr": "French",
-}
+def _language_name(code: str) -> str:
+    """Resolve ISO 639-1 code to English language name via pycountry."""
+    try:
+        import pycountry
+        lang = pycountry.languages.get(alpha_2=code)
+        if lang:
+            return lang.name
+    except Exception:
+        pass
+    return code
 
 
 class TranslationService:
@@ -42,7 +46,7 @@ class TranslationService:
         if len(text.strip()) < 5:
             return text
 
-        lang_name = LANGUAGE_NAMES.get(source_language, source_language)
+        lang_name = _language_name(source_language)
         return await self._translate(text, lang_name, "English")
 
     async def translate_from_english(self, text: str, target_language: str) -> str:
@@ -51,7 +55,7 @@ class TranslationService:
         if len(text.strip()) < 5:
             return text
 
-        lang_name = LANGUAGE_NAMES.get(target_language, target_language)
+        lang_name = _language_name(target_language)
         return await self._translate(text, "English", lang_name)
 
     @staticmethod

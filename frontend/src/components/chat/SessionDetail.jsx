@@ -41,6 +41,12 @@ import SandboxEventCard, {
   getToolCategory,
 } from './SandboxEventCard'
 
+// Fast-poll window after user actions (answer/approve/continue) so the
+// loading indicator appears promptly instead of waiting for the 2s paused poll.
+let _resumingUntil = 0
+const markResuming = () => { _resumingUntil = Date.now() + 10000 }
+const isResuming = () => Date.now() < _resumingUntil
+
 // --- Tool label helper ---
 
 const getToolLabel = (toolName) => {
@@ -68,6 +74,7 @@ const InlineApproval = ({ tc, sessionId, sessionUserId }) => {
   const [showFilePreview, setShowFilePreview] = useState(false)
 
   const invalidate = () => {
+    markResuming()
     queryClient.invalidateQueries({ queryKey: ['session', sessionId] })
     queryClient.invalidateQueries({ queryKey: ['tasks'] })
     queryClient.invalidateQueries({ queryKey: ['approvalHistory'] })
@@ -245,7 +252,7 @@ const TimelineQuestion = ({ tc, agentId, sessionId }) => {
 
   const answerMut = useMutation({
     mutationFn: ({ questionId, answer, selectedChoices = null }) => answerQuestion(questionId, answer, selectedChoices),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['session', sessionId] }),
+    onSuccess: () => { markResuming(); queryClient.invalidateQueries({ queryKey: ['session', sessionId] }) },
   })
 
   const isAnswered = tc.status === 'completed'
@@ -629,10 +636,11 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
       if (query.state.error) return false
       const status = query.state.data?.status
       if (status === 'completed' || status === 'failed') return false
+      // Fast poll briefly after submitting an answer/approval (translation in progress)
+      if (isResuming()) return 500
       if (status === 'paused_crashed') return 2000
       if (status === 'paused_sandbox') return 2000
       if (status === 'paused' || status === 'paused_approval' || status === 'paused_hitl') {
-        // Fast poll while stopping (agent still finishing current op), slow poll when fully paused
         const hasRunning = query.state.data?.timeline?.some(
           e => e.type === 'agent_run' && e.agent_run?.status === 'running'
         )
@@ -646,6 +654,7 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
   const continueMutation = useMutation({
     mutationFn: (message) => sendChat(message, sessionId),
     onSuccess: () => {
+      markResuming()
       setContinueInput('')
       queryClient.invalidateQueries({ queryKey: ['session', sessionId] })
       queryClient.invalidateQueries({ queryKey: ['sessions'] })

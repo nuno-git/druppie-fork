@@ -737,24 +737,12 @@ class Orchestrator:
             await self.execute_pending_runs(session_id)
             return session_id
 
-        # Step 2: Detect language and translate HITL answer before saving
+        # Step 2: Detect language for translation but do NOT update session language.
+        # Session language is locked by the initial user message to prevent
+        # HITL answers from flipping it (e.g. a Dutch user giving one
+        # English-sounding answer would switch the entire session to English).
         human_input = HumanInput(answer, self.language_detector)
         self._last_language_info = human_input.language_info()
-        if human_input.detected_language:
-            session_language = (
-                human_input.detected_language
-                if human_input.detected_language in ("nl", "en")
-                else "en"
-            )
-            self.session_repo.update_language(session_id, session_language)
-            logger.info(
-                "language_detected_from_hitl_answer",
-                session_id=str(session_id),
-                question_id=str(question_id),
-                detected_language=human_input.detected_language,
-                session_language=session_language,
-            )
-            self.session_repo.commit()
 
         translated_answer = answer
         if human_input.detected_language and human_input.detected_language != "en":
