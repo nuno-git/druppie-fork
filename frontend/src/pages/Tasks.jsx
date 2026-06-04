@@ -8,7 +8,7 @@ import { Link } from 'react-router-dom'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { CheckCircle, XCircle, Clock, Shield, AlertTriangle, AlertCircle, Loader2, MessageSquare, Bot, ExternalLink, ChevronDown, ChevronRight, History, User, FileCode, FilePlus, Terminal, GitBranch, Code, Eye, X, Calendar } from 'lucide-react'
-import { getTasks, approveTask, rejectTask, getApprovalHistory, getJobRuns, getJobs, triggerJob } from '../services/api'
+import { getTasks, approveTask, rejectTask, getApprovalHistory, getJobRuns, getJobs, triggerJob, getPendingJobApprovals, approveJob, rejectJob } from '../services/api'
 import { chatMarkdownComponents, ProjectRepoContext, SourceFileContext } from '../components/chat/ChatHelpers'
 import { useAuth } from '../App'
 import { hasRole } from '../services/keycloak'
@@ -147,7 +147,6 @@ const getToolDescription = (toolName) => {
     'docker:remove': 'Remove a Docker container',
     'exec_command': 'Execute command inside a Docker container',
     'docker:exec_command': 'Execute command inside a Docker container',
-    'execute_job': 'Execute scheduled job (job-level approval)',
   }
   return toolDescriptions[toolName] || `Execute ${toolName}`
 }
@@ -178,7 +177,6 @@ const getToolInfo = (toolName) => {
     'coding:run_command': { icon: Terminal, label: 'Run Command', color: 'text-gray-600' },
     'commit_and_push': { icon: GitBranch, label: 'Git Commit', color: 'text-green-600' },
     'coding:commit_and_push': { icon: GitBranch, label: 'Git Commit', color: 'text-green-600' },
-    'execute_job': { icon: Calendar, label: 'Scheduled Job', color: 'text-purple-600' },
   }
   return tools[toolName] || { icon: Code, label: toolName?.split(':').pop() || 'Tool', color: 'text-gray-600' }
 }
@@ -531,6 +529,104 @@ const JobCard = ({ job, onTrigger, isTriggering }) => {
   )
 }
 
+const JobApprovalCard = ({ run, onApprove, onReject }) => {
+  const [rejectReason, setRejectReason] = useState('')
+  const [showReject, setShowReject] = useState(false)
+
+  const requiredRole = run.required_role || 'admin'
+  const canApprove = hasRole('admin') || hasRole(requiredRole)
+
+  return (
+    <div className={`bg-white rounded-xl border p-4 border-amber-100`}>
+      <div className="flex items-start justify-between gap-4">
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <Calendar className="w-4 h-4 text-purple-600 flex-shrink-0" />
+            <h3 className="font-medium text-gray-900">Scheduled Job Approval</h3>
+            <span className="text-xs text-gray-400">{run.trigger_type}</span>
+          </div>
+          <p className="text-gray-400 text-sm mt-0.5">
+            Requires <span className="font-semibold text-gray-700">{requiredRole}</span> role to execute
+          </p>
+          {run.error_message && (
+            <p className="text-red-500 text-sm mt-1">{run.error_message}</p>
+          )}
+          <div className="flex items-center gap-4 text-xs text-gray-400 flex-wrap mt-1">
+            <span>{new Date(run.created_at).toLocaleString()}</span>
+            {run.session_id && (
+              <Link to={`/chat?session=${run.session_id}`} className="text-blue-500 hover:text-blue-700 hover:underline flex items-center gap-1">
+                <MessageSquare className="w-3 h-3" />
+                Conversation
+              </Link>
+            )}
+          </div>
+        </div>
+
+        {canApprove ? (
+          <div className="flex items-center gap-2 flex-shrink-0">
+            {!showReject ? (
+              <>
+                <button
+                  onClick={() => onApprove(run.id)}
+                  className="px-3 py-1.5 text-sm text-white rounded-lg flex items-center focus:outline-none focus:ring-2 focus:ring-offset-2 bg-green-600 hover:bg-green-700 focus:ring-green-500"
+                  aria-label="Approve job run"
+                >
+                  <CheckCircle className="w-4 h-4 mr-1.5" aria-hidden="true" />
+                  Approve
+                </button>
+                <button
+                  onClick={() => setShowReject(true)}
+                  className="px-3 py-1.5 text-sm text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors focus:outline-none"
+                  aria-label="Reject job run"
+                >
+                  Reject
+                </button>
+              </>
+            ) : null}
+          </div>
+        ) : (
+          <span className="flex items-center gap-1.5 text-xs text-gray-400 flex-shrink-0">
+            <Clock className="w-3.5 h-3.5 animate-pulse" />
+            Needs {requiredRole}
+          </span>
+        )}
+      </div>
+
+      {canApprove && showReject && (
+        <div className="mt-3 space-y-2">
+          <textarea
+            value={rejectReason}
+            onChange={(e) => setRejectReason(e.target.value)}
+            placeholder="Reason for rejection..."
+            className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent text-sm"
+            rows={2}
+            autoFocus
+          />
+          <div className="flex items-center gap-2 justify-end">
+            <button
+              onClick={() => setShowReject(false)}
+              className="px-3 py-1.5 text-sm text-gray-500 hover:text-gray-700 rounded-lg"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={() => {
+                if (rejectReason.trim()) {
+                  onReject(run.id, rejectReason)
+                }
+              }}
+              disabled={!rejectReason.trim()}
+              className="px-3 py-1.5 text-sm bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50"
+            >
+              Confirm Reject
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 const Tasks = () => {
   const { user } = useAuth()
   const queryClient = useQueryClient()
@@ -546,7 +642,7 @@ const Tasks = () => {
     queryFn: getTasks,
     refetchInterval: 5000,
   })
- 
+
   const { data: jobRunsResponse, isLoading: jobRunsLoading } = useQuery({
     queryKey: ['jobRuns'],
     queryFn: () => getJobRuns(null, null, 1, 20),
@@ -581,6 +677,45 @@ const Tasks = () => {
     },
   })
 
+  // Fetch pending job-level approvals
+  const { data: pendingJobApprovalsResponse, isLoading: pendingJobApprovalsLoading } = useQuery({
+    queryKey: ['pendingJobApprovals'],
+    queryFn: getPendingJobApprovals,
+    refetchInterval: 5000,
+  })
+
+  const approveJobMutation = useMutation({
+    mutationFn: (jobRunId) => approveJob(jobRunId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['pendingJobApprovals'] })
+      queryClient.invalidateQueries({ queryKey: ['jobRuns'] })
+      toast.success('Job Approved', 'The scheduled job has been approved and will execute.')
+    },
+    onError: (err) => {
+      toast.error('Approval Failed', err.message || 'Failed to approve the job. Please try again.')
+    },
+  })
+
+  const rejectJobMutation = useMutation({
+    mutationFn: ({ jobRunId, reason }) => rejectJob(jobRunId, reason),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['pendingJobApprovals'] })
+      queryClient.invalidateQueries({ queryKey: ['jobRuns'] })
+      toast.success('Job Rejected', 'The scheduled job has been rejected.')
+    },
+    onError: (err) => {
+      toast.error('Rejection Failed', err.message || 'Failed to reject the job. Please try again.')
+    },
+  })
+
+  const handleApproveJob = (jobRunId) => {
+    approveJobMutation.mutate(jobRunId)
+  }
+
+  const handleRejectJob = (jobRunId, reason) => {
+    rejectJobMutation.mutate({ jobRunId, reason })
+  }
+
   // Extract tasks array from paginated response
   const tasks = tasksResponse?.items || []
 
@@ -589,6 +724,7 @@ const Tasks = () => {
     queryClient.invalidateQueries({ queryKey: ['plans'] })
     queryClient.invalidateQueries({ queryKey: ['approvalHistory'] })
     queryClient.invalidateQueries({ queryKey: ['pending-approvals-count'] })
+    queryClient.invalidateQueries({ queryKey: ['pendingJobApprovals'] })
     queryClient.invalidateQueries({ queryKey: ['jobRuns'] })
     queryClient.invalidateQueries({ queryKey: ['jobs'] })
   }
@@ -684,7 +820,51 @@ const Tasks = () => {
     </>
   )}
 
-      <PageHeader title="Pending Approvals" subtitle="Review and approve tasks based on your role permissions.">
+      <PageHeader title="Pending Job Approvals" subtitle="Scheduled jobs awaiting approval before execution.">
+        <div className="flex items-center gap-2">
+          <span className="text-sm text-gray-500">Your roles:</span>
+          {user?.roles?.slice(0, 3).map((role) => (
+            <span
+              key={role}
+              className="px-2 py-1 bg-blue-100 text-blue-700 text-xs rounded-full"
+            >
+              {role}
+            </span>
+          ))}
+        </div>
+      </PageHeader>
+
+      {pendingJobApprovalsLoading ? (
+        <div className="space-y-4">
+          {Array.from({ length: 2 }).map((_, i) => (
+            <div key={i} className="bg-white rounded-xl border border-gray-100 p-4 animate-pulse">
+              <div className="w-32 h-4 bg-gray-200 rounded mb-2" />
+              <div className="w-3/4 h-3 bg-gray-100 rounded" />
+            </div>
+          ))}
+        </div>
+      ) : (pendingJobApprovalsResponse?.items || []).length === 0 ? (
+        <EmptyState
+          icon={CheckCircle}
+          title="No pending job approvals"
+          description="No scheduled jobs waiting for approval right now."
+        />
+      ) : (
+        <div className="space-y-4">
+          {(pendingJobApprovalsResponse?.items || []).map((run) => (
+            <JobApprovalCard
+              key={run.id}
+              run={run}
+              onApprove={handleApproveJob}
+              onReject={handleRejectJob}
+            />
+          ))}
+        </div>
+      )}
+
+      <div className="border-t border-gray-200 pt-6" />
+
+      <PageHeader title="Pending Tool Approvals" subtitle="Review and approve MCP tool executions based on your role permissions.">
         <div className="flex items-center gap-2">
           <span className="text-sm text-gray-500">Your roles:</span>
           {user?.roles?.slice(0, 3).map((role) => (

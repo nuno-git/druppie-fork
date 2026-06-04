@@ -25,8 +25,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 import structlog
 
-from druppie.api.deps import get_current_user, get_user_roles, get_approval_service, get_job_service
-from druppie.services import ApprovalService, JobService
+from druppie.api.deps import get_current_user, get_user_roles, get_approval_service
+from druppie.services import ApprovalService
 from druppie.domain import ApprovalDetail, ApprovalHistoryList, PendingApprovalList
 from druppie.core.background_tasks import create_session_task, run_session_task, SessionTaskConflict
 
@@ -195,7 +195,6 @@ async def reject(
     approval_id: UUID,
     request: RejectRequest,
     approval_service: ApprovalService = Depends(get_approval_service),
-    job_service: JobService = Depends(get_job_service),
     user: dict = Depends(get_current_user),
 ) -> ApprovalResponse:
     """Reject a pending tool execution.
@@ -235,17 +234,6 @@ async def reject(
         user_roles=user_roles,
         reason=request.reason,
     )
-
-    is_job_level = approval.tool_call_id is None
-    if is_job_level:
-        job_service.handle_rejected_job_approval(
-            agent_run_id=approval.agent_run_id,
-            session_id=approval.session_id,
-        )
-        return ApprovalResponse(
-            approval=approval,
-            message="Rejected - job will not execute",
-        )
 
     # Step 2: Spawn background task to resume workflow
     try:

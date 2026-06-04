@@ -98,12 +98,11 @@ def job_repo(db_session: DbSession) -> JobRepository:
 @pytest.fixture()
 def job_service(db_session: DbSession) -> JobService:
     job_repo = JobRepository(db_session)
-    from druppie.repositories import SessionRepository, ExecutionRepository, ApprovalRepository
+    from druppie.repositories import SessionRepository, ExecutionRepository
 
     session_repo = SessionRepository(db_session)
     execution_repo = ExecutionRepository(db_session)
-    approval_repo = ApprovalRepository(db_session)
-    return JobService(job_repo, session_repo, execution_repo, approval_repo)
+    return JobService(job_repo, session_repo, execution_repo)
 
 
 # ---------------------------------------------------------------------------

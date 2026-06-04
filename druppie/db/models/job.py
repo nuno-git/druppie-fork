@@ -108,6 +108,11 @@ class JobRun(Base):
     error_message = Column(Text)
     logs = Column(Text)
 
+    required_role = Column(String(50))
+    approved_by = Column(UUID(as_uuid=True), ForeignKey("users.id"))
+    approved_at = Column(DateTime(timezone=True))
+    rejection_reason = Column(Text)
+
     started_at = Column(DateTime(timezone=True), default=utcnow)
     completed_at = Column(DateTime(timezone=True))
     created_at = Column(DateTime(timezone=True), default=utcnow)
@@ -125,4 +130,8 @@ class JobRun(Base):
             "started_at": self.started_at.isoformat() if self.started_at else None,
             "completed_at": self.completed_at.isoformat() if self.completed_at else None,
             "created_at": self.created_at.isoformat() if self.created_at else None,
+            "required_role": self.required_role,
+            "approved_by": str(self.approved_by) if self.approved_by else None,
+            "approved_at": self.approved_at.isoformat() if self.approved_at else None,
+            "rejection_reason": self.rejection_reason,
         }

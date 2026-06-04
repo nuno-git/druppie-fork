@@ -129,7 +129,7 @@ async def lifespan(app: FastAPI):
     create_tracked_task(sandbox_watchdog_loop(), name="sandbox-watchdog")
 
     from druppie.db.database import SessionLocal
-    from druppie.repositories import JobRepository, SessionRepository, ExecutionRepository, ApprovalRepository
+    from druppie.repositories import JobRepository, SessionRepository, ExecutionRepository
     from druppie.services import JobService
     from druppie.services.job_service import JobScheduler
 
@@ -138,7 +138,6 @@ async def lifespan(app: FastAPI):
             job_repo=JobRepository(db),
             session_repo=SessionRepository(db),
             execution_repo=ExecutionRepository(db),
-            approval_repo=ApprovalRepository(db),
         )
 
     job_db = SessionLocal()

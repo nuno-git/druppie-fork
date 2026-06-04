@@ -625,44 +625,6 @@ class Orchestrator:
             await self.execute_pending_runs(session_id)
             return session_id
 
-        # Job-level approval: no tool to execute, just resume agent run.
-        # Rejections are already handled upstream in the approvals endpoint
-        # (approvals.py) before this method is called, so no REJECTED
-        # branch is needed here.
-        if not approval.tool_call_id:
-            logger.info(
-                "resuming_job_after_approval",
-                session_id=str(session_id),
-                approval_id=str(approval_id),
-            )
-            self.session_repo.update_status(session_id, SessionStatus.ACTIVE)
-            self.execution_repo.update_status(approval.agent_run_id, AgentRunStatus.PENDING)
-            self.execution_repo.commit()
-
-            try:
-                await self.execute_pending_runs(session_id)
-            except Exception:
-                if self.job_repo:
-                    self.job_repo.mark_job_run_finalized_by_agent_run_id(
-                        approval.agent_run_id, "failed"
-                    )
-                    self.execution_repo.commit()
-                raise
-
-            # Sync job_run status for approval-gated jobs
-            if self.job_repo:
-                final_session = self.session_repo.get_by_id(session_id)
-                if final_session and final_session.status == SessionStatus.COMPLETED:
-                    self.job_repo.mark_job_run_finalized_by_agent_run_id(
-                        approval.agent_run_id, "completed"
-                    )
-                else:
-                    self.job_repo.mark_job_run_finalized_by_agent_run_id(
-                        approval.agent_run_id, "failed"
-                    )
-            self.execution_repo.commit()
-            return session_id
-
         # Step 2: Execute the approved tool
         # Note: Even if the tool fails, we continue to resume the agent
         # so it can see the error and decide what to do (retry, different approach, etc.)

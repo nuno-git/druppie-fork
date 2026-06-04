@@ -12,7 +12,7 @@ import yaml
 from croniter import croniter
 from sqlalchemy.orm import Session
 
-from ..repositories import JobRepository, SessionRepository, ExecutionRepository, ApprovalRepository
+from ..repositories import JobRepository, SessionRepository, ExecutionRepository
 from ..domain.job import JobDefinitionList, JobDefinitionDetail, JobRunList, JobRunDetail
 from ..db.models.job import JobDefinition, JobDefinitionConfig
 from ..domain.common import AgentRunStatus, SessionStatus, JobRunStatus
@@ -29,12 +29,10 @@ class JobService:
         job_repo: JobRepository,
         session_repo: SessionRepository,
         execution_repo: ExecutionRepository,
-        approval_repo: ApprovalRepository | None = None,
     ):
         self.job_repo = job_repo
         self.session_repo = session_repo
         self.execution_repo = execution_repo
-        self.approval_repo = approval_repo
 
     def load_definitions_from_yaml(self, directory: str | None = None) -> JobDefinitionList:
         jobs_dir = directory or os.path.abspath(DEFAULT_JOBS_DIR)
@@ -128,15 +126,13 @@ class JobService:
             return None
         return self.job_repo.to_job_run_detail(run)
 
-    def handle_rejected_job_approval(self, agent_run_id: UUID, session_id: UUID) -> None:
-        job_run = self.job_repo.get_job_run_by_agent_run_id(agent_run_id)
-        if job_run:
-            self.job_repo.update_job_run_status(job_run.id, JobRunStatus.REJECTED)
-        self.session_repo.update_status(
-            session_id, SessionStatus.FAILED, error_message="Job approval rejected"
-        )
-        self.execution_repo.update_status(agent_run_id, AgentRunStatus.FAILED)
-        self.execution_repo.commit()
+    def get_pending_approval_runs(self, user_roles: list[str], user_id: UUID | None = None) -> list[JobRunDetail]:
+        if "admin" in user_roles:
+            roles = None
+        else:
+            roles = user_roles
+        runs = self.job_repo.get_pending_approval_runs(roles)
+        return [self.job_repo.to_job_run_detail(r) for r in runs]
 
     def list_job_runs(
         self,
@@ -166,7 +162,6 @@ class JobService:
 
         Raises:
             NotFoundError: If the job definition does not exist.
-            RuntimeError: If approval is required but no approval_repo is wired.
         """
         definition = self.job_repo.get_definition_by_id(definition_id)
         if not definition:
@@ -201,18 +196,7 @@ class JobService:
         self.job_repo.commit()
 
         if definition.approval_required:
-            if self.approval_repo is None:
-                raise RuntimeError("approval_repo required for approval-gated jobs")
-            approval = self.approval_repo.create(
-                session_id=session.id,
-                agent_run_id=agent_run.id,
-                tool_call_id=None,
-                mcp_server="jobs",
-                tool_name="execute_job",
-                arguments={"job_id": definition.job_id, "prompt": definition.prompt},
-                required_role=definition.required_role or "admin",
-            )
-            self.approval_repo.commit()
+            self.job_repo.set_job_run_approval_required(run.id, definition.required_role or "admin")
             self.execution_repo.update_status(agent_run.id, AgentRunStatus.PAUSED_TOOL)
             self.session_repo.update_status(session.id, SessionStatus.PAUSED_APPROVAL)
             self.execution_repo.commit()
@@ -221,7 +205,6 @@ class JobService:
             logger.info(
                 "job_approval_required",
                 job_run_id=str(run.id),
-                approval_id=str(approval.id),
                 required_role=definition.required_role,
             )
             return self.job_repo.to_job_run_detail(run)
@@ -235,6 +218,91 @@ class JobService:
             job_definition_id=str(definition_id),
             session_id=str(session.id),
             trigger_type=trigger_type,
+        )
+
+        return self.job_repo.to_job_run_detail(run)
+
+    def approve_job_run(
+        self,
+        job_run_id: UUID,
+        user_id: UUID,
+        user_roles: list[str],
+    ) -> JobRunDetail:
+        from ..api.errors import NotFoundError, AuthorizationError, ConflictError
+
+        run = self.job_repo.get_job_run_by_id(job_run_id)
+        if not run:
+            raise NotFoundError("job_run", str(job_run_id))
+
+        if run.status != JobRunStatus.WAITING_APPROVAL.value:
+            raise ConflictError(f"Job run is not waiting for approval ({run.status})")
+
+        required_role = run.required_role or "admin"
+        if "admin" not in user_roles and required_role not in user_roles:
+            raise AuthorizationError(
+                f"Requires {required_role} role to approve",
+                required_roles=[required_role],
+            )
+
+        from datetime import datetime, timezone
+        from ..db.models.base import utcnow
+        self.job_repo.db.query(JobRun).filter(JobRun.id == job_run_id).update(
+            {"approved_by": user_id, "approved_at": utcnow()}
+        )
+
+        if run.session_id:
+            self.session_repo.update_status(run.session_id, SessionStatus.ACTIVE)
+        if run.agent_run_id:
+            self.execution_repo.update_status(run.agent_run_id, AgentRunStatus.PENDING)
+        self.execution_repo.commit()
+
+        logger.info(
+            "job_run_approved",
+            job_run_id=str(job_run_id),
+            approved_by=str(user_id),
+        )
+
+        self.execute_job_in_background(run.id, run.session_id)
+        return self.job_repo.to_job_run_detail(run)
+
+    def reject_job_run(
+        self,
+        job_run_id: UUID,
+        user_id: UUID,
+        user_roles: list[str],
+        reason: str,
+    ) -> JobRunDetail:
+        from ..api.errors import NotFoundError, AuthorizationError, ConflictError
+
+        run = self.job_repo.get_job_run_by_id(job_run_id)
+        if not run:
+            raise NotFoundError("job_run", str(job_run_id))
+
+        if run.status != JobRunStatus.WAITING_APPROVAL.value:
+            raise ConflictError(f"Job run is not waiting for approval ({run.status})")
+
+        required_role = run.required_role or "admin"
+        if "admin" not in user_roles and required_role not in user_roles:
+            raise AuthorizationError(
+                f"Requires {required_role} role to reject",
+                required_roles=[required_role],
+            )
+
+        self.job_repo.update_job_run_status(
+            run.id, JobRunStatus.REJECTED, error_message=reason
+        )
+        self.session_repo.update_status(
+            run.session_id, SessionStatus.FAILED, error_message=f"Job rejected: {reason}"
+        )
+        if run.agent_run_id:
+            self.execution_repo.update_status(run.agent_run_id, AgentRunStatus.FAILED)
+        self.execution_repo.commit()
+
+        logger.info(
+            "job_run_rejected",
+            job_run_id=str(job_run_id),
+            rejected_by=str(user_id),
+            reason=reason,
         )
 
         return self.job_repo.to_job_run_detail(run)

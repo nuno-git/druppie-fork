@@ -43,6 +43,10 @@ class JobRunSummary(BaseModel):
     started_at: datetime | None = None
     completed_at: datetime | None = None
     created_at: datetime
+    required_role: str | None = None
+    approved_by: UUID | None = None
+    approved_at: datetime | None = None
+    rejection_reason: str | None = None
 
 
 class JobRunDetail(JobRunSummary):

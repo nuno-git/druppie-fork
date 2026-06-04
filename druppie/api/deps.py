@@ -159,10 +159,9 @@ def get_job_service(
     job_repo: JobRepository = Depends(get_job_repository),
     session_repo: SessionRepository = Depends(get_session_repository),
     execution_repo: "ExecutionRepository" = Depends(get_execution_repository),
-    approval_repo: ApprovalRepository = Depends(get_approval_repository),
 ) -> JobService:
     """Get JobService with repositories injected."""
-    return JobService(job_repo, session_repo, execution_repo, approval_repo)
+    return JobService(job_repo, session_repo, execution_repo)
 
 
 def get_orchestrator(

@@ -126,6 +126,25 @@ class JobRepository(BaseRepository):
             updates["agent_run_id"] = agent_run_id
         self.db.query(JobRun).filter(JobRun.id == run_id).update(updates)
 
+    def set_job_run_approval_required(
+        self,
+        run_id: UUID,
+        required_role: str,
+    ) -> None:
+        self.db.query(JobRun).filter(JobRun.id == run_id).update(
+            {"required_role": required_role}
+        )
+
+    def get_pending_approval_runs(
+        self, roles: list[str] | None = None
+    ) -> list[JobRun]:
+        query = self.db.query(JobRun).filter(
+            JobRun.status == JobRunStatus.WAITING_APPROVAL.value
+        )
+        if roles is not None:
+            query = query.filter(JobRun.required_role.in_(roles))
+        return query.order_by(JobRun.created_at.desc()).all()
+
     def list_job_runs(
         self,
         job_definition_id: UUID | None = None,
@@ -238,6 +257,10 @@ class JobRepository(BaseRepository):
             started_at=run.started_at,
             completed_at=run.completed_at,
             created_at=run.created_at,
+            required_role=run.required_role,
+            approved_by=run.approved_by,
+            approved_at=run.approved_at,
+            rejection_reason=run.rejection_reason,
         )
 
     def to_job_run_detail(self, run: JobRun) -> JobRunDetail:
@@ -253,4 +276,8 @@ class JobRepository(BaseRepository):
             started_at=run.started_at,
             completed_at=run.completed_at,
             created_at=run.created_at,
+            required_role=run.required_role,
+            approved_by=run.approved_by,
+            approved_at=run.approved_at,
+            rejection_reason=run.rejection_reason,
         )

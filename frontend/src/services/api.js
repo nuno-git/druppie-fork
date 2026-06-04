@@ -436,6 +436,17 @@ export const getJobRuns = (jobDefinitionId = null, status = null, page = 1, limi
   return request(`/api/jobs/runs?${qs}`)
 }
 
+// Job-level approval endpoints
+export const getPendingJobApprovals = () => request('/api/jobs/pending-approvals')
+export const approveJob = (jobRunId) =>
+  request(`/api/jobs/${jobRunId}/approve`, { method: 'POST' })
+export const rejectJob = (jobRunId, reason = '') =>
+  request(`/api/jobs/${jobRunId}/reject`, {
+    method: 'POST',
+    body: JSON.stringify({ reason }),
+    headers: { 'Content-Type': 'application/json' },
+  })
+
 // ============ Cache ============
 export const getCachedPackages = () => request('/api/cache/packages')
 export const getAllProjectDependencies = () => request('/api/cache/dependencies')
