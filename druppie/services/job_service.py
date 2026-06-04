@@ -34,6 +34,42 @@ class JobService:
         self.session_repo = session_repo
         self.execution_repo = execution_repo
 
+    def _validate_job_data(self, data: dict, filepath: str) -> list[str]:
+        """Validate a job definition loaded from YAML. Returns list of error messages."""
+        errors: list[str] = []
+
+        name = data.get("name")
+        if not name or not str(name).strip():
+            errors.append("name is required and must be non-empty")
+
+        schedule = data.get("schedule")
+        if not schedule or not str(schedule).strip():
+            errors.append("schedule is required")
+        else:
+            try:
+                croniter(str(schedule))
+            except ValueError:
+                errors.append(f"invalid cron schedule: '{schedule}'")
+
+        agent_id = data.get("agent_id")
+        if not agent_id or not str(agent_id).strip():
+            errors.append("agent_id is required")
+        else:
+            from ..agents.definition_loader import AgentDefinitionLoader
+
+            definitions_path = AgentDefinitionLoader._get_definitions_path()
+            agent_file = os.path.join(definitions_path, f"{agent_id}.yaml")
+            if not os.path.exists(agent_file):
+                errors.append(
+                    f"agent_id '{agent_id}' not found (looked in {agent_file})"
+                )
+
+        prompt = data.get("prompt")
+        if not prompt or not str(prompt).strip():
+            errors.append("prompt is required and must be non-empty")
+
+        return errors
+
     def load_definitions_from_yaml(self, directory: str | None = None) -> JobDefinitionList:
         jobs_dir = directory or os.path.abspath(DEFAULT_JOBS_DIR)
         if not os.path.isdir(jobs_dir):
@@ -54,6 +90,16 @@ class JobService:
                 job_id = data.get("id")
                 if not job_id:
                     logger.warning("job_yaml_missing_id", file=filename)
+                    continue
+                validation_errors = self._validate_job_data(data, filepath)
+                if validation_errors:
+                    for error in validation_errors:
+                        logger.error(
+                            "job_yaml_validation_failed",
+                            file=filename,
+                            job_id=job_id,
+                            error=error,
+                        )
                     continue
                 seen_job_ids.add(job_id)
                 existing = self.job_repo.get_definition_by_job_id(job_id)

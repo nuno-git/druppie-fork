@@ -383,6 +383,58 @@ class TestJobServiceYamlLoading:
         assert result.total == 1
         assert result.items[0].job_id == "keep"
 
+    def test_load_definitions_from_yaml_skips_invalid_cron(self, job_service: JobService, tmp_path):
+        defs_dir = tmp_path / "defs"
+        defs_dir.mkdir()
+        (defs_dir / "bad_cron.yaml").write_text(
+            "id: bad_cron\nname: Bad Cron\nschedule: 'not a cron at all'\n"
+            "agent_id: summarizer\nprompt: Do it\nenabled: true\n"
+        )
+
+        with patch("druppie.services.job_service.DEFAULT_JOBS_DIR", str(defs_dir)):
+            result = job_service.load_definitions_from_yaml(str(defs_dir))
+
+        assert result.total == 0
+
+    def test_load_definitions_from_yaml_skips_invalid_agent(self, job_service: JobService, tmp_path):
+        defs_dir = tmp_path / "defs"
+        defs_dir.mkdir()
+        (defs_dir / "bad_agent.yaml").write_text(
+            "id: bad_agent\nname: Bad Agent\nschedule: '0 0 * * *'\n"
+            "agent_id: nonexistent_agent\nprompt: Do it\nenabled: true\n"
+        )
+
+        with patch("druppie.services.job_service.DEFAULT_JOBS_DIR", str(defs_dir)):
+            result = job_service.load_definitions_from_yaml(str(defs_dir))
+
+        assert result.total == 0
+
+    def test_load_definitions_from_yaml_skips_missing_name(self, job_service: JobService, tmp_path):
+        defs_dir = tmp_path / "defs"
+        defs_dir.mkdir()
+        (defs_dir / "no_name.yaml").write_text(
+            "id: no_name\nschedule: '0 0 * * *'\n"
+            "agent_id: summarizer\nprompt: Do it\nenabled: true\n"
+        )
+
+        with patch("druppie.services.job_service.DEFAULT_JOBS_DIR", str(defs_dir)):
+            result = job_service.load_definitions_from_yaml(str(defs_dir))
+
+        assert result.total == 0
+
+    def test_load_definitions_from_yaml_skips_missing_prompt(self, job_service: JobService, tmp_path):
+        defs_dir = tmp_path / "defs"
+        defs_dir.mkdir()
+        (defs_dir / "no_prompt.yaml").write_text(
+            "id: no_prompt\nname: No Prompt\nschedule: '0 0 * * *'\n"
+            "agent_id: summarizer\nenabled: true\n"
+        )
+
+        with patch("druppie.services.job_service.DEFAULT_JOBS_DIR", str(defs_dir)):
+            result = job_service.load_definitions_from_yaml(str(defs_dir))
+
+        assert result.total == 0
+
 
 # ---------------------------------------------------------------------------
 # JobScheduler — should_run logic
