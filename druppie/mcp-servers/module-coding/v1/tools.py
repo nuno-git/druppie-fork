@@ -115,13 +115,19 @@ def _get_github_push_url() -> str:
 
 
 SANDBOX_IMAGE = os.getenv("DRUPPIE_SANDBOX_IMAGE", "druppie-sandbox:latest")
-SANDBOX_MEMORY = os.getenv("DRUPPIE_DOCKER_MEMORY_LIMIT", "4g")
-SANDBOX_CPU = os.getenv("DRUPPIE_DOCKER_CPU_LIMIT", "2")
-SANDBOX_PIDS_LIMIT = int(os.getenv("DRUPPIE_DOCKER_PIDS_LIMIT", "8192"))
+SANDBOX_MEMORY = os.getenv("DRUPPIE_DOCKER_MEMORY_LIMIT", "12g")
+SANDBOX_CPU = os.getenv("DRUPPIE_DOCKER_CPU_LIMIT", "4")
+SANDBOX_PIDS_LIMIT = int(os.getenv("DRUPPIE_DOCKER_PIDS_LIMIT", "32768"))
 SANDBOX_NETWORK = os.getenv("DRUPPIE_SANDBOX_NETWORK", "bridge")
 SANDBOX_INET_NETWORK = os.getenv("DRUPPIE_SANDBOX_INET_NETWORK", "")
 SANDBOX_MODULES_NETWORK = os.getenv("DRUPPIE_SANDBOX_MODULES_NETWORK", "")
 SANDBOX_RUNTIME = os.getenv("DRUPPIE_SANDBOX_RUNTIME", "sysbox-runc")
+_ALLOWED_RUNTIMES = {"sysbox-runc", "kata-runtime"}
+assert SANDBOX_RUNTIME in _ALLOWED_RUNTIMES, (
+    f"Invalid DRUPPIE_SANDBOX_RUNTIME={SANDBOX_RUNTIME!r}. "
+    f"Must be one of {_ALLOWED_RUNTIMES}. "
+    f"Install sysbox-runc: https://github.com/nestybox/sysbox"
+)
 SANDBOX_CACHE_VOLUME = os.getenv("DRUPPIE_SANDBOX_CACHE_VOLUME", "sandbox_dep_cache")
 SANDBOX_USER = os.getenv("DRUPPIE_SANDBOX_USER", "druppie")
 

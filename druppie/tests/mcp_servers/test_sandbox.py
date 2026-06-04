@@ -125,14 +125,6 @@ class TestCommandConstruction:
         assert cmd[idx + 1] == "kata-runtime"
 
     @pytest.mark.asyncio
-    async def test_runtime_flag_docker(self):
-        """Even with runtime='docker', the flag is still emitted."""
-        with patch.object(tools, "SANDBOX_RUNTIME", "docker"):
-            cmd = await _capture_docker_run_cmd()
-        idx = cmd.index("--runtime")
-        assert cmd[idx + 1] == "docker"
-
-    @pytest.mark.asyncio
     async def test_no_user_flag(self):
         cmd = await _capture_docker_run_cmd()
         assert "--user" not in cmd

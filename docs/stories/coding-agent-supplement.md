@@ -108,7 +108,7 @@ De nieuwe Agent class die alle agents via agent_runtime draait. De orchestrator 
 |---|---------------------|--------|
 | SB-1 | Per-session per-git_scope container: `druppie-{session[:12]}-{git_scope}` | ✅ |
 | SB-2 | Eerste tool call → container created + repo cloned. Volgende calls → bestaande container hergebruikt | ✅ |
-| SB-3 | Container resources: 4GB memory, 2 CPUs, 8192 pids limit, 512MB tmpfs | ✅ |
+| SB-3 | Container resources: 12GB memory, 4 CPUs, 32768 pids limit, 512MB tmpfs | ✅ |
 | SB-4 | Sysbox runtime voor Docker-in-Docker (Docker 20.10.24 + Compose v5.1.4 in sandbox) | ✅ |
 | SB-5 | Dependency cache volume gedeeld tussen alle sandboxen (`sandbox_dep_cache` voor pip/npm/uv) | ✅ |
 | SB-6 | Container destroyed bij: parent done(), error, cancel (`_destroy_all_for_session()`) | ✅ |

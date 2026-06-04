@@ -1004,8 +1004,8 @@ Optional:
 | `VITE_KEYCLOAK_URL` | `http://localhost:8180` | Frontend Keycloak URL |
 | `SANDBOX_CONTROL_PLANE_URL` | `http://sandbox-control-plane:8787` | Sandbox control plane endpoint |
 | `SANDBOX_API_SECRET` | `sandbox-dev-secret` | HMAC-SHA256 secret for sandbox auth tokens |
-| `SANDBOX_MEMORY_LIMIT` | `4g` | Docker memory limit per sandbox container |
-| `SANDBOX_CPU_LIMIT` | `2` | Docker CPU limit per sandbox container |
+| `SANDBOX_MEMORY_LIMIT` | `12g` | Docker memory limit per sandbox container |
+| `SANDBOX_CPU_LIMIT` | `4` | Docker CPU limit per sandbox container |
 
 ### 9.2 Configuration Files
 

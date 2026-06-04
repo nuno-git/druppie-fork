@@ -49,7 +49,7 @@ Per-agent Docker containers via `druppie/mcp-servers/module-coding/`.
 | **Destroy bij parent done()** | `tools.py:567-580` | `_destroy_all_for_session()`: alle containers voor een sessie gestopt + verwijderd. |
 | **Subagent done() = NIET destroyen** | `subagents.py` (architectuur) | Alleen parent done/error/cancel triggert destroy. Child done stopt alleen de child execution. |
 | **Dode container detectie** | `tools.py:539-543` | Als container niet running → uit cache, nieuwe aanmaken. |
-| **Resources** | `tools.py:116-124` | 4GB memory, 2 CPUs, 8192 pids, 512MB tmpfs, Sysbox runtime. |
+| **Resources** | `tools.py:116-124` | 12GB memory, 4 CPUs, 32768 pids, 512MB tmpfs, Sysbox runtime. |
 | **Docker-in-Docker** | `Dockerfile.sandbox:24-33` | Docker 20.10.24 + Compose v5.1.4 in sandbox. Agent kan eigen containers bouwen. |
 | **Dependency cache** | `tools.py:348` | Gedeeld volume `sandbox_dep_cache` → pip/npm/uv cache persistent over containers. |
 

@@ -133,8 +133,8 @@ docker compose --profile reset-cache run --rm reset-cache
 |----------|---------|-------------|
 | `DRUPPIE_SANDBOX_IMAGE` | `druppie-sandbox:latest` | Sandbox container base image |
 | `DRUPPIE_SANDBOX_RUNTIME` | `sysbox-runc` | Container runtime (`sysbox-runc`, `kata-runtime`) |
-| `SANDBOX_MEMORY_LIMIT` | `4g` | Docker memory limit per sandbox |
-| `SANDBOX_CPU_LIMIT` | `2` | Docker CPU limit per sandbox |
+| `SANDBOX_MEMORY_LIMIT` | `12g` | Docker memory limit per sandbox |
+| `SANDBOX_CPU_LIMIT` | `4` | Docker CPU limit per sandbox |
 
 ### Key Files
 
