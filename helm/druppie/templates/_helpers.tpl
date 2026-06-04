@@ -67,3 +67,34 @@ Usage: {{ include "druppie.image" (dict "Values" .Values "image" .Values.backend
 {{- printf "%s:%s" $repo $tag -}}
 {{- end -}}
 {{- end -}}
+
+{{/*
+External scheme: http or https based on TLS enabled
+*/}}
+{{- define "druppie.scheme" -}}
+{{- if .Values.global.ingress.tls.enabled -}}
+https
+{{- else -}}
+http
+{{- end -}}
+{{- end -}}
+
+{{/*
+External base URL: scheme://domain(:port if non-standard)
+- TLS enabled → https://domain (standard 443, no port)
+- TLS disabled, port 80 → http://domain (standard 80, no port)
+- TLS disabled, non-standard port → http://domain:port
+*/}}
+{{- define "druppie.externalBaseUrl" -}}
+{{- $scheme := include "druppie.scheme" . -}}
+{{- $domain := .Values.global.domain -}}
+{{- $port := .Values.global.ingress.port | int -}}
+{{- $tlsEnabled := .Values.global.ingress.tls.enabled -}}
+{{- if $tlsEnabled -}}
+{{- printf "%s://%s" $scheme $domain -}}
+{{- else if eq $port 80 -}}
+{{- printf "%s://%s" $scheme $domain -}}
+{{- else -}}
+{{- printf "%s://%s:%d" $scheme $domain $port -}}
+{{- end -}}
+{{- end -}}

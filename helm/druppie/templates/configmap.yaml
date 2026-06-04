@@ -13,11 +13,11 @@ data:
   KEYCLOAK_REALM: "druppie"
   KEYCLOAK_CLIENT_ID: "druppie-backend"
   KEYCLOAK_SERVER_URL: "http://{{ include "druppie.fullname" . }}-keycloak:8080"
-  KEYCLOAK_ISSUER_URL: "http://localhost:9080"
+  KEYCLOAK_ISSUER_URL: "{{ include "druppie.externalBaseUrl" . }}"
 
   # Gitea
   GITEA_INTERNAL_URL: "http://{{ include "druppie.fullname" . }}-gitea:3000"
-  GITEA_URL: "http://localhost:9080/git"
+  GITEA_URL: "{{ include "druppie.externalBaseUrl" . }}/git"
   GITEA_ORG: {{ .Values.gitea.org | quote }}
   GITEA_ADMIN_USER: {{ .Values.gitea.adminUser | quote }}
   GITEA_ADMIN_EMAIL: {{ .Values.gitea.adminEmail | quote }}
@@ -34,9 +34,11 @@ data:
   MCP_WEB_URL: "http://{{ include "druppie.fullname" . }}-module-web:9005"
   MCP_ARCHIMATE_URL: "http://{{ include "druppie.fullname" . }}-module-archimate:9006"
   MCP_REGISTRY_URL: "http://{{ include "druppie.fullname" . }}-module-registry:9007"
+  MCP_LLM_URL: "http://{{ include "druppie.fullname" . }}-module-llm:{{ .Values.modules.llm.port }}"
+  MCP_VISION_URL: "http://{{ include "druppie.fullname" . }}-module-vision:{{ .Values.modules.vision.port }}"
 
   # CORS
-  CORS_ORIGINS: "http://localhost:9080"
+  CORS_ORIGINS: "{{ include "druppie.externalBaseUrl" . }}"
 
   # LLM defaults
   LLM_PROVIDER: {{ .Values.backend.llm.provider | quote }}
@@ -54,8 +56,8 @@ data:
   DRUPPIE_DOCKER_CPU_LIMIT: {{ .Values.sandbox.cpuLimit | quote }}
 
   # Frontend Vite
-  VITE_API_URL: "http://localhost:9080"
-  VITE_KEYCLOAK_URL: "http://localhost:9080"
+  VITE_API_URL: "{{ include "druppie.externalBaseUrl" . }}"
+  VITE_KEYCLOAK_URL: "{{ include "druppie.externalBaseUrl" . }}"
   VITE_KEYCLOAK_REALM: {{ .Values.frontend.vite.keycloakRealm | quote }}
   VITE_KEYCLOAK_CLIENT_ID: {{ .Values.frontend.vite.keycloakClientId | quote }}
-  VITE_GITEA_URL: "http://localhost:9080/git"
+  VITE_GITEA_URL: "{{ include "druppie.externalBaseUrl" . }}/git"

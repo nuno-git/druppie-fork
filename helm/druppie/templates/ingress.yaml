@@ -5,10 +5,20 @@ metadata:
   name: {{ include "druppie.fullname" . }}-main
   labels:
     {{- include "druppie.labels" . | nindent 4 }}
+  {{- with .Values.global.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
 spec:
   ingressClassName: {{ .Values.global.ingress.className | default "nginx" }}
+  {{- if .Values.global.ingress.tls.enabled }}
+  tls:
+    - hosts:
+        - {{ .Values.global.domain }}
+      secretName: {{ .Values.global.ingress.tls.secretName }}
+  {{- end }}
   rules:
-    - host: localhost
+    - host: {{ .Values.global.domain }}
       http:
         paths:
           # Backend API — backend already has /api prefix on all routes
@@ -74,10 +84,19 @@ metadata:
   annotations:
     nginx.ingress.kubernetes.io/rewrite-target: /$2
     nginx.ingress.kubernetes.io/use-regex: "true"
+    {{- with .Values.global.ingress.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
 spec:
   ingressClassName: {{ .Values.global.ingress.className | default "nginx" }}
+  {{- if .Values.global.ingress.tls.enabled }}
+  tls:
+    - hosts:
+        - {{ .Values.global.domain }}
+      secretName: {{ .Values.global.ingress.tls.secretName }}
+  {{- end }}
   rules:
-    - host: localhost
+    - host: {{ .Values.global.domain }}
       http:
         paths:
           - path: /git(/|$)(.*)

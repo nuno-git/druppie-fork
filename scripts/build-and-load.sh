@@ -7,7 +7,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 CLUSTER_NAME="druppie"
-SOURCE_DIR="/mnt/HC_Volume_104477633/home_nuno/Documents/druppie-fork"
+SOURCE_DIR="$PROJECT_DIR"
 
 # Colors
 GREEN='\033[0;32m'

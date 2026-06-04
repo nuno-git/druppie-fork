@@ -63,9 +63,13 @@ spec:
                   name: {{ include "druppie.fullname" . }}-secrets
                   key: KEYCLOAK_ADMIN_PASSWORD
             - name: KC_HOSTNAME
-              value: "localhost"
+              value: {{ .Values.global.domain | quote }}
             - name: KC_HOSTNAME_PORT
-              value: "9080"
+              {{- if .Values.global.ingress.tls.enabled }}
+              value: "443"
+              {{- else }}
+              value: {{ .Values.global.ingress.port | quote }}
+              {{- end }}
             - name: KC_HOSTNAME_STRICT
               value: "false"
             - name: KC_PROXY

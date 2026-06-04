@@ -60,11 +60,11 @@ spec:
                   name: {{ include "druppie.fullname" . }}-secrets
                   key: GITEA_DB_PASSWORD
             - name: GITEA__server__ROOT_URL
-              value: "http://localhost:9080/git/"
+              value: "{{ include "druppie.externalBaseUrl" . }}/git/"
             - name: GITEA__server__HTTP_PORT
               value: {{ .Values.gitea.httpPort | quote }}
             - name: GITEA__server__DOMAIN
-              value: "localhost"
+              value: {{ .Values.global.domain | quote }}
             - name: GITEA__security__INSTALL_LOCK
               value: "true"
             - name: GITEA__service__DISABLE_REGISTRATION
