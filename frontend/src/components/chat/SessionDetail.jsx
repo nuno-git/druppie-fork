@@ -13,6 +13,8 @@ import { getUserInfo } from '../../services/keycloak'
 import { useAuth } from '../../App'
 import { getAgentConfig, getAgentMessageColors, formatToolName } from '../../utils/agentConfig'
 import { FilePreviewModal } from './ApprovalCard'
+import DownloadMenu from './DownloadMenu'
+import { downloadAsMarkdown, downloadContentAsPdf, buildChatTranscript } from '../../utils/downloadDesign'
 import HITLQuestionMessage from './HITLQuestionMessage'
 import WorkflowPipeline from './WorkflowPipeline'
 import DebugEventLog from './DebugEventLog'
@@ -65,6 +67,7 @@ const InlineApproval = ({ tc, sessionId, sessionUserId }) => {
   const [rejectMode, setRejectMode] = useState(false)
   const [rejectReason, setRejectReason] = useState('')
   const [showFilePreview, setShowFilePreview] = useState(false)
+  const [pdfDownloading, setPdfDownloading] = useState(false)
 
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ['session', sessionId] })
@@ -151,13 +154,27 @@ const InlineApproval = ({ tc, sessionId, sessionUserId }) => {
               : [{ path: filePath || 'file', content }]
             return (
               <div className="mt-1.5">
-                <button
-                  onClick={() => setShowFilePreview(true)}
-                  className="flex items-center gap-1.5 text-xs text-blue-600 hover:text-blue-800 transition-colors"
-                >
-                  {isBatchWrite ? <FileCode className="w-3.5 h-3.5" /> : <FilePlus className="w-3.5 h-3.5" />}
-                  View {isBatchWrite ? `${files.length} files` : filePath || 'file'}
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setShowFilePreview(true)}
+                    className="flex items-center gap-1.5 text-xs text-blue-600 hover:text-blue-800 transition-colors"
+                  >
+                    {isBatchWrite ? <FileCode className="w-3.5 h-3.5" /> : <FilePlus className="w-3.5 h-3.5" />}
+                    View {isBatchWrite ? `${files.length} files` : filePath || 'file'}
+                  </button>
+                  {!isBatchWrite && content && (
+                    <DownloadMenu
+                      variant="light"
+                      loading={pdfDownloading}
+                      onDownloadMd={() => downloadAsMarkdown(content, filePath)}
+                      onDownloadPdf={async () => {
+                        setPdfDownloading(true)
+                        try { await downloadContentAsPdf(content, filePath) }
+                        finally { setPdfDownloading(false) }
+                      }}
+                    />
+                  )}
+                </div>
                 {showFilePreview && (
                   <FilePreviewModal files={files} onClose={() => setShowFilePreview(false)} />
                 )}
@@ -606,6 +623,7 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
   const prevLengthRef = useRef(0)
   const inputRef = useRef(null)
   const [continueInput, setContinueInput] = useState('')
+  const [transcriptPdfLoading, setTranscriptPdfLoading] = useState(false)
   const savedInspectScroll = useRef(0)
   const [viewMode, _setViewMode] = useState(() => {
     if (initialViewMode && VALID_VIEW_MODES.has(initialViewMode)) return initialViewMode
@@ -923,6 +941,24 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
                 {data.project.name}
               </a>
             )}
+            <DownloadMenu
+              loading={transcriptPdfLoading}
+              onDownloadMd={() => {
+                const md = buildChatTranscript(data)
+                const slug = (data.title || 'chat').replace(/[^a-z0-9]+/gi, '-').toLowerCase()
+                downloadAsMarkdown(md, `${slug}.md`)
+              }}
+              onDownloadPdf={async () => {
+                setTranscriptPdfLoading(true)
+                try {
+                  const md = buildChatTranscript(data)
+                  const slug = (data.title || 'chat').replace(/[^a-z0-9]+/gi, '-').toLowerCase()
+                  await downloadContentAsPdf(md, `${slug}.pdf`)
+                } finally {
+                  setTranscriptPdfLoading(false)
+                }
+              }}
+            />
             <CopyJsonButton
               getData={() => buildVisibleJson(data, timelineRef.current)}
               label="Copy JSON"
