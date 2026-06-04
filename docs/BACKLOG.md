@@ -42,6 +42,9 @@ Last updated: 2026-03-24
 - Update Core Flow — End-to-End Improvements
 - ~~Update Core — Technical Basis~~ ✅ DONE
 - ~~Update Core — Architect Signal & Dual-Repo Sandbox~~ ✅ DONE
+- Kubernetes — Sandbox Image Builder Job is a Placeholder
+- Kubernetes — Helm Chart Test Suite
+- Kubernetes — Production Hardening (TLS, External Secrets, HPA)
 - Dependency Cache — Remote/Distributed Caching
 - Dependency Cache — Pre-Populated Common Packages
 - Dependency Cache — Automated Periodic Vulnerability Scanning
@@ -315,6 +318,34 @@ Last updated: 2026-03-24
 - **`repo_target` parameter:** `execute_coding_task` accepts `repo_target` enum (`"project"` default, `"druppie_core"`). Controls whether the sandbox gets single-repo or dual-repo credentials.
 - **Simplified branch targeting:** The sandbox agent determines PR base branch from its git remote (GitHub repos → `colab-dev`, Gitea repos → `main`). Configured in sandbox agent prompts — no branch parameter threaded through infrastructure.
 - **YAML auto-reload:** `AgentDefinitionLoader` checks file mtime on each load and automatically reloads YAML definitions when they change on disk. No backend restart needed for prompt edits during development.
+
+### Kubernetes — Sandbox Image Builder Job is a Placeholder
+
+- **Location:** `helm/druppie/templates/sandbox-image-builder-job.yaml`
+- **Current state:** The sandbox image builder Job in the Helm chart is a placeholder that just echoes a message. The actual `open-inspect-sandbox` image must be pre-built and pushed to a registry before deploying to Kubernetes.
+- **Desired improvement:** Either automate the sandbox image build as part of the Helm install (using a Kaniko-based Job or similar), or document the pre-build step more prominently and add a health check that verifies the image exists before sandbox-dependent components start.
+- **Priority:** Medium — blocks sandbox functionality in Kubernetes deployments.
+
+### Kubernetes — Helm Chart Test Suite
+
+- **Current state:** The Helm chart has no automated tests. Template rendering and resource correctness are only verified manually.
+- **Desired improvement:** Add `helm unittest` tests (or `helm template` + snapshot tests) to validate:
+  - All templates render without errors for default values
+  - Module enable/disable toggles correctly include/exclude resources
+  - NetworkPolicies, ingress rules, and service ports match expected values
+  - Secret and ConfigMap values are correctly templated
+- **Priority:** Medium — prevents regressions as the chart evolves.
+
+### Kubernetes — Production Hardening (TLS, External Secrets, HPA)
+
+- **Current state:** The Helm chart is designed for local Kind clusters. Production requires TLS, external secret management, autoscaling, and a real container registry. See `docs/kubernetes.md` section 9 and `docs/KUBERNETES-STRATEGY.md` for the full production roadmap.
+- **Desired improvement:**
+  - cert-manager integration for automatic TLS certificates
+  - External Secrets Operator or Sealed Secrets support
+  - HorizontalPodAutoscaler templates for backend and MCP modules
+  - PodDisruptionBudget templates for availability during updates
+  - Container registry configuration in `values.yaml` (currently all images use `IfNotPresent` with local tags)
+- **Priority:** Low — only needed when moving beyond local development.
 
 ### Dependency Cache — Remote/Distributed Caching
 

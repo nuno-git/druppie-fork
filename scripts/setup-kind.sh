@@ -51,9 +51,48 @@ delete_cluster() {
     log "Cluster deleted."
 }
 
-deploy_chart() {
+build_and_load_images() {
     log "Building Docker images and loading into kind..."
-    # TODO: Add image build and load commands when Dockerfiles are ready
+
+    _build_one() {
+        local name="$1" dockerfile="$2" context="$3"
+        log "  Building $name..."
+        docker build -q -t "$name:latest" -f "$dockerfile" "$context" >/dev/null
+        kind load docker-image "$name:latest" --name "$CLUSTER_NAME" 2>/dev/null
+    }
+
+    _build_one "druppie-backend"  "$PROJECT_DIR/Dockerfile"           "$PROJECT_DIR"
+    _build_one "druppie-frontend" "$PROJECT_DIR/frontend/Dockerfile"  "$PROJECT_DIR/frontend"
+    _build_one "druppie-init"     "$PROJECT_DIR/Dockerfile.init"      "$PROJECT_DIR"
+
+    local MCP_DIR="$PROJECT_DIR/druppie/mcp-servers"
+    for module in coding docker filesearch web archimate registry llm vision; do
+        if [ -f "$MCP_DIR/module-$module/Dockerfile" ]; then
+            _build_one "druppie-module-$module" "$MCP_DIR/module-$module/Dockerfile" "$MCP_DIR"
+        fi
+    done
+
+    log "All images built and loaded into kind."
+}
+
+install_nginx_ingress() {
+    if ! kubectl get ns ingress-nginx >/dev/null 2>&1 || \
+       ! kubectl get pods -n ingress-nginx -l app.kubernetes.io/component=controller --field-selector=status.phase=Running -o name 2>/dev/null | grep -q .; then
+        log "Installing NGINX Ingress Controller..."
+        kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/kind/deploy.yaml
+        log "Waiting for ingress controller..."
+        kubectl wait --namespace ingress-nginx \
+            --for=condition=ready pod \
+            --selector=app.kubernetes.io/component=controller \
+            --timeout=120s
+    else
+        log "NGINX Ingress Controller already running."
+    fi
+}
+
+deploy_chart() {
+    build_and_load_images
+    install_nginx_ingress
 
     log "Creating namespace..."
     kubectl create namespace "$NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -

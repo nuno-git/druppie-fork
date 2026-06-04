@@ -29,8 +29,6 @@ nodes:
       - containerPort: 30003  # gitea HTTP NodePort
         hostPort: 3000
         protocol: TCP
-  - role: worker
-  - role: worker
 networking:
   podSubnet: "10.244.0.0/16"
   serviceSubnet: "10.96.0.0/12"
