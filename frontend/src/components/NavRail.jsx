@@ -25,11 +25,12 @@ import {
   Boxes,
   Code2,
   Terminal,
+  HelpCircle,
 } from 'lucide-react'
 
 import { useAuth } from '../App'
 import { login, logout } from '../services/keycloak'
-import { getTasks } from '../services/api'
+import { getTasks, getPendingQuestions } from '../services/api'
 
 // --- NavRail Item with tooltip ---
 
@@ -177,7 +178,15 @@ const NavRail = () => {
     refetchInterval: 30000,
   })
 
+  const { data: questionsData } = useQuery({
+    queryKey: ['pending-questions-count'],
+    queryFn: getPendingQuestions,
+    enabled: authenticated,
+    refetchInterval: 30000,
+  })
+
   const pendingApprovalsCount = tasksData?.items?.length || 0
+  const pendingQuestionsCount = questionsData?.items?.length || 0
 
   const isActive = (path) => {
     if (path === '/') return location.pathname === '/'
@@ -200,6 +209,13 @@ const NavRail = () => {
         label="Approvals"
         badge={pendingApprovalsCount}
         active={isActive('/tasks')}
+      />
+      <NavRailItem
+        to="/questions"
+        icon={HelpCircle}
+        label="Questions"
+        badge={pendingQuestionsCount}
+        active={isActive('/questions')}
       />
       <NavRailItem to="/projects" icon={FolderOpen} label="Projects" active={isActive('/projects')} />
 
