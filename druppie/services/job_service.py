@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 
 from ..repositories import JobRepository, SessionRepository, ExecutionRepository
 from ..domain.job import JobDefinitionList, JobDefinitionDetail, JobRunList, JobRunDetail
-from ..db.models.job import JobDefinition, JobDefinitionConfig
+from ..db.models.job import JobDefinition
 from ..domain.common import AgentRunStatus, SessionStatus, JobRunStatus
 from ..core.background_tasks import create_session_task, run_session_task
 
@@ -69,7 +69,6 @@ class JobService:
                         prompt=data.get("prompt", ""),
                         approval_required=data.get("approval_required", False),
                         required_role=data.get("required_role"),
-                        config=data.get("config"),
                         enabled=data.get("enabled", True),
                         yaml_path=filepath,
                     )
@@ -96,18 +95,6 @@ class JobService:
         definition.prompt = data.get("prompt", definition.prompt)
         definition.approval_required = data.get("approval_required", definition.approval_required)
         definition.required_role = data.get("required_role", definition.required_role)
-        new_config = data.get("config")
-        if new_config is not None:
-            definition.configs = []
-            for key, value in new_config.items():
-                definition.configs.append(
-                    JobDefinitionConfig(
-                        config_key=key,
-                        config_value=str(value) if value is not None else None,
-                    )
-                )
-        else:
-            definition.configs = []
         definition.enabled = data.get("enabled", True) if data.get("enabled") is not None else definition.enabled
         definition.yaml_path = filepath
 

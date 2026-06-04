@@ -26,7 +26,6 @@ class JobDefinitionSummary(BaseModel):
 class JobDefinitionDetail(JobDefinitionSummary):
     """Full job definition. Inherits from JobDefinitionSummary."""
     prompt: str
-    config: dict | None = None
     yaml_path: str | None = None
     updated_at: datetime | None = None
 

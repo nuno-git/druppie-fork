@@ -11,6 +11,4 @@ prompt: |
   the scheduled job pipeline is working correctly.
 approval_required: false
 required_role: null
-config:
-  dry_run: false
 enabled: true

@@ -11,7 +11,7 @@ from ..domain.job import (
     JobRunList,
     JobRunSummary,
 )
-from ..db.models.job import JobDefinition, JobDefinitionConfig, JobRun
+from ..db.models.job import JobDefinition, JobRun
 from ..domain.common import JobRunStatus
 
 
@@ -28,7 +28,6 @@ class JobRepository(BaseRepository):
         prompt: str,
         approval_required: bool,
         required_role: str | None,
-        config: dict | None,
         enabled: bool,
         yaml_path: str | None,
     ) -> JobDefinition:
@@ -46,15 +45,6 @@ class JobRepository(BaseRepository):
         )
         self.db.add(definition)
         self.db.flush()
-        if config:
-            for key, value in config.items():
-                self.db.add(
-                    JobDefinitionConfig(
-                        job_definition_id=definition.id,
-                        config_key=key,
-                        config_value=str(value) if value is not None else None,
-                    )
-                )
         return definition
 
     def get_definition_by_job_id(self, job_id: str) -> JobDefinition | None:
@@ -234,10 +224,6 @@ class JobRepository(BaseRepository):
             approval_required=definition.approval_required or False,
             required_role=definition.required_role,
             prompt=definition.prompt,
-            config={
-                cfg.config_key: cfg.config_value
-                for cfg in (definition.configs or [])
-            } or None,
             enabled=definition.enabled if definition.enabled is not None else True,
             yaml_path=definition.yaml_path,
             last_triggered_at=definition.last_triggered_at,

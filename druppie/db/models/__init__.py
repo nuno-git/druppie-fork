@@ -61,7 +61,7 @@ from .documentation_cache import DocumentationCache
 # Question model (HITL questions from agents)
 from .question import Question
 
-from .job import JobDefinition, JobDefinitionConfig, JobRun
+from .job import JobDefinition, JobRun
 
 # Sandbox session ownership mapping
 from .sandbox_session import SandboxSession
@@ -114,6 +114,5 @@ __all__ = [
     "TestRunningStatus",
     # Cron jobs
     "JobDefinition",
-    "JobDefinitionConfig",
     "JobRun",
 ]

@@ -10,6 +10,4 @@ prompt: |
   job execution pipeline is working correctly.
 approval_required: true
 required_role: admin
-config:
-  dry_run: false
 enabled: true

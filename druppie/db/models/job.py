@@ -5,7 +5,6 @@ from uuid import uuid4
 
 from sqlalchemy import Column, DateTime, ForeignKey, Index, String, Text, Boolean
 from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.orm import relationship
 
 from .base import Base, utcnow
 
@@ -33,18 +32,7 @@ class JobDefinition(Base):
     created_at = Column(DateTime(timezone=True), default=utcnow)
     updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
-    configs = relationship(
-        "JobDefinitionConfig",
-        back_populates="job_definition",
-        cascade="all, delete-orphan",
-        lazy="joined",
-    )
-
     def to_dict(self) -> dict[str, Any]:
-        config_items = {
-            cfg.config_key: cfg.config_value
-            for cfg in (self.configs or [])
-        }
         return {
             "id": str(self.id),
             "job_id": self.job_id,
@@ -55,36 +43,12 @@ class JobDefinition(Base):
             "prompt": self.prompt,
             "approval_required": self.approval_required,
             "required_role": self.required_role,
-            "config": config_items if config_items else None,
             "enabled": self.enabled,
             "yaml_path": self.yaml_path,
             "last_triggered_at": self.last_triggered_at.isoformat() if self.last_triggered_at else None,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }
-
-
-class JobDefinitionConfig(Base):
-    """Normalized configuration key-value pairs for a job definition."""
-
-    __tablename__ = "job_definition_configs"
-    __table_args__ = (
-        Index("idx_job_definition_configs_job_definition_id", "job_definition_id"),
-    )
-
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
-    job_definition_id = Column(
-        UUID(as_uuid=True),
-        ForeignKey("job_definitions.id", ondelete="CASCADE"),
-        nullable=False,
-    )
-    config_key = Column(String(255), nullable=False)
-    config_value = Column(Text, nullable=True)
-
-    created_at = Column(DateTime(timezone=True), default=utcnow)
-    updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
-
-    job_definition = relationship("JobDefinition", back_populates="configs")
 
 
 class JobRun(Base):

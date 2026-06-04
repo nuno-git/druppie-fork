@@ -15,7 +15,7 @@ import pytest
 from sqlalchemy import String, TypeDecorator, create_engine
 from sqlalchemy.orm import Session as DbSession, sessionmaker
 
-from druppie.db.models import Base, JobDefinition, JobDefinitionConfig, JobRun
+from druppie.db.models import Base, JobDefinition, JobRun
 from druppie.db.models.job import JobDefinition as JobDefinitionModel, JobRun as JobRunModel
 from druppie.domain.job import (
     JobDefinitionDetail,
@@ -110,7 +110,7 @@ def job_service(db_session: DbSession) -> JobService:
 # ---------------------------------------------------------------------------
 
 
-def _make_definition(repo: JobRepository, job_id: str = "test_job", config: dict | None = None):
+def _make_definition(repo: JobRepository, job_id: str = "test_job"):
     return repo.create_definition(
         job_id=job_id,
         name="Test Job",
@@ -120,7 +120,6 @@ def _make_definition(repo: JobRepository, job_id: str = "test_job", config: dict
         prompt="Do the thing",
         approval_required=False,
         required_role=None,
-        config=config,
         enabled=True,
         yaml_path="/tmp/test.yaml",
     )
@@ -132,24 +131,12 @@ def _make_definition(repo: JobRepository, job_id: str = "test_job", config: dict
 
 
 class TestJobRepositoryDefinitions:
-    def test_create_definition_without_config(self, job_repo: JobRepository):
-        definition = _make_definition(job_repo, config=None)
+    def test_create_definition_no_extra_fields(self, job_repo: JobRepository):
+        definition = _make_definition(job_repo)
         job_repo.commit()
 
         assert definition.job_id == "test_job"
         assert definition.name == "Test Job"
-        assert definition.configs == []
-
-    def test_create_definition_with_config_normalizes_rows(self, job_repo: JobRepository):
-        definition = _make_definition(job_repo, config={"dry_run": False, "timeout": 30})
-        job_repo.commit()
-
-        assert len(definition.configs) == 2
-        keys = {c.config_key for c in definition.configs}
-        assert keys == {"dry_run", "timeout"}
-        values = {c.config_key: c.config_value for c in definition.configs}
-        assert values["dry_run"] == "False"
-        assert values["timeout"] == "30"
 
     def test_get_definition_by_job_id_found(self, job_repo: JobRepository):
         _make_definition(job_repo, job_id="find_me")
@@ -181,7 +168,7 @@ class TestJobRepositoryDefinitions:
         assert job_repo.get_definition_by_job_id("to_delete") is None
 
     def test_delete_definition_removes_parent(self, job_repo: JobRepository):
-        definition = _make_definition(job_repo, job_id="to_delete", config={"key": "val"})
+        definition = _make_definition(job_repo, job_id="to_delete")
         job_repo.commit()
 
         job_repo.delete_definition_by_job_id("to_delete")
@@ -339,7 +326,7 @@ class TestJobServiceYamlLoading:
         defs_dir.mkdir()
         (defs_dir / "hello.yaml").write_text(
             "id: hello\nname: Hello Job\nschedule: '0 0 * * *'\n"
-            "agent_id: summarizer\nprompt: Say hello\nconfig:\n  dry_run: true\nenabled: true\n"
+            "agent_id: summarizer\nprompt: Say hello\nenabled: true\n"
         )
 
         with patch("druppie.services.job_service.DEFAULT_JOBS_DIR", str(defs_dir)):
@@ -348,7 +335,6 @@ class TestJobServiceYamlLoading:
         assert result.total == 1
         item = result.items[0]
         assert item.job_id == "hello"
-        assert item.config == {"dry_run": "True"}  # normalized via str(bool) -> "True"
 
     def test_load_definitions_from_yaml_updates_existing(self, job_service: JobService, tmp_path):
         defs_dir = tmp_path / "defs"
@@ -364,7 +350,7 @@ class TestJobServiceYamlLoading:
         # Update the file
         (defs_dir / "upd.yaml").write_text(
             "id: upd\nname: New Name\nschedule: '0 0 * * *'\n"
-            "agent_id: summarizer\nprompt: New\nconfig:\n  timeout: 42\nenabled: true\n"
+            "agent_id: summarizer\nprompt: New\nenabled: true\n"
         )
 
         with patch("druppie.services.job_service.DEFAULT_JOBS_DIR", str(defs_dir)):
@@ -372,7 +358,6 @@ class TestJobServiceYamlLoading:
 
         assert result.total == 1
         assert result.items[0].name == "New Name"
-        assert result.items[0].config == {"timeout": "42"}
 
     def test_load_definitions_removes_orphans(self, job_service: JobService, tmp_path):
         defs_dir = tmp_path / "defs"
@@ -470,7 +455,7 @@ class TestJobSchedulerShouldRun:
 
 
 class TestJobDomainModels:
-    def test_definition_detail_serializes_config(self):
+    def test_definition_detail_serializes(self):
         detail = JobDefinitionDetail(
             id=uuid.uuid4(),
             job_id="my_job",
@@ -481,14 +466,12 @@ class TestJobDomainModels:
             approval_required=False,
             required_role=None,
             prompt="Do it",
-            config={"dry_run": "true"},
             enabled=True,
             yaml_path="/tmp/j.yaml",
             last_triggered_at=None,
             created_at=datetime.now(timezone.utc),
             updated_at=datetime.now(timezone.utc),
         )
-        assert detail.config == {"dry_run": "true"}
         assert detail.job_id == "my_job"
 
     def test_job_run_list_pagination_defaults(self):
@@ -515,7 +498,7 @@ class TestJobDomainModels:
 
 
 class TestJobModelToDict:
-    def test_job_definition_to_dict_includes_config(self, db_session: DbSession):
+    def test_job_definition_to_dict(self, db_session: DbSession):
         definition = JobDefinitionModel(
             job_id="dict_test",
             name="Dict Test",
@@ -524,19 +507,13 @@ class TestJobModelToDict:
             prompt="prompt",
             enabled=True,
         )
-        definition.configs = [
-            JobDefinitionConfig(config_key="k1", config_value="v1"),
-        ]
         db_session.add(definition)
         db_session.commit()
 
         d = definition.to_dict()
         assert d["job_id"] == "dict_test"
-        assert d["config"] == {"k1": "v1"}
 
-    def test_job_definition_to_dict_with_empty_config_returns_none(
-        self, db_session: DbSession
-    ):
+    def test_job_definition_to_dict_no_extra(self, db_session: DbSession):
         definition = JobDefinitionModel(
             job_id="empty_cfg",
             name="Empty",
@@ -549,7 +526,7 @@ class TestJobModelToDict:
         db_session.commit()
 
         d = definition.to_dict()
-        assert d["config"] is None
+        assert "config" not in d
 
     def test_job_run_to_dict(self, db_session: DbSession):
         run = JobRunModel(
