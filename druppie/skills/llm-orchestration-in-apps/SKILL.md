@@ -5,11 +5,11 @@ description: >
   describes multi-step LLM logic INSIDE a generated application — chains,
   evaluation loops, agents with tools, stateful/durable workflows, or
   multi-agent systems. It helps the architect decide the WHAT: which
-  workflow pattern applies, how much agency the problem actually needs,
-  and whether the capability should live in the app, in an extended
-  module, or in a new module. It does NOT name frameworks or libraries —
-  that HOW-decision belongs to the builder_planner (see the
-  `llm-orchestration-standard` skill).
+  workflow pattern applies and how much agency the problem actually
+  needs. It does NOT name frameworks or libraries — that HOW-decision
+  belongs to the builder_planner (see the `llm-orchestration-standard`
+  skill) — and it does NOT re-derive capability placement, which is the
+  architect's standard reuse decision framework applied to any capability.
 ---
 
 # LLM Orchestration in Built Apps (Architect — WHAT)
@@ -17,9 +17,11 @@ description: >
 When a Druppie-built application contains its **own** LLM workflow — not
 just calling out to a Druppie agent, but running multi-step LLM logic
 inside the app — the architect must decide **how much agency the problem
-needs** and **where the capability lives**. The architect names the
-*pattern* and the *structural shape*; the builder_planner later picks the
-concrete library from the platform standard.
+needs**. The architect names the *pattern* and the *structural shape*;
+the builder_planner later picks the concrete library from the platform
+standard. Where the capability lives (in-app / extend a module / new
+module) is **not** decided here — it is the architect's standard reuse
+decision framework, applied to this capability like any other.
 
 This keeps the role boundary intact: the architect decides WHAT and WHY,
 **never** names concrete frameworks or libraries in the TD.
@@ -93,30 +95,17 @@ single-agent / multi-agent), not a library.
 > project-grounded thresholds as the platform learns — but keep them a
 > *strict order*, not a menu.
 
-## Step 3 — Where does the capability live? (modules vs app)
+## Capability placement is not an LLM decision
 
-Before any "how to build it" question, decide where the abstraction
-belongs. This is a reuse/architecture decision — squarely the architect's
-WHAT — and it reuses the standard reuse decision framework:
-
-1. **In the app (project-local).** The LLM logic is project-specific and
-   unlikely to recur. Keep it inside the generated app. *(No platform
-   change.)*
-2. **Extend the project template.** A default pattern that recurs across
-   projects but still needs high per-project adaptability, and is most
-   efficient living close to the application. *(Template change.)*
-3. **Evolve a module.** The capability recurs across projects and benefits
-   from centralisation/governance — e.g. growing `module-llm` toward
-   richer in-app primitives so apps stay on `druppie.call("llm", …)`
-   instead of each app importing its own stack. *(Module change — a
-   platform-roadmap item; see the module-llm v2 handoff in the research
-   doc. Do not design module internals here.)*
-4. **New module.** The functionality is fundamentally distinct or broadly
-   reusable. *(New module — platform-roadmap item.)*
-
-State which path applies and why, in one sentence. For paths 3–4 the
-architect flags the platform need; it does **not** specify the module's
-internals (that is a separate core-update design).
+Where the capability lives — in-app, extend an existing module, or a new
+module — is **not** specific to LLM workflows. It is the architect's
+standard **reuse decision framework**, applied to an LLM capability
+exactly as to any other (OCR, RAG, data-access, …). Do not re-derive an
+LLM-flavoured version here: run the same generic placement decision the
+architect makes for every capability, and state the outcome in one
+sentence in the TD. For "extend a module" / "new module" the architect
+flags the platform need (e.g. the module-llm v2 handoff) without
+designing the module's internals.
 
 ## What to write in the TD (compact — WHAT only)
 
@@ -126,13 +115,15 @@ Keep this to one subsection in the architectural solution. Include:
 2. **Agency decision** — no-agent (LLM + UI) / single agent / multi-agent,
    with the rule that decided it and (for multi-agent) the saturation
    evidence.
-3. **Capability placement** — in-app / extend-template / evolve-module /
-   new-module, with a one-line reason.
-4. **Workflow-specific NFRs** — only when they actually drive design:
+3. **Workflow-specific NFRs** — only when they actually drive design:
    end-to-end latency budget, fallback on LLM failure, retry policy, max
    iterations for an agent loop.
-5. **Evaluation hook** — how the team will know the choice was right (one
+4. **Evaluation hook** — how the team will know the choice was right (one
    sentence — metric + source).
+
+Capability placement (in-app / extend a module / new module) is recorded
+in the TD's general modules/reuse section via the architect's standard
+reuse decision framework — not restated as an LLM-specific item here.
 
 **Do not** name a framework or library, and **do not** produce a
 multi-row TR-LLM-XX requirements dump. The concrete library and the
@@ -150,8 +141,6 @@ call, made against the platform standard.
 - **Re-inventing a durable state machine** ("we'll just persist to
   Postgres between steps") for a genuine pattern #5 — flag the durability
   requirement; let the builder_planner pick the standard tool.
-- **Skipping the placement decision** — defaulting to in-app code for
-  something that clearly recurs and should evolve a module.
 
 ## References
 

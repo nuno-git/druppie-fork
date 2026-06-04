@@ -24,13 +24,18 @@ beheerbaar, reviewbaar en snel te begrijpen.
 |---|---|---|
 | **LLM + UI** (patroon #1–#2) | **Plain Python** — directe call + UI-gate (Approve/Reject/edit). Geen framework. | `module-llm.chat` |
 | **Sequential chain / evaluation loop** (#2–#3) | **Plain Python** — expliciete functies/stappen, `for`-loop voor evaluatie. Geen framework. | `module-llm.chat` |
-| **Single agent + tools** (#4) | **Pydantic-AI** — één getypeerde agent, tools als functies, ReAct-loop. *(Voorgestelde standaard — bevestigen met platformteam.)* | Direct provider-SDK *(tot module-llm tool-use biedt — zie §5)* |
-| **Durable / multi-agent** (#5–#6) | **Escalatie — niet voorgebakken.** Vereist een bewuste platform-beslissing vóór bouwen; niet stilletjes per project een nieuw framework kiezen. | n.v.t. |
+| **Single agent + tools** (#4) | **Plain Python, core-stijl** — een kleine tool-loop gemodelleerd op de platform-agent-loop: tool calls, een **verplichte `done`-tool**, agents/tools in **YAML**, een max-iteratie-cap. Geen agent-framework. | Direct provider-SDK *(native tool-calling is nodig; module-llm.chat kan dat nog niet — zie §5)* |
+| **Durable / multi-agent** (#5–#6) | **Escalatie — niet voorgebakken.** Vereist een bewuste platform-beslissing vóór bouwen; niet stilletjes per project een framework kiezen. | n.v.t. |
 
-Twee libraries dekken het leeuwendeel: **plain Python** voor alles
-lineairs, **Pydantic-AI** voor de single agent met tools. Alles daarbuiten
-(durable execution, echte multi-agent) is zeldzaam en wordt bewust
-gestandaardiseerd — niet ad hoc gekozen.
+**Geen agent-framework.** Alles lineairs is plain Python; de single agent
+met tools is een kleine core-stijl tool-loop (zie boven). Externe
+agent-libraries (Pydantic-AI, LangGraph, CrewAI, …) brengen reële kosten
+mee — version-churn, abstractie-lock-in, lastiger debuggen, grotere
+supply-chain — en zijn niet de standaard. Durable execution en echte
+multi-agent zijn zeldzaam en worden bewust gestandaardiseerd, niet ad hoc
+gekozen. Een écht herbruikbare core-runtime vergt eerst de platform-loop
+app-bruikbaar maken (toekomstwerk); tot dan is "core-stijl" *gemodelleerd
+op* de core, per app met de hand geschreven.
 
 **Default access-pattern:** `module-llm.chat`, tenzij het patroon iets
 vereist dat de module vandaag niet kan (tool-use, streaming, structured
@@ -70,7 +75,7 @@ Het patroon — niet het use-case-domein — bepaalt de structuur.
 > productie 58–285% duurder in tokens dan single-agent en degradeert 2–15%
 > op SWE-bench Verified onder verkeerde toepassing. **Default = #4,
 > escaleer naar #6 alleen bij gemeten capaciteits-saturatie.** Dit
-> onderbouwt waarom de standaard bij Pydantic-AI (single agent) stopt en
+> onderbouwt waarom de standaard bij de single agent (#4) stopt en
 > multi-agent als bewuste escalatie behandelt.
 
 ## 4. De agency-hiërarchie (architect → WAT)
@@ -105,7 +110,7 @@ zonder de governance/consistentie die `druppie.call("llm", …)` geeft.
 | Capability | `module-llm.chat` | Vereist voor |
 |------------|-------------------|--------------|
 | Streaming (token-stream) | ❌ | Agent-UX, streaming responses |
-| Tool-use / function-calling | ❌ | Elke single-agent #4 (Pydantic-AI etc.) |
+| Tool-use / function-calling | ❌ | Elke single-agent #4 (eigen core-stijl tool-loop) |
 | Structured output (JSON-schema) | ❌ | Getypeerde agent-output, validatie |
 | Multi-turn message history | ❌ | Alle meerstaps-agent-state |
 | Vision (image inputs) | ❌ | Multimodale workflows |
@@ -135,8 +140,10 @@ het nog niet kan", zodat ze automatisch meeschuiven als v2 landt.
 * **Default 2026:** Plain Python + `module-llm.chat` voor #1–#3. Reik naar
   een framework alleen als het patroon expliciet voorbij lineair gaat én
   een direct SDK acceptabel is.
-* **Eén agent-standaard:** Pydantic-AI voor #4 (getypeerd, tool-loop,
-  goede observability via Logfire). Niet twaalf opties — één.
+* **Eén agent-standaard:** plain Python, core-stijl voor #4 — een kleine
+  tool-loop gemodelleerd op de platform-agent-loop (tool calls, verplichte
+  `done`, YAML-agents, max-iteratie-cap). Geen agent-framework; niet
+  twaalf opties — één.
 * **Multi-agent/durable defensief:** behandel als escalatie die eerst een
   platform-standaard nodig heeft; bouw niet per project een eigen
   checkpointer of multi-agent-framework.
@@ -155,16 +162,17 @@ positioneren daarom patronen, geen archetypes.
 
 ## Appendix A — Overwogen alternatieven (bewijslast)
 
-> Deze survey onderbouwt *waarom* de standaard plain Python + Pydantic-AI
-> is. Het is bewust een appendix: een project-architect of builder_planner
-> hoeft hier niet doorheen — de standaard in §1 is de uitkomst.
+> Deze survey onderbouwt *waarom* de standaard plain Python (core-stijl)
+> is, zónder agent-framework. Het is bewust een appendix: een
+> project-architect of builder_planner hoeft hier niet doorheen — de
+> standaard in §1 is de uitkomst.
 
 ### Cross-framework vergelijking
 
 | Framework | Status (2026) | Sweet spot | `module-llm`-fit | Verdict t.o.v. standaard |
 |-----------|---------------|-----------|------------------|--------------------------|
-| **Plain Python** | stabiel | #1–#3, simpele #4 | ✅ native | **Standaard (baseline)** |
-| **Pydantic-AI** | V1 stable | getypeerde single agent + tools | ❌ (direct SDK) | **Standaard (agent)** |
+| **Plain Python (core-stijl)** | stabiel | #1–#3 én de single agent #4 (eigen tool-loop) | ✅ native (chat); direct SDK voor native tool-use | **Standaard (baseline + agent)** |
+| Pydantic-AI | V1 stable | getypeerde single agent + tools | ❌ (direct SDK) | Niet de standaard — geen framework |
 | LangChain LCEL | 1.0 stable; legacy chains EOL dec-2026 | lineaire pipelines | ✅ lineair | Niet nodig naast plain Python |
 | LangGraph | 1.0 LTS | durable stateful, complexe multi-agent | ❌ | Alleen bij bewezen #5-escalatie |
 | DSPy | 3.x (alpha-label) | metric-driven multi-stage | ✅ uniek | Optioneel voor #3 met harde metric |
@@ -182,13 +190,17 @@ LangChain-1.0-upgrade-lessen) is dat ~80% van in-app LLM-werk lineair is en
 geen framework nodig heeft; een framework toevoegen "voor later" is een
 anti-pattern. Plain Python + `module-llm.chat` is daarom de nulmeting.
 
-### Waarom precies één agent-framework
-Een single agent met tools (#4) heeft wél een library nodig (tool-loop,
-structured output). Pydantic-AI is getypeerd, V1-stabiel, met sterke
-observability — en één standaard voorkomt dat elke app een andere
-agent-library importeert. Multi-agent-frameworks (CrewAI/MAF) en durable
-engines (LangGraph) worden bewust níét voorgebakken, conform de
-2026-consensus dat premature multi-agent duurder en slechter is.
+### Waarom geen agent-framework, maar een eigen core-stijl loop
+Een single agent met tools (#4) heeft een tool-loop nodig, maar dat is
+een kleine, expliciete loop — geen reden om een externe agent-library te
+importeren. Het platform heeft het patroon al in de core
+(`druppie/agents/loop.py`: tool calls, verplichte `done`, YAML-agents);
+apps modelleren dáárop. Eén standaard voorkomt dat elke app een andere
+agent-library kiest, en vermijdt de kosten van frameworks (version-churn,
+abstractie-lock-in, lastiger debuggen, supply-chain). Multi-agent
+(CrewAI/MAF) en durable engines (LangGraph) worden bewust níét
+voorgebakken, conform de 2026-consensus dat premature multi-agent duurder
+en slechter is.
 
 ## Appendix B — Bronnen (selectie)
 

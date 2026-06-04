@@ -28,13 +28,25 @@ written justification in the build plan.
 |---|---|---|
 | **LLM + UI baseline** (patterns #1–#2) | **Plain Python** — a direct call plus a UI gate (Approve/Reject/edit). No framework. | `module-llm.chat` |
 | **Sequential chain / evaluation loop** (#2–#3) | **Plain Python** — explicit functions/steps, a `for`-loop for evaluation. No framework. | `module-llm.chat` |
-| **Single agent + tools** (#4) | **Pydantic-AI** — one typed agent, tools as typed functions, ReAct-style loop. *(Proposed standard — confirm with the platform team.)* | Direct provider SDK *(until module-llm exposes tool-use — see v2 handoff)* |
-| **Durable / multi-agent** (#5–#6) | **Escalation — not pre-blessed.** Requires a deliberate platform decision before building; do not silently pick a new framework per project. Flag it and get the standard set first. | n/a |
+| **Single agent + tools** (#4) | **Plain Python, core-style** — a small tool-calling loop modelled on the platform's own agent loop: tool calls, a **mandatory `done` tool** to finish, agents/tools defined in **YAML**, a max-iteration cap. No agent framework. | Direct provider SDK *(native tool-calling is needed and `module-llm.chat` can't do it yet — see v2 handoff)* |
+| **Durable / multi-agent** (#5–#6) | **Escalation — not pre-blessed.** Requires a deliberate platform decision before building; do not silently pick a framework per project. Flag it and get the standard set first. | n/a |
 
-Two libraries cover the overwhelming majority of in-app work: **plain
-Python** for everything linear, **Pydantic-AI** for the single agent with
-tools. Anything beyond (durable execution, genuine multi-agent) is rare
-and must be standardised deliberately — not chosen ad hoc.
+**No agent framework.** Everything linear is plain Python; the single
+agent with tools is a small core-style tool-loop (above). External agent
+libraries (Pydantic-AI, LangGraph, CrewAI, …) carry real costs —
+version churn, abstraction lock-in, harder debugging, a larger
+supply-chain surface — and are not the standard. Durable execution and
+genuine multi-agent are rare and must be standardised deliberately, not
+chosen ad hoc.
+
+> **"Core-style" means modelled on the core, not a shared runtime.** The
+> platform agent loop (`druppie/agents/loop.py`) is bound to platform infra
+> (tool_executor, registry, HITL/approval, repositories) and native
+> tool-calling, so apps cannot import it directly. Each app hand-writes a
+> small loop that follows the same shape (tool calls + `done` + YAML
+> agents). A genuinely reusable core-based runtime would first require
+> making that platform loop app-consumable — a separate platform-roadmap
+> item.
 
 ## Access pattern — default to the platform building block
 
@@ -46,9 +58,9 @@ and must be standardised deliberately — not chosen ad hoc.
   output, or multi-turn history). A single agent with tools (#4) therefore
   needs a direct SDK *today*. State this in the build plan with the reason.
 - **This boundary will move.** If `module-llm` grows tool-use / structured
-  output / multi-turn (the v2 handoff in the research doc), Pydantic-AI and
-  friends can run through the platform module and the default widens. Treat
-  the access-pattern as "module-llm unless it can't yet do it."
+  output / multi-turn (the v2 handoff in the research doc), the core-style
+  tool-loop can run through the platform module and the default widens.
+  Treat the access-pattern as "module-llm unless it can't yet do it."
 
 ## Where the code lives (confirm the architect's placement)
 
@@ -78,16 +90,19 @@ silently building a one-off.
    in-app.
 2. **Permit-checker** — an LLM that, given an application, decides which
    validation tools to run (rules lookup, zoning check, document fetch).
-   Pattern #4 (single agent + tools). Standard: **Pydantic-AI**, tools as
-   typed functions, direct provider SDK. Placement: in-app (project-local
-   tools), unless the validation tools recur → extend the template.
+   Pattern #4 (single agent + tools). Standard: **plain-Python core-style
+   tool-loop** — tools as plain functions, a `done` tool to finish, agent
+   config in YAML, direct provider SDK for native tool-calling. Placement:
+   in-app (project-local tools), unless the validation tools recur → extend
+   the template.
 3. **Ticket summariser** — one prompt → one answer shown to an agent.
    Pattern #1 (single-shot). Agency: LLM + UI. Standard: **plain Python**,
    a single `module-llm.chat` call. No framework, no agent.
 
 ## What to put in the build plan
 
-- Library: plain Python **or** Pydantic-AI (or a flagged escalation).
+- Library: plain Python (linear) **or** the plain-Python core-style
+  tool-loop (single agent) — or a flagged escalation. No agent framework.
 - Access pattern: `module-llm.chat` **or** direct SDK + the one-line reason.
 - Code placement: which of the four paths, matching the TD.
 - Workflow NFRs the TD set (latency budget, LLM-failure fallback, retry

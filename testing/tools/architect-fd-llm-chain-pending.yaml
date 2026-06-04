@@ -35,8 +35,9 @@
 ##        builder_planner's call against the platform standard).
 ##   9. When the build path runs, the builder_planner invokes
 ##      invoke_skill(skill_name="llm-orchestration-standard") and its
-##      builder_plan.md names the standard library (plain Python or
-##      Pydantic-AI) + the access-pattern — not a per-project framework.
+##      builder_plan.md names the standard (plain Python — linear, or a
+##      core-style tool-loop for a single agent; no framework) + the
+##      access-pattern — not a per-project framework.
 ##
 ## This test is intentionally NOT doc-heavy so it should not trigger
 ## the `rag-patterns` skill (when that skill lands on colab-dev). The

@@ -517,8 +517,8 @@ The Architect and Builder-Planner use pattern-detecting skills that fire proacti
 
 | Skill | Agent | Trigger signal | Output |
 |-------|-------|----------------|--------|
-| `llm-orchestration-in-apps` | Architect (Step 1) | FD describes a multi-step LLM workflow inside the built app (chains, evaluation loops, agents with tools, stateful/durable workflows, multi-agent) | The WHAT: workflow pattern (#1–#6), agency decision via a strict hierarchy (LLM + UI / single agent / multi-agent), and capability placement (in-app / extend template / evolve or new module). No framework names. |
-| `llm-orchestration-standard` | Builder-Planner | TD describes an in-app LLM workflow | The HOW: the single platform standard (plain Python baseline + Pydantic-AI for single-agent), access-pattern (`module-llm.chat` vs direct SDK), and code placement. One standard, not a per-project framework menu. |
+| `llm-orchestration-in-apps` | Architect (Step 1) | FD describes a multi-step LLM workflow inside the built app (chains, evaluation loops, agents with tools, stateful/durable workflows, multi-agent) | The WHAT: workflow pattern (#1–#6) and agency decision via a strict hierarchy (LLM + UI / single agent / multi-agent). No framework names; capability placement is the architect's generic reuse decision, not re-derived here. |
+| `llm-orchestration-standard` | Builder-Planner | TD describes an in-app LLM workflow | The HOW: the single platform standard (plain Python everywhere — linear and the single agent as a small core-style tool-loop; no agent framework), access-pattern (`module-llm.chat` vs direct SDK), and code placement. One standard, not a per-project framework menu. |
 
 Both skills are backed by one platform-research document, `docs/LLM-orchestration/llm-orchestration-in-apps.md`, which leads with the standard and keeps the framework survey as a considered-alternatives appendix. Each agent calls `invoke_skill(...)` itself when the signals match — the user doesn't have to ask.
 
