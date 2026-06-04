@@ -67,51 +67,51 @@ After the plate is materialised, write the TD with a
 That single `coding_make_design` call is the approval gate; the
 reviewer sees the TD narrative and the rendered plate side by side.
 
-Within that frame, the archimate tool order matters because
-relationships reference elements and view-connections reference
-relationships:
+**Build the whole plate in ONE call.** Assemble every element and
+relationship into a single spec and hand it to a composite-view builder.
+This is the default and by far the fastest path: a plate that the
+primitive tools would build in 30–50 separate `create_*` / `add_*` calls
+— each its own LLM turn, the reason a plate used to take ~13 minutes —
+becomes **one** tool call. Drop to the primitive tools *only* to edit an
+existing view (see "Updating an Existing View" below).
 
-1. **Always check WILMA — but don't always reuse.** Call
-   `archimate_search_model(query=<keyword>, layer=<layer>)` to see
-   which reference elements exist for the concepts you're about to
-   model. The search is cheap and the results often improve naming,
-   documentation, or surface a missing relationship.
+1. **Always check WILMA first — but reuse selectively.** Call
+   `archimate_search_model(query=<keyword>, layer=<layer>)` to see which
+   reference elements exist for the concepts you're about to model. The
+   search is cheap and improves naming or surfaces a missing relationship.
 
-   Reuse via `archimate_get_or_create_wilma_reference(wilma_element_id)`
-   only when **both** apply:
+   Reuse a WILMA element only when **both** apply:
    - the project sits in the waterschap context that WILMA models
-     (the FD references waterschappen, bronsystemen, zaaksysteem,
-     DMS, archiefsysteem, drinkwater/waterkeringen/heffingen, etc.), AND
+     (the FD references waterschappen, bronsystemen, zaaksysteem, DMS,
+     archiefsysteem, drinkwater/waterkeringen/heffingen, etc.), AND
    - the WILMA element genuinely matches the role you need.
 
-   Reasons NOT to reuse: the project is unrelated to waterschappen,
-   the WILMA element is too coarse/fine, or the name/responsibilities
-   would mislead readers. In those cases, note the WILMA match in the
-   TD (so the link is visible) but model with project-specific
-   elements.
+   When reuse is right you do **not** import it as a separate step — put
+   `{name: "<label>", wilma_id: "<wilma element id>"}` straight in the
+   builder's element spec (step 2); the identifier is preserved. When reuse
+   is wrong (non-waterschap project, element too coarse/fine, misleading
+   name), model a project-specific element and note in the TD which WILMA
+   concept you considered.
 
-2. **Create project-specific elements** for the rest via
-   `archimate_create_element(element_type, name, documentation)`. Save
-   the returned `element_id` for the next steps.
+2. **Build the view in one call.** Assemble the spec and call:
+   - `archimate_add_layered_view(name, business=[…], application=[…],
+     technology=[…], motivation=[…], relationships=[…])` for the standard
+     cross-layer stack (Business top → Application → Technology), or
+   - `archimate_add_cooperation_view(name, peers=[…], shared_services=[…],
+     relationships=[…])` for an application-cooperation plate.
 
-3. **Create the relationships** between elements via
-   `archimate_create_relationship(relationship_type, source_id,
-   target_id, name?, access_type?)`. Pick a valid relationship type
-   (table below). Save the returned `relationship_id`.
+   Element specs are `{name, type, documentation?, stereotype?}` — or
+   `{name, wilma_id}` to reuse a WILMA reference. Relationship specs are
+   `{source, target, type, access_type?}` and reference elements by
+   **name** (no IDs to track). Composition / Aggregation relationships
+   automatically become visual nesting (e.g. systems inside a
+   `Beveiligingsdomein` Grouping). Name a security zone with its NORA/IEC
+   trust level (`Beveiligingsdomein - niet-vertrouwd`) so it colours
+   correctly. The builder creates the view, every element, every
+   relationship, places them and wires the connections in one shot, and
+   returns the `view_id` plus name→id maps.
 
-4. **Create the view** via `archimate_create_view(name,
-   documentation)`. Save the returned `view_id`.
-
-5. **Place every element on the view** via
-   `archimate_add_to_view(view_id, element_id)`. Omit x/y/w/h — the
-   write-MCP places new elements in a free region while keeping any
-   already-placed elements at their existing positions.
-
-6. **Wire connections on the view** via
-   `archimate_add_connection_to_view(view_id, relationship_id)`. Both
-   endpoint elements must already be on the view (step 5).
-
-7. **Persist** via `archimate_save_model()` — writes the
+3. **Persist** via `archimate_save_model()` — writes the
    `architecture.archimate` XML AND a rendered SVG per view to
    `docs/diagrams/` in the workspace; no approval gate fires (the
    architect builds the plate freely; the review point is the TD
@@ -119,7 +119,7 @@ relationships:
    reviewers actually see — the raw XML is source-of-truth but Gitea
    flags its invisible Unicode and humans don't read XML.
 
-8. **Embed the view id** in the TD as the ```archimate code block
+4. **Embed the view id** in the TD as the ```archimate code block
    shown above, then call `coding_make_design(path, content)` for
    `docs/technical-design.md`. **This is the architect-approval gate.**
    The reviewer sees the markdown + the embedded plate (rendered from
@@ -127,7 +127,7 @@ relationships:
    whole — including the diagram. Feedback on either the text or the
    plate flows back through this gate.
 
-9. **Commit + push** via `coding_run_git(command="add ...")`,
+5. **Commit + push** via `coding_run_git(command="add ...")`,
    `coding_run_git(command="commit ...")`, `coding_run_git(command="push")`.
    Stage three things together: `docs/architecture.archimate`,
    `docs/diagrams/` (the SVG per-view exports written by save_model —
@@ -136,6 +136,11 @@ relationships:
    reviewers staring at raw XML with an invisible-Unicode warning.
 
 ## Updating an Existing View (Feedback Iteration)
+
+This is the home of the primitive `create_*` / `add_*` / `update_*` tools:
+small, surgical deltas on a view that already exists. (For the *initial*
+plate, use the one-shot builder above — don't hand-assemble it element by
+element.)
 
 When the architect gives feedback on an existing TD, **never call
 `archimate_delete_view` + `archimate_create_view` on a view that

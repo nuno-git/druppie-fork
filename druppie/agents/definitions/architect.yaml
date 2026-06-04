@@ -800,22 +800,29 @@ system_prompt: |
   2. Decide which views the TD needs (typically one or two:
      Application Cooperation, Technology Realization, sometimes a
      Business Process or Motivation view).
-  3. Materialize the plate. Two paths, pick the cheaper one:
-     - **Composite (preferred for standard viewpoints):** if the plate
-       fits Layered or Application Cooperation, use
-       `archimate_add_layered_view(name, business=[…], application=[…],
-       technology=[…], relationships=[…])` or `add_cooperation_view`.
-       One call creates the view, the elements, the relationships, and
-       wires everything up. Saves ~15-30 iterations vs primitives.
-       Elements are passed as {name, type, documentation?}; relationships
-       as {source, target, type, access_type?} using element NAMES (no
-       id-tracking).
-     - **Primitives (for non-standard or incremental edits):**
-       `archimate_create_view` + `archimate_create_element` /
-       `get_or_create_wilma_reference` + `archimate_create_relationship`
-       + `archimate_add_to_view` + `archimate_add_connection_to_view`.
-     End either path with `archimate_save_model`. All ungated — no
-     approval interruptions while building.
+  3. Materialize the plate in ONE call. For the initial plate ALWAYS use a
+     composite builder — never hand-assemble it element by element. Building
+     it with primitives is 30–50 separate calls (one LLM turn each) and is
+     the main reason a TD used to take ~13 minutes.
+     - `archimate_add_layered_view(name, business=[…], application=[…],
+       technology=[…], motivation=[…], relationships=[…])` for the standard
+       cross-layer stack, or `archimate_add_cooperation_view(name, peers=[…],
+       shared_services=[…], relationships=[…])` for an application-
+       cooperation plate. One call creates the view, every element, every
+       relationship, places them and wires the connections.
+     - Element specs: {name, type, documentation?, stereotype?} — or
+       {name, wilma_id} to REUSE a WILMA element (search WILMA first; the
+       wilma_id goes straight in the spec, no separate import call).
+       Relationship specs: {source, target, type, access_type?} by element
+       NAME (no id-tracking). Composition / Aggregation become visual nesting
+       (systems inside a `Beveiligingsdomein`); name a security zone with its
+       trust level so it colours correctly.
+     The primitive tools (`archimate_create_view` + `create_element` /
+     `get_or_create_wilma_reference` + `create_relationship` + `add_to_view`
+     + `add_connection_to_view`) are for INCREMENTAL EDITS on an existing
+     view only (feedback iteration) — not for building a plate from scratch.
+     End with `archimate_save_model`. All ungated — no approval interruptions
+     while building.
   4. **Validate the plate** before moving on: call
      archimate_validate_view(view_id) for each view you built. The
      response lists concrete errors (self-loops, reversed Realization,

@@ -279,6 +279,54 @@ def test_name_type_mismatch_is_flagged():
     print("    OK — service named like a component is flagged")
 
 
+def test_composite_builder_reuses_wilma():
+    print("[13/13] add_layered_view reuses a WILMA element via wilma_id (one call)...")
+    import asyncio
+
+    # A throwaway WILMA model with one reusable element.
+    wilma = _fresh_doc()
+    wid = wilma.create_element(element_type="ApplicationComponent", name="Zaaksysteem (WILMA)")
+    proj = _fresh_doc()
+
+    class _FakeRegistry:
+        def get(self, session_id, model_path, create_if_missing=True):
+            return proj
+
+        def wilma(self):
+            return wilma
+
+    orig = write_tools.get_registry
+    write_tools.get_registry = lambda: _FakeRegistry()
+    try:
+        res = asyncio.run(write_tools._build_composite_view(
+            session_id="s",
+            view_name="Cooperation",
+            view_documentation="",
+            groups={"Application": [
+                {"name": "Zaaksysteem", "wilma_id": wid},
+                {"name": "Portaal", "type": "ApplicationComponent", "stereotype": "Applicatie"},
+            ]},
+            relationships=[{"source": "Portaal", "target": "Zaaksysteem", "type": "Serving"}],
+            model_path="docs/architecture.archimate",
+        ))
+    finally:
+        write_tools.get_registry = orig
+
+    if not res.get("success"):
+        _fail(f"builder returned error: {res.get('error')}")
+    ids = res.get("element_ids", {})
+    if ids.get("Zaaksysteem") != wid:
+        _fail(f"WILMA reuse should keep identifier {wid}, got {ids.get('Zaaksysteem')!r}")
+    if "Portaal" not in ids:
+        _fail("project-specific element was not created alongside the WILMA reuse")
+    if res.get("relationship_count") != 1:
+        _fail(f"expected 1 relationship wired, got {res.get('relationship_count')}")
+    # The WILMA element must actually be present in the project doc now.
+    if proj.find_element(wid) is None:
+        _fail("WILMA element was not imported into the project model")
+    print("    OK — wilma_id reuses (identifier preserved), mixed with a created element, one call")
+
+
 if __name__ == "__main__":
     print("=" * 50)
     print("Rijnland tekenafspraken — convention tests")
@@ -294,5 +342,6 @@ if __name__ == "__main__":
     test_cross_aspect_flow_is_flagged()
     test_serving_direction_is_flagged()
     test_name_type_mismatch_is_flagged()
+    test_composite_builder_reuses_wilma()
     print("=" * 50)
     print("All checks passed.")

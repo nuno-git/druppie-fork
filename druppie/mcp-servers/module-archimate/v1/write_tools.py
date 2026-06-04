@@ -436,11 +436,14 @@ def register_write_tools(mcp, *, module_id: str, module_version: str) -> None:
             "Application middle, Technology bottom). For non-standard "
             "viewpoints or fine-grained editing, fall back to the primitive "
             "create_* / add_to_view tools.\n\n"
-            "Element specs: {name, type, documentation?}. Relationship "
-            "specs: {source, target, type, access_type?} where source / "
-            "target are element NAMES from the lists below (no need to "
-            "track IDs). Composition / Aggregation relations automatically "
-            "become visual nesting in the rendered plate."
+            "Element specs: {name, type, documentation?, stereotype?} — or "
+            "{name, wilma_id} to REUSE an existing WILMA reference element "
+            "(preserves its identifier; search WILMA first with "
+            "archimate_search_model). Relationship specs: {source, target, "
+            "type, access_type?} where source / target are element NAMES from "
+            "the lists below (no need to track IDs). Composition / Aggregation "
+            "relations automatically become visual nesting in the rendered "
+            "plate (e.g. systems inside a Beveiligingsdomein Grouping)."
         ),
         meta=meta,
     )
@@ -478,8 +481,9 @@ def register_write_tools(mcp, *, module_id: str, module_version: str) -> None:
             "maps. Use when the plate is about how application components "
             "collaborate via shared services (horizontal flow). For "
             "cross-layer blueprints, use add_layered_view instead.\n\n"
-            "Element specs: {name, type, documentation?}. Relationship "
-            "specs: {source, target, type, access_type?}."
+            "Element specs: {name, type, documentation?, stereotype?} — or "
+            "{name, wilma_id} to reuse an existing WILMA reference element. "
+            "Relationship specs: {source, target, type, access_type?}."
         ),
         meta=meta,
     )
@@ -613,7 +617,8 @@ async def _build_composite_view(
     target reference element names from the groups.
     """
     try:
-        doc = _registry().get(session_id, model_path)
+        registry = _registry()
+        doc = registry.get(session_id, model_path)
 
         # Step 1: create the view itself.
         view_id = doc.create_view(name=view_name, documentation=view_documentation)
@@ -625,9 +630,28 @@ async def _build_composite_view(
                 name = (spec.get("name") or "").strip()
                 if not name:
                     return _error(f"Element in layer '{layer}' is missing a name")
+                if name in element_id_by_name:
+                    return _error(f"Element name '{name}' appears twice")
+                # WILMA reuse: a spec carrying `wilma_id` imports the existing
+                # WILMA reference element (preserving its original identifier)
+                # instead of creating a project-specific copy. `name` stays the
+                # key used to wire relationships below. This keeps a plate that
+                # reuses WILMA a single one-shot call instead of falling back to
+                # per-element get_or_create_wilma_reference + add_to_view.
+                wilma_id = (spec.get("wilma_id") or "").strip()
+                if wilma_id:
+                    try:
+                        element_id_by_name[name] = doc.copy_element_from(
+                            registry.wilma(), wilma_id
+                        )
+                    except ArchiMateWriteError as e:
+                        return _error(
+                            f"WILMA import for '{name}' (wilma_id='{wilma_id}') failed: {e}"
+                        )
+                    continue
                 element_type = spec.get("type") or ""
                 if not element_type:
-                    return _error(f"Element '{name}' is missing 'type'")
+                    return _error(f"Element '{name}' is missing 'type' (or a 'wilma_id')")
                 if element_type not in ELEMENT_TYPE_LAYER:
                     return _error(
                         f"Element '{name}': unsupported type '{element_type}'. "
@@ -640,8 +664,6 @@ async def _build_composite_view(
                         f"(layer {actual_layer}) but was placed in group "
                         f"'{layer}'. Move it to the matching group."
                     )
-                if name in element_id_by_name:
-                    return _error(f"Element name '{name}' appears twice")
                 element_id_by_name[name] = doc.create_element(
                     element_type=element_type,
                     name=name,
