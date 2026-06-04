@@ -14,6 +14,7 @@ import {
 } from 'lucide-react'
 
 // Agent name formatting and icons
+// surfaceFileWrites: show file-write cards in chat for non-gated agents (no approval step)
 export const AGENT_CONFIG = {
   router: { name: 'Router', icon: Brain, color: 'purple', description: 'Intent analysis', thinkingLabel: 'Analyzing intent...' },
   planner: { name: 'Planner', icon: Clock, color: 'blue', description: 'Execution planning', thinkingLabel: 'Planning execution...' },

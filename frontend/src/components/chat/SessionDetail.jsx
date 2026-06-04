@@ -28,6 +28,7 @@ import {
   findPendingQuestion,
   ProjectRepoContext,
 } from './ChatHelpers'
+import SurfacedFileCard from './SurfacedFileCard'
 import TestResultCard from './TestResultCard'
 import SandboxEventCard, {
   processEvents,
@@ -308,39 +309,13 @@ const TimelineQuestion = ({ tc, agentId, sessionId }) => {
 
 // --- Agent Run ---
 
-const SurfacedFileCard = ({ files }) => {
-  const [showPreview, setShowPreview] = useState(false)
-  if (!files || files.length === 0) return null
-
-  const label = files.length === 1
-    ? files[0].path.split('/').pop()
-    : `${files.length} files`
-
-  return (
-    <div className="mt-2 pl-8">
-      <button
-        onClick={() => setShowPreview(true)}
-        className="flex items-center gap-2 px-3 py-2 text-sm rounded-lg border border-gray-200 bg-white hover:bg-gray-50 hover:border-gray-300 transition-colors text-gray-700"
-      >
-        <FileCode className="w-4 h-4 text-blue-500 flex-shrink-0" />
-        <span className="truncate">{label}</span>
-        <ExternalLink className="w-3 h-3 text-gray-400 flex-shrink-0" />
-      </button>
-      {showPreview && (
-        <FilePreviewModal files={files} onClose={() => setShowPreview(false)} />
-      )}
-    </div>
-  )
-}
-
-const AgentRunItem = ({ run, timelineIndex, sessionId, hasFollowingMessage, sessionUserId }) => {
+const AgentRunItem = ({ run, timelineIndex, sessionId, hasFollowingMessage, sessionUserId, surfacedFiles }) => {
   const orderedItems = extractOrderedItems(run, hasFollowingMessage)
-  const surfacedFiles = extractSurfacedFileWrites(run)
 
   // Show agent trace for completed runs that have no following message
   const showAgentTrace = !hasFollowingMessage && run.status !== 'running'
 
-  if (!showAgentTrace && orderedItems.length === 0 && surfacedFiles.length === 0) return null
+  if (!showAgentTrace && orderedItems.length === 0 && (!surfacedFiles || surfacedFiles.length === 0)) return null
 
   const config = getAgentConfig(run.agent_id)
   const AgentIcon = config.icon
@@ -1084,6 +1059,7 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
                       sessionId={sessionId}
                       hasFollowingMessage={hasFollowingMessage}
                       sessionUserId={data?.user_id}
+                      surfacedFiles={surfacedFiles}
                     />
                     {renderAnnotation(i)}
                   </div>
