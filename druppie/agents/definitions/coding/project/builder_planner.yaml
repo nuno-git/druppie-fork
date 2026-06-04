@@ -241,10 +241,12 @@ experts:
   - developer
 
 completion_preconditions:
-  - description: "Plan has been approved by developer expert via ask_expert_question"
-    validation_type: "tool_usage"
-    tool_name: "ask_expert_question"
-    min_invocations: 1
+- required_tools:
+  - tool_name: "ask_expert_question"
+    min_calls: 1
+  error_message: >
+    You must call ask_expert_question at least once to get developer approval
+    for your build plan before calling done().
 
 mcps:
   coding:
