@@ -823,7 +823,14 @@ async def edit_file(
     git_scope: str | None = None,
     sandbox_networks: list[str] | None = None,
 ) -> dict:
-    """Edit a file by replacing old_string with new_string (must be unique).
+    """Edit an existing file by replacing old_string with new_string (must be unique).
+
+    IMPORTANT: This tool can ONLY edit files that already exist. It CANNOT create new files.
+    If the file does not exist, the tool returns: {"success": false, "error": "File not found: <path>"}
+
+    To CREATE a new file, use one of these tools instead:
+    - write_file(path, content, ...) — creates or overwrites a single file
+    - batch_write_files(files, ...) — creates multiple files in one call
 
     Args:
         path: File path relative to workspace
