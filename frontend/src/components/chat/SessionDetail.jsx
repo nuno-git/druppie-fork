@@ -30,6 +30,7 @@ import {
   findPendingQuestion,
   ProjectRepoContext,
 } from './ChatHelpers'
+import SurfacedFileCard from './SurfacedFileCard'
 import TestResultCard from './TestResultCard'
 import SandboxEventCard, {
   processEvents,
@@ -324,13 +325,13 @@ const TimelineQuestion = ({ tc, agentId, sessionId }) => {
 
 // --- Agent Run ---
 
-const AgentRunItem = ({ run, timelineIndex, sessionId, hasFollowingMessage, sessionUserId }) => {
+const AgentRunItem = ({ run, timelineIndex, sessionId, hasFollowingMessage, sessionUserId, surfacedFiles }) => {
   const orderedItems = extractOrderedItems(run, hasFollowingMessage)
 
   // Show agent trace for completed runs that have no following message
   const showAgentTrace = !hasFollowingMessage && run.status !== 'running'
 
-  if (!showAgentTrace && orderedItems.length === 0) return null
+  if (!showAgentTrace && orderedItems.length === 0 && (!surfacedFiles || surfacedFiles.length === 0)) return null
 
   const config = getAgentConfig(run.agent_id)
   const AgentIcon = config.icon
@@ -379,6 +380,9 @@ const AgentRunItem = ({ run, timelineIndex, sessionId, hasFollowingMessage, sess
         }
         return null
       })}
+      {surfacedFiles.length > 0 && (
+        <SurfacedFileCard files={surfacedFiles} />
+      )}
     </div>
   )
 }
@@ -1076,9 +1080,10 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
 
                 const hasFollowingMessage = runsWithMessages.has(i)
                 const orderedItems = extractOrderedItems(entry.agent_run, hasFollowingMessage)
+                const surfacedFiles = extractSurfacedFileWrites(entry.agent_run)
                 // Show completed runs without a following message (e.g. architect)
                 const isCompletedWithoutMessage = !hasFollowingMessage && entry.agent_run.status !== 'running'
-                if (orderedItems.length === 0 && !isCompletedWithoutMessage) {
+                if (orderedItems.length === 0 && surfacedFiles.length === 0 && !isCompletedWithoutMessage) {
                   return null
                 }
                 return (
@@ -1089,6 +1094,7 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
                       sessionId={sessionId}
                       hasFollowingMessage={hasFollowingMessage}
                       sessionUserId={data?.user_id}
+                      surfacedFiles={surfacedFiles}
                     />
                     {renderAnnotation(i)}
                   </div>
