@@ -142,10 +142,18 @@ small, surgical deltas on a view that already exists. (For the *initial*
 plate, use the one-shot builder above — don't hand-assemble it element by
 element.)
 
+**Change ONLY what the feedback asks for.** Add, modify or remove exactly
+the elements and relationships the reviewer named — and **nothing else**. Do
+not silently add elements the feedback didn't mention, do not drop existing
+ones, and never regenerate the plate from scratch. The reviewer asked for a
+delta, not a redraw: any surprise addition or deletion is a defect, even if
+the result still looks tidy. When in doubt about whether something is in
+scope, leave it as it is.
+
 When the architect gives feedback on an existing TD, **never call
 `archimate_delete_view` + `archimate_create_view` on a view that
-already exists**. That blows away every position and produces a
-diagram the reviewer cannot recognize. Instead:
+already exists**, and don't rebuild it with the composite builder either —
+both throw away the existing model. Instead:
 
 1. **Read the current state**: `archimate_get_view(view_id)` and
    `archimate_get_element(element_id)` for the elements you may touch.
@@ -156,8 +164,12 @@ diagram the reviewer cannot recognize. Instead:
    relationships with `archimate_create_relationship` +
    `archimate_add_connection_to_view`. Update labels with
    `archimate_update_element` / `archimate_update_relationship`.
-3. **Existing elements keep their position.** The write-MCP
-   automatically preserves x/y of any element already on the view.
+3. **The rest of the model is left untouched.** Adding an element re-flows
+   the layout on save (the layout engine recomputes positions and edge
+   routing) — that is fine: colours, layers, shapes and the Rijnland
+   tekenafspraken are derived fresh on every render, so the plate stays
+   correct after the change. What must stay the same is the *content* — only
+   the requested delta differs; everything you didn't touch is still there.
 4. **Save** with `archimate_save_model()` — re-renders all SVGs in
    `docs/diagrams/` too, so the committed SVG matches the new state.
    Don't forget to `git add docs/diagrams/` alongside the .archimate
