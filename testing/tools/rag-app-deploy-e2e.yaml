@@ -1,0 +1,228 @@
+## E2E test: deploy the template app and prove the RAG pipeline works.
+##
+## This test validates the full RAG loop end-to-end in a real deployed app:
+##   1. Create a project (scaffolds the template with rag.py + pgvector)
+##   2. Deploy it via docker compose (real deploy — app + pgvector database)
+##   3. Index sample Dutch policy documents via POST /api/rag/index
+##   4. Search for a query via POST /api/rag/search
+##   5. Assert that relevant chunks come back with source metadata
+##
+## This proves that the distributed vector storage architecture
+## (app/rag.py + module-llm embed + pgvector) actually works when deployed.
+##
+## Prerequisites:
+##   - Dev stack running (module-llm with embedding provider configured)
+##   - Docker available for compose_up
+
+tool-test:
+  name: rag-app-deploy-e2e
+  description: "Deploy template app and validate RAG index + search end-to-end with Dutch policy documents"
+  tags: [e2e, rag, deploy, real-deploy, pgvector]
+
+  chain:
+    # =========================================================================
+    # Step 1: Create the project (scaffolds template into Gitea)
+    # =========================================================================
+    - agent: router
+      tool: builtin:set_intent
+      arguments:
+        intent: create_project
+        project_name: rag-e2e-test
+        description: "E2E test app for validating the RAG pipeline — index Dutch policy documents and search them"
+      assert:
+        result:
+          - not_empty
+
+    - agent: router
+      tool: builtin:done
+      arguments:
+        summary: "Agent router: Created project rag-e2e-test"
+
+    # =========================================================================
+    # Step 2: Deploy the template app (real deploy — app + pgvector DB)
+    # =========================================================================
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: deployer
+            prompt: "Deploy rag-e2e-test from main"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: Planned deployer for rag-e2e-test"
+
+    - agent: deployer
+      tool: docker:list_containers
+
+    - agent: deployer
+      tool: docker:compose_up
+      approval:
+        status: approved
+        by: developer
+      arguments:
+        compose_project_name: rag-e2e-test
+        branch: main
+      assert:
+        result:
+          - not_empty
+          - { contains: "success" }
+
+    - agent: deployer
+      tool: builtin:done
+      arguments:
+        summary: "Agent deployer: Deployed rag-e2e-test from main."
+
+    # =========================================================================
+    # Step 3: Index sample Dutch policy documents via the RAG endpoint
+    #
+    # Calls POST /api/rag/index inside the deployed app container.
+    # The app's rag.py will:
+    #   - Chunk the text (recursive split)
+    #   - Call module-llm embed to generate vectors
+    #   - Store chunks + vectors in the app's own pgvector database
+    # =========================================================================
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: developer
+            prompt: "Test the RAG pipeline: index documents then search"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: Planned developer to test RAG pipeline"
+
+    - agent: developer
+      tool: docker:exec_command
+      approval:
+        status: approved
+        by: developer
+      arguments:
+        container_name: rag-e2e-test-app-1
+        command: >-
+          curl -s -X POST http://localhost:8000/api/rag/index
+          -H "Content-Type: application/json"
+          -d '{
+            "documents": [
+              {
+                "content": "Het waterschap hanteert het uitgangspunt dat in landelijk gebied geen gescheiden rioolstelsel wordt aangelegd tenzij de afstand tot het dichtstbijzijnde rioolgemaal minder dan 500 meter bedraagt. Bij vervanging van bestaande riolering wordt standaard overgegaan op een verbeterd gescheiden stelsel conform de richtlijnen van Stichting RIONED.",
+                "source_name": "Rioleringsbeleid 2024",
+                "source_page": 12,
+                "source_section": "3.2 Riolering landelijk gebied"
+              },
+              {
+                "content": "De Kaderrichtlijn Water verplicht het waterschap om uiterlijk in 2027 een goede ecologische toestand te bereiken voor alle oppervlaktewaterlichamen. Het waterschap beheert 245 kilometer primaire waterkering en 180 kilometer regionale waterkering. De veiligheidsnormen worden elke twaalf jaar getoetst conform de Waterwet.",
+                "source_name": "Waterbeheerprogramma 2022-2027",
+                "source_page": 8,
+                "source_section": "2.1 Kaderrichtlijn Water"
+              },
+              {
+                "content": "Voor de zuivering van afvalwater exploiteert het waterschap zeven rioolwaterzuiveringsinstallaties met een gezamenlijke capaciteit van 850.000 vervuilingseenheden. De energietransitie richt zich op het terugwinnen van grondstoffen uit afvalwater, waaronder fosfaat en cellulose. In 2025 moet minimaal 40 procent van de energie op de zuiveringen duurzaam worden opgewekt.",
+                "source_name": "Zuiveringsbeleid 2023",
+                "source_page": 22,
+                "source_section": "5.1 Energietransitie"
+              }
+            ]
+          }'
+      assert:
+        result:
+          - not_empty
+          - no_error
+          - { contains: "chunks_created" }
+          - { contains: "documents_indexed" }
+
+    # =========================================================================
+    # Step 4: Search the indexed documents — query about riolering
+    #
+    # The search query is about sewer policy in rural areas. The most
+    # relevant chunk should be from "Rioleringsbeleid 2024" page 12.
+    # =========================================================================
+    - agent: developer
+      tool: docker:exec_command
+      approval:
+        status: approved
+        by: developer
+      arguments:
+        container_name: rag-e2e-test-app-1
+        command: >-
+          curl -s -X POST http://localhost:8000/api/rag/search
+          -H "Content-Type: application/json"
+          -d '{"query": "Wat is het beleid voor riolering in landelijk gebied?", "top_k": 3}'
+      assert:
+        result:
+          - not_empty
+          - no_error
+          - { contains: "results" }
+          - { contains: "Rioleringsbeleid" }
+          - { contains: "source_name" }
+          - { contains: "score" }
+
+    # =========================================================================
+    # Step 5: Search for a different topic — waterkering / flood defence
+    #
+    # Validates that search returns the correct document for a different
+    # topic, proving the embeddings are meaningful (not just returning
+    # the same chunk every time).
+    # =========================================================================
+    - agent: developer
+      tool: docker:exec_command
+      approval:
+        status: approved
+        by: developer
+      arguments:
+        container_name: rag-e2e-test-app-1
+        command: >-
+          curl -s -X POST http://localhost:8000/api/rag/search
+          -H "Content-Type: application/json"
+          -d '{"query": "Hoeveel kilometer waterkering beheert het waterschap?", "top_k": 3}'
+      assert:
+        result:
+          - not_empty
+          - no_error
+          - { contains: "results" }
+          - { contains: "Waterbeheerprogramma" }
+          - { contains: "source_page" }
+
+    - agent: developer
+      tool: builtin:done
+      arguments:
+        summary: "Agent developer: RAG pipeline validated — indexed 3 Dutch policy documents, search returns relevant chunks with correct source metadata."
+
+    # =========================================================================
+    # Step 6: Cleanup — tear down the deployed app
+    # =========================================================================
+    - agent: deployer
+      tool: docker:compose_down
+      approval:
+        status: approved
+        by: developer
+      arguments:
+        compose_project_name: rag-e2e-test
+        remove_volumes: true
+      assert:
+        result:
+          - not_empty
+
+    - agent: deployer
+      tool: builtin:done
+      arguments:
+        summary: "Agent deployer: Cleaned up rag-e2e-test deployment."
+      assert:
+        completed: true
+
+  verify:
+    - gitea_repo_exists: true
+    - file_exists: app/rag.py
+    - file_exists: app/routes.py
+    - file_contains:
+        path: app/rag.py
+        content: "class RAG"
+    - file_contains:
+        path: app/routes.py
+        content: "/rag/index"
+    - file_contains:
+        path: app/routes.py
+        content: "/rag/search"

@@ -502,7 +502,21 @@ ArchiMate model operations. Reads `.archimate` files from a mounted models direc
 | `search_model` | None | Search for elements by query |
 | `export_view` | None | Export an ArchiMate view |
 
-### 6.8 Data Access Server (port 9010)
+### 6.8 RAG Architecture (Distributed Vector Storage)
+
+Vector storage for RAG lives in each app's own database, not in a
+central module. Every app template ships with `pgvector/pgvector:pg16`
+and an `app/rag.py` helper that provides `index_documents()` and
+`search()` against the app's own Postgres. Embeddings are generated
+via the stateless `module-llm` `embed` tool (called through the SDK).
+
+This gives each app full data isolation — no shared database, no
+cross-project access. The `rag-patterns` skill captures the per-layer
+design decisions the Architect documents in a TD; platform defaults
+are seeded into every project via §5 of the platform technical
+standards.
+
+### 6.9 Data Access Server (port 9010)
 
 Adapter-based access to heterogeneous data sources (Azure SQL, Azure Data Lake) plus inline chart generation. Full reference: [`docs/MCP/data-access.md`](MCP/data-access.md).
 
@@ -520,7 +534,7 @@ Adapter-based access to heterogeneous data sources (Azure SQL, Azure Data Lake) 
 
 **Charting data flow.** `create_chart_from_source` keeps raw data out of the LLM context: for SQL sources the `GROUP BY` is pushed into the database (`build_sql_aggregation_query`); for Data Lake files the whole file is read into MCP-server memory and aggregated in Python. Either way only a small JSON spec (the chart) is returned — no file is written, and the aggregation covers the full dataset (`full_dataset`/`rows_scanned` report any sampling). The spec is emitted as a ` ```chart ` fenced code block; the chat frontend renders it via `frontend/src/components/ChartBlock.jsx` (registered for the `chart` language in `ChatHelpers.jsx`, mirroring how `MermaidBlock` handles `mermaid`) using `recharts`. 13 chart types span XY, proportion, and multi-series families.
 
-### 6.9 Declarative Parameter Injection
+### 6.10 Declarative Parameter Injection
 
 MCP tools can have parameters auto-injected from the session/project context. Injected parameters are marked `hidden: true` and are removed from the LLM-visible tool schema. This prevents the LLM from needing to know internal IDs.
 
@@ -537,7 +551,7 @@ inject:
     tools: [read_file, write_file, list_dir, ...]
 ```
 
-### 6.10 Layered Approval System
+### 6.11 Layered Approval System
 
 Approvals have two layers:
 

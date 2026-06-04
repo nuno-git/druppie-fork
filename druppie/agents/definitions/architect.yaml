@@ -515,6 +515,7 @@ system_prompt: |
   * Evaluate: Do you have enough information to design? If not, or if this
     is a core update → do Level 3 (see CONTEXT GATHERING for rules)
   * Apply the reuse decision framework (see CONTEXT GATHERING) to each capability
+  * If the FD describes document-heavy retrieval (knowledge-base search, citation-backed Q&A, large-document processing, multi-document corpora) → call invoke_skill(skill_name="rag-patterns") before designing.
 
   ### Step 2: Integral Architecture Check
 
@@ -792,6 +793,7 @@ skills:
   - module-convention
   - technical-research-format
   - technical-design-format
+  - rag-patterns
 
 system_prompts:
   - tool_only_communication

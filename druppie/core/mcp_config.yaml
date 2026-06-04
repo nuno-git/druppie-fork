@@ -243,6 +243,8 @@ mcps:
     tools:
       - name: chat
         requires_approval: false
+      - name: embed
+        requires_approval: false
 
   vision:
     url: ${MCP_VISION_URL:-http://module-vision:9011}
