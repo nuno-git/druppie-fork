@@ -60,7 +60,7 @@ metadata:
     {{- include "druppie.labels" . | nindent 4 }}
     app.kubernetes.io/component: keycloak
 spec:
-  type: ClusterIP
+  type: NodePort
   selector:
     {{- include "druppie.selectorLabels" . | nindent 4 }}
     app.kubernetes.io/component: keycloak
@@ -68,6 +68,7 @@ spec:
     - name: http
       port: 8080
       targetPort: http
+      nodePort: 30002
 ---
 # Gitea Service
 apiVersion: v1
@@ -78,7 +79,7 @@ metadata:
     {{- include "druppie.labels" . | nindent 4 }}
     app.kubernetes.io/component: gitea
 spec:
-  type: ClusterIP
+  type: NodePort
   selector:
     {{- include "druppie.selectorLabels" . | nindent 4 }}
     app.kubernetes.io/component: gitea
@@ -86,6 +87,7 @@ spec:
     - name: http
       port: 3000
       targetPort: http
+      nodePort: 30003
     - name: ssh
       port: 2222
       targetPort: ssh
@@ -99,7 +101,7 @@ metadata:
     {{- include "druppie.labels" . | nindent 4 }}
     app.kubernetes.io/component: backend
 spec:
-  type: ClusterIP
+  type: NodePort
   selector:
     {{- include "druppie.selectorLabels" . | nindent 4 }}
     app.kubernetes.io/component: backend
@@ -107,6 +109,7 @@ spec:
     - name: http
       port: {{ .Values.backend.port }}
       targetPort: http
+      nodePort: 30000
 ---
 # Frontend Service
 apiVersion: v1
@@ -117,7 +120,7 @@ metadata:
     {{- include "druppie.labels" . | nindent 4 }}
     app.kubernetes.io/component: frontend
 spec:
-  type: ClusterIP
+  type: NodePort
   selector:
     {{- include "druppie.selectorLabels" . | nindent 4 }}
     app.kubernetes.io/component: frontend
@@ -125,6 +128,7 @@ spec:
     - name: http
       port: {{ .Values.frontend.port }}
       targetPort: http
+      nodePort: 30001
 {{- if .Values.modules.coding.enabled }}
 ---
 # Module Coding Service

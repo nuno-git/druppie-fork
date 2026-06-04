@@ -7,9 +7,9 @@ metadata:
     {{- include "druppie.labels" . | nindent 4 }}
     app.kubernetes.io/component: init
   annotations:
-    helm.sh/hook: post-install
+    helm.sh/hook: post-install,post-upgrade
     helm.sh/hook-weight: "0"
-    helm.sh/hook-delete-policy: hook-succeeded
+    helm.sh/hook-delete-policy: hook-succeeded,before-hook-creation
 spec:
   backoffLimit: 3
   ttlSecondsAfterFinished: 300
@@ -77,13 +77,13 @@ spec:
             - name: DOMAIN
               value: {{ .Values.global.domain | quote }}
             - name: FRONTEND_PORT
-              value: {{ .Values.global.ingress.port | default "9080" | quote }}
+              value: {{ .Values.frontend.nodePort | default .Values.global.ingress.port | default "9080" | quote }}
             - name: KEYCLOAK_PORT
-              value: {{ .Values.global.ingress.port | default "9080" | quote }}
+              value: {{ .Values.keycloak.nodePort | default .Values.global.ingress.port | default "9080" | quote }}
             - name: GITEA_PORT
-              value: {{ .Values.global.ingress.port | default "9080" | quote }}
+              value: {{ .Values.gitea.nodePort | default .Values.global.ingress.port | default "9080" | quote }}
             - name: BACKEND_PORT
-              value: {{ .Values.global.ingress.port | default "9080" | quote }}
+              value: {{ .Values.backend.nodePort | default .Values.global.ingress.port | default "9080" | quote }}
             - name: GITEA_URL
               value: "http://{{ include "druppie.fullname" . }}-gitea:3000"
             - name: GITEA_ADMIN_USER
