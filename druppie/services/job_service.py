@@ -126,6 +126,13 @@ class JobService:
         existing = self.list_definitions()
         for definition in existing.items:
             if definition.job_id not in seen_job_ids and definition.yaml_path:
+                if self.job_repo.has_active_runs_for_definition(definition.id):
+                    logger.warning(
+                        "orphan_definition_skipped_active_runs",
+                        job_id=definition.job_id,
+                        hint="definition_has_active_runs",
+                    )
+                    continue
                 self.job_repo.delete_definition_by_job_id(definition.job_id)
         self.job_repo.commit()
 
@@ -176,6 +183,13 @@ class JobService:
     ) -> JobRunList:
         return self.job_repo.list_job_runs(job_definition_id, status, page, limit)
 
+    def _get_system_user_id(self) -> UUID | None:
+        """Lookup the 'admin' user to own sessions created by scheduled jobs."""
+        from ..db.models.user import User as UserModel
+
+        admin = self.job_repo.db.query(UserModel).filter_by(username="admin").first()
+        return admin.id if admin else None
+
     def trigger_job(self, definition_id: UUID, user_id: UUID | None = None, trigger_type: str = "manual") -> JobRunDetail:
         """Create a new job run, session, and agent run for a job definition.
 
@@ -209,6 +223,11 @@ class JobService:
         )
         self.job_repo.commit()
 
+        if user_id is None and trigger_type == "scheduled":
+            system_user_id = self._get_system_user_id()
+            if system_user_id:
+                user_id = system_user_id
+
         session = self.session_repo.create(
             user_id=user_id,
             title=f"Job: {definition.name}",
@@ -227,6 +246,7 @@ class JobService:
 
         self.job_repo.set_job_run_session(run.id, session.id, agent_run.id)
         self.job_repo.commit()
+        self.job_repo.db.refresh(run)
 
         if definition.approval_required:
             self.job_repo.set_job_run_approval_required(run.id, definition.required_role or "admin")
@@ -330,6 +350,7 @@ class JobService:
         if run.agent_run_id:
             self.execution_repo.update_status(run.agent_run_id, AgentRunStatus.FAILED)
         self.execution_repo.commit()
+        self.job_repo.commit()
 
         logger.info(
             "job_run_rejected",
@@ -347,7 +368,33 @@ class JobService:
             job_repo.commit()
 
             try:
-                await ctx.orchestrator.execute_pending_runs(session_id)
+                await asyncio.wait_for(
+                    ctx.orchestrator.execute_pending_runs(session_id),
+                    timeout=1800,
+                )
+            except asyncio.TimeoutError:
+                error_msg = "Job timed out after 30 minutes"
+                logger.error(
+                    "job_execution_timeout",
+                    job_run_id=str(job_run_id),
+                    session_id=str(session_id),
+                    error=error_msg,
+                )
+                try:
+                    job_repo.update_job_run_status(
+                        job_run_id, JobRunStatus.FAILED, error_message=error_msg
+                    )
+                    job_repo.commit()
+                    ctx.session_repo.update_status(
+                        session_id, SessionStatus.FAILED, error_message=error_msg
+                    )
+                    ctx.session_repo.commit()
+                except Exception as db_err:
+                    logger.error(
+                        "job_status_update_failed_after_timeout",
+                        session_id=str(session_id),
+                        error=str(db_err),
+                    )
             except Exception as e:
                 error_msg = f"{type(e).__name__}: {e}"
                 logger.error(
@@ -357,9 +404,13 @@ class JobService:
                     error=error_msg,
                 )
                 try:
-                    job_repo.update_job_run_status(job_run_id, JobRunStatus.FAILED, error_message=error_msg[:2000])
+                    job_repo.update_job_run_status(
+                        job_run_id, JobRunStatus.FAILED, error_message=error_msg[:2000]
+                    )
                     job_repo.commit()
-                    ctx.session_repo.update_status(session_id, SessionStatus.FAILED, error_message=error_msg[:2000])
+                    ctx.session_repo.update_status(
+                        session_id, SessionStatus.FAILED, error_message=error_msg[:2000]
+                    )
                     ctx.session_repo.commit()
                 except Exception as db_err:
                     logger.error(
@@ -411,19 +462,33 @@ class JobScheduler:
     async def _loop(self) -> None:
         try:
             while self._running:
-                await asyncio.to_thread(self._check_jobs)
+                pending_jobs = await asyncio.to_thread(self._check_jobs)
+                for run_id, session_id in pending_jobs:
+                    try:
+                        self._execute_job_in_background(run_id, session_id)
+                    except Exception as e:
+                        logger.error(
+                            "job_scheduler_background_task_failed",
+                            job_run_id=str(run_id),
+                            error=str(e),
+                        )
                 await asyncio.sleep(60)
         except asyncio.CancelledError:
             logger.info("job_scheduler_loop_cancelled")
 
-    def _check_jobs(self) -> None:
+    def _check_jobs(self) -> list[tuple[UUID, UUID]]:
         """Synchronous check for jobs that should run now.
 
         Called from the async scheduler loop via asyncio.to_thread so
         synchronous DB calls don't block the event loop.
+
+        Returns a list of (job_run_id, session_id) tuples for jobs that
+        need background execution. The caller schedules the tasks on the
+        event loop so asyncio.create_task works.
         """
         from ..db.database import SessionLocal
         db = SessionLocal()
+        pending_runs: list[tuple[UUID, UUID]] = []
         try:
             job_service = self._job_service_factory(db)
             definitions = job_service.list_definitions()
@@ -446,9 +511,11 @@ class JobScheduler:
                     continue
                 logger.info("job_scheduler_triggering", job_id=definition.job_id)
                 try:
-                    run = job_service.trigger_job(definition.id, trigger_type="scheduled")
-                    if run.session_id and run.status != JobRunStatus.WAITING_APPROVAL:
-                        job_service.execute_job_in_background(run.id, run.session_id)
+                    run = job_service.trigger_job(
+                        definition.id, trigger_type="scheduled"
+                    )
+                    if run.session_id and run.status != JobRunStatus.WAITING_APPROVAL.value:
+                        pending_runs.append((run.id, run.session_id))
                     logger.info(
                         "job_scheduler_triggered",
                         job_id=definition.job_id,
@@ -464,6 +531,85 @@ class JobScheduler:
             logger.error("job_scheduler_check_failed", error=str(e))
         finally:
             db.close()
+        return pending_runs
+
+    def _execute_job_in_background(self, job_run_id: UUID, session_id: UUID) -> None:
+        async def _execute(ctx):
+            job_repo = JobRepository(ctx.db)
+            job_repo.update_job_run_status(job_run_id, JobRunStatus.RUNNING)
+            job_repo.commit()
+
+            try:
+                await asyncio.wait_for(
+                    ctx.orchestrator.execute_pending_runs(session_id),
+                    timeout=1800,
+                )
+            except asyncio.TimeoutError:
+                error_msg = "Job timed out after 30 minutes"
+                logger.error(
+                    "job_execution_timeout",
+                    job_run_id=str(job_run_id),
+                    session_id=str(session_id),
+                    error=error_msg,
+                )
+                try:
+                    job_repo.update_job_run_status(
+                        job_run_id, JobRunStatus.FAILED, error_message=error_msg
+                    )
+                    job_repo.commit()
+                    ctx.session_repo.update_status(
+                        session_id, SessionStatus.FAILED, error_message=error_msg
+                    )
+                    ctx.session_repo.commit()
+                except Exception as db_err:
+                    logger.error(
+                        "job_status_update_failed_after_timeout",
+                        session_id=str(session_id),
+                        error=str(db_err),
+                    )
+            except Exception as e:
+                error_msg = f"{type(e).__name__}: {e}"
+                logger.error(
+                    "job_execution_failed",
+                    job_run_id=str(job_run_id),
+                    session_id=str(session_id),
+                    error=error_msg,
+                )
+                try:
+                    job_repo.update_job_run_status(
+                        job_run_id, JobRunStatus.FAILED, error_message=error_msg[:2000]
+                    )
+                    job_repo.commit()
+                    ctx.session_repo.update_status(
+                        session_id, SessionStatus.FAILED, error_message=error_msg[:2000]
+                    )
+                    ctx.session_repo.commit()
+                except Exception as db_err:
+                    logger.error(
+                        "job_status_update_failed_after_failure",
+                        session_id=str(session_id),
+                        error=str(db_err),
+                    )
+
+            final_session = ctx.session_repo.get_by_id(session_id)
+            if final_session and final_session.status in {
+                SessionStatus.COMPLETED.value, SessionStatus.FAILED.value
+            }:
+                final_status = (
+                    JobRunStatus.COMPLETED
+                    if final_session.status == SessionStatus.COMPLETED.value
+                    else JobRunStatus.FAILED
+                )
+                job_repo.update_job_run_status(
+                    job_run_id, final_status, error_message=final_session.error_message
+                )
+                job_repo.commit()
+
+        create_session_task(
+            session_id,
+            run_session_task(session_id, _execute, "job_execution"),
+            name=f"job_execution-{session_id}",
+        )
 
     def _should_run(self, definition: JobDefinitionDetail, now: datetime) -> tuple[bool, datetime | None]:
         try:

@@ -51,6 +51,49 @@ def _recover_zombie_sessions() -> None:
         db.close()
 
 
+def _recover_stuck_job_runs() -> None:
+    """Mark job runs that have been RUNNING for too long as FAILED.
+
+    If the server crashed or the job background task was killed,
+    RUNNING job runs stay stuck forever with no heartbeat. On startup
+    we know no background task is alive, so anyRUNNING run is orphaned.
+    """
+    from datetime import timedelta
+    from druppie.db.database import SessionLocal
+    from druppie.repositories import JobRepository
+    from druppie.domain.common import JobRunStatus
+    from druppie.db.models.base import utcnow
+
+    db = SessionLocal()
+    try:
+        job_repo = JobRepository(db)
+        cutoff = utcnow() - timedelta(minutes=30)
+        stuck_runs = job_repo.get_stuck_runs(
+            status=JobRunStatus.RUNNING.value,
+            older_than=cutoff,
+        )
+        for run in stuck_runs:
+            job_repo.update_job_run_status(
+                run.id,
+                JobRunStatus.FAILED.value,
+                error_message="Server restarted while job was running — marked as failed.",
+            )
+        if stuck_runs:
+            db.commit()
+            logger.warning(
+                "stuck_job_runs_recovered",
+                count=len(stuck_runs),
+                run_ids=[str(r.id) for r in stuck_runs],
+            )
+        else:
+            logger.info("no_stuck_job_runs")
+    except Exception as e:
+        logger.error("stuck_job_run_recovery_failed", error=str(e), exc_info=True)
+        db.rollback()
+    finally:
+        db.close()
+
+
 def _recover_orphaned_batch_runs() -> None:
     """Mark orphaned test batch runs as error on startup.
 
@@ -101,6 +144,8 @@ async def lifespan(app: FastAPI):
 
     # Recover orphaned test batch runs left in "running" state by a crash/restart
     _recover_orphaned_batch_runs()
+
+    _recover_stuck_job_runs()
 
     # Clean up orphaned sandbox Gitea users from previous runs
     from druppie.opencode.gitea_cleanup import cleanup_orphaned_sandbox_users

@@ -820,49 +820,53 @@ const Tasks = () => {
     </>
   )}
 
-      <PageHeader title="Pending Job Approvals" subtitle="Scheduled jobs awaiting approval before execution.">
-        <div className="flex items-center gap-2">
-          <span className="text-sm text-gray-500">Your roles:</span>
-          {user?.roles?.slice(0, 3).map((role) => (
-            <span
-              key={role}
-              className="px-2 py-1 bg-blue-100 text-blue-700 text-xs rounded-full"
-            >
-              {role}
-            </span>
-          ))}
-        </div>
-      </PageHeader>
-
-      {pendingJobApprovalsLoading ? (
-        <div className="space-y-4">
-          {Array.from({ length: 2 }).map((_, i) => (
-            <div key={i} className="bg-white rounded-xl border border-gray-100 p-4 animate-pulse">
-              <div className="w-32 h-4 bg-gray-200 rounded mb-2" />
-              <div className="w-3/4 h-3 bg-gray-100 rounded" />
+      {isAdmin && (
+        <>
+          <PageHeader title="Pending Job Approvals" subtitle="Scheduled jobs awaiting approval before execution.">
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-gray-500">Your roles:</span>
+              {user?.roles?.slice(0, 3).map((role) => (
+                <span
+                  key={role}
+                  className="px-2 py-1 bg-blue-100 text-blue-700 text-xs rounded-full"
+                >
+                  {role}
+                </span>
+              ))}
             </div>
-          ))}
-        </div>
-      ) : (pendingJobApprovalsResponse?.items || []).length === 0 ? (
-        <EmptyState
-          icon={CheckCircle}
-          title="No pending job approvals"
-          description="No scheduled jobs waiting for approval right now."
-        />
-      ) : (
-        <div className="space-y-4">
-          {(pendingJobApprovalsResponse?.items || []).map((run) => (
-            <JobApprovalCard
-              key={run.id}
-              run={run}
-              onApprove={handleApproveJob}
-              onReject={handleRejectJob}
-            />
-          ))}
-        </div>
-      )}
+          </PageHeader>
 
-      <div className="border-t border-gray-200 pt-6" />
+          {pendingJobApprovalsLoading ? (
+            <div className="space-y-4">
+              {Array.from({ length: 2 }).map((_, i) => (
+                <div key={i} className="bg-white rounded-xl border border-gray-100 p-4 animate-pulse">
+                  <div className="w-32 h-4 bg-gray-200 rounded mb-2" />
+                  <div className="w-3/4 h-3 bg-gray-100 rounded" />
+                </div>
+              ))}
+            </div>
+          ) : (pendingJobApprovalsResponse?.items || []).length === 0 ? (
+            <EmptyState
+              icon={CheckCircle}
+              title="No pending job approvals"
+              description="No scheduled jobs waiting for approval right now."
+            />
+          ) : (
+            <div className="space-y-4">
+              {(pendingJobApprovalsResponse?.items || []).map((run) => (
+                <JobApprovalCard
+                  key={run.id}
+                  run={run}
+                  onApprove={handleApproveJob}
+                  onReject={handleRejectJob}
+                />
+              ))}
+            </div>
+          )}
+
+          <div className="border-t border-gray-200 pt-6" />
+        </>
+      )}
 
       <PageHeader title="Pending Tool Approvals" subtitle="Review and approve MCP tool executions based on your role permissions.">
         <div className="flex items-center gap-2">

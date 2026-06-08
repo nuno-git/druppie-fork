@@ -65,6 +65,26 @@ class JobRepository(BaseRepository):
             synchronize_session=False
         )
 
+    def has_active_runs_for_definition(self, definition_id: UUID) -> bool:
+        """Check if a job definition has any runs that are not terminal.
+
+        Active statuses: pending, running, waiting_approval.
+        """
+        active_statuses = {
+            JobRunStatus.PENDING.value,
+            JobRunStatus.RUNNING.value,
+            JobRunStatus.WAITING_APPROVAL.value,
+        }
+        return (
+            self.db.query(JobRun)
+            .filter(
+                JobRun.job_definition_id == definition_id,
+                JobRun.status.in_(active_statuses),
+            )
+            .first()
+            is not None
+        )
+
     def create_job_run(
         self,
         job_definition_id: UUID,
@@ -95,13 +115,15 @@ class JobRepository(BaseRepository):
         error_message: str | None = None,
         logs: str | None = None,
     ) -> None:
+        from ..db.models.base import utcnow
         updates = {"status": status}
         if error_message is not None:
             updates["error_message"] = error_message
         if logs is not None:
             updates["logs"] = logs
+        if status == JobRunStatus.RUNNING.value:
+            updates["started_at"] = utcnow()
         if status in {JobRunStatus.COMPLETED.value, JobRunStatus.FAILED.value, JobRunStatus.CANCELLED.value, JobRunStatus.REJECTED.value}:
-            from ..db.models.base import utcnow
             updates["completed_at"] = utcnow()
         self.db.query(JobRun).filter(JobRun.id == run_id).update(updates)
 
@@ -181,6 +203,18 @@ class JobRepository(BaseRepository):
             from ..db.models.base import utcnow
             updates["completed_at"] = utcnow()
         self.db.query(JobRun).filter(JobRun.agent_run_id == agent_run_id).update(updates)
+
+    def get_stuck_runs(
+        self,
+        status: str,
+        older_than: datetime,
+    ) -> list[JobRun]:
+        """Return runs that have been in a given status for longer than the cutoff."""
+        return (
+            self.db.query(JobRun)
+            .filter(JobRun.status == status, JobRun.started_at < older_than)
+            .all()
+        )
 
     def claim_job_trigger(
         self,
