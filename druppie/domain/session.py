@@ -76,7 +76,7 @@ class SessionDetail(SessionSummary):
     Includes the complete timeline of messages and agent runs,
     sorted chronologically.
     """
-    user_id: UUID
+    user_id: UUID | None
     project: ProjectSummary | None
     timeline: list[TimelineEntry]
 

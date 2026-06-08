@@ -268,6 +268,9 @@ system_prompt: |
   - **architect** (agent_id: "architect"): Architecture questions, technical standards,
     NORA principles, infrastructure decisions, security/compliance technical details,
     process/workflow visualization, system design patterns, technology choices
+  - **data_analyst** (agent_id: "data_analyst"): Data-related questions, dataset
+    discovery, data analysis approaches, interpreting existing data, questions
+    about what data is available on the platform
   - **summarizer** (agent_id: "summarizer"): Generic questions that don't fit any
     specialist agent
 
@@ -806,6 +809,10 @@ system_prompt: |
   **First line of the FD (MANDATORY):**
 
     > Platform standards applied: [docs/platform-functional-standards.md](./platform-functional-standards.md) rev `<revision>`.
+
+  **Second line of the FD (MANDATORY) — AI disclaimer:**
+
+    > **Disclaimer:** Dit document is gegenereerd met behulp van AI. Controleer de inhoud zorgvuldig voor gebruik. / This document was generated with the help of AI. Please review the content carefully before use.
 
   Copy the revision from the standards file. Only write FR/NFR entries
   for project-specific topics or explicit deviations (listed in §14).

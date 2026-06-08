@@ -20,7 +20,7 @@ class ApprovalDetail(ApprovalSummary):
     """Full approval with context. Inherits from ApprovalSummary."""
     session_id: UUID
     agent_run_id: UUID | None
-    tool_call_id: UUID
+    tool_call_id: UUID | None
     # Tool info
     mcp_server: str
     tool_name: str

@@ -1,0 +1,23 @@
+## Tool Test: Data Access MCP - filter_expr injection guard (live)
+## Verifies read_data rejects a filter_expr that tries to break out of the
+## WHERE clause. The guard runs before the DB connection is opened, so this
+## passes even if the Synapse endpoint is unreachable — it only needs an
+## azure-sql source named "synapsedwh" to be configured.
+
+tool-test:
+  name: data-access-sql-filter-rejected
+  description: "read_data rejects a filter_expr containing a statement terminator"
+  tags: [data-access, mcp, azure-sql, error-handling, security, live]
+
+  chain:
+    - agent: router
+      tool: dataaccess:read_data
+      arguments:
+        source_id: "synapsedwh"
+        data_id: "dbo.anytable"
+        filter_expr: "1=1; DROP TABLE dbo.anytable"
+      assert:
+        result:
+          - json_parseable
+          - {matches: "\"success\"\\s*:\\s*false"}
+          - {contains: "WHERE-clause"}

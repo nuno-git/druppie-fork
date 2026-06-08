@@ -28,7 +28,7 @@ Thirteen agents are defined. Twelve are functional; one is a stub.
 | **Router** | Classifies user intent | Determines whether the request is `create_project`, `update_project`, or `general_chat`. Can ask clarifying questions. Has web search access. |
 | **Planner** | Orchestrates the pipeline | Creates execution plans as ordered sequences of agent steps. Re-evaluates after each major phase. Manages design loops (BA/Architect) and execution loops (Developer/Deployer). Max 15 iterations. |
 | **Business Analyst** | Gathers requirements | Engages the user in structured dialogue using a funnel approach (max 1 question at a time, almost always multiple choice). Produces `docs/functional-design.md` via the `make_design` tool with built-in Mermaid validation. Considers security and compliance by design. Handles revision cycles when the Architect sends feedback. Supports `NO_FD_CHANGE` pass-through for technical fixes. Max 50 iterations. |
-| **Architect** | Designs system architecture | Reviews the functional design against NORA standards and water authority architecture principles. Four outcomes: APPROVE (writes `docs/technical-design.md` via `make_design`), APPROVE_CORE_UPDATE (same, but signals the project modifies Druppie's own codebase), FEEDBACK (sends specific items back to BA), or REJECT (communicates directly with user). Has access to ArchiMate models via MCP. Can create Mermaid diagrams with built-in syntax validation. Applies Security by Design and Compliance by Design. Max 50 iterations. |
+| **Architect** | Designs system architecture | Reviews the functional design against NORA standards and water authority architecture principles. Four outcomes: APPROVE (writes `docs/technical-design.md` via `make_design`), APPROVE_CORE_UPDATE (same, but signals the project modifies Druppie's own codebase), FEEDBACK (sends specific items back to BA), or REJECT (communicates directly with user). Has access to ArchiMate models via MCP. Can create Mermaid diagrams with built-in syntax validation. For doc-heavy FDs (knowledge bases, citation-backed Q&A, large-document retrieval) invokes the `rag-patterns` skill in Step 1 to land per-layer choices, the app-local pgvector reference, and TR-RAG NFRs in the TD. Applies Security by Design and Compliance by Design. Max 50 iterations. |
 | **Builder Planner** | Creates implementation plans | Reads `docs/functional-design.md` and `docs/technical-design.md`, writes `builder_plan.md` with code standards, test framework, test strategy, solution strategy, and change approach. Guides downstream test_builder and builder agents. Max 30 iterations. |
 | **Test Builder** | Generates tests (TDD Red Phase) | Writes comprehensive test suites based on functional and technical design documents and builder_plan.md. Sets up test frameworks and dependencies. Does NOT run tests. Max 30 iterations. |
 | **Builder** | Implements code (TDD Green Phase) | Reads tests written by test_builder and implements source code to pass them. Follows TDD methodology. Max 100 iterations. |
@@ -168,7 +168,7 @@ Users can hold multiple roles. For example, the `architect` test user has both `
 
 ### Frontend Authentication
 
-- Protected routes with role-based guards (e.g., admin-only database page)
+- Protected routes with role-based guards (e.g., admin-only platform page)
 - JWT Bearer token injected on all API requests
 - Silent SSO check on page load; automatic token refresh on expiry
 - User profile and role display on the Settings page
@@ -231,6 +231,22 @@ The primary interface is a chat page where users submit natural language request
 - **Inline approval cards**: When an agent needs approval to proceed, an approval card appears directly in the timeline.
 - **Inline HITL cards**: When an agent asks a question, an input card appears in the timeline for the user to respond.
 - **Polling**: Active sessions poll at 500ms intervals; session lists poll at 5s intervals. Polling stops when a session completes, fails, or is paused.
+
+---
+
+## Data Visualizations
+
+The Data Analyst agent can render charts **inline in the chat** from data in the configured sources (Azure SQL, Azure Data Lake), via the Data Access MCP.
+
+- **Ask in natural language**: "Show me a chart of assets per category", "visualize subscriptions by type as a donut", "break it down by year". The agent picks an appropriate chart type, aggregates the data, and shows the result inline.
+- **13 chart types**: bar, line, area, horizontal bar, scatter, pie, donut, treemap, funnel, and multi-series stacked bar / grouped bar / stacked area / multi-line.
+- **Deliberate type selection**: the agent follows a decision matrix — counts per category → bar, long category names → horizontal bar, long-tail distributions → treemap, proportions → pie/donut, breakdowns by a second dimension → stacked/grouped, trends → line/area, correlation → scatter.
+- **Whole-dataset accuracy**: aggregation runs over the **entire** dataset (the database does it for SQL; the whole file is read server-side for Data Lake), so counts and sums are exact rather than sampled. The agent flags when a result is ever a sample.
+- **Data stays private**: raw rows never enter the LLM context and nothing is written to the workspace — only a compact chart spec is produced, stored in the chat transcript so charts survive a reload.
+- **Inline values too**: if the user types the numbers directly ("chart A=10, B=25, C=7"), the agent charts them immediately without touching a data source.
+- **Graceful failure**: a malformed chart renders as a small inline error card rather than breaking the message.
+
+The Data Analyst is read-only: it visualizes and explains data but does not build dashboards or write files (creating a persistent dashboard project is a separate `create_project` path).
 
 ---
 
@@ -511,6 +527,16 @@ The Builder and Reviewer agents use skills to enforce project-specific coding st
 
 **Reviewer behavior**: Before reviewing code, the Reviewer invokes `project-coding-standards` and `standards-validation` to load the validation checklist. Reviews include explicit architecture compliance and standards compliance sections, with critical violations (e.g., JSON/JSONB columns, business logic in routes) resulting in an automatic FAIL verdict.
 
+### Architect-Side Skills
+
+| Skill | Used By | Purpose |
+|-------|---------|---------|
+| `architecture-principles` | Architect | NORA / water-authority principles for FD assessment and TD design. |
+| `making-mermaid-diagrams` | Architect | Diagram-type selection and Mermaid syntax for TD visualizations. |
+| `capability-placement` | Architect | Generic reuse/placement decision for a capability not yet covered by a module — decides whether it lives in the project, the project template, an extended module, or a new module. Applies to any building block (LLM, OCR, RAG, data-access, …). |
+| `rag-patterns` | Architect | Decision guides for doc-heavy applications: chunking, retrieval, embedding, vector store, re-ranking, advanced patterns, citation strategy, and TR-RAG NFRs. Invoked in Step 1 when the FD describes knowledge-base search, citation-backed Q&A, large-document retrieval, or multi-document corpora. Apps use `app/rag.py` (app-local pgvector) for storage + retrieval and `module-llm` `embed` for embeddings. Platform defaults seeded via platform-standards §5. |
+| `technical-research-format` / `technical-design-format` | Architect | Format templates for the research and design documents. |
+
 ### Architect & Builder-Planner Decision-Guide Skills
 
 The Architect and Builder-Planner use pattern-detecting skills that fire proactively when the design describes a specific challenge. For in-app LLM workflows the responsibility is **split along the role boundary** — the Architect decides the WHAT, the Builder-Planner the HOW — so the Architect never names a concrete framework (per its own role definition):
@@ -577,6 +603,178 @@ docker compose --profile scan-cache run --rm cache-scanner
 - **Delete**: Projects can be deleted from the project detail view.
 - **Stop deployments**: Running containers can be stopped from the project detail view.
 
+
+---
+
+## Scheduled Jobs
+
+Recurring cron jobs can be defined in YAML files under `druppie/jobs/definitions/`. Each job specifies a cron schedule for when to run, a natural-language prompt that tells the agent what to do, and an optional approval gate before execution.
+
+YAML definitions are auto-synced at application startup: new files are created in the database, updated files replace their previous values, and removed files are deleted from the database.
+
+### Job YAML Schema
+
+| Field | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `id` | **Yes** | — | Unique identifier for the job. Used as the DB key and in log lines. Alphanumeric and hyphens recommended. |
+| `name` | **Yes** | — | Human-readable display name shown in the Tasks page. |
+| `schedule` | **Yes** | — | Cron expression. See [Cron Syntax](#cron-syntax) below. |
+| `agent_id` | **Yes** | — | Agent to run the task. Must be a valid agent YAML file in `agents/definitions/{agent_id}.yaml`. See [Available Agents](#available-agents). |
+| `prompt` | **Yes** | — | Natural-language instructions sent to the agent. Can be multiline YAML (`\|`) for longer prompts. |
+| `description` | No | — | Optional description shown in the job card. |
+| `approval_required` | No | `false` | If `true`, the job pauses at trigger time and requires a human with `required_role` to approve before the agent starts. |
+| `required_role` | No | `admin` | The Keycloak role required to approve/reject a gated job. Only checked when `approval_required: true`. |
+| `enabled` | No | `true` | If `false`, the job is visible in the UI but excluded from the scheduler. |
+
+### Cron Syntax
+
+The `schedule` field uses standard cron expressions parsed by `croniter`. Both 5-field (minute hour day month weekday) and 6-field (seconds minute hour day month weekday) formats are accepted.
+
+**5-field format** (minute hour day month weekday):
+
+| Position | Field | Range | `N` (fixed) vs `*/N` (interval) |
+|----------|-------|-------|-----------------------------------|
+| 1 | **Minute** | `0-59` | `30` = exact minute 30. `*/5` = every 5 minutes (0, 5, 10, ..., 55). |
+| 2 | **Hour** | `0-23` | `2` = exactly 02:00. `*/6` = every 6 hours (00:00, 06:00, 12:00, 18:00). |
+| 3 | **Day of month** | `1-31` | `1` = 1st of the month. `*/2` = every 2 days (1, 3, 5, ...). `*` = every day. |
+| 4 | **Month** | `1-12` or `*` | `1` = January only. `*` = every month. `*/3` = every 3 months. |
+| 5 | **Day of week** | `0-6` (Sun=0) | `0` = Sunday only. `1,3,5` = Mon, Wed, Fri. `*` = every day. |
+
+**6-field format** (seconds minute hour day month weekday):
+
+| Position | Field | Range | `N` (fixed) vs `*/N` (interval) |
+|----------|-------|-------|-----------------------------------|
+| 1 | **Seconds** | `0-59` | `0` = exact top of the minute. `*/30` = every 30 seconds. |
+| 2 | **Minute** | `0-59` | `30` = exact minute 30. `*/5` = every 5 minutes (0, 5, 10, ..., 55). |
+| 3 | **Hour** | `0-23` | `2` = exactly 02:00. `*/6` = every 6 hours (00:00, 06:00, 12:00, 18:00). |
+| 4 | **Day of month** | `1-31` | `1` = 1st of the month. `*/2` = every 2 days (1, 3, 5, ...). `*` = every day. |
+| 5 | **Month** | `1-12` or `*` | `1` = January only. `*` = every month. `*/3` = every 3 months. |
+| 6 | **Day of week** | `0-6` (Sun=0) | `0` = Sunday only. `1,3,5` = Mon, Wed, Fri. `*` = every day. |
+
+**`N` vs `*/N` by field (5-field examples):**
+
+- `schedule: "30 2 * * *"` → At **02:30** every day (fixed minute and hour).
+- `schedule: "*/30 2 * * *"` → Every **30 minutes** starting at 02:00, once per day (02:00, 02:30 only).
+- `schedule: "0 */6 * * *"` → Every **6 hours** on the hour (00:00, 06:00, 12:00, 18:00).
+- `schedule: "0 0 */7 * *"` → Every **7th day** of the month (1st, 8th, 15th, 22nd, 29th).
+- `schedule: "0 0 * * 1/2"` → Every **second Monday** starting from the first Monday (croniter-specific; replaces complex expressions).
+
+**`N` vs `*/N` by field (6-field examples):**
+
+- `schedule: "0 30 2 * * *"` → At **02:30:00** every day (5-field equivalent: `"30 2 * * *"`).
+- `schedule: "*/30 0 2 * * *"` → Every **30 seconds** during the 02:00 minute (02:00:00, 02:00:30).
+- `schedule: "0 */5 * * * *"` → Every **5 minutes** on the minute (equivalent to `"0 */5 * * *"` in 5-field).
+- `schedule: "0 0 0 */7 * *"` → Same as 5-field `"0 0 */7 * *"` but with seconds=0 explicit.
+
+| Example | Meaning |
+|---------|---------|
+| `0 2 * * *` | Daily at 02:00 (5-field) |
+| `0 */6 * * *` | Every 6 hours at :00 (5-field) |
+| `0 0 * * 0` | Weekly on Sunday at 00:00 (5-field) |
+| `0 0 1 * *` | Monthly on the 1st at 00:00 (5-field) |
+| `0 0 31 2 *` | 31 February — **never triggers** (5-field, used in tests to prevent accidental execution) |
+| `0 */5 * * *` | Every 5 minutes at :00 (5-field) |
+| `30 9 * * 1,3,5` | At 09:30 on Monday, Wednesday, Friday (5-field) |
+| `0 0 * * 1-5` | Every weekday at 00:00 (5-field) |
+| `0 0 L * *` | Last day of every month at 00:00 (5-field; `L` supported by croniter) |
+| `0 */5 * * * *` | Every 5 minutes at :00 (6-field, seconds=0) |
+| `0 0 2 * * *` | Daily at 02:00:00 (6-field, equivalent to `"0 2 * * *"`) |
+| `*/30 0 2 * * *` | Every 30 seconds during 02:00 (6-field) |
+
+### Special Characters
+
+`croniter` supports several non-obvious extensions beyond basic `*` and `*/N` notation:
+
+| Character | Field(s) | Meaning | Example |
+|-----------|----------|---------|---------|
+| `L` | Day-of-month | **Last** day of the month | `0 0 L * *` → Last day of every month at 00:00 |
+| `W` | Day-of-month | **Weekday** — nearest weekday to the given date | `0 0 15W * *` → Nearest weekday to the 15th at 00:00. If the 15th is Saturday, it fires Friday the 14th; if Sunday, Monday the 16th. |
+| `#` | Day-of-week | **Nth occurrence** of a weekday in the month | `0 0 * * 2#3` → Third Tuesday of every month at 00:00 |
+| `,` | All | **List** of values | `0 0 * * 1,3,5` → Monday, Wednesday, Friday |
+| `-` | All | **Range** of values | `0 0 * * 1-5` → Monday through Friday |
+
+**Note on `W`**: If the target date falls on a Saturday, it shifts backwards to Friday. If Sunday, forwards to Monday. It never crosses month boundaries (e.g., `1W` on a Saturday will fire on Monday the 3rd, not Friday the 31st of the previous month).
+
+**Invalid expressions** (the scheduler logs an error and skips the file at load time):
+- `not a cron` — rejected by `croniter`
+- `0 0 * *` — only 4 fields
+- `0 0 31 2 * *` — 7 fields (6-field + extra)
+
+**Testing tip:** For jobs that should not auto-trigger (e.g., jobs intended only for manual "Run Now"), set the schedule to a date that never occurs, or set `enabled: false`.
+
+### Available Agents
+
+The `agent_id` field must match one of the agent definitions in `druppie/agents/definitions/*.yaml` (without the `.yaml` extension):
+
+| Agent ID | Purpose |
+|---------|---------|
+| `summarizer` | Creates concise summaries from session context |
+| `developer` | Writes code, manages git, creates PRs |
+| `deployer` | Builds Docker images and runs containers |
+| `builder` | Implements code from test suites (TDD Green Phase) |
+| `test_builder` | Generates tests from design documents (TDD Red Phase) |
+| `test_executor` | Runs tests iteratively and fixes failures |
+| `builder_planner` | Creates implementation plans from design docs |
+| `business_analyst` | Gathers requirements, writes functional design |
+| `architect` | Designs system architecture, writes technical design |
+| `planner` | Creates multi-agent execution plans |
+| `router` | Classifies user intent |
+| `reviewer` | Reviews code quality |
+| `data_analyst` | Renders charts from data sources |
+| `documenter` | Writes documentation |
+| `update_core_builder` | Modifies Druppie's own codebase |
+
+If an `agent_id` does not match a known agent file, the YAML file is **rejected at load time** with a clear error log (e.g., `agent_id 'summarizerr' not found`).
+
+### Example Definition
+
+```yaml
+id: nightly-report
+name: Nightly Summary Report
+description: Generates a daily summary of platform activity
+schedule: "0 2 * * *"
+agent_id: summarizer
+prompt: "Generate a summary of today's activity, including sessions created, approvals resolved, and deployments made."
+approval_required: true
+required_role: admin
+enabled: true
+```
+
+The `id` is the stable key; `name` is what users see in the UI; `prompt` is what the agent receives as its task. The `description` is optional but useful for long job lists.
+
+### Validation at Load Time
+
+`JobService.load_definitions_from_yaml()` validates every YAML file before creating or updating a database record. A file that fails validation is **skipped entirely** and its errors are logged:
+
+```
+job_yaml_validation_failed   file=test_approval_job.yaml  job_id=test_approval_job  error=invalid cron schedule: 'not a schedule'
+job_yaml_validation_failed   file=test_approval_job.yaml  job_id=test_approval_job  error=agent_id 'summarizerr' not found
+job_yaml_validation_failed   file=test_approval_job.yaml  job_id=test_approval_job  error=name is required and must be non-empty
+```
+
+Skipping (rather than creating a broken record) means:
+- The scheduler never tries to trigger a job with an invalid cron
+- The Tasks page never shows a card for a job whose agent does not exist
+- Operators can fix the YAML and restart; the job will be picked up on the next load cycle
+
+### Frontend Integration
+
+- The Tasks page (`/tasks`) shows all job definitions with their latest runs.
+- Job run cards display status badges, trigger type, timestamps, error messages, and a link to the associated session.
+- Admins can click **Run Now** to trigger a job immediately, bypassing the cron schedule.
+- Active runs are polled every 5 seconds; inactive sections stop polling automatically.
+
+### Job Run Lifecycle
+
+| Status | Meaning | Next Step |
+|--------|---------|-----------|
+| `pending` | Created but not yet triggered | Scheduler claims and triggers |
+| `waiting_approval` | Paused at trigger time, awaiting human approval | Admin approves/rejects |
+| `running` | Agent is executing | Completes or fails |
+| `completed` | Agent finished successfully | Finalized |
+| `failed` | Agent encountered an error (or was rejected) | Finalized |
+| `rejected` | A human rejected the approval gate | Finalized |
+| `cancelled` | Superseded by a new plan | Finalized |
 
 ---
 

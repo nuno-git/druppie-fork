@@ -146,6 +146,7 @@ class SessionRepository(BaseRepository):
         user_id: UUID | None = None,
         title: str = "New Session",
         project_id: UUID | None = None,
+        intent: str | None = None,
     ) -> SessionSummary:
         """Create a new session and return its summary."""
         session = SessionModel(
@@ -153,6 +154,7 @@ class SessionRepository(BaseRepository):
             title=title,
             project_id=project_id,
             status=SessionStatus.ACTIVE.value,
+            intent=intent,
         )
         self.db.add(session)
         self.db.flush()
@@ -554,6 +556,8 @@ class SessionRepository(BaseRepository):
             name=project.name,
             description=project.description,
             repo_url=project.repo_url,
+            repo_name=project.repo_name,
+            repo_owner=project.repo_owner,
             username=username,
             created_at=project.created_at,
         )

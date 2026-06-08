@@ -223,7 +223,6 @@ druppie/
 | Project Detail | `ProjectDetail.jsx` | Single project view with deployments |
 | Plans | `Plans.jsx` | Execution plan viewer |
 | Settings | `Settings.jsx` | User preferences |
-| Admin Database | `AdminDatabase.jsx` | Database inspection |
 | Debug | `Debug.jsx`, `DebugChat.jsx`, `DebugApprovals.jsx`, `DebugMCP.jsx`, `DebugProjects.jsx` | Development debugging tools |
 
 ### 3.3 Real-time Updates
@@ -503,7 +502,39 @@ ArchiMate model operations. Reads `.archimate` files from a mounted models direc
 | `search_model` | None | Search for elements by query |
 | `export_view` | None | Export an ArchiMate view |
 
-### 6.8 Declarative Parameter Injection
+### 6.8 RAG Architecture (Distributed Vector Storage)
+
+Vector storage for RAG lives in each app's own database, not in a
+central module. Every app template ships with `pgvector/pgvector:pg16`
+and an `app/rag.py` helper that provides `index_documents()` and
+`search()` against the app's own Postgres. Embeddings are generated
+via the stateless `module-llm` `embed` tool (called through the SDK).
+
+This gives each app full data isolation — no shared database, no
+cross-project access. The `rag-patterns` skill captures the per-layer
+design decisions the Architect documents in a TD; platform defaults
+are seeded into every project via §5 of the platform technical
+standards.
+
+### 6.9 Data Access Server (port 9010)
+
+Adapter-based access to heterogeneous data sources (Azure SQL, Azure Data Lake) plus inline chart generation. Full reference: [`docs/MCP/data-access.md`](MCP/data-access.md).
+
+| Tool | Approval | Description |
+|------|----------|-------------|
+| `list_sources` | None | List configured data sources |
+| `test_connection` | None | Verify a source is reachable |
+| `list_available_data` | None | List tables (SQL) or files (Data Lake) |
+| `get_schema` | None | Column metadata for a table/file |
+| `read_data` | None | Read rows (capped; goes into context) |
+| `execute_query` | None | Free-form read-only SELECT/WITH (SQL only) |
+| `download_data` | None | Stream a table/file to the workspace as CSV/Parquet |
+| `create_chart` | None | Chart inline values (returns a `chart` spec) |
+| `create_chart_from_source` | None | Read + aggregate a source server-side, return a `chart` spec |
+
+**Charting data flow.** `create_chart_from_source` keeps raw data out of the LLM context: for SQL sources the `GROUP BY` is pushed into the database (`build_sql_aggregation_query`); for Data Lake files the whole file is read into MCP-server memory and aggregated in Python. Either way only a small JSON spec (the chart) is returned — no file is written, and the aggregation covers the full dataset (`full_dataset`/`rows_scanned` report any sampling). The spec is emitted as a ` ```chart ` fenced code block; the chat frontend renders it via `frontend/src/components/ChartBlock.jsx` (registered for the `chart` language in `ChatHelpers.jsx`, mirroring how `MermaidBlock` handles `mermaid`) using `recharts`. 13 chart types span XY, proportion, and multi-series families.
+
+### 6.10 Declarative Parameter Injection
 
 MCP tools can have parameters auto-injected from the session/project context. Injected parameters are marked `hidden: true` and are removed from the LLM-visible tool schema. This prevents the LLM from needing to know internal IDs.
 
@@ -520,7 +551,7 @@ inject:
     tools: [read_file, write_file, list_dir, ...]
 ```
 
-### 6.9 Layered Approval System
+### 6.11 Layered Approval System
 
 Approvals have two layers:
 
@@ -977,6 +1008,40 @@ On application startup, the system detects "zombie" sessions -- sessions that we
 | `cancelled` | Internal only -- planner superseded old pending runs | Planner (via `make_plan`) |
 
 Note: `CANCELLED` is never set by user actions. It is only used internally by the planner when it creates a new plan that supersedes previously pending agent runs.
+
+### 8.10 Scheduled Jobs (Cron Pipeline)
+
+The cron job pipeline lets administrators schedule recurring tasks via YAML definitions in `druppie/jobs/definitions/*.yaml`. Jobs are loaded into `job_definitions` on startup; execution instances are tracked in `job_runs`.
+
+**Architecture:**
+
+```
+YAML files  →  JobService.load_definitions_from_yaml()  →  job_definitions (DB)
+                                                   ↓
+                                        JobScheduler._check_jobs()
+                                                   ↓
+                                              job_runs (DB)
+                                                   ↓
+                                        Orchestrator.execute_pending_runs()
+```
+
+**Components:**
+
+| Layer | File | Responsibility |
+|-------|------|---------------|
+| API | `api/routes/jobs.py` | List, trigger, list runs |
+| Service | `services/job_service.py` | Load YAML, trigger, schedule |
+| Repository | `repositories/job_repository.py` | DB access + claim compare-and-swap |
+| Domain | `domain/job.py` | Pydantic models |
+| Models | `db/models/job.py` | `JobDefinition`, `JobRun` |
+
+**Key design decisions:**
+
+1. **No pagination on `JobDefinitionList`** — Job definitions are YAML-scoped configuration objects, not growing event history. A typical deployment has < 50 definitions. `JobRunList` *does* have pagination because runs accumulate indefinitely.
+
+2. **Atomic claim via UPDATE-WHERE** — `JobRepository.claim_job_trigger()` uses an `UPDATE ... WHERE last_triggered_at < scheduled_time` so multiple backend instances can safely race for the same scheduled slot without duplicate runs.
+
+3. **YAML validation at load time** — `JobService.load_definitions_from_yaml()` validates each file before DB insertion: required fields (`name`, `schedule`, `agent_id`, `prompt`), cron syntax (via `croniter`), and agent existence (via filesystem check). Invalid files are logged and skipped entirely; no broken definitions are recorded.
 
 ---
 

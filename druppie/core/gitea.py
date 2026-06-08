@@ -42,23 +42,18 @@ class GiteaClient:
         self.admin_user = admin_user or GITEA_ADMIN_USER
         self.admin_password = admin_password or GITEA_ADMIN_PASSWORD
         self.org = org or GITEA_ORG
-        self._client: httpx.AsyncClient | None = None
 
-    async def _get_client(self) -> httpx.AsyncClient:
-        """Get or create async HTTP client."""
-        if self._client is None or self._client.is_closed:
-            self._client = httpx.AsyncClient(
-                base_url=f"{self.base_url}/api/v1",
-                auth=(self.admin_user, self.admin_password),
-                timeout=30.0,
-            )
-        return self._client
+    def _new_client(self) -> httpx.AsyncClient:
+        """Create a fresh async HTTP client.
 
-    async def close(self):
-        """Close the HTTP client."""
-        if self._client and not self._client.is_closed:
-            await self._client.aclose()
-            self._client = None
+        Each call creates a new client so the instance is safe to use
+        across threads and event loops without shared mutable state.
+        """
+        return httpx.AsyncClient(
+            base_url=f"{self.base_url}/api/v1",
+            auth=(self.admin_user, self.admin_password),
+            timeout=30.0,
+        )
 
     async def _request(
         self,
@@ -67,45 +62,43 @@ class GiteaClient:
         json_data: dict | None = None,
         params: dict | None = None,
     ) -> dict[str, Any]:
-        """Make an API request to Gitea."""
-        client = await self._get_client()
-
-        try:
-            response = await client.request(
-                method=method,
-                url=endpoint,
-                json=json_data,
-                params=params,
-            )
-
-            result = {
-                "success": response.status_code in (200, 201, 204),
-                "status_code": response.status_code,
-            }
-
-            if response.text:
-                try:
-                    result["data"] = response.json()
-                except ValueError:
-                    result["data"] = response.text
-
-            if not result["success"]:
-                logger.warning(
-                    "gitea_api_error",
+        async with self._new_client() as client:
+            try:
+                response = await client.request(
                     method=method,
-                    endpoint=endpoint,
-                    status=response.status_code,
-                    response=result.get("data"),
+                    url=endpoint,
+                    json=json_data,
+                    params=params,
                 )
 
-            return result
+                result = {
+                    "success": response.status_code in (200, 201, 204),
+                    "status_code": response.status_code,
+                }
 
-        except httpx.RequestError as e:
-            logger.error("gitea_request_error", method=method, endpoint=endpoint, error=str(e), exc_info=True)
-            return {
-                "success": False,
-                "error": str(e),
-            }
+                if response.text:
+                    try:
+                        result["data"] = response.json()
+                    except ValueError:
+                        result["data"] = response.text
+
+                if not result["success"]:
+                    logger.warning(
+                        "gitea_api_error",
+                        method=method,
+                        endpoint=endpoint,
+                        status=response.status_code,
+                        response=result.get("data"),
+                    )
+
+                return result
+
+            except httpx.RequestError as e:
+                logger.error("gitea_request_error", method=method, endpoint=endpoint, error=str(e), exc_info=True)
+                return {
+                    "success": False,
+                    "error": str(e),
+                }
 
     # =========================================================================
     # User Operations
@@ -401,11 +394,13 @@ class GiteaClient:
         repo: str,
         path: str,
         branch: str = "main",
+        owner: str | None = None,
     ) -> dict[str, Any]:
         """Get file contents and SHA from a repository."""
+        repo_owner = owner or self.org
         result = await self._request(
             "GET",
-            f"/repos/{self.org}/{repo}/contents/{path}",
+            f"/repos/{repo_owner}/{repo}/contents/{path}",
             params={"ref": branch},
         )
 
@@ -433,9 +428,11 @@ class GiteaClient:
         repo: str,
         path: str = "",
         branch: str = "main",
+        owner: str | None = None,
     ) -> dict[str, Any]:
         """List files in a directory of a repository."""
-        endpoint = f"/repos/{self.org}/{repo}/contents"
+        repo_owner = owner or self.org
+        endpoint = f"/repos/{repo_owner}/{repo}/contents"
         if path:
             endpoint = f"{endpoint}/{path}"
 
@@ -814,13 +811,10 @@ class GiteaClient:
         return f"{GITEA_URL}/{repo_owner}/{repo_name}"
 
 
-# Singleton instance
-_gitea_client: GiteaClient | None = None
-
-
 def get_gitea_client() -> GiteaClient:
-    """Get the global GiteaClient instance."""
-    global _gitea_client
-    if _gitea_client is None:
-        _gitea_client = GiteaClient()
-    return _gitea_client
+    """Create a new GiteaClient instance.
+
+    Stateless factory — returns a fresh client each time so it's safe
+    across threads and event loops without shared mutable state.
+    """
+    return GiteaClient()

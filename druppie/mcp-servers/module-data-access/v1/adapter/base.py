@@ -135,6 +135,25 @@ class BaseDataSourceAdapter(ABC):
         """
         pass
 
+    async def execute_query(
+        self,
+        query: str,
+        limit: int | None = None,
+    ) -> dict:
+        """Run a free-form read-only query.
+
+        Default implementation reports the operation as unsupported; SQL
+        adapters override this. File-based adapters cannot satisfy a SQL
+        query and must not silently succeed.
+        """
+        return {
+            "success": False,
+            "error": (
+                f"execute_query is not supported for source type "
+                f"'{self.source_info.source_type}' — use read_data instead"
+            ),
+        }
+
     async def test_connection(self) -> dict:
         """Test connection to the data source.
 

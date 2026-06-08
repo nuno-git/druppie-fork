@@ -9,7 +9,9 @@ description: >
 
 > Platform standards: conforms to [docs/platform-technical-standards.md](./platform-technical-standards.md) rev `<revision>`.
 
-**First line is MANDATORY.** Copy the revision from the standards file. Do not restate anything it covers (stack, template, modules, DB, API layering, frontend conventions, testing, Druppie auth, deployment, git) — those are givens.
+> **Disclaimer:** Dit document is gegenereerd met behulp van AI. Controleer de inhoud zorgvuldig voor gebruik. / This document was generated with the help of AI. Please review the content carefully before use.
+
+**First two lines are MANDATORY.** Copy the revision from the standards file. Do not restate anything it covers (stack, template, modules, DB, API layering, frontend conventions, testing, Druppie auth, deployment, git) — those are givens.
 
 ## Introduction
 
@@ -88,6 +90,26 @@ Source: BA = from Business Analyst (FR/NFR) | AR = from Architect (TR)
     koppelingen is niet acceptabel als er één of meer organizational
     koppelingen in scope zijn — noem dan expliciet welke modules
     (REUSE/EXTEND/NEW) elke koppeling afdekken.
+
+#### 3. RAG choices (only if the design contains a RAG component)
+Invoke the `rag-patterns` skill for the decision guides. **Stay
+high-level.** As the architect you name *which* building blocks are in
+play and *where* the design deviates from the platform default and why
+— you do **not** specify implementation details. Concretely:
+
+- **Do** state: RAG is the pattern (plain vs agentic), which layers
+  deviate from platform-standards §5 (RAG defaults) and the trigger for
+  each deviation, and any RAG-specific NFRs.
+- **Do not** state: exact chunk sizes, specific embedding model names,
+  index/SQL tuning, rerank thresholds, or other implementation detail —
+  those are the developer's call (and will move to a data-scientist /
+  AI-engineer subagent once subagents land in the core; see issue #231).
+
+Keep this subsection compact: per-layer targets and any RAG-specific
+NFRs stay **inside this subsection**. Do **not** dump TR-RAG-XX rows
+into the global Requirements table — that table is for FR/NFR/TR at the
+project level, not RAG implementation detail. Reference the
+rag-patterns research doc for the full NFR menu.
 
 (Deployment / hosting / infra is the platform default — do not restate it
 unless this project deviates.)
