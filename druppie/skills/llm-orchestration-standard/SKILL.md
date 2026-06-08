@@ -64,18 +64,10 @@ chosen ad hoc.
 
 ## Where the code lives (confirm the architect's placement)
 
-The architect named a placement; the builder_planner confirms it and plans
-the build accordingly:
-
-1. **In the app (project-local)** — implement directly in the generated
-   app. One-off, project-specific logic.
-2. **Extend the project template** — add the pattern as a reusable,
-   pre-defined example in the template. Recurs across projects but needs
-   per-project adaptability and lives best close to the app.
-3. **Evolve a module** — recurring + benefits from centralisation; grow an
-   existing module (e.g. `module-llm`). This is a core-update build path,
-   not project-local code.
-4. **New module** — fundamentally distinct or broadly reusable capability.
+The architect named a placement using the `capability-placement` skill
+(project / extend the project template / evolve a module / new module —
+see that skill for the paths and criteria). The builder_planner confirms
+it and plans the build accordingly.
 
 If the architect's placement looks wrong from the build side (e.g. clear
 cross-project reuse routed as project-local code), raise it rather than

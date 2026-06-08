@@ -9,7 +9,7 @@ description: >
   needs. It does NOT name frameworks or libraries — that HOW-decision
   belongs to the builder_planner (see the `llm-orchestration-standard`
   skill) — and it does NOT re-derive capability placement, which is the
-  architect's standard reuse decision framework applied to any capability.
+  generic `capability-placement` skill applied to any capability.
 ---
 
 # LLM Orchestration in Built Apps (Architect — WHAT)
@@ -97,15 +97,15 @@ single-agent / multi-agent), not a library.
 
 ## Capability placement is not an LLM decision
 
-Where the capability lives — in-app, extend an existing module, or a new
-module — is **not** specific to LLM workflows. It is the architect's
-standard **reuse decision framework**, applied to an LLM capability
-exactly as to any other (OCR, RAG, data-access, …). Do not re-derive an
-LLM-flavoured version here: run the same generic placement decision the
-architect makes for every capability, and state the outcome in one
-sentence in the TD. For "extend a module" / "new module" the architect
-flags the platform need (e.g. the module-llm v2 handoff) without
-designing the module's internals.
+Where the capability lives — in the project, the project template, an
+existing module, or a new module — is **not** specific to LLM workflows.
+It is a generic placement decision the architect makes for every
+capability (OCR, RAG, data-access, …). Do not re-derive an LLM-flavoured
+version here: run the standard placement decision via
+`invoke_skill(skill_name="capability-placement")` and state the outcome
+in one sentence in the TD. For "extend a module" / "new module" the
+architect flags the platform need (e.g. the module-llm v2 handoff)
+without designing the module's internals.
 
 ## What to write in the TD (compact — WHAT only)
 
@@ -121,9 +121,9 @@ Keep this to one subsection in the architectural solution. Include:
 4. **Evaluation hook** — how the team will know the choice was right (one
    sentence — metric + source).
 
-Capability placement (in-app / extend a module / new module) is recorded
-in the TD's general modules/reuse section via the architect's standard
-reuse decision framework — not restated as an LLM-specific item here.
+Capability placement (project / template / extend a module / new module)
+is recorded in the TD's general modules/reuse section via the
+`capability-placement` skill — not restated as an LLM-specific item here.
 
 **Do not** name a framework or library, and **do not** produce a
 multi-row TR-LLM-XX requirements dump. The concrete library and the
