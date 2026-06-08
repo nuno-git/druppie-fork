@@ -155,6 +155,21 @@ class DruppieToolProvider:
             )
 
         self._tools_cache = self._tool_registry.to_openai_format(tools)
+
+        # Inject allowed expert roles as enum on ask_expert tool schemas
+        experts = getattr(self._old_def, 'experts', None)
+        if experts:
+            for tool in self._tools_cache:
+                fn = tool.get("function", {})
+                name = fn.get("name", "")
+                if name in ("ask_expert_question", "ask_expert_multiple_choice_question"):
+                    props = fn.get("parameters", {}).get("properties", {})
+                    if "expert_role" in props:
+                        props["expert_role"]["enum"] = list(experts)
+                        props["expert_role"]["description"] = (
+                            f"Expert role to ask. Allowed values: {', '.join(experts)}."
+                        )
+
         return self._tools_cache
 
     async def execute(self, tool_name: str, arguments: dict) -> dict:
