@@ -45,12 +45,12 @@ from uuid import UUID
 import structlog
 
 from druppie.agents.prompt_builder import DEFAULT_LANGUAGE
-from druppie.domain.common import AgentRunStatus, SessionStatus
+from druppie.domain.common import AgentRunStatus, SessionStatus, ApprovalStatus
 from druppie.core.language_detection import LanguageDetector
 from druppie.execution.human_input import HumanInput
 
 if TYPE_CHECKING:
-    from druppie.repositories import SessionRepository, ExecutionRepository, ProjectRepository, QuestionRepository
+    from druppie.repositories import SessionRepository, ExecutionRepository, ProjectRepository, QuestionRepository, JobRepository
 
 logger = structlog.get_logger()
 
@@ -67,6 +67,7 @@ class Orchestrator:
         execution_repo: "ExecutionRepository",
         project_repo: "ProjectRepository",
         question_repo: "QuestionRepository",
+        job_repo: "JobRepository | None" = None,
     ):
         """Initialize orchestrator with repositories.
 
@@ -75,11 +76,13 @@ class Orchestrator:
             execution_repo: Repository for agent runs, tool calls
             project_repo: Repository for project operations
             question_repo: Repository for question operations
+            job_repo: Repository for job runs (optional, required for approval-gated jobs)
         """
         self.session_repo = session_repo
         self.execution_repo = execution_repo
         self.project_repo = project_repo
         self.question_repo = question_repo
+        self.job_repo = job_repo
         self.language_detector = LanguageDetector()
         # Updated on each user input (process_message / resume_after_answer).
         # Safe as instance state because Orchestrator is created per-request.

@@ -25,6 +25,10 @@ Removed tables (handled by MCPs):
 - builds: Docker MCP tracks via container labels
 - deployments: Docker MCP tracks via container labels
 - session_events: Derived from other tables, not stored
+
+New tables (cron job pipeline):
+- job_definitions  JobDefinition       JobDefinitionSummary, JobDefinitionDetail
+- job_runs         JobRun              JobRunSummary, JobRunDetail
 """
 
 # Agent execution models
@@ -56,6 +60,8 @@ from .documentation_cache import DocumentationCache
 
 # Question model (HITL questions from agents)
 from .question import Question
+
+from .job import JobDefinition, JobRun
 
 # Sandbox session ownership mapping
 from .sandbox_session import SandboxSession
@@ -106,4 +112,7 @@ __all__ = [
     "TestRunTag",
     "TestAssertionResult",
     "TestRunningStatus",
+    # Cron jobs
+    "JobDefinition",
+    "JobRun",
 ]

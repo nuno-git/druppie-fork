@@ -2,7 +2,7 @@
 
 Bugs, implementation gaps, technical debt, and improvement ideas for the Druppie platform.
 
-Last updated: 2026-03-24
+Last updated: 2026-06-03
 
 ---
 
@@ -28,6 +28,7 @@ Last updated: 2026-03-24
 - Keycloak in Development Mode
 - ~~Sandboxed Execution Environment for Agents~~ ✅ DONE
 - ~~Test-Driven Development (TDD) Workflow~~ ✅ DONE
+- ~~Scheduled Jobs (Cron Jobs)~~ ✅ DONE (see `feature/cronjobs` branch)
 - Agents Should Be Able to Spawn Sub-Agents and Inject Next Steps
 - ~~Skills System~~ ✅ DONE
 - Skill: MCP Server Integration for Generated Applications
@@ -208,6 +209,19 @@ Last updated: 2026-03-24
 ### ~~Skills System~~ ✅ DONE
 
 - **Implemented:** Skills system is live. Skills are Markdown files (`SKILL.md`) with YAML frontmatter defining `name`, `description`, and `allowed-tools`. Agents invoke skills via the `invoke_skill` builtin tool. When invoked, the skill's `allowed_tools` are dynamically added to the agent's available tools, and the skill's markdown body is returned as instructions. Skills are configured per-agent in YAML definitions via the `skills:` field. Skill loading is handled by `SkillService` from the `druppie/skills/` directory.
+
+### ~~Scheduled Jobs (Cron Jobs)~~ ✅ DONE
+
+- **Resolved in:** `feature/cronjobs` branch
+- **Feature:** Recurring cron jobs defined in YAML under `druppie/jobs/definitions/`. Each job specifies an agent, prompt, cron schedule, and optional approval gate. Jobs are loaded at startup and synced with the database automatically.
+- **Key components:**
+  - `JobScheduler`: Background asyncio task that checks cron schedules every 60 seconds
+  - `JobService`: YAML loading, job triggering, manual execution, and background task orchestration
+  - `JobRepository`: Database access for definitions, runs, and atomic claim-based trigger scheduling
+  - `JobRunStatus` enum: Typed status values (`pending`, `running`, `waiting_approval`, `completed`, `failed`, `cancelled`, `rejected`) replacing hardcoded string literals
+  - Summary/Detail pattern: `JobRunList` returns `JobRunSummary` (without logs); detail endpoints return `JobRunDetail`
+- **Frontend integration:** Tasks page (`/tasks`) displays job definitions with Run Now buttons and recent run history. Conditional polling (5s when active).
+- **Approval gating:** Jobs with `approval_required: true` create a session approval before execution. Rejected approvals mark the job run as `rejected`.
 
 ### Skill: MCP Server Integration for Generated Applications
 

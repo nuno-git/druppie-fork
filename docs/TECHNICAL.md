@@ -1007,6 +1007,40 @@ On application startup, the system detects "zombie" sessions -- sessions that we
 
 Note: `CANCELLED` is never set by user actions. It is only used internally by the planner when it creates a new plan that supersedes previously pending agent runs.
 
+### 8.10 Scheduled Jobs (Cron Pipeline)
+
+The cron job pipeline lets administrators schedule recurring tasks via YAML definitions in `druppie/jobs/definitions/*.yaml`. Jobs are loaded into `job_definitions` on startup; execution instances are tracked in `job_runs`.
+
+**Architecture:**
+
+```
+YAML files  →  JobService.load_definitions_from_yaml()  →  job_definitions (DB)
+                                                   ↓
+                                        JobScheduler._check_jobs()
+                                                   ↓
+                                              job_runs (DB)
+                                                   ↓
+                                        Orchestrator.execute_pending_runs()
+```
+
+**Components:**
+
+| Layer | File | Responsibility |
+|-------|------|---------------|
+| API | `api/routes/jobs.py` | List, trigger, list runs |
+| Service | `services/job_service.py` | Load YAML, trigger, schedule |
+| Repository | `repositories/job_repository.py` | DB access + claim compare-and-swap |
+| Domain | `domain/job.py` | Pydantic models |
+| Models | `db/models/job.py` | `JobDefinition`, `JobRun` |
+
+**Key design decisions:**
+
+1. **No pagination on `JobDefinitionList`** — Job definitions are YAML-scoped configuration objects, not growing event history. A typical deployment has < 50 definitions. `JobRunList` *does* have pagination because runs accumulate indefinitely.
+
+2. **Atomic claim via UPDATE-WHERE** — `JobRepository.claim_job_trigger()` uses an `UPDATE ... WHERE last_triggered_at < scheduled_time` so multiple backend instances can safely race for the same scheduled slot without duplicate runs.
+
+3. **YAML validation at load time** — `JobService.load_definitions_from_yaml()` validates each file before DB insertion: required fields (`name`, `schedule`, `agent_id`, `prompt`), cron syntax (via `croniter`), and agent existence (via filesystem check). Invalid files are logged and skipped entirely; no broken definitions are recorded.
+
 ---
 
 ## 9. Configuration

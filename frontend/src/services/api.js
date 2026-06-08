@@ -422,6 +422,31 @@ export const getTestRunAssertionsList = getTestRunAssertions
 // ============ Documentation ============
 export const getDocumentation = () => request("/api/documentation")
 
+// ============ Jobs (Scheduled / Cron) ============
+export const getJobs = () => request('/api/jobs')
+export const triggerJob = (jobDefinitionId) =>
+  request(`/api/jobs/${jobDefinitionId}/trigger`, { method: 'POST' })
+export const getJobRuns = (jobDefinitionId = null, status = null, page = 1, limit = 20) => {
+  const params = new URLSearchParams({ page, limit })
+  if (status) params.append('status', status)
+  const qs = params.toString()
+  if (jobDefinitionId) {
+    return request(`/api/jobs/${jobDefinitionId}/runs?${qs}`)
+  }
+  return request(`/api/jobs/runs?${qs}`)
+}
+
+// Job-level approval endpoints
+export const getPendingJobApprovals = () => request('/api/jobs/pending-approvals')
+export const approveJob = (jobRunId) =>
+  request(`/api/jobs/${jobRunId}/approve`, { method: 'POST' })
+export const rejectJob = (jobRunId, reason = '') =>
+  request(`/api/jobs/${jobRunId}/reject`, {
+    method: 'POST',
+    body: JSON.stringify({ reason }),
+    headers: { 'Content-Type': 'application/json' },
+  })
+
 // ============ Cache ============
 export const getCachedPackages = () => request('/api/cache/packages')
 export const getAllProjectDependencies = () => request('/api/cache/dependencies')
