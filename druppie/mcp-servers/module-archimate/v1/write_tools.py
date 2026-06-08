@@ -587,6 +587,19 @@ async def _build_composite_view(
         registry = _registry()
         doc = registry.get(session_id, model_path)
 
+        # Pre-flight: normalise relationship direction/type against the
+        # ArchiMate metamodel BEFORE writing anything. Reversed Serving /
+        # Realization / Assignment are auto-corrected (swap source+target) and
+        # an impossible Flow is rejected up front — so bad relationships never
+        # get baked into the plate and then torn out with delete/create churn
+        # in the validate→fix loop.
+        type_by_name = _resolve_spec_types(registry, groups)
+        relationships, rel_corrections, rel_error = _preflight_relationships(
+            type_by_name, relationships
+        )
+        if rel_error:
+            return _error(rel_error)
+
         # Step 1: create the view itself.
         view_id = doc.create_view(name=view_name, documentation=view_documentation)
 
@@ -687,6 +700,7 @@ async def _build_composite_view(
             "relationship_ids": relationship_ids,
             "element_count": len(element_id_by_name),
             "relationship_count": len(relationship_ids),
+            "auto_corrections": rel_corrections,
         })
     except ArchiMateWriteError as e:
         return _error(str(e))
@@ -757,6 +771,107 @@ def _category(t: str) -> str:
     if t in _MOTIVATION_TYPES:
         return "motivation"
     return "other"
+
+
+def _resolve_spec_types(registry, groups: dict[str, list[dict]]) -> dict[str, str]:
+    """Map element name → ArchiMate type for a composite-builder spec.
+
+    Elements created from a spec use their declared ``type``; WILMA-reused
+    elements (spec carries ``wilma_id``) get their type read from the WILMA
+    model. Used by the relationship pre-flight so it can reason about the
+    metamodel before anything is written. The WILMA model is only loaded if a
+    ``wilma_id`` actually appears.
+    """
+    xsi_type = "{http://www.w3.org/2001/XMLSchema-instance}type"
+    type_by_name: dict[str, str] = {}
+    wilma_doc = None
+    for specs in groups.values():
+        for spec in specs or []:
+            name = (spec.get("name") or "").strip()
+            if not name:
+                continue
+            wilma_id = (spec.get("wilma_id") or "").strip()
+            if wilma_id:
+                if wilma_doc is None:
+                    wilma_doc = registry.wilma()
+                el = wilma_doc.find_element(wilma_id)
+                type_by_name[name] = el.get(xsi_type, "") if el is not None else ""
+            else:
+                type_by_name[name] = spec.get("type") or ""
+    return type_by_name
+
+
+def _preflight_relationships(
+    type_by_name: dict[str, str], relationships: list[dict]
+) -> tuple[list[dict], list[str], str]:
+    """Normalise relationship specs against the ArchiMate metamodel at build
+    time — the same rules ``validate_view`` enforces, but applied *before*
+    anything is written.
+
+    Deterministic direction mistakes (reversed Serving / Realization across the
+    layer stack, and Assignment from a behaviour element) are auto-corrected by
+    swapping source and target. An impossible Flow (mixing incompatible kinds)
+    needs a *type* change we can't infer, so it is rejected with the corrective
+    message — the caller then resubmits a single fixed ``add_*_view`` call
+    instead of tearing the plate apart with delete/create churn.
+
+    Returns ``(normalized_relationships, corrections, error_message)``. A
+    non-empty ``error_message`` means the build must abort before mutating.
+    """
+    _BAT = {"Business", "Application", "Technology"}
+    normalized: list[dict] = []
+    corrections: list[str] = []
+    for rel in relationships or []:
+        src = (rel.get("source") or "").strip()
+        tgt = (rel.get("target") or "").strip()
+        rtype = rel.get("type") or ""
+        src_type = type_by_name.get(src, "")
+        tgt_type = type_by_name.get(tgt, "")
+        # Unknown names / unsupported types: leave untouched — the builder's
+        # own checks report them with a precise message.
+        if not src_type or not tgt_type or rtype not in VALID_RELATIONSHIP_TYPES:
+            normalized.append(rel)
+            continue
+
+        src_cat, tgt_cat = _category(src_type), _category(tgt_type)
+        src_layer = ELEMENT_TYPE_LAYER.get(src_type, "Other")
+        tgt_layer = ELEMENT_TYPE_LAYER.get(tgt_type, "Other")
+        swap = False
+
+        if rtype == "Assignment" and src_cat == "behavior":
+            swap = True
+        elif rtype == "Realization" and _LAYER_ORDER.get(src_layer, 0) > _LAYER_ORDER.get(tgt_layer, 0):
+            swap = True
+        elif (
+            rtype == "Serving"
+            and src_layer in _BAT
+            and tgt_layer in _BAT
+            and _LAYER_ORDER.get(src_layer, 0) > _LAYER_ORDER.get(tgt_layer, 0)
+        ):
+            swap = True
+        elif rtype == "Flow":
+            cats = {src_cat, tgt_cat}
+            if (cats & {"passive", "motivation"}) or cats == {"active", "behavior"}:
+                return ([], [], (
+                    f"Flow between '{src}' ({src_type}) and '{tgt}' ({tgt_type}) "
+                    f"mixes incompatible kinds. Flow is for two behaviour elements "
+                    f"or two active-structure elements. For an app/service "
+                    f"supporting a process use Serving; for reading or writing data "
+                    f"use Access. Fix this relationship's type and resubmit the "
+                    f"whole view in one call."
+                ))
+
+        if swap:
+            fixed = dict(rel)
+            fixed["source"], fixed["target"] = tgt, src
+            normalized.append(fixed)
+            corrections.append(
+                f"{rtype} '{src}' → '{tgt}' was reversed; auto-corrected to "
+                f"'{tgt}' → '{src}'"
+            )
+        else:
+            normalized.append(rel)
+    return (normalized, corrections, "")
 
 
 def _read_property(doc, el, prop_name: str) -> str:

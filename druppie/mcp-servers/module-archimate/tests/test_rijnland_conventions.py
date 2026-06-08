@@ -327,6 +327,99 @@ def test_composite_builder_reuses_wilma():
     print("    OK — wilma_id reuses (identifier preserved), mixed with a created element, one call")
 
 
+def test_preflight_autocorrects_reversed_relationships():
+    print("[14/16] composite-builder pre-flight auto-corrects reversed directions...")
+    type_by_name = {
+        "Meldportaal": "ApplicationComponent",   # Application (concrete)
+        "PostgreSQL": "SystemSoftware",            # Technology (more concrete)
+        "Inname": "ApplicationService",            # behaviour
+        "AVG-eis": "Requirement",                  # Motivation (abstract)
+    }
+    rels = [
+        # App serving Technology is reversed → should swap to Tech → App.
+        {"source": "Meldportaal", "target": "PostgreSQL", "type": "Serving"},
+        # Assignment from a behaviour element is reversed → should swap.
+        {"source": "Inname", "target": "Meldportaal", "type": "Assignment"},
+        # Requirement realizing a component is reversed → should swap.
+        {"source": "AVG-eis", "target": "Meldportaal", "type": "Realization"},
+    ]
+    normalized, corrections, error = write_tools._preflight_relationships(type_by_name, rels)
+    if error:
+        _fail(f"did not expect an error, got: {error}")
+    if len(corrections) != 3:
+        _fail(f"expected 3 auto-corrections, got {len(corrections)}: {corrections}")
+    if not (normalized[0]["source"] == "PostgreSQL" and normalized[0]["target"] == "Meldportaal"):
+        _fail(f"reversed Serving not swapped: {normalized[0]}")
+    if not (normalized[1]["source"] == "Meldportaal" and normalized[1]["target"] == "Inname"):
+        _fail(f"Assignment-from-behaviour not swapped: {normalized[1]}")
+    if not (normalized[2]["source"] == "Meldportaal" and normalized[2]["target"] == "AVG-eis"):
+        _fail(f"reversed Realization not swapped: {normalized[2]}")
+    print("    OK — reversed Serving/Assignment/Realization swapped, 3 corrections recorded")
+
+
+def test_preflight_rejects_impossible_flow():
+    print("[15/16] pre-flight rejects an impossible Flow up front (no churn)...")
+    type_by_name = {
+        "Inname": "ApplicationService",       # behaviour
+        "Meldportaal": "ApplicationComponent",  # active structure
+    }
+    rels = [{"source": "Inname", "target": "Meldportaal", "type": "Flow"}]
+    normalized, corrections, error = write_tools._preflight_relationships(type_by_name, rels)
+    if not error:
+        _fail("expected an error for a Flow that mixes behaviour + active structure")
+    if "Serving" not in error or "Access" not in error:
+        _fail(f"error should suggest Serving/Access, got: {error}")
+    # Untyped / unknown endpoints must pass through untouched (builder reports them).
+    passthrough = [{"source": "X", "target": "Y", "type": "Serving"}]
+    norm2, _corr2, err2 = write_tools._preflight_relationships({}, passthrough)
+    if err2 or norm2 != passthrough:
+        _fail(f"unknown endpoints should pass through untouched, got {norm2} / {err2!r}")
+    print("    OK — impossible Flow rejected; unknown endpoints pass through")
+
+
+def test_composite_builder_autocorrects_so_validate_is_clean():
+    print("[16/16] add_layered_view auto-corrects so validate_view is clean in one pass...")
+    import asyncio
+
+    proj = _fresh_doc()
+
+    class _FakeRegistry:
+        def get(self, session_id, model_path, create_if_missing=True):
+            return proj
+
+        def wilma(self):
+            return _fresh_doc()
+
+    orig = write_tools.get_registry
+    write_tools.get_registry = lambda: _FakeRegistry()
+    try:
+        res = asyncio.run(write_tools._build_composite_view(
+            session_id="s",
+            view_name="Layered",
+            view_documentation="",
+            groups={
+                "Application": [{"name": "Meldportaal", "type": "ApplicationComponent"}],
+                "Technology": [{"name": "PostgreSQL", "type": "SystemSoftware"}],
+            },
+            # Reversed Serving (App → Tech) — would normally need a delete+create
+            # fix-up after validate_view flags it.
+            relationships=[{"source": "Meldportaal", "target": "PostgreSQL", "type": "Serving"}],
+            model_path="docs/architecture.archimate",
+        ))
+    finally:
+        write_tools.get_registry = orig
+
+    if not res.get("success"):
+        _fail(f"builder returned error: {res.get('error')}")
+    if not res.get("auto_corrections"):
+        _fail("expected the reversed Serving to be reported in auto_corrections")
+    view = proj.find_view(res["view_id"])
+    codes = {e["code"] for e in write_tools._validate_view_impl(proj, view)}
+    if "serving_direction" in codes:
+        _fail(f"reversed Serving should have been auto-corrected before write, got {codes}")
+    print("    OK — reversed Serving swapped at build time, validate_view clean, no churn")
+
+
 if __name__ == "__main__":
     print("=" * 50)
     print("Rijnland tekenafspraken — convention tests")
@@ -343,5 +436,8 @@ if __name__ == "__main__":
     test_serving_direction_is_flagged()
     test_name_type_mismatch_is_flagged()
     test_composite_builder_reuses_wilma()
+    test_preflight_autocorrects_reversed_relationships()
+    test_preflight_rejects_impossible_flow()
+    test_composite_builder_autocorrects_so_validate_is_clean()
     print("=" * 50)
     print("All checks passed.")
