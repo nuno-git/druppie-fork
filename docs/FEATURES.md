@@ -599,7 +599,7 @@ The Architect agent produces structural enterprise-architecture views as ArchiMa
 What the architect can do:
 
 - **Consult WILMA selectively.** The `archimate` MCP loads the waterschappen WILMA model read-only. The architect always searches WILMA to inform the design, but only reuses elements (via `get_or_create_wilma_reference`, which preserves the original identifier) when the project sits in the waterschap context and the WILMA element fits — otherwise the TD names the considered WILMA concepts and proceeds with project-specific modeling.
-- **Author project-specific views.** `create_element`, `create_relationship`, `create_view`, `add_to_view`, and `add_connection_to_view` build plates incrementally — these tools are ungated; the single human review point is the `coding:make_design` gate on the technical design (so the reviewer sees the markdown and the rendered plate as one artifact and approves the TD as a whole).
+- **Author project-specific views.** The composite builders `add_layered_view` / `add_cooperation_view` create a whole plate (view + elements + relationships) in one call; the primitives `create_element`, `create_relationship`, `add_to_view`, and `add_connection_to_view` apply incremental edits on revision — these tools are ungated; the single human review point is the `coding:make_design` gate on the technical design (so the reviewer sees the markdown and the rendered plate as one artifact and approves the TD as a whole).
 - **Incremental revision.** On feedback rounds the agent reads the existing view, applies only the requested delta, and saves; element positions stay put so the reviewer sees a recognisable diff rather than a re-shuffled layout.
 
 What the reviewer sees:

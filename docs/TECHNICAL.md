@@ -514,8 +514,7 @@ Write tools (per-project `docs/architecture.archimate`, **all ungated** — the 
 |------|-------------|
 | `create_element` / `update_element` / `delete_element` | Element CRUD (delete cascades to dependent relationships and view nodes) |
 | `create_relationship` / `update_relationship` / `delete_relationship` | Relationship CRUD with valid types (Composition, Aggregation, Serving, Realization, Flow, Triggering, Access, …) |
-| `create_view` / `delete_view` | View CRUD |
-| `add_to_view` / `add_connection_to_view` / `remove_from_view` | View composition; `add_to_view` chooses a free position for new nodes while preserving existing x/y |
+| `add_to_view` / `add_connection_to_view` / `remove_from_view` | View composition; `add_to_view` chooses a free position for new nodes while preserving existing x/y. Views themselves are created by the composite builders (`add_layered_view` / `add_cooperation_view`); there is no standalone view-CRUD tool. |
 | `get_or_create_wilma_reference` | Idempotent import of a WILMA element into the project model with the original identifier preserved (read-only locally via a `wilma-source=true` property) |
 | `save_model` | Persist buffered mutations to disk; also writes a per-view SVG to `docs/diagrams/<view-name>.svg` so the plates are visible directly in Gitea |
 | `request_full_relayout` | Clears positions on a view so the frontend's elkjs runs a fresh layout; destructive of manual position tweaks, hence approval-gated |

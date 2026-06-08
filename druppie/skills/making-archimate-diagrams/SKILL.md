@@ -191,7 +191,7 @@ and vice versa. Classify the feedback before acting:
 | "Sequence between A and B is wrong" | yes (update mermaid) | no |
 | "The message bus is missing from the Application view" | maybe | **yes** (add_to_view) |
 | "Relation between Portal and Customer should be Serving, not Flow" | maybe | **yes** (delete_relationship + create_relationship) |
-| "Add a Trust Boundary group around Portal and Auth" | yes (note it) | yes (create_view group or add_to_view of a Grouping) |
+| "Add a Trust Boundary group around Portal and Auth" | yes (note it) | yes (create_element of a Grouping + add_to_view) |
 | "Section X mentions a new component Y" | yes | yes (also add Y to the relevant ArchiMate view) |
 
 If you are unsure whether the cascade applies, ask the architect via

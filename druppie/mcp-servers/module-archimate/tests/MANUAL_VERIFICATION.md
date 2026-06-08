@@ -44,9 +44,12 @@ Pre-requisites: stack up via `docker compose --profile dev --profile init up -d`
      applicable, and either imports relevant elements via
      `get_or_create_wilma_reference` or notes in the TD why
      project-specific modeling was chosen.
-   - Approval-gates fire on `create_element`, `create_relationship`,
-     `create_view`, `add_to_view`, `add_connection_to_view`,
-     `save_model`. Approve each as the architect user.
+   - The plate is built with `add_layered_view` / `add_cooperation_view`
+     (or the primitive `create_element`, `create_relationship`,
+     `add_to_view`, `add_connection_to_view`, `save_model` for
+     incremental edits). These write tools are ungated — the single
+     approval gate is the `coding:make_design` call on the technical
+     design; approve that one as the architect user.
    - The agent writes `docs/technical-design.md` with at least one
      `` ```archimate view-id=… file=docs/architecture.archimate ``` ``
      block; behavioural diagrams (if any) use Mermaid.

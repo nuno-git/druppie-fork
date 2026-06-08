@@ -604,14 +604,6 @@ class ArchiMateDocument:
         self.dirty = True
         return ident
 
-    def delete_view(self, identifier: str) -> None:
-        view = self.find_view(identifier)
-        if view is None:
-            raise ArchiMateWriteError(f"View '{identifier}' not found")
-        diagrams = self._ensure_views_section()
-        diagrams.remove(view)
-        self.dirty = True
-
     def add_to_view(
         self,
         view_id: str,

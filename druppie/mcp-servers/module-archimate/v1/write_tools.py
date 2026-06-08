@@ -220,44 +220,11 @@ def register_write_tools(mcp, *, module_id: str, module_version: str) -> None:
             return _error(str(e))
 
     # --- Views ---
-
-    @mcp.tool(
-        name="create_view",
-        description=(
-            "Create a new empty view (diagram) in the project model. "
-            "Use add_to_view and add_connection_to_view to populate it."
-        ),
-        meta=meta,
-    )
-    async def create_view(
-        session_id: str,
-        name: str,
-        documentation: str = "",
-        model_path: str = DEFAULT_MODEL_PATH,
-    ) -> dict:
-        try:
-            doc = _registry().get(session_id, model_path)
-            ident = doc.create_view(name=name, documentation=documentation)
-            return _result({"view_id": ident})
-        except ArchiMateWriteError as e:
-            return _error(str(e))
-
-    @mcp.tool(
-        name="delete_view",
-        description="Delete an entire view. Approval-gated.",
-        meta=meta,
-    )
-    async def delete_view(
-        session_id: str,
-        view_id: str,
-        model_path: str = DEFAULT_MODEL_PATH,
-    ) -> dict:
-        try:
-            doc = _registry().get(session_id, model_path, create_if_missing=False)
-            doc.delete_view(view_id)
-            return _result({"view_id": view_id})
-        except ArchiMateWriteError as e:
-            return _error(str(e))
+    # Note: views are created by the composite builders (add_layered_view /
+    # add_cooperation_view), which call the doc.create_view() writer method
+    # directly. There is deliberately no agent-facing create_view / delete_view
+    # tool: the initial plate always goes through a composite builder, and the
+    # revision loop edits the existing view in place (never deletes/recreates).
 
     @mcp.tool(
         name="add_to_view",

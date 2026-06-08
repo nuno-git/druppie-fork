@@ -41,8 +41,6 @@ WRITE_TOOLS = {
     "create_relationship",
     "update_relationship",
     "delete_relationship",
-    "create_view",
-    "delete_view",
     "add_to_view",
     "add_connection_to_view",
     "remove_from_view",
