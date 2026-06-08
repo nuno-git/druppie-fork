@@ -230,17 +230,38 @@ export const extractSurfacedApprovals = (llmCalls) => {
   return items
 }
 
-// --- Extract HITL questions from an agent run's LLM calls ---
+// --- Recursive helper: scan a run (and its subagent_runs) for a pending question ---
+
+const _scanRunForPendingQuestion = (run) => {
+  for (const llm of run.llm_calls || []) {
+    for (const tc of llm.tool_calls || []) {
+      if (tc.question_id && tc.status === 'waiting_answer') {
+        return { tc, agentId: run.agent_id }
+      }
+    }
+  }
+  for (const sub of run.subagent_runs || []) {
+    const found = _scanRunForPendingQuestion(sub)
+    if (found) return found
+  }
+  return null
+}
+
+// --- Extract questions from an agent run (including subagent_runs) ---
 
 export const extractQuestions = (agentRun) => {
   const questions = []
-  agentRun.llm_calls?.forEach((llm) => {
-    llm.tool_calls?.forEach((tc) => {
-      if (tc.tool_name?.includes('hitl_ask')) {
-        questions.push({ tc, agentId: agentRun.agent_id })
-      }
+  const scanRun = (run) => {
+    run.llm_calls?.forEach((llm) => {
+      llm.tool_calls?.forEach((tc) => {
+        if (tc.question_id) {
+          questions.push({ tc, agentId: run.agent_id })
+        }
+      })
     })
-  })
+    run.subagent_runs?.forEach(scanRun)
+  }
+  scanRun(agentRun)
   return questions
 }
 
@@ -250,13 +271,8 @@ export const findPendingQuestion = (timeline) => {
   if (!timeline) return null
   for (const entry of timeline) {
     if (entry.type !== 'agent_run' || !entry.agent_run) continue
-    for (const llm of entry.agent_run.llm_calls || []) {
-      for (const tc of llm.tool_calls || []) {
-        if (tc.tool_name?.includes('hitl_ask') && tc.status === 'waiting_answer') {
-          return { tc, agentId: entry.agent_run.agent_id }
-        }
-      }
-    }
+    const found = _scanRunForPendingQuestion(entry.agent_run)
+    if (found) return found
   }
   return null
 }
@@ -464,8 +480,7 @@ export const extractOrderedItems = (agentRun, hasFollowingMessage) => {
       if (!hasFollowingMessage && tc.approval && tc.approval.status !== 'pending') {
         items.push({ type: 'approval', tc })
       }
-      // HITL questions
-      if (tc.tool_name?.includes('hitl_ask')) {
+      if (tc.question_id) {
         items.push({ type: 'question', tc, agentId: agentRun.agent_id })
       }
       // Test results

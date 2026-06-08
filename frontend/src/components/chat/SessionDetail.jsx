@@ -605,7 +605,7 @@ const SubagentRunCard = ({ subagentRun, depth = 0, sessionId, sessionUserId, isO
             }
             return allToolCalls.map((tc, i) => (
               <div key={tc.id || i}>
-                {tc.tool_name?.includes('hitl_ask') ? (
+                {tc.question_id ? (
                   <TimelineQuestion tc={tc} agentId={subagentRun.agent_id} sessionId={sessionId} isOwner={isOwner} isAdmin={isAdmin} userRoles={userRoles} />
                 ) : (
                   <SubagentToolCall tc={tc} sessionId={sessionId} sessionUserId={sessionUserId} />
