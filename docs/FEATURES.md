@@ -533,8 +533,22 @@ The Builder and Reviewer agents use skills to enforce project-specific coding st
 |-------|---------|---------|
 | `architecture-principles` | Architect | NORA / water-authority principles for FD assessment and TD design. |
 | `making-mermaid-diagrams` | Architect | Diagram-type selection and Mermaid syntax for TD visualizations. |
+| `capability-placement` | Architect | Generic reuse/placement decision for a capability not yet covered by a module — decides whether it lives in the project, the project template, an extended module, or a new module. Applies to any building block (LLM, OCR, RAG, data-access, …). |
 | `rag-patterns` | Architect | Decision guides for doc-heavy applications: chunking, retrieval, embedding, vector store, re-ranking, advanced patterns, citation strategy, and TR-RAG NFRs. Invoked in Step 1 when the FD describes knowledge-base search, citation-backed Q&A, large-document retrieval, or multi-document corpora. Apps use `app/rag.py` (app-local pgvector) for storage + retrieval and `module-llm` `embed` for embeddings. Platform defaults seeded via platform-standards §5. |
 | `technical-research-format` / `technical-design-format` | Architect | Format templates for the research and design documents. |
+
+### Architect & Builder-Planner Decision-Guide Skills
+
+The Architect and Builder-Planner use pattern-detecting skills that fire proactively when the design describes a specific challenge. For in-app LLM workflows the responsibility is **split along the role boundary** — the Architect decides the WHAT, the Builder-Planner the HOW — so the Architect never names a concrete framework (per its own role definition):
+
+| Skill | Agent | Trigger signal | Output |
+|-------|-------|----------------|--------|
+| `llm-orchestration-in-apps` | Architect (Step 1) | FD describes a multi-step LLM workflow inside the built app (chains, evaluation loops, agents with tools, stateful/durable workflows, multi-agent) | The WHAT: workflow pattern (#1–#6) and agency decision via a strict hierarchy (LLM + UI / single agent / multi-agent). No framework names; capability placement is the architect's generic reuse decision, not re-derived here. |
+| `llm-orchestration-standard` | Builder-Planner | TD describes an in-app LLM workflow | The HOW: the single platform standard (plain Python everywhere — linear and the single agent as a small core-style tool-loop; no agent framework), access-pattern (`module-llm.chat` vs direct SDK), and code placement. One standard, not a per-project framework menu. |
+
+Both skills are backed by one platform-research document, `docs/LLM-orchestration/llm-orchestration-in-apps.md`, which leads with the standard and keeps the framework survey as a considered-alternatives appendix. Each agent calls `invoke_skill(...)` itself when the signals match — the user doesn't have to ask.
+
+**End-to-end verification (UI test loop):** to confirm the skills fire, run the seed tool test `architect-fd-llm-chain-pending` from `/evaluations`, log in as `analyst`, approve the pending FD on `/tasks`, then resume the session and watch the tool calls — `invoke_skill(skill_name="llm-orchestration-in-apps")` must appear in the architect's Step 1 (and the TD must name the pattern/agency/placement but **no** framework), and `invoke_skill(skill_name="llm-orchestration-standard")` appears when the builder_planner runs. Alternatively, write your own FD with the relevant trigger signal and run the planner → BA → architect → builder_planner flow manually.
 
 ---
 

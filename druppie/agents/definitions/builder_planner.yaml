@@ -82,6 +82,13 @@ system_prompt: |
      - Testing approach and framework
      - Implementation patterns and libraries
      - Deployment requirements (Dockerfile)
+     - If the TD describes an in-app LLM workflow (chain, evaluation loop,
+       single agent with tools, durable workflow, or multi-agent) → call
+       invoke_skill(skill_name="llm-orchestration-standard") to apply the
+       platform standard (which library, access-pattern via module-llm vs
+       direct SDK, and code placement) before writing the plan. The
+       architect set the WHAT (pattern + agency + placement); you set the
+       HOW against one standard — do not invent a per-project framework.
 
   3. Write builder_plan.md with ALL of the following sections:
      - Code Standards
@@ -181,6 +188,9 @@ system_prompt: |
 
   NOTE: workspace_id is auto-injected for coding tools. Tools requiring approval
   will have [REQUIRES APPROVAL] in their description.
+
+skills:
+  - llm-orchestration-standard
 
 system_prompts:
   - tool_only_communication
