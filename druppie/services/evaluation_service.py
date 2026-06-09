@@ -158,6 +158,19 @@ class EvaluationService:
         """Get all unique tags with test run counts."""
         return self.eval_repo.list_tags()
 
+    def delete_test_batch(self, batch_id: str) -> int:
+        """Delete a test result batch and all of its test runs.
+
+        Raises:
+            NotFoundError: If no test runs matched the batch.
+        """
+        count = self.eval_repo.delete_test_batch(batch_id)
+        if count == 0:
+            raise NotFoundError("test_batch", batch_id)
+        self.eval_repo.commit()
+        logger.info("test_batch_deleted", batch_id=batch_id, deleted_count=count)
+        return count
+
     @staticmethod
     def run_unit_tests() -> dict:
         """Run pytest unit tests and return parsed results."""

@@ -345,6 +345,9 @@ export const getTags = () =>
 export const deleteTestUsers = () =>
   request('/api/evaluations/test-users', { method: 'DELETE' })
 
+export const deleteTestBatch = (batchId) =>
+  request(`/api/evaluations/test-batches/${encodeURIComponent(batchId)}`, { method: 'DELETE' })
+
 export const runTests = (options = {}) =>
   request('/api/evaluations/run-tests', {
     method: 'POST',

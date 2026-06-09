@@ -372,6 +372,39 @@ class EvaluationRepository(BaseRepository):
 
         return count
 
+    def delete_test_batch(self, batch_id: str) -> int:
+        """Delete a test result batch and all of its test runs.
+
+        Handles both real batches (TestRun.batch_id == batch_id) and the
+        single unbatched runs that list_test_batches surfaces using the run's
+        own id as the batch_id. Child tags/assertion results cascade via ORM.
+
+        Returns:
+            Number of test runs deleted (0 if nothing matched).
+        """
+        runs = self.db.query(TestRun).filter(TestRun.batch_id == batch_id).all()
+        if not runs:
+            # Unbatched run surfaced with its own id as the batch_id
+            try:
+                run_uuid = UUID(str(batch_id))
+            except (ValueError, TypeError):
+                run_uuid = None
+            if run_uuid is not None:
+                run = self.db.query(TestRun).filter(TestRun.id == run_uuid).first()
+                if run:
+                    runs = [run]
+
+        for run in runs:
+            self.db.delete(run)
+
+        # Remove the batch metadata row if present
+        batch = self.db.query(TestBatchRun).filter(TestBatchRun.id == batch_id).first()
+        if batch:
+            self.db.delete(batch)
+
+        self.db.flush()
+        return len(runs)
+
     # =========================================================================
     # AGGREGATION METHODS
     # =========================================================================

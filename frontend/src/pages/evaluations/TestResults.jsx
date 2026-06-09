@@ -18,8 +18,9 @@ import {
   Clock,
   Filter,
   BarChart3,
+  Trash2,
 } from 'lucide-react'
-import { getTestBatches, getTags } from '../../services/api'
+import { getTestBatches, getTags, deleteTestBatch } from '../../services/api'
 import { formatDate, formatDuration, StatusBadge, ResultsBanner } from './helpers'
 
 const TestResults = ({ refreshKey, onSelectRun, isRunning, runResult, setRunResult }) => {
@@ -33,6 +34,7 @@ const TestResults = ({ refreshKey, onSelectRun, isRunning, runResult, setRunResu
   const [expandedBatches, setExpandedBatches] = useState(new Set())
   const [initialExpanded, setInitialExpanded] = useState(false)
   const [retryKey, setRetryKey] = useState(0)
+  const [deletingBatch, setDeletingBatch] = useState(null)
 
   const fetchTags = async () => {
     try {
@@ -75,6 +77,20 @@ const TestResults = ({ refreshKey, onSelectRun, isRunning, runResult, setRunResu
       next.add(batchId)
     }
     setExpandedBatches(next)
+  }
+
+  const handleDeleteBatch = async (batchId, e) => {
+    e.stopPropagation()
+    if (!window.confirm('Delete this test result and all its runs? This cannot be undone.')) return
+    setDeletingBatch(batchId)
+    try {
+      await deleteTestBatch(batchId)
+      setRetryKey((k) => k + 1)
+    } catch (err) {
+      alert('Failed to delete test result: ' + err.message)
+    } finally {
+      setDeletingBatch(null)
+    }
   }
 
   return (
@@ -184,6 +200,18 @@ const TestResults = ({ refreshKey, onSelectRun, isRunning, runResult, setRunResu
                       <span className="text-xs text-gray-500">
                         {formatDate(batch.started_at)}
                       </span>
+                      <button
+                        onClick={(e) => handleDeleteBatch(batch.batch_id, e)}
+                        disabled={deletingBatch === batch.batch_id}
+                        title="Delete this test result"
+                        className="flex items-center text-gray-400 hover:text-red-600 disabled:opacity-50 transition-colors"
+                      >
+                        {deletingBatch === batch.batch_id ? (
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        ) : (
+                          <Trash2 className="w-3.5 h-3.5" />
+                        )}
+                      </button>
                       {expanded ? (
                         <ChevronUp className="w-4 h-4 text-gray-400" />
                       ) : (

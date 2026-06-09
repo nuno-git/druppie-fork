@@ -21,7 +21,7 @@ import {
   Search,
 } from 'lucide-react'
 import { runUnitTests } from '../../services/api'
-import { formatDuration } from './helpers'
+import { filterTests, formatDuration } from './helpers'
 
 // ---- Full-screen Test Selector Modal ----
 
@@ -35,6 +35,8 @@ export const TestSelectorModal = ({
   setSelectedTests,
   modeFilter,
   setModeFilter,
+  searchQuery,
+  setSearchQuery,
   onRun,
   onClose,
   isRunning,
@@ -44,7 +46,10 @@ export const TestSelectorModal = ({
   setJudgeEnabled,
 }) => {
   const [expandedTests, setExpandedTests] = useState(new Set())
-  const [searchQuery, setSearchQuery] = useState('')
+
+  // Tests currently visible given the mode filter + search query. Selection
+  // counts and the run resolution key off this so they match what's shown.
+  const visibleTests = filterTests(tests, modeFilter, searchQuery)
 
   const toggleTest = (name) => {
     const next = new Set(selectedTests)
@@ -58,7 +63,7 @@ export const TestSelectorModal = ({
         setExpandedTests((prev) => new Set([...prev, name]))
       }
     }
-    if (next.size === tests.length) {
+    if (next.size === visibleTests.length) {
       setSelectAll(true)
       setSelectedTests(new Set())
     } else {
@@ -88,7 +93,7 @@ export const TestSelectorModal = ({
     setExpandedTests(next)
   }
 
-  const effectiveCount = selectAll ? tests.length : selectedTests.size
+  const effectiveCount = selectAll ? visibleTests.length : selectedTests.size
   const canRun = !isRunning && effectiveCount > 0 && !loading && !error
 
   return (
@@ -156,27 +161,11 @@ export const TestSelectorModal = ({
                   onChange={toggleAll}
                   className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 w-4 h-4"
                 />
-                <span className="font-semibold text-sm">Select All ({tests.length} tests)</span>
+                <span className="font-semibold text-sm">Select All ({visibleTests.length} tests)</span>
               </label>
 
               {/* Individual tests */}
-              {tests.filter((t) => {
-                if (modeFilter === 'all') return true
-                if (modeFilter === 'manual') return t.manual_input
-                if (modeFilter === 'tool') return t.type === 'tool'
-                if (modeFilter === 'agent') return t.type === 'agent' && !t.manual_input
-                return t.type === modeFilter && !t.manual_input
-              }).filter((t) => {
-                if (!searchQuery.trim()) return true
-                const q = searchQuery.toLowerCase()
-                return (
-                  t.name.toLowerCase().includes(q) ||
-                  (t.description && t.description.toLowerCase().includes(q)) ||
-                  (t.tags && t.tags.some((tag) => tag.toLowerCase().includes(q))) ||
-                  (t.agents && t.agents.some((a) => a.toLowerCase().includes(q))) ||
-                  (t.message && t.message.toLowerCase().includes(q))
-                )
-              }).map((test) => {
+              {visibleTests.map((test) => {
                 const checked = selectAll || selectedTests.has(test.name)
                 const expanded = expandedTests.has(test.name)
                 const testType = test.type
@@ -338,6 +327,12 @@ export const TestSelectorModal = ({
                   </div>
                 )
               })}
+
+              {visibleTests.length === 0 && (
+                <div className="text-center py-8 text-sm text-gray-400">
+                  No tests match the current filter{searchQuery.trim() ? ` "${searchQuery.trim()}"` : ''}.
+                </div>
+              )}
             </>
           )}
         </div>
@@ -362,7 +357,7 @@ export const TestSelectorModal = ({
           <div className="flex items-center gap-3">
             {(() => {
               const hasAgent = selectAll
-                ? tests.some((t) => t.type === 'agent')
+                ? visibleTests.some((t) => t.type === 'agent')
                 : tests.some((t) => selectedTests.has(t.name) && t.type === 'agent')
               return hasAgent ? (
                 <label className="flex items-center gap-1.5 cursor-pointer">
