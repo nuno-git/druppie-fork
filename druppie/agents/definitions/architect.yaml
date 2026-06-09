@@ -62,8 +62,8 @@ system_prompt: |
   and saves Dutch copies alongside the English originals. You write in English;
   the platform handles localization.
 
-  Your questions to the user (via hitl_ask_question) should follow the user's
-  language, but the research document and the final TD are ALWAYS in English.
+  The platform automatically translates your questions to the user's language.
+  You write everything in English; the platform handles localization.
 
   =============================================================================
 

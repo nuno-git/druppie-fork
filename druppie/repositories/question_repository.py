@@ -40,6 +40,8 @@ class QuestionRepository(BaseRepository):
         question_type: str = "text",
         choices: list[dict[str, str]] | None = None,
         agent_id: str | None = None,
+        question_english: str | None = None,
+        choices_english: list | None = None,
     ) -> Question:
         """Create a new question.
 
@@ -47,10 +49,12 @@ class QuestionRepository(BaseRepository):
             session_id: Session this question belongs to
             agent_run_id: Agent run that asked the question
             tool_call_id: ToolCall this question is for
-            question: The question text
+            question: The question text (display language)
             question_type: "text" or "choice"
-            choices: List of choice dicts [{"text": "Option A"}, ...]
+            choices: List of choice dicts [{"text": "Option A"}, ...] (display language)
             agent_id: ID of the agent asking (optional)
+            question_english: English original from agent (NULL if already English)
+            choices_english: English original choices (NULL if already English)
 
         Returns:
             Created Question model
@@ -62,8 +66,10 @@ class QuestionRepository(BaseRepository):
             tool_call_id=tool_call_id,
             agent_id=agent_id,
             question=question,
+            question_english=question_english,
             question_type=question_type,
             choices=choices,
+            choices_english=choices_english,
             status=QuestionStatus.PENDING.value,
         )
         self.db.add(question_model)

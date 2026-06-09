@@ -759,6 +759,7 @@ async def create_message(
         session_id=session_id,
         role="assistant",
         content=display_content,
+        content_english=content if display_content != content else None,
         agent_run_id=agent_run_id,
         agent_id="summarizer",
         sequence_number=seq,

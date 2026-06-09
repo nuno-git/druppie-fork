@@ -2,6 +2,26 @@
 
 import json
 
+DISPLAY_ONLY_KEYS = {"display_answer"}
+
+
+def _strip_display_fields(result):
+    """Remove display-only fields from a tool result before feeding to agents.
+
+    Tool results may contain translated display fields (e.g. display_answer)
+    that are only for the frontend. Agents must see English only.
+    """
+    if not result:
+        return result
+    try:
+        parsed = json.loads(result) if isinstance(result, str) else result
+        if isinstance(parsed, dict) and DISPLAY_ONLY_KEYS & parsed.keys():
+            cleaned = {k: v for k, v in parsed.items() if k not in DISPLAY_ONLY_KEYS}
+            return json.dumps(cleaned) if isinstance(result, str) else cleaned
+    except (json.JSONDecodeError, TypeError):
+        pass
+    return result
+
 
 def reconstruct_from_db(
     llm_calls: list,
@@ -61,10 +81,11 @@ def reconstruct_from_db(
                     if j < len(llm_call.response_tool_calls):
                         tool_call_id = llm_call.response_tool_calls[j].get("id", tool_call_id)
 
+                    result_content = _strip_display_fields(tool_call_db.result) or f"Error: {tool_call_db.error_message}"
                     messages.append({
                         "role": "tool",
                         "tool_call_id": tool_call_id,
-                        "content": tool_call_db.result or f"Error: {tool_call_db.error_message}",
+                        "content": result_content,
                     })
 
         elif llm_call.response_content:

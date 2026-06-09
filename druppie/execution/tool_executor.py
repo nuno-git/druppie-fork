@@ -689,12 +689,13 @@ class ToolExecutor:
             logger.error("question_missing_tool_call_id", question_id=str(question_id))
             return ToolCallStatus.FAILED
 
-        # Build result — agent sees 'answer' (English), frontend sees 'display_answer' (user's language)
+        # Build result — contains both English (for agent) and display (for frontend).
+        # message_history.py strips display-only fields when reconstructing for agents.
         result = {
             "status": "answered",
             "answer": answer,
             "display_answer": display_answer or answer,
-            "question": question.question,
+            "question": question.question_english or question.question,
             "question_type": question.question_type,
         }
 
@@ -877,6 +878,11 @@ class ToolExecutor:
             question_type = "text"
             raw_choices = []
 
+        # Save English originals before translation
+        english_question = question_text
+        english_choices = list(raw_choices) if raw_choices else None
+        is_translated = False
+
         # Translate question and choices to the user's language
         try:
             from druppie.repositories import SessionRepository
@@ -895,6 +901,15 @@ class ToolExecutor:
                             await translator.translate_from_english(c, session.language)
                         )
                     raw_choices = translated_choices
+                context_text = args.get("context", "")
+                if context_text:
+                    translated_context = await translator.translate_from_english(
+                        context_text, session.language
+                    )
+                    updated_args = dict(args)
+                    updated_args["context"] = translated_context
+                    self.execution_repo.update_tool_call_arguments(tool_call.id, updated_args)
+                is_translated = True
                 logger.info(
                     "hitl_question_translated",
                     tool_call_id=str(tool_call.id),
@@ -915,6 +930,8 @@ class ToolExecutor:
             question=question_text,
             question_type=question_type,
             choices=choices,
+            question_english=english_question if is_translated else None,
+            choices_english=[{"text": c} for c in english_choices] if english_choices and is_translated else None,
         )
 
         # Update tool call status to waiting

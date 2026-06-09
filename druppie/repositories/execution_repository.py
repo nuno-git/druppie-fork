@@ -569,6 +569,7 @@ class ExecutionRepository(BaseRepository):
         session_id: UUID,
         role: str,
         content: str,
+        content_english: str | None = None,
         agent_run_id: UUID | None = None,
         agent_id: str | None = None,
         sequence_number: int = 0,
@@ -578,7 +579,8 @@ class ExecutionRepository(BaseRepository):
         Args:
             session_id: Session ID
             role: Message role (user, assistant, system)
-            content: Message content
+            content: Message content (display language)
+            content_english: English version for agent consumption (NULL if already English)
             agent_run_id: Optional agent run ID (for agent messages)
             agent_id: Optional agent ID (for assistant messages)
             sequence_number: Sequence number within session
@@ -591,6 +593,7 @@ class ExecutionRepository(BaseRepository):
             agent_run_id=agent_run_id,
             role=role,
             content=content,
+            content_english=content_english,
             agent_id=agent_id,
             sequence_number=sequence_number,
         )

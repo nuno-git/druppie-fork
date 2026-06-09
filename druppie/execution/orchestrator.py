@@ -156,16 +156,6 @@ class Orchestrator:
         # This ensures follow-up messages don't collide with existing runs
         next_seq = self.execution_repo.get_next_sequence_number(current_session_id)
 
-        # Step 3b: Save user message to the timeline
-        self.execution_repo.create_message(
-            session_id=current_session_id,
-            role="user",
-            content=message,
-            sequence_number=next_seq,
-        )
-        next_seq += 1
-        self.execution_repo.commit()
-
         # Step 3.5: Detect and update language (only if detection succeeds)
         human_input = HumanInput(message, self.language_detector)
         self._last_language_info = human_input.language_info()
@@ -202,6 +192,17 @@ class Orchestrator:
                     original_preview=message[:80],
                     translated_preview=translated_message[:80],
                 )
+
+        # Step 3b: Save user message to the timeline (after translation so we can store both versions)
+        self.execution_repo.create_message(
+            session_id=current_session_id,
+            role="user",
+            content=message,
+            content_english=translated_message if translated_message != message else None,
+            sequence_number=next_seq,
+        )
+        next_seq += 1
+        self.execution_repo.commit()
 
         # Step 4: Get user's projects for router injection
         user_projects = self.project_repo.get_by_user(user_id)
@@ -287,7 +288,8 @@ class Orchestrator:
         lines = ["CONVERSATION HISTORY:"]
         for msg in messages:
             role_label = "User" if msg.role == "user" else "Assistant"
-            lines.append(f"{role_label}: {msg.content}")
+            text = msg.content_english or msg.content
+            lines.append(f"{role_label}: {text}")
 
         logger.info(
             "conversation_history_built",
