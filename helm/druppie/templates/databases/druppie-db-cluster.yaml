@@ -1,0 +1,23 @@
+{{- if .Values.cnpg.enabled }}
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: {{ include "druppie.fullname" . }}-druppie-db
+  labels:
+    {{- include "druppie.labels" . | nindent 4 }}
+    app.kubernetes.io/component: druppie-db
+spec:
+  instances: {{ .Values.cnpg.druppie.instances | default 3 }}
+  postgresql:
+    parameters:
+      shared_buffers: "256MB"
+      max_connections: "200"
+  storage:
+    size: {{ .Values.cnpg.druppie.storage | default "20Gi" }}
+    {{- if .Values.persistence.storageClass }}
+    storageClass: {{ .Values.persistence.storageClass | quote }}
+    {{- end }}
+  monitoring:
+    enablePodMonitor: {{ .Values.cnpg.monitoring.enabled | default false }}
+{{- end }}

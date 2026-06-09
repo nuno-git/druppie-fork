@@ -52,6 +52,7 @@ keycloak:
   adminPassword: admin
   hostname: ""
   nodePort: 8080
+  replicaCount: 1
   resources:
     requests:
       memory: "384Mi"
@@ -85,6 +86,14 @@ gitea:
   httpPort: 3000
   nodePort: 3000
   storage: 5Gi
+  replicaCount: 1
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "250m"
+    limits:
+      memory: "512Mi"
+      cpu: "500m"
 
 # Backend API
 backend:
@@ -93,6 +102,7 @@ backend:
     tag: latest
   port: 8000
   nodePort: 8000
+  replicaCount: 1
   resources:
     requests:
       memory: "256Mi"
@@ -136,6 +146,14 @@ frontend:
     tag: latest
   port: 5173
   nodePort: 5173
+  replicaCount: 1
+  resources:
+    requests:
+      memory: "128Mi"
+      cpu: "100m"
+    limits:
+      memory: "256Mi"
+      cpu: "500m"
   # Vite environment variables
   vite:
     keycloakRealm: druppie
@@ -145,52 +163,116 @@ frontend:
 modules:
   coding:
     enabled: true
+    replicaCount: 1
     image:
       repository: druppie-module-coding
       tag: latest
     port: 9001
+    resources:
+      requests:
+        memory: "128Mi"
+        cpu: "100m"
+      limits:
+        memory: "256Mi"
+        cpu: "500m"
   docker:
     enabled: true
+    replicaCount: 1
     image:
       repository: druppie-module-docker
       tag: latest
     port: 9002
+    resources:
+      requests:
+        memory: "128Mi"
+        cpu: "100m"
+      limits:
+        memory: "256Mi"
+        cpu: "500m"
   filesearch:
     enabled: true
+    replicaCount: 1
     image:
       repository: druppie-module-filesearch
       tag: latest
     port: 9004
+    resources:
+      requests:
+        memory: "128Mi"
+        cpu: "100m"
+      limits:
+        memory: "256Mi"
+        cpu: "500m"
   web:
     enabled: true
+    replicaCount: 1
     image:
       repository: druppie-module-web
       tag: latest
     port: 9005
+    resources:
+      requests:
+        memory: "128Mi"
+        cpu: "100m"
+      limits:
+        memory: "256Mi"
+        cpu: "500m"
   archimate:
     enabled: true
+    replicaCount: 1
     image:
       repository: druppie-module-archimate
       tag: latest
     port: 9006
+    resources:
+      requests:
+        memory: "128Mi"
+        cpu: "100m"
+      limits:
+        memory: "256Mi"
+        cpu: "500m"
   registry:
     enabled: true
+    replicaCount: 1
     image:
       repository: druppie-module-registry
       tag: latest
     port: 9007
+    resources:
+      requests:
+        memory: "128Mi"
+        cpu: "100m"
+      limits:
+        memory: "256Mi"
+        cpu: "500m"
   llm:
     enabled: true
+    replicaCount: 1
     image:
       repository: druppie-module-llm
       tag: latest
     port: 9008
+    resources:
+      requests:
+        memory: "128Mi"
+        cpu: "100m"
+      limits:
+        memory: "256Mi"
+        cpu: "500m"
   vision:
     enabled: true
+    replicaCount: 1
     image:
       repository: druppie-module-vision
       tag: latest
     port: 9011
+    resources:
+      requests:
+        memory: "128Mi"
+        cpu: "100m"
+      limits:
+        memory: "256Mi"
+        cpu: "500m"
 
 # Init job
 init:
@@ -231,3 +313,44 @@ secrets:
   giteaSecretKey: ""
   giteaToken: ""
   moduleApiToken: ""
+
+# Autoscaling (HPA)
+autoscaling:
+  backend:
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+  frontend:
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 8
+    targetCPUUtilizationPercentage: 70
+
+# CloudNativePG — HA PostgreSQL (set cnpg.enabled: true for production)
+cnpg:
+  enabled: false  # Use StatefulSets for Kind, CNPG for K3s production
+  monitoring:
+    enabled: false
+  druppie:
+    instances: 3
+    storage: 20Gi
+  keycloak:
+    instances: 3
+    storage: 5Gi
+  gitea:
+    instances: 3
+    storage: 5Gi
+
+# High Availability
+highAvailability:
+  pdb:
+    enabled: false
+    minAvailable: 1
+  antiAffinity:
+    enabled: false
+
+# cert-manager integration
+certManager:
+  enabled: false
+  email: ""

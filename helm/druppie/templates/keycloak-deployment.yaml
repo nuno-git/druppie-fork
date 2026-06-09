@@ -6,7 +6,7 @@ metadata:
     {{- include "druppie.labels" . | nindent 4 }}
     app.kubernetes.io/component: keycloak
 spec:
-  replicas: 1
+  replicas: {{ .Values.keycloak.replicaCount }}
   selector:
     matchLabels:
       {{- include "druppie.selectorLabels" . | nindent 6 }}
@@ -24,7 +24,11 @@ spec:
             - sh
             - -c
             - |
+              {{- if .Values.cnpg.enabled }}
+              until pg_isready -h {{ include "druppie.fullname" . }}-keycloak-db-rw -p 5432 -U {{ .Values.postgresql.keycloak.username }}; do
+              {{- else }}
               until pg_isready -h {{ include "druppie.fullname" . }}-keycloak-db -p 5432 -U {{ .Values.postgresql.keycloak.username }}; do
+              {{- end }}
                 echo "Waiting for keycloak-db..."
                 sleep 2
               done
@@ -44,7 +48,11 @@ spec:
             - name: KC_DB
               value: "postgres"
             - name: KC_DB_URL
+              {{- if .Values.cnpg.enabled }}
+              value: "jdbc:postgresql://{{ include "druppie.fullname" . }}-keycloak-db-rw:5432/{{ .Values.postgresql.keycloak.database }}"
+              {{- else }}
               value: "jdbc:postgresql://{{ include "druppie.fullname" . }}-keycloak-db:5432/{{ .Values.postgresql.keycloak.database }}"
+              {{- end }}
             - name: KC_DB_USERNAME
               value: {{ .Values.postgresql.keycloak.username | quote }}
             - name: KC_DB_PASSWORD

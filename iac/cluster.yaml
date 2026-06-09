@@ -1,0 +1,125 @@
+# =============================================================================
+# Druppie K3s Cluster — Hetzner Cloud
+# =============================================================================
+# Provisioned with hetzner-k3s CLI (https://github.com/vitobotta/hetzner-k3s)
+#
+# Architecture (from ADR-001):
+#   3x K3s Server  (etcd HA, control plane only, no workloads)
+#   1-2x Agent     (infra pool — fixed, Keycloak/Gitea/CNPG/monitoring)
+#   1-10x Agent    (app pool — autoscaled, Backend/Frontend)
+#
+# Usage:
+#   hetzner-k3s create cluster --config iac/cluster.yaml
+#   hetzner-k3s delete cluster --config iac/cluster.yaml
+#
+# All nodes: CPX31 (4 vCPU, 8GB RAM, 160GB NVMe) — see ADR-001 §4.1
+# Estimated base cost: ~€86/mo (3 servers + 1 infra + 1 app)
+# =============================================================================
+
+# -- Required ----------------------------------------------------------------
+hetzner_token: "<YOUR_HETZNER_TOKEN>"    # Or use HCLOUD_TOKEN env var
+cluster_name: druppie
+kubeconfig_path: "./kubeconfig"
+k3s_version: v1.32.3+k3s1               # Run `hetzner-k3s releases` for latest
+
+# -- Cluster settings --------------------------------------------------------
+schedule_workloads_on_masters: false     # Masters = pure control plane (ADR §4.2)
+# image: ubuntu-24.04                   # Default OS (most tested for K3s)
+# protect_against_deletion: true         # Protect VMs from accidental deletion
+
+# -- Networking --------------------------------------------------------------
+networking:
+  ssh:
+    port: 22
+    public_key_path: "~/.ssh/id_ed25519.pub"
+    private_key_path: "~/.ssh/id_ed25519"
+    # existing_ssh_key_name: ""          # Reuse an existing Hetzner SSH key
+
+  allowed_networks:
+    ssh:
+      - 0.0.0.0/0                       # Restrict in production!
+    api:
+      - 0.0.0.0/0                       # Restrict in production!
+
+  public_network:
+    ipv4: true
+    ipv6: true
+
+  private_network:
+    enabled: true
+    subnet: 10.0.0.0/16
+
+  cni:
+    enabled: true
+    mode: flannel                       # Flannel is K3s default; cilium also supported
+
+# -- Datastore ---------------------------------------------------------------
+datastore:
+  mode: etcd                            # Embedded etcd for HA (3 masters = quorum)
+  etcd:
+    snapshot_retention: 24
+    snapshot_schedule_cron: "0 * * * *"
+
+# -- Masters (K3s Servers) ---------------------------------------------------
+# 3 servers = etcd quorum (1 may fail without cluster outage)
+# No workloads scheduled — control plane isolation
+masters_pool:
+  instance_type: cpx31                  # 4 vCPU, 8GB RAM, 160GB NVMe
+  instance_count: 3
+  locations:                            # Array: one location per master
+    - fsn1                              # All in Falkenstein for low latency
+    - fsn1
+    - fsn1
+
+# -- Worker Node Pools -------------------------------------------------------
+worker_node_pools:
+
+  # Pool 1 — Infrastructure (fixed)
+  # Runs: Keycloak, Gitea, MCP modules, CloudNativePG, monitoring
+  # Not autoscaled — stable workloads that must not be evicted
+  - name: infra
+    instance_type: cpx31                # 4 vCPU, 8GB RAM, 160GB NVMe
+    instance_count: 1                   # Start with 1, scale to 2 manually if needed
+    location: fsn1
+    autoscaling:
+      enabled: false                    # Fixed pool — never auto-scaled
+    labels:
+      - key: pool
+        value: infra                    # Scheduler hint for infra workloads
+    taints: []                          # No taints — fully schedulable
+
+  # Pool 2 — Application (autoscaled)
+  # Runs: Backend (FastAPI), Frontend (React)
+  # Cluster Autoscaler manages node count based on Pending pods
+  - name: app
+    instance_type: cpx31                # 4 vCPU, 8GB RAM, 160GB NVMe
+    instance_count: 1                   # Minimum running when idle
+    location: fsn1
+    autoscaling:
+      enabled: true
+      min_instances: 1                  # Always at least 1 node
+      max_instances: 10                 # Scale up under load (~60s per new node)
+    labels:
+      - key: pool
+        value: app                      # Scheduler hint for app workloads
+    taints: []                          # No taints — fully schedulable
+
+# -- Addons ------------------------------------------------------------------
+# hetzner-k3s installs these automatically. Customize here if needed.
+addons:
+  cluster_autoscaler:
+    enabled: true                       # Required for worker pool autoscaling
+    # scan_interval: "10s"              # How often to check for Pending pods
+    # scale_down_delay_after_add: "10m"  # Wait before considering scale-down
+    # scale_down_delay_after_delete: "10s"
+    # scale_down_delay_after_failure: "3m"
+    # max_node_provision_time: "15m"
+
+  csi_driver:
+    enabled: true                       # Hetzner CSI for persistent volumes
+
+  cloud_controller_manager:
+    enabled: true                       # Hetzner CCM for load balancers, networking
+
+  system_upgrade_controller:
+    enabled: true                       # Automated K3s version upgrades

@@ -5,9 +5,14 @@ metadata:
   name: {{ include "druppie.fullname" . }}-main
   labels:
     {{- include "druppie.labels" . | nindent 4 }}
-  {{- with .Values.global.ingress.annotations }}
+  {{- if or .Values.global.ingress.annotations .Values.certManager.enabled }}
   annotations:
+    {{- if .Values.certManager.enabled }}
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    {{- end }}
+    {{- with .Values.global.ingress.annotations }}
     {{- toYaml . | nindent 4 }}
+    {{- end }}
   {{- end }}
 spec:
   ingressClassName: {{ .Values.global.ingress.className | default "nginx" }}
@@ -74,7 +79,7 @@ spec:
                 port:
                   number: {{ .Values.frontend.port }}
 ---
-# Gitea needs path rewrite (/git/foo → /foo)
+# Gitea ingress — path rewriting (/git/foo → /foo) is NGINX-specific
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -82,8 +87,13 @@ metadata:
   labels:
     {{- include "druppie.labels" . | nindent 4 }}
   annotations:
+    {{- if eq ( .Values.global.ingress.className | default "nginx" ) "nginx" }}
     nginx.ingress.kubernetes.io/rewrite-target: /$2
     nginx.ingress.kubernetes.io/use-regex: "true"
+    {{- end }}
+    {{- if .Values.certManager.enabled }}
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    {{- end }}
     {{- with .Values.global.ingress.annotations }}
     {{- toYaml . | nindent 4 }}
     {{- end }}
@@ -99,8 +109,14 @@ spec:
     - host: {{ .Values.global.domain }}
       http:
         paths:
+          {{- if eq ( .Values.global.ingress.className | default "nginx" ) "nginx" }}
           - path: /git(/|$)(.*)
             pathType: ImplementationSpecific
+          {{- else }}
+          # Traefik / other controllers — standard prefix path (no rewrite)
+          - path: /git
+            pathType: Prefix
+          {{- end }}
             backend:
               service:
                 name: {{ include "druppie.fullname" . }}-gitea

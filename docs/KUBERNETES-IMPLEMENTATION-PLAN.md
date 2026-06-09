@@ -2,7 +2,7 @@
 
 | Veld | Waarde |
 |------|--------|
-| **Status** | Draft |
+| **Status** | Geïmplementeerd |
 | **Datum** | 2026-06-09 |
 | **Gebaseerd op** | [ADR-KUBERNETES.md](./ADR-KUBERNETES.md) |
 | **Referentie** | [KUBERNETES-STRATEGY.md](./KUBERNETES-STRATEGY.md), [kubernetes.md](./kubernetes.md) |

@@ -6,7 +6,7 @@ metadata:
     {{- include "druppie.labels" . | nindent 4 }}
     app.kubernetes.io/component: backend
 spec:
-  replicas: 1
+  replicas: {{ .Values.backend.replicaCount }}
   selector:
     matchLabels:
       {{- include "druppie.selectorLabels" . | nindent 6 }}
@@ -17,6 +17,19 @@ spec:
         {{- include "druppie.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: backend
     spec:
+      terminationGracePeriodSeconds: 60
+      {{- if .Values.highAvailability.antiAffinity.enabled }}
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    {{- include "druppie.selectorLabels" . | nindent 20 }}
+                    app.kubernetes.io/component: backend
+                topologyKey: kubernetes.io/hostname
+      {{- end }}
       initContainers:
         - name: wait-for-druppie-db
           image: {{ .Values.postgresql.image }}
@@ -24,7 +37,11 @@ spec:
             - sh
             - -c
             - |
+              {{- if .Values.cnpg.enabled }}
+              until pg_isready -h {{ include "druppie.fullname" . }}-druppie-db-rw -p 5432 -U {{ .Values.postgresql.druppie.username }}; do
+              {{- else }}
               until pg_isready -h {{ include "druppie.fullname" . }}-druppie-db -p 5432 -U {{ .Values.postgresql.druppie.username }}; do
+              {{- end }}
                 echo "Waiting for druppie-db..."
                 sleep 2
               done

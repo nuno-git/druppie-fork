@@ -6,7 +6,7 @@ metadata:
     {{- include "druppie.labels" . | nindent 4 }}
     app.kubernetes.io/component: frontend
 spec:
-  replicas: 1
+  replicas: {{ .Values.frontend.replicaCount }}
   selector:
     matchLabels:
       {{- include "druppie.selectorLabels" . | nindent 6 }}
@@ -17,6 +17,18 @@ spec:
         {{- include "druppie.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: frontend
     spec:
+      {{- if .Values.highAvailability.antiAffinity.enabled }}
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    {{- include "druppie.selectorLabels" . | nindent 20 }}
+                    app.kubernetes.io/component: frontend
+                topologyKey: kubernetes.io/hostname
+      {{- end }}
       initContainers:
         - name: wait-for-backend
           image: curlimages/curl:latest
@@ -71,9 +83,4 @@ spec:
             timeoutSeconds: 5
             failureThreshold: 6
           resources:
-            requests:
-              memory: "128Mi"
-              cpu: "100m"
-            limits:
-              memory: "256Mi"
-              cpu: "500m"
+            {{- toYaml .Values.frontend.resources | nindent 12 }}

@@ -1,3 +1,4 @@
+{{- if not .Values.cnpg.enabled }}
 # Database Services
 ---
 apiVersion: v1
@@ -50,6 +51,7 @@ spec:
     - name: postgres
       port: 5432
       targetPort: postgres
+{{- end }}
 ---
 # Keycloak Service
 apiVersion: v1

@@ -28,7 +28,7 @@ import structlog
 from druppie.api.deps import get_current_user, get_user_roles, get_approval_service
 from druppie.services import ApprovalService
 from druppie.domain import ApprovalDetail, ApprovalHistoryList, PendingApprovalList
-from druppie.core.background_tasks import create_session_task, run_session_task, SessionTaskConflict
+from druppie.core.background_tasks import create_session_task, run_session_task
 
 logger = structlog.get_logger()
 
@@ -163,20 +163,14 @@ async def approve(
     )
 
     # Step 2: Spawn background task to resume workflow
-    try:
-        create_session_task(
-            approval.session_id,
-            _resume_workflow_after_approval(
-                session_id=approval.session_id,
-                approval_id=approval_id,
-            ),
-            name=f"resume-approve-{approval_id}",
-        )
-    except SessionTaskConflict:
-        raise HTTPException(
-            status_code=409,
-            detail="A task is already running for this session",
-        )
+    create_session_task(
+        approval.session_id,
+        _resume_workflow_after_approval(
+            session_id=approval.session_id,
+            approval_id=approval_id,
+        ),
+        name=f"resume-approve-{approval_id}",
+    )
 
     logger.info(
         "approval_recorded_resuming_in_background",
@@ -236,20 +230,14 @@ async def reject(
     )
 
     # Step 2: Spawn background task to resume workflow
-    try:
-        create_session_task(
-            approval.session_id,
-            _resume_workflow_after_approval(
-                session_id=approval.session_id,
-                approval_id=approval_id,
-            ),
-            name=f"resume-reject-{approval_id}",
-        )
-    except SessionTaskConflict:
-        raise HTTPException(
-            status_code=409,
-            detail="A task is already running for this session",
-        )
+    create_session_task(
+        approval.session_id,
+        _resume_workflow_after_approval(
+            session_id=approval.session_id,
+            approval_id=approval_id,
+        ),
+        name=f"resume-reject-{approval_id}",
+    )
 
     logger.info(
         "rejection_recorded_resuming_in_background",
