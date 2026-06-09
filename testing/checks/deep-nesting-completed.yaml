@@ -1,0 +1,9 @@
+check:
+  name: deep-nesting-completed
+  description: "ultimate_dev_core and core_explorer agents should have completed successfully after 3 levels of recursive nesting"
+  tags: [assertion]
+  assert:
+    - agent: ultimate_dev_core
+      completed: true
+    - agent: core_explorer
+      completed: true

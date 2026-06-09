@@ -7,7 +7,7 @@
 tool-test:
   name: recursive-core-explorer
   description: "Core explorer recursively spawns itself as a subagent (2 levels of nesting)"
-  tags: [subagent, recursive]
+  tags: [subagent, recursive, agent-runtime]
 
   chain:
     # --- Router ---

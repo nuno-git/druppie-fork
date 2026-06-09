@@ -50,13 +50,39 @@ export const TestSelectorModal = ({
   const [expandedTests, setExpandedTests] = useState(new Set())
   const [searchQuery, setSearchQuery] = useState('')
 
+  const filteredTests = tests
+    .filter((t) => {
+      if (modeFilter === 'all') return true
+      if (modeFilter === 'manual') return t.manual_input
+      if (modeFilter === 'tool') return t.type === 'tool'
+      if (modeFilter === 'agent') return t.type === 'agent' && !t.manual_input
+      return t.type === modeFilter && !t.manual_input
+    })
+    .filter((t) => {
+      if (!searchQuery.trim()) return true
+      const q = searchQuery.toLowerCase()
+      return (
+        t.name.toLowerCase().includes(q) ||
+        (t.description && t.description.toLowerCase().includes(q)) ||
+        (t.tags && t.tags.some((tag) => tag.toLowerCase().includes(q))) ||
+        (t.agents && t.agents.some((a) => a.toLowerCase().includes(q))) ||
+        (t.message && t.message.toLowerCase().includes(q))
+      )
+    })
+
+  const allVisibleSelected = filteredTests.length > 0 && filteredTests.every(
+    (t) => selectAll || selectedTests.has(t.name)
+  )
+
   const toggleTest = (name) => {
     const next = new Set(selectedTests)
-    if (next.has(name)) {
+    if (selectAll) {
+      tests.forEach((t) => next.add(t.name))
+      next.delete(name)
+    } else if (next.has(name)) {
       next.delete(name)
     } else {
       next.add(name)
-      // Auto-expand manual tests so the input form is visible
       const test = tests.find((t) => t.name === name)
       if (test?.manual_input) {
         setExpandedTests((prev) => new Set([...prev, name]))
@@ -72,13 +98,29 @@ export const TestSelectorModal = ({
   }
 
   const toggleAll = () => {
-    if (selectAll) {
-      setSelectAll(false)
-      setSelectedTests(new Set())
+    if (allVisibleSelected) {
+      if (selectAll) {
+        const next = new Set(tests.map((t) => t.name))
+        filteredTests.forEach((t) => next.delete(t.name))
+        setSelectAll(false)
+        setSelectedTests(next)
+      } else {
+        const next = new Set(selectedTests)
+        filteredTests.forEach((t) => next.delete(t.name))
+        setSelectAll(false)
+        setSelectedTests(next)
+      }
       setInputValues({})
     } else {
-      setSelectAll(true)
-      setSelectedTests(new Set())
+      const next = new Set(selectedTests)
+      filteredTests.forEach((t) => next.add(t.name))
+      if (next.size === tests.length) {
+        setSelectAll(true)
+        setSelectedTests(new Set())
+      } else {
+        setSelectAll(false)
+        setSelectedTests(next)
+      }
     }
   }
 
@@ -152,35 +194,21 @@ export const TestSelectorModal = ({
 
           {!loading && !error && (
             <>
-              {/* Select All */}
+              {/* Select All (visible) */}
               <label className="flex items-center gap-3 px-4 py-3 bg-gray-50 rounded-lg cursor-pointer hover:bg-gray-100 transition-colors">
                 <input
                   type="checkbox"
-                  checked={selectAll}
+                  checked={allVisibleSelected}
                   onChange={toggleAll}
                   className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 w-4 h-4"
                 />
-                <span className="font-semibold text-sm">Select All ({tests.length} tests)</span>
+                <span className="font-semibold text-sm">
+                  Select All ({filteredTests.length}{filteredTests.length !== tests.length ? ` / ${tests.length}` : ''} tests)
+                </span>
               </label>
 
               {/* Individual tests */}
-              {tests.filter((t) => {
-                if (modeFilter === 'all') return true
-                if (modeFilter === 'manual') return t.manual_input
-                if (modeFilter === 'tool') return t.type === 'tool'
-                if (modeFilter === 'agent') return t.type === 'agent' && !t.manual_input
-                return t.type === modeFilter && !t.manual_input
-              }).filter((t) => {
-                if (!searchQuery.trim()) return true
-                const q = searchQuery.toLowerCase()
-                return (
-                  t.name.toLowerCase().includes(q) ||
-                  (t.description && t.description.toLowerCase().includes(q)) ||
-                  (t.tags && t.tags.some((tag) => tag.toLowerCase().includes(q))) ||
-                  (t.agents && t.agents.some((a) => a.toLowerCase().includes(q))) ||
-                  (t.message && t.message.toLowerCase().includes(q))
-                )
-              }).map((test) => {
+              {filteredTests.map((test) => {
                 const checked = selectAll || selectedTests.has(test.name)
                 const expanded = expandedTests.has(test.name)
                 const testType = test.type

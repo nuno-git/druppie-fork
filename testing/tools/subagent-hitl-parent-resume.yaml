@@ -10,14 +10,14 @@ tool-test:
     Setup test for subagent HITL (human-in-the-loop) parent-resume flow.
     Creates a full pipeline (router → planner → BA → architect → planner → developer)
     ending with a pending developer agent run. The developer's planned_prompt
-    strongly instructs it to use the subagents() tool to spawn explorer and
-    builder_subagent agents, each with a prompt to ask a simple HITL question.
+    strongly instructs it to use the subagents() tool to spawn two explorer
+    agents, each with a prompt to ask a simple HITL question.
     After running this setup, retry the developer via API or UI to verify that:
     - Subagents spawn and pause for HITL questions
     - User answers propagate correctly
     - Parent developer agent resumes after subagents complete
     - Subagents tool call result shows "success" for completed subagents
-  tags: [e2e, subagent, hitl]
+  tags: [e2e, subagent, hitl, agent-runtime]
 
   chain:
     # --- Router ---
@@ -66,9 +66,9 @@ tool-test:
           - FR-05: Use TypeScript for implementation
 
           ## Functionality
-          - Parent agent spawns two subagents: explorer and builder_subagent
-          - Explorer subagent asks a clarification question via HITL
-          - Builder subagent asks a confirmation question via HITL
+          - Parent agent spawns two explorer subagents with different focus areas
+          - First explorer subagent asks a clarification question about frontend structure via HITL
+          - Second explorer subagent asks a clarification question about backend structure via HITL
           - After user answers, subagents complete and parent resumes
           - Simple file-based output demonstrating the flow
 
@@ -120,8 +120,8 @@ tool-test:
           ## Implementation Plan
           1. Create subagent-hitl-demo.ts file
           2. Implement parent function that spawns subagents
-          3. Explorer subagent: asks HITL question, returns answer
-          4. Builder subagent: asks HITL question, returns answer
+          3. First explorer subagent: asks HITL question about frontend, returns answer
+          4. Second explorer subagent: asks HITL question about backend, returns answer
           5. Parent resumes with subagent results and writes summary
           6. Export all functions
 
@@ -155,17 +155,17 @@ tool-test:
               2. Spawn these two subagents using the subagents() tool:
 
                  Subagent 1 - "explorer":
-                 prompt: "You are the explorer subagent. You MUST call the hitl_ask_question tool with the question 'What is your preferred greeting style for the output file?'. Wait for the user's answer, then call done with a summary of the answer."
+                 prompt: "You are the frontend explorer subagent. You MUST call the hitl_ask_question tool with the question 'What is your preferred greeting style for the output file?'. Wait for the user's answer, then call done with a summary of the answer."
 
-                 Subagent 2 - "builder_subagent":
-                 prompt: "You are the builder subagent. You MUST call the hitl_ask_question tool with the question 'Should the output file include a timestamp?'. Wait for the user's answer, then call done with a summary of the answer."
+                 Subagent 2 - "explorer":
+                 prompt: "You are the backend explorer subagent. You MUST call the hitl_ask_question tool with the question 'Should the output file include a timestamp?'. Wait for the user's answer, then call done with a summary of the answer."
 
               3. After both subagents complete, the subagents tool will return their results showing "success" status.
               4. Then create a simple TypeScript file subagent-hitl-demo.ts that logs the subagent results.
               5. Commit and push the file.
               6. Call done with a summary.
 
-              DO NOT implement the task yourself. You MUST use the subagents() tool to delegate to explorer and builder_subagent.
+              DO NOT implement the task yourself. You MUST use the subagents() tool to delegate to the two explorer subagents.
 
     - agent: planner
       tool: builtin:done

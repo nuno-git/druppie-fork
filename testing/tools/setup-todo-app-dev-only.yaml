@@ -5,7 +5,7 @@
 tool-test:
   name: setup-todo-app-dev-only
   description: "Setup todo-app project with FD + TD, ready for ultimate_dev"
-  tags: [setup, create-project, ultimate-dev]
+  tags: [setup, create-project, ultimate-dev, agent-runtime]
 
   chain:
     # --- Router ---

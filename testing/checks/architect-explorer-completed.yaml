@@ -1,0 +1,9 @@
+check:
+  name: architect-explorer-completed
+  description: "Architect and core_explorer agents should have completed successfully"
+  tags: [assertion]
+  assert:
+    - agent: architect
+      completed: true
+    - agent: core_explorer
+      completed: true

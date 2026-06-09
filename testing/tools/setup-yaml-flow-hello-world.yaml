@@ -4,7 +4,7 @@
 tool-test:
   name: setup-yaml-flow-hello-world
   description: "Setup project with FD and TD for hello world YAML flow test"
-  tags: [setup, yaml-flow, hello-world]
+  tags: [setup, yaml-flow, hello-world, agent-runtime]
 
   chain:
     # --- Router ---

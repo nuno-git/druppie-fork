@@ -492,6 +492,7 @@ services:
     environment:
       DATABASE_URL: postgresql://druppie:${DRUPPIE_DB_PASSWORD:-druppie_secret}@druppie-db:5432/druppie
       DEV_MODE: ${DEV_MODE:-false}
+      KEYCLOAK_URL: http://${EXTERNAL_HOST:-localhost}:${KEYCLOAK_PORT:-8080}
       KEYCLOAK_SERVER_URL: http://keycloak:8080
       KEYCLOAK_ISSUER_URL: http://${EXTERNAL_HOST:-localhost}:${KEYCLOAK_PORT:-8080}
       KEYCLOAK_REALM: druppie
@@ -582,6 +583,7 @@ services:
     profiles: [prod]
     environment:
       DATABASE_URL: postgresql://druppie:${DRUPPIE_DB_PASSWORD:-druppie_secret}@druppie-db:5432/druppie
+      KEYCLOAK_URL: http://${EXTERNAL_HOST:-localhost}:${KEYCLOAK_PORT:-8080}
       KEYCLOAK_SERVER_URL: http://keycloak:8080
       KEYCLOAK_ISSUER_URL: http://${EXTERNAL_HOST:-localhost}:${KEYCLOAK_PORT:-8080}
       KEYCLOAK_REALM: druppie

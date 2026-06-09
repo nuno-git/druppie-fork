@@ -1,11 +1,9 @@
 check:
   name: all-agents-completed
-  description: "All agents in the chain should have completed successfully"
+  description: "All agents in the recursive-core-explorer chain should have completed successfully"
   tags: [assertion]
   assert:
-    - agent: ultimate_dev
+    - agent: ultimate_dev_core
       completed: true
-    - agent: explorer
-      completed: true
-    - agent: developer
+    - agent: core_explorer
       completed: true

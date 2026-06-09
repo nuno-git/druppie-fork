@@ -1,8 +1,8 @@
 tool-test:
   name: test-sandbox-bash-curl
   description: |
-    Tests internet access via curl in the coding sandbox via router→planner→builder pipeline.
-  tags: [sandbox, bash, curl, e2e]
+    Tests internet access via curl in the coding sandbox via router→planner→developer pipeline.
+  tags: [sandbox, bash, curl, e2e, agent-runtime]
 
   chain:
     # Router — create project
@@ -21,21 +21,21 @@ tool-test:
       arguments:
         summary: "Agent router: Classified as create_project"
 
-    # Planner → Builder
+    # Planner → Developer
     - agent: planner
       tool: builtin:make_plan
       arguments:
         steps:
-          - agent_id: builder
+          - agent_id: developer
             prompt: "Test curl availability and internet access in the sandbox"
 
     - agent: planner
       tool: builtin:done
       arguments:
-        summary: "Agent planner: Planned builder for sandbox curl test"
+        summary: "Agent planner: Planned developer for sandbox curl test"
 
-    # Builder — check curl is available
-    - agent: builder
+    # Developer — check curl is available
+    - agent: developer
       tool: coding:bash
       arguments:
         command: "which curl && curl --version | head -1"
@@ -45,14 +45,14 @@ tool-test:
         result:
           - { contains: "curl" }
 
-    # Builder — test actual internet access via http
-    - agent: builder
+    # Developer — test actual internet access via http (verify response body, not just status)
+    - agent: developer
       tool: coding:bash
       arguments:
-        command: "curl -s http://httpbin.org/get"
+        command: "curl -s https://pypi.org/simple/ | head -5"
         timeout: 60
         git_scope: "current_project"
         sandbox_networks: ["internet"]
       assert:
         result:
-          - { contains: "httpbin.org" }
+          - { contains: "html" }

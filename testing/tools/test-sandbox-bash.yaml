@@ -1,22 +1,24 @@
 ## Test: bash commands in the coding sandbox
 ##
 ## Verifies that the coding sandbox provides:
-## - Root user (Sysbox user-namespace mapping)
+## - Root user
+## - Docker CLI installed
 ## - uv package manager
 ## - git
 ## - Python, Node.js
 ## - Cache volume at /cache
 ## - Writable /workspace
 ## - Custom timeout support
+## Note: Docker daemon tests (docker ps) require Sysbox — see test-sandbox-docker-compose.yaml
 ##
 ## Run: POST /api/evaluations/run-tests {"test_name": "test-sandbox-bash"}
 
 tool-test:
   name: test-sandbox-bash
   description: |
-    Tests bash commands in the coding sandbox via router→planner→builder pipeline.
-    Verifies: root user, uv, git, cache volume, Python, Node, workspace, custom timeout.
-  tags: [sandbox, bash, e2e]
+    Tests bash commands in the coding sandbox via router→planner→developer pipeline.
+    Verifies: root user, Docker CLI, uv, git, cache volume, Python, Node, workspace, custom timeout.
+  tags: [sandbox, bash, e2e, agent-runtime]
 
   chain:
     # =========================================================================
@@ -44,20 +46,20 @@ tool-test:
       tool: builtin:make_plan
       arguments:
         steps:
-          - agent_id: builder
+          - agent_id: developer
             prompt: "Run bash commands to verify sandbox environment"
 
     - agent: planner
       tool: builtin:done
       arguments:
-        summary: "Agent planner: Planned builder for sandbox bash test"
+        summary: "Agent planner: Planned developer for sandbox bash test"
 
     # =========================================================================
     # Builder — bash tool tests
     # =========================================================================
 
-    # Test 1: whoami — should be root inside Sysbox container
-    - agent: builder
+    # Test 1: whoami — should be root (no USER directive in Dockerfile.sandbox)
+    - agent: developer
       tool: coding:bash
       arguments:
         command: "whoami"
@@ -67,8 +69,8 @@ tool-test:
         result:
           - { contains: "root" }
 
-    # Test 2: Docker CLI available
-    - agent: builder
+    # Test 2: Docker CLI installed (daemon requires Sysbox, but binary should exist)
+    - agent: developer
       tool: coding:bash
       arguments:
         command: "docker --version"
@@ -78,19 +80,8 @@ tool-test:
         result:
           - { contains: "Docker version" }
 
-    # Test 3: Nested Docker daemon works (docker ps inside sandbox)
-    - agent: builder
-      tool: coding:bash
-      arguments:
-        command: "docker ps"
-        timeout: 60
-        git_scope: "current_project"
-      assert:
-        result:
-          - { contains: "CONTAINER" }
-
-    # Test 4: uv package manager available
-    - agent: builder
+    # Test 3: uv package manager available
+    - agent: developer
       tool: coding:bash
       arguments:
         command: "uv --version"
@@ -100,8 +91,8 @@ tool-test:
         result:
           - { contains: "uv" }
 
-    # Test 3: git available
-    - agent: builder
+    # Test 4: git available
+    - agent: developer
       tool: coding:bash
       arguments:
         command: "git --version"
@@ -111,8 +102,8 @@ tool-test:
         result:
           - { contains: "git version" }
 
-    # Test 4: Cache volume mounted at /cache
-    - agent: builder
+    # Test 5: Cache volume mounted at /cache
+    - agent: developer
       tool: coding:bash
       arguments:
         command: "test -d /cache && echo '/cache directory exists'"
@@ -122,8 +113,8 @@ tool-test:
         result:
           - { contains: "/cache directory exists" }
 
-    # Test 5: Python available
-    - agent: builder
+    # Test 6: Python available
+    - agent: developer
       tool: coding:bash
       arguments:
         command: "python3 --version"
@@ -133,8 +124,8 @@ tool-test:
         result:
           - { contains: "Python" }
 
-    # Test 6: Node.js available
-    - agent: builder
+    # Test 7: Node.js available
+    - agent: developer
       tool: coding:bash
       arguments:
         command: "node --version"
@@ -144,8 +135,8 @@ tool-test:
         result:
           - { contains: "v" }
 
-    # Test 7: Short timeout — quick command with 5s timeout
-    - agent: builder
+    # Test 8: Short timeout — quick command with 5s timeout
+    - agent: developer
       tool: coding:bash
       arguments:
         command: "echo 'timeout test passed'"
@@ -155,8 +146,8 @@ tool-test:
         result:
           - { contains: "timeout test passed" }
 
-    # Test 8: Workspace writable — write, read, cleanup
-    - agent: builder
+    # Test 9: Workspace writable — write, read, cleanup
+    - agent: developer
       tool: coding:bash
       arguments:
         command: "echo 'sandbox-test-file' > /workspace/test.txt && cat /workspace/test.txt && rm /workspace/test.txt"
@@ -167,9 +158,9 @@ tool-test:
           - { contains: "sandbox-test-file" }
 
     # Done
-    - agent: builder
+    - agent: developer
       tool: builtin:done
       arguments:
-        summary: "Sandbox bash tests completed: whoami, uv, git, cache, python, node, timeout, workspace"
+        summary: "Sandbox bash tests completed: whoami, docker-cli, uv, git, cache, python, node, timeout, workspace"
       assert:
         completed: true
