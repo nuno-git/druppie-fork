@@ -270,6 +270,23 @@ class RevertService:
         # Step 3: Apply edited planned_prompt to target run only
         if planned_prompt is not None:
             self.execution_repo.update_planned_prompt(agent_run_id, planned_prompt)
+        elif not target.planned_prompt:
+            # Subagents get planned_prompt="" at creation — the real prompt is
+            # in the spawning subagents() ToolCall arguments. Extract it.
+            original_prompt = self._extract_subagent_prompt(
+                target.id, target.spawning_tool_call_id
+            )
+            if original_prompt:
+                self.execution_repo.update_planned_prompt(agent_run_id, original_prompt)
+
+        # Step 3b: Restore prompts for later siblings too
+        for sibling in later_siblings:
+            if not sibling.planned_prompt:
+                sibling_prompt = self._extract_subagent_prompt(
+                    sibling.id, sibling.spawning_tool_call_id
+                )
+                if sibling_prompt:
+                    self.execution_repo.update_planned_prompt(sibling.id, sibling_prompt)
 
         # Step 4: Delete the parent's done() ToolCall
         from druppie.db.models.tool_call import ToolCall as ToolCallModel
@@ -459,6 +476,46 @@ class RevertService:
 
         except Exception as e:
             logger.warning("close_pr_error", pr_number=pr_number, error=str(e))
+
+    def _extract_subagent_prompt(
+        self, child_run_id: UUID, spawning_tool_call_id: UUID | None
+    ) -> str | None:
+        """Extract the original prompt from the subagents() ToolCall arguments.
+
+        Subagents created by SubagentsMCP have planned_prompt="" in the DB.
+        The real prompt lives in the spawning tool call's arguments JSON:
+          {"agents": [{"agent": "explorer", "prompt": "the real prompt"}]}
+        Matched by child_run_id to find the right agent entry.
+        """
+        if not spawning_tool_call_id:
+            return None
+
+        from druppie.db.models.tool_call import ToolCall as ToolCallModel
+        import json
+
+        tc = (
+            self.execution_repo.db.query(ToolCallModel)
+            .filter(ToolCallModel.id == spawning_tool_call_id)
+            .first()
+        )
+        if not tc or not tc.arguments:
+            return None
+
+        try:
+            args = json.loads(tc.arguments) if isinstance(tc.arguments, str) else tc.arguments
+        except (json.JSONDecodeError, TypeError):
+            return None
+
+        agents = args.get("agents", [])
+        child_run = self.execution_repo.get_by_id(child_run_id)
+        if not child_run:
+            return None
+
+        for entry in agents:
+            if entry.get("agent") == child_run.agent_id:
+                return entry.get("prompt")
+
+        return None
 
     @staticmethod
     def _strip_accumulated_context(prompt: str) -> str:
