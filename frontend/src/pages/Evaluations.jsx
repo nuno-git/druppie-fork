@@ -26,7 +26,7 @@ import {
   runTests,
 } from '../services/api'
 
-import { TestSelectorModal, RunProgress, SeedSection, UnitTestsSection } from './evaluations/TestRunner'
+import { TestSelectorModal, RunProgress, UnitTestsSection } from './evaluations/TestRunner'
 import TestResults from './evaluations/TestResults'
 import TestRunDetail from './evaluations/TestRunDetail'
 import useTestPolling from './evaluations/useTestPolling'
@@ -315,10 +315,7 @@ export default function Evaluations() {
             </div>
           </div>
 
-          {/* ============ SECTION 3: Seed Setup ============ */}
-          <SeedSection />
-
-          {/* ============ SECTION 4: Unit Tests ============ */}
+          {/* ============ SECTION 3: Unit Tests ============ */}
           <UnitTestsSection />
         </div>
       )}

@@ -1,7 +1,7 @@
 /**
  * TestRunner — Test selection, run controls, live progress display
  *
- * Includes: TestSelectorModal, SeedSection, UnitTestsSection,
+ * Includes: TestSelectorModal, UnitTestsSection,
  * and the run controls / progress bar shown on the main list view.
  */
 
@@ -20,11 +20,7 @@ import {
   Info,
   Search,
 } from 'lucide-react'
-import {
-  getAvailableSetups,
-  seedSessions,
-  runUnitTests,
-} from '../../services/api'
+import { runUnitTests } from '../../services/api'
 import { formatDuration } from './helpers'
 
 // ---- Full-screen Test Selector Modal ----
@@ -450,164 +446,6 @@ export const RunProgress = ({ runMessage, runProgress }) => {
                   <span className="text-blue-700 font-medium">{runProgress.current_test}</span>
                 </div>
               )}
-        </div>
-      )}
-    </div>
-  )
-}
-
-// ---- Seed Section ----
-
-export const SeedSection = () => {
-  const [setups, setSetups] = useState([])
-  const [loading, setLoading] = useState(true)
-  const [seeding, setSeeding] = useState(false)
-  const [selectedSetups, setSelectedSetups] = useState(new Set())
-  const [seedUser, setSeedUser] = useState('__random__')
-  const [result, setResult] = useState(null)
-  const [expanded, setExpanded] = useState(false)
-
-  useEffect(() => {
-    const load = async () => {
-      try {
-        const data = await getAvailableSetups()
-        setSetups(data || [])
-      } catch (err) {
-        console.error('Failed to load setups:', err)
-      } finally {
-        setLoading(false)
-      }
-    }
-    load()
-  }, [])
-
-  const toggleSetup = (id) => {
-    setSelectedSetups((prev) => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      return next
-    })
-  }
-
-  const handleSeed = async () => {
-    if (selectedSetups.size === 0) return
-    setSeeding(true)
-    setResult(null)
-    try {
-      const res = await seedSessions([...selectedSetups], seedUser)
-      setResult(res)
-      setSelectedSetups(new Set())
-    } catch (err) {
-      setResult({ error: err.message })
-    } finally {
-      setSeeding(false)
-    }
-  }
-
-  const statusColor = {
-    completed: 'bg-green-100 text-green-700',
-    failed: 'bg-red-100 text-red-700',
-    active: 'bg-blue-100 text-blue-700',
-    paused_approval: 'bg-yellow-100 text-yellow-700',
-  }
-
-  return (
-    <div className="bg-white rounded-xl shadow-sm border border-gray-200">
-      <div
-        className="flex items-center justify-between px-6 py-4 cursor-pointer hover:bg-gray-50 transition-colors"
-        onClick={() => setExpanded(!expanded)}
-      >
-        <div className="flex items-center gap-2">
-          <Play className="w-4 h-4 text-emerald-600" />
-          <h2 className="text-lg font-semibold text-gray-900">Seed Setup</h2>
-          <span className="text-xs text-gray-400">({setups.length} sessions)</span>
-        </div>
-        {expanded ? <ChevronUp className="w-4 h-4 text-gray-400" /> : <ChevronDown className="w-4 h-4 text-gray-400" />}
-      </div>
-
-      {expanded && (
-        <div className="px-6 pb-4 border-t border-gray-100">
-          <p className="text-xs text-gray-500 mt-3 mb-3">
-            Seed sessions into the database as a specific user. Use this to set up world state for manual testing.
-          </p>
-
-          {/* User selector */}
-          <div className="flex items-center gap-3 mb-3">
-            <label className="text-xs font-medium text-gray-600">Seed as user:</label>
-            <select
-              value={seedUser}
-              onChange={(e) => setSeedUser(e.target.value)}
-              className="text-xs border border-gray-300 rounded px-2 py-1"
-            >
-              <option value="__random__">New random user</option>
-              <option value="admin">admin</option>
-              <option value="architect">architect</option>
-              <option value="developer">developer</option>
-              <option value="analyst">analyst</option>
-              <option value="normal_user">normal_user</option>
-            </select>
-            <button
-              onClick={handleSeed}
-              disabled={seeding || selectedSetups.size === 0}
-              className="flex items-center gap-1.5 px-3 py-1 bg-emerald-600 text-white rounded text-xs font-medium hover:bg-emerald-700 disabled:opacity-50 transition-colors"
-            >
-              {seeding ? <Loader2 className="w-3 h-3 animate-spin" /> : <Play className="w-3 h-3" />}
-              Seed {selectedSetups.size > 0 ? `(${selectedSetups.size})` : ''}
-            </button>
-          </div>
-
-          {/* Result banner */}
-          {result && (
-            <div className={`mb-3 px-3 py-2 rounded text-xs ${result.error ? 'bg-red-50 text-red-700' : 'bg-green-50 text-green-700'}`}>
-              {result.error ? (
-                <span>Error: {result.error}</span>
-              ) : (
-                <span>Seeded {result.seeded?.filter((s) => s.status === 'seeded').length} session(s) as <strong>{result.user || seedUser}</strong></span>
-              )}
-            </div>
-          )}
-
-          {/* Session list */}
-          {loading ? (
-            <div className="flex items-center gap-2 py-4 text-gray-400 text-sm">
-              <Loader2 className="w-4 h-4 animate-spin" />Loading...
-            </div>
-          ) : (
-            <div className="space-y-1 max-h-64 overflow-y-auto">
-              {setups.map((s) => (
-                <label
-                  key={s.id}
-                  className="flex items-center gap-3 px-3 py-2 rounded hover:bg-gray-50 cursor-pointer transition-colors"
-                >
-                  <input
-                    type="checkbox"
-                    checked={selectedSetups.has(s.id)}
-                    onChange={() => toggleSetup(s.id)}
-                    className="rounded border-gray-300 text-emerald-600 focus:ring-emerald-500 w-3.5 h-3.5"
-                  />
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${statusColor[s.status] || 'bg-gray-100 text-gray-600'}`}>
-                        {s.status}
-                      </span>
-                      <span className="text-xs font-medium text-gray-800 truncate">{s.id}</span>
-                    </div>
-                    <div className="flex items-center gap-2 mt-0.5">
-                      <span className="text-[10px] text-gray-400 truncate">{s.title}</span>
-                      {s.project_name && (
-                        <span className="text-[10px] text-gray-400">project: {s.project_name}</span>
-                      )}
-                      {s.intent && (
-                        <span className="text-[10px] text-indigo-400">{s.intent}</span>
-                      )}
-                    </div>
-                  </div>
-                  <span className="text-[10px] text-gray-400 flex-shrink-0">{s.num_agents} agents</span>
-                </label>
-              ))}
-            </div>
-          )}
         </div>
       )}
     </div>
