@@ -412,7 +412,7 @@ tool-test:
   # Assertions
   # ===========================================================================
   assert:
-    check: architect-completed
+    - check: architect-completed
 
   verify:
     - gitea_repo_exists: true
