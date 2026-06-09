@@ -1068,9 +1068,80 @@ YAML files  →  JobService.load_definitions_from_yaml()  →  job_definitions (
 
 ---
 
-## 9. Configuration
+## 9. Kubernetes Deployment
 
-### 9.1 Environment Variables
+### 9.1 Helm Chart
+
+The Helm chart (`helm/druppie/`) deploys the full Druppie platform to Kubernetes. It translates every service from `docker-compose.yml` into native Kubernetes resources:
+
+| Docker Compose Service | Kubernetes Resource |
+|------------------------|---------------------|
+| PostgreSQL databases (3) | StatefulSets with volumeClaimTemplates (5Gi each) |
+| Keycloak, Gitea, Backend, Frontend | Deployments with readiness/liveness probes |
+| MCP modules (8) | Deployments, individually toggleable via `values.yaml` |
+| Init container | Helm post-install hook Job |
+| Shared volumes | PersistentVolumeClaims (workspace 10Gi, dataset 5Gi, sandbox-bundles 5Gi, gitea-data 5Gi) |
+| Bridge network | ClusterIP Services (15) + NetworkPolicies (5) |
+| Port mappings | Ingress with path-based routing via nginx |
+
+### 9.2 Template Helpers
+
+`_helpers.tpl` provides reusable template functions: name/fullname generation, standard Kubernetes labels (app, chart, release), selector labels, image rendering (with `imagePullPolicy: IfNotPresent` for local images), and external URL construction from `global.domain` and `global.ingress.port`.
+
+### 9.3 Ingress and Routing
+
+Two Ingress resources handle all external traffic on a single domain:
+
+**Main ingress** routes by path prefix:
+- `/api` → backend (pass-through, backend expects `/api` prefix)
+- `/realms`, `/resources`, `/admin`, `/js`, `/welcome` → Keycloak
+- `/` → frontend (catch-all)
+
+**Gitea ingress** uses a path rewrite annotation to strip `/git/` before forwarding to Gitea.
+
+### 9.4 NetworkPolicies
+
+Five policies control traffic:
+- `app-net`: allows intra-namespace communication + ingress from `ingress-nginx` namespace + HTTPS egress (port 443) + DNS egress
+- `sandbox-net`: sandbox pods accept ingress only from backend and module-coding
+- `sandbox-inet`: sandbox pods can reach the internet but not private IP ranges (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16)
+- `sandbox-modules`: module-coding accepts ingress only from backend
+- `sandbox-modules-docker`: module-docker accepts ingress only from backend
+
+### 9.5 Init System
+
+A Helm post-install hook Job (`init-job.yaml`) runs `setup_keycloak.py` after Keycloak and Gitea are healthy. It creates the Druppie realm, OAuth clients, roles, and test users. The Job uses init containers that wait for Keycloak and Gitea readiness before running.
+
+### 9.6 Kind Cluster Configs
+
+Two Kind configurations are provided in `kind/`:
+
+| File | Nodes | Port Mapping | Use Case |
+|------|-------|--------------|----------|
+| `cluster-dev.yaml` | 1 control-plane | 9080→80, 8443→443 | Local dev with ingress |
+| `cluster.yaml` | 1 control-plane + 2 workers | 80, 443 + NodePorts 30000-30003 | Multi-node testing |
+
+Both use pod subnet `10.244.0.0/16` and service subnet `10.96.0.0/12`.
+
+### 9.7 Helper Scripts
+
+| Script | Purpose |
+|--------|---------|
+| `scripts/setup-kind.sh` | Creates Kind cluster, installs nginx ingress, builds and loads all images |
+| `scripts/build-and-load.sh` | Builds all Docker images and loads them into an existing Kind cluster |
+| `scripts/port-forward.sh` | Sets up kubectl port-forward for direct service access (bypasses ingress) |
+
+### 9.8 Secrets and ConfigMap
+
+A single Secret holds all sensitive values (DB passwords, Keycloak admin creds, Gitea token, LLM API keys). A single ConfigMap holds all non-secret environment variables (service URLs, MCP module URLs, CORS origins, Vite build vars). Both are referenced by deployments via `envFrom`.
+
+Secrets are stored as plaintext in `values.yaml` — intended for local dev only. Production deployments should use an external secrets manager (Vault, AWS Secrets Manager, etc.).
+
+---
+
+## 10. Configuration
+
+### 10.1 Environment Variables
 
 Required in `.env`:
 
@@ -1097,7 +1168,7 @@ Optional:
 | `SANDBOX_MEMORY_LIMIT` | `4g` | Docker memory limit per sandbox container |
 | `SANDBOX_CPU_LIMIT` | `2` | Docker CPU limit per sandbox container |
 
-### 9.2 Configuration Files
+### 10.2 Configuration Files
 
 | File | Purpose |
 |------|---------|
@@ -1111,13 +1182,13 @@ Optional:
 
 ---
 
-## 10. Sandbox Infrastructure (Open-Inspect)
+## 11. Sandbox Infrastructure (Open-Inspect)
 
 > Full documentation: [docs/SANDBOX.md](SANDBOX.md) — covers architecture, OpenCode integration, provider resilience, Kata Containers, and security.
 
 [Open-Inspect](https://github.com/nuno120/background-agents) (our fork, branch `druppie`) is integrated as a git submodule at `background-agents/`. Sandbox containers run OpenCode `v1.2.22` (pinned in `Dockerfile.sandbox`). They provide isolated Docker sandboxes where coding agents can clone a project, write code, run tests, commit, and push — all without touching the shared workspace.
 
-### 10.1 Services
+### 11.1 Services
 
 | Service | Port | Role |
 |---------|------|------|
@@ -1125,7 +1196,7 @@ Optional:
 | `sandbox-manager` | 8000 | Creates/manages sandbox containers, enforces resource limits |
 | `sandbox-image-builder` | — | One-shot build producing `open-inspect-sandbox:latest` |
 
-### 10.2 `execute_coding_task` Built-in Tool
+### 11.2 `execute_coding_task` Built-in Tool
 
 Defined in `druppie/agents/builtin_tools.py`. Delegates a coding task to a sandbox using a **webhook + pause/resume** pattern:
 
@@ -1137,7 +1208,7 @@ Defined in `druppie/agents/builtin_tools.py`. Delegates a coding task to a sandb
 
 **Auth:** HMAC-SHA256 tokens (`{unix_ms_timestamp}.{hmac_sha256_hex_signature}`), verified by Open-Inspect's `verifyInternalToken`.
 
-### 10.3 Status Model
+### 11.3 Status Model
 
 | Level | Status | Meaning |
 |-------|--------|---------|
@@ -1147,7 +1218,7 @@ Defined in `druppie/agents/builtin_tools.py`. Delegates a coding task to a sandb
 | SessionStatus | `paused_sandbox` | Visible in UI as paused |
 | SessionStatus | `paused_crashed` | Visible in UI as crashed |
 
-### 10.4 Sandbox Session Ownership
+### 11.4 Sandbox Session Ownership
 
 The `sandbox_sessions` table maps control plane session IDs to Druppie users:
 

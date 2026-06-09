@@ -1,0 +1,92 @@
+{{- if .Values.modules.docker.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "druppie.fullname" . }}-module-docker
+  labels:
+    {{- include "druppie.labels" . | nindent 4 }}
+    app.kubernetes.io/component: module-docker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "druppie.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: module-docker
+  template:
+    metadata:
+      labels:
+        {{- include "druppie.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: module-docker
+    spec:
+      containers:
+        - name: module-docker
+          image: {{ include "druppie.image" (dict "Values" .Values "image" .Values.modules.docker.image) }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          env:
+            - name: MCP_PORT
+              value: {{ .Values.modules.docker.port | quote }}
+            - name: WORKSPACE_ROOT
+              value: "/workspaces"
+            - name: DOCKER_NETWORK
+              value: "{{ .Values.global.instance }}-network"
+            - name: DRUPPIE_URL
+              value: "http://{{ include "druppie.fullname" . }}-backend:{{ .Values.backend.port }}"
+            - name: DRUPPIE_MODULE_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "druppie.fullname" . }}-secrets
+                  key: DRUPPIE_MODULE_API_TOKEN
+            - name: DEEPINFRA_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "druppie.fullname" . }}-secrets
+                  key: DEEPINFRA_API_KEY
+            {{- if .Values.backend.dockerSocket.enabled }}
+            - name: DOCKER_HOST
+              value: "unix:///var/run/docker.sock"
+            {{- end }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.modules.docker.port }}
+              protocol: TCP
+          volumeMounts:
+            - name: workspace
+              mountPath: /workspaces
+            {{- if .Values.backend.dockerSocket.enabled }}
+            - name: docker-sock
+              mountPath: /var/run/docker.sock
+            {{- end }}
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.modules.docker.port }}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 5
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.modules.docker.port }}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 5
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "256Mi"
+              cpu: "500m"
+      volumes:
+        - name: workspace
+          persistentVolumeClaim:
+            claimName: {{ include "druppie.fullname" . }}-workspace
+        {{- if .Values.backend.dockerSocket.enabled }}
+        - name: docker-sock
+          hostPath:
+            path: /var/run/docker.sock
+            type: Socket
+        {{- end }}
+{{- end }}

@@ -1,0 +1,66 @@
+{{- if .Values.modules.archimate.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "druppie.fullname" . }}-module-archimate
+  labels:
+    {{- include "druppie.labels" . | nindent 4 }}
+    app.kubernetes.io/component: module-archimate
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "druppie.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: module-archimate
+  template:
+    metadata:
+      labels:
+        {{- include "druppie.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: module-archimate
+    spec:
+      containers:
+        - name: module-archimate
+          image: {{ include "druppie.image" (dict "Values" .Values "image" .Values.modules.archimate.image) }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          env:
+            - name: MODELS_DIR
+              value: "/models"
+            - name: MCP_PORT
+              value: {{ .Values.modules.archimate.port | quote }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.modules.archimate.port }}
+              protocol: TCP
+          volumeMounts:
+            - name: archimate-models
+              mountPath: /models
+              readOnly: true
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.modules.archimate.port }}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 5
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.modules.archimate.port }}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 5
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "256Mi"
+              cpu: "500m"
+      volumes:
+        - name: archimate-models
+          configMap:
+            name: {{ include "druppie.fullname" . }}-archimate-models
+            optional: true
+{{- end }}

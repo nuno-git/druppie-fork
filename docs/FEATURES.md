@@ -793,6 +793,35 @@ The dashboards goal is to provide an overview of platform activity. This page is
 
 ---
 
+## Kubernetes Deployment (Helm Chart)
+
+Druppie can be deployed to Kubernetes using the included Helm chart (`helm/druppie/`). The chart packages all platform components — backend, frontend, Keycloak, Gitea, 8 MCP modules, and 3 PostgreSQL databases — into ~43 Kubernetes resources managed as a single release.
+
+### What the Chart Deploys
+
+- **12 Deployments**: backend, frontend, Keycloak, Gitea, and 8 MCP modules (coding, docker, filesearch, web, archimate, registry, llm, vision)
+- **3 StatefulSets**: PostgreSQL instances for Druppie, Keycloak, and Gitea
+- **Path-based ingress**: nginx routes `/api` to backend, `/realms` to Keycloak, `/git` to Gitea, `/` to frontend — all on a single domain
+- **5 NetworkPolicies**: internal app communication, sandbox isolation, controlled egress for LLM API calls
+- **4 PVCs**: workspace (10Gi), dataset (5Gi), sandbox-bundles (5Gi), gitea-data (5Gi)
+- **Post-install init Job**: automatically sets up Keycloak realm, clients, roles, and test users
+
+### Local Development with Kind
+
+A Kind cluster configuration is included (`kind/cluster-dev.yaml`) for local testing. Helper scripts in `scripts/` automate cluster creation (`setup-kind.sh`), image building and loading (`build-and-load.sh`), and port forwarding (`port-forward.sh`).
+
+### Key Configuration
+
+All configuration is centralized in `values.yaml`:
+- `global.domain` — platform domain (default: `localhost`)
+- `global.ingress.port` — external port (default: `9080`)
+- `secrets.zaiApiKey` — LLM provider API key
+- Each MCP module can be individually enabled/disabled
+
+See `docs/kubernetes.md` for the full setup guide and troubleshooting.
+
+---
+
 ## Settings Page
 
 The Settings page displays system configuration and status (read-only). This page too is a prototype and might not work correctly.
