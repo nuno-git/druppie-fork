@@ -1127,6 +1127,23 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
         </div>
       )}
 
+      {/* Failed session banner — show error message so the user knows what went wrong */}
+      {data.status === 'failed' && viewMode !== 'inspect' && (
+        <div className="px-4 pb-4 pt-2 flex-shrink-0">
+          <div className="max-w-3xl mx-auto">
+            <div className="flex items-start gap-2.5 border border-red-200 rounded-2xl shadow-sm px-4 py-3.5 bg-red-50">
+              <XCircle className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-red-800">Session failed</p>
+                {data.error_message && (
+                  <p className="text-sm text-red-600 mt-0.5 break-words">{data.error_message}</p>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Sandbox waiting bar — replaces input when sandbox is running */}
       {data.status === 'paused_sandbox' && viewMode !== 'inspect' && (
         <div className="px-4 pb-4 pt-2 flex-shrink-0">
