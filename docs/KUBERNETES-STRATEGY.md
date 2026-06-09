@@ -2,9 +2,59 @@
 
 > **Status:** Voorstel  
 > **Datum:** 2026-06-02  
+> **Laatst bijgewerkt:** 2026-06-09  
 > **Type:** Spike / Architecture Decision Record  
 > **Story:** Story 2 — Spike: schaalbare Kubernetes strategie (3 SP)  
 > **Principe:** Alles open source, geen vendor lock-in
+
+---
+
+## Strategieoverzicht
+
+Dit document onderzoekt **12 strategiegebieden** voor de migratie van Docker Compose naar productie-ready Kubernetes. Elke strategie adresseert een specifieke bottleneck of risico in de huidige architectuur.
+
+| # | Strategie | Waarom | Huidige staat | Beslissing |
+|---|-----------|--------|---------------|------------|
+| 2.1 | **Kubernetes Platform** | Welke distributie voor dev, staging, productie | Kind (alleen dev) | Kind (dev) → K3s (staging/prod) |
+| 2.2 | **Hosting Model** | Waar draait het cluster, zonder vendor lock-in | Lokaal (Docker Desktop) | Cloud VMs (commodity provider) |
+| 2.3 | **Schaalbaarheid** | Backend is single-replica, geen autoscaling | 1 replica, hardcoded, geen HPA | HPA + KEDA per service |
+| 2.4 | **Database** | 3× container PostgreSQL zonder HA, backup, of failover | StatefulSets, geen replicatie | CloudNativePG operator |
+| 2.5 | **High Availability** | Single point of failure op elke laag | Geen PDB, geen anti-affinity | PDB + anti-affinity + graceful shutdown |
+| 2.6 | **Sandbox** | Docker socket dependency werkt niet in K8s | `docker_manager.py` via Docker CLI | Agent Sandbox (SIG Apps) / K8s Jobs fallback |
+| 2.7 | **Shared Volumes (RWX)** | Workspace PVC is ReadWriteOnce — blokkeert multi-node | RWO, 4 services delen 1 volume | Longhorn RWX → per-session eliminatie |
+| 2.8 | **Deployment** | Geen GitOps, geen drift detection | Handmatig `helm upgrade` | Helm + CI/CD → ArgoCD |
+| 2.9 | **Container Registry** | Images moeten ergens naartoe (niet `kind load`) | Geen registry | Gitea registry → Harbor |
+| 2.10 | **Networking/Ingress** | TLS, routing, rate limiting voor productie | NGINX op Kind (port 9080) | Traefik (K3s standaard) + cert-manager |
+| 2.11 | **Secrets Management** | API keys en wachtwoorden staan in plaintext values | Helm values (onversleuteld) | Sealed Secrets |
+| 2.12 | **Monitoring** | Geen observability, blind vliegen in productie | Niets | kube-prometheus-stack |
+
+**Sectie 3** beschrijft **architectuursuggesties** die dieper ingrijpen dan tooling-keuzes — dit zijn de wijzigingen die nodig zijn om Druppie écht horizontaal schaalbaar te maken:
+
+| # | Suggestie | Kernprobleem |
+|---|-----------|-------------|
+| 3.1 | Event-driven backend | In-memory session tracking (`_active_session_tasks` dict) voorkomt multi-replica |
+| 3.2 | MCP module mesh | 9 MCP modules als losse services + shared volume = NFS bottleneck |
+| 3.3 | Database partitioning | `tool_calls`/`llm_calls` tabellen groeien onbegrensd |
+| 3.4 | Sandbox pool pre-warming | Cold start 3-10s is te traag voor interactieve sessies |
+| 3.5 | Multi-tenant schaalbaarheid | Geen tenant isolatie op K8s niveau |
+| 3.6 | Control plane schaalbaarheid | SQLite in sandbox-control-plane = single replica |
+
+### Toekomstige uitbreidingen (nog niet behandeld)
+
+De volgende onderwerpen vallen buiten scope van deze spike maar worden relevant bij groei:
+
+| Onderwerp | Waarom relevant | Wanneer |
+|-----------|----------------|---------|
+| **Service mesh** (Istio/Linkerd) | mTLS tussen services, traffic shaping, circuit breaking | Multi-tenant of compliance-eisen |
+| **Distributed caching** (Redis/Valkey) | Session state delen tussen replicas, MCP response caching | Backend multi-replica (fase 2) |
+| **Blue/green & canary deployments** | Zero-downtime releases met rollback op metrics | Productie met SLA |
+| **API rate limiting per tenant** | Fair use, abuse prevention | Multi-tenant |
+| **Distributed tracing** (Jaeger/Tempo) | Request flow door 20+ services debuggen | Productie debugging |
+| **Log aggregation** (Loki/ELK) | Gecentraliseerd loggen, correlatie tussen services | Productie operatie |
+| **Webhook retry & dead-letter queue** | Sandbox webhooks kunnen falen, geen retry mechanisme nu | Backend reliability |
+| **FinOps / cost management** | Resource right-sizing, idle detection, burst billing | Cloud productie |
+| **Disaster recovery automatisering** | Cluster rebuild, cross-region failover | Enterprise / SLA 99.9%+ |
+| **Feature flags** | Graduele rollout van nieuwe agent capabilities | Team groei |
 
 ---
 
@@ -800,9 +850,11 @@ CloudNativePG exporteert automatisch PostgreSQL metrics via PodMonitor. KEDA, Tr
 
 De huidige Druppie-architectuur is ontworpen voor single-instance Docker Compose. Om echt schaalbaar te worden op Kubernetes zijn er architectuurwijzigingen nodig. Deze sectie beschrijft suggesties — geen van deze vereist de huidige codebase als beperking.
 
+> **Huidige staat samengevat:** Backend draait op 1 hardcoded replica (`backend-deployment.yaml:9`). Session tracking is in-memory via `_active_session_tasks` dict in `core/background_tasks.py` — dit voorkomt multi-replica zonder race conditions. Workspace PVC is `ReadWriteOnce` — blokkeert scheduling naar andere nodes. Sandbox-manager spawnt containers via `docker run` subprocess calls. Geen HPA, geen PDB, geen autoscaling geconfigureerd in het Helm chart.
+
 ### 3.1 Event-Driven Backend (huidige bottleneck elimineren)
 
-**Probleem:** Het backend verwerkt agent sessies synchroon via `asyncio.create_task()`. Dit koppelt webhook ontvangst aan de specifieke replica die de agent draait — een fundamentele belemmering voor horizontale schaalbaarheid.
+**Probleem:** Het backend verwerkt agent sessies via `create_session_task()` (`core/background_tasks.py`), dat een in-memory `dict[UUID, asyncio.Task]` bijhoudt per session_id. Dit voorkomt dubbele runs binnen één replica, maar bij meerdere replicas is er **geen cross-replica coördinatie** — twee replicas kunnen tegelijk dezelfde sessie draaien. De sandbox webhook (`api/routes/sandbox.py`) landt op een willekeurige replica via de Service load balancer, niet noodzakelijk op de replica die de agent sessie host.
 
 **Suggestie: Message queue als backbone**
 
@@ -955,7 +1007,26 @@ Voor Druppie is **namespace per tenant + vCluster** de sweet spot: volledige Kub
 
 Alternatief: als de control plane voornamelijk caching en session state doet, overweeg Redis als backing store (sneller dan PostgreSQL voor key-value lookups, maar minder durable).
 
+### 3.7 Concrete codebase-wijzigingen voor schaalbaarheid
+
+Onderstaande wijzigingen zijn nodig om van single-replica naar horizontaal schaalbaar te gaan. Geordend op prioriteit:
+
+| Prioriteit | Wijziging | Bestand(en) | Wat |
+|------------|-----------|-------------|-----|
+| **P0** | Replica count configureerbaar | `helm/druppie/templates/backend-deployment.yaml` | Hardcoded `replicas: 1` → `{{ .Values.backend.replicas }}` |
+| **P0** | Workspace PVC naar RWX | `helm/druppie/templates/persistentvolumeclaims.yaml` | `ReadWriteOnce` → `ReadWriteMany` + storageClass |
+| **P0** | HPA toevoegen | `helm/druppie/templates/` (nieuw) | HPA resources voor backend, frontend, MCP modules |
+| **P1** | Session locking naar database | `druppie/core/background_tasks.py` | `_active_session_tasks` dict → PostgreSQL advisory lock of `FOR UPDATE SKIP LOCKED` |
+| **P1** | Sandbox manager naar K8s API | `background-agents/.../docker_manager.py` | `docker run` subprocess → `kubernetes` Python client |
+| **P2** | PDB's toevoegen | `helm/druppie/templates/` (nieuw) | PodDisruptionBudget per kritieke service |
+| **P2** | Anti-affinity configureren | `helm/druppie/templates/*-deployment.yaml` | Pod anti-affinity op hostname |
+| **P2** | Graceful shutdown | `druppie/api/main.py` | `terminationGracePeriodSeconds` + SIGTERM handler uitbreiden |
+| **P3** | Control plane SQLite → PG | `background-agents/` | SQLite vervangen door PostgreSQL client |
+| **P3** | Replica counts in values.yaml | `helm/druppie/values.yaml` | Expose `replicas` per service in values |
+
 ---
+
+## 4. Fasering
 
 ### Fase 1 — Minimaal Productie-Ready (4-6 weken)
 
