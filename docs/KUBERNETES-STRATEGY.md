@@ -11,7 +11,7 @@
 
 ## Strategieoverzicht
 
-Dit document onderzoekt **12 strategiegebieden** voor de migratie van Docker Compose naar productie-ready Kubernetes. Elke strategie adresseert een specifieke bottleneck of risico in de huidige architectuur.
+Dit document onderzoekt **13 strategiegebieden** voor de migratie van Docker Compose naar productie-ready Kubernetes. Elke strategie adresseert een specifieke bottleneck of risico in de huidige architectuur.
 
 | # | Strategie | Waarom | Huidige staat | Beslissing |
 |---|-----------|--------|---------------|------------|
@@ -27,6 +27,7 @@ Dit document onderzoekt **12 strategiegebieden** voor de migratie van Docker Com
 | 2.10 | **Networking/Ingress** | TLS, routing, rate limiting voor productie | NGINX op Kind (port 9080) | Traefik (K3s standaard) + cert-manager |
 | 2.11 | **Secrets Management** | API keys en wachtwoorden staan in plaintext values | Helm values (onversleuteld) | Sealed Secrets |
 | 2.12 | **Monitoring** | Geen observability, blind vliegen in productie | Niets | kube-prometheus-stack |
+| 2.13 | **Infrastructure Provisioning & Node Autoscaling** | HPA/KEDA schalen pods, maar nodes zijn vol = geen scheduling | Geen node-level autoscaling | hetzner-k3s CLI + Cluster Autoscaler (upstream) |
 
 **Sectie 3** beschrijft **architectuursuggesties** die dieper ingrijpen dan tooling-keuzes — dit zijn de wijzigingen die nodig zijn om Druppie écht horizontaal schaalbaar te maken:
 
@@ -843,6 +844,156 @@ Dit is de de-facto standaard voor Kubernetes monitoring. Eén `helm install` gee
 - kube-state-metrics voor Kubernetes object metrics
 
 CloudNativePG exporteert automatisch PostgreSQL metrics via PodMonitor. KEDA, Traefik, en Keycloak hebben ook Prometheus endpoints.
+
+---
+
+### 2.13 Infrastructure Provisioning & Node Autoscaling
+
+#### Probleemstelling
+
+HPA en KEDA schalen pods, maar wanneer alle 3 nodes vol zijn, heeft Kubernetes geen plek om nieuwe pods te schedulen. We hebben automatische node-level autoscaling nodig: nieuwe Hetzner VMs inrichten wanneer er capaciteit nodig is, en ze verwijderen wanneer ze idle zijn.
+
+#### Vergelijkingsmatrix
+
+| Criterium | hetzner-k3s (CLI) | kube-hetzner (Terraform) | Custom Terraform | Handmatig |
+|-----------|-------------------|--------------------------|------------------|-----------|
+| **Licentie** | MIT | MIT | N.v.t. | n.v.t. |
+| **Type** | CLI tool (1 YAML config) | Terraform module | Eigen Terraform | SSH + scripts |
+| **OS** | Ubuntu (default), Debian, others | MicroOS (openSUSE) | Kies zelf | Kies zelf |
+| **Cluster setup** | 2-3 minuten | ~5 minuten | Variabel | 30+ min |
+| **Autoscaling ingebouwd** | Ja (Cluster Autoscaler + CCM + CSI) | Ja (Cluster Autoscaler + CCM + CSI) | Nee (zelf configureren) | Nee |
+| **Auto-upgrades K3s** | Ja (System Upgrade Controller) | Ja (System Upgrade Controller) | Nee | Nee |
+| **IaC in git** | Ja (YAML config) | Ja (Terraform state) | Ja | Nee |
+| **Leercurve** | Laag | Medium (Terraform kennis nodig) | Hoog | Laag |
+| **Flexibiliteit** | Medium | Hoog (190+ variabelen) | Maximaal | Geen |
+| **Community** | ⭐ 3.5k+ GitHub stars | ⭐ 3.8k+ GitHub stars | n.v.t. | n.v.t. |
+| **Multi-cluster** | Nee | Ja (Terraform workspaces) | Ja | Nee |
+| **Production ready** | Ja | Ja | Afhankelijk van implementatie | Nee |
+
+#### Toelichting: Two-tier autoscaling architectuur
+
+Pod scaling en node scaling zijn twee aparte lagen die samenwerken:
+
+**Tier 1 — Pod Autoscaling (HPA + KEDA):**
+- Bewaakt CPU/memory/custom metrics per pod
+- Voegt pod replicas toe of verwijdert ze binnen bestaande nodes
+- Snel (seconden): nieuwe pod start op bestaande node
+- Begrensd door beschikbare node capaciteit
+
+**Tier 2 — Node Autoscaling (Cluster Autoscaler):**
+- Bewaakt pods die niet gescheduled kunnen worden (Pending state)
+- Creëert nieuwe Hetzner VMs via Hetzner Cloud API
+- Cloud-init script installeert automatisch K3s agent en voegt toe aan cluster
+- Verwijdert idle nodes na een configureerbare timeout
+- Trager (30-60s): VM provisioning + K3s join
+
+Flow:
+```
+Load spike → HPA creates pods → Nodes full? → Pending pods
+                                                  ↓
+                              Cluster Autoscaler detecteert Pending pods
+                                                  ↓
+                              Hetzner API: maak nieuwe VM aan
+                                                  ↓
+                              Cloud-init: installeer K3s agent, join cluster
+                                                  ↓
+                              Node ready → Pending pods gescheduled
+```
+
+#### Toelichting per optie
+
+**hetzner-k3s (aanbevolen voor Druppie)**
+
+CLI tool door Vito Botta. Eén YAML config file definieert het hele cluster: masters, workers, autoscaling pools, networking. Geen Terraform nodig. Installeert automatisch: Hetzner CCM, CSI driver, System Upgrade Controller, en Cluster Autoscaler.
+
+```yaml
+# cluster.yaml
+hetzner_token: <token>
+cluster_name: druppie
+kubeconfig_path: "./kubeconfig"
+k3s_version: v1.32.3+k3s1
+
+networking:
+  mode: flannel
+
+masters_pool:
+  instance_type: cpx31
+  instance_count: 3
+  location: fsn1
+
+worker_node_pools:
+- name: workers
+  instance_type: cpx31
+  instance_count: 1
+  location: fsn1
+  autoscaling:
+    enabled: true
+    min_instances: 1
+    max_instances: 10
+```
+
+Sterktes: Ubuntu support, simpelste setup, batteries included, actieve community.
+Zwaktes: Single maintainer, minder flexibel dan Terraform modules.
+
+**kube-hetzner (Terraform module)**
+
+Meest populaire Terraform module voor K3s op Hetzner. Gebruikt MicroOS (openSUSE), een immuut, transactioneel OS ontworpen voor containers. Diepe integratie met auto-upgrades, Longhorn, meerdere CNI opties.
+
+Sterktes: Meest compleet, IaC standaard, multi-cluster, MicroOS security voordelen.
+Zwaktes: Vereist Terraform kennis, MicroOS leercurve, geen Ubuntu.
+
+**Kubernetes Cluster Autoscaler (upstream Hetzner provider)**
+
+Onafhankelijk van provisioning tool: de daadwerkelijke autoscaling wordt uitgevoerd door de officiële Kubernetes Cluster Autoscaler met ingebouwde Hetzner Cloud provider (`--cloud-provider=hetzner`). Dit is upstream Kubernetes, actief onderhouden (commits van mei 2026).
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cluster-autoscaler
+  namespace: kube-system
+spec:
+  replicas: 1
+  template:
+    spec:
+      containers:
+        - name: cluster-autoscaler
+          image: registry.k8s.io/autoscaling/cluster-autoscaler:v1.32.0
+          command:
+            - ./cluster-autoscaler
+            - --cloud-provider=hetzner
+            - --nodes=1:10:cpx31:fsn1:workers    # min:max:type:region:pool
+            - --scale-down-delay-after-add=10m
+            - --scale-down-unneeded-time=10m
+            - --scan-interval=10s
+          env:
+            - name: HCLOUD_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: hcloud-autoscaler
+                  key: token
+            - name: HCLOUD_CLUSTER_CONFIG
+              valueFrom:
+                secretKeyRef:
+                  name: hcloud-autoscaler
+                  key: clusterConfig
+            - name: HCLOUD_NETWORK
+              value: "druppie-network"
+```
+
+**Hetzner Cloud Controller Manager (CCM)** — Verplichte dependency. Integreert Kubernetes met Hetzner APIs voor node lifecycle, load balancer provisioning, en netwerk routes. De CCM regelt geen autoscaling zelf, het is de brug tussen K8s en Hetzner die de Cluster Autoscaler nodig heeft.
+
+**Karpenter** — NIET beschikbaar voor Hetzner. Er bestaat geen provider en het staat niet op de roadmap. Karpenter ondersteunt alleen AWS, Azure, GCP, en een paar anderen. Geen optie.
+
+#### Beslissing: hetzner-k3s (CLI) + Cluster Autoscaler (upstream)
+
+| Onderdeel | Keuze | Reden |
+|-----------|-------|-------|
+| **Cluster provisioning** | hetzner-k3s CLI | Ubuntu, simpelste setup, alles ingebouwd, 2-3 min cluster |
+| **Node autoscaling** | Kubernetes Cluster Autoscaler (Hetzner provider) | Upstream, production-ready, actief onderhouden |
+| **Cloud integration** | Hetzner CCM | Verplicht — node lifecycle, LB provisioning |
+| **Storage integration** | Hetzner CSI driver | Persistent volumes via Hetzner block storage |
+| **Auto-upgrades** | System Upgrade Controller | K3s en OS updates met rollback |
 
 ---
 
