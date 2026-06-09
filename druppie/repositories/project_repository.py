@@ -102,10 +102,11 @@ class ProjectRepository(BaseRepository):
             name=project.name,
             description=project.description,
             repo_url=project.repo_url,
+            repo_name=project.repo_name,
+            repo_owner=project.repo_owner,
             created_at=project.created_at,
             # ProjectDetail specific
             owner_id=project.owner_id,
-            repo_name=project.repo_name,
             token_usage=TokenUsage(
                 prompt_tokens=stats.prompt_tokens,
                 completion_tokens=stats.completion_tokens,
