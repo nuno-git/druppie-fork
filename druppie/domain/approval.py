@@ -36,6 +36,11 @@ class ApprovalDetail(ApprovalSummary):
     # so the Tasks page can resolve relative markdown links in FD/TD previews
     # to Gitea URLs (same behaviour as the chat view).
     repo_url: str | None = None
+    # Project id — needed by the ArchimateBlock renderer to fetch the
+    # referenced .archimate file via /api/projects/{id}/file or
+    # /api/projects/{id}/file/workspace. Without it the embedded plate
+    # preview fails with "No project context".
+    project_id: UUID | None = None
 
 
 class PendingApprovalList(BaseModel):

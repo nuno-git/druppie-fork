@@ -64,7 +64,14 @@ Source: BA = from Business Analyst (FR/NFR) | AR = from Architect (TR)
 
 #### 2. Data Architecture & Integration
 * Data Model: [Entities, relationships, and classification (PII, confidentiality).
-  Follow the DB rules from platform-standards §5. Exact column types are builder_planner's call.]
+  Follow the DB rules from platform-standards §5. Exact column types
+  are builder_planner's call. **Same applies to diagrams: a Mermaid
+  ``erDiagram`` block may name entities and their key relationships,
+  but MUST NOT list individual fields, types, primary-key markers, or
+  comment-style PII annotations. If you find yourself writing
+  ``MELDING { uuid id PK, string email ... }`` you are pre-empting the
+  builder_planner. Keep it at ``MELDING ||--o{ STATUSHISTORIE : heeft``
+  level.**]
 * Data Flows: [Which data moves between which components, and why]
 * Integration Points: [External systems and trust boundaries. Contracts
   with external consumers (other Druppie agents, user-facing apps, 3rd party
@@ -137,6 +144,19 @@ empty list if there are no deviations:
 | (none) | | |
 
 ### Visualization
+
+Use **ArchiMate** for structural / cross-layer views (Application
+Cooperation, Technology Realization, Business Process). Embed by view
+id; the diagram is rendered from `docs/architecture.archimate`:
+
+```archimate
+view-id: <uuid-from-archimate_save_model>
+file: docs/architecture.archimate
+```
+
+Use **Mermaid** for behavioral diagrams (sequence, state, flowchart,
+ER) ArchiMate cannot express:
+
 ```mermaid
 flowchart TD
   A["Input"] --> B["Processing"]
@@ -144,7 +164,9 @@ flowchart TD
 ```
 
 Include: Overview, Components, File Structure, Technology Choices.
-Only use diagram types covered by the making-mermaid-diagrams skill.
+For each diagram, pick the notation per the choice rule in the
+making-archimate-diagrams skill, and follow the corresponding skill's
+syntax exactly (making-archimate-diagrams or making-mermaid-diagrams).
 Detailed enough for builder_planner to plan implementation — framework, versions, endpoint signatures and file layout are their call, not the TD's.
 
 ### Module Samenvatting (alleen bij een nieuwe module)

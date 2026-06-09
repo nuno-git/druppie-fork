@@ -364,7 +364,14 @@ const TaskCard = ({ task, onApprove, onReject }) => {
                     View {isBatchWrite ? `${Object.keys(batchFiles).length} files` : 'file'}
                   </button>
                   {showCodePreview && (
-                    <ProjectRepoContext.Provider value={task.repo_url ? { repo_url: task.repo_url, default_branch: 'main' } : null}>
+                    <ProjectRepoContext.Provider
+                      value={task.repo_url || task.project_id ? {
+                        id: task.project_id,
+                        repo_url: task.repo_url,
+                        default_branch: 'main',
+                        session_id: task.session_id,
+                      } : null}
+                    >
                       <FilePreviewModal
                         files={
                           isBatchWrite

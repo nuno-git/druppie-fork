@@ -493,14 +493,37 @@ Local file search capability over mounted dataset volumes.
 
 ### 6.7 ArchiMate Server (port 9006)
 
-ArchiMate model operations. Reads `.archimate` files from a mounted models directory.
+ArchiMate model operations. Two surfaces co-exist on one server:
+
+- **Read-only WILMA reference model** mounted from `module-archimate/models/WILMA-exchange.xml` (Open Exchange XML).
+- **Read-write per-project model** living in the session workspace at `docs/architecture.archimate` (also Open Exchange XML, committed to Gitea alongside `docs/technical-design.md`).
+
+The `WORKSPACE_ROOT` volume is shared with `module-coding`, so the same on-disk file is visible to both MCPs — the architect mutates it through write tools here and commits it through `coding.run_git`.
+
+Read tools (WILMA + project model):
 
 | Tool | Approval | Description |
 |------|----------|-------------|
-| `list_models` | None | List available ArchiMate models |
-| `read_model` | None | Read a full ArchiMate model |
-| `search_model` | None | Search for elements by query |
-| `export_view` | None | Export an ArchiMate view |
+| `list_models` / `get_statistics` / `list_elements` / `get_element` / `list_views` / `get_view` / `search_model` / `get_impact` | None | Query WILMA elements, relationships, views, and impact paths |
+| `assess_layout` | None | Element/connection count + density recommendation for a view (used to decide when to recommend `request_full_relayout`) |
+
+Write tools (per-project `docs/architecture.archimate`, **all ungated** — the architect builds the plate freely; the single human review point is the `coding:make_design` gate on `docs/technical-design.md` where the reviewer sees the markdown + embedded plate as one artifact):
+
+| Tool | Description |
+|------|-------------|
+| `create_element` / `update_element` / `delete_element` | Element CRUD (delete cascades to dependent relationships and view nodes) |
+| `create_relationship` / `update_relationship` / `delete_relationship` | Relationship CRUD with valid types (Composition, Aggregation, Serving, Realization, Flow, Triggering, Access, …) |
+| `add_to_view` / `add_connection_to_view` / `remove_from_view` | View composition; `add_to_view` chooses a free position for new nodes while preserving existing x/y. Views themselves are created by the composite builders (`add_layered_view` / `add_cooperation_view`); there is no standalone view-CRUD tool. |
+| `get_or_create_wilma_reference` | Idempotent import of a WILMA element into the project model with the original identifier preserved (read-only locally via a `wilma-source=true` property) |
+| `save_model` | Persist buffered mutations to disk; also writes a per-view SVG to `docs/diagrams/<view-name>.svg` so the plates are visible directly in Gitea |
+| `request_full_relayout` | Clears positions on a view so the frontend's elkjs runs a fresh layout; destructive of manual position tweaks, hence approval-gated |
+
+Implementation:
+
+- `v1/writer.py` — buffered ElementTree document model with mutation API and an ID-aware free-region heuristic for new node placement.
+- `v1/write_tools.py` — FastMCP tool definitions on top of the writer, plus per-`session_id` `WriteSessionRegistry` that resolves the workspace path matching the `coding` MCP's convention.
+- `v1/svg_export.py` — stdlib SVG renderer that mirrors the frontend renderer (layer colors, relationship markers); runs at save time, never blocks the save itself.
+- Read-only `module.py` + read-only tools are unchanged from earlier WILMA work.
 
 ### 6.8 RAG Architecture (Distributed Vector Storage)
 
@@ -721,7 +744,7 @@ Twelve agents are defined as YAML files in `druppie/agents/definitions/`:
 | `router` | Classifies user intent, selects project | `set_intent` | None | — |
 | `planner` | Creates execution plan (which agents to run) | `make_plan` | None | — |
 | `business_analyst` | Gathers requirements from user | Default | `coding` (read_file, make_design, list_dir) | `making-mermaid-diagrams` |
-| `architect` | Designs system architecture, writes specs | Default | `coding` (read_file, make_design, list_dir), `archimate` | `making-mermaid-diagrams` |
+| `architect` | Designs system architecture, writes specs | Default | `coding` (read_file, make_design, list_dir), `archimate` (read + write) | `making-mermaid-diagrams`, `making-archimate-diagrams` |
 | `builder_planner` | Creates implementation plans, writes builder_plan.md | Default | `coding` | — |
 | `test_builder` | Generates tests (TDD Red Phase) | Default | `coding` | — |
 | `builder` | Implements code to pass tests (TDD Green Phase) | Default | `coding` | — |

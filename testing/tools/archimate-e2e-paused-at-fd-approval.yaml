@@ -1,0 +1,228 @@
+## Setup: project with a waterschap-context FD pending at the
+## approval gate, ready for a human reviewer.
+##
+## The chain runs router → planner → BA → make_design and STOPS at
+## the make_design approval gate (status: pending). The session lands
+## in paused_approval state with the FD awaiting a real human
+## decision in the UI.
+##
+## What happens when you approve the FD in the UI:
+##   1. The approval-resume kicks the BA back to finish (run_git × 3
+##      + done with DESIGN_APPROVED).
+##   2. The planner re-evaluates and schedules the architect (real
+##      LLM, real plan — no test injection beyond this point).
+##   3. The architect picks up, reads the FD, runs WILMA search,
+##      produces docs/technical-research.md and docs/technical-design.md
+##      with an ArchiMate view in architecture.archimate.
+##   4. Each archimate_* write tool fires an architect-role approval
+##      gate that you also approve in the UI — that is the actual end-
+##      to-end demo of the ArchiMate flow.
+##
+## So this single test on the Tests page lands you exactly where you
+## want to be: in front of a pending FD approval, with a project ready
+## to grow an ArchiMate plate once you say "go".
+
+tool-test:
+  name: archimate-e2e-paused-at-fd-approval
+  description: "Project + FD ready, paused at the FD approval gate — approve in the UI and the architect produces an ArchiMate TD"
+  tags: [archimate, e2e, paused, manual-followup]
+  session_status: paused
+
+  chain:
+    # --- Router ---
+    - agent: router
+      tool: builtin:set_intent
+      arguments:
+        intent: create_project
+        project_name: overlast-meldportaal
+        description: "Burger-portaal voor het melden van overlast (stank, water, vis, vervuiling) aan het waterschap. Meldingen worden vastgelegd in het zaaksysteem en de juiste behandelteams genotificeerd."
+      assert:
+        result:
+          - not_empty
+
+    - agent: router
+      tool: builtin:done
+      arguments:
+        summary: "Agent router: Classified as create_project for overlast-meldportaal"
+
+    # --- Planner ---
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: business_analyst
+            prompt: "Gather requirements and create functional design for the overlast-meldportaal"
+          - agent_id: planner
+            prompt: "Re-evaluate after business analyst completes"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: Planned business_analyst to gather requirements and create the functional design"
+
+    # --- Business Analyst writes the FD ---
+    # Approval gate is left PENDING. The chain stops here; the session
+    # lands in paused_approval state for the human reviewer to resolve.
+    - agent: business_analyst
+      tool: coding:make_design
+      approval:
+        status: pending
+      arguments:
+        path: docs/functional-design.md
+        content: |
+          # Functioneel Ontwerp — Burger Overlast-meldportaal
+
+          > Platform standards applied: [docs/platform-functional-standards.md](./platform-functional-standards.md) rev `2026-04-20`.
+
+          ## 1. Current vs Desired Situation
+
+          | Aspect | Current Situation | Desired Situation |
+          |--------|-------------------|-------------------|
+          | Meldkanaal | Telefoon, e-mail, social media verspreid over afdelingen | Eén digitaal portaal voor alle overlast-meldingen |
+          | Registratie | Handmatig per afdeling, geen centraal overzicht | Automatisch in zaaksysteem (DSP) bij indienen |
+          | Notificatie | Hangt af van wie de melding ontvangt | Automatisch naar het juiste behandelteam binnen seconden |
+          | Status voor burger | Geen terugkoppeling tenzij burger zelf belt | Burger volgt status via meldingsnummer + e-maillink |
+          | Trendrapportage | Niet mogelijk — meldingen niet gestructureerd | Dashboard per type, locatie, doorlooptijd |
+          | Bereikbaarheid | Alleen kantooruren effectief | 24/7 indienen, behandeling kantooruren |
+
+          ## 2. Problem Summary
+
+          - **Who is affected:** Burgers in het beheergebied van het waterschap (overlastmelders) en de behandelteams die meldingen oppakken.
+          - **Problem:** Meldingen komen via verspreide kanalen binnen, raken zoek of komen vertraagd bij het juiste team. Burgers krijgen geen statusterugkoppeling.
+          - **Why it matters:** Vertraagde behandeling leidt tot escalaties, herhaalmeldingen en imagoschade. Het waterschap kan niet rapporteren op trends en kan dus niet proactief beleid maken.
+          - **What success looks like:** Elke melding belandt binnen 1 minuut bij het juiste team, burger kan status volgen zonder te bellen, zaakcoördinator heeft realtime overzicht.
+
+          ## 3. Functional Requirements
+
+          | ID | Source | Requirement | Verification Method |
+          |----|--------|-------------|---------------------|
+          | FR-01 | BA | The system shall enable a citizen to submit an overlast report with location (map pin), overlast type, description and optional photo so that registration is complete in a single form. | Functional test — submit a report with all fields, confirm it lands in the zaaksysteem |
+          | FR-02 | BA | The system shall return a meldingsnummer to the citizen upon submission so that the citizen can track the status without an account. | Functional test — submit form, confirm meldingsnummer in confirmation screen |
+          | FR-03 | BA | The system shall send an e-maillink to the citizen (if e-mail provided) so that the citizen can return to the status page later. | Integration test — submit with e-mail, confirm e-mail received with working link |
+          | FR-04 | BA | The system shall automatically register every submitted report as a zaak in the DSP with the matching zaaktype so that no manual zaakregistratie is needed. | Integration test — submit report, query DSP for new zaak, confirm zaaktype mapping |
+          | FR-05 | BA | The system shall notify the behandelteam responsible for the zaaktype within 60 seconds of submission so that handling can start immediately. | Integration test — submit report, observe notification delivery within 60s |
+          | FR-06 | BA | The system shall mirror status updates from the zaaksysteem to the citizen-facing status page within 60 seconds so that the citizen sees current state. | Integration test — change zaak status in DSP, confirm status page updates within 60s |
+          | FR-07 | BA | The system shall expose a coordinator dashboard with meldingen filtered by type, location and doorlooptijd so that the zaakcoördinator can monitor and report on trends. | Functional test — open dashboard as coordinator, filter by type, confirm correct subset |
+
+          ## 4. Business Rules & Logic
+
+          | Rule ID | Description | Condition | Outcome |
+          |---------|-------------|-----------|---------|
+          | BR-01 | Mapping melding-type → zaaktype | Submitted overlast type matches a DSP zaaktype in the configuration | Auto-register with matched zaaktype |
+          | BR-02 | Onbekend melding-type | No DSP zaaktype matches | Register with default "overlast-overig" zaaktype |
+          | BR-03 | Pseudonimiseer e-mail bij sluiten | Zaak status becomes "afgesloten" | Replace e-mail address with hash in melding-record after 7 days |
+          | BR-04 | Duplicaat-detectie | New melding within 500m + 4h + same type | Link to existing zaak instead of creating new one |
+          | BR-05 | Notificatie-routing | Zaaktype assigned to a behandelteam in configuration | Notify that team; fall back to algemene meldkamer if no mapping |
+
+          ## 5. Information Requirements
+
+          | Information | Description | Source | Used By |
+          |-------------|-------------|--------|---------|
+          | Melding | Locatie, type, beschrijving, optionele foto, optionele e-mail, meldingsnummer | Burger via portaal | Zaaksysteem, behandelteam, dashboard |
+          | Zaaktype-mapping | Welke melding-type hoort bij welke DSP zaaktype | Beheer-config | Auto-registratie |
+          | Behandelteam-routing | Welk team voor welk zaaktype | Beheer-config | Notificatieservice |
+          | Zaakstatus | Open/in behandeling/afgesloten + laatste opmerking | Zaaksysteem (DSP) | Status-pagina burger, dashboard |
+          | Adresgegevens | Resolved address bij gegeven coördinaten | PDOK BAG/BGT | Indien-formulier, dashboard-filters |
+
+          ## 6. User Journeys
+
+          **Journey A — Burger dient melding in**
+          1. Burger opent portaal-URL in browser
+          2. Systeem toont kaart van beheergebied
+          3. Burger zet pin op overlast-locatie
+          4. Systeem resolved adres via PDOK en toont in formulier
+          5. Burger kiest type overlast uit lijst, schrijft beschrijving, voegt foto toe, vult optioneel e-mail in
+          6. Burger drukt op "Verstuur"
+          7. Systeem registreert zaak in DSP, krijgt zaaknummer terug
+          8. Systeem toont meldingsnummer + link naar status-pagina
+          9. Systeem stuurt (indien e-mail) bevestigingsmail met link
+
+          **Journey B — Behandelteam handelt af**
+          1. Team ontvangt notificatie met zaaknummer + samenvatting
+          2. Teamlid opent zaaksysteem en behandelt zaak
+          3. Teamlid werkt status bij in zaaksysteem
+          4. Status verschijnt binnen 60s op burger's status-pagina
+
+          **Journey C — Burger volgt status**
+          1. Burger opent status-pagina met meldingsnummer (of via e-maillink)
+          2. Systeem toont actuele status + laatste opmerking
+          3. Burger ziet historie van statuswijzigingen
+
+          **Journey D — Coördinator rapporteert**
+          1. Coördinator logt in op dashboard (via waterschap-SSO)
+          2. Filtert meldingen per type, locatie, periode, doorlooptijd
+          3. Exporteert CSV voor bestuursrapportage
+
+          ## 7. Integration Points
+
+          | System/Service | Interaction Type | Purpose |
+          |----------------|------------------|---------|
+          | Zaaksysteem (DSP) | REST (ZGW-API) | Zaakregistratie, statusupdates ophalen, zaaktype-lookup |
+          | Notificatieservice | REST | E-mail + push naar behandelteams |
+          | PDOK BAG/BGT | REST | Adres-resolutie bij coördinaten |
+          | Object-opslag (S3-compatibel) | S3 API | Foto's bij meldingen |
+          | Waterschap-SSO (Keycloak) | OIDC | Authenticatie van behandelteam + coördinator (niet de burger) |
+
+          ## 8. Non-Functional Requirements
+
+          | ID | Source | Requirement | Verification Method |
+          |----|--------|-------------|---------------------|
+          | NFR-01 | BA | 95% van indien-acties wordt binnen 2 seconden verwerkt (form-submit tot bevestigingsscherm) | Performance test met 50 concurrent users |
+          | NFR-02 | BA | Beschikbaarheid 99.5% tijdens kantooruren (08:00-18:00), 99% buiten kantooruren | SLA-monitoring over 30 dagen |
+          | NFR-03 | BA | Status-page latency: actuele zaakstatus binnen 60s na update in DSP | Integration test polling + timestamping |
+          | NFR-04 | BA | Notificatie-latency: behandelteam ontvangt notificatie binnen 60s van indien-actie | Integration test stopwatch |
+          | NFR-05 | BA | Foto-upload max 10 MB, JPEG/PNG/HEIC, automatisch herschalen naar max 1920px | Functional test met grenswaarde-bestanden |
+          | NFR-06 | BA | Mobiel-responsive (≥360px breed); Lighthouse Performance score ≥80 op 4G | Lighthouse audit in CI |
+
+          ## 9. Security & Compliance Requirements (from user input)
+
+          - **Personal Data Involved:** Ja — e-mailadres (optioneel) van de melder + locatie van de melding. Beide zijn herleidbaar tot de persoon.
+          - **Confidential Data Involved:** Nee — meldingen zijn niet vertrouwelijk; foto's mogen geen herkenbare personen tonen (UX-prompt waarschuwt).
+          - **Authentication Required:** Burger: nee (alleen meldingsnummer + e-maillink). Behandelteam en coördinator: ja, via waterschap-Keycloak (OIDC).
+          - **Access Restrictions:** Behandelteam ziet alleen zaken van eigen zaaktype-set. Coördinator ziet alles binnen het waterschap.
+          - **Failure Preference:** Stop completely — bij falen van DSP-koppeling wordt de melding NIET geregistreerd, burger krijgt foutmelding met meldingsnummer voor retry. Geen "best effort".
+          - **Data Retention:** Meldingen blijven gekoppeld aan de zaak in DSP (wettelijke termijn waterschap). E-mailadres wordt 7 dagen na sluiten van de zaak gepseudonimiseerd in melding-record. Foto's: zelfde retentie als de zaak.
+
+          ## 10. Assumptions & Open Questions
+
+          | ID | Type | Description | Default/Fallback |
+          |----|------|-------------|------------------|
+          | A-01 | Assumption | De zaaktype-mapping wordt beheerd in een configuratie-bestand dat operationeel beheer kan aanpassen zonder code-release. | Single source of truth in DSP-koppeling-config |
+          | A-02 | Assumption | Burger heeft geen account-historie nodig over meerdere meldingen — elke melding staat los. | Geen "mijn meldingen"-overzicht in v1 |
+          | A-03 | Assumption | Behandelteams werken hoofdzakelijk in het zaaksysteem zelf, niet in dit portaal. | Portaal is alleen ingang + status-uitgang |
+          | A-04 | Assumption | Het waterschap heeft één DSP-instance; multi-tenant is niet nodig. | Single-tenant deployment |
+
+          ## 11. Out of Scope
+
+          - Mobiele app (alleen responsive web).
+          - Geavanceerde analytics / BI-dashboard (alleen basis-filtering + CSV-export).
+          - Inkomende koppelingen vanuit andere meldsystemen (alleen burger-portaal).
+          - Beheer-UI voor zaaktype-mapping (config-bestand volstaat in v1).
+          - Push-notificaties naar de burger (alleen e-mail + status-pagina).
+          - Anonieme upload van foto's zonder melding (foto altijd bij melding).
+
+          ## 12. Process Flow Diagram
+
+          ```mermaid
+          flowchart TD
+              start(["Burger opent portaal"]) --> form["Locatie + type + beschrijving + foto"]
+              form --> submit{"Submit"}
+              submit --> resolve["PDOK adres-resolutie"]
+              resolve --> dup{"Duplicaat binnen 500m + 4h?"}
+              dup -->|"Ja"| link["Koppel aan bestaande zaak"]
+              dup -->|"Nee"| zaak["Registreer zaak in DSP"]
+              link --> num["Toon meldingsnummer"]
+              zaak --> num
+              num --> notify["Notificeer behandelteam"]
+              notify --> finish(["Bevestiging + e-maillink"])
+          ```
+
+          ## 13. Possible Solution Direction
+
+          No existing modules or projects were identified as relevant; context-gathering surfaced only generic platform capabilities (auth, storage) which are already platform standards.
+
+          ## 14. Platform standard deviations
+
+          | Standard | Deviation | Rationale |
+          |----------|-----------|-----------|
+          | (none)   |           |           |
