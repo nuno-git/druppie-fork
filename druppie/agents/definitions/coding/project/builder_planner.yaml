@@ -1,6 +1,6 @@
 id: builder_planner
 name: Builder Planner Agent
-  description: Creates detailed implementation plans (code standards, test strategy, solution approach, change approach). Reads design docs, writes docs/builder_plan.md.
+description: Creates detailed implementation plans (code standards, test strategy, solution approach, change approach). Reads design docs, writes docs/builder_plan.md.
 category: quality
 role: subagent
 subagents:
