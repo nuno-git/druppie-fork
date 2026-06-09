@@ -22,6 +22,11 @@ linked_prd: null                  # Path or URL to a PRD section (e.g. "docs/FEA
 linked_research: null             # Path or URL to research/spike document
 ---
 
+> **Where this fits:** ADRs come AFTER the PRD (we know what we want) and AFTER research
+> (if needed — we investigated the options). An ADR is a COMMITTED decision — it records
+> what was chosen, why, and how it's enforced. It does NOT contain the user journey (that's
+> the PRD) or the investigation (that's the research doc).
+
 ## Context
 
 What is the issue that we're seeing that is motivating this decision or change? Describe the forces at play, including technical, social, and project constraints. Include any assumptions about the current state of the system.

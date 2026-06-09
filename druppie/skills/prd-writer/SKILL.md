@@ -17,6 +17,19 @@ Product Requirements Documents define *what* needs to be built and *why*,
 before any architectural decisions or implementation. They are the starting
 point of the spec-driven pipeline: PRD → Research → ADR → BDD → Code.
 
+## Where the PRD Fits in the Flow
+
+The PRD is the START of the spec-driven pipeline. Everything flows from here:
+
+1. **PRD** — We want something. Why? What's the user journey?
+2. **Research** (optional) — How should we build it? What are the options?
+3. **ADR** — We decided X. Here's why. Here's how it's enforced.
+4. **BDD** — The system must do Y. Here's the executable proof.
+5. **Implementation** — Build it following the ADRs.
+
+The PRD is the user-facing story. It does NOT contain technical decisions (that's ADRs)
+or executable tests (that's BDD). It describes the PROBLEM and the GOAL.
+
 ## When to Write a PRD
 
 Write a PRD **before any feature work begins**. This includes:

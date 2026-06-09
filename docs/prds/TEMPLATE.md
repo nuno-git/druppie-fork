@@ -11,6 +11,11 @@ linked_bdd: []                        # List of .feature file paths, e.g. ["test
 
 # PRD: {title}
 
+> **Where this fits:** The PRD is the START of the spec-driven pipeline. Everything flows
+> from here: PRD → Research (optional, only when unclear) → ADR (decision) → BDD (verification)
+> → Implementation. The PRD describes the PROBLEM and the GOAL from the user's perspective.
+> It does NOT contain technical decisions (that's ADRs) or executable tests (that's BDD).
+
 ## Problem
 
 <!-- What problem does this solve? Why now?

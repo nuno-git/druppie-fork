@@ -42,14 +42,73 @@ The framework is built on a key insight from Michal's talk: **humans and LLMs bo
 
 | Pillar | Purpose | Format | Location |
 |--------|---------|--------|----------|
+| **PRD** | Describe why a feature exists, the problem, user journey | Lightweight Markdown | `docs/prds/` |
 | **Research** | Investigate options before committing to a decision | Markdown with trade-off tables | `docs/research/` |
 | **ADR** | Record why a technical decision was made and how it's enforced | Markdown with YAML frontmatter | `docs/adrs/` |
-| **PRD** | Describe why a feature exists, the problem, user journey | Lightweight Markdown | `docs/prds/` |
 | **BDD** | Executable specification of what the system does | Gherkin `.feature` files | `testing/bdd/` |
 | **Design System** | Component library, visual rules, usage constraints | Markdown + code examples | `docs/design-system/` |
 | **CAS** | Current Architecture Specification — living snapshot of all active rules | Auto-generated Markdown | `docs/adrs/CAS.md` |
 | **Memory** | Hierarchical context management for agents | Runtime (DB-backed) | Agent loop integration |
 | **Harness** | Git hooks + CI that enforce all rules | Config files | Root of repo |
+
+### What Goes Where
+
+Each artifact answers a different question. Using the subagent retry feature as a concrete example:
+
+| Artifact | Answers | Contains | Example: Subagent Retry |
+|----------|---------|----------|------------------------|
+| **PRD** | Why does this exist? What does the user want? | Problem, goal, user journey, constraints | "Users need to retry a failed subagent without losing work from successful ones" |
+| **Research** | What are the options? Which one do we pick? | Findings, comparison tables, recommendation | (Skipped — straightforward, one obvious approach) |
+| **ADR** | Why did we pick X? How is it enforced? | Context, decision, consequences, enforcement | "We chose granular per-subagent retry because full restart wastes completed work" |
+| **BDD** | What must the system do? Does it work? | Gherkin Given/When/Then scenarios | "Given 3 parallel subagents, When user clicks retry on B, Then only B resets" |
+| **Design System** | How should UI look and behave? | Component variants, visual rules, usage rules | "Retry button: ghost variant, appears on hover of failed agent card" |
+
+The same feature flows through multiple artifacts, each from a different angle:
+
+```mermaid
+flowchart LR
+    subgraph "Same feature, three angles"
+        PRD["PRD<br/><b>User-facing story</b><br/>User clicks retry on<br/>the failed one"]
+        BDD["BDD<br/><b>Machine-checkable proof</b><br/>Given/When/Then<br/>with exact state"]
+        ADR["ADR<br/><b>Design rationale</b><br/>Granular retry saves<br/>completed work"]
+    end
+    PRD --- BDD --- ADR
+```
+
+### Research vs ADR — What's the difference?
+
+Research and ADR serve different purposes and sit at different stages of the decision process.
+
+**Research = "We're figuring this out."** This is the investigation phase. Open questions, trade-off analysis, prototyping. Not every ADR needs research behind it.
+
+**ADR = "We've decided."** This is a committed decision. No more debate. The choice is recorded, the reasoning is preserved, and the enforcement rules are configured.
+
+Research is **optional**. Skip it when:
+
+- The choice is obvious ("We use PostgreSQL for the main database")
+- Existing ADRs already cover the domain ("ADR-003 already says we use background jobs for long-running tasks")
+- The feature is straightforward enough that there's only one sensible approach
+
+You only write a research doc when multiple viable options exist and the trade-offs aren't clear from existing context.
+
+### How Artifacts Link Together
+
+```mermaid
+flowchart LR
+    PRD["PRD<br/>docs/prds/001-bulk-export.md"]
+    RESEARCH["Research<br/>docs/research/001-zip-approaches.md"]
+    ADR["ADR<br/>docs/adrs/004-background-jobs.md"]
+    BDD["BDD<br/>testing/bdd/features/bulk-export.feature"]
+    CAS["CAS<br/>docs/adrs/CAS.md"]
+
+    PRD -->|"unclear? investigate"| RESEARCH
+    RESEARCH -->|"recommendation"| ADR
+    PRD -->|"architectural choice"| ADR
+    PRD -->|"verify behavior"| BDD
+    ADR -->|"accepted → regenerate"| CAS
+    BDD -.->|"@prd tag links back"| PRD
+    BDD -.->|"@adr tag links back"| ADR
+```
 
 ---
 
@@ -120,34 +179,47 @@ lefthook.yml                       # Git hooks
 
 ## 4. Artifact Lifecycle
 
-### Research → ADR → Implementation
+### The Correct Flow: Want → PRD → Research → ADR → BDD → Build
 
+Every feature starts with a want. Then we write a PRD to define what we're building. If the technical approach is unclear, we research options. Then we commit to a decision in an ADR, write BDD scenarios to prove it works, and build.
+
+```mermaid
+flowchart TD
+    WANT["We WANT something<br/>(bug, feature, idea)"]
+    PRD["PRD<br/><i>Why does this exist? What's the user journey?</i>"]
+    RESEARCH{"Research needed?<br/>(unclear options)"}
+    RESEARCH_DOC["Research Doc<br/><i>Investigate options, trade-offs</i>"]
+    ADR{"ADR needed?<br/>(architectural choice?)"}
+    ADR_DOC["ADR<br/><i>Record the decision + enforcement</i>"]
+    BDD["BDD Scenarios<br/><i>Executable acceptance criteria</i>"]
+    IMPL["Implementation"]
+    VERIFY["Verification<br/>(lint + BDD + tests)"]
+    MERGE["Merge"]
+
+    WANT --> PRD
+    PRD --> RESEARCH
+    RESEARCH -->|"Yes: unclear options"| RESEARCH_DOC
+    RESEARCH -->|"No: straightforward"| ADR
+    RESEARCH_DOC --> ADR
+    ADR -->|"Yes: new decision"| ADR_DOC
+    ADR -->|"No: covered by existing ADRs"| BDD
+    ADR_DOC --> BDD
+    BDD --> IMPL
+    IMPL --> VERIFY
+    VERIFY --> MERGE
+
+    style PRD fill:#4CAF50,color:#fff
+    style RESEARCH_DOC fill:#2196F3,color:#fff
+    style ADR_DOC fill:#FF9800,color:#fff
+    style BDD fill:#9C27B0,color:#fff
 ```
-Research (investigation)
-  │
-  ├── Question identified
-  ├── Findings documented
-  ├── Trade-off analysis
-  └── Recommendation
-        │
-        ▼
-  ADR (decision record)
-  │
-  ├── status: proposed
-  ├── Review & discussion
-  ├── status: accepted
-  ├── Enforcement configured
-  └── CAS regenerated
-        │
-        ▼
-  Implementation
-  │
-  ├── PRD written (if feature)
-  ├── BDD scenarios written
-  ├── Code implemented
-  ├── Lint + tests pass
-  └── Merged
-```
+
+Key points:
+
+- **PRD always comes first.** Before you research, before you decide, you need to know what you're building and why.
+- **Research is optional.** Only write a research doc when multiple viable options exist and the trade-offs aren't obvious.
+- **ADR captures the decision.** If existing ADRs already cover the architectural choice, skip writing a new one.
+- **BDD is the proof.** Scenarios are executable acceptance criteria that link back to the PRD and ADR.
 
 ### ADR Status Model
 
@@ -320,23 +392,28 @@ memory_enabled: true    # enable smart truncation + memory store
 
 ### Scenario: "Bulk Export" feature
 
-**Step 1: Research** — Agent investigates ZIP file generation libraries, streaming approaches.
-- Output: `docs/research/004-zip-export-approaches.md`
-- Result: Python `zipfile` + background jobs recommended
+**Step 1: PRD** — "We need bulk export." The user-facing story comes first.
+- What does the user want? Export all reports from a project as a downloadable file.
+- Output: `docs/prds/001-bulk-export.md`
+- Defines the user journey, constraints, and acceptance criteria
 
-**Step 2: ADR** — Agent records the architectural decision.
+**Step 2: Research** — "Streaming ZIP vs background job?" Only because the approach is unclear.
+- The PRD raises a question: how do you generate a file that could be large?
+- Output: `docs/research/001-zip-approaches.md`
+- Result: streaming ZIP is brittle for large datasets; background jobs with a download link is more reliable
+- (If the approach had been obvious, this step would be skipped entirely)
+
+**Step 3: ADR** — "We chose background jobs." The decision is committed.
 - Output: `docs/adrs/004-background-jobs-for-exports.md` (status: proposed)
 - After review: status → accepted
 - CAS regenerated automatically
+- Links back to PRD-001 and Research-001
 
-**Step 3: PRD** — Agent describes the feature.
-- Output: `docs/prds/001-bulk-export.md`
-- Links to: ADR-004, BDD scenarios
-
-**Step 4: BDD** — Agent writes acceptance criteria.
+**Step 4: BDD** — "When user clicks Export All, background job created." Verification.
 - Output: `testing/bdd/features/bulk-export.feature`
 - Tagged: `@prd docs/prds/001-bulk-export.md`
 - Scenarios: successful export, exceeding max reports, concurrent export prevention
+- Each scenario links back to the PRD and ADR via tags
 
 **Step 5: Implementation** — Agent follows feature-dev skill.
 - Loads CAS, ADR-004, PRD-001

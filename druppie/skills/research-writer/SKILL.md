@@ -20,6 +20,18 @@ Research documents investigate alternatives and provide evidence-based
 recommendations *before* an Architectural Decision Record is written.
 They are the input to ADRs — research explores, ADRs decide.
 
+## Where Research Fits in the Flow
+
+Research comes AFTER the PRD (we know what we want) but BEFORE the ADR (we haven't decided yet).
+
+**PRD** (we want something) → **Research** (what are the options?) → **ADR** (we decided X)
+
+Research is OPTIONAL — only needed when there are genuinely multiple viable options and the
+choice isn't obvious. If the decision is straightforward, skip research and go straight to ADR.
+
+Research = "We're figuring this out"
+ADR = "We've decided"
+
 ## When Research Is Needed
 
 Write a research document when:

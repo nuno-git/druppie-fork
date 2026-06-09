@@ -17,6 +17,16 @@ Architecture Decision Records (ADRs) document the "why" behind architectural
 choices. They are the primary mechanism for architectural governance in this
 project.
 
+## Where ADR Fits in the Flow
+
+ADRs come AFTER research (if needed) and AFTER the PRD. The flow is:
+
+**PRD** (we want something) → **Research** (what are the options?) → **ADR** (we decided X)
+
+An ADR is a COMMITTED decision — it records what was chosen and why. Research documents
+are the investigation that happens BEFORE the ADR. Not every ADR needs a research document
+(skip research when the choice is obvious).
+
 ## When to Write an ADR
 
 Write an ADR for any **non-trivial architectural choice**, including but not

@@ -9,6 +9,11 @@ outcome: null                         # "adr-NNN" if research led to an ADR, or 
 
 # Research: {title}
 
+> **Where this fits:** Research comes AFTER the PRD (we know what we want) but BEFORE
+> the ADR (we haven't decided yet). Research is OPTIONAL — only needed when there are
+> genuinely multiple viable options. If the choice is obvious, skip research and go
+> straight to the ADR. Research = "we're figuring this out". ADR = "we've decided".
+
 ## Question
 
 <!-- What are we investigating?
