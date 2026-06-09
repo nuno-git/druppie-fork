@@ -284,19 +284,6 @@ export const getSandboxEvents = async (sessionId, messageId) => {
 export const getHealth = () => request('/health')
 export const getStatus = () => request('/api/status')
 
-// ============ Admin Database Browser ============
-export const getAdminStats = () => request('/api/admin/stats')
-export const getAdminTables = () => request('/api/admin/tables')
-export const getAdminTableData = (tableName, page = 1, limit = 50, options = {}) => {
-  const params = new URLSearchParams({ page, limit })
-  if (options.orderBy) params.append('order_by', options.orderBy)
-  if (options.orderDir) params.append('order_dir', options.orderDir)
-  if (options.filterField) params.append('filter_field', options.filterField)
-  if (options.filterValue) params.append('filter_value', options.filterValue)
-  return request(`/api/admin/table/${tableName}?${params.toString()}`)
-}
-export const getAdminRecord = (tableName, recordId) =>
-  request(`/api/admin/table/${tableName}/${recordId}`)
 
 // ============ Evaluations (Admin) ============
 export const getBenchmarkRuns = (page = 1, limit = 20, runType = null) => {
@@ -434,6 +421,35 @@ export const getActiveRun = () =>
 
 // Kept for backwards compat - used by Evaluations.jsx TestRunDetail
 export const getTestRunAssertionsList = getTestRunAssertions
+
+
+// ============ Documentation ============
+export const getDocumentation = () => request("/api/documentation")
+
+// ============ Jobs (Scheduled / Cron) ============
+export const getJobs = () => request('/api/jobs')
+export const triggerJob = (jobDefinitionId) =>
+  request(`/api/jobs/${jobDefinitionId}/trigger`, { method: 'POST' })
+export const getJobRuns = (jobDefinitionId = null, status = null, page = 1, limit = 20) => {
+  const params = new URLSearchParams({ page, limit })
+  if (status) params.append('status', status)
+  const qs = params.toString()
+  if (jobDefinitionId) {
+    return request(`/api/jobs/${jobDefinitionId}/runs?${qs}`)
+  }
+  return request(`/api/jobs/runs?${qs}`)
+}
+
+// Job-level approval endpoints
+export const getPendingJobApprovals = () => request('/api/jobs/pending-approvals')
+export const approveJob = (jobRunId) =>
+  request(`/api/jobs/${jobRunId}/approve`, { method: 'POST' })
+export const rejectJob = (jobRunId, reason = '') =>
+  request(`/api/jobs/${jobRunId}/reject`, {
+    method: 'POST',
+    body: JSON.stringify({ reason }),
+    headers: { 'Content-Type': 'application/json' },
+  })
 
 // ============ Cache ============
 export const getCachedPackages = () => request('/api/cache/packages')

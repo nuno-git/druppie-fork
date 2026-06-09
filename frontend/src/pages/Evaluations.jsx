@@ -58,7 +58,7 @@ export default function Evaluations() {
   const [modeFilter, setModeFilter] = useState('all') // all, live, record_only, replay, manual
   const [judgeEnabled, setJudgeEnabled] = useState(true)
   const [deletingUsers, setDeletingUsers] = useState(false)
-  const [runProgress, setRunProgress] = useState(null) // {current_test, completed_tests, total_tests}
+  const [runProgress, setRunProgress] = useState(null)
 
   // Effective selected count for display (respects mode filter when selectAll)
   const effectiveCount = selectAll
@@ -99,6 +99,7 @@ export default function Evaluations() {
           setRunMessage(activeRun.message || 'Running tests...')
           setRunProgress({
             current_test: activeRun.current_test,
+            running_tests: activeRun.running_tests || [],
             completed_tests: activeRun.completed_tests || [],
             total_tests: activeRun.total_tests || 0,
           })

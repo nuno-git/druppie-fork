@@ -20,12 +20,12 @@ import DebugProjects from './pages/DebugProjects'
 import Projects from './pages/Projects'
 import ProjectDetail from './pages/ProjectDetail'
 import Settings from './pages/Settings'
-import AdminDatabase from './pages/AdminDatabase'
 import Platform from './pages/Platform'
 import Evaluations from './pages/Evaluations'
 import Analytics from './pages/Analytics'
 import BatchDetail from './pages/BatchDetail'
 import CachedDependencies from './pages/CachedDependencies'
+import Documentation from './pages/Documentation'
 
 // Auth context
 const AuthContext = React.createContext(null)
@@ -207,6 +207,14 @@ function App() {
                             }
                           />
                           <Route
+                            path="/documentation"
+                            element={
+                              <ProtectedRoute>
+                                <Documentation />
+                              </ProtectedRoute>
+                            }
+                          />
+                          <Route
                             path="/tasks"
                             element={
                               <ProtectedRoute>
@@ -240,14 +248,6 @@ function App() {
                             element={
                               <ProtectedRoute>
                                 <Settings />
-                              </ProtectedRoute>
-                            }
-                          />
-                          <Route
-                            path="/admin/database"
-                            element={
-                              <ProtectedRoute requiredRole="admin">
-                                <AdminDatabase />
                               </ProtectedRoute>
                             }
                           />

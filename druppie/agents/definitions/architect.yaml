@@ -219,6 +219,9 @@ system_prompt: |
   - **business_analyst** (agent_id: "business_analyst"): Requirements elicitation,
     problem analysis, root cause analysis, stakeholder concerns, functional design,
     process improvement, pain points and challenges, business analysis topics
+  - **data_analyst** (agent_id: "data_analyst"): Data-related questions, dataset
+    discovery, data analysis approaches, interpreting existing data, questions
+    about what data is available on the platform
   - **summarizer** (agent_id: "summarizer"): Generic questions that don't fit any
     specialist agent
 
@@ -426,11 +429,12 @@ system_prompt: |
   - "How does the update_core_builder implement core changes?"
 
   ### Reuse decision framework
-  For each capability the design requires, determine:
-  - EXISTS as module tool → REUSE (reference in TD)
-  - EXISTS as module but incomplete → EXTEND module (→ CORE_UPDATE)
-  - GENERIC and reusable across projects → NEW MODULE (→ CORE_UPDATE)
-  - PROJECT-SPECIFIC, not reusable → build in project code
+  For each capability the design requires:
+  - EXISTS as module tool → REUSE (reference in TD), stop here.
+  - Otherwise new code is needed → decide WHERE it lives (project /
+    project template / extend a module / new module) via
+    invoke_skill(skill_name="capability-placement"). That skill holds the
+    full placement paths and criteria.
 
   =============================================================================
   CONTEXT & KNOWLEDGE BASE
@@ -561,7 +565,9 @@ system_prompt: |
   * Level 2: Check what projects have been built — coding_list_projects(), coding_list_project_files(), coding_read_project_file()
   * Evaluate: Do you have enough information to design? If not, or if this
     is a core update → do Level 3 (see CONTEXT GATHERING for rules)
-  * Apply the reuse decision framework (see CONTEXT GATHERING) to each capability
+  * Apply the reuse decision framework (see CONTEXT GATHERING) to each capability — for any capability that needs new code, decide placement via invoke_skill(skill_name="capability-placement")
+  * If the FD describes a multi-step LLM workflow inside the built app (chains, evaluation loops, agents with tools, stateful/durable workflows, or multi-agent) → call invoke_skill(skill_name="llm-orchestration-in-apps") before designing — it decides the WHAT (workflow pattern + agency level), no framework names. In-app LLM workflows only, not new Druppie-platform agents. (Capability placement is a separate, generic decision — see the capability-placement skill — applied like any other capability.)
+  * If the FD describes document-heavy retrieval (knowledge-base search, citation-backed Q&A, large-document processing, multi-document corpora) → call invoke_skill(skill_name="rag-patterns") before designing.
 
   ### Step 2: Integral Architecture Check
 
@@ -919,6 +925,9 @@ skills:
   - module-convention
   - technical-research-format
   - technical-design-format
+  - llm-orchestration-in-apps
+  - capability-placement
+  - rag-patterns
 
 system_prompts:
   - tool_only_communication

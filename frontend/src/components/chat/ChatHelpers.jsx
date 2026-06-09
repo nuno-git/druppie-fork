@@ -7,6 +7,7 @@ import { Copy, Check } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import CodeBlock from '../CodeBlock'
+import ChartBlock from '../ChartBlock'
 import MermaidBlock from '../MermaidBlock'
 import ArchimateBlock from '../ArchimateBlock'
 import { getAgentConfig } from '../../utils/agentConfig'
@@ -99,6 +100,9 @@ export const chatMarkdownComponents = {
     }
     if (match?.[1] === 'archimate') {
       return <ArchimateBlock code={codeString} />
+    }
+    if (match?.[1] === 'chart') {
+      return <ChartBlock code={codeString} />
     }
     if (match || codeString.includes('\n')) {
       return (
@@ -422,7 +426,7 @@ export const extractSurfacedFileWrites = (agentRun) => {
       const toolName = tc.tool_name || ''
       const args = tc.arguments || {}
 
-      if (toolName.includes('write_file') && !toolName.includes('batch')) {
+      if ((toolName.includes('write_file') || toolName === 'make_design' || toolName.endsWith(':make_design')) && !toolName.includes('batch')) {
         if (args.path && args.content) {
           files.push({ path: args.path, content: args.content })
         }

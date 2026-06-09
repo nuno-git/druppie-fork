@@ -2,7 +2,7 @@
 
 Bugs, implementation gaps, technical debt, and improvement ideas for the Druppie platform.
 
-Last updated: 2026-03-24
+Last updated: 2026-06-03
 
 ---
 
@@ -28,6 +28,7 @@ Last updated: 2026-03-24
 - Keycloak in Development Mode
 - ~~Sandboxed Execution Environment for Agents~~ ✅ DONE
 - ~~Test-Driven Development (TDD) Workflow~~ ✅ DONE
+- ~~Scheduled Jobs (Cron Jobs)~~ ✅ DONE (see `feature/cronjobs` branch)
 - Agents Should Be Able to Spawn Sub-Agents and Inject Next Steps
 - ~~Skills System~~ ✅ DONE
 - Skill: MCP Server Integration for Generated Applications
@@ -209,6 +210,19 @@ Last updated: 2026-03-24
 
 - **Implemented:** Skills system is live. Skills are Markdown files (`SKILL.md`) with YAML frontmatter defining `name`, `description`, and `allowed-tools`. Agents invoke skills via the `invoke_skill` builtin tool. When invoked, the skill's `allowed_tools` are dynamically added to the agent's available tools, and the skill's markdown body is returned as instructions. Skills are configured per-agent in YAML definitions via the `skills:` field. Skill loading is handled by `SkillService` from the `druppie/skills/` directory.
 
+### ~~Scheduled Jobs (Cron Jobs)~~ ✅ DONE
+
+- **Resolved in:** `feature/cronjobs` branch
+- **Feature:** Recurring cron jobs defined in YAML under `druppie/jobs/definitions/`. Each job specifies an agent, prompt, cron schedule, and optional approval gate. Jobs are loaded at startup and synced with the database automatically.
+- **Key components:**
+  - `JobScheduler`: Background asyncio task that checks cron schedules every 60 seconds
+  - `JobService`: YAML loading, job triggering, manual execution, and background task orchestration
+  - `JobRepository`: Database access for definitions, runs, and atomic claim-based trigger scheduling
+  - `JobRunStatus` enum: Typed status values (`pending`, `running`, `waiting_approval`, `completed`, `failed`, `cancelled`, `rejected`) replacing hardcoded string literals
+  - Summary/Detail pattern: `JobRunList` returns `JobRunSummary` (without logs); detail endpoints return `JobRunDetail`
+- **Frontend integration:** Tasks page (`/tasks`) displays job definitions with Run Now buttons and recent run history. Conditional polling (5s when active).
+- **Approval gating:** Jobs with `approval_required: true` create a session approval before execution. Rejected approvals mark the job run as `rejected`.
+
 ### Skill: MCP Server Integration for Generated Applications
 
 - **Current state:** The Developer agent writes standalone applications. There is no standardized way for generated applications to consume Druppie's own MCP servers (coding, docker, web, file search) as part of their functionality.
@@ -343,6 +357,45 @@ Last updated: 2026-03-24
   - Optional policy: auto-purge packages with critical vulnerabilities
   - Dashboard or log aggregation for scan results over time
 - **Priority:** Medium — important for continuous security posture in production environments.
+
+### Visualization — Multiple Sources & Joins
+
+- **Current state:** `create_chart_from_source` charts a single table/file. Joining tables for a visualization is not supported.
+- **Desired improvement:**
+  - `create_chart_from_query` for SQL: the agent writes a `JOIN ... GROUP BY`, the DB aggregates, only the spec returns (same context-hygiene as the current pushdown). Reuses `execute_query` validation.
+  - Data Lake file joins via server-side `pandas.merge` (needs join-key/how params).
+  - Cross-source joins (SQL table ⋈ Data Lake file) — read both into the server and merge.
+- **Priority:** Medium — SQL joins are the common case and low-risk.
+
+### Visualization — Performance & Scale
+
+- **Current state:** For Data Lake, `create_chart_from_source` reads the whole file into MCP-server memory (`readall()` → `io.BytesIO`) before aggregating. Fine for ~hundreds of thousands of rows; a multi-GB file would pressure the server. Follow-up charts re-read the same file.
+- **Desired improvement:**
+  - Use DuckDB/Polars to run SQL-style aggregation directly over CSV/Parquet with column projection (no full in-memory materialization).
+  - Cache the read/aggregation within a session so follow-up charts don't re-scan.
+  - Chunked/streaming aggregation for files too large to hold in memory.
+- **Priority:** Medium — removes the in-memory ceiling flagged in `docs/MCP/data-access.md`.
+
+### Visualization — Smarter Graphing
+
+- **Current state:** The agent picks chart type and columns from a prompt decision matrix. No date bucketing, no histogram/binning, no "Other" bucket, fixed colors.
+- **Desired improvement:**
+  - Auto chart-type selection from `get_schema` (column cardinality + dtype).
+  - Date/time intelligence: detect date columns and bucket by day/week/month/quarter/year (fixes charting raw `YYYYMMDD` date keys as an x-axis).
+  - Numeric binning (true histograms); roll long tails into an "Other" bucket instead of dropping; sort controls; combo/dual-axis (`ComposedChart`); number/unit formatting on axes and tooltips.
+- **Priority:** Medium — biggest "charts make sense" quality lever.
+
+### Visualization — Frontend & Artifacts
+
+- **Current state:** `ChartBlock` renders statically inside a HITL/assistant message; the spec lives in the `messages` row. No interactivity, export, or persistence beyond the transcript.
+- **Desired improvement:** zoom/pan/fullscreen (like `MermaidBlock`), export PNG/SVG, "show data" table toggle, dark mode, a visible "sample" badge when `full_dataset` is false, and promoting charts to first-class session artifacts / a saved dashboard project.
+- **Priority:** Low–Medium — UX polish; artifacts overlap with the `create_project` dashboard path.
+
+### Visualization — Data Analyst Prompt Size
+
+- **Current state:** After merging the dataset-selection strategy and the charting guidance, the `data_analyst` system prompt is long, and the agent runs on `llm_profile: cheap` (small context). Long charting sessions can still approach context limits.
+- **Desired improvement:** trim/split the prompt or raise the agent's `llm_profile`; add conversation-history trimming for long sessions (overlaps with the existing "No Context Window Management" item).
+- **Priority:** Medium — reliability for extended sessions.
 
 ---
 

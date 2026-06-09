@@ -329,6 +329,8 @@ mcps:
     tools:
       - name: chat
         requires_approval: false
+      - name: embed
+        requires_approval: false
 
   vision:
     url: ${MCP_VISION_URL:-http://module-vision:9011}
@@ -389,5 +391,14 @@ mcps:
       - name: read_data
         requires_approval: false
 
+      - name: execute_query
+        requires_approval: false
+
       - name: download_data
+        requires_approval: false
+
+      - name: create_chart
+        requires_approval: false
+
+      - name: create_chart_from_source
         requires_approval: false
