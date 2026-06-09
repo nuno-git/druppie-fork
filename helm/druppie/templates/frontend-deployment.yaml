@@ -53,15 +53,15 @@ spec:
           imagePullPolicy: {{ .Values.global.imagePullPolicy }}
           env:
             - name: VITE_API_URL
-              value: "{{ include "druppie.externalBaseUrl" . }}"
+              value: "{{ include "druppie.backendExternalUrl" . }}"
             - name: VITE_KEYCLOAK_URL
-              value: "{{ include "druppie.externalBaseUrl" . }}"
+              value: "{{ include "druppie.keycloakExternalUrl" . }}"
             - name: VITE_KEYCLOAK_REALM
               value: {{ .Values.frontend.vite.keycloakRealm | quote }}
             - name: VITE_KEYCLOAK_CLIENT_ID
               value: {{ .Values.frontend.vite.keycloakClientId | quote }}
             - name: VITE_GITEA_URL
-              value: "{{ include "druppie.externalBaseUrl" . }}/git"
+              value: "{{ include "druppie.giteaExternalUrl" . }}"
           ports:
             - name: http
               containerPort: {{ .Values.frontend.port }}

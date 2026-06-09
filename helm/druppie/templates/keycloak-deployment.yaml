@@ -75,8 +75,10 @@ spec:
             - name: KC_HOSTNAME_PORT
               {{- if .Values.global.ingress.tls.enabled }}
               value: "443"
+              {{- else if .Values.global.ingress.enabled }}
+              value: {{ .Values.global.ingress.port | quote }}
               {{- else }}
-              value: {{ .Values.keycloak.nodePort | default .Values.global.ingress.port | quote }}
+              value: {{ .Values.keycloak.nodePort | quote }}
               {{- end }}
             - name: KC_HOSTNAME_STRICT
               value: "false"

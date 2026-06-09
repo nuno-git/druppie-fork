@@ -1,0 +1,123 @@
+# values-local.yaml — Single-node VM deployment (K3s, no ingress controller)
+# Usage: helm install druppie ./helm/druppie -f helm/druppie/values-local.yaml
+
+global:
+  instance: druppie
+  imagePullPolicy: IfNotPresent
+  imageRegistry: ""
+  domain: localhost
+  ingress:
+    enabled: false
+    className: nginx
+    port: 9080
+    tls:
+      enabled: false
+
+# PostgreSQL
+postgresql:
+  image: postgres:15-alpine
+  druppie:
+    database: druppie
+    username: druppie
+    password: druppie_secret
+    port: 5432
+    storage: 2Gi
+  keycloak:
+    database: keycloak
+    username: keycloak
+    password: keycloak_secret
+    port: 5432
+    storage: 2Gi
+  gitea:
+    database: gitea
+    username: gitea
+    password: gitea_secret
+    port: 5432
+    storage: 2Gi
+
+# Keycloak
+keycloak:
+  image: quay.io/keycloak/keycloak:24.0
+  adminUser: admin
+  adminPassword: admin
+  hostname: ""
+  nodePort: 30002
+  replicaCount: 1
+
+# Gitea
+gitea:
+  image: gitea/gitea:1.21
+  adminUser: gitea_admin
+  adminPassword: GiteaAdmin123
+  adminEmail: admin@druppie.local
+  org: druppie
+  sshPort: 2222
+  httpPort: 3000
+  nodePort: 30003
+  storage: 2Gi
+  replicaCount: 1
+
+# Backend
+backend:
+  image:
+    repository: druppie-backend
+    tag: latest
+  port: 8000
+  nodePort: 30000
+  replicaCount: 1
+  devMode: false
+  dockerSocket:
+    enabled: true  # Need Docker for sandbox
+
+# Frontend
+frontend:
+  image:
+    repository: druppie-frontend
+    tag: latest
+  port: 5173
+  nodePort: 30001
+  replicaCount: 1
+
+# Init
+init:
+  enabled: true
+  image:
+    repository: druppie-init
+    tag: latest
+
+# Secrets — populated from .env
+secrets:
+  zaiApiKey: ""     # Set via --set or helm secrets
+  deepinfraApiKey: ""
+  internalApiKey: druppie-internal-secret-key
+  giteaToken: ""
+  moduleApiToken: ""
+
+# Disabled features
+autoscaling:
+  backend:
+    enabled: false
+  frontend:
+    enabled: false
+
+cnpg:
+  enabled: false
+
+highAvailability:
+  pdb:
+    enabled: false
+  antiAffinity:
+    enabled: false
+
+certManager:
+  enabled: false
+
+persistence:
+  enabled: true
+  storageClass: "local-path"
+  workspace:
+    size: 5Gi
+  dataset:
+    size: 2Gi
+  sandboxBundles:
+    size: 2Gi

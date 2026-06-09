@@ -98,3 +98,47 @@ External base URL: scheme://domain(:port if non-standard)
 {{- printf "%s://%s:%d" $scheme $domain $port -}}
 {{- end -}}
 {{- end -}}
+
+{{/*
+Backend external URL: ingress path or direct NodePort
+*/}}
+{{- define "druppie.backendExternalUrl" -}}
+{{- if .Values.global.ingress.enabled -}}
+{{ include "druppie.externalBaseUrl" . }}
+{{- else -}}
+http://{{ .Values.global.domain }}:{{ .Values.backend.nodePort }}
+{{- end -}}
+{{- end -}}
+
+{{/*
+Keycloak external URL
+*/}}
+{{- define "druppie.keycloakExternalUrl" -}}
+{{- if .Values.global.ingress.enabled -}}
+{{ include "druppie.externalBaseUrl" . }}
+{{- else -}}
+http://{{ .Values.global.domain }}:{{ .Values.keycloak.nodePort }}
+{{- end -}}
+{{- end -}}
+
+{{/*
+Gitea external URL
+*/}}
+{{- define "druppie.giteaExternalUrl" -}}
+{{- if .Values.global.ingress.enabled -}}
+{{ include "druppie.externalBaseUrl" . }}/git
+{{- else -}}
+http://{{ .Values.global.domain }}:{{ .Values.gitea.nodePort }}
+{{- end -}}
+{{- end -}}
+
+{{/*
+Frontend external URL
+*/}}
+{{- define "druppie.frontendExternalUrl" -}}
+{{- if .Values.global.ingress.enabled -}}
+{{ include "druppie.externalBaseUrl" . }}
+{{- else -}}
+http://{{ .Values.global.domain }}:{{ .Values.frontend.nodePort }}
+{{- end -}}
+{{- end -}}

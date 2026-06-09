@@ -77,13 +77,29 @@ spec:
             - name: DOMAIN
               value: {{ .Values.global.domain | quote }}
             - name: FRONTEND_PORT
-              value: {{ .Values.frontend.nodePort | default .Values.global.ingress.port | default "9080" | quote }}
+              {{- if .Values.global.ingress.enabled }}
+              value: {{ .Values.global.ingress.port | quote }}
+              {{- else }}
+              value: {{ .Values.frontend.nodePort | quote }}
+              {{- end }}
             - name: KEYCLOAK_PORT
-              value: {{ .Values.keycloak.nodePort | default .Values.global.ingress.port | default "9080" | quote }}
+              {{- if .Values.global.ingress.enabled }}
+              value: {{ .Values.global.ingress.port | quote }}
+              {{- else }}
+              value: {{ .Values.keycloak.nodePort | quote }}
+              {{- end }}
             - name: GITEA_PORT
-              value: {{ .Values.gitea.nodePort | default .Values.global.ingress.port | default "9080" | quote }}
+              {{- if .Values.global.ingress.enabled }}
+              value: {{ .Values.global.ingress.port | quote }}
+              {{- else }}
+              value: {{ .Values.gitea.nodePort | quote }}
+              {{- end }}
             - name: BACKEND_PORT
-              value: {{ .Values.backend.nodePort | default .Values.global.ingress.port | default "9080" | quote }}
+              {{- if .Values.global.ingress.enabled }}
+              value: {{ .Values.global.ingress.port | quote }}
+              {{- else }}
+              value: {{ .Values.backend.nodePort | quote }}
+              {{- end }}
             - name: GITEA_URL
               value: "http://{{ include "druppie.fullname" . }}-gitea:3000"
             - name: GITEA_ADMIN_USER
@@ -102,7 +118,11 @@ spec:
             - name: EXTERNAL_HOST
               value: {{ .Values.global.domain | quote }}
             - name: INGRESS_PORT
-              value: {{ .Values.global.ingress.port | default "9080" | quote }}
+              {{- if .Values.global.ingress.enabled }}
+              value: {{ .Values.global.ingress.port | quote }}
+              {{- else }}
+              value: ""
+              {{- end }}
           volumeMounts:
             - name: init-marker
               mountPath: /init-marker

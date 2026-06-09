@@ -16,9 +16,15 @@ spec:
         - podSelector:
             matchLabels:
               {{- include "druppie.selectorLabels" . | nindent 14 }}
+        {{- if .Values.global.ingress.enabled }}
         - namespaceSelector:
             matchLabels:
               app.kubernetes.io/name: ingress-nginx
+        {{- else }}
+        # When ingress is disabled (NodePort mode), allow traffic from any source
+        - ipBlock:
+            cidr: 0.0.0.0/0
+        {{- end }}
   egress:
     - to:
         - podSelector:

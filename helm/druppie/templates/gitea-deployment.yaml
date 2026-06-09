@@ -68,7 +68,7 @@ spec:
                   name: {{ include "druppie.fullname" . }}-secrets
                   key: GITEA_DB_PASSWORD
             - name: GITEA__server__ROOT_URL
-              value: "{{ include "druppie.externalBaseUrl" . }}/git/"
+              value: "{{ include "druppie.giteaExternalUrl" . }}/"
             - name: GITEA__server__HTTP_PORT
               value: {{ .Values.gitea.httpPort | quote }}
             - name: GITEA__server__DOMAIN
