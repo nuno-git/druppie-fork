@@ -1,12 +1,21 @@
-"""Translation service — translates text between languages using GLM-4.7-Flash.
+"""Translation service — translates text between languages via DeepInfra.
 
-Uses a dedicated lightweight LLM instance for fast, free translations.
-Falls back to returning the original text on any error.
+Uses a dedicated lightweight LLM instance (Qwen/Qwen3-32B on DeepInfra) for
+translations. Raises TranslationNotAvailableError on first use when
+DEEPINFRA_API_KEY is not configured, so callers surface a clear error instead
+of silently serving untranslated text.
 """
+
+import os
 
 import structlog
 
 logger = structlog.get_logger()
+
+
+class TranslationNotAvailableError(RuntimeError):
+    """Raised when translation is requested but cannot work (e.g. missing API key)."""
+
 
 def _language_name(code: str) -> str:
     """Resolve ISO 639-1 code to English language name via pycountry."""
@@ -21,7 +30,7 @@ def _language_name(code: str) -> str:
 
 
 class TranslationService:
-    """Translates text between languages using GLM-4.7-Flash."""
+    """Translates text between languages using Qwen/Qwen3-32B on DeepInfra."""
 
     def __init__(self):
         self._llm = None
@@ -29,6 +38,12 @@ class TranslationService:
     @property
     def llm(self):
         if self._llm is None:
+            if not os.getenv("DEEPINFRA_API_KEY"):
+                raise TranslationNotAvailableError(
+                    "DEEPINFRA_API_KEY is not set. Translation requires a valid "
+                    "DeepInfra API key. Set DEEPINFRA_API_KEY in your .env file "
+                    "to enable translation for non-English sessions."
+                )
             from druppie.llm.litellm_provider import ChatLiteLLM
             self._llm = ChatLiteLLM(
                 provider="deepinfra",
@@ -85,6 +100,8 @@ class TranslationService:
                 logger.warning("translation_empty_response", from_lang=from_lang, to_lang=to_lang)
                 return text
             return translated
+        except TranslationNotAvailableError:
+            raise
         except Exception as e:
             logger.warning("translation_failed", error=str(e), from_lang=from_lang, to_lang=to_lang)
             return text

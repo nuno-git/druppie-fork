@@ -17,6 +17,8 @@ from uuid import UUID
 
 import structlog
 
+from druppie.core.translation import TranslationNotAvailableError
+
 if TYPE_CHECKING:
     from druppie.repositories import ExecutionRepository
 
@@ -745,6 +747,8 @@ async def create_message(
                     session_id=str(session_id),
                     target_language=session.language,
                 )
+    except TranslationNotAvailableError:
+        raise
     except Exception as e:
         logger.warning("create_message_translation_failed", error=str(e))
 

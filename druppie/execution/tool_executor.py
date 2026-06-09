@@ -27,6 +27,7 @@ from uuid import UUID
 import structlog
 
 from druppie.core.mcp_config import MCPConfig
+from druppie.core.translation import TranslationNotAvailableError
 from druppie.execution.mcp_http import MCPHttp, MCPHttpError
 
 if TYPE_CHECKING:
@@ -768,6 +769,8 @@ class ToolExecutor:
                     path=path,
                     translated_path=translated_path,
                 )
+        except TranslationNotAvailableError:
+            raise
         except Exception as e:
             logger.warning(
                 "design_translation_failed",
@@ -897,6 +900,8 @@ class ToolExecutor:
                     tool_call_id=str(tool_call.id),
                     target_language=session.language,
                 )
+        except TranslationNotAvailableError:
+            raise
         except Exception as e:
             logger.warning("hitl_question_translation_failed", error=str(e))
 

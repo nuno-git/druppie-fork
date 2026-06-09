@@ -31,7 +31,7 @@ Last updated: 2026-03-24
 - Agents Should Be Able to Spawn Sub-Agents and Inject Next Steps
 - ~~Skills System~~ ✅ DONE
 - Skill: MCP Server Integration for Generated Applications
-- Language Matching
+- ~~Language Matching~~ ✅ DONE
 - Prompt Injection Protection
 - Compliance Agent for Input Validation
 - TDD Retry Counting in Python Runtime
@@ -217,13 +217,9 @@ Last updated: 2026-03-24
   2. **MCP integration skill** — A prompt/template that instructs the Developer agent on how to use the core Druppie MCP servers in the applications it creates, following a standardized integration pattern. Depends on the skills system being implemented *(Owner: Nuno)*
   3. **Dynamic skill updates** — Automatically update the MCP integration skill/prompt with the currently available MCP servers and tools in core Druppie, so the Developer agent always has an up-to-date view of what it can integrate *(Owners: Nuno, Robbe)*
 
-### Language Matching
+### ~~Language Matching~~ ✅ DONE
 
-- **Current state:** Agents always respond in English regardless of the language the user communicates in.
-- **Desired improvement:** The system should detect the user's language and ensure all agent responses, HITL questions, and summaries are in the same language. This could be implemented by:
-  - Detecting the language of the user's initial message and storing it on the session
-  - Injecting a language instruction as a system prompt or into each agent's system prompt
-  - Ensuring the Planner's generated prompts for each agent also carry the language preference
+- **Implemented:** Automated bilingual translation. The platform detects the user's language, translates user messages to English for agents, and translates all agent output (HITL questions, design documents, summaries) back to the user's language. Agents always work in English; the platform handles translation transparently via a dedicated DeepInfra/Qwen service. See [docs/TRANSLATION.md](TRANSLATION.md) for details.
 
 ### Prompt Injection Protection
 
