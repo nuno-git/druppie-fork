@@ -101,14 +101,8 @@ export const resumeSession = (sessionId) =>
 export const deleteSession = (sessionId) =>
   request(`/api/sessions/${sessionId}`, { method: 'DELETE' })
 
-export const retryFromRun = (sessionId, agentRunId, plannedPrompt = null) =>
-  request(`/api/sessions/${sessionId}/retry-from/${agentRunId}`, {
-    method: 'POST',
-    body: plannedPrompt !== null ? JSON.stringify({ planned_prompt: plannedPrompt }) : JSON.stringify({}),
-  })
-
-export const retrySubagentRun = (sessionId, agentRunId, plannedPrompt = null) =>
-  request(`/api/sessions/${sessionId}/retry-subagent/${agentRunId}`, {
+export const retryRun = (sessionId, agentRunId, plannedPrompt = null) =>
+  request(`/api/sessions/${sessionId}/retry/${agentRunId}`, {
     method: 'POST',
     body: plannedPrompt !== null ? JSON.stringify({ planned_prompt: plannedPrompt }) : JSON.stringify({}),
   })

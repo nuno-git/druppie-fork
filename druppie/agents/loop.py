@@ -214,6 +214,9 @@ class AgentLoop:
         )
         openai_tools = registry.to_openai_format(tools)
 
+        from druppie.core.mcp_config import strip_hidden_params_from_openai_tools
+        strip_hidden_params_from_openai_tools(openai_tools)
+
         # Enrich invoke_skill with dynamic enum + descriptions from agent's skills
         if self.definition.skills:
             self._enrich_invoke_skill(openai_tools)

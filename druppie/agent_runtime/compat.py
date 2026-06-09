@@ -156,6 +156,9 @@ class DruppieToolProvider:
 
         self._tools_cache = self._tool_registry.to_openai_format(tools)
 
+        from druppie.core.mcp_config import strip_hidden_params_from_openai_tools
+        strip_hidden_params_from_openai_tools(self._tools_cache)
+
         # Inject allowed expert roles as enum on ask_expert tool schemas
         experts = getattr(self._old_def, 'experts', None)
         if experts:

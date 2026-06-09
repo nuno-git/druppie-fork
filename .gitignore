@@ -67,3 +67,4 @@ evaluation_config.yaml
 
 # OpenCode runtime session state
 .omo/run-continuation/
+pr-190-review.md

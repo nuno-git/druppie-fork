@@ -25,7 +25,7 @@ import {
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { getAgentConfig, getAgentMessageColors, formatToolName } from '../../utils/agentConfig'
 import { formatDuration, formatTokens } from '../../utils/tokenUtils'
-import { retryFromRun, retrySubagentRun } from '../../services/api'
+import { retryRun } from '../../services/api'
 import CopyButton from '../shared/CopyButton'
 import ContainerLogsModal from '../shared/ContainerLogsModal'
 
@@ -301,10 +301,7 @@ const AgentDetailPanel = ({ agentRun, sessionId, sessionStatus }) => {
 
   const retryMutation = useMutation({
     mutationFn: (editedPrompt) => {
-      if (agentRun.parent_run_id) {
-        return retrySubagentRun(sessionId, agentRun.id, editedPrompt)
-      }
-      return retryFromRun(sessionId, agentRun.id, editedPrompt)
+      return retryRun(sessionId, agentRun.id, editedPrompt)
     },
     onSuccess: () => {
       setShowRetryConfirm(false)

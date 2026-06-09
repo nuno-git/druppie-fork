@@ -308,6 +308,68 @@ class MCPConfig:
 
         return result
 
+    def get_hidden_params_for_full_name(self, full_name: str) -> set[str]:
+        """Get hidden param names for a tool given its registry full name.
+
+        Parses the full name (e.g., "docker_compose_up") into server ("docker")
+        and tool name ("compose_up"), then looks up hidden params.
+
+        Args:
+            full_name: Full tool name from the registry (e.g., "coding_read_file")
+
+        Returns:
+            Set of hidden parameter names (empty if none or not an MCP tool)
+        """
+        parts = full_name.split("_", 1)
+        if len(parts) != 2:
+            return set()
+        server, tool_name = parts
+        hidden = self.get_hidden_params(server, tool_name)
+        return hidden.get(tool_name, set())
+
+
+def strip_hidden_params_from_openai_tools(tools: list[dict]) -> list[dict]:
+    """Remove hidden params from OpenAI-format tool schemas in-place.
+
+    For each tool, looks up hidden params from mcp_config.yaml and removes
+    them from the JSON schema's ``properties`` dict and ``required`` list.
+    Builtin tools (no underscore in name) are skipped.
+
+    Args:
+        tools: List of OpenAI function-calling tool dicts (modified in-place)
+
+    Returns:
+        The same list (modified in-place) for convenience
+    """
+    config = get_mcp_config()
+    for tool_def in tools:
+        fn = tool_def.get("function", {})
+        name = fn.get("name", "")
+        # Skip builtin tools (no server prefix)
+        if "_" not in name:
+            continue
+
+        hidden = config.get_hidden_params_for_full_name(name)
+        if not hidden:
+            continue
+
+        params = fn.get("parameters", {})
+        props = params.get("properties", {})
+        required = params.get("required", [])
+
+        for param_name in hidden:
+            props.pop(param_name, None)
+            if param_name in required:
+                required.remove(param_name)
+
+        logger.debug(
+            "stripped_hidden_params",
+            tool=name,
+            hidden_params=sorted(hidden),
+        )
+
+    return tools
+
 
 # Singleton instance
 _config: MCPConfig | None = None

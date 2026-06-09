@@ -718,6 +718,47 @@ class ExecutionRepository(BaseRepository):
             return None
         return ToolCallRecord(id=tc.id, tool_name=tc.tool_name, status=tc.status, result=tc.result)
 
+    def get_children_after(
+        self,
+        parent_run_id: UUID,
+        after_child_id: UUID,
+    ) -> list[AgentRunSummary]:
+        """Get child agent runs created after a specific child.
+
+        Finds all agent runs with the same parent_run_id that were created
+        after the target child. Used by retry to find later children to reset.
+
+        Note: Subagents may each have a unique spawning_tool_call_id (when
+        the parent spawns them one at a time), so we cannot rely on shared
+        spawning_tool_call_id. Instead we order by created_at.
+
+        Args:
+            parent_run_id: Parent agent run ID
+            after_child_id: The child run ID — return children created after this one.
+
+        Returns:
+            List of child AgentRunSummary objects ordered by created_at.
+        """
+        target = (
+            self.db.query(AgentRun)
+            .filter(AgentRun.id == after_child_id)
+            .first()
+        )
+        if not target:
+            return []
+
+        runs = (
+            self.db.query(AgentRun)
+            .filter(
+                AgentRun.parent_run_id == parent_run_id,
+                AgentRun.id != after_child_id,
+                AgentRun.created_at > target.created_at,
+            )
+            .order_by(AgentRun.created_at)
+            .all()
+        )
+        return [self._to_summary(r) for r in runs]
+
     # =========================================================================
     # BULK DELETE METHODS (used by RevertService)
     # =========================================================================

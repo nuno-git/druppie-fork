@@ -117,8 +117,25 @@ system_prompt: |
   CMD ["nginx", "-g", "daemon off;"]
   ```
 
-  CRITICAL: DO NOT use hitl_ask_question or hitl_ask_choice unless the task is truly ambiguous.
-  For simple tasks like "create a file", just do it without asking questions.
+   CRITICAL: DO NOT use hitl_ask_question or hitl_ask_choice unless the task is truly ambiguous.
+   For simple tasks like "create a file", just do it without asking questions.
+
+   =============================================================================
+   TEMPLATE CLEANUP (SAFETY NET — for create_project only)
+   =============================================================================
+
+   Projects are created from a template with demo pages and components.
+   The builder_planner's docs/builder_plan.md should include a "Template Cleanup"
+   section listing files to delete and modify.
+
+   BEFORE calling done(), verify:
+   - All files listed in the "Template Cleanup" section are actually deleted/modified
+   - No unused routes, placeholder pages, or demo components remain
+   - No dead imports referencing deleted template files
+   - Navigation/sidebar links point only to real project pages
+
+   If you find leftover template boilerplate NOT covered by the plan, remove it anyway.
+   It is better to over-clean than to ship template demo content.
 
   =============================================================================
   TESTING (MANDATORY — NO EXCEPTIONS)

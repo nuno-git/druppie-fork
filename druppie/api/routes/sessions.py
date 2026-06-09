@@ -162,7 +162,7 @@ async def delete_session(
 
 
 # =============================================================================
-# RETRY FROM RUN
+# UNIFIED RETRY
 # =============================================================================
 
 
@@ -176,54 +176,132 @@ async def _run_retry_background(
     agent_run_id: UUID,
     planned_prompt: str | None = None,
 ) -> None:
-    """Revert and re-execute from a specific agent run."""
+    """Unified retry background task.
+
+    For top-level runs (no parent): rolls back target + subsequent runs and re-executes pipeline.
+    For nested runs (any depth): resets target + later siblings, clears parent state,
+    re-runs the sibling chain, then resumes the parent via continue_run().
+    """
 
     async def task(ctx):
         from druppie.core.mcp_config import get_mcp_config
         from druppie.execution.mcp_http import MCPHttp
         from druppie.services import RevertService
 
-        # Step 1: Revert (delete old runs, revert git, recreate as pending)
         mcp_http = MCPHttp(get_mcp_config())
         revert_service = RevertService(ctx.execution_repo, ctx.session_repo, mcp_http)
-        result = await revert_service.retry_from_run(
-            session_id, agent_run_id, planned_prompt=planned_prompt,
-        )
 
-        logger.info("retry_revert_complete", session_id=str(session_id), result=result)
+        agent_run = ctx.execution_repo.get_by_id_for_session(agent_run_id, session_id)
 
-        for warning in result.get("warnings", []):
-            logger.warning("retry_revert_warning", session_id=str(session_id), warning=warning)
+        if agent_run.parent_run_id is None:
+            # Top-level run: rollback + re-execute pipeline
+            result = await revert_service.retry_from_run(
+                session_id, agent_run_id, planned_prompt=planned_prompt,
+            )
+            logger.info("retry_revert_complete", session_id=str(session_id), result=result)
+            for warning in result.get("warnings", []):
+                logger.warning("retry_revert_warning", session_id=str(session_id), warning=warning)
+            await ctx.orchestrator.execute_pending_runs(session_id)
+        else:
+            # Nested run: reset target + later siblings, clean parent state, re-run chain
+            result = await revert_service.retry_nested_subagent_run(
+                session_id, agent_run_id, planned_prompt=planned_prompt,
+            )
+            logger.info("retry_nested_reset_complete", session_id=str(session_id), result=result)
 
-        # Step 2: Execute pending runs (the recreated ones)
-        # If user paused during revert, execute_pending_runs detects PAUSED and returns
-        await ctx.orchestrator.execute_pending_runs(session_id)
+            parent_run_id = UUID(result["parent_run_id"])
+            later_sibling_ids = [UUID(sid) for sid in result.get("later_sibling_ids", [])]
+
+            # Run the target subagent
+            agent_run = ctx.execution_repo.get_by_id_for_session(agent_run_id, session_id)
+            context = ctx.orchestrator.build_project_context(session_id)
+
+            target_result = await ctx.orchestrator.run_agent(
+                session_id=session_id,
+                agent_run_id=agent_run_id,
+                agent_id=agent_run.agent_id,
+                prompt=planned_prompt or agent_run.planned_prompt or "",
+                context=context,
+            )
+
+            if target_result == "paused":
+                return  # Target paused — session status already set by run_agent
+
+            # Run remaining later siblings sequentially
+            for sibling_id in later_sibling_ids:
+                sibling_run = ctx.execution_repo.get_by_id_for_session(sibling_id, session_id)
+                if not sibling_run:
+                    continue
+                sibling_context = ctx.orchestrator.build_project_context(session_id)
+                sibling_result = await ctx.orchestrator.run_agent(
+                    session_id=session_id,
+                    agent_run_id=sibling_id,
+                    agent_id=sibling_run.agent_id,
+                    prompt=sibling_run.planned_prompt or "",
+                    context=sibling_context,
+                )
+                if sibling_result == "paused":
+                    return  # Sibling paused — stop chain
+
+            # All siblings done — patch subagents ToolCall and resume parent
+            from druppie.agents.runtime_v2 import AgentV2 as Agent
+            from druppie.domain.common import AgentRunStatus
+
+            ctx.orchestrator._patch_paused_subagents_tool_call(parent_run_id, session_id)
+            ctx.execution_repo.update_status(parent_run_id, AgentRunStatus.RUNNING)
+            ctx.session_repo.update_status(session_id, SessionStatus.ACTIVE)
+            ctx.execution_repo.commit()
+
+            parent_run = ctx.execution_repo.get_by_id(parent_run_id)
+            parent_agent = Agent(parent_run.agent_id, db=ctx.execution_repo.db)
+            parent_context = ctx.orchestrator.build_project_context(session_id)
+            parent_result = await parent_agent.continue_run(
+                session_id=session_id,
+                agent_run_id=parent_run_id,
+                context=parent_context,
+            )
+            parent_status = ctx.orchestrator._handle_agent_resume_result(
+                session_id, parent_run_id, parent_result, agent_id=parent_run.agent_id,
+            )
+
+            if parent_status == "paused":
+                # Walk parent chain in case parent is also a subagent
+                ctx.session_repo.db.expire_all()
+                refreshed_parent = ctx.execution_repo.get_by_id(parent_run_id)
+                chain_done = await ctx.orchestrator._walk_parent_chain(
+                    session_id, refreshed_parent, ctx.execution_repo.db,
+                )
+                if chain_done:
+                    await ctx.orchestrator.execute_pending_runs(session_id)
+            else:
+                # Parent completed — check for pending runs, then mark session completed
+                ctx.session_repo.db.expire_all()
+                next_pending = ctx.execution_repo.get_next_pending(session_id)
+                if next_pending:
+                    await ctx.orchestrator.execute_pending_runs(session_id)
+                else:
+                    ctx.session_repo.update_status(session_id, SessionStatus.COMPLETED)
+                    ctx.session_repo.commit()
 
     await run_session_task(session_id, task, "retry_background")
 
 
-@router.post("/sessions/{session_id}/retry-from/{agent_run_id}")
-async def retry_from_run(
+@router.post("/sessions/{session_id}/retry/{agent_run_id}")
+async def retry_run(
     session_id: UUID,
     agent_run_id: UUID,
     body: RetryRequest | None = Body(None),
     service: SessionService = Depends(get_session_service),
     user: dict = Depends(get_current_user),
 ):
-    """Retry a session from a specific agent run.
+    """Unified retry endpoint.
 
-    Reverts the target agent run and all subsequent runs, then re-executes
-    them with the same planned prompts. Works for any agent run status.
-
-    This endpoint:
-    1. Validates session ownership and status (must not be active)
-    2. Sets session to active immediately
-    3. Spawns background task to revert + re-execute
-    4. Returns immediately
+    For top-level runs (no parent), rolls back target + subsequent runs and re-executes pipeline.
+    For nested runs (any depth), re-runs that single agent standalone.
 
     Args:
-        session_id: Session to retry
-        agent_run_id: Agent run to retry from (this run and all after it)
+        session_id: Session containing the run to retry
+        agent_run_id: Agent run to retry
 
     Returns:
         Success response with session_id
@@ -231,9 +309,7 @@ async def retry_from_run(
     user_id = UUID(user["sub"])
     user_roles = get_user_roles(user)
 
-    # Only the session owner or an admin can control the session.
-    # Non-owner experts have read access via get_detail but cannot retry.
-    service.require_owner_or_admin(
+    service.get_detail(
         session_id=session_id,
         user_id=user_id,
         user_roles=user_roles,
@@ -246,7 +322,7 @@ async def retry_from_run(
         raise HTTPException(status_code=409, detail=str(e))
 
     logger.info(
-        "retry_from_run_requested",
+        "retry_requested",
         session_id=str(session_id),
         agent_run_id=str(agent_run_id),
         user_id=str(user_id),
@@ -269,111 +345,6 @@ async def retry_from_run(
         "success": True,
         "session_id": str(session_id),
         "message": "Retry started",
-    }
-
-
-# =============================================================================
-# RETRY SUBAGENT RUN
-# =============================================================================
-
-
-async def _run_subagent_retry_background(
-    session_id: UUID,
-    agent_run_id: UUID,
-    planned_prompt: str | None = None,
-) -> None:
-    """Re-execute a single subagent run (standalone, parent stays COMPLETED)."""
-
-    async def task(ctx):
-        from druppie.core.mcp_config import get_mcp_config
-        from druppie.execution.mcp_http import MCPHttp
-        from druppie.services import RevertService
-
-        # Step 1: Reset the subagent run (clear artifacts, set to RUNNING)
-        mcp_http = MCPHttp(get_mcp_config())
-        revert_service = RevertService(ctx.execution_repo, ctx.session_repo, mcp_http)
-        result = await revert_service.retry_subagent_run(
-            session_id, agent_run_id, planned_prompt=planned_prompt,
-        )
-
-        logger.info(
-            "subagent_retry_reset_complete",
-            session_id=str(session_id),
-            result=result,
-        )
-
-        # Step 2: Execute the subagent using orchestrator.run_agent directly
-        agent_run = ctx.execution_repo.get_by_id_for_session(agent_run_id, session_id)
-        context = ctx.orchestrator.build_project_context(session_id)
-
-        await ctx.orchestrator.run_agent(
-            session_id=session_id,
-            agent_run_id=agent_run_id,
-            agent_id=agent_run.agent_id,
-            prompt=planned_prompt or agent_run.planned_prompt or "",
-            context=context,
-        )
-
-        # Step 3: Mark session completed
-        ctx.session_repo.update_status(session_id, SessionStatus.COMPLETED)
-        ctx.session_repo.commit()
-
-    await run_session_task(session_id, task, "subagent_retry_background")
-
-
-@router.post("/sessions/{session_id}/retry-subagent/{agent_run_id}")
-async def retry_subagent_run(
-    session_id: UUID,
-    agent_run_id: UUID,
-    body: RetryRequest | None = Body(None),
-    service: SessionService = Depends(get_session_service),
-    user: dict = Depends(get_current_user),
-):
-    """Retry a single subagent run (standalone re-execution).
-
-    The parent agent stays COMPLETED. The subagent re-runs independently.
-    Use this for debugging/inspection of subagent behavior.
-    """
-    user_id = UUID(user["sub"])
-    user_roles = get_user_roles(user)
-
-    # Validate session exists and user has access (raises on failure)
-    service.get_detail(
-        session_id=session_id,
-        user_id=user_id,
-        user_roles=user_roles,
-    )
-
-    # Atomically lock and transition session to ACTIVE
-    try:
-        service.lock_for_retry(session_id)
-    except ValueError as e:
-        raise HTTPException(status_code=409, detail=str(e))
-
-    logger.info(
-        "retry_subagent_requested",
-        session_id=str(session_id),
-        agent_run_id=str(agent_run_id),
-        user_id=str(user_id),
-    )
-
-    try:
-        create_tracked_task(
-            _run_subagent_retry_background(
-                session_id=session_id,
-                agent_run_id=agent_run_id,
-                planned_prompt=body.planned_prompt if body else None,
-            ),
-            name=f"subagent-retry-{session_id}",
-        )
-    except Exception:
-        service.mark_failed(session_id, "Failed to start subagent retry background task")
-        raise
-
-    return {
-        "success": True,
-        "session_id": str(session_id),
-        "message": "Subagent retry started",
     }
 
 

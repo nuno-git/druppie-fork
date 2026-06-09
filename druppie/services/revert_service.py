@@ -217,49 +217,105 @@ class RevertService:
             "warnings": git_analysis.get("warnings", []),
         }
 
-    async def retry_subagent_run(
+    async def retry_nested_subagent_run(
         self, session_id: UUID, agent_run_id: UUID, planned_prompt: str | None = None
     ) -> dict:
-        """Retry a single subagent run (standalone re-execution).
+        """Retry a nested subagent run, resetting the entire sibling chain after it.
 
-        Phase 1: Parent stays COMPLETED. Subagent re-runs independently.
-        Its results are updated in-place.
+        Resets the target subagent, clears artifacts for all later siblings
+        (same parent_run_id + spawning_tool_call_id, higher sequence_number),
+        deletes the parent's done() ToolCall, clears the parent's subagents
+        ToolCall result, and resets the parent AgentRun back to RUNNING.
+
+        The caller is responsible for:
+        1. Re-running the target subagent via orchestrator.run_agent()
+        2. Re-running remaining PENDING siblings via orchestrator.run_agent()
+        3. Patching the subagents ToolCall result via _patch_paused_subagents_tool_call()
+        4. Continuing the parent via agent.continue_run()
+
+        Returns:
+            Dict with reset details including parent_run_id and sibling_ids.
         """
-        # Validate target is a subagent
+        # Validate target exists
         target = self.execution_repo.get_by_id_for_session(agent_run_id, session_id)
         if not target:
             raise ValueError(f"Agent run {agent_run_id} not found in session {session_id}")
-        if not target.parent_run_id:
-            raise ValueError("Agent run is not a subagent — use retry-from instead")
 
         logger.info(
-            "retry_subagent_run_start",
+            "retry_nested_subagent_start",
             session_id=str(session_id),
             agent_run_id=str(agent_run_id),
+            parent_run_id=str(target.parent_run_id),
         )
 
-        # Clear execution artifacts (llm_calls, tool_calls, events)
-        self.execution_repo.clear_execution_artifacts([agent_run_id])
+        # Step 1: Find all later children of the same parent (created after target)
+        later_siblings = self.execution_repo.get_children_after(
+            parent_run_id=target.parent_run_id,
+            after_child_id=agent_run_id,
+        )
+        later_sibling_ids = [s.id for s in later_siblings]
 
-        # Reset all fields (status→PENDING, clear timestamps/tokens/error)
-        self.execution_repo.reset_runs_to_pending([agent_run_id])
+        logger.info(
+            "retry_nested_later_siblings",
+            session_id=str(session_id),
+            target_id=str(agent_run_id),
+            later_siblings=[(s.agent_id, str(s.id)) for s in later_siblings],
+        )
 
-        # Set to RUNNING (also sets started_at = now)
-        self.execution_repo.update_status(agent_run_id, AgentRunStatus.RUNNING)
+        # Step 2: Clear artifacts for target + later siblings, then reset to PENDING
+        all_reset_ids = [agent_run_id] + later_sibling_ids
+        self.execution_repo.clear_execution_artifacts(all_reset_ids)
+        self.execution_repo.reset_runs_to_pending(all_reset_ids)
 
-        # Apply edited planned_prompt if provided
+        # Step 3: Apply edited planned_prompt to target run only
         if planned_prompt is not None:
             self.execution_repo.update_planned_prompt(agent_run_id, planned_prompt)
+
+        # Step 4: Delete the parent's done() ToolCall
+        from druppie.db.models.tool_call import ToolCall as ToolCallModel
+        self.execution_repo.db.query(ToolCallModel).filter(
+            ToolCallModel.agent_run_id == target.parent_run_id,
+            ToolCallModel.tool_name == "done",
+        ).delete(synchronize_session="fetch")
+
+        # Step 5: Clear the parent's subagents ToolCall result (so it looks in-progress)
+        subagents_tc = (
+            self.execution_repo.db.query(ToolCallModel)
+            .filter(
+                ToolCallModel.agent_run_id == target.parent_run_id,
+                ToolCallModel.tool_name == "subagents",
+            )
+            .order_by(ToolCallModel.created_at.desc())
+            .first()
+        )
+        if subagents_tc:
+            subagents_tc.result = None
+            subagents_tc.status = "executing"
+
+        # Step 6: Reset parent AgentRun back to RUNNING
+        from druppie.db.models.agent_run import AgentRun
+        parent_run = self.execution_repo.db.query(AgentRun).filter(AgentRun.id == target.parent_run_id).first()
+        if parent_run:
+            parent_run.status = AgentRunStatus.RUNNING.value
+            parent_run.completed_at = None
 
         self.execution_repo.commit()
 
         logger.info(
-            "retry_subagent_run_complete",
+            "retry_nested_subagent_complete",
             session_id=str(session_id),
-            agent_run_id=str(agent_run_id),
+            target_id=str(agent_run_id),
+            later_siblings_reset=len(later_sibling_ids),
+            parent_run_id=str(target.parent_run_id),
         )
 
-        return {"status": "reset", "agent_run_id": str(agent_run_id)}
+        return {
+            "status": "reset",
+            "agent_run_id": str(agent_run_id),
+            "parent_run_id": str(target.parent_run_id),
+            "spawning_tool_call_id": str(target.spawning_tool_call_id),
+            "later_sibling_ids": [str(sid) for sid in later_sibling_ids],
+        }
 
     def _analyze_git_side_effects(
         self,
