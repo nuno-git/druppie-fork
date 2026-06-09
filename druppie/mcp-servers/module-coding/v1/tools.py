@@ -2051,14 +2051,14 @@ async def merge_pull_request(
 @mcp.tool(
     name="list_projects",
     description=(
-        "List all project repositories in the Gitea organization. "
-        "Returns name, description, last update time, and default branch "
+        "List all project repositories in Gitea (both org and user-owned). "
+        "Returns name, owner, description, last update time, and default branch "
         "for each project. Use this to discover what has been built before."
     ),
     meta={"module_id": MODULE_ID, "version": MODULE_VERSION},
 )
 async def list_projects() -> dict:
-    """List all project repos in the Gitea organization."""
+    """List all project repos visible in Gitea (org repos + user repos)."""
     import httpx
 
     if not GITEA_URL or not GITEA_ORG:
@@ -2066,18 +2066,21 @@ async def list_projects() -> dict:
 
     try:
         async with httpx.AsyncClient(timeout=15) as client:
+            # Use the search API to find repos across all owners (org and user)
             response = await client.get(
-                f"{GITEA_URL}/api/v1/orgs/{GITEA_ORG}/repos",
+                f"{GITEA_URL}/api/v1/repos/search",
                 headers=_gitea_api_headers(),
-                params={"limit": 50},
+                params={"limit": 100, "template": "false"},
             )
             if response.status_code != 200:
                 return {"success": False, "error": f"Gitea API returned {response.status_code}"}
 
-            repos = response.json()
+            data = response.json()
+            repos = data.get("data", [])
             projects = [
                 {
                     "name": r["name"],
+                    "owner": r["owner"]["login"] if "owner" in r else None,
                     "description": r.get("description", ""),
                     "updated_at": r.get("updated_at", ""),
                     "default_branch": r.get("default_branch", "main"),
@@ -2099,9 +2102,19 @@ async def list_projects() -> dict:
     ),
     meta={"module_id": MODULE_ID, "version": MODULE_VERSION},
 )
-async def read_project_file(repo_name: str, path: str, ref: str = "main") -> dict:
-    """Read a file from any project repository."""
+async def read_project_file(repo_name: str, path: str, ref: str = "main", owner: str | None = None) -> dict:
+    """Read a file from any project repository.
+
+    Args:
+        repo_name: Repository name (e.g. "todo-app-a1b2c3d4")
+        path: File path within the repo (e.g. "docs/documentation.md")
+        ref: Git ref (branch or tag), defaults to "main"
+        owner: Repository owner (username or org). Defaults to GITEA_ORG.
+               Use the owner value from list_projects output for user-owned repos.
+    """
     import httpx
+
+    repo_owner = owner or GITEA_ORG
 
     if not GITEA_URL or not GITEA_ORG:
         return {"success": False, "error": "Gitea not configured"}
@@ -2109,7 +2122,7 @@ async def read_project_file(repo_name: str, path: str, ref: str = "main") -> dic
     try:
         async with httpx.AsyncClient(timeout=15) as client:
             response = await client.get(
-                f"{GITEA_URL}/api/v1/repos/{GITEA_ORG}/{repo_name}/raw/{path}",
+                f"{GITEA_URL}/api/v1/repos/{repo_owner}/{repo_name}/raw/{path}",
                 headers=_gitea_api_headers(),
                 params={"ref": ref},
             )
@@ -2137,9 +2150,19 @@ async def read_project_file(repo_name: str, path: str, ref: str = "main") -> dic
     ),
     meta={"module_id": MODULE_ID, "version": MODULE_VERSION},
 )
-async def list_project_files(repo_name: str, path: str = "", ref: str = "main") -> dict:
-    """List files in a project repository."""
+async def list_project_files(repo_name: str, path: str = "", ref: str = "main", owner: str | None = None) -> dict:
+    """List files in a project repository.
+
+    Args:
+        repo_name: Repository name (e.g. "todo-app-a1b2c3d4")
+        path: Optional path prefix to filter files
+        ref: Git ref (branch or tag), defaults to "main"
+        owner: Repository owner (username or org). Defaults to GITEA_ORG.
+               Use the owner value from list_projects output for user-owned repos.
+    """
     import httpx
+
+    repo_owner = owner or GITEA_ORG
 
     if not GITEA_URL or not GITEA_ORG:
         return {"success": False, "error": "Gitea not configured"}
@@ -2147,7 +2170,7 @@ async def list_project_files(repo_name: str, path: str = "", ref: str = "main") 
     try:
         async with httpx.AsyncClient(timeout=15) as client:
             response = await client.get(
-                f"{GITEA_URL}/api/v1/repos/{GITEA_ORG}/{repo_name}/git/trees/{ref}",
+                f"{GITEA_URL}/api/v1/repos/{repo_owner}/{repo_name}/git/trees/{ref}",
                 headers=_gitea_api_headers(),
                 params={"recursive": "true"},
             )
