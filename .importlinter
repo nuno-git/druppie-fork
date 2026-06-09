@@ -1,0 +1,38 @@
+[tool.importlinter]
+root_package = "druppie"
+
+[[tool.importlinter.contracts]]
+name = "api-no-db"
+type = "independence"
+modules = ["druppie.api", "druppie.db"]
+
+[[tool.importlinter.contracts]]
+name = "api-no-repos"
+type = "independence"
+modules = ["druppie.api", "druppie.repositories"]
+
+[[tool.importlinter.contracts]]
+name = "services-no-routes"
+type = "independence"
+modules = ["druppie.services", "druppie.api"]
+
+[[tool.importlinter.contracts]]
+name = "domain-independent"
+type = "independence"
+modules = [
+    "druppie.domain",
+    "druppie.api",
+    "druppie.services",
+    "druppie.repositories",
+    "druppie.db",
+]
+
+[[tool.importlinter.contracts]]
+name = "layered-flow"
+type = "layers"
+layers = [
+    "druppie.api",
+    "druppie.services",
+    "druppie.repositories",
+]
+# domain is accessible by all layers (excluded from layered contract)
