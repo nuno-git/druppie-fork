@@ -437,6 +437,7 @@ class JobService:
             session_id,
             run_session_task(session_id, _execute, "job_execution"),
             name=f"job_execution-{session_id}",
+            skip_lock=True,
         )
 
 
