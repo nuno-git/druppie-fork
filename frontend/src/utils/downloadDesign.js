@@ -117,55 +117,30 @@ async function downloadElementAsPdf(element, path) {
 }
 
 // Browsers skip <foreignObject> when rendering SVG as <img> (security sandbox).
-// Mermaid puts text labels in <foreignObject> by default (htmlLabels:true).
-// Convert them to native SVG <text> so they survive rasterisation.
+// Mermaid puts text labels inside <foreignObject> by default (htmlLabels:true).
+// Replace each one with a native SVG <text> so labels survive rasterisation.
+// Uses regex on the raw SVG string to avoid DOMParser/XMLSerializer round-trip
+// which can corrupt namespaces and break the image load.
 function foreignObjectsToText(svgString) {
-  const parser = new DOMParser()
-  const doc = parser.parseFromString(svgString, 'image/svg+xml')
-  const NS = 'http://www.w3.org/2000/svg'
+  return svgString.replace(
+    /<foreignObject([^>]*)>([\s\S]*?)<\/foreignObject>/gi,
+    (_match, attrs, content) => {
+      const tmp = document.createElement('div')
+      tmp.innerHTML = content
+      const text = tmp.textContent.trim()
+      if (!text) return ''
 
-  for (const fo of [...doc.querySelectorAll('foreignObject')]) {
-    const rawText = fo.textContent.trim()
-    if (!rawText) { fo.remove(); continue }
+      const w = parseFloat((attrs.match(/width="([^"]+)"/) || [])[1]) || 0
+      const h = parseFloat((attrs.match(/height="([^"]+)"/) || [])[1]) || 0
+      const x = parseFloat((attrs.match(/\bx="([^"]+)"/) || [])[1]) || 0
+      const y = parseFloat((attrs.match(/\by="([^"]+)"/) || [])[1]) || 0
+      const fontSize = parseFloat((content.match(/font-size:\s*([\d.]+)/i) || [])[1]) || 14
 
-    const x = parseFloat(fo.getAttribute('x')) || 0
-    const y = parseFloat(fo.getAttribute('y')) || 0
-    const w = parseFloat(fo.getAttribute('width')) || 0
-    const h = parseFloat(fo.getAttribute('height')) || 0
+      const escaped = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 
-    const sizeMatch = fo.innerHTML.match(/font-size:\s*([\d.]+)/i)
-    const fontSize = sizeMatch ? parseFloat(sizeMatch[1]) : 14
-    const lines = rawText.split(/\n/).map(l => l.trim()).filter(Boolean)
-
-    const text = doc.createElementNS(NS, 'text')
-    text.setAttribute('x', String(x + w / 2))
-    text.setAttribute('text-anchor', 'middle')
-    text.setAttribute('font-family', '"trebuchet ms", verdana, arial, sans-serif')
-    text.setAttribute('font-size', String(fontSize))
-    text.setAttribute('fill', '#333')
-
-    if (lines.length <= 1) {
-      text.setAttribute('y', String(y + h / 2))
-      text.setAttribute('dominant-baseline', 'central')
-      text.textContent = lines[0] || ''
-    } else {
-      const lineH = fontSize * 1.3
-      const totalH = lines.length * lineH
-      const startY = y + (h - totalH) / 2 + fontSize * 0.85
-      for (let i = 0; i < lines.length; i++) {
-        const tspan = doc.createElementNS(NS, 'tspan')
-        tspan.setAttribute('x', String(x + w / 2))
-        tspan.setAttribute('y', String(startY + i * lineH))
-        tspan.textContent = lines[i]
-        text.appendChild(tspan)
-      }
-    }
-
-    fo.parentNode.insertBefore(text, fo)
-    fo.remove()
-  }
-
-  return new XMLSerializer().serializeToString(doc)
+      return `<text x="${x + w / 2}" y="${y + h / 2}" text-anchor="middle" dominant-baseline="central" font-family="'trebuchet ms', verdana, arial, sans-serif" font-size="${fontSize}" fill="#333">${escaped}</text>`
+    },
+  )
 }
 
 async function renderMermaidForPdf(container) {
