@@ -353,9 +353,6 @@ mcps:
     - search_files
     - read_file
   web:
-    - search_files
-    - list_directory
-    - read_file
     - fetch_url
     - search_web
     - get_page_info
