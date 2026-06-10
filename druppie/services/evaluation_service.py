@@ -171,6 +171,25 @@ class EvaluationService:
         logger.info("test_batch_deleted", batch_id=batch_id, deleted_count=count)
         return count
 
+    def delete_test_run(self, test_run_id: UUID) -> None:
+        """Delete a single test run.
+
+        Raises:
+            NotFoundError: If the test run does not exist.
+        """
+        deleted = self.eval_repo.delete_test_run(test_run_id)
+        if not deleted:
+            raise NotFoundError("test_run", str(test_run_id))
+        self.eval_repo.commit()
+        logger.info("test_run_deleted", test_run_id=str(test_run_id))
+
+    def delete_all_test_batches(self) -> int:
+        """Delete all test batches and their runs."""
+        count = self.eval_repo.delete_all_test_batches()
+        self.eval_repo.commit()
+        logger.info("all_test_batches_deleted", deleted_count=count)
+        return count
+
     @staticmethod
     def run_unit_tests() -> dict:
         """Run pytest unit tests and return parsed results."""

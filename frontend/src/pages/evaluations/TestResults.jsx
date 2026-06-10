@@ -20,7 +20,7 @@ import {
   BarChart3,
   Trash2,
 } from 'lucide-react'
-import { getTestBatches, getTags, deleteTestBatch } from '../../services/api'
+import { getTestBatches, getTags, deleteTestBatch, deleteTestRun, deleteAllTestBatches } from '../../services/api'
 import { formatDate, formatDuration, StatusBadge, ResultsBanner } from './helpers'
 
 const TestResults = ({ refreshKey, onSelectRun, isRunning, runResult, setRunResult }) => {
@@ -35,6 +35,8 @@ const TestResults = ({ refreshKey, onSelectRun, isRunning, runResult, setRunResu
   const [initialExpanded, setInitialExpanded] = useState(false)
   const [retryKey, setRetryKey] = useState(0)
   const [deletingBatch, setDeletingBatch] = useState(null)
+  const [deletingRun, setDeletingRun] = useState(null)
+  const [deletingAll, setDeletingAll] = useState(false)
 
   const fetchTags = async () => {
     try {
@@ -93,40 +95,85 @@ const TestResults = ({ refreshKey, onSelectRun, isRunning, runResult, setRunResu
     }
   }
 
+  const handleDeleteRun = async (runId, e) => {
+    e.stopPropagation()
+    if (!window.confirm('Delete this test run? This cannot be undone.')) return
+    setDeletingRun(runId)
+    try {
+      await deleteTestRun(runId)
+      setRetryKey((k) => k + 1)
+    } catch (err) {
+      alert('Failed to delete test run: ' + err.message)
+    } finally {
+      setDeletingRun(null)
+    }
+  }
+
+  const handleDeleteAll = async () => {
+    if (!window.confirm('Delete ALL test results? This cannot be undone.')) return
+    setDeletingAll(true)
+    try {
+      await deleteAllTestBatches()
+      setRetryKey((k) => k + 1)
+    } catch (err) {
+      alert('Failed to delete all test results: ' + err.message)
+    } finally {
+      setDeletingAll(false)
+    }
+  }
+
   return (
     <div className="space-y-3">
       {/* Results banner */}
       <ResultsBanner result={runResult} onDismiss={() => setRunResult(null)} />
 
       {/* Filter bar */}
-      {tags.length > 0 && (
+      <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <Filter className="w-4 h-4 text-gray-400" />
-          <select
-            value={selectedTag || ''}
-            onChange={(e) => {
-              setSelectedTag(e.target.value || null)
-              setPage(1)
-            }}
-            className="px-3 py-1.5 border rounded text-sm bg-white focus:outline-none focus:ring-2 focus:ring-purple-500"
-          >
-            <option value="">All tags</option>
-            {tags.map((t) => (
-              <option key={t.tag} value={t.tag}>
-                {t.tag} ({t.count})
-              </option>
-            ))}
-          </select>
-          {selectedTag && (
-            <button
-              onClick={() => { setSelectedTag(null); setPage(1) }}
-              className="text-xs text-gray-500 hover:text-gray-700 underline"
-            >
-              Clear filter
-            </button>
+          {tags.length > 0 && (
+            <>
+              <Filter className="w-4 h-4 text-gray-400" />
+              <select
+                value={selectedTag || ''}
+                onChange={(e) => {
+                  setSelectedTag(e.target.value || null)
+                  setPage(1)
+                }}
+                className="px-3 py-1.5 border rounded text-sm bg-white focus:outline-none focus:ring-2 focus:ring-purple-500"
+              >
+                <option value="">All tags</option>
+                {tags.map((t) => (
+                  <option key={t.tag} value={t.tag}>
+                    {t.tag} ({t.count})
+                  </option>
+                ))}
+              </select>
+              {selectedTag && (
+                <button
+                  onClick={() => { setSelectedTag(null); setPage(1) }}
+                  className="text-xs text-gray-500 hover:text-gray-700 underline"
+                >
+                  Clear filter
+                </button>
+              )}
+            </>
           )}
         </div>
-      )}
+        {batches.length > 0 && (
+          <button
+            onClick={handleDeleteAll}
+            disabled={deletingAll}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-red-600 bg-red-50 border border-red-200 rounded hover:bg-red-100 disabled:opacity-50 transition-colors"
+          >
+            {deletingAll ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <Trash2 className="w-3.5 h-3.5" />
+            )}
+            Delete All
+          </button>
+        )}
+      </div>
 
       {/* Loading state */}
       {loading && (
@@ -232,6 +279,7 @@ const TestResults = ({ refreshKey, onSelectRun, isRunning, runResult, setRunResu
                             <th className="px-4 py-2 text-center text-xs font-medium text-gray-500 uppercase">Judge</th>
                             <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Duration</th>
                             <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Tags</th>
+                            <th className="px-4 py-2 w-10"></th>
                           </tr>
                         </thead>
                         <tbody>
@@ -286,6 +334,20 @@ const TestResults = ({ refreshKey, onSelectRun, isRunning, runResult, setRunResu
                                     <span className="text-gray-400 text-xs">-</span>
                                   )}
                                 </div>
+                              </td>
+                              <td className="px-4 py-2.5">
+                                <button
+                                  onClick={(e) => handleDeleteRun(run.id, e)}
+                                  disabled={deletingRun === run.id}
+                                  title="Delete this test run"
+                                  className="text-gray-400 hover:text-red-600 disabled:opacity-50 transition-colors"
+                                >
+                                  {deletingRun === run.id ? (
+                                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                  ) : (
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  )}
+                                </button>
                               </td>
                             </tr>
                           ))}
