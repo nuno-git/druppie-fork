@@ -85,11 +85,13 @@ init:
     repository: druppie-init
     tag: latest
 
-# Secrets — populated from .env
+# Secrets — populated from values-local.secrets.yaml (gitignored)
+# See values-local.secrets.example.yaml for the template.
+# If secrets.yaml is missing, Helm uses these empty defaults.
 secrets:
-  zaiApiKey: ""     # Set via --set or helm secrets
+  zaiApiKey: ""
   deepinfraApiKey: ""
-  internalApiKey: druppie-internal-secret-key
+  internalApiKey: ""
   giteaToken: ""
   moduleApiToken: ""
 

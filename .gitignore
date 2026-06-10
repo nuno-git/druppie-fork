@@ -52,6 +52,9 @@ instance/
 secrets/
 secrets
 
+# Helm secrets (contains API keys — use .example.yaml as template)
+helm/druppie/values-local.secrets.yaml
+
 # Local config
 .druppie/
 .playwright-mcp/
