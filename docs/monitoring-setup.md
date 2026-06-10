@@ -30,18 +30,24 @@ helm repo add prometheus-community https://prometheus-community.github.io/helm-c
 helm repo update
 
 # Install
-helm install kube-prometheus-stack prometheus-community/kube-prometheus-stack \
+helm install monitoring prometheus-community/kube-prometheus-stack \
   --namespace monitoring \
   --create-namespace \
   --set grafana.adminPassword=admin \
-  --set prometheus.prometheusSpec.retention=15d \
-  --set prometheus.prometheusSpec.storageSpec.volumeClaimTemplate.spec.storageClassName=local-path \
-  --set prometheus.prometheusSpec.storageSpec.volumeClaimTemplate.spec.resources.requests.storage=20Gi
+  --set grafana.service.type=NodePort \
+  --set grafana.service.nodePort=30050 \
+  --set prometheus.prometheusSpec.retention=7d \
+  --set alertmanager.enabled=false \
+  --set prometheus-node-exporter.enabled=false
 ```
 
+> **K3s note:** Node exporter conflicts with K3s's embedded metrics server on port 9100.
+> Disable it with `--set prometheus-node-exporter.enabled=false` — K3s already exposes node metrics via its own endpoint.
+
 This configures:
-- **15-day** metric retention
-- **20Gi** persistent volume via K3s `local-path` provisioner
+- **7-day** metric retention
+- Grafana on **NodePort 30050** (accessible at `http://<node-ip>:30050`)
+- Node exporter **disabled** (K3s provides equivalent metrics)
 - Grafana admin password set to `admin` (change for production)
 
 Verify all pods are running:
@@ -52,17 +58,18 @@ kubectl get pods -n monitoring
 
 ## Access
 
-Use port-forwarding for local access:
+For single-node VM deployments, services are accessible via NodePort:
+
+| Service | URL | Credentials |
+|---------|-----|-------------|
+| Grafana | `http://<node-ip>:30050` | admin / admin |
+| Prometheus | Port-forward only | — |
+
+Port-forwarding for Prometheus:
 
 ```bash
-# Grafana (http://localhost:3000)
-kubectl port-forward -n monitoring svc/kube-prometheus-stack-grafana 3000:80
-
 # Prometheus (http://localhost:9090)
-kubectl port-forward -n monitoring svc/kube-prometheus-stack-prometheus 9090:9090
-
-# Alertmanager (http://localhost:9093)
-kubectl port-forward -n monitoring svc/kube-prometheus-stack-alertmanager 9093:9093
+kubectl port-forward -n monitoring svc/monitoring-kube-prometheus-prometheus 9090:9090
 ```
 
 For production, expose Grafana via Traefik Ingress with TLS (cert-manager + Let's Encrypt).
