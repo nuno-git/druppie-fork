@@ -131,6 +131,11 @@ spec:
             - name: docker-sock
               mountPath: /var/run/docker.sock
             {{- end }}
+            {{- if .Values.secrets.githubAppPrivateKey }}
+            - name: github-app-key
+              mountPath: /app/secrets
+              readOnly: true
+            {{- end }}
           livenessProbe:
             httpGet:
               path: /health
@@ -161,4 +166,12 @@ spec:
           hostPath:
             path: /var/run/docker.sock
             type: Socket
+        {{- end }}
+        {{- if .Values.secrets.githubAppPrivateKey }}
+        - name: github-app-key
+          secret:
+            secretName: {{ include "druppie.fullname" . }}-github-app-key
+            items:
+              - key: github-app-private-key.pem
+                path: github-app-private-key.pem
         {{- end }}

@@ -341,6 +341,7 @@ secrets:
   giteaSecretKey: ""
   giteaToken: ""
   moduleApiToken: ""
+  githubAppPrivateKey: ""
 
 # Autoscaling (HPA)
 autoscaling:
