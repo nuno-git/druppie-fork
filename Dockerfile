@@ -24,10 +24,14 @@ RUN npm install -g @mermaid-js/mermaid-cli
 
 # Install Python dependencies
 COPY druppie/requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install -r requirements.txt
 
 # Copy application code
 COPY druppie/ /app/druppie/
+
+# Copy test definitions (YAML files for evaluation framework)
+COPY testing/ /app/testing/
 
 # Set environment variables
 ENV PYTHONPATH=/app
