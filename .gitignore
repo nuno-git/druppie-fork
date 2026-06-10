@@ -75,3 +75,4 @@ analyze_storage.sh
 pi-coding-one-shot-agent/
 evaluation_config.yaml
 iac/cluster.secrets.yaml
+kubeconfig
