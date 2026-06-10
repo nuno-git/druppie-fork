@@ -116,6 +116,58 @@ async function downloadElementAsPdf(element, path) {
   pdf.save(filename)
 }
 
+// Browsers skip <foreignObject> when rendering SVG as <img> (security sandbox).
+// Mermaid puts text labels in <foreignObject> by default (htmlLabels:true).
+// Convert them to native SVG <text> so they survive rasterisation.
+function foreignObjectsToText(svgString) {
+  const parser = new DOMParser()
+  const doc = parser.parseFromString(svgString, 'image/svg+xml')
+  const NS = 'http://www.w3.org/2000/svg'
+
+  for (const fo of [...doc.querySelectorAll('foreignObject')]) {
+    const rawText = fo.textContent.trim()
+    if (!rawText) { fo.remove(); continue }
+
+    const x = parseFloat(fo.getAttribute('x')) || 0
+    const y = parseFloat(fo.getAttribute('y')) || 0
+    const w = parseFloat(fo.getAttribute('width')) || 0
+    const h = parseFloat(fo.getAttribute('height')) || 0
+
+    const sizeMatch = fo.innerHTML.match(/font-size:\s*([\d.]+)/i)
+    const fontSize = sizeMatch ? parseFloat(sizeMatch[1]) : 14
+    const lines = rawText.split(/\n/).map(l => l.trim()).filter(Boolean)
+
+    const text = doc.createElementNS(NS, 'text')
+    text.setAttribute('x', String(x + w / 2))
+    text.setAttribute('text-anchor', 'middle')
+    text.setAttribute('font-family', '"trebuchet ms", verdana, arial, sans-serif')
+    text.setAttribute('font-size', String(fontSize))
+    text.setAttribute('fill', '#333')
+
+    if (lines.length <= 1) {
+      text.setAttribute('y', String(y + h / 2))
+      text.setAttribute('dominant-baseline', 'central')
+      text.textContent = lines[0] || ''
+    } else {
+      const lineH = fontSize * 1.3
+      const totalH = lines.length * lineH
+      const startY = y + (h - totalH) / 2 + fontSize * 0.85
+      for (let i = 0; i < lines.length; i++) {
+        const tspan = doc.createElementNS(NS, 'tspan')
+        tspan.setAttribute('x', String(x + w / 2))
+        tspan.setAttribute('y', String(startY + i * lineH))
+        tspan.textContent = lines[i]
+        text.appendChild(tspan)
+      }
+    }
+
+    fo.parentNode.insertBefore(text, fo)
+    fo.remove()
+  }
+
+  return new XMLSerializer().serializeToString(doc)
+}
+
 async function renderMermaidForPdf(container) {
   const codeBlocks = container.querySelectorAll('pre > code.language-mermaid')
   if (codeBlocks.length === 0) return
@@ -140,10 +192,11 @@ async function renderMermaidForPdf(container) {
     try {
       const { svg } = await mermaid.render(id, code)
 
-      // Strip <foreignObject> to prevent canvas taint when rasterising
-      const cleanSvg = svg.replace(/<foreignObject[\s\S]*?<\/foreignObject>/gi, '')
+      // Convert any <foreignObject> labels to SVG <text> so they survive
+      // the browser's image-context sandbox (htmlLabels:false may not
+      // take effect if mermaid was already initialised with htmlLabels:true)
+      const cleanSvg = foreignObjectsToText(svg)
 
-      // Blob URL: same-origin (no taint) and avoids btoa Unicode edge-cases
       const svgBlob = new Blob([cleanSvg], { type: 'image/svg+xml;charset=utf-8' })
       const svgUrl = URL.createObjectURL(svgBlob)
 
@@ -171,7 +224,6 @@ async function renderMermaidForPdf(container) {
         replacement.height = h
         replacement.style.cssText = 'max-width:100%;height:auto;display:block;margin:16px 0;'
 
-        // Guarantee the browser has decoded the pixels before html2canvas runs
         await replacement.decode().catch(() => {})
 
         pre.replaceWith(replacement)
