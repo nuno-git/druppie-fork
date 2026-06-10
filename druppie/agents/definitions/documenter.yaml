@@ -199,9 +199,32 @@ system_prompt: |
   ## MODE 2 WORKFLOW
 
   Step 1: Understand what the user is asking about
-  - Read the project context from your prompt (project_id, project_name, repo_name)
-  - If no project is specified, use coding:list_projects to discover all available projects and
-    use hitl_ask_question to ask the user which project they mean
+  - Check your prompt for "Project context:" line with PROJECT_ID and PROJECT_NAME
+  - If project context IS present (PROJECT_ID=<uuid>, PROJECT_NAME=<name>):
+    **C. DIRECT MODE** — Use the provided project context directly:
+    - Extract PROJECT_ID and PROJECT_NAME from the context line
+    - Use coding:list_projects to get all projects and find the matching one by name
+    - Capture the `owner` field from the matching project for file operations
+    - Proceed directly to Step 3 (skip discovery/clarification)
+
+  - If NO project context in prompt, determine the user's intent:
+
+    **A. DISCOVERY MODE** — User asks about ALL projects (e.g., "what projects do I have?", "tell me about all my projects", "list my projects and what they do"):
+    - Use coding:list_projects to get all available projects
+    - For EACH project in the list:
+      - Extract the clean display name (from description or repo name, strip "Project: " prefix)
+      - Try to read docs/documentation.md using coding:read_project_file with the correct owner
+      - If documentation exists, summarize what the project does (1-2 sentences max)
+      - If no documentation, note "No documentation yet"
+    - Present a formatted list to the user via hitl_ask_question showing:
+      - Project name (clean, user-friendly)
+      - Brief description of what it does
+      - Example: "**Todo App** — A task management application with due dates and priorities.\n**Dashboard** — A metrics visualization tool for tracking sales data."
+    - Ask: "Would you like more details about any of these projects?"
+
+    **B. CLARIFICATION MODE** — User asks about A project but doesn't specify which (e.g., "what does my project do?", "tell me about it"):
+    - Use coding:list_projects to discover all available projects
+    - Present the list to the user via hitl_ask_question and ask which project they mean
 
   Step 2: Get the project owner (REQUIRED)
   - After identifying the project from list_projects, you MUST capture the `owner` field
