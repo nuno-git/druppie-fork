@@ -1,34 +1,30 @@
-{{- if .Values.modules.archimate.enabled }}
+{{- if .Values.modules.data_access.enabled }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "druppie.fullname" . }}-module-archimate
+  name: {{ include "druppie.fullname" . }}-module-data-access
   labels:
     {{- include "druppie.labels" . | nindent 4 }}
-    app.kubernetes.io/component: module-archimate
+    app.kubernetes.io/component: module-data-access
 spec:
-  replicas: {{ .Values.modules.archimate.replicaCount }}
+  replicas: {{ .Values.modules.data_access.replicaCount }}
   selector:
     matchLabels:
       {{- include "druppie.selectorLabels" . | nindent 6 }}
-      app.kubernetes.io/component: module-archimate
+      app.kubernetes.io/component: module-data-access
   template:
     metadata:
       labels:
         {{- include "druppie.selectorLabels" . | nindent 8 }}
-        app.kubernetes.io/component: module-archimate
+        app.kubernetes.io/component: module-data-access
     spec:
       containers:
-        - name: module-archimate
-          image: {{ include "druppie.image" (dict "Values" .Values "image" .Values.modules.archimate.image) }}
+        - name: module-data-access
+          image: {{ include "druppie.image" (dict "Values" .Values "image" .Values.modules.data_access.image) }}
           imagePullPolicy: {{ .Values.global.imagePullPolicy }}
           env:
-            - name: MODELS_DIR
-              value: "/models"
             - name: MCP_PORT
-              value: {{ .Values.modules.archimate.port | quote }}
-            - name: LAYOUT_SERVICE_URL
-              value: "http://{{ include "druppie.fullname" . }}-layout-service:8090"
+              value: {{ .Values.modules.data_access.port | quote }}
             - name: WORKSPACE_ROOT
               value: "/workspaces"
           envFrom:
@@ -38,7 +34,7 @@ spec:
                 name: {{ include "druppie.fullname" . }}-secrets
           ports:
             - name: http
-              containerPort: {{ .Values.modules.archimate.port }}
+              containerPort: {{ .Values.modules.data_access.port }}
               protocol: TCP
           volumeMounts:
             - name: workspace
@@ -46,7 +42,7 @@ spec:
           livenessProbe:
             httpGet:
               path: /health
-              port: {{ .Values.modules.archimate.port }}
+              port: {{ .Values.modules.data_access.port }}
             initialDelaySeconds: 10
             periodSeconds: 10
             timeoutSeconds: 5
@@ -54,15 +50,33 @@ spec:
           readinessProbe:
             httpGet:
               path: /health
-              port: {{ .Values.modules.archimate.port }}
+              port: {{ .Values.modules.data_access.port }}
             initialDelaySeconds: 10
             periodSeconds: 10
             timeoutSeconds: 5
             failureThreshold: 5
           resources:
-            {{- toYaml .Values.modules.archimate.resources | nindent 12 }}
+            {{- toYaml .Values.modules.data_access.resources | nindent 12 }}
       volumes:
         - name: workspace
           persistentVolumeClaim:
             claimName: {{ include "druppie.fullname" . }}-workspace
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "druppie.fullname" . }}-module-data-access
+  labels:
+    {{- include "druppie.labels" . | nindent 4 }}
+    app.kubernetes.io/component: module-data-access
+spec:
+  type: ClusterIP
+  ports:
+    - port: {{ .Values.modules.data_access.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "druppie.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: module-data-access
 {{- end }}

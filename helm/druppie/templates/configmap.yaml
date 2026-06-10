@@ -37,6 +37,8 @@ data:
   MCP_REGISTRY_URL: "http://{{ include "druppie.fullname" . }}-module-registry:9007"
   MCP_LLM_URL: "http://{{ include "druppie.fullname" . }}-module-llm:{{ .Values.modules.llm.port }}"
   MCP_VISION_URL: "http://{{ include "druppie.fullname" . }}-module-vision:{{ .Values.modules.vision.port }}"
+  MCP_DATA_ACCESS_URL: "http://{{ include "druppie.fullname" . }}-module-data-access:9010"
+  LAYOUT_SERVICE_URL: "http://{{ include "druppie.fullname" . }}-layout-service:8090"
 
   # CORS
   CORS_ORIGINS: "{{ include "druppie.frontendExternalUrl" . }}"

@@ -273,6 +273,20 @@ modules:
       limits:
         memory: "512Mi"
         cpu: "1000m"
+  data_access:
+    enabled: true
+    replicaCount: 1
+    image:
+      repository: druppie-module-data-access
+      tag: latest
+    port: 9010
+    resources:
+      requests:
+        memory: "256Mi"
+        cpu: "250m"
+      limits:
+        memory: "512Mi"
+        cpu: "1000m"
   layout_service:
     enabled: true
     replicaCount: 1
