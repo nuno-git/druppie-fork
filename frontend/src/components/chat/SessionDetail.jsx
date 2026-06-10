@@ -2,7 +2,7 @@
  * Session Detail - right panel when a session is selected in Chat
  */
 
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useContext } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Send, CheckCircle, XCircle, Shield, ShieldOff, Loader2, ExternalLink, MessageSquare, FileCode, FilePlus, StopCircle, PlayCircle, ArrowUp, AlertTriangle, Terminal, ChevronDown, ChevronRight, Calendar } from 'lucide-react'
 import { Link } from 'react-router-dom'
@@ -65,6 +65,7 @@ const getToolLabel = (toolName) => {
 const InlineApproval = ({ tc, sessionId, sessionUserId }) => {
   const queryClient = useQueryClient()
   const user = getUserInfo()
+  const repo = useContext(ProjectRepoContext)
   const [rejectMode, setRejectMode] = useState(false)
   const [rejectReason, setRejectReason] = useState('')
   const [showFilePreview, setShowFilePreview] = useState(false)
@@ -170,7 +171,7 @@ const InlineApproval = ({ tc, sessionId, sessionUserId }) => {
                       onDownloadMd={() => downloadAsMarkdown(content, filePath)}
                       onDownloadPdf={async () => {
                         setPdfDownloading(true)
-                        try { await downloadContentAsPdf(content, filePath) }
+                        try { await downloadContentAsPdf(content, filePath, repo) }
                         finally { setPdfDownloading(false) }
                       }}
                     />

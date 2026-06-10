@@ -18,13 +18,8 @@
 import { useEffect, useState, useRef, useCallback, useContext } from 'react'
 import { AlertTriangle, Code, Eye, ZoomIn, ZoomOut, Maximize2 } from 'lucide-react'
 import { ProjectRepoContext } from './chat/ChatHelpers'
-import { getProjectFile, getProjectFileFromWorkspace, getProjectFileChanges } from '../services/api'
-import {
-  parseEmbedSpec,
-  parseArchimateXML,
-  computeLayout,
-  renderViewToSVG,
-} from './archimate/archimateParser'
+import { parseEmbedSpec } from './archimate/archimateParser'
+import { renderArchimateSpecToSvg } from './archimate/archimateRender'
 
 // --- Interactive pan/zoom (same UX as MermaidBlock) -----------------------
 
@@ -130,61 +125,14 @@ const ArchimateBlock = ({ code, highlightIds }) => {
       return
     }
 
-    const branch = repo.default_branch || 'main'
     setState({ status: 'loading', svg: null, error: null })
-
-    // Source the .archimate file from the session workspace when we have
-    // one — the architect's commit may not have reached Gitea yet during
-    // an approval preview. Fall back to the Gitea ref when the workspace
-    // copy is missing (e.g. older sessions or post-merge browsing).
-    const fetchArchimateFile = async () => {
-      if (repo.session_id) {
-        try {
-          return await getProjectFileFromWorkspace(repo.id, repo.session_id, spec.file)
-        } catch (err) {
-          if (err.status && err.status !== 404) throw err
-        }
-      }
-      return getProjectFile(repo.id, spec.file, branch)
-    }
 
     ;(async () => {
       try {
-        // Fetch the current file and the last-commit identifier-diff in parallel.
-        // The diff feeds delta-highlighting: any element/connection whose
-        // identifier appeared in the latest commit is rendered with an accent.
-        // The diff is Gitea-only — if the file isn't committed yet there is
-        // nothing to diff against, hence the silent catch.
-        const [response, changes] = await Promise.all([
-          fetchArchimateFile(),
-          getProjectFileChanges(repo.id, spec.file, branch).catch(() => null),
-        ])
-        const xml = response?.content ?? response
-        if (typeof xml !== 'string') {
-          throw new Error('Unexpected response shape from project file API')
-        }
-        const model = parseArchimateXML(xml)
-        const view = model.views.get(spec.viewId)
-        if (!view) {
-          throw new Error(`View '${spec.viewId}' not found in ${spec.file}`)
-        }
-        const laidOut = await computeLayout(view)
-        const deltaIds = new Set([
-          ...(highlightIds || []),
-          ...((changes?.added_identifiers) || []),
-        ])
-        const svg = renderViewToSVG(laidOut, model, {
-          highlightIds: deltaIds.size ? deltaIds : undefined,
-        })
+        const { svg, viewName, changeCount, lastCommitMessage } =
+          await renderArchimateSpecToSvg(code, repo, { highlightIds })
         if (!cancelled) {
-          setState({
-            status: 'ready',
-            svg,
-            error: null,
-            viewName: view.name,
-            changeCount: (changes?.added_identifiers || []).length,
-            lastCommitMessage: changes?.last_commit_message,
-          })
+          setState({ status: 'ready', svg, error: null, viewName, changeCount, lastCommitMessage })
         }
       } catch (err) {
         if (!cancelled) {
