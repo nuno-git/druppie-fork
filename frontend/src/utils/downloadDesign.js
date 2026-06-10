@@ -116,7 +116,117 @@ async function downloadElementAsPdf(element, path) {
   pdf.save(filename)
 }
 
-// Pre-render mermaid code blocks to raster images for reliable PDF capture.
+// Browsers skip <foreignObject> when rendering SVG as <img> (security sandbox).
+// Mermaid puts text labels inside <foreignObject> by default (htmlLabels:true).
+// Replace each one with a native SVG <text> so labels survive rasterisation.
+// Uses regex on the raw SVG string to avoid DOMParser/XMLSerializer round-trip
+// which can corrupt namespaces and break the image load.
+
+function wordWrap(text, maxWidth, fontSize) {
+  const avgCharWidth = fontSize * 0.6
+  const maxChars = Math.max(1, Math.floor(maxWidth / avgCharWidth))
+  const words = text.split(/\s+/)
+  const lines = []
+  let cur = ''
+  for (const word of words) {
+    if (!cur) {
+      cur = word
+    } else if ((cur + ' ' + word).length <= maxChars) {
+      cur += ' ' + word
+    } else {
+      lines.push(cur)
+      cur = word
+    }
+  }
+  if (cur) lines.push(cur)
+  return lines.length ? lines : [text]
+}
+
+function escapeXml(s) {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+}
+
+function foreignObjectsToText(svgString) {
+  return svgString.replace(
+    /<foreignObject([^>]*)>([\s\S]*?)<\/foreignObject>/gi,
+    (_match, attrs, content) => {
+      const tmp = document.createElement('div')
+      tmp.innerHTML = content
+      const text = tmp.textContent.trim()
+      if (!text) return ''
+
+      const w = parseFloat((attrs.match(/width="([^"]+)"/) || [])[1]) || 0
+      const h = parseFloat((attrs.match(/height="([^"]+)"/) || [])[1]) || 0
+      const x = parseFloat((attrs.match(/\bx="([^"]+)"/) || [])[1]) || 0
+      const y = parseFloat((attrs.match(/\by="([^"]+)"/) || [])[1]) || 0
+      const fontSize = parseFloat((content.match(/font-size:\s*([\d.]+)/i) || [])[1]) || 14
+
+      const cx = x + w / 2
+      const pad = 8
+      const lines = wordWrap(text, Math.max(w - pad * 2, fontSize * 2), fontSize)
+      const lineH = fontSize * 1.35
+      const totalH = lines.length * lineH
+      const baseY = y + (h - totalH) / 2 + fontSize * 0.9
+
+      const tspans = lines
+        .map((line, i) => `<tspan x="${cx}" y="${baseY + i * lineH}">${escapeXml(line)}</tspan>`)
+        .join('')
+
+      return `<text text-anchor="middle" font-family="'trebuchet ms', verdana, arial, sans-serif" font-size="${fontSize}" fill="#333">${tspans}</text>`
+    },
+  )
+}
+
+// Content column inside the PDF container (800px − 2×48px padding). Diagrams
+// are rasterised to fill this width (scaled down only when they'd be too tall),
+// so they never come out tiny. The canvas renders at 2× for crisp output.
+const PDF_CONTENT_WIDTH = 704
+const PDF_MAX_DIAGRAM_HEIGHT = 900
+
+// Rasterise an SVG string to a page-width <img> for reliable PDF capture.
+// Shared by the mermaid and archimate renderers. Drawing the (vector) SVG onto
+// a larger canvas keeps it sharp even when the source diagram is small.
+async function svgToPdfImage(svgString) {
+  const svgBlob = new Blob([svgString], { type: 'image/svg+xml;charset=utf-8' })
+  const svgUrl = URL.createObjectURL(svgBlob)
+  try {
+    const img = new Image()
+    await new Promise((resolve, reject) => {
+      img.onload = resolve
+      img.onerror = reject
+      img.src = svgUrl
+    })
+
+    const iw = img.naturalWidth || 800
+    const ih = img.naturalHeight || 600
+    let displayW = PDF_CONTENT_WIDTH
+    let displayH = Math.round(ih * (displayW / iw))
+    if (displayH > PDF_MAX_DIAGRAM_HEIGHT) {
+      displayH = PDF_MAX_DIAGRAM_HEIGHT
+      displayW = Math.round(iw * (displayH / ih))
+    }
+
+    const scale = 2
+    const c = document.createElement('canvas')
+    c.width = displayW * scale
+    c.height = displayH * scale
+    const ctx = c.getContext('2d')
+    ctx.fillStyle = '#ffffff'
+    ctx.fillRect(0, 0, c.width, c.height)
+    ctx.drawImage(img, 0, 0, c.width, c.height)
+
+    const replacement = document.createElement('img')
+    replacement.src = c.toDataURL('image/png')
+    replacement.width = displayW
+    replacement.height = displayH
+    replacement.style.cssText = 'max-width:100%;height:auto;display:block;margin:16px 0;'
+    await replacement.decode().catch(() => {})
+    return replacement
+  } finally {
+    URL.revokeObjectURL(svgUrl)
+  }
+}
+
 async function renderMermaidForPdf(container) {
   const codeBlocks = container.querySelectorAll('pre > code.language-mermaid')
   if (codeBlocks.length === 0) return
@@ -137,32 +247,21 @@ async function renderMermaidForPdf(container) {
     const code = codeEl.textContent.trim()
     if (!code) continue
 
+    const id = `pdf-mermaid-${++counter}-${Date.now()}`
     try {
-      const id = `pdf-mermaid-${++counter}-${Date.now()}`
       const { svg } = await mermaid.render(id, code)
 
-      const dataUrl = `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(svg)))}`
-      const img = new Image()
-      await new Promise((resolve, reject) => {
-        img.onload = resolve
-        img.onerror = reject
-        img.src = dataUrl
-      })
+      // Convert any <foreignObject> labels to SVG <text> so they survive
+      // the browser's image-context sandbox (htmlLabels:false may not
+      // take effect if mermaid was already initialised with htmlLabels:true)
+      const cleanSvg = foreignObjectsToText(svg)
 
-      const c = document.createElement('canvas')
-      c.width = img.naturalWidth * 2
-      c.height = img.naturalHeight * 2
-      const ctx = c.getContext('2d')
-      ctx.fillStyle = '#ffffff'
-      ctx.fillRect(0, 0, c.width, c.height)
-      ctx.drawImage(img, 0, 0, c.width, c.height)
-
-      const replacement = document.createElement('img')
-      replacement.src = c.toDataURL('image/png')
-      replacement.style.cssText = 'max-width:100%;height:auto;display:block;margin:16px 0;'
+      const replacement = await svgToPdfImage(cleanSvg)
       pre.replaceWith(replacement)
-    } catch {
-      // Keep the raw code block if mermaid rendering fails
+    } catch (err) {
+      console.warn(`[PDF] mermaid block ${counter} failed:`, err)
+      document.querySelector(`#d${id}`)?.remove()
+      document.querySelector(`#${id}`)?.remove()
     }
   }
 
@@ -181,6 +280,37 @@ async function renderMermaidForPdf(container) {
     er: { useMaxWidth: false },
     pie: { useMaxWidth: false },
   })
+}
+
+// Pre-render ```archimate code blocks to raster images for PDF capture.
+// Reuses the same SVG the chat builds (via renderArchimateSpecToSvg) and the
+// same rasterisation path as mermaid. Needs the project/session context to
+// fetch the .archimate model; without it the raw code block is left intact.
+async function renderArchimateForPdf(container, repoContext) {
+  const codeBlocks = container.querySelectorAll('pre > code.language-archimate')
+  if (codeBlocks.length === 0) return
+  if (!repoContext?.id) {
+    console.warn('[PDF] archimate blocks present but no project context — left as raw code')
+    return
+  }
+
+  const { renderArchimateSpecToSvg } = await import('../components/archimate/archimateRender')
+
+  let counter = 0
+  for (const codeEl of codeBlocks) {
+    const pre = codeEl.parentElement
+    const code = codeEl.textContent.trim()
+    if (!code) continue
+    counter++
+    try {
+      const { svg } = await renderArchimateSpecToSvg(code, repoContext)
+      const replacement = await svgToPdfImage(svg)
+      pre.replaceWith(replacement)
+    } catch (err) {
+      console.warn(`[PDF] archimate block ${counter} failed:`, err)
+      // leave the raw code block in place
+    }
+  }
 }
 
 export function buildChatTranscript(sessionData) {
@@ -278,7 +408,7 @@ export function buildChatTranscript(sessionData) {
   return lines.join('\n')
 }
 
-export async function downloadContentAsPdf(markdownContent, path) {
+export async function downloadContentAsPdf(markdownContent, path, repoContext = null) {
   const [{ marked }, { default: DOMPurify }] = await Promise.all([
     import('marked'),
     import('dompurify'),
@@ -313,6 +443,7 @@ export async function downloadContentAsPdf(markdownContent, path) {
   document.body.appendChild(container)
   try {
     await renderMermaidForPdf(container)
+    await renderArchimateForPdf(container, repoContext)
     await downloadElementAsPdf(container.firstElementChild, path)
   } finally {
     document.body.removeChild(container)
