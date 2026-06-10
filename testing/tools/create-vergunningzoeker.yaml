@@ -1232,7 +1232,7 @@ tool-test:
         result:
           - not_empty
           - { contains: "health_check" }
-          - { matches: ".*'success':\\s*True.*" }
+          - { contains: '"success": true' }
 
     - agent: deployer
       tool: builtin:done
