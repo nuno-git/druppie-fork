@@ -27,7 +27,7 @@ from druppie.api.deps import (
 )
 from druppie.services import SessionService
 from druppie.domain import SessionDetail
-from druppie.core.background_tasks import create_session_task, run_session_task
+from druppie.core.background_tasks import create_session_task, run_session_task, SessionTaskConflict
 
 logger = structlog.get_logger()
 
@@ -250,15 +250,22 @@ async def retry_from_run(
         user_id=str(user_id),
     )
 
-    create_session_task(
-        session_id,
-        _run_retry_background(
-            session_id=session_id,
-            agent_run_id=agent_run_id,
-            planned_prompt=body.planned_prompt if body else None,
-        ),
-        name=f"retry-{session_id}",
-    )
+    # skip_lock=True: lock_for_retry already atomically set status to ACTIVE.
+    # The DB lock there prevents concurrent retries.
+    try:
+        create_session_task(
+            session_id,
+            _run_retry_background(
+                session_id=session_id,
+                agent_run_id=agent_run_id,
+                planned_prompt=body.planned_prompt if body else None,
+            ),
+            name=f"retry-{session_id}",
+            skip_lock=True,
+        )
+    except Exception:
+        service.mark_failed(session_id, "Failed to start retry background task")
+        raise
 
     return {
         "success": True,
@@ -314,11 +321,17 @@ async def resume_session(
         user_id=str(user_id),
     )
 
-    create_session_task(
-        session_id,
-        _run_resume_background(session_id=session_id),
-        name=f"resume-{session_id}",
-    )
+    # skip_lock=True: lock_for_resume already atomically set status to ACTIVE.
+    try:
+        create_session_task(
+            session_id,
+            _run_resume_background(session_id=session_id),
+            name=f"resume-{session_id}",
+            skip_lock=True,
+        )
+    except Exception:
+        service.mark_failed(session_id, "Failed to start resume background task")
+        raise
 
     return {
         "success": True,
