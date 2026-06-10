@@ -116,7 +116,6 @@ async function downloadElementAsPdf(element, path) {
   pdf.save(filename)
 }
 
-// Pre-render mermaid code blocks to raster images for reliable PDF capture.
 async function renderMermaidForPdf(container) {
   const codeBlocks = container.querySelectorAll('pre > code.language-mermaid')
   if (codeBlocks.length === 0) return
@@ -137,32 +136,52 @@ async function renderMermaidForPdf(container) {
     const code = codeEl.textContent.trim()
     if (!code) continue
 
+    const id = `pdf-mermaid-${++counter}-${Date.now()}`
     try {
-      const id = `pdf-mermaid-${++counter}-${Date.now()}`
       const { svg } = await mermaid.render(id, code)
 
-      const dataUrl = `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(svg)))}`
-      const img = new Image()
-      await new Promise((resolve, reject) => {
-        img.onload = resolve
-        img.onerror = reject
-        img.src = dataUrl
-      })
+      // Strip <foreignObject> to prevent canvas taint when rasterising
+      const cleanSvg = svg.replace(/<foreignObject[\s\S]*?<\/foreignObject>/gi, '')
 
-      const c = document.createElement('canvas')
-      c.width = img.naturalWidth * 2
-      c.height = img.naturalHeight * 2
-      const ctx = c.getContext('2d')
-      ctx.fillStyle = '#ffffff'
-      ctx.fillRect(0, 0, c.width, c.height)
-      ctx.drawImage(img, 0, 0, c.width, c.height)
+      // Blob URL: same-origin (no taint) and avoids btoa Unicode edge-cases
+      const svgBlob = new Blob([cleanSvg], { type: 'image/svg+xml;charset=utf-8' })
+      const svgUrl = URL.createObjectURL(svgBlob)
 
-      const replacement = document.createElement('img')
-      replacement.src = c.toDataURL('image/png')
-      replacement.style.cssText = 'max-width:100%;height:auto;display:block;margin:16px 0;'
-      pre.replaceWith(replacement)
-    } catch {
-      // Keep the raw code block if mermaid rendering fails
+      try {
+        const img = new Image()
+        await new Promise((resolve, reject) => {
+          img.onload = resolve
+          img.onerror = reject
+          img.src = svgUrl
+        })
+
+        const w = img.naturalWidth || 800
+        const h = img.naturalHeight || 600
+        const c = document.createElement('canvas')
+        c.width = w * 2
+        c.height = h * 2
+        const ctx = c.getContext('2d')
+        ctx.fillStyle = '#ffffff'
+        ctx.fillRect(0, 0, c.width, c.height)
+        ctx.drawImage(img, 0, 0, c.width, c.height)
+
+        const replacement = document.createElement('img')
+        replacement.src = c.toDataURL('image/png')
+        replacement.width = w
+        replacement.height = h
+        replacement.style.cssText = 'max-width:100%;height:auto;display:block;margin:16px 0;'
+
+        // Guarantee the browser has decoded the pixels before html2canvas runs
+        await replacement.decode().catch(() => {})
+
+        pre.replaceWith(replacement)
+      } finally {
+        URL.revokeObjectURL(svgUrl)
+      }
+    } catch (err) {
+      console.warn(`[PDF] mermaid block ${counter} failed:`, err)
+      document.querySelector(`#d${id}`)?.remove()
+      document.querySelector(`#${id}`)?.remove()
     }
   }
 
