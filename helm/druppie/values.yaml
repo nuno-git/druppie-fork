@@ -273,6 +273,20 @@ modules:
       limits:
         memory: "512Mi"
         cpu: "1000m"
+  layout_service:
+    enabled: true
+    replicaCount: 1
+    image:
+      repository: druppie-layout-service
+      tag: latest
+    port: 8090
+    resources:
+      requests:
+        memory: "128Mi"
+        cpu: "100m"
+      limits:
+        memory: "256Mi"
+        cpu: "500m"
 
 # Init job
 init:

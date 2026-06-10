@@ -27,14 +27,17 @@ spec:
               value: "/models"
             - name: MCP_PORT
               value: {{ .Values.modules.archimate.port | quote }}
+            - name: LAYOUT_SERVICE_URL
+              value: "http://{{ include "druppie.fullname" . }}-layout-service:8090"
+          envFrom:
+            - configMapRef:
+                name: {{ include "druppie.fullname" . }}-config
+            - secretRef:
+                name: {{ include "druppie.fullname" . }}-secrets
           ports:
             - name: http
               containerPort: {{ .Values.modules.archimate.port }}
               protocol: TCP
-          volumeMounts:
-            - name: archimate-models
-              mountPath: /models
-              readOnly: true
           livenessProbe:
             httpGet:
               path: /health
@@ -53,9 +56,4 @@ spec:
             failureThreshold: 5
           resources:
             {{- toYaml .Values.modules.archimate.resources | nindent 12 }}
-      volumes:
-        - name: archimate-models
-          configMap:
-            name: {{ include "druppie.fullname" . }}-archimate-models
-            optional: true
 {{- end }}

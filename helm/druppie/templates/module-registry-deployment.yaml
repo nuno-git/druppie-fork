@@ -27,26 +27,15 @@ spec:
               value: "/data"
             - name: MCP_PORT
               value: {{ .Values.modules.registry.port | quote }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "druppie.fullname" . }}-config
+            - secretRef:
+                name: {{ include "druppie.fullname" . }}-secrets
           ports:
             - name: http
               containerPort: {{ .Values.modules.registry.port }}
               protocol: TCP
-          volumeMounts:
-            - name: registry-agents
-              mountPath: /data/agents
-              readOnly: true
-            - name: registry-mcp-config
-              mountPath: /data/mcp_config.yaml
-              readOnly: true
-            - name: registry-skills
-              mountPath: /data/skills
-              readOnly: true
-            - name: registry-builtin-tools
-              mountPath: /data/builtin_tools.py
-              readOnly: true
-            - name: registry-mcp-servers
-              mountPath: /data/mcp-servers
-              readOnly: true
           livenessProbe:
             httpGet:
               path: /health
@@ -65,23 +54,4 @@ spec:
             failureThreshold: 5
           resources:
             {{- toYaml .Values.modules.registry.resources | nindent 12 }}
-      volumes:
-        - name: registry-agents
-          configMap:
-            name: {{ include "druppie.fullname" . }}-registry-agents
-            optional: true
-        - name: registry-mcp-config
-          configMap:
-            name: {{ include "druppie.fullname" . }}-registry-mcp-config
-            optional: true
-        - name: registry-skills
-          configMap:
-            name: {{ include "druppie.fullname" . }}-registry-skills
-            optional: true
-        - name: registry-builtin-tools
-          configMap:
-            name: {{ include "druppie.fullname" . }}-registry-builtin-tools
-            optional: true
-        - name: registry-mcp-servers
-          emptyDir: {}
 {{- end }}
