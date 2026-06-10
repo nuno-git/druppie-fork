@@ -12,15 +12,15 @@
 #   hetzner-k3s create cluster --config iac/cluster.yaml
 #   hetzner-k3s delete cluster --config iac/cluster.yaml
 #
-# All nodes: CPX31 (4 vCPU, 8GB RAM, 160GB NVMe) — see ADR-001 §4.1
+# All nodes: CPX32 (4 vCPU, 8GB RAM, 160GB NVMe) — see ADR-001 §4.1
 # Estimated base cost: ~€86/mo (3 servers + 1 infra + 1 app)
 # =============================================================================
 
 # -- Required ----------------------------------------------------------------
-hetzner_token: "<YOUR_HETZNER_TOKEN>"    # Or use HCLOUD_TOKEN env var
+hetzner_token: ""                        # Uses HCLOUD_TOKEN env var instead
 cluster_name: druppie
 kubeconfig_path: "./kubeconfig"
-k3s_version: v1.32.3+k3s1               # Run `hetzner-k3s releases` for latest
+k3s_version: v1.35.5+k3s1               # Latest stable (June 2026)
 
 # -- Cluster settings --------------------------------------------------------
 schedule_workloads_on_masters: false     # Masters = pure control plane (ADR §4.2)
@@ -64,7 +64,7 @@ datastore:
 # 3 servers = etcd quorum (1 may fail without cluster outage)
 # No workloads scheduled — control plane isolation
 masters_pool:
-  instance_type: cpx31                  # 4 vCPU, 8GB RAM, 160GB NVMe
+  instance_type: cpx32                  # 4 vCPU, 8GB RAM, 160GB NVMe
   instance_count: 3
   locations:                            # Array: one location per master
     - fsn1                              # All in Falkenstein for low latency
@@ -78,7 +78,7 @@ worker_node_pools:
   # Runs: Keycloak, Gitea, MCP modules, CloudNativePG, monitoring
   # Not autoscaled — stable workloads that must not be evicted
   - name: infra
-    instance_type: cpx31                # 4 vCPU, 8GB RAM, 160GB NVMe
+    instance_type: cpx32                # 4 vCPU, 8GB RAM, 160GB NVMe
     instance_count: 1                   # Start with 1, scale to 2 manually if needed
     location: fsn1
     autoscaling:
@@ -92,7 +92,7 @@ worker_node_pools:
   # Runs: Backend (FastAPI), Frontend (React)
   # Cluster Autoscaler manages node count based on Pending pods
   - name: app
-    instance_type: cpx31                # 4 vCPU, 8GB RAM, 160GB NVMe
+    instance_type: cpx32                # 4 vCPU, 8GB RAM, 160GB NVMe
     instance_count: 1                   # Minimum running when idle
     location: fsn1
     autoscaling:
