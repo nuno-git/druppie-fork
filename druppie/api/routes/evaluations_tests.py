@@ -492,6 +492,29 @@ async def delete_test_batch(
     return {"success": True, "deleted_count": count, "message": f"Deleted {count} test run(s)"}
 
 
+@router.delete("/evaluations/test-batches")
+async def delete_all_test_batches(
+    service: EvaluationService = Depends(get_evaluation_service),
+    user: dict = Depends(require_admin),
+):
+    """Delete all test batches and their runs."""
+    count = service.delete_all_test_batches()
+    logger.info("all_test_batches_deleted_via_api", deleted_count=count, user_id=user.get("sub"))
+    return {"success": True, "deleted_count": count, "message": f"Deleted {count} test run(s)"}
+
+
+@router.delete("/evaluations/test-runs/{test_run_id}")
+async def delete_test_run(
+    test_run_id: UUID,
+    service: EvaluationService = Depends(get_evaluation_service),
+    user: dict = Depends(require_admin),
+):
+    """Delete a single test run."""
+    service.delete_test_run(test_run_id)
+    logger.info("test_run_deleted_via_api", test_run_id=str(test_run_id), user_id=user.get("sub"))
+    return {"success": True, "message": "Test run deleted"}
+
+
 @router.delete("/evaluations/test-users")
 async def delete_test_users(
     service: EvaluationService = Depends(get_evaluation_service),
