@@ -766,10 +766,10 @@ async def compose_up(
             env = {
                 **os.environ,
                 "APP_PORT": str(host_port),
-                "DRUPPIE_URL": os.environ.get("DRUPPIE_URL", "http://druppie-backend:8000"),
-                # Shared secret for the /api/modules/{id}/call proxy. Apps
-                # forward this back via the X-Druppie-Token header through
-                # the Druppie SDK. Empty string = dev mode / no auth.
+                "DRUPPIE_URL": os.environ.get(
+                    "COMPOSE_DRUPPIE_URL",
+                    os.environ.get("DRUPPIE_URL", "http://druppie-backend:8000"),
+                ),
                 "DRUPPIE_MODULE_API_TOKEN": os.environ.get("DRUPPIE_MODULE_API_TOKEN", ""),
             }
             compose_result = await asyncio.to_thread(

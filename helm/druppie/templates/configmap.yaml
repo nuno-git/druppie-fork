@@ -27,6 +27,10 @@ data:
   BACKEND_URL: "http://{{ include "druppie.fullname" . }}-backend:8000"
   WORKSPACE_PATH: "/app/workspace"
   USE_MCP_MICROSERVICES: "true"
+  {{- if not .Values.global.ingress.enabled }}
+  # URL for compose_up apps to reach the backend (Docker-reachable, not K8s DNS)
+  COMPOSE_DRUPPIE_URL: "http://172.25.0.1:{{ .Values.backend.nodePort }}"
+  {{- end }}
 
   # MCP module URLs
   MCP_CODING_URL: "http://{{ include "druppie.fullname" . }}-module-coding:9001"
