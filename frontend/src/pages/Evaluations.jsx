@@ -27,6 +27,7 @@ import {
 } from '../services/api'
 
 import { TestSelectorModal, RunProgress, UnitTestsSection } from './evaluations/TestRunner'
+import { filterTests } from './evaluations/helpers'
 import TestResults from './evaluations/TestResults'
 import TestRunDetail from './evaluations/TestRunDetail'
 import useTestPolling from './evaluations/useTestPolling'
@@ -50,6 +51,7 @@ export default function Evaluations() {
   const [selectAll, setSelectAll] = useState(true)
   const [selectedTests, setSelectedTests] = useState(new Set())
   const [inputValues, setInputValues] = useState({})
+  const [searchQuery, setSearchQuery] = useState('')
 
   // Shared run state
   const [isRunning, setIsRunning] = useState(false)
@@ -60,16 +62,10 @@ export default function Evaluations() {
   const [deletingUsers, setDeletingUsers] = useState(false)
   const [runProgress, setRunProgress] = useState(null)
 
-  // Effective selected count for display (respects mode filter when selectAll)
+  // Effective selected count for display (respects both the mode filter and the
+  // search query when selectAll, so the count matches what actually runs)
   const effectiveCount = selectAll
-    ? (modeFilter === 'all'
-        ? availableTests.length
-        : availableTests.filter((t) => {
-            if (modeFilter === 'manual') return t.manual_input
-            if (modeFilter === 'tool') return t.type === 'tool'
-            if (modeFilter === 'agent') return t.type === 'agent' && !t.manual_input
-            return t.type === modeFilter && !t.manual_input
-          }).length)
+    ? filterTests(availableTests, modeFilter, searchQuery).length
     : selectedTests.size
 
   // Polling hook
@@ -125,16 +121,12 @@ export default function Evaluations() {
     try {
       const options = { execute: true, judge: judgeEnabled }
 
-      if (selectAll && modeFilter === 'all') {
+      if (selectAll && modeFilter === 'all' && !searchQuery.trim()) {
         options.run_all = true
       } else if (selectAll) {
-        // selectAll with a mode filter — resolve to specific test names
-        const filtered = availableTests.filter((t) => {
-          if (modeFilter === 'manual') return t.manual_input
-          if (modeFilter === 'tool') return t.type === 'tool'
-          if (modeFilter === 'agent') return t.type === 'agent' && !t.manual_input
-          return t.type === modeFilter && !t.manual_input
-        })
+        // selectAll with a mode filter and/or search query — resolve to the
+        // specific test names that are actually visible/matching
+        const filtered = filterTests(availableTests, modeFilter, searchQuery)
         options.test_names = filtered.map((t) => t.name)
       } else if (selectedTests.size === 1) {
         options.test_name = [...selectedTests][0]
@@ -335,12 +327,14 @@ export default function Evaluations() {
           setSelectedTests={setSelectedTests}
           modeFilter={modeFilter}
           setModeFilter={setModeFilter}
+          searchQuery={searchQuery}
+          setSearchQuery={setSearchQuery}
           inputValues={inputValues}
           setInputValues={setInputValues}
           judgeEnabled={judgeEnabled}
           setJudgeEnabled={setJudgeEnabled}
           onRun={handleRun}
-          onClose={() => setShowSelector(false)}
+          onClose={() => { setShowSelector(false); setSearchQuery('') }}
           isRunning={isRunning}
         />
       )}
