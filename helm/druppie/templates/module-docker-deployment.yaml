@@ -18,6 +18,8 @@ spec:
         {{- include "druppie.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: module-docker
     spec:
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
       containers:
         - name: module-docker
           image: {{ include "druppie.image" (dict "Values" .Values "image" .Values.modules.docker.image) }}
