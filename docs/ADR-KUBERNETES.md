@@ -396,7 +396,9 @@ affinity:
 
 **Graceful shutdown:** Backend pods moeten lopende LLM calls afronden voor ze stoppen. `terminationGracePeriodSeconds: 60` met SIGTERM handling in FastAPI die nieuwe requests weigert maar actieve afrondt.
 
-**Backend multi-replica:** De huidige `reconstruct_from_db()` functie rebuildt al agent state vanuit de database. Bij multi-replica werkt de webhook handler als volgt: update het ToolCall record in de DB, waarna elke backend replica de agent kan oppakken en doorgaan. Database-driven resume, geen nieuwe infrastructuur nodig.
+**Backend multi-replica:** De backend is stateless. Session task concurrency wordt bewaakt via `SELECT ... FOR UPDATE` op de session row in PostgreSQL (vervangt de vroegere in-memory dict). De `reconstruct_from_db()` functie rebuildt agent state vanuit de database. Bij multi-replica werkt de webhook handler als volgt: update het ToolCall record in de DB, waarna elke backend replica de agent kan oppakken en doorgaan. Database-driven resume, geen nieuwe infrastructuur nodig.
+
+Singleton achtergrondtaken (JobScheduler, sandbox watchdog) gebruiken PostgreSQL advisory locks (`pg_try_advisory_lock`) voor leader election. Alleen de replica die de lock verwerpt start de taak; andere replica's slaan hem over. De lock is verbindingsscoped — als de leader pod sterft, wordt de verbinding verbroken en komt de lock vrij, zodat een andere replica deze bij de volgende herstart kan opeisen. Geen extra infrastructuur nodig.
 
 ### 4.12 Cluster Provisioning: hetzner-k3s
 
@@ -718,7 +720,7 @@ flowchart TB
 
 | Risico | Impact | Kans | Mitigatie |
 |--------|--------|------|-----------|
-| Backend multi-replica race conditions bij webhooks | Data inconsistentie | Medium | Database-driven resume patroon (bestaande `reconstruct_from_db()`). Testen met 3+ replicas op staging. |
+| Backend multi-replica race conditions bij webhooks | Data inconsistentie | ~~Medium~~ Laag | Opgelost: session task concurrency via `SELECT FOR UPDATE` op DB. Singleton taken via PostgreSQL advisory lock leader election. Testen met 3+ replicas op staging. |
 | CloudNativePG operationele kennis ontbreekt | DB issues in productie | Medium | Failover scenario's testen op staging vóór productie. Runbooks schrijven. CNPG documentatie bestuderen. |
 | KEDA scaling te agressief of te traag | Oscillatie of vertraging | Laag | Stabilization windows configureren (300s scale-down, 60s scale-up). Tunen op basis van load tests. |
 | Sealed Secrets key verloren | Alle secrets ontoegankelijk | Medium | Private key backup procedure documenteren én testen. Key opslaan in offline vault. |
@@ -766,7 +768,7 @@ Bij schaalvergroting (meer nodes of grotere VMs): CPX41 (8 vCPU, 16GB RAM) is ~�
 - Sandbox blijft op Docker Compose. De Docker socket dependency is niet opgelost in Phase 1. Sandbox migratie volgt in Phase 2, afhankelijk van Agent Sandbox operator volwassenheid.
 - MCP modules schalen niet onafhankelijk. Dit is bewust: modules worden herbouwd als built-in backend tools, waarna de shared PVC vervalt.
 - Geen drift detection. Push-based CI/CD betekent dat handmatige cluster wijzigingen onopgemerkt blijven. ArgoCD (Phase 2) lost dit op.
-- Backend sessie tracking blijft in-memory in Phase 1. Multi-replica webhooks worden afgehandeld via database-driven resume. Een message queue (Redis Streams/NATS) volgt in Phase 2 als de belasting het rechtvaardigt.
+- Backend is stateless. Session task concurrency via database-level `SELECT FOR UPDATE`. Singleton achtergrondtaken (JobScheduler, sandbox watchdog) via PostgreSQL advisory lock leader election. Een message queue (Redis Streams/NATS) volgt in Phase 2 voor event-driven architectuur als de belasting het rechtvaardigt.
 - Geen sandbox runtime isolatie (gVisor/Kata). Pas relevant als sandboxes naar K8s migreren.
 
 ### Migratiepad
