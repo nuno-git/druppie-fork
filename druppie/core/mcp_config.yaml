@@ -316,3 +316,16 @@ mcps:
 
       - name: create_chart_from_source
         requires_approval: false
+
+  # Read-only Azure DevOps backlog for ONE configured project (AZURE_DEVOPS_PROJECT).
+  # No write tools and no cross-project access — the project is fixed server-side.
+  azuredevops:
+    url: ${MCP_AZUREDEVOPS_URL:-http://module-azuredevops:9012}
+    type: module
+    tools:
+      - name: list_backlog_items
+        requires_approval: false
+      - name: get_work_item
+        requires_approval: false
+      - name: search_work_items
+        requires_approval: false
