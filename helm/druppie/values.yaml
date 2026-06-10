@@ -55,11 +55,11 @@ keycloak:
   replicaCount: 1
   resources:
     requests:
-      memory: "384Mi"
-      cpu: "250m"
+      memory: "512Mi"
+      cpu: "500m"
     limits:
-      memory: "768Mi"
-      cpu: "1000m"
+      memory: "1Gi"
+      cpu: "2000m"
   readinessProbe:
     httpGet:
       path: /health/ready
@@ -89,11 +89,11 @@ gitea:
   replicaCount: 1
   resources:
     requests:
-      memory: "256Mi"
+      memory: "512Mi"
       cpu: "250m"
     limits:
-      memory: "512Mi"
-      cpu: "500m"
+      memory: "1Gi"
+      cpu: "1000m"
 
 # Backend API
 backend:
@@ -105,11 +105,11 @@ backend:
   replicaCount: 1
   resources:
     requests:
-      memory: "256Mi"
+      memory: "512Mi"
       cpu: "250m"
     limits:
-      memory: "512Mi"
-      cpu: "1000m"
+      memory: "1Gi"
+      cpu: "2000m"
   devMode: false
   dockerSocket:
     enabled: false
@@ -149,11 +149,11 @@ frontend:
   replicaCount: 1
   resources:
     requests:
-      memory: "128Mi"
-      cpu: "100m"
-    limits:
       memory: "256Mi"
-      cpu: "500m"
+      cpu: "250m"
+    limits:
+      memory: "512Mi"
+      cpu: "1000m"
   # Vite environment variables
   vite:
     keycloakRealm: druppie
@@ -170,11 +170,11 @@ modules:
     port: 9001
     resources:
       requests:
-        memory: "128Mi"
-        cpu: "100m"
+        memory: "512Mi"
+        cpu: "250m"
       limits:
-        memory: "256Mi"
-        cpu: "500m"
+        memory: "2Gi"
+        cpu: "2000m"
   docker:
     enabled: true
     replicaCount: 1
@@ -184,11 +184,11 @@ modules:
     port: 9002
     resources:
       requests:
-        memory: "128Mi"
-        cpu: "100m"
+        memory: "512Mi"
+        cpu: "250m"
       limits:
-        memory: "256Mi"
-        cpu: "500m"
+        memory: "2Gi"
+        cpu: "2000m"
   filesearch:
     enabled: true
     replicaCount: 1
@@ -198,11 +198,11 @@ modules:
     port: 9004
     resources:
       requests:
-        memory: "128Mi"
-        cpu: "100m"
-      limits:
         memory: "256Mi"
-        cpu: "500m"
+        cpu: "250m"
+      limits:
+        memory: "512Mi"
+        cpu: "1000m"
   web:
     enabled: true
     replicaCount: 1
@@ -212,11 +212,11 @@ modules:
     port: 9005
     resources:
       requests:
-        memory: "128Mi"
-        cpu: "100m"
-      limits:
         memory: "256Mi"
-        cpu: "500m"
+        cpu: "250m"
+      limits:
+        memory: "512Mi"
+        cpu: "1000m"
   archimate:
     enabled: true
     replicaCount: 1
@@ -226,11 +226,11 @@ modules:
     port: 9006
     resources:
       requests:
-        memory: "128Mi"
-        cpu: "100m"
-      limits:
         memory: "256Mi"
-        cpu: "500m"
+        cpu: "250m"
+      limits:
+        memory: "512Mi"
+        cpu: "1000m"
   registry:
     enabled: true
     replicaCount: 1
@@ -240,11 +240,11 @@ modules:
     port: 9007
     resources:
       requests:
-        memory: "128Mi"
-        cpu: "100m"
-      limits:
         memory: "256Mi"
-        cpu: "500m"
+        cpu: "250m"
+      limits:
+        memory: "512Mi"
+        cpu: "1000m"
   llm:
     enabled: true
     replicaCount: 1
@@ -254,11 +254,11 @@ modules:
     port: 9008
     resources:
       requests:
-        memory: "128Mi"
-        cpu: "100m"
-      limits:
         memory: "256Mi"
-        cpu: "500m"
+        cpu: "250m"
+      limits:
+        memory: "512Mi"
+        cpu: "1000m"
   vision:
     enabled: true
     replicaCount: 1
@@ -268,11 +268,11 @@ modules:
     port: 9011
     resources:
       requests:
-        memory: "128Mi"
-        cpu: "100m"
-      limits:
         memory: "256Mi"
-        cpu: "500m"
+        cpu: "250m"
+      limits:
+        memory: "512Mi"
+        cpu: "1000m"
 
 # Init job
 init:
