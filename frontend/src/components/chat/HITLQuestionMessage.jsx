@@ -29,12 +29,24 @@ const HITLQuestionMessage = ({ question, onSubmitAnswer, isAnswering, answered =
   const [freeText, setFreeText] = useState('')
   const [showFreeText, setShowFreeText] = useState(false)
   const freeTextRef = useRef(null)
+  const plainTextRef = useRef(null)
+
+  const autoResize = (ref) => {
+    const el = ref?.current
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = Math.min(el.scrollHeight, 200) + 'px'
+  }
 
   useEffect(() => {
     if (showFreeText && freeTextRef.current) {
       freeTextRef.current.focus()
     }
   }, [showFreeText])
+
+  useEffect(() => {
+    autoResize(hasOptions ? freeTextRef : plainTextRef)
+  }, [freeText, hasOptions])
 
   const handleToggleChoice = (index) => {
     setSelectedIndices((prev) => {
@@ -147,7 +159,7 @@ const HITLQuestionMessage = ({ question, onSubmitAnswer, isAnswering, answered =
                     placeholder="Type your answer..."
                     rows={2}
                     disabled={isAnswering}
-                    className="flex-1 resize-none bg-transparent outline-none text-sm leading-6 min-w-0"
+                    className="flex-1 resize-y bg-transparent outline-none text-sm leading-6 min-w-0 max-h-[200px]"
                   />
                 </div>
               </div>
@@ -175,6 +187,7 @@ const HITLQuestionMessage = ({ question, onSubmitAnswer, isAnswering, answered =
           <div className="mt-2">
             <div className="flex items-end gap-2 border border-gray-200 rounded-lg px-3 py-2 bg-white focus-within:border-gray-300 transition-colors">
               <textarea
+                ref={plainTextRef}
                 value={freeText}
                 onChange={(e) => setFreeText(e.target.value)}
                 onKeyDown={(e) => {
@@ -186,7 +199,7 @@ const HITLQuestionMessage = ({ question, onSubmitAnswer, isAnswering, answered =
                 placeholder="Type your answer..."
                 rows={2}
                 disabled={isAnswering}
-                className="flex-1 resize-none bg-transparent outline-none text-sm leading-6 min-w-0"
+                className="flex-1 resize-y bg-transparent outline-none text-sm leading-6 min-w-0 max-h-[200px]"
               />
               <button
                 onClick={handleSubmit}
