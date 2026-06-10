@@ -121,6 +121,31 @@ async function downloadElementAsPdf(element, path) {
 // Replace each one with a native SVG <text> so labels survive rasterisation.
 // Uses regex on the raw SVG string to avoid DOMParser/XMLSerializer round-trip
 // which can corrupt namespaces and break the image load.
+
+function wordWrap(text, maxWidth, fontSize) {
+  const avgCharWidth = fontSize * 0.6
+  const maxChars = Math.max(1, Math.floor(maxWidth / avgCharWidth))
+  const words = text.split(/\s+/)
+  const lines = []
+  let cur = ''
+  for (const word of words) {
+    if (!cur) {
+      cur = word
+    } else if ((cur + ' ' + word).length <= maxChars) {
+      cur += ' ' + word
+    } else {
+      lines.push(cur)
+      cur = word
+    }
+  }
+  if (cur) lines.push(cur)
+  return lines.length ? lines : [text]
+}
+
+function escapeXml(s) {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+}
+
 function foreignObjectsToText(svgString) {
   return svgString.replace(
     /<foreignObject([^>]*)>([\s\S]*?)<\/foreignObject>/gi,
@@ -136,9 +161,18 @@ function foreignObjectsToText(svgString) {
       const y = parseFloat((attrs.match(/\by="([^"]+)"/) || [])[1]) || 0
       const fontSize = parseFloat((content.match(/font-size:\s*([\d.]+)/i) || [])[1]) || 14
 
-      const escaped = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      const cx = x + w / 2
+      const pad = 8
+      const lines = wordWrap(text, Math.max(w - pad * 2, fontSize * 2), fontSize)
+      const lineH = fontSize * 1.35
+      const totalH = lines.length * lineH
+      const baseY = y + (h - totalH) / 2 + fontSize * 0.9
 
-      return `<text x="${x + w / 2}" y="${y + h / 2}" text-anchor="middle" dominant-baseline="central" font-family="'trebuchet ms', verdana, arial, sans-serif" font-size="${fontSize}" fill="#333">${escaped}</text>`
+      const tspans = lines
+        .map((line, i) => `<tspan x="${cx}" y="${baseY + i * lineH}">${escapeXml(line)}</tspan>`)
+        .join('')
+
+      return `<text text-anchor="middle" font-family="'trebuchet ms', verdana, arial, sans-serif" font-size="${fontSize}" fill="#333">${tspans}</text>`
     },
   )
 }
