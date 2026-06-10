@@ -795,30 +795,61 @@ async def compose_up(
             compose_port_registry[project_name] = host_port
 
             # Step 8: Health check
-            # In Docker Compose (module-docker is a container): use Docker DNS
-            # In K8s (module-docker is a pod with host Docker socket): use localhost
+            # Strategy (ordered by environment):
+            # 1. Docker DNS (works when module-docker runs as a Docker container)
+            # 2. localhost (works when module-docker has hostNetwork or runs on host)
+            # 3. docker exec curl (works everywhere — executes inside the container's namespace)
             container_port = _discover_container_port(compose_file)
             app_container = f"{project_name}-app-1"
             health_url_docker = f"http://{app_container}:{container_port}{health_path}"
             health_url_local = f"http://localhost:{host_port}{health_path}"
+            health_exec_cmd = ["docker", "exec", app_container,
+                               "curl", "-sf", "-o", "/dev/null", "-w", "%{http_code}",
+                               f"http://localhost:{container_port}{health_path}"]
             health_passed = False
 
             for elapsed in range(health_timeout):
-                for url in [health_url_docker, health_url_local]:
-                    try:
-                        req = urllib.request.Request(url)
-                        resp = await asyncio.to_thread(
-                            urllib.request.urlopen, req, timeout=2
-                        )
-                        if resp.status == 200:
-                            health_passed = True
-                            resp.close()
-                            break
+                # Try Docker DNS first (container-to-container)
+                try:
+                    req = urllib.request.Request(health_url_docker)
+                    resp = await asyncio.to_thread(
+                        urllib.request.urlopen, req, timeout=2
+                    )
+                    if resp.status == 200:
+                        health_passed = True
                         resp.close()
-                    except Exception:
-                        pass
-                if health_passed:
-                    break
+                        break
+                    resp.close()
+                except Exception:
+                    pass
+
+                # Try localhost (hostNetwork / Docker Compose native)
+                try:
+                    req = urllib.request.Request(health_url_local)
+                    resp = await asyncio.to_thread(
+                        urllib.request.urlopen, req, timeout=2
+                    )
+                    if resp.status == 200:
+                        health_passed = True
+                        resp.close()
+                        break
+                    resp.close()
+                except Exception:
+                    pass
+
+                # Try docker exec (works from any network namespace)
+                try:
+                    exec_result = await asyncio.to_thread(
+                        subprocess.run,
+                        health_exec_cmd,
+                        capture_output=True, text=True, timeout=5,
+                    )
+                    if exec_result.returncode == 0 and exec_result.stdout.strip() == "200":
+                        health_passed = True
+                        break
+                except Exception:
+                    pass
+
                 if elapsed % 30 == 29:
                     logger.info(
                         "compose_up: health check pending (%ds/%ds)", elapsed + 1, health_timeout
