@@ -19,6 +19,7 @@ data:
   GITEA_INTERNAL_URL: "http://{{ include "druppie.fullname" . }}-gitea:3000"
   GITEA_URL: "{{ include "druppie.giteaExternalUrl" . }}"
   GITEA_ORG: {{ .Values.gitea.org | quote }}
+  GITEA_USER: {{ .Values.gitea.adminUser | quote }}
   GITEA_ADMIN_USER: {{ .Values.gitea.adminUser | quote }}
   GITEA_ADMIN_EMAIL: {{ .Values.gitea.adminEmail | quote }}
 
@@ -52,8 +53,15 @@ data:
   # Sandbox
   DRUPPIE_SANDBOX_RUNTIME: {{ .Values.sandbox.runtime | quote }}
   DRUPPIE_SANDBOX_IMAGE: {{ .Values.sandbox.image | quote }}
+  DRUPPIE_SANDBOX_USER: {{ .Values.global.instance | quote }}
+  DRUPPIE_SANDBOX_NETWORK: "{{ .Values.global.instance }}-sandbox-net"
+  DRUPPIE_SANDBOX_INET_NETWORK: "{{ .Values.global.instance }}-sandbox-inet"
+  DRUPPIE_SANDBOX_MODULES_NETWORK: "{{ .Values.global.instance }}-sandbox-modules"
+  DRUPPIE_SANDBOX_CACHE_VOLUME: "{{ .Values.global.instance }}_sandbox_dep_cache"
   DRUPPIE_DOCKER_MEMORY_LIMIT: {{ .Values.sandbox.memoryLimit | quote }}
   DRUPPIE_DOCKER_CPU_LIMIT: {{ .Values.sandbox.cpuLimit | quote }}
+  WORKSPACE_ROOT: "/workspaces"
+  DOCKER_NETWORK: "{{ .Values.global.instance }}-network"
 
   # Frontend Vite
   VITE_API_URL: "{{ include "druppie.backendExternalUrl" . }}"
