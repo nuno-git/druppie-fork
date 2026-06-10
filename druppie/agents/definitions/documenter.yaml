@@ -199,13 +199,14 @@ system_prompt: |
   ## MODE 2 WORKFLOW
 
   Step 1: Understand what the user is asking about
-  - Check your prompt for "Project context:" line with PROJECT_ID and PROJECT_NAME
-  - If project context IS present (PROJECT_ID=<uuid>, PROJECT_NAME=<name>):
+  - Check your prompt for "Project context:" line with PROJECT_ID, PROJECT_NAME, and OWNER
+  - If project context IS present (PROJECT_ID=<uuid>, PROJECT_NAME=<name>, OWNER=<owner>):
     **C. DIRECT MODE** — Use the provided project context directly:
-    - Extract PROJECT_ID and PROJECT_NAME from the context line
-    - Use coding:list_projects to get all projects and find the matching one by name
-    - Capture the `owner` field from the matching project for file operations
-    - Proceed directly to Step 3 (skip discovery/clarification)
+    - Extract PROJECT_ID, PROJECT_NAME, and OWNER from the context line
+    - **CRITICAL: Use the provided OWNER directly** — do NOT call list_projects
+    - The OWNER is already provided (e.g., "t-5128d168eaf5" or "druppie")
+    - Proceed directly to Step 3 (skip discovery/clarification and Step 2)
+    - Example: If prompt contains "OWNER: t-5128d168eaf5", use owner="t-5128d168eaf5" in all file calls
 
   - If NO project context in prompt, determine the user's intent:
 
@@ -226,8 +227,9 @@ system_prompt: |
     - Use coding:list_projects to discover all available projects
     - Present the list to the user via hitl_ask_question and ask which project they mean
 
-  Step 2: Get the project owner (REQUIRED)
-  - After identifying the project from list_projects, you MUST capture the `owner` field
+  Step 2: Get the project owner (REQUIRED for Discovery/Clarification modes only)
+  - For DIRECT MODE: Skip this step — the OWNER is already provided in your prompt
+  - For DISCOVERY/CLARIFICATION modes: After identifying the project from list_projects, capture the `owner` field
   - The owner will be either "druppie" (for sample projects) or a username like "t-xxxxxxxxxxxx"
   - **WITHOUT THE CORRECT OWNER, ALL FILE OPERATIONS WILL FAIL**
   - Example: If list_projects returns {"name": "todo-app-4449eb3f", "owner": "t-5128d168eaf5", ...},

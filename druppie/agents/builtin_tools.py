@@ -579,20 +579,23 @@ def _update_planner_prompt(
         )
         return
 
-    if project_id and not project_name:
+    owner = None
+    if project_id:
         try:
             project_repo = ProjectRepository(execution_repo.db)
             project = project_repo.get_by_id(project_id)
             if project:
-                project_name = project.name
+                if not project_name:
+                    project_name = project.name
+                owner = project.repo_owner
         except Exception:
             pass
 
     # Prepend intent context to the existing prompt
     if project_id:
-        intent_context = f"INTENT: {intent}\nPROJECT_ID: {str(project_id)}\nPROJECT_NAME: {project_name or 'unknown'}\n\n"
+        intent_context = f"INTENT: {intent}\nPROJECT_ID: {str(project_id)}\nPROJECT_NAME: {project_name or 'unknown'}\nOWNER: {owner or 'unknown'}\n\n"
     else:
-        intent_context = f"INTENT: {intent}\nPROJECT_ID: new\nPROJECT_NAME: {project_name or 'unknown'}\n\n"
+        intent_context = f"INTENT: {intent}\nPROJECT_ID: new\nPROJECT_NAME: {project_name or 'unknown'}\nOWNER: unknown\n\n"
     new_prompt = intent_context + (planner_run.planned_prompt or "")
     execution_repo.update_planned_prompt(planner_run.id, new_prompt)
 

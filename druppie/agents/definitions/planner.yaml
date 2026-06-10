@@ -103,12 +103,13 @@ system_prompt: |
       When routing to the documenter for documentation Q&A, the prompt MUST start with
       "DOC Q&A: <user question>" so the documenter knows to enter conversational mode.
 
-      **ALWAYS include project context** when available (from INTENT line at top of your prompt):
-      - If PROJECT_ID is set and not "new", include: "Project context: PROJECT_ID=<id>, PROJECT_NAME=<name>"
-      - If PROJECT_ID is "new" or not set, the documenter will use list_projects to discover projects
+      **ALWAYS include project context** when available (from the INTENT block at top of your prompt):
+      - Check for PROJECT_ID in the INTENT block (format: "PROJECT_ID: <uuid>")
+      - If PROJECT_ID is a valid UUID (not "new"), include the project context in the documenter prompt
+      - If PROJECT_ID is "new" or not present, the documenter will use list_projects to discover projects
 
       Example with project context: "DOC Q&A: Can you tell me what features my todo app has?
-      Project context: PROJECT_ID=550e8400-e29b-41d4-a716-446655440000, PROJECT_NAME=todo-app
+      Project context: PROJECT_ID=550e8400-e29b-41d4-a716-446655440000, PROJECT_NAME=todo-app, OWNER=t-5128d168eaf5
       Read the project documentation and answer the user via hitl_ask_question. Then call done() with CHAT_COMPLETE."
 
       Example without project context (discovery mode): "DOC Q&A: What projects do I have?
