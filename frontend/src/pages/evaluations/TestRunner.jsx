@@ -5,7 +5,7 @@
  * and the run controls / progress bar shown on the main list view.
  */
 
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import {
   FlaskConical,
   Loader2,
@@ -395,7 +395,7 @@ export const TestSelectorModal = ({
 
 // ---- Running Progress Display ----
 
-export const RunProgress = ({ runMessage, runProgress }) => {
+export const RunProgress = ({ runMessage, runProgress, onCancel }) => {
   return (
     <div className="bg-blue-50 border border-blue-200 rounded-lg overflow-hidden">
       <div className="flex items-center gap-3 px-4 py-3">
@@ -413,6 +413,15 @@ export const RunProgress = ({ runMessage, runProgress }) => {
             </div>
           )}
         </div>
+        {onCancel && (
+          <button
+            onClick={onCancel}
+            className="flex items-center gap-1 px-3 py-1.5 text-sm text-red-600 bg-red-50 hover:bg-red-100 border border-red-200 rounded-lg transition-colors shrink-0"
+          >
+            <X className="w-3.5 h-3.5" />
+            Cancel
+          </button>
+        )}
       </div>
       {/* Completed tests so far */}
       {runProgress && runProgress.completed_tests.length > 0 && (
