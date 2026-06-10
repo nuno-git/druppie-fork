@@ -794,26 +794,31 @@ async def compose_up(
             # Step 7: Track port mapping
             compose_port_registry[project_name] = host_port
 
-            # Step 8: Health check via Docker network (not localhost)
-            # Discover the container port from the compose file instead of hardcoding
+            # Step 8: Health check
+            # In Docker Compose (module-docker is a container): use Docker DNS
+            # In K8s (module-docker is a pod with host Docker socket): use localhost
             container_port = _discover_container_port(compose_file)
             app_container = f"{project_name}-app-1"
-            health_url = f"http://{app_container}:{container_port}{health_path}"
+            health_url_docker = f"http://{app_container}:{container_port}{health_path}"
+            health_url_local = f"http://localhost:{host_port}{health_path}"
             health_passed = False
 
             for elapsed in range(health_timeout):
-                try:
-                    req = urllib.request.Request(health_url)
-                    resp = await asyncio.to_thread(
-                        urllib.request.urlopen, req, timeout=2
-                    )
-                    if resp.status == 200:
-                        health_passed = True
+                for url in [health_url_docker, health_url_local]:
+                    try:
+                        req = urllib.request.Request(url)
+                        resp = await asyncio.to_thread(
+                            urllib.request.urlopen, req, timeout=2
+                        )
+                        if resp.status == 200:
+                            health_passed = True
+                            resp.close()
+                            break
                         resp.close()
-                        break
-                    resp.close()
-                except Exception:
-                    pass
+                    except Exception:
+                        pass
+                if health_passed:
+                    break
                 if elapsed % 30 == 29:
                     logger.info(
                         "compose_up: health check pending (%ds/%ds)", elapsed + 1, health_timeout
