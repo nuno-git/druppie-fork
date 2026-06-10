@@ -20,8 +20,9 @@ Usage:
         name=f"resume-{session_id}",
     )
 
-Concurrency is guarded at the database level via SELECT ... FOR UPDATE
-(lock_for_retry / lock_for_resume), which works across multiple replicas.
+Concurrency is guarded at the database level via SELECT ... FOR UPDATE.
+create_session_task() acquires a row lock on the session and checks that
+no other task is active before spawning. This works across replicas.
 """
 
 import asyncio
@@ -35,6 +36,11 @@ logger = structlog.get_logger()
 
 # Module-level set: prevents GC of running tasks and enables shutdown enumeration.
 _background_tasks: set[asyncio.Task] = set()
+
+
+class SessionTaskConflict(Exception):
+    """Raised when a background task is already running for a session."""
+    pass
 
 
 def _on_task_done(task: asyncio.Task) -> None:
@@ -72,18 +78,79 @@ def create_tracked_task(
     return task
 
 
+# States that indicate a background task is currently running for this session.
+# ACTIVE = task just spawned (session created or lock_for_retry/resume set it).
+# RUNNING = orchestrator is actively processing.
+_TASK_ACTIVE_STATES = frozenset({"active", "running"})
+
+
 def create_session_task(
     session_id: UUID,
     coro: Coroutine[Any, Any, Any],
     *,
     name: str | None = None,
+    skip_lock: bool = False,
 ) -> asyncio.Task:
-    """Create a tracked task for a session.
+    """Create a tracked task for a session with a DB-level concurrency guard.
 
-    Concurrency is guarded at the database level (SELECT ... FOR UPDATE)
-    by the caller before invoking this function. This wrapper simply
-    creates a tracked task with the session_id as a label for logging.
+    Opens a short-lived DB session, locks the session row with SELECT FOR UPDATE,
+    and verifies no other task is active. If the session is in a state that
+    indicates a running task (ACTIVE or RUNNING), raises SessionTaskConflict.
+
+    Args:
+        session_id: Session to guard.
+        coro: Coroutine to run as a background task.
+        name: Task name for logging.
+        skip_lock: Skip the DB guard. Use ONLY when the caller already holds
+            a DB lock (e.g. lock_for_retry / lock_for_resume) or for brand-new
+            sessions that no other request can reference yet.
+
+    Raises:
+        SessionTaskConflict: If a task is already running for this session.
     """
+    if not skip_lock:
+        from druppie.db.database import SessionLocal
+        from druppie.db.models import Session as SessionModel
+
+        db = SessionLocal()
+        try:
+            session = (
+                db.query(SessionModel)
+                .filter_by(id=session_id)
+                .with_for_update()
+                .first()
+            )
+            if session is not None and session.status in _TASK_ACTIVE_STATES:
+                logger.warning(
+                    "session_task_conflict",
+                    session_id=str(session_id),
+                    session_status=session.status,
+                    requested_task=name,
+                )
+                raise SessionTaskConflict(
+                    f"A background task is already running for session {session_id} "
+                    f"(status={session.status})"
+                )
+            # No active task — it's safe to spawn. The background task itself
+            # will transition the session status (ACTIVE → RUNNING → COMPLETED/PAUSED).
+            db.commit()  # Release the row lock.
+        except SessionTaskConflict:
+            db.rollback()
+            raise
+        except Exception:
+            db.rollback()
+            logger.warning(
+                "session_task_guard_failed",
+                session_id=str(session_id),
+                requested_task=name,
+            )
+            # If the guard itself fails (e.g. DB connection issue), still
+            # allow the task to proceed — the guard is a safety net, not a
+            # gate. Worst case: a duplicate task runs, which the orchestrator
+            # handles gracefully via session status checks.
+        finally:
+            db.close()
+
     return create_tracked_task(coro, name=name)
 
 
