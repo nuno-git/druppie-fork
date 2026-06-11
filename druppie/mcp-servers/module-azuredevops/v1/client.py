@@ -110,5 +110,12 @@ class AzureDevOpsClient:
             {"$expand": "fields"},
         )
 
+    async def get_team_iterations(self) -> list[dict]:
+        """Fetch all iterations (sprints) for the default team."""
+        result = await self._get(
+            f"{self._project}/_apis/work/teamsettings/iterations",
+        )
+        return result.get("value", [])
+
     async def close(self) -> None:
         await self._credential.close()
