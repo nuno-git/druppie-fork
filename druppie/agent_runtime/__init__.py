@@ -9,6 +9,7 @@ Storage-agnostic Python library for running AI agents with:
 - Cancellation support
 """
 
+from druppie.agent_runtime.compaction import CompactionConfig, MessageCompactor
 from druppie.agent_runtime.definition import (
     AgentDefinition,
     build_done_schema,
@@ -35,6 +36,8 @@ from druppie.agent_runtime.types import (
 )
 
 __all__ = [
+    "CompactionConfig",
+    "MessageCompactor",
     "AgentEvent",
     "AgentResult",
     "LoopConfig",

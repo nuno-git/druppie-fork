@@ -726,6 +726,10 @@ def old_definition_to_new(old_def) -> NewAgentDefinition:
     if hasattr(old_def, "sandbox_constraints") and old_def.sandbox_constraints:
         yaml_dict["sandbox_constraints"] = _to_dict(old_def.sandbox_constraints)
 
+    compression = getattr(old_def, "compression", None)
+    if compression:
+        yaml_dict["compression"] = _to_dict(compression) if not isinstance(compression, dict) else compression
+
     sandbox_data = {}
     old_sandbox = getattr(old_def, "sandbox", None)
     if old_sandbox:

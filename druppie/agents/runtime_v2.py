@@ -17,6 +17,7 @@ from uuid import UUID
 
 import structlog
 
+from druppie.agent_runtime.compaction import CompactionConfig
 from druppie.agent_runtime.compat import (
     DruppieToolProvider,
     SubagentsMCPConnection,
@@ -380,6 +381,9 @@ class AgentV2:
             max_turns=self.definition.max_iterations or 20,
         )
 
+        compaction_config = self._build_compaction_config(loop_config)
+        summary_llm = None
+
         from druppie.agent_runtime.types import SessionPauseToken
 
         # Create cancellation token that polls for session PAUSED status
@@ -492,6 +496,8 @@ class AgentV2:
                 config=loop_config,
                 tool_call_history=tool_call_history,
                 cancellation_token=cancellation_token,
+                compaction_config=compaction_config,
+                summary_llm=summary_llm,
             )
         finally:
             await cancellation_token.cleanup()
@@ -566,6 +572,31 @@ class AgentV2:
                         return "waiting_sandbox"
                     return "waiting_answer"
         return "waiting_answer"
+
+    # ------------------------------------------------------------------
+    # Compaction configuration
+    # ------------------------------------------------------------------
+
+    def _build_compaction_config(self, loop_config: LoopConfig) -> CompactionConfig:
+        """Build CompactionConfig from agent definition and loop config."""
+        cc = CompactionConfig(
+            max_context_tokens=loop_config.max_context_tokens,
+        )
+        compression = getattr(self.definition, "compression", None)
+        if compression and isinstance(compression, dict):
+            if "keep_recent" in compression:
+                cc.keep_recent = compression["keep_recent"]
+            if "phase1_threshold" in compression:
+                cc.phase1_threshold = compression["phase1_threshold"]
+            if "phase2_threshold" in compression:
+                cc.phase2_threshold = compression["phase2_threshold"]
+            if "phase3_threshold" in compression:
+                cc.phase3_threshold = compression["phase3_threshold"]
+            if "content_aware" in compression:
+                cc.content_aware = compression["content_aware"]
+            if "adaptive_recent" in compression:
+                cc.adaptive_recent = compression["adaptive_recent"]
+        return cc
 
     # ------------------------------------------------------------------
     # Helpers

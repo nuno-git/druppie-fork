@@ -149,6 +149,9 @@ class AgentDefinition(BaseModel):
     thinking: str | None = None
     reasoning_effort: str | None = None
 
+    # Context compression overrides (optional, per-agent)
+    compression: dict | None = None
+
     def get_mcp_names(self) -> list[str]:
         """Get list of MCP server names this agent can use."""
         if isinstance(self.mcps, dict):

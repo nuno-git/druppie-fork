@@ -9,35 +9,70 @@ def reconstruct_from_db(
 ) -> list[dict]:
     """Reconstruct message history from stored LLM calls.
 
-    Walks the DB records and rebuilds the full messages list so
-    the agent loop can resume from where it left off.
+    Uses the last LLM call's request_messages as the base — it already
+    contains any compressed history from previous turns. Only appends
+    the assistant response and tool results from that final call.
 
-    For each LLM call:
-    1. Add the request_messages (first call has system + user)
-    2. Add the assistant response (with tool_calls if any)
-    3. Add tool results for each tool call
-
-    Args:
-        llm_calls: Ordered list of LLM call DB records
-        execution_repo: ExecutionRepository (used for tool call lookups)
-
-    Returns:
-        Reconstructed messages list ready for next LLM call
+    Falls back to full replay if the last call has no request_messages.
     """
+    if not llm_calls:
+        return []
+
+    last_call = llm_calls[-1]
+
+    if last_call.request_messages and len(last_call.request_messages) > 0:
+        messages = list(last_call.request_messages)
+    else:
+        messages = _full_replay(llm_calls)
+        return messages
+
+    if last_call.response_tool_calls and len(last_call.response_tool_calls) > 0:
+        messages.append({
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": tc.get("id", f"call_last_{j}"),
+                    "type": "function",
+                    "function": {
+                        "name": tc.get("name"),
+                        "arguments": json.dumps(tc.get("args", {})),
+                    },
+                }
+                for j, tc in enumerate(last_call.response_tool_calls)
+            ],
+        })
+
+        for j, tool_call_db in enumerate(last_call.tool_calls):
+            if tool_call_db.result or tool_call_db.error_message:
+                tool_call_id = f"call_last_{j}"
+                if j < len(last_call.response_tool_calls):
+                    tool_call_id = last_call.response_tool_calls[j].get("id", tool_call_id)
+
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tool_call_id,
+                    "content": tool_call_db.result or f"Error: {tool_call_db.error_message}",
+                })
+
+    elif last_call.response_content:
+        messages.append({
+            "role": "assistant",
+            "content": last_call.response_content,
+        })
+
+    return messages
+
+
+def _full_replay(llm_calls: list) -> list[dict]:
+    """Full replay fallback — reconstruct from all LLM calls sequentially."""
     messages = []
 
     for i, llm_call in enumerate(llm_calls):
-        # For first LLM call, use the full request_messages (system + user)
         if i == 0 and llm_call.request_messages:
             messages.extend(llm_call.request_messages)
-        elif llm_call.request_messages:
-            # For subsequent calls, skip system/user (already added)
-            pass
 
-        # Add assistant response with tool calls
-        # Check for non-empty list (empty list [] is falsy in Python)
         if llm_call.response_tool_calls and len(llm_call.response_tool_calls) > 0:
-            # Assistant made tool calls
             messages.append({
                 "role": "assistant",
                 "content": "",
@@ -54,10 +89,9 @@ def reconstruct_from_db(
                 ],
             })
 
-            # Add tool results from the database
             for j, tool_call_db in enumerate(llm_call.tool_calls):
                 if tool_call_db.result or tool_call_db.error_message:
-                    tool_call_id = f"call_{i}_{j}"  # Default
+                    tool_call_id = f"call_{i}_{j}"
                     if j < len(llm_call.response_tool_calls):
                         tool_call_id = llm_call.response_tool_calls[j].get("id", tool_call_id)
 
@@ -68,7 +102,6 @@ def reconstruct_from_db(
                     })
 
         elif llm_call.response_content:
-            # Assistant gave text response (no tool calls)
             messages.append({
                 "role": "assistant",
                 "content": llm_call.response_content,

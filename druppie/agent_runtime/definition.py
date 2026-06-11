@@ -76,6 +76,7 @@ def parse_definition(data: dict[str, Any]) -> AgentDefinition:
         excluded_builtin_tools=data.get("excluded_builtin_tools", []),
         sandbox_constraints=data.get("sandbox_constraints"),
         allowed_next_agents=data.get("allowed_next_agents", []),
+        compression=data.get("compression"),
     )
 
 
@@ -232,6 +233,8 @@ class AgentDefinition:
     mcps: dict[str, Any] = field(default_factory=dict)
 
     approval_overrides: dict[str, dict[str, Any]] = field(default_factory=dict)
+
+    compression: dict[str, Any] | None = None
 
     # Legacy fields from old schema — kept for compatibility during migration
     extra_builtin_tools: list[str] = field(default_factory=list)

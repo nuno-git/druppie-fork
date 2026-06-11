@@ -9,7 +9,6 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Literal
 
-
 @dataclass(frozen=True)
 class AgentEvent:
     """Immutable event record emitted during agent execution."""

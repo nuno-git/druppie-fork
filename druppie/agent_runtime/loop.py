@@ -7,6 +7,7 @@ context limits, cancellation, retries, and event emission.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import random
 import traceback
@@ -14,6 +15,7 @@ from typing import Any, Awaitable, Callable
 
 logger = logging.getLogger(__name__)
 
+from druppie.agent_runtime.compaction import CompactionConfig, MessageCompactor
 from druppie.agent_runtime.definition import AgentDefinition
 from druppie.agent_runtime.events import EventEmitter
 from druppie.agent_runtime.tools.done import DoneTool
@@ -80,6 +82,8 @@ class AgentLoop:
         config: LoopConfig = LoopConfig(),
         cancellation_token: CancellationToken | None = None,
         tool_call_history: dict[str, int] | None = None,
+        compaction_config: CompactionConfig | None = None,
+        summary_llm: Callable | None = None,
     ) -> AgentResult:
         emitter = EventEmitter()
         for cb in event_callbacks:
@@ -102,6 +106,11 @@ class AgentLoop:
         truncation_retries = 0
         max_truncation_retries = 5
 
+        cc = compaction_config or CompactionConfig(
+            max_context_tokens=config.max_context_tokens,
+        )
+        compactor = MessageCompactor(config=cc, summary_llm=summary_llm)
+
         for turn in range(1, config.max_turns + 1):
             if cancellation_token and cancellation_token.is_cancelled:
                 return AgentResult(
@@ -115,7 +124,11 @@ class AgentLoop:
                 agent, tool_provider, done_tool, expanded_tools,
             )
 
-            context_overflow = self._estimate_tokens(messages) > config.max_context_tokens
+            messages = await compactor.compress(
+                messages, llm, agent, emitter,
+            )
+
+            context_overflow = compactor.estimate_tokens(messages) > config.max_context_tokens
             tools_for_call = all_tools
 
             if context_overflow:
@@ -149,6 +162,10 @@ class AgentLoop:
             choice = response.get("choices", [{}])[0]
             message = choice.get("message", {})
             usage = response.get("usage", {})
+
+            prompt_tokens = usage.get("prompt_tokens", 0)
+            if prompt_tokens:
+                compactor.calibrate(prompt_tokens, messages)
 
             emitter.emit(AgentEvent.now("llm_response", {
                 "response": response,
@@ -209,9 +226,8 @@ class AgentLoop:
                         )
 
                     messages.append({
-                        "role": "tool",
-                        "tool_call_id": "truncation-nudge",
-                        "content": _TRUNCATION_NUDGE_MSG,
+                        "role": "user",
+                        "content": f"[SYSTEM] {_TRUNCATION_NUDGE_MSG}",
                     })
 
                     emitter.emit(AgentEvent.now("turn_end", {
@@ -266,9 +282,8 @@ class AgentLoop:
                     )
 
                 messages.append({
-                    "role": "tool",
-                    "tool_call_id": "enforcement",
-                    "content": _ENFORCEMENT_ERROR_MSG,
+                    "role": "user",
+                    "content": "[SYSTEM] You must communicate through tool calls only. Call a tool now, or call done() if finished.",
                 })
 
                 emitter.emit(AgentEvent.now("turn_end", {
@@ -450,13 +465,6 @@ class AgentLoop:
 
         raise last_error
 
-    @staticmethod
-    def _estimate_tokens(messages: list[dict]) -> int:
-        total = 0
-        for msg in messages:
-            total += len(str(msg)) // 4
-        return total
-
     async def _execute_tool_call(
         self,
         tool_call: dict,
@@ -473,7 +481,6 @@ class AgentLoop:
         call_id = tool_call.get("id", "")
         arguments_str = function.get("arguments", "{}")
 
-        import json
         try:
             arguments = json.loads(arguments_str) if isinstance(arguments_str, str) else arguments_str
         except (json.JSONDecodeError, TypeError):
@@ -532,6 +539,8 @@ class AgentLoop:
             "_pending": is_pending,
         }))
 
+        result_content = MessageCompactor.truncate_tool_result(result_content)
+
         result_msg = {
             "role": "tool",
             "tool_call_id": call_id,
@@ -553,7 +562,6 @@ class AgentLoop:
             if func.get("name") != "done":
                 continue
 
-            import json
             args_str = func.get("arguments", "{}")
             try:
                 args = json.loads(args_str) if isinstance(args_str, str) else args_str
