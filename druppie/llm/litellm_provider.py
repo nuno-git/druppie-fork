@@ -355,7 +355,7 @@ class ChatLiteLLM(BaseLLM):
     def _build_kwargs(self, messages, tools, max_tokens_override=None):
         """Build common kwargs for LiteLLM completion calls."""
         effective_tools = tools or self._bound_tools
-        effective_max_tokens = min(max_tokens_override or self.max_tokens, 16384)
+        effective_max_tokens = min(max_tokens_override or self.max_tokens, 32768)
 
         token_param = "max_completion_tokens" if self._use_max_completion_tokens else "max_tokens"
         kwargs = {
