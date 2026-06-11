@@ -1,0 +1,23 @@
+## Tool Test: Data Access MCP - download_data workspace-escape guard
+## Pins the guard in tools.py that rejects destinations resolving outside
+## the session workspace. Runs ahead of any adapter call, so the test is
+## env-agnostic (source_id need not exist).
+
+tool-test:
+  name: data-access-download-data-path-traversal
+  description: "download_data refuses a destination that escapes the workspace"
+  tags: [data-access, mcp, error-handling, security]
+
+  chain:
+    - agent: router
+      tool: dataaccess:download_data
+      arguments:
+        source_id: "nonexistent-source"
+        data_id: "some.table"
+        destination: "../escape.csv"
+      assert:
+        result:
+          - json_parseable
+          - {matches: "\"success\"\\s*:\\s*false"}
+          - {contains: "Invalid destination path"}
+          - {contains: "escapes the workspace"}

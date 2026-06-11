@@ -1,0 +1,20 @@
+## Agent test: BA produces bilingual FD for Dutch-speaking user
+##
+## Verifies the end-to-end bilingual pipeline: agent writes FD in English,
+## platform translates to Dutch, both versions are present in the tool call.
+## The session message is in Dutch to trigger language detection → nl session.
+
+agent-test:
+  name: ba-bilingual-fd
+  description: "BA writes English FD, platform adds Dutch translation for Dutch session"
+  tags: [business_analyst, translation, bilingual, language]
+
+  message: "Ik wil een applicatie voor het registreren en opvolgen van klachten over waterkwaliteit van burgers"
+  agents: [router, planner, business_analyst]
+  hitl: cooperative-user
+
+  assert:
+    - check: ba-fd-in-english
+    - check: ba-fd-bilingual
+    - check: ba-fd-complete-structure
+    - check: ba-git-commit

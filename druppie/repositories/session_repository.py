@@ -159,6 +159,7 @@ class SessionRepository(BaseRepository):
         user_id: UUID | None = None,
         title: str = "New Session",
         project_id: UUID | None = None,
+        intent: str | None = None,
     ) -> SessionSummary:
         """Create a new session and return its summary."""
         session = SessionModel(
@@ -166,6 +167,7 @@ class SessionRepository(BaseRepository):
             title=title,
             project_id=project_id,
             status=SessionStatus.ACTIVE.value,
+            intent=intent,
         )
         self.db.add(session)
         self.db.flush()
@@ -575,6 +577,21 @@ class SessionRepository(BaseRepository):
             )
             if question:
                 question_id = question.id
+                arguments = dict(arguments)
+                if question.question:
+                    arguments["question"] = question.question
+                if question.choices:
+                    arguments["choices"] = [
+                        c["text"] if isinstance(c, dict) else c
+                        for c in question.choices
+                    ]
+                if question.question_english:
+                    arguments["question_english"] = question.question_english
+                if question.choices_english:
+                    arguments["choices_english"] = [
+                        c["text"] if isinstance(c, dict) else c
+                        for c in question.choices_english
+                    ]
 
         return ToolCallDetail(
             id=tc.id,
@@ -617,6 +634,8 @@ class SessionRepository(BaseRepository):
             name=project.name,
             description=project.description,
             repo_url=project.repo_url,
+            repo_name=project.repo_name,
+            repo_owner=project.repo_owner,
             username=username,
             repo_name=project.repo_name,
             created_at=project.created_at,

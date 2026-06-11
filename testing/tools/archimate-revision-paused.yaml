@@ -1,0 +1,465 @@
+## Seeded session: a COMPLETE ArchiMate plate + TD already exist, paused on
+## the architect's TD approval gate — ready to test the REVISION / feedback loop.
+##
+## Unlike archimate-e2e-paused-at-fd-approval (which builds the plate live with a
+## real LLM, ~7 min), this seed INJECTS a finished plate + TD deterministically so
+## you land straight on the TD approval with a plate to revise. Both files are
+## written with coding:make_design (the architect IS allowed it; it writes content
+## verbatim, only validating Mermaid — the .archimate XML has none).
+##
+## To test the revision loop:
+##   1. Run archimate-revision-paused from the evaluations page -> green.
+##   2. Log in as the session owner (admin). Go to /tasks.
+##   3. Open the pending approval for docs/technical-design.md on session
+##      "overlast-meldportaal" -> the embedded ArchiMate plate renders.
+##   4. REJECT with feedback, e.g. "Voeg een element 'Audit-log'
+##      (ApplicationComponent) toe en koppel het via Serving aan het
+##      Overlast-meldportaal." Then resume the session.
+##   5. Watch the architect apply ONLY that delta (add_to_view on the existing
+##      view, not a rebuild). Reopen the TD: the new element is present
+##      (highlighted), nothing you didn't ask for changed, tekenafspraken intact.
+##
+## Deterministic (no LLM up to the gate). Embed view id matches the injected
+## architecture.archimate: id-22c5ae408afc4068aa82d09d65c58df2.
+
+tool-test:
+  name: archimate-revision-paused
+  description: "Complete ArchiMate plate + TD injected, paused on the TD approval gate — for testing the revision/feedback loop"
+  tags: [archimate, revision, paused, manual-followup, tekenafspraken]
+  session_status: paused
+
+  chain:
+    - agent: router
+      tool: builtin:set_intent
+      arguments:
+        intent: create_project
+        project_name: overlast-meldportaal
+        description: "Burger-portaal voor het melden van overlast aan het waterschap; meldingen landen in het zaaksysteem (DSP) en het juiste behandelteam wordt genotificeerd."
+      assert:
+        result:
+          - not_empty
+
+    - agent: router
+      tool: builtin:done
+      arguments:
+        summary: "Agent router: Classified as create_project for overlast-meldportaal"
+
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: architect
+            prompt: "Produce the technical design with an ArchiMate plate"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: Planned architect to produce the technical design"
+
+    # --- Inject the finished ArchiMate model (architect IS allowed make_design;
+    #     it writes verbatim, Mermaid-validating only — the XML has none) ---
+    - agent: architect
+      tool: coding:make_design
+      approval:
+        status: approved
+      arguments:
+        path: docs/architecture.archimate
+        content: |
+          <?xml version='1.0' encoding='UTF-8'?>
+          <model xmlns="http://www.opengroup.org/xsd/archimate/3.0/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" identifier="id-9739e69f96004fa996b7d281dfeb51a5" xsi:schemaLocation="http://www.opengroup.org/xsd/archimate/3.0/ http://www.opengroup.org/xsd/archimate/3.1/archimate3_Diagram.xsd">
+            <name xml:lang="en">Project Architecture</name>
+            <propertyDefinitions>
+              <propertyDefinition identifier="propid-6343eae0" type="string">
+                <name>wilma-source</name>
+              </propertyDefinition>
+              <propertyDefinition identifier="propid-bd4fead3" type="string">
+                <name>stereotype</name>
+              </propertyDefinition>
+            </propertyDefinitions>
+            <elements>
+              <element identifier="id-e7779c171938138a86d29c590254be00" xsi:type="ApplicationComponent">
+                <name xml:lang="en">Zaakbeheercomponent</name>
+                <documentation xml:lang="en">Component voor het afhandelen van zaken van alle typen.</documentation>
+                <properties>
+                  <property propertyDefinitionRef="propid-6343eae0">
+                    <value xml:lang="en">true</value>
+                  </property>
+                </properties>
+              </element>
+              <element identifier="id-a3e9717e6059ca136296087f8cc1f339" xsi:type="ApplicationComponent">
+                <name xml:lang="en">Notificatierouteringcomponent</name>
+                <documentation xml:lang="en">Component voor ontvangen van notificaties van bronsystemen en het routeren daarvan naar geabonneerde afnemers.</documentation>
+                <properties>
+                  <property propertyDefinitionRef="propid-6343eae0">
+                    <value xml:lang="en">true</value>
+                  </property>
+                </properties>
+              </element>
+              <element identifier="id-96681c537c793f1270126059256c7402" xsi:type="ApplicationService">
+                <name xml:lang="en">PDOK - Publieke Dienstverlening op Kaart</name>
+                <documentation xml:lang="en">Publieke Dienstverlening Op de Kaart (PDOK) ontsluit digitale geo-informatie van de overheid. Dit ontsluiten gebeurt via een centrale voorziening: het PDOK Loket. De data is beschikbaar als data services of als downloadbare bestanden.</documentation>
+                <properties>
+                  <property propertyDefinitionRef="propid-6343eae0">
+                    <value xml:lang="en">true</value>
+                  </property>
+                </properties>
+              </element>
+              <element identifier="id-cbca84bac0214fbfa4bfb6a3a6d19543" xsi:type="BusinessActor">
+                <name xml:lang="en">Burger</name>
+                <documentation xml:lang="en">De melder van overlast. Heeft geen account; communiceert via meldingsnummer en e-maillink.</documentation>
+              </element>
+              <element identifier="id-1d1d14671ce4404cbe6f456027b7ac61" xsi:type="BusinessRole">
+                <name xml:lang="en">Behandelteam</name>
+                <documentation xml:lang="en">Het team dat de overlast-melding inhoudelijk behandelt. Authenticeert via waterschap-SSO (Keycloak). Ziet alleen zaken van het eigen zaaktype.</documentation>
+              </element>
+              <element identifier="id-74ebff51737147c6b4d8ca4e0ebaec15" xsi:type="BusinessRole">
+                <name xml:lang="en">Zaakcoördinator</name>
+                <documentation xml:lang="en">De zaakcoördinator die meldingen monitort, filtert en rapporteert. Authenticeert via waterschap-SSO (Keycloak). Heeft inzage in alle meldingen binnen het waterschap.</documentation>
+              </element>
+              <element identifier="id-912acaf271294e3fa965de8fb1144ad8" xsi:type="BusinessProcess">
+                <name xml:lang="en">Overlast melden</name>
+                <documentation xml:lang="en">Het proces van het indienen van een overlast-melding door een burger, inclusief locatie, type, beschrijving en optioneel foto en e-mailadres.</documentation>
+              </element>
+              <element identifier="id-47f55957db464b97a6aed7ed0490b173" xsi:type="BusinessProcess">
+                <name xml:lang="en">Meldingsstatus volgen</name>
+                <documentation xml:lang="en">Het proces van het volgen van de status van een ingediende overlast-melding via het meldingsnummer.</documentation>
+              </element>
+              <element identifier="id-c30979c81b64444a9f568a39df5a3c35" xsi:type="BusinessProcess">
+                <name xml:lang="en">Meldingen rapporteren</name>
+                <documentation xml:lang="en">Het proces van het monitoren, filteren en rapporteren van overlast-meldingen voor bestuursrapportage.</documentation>
+              </element>
+              <element identifier="id-704e4abd5b434af7b54c69e7393a864e" xsi:type="BusinessObject">
+                <name xml:lang="en">Overlastmelding</name>
+                <documentation xml:lang="en">Een overlast-melding zoals ingediend door een burger: locatie, type, beschrijving, optionele foto, optioneel e-mailadres en meldingsnummer.</documentation>
+              </element>
+              <element identifier="id-51c6b9e9b2704b32b921931efb686b61" xsi:type="ApplicationComponent">
+                <name xml:lang="en">Overlast-meldportaal</name>
+                <documentation xml:lang="en">Het Burger Overlast-meldportaal: een webapplicatie voor het indienen, volgen en rapporteren van overlast-meldingen. Gebouwd als Druppie-project met React frontend en FastAPI backend.</documentation>
+                <properties>
+                  <property propertyDefinitionRef="propid-bd4fead3">
+                    <value xml:lang="en">Applicatie</value>
+                  </property>
+                </properties>
+              </element>
+              <element identifier="id-c2f1972b46c643128810ec4d50794b95" xsi:type="ApplicationComponent">
+                <name xml:lang="en">module-dsp-zgw</name>
+                <documentation xml:lang="en">Druppie MCP-module voor koppeling met het zaaksysteem (DSP) via de ZGW API's. Biedt tools voor zaakregistratie, status-ophaling en document-koppeling.</documentation>
+                <properties>
+                  <property propertyDefinitionRef="propid-bd4fead3">
+                    <value xml:lang="en">Applicatie</value>
+                  </property>
+                </properties>
+              </element>
+              <element identifier="id-33b9639463b94a8eb3353553854cb2ae" xsi:type="ApplicationComponent">
+                <name xml:lang="en">module-notificatie</name>
+                <documentation xml:lang="en">Druppie MCP-module voor het versturen van notificaties (e-mail en push) via de Notificatieservice.</documentation>
+                <properties>
+                  <property propertyDefinitionRef="propid-bd4fead3">
+                    <value xml:lang="en">Applicatie</value>
+                  </property>
+                </properties>
+              </element>
+              <element identifier="id-f101727d982244c8b747cb638f58b486" xsi:type="ApplicationComponent">
+                <name xml:lang="en">module-pdok-geo</name>
+                <documentation xml:lang="en">Druppie MCP-module voor geolocatie-functionaliteit via PDOK (BAG/BGT). Biedt reverse/forward geocoding.</documentation>
+                <properties>
+                  <property propertyDefinitionRef="propid-bd4fead3">
+                    <value xml:lang="en">Applicatie</value>
+                  </property>
+                </properties>
+              </element>
+              <element identifier="id-55df85f438854f559a125e05792a0475" xsi:type="DataObject">
+                <name xml:lang="en">Meldportaal Data</name>
+                <documentation xml:lang="en">De data-objecten van het overlast-meldportaal: melding, statushistorie, zaaktype-mapping, team-routing, configuratie. Opgeslagen in Postgres.</documentation>
+              </element>
+              <element identifier="id-45c30976b62e4c67930e62b073c06c09" xsi:type="TechnologyService">
+                <name xml:lang="en">Object-opslag (S3)</name>
+                <documentation xml:lang="en">S3-compatibele objectopslag voor het opslaan van foto's bij overlast-meldingen.</documentation>
+              </element>
+              <element identifier="id-318ea20dc92f4e46be3cbc0d92e4ed75" xsi:type="SystemSoftware">
+                <name xml:lang="en">PostgreSQL</name>
+                <documentation xml:lang="en">PostgreSQL database voor het overlast-meldportaal. Bevat meldingen, statushistorie, configuratie en zaaktype-mapping.</documentation>
+              </element>
+              <element identifier="id-6acba7100f614f999f73104ee1708b5a" xsi:type="Grouping">
+                <name xml:lang="en">Beveiligingsdomein - niet-vertrouwd</name>
+                <documentation xml:lang="en">Het niet-vertrouwd domein: het publieke deel van het overlast-meldportaal dat bereikbaar is zonder authenticatie (burger-interface, status-pagina).</documentation>
+                <properties>
+                  <property propertyDefinitionRef="propid-bd4fead3">
+                    <value xml:lang="en">Beveiligingsdomein</value>
+                  </property>
+                </properties>
+              </element>
+              <element identifier="id-f86b8f8546484e71aeb07ce9c5d6c9a4" xsi:type="Grouping">
+                <name xml:lang="en">Beveiligingsdomein - vertrouwd</name>
+                <documentation xml:lang="en">Het vertrouwd domein: het interne deel van het overlast-meldportaal dat bereikbaar is alleen met waterschap-SSO authenticatie (dashboard, behandelteam-interface).</documentation>
+                <properties>
+                  <property propertyDefinitionRef="propid-bd4fead3">
+                    <value xml:lang="en">Beveiligingsdomein</value>
+                  </property>
+                </properties>
+              </element>
+              <element identifier="id-cad707283bd8430ebc19ceba99dbe018" xsi:type="DataObject">
+                <name xml:lang="en">Meldingsnummer</name>
+                <documentation xml:lang="en">Schaalbare, niet-guessable meldingsnummer ter identificatie van een melding door de burger.</documentation>
+              </element>
+            </elements>
+            <relationships>
+              <relationship identifier="id-829437efaca2466d9d7b89c3dd26556c" source="id-cbca84bac0214fbfa4bfb6a3a6d19543" target="id-912acaf271294e3fa965de8fb1144ad8" xsi:type="Assignment">
+                <name xml:lang="en">meldt overlast</name>
+              </relationship>
+              <relationship identifier="id-8a05c54c72d943a98afd4855c2b62610" source="id-cbca84bac0214fbfa4bfb6a3a6d19543" target="id-47f55957db464b97a6aed7ed0490b173" xsi:type="Assignment">
+                <name xml:lang="en">volgt status</name>
+              </relationship>
+              <relationship identifier="id-723ea6906dff47619286ca07cabf68a5" source="id-74ebff51737147c6b4d8ca4e0ebaec15" target="id-c30979c81b64444a9f568a39df5a3c35" xsi:type="Assignment">
+                <name xml:lang="en">rappporteert</name>
+              </relationship>
+              <relationship identifier="id-7b626c8ae5d446e59e02650a29d5ce95" source="id-51c6b9e9b2704b32b921931efb686b61" target="id-912acaf271294e3fa965de8fb1144ad8" xsi:type="Serving">
+                <name xml:lang="en">ondersteunt</name>
+              </relationship>
+              <relationship identifier="id-2fee246d8e2546e09070ac3a1a6c1261" source="id-51c6b9e9b2704b32b921931efb686b61" target="id-47f55957db464b97a6aed7ed0490b173" xsi:type="Serving">
+                <name xml:lang="en">ondersteunt</name>
+              </relationship>
+              <relationship identifier="id-38fab6615e4242abb80cde8a74c5105d" source="id-51c6b9e9b2704b32b921931efb686b61" target="id-c30979c81b64444a9f568a39df5a3c35" xsi:type="Serving">
+                <name xml:lang="en">ondersteunt</name>
+              </relationship>
+              <relationship identifier="id-a96ea33a1f314fe6a64a5115cd74f21e" source="id-c2f1972b46c643128810ec4d50794b95" target="id-51c6b9e9b2704b32b921931efb686b61" xsi:type="Serving">
+                <name xml:lang="en">zaakregistratie en status</name>
+              </relationship>
+              <relationship identifier="id-28da4ae1bb4b40ffa6066c01e8ea078c" source="id-33b9639463b94a8eb3353553854cb2ae" target="id-51c6b9e9b2704b32b921931efb686b61" xsi:type="Serving">
+                <name xml:lang="en">notificaties</name>
+              </relationship>
+              <relationship identifier="id-7e52165d1156403fb2ea3dcf8a669f43" source="id-f101727d982244c8b747cb638f58b486" target="id-51c6b9e9b2704b32b921931efb686b61" xsi:type="Serving">
+                <name xml:lang="en">adres-resolutie</name>
+              </relationship>
+              <relationship identifier="id-5ada052b8b7d439aa4caf49920ab8760" source="id-e7779c171938138a86d29c590254be00" target="id-c2f1972b46c643128810ec4d50794b95" xsi:type="Serving">
+                <name xml:lang="en">ZGW API</name>
+              </relationship>
+              <relationship identifier="id-ddd67acb69044fa3a5694964708ba949" source="id-a3e9717e6059ca136296087f8cc1f339" target="id-33b9639463b94a8eb3353553854cb2ae" xsi:type="Serving">
+                <name xml:lang="en">notificatie-routering</name>
+              </relationship>
+              <relationship identifier="id-76125b2ac6a44ac49f874664d1513184" source="id-96681c537c793f1270126059256c7402" target="id-f101727d982244c8b747cb638f58b486" xsi:type="Serving">
+                <name xml:lang="en">geo-informatie</name>
+              </relationship>
+              <relationship identifier="id-fed38820a637441eb04b4ee26f5bec26" source="id-51c6b9e9b2704b32b921931efb686b61" target="id-55df85f438854f559a125e05792a0475" xsi:type="Access" accessType="ReadWrite">
+                <name xml:lang="en">leest/schrijft meldingsdata</name>
+              </relationship>
+              <relationship identifier="id-ec17e080c1a741c3801bc2c2965070d1" source="id-318ea20dc92f4e46be3cbc0d92e4ed75" target="id-55df85f438854f559a125e05792a0475" xsi:type="Serving">
+                <name xml:lang="en">host data</name>
+              </relationship>
+              <relationship identifier="id-5acc8eef5e994093bc3bdaffc7fdc746" source="id-912acaf271294e3fa965de8fb1144ad8" target="id-704e4abd5b434af7b54c69e7393a864e" xsi:type="Access" accessType="Write">
+                <name xml:lang="en">produceert melding</name>
+              </relationship>
+              <relationship identifier="id-25872e59cbac4029b4b658858622b9da" source="id-1d1d14671ce4404cbe6f456027b7ac61" target="id-e7779c171938138a86d29c590254be00" xsi:type="Assignment">
+                <name xml:lang="en">behandelt zaken van</name>
+              </relationship>
+              <relationship identifier="id-6ae93492744643c8a6fc57710014c798" source="id-51c6b9e9b2704b32b921931efb686b61" target="id-1d1d14671ce4404cbe6f456027b7ac61" xsi:type="Serving">
+                <name xml:lang="en">ondersteunt via SSO</name>
+              </relationship>
+              <relationship identifier="id-048b0eb687b1445dbcf7dbc412a7e9f3" source="id-51c6b9e9b2704b32b921931efb686b61" target="id-74ebff51737147c6b4d8ca4e0ebaec15" xsi:type="Serving">
+                <name xml:lang="en">ondersteunt via SSO</name>
+              </relationship>
+              <relationship identifier="id-cfbf3526b3584d8293ddc79ce6c752af" source="id-45c30976b62e4c67930e62b073c06c09" target="id-51c6b9e9b2704b32b921931efb686b61" xsi:type="Serving">
+                <name xml:lang="en">foto-opslag</name>
+              </relationship>
+            </relationships>
+            <views>
+              <diagrams>
+                <view identifier="id-22c5ae408afc4068aa82d09d65c58df2" xsi:type="Diagram">
+                  <name xml:lang="en">Overlast-meldportaal - Application Cooperation</name>
+                  <documentation xml:lang="en">Application Cooperation view: toont de samenwerking tussen het Overlast-meldportaal en de externe services (DSP, Notificatieservice, PDOK) via Druppie-modules, inclusief technologische infrastructuur (Postgres, S3).</documentation>
+                  <node identifier="id-59c9b14b7f1c48d29fa19518f90fd033" elementRef="id-96681c537c793f1270126059256c7402" xsi:type="Element" x="1514" y="455" w="304" h="55"></node>
+                  <node identifier="id-41f0ea5ecc624e158d281596f9bb3abe" elementRef="id-6acba7100f614f999f73104ee1708b5a" xsi:type="Element" x="1481" y="310" w="269" h="55"></node>
+                  <node identifier="id-33e8578b2f264334863eaf17df633f5b" elementRef="id-f86b8f8546484e71aeb07ce9c5d6c9a4" xsi:type="Element" x="1187" y="310" w="234" h="55"></node>
+                  <node identifier="id-56b58bdd9572416594195e0bd95f2fea" elementRef="id-a3e9717e6059ca136296087f8cc1f339" xsi:type="Element" x="1227" y="455" w="227" h="55"></node>
+                  <node identifier="id-9d37ea3bc30b4d1abe2cbd4d500f542f" elementRef="id-47f55957db464b97a6aed7ed0490b173" xsi:type="Element" x="421" y="165" w="171" h="55"></node>
+                  <node identifier="id-878dfca692354778959d63702ce33632" elementRef="id-c30979c81b64444a9f568a39df5a3c35" xsi:type="Element" x="852" y="165" w="171" h="55"></node>
+                  <node identifier="id-a4e968c086a24efe94ff3019394b2e7a" elementRef="id-51c6b9e9b2704b32b921931efb686b61" xsi:type="Element" x="910" y="745" w="164" h="55"></node>
+                  <node identifier="id-f81eb21cdce344709d8218a89a523d2d" elementRef="id-e7779c171938138a86d29c590254be00" xsi:type="Element" x="1010" y="455" w="157" h="55"></node>
+                  <node identifier="id-01439d89a3474a4681d23570e9bfea1a" elementRef="id-33b9639463b94a8eb3353553854cb2ae" xsi:type="Element" x="1265" y="600" w="150" h="55"></node>
+                  <node identifier="id-d1ce338f5e88456dbe24990033583b37" elementRef="id-45c30976b62e4c67930e62b073c06c09" xsi:type="Element" x="815" y="1035" w="150" h="55"></node>
+                  <node identifier="id-1fd862bbd5014d1f963737d9658aa977" elementRef="id-cbca84bac0214fbfa4bfb6a3a6d19543" xsi:type="Element" x="220" y="165" w="140" h="55"></node>
+                  <node identifier="id-dc8fe44b60b9452f8619ab2106cd290d" elementRef="id-c2f1972b46c643128810ec4d50794b95" xsi:type="Element" x="1018" y="600" w="140" h="55"></node>
+                  <node identifier="id-063cf90c4efc4190bfcbcb4ea1458004" elementRef="id-f101727d982244c8b747cb638f58b486" xsi:type="Element" x="1596" y="600" w="140" h="55"></node>
+                  <node identifier="id-a385266d2ff94cda948e36d8ea226f89" elementRef="id-55df85f438854f559a125e05792a0475" xsi:type="Element" x="1025" y="890" w="140" h="55"></node>
+                  <node identifier="id-56bd3f18482a4c2bb98b3bbb49c16917" elementRef="id-318ea20dc92f4e46be3cbc0d92e4ed75" xsi:type="Element" x="1025" y="1035" w="140" h="55"></node>
+                  <node identifier="id-a7f02f2f3dc444bcbc93e2d135bd5830" elementRef="id-1d1d14671ce4404cbe6f456027b7ac61" xsi:type="Element" x="1398" y="165" w="140" h="55"></node>
+                  <node identifier="id-0e16948069ec4cf6bc22a35a2dc5e25d" elementRef="id-74ebff51737147c6b4d8ca4e0ebaec15" xsi:type="Element" x="20" y="165" w="140" h="55"></node>
+                  <node identifier="id-6c4a3320520b4cc8b45163a3552c67e2" elementRef="id-912acaf271294e3fa965de8fb1144ad8" xsi:type="Element" x="486" y="20" w="140" h="55"></node>
+                  <node identifier="id-e4a915173c324ed4866e2f834115c2eb" elementRef="id-704e4abd5b434af7b54c69e7393a864e" xsi:type="Element" x="652" y="165" w="140" h="55"></node>
+                  <connection identifier="id-f460882b5f924418804771184ef69d5d" relationshipRef="id-7b626c8ae5d446e59e02650a29d5ce95" xsi:type="Relationship" source="id-a4e968c086a24efe94ff3019394b2e7a" target="id-6c4a3320520b4cc8b45163a3552c67e2">
+                    <bendpoint x="947" y="745"></bendpoint>
+                    <bendpoint x="947" y="685"></bendpoint>
+                    <bendpoint x="390" y="685"></bendpoint>
+                    <bendpoint x="390" y="85"></bendpoint>
+                    <bendpoint x="533" y="85"></bendpoint>
+                    <bendpoint x="533" y="75"></bendpoint>
+                  </connection>
+                  <connection identifier="id-6e934ca8e482479fb9f4e48682aa7a6f" relationshipRef="id-2fee246d8e2546e09070ac3a1a6c1261" xsi:type="Relationship" source="id-a4e968c086a24efe94ff3019394b2e7a" target="id-9d37ea3bc30b4d1abe2cbd4d500f542f">
+                    <bendpoint x="965" y="745"></bendpoint>
+                    <bendpoint x="965" y="675"></bendpoint>
+                    <bendpoint x="507" y="675"></bendpoint>
+                    <bendpoint x="507" y="220"></bendpoint>
+                  </connection>
+                  <connection identifier="id-62927e77a2f9480c8ead7eaaa8f88198" relationshipRef="id-38fab6615e4242abb80cde8a74c5105d" xsi:type="Relationship" source="id-a4e968c086a24efe94ff3019394b2e7a" target="id-878dfca692354778959d63702ce33632">
+                    <bendpoint x="983" y="745"></bendpoint>
+                    <bendpoint x="983" y="665"></bendpoint>
+                    <bendpoint x="938" y="665"></bendpoint>
+                    <bendpoint x="938" y="220"></bendpoint>
+                  </connection>
+                  <connection identifier="id-25a08ccc3ded488bba615ef990fa71b3" relationshipRef="id-a96ea33a1f314fe6a64a5115cd74f21e" xsi:type="Relationship" source="id-dc8fe44b60b9452f8619ab2106cd290d" target="id-a4e968c086a24efe94ff3019394b2e7a">
+                    <bendpoint x="1088" y="655"></bendpoint>
+                    <bendpoint x="1088" y="665"></bendpoint>
+                    <bendpoint x="1001" y="665"></bendpoint>
+                    <bendpoint x="1001" y="745"></bendpoint>
+                  </connection>
+                  <connection identifier="id-cdc3fe07365041d79f1e509448444ede" relationshipRef="id-28da4ae1bb4b40ffa6066c01e8ea078c" xsi:type="Relationship" source="id-01439d89a3474a4681d23570e9bfea1a" target="id-a4e968c086a24efe94ff3019394b2e7a">
+                    <bendpoint x="1340" y="655"></bendpoint>
+                    <bendpoint x="1340" y="675"></bendpoint>
+                    <bendpoint x="1020" y="675"></bendpoint>
+                    <bendpoint x="1020" y="745"></bendpoint>
+                  </connection>
+                  <connection identifier="id-074afc60b3c348578a8357ef05ded1ba" relationshipRef="id-7e52165d1156403fb2ea3dcf8a669f43" xsi:type="Relationship" source="id-063cf90c4efc4190bfcbcb4ea1458004" target="id-a4e968c086a24efe94ff3019394b2e7a">
+                    <bendpoint x="1666" y="655"></bendpoint>
+                    <bendpoint x="1666" y="685"></bendpoint>
+                    <bendpoint x="1038" y="685"></bendpoint>
+                    <bendpoint x="1038" y="745"></bendpoint>
+                  </connection>
+                  <connection identifier="id-fed3e9fc7fd74a76b62057e88b4954d4" relationshipRef="id-5ada052b8b7d439aa4caf49920ab8760" xsi:type="Relationship" source="id-f81eb21cdce344709d8218a89a523d2d" target="id-dc8fe44b60b9452f8619ab2106cd290d">
+                    <bendpoint x="1088" y="510"></bendpoint>
+                    <bendpoint x="1088" y="600"></bendpoint>
+                  </connection>
+                  <connection identifier="id-54443f3396884fbbadde6949cf7770d3" relationshipRef="id-ddd67acb69044fa3a5694964708ba949" xsi:type="Relationship" source="id-56b58bdd9572416594195e0bd95f2fea" target="id-01439d89a3474a4681d23570e9bfea1a">
+                    <bendpoint x="1340" y="510"></bendpoint>
+                    <bendpoint x="1340" y="600"></bendpoint>
+                  </connection>
+                  <connection identifier="id-a5b583d7bb724e1594c650816212be86" relationshipRef="id-76125b2ac6a44ac49f874664d1513184" xsi:type="Relationship" source="id-59c9b14b7f1c48d29fa19518f90fd033" target="id-063cf90c4efc4190bfcbcb4ea1458004">
+                    <bendpoint x="1666" y="510"></bendpoint>
+                    <bendpoint x="1666" y="600"></bendpoint>
+                  </connection>
+                  <connection identifier="id-a711d017831c4103a393e0912b22bce0" relationshipRef="id-fed38820a637441eb04b4ee26f5bec26" xsi:type="Relationship" source="id-a4e968c086a24efe94ff3019394b2e7a" target="id-a385266d2ff94cda948e36d8ea226f89">
+                    <bendpoint x="1020" y="800"></bendpoint>
+                    <bendpoint x="1020" y="810"></bendpoint>
+                    <bendpoint x="1095" y="810"></bendpoint>
+                    <bendpoint x="1095" y="890"></bendpoint>
+                  </connection>
+                  <connection identifier="id-600c3c483faf4924b9ab47c789d338ab" relationshipRef="id-ec17e080c1a741c3801bc2c2965070d1" xsi:type="Relationship" source="id-56bd3f18482a4c2bb98b3bbb49c16917" target="id-a385266d2ff94cda948e36d8ea226f89">
+                    <bendpoint x="1095" y="1035"></bendpoint>
+                    <bendpoint x="1095" y="945"></bendpoint>
+                  </connection>
+                  <connection identifier="id-86edd547088a4d749aa540c06cbfcac3" relationshipRef="id-5acc8eef5e994093bc3bdaffc7fdc746" xsi:type="Relationship" source="id-6c4a3320520b4cc8b45163a3552c67e2" target="id-e4a915173c324ed4866e2f834115c2eb">
+                    <bendpoint x="579" y="75"></bendpoint>
+                    <bendpoint x="579" y="85"></bendpoint>
+                    <bendpoint x="722" y="85"></bendpoint>
+                    <bendpoint x="722" y="165"></bendpoint>
+                  </connection>
+                  <connection identifier="id-207b050eed8f460d99d5dad5cc9a96fd" relationshipRef="id-6ae93492744643c8a6fc57710014c798" xsi:type="Relationship" source="id-a4e968c086a24efe94ff3019394b2e7a" target="id-a7f02f2f3dc444bcbc93e2d135bd5830">
+                    <bendpoint x="1056" y="745"></bendpoint>
+                    <bendpoint x="1056" y="695"></bendpoint>
+                    <bendpoint x="1848" y="695"></bendpoint>
+                    <bendpoint x="1848" y="230"></bendpoint>
+                    <bendpoint x="1491" y="230"></bendpoint>
+                    <bendpoint x="1491" y="220"></bendpoint>
+                  </connection>
+                  <connection identifier="id-9bf04b9ce4aa4a4faea9677ab0cac311" relationshipRef="id-048b0eb687b1445dbcf7dbc412a7e9f3" xsi:type="Relationship" source="id-a4e968c086a24efe94ff3019394b2e7a" target="id-0e16948069ec4cf6bc22a35a2dc5e25d">
+                    <bendpoint x="928" y="745"></bendpoint>
+                    <bendpoint x="928" y="695"></bendpoint>
+                    <bendpoint x="90" y="695"></bendpoint>
+                    <bendpoint x="90" y="220"></bendpoint>
+                  </connection>
+                  <connection identifier="id-562c2c274e7543f2b00758d33cbdaeb7" relationshipRef="id-25872e59cbac4029b4b658858622b9da" xsi:type="Relationship" source="id-a7f02f2f3dc444bcbc93e2d135bd5830" target="id-f81eb21cdce344709d8218a89a523d2d">
+                    <bendpoint x="1445" y="220"></bendpoint>
+                    <bendpoint x="1445" y="230"></bendpoint>
+                    <bendpoint x="1088" y="230"></bendpoint>
+                    <bendpoint x="1088" y="455"></bendpoint>
+                  </connection>
+                  <connection identifier="id-b285be44b9ef4269b870a20b03c77cf2" relationshipRef="id-cfbf3526b3584d8293ddc79ce6c752af" xsi:type="Relationship" source="id-d1ce338f5e88456dbe24990033583b37" target="id-a4e968c086a24efe94ff3019394b2e7a">
+                    <bendpoint x="890" y="1035"></bendpoint>
+                    <bendpoint x="890" y="810"></bendpoint>
+                    <bendpoint x="965" y="810"></bendpoint>
+                    <bendpoint x="965" y="800"></bendpoint>
+                  </connection>
+                </view>
+              </diagrams>
+            </views>
+          </model>
+
+    # --- Architect writes the TD referencing the plate — approval gate PENDING ---
+    - agent: architect
+      tool: coding:make_design
+      approval:
+        status: pending
+      arguments:
+        path: docs/technical-design.md
+        content: |
+          # Technical Design — Burger Overlast-meldportaal
+
+          > Platform standards: conforms to [docs/platform-technical-standards.md](./platform-technical-standards.md) rev 2026-04-20.
+
+          > **Disclaimer:** Dit document is gegenereerd met behulp van AI. Controleer de inhoud zorgvuldig voor gebruik. / This document was generated with the help of AI. Please review the content carefully before use.
+
+          ## Introduction
+
+          ### Subject
+
+          Burger Overlast-meldportaal: een digitaal portaal waarmee burgers overlast melden (locatie op kaart, type, beschrijving, optionele foto). Elke melding wordt automatisch een zaak in het zaaksysteem (DSP) via de ZGW-API, het verantwoordelijke behandelteam wordt genotificeerd, de burger volgt de status via een meldingsnummer, en een zaakcoordinator rapporteert via een dashboard.
+
+          ### Problem Summary
+
+          Meldingen komen nu versnipperd binnen (telefoon, e-mail, social media), raken zoek of komen vertraagd bij het juiste team. Burgers krijgen geen statusterugkoppeling en het waterschap kan niet rapporteren op trends.
+
+          ## Solution
+
+          ### Applied Principles (per NORA layer)
+
+          - **Organization:** elke melding wordt een zaak in het bestaande DSP (zaakgericht werken, P8). Zaaktype-mapping en team-routing zijn beheer-geconfigureerd.
+          - **Information:** PDOK is de authentieke bron voor adresgegevens (P13); het DSP is de authentieke bron voor zaakstatus.
+          - **Application:** een project-applicatie (React + FastAPI) consumeert drie Druppie-modules (DSP/ZGW, notificatie, PDOK-geo). Foto-opslag via S3 (project-specifiek).
+          - **Security & Privacy:** burger zonder account (niet-guessable meldingsnummer); behandelteam/coordinator via Keycloak-SSO; PII gepseudonimiseerd; fail-stop bij DSP-fout.
+
+          ### Requirements
+
+          | ID | Source | Requirement | Verification |
+          |----|--------|-------------|--------------|
+          | FR-01 | BA | Burger dient melding in met locatie, type, beschrijving, optionele foto. | Functional test |
+          | FR-04 | BA | Elke melding wordt automatisch als zaak in het DSP geregistreerd. | Integration test |
+          | FR-05 | BA | Behandelteam ontvangt binnen 60s een notificatie. | Integration test |
+          | FR-06 | BA | Statusupdates uit het DSP zijn binnen 60s zichtbaar voor de burger. | Integration test |
+          | NFR-01 | BA | 95% van indien-acties verwerkt binnen 2 seconden. | Performance test |
+          | TR-02 | AR | Duplicaatdetectie binnen 500m + 4h + zelfde type via spatial index. | Unit test |
+          | TR-03 | AR | E-mail gepseudonimiseerd (SHA-256) 7 dagen na zaaksluiting. | Integration test |
+
+          ### Architectural Solution
+
+          De project-applicatie bevat de domeinlogica (duplicaatdetectie, zaaktype-mapping, team-routing, pseudonimisering, foto-herschaling) en orkestreert de drie modules. Achtergrond-taken: DSP-status-poller (60s) en pseudonimiserings-taak (dagelijks).
+
+          #### Visualization — Application Cooperation
+
+          ```archimate
+          view-id: id-22c5ae408afc4068aa82d09d65c58df2
+          file: docs/architecture.archimate
+          ```
+
+          **Legenda:** business (geel) — Burger, Behandelteam, Zaakcoordinator + bedrijfsprocessen; application (blauw) — Overlast-meldportaal + de drie modules + WILMA-referenties (Zaakbeheercomponent, Notificatierouteringcomponent, PDOK); technology (groen) — PostgreSQL, Object-opslag S3. Twee beveiligingsdomeinen (niet-vertrouwd / vertrouwd).
+
+          ### Integration Points
+
+          | Extern systeem | Categorie | Beslissing | Module |
+          |----------------|-----------|------------|--------|
+          | Zaaksysteem (DSP) | organizational | NEW | module-dsp-zgw |
+          | Notificatieservice | organizational | NEW | module-notificatie |
+          | PDOK BAG/BGT | other | NEW | module-pdok-geo |
+          | Object-opslag (S3) | other | PROJECT-SPECIFIC | n.v.t. |
+          | Waterschap-SSO (Keycloak) | organizational | REUSE | platform auth |
+
+          ### Security & Compliance
+
+          | Aspect | Maatregel |
+          |--------|-----------|
+          | Data Protection | Fail-stop bij DSP-fout — melding niet geregistreerd als DSP onbeschikbaar is. |
+          | PII handling | E-mail na 7 dagen zaaksluiting vervangen door SHA-256 hash. Locatie is PII-geclassificeerd. |
+          | Access Control | Burger: geen auth (niet-guessable meldingsnummer); team/coordinator: SSO + rol-filter. |
+          | Compliance | AVG (taak algemeen belang, art. 6(1)(e)); BIO-baseline voor publieke webapps. |
+
+
+  verify:
+    - gitea_repo_exists: true

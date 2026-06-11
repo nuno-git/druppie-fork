@@ -1,0 +1,24 @@
+## Tool Test: Data Access MCP - execute_query against Azure SQL (live)
+## Verifies execute_query runs a SELECT against the configured Azure SQL
+## source and returns row data.
+## Requires DATA_SOURCE_N=azure-sql:synapsedwh:<connection-string> and a
+## table reachable from the configured principal.
+
+tool-test:
+  name: data-access-sql-execute-query
+  description: "execute_query runs a SELECT and returns rows from Azure SQL"
+  tags: [data-access, mcp, azure-sql, live]
+
+  chain:
+    - agent: router
+      tool: dataaccess:execute_query
+      arguments:
+        source_id: "synapsedwh"
+        query: "SELECT TOP 3 user_id, first_name FROM dbo.fake_users_cetas ORDER BY user_id"
+      assert:
+        result:
+          - json_parseable
+          - {matches: "\"success\"\\s*:\\s*true"}
+          - {contains: "data"}
+          - {contains: "row_count"}
+          - {contains: "first_name"}

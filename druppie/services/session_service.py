@@ -56,7 +56,7 @@ class SessionService:
         if not session:
             raise NotFoundError("session", str(session_id))
 
-        is_owner = session.user_id == user_id
+        is_owner = session.user_id is not None and session.user_id == user_id
         is_admin = "admin" in user_roles
         is_expert = (
             not is_owner
@@ -112,7 +112,7 @@ class SessionService:
         if not session:
             raise NotFoundError("session", str(session_id))
 
-        is_owner = session.user_id == user_id
+        is_owner = session.user_id is not None and session.user_id == user_id
         is_admin = "admin" in user_roles
 
         if not is_owner and not is_admin:

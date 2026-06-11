@@ -6,7 +6,7 @@
  * a contact popup to find users who can approve.
  */
 
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useContext } from 'react'
 import { Link } from 'react-router-dom'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -30,7 +30,9 @@ import {
   Clock,
 } from 'lucide-react'
 import { getUsersByRole } from '../../services/api'
-import { chatMarkdownComponents, SourceFileContext } from './ChatHelpers'
+import { chatMarkdownComponents, SourceFileContext, ProjectRepoContext } from './ChatHelpers'
+import DownloadMenu from './DownloadMenu'
+import { downloadAsMarkdown, downloadContentAsPdf } from '../../utils/downloadDesign'
 
 // Helper to check if a file path is a markdown file
 const isMarkdownFile = (path) => {
@@ -42,6 +44,7 @@ const isMarkdownFile = (path) => {
 const FilePreviewModal = ({ files, onClose }) => {
   // files: [{ path, content }]
   const [rawOverrides, setRawOverrides] = useState({})
+  const [pdfLoading, setPdfLoading] = useState({})
 
   const toggleRaw = (path) => {
     setRawOverrides((prev) => ({ ...prev, [path]: !prev[path] }))
@@ -107,21 +110,36 @@ const FilePreviewModal = ({ files, onClose }) => {
                         {isRaw(path) ? 'Preview' : 'Raw'}
                       </button>
                     )}
+                    <DownloadMenu
+                      variant="dark"
+                      loading={!!pdfLoading[path]}
+                      onDownloadMd={() => downloadAsMarkdown(content, path)}
+                      onDownloadPdf={async () => {
+                        setPdfLoading((prev) => ({ ...prev, [path]: true }))
+                        try {
+                          await downloadContentAsPdf(content, path, repo)
+                        } finally {
+                          setPdfLoading((prev) => ({ ...prev, [path]: false }))
+                        }
+                      }}
+                    />
                     <span className="text-xs text-gray-500">{content?.split('\n').length || 0} lines</span>
                   </div>
                 </div>
                 {/* Content */}
-                {isMarkdownFile(path) && !isRaw(path) ? (
-                  <div className="p-6 markdown-content text-sm bg-white text-gray-900 rounded-b-lg">
-                    <SourceFileContext.Provider value={path}>
-                      <ReactMarkdown remarkPlugins={[remarkGfm]} components={chatMarkdownComponents}>{content}</ReactMarkdown>
-                    </SourceFileContext.Provider>
-                  </div>
-                ) : (
-                  <pre className="p-4 text-sm text-gray-100 whitespace-pre-wrap font-mono leading-relaxed">
-                    {content}
-                  </pre>
-                )}
+                <div>
+                  {isMarkdownFile(path) && !isRaw(path) ? (
+                    <div className="p-6 markdown-content text-sm bg-white text-gray-900 rounded-b-lg">
+                      <SourceFileContext.Provider value={path}>
+                        <ReactMarkdown remarkPlugins={[remarkGfm]} components={chatMarkdownComponents}>{content}</ReactMarkdown>
+                      </SourceFileContext.Provider>
+                    </div>
+                  ) : (
+                    <pre className="p-4 text-sm text-gray-100 whitespace-pre-wrap font-mono leading-relaxed">
+                      {content}
+                    </pre>
+                  )}
+                </div>
               </div>
             ))}
           </div>
@@ -192,9 +210,11 @@ const getToolInfo = (toolName) => {
 }
 
 const ApprovalCard = ({ approval, onApprove, onReject, isProcessing, currentUserId, sessionId, userRoles = [], chatInline = false, resolved = false }) => {
+  const repo = useContext(ProjectRepoContext)
   const [showRejectInput, setShowRejectInput] = useState(false)
   const [rejectReason, setRejectReason] = useState('')
   const [showNewContent, setShowNewContent] = useState(false)
+  const [cardPdfLoading, setCardPdfLoading] = useState(false)
   // Contact modal state
   const [showContactModal, setShowContactModal] = useState(false)
   const [contactUsers, setContactUsers] = useState([])
@@ -388,14 +408,26 @@ const ApprovalCard = ({ approval, onApprove, onReject, isProcessing, currentUser
           {/* Content preview for write_file operations */}
           {hasContentToShow && !isBatchWrite && (
             <div className="mb-3">
-              <button
-                onClick={() => setShowNewContent(true)}
-                className="flex items-center gap-2 text-sm text-blue-600 hover:text-blue-800 transition-colors font-medium"
-              >
-                <FilePlus className="w-4 h-4" />
-                <span>View file to be written: {filePath}</span>
-                <ExternalLink className="w-3.5 h-3.5" />
-              </button>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => setShowNewContent(true)}
+                  className="flex items-center gap-2 text-sm text-blue-600 hover:text-blue-800 transition-colors font-medium"
+                >
+                  <FilePlus className="w-4 h-4" />
+                  <span>View file to be written: {filePath}</span>
+                  <ExternalLink className="w-3.5 h-3.5" />
+                </button>
+                <DownloadMenu
+                  variant="light"
+                  loading={cardPdfLoading}
+                  onDownloadMd={() => downloadAsMarkdown(newContent, filePath)}
+                  onDownloadPdf={async () => {
+                    setCardPdfLoading(true)
+                    try { await downloadContentAsPdf(newContent, filePath, repo) }
+                    finally { setCardPdfLoading(false) }
+                  }}
+                />
+              </div>
 
               {showNewContent && (
                 <FilePreviewModal

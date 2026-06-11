@@ -235,6 +235,10 @@ export const getProjectFiles = (projectId, path = '', branch = 'main') =>
   request(`/api/projects/${projectId}/files?path=${encodeURIComponent(path)}&branch=${branch}`)
 export const getProjectFile = (projectId, path, branch = 'main') =>
   request(`/api/projects/${projectId}/file?path=${encodeURIComponent(path)}&branch=${branch}`)
+export const getProjectFileFromWorkspace = (projectId, sessionId, path) =>
+  request(`/api/projects/${projectId}/file/workspace?session_id=${sessionId}&path=${encodeURIComponent(path)}`)
+export const getProjectFileChanges = (projectId, path, branch = 'main') =>
+  request(`/api/projects/${projectId}/file/changes?path=${encodeURIComponent(path)}&branch=${branch}`)
 
 // ============ Deployments ============
 export const getDeployments = (projectId = null, allContainers = false) => {
@@ -270,19 +274,6 @@ export const getAgent = (agentId) => request(`/api/agents/${agentId}`)
 export const getHealth = () => request('/health')
 export const getStatus = () => request('/api/status')
 
-// ============ Admin Database Browser ============
-export const getAdminStats = () => request('/api/admin/stats')
-export const getAdminTables = () => request('/api/admin/tables')
-export const getAdminTableData = (tableName, page = 1, limit = 50, options = {}) => {
-  const params = new URLSearchParams({ page, limit })
-  if (options.orderBy) params.append('order_by', options.orderBy)
-  if (options.orderDir) params.append('order_dir', options.orderDir)
-  if (options.filterField) params.append('filter_field', options.filterField)
-  if (options.filterValue) params.append('filter_value', options.filterValue)
-  return request(`/api/admin/table/${tableName}?${params.toString()}`)
-}
-export const getAdminRecord = (tableName, recordId) =>
-  request(`/api/admin/table/${tableName}/${recordId}`)
 
 // ============ Evaluations (Admin) ============
 export const getBenchmarkRuns = (page = 1, limit = 20, runType = null) => {
@@ -329,15 +320,6 @@ export const runUnitTests = () =>
 export const getAvailableTests = () =>
   request('/api/evaluations/available-tests')
 
-export const getAvailableSetups = () =>
-  request('/api/evaluations/available-setups')
-
-export const seedSessions = (sessionNames, user = 'admin') =>
-  request('/api/evaluations/seed', {
-    method: 'POST',
-    body: JSON.stringify({ session_names: sessionNames, user }),
-  })
-
 export const getTestRuns = (page = 1, limit = 20, tag = null) => {
   const params = new URLSearchParams({ page, limit })
   if (tag) params.append('tag', tag)
@@ -353,6 +335,15 @@ export const getTags = () =>
 export const deleteTestUsers = () =>
   request('/api/evaluations/test-users', { method: 'DELETE' })
 
+export const deleteTestBatch = (batchId) =>
+  request(`/api/evaluations/test-batches/${encodeURIComponent(batchId)}`, { method: 'DELETE' })
+
+export const deleteAllTestBatches = () =>
+  request('/api/evaluations/test-batches', { method: 'DELETE' })
+
+export const deleteTestRun = (testRunId) =>
+  request(`/api/evaluations/test-runs/${encodeURIComponent(testRunId)}`, { method: 'DELETE' })
+
 export const runTests = (options = {}) =>
   request('/api/evaluations/run-tests', {
     method: 'POST',
@@ -361,6 +352,9 @@ export const runTests = (options = {}) =>
 
 export const getRunStatus = (runId) =>
   request(`/api/evaluations/run-status/${runId}`)
+
+export const cancelTestRun = (runId) =>
+  request(`/api/evaluations/cancel-run/${runId}`, { method: 'POST' })
 
 export const getTestBatches = (page = 1, limit = 10, tag = null) => {
   const params = new URLSearchParams({ page, limit })
@@ -426,6 +420,34 @@ export const executeAgentTest = (params) =>
   request('/api/agent-test/execute', { method: 'POST', body: JSON.stringify(params) })
 export const getAgentTestRun = (runId) =>
   request(`/api/agent-test/runs/${runId}`)
+
+// ============ Documentation ============
+export const getDocumentation = () => request("/api/documentation")
+
+// ============ Jobs (Scheduled / Cron) ============
+export const getJobs = () => request('/api/jobs')
+export const triggerJob = (jobDefinitionId) =>
+  request(`/api/jobs/${jobDefinitionId}/trigger`, { method: 'POST' })
+export const getJobRuns = (jobDefinitionId = null, status = null, page = 1, limit = 20) => {
+  const params = new URLSearchParams({ page, limit })
+  if (status) params.append('status', status)
+  const qs = params.toString()
+  if (jobDefinitionId) {
+    return request(`/api/jobs/${jobDefinitionId}/runs?${qs}`)
+  }
+  return request(`/api/jobs/runs?${qs}`)
+}
+
+// Job-level approval endpoints
+export const getPendingJobApprovals = () => request('/api/jobs/pending-approvals')
+export const approveJob = (jobRunId) =>
+  request(`/api/jobs/${jobRunId}/approve`, { method: 'POST' })
+export const rejectJob = (jobRunId, reason = '') =>
+  request(`/api/jobs/${jobRunId}/reject`, {
+    method: 'POST',
+    body: JSON.stringify({ reason }),
+    headers: { 'Content-Type': 'application/json' },
+  })
 
 // ============ Cache ============
 export const getCachedPackages = () => request('/api/cache/packages')

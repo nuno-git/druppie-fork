@@ -74,6 +74,7 @@ async def _resume_workflow_after_answer(
     session_id: UUID,
     question_id: UUID,
     answer: str,
+    selected_choices: list[int] | None = None,
 ) -> None:
     """Resume workflow in background using run_session_task for DB lifecycle."""
 
@@ -82,6 +83,7 @@ async def _resume_workflow_after_answer(
             session_id=session_id,
             question_id=question_id,
             answer=answer,
+            selected_choices=selected_choices,
         )
 
     await run_session_task(session_id, task, "resume_after_answer")
@@ -167,6 +169,7 @@ async def answer_question(
                 session_id=question.session_id,
                 question_id=question_id,
                 answer=request.answer,
+                selected_choices=request.selected_choices,
             ),
             name=f"resume-answer-{question_id}",
         )

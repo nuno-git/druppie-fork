@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import httpx
 import structlog
 
-from druppie.api.routes import agent_test, agents, approvals, cache, chat, deployments, evaluations, mcp_bridge, mcps, modules, projects, questions, sessions, tool_output, workspace
+from druppie.api.routes import agent_test, agents, approvals, cache, chat, deployments, documentation, evaluations, jobs, mcp_bridge, mcps, modules, projects, questions, sandbox, sessions, tool_output, workspace
 from druppie.api.errors import register_exception_handlers
 from druppie.core.auth import get_auth_service
 from druppie.core.config import get_settings
@@ -51,6 +51,49 @@ def _recover_zombie_sessions() -> None:
             logger.info("no_zombie_sessions_found")
     except Exception as e:
         logger.error("zombie_recovery_failed", error=str(e), exc_info=True)
+        db.rollback()
+    finally:
+        db.close()
+
+
+def _recover_stuck_job_runs() -> None:
+    """Mark job runs that have been RUNNING for too long as FAILED.
+
+    If the server crashed or the job background task was killed,
+    RUNNING job runs stay stuck forever with no heartbeat. On startup
+    we know no background task is alive, so anyRUNNING run is orphaned.
+    """
+    from datetime import timedelta
+    from druppie.db.database import SessionLocal
+    from druppie.repositories import JobRepository
+    from druppie.domain.common import JobRunStatus
+    from druppie.db.models.base import utcnow
+
+    db = SessionLocal()
+    try:
+        job_repo = JobRepository(db)
+        cutoff = utcnow() - timedelta(minutes=30)
+        stuck_runs = job_repo.get_stuck_runs(
+            status=JobRunStatus.RUNNING.value,
+            older_than=cutoff,
+        )
+        for run in stuck_runs:
+            job_repo.update_job_run_status(
+                run.id,
+                JobRunStatus.FAILED.value,
+                error_message="Server restarted while job was running — marked as failed.",
+            )
+        if stuck_runs:
+            db.commit()
+            logger.warning(
+                "stuck_job_runs_recovered",
+                count=len(stuck_runs),
+                run_ids=[str(r.id) for r in stuck_runs],
+            )
+        else:
+            logger.info("no_stuck_job_runs")
+    except Exception as e:
+        logger.error("stuck_job_run_recovery_failed", error=str(e), exc_info=True)
         db.rollback()
     finally:
         db.close()
@@ -165,6 +208,13 @@ async def lifespan(app: FastAPI):
     # Recover orphaned test batch runs left in "running" state by a crash/restart
     _recover_orphaned_batch_runs()
 
+    _recover_stuck_job_runs()
+
+    # Clean up orphaned sandbox Gitea users from previous runs
+    from druppie.opencode.gitea_cleanup import cleanup_orphaned_sandbox_users
+    await cleanup_orphaned_sandbox_users()
+
+
     # Initialize tool registry (discovers MCP tools from servers via tools/list)
     from druppie.core.tool_registry import initialize_tool_registry, get_tool_registry
     try:
@@ -186,6 +236,32 @@ async def lifespan(app: FastAPI):
     sandbox_watchdog = asyncio.create_task(_sandbox_stuck_watchdog())
     logger.info("sandbox_stuck_watchdog_started", interval=SANDBOX_WATCHDOG_INTERVAL, timeout=SANDBOX_STUCK_TIMEOUT)
 
+    from druppie.db.database import SessionLocal
+    from druppie.repositories import JobRepository, SessionRepository, ExecutionRepository
+    from druppie.services import JobService
+    from druppie.services.job_service import JobScheduler
+
+    def _get_job_service(db):
+        return JobService(
+            job_repo=JobRepository(db),
+            session_repo=SessionRepository(db),
+            execution_repo=ExecutionRepository(db),
+        )
+
+    job_db = SessionLocal()
+    try:
+        job_service = _get_job_service(job_db)
+        job_service.load_definitions_from_yaml()
+        logger.info("job_definitions_loaded")
+    except Exception as e:
+        job_db.rollback()
+        logger.error("job_definitions_load_failed", error=str(e))
+    finally:
+        job_db.close()
+
+    app.state.job_scheduler = JobScheduler(_get_job_service)
+    app.state.job_scheduler.start()
+
     yield
 
     # Shutdown — cancel watchdog and wait for background tasks
@@ -194,6 +270,10 @@ async def lifespan(app: FastAPI):
         await sandbox_watchdog
     except asyncio.CancelledError:
         pass
+
+    if hasattr(app.state, "job_scheduler"):
+        app.state.job_scheduler.stop()
+
     await shutdown_background_tasks(timeout=30.0)
     logger.info("druppie_stopping")
 
@@ -242,6 +322,8 @@ def create_app() -> FastAPI:
     app.include_router(modules.router, prefix="/api", tags=["Modules"])
     app.include_router(agent_test.router, prefix="/api", tags=["Agent Test"])
     app.include_router(tool_output.router, prefix="/api", tags=["Tool Output"])
+    app.include_router(documentation.router, prefix="/api", tags=["Documentation"])
+    app.include_router(jobs.router, prefix="/api/jobs", tags=["Jobs"])
 
     @app.get("/health")
     async def health_check():

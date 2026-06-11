@@ -64,6 +64,15 @@ export default function useTestPolling({
           setRunProgress(null)
           setRunResult({ error: true, message: status.message })
           setRefreshKey((k) => k + 1)
+        } else if (status.status === 'cancelled') {
+          clearInterval(id)
+          intervalRef.current = null
+          activeRunRef.current = null
+          setIsRunning(false)
+          setRunMessage(null)
+          setRunProgress(null)
+          setRunResult({ cancelled: true, message: status.message || 'Test run was cancelled' })
+          setRefreshKey((k) => k + 1)
         } else if (status.status === 'not_found') {
           // Backend might have restarted — wait a few polls before giving up
           notFoundCount++
@@ -83,6 +92,7 @@ export default function useTestPolling({
           setRunMessage(status.message || 'Running tests...')
           setRunProgress({
             current_test: status.current_test,
+            running_tests: status.running_tests || [],
             completed_tests: status.completed_tests || [],
             total_tests: status.total_tests || 0,
           })

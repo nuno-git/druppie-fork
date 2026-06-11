@@ -29,6 +29,7 @@ def init_db():
     gunicorn workers start simultaneously.
     """
     import app.models  # noqa: F401
+    import app.rag  # noqa: F401 — register vector_* tables (pgvector)
     try:
         import app.chat  # noqa: F401 — register chat models
     except ImportError:
@@ -38,6 +39,7 @@ def init_db():
         # PostgreSQL advisory lock to prevent concurrent CREATE TABLE
         try:
             conn.execute(text("SELECT pg_advisory_lock(42)"))
+            conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
             Base.metadata.create_all(bind=engine)
             conn.execute(text("SELECT pg_advisory_unlock(42)"))
             conn.commit()

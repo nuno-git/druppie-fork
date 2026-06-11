@@ -2,7 +2,7 @@
 
 Bugs, implementation gaps, technical debt, and improvement ideas for the Druppie platform.
 
-Last updated: 2026-03-24
+Last updated: 2026-06-03
 
 ---
 
@@ -28,10 +28,11 @@ Last updated: 2026-03-24
 - Keycloak in Development Mode
 - ~~Sandboxed Execution Environment for Agents~~ ✅ DONE
 - ~~Test-Driven Development (TDD) Workflow~~ ✅ DONE
+- ~~Scheduled Jobs (Cron Jobs)~~ ✅ DONE (see `feature/cronjobs` branch)
 - Agents Should Be Able to Spawn Sub-Agents and Inject Next Steps
 - ~~Skills System~~ ✅ DONE
 - Skill: MCP Server Integration for Generated Applications
-- Language Matching
+- ~~Language Matching~~ ✅ DONE
 - Prompt Injection Protection
 - Compliance Agent for Input Validation
 - TDD Retry Counting in Python Runtime
@@ -42,6 +43,9 @@ Last updated: 2026-03-24
 - Update Core Flow — End-to-End Improvements
 - ~~Update Core — Technical Basis~~ ✅ DONE
 - ~~Update Core — Architect Signal & Dual-Repo Sandbox~~ ✅ DONE
+- Kubernetes — Sandbox Image Builder Job is a Placeholder
+- Kubernetes — Helm Chart Test Suite
+- Kubernetes — Production Hardening (TLS, External Secrets, HPA)
 - Dependency Cache — Remote/Distributed Caching
 - Dependency Cache — Pre-Populated Common Packages
 - Dependency Cache — Automated Periodic Vulnerability Scanning
@@ -209,6 +213,19 @@ Last updated: 2026-03-24
 
 - **Implemented:** Skills system is live. Skills are Markdown files (`SKILL.md`) with YAML frontmatter defining `name`, `description`, and `allowed-tools`. Agents invoke skills via the `invoke_skill` builtin tool. When invoked, the skill's `allowed_tools` are dynamically added to the agent's available tools, and the skill's markdown body is returned as instructions. Skills are configured per-agent in YAML definitions via the `skills:` field. Skill loading is handled by `SkillService` from the `druppie/skills/` directory.
 
+### ~~Scheduled Jobs (Cron Jobs)~~ ✅ DONE
+
+- **Resolved in:** `feature/cronjobs` branch
+- **Feature:** Recurring cron jobs defined in YAML under `druppie/jobs/definitions/`. Each job specifies an agent, prompt, cron schedule, and optional approval gate. Jobs are loaded at startup and synced with the database automatically.
+- **Key components:**
+  - `JobScheduler`: Background asyncio task that checks cron schedules every 60 seconds
+  - `JobService`: YAML loading, job triggering, manual execution, and background task orchestration
+  - `JobRepository`: Database access for definitions, runs, and atomic claim-based trigger scheduling
+  - `JobRunStatus` enum: Typed status values (`pending`, `running`, `waiting_approval`, `completed`, `failed`, `cancelled`, `rejected`) replacing hardcoded string literals
+  - Summary/Detail pattern: `JobRunList` returns `JobRunSummary` (without logs); detail endpoints return `JobRunDetail`
+- **Frontend integration:** Tasks page (`/tasks`) displays job definitions with Run Now buttons and recent run history. Conditional polling (5s when active).
+- **Approval gating:** Jobs with `approval_required: true` create a session approval before execution. Rejected approvals mark the job run as `rejected`.
+
 ### Skill: MCP Server Integration for Generated Applications
 
 - **Current state:** The Developer agent writes standalone applications. There is no standardized way for generated applications to consume Druppie's own MCP servers (coding, docker, web, file search) as part of their functionality.
@@ -217,13 +234,9 @@ Last updated: 2026-03-24
   2. **MCP integration skill** — A prompt/template that instructs the Developer agent on how to use the core Druppie MCP servers in the applications it creates, following a standardized integration pattern. Depends on the skills system being implemented *(Owner: Nuno)*
   3. **Dynamic skill updates** — Automatically update the MCP integration skill/prompt with the currently available MCP servers and tools in core Druppie, so the Developer agent always has an up-to-date view of what it can integrate *(Owners: Nuno, Robbe)*
 
-### Language Matching
+### ~~Language Matching~~ ✅ DONE
 
-- **Current state:** Agents always respond in English regardless of the language the user communicates in.
-- **Desired improvement:** The system should detect the user's language and ensure all agent responses, HITL questions, and summaries are in the same language. This could be implemented by:
-  - Detecting the language of the user's initial message and storing it on the session
-  - Injecting a language instruction as a system prompt or into each agent's system prompt
-  - Ensuring the Planner's generated prompts for each agent also carry the language preference
+- **Implemented:** Automated bilingual translation. The platform detects the user's language, translates user messages to English for agents, and translates all agent output (HITL questions, design documents, summaries) back to the user's language. Agents always work in English; the platform handles translation transparently via a dedicated DeepInfra/Qwen service. See [docs/TRANSLATION.md](TRANSLATION.md) for details.
 
 ### Prompt Injection Protection
 
@@ -316,6 +329,34 @@ Last updated: 2026-03-24
 - **Simplified branch targeting:** The sandbox agent determines PR base branch from its git remote (GitHub repos → `colab-dev`, Gitea repos → `main`). Configured in sandbox agent prompts — no branch parameter threaded through infrastructure.
 - **YAML auto-reload:** `AgentDefinitionLoader` checks file mtime on each load and automatically reloads YAML definitions when they change on disk. No backend restart needed for prompt edits during development.
 
+### Kubernetes — Sandbox Image Builder Job is a Placeholder
+
+- **Location:** `helm/druppie/templates/sandbox-image-builder-job.yaml`
+- **Current state:** The sandbox image builder Job in the Helm chart is a placeholder that just echoes a message. The actual `open-inspect-sandbox` image must be pre-built and pushed to a registry before deploying to Kubernetes.
+- **Desired improvement:** Either automate the sandbox image build as part of the Helm install (using a Kaniko-based Job or similar), or document the pre-build step more prominently and add a health check that verifies the image exists before sandbox-dependent components start.
+- **Priority:** Medium — blocks sandbox functionality in Kubernetes deployments.
+
+### Kubernetes — Helm Chart Test Suite
+
+- **Current state:** The Helm chart has no automated tests. Template rendering and resource correctness are only verified manually.
+- **Desired improvement:** Add `helm unittest` tests (or `helm template` + snapshot tests) to validate:
+  - All templates render without errors for default values
+  - Module enable/disable toggles correctly include/exclude resources
+  - NetworkPolicies, ingress rules, and service ports match expected values
+  - Secret and ConfigMap values are correctly templated
+- **Priority:** Medium — prevents regressions as the chart evolves.
+
+### Kubernetes — Production Hardening (TLS, External Secrets, HPA)
+
+- **Current state:** The Helm chart is designed for local Kind clusters. Production requires TLS, external secret management, autoscaling, and a real container registry. See `docs/kubernetes.md` section 9 and `docs/KUBERNETES-STRATEGY.md` for the full production roadmap.
+- **Desired improvement:**
+  - cert-manager integration for automatic TLS certificates
+  - External Secrets Operator or Sealed Secrets support
+  - HorizontalPodAutoscaler templates for backend and MCP modules
+  - PodDisruptionBudget templates for availability during updates
+  - Container registry configuration in `values.yaml` (currently all images use `IfNotPresent` with local tags)
+- **Priority:** Low — only needed when moving beyond local development.
+
 ### Dependency Cache — Remote/Distributed Caching
 
 - **Current state:** The shared dependency cache is a local Docker volume (`druppie_sandbox_dep_cache`) on a single host. This works well for single-node deployments but does not scale to multi-node or team environments.
@@ -343,3 +384,126 @@ Last updated: 2026-03-24
   - Optional policy: auto-purge packages with critical vulnerabilities
   - Dashboard or log aggregation for scan results over time
 - **Priority:** Medium — important for continuous security posture in production environments.
+
+### Visualization — Multiple Sources & Joins
+
+- **Current state:** `create_chart_from_source` charts a single table/file. Joining tables for a visualization is not supported.
+- **Desired improvement:**
+  - `create_chart_from_query` for SQL: the agent writes a `JOIN ... GROUP BY`, the DB aggregates, only the spec returns (same context-hygiene as the current pushdown). Reuses `execute_query` validation.
+  - Data Lake file joins via server-side `pandas.merge` (needs join-key/how params).
+  - Cross-source joins (SQL table ⋈ Data Lake file) — read both into the server and merge.
+- **Priority:** Medium — SQL joins are the common case and low-risk.
+
+### Visualization — Performance & Scale
+
+- **Current state:** For Data Lake, `create_chart_from_source` reads the whole file into MCP-server memory (`readall()` → `io.BytesIO`) before aggregating. Fine for ~hundreds of thousands of rows; a multi-GB file would pressure the server. Follow-up charts re-read the same file.
+- **Desired improvement:**
+  - Use DuckDB/Polars to run SQL-style aggregation directly over CSV/Parquet with column projection (no full in-memory materialization).
+  - Cache the read/aggregation within a session so follow-up charts don't re-scan.
+  - Chunked/streaming aggregation for files too large to hold in memory.
+- **Priority:** Medium — removes the in-memory ceiling flagged in `docs/MCP/data-access.md`.
+
+### Visualization — Smarter Graphing
+
+- **Current state:** The agent picks chart type and columns from a prompt decision matrix. No date bucketing, no histogram/binning, no "Other" bucket, fixed colors.
+- **Desired improvement:**
+  - Auto chart-type selection from `get_schema` (column cardinality + dtype).
+  - Date/time intelligence: detect date columns and bucket by day/week/month/quarter/year (fixes charting raw `YYYYMMDD` date keys as an x-axis).
+  - Numeric binning (true histograms); roll long tails into an "Other" bucket instead of dropping; sort controls; combo/dual-axis (`ComposedChart`); number/unit formatting on axes and tooltips.
+- **Priority:** Medium — biggest "charts make sense" quality lever.
+
+### Visualization — Frontend & Artifacts
+
+- **Current state:** `ChartBlock` renders statically inside a HITL/assistant message; the spec lives in the `messages` row. No interactivity, export, or persistence beyond the transcript.
+- **Desired improvement:** zoom/pan/fullscreen (like `MermaidBlock`), export PNG/SVG, "show data" table toggle, dark mode, a visible "sample" badge when `full_dataset` is false, and promoting charts to first-class session artifacts / a saved dashboard project.
+- **Priority:** Low–Medium — UX polish; artifacts overlap with the `create_project` dashboard path.
+
+### Visualization — Data Analyst Prompt Size
+
+- **Current state:** After merging the dataset-selection strategy and the charting guidance, the `data_analyst` system prompt is long, and the agent runs on `llm_profile: cheap` (small context). Long charting sessions can still approach context limits.
+- **Desired improvement:** trim/split the prompt or raise the agent's `llm_profile`; add conversation-history trimming for long sessions (overlaps with the existing "No Context Window Management" item).
+- **Priority:** Medium — reliability for extended sessions.
+
+---
+
+## ArchiMate End-to-End — Deferred Items (v2+)
+
+Branch `Archimate-end-to-end` delivers ArchiMate generation, rendering, and incremental feedback. The following items were explicitly deferred during planning and are tracked here for future iterations.
+
+### Edge-Routing Upgrade: Server-Side libavoid
+
+- **Current state (v1):** Client-side `elkjs` orthogonal routing with `spacing.edgeNode` 60-80px. "Good enough" but can still produce lines through elements in dense views.
+- **Desired improvement:** Server-side ELK Java microservice with `org.eclipse.elk.alg.libavoid` integration (Adaptagrams, LGPL). libavoid does A*-based orthogonal routing through a visibility-graph, guarantees object avoidance, and supports fixed node positions. Service returns edge-paths as JSON; client renders.
+- **Priority:** Medium — only when the v1 routing visibly fails on common architect workloads.
+- **Alternative:** Investigate WASM-port of libavoid if one materializes — keeps client-side rendering with libavoid quality.
+
+### Full 7-Layer ArchiMate Support
+
+- **Current state (v1):** Business, Application, Technology, Motivation layers covered by the write-MCP and renderer.
+- **Desired improvement:** Add Strategy, Physical, Implementation & Migration layers (Capability, Resource, Equipment, Facility, WorkPackage, Plateau, Gap, etc.). Each new element type needs (a) write-tool validation, (b) renderer-shape, (c) correct layer-color in archimate-js.
+- **Priority:** Medium — depends on demand from architects beyond software-architecture TDs.
+
+### Bizzdesign Integration
+
+- **Current state (v1):** Out-of-scope. ArchiMate lives in Gitea per project + WILMA read-only reference. No connection to a central EA repository.
+- **Desired improvement:** Conditional Bizzdesign-koppeling:
+  - **(a) Context import:** read views/elements from other Bizzdesign-modellen as additional reference context (similar to how WILMA works today)
+  - **(b) Write-back:** push project views to a central Bizzdesign EA repository on demand
+- **Constraint:** Only viable with local LLMs (data-residency). With Foundry-hosted LLMs depends on the data-residency policy per organization.
+- **Priority:** Low — conditional on customer demand and LLM-hosting strategy.
+
+### Approval-Gate Relaxation — DONE in v1
+
+- ~~All ArchiMate write tools approval-gated~~ → archimate_* writes are
+  ungated; the single review point is `coding:make_design` on
+  `docs/technical-design.md` (architect-gated via the architect agent's
+  approval_overrides). The reviewer sees the markdown + the embedded
+  plate as one artifact and approves the TD as a whole.
+
+### Interactive Editing in TD Viewer
+
+- **Current state (v1):** archimate-js renders ArchiMate views read-only with pan/zoom in the Druppie TD viewer.
+- **Desired improvement:** Enable archimate-js's drag-to-reposition and inline-edit features so architects can fine-tune layouts without leaving the browser. Changes flow back to `docs/architecture.archimate` via a new "save edits" action.
+- **Priority:** Medium — significantly improves architect ergonomics once core flow works.
+
+### Webhook-Based SVG Regeneration
+
+- **Current state (v1):** Architect-agent generates SVG-exports to `docs/diagrams/*.svg` on every `save_model` call.
+- **Desired improvement:** Gitea webhook that triggers a renderer-service on every commit touching `*.archimate`, regenerating SVGs automatically. Decouples SVG-generation from the agent — survives manual edits to `.archimate` files outside Druppie.
+- **Priority:** Low — only useful when architects edit `.archimate` outside the agent flow.
+
+### ArchiMate Specializations (Custom Element Types)
+
+- **Current state (v1):** Only standard ArchiMate 3.2 element types supported.
+- **Desired improvement:** Support custom specializations (e.g., a `BusinessActor` specialized as "Customer" or "Supplier"). Requires write-MCP tools for `create_specialization`, `update_specialization`, plus renderer support for stereotype-rendering on the canvas.
+- **Priority:** Low — most TDs work with standard types.
+
+### Custom Viewpoints
+
+- **Current state (v1):** Generic views (no viewpoint filter).
+- **Desired improvement:** ArchiMate's viewpoint mechanism — a viewpoint defines which element-types and relationship-types are relevant for a specific stakeholder concern (e.g., Information Structure Viewpoint, Application Cooperation Viewpoint). Write-MCP would validate that elements added to a view conform to its viewpoint.
+- **Priority:** Low — advanced ArchiMate feature, useful for compliance-heavy contexts.
+
+### Cross-Project View References
+
+- **Current state (v1):** Each project's `architecture.archimate` is self-contained (WILMA references are copied in).
+- **Desired improvement:** Federate — agent can reference a view from another project's `architecture.archimate` (e.g., a shared core-platform view used by multiple application projects). Requires resolution mechanism + read-only access cross-project.
+- **Priority:** Low — relevant once multiple coupled projects exist in the same Druppie instance.
+
+### Concurrent-Edit Conflict Resolution
+
+- **Current state (v1):** Architect saves via `save_model` → write goes through; if two sessions edit the same `.archimate` concurrently the second push gets a git-conflict error and the architect must resolve manually.
+- **Desired improvement:** Detect concurrent edits at `save_model` time, present a diff-UI in the TD viewer showing the conflicting nodes/edges, let architect choose per-element which version wins.
+- **Priority:** Low — concurrent architect edits on the same project are rare.
+
+### WILMA Version Pinning
+
+- **Current state (v1):** Single WILMA model loaded in module-archimate; all projects reference the same version.
+- **Desired improvement:** Per-project pin: `project.archimate-config.yaml` declares `wilma_version: 1.2.3` and the MCP serves the pinned snapshot. Allows projects to upgrade WILMA on their own schedule without breaking stable references.
+- **Priority:** Low — only relevant once WILMA receives versioned releases.
+
+### Property Definitions in Write-MCP
+
+- **Current state (v1):** Write-MCP creates elements with inline properties using existing propertyDefinitions from the loaded file (or skips properties).
+- **Desired improvement:** Full `propertyDefinition` management — `create_property_definition`, `update_property_definition`, validation that properties on elements reference valid definitions.
+- **Priority:** Medium — needed once architects define organization-specific properties (e.g., "Compliance-status", "Owner-department").

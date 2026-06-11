@@ -29,7 +29,8 @@
 #   MCP Registry:   9007
 #   MCP Vision:     9008
 #   MCP LLM:        9009
-#   Adminer:        8080
+#   MCP Data Access:9010
+#   Adminer:        8081
 
 services:
   # ===========================================================================
@@ -304,16 +305,41 @@ services:
     profiles: [infra, dev, prod]
     environment:
       MODELS_DIR: /models
+      WORKSPACE_ROOT: /workspaces
       MCP_PORT: "9006"
+      LAYOUT_SERVICE_URL: ${LAYOUT_SERVICE_URL:-http://layout-service:8090}
     volumes:
       - ./druppie/mcp-servers/module-archimate/models:/models:ro
+      - druppie_new_workspace:/workspaces
     ports:
       - "${MCP_ARCHIMATE_PORT:-9006}:9006"
     networks:
       - app-net
       - sandbox-modules
+    depends_on:
+      layout-service:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9006/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  layout-service:
+    build:
+      context: ./druppie/mcp-servers/layout-service
+      dockerfile: Dockerfile
+    container_name: druppie-layout-service
+    profiles: [infra, dev, prod]
+    environment:
+      PORT: "8090"
+    ports:
+      - "${LAYOUT_SERVICE_PORT:-8090}:8090"
+    networks:
+      - druppie-new-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8090/health"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -378,6 +404,11 @@ services:
       ZAI_BASE_URL: ${ZAI_BASE_URL:-}
       ZAI_MODEL: ${ZAI_MODEL:-}
       DEEPINFRA_API_KEY: ${DEEPINFRA_API_KEY:-}
+      EMBEDDING_API_KEY: ${EMBEDDING_API_KEY:-}
+      EMBEDDING_BASE_URL: ${EMBEDDING_BASE_URL:-}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-}
+      EMBEDDING_DIMENSIONS: ${EMBEDDING_DIMENSIONS:-}
+      EMBEDDING_API_VERSION: ${EMBEDDING_API_VERSION:-}
     ports:
       - "${MCP_LLM_PORT:-9009}:9008"
     networks:
@@ -408,6 +439,31 @@ services:
       - sandbox-modules
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9011/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  module-data-access:
+    build:
+      context: ./druppie/mcp-servers
+      dockerfile: module-data-access/Dockerfile
+    container_name: druppie-module-data-access
+    profiles: [infra, dev, prod]
+    environment:
+      MCP_PORT: "9010"
+      WORKSPACE_ROOT: /workspaces
+      DATA_SOURCE_1: ${DATA_SOURCE_1:-}
+      DATA_SOURCE_2: ${DATA_SOURCE_2:-}
+      DATA_SOURCE_3: ${DATA_SOURCE_3:-}
+    volumes:
+      - druppie_new_workspace:/workspaces
+    ports:
+      - "${MCP_DATA_ACCESS_PORT:-9010}:9010"
+    networks:
+      - druppie-new-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9010/health"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -742,6 +798,8 @@ services:
           DROP TABLE IF EXISTS tool_calls CASCADE;
           DROP TABLE IF EXISTS messages CASCADE;
           DROP TABLE IF EXISTS agent_runs CASCADE;
+          DROP TABLE IF EXISTS job_runs CASCADE;
+          DROP TABLE IF EXISTS job_definitions CASCADE;
           DROP TABLE IF EXISTS sessions CASCADE;
           DROP TABLE IF EXISTS projects CASCADE;
         "

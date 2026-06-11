@@ -1,0 +1,69 @@
+{{- if .Values.modules.vision.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "druppie.fullname" . }}-module-vision
+  labels:
+    {{- include "druppie.labels" . | nindent 4 }}
+    app.kubernetes.io/component: module-vision
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "druppie.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: module-vision
+  template:
+    metadata:
+      labels:
+        {{- include "druppie.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: module-vision
+    spec:
+      containers:
+        - name: module-vision
+          image: {{ include "druppie.image" (dict "Values" .Values "image" .Values.modules.vision.image) }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          env:
+            - name: MCP_PORT
+              value: {{ .Values.modules.vision.port | quote }}
+            - name: ZAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "druppie.fullname" . }}-secrets
+                  key: ZAI_API_KEY
+            - name: ZAI_BASE_URL
+              value: {{ .Values.backend.zai.baseUrl | quote }}
+            - name: ZAI_VISION_MODEL
+              value: ""
+            - name: DEEPINFRA_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "druppie.fullname" . }}-secrets
+                  key: DEEPINFRA_API_KEY
+          ports:
+            - name: http
+              containerPort: {{ .Values.modules.vision.port }}
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.modules.vision.port }}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 5
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.modules.vision.port }}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 5
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "256Mi"
+              cpu: "500m"
+{{- end }}

@@ -19,7 +19,7 @@ class ApprovalRepository(BaseRepository):
         self,
         session_id: UUID,
         agent_run_id: UUID,
-        tool_call_id: UUID,
+        tool_call_id: UUID | None,
         mcp_server: str,
         tool_name: str,
         arguments: dict,
@@ -157,13 +157,19 @@ class ApprovalRepository(BaseRepository):
 
     def _to_detail(self, approval: Approval) -> ApprovalDetail:
         """Convert approval model to detail domain object."""
-        # Session owner for session_owner approvals + project repo_url for
-        # the frontend's link-rewriting in FD/TD previews. One join does both.
+        # Session owner for session_owner approvals + project repo_url and
+        # project_id for the frontend's link-rewriting in FD/TD previews
+        # and for the ArchimateBlock embed render. One join does all three.
         session_user_id = None
         repo_url = None
+        project_id = None
         if approval.session_id:
             row = (
-                self.db.query(SessionModel.user_id, ProjectModel.repo_url)
+                self.db.query(
+                    SessionModel.user_id,
+                    ProjectModel.repo_url,
+                    ProjectModel.id,
+                )
                 .outerjoin(ProjectModel, SessionModel.project_id == ProjectModel.id)
                 .filter(SessionModel.id == approval.session_id)
                 .first()
@@ -172,6 +178,7 @@ class ApprovalRepository(BaseRepository):
                 if approval.required_role == "session_owner":
                     session_user_id = row.user_id
                 repo_url = row.repo_url
+                project_id = row.id
 
         return ApprovalDetail(
             # From ApprovalSummary
@@ -192,6 +199,7 @@ class ApprovalRepository(BaseRepository):
             created_at=approval.created_at,
             session_user_id=session_user_id,
             repo_url=repo_url,
+            project_id=project_id,
         )
 
     def _to_summary(self, approval: Approval) -> ApprovalSummary:

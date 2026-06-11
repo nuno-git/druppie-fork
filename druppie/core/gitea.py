@@ -43,9 +43,17 @@ class GiteaClient:
         self.admin_password = admin_password or GITEA_ADMIN_PASSWORD
         self.org = org or GITEA_ORG
 
+
     async def close(self):
         """Close the HTTP client. No-op with per-request clients."""
         pass
+
+    def _new_client(self) -> httpx.AsyncClient:
+        return httpx.AsyncClient(
+            base_url=f"{self.base_url}/api/v1",
+            auth=(self.admin_user, self.admin_password),
+            timeout=30.0,
+        )
 
     async def _request(
         self,
@@ -54,22 +62,14 @@ class GiteaClient:
         json_data: dict | None = None,
         params: dict | None = None,
     ) -> dict[str, Any]:
-        max_attempts = 2
-        last_exception: Exception | None = None
-
-        for attempt in range(1, max_attempts + 1):
+        async with self._new_client() as client:
             try:
-                async with httpx.AsyncClient(
-                    base_url=f"{self.base_url}/api/v1",
-                    auth=(self.admin_user, self.admin_password),
-                    timeout=30.0,
-                ) as client:
-                    response = await client.request(
-                        method=method,
-                        url=endpoint,
-                        json=json_data,
-                        params=params,
-                    )
+                response = await client.request(
+                    method=method,
+                    url=endpoint,
+                    json=json_data,
+                    params=params,
+                )
 
                 result = {
                     "success": response.status_code in (200, 201, 204),
@@ -94,46 +94,11 @@ class GiteaClient:
                 return result
 
             except httpx.RequestError as e:
-                last_exception = e
-                if attempt < max_attempts:
-                    logger.warning(
-                        "gitea_request_retry",
-                        method=method,
-                        endpoint=endpoint,
-                        attempt=attempt,
-                        error=str(e),
-                    )
-                    continue
-                logger.error(
-                    "gitea_request_error",
-                    method=method,
-                    endpoint=endpoint,
-                    error=str(e),
-                    exc_info=True,
-                )
-                return {"success": False, "error": str(e)}
-
-            except RuntimeError as e:
-                last_exception = e
-                if attempt < max_attempts and ("event loop" in str(e).lower() or "closed" in str(e).lower()):
-                    logger.warning(
-                        "gitea_runtime_retry",
-                        method=method,
-                        endpoint=endpoint,
-                        attempt=attempt,
-                        error=str(e),
-                    )
-                    continue
-                logger.error(
-                    "gitea_runtime_error",
-                    method=method,
-                    endpoint=endpoint,
-                    error=str(e),
-                    exc_info=True,
-                )
-                return {"success": False, "error": str(e)}
-
-        return {"success": False, "error": str(last_exception)}
+                logger.error("gitea_request_error", method=method, endpoint=endpoint, error=str(e), exc_info=True)
+                return {
+                    "success": False,
+                    "error": str(e),
+                }
 
     # =========================================================================
     # User Operations
@@ -429,11 +394,13 @@ class GiteaClient:
         repo: str,
         path: str,
         branch: str = "main",
+        owner: str | None = None,
     ) -> dict[str, Any]:
         """Get file contents and SHA from a repository."""
+        repo_owner = owner or self.org
         result = await self._request(
             "GET",
-            f"/repos/{self.org}/{repo}/contents/{path}",
+            f"/repos/{repo_owner}/{repo}/contents/{path}",
             params={"ref": branch},
         )
 
@@ -456,14 +423,51 @@ class GiteaClient:
 
         return result
 
+    async def list_commits_for_path(
+        self,
+        repo: str,
+        path: str,
+        branch: str = "main",
+        limit: int = 2,
+    ) -> dict[str, Any]:
+        """List the most recent commits that touched ``path``.
+
+        Returns ``result["commits"]`` as a list of
+        ``{sha, message, author, timestamp}`` dicts, newest first.
+        """
+        result = await self._request(
+            "GET",
+            f"/repos/{self.org}/{repo}/commits",
+            params={"sha": branch, "path": path, "limit": limit},
+        )
+
+        if result["success"] and "data" in result:
+            data = result["data"] or []
+            commits = []
+            for c in data:
+                commit_payload = c.get("commit") or {}
+                author = commit_payload.get("author") or {}
+                commits.append({
+                    "sha": c.get("sha"),
+                    "message": commit_payload.get("message", "").strip(),
+                    "author": author.get("name"),
+                    "timestamp": author.get("date"),
+                })
+            result["commits"] = commits
+            result["count"] = len(commits)
+
+        return result
+
     async def list_files(
         self,
         repo: str,
         path: str = "",
         branch: str = "main",
+        owner: str | None = None,
     ) -> dict[str, Any]:
         """List files in a directory of a repository."""
-        endpoint = f"/repos/{self.org}/{repo}/contents"
+        repo_owner = owner or self.org
+        endpoint = f"/repos/{repo_owner}/{repo}/contents"
         if path:
             endpoint = f"{endpoint}/{path}"
 
@@ -842,13 +846,10 @@ class GiteaClient:
         return f"{GITEA_URL}/{repo_owner}/{repo_name}"
 
 
-# Singleton instance
-_gitea_client: GiteaClient | None = None
-
-
 def get_gitea_client() -> GiteaClient:
-    """Get the global GiteaClient instance."""
-    global _gitea_client
-    if _gitea_client is None:
-        _gitea_client = GiteaClient()
-    return _gitea_client
+    """Create a new GiteaClient instance.
+
+    Stateless factory — returns a fresh client each time so it's safe
+    across threads and event loops without shared mutable state.
+    """
+    return GiteaClient()

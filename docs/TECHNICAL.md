@@ -223,7 +223,6 @@ druppie/
 | Project Detail | `ProjectDetail.jsx` | Single project view with deployments |
 | Plans | `Plans.jsx` | Execution plan viewer |
 | Settings | `Settings.jsx` | User preferences |
-| Admin Database | `AdminDatabase.jsx` | Database inspection |
 | Debug | `Debug.jsx`, `DebugChat.jsx`, `DebugApprovals.jsx`, `DebugMCP.jsx`, `DebugProjects.jsx` | Development debugging tools |
 
 ### 3.3 Real-time Updates
@@ -494,16 +493,71 @@ Local file search capability over mounted dataset volumes.
 
 ### 6.7 ArchiMate Server (port 9006)
 
-ArchiMate model operations. Reads `.archimate` files from a mounted models directory.
+ArchiMate model operations. Two surfaces co-exist on one server:
+
+- **Read-only WILMA reference model** mounted from `module-archimate/models/WILMA-exchange.xml` (Open Exchange XML).
+- **Read-write per-project model** living in the session workspace at `docs/architecture.archimate` (also Open Exchange XML, committed to Gitea alongside `docs/technical-design.md`).
+
+The `WORKSPACE_ROOT` volume is shared with `module-coding`, so the same on-disk file is visible to both MCPs — the architect mutates it through write tools here and commits it through `coding.run_git`.
+
+Read tools (WILMA + project model):
 
 | Tool | Approval | Description |
 |------|----------|-------------|
-| `list_models` | None | List available ArchiMate models |
-| `read_model` | None | Read a full ArchiMate model |
-| `search_model` | None | Search for elements by query |
-| `export_view` | None | Export an ArchiMate view |
+| `list_models` / `get_statistics` / `list_elements` / `get_element` / `list_views` / `get_view` / `search_model` / `get_impact` | None | Query WILMA elements, relationships, views, and impact paths |
+| `assess_layout` | None | Element/connection count + density recommendation for a view (used to decide when to recommend `request_full_relayout`) |
 
-### 6.8 Declarative Parameter Injection
+Write tools (per-project `docs/architecture.archimate`, **all ungated** — the architect builds the plate freely; the single human review point is the `coding:make_design` gate on `docs/technical-design.md` where the reviewer sees the markdown + embedded plate as one artifact):
+
+| Tool | Description |
+|------|-------------|
+| `create_element` / `update_element` / `delete_element` | Element CRUD (delete cascades to dependent relationships and view nodes) |
+| `create_relationship` / `update_relationship` / `delete_relationship` | Relationship CRUD with valid types (Composition, Aggregation, Serving, Realization, Flow, Triggering, Access, …) |
+| `add_to_view` / `add_connection_to_view` / `remove_from_view` | View composition; `add_to_view` chooses a free position for new nodes while preserving existing x/y. Views themselves are created by the composite builders (`add_layered_view` / `add_cooperation_view`); there is no standalone view-CRUD tool. |
+| `get_or_create_wilma_reference` | Idempotent import of a WILMA element into the project model with the original identifier preserved (read-only locally via a `wilma-source=true` property) |
+| `save_model` | Persist buffered mutations to disk; also writes a per-view SVG to `docs/diagrams/<view-name>.svg` so the plates are visible directly in Gitea |
+| `request_full_relayout` | Clears positions on a view so the frontend's elkjs runs a fresh layout; destructive of manual position tweaks, hence approval-gated |
+
+Implementation:
+
+- `v1/writer.py` — buffered ElementTree document model with mutation API and an ID-aware free-region heuristic for new node placement.
+- `v1/write_tools.py` — FastMCP tool definitions on top of the writer, plus per-`session_id` `WriteSessionRegistry` that resolves the workspace path matching the `coding` MCP's convention.
+- `v1/svg_export.py` — stdlib SVG renderer that mirrors the frontend renderer (layer colors, relationship markers); runs at save time, never blocks the save itself.
+- Read-only `module.py` + read-only tools are unchanged from earlier WILMA work.
+
+### 6.8 RAG Architecture (Distributed Vector Storage)
+
+Vector storage for RAG lives in each app's own database, not in a
+central module. Every app template ships with `pgvector/pgvector:pg16`
+and an `app/rag.py` helper that provides `index_documents()` and
+`search()` against the app's own Postgres. Embeddings are generated
+via the stateless `module-llm` `embed` tool (called through the SDK).
+
+This gives each app full data isolation — no shared database, no
+cross-project access. The `rag-patterns` skill captures the per-layer
+design decisions the Architect documents in a TD; platform defaults
+are seeded into every project via §5 of the platform technical
+standards.
+
+### 6.9 Data Access Server (port 9010)
+
+Adapter-based access to heterogeneous data sources (Azure SQL, Azure Data Lake) plus inline chart generation. Full reference: [`docs/MCP/data-access.md`](MCP/data-access.md).
+
+| Tool | Approval | Description |
+|------|----------|-------------|
+| `list_sources` | None | List configured data sources |
+| `test_connection` | None | Verify a source is reachable |
+| `list_available_data` | None | List tables (SQL) or files (Data Lake) |
+| `get_schema` | None | Column metadata for a table/file |
+| `read_data` | None | Read rows (capped; goes into context) |
+| `execute_query` | None | Free-form read-only SELECT/WITH (SQL only) |
+| `download_data` | None | Stream a table/file to the workspace as CSV/Parquet |
+| `create_chart` | None | Chart inline values (returns a `chart` spec) |
+| `create_chart_from_source` | None | Read + aggregate a source server-side, return a `chart` spec |
+
+**Charting data flow.** `create_chart_from_source` keeps raw data out of the LLM context: for SQL sources the `GROUP BY` is pushed into the database (`build_sql_aggregation_query`); for Data Lake files the whole file is read into MCP-server memory and aggregated in Python. Either way only a small JSON spec (the chart) is returned — no file is written, and the aggregation covers the full dataset (`full_dataset`/`rows_scanned` report any sampling). The spec is emitted as a ` ```chart ` fenced code block; the chat frontend renders it via `frontend/src/components/ChartBlock.jsx` (registered for the `chart` language in `ChatHelpers.jsx`, mirroring how `MermaidBlock` handles `mermaid`) using `recharts`. 13 chart types span XY, proportion, and multi-series families.
+
+### 6.10 Declarative Parameter Injection
 
 MCP tools can have parameters auto-injected from the session/project context. Injected parameters are marked `hidden: true` and are removed from the LLM-visible tool schema. This prevents the LLM from needing to know internal IDs.
 
@@ -520,7 +574,7 @@ inject:
     tools: [read_file, write_file, list_dir, ...]
 ```
 
-### 6.9 Layered Approval System
+### 6.11 Layered Approval System
 
 Approvals have two layers:
 
@@ -690,7 +744,7 @@ Twelve agents are defined as YAML files in `druppie/agents/definitions/`:
 | `router` | Classifies user intent, selects project | `set_intent` | None | — |
 | `planner` | Creates execution plan (which agents to run) | `make_plan` | None | — |
 | `business_analyst` | Gathers requirements from user | Default | `coding` (read_file, make_design, list_dir) | `making-mermaid-diagrams` |
-| `architect` | Designs system architecture, writes specs | Default | `coding` (read_file, make_design, list_dir), `archimate` | `making-mermaid-diagrams` |
+| `architect` | Designs system architecture, writes specs | Default | `coding` (read_file, make_design, list_dir), `archimate` (read + write) | `making-mermaid-diagrams`, `making-archimate-diagrams` |
 | `builder_planner` | Creates implementation plans, writes builder_plan.md | Default | `coding` | — |
 | `test_builder` | Generates tests (TDD Red Phase) | Default | `coding` | — |
 | `builder` | Implements code to pass tests (TDD Green Phase) | Default | `coding` | — |
@@ -888,6 +942,8 @@ Skills are reusable prompt/instruction packages stored as Markdown files in `dru
    - The skill's Markdown body is returned as the tool result (instructions for the LLM).
 4. `ToolExecutor` checks `_is_tool_allowed_via_skill()` to permit tools granted by active skills.
 
+**Decision-guide skills.** Agent intake steps contain pattern-detection trigger lines that instruct an agent to call `invoke_skill(...)` proactively when specific design signals match. For in-app LLM workflows the responsibility is split along the architect/builder_planner role boundary: the Architect's Step 1 intake (in `druppie/agents/definitions/architect.yaml`) invokes `llm-orchestration-in-apps` to decide the **WHAT** (workflow pattern and agency level via a strict hierarchy) without naming any framework — which respects the architect's own rule that it never names concrete libraries; capability placement is left to the architect's generic reuse decision framework rather than re-derived per skill. The Builder-Planner's intake (`builder_planner.yaml`, which now carries a `skills:` block) invokes `llm-orchestration-standard` to decide the **HOW** (the single platform standard: plain Python everywhere, with the single agent built as a small core-style tool-loop rather than an agent framework; access-pattern; code placement). Both skills share one platform-research document (`docs/LLM-orchestration/llm-orchestration-in-apps.md`) that leads with the standard and demotes the framework survey to an appendix. End-to-end verification runs via the seed tool test `testing/tools/architect-fd-llm-chain-pending.yaml`, which pauses on the FD-approval gate so an analyst can drive the loop manually from `/evaluations` + `/tasks`.
+
 ### 8.8 Orchestrator
 
 `druppie/execution/orchestrator.py` is the main entry point for processing user messages. The flow:
@@ -976,11 +1032,116 @@ On application startup, the system detects "zombie" sessions -- sessions that we
 
 Note: `CANCELLED` is never set by user actions. It is only used internally by the planner when it creates a new plan that supersedes previously pending agent runs.
 
+### 8.10 Scheduled Jobs (Cron Pipeline)
+
+The cron job pipeline lets administrators schedule recurring tasks via YAML definitions in `druppie/jobs/definitions/*.yaml`. Jobs are loaded into `job_definitions` on startup; execution instances are tracked in `job_runs`.
+
+**Architecture:**
+
+```
+YAML files  →  JobService.load_definitions_from_yaml()  →  job_definitions (DB)
+                                                   ↓
+                                        JobScheduler._check_jobs()
+                                                   ↓
+                                              job_runs (DB)
+                                                   ↓
+                                        Orchestrator.execute_pending_runs()
+```
+
+**Components:**
+
+| Layer | File | Responsibility |
+|-------|------|---------------|
+| API | `api/routes/jobs.py` | List, trigger, list runs |
+| Service | `services/job_service.py` | Load YAML, trigger, schedule |
+| Repository | `repositories/job_repository.py` | DB access + claim compare-and-swap |
+| Domain | `domain/job.py` | Pydantic models |
+| Models | `db/models/job.py` | `JobDefinition`, `JobRun` |
+
+**Key design decisions:**
+
+1. **No pagination on `JobDefinitionList`** — Job definitions are YAML-scoped configuration objects, not growing event history. A typical deployment has < 50 definitions. `JobRunList` *does* have pagination because runs accumulate indefinitely.
+
+2. **Atomic claim via UPDATE-WHERE** — `JobRepository.claim_job_trigger()` uses an `UPDATE ... WHERE last_triggered_at < scheduled_time` so multiple backend instances can safely race for the same scheduled slot without duplicate runs.
+
+3. **YAML validation at load time** — `JobService.load_definitions_from_yaml()` validates each file before DB insertion: required fields (`name`, `schedule`, `agent_id`, `prompt`), cron syntax (via `croniter`), and agent existence (via filesystem check). Invalid files are logged and skipped entirely; no broken definitions are recorded.
+
 ---
 
-## 9. Configuration
+## 9. Kubernetes Deployment
 
-### 9.1 Environment Variables
+### 9.1 Helm Chart
+
+The Helm chart (`helm/druppie/`) deploys the full Druppie platform to Kubernetes. It translates every service from `docker-compose.yml` into native Kubernetes resources:
+
+| Docker Compose Service | Kubernetes Resource |
+|------------------------|---------------------|
+| PostgreSQL databases (3) | StatefulSets with volumeClaimTemplates (5Gi each) |
+| Keycloak, Gitea, Backend, Frontend | Deployments with readiness/liveness probes |
+| MCP modules (8) | Deployments, individually toggleable via `values.yaml` |
+| Init container | Helm post-install hook Job |
+| Shared volumes | PersistentVolumeClaims (workspace 10Gi, dataset 5Gi, sandbox-bundles 5Gi, gitea-data 5Gi) |
+| Bridge network | ClusterIP Services (15) + NetworkPolicies (5) |
+| Port mappings | Ingress with path-based routing via nginx |
+
+### 9.2 Template Helpers
+
+`_helpers.tpl` provides reusable template functions: name/fullname generation, standard Kubernetes labels (app, chart, release), selector labels, image rendering (with `imagePullPolicy: IfNotPresent` for local images), and external URL construction from `global.domain` and `global.ingress.port`.
+
+### 9.3 Ingress and Routing
+
+Two Ingress resources handle all external traffic on a single domain:
+
+**Main ingress** routes by path prefix:
+- `/api` → backend (pass-through, backend expects `/api` prefix)
+- `/realms`, `/resources`, `/admin`, `/js`, `/welcome` → Keycloak
+- `/` → frontend (catch-all)
+
+**Gitea ingress** uses a path rewrite annotation to strip `/git/` before forwarding to Gitea.
+
+### 9.4 NetworkPolicies
+
+Five policies control traffic:
+- `app-net`: allows intra-namespace communication + ingress from `ingress-nginx` namespace + HTTPS egress (port 443) + DNS egress
+- `sandbox-net`: sandbox pods accept ingress only from backend and module-coding
+- `sandbox-inet`: sandbox pods can reach the internet but not private IP ranges (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16)
+- `sandbox-modules`: module-coding accepts ingress only from backend
+- `sandbox-modules-docker`: module-docker accepts ingress only from backend
+
+### 9.5 Init System
+
+A Helm post-install hook Job (`init-job.yaml`) runs `setup_keycloak.py` after Keycloak and Gitea are healthy. It creates the Druppie realm, OAuth clients, roles, and test users. The Job uses init containers that wait for Keycloak and Gitea readiness before running.
+
+### 9.6 Kind Cluster Configs
+
+Two Kind configurations are provided in `kind/`:
+
+| File | Nodes | Port Mapping | Use Case |
+|------|-------|--------------|----------|
+| `cluster-dev.yaml` | 1 control-plane | 9080→80, 8443→443 | Local dev with ingress |
+| `cluster.yaml` | 1 control-plane + 2 workers | 80, 443 + NodePorts 30000-30003 | Multi-node testing |
+
+Both use pod subnet `10.244.0.0/16` and service subnet `10.96.0.0/12`.
+
+### 9.7 Helper Scripts
+
+| Script | Purpose |
+|--------|---------|
+| `scripts/setup-kind.sh` | Creates Kind cluster, installs nginx ingress, builds and loads all images |
+| `scripts/build-and-load.sh` | Builds all Docker images and loads them into an existing Kind cluster |
+| `scripts/port-forward.sh` | Sets up kubectl port-forward for direct service access (bypasses ingress) |
+
+### 9.8 Secrets and ConfigMap
+
+A single Secret holds all sensitive values (DB passwords, Keycloak admin creds, Gitea token, LLM API keys). A single ConfigMap holds all non-secret environment variables (service URLs, MCP module URLs, CORS origins, Vite build vars). Both are referenced by deployments via `envFrom`.
+
+Secrets are stored as plaintext in `values.yaml` — intended for local dev only. Production deployments should use an external secrets manager (Vault, AWS Secrets Manager, etc.).
+
+---
+
+## 10. Configuration
+
+### 10.1 Environment Variables
 
 Required in `.env`:
 
@@ -1007,7 +1168,7 @@ Optional:
 | `SANDBOX_MEMORY_LIMIT` | `12g` | Docker memory limit per sandbox container |
 | `SANDBOX_CPU_LIMIT` | `4` | Docker CPU limit per sandbox container |
 
-### 9.2 Configuration Files
+### 10.2 Configuration Files
 
 | File | Purpose |
 |------|---------|
@@ -1021,13 +1182,13 @@ Optional:
 
 ---
 
-## 10. Sandbox Infrastructure (Open-Inspect)
+## 11. Sandbox Infrastructure (Open-Inspect)
 
 > Full documentation: [docs/SANDBOX.md](SANDBOX.md) — covers architecture, OpenCode integration, provider resilience, Kata Containers, and security.
 
 [Open-Inspect](https://github.com/nuno120/background-agents) (our fork, branch `druppie`) is integrated as a git submodule at `background-agents/`. Sandbox containers run OpenCode `v1.2.22` (pinned in `Dockerfile.sandbox`). They provide isolated Docker sandboxes where coding agents can clone a project, write code, run tests, commit, and push — all without touching the shared workspace.
 
-### 10.1 Services
+### 11.1 Services
 
 | Service | Port | Role |
 |---------|------|------|
@@ -1035,7 +1196,7 @@ Optional:
 | `sandbox-manager` | 8000 | Creates/manages sandbox containers, enforces resource limits |
 | `sandbox-image-builder` | — | One-shot build producing `open-inspect-sandbox:latest` |
 
-### 10.2 `execute_coding_task` Built-in Tool
+### 11.2 `execute_coding_task` Built-in Tool
 
 Defined in `druppie/agents/builtin_tools.py`. Delegates a coding task to a sandbox using a **webhook + pause/resume** pattern:
 
@@ -1047,7 +1208,7 @@ Defined in `druppie/agents/builtin_tools.py`. Delegates a coding task to a sandb
 
 **Auth:** HMAC-SHA256 tokens (`{unix_ms_timestamp}.{hmac_sha256_hex_signature}`), verified by Open-Inspect's `verifyInternalToken`.
 
-### 10.3 Status Model
+### 11.3 Status Model
 
 | Level | Status | Meaning |
 |-------|--------|---------|
@@ -1057,7 +1218,7 @@ Defined in `druppie/agents/builtin_tools.py`. Delegates a coding task to a sandb
 | SessionStatus | `paused_sandbox` | Visible in UI as paused |
 | SessionStatus | `paused_crashed` | Visible in UI as crashed |
 
-### 10.4 Sandbox Session Ownership
+### 11.4 Sandbox Session Ownership
 
 The `sandbox_sessions` table maps control plane session IDs to Druppie users:
 
@@ -1292,4 +1453,87 @@ Zero modifications are required to existing code when using the library. Both sy
 | `mock_mcp_connection` | Simulates MCP server connections with canned responses |
 
 Tests cover all layers: type construction, YAML parsing, event emission, tool routing, loop iteration, done enforcement, subagent spawning, and sandbox pool management.
+
+---
+
+## 12. Translation Service
+
+The platform provides automatic translation so agents always work in English while users interact in their own language.
+
+### 12.1 Architecture
+
+| Component | Location | Responsibility |
+|-----------|----------|----------------|
+| `TranslationService` | `druppie/core/translation.py` | Singleton; calls DeepInfra's Qwen/Qwen3-32B for all translations |
+| `LanguageDetector` | `druppie/core/language_detection.py` | Hybrid detection: keyword heuristics + `langdetect` library |
+| `HumanInput` | `druppie/execution/human_input.py` | Wraps user text with detected language metadata |
+
+The translation service is separate from the main LLM provider — it always uses DeepInfra regardless of `LLM_PROVIDER`. This requires `DEEPINFRA_API_KEY` to be set. If the key is missing, `TranslationNotAvailableError` is raised on first use (not silently swallowed).
+
+### 12.2 Data Flow
+
+```
+User (Dutch) → Orchestrator → [detect language] → [translate to English] → Router/Planner/Agent
+                                                                                    │
+Agent (English) ← ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┘
+    │
+    ├─► HITL question → [translate question + choices to Dutch] → User
+    ├─► make_design   → [translate content] → Dutch file alongside English original
+    └─► done (summary) → [translate to Dutch] → Chat timeline
+```
+
+### 12.3 Integration Points
+
+| Point | File | What happens |
+|-------|------|--------------|
+| User message | `orchestrator.py` ~line 189 | Detect language, translate to English |
+| HITL answer | `orchestrator.py` ~line 748 | Translate answer to English (session language unchanged) |
+| HITL question | `tool_executor.py` ~line 877 | Translate question + choices to user's language |
+| Design document | `tool_executor.py` ~line 723 | Translate content, inject `translated_content`/`translated_path` |
+| MCP write | `tool_executor.py` ~line 1040 | Write Dutch file via second MCP `write_file` call |
+| Summarizer message | `builtin_tools.py` ~line 731 | Translate to session language before storing |
+| Agent prompt | `prompt_builder.py` ~line 82 | Inject English-only instruction block |
+
+### 12.3.1 HITL Answer Field Naming
+
+The tool call result for answered HITL questions stores two versions of the answer:
+
+| Field | Content | Consumed by |
+|-------|---------|-------------|
+| `user_answer` | Original answer in the user's language (what they typed) | Frontend display |
+| `answer_english` | Translated to English (for the agent) | Agent via `message_history.py` |
+
+`message_history.py` strips `user_answer` before reconstructing tool results for agent context, so agents only see the English version.
+
+### 12.3.2 HITL Question Bilingual Storage
+
+HITL questions store both the translated (display) and original (English) versions:
+
+| Column | Content | Where shown |
+|--------|---------|-------------|
+| `Question.question` | Translated to user's language | Chat timeline, HITL UI |
+| `Question.question_english` | Original English from agent | Debug/inspect panel, session API |
+| `Question.choices` | Translated choices | Chat timeline |
+| `Question.choices_english` | Original English choices | Debug/inspect panel |
+
+The debug panel (`DebugEventLog.jsx`) shows an "Original (English)" section on HITL tool calls when `question_english` is present, making it easy to compare what the agent generated vs what the user saw.
+
+### 12.4 Design Document Translation Paths
+
+| English path | Dutch path |
+|--------------|------------|
+| `docs/functional-design.md` | `docs/functioneel-ontwerp.md` |
+| `docs/technical-design.md` | `docs/technisch-ontwerp.md` |
+| `docs/technical-research.md` | `docs/technisch-onderzoek.md` |
+
+### 12.5 Session Language
+
+Stored in `sessions.language` (VARCHAR(10), nullable). Set on the first user message and locked — HITL answers do not update it, preventing a Dutch user's English-sounding answer from flipping the session language.
+
+### 12.6 Error Handling
+
+- `TranslationNotAvailableError` (missing API key) propagates — the session fails with a clear error message.
+- Transient translation errors (API timeouts, empty responses) fall back to the original English text with a logged warning.
+- Startup validation logs a warning when `DEEPINFRA_API_KEY` is not set.
+- Test framework pre-flight check: `runner.py` logs a warning before executing agent tests when `DEEPINFRA_API_KEY` is missing, and wraps `TranslationNotAvailableError` with a clear "set it in .env" message in test results.
 

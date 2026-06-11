@@ -562,6 +562,18 @@ const ToolCallDetail = ({ tc }) => {
           </div>
         )}
 
+        {tc.question_id && tc.arguments?.question_english && (
+          <div>
+            <span className="font-medium text-blue-500">Original (English)</span>
+            <div className="mt-0.5 bg-blue-50 border border-blue-200 p-2 rounded text-gray-700 space-y-1">
+              <div><span className="text-gray-400">Question: </span>{tc.arguments.question_english}</div>
+              {tc.arguments.choices_english && (
+                <div><span className="text-gray-400">Choices: </span>{tc.arguments.choices_english.join(', ')}</div>
+              )}
+            </div>
+          </div>
+        )}
+
         {tc.result && (
           <div>
             <div className="flex items-center gap-2">
@@ -644,6 +656,18 @@ const ToolDetailPanel = ({ tc, agentRun }) => {
           <pre className="bg-gray-50 border border-gray-200 p-2.5 rounded overflow-auto max-h-72 whitespace-pre-wrap break-all text-xs text-gray-700">
             {formatValue(tc.arguments)}
           </pre>
+        </div>
+      )}
+
+      {tc.question_id && tc.arguments?.question_english && (
+        <div>
+          <span className="text-xs font-medium text-blue-500">Original (English)</span>
+          <div className="mt-1 bg-blue-50 border border-blue-200 p-2 rounded text-xs text-gray-700 space-y-1">
+            <div><span className="text-gray-400">Question: </span>{tc.arguments.question_english}</div>
+            {tc.arguments.choices_english && (
+              <div><span className="text-gray-400">Choices: </span>{tc.arguments.choices_english.join(', ')}</div>
+            )}
+          </div>
         </div>
       )}
 

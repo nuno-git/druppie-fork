@@ -29,6 +29,13 @@ pyyaml>=6.0.0
 python-dotenv>=1.0.0
 jsonschema>=4.0.0
 
+# Language Detection
+langdetect>=1.0.9
+pycountry>=24.6.1
+
+# Cron job scheduling
+croniter>=2.0.0
+
 # Logging
 structlog>=24.1.0
 

@@ -104,7 +104,7 @@ class LLMService:
         """Get all loaded profiles (for status endpoint)."""
         return get_profiles()
 
-    def create_llm_for_agent(self, agent_def: "AgentDefinition") -> BaseLLM:
+    def create_llm_for_agent(self, agent_def: "AgentDefinition", session_id: str | None = None) -> BaseLLM:
         """Create an LLM instance using the model resolution chain.
 
         Resolution order: override → profile → global default.
@@ -150,7 +150,7 @@ class LLMService:
                     thinking=effective_thinking,
                     reasoning_effort=effective_effort,
                 )
-                result = FallbackLLM(primary, fallback)
+                result = FallbackLLM(primary, fallback, session_id=session_id)
                 has_fallback = True
 
         logger.info(

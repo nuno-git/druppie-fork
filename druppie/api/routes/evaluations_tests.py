@@ -7,7 +7,7 @@ and there's no lock/eviction complexity.
 
 import threading
 import uuid as uuid_mod
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError, as_completed
 from datetime import datetime, timezone
 from uuid import UUID
 
@@ -21,6 +21,9 @@ from druppie.services import EvaluationService
 
 logger = structlog.get_logger()
 router = APIRouter()
+
+_running_lock = threading.Lock()
+_cancel_events: dict[str, threading.Event] = {}
 
 
 class RunTestsRequest(BaseModel):
@@ -128,6 +131,9 @@ async def run_tests(
     finally:
         db_check.close()
 
+    cancel_event = threading.Event()
+    _cancel_events[run_id] = cancel_event
+
     test_name = body.test_name
     test_names = body.test_names
     tag = body.tag
@@ -178,6 +184,8 @@ async def run_tests(
             logger.error("tests_run_fatal", run_id=run_id, error=str(e), exc_info=True)
             _update_batch(status="error", current_test=None,
                           message=str(e), completed_at=datetime.now(timezone.utc))
+        finally:
+            _cancel_events.pop(run_id, None)
 
     def _run_inner(run_id, test_name, test_names, tag, run_all,
                    execute, judge, input_values):
@@ -261,13 +269,34 @@ async def run_tests(
 
         all_results = []
         test_timeout = int(os.getenv("TEST_TIMEOUT_SECONDS", "600"))
+        max_workers = int(os.getenv("PARALLEL_TEST_WORKERS", "10"))
+        completed_count = 0
 
-        for idx, (name, test_def) in enumerate(tests_to_run):
-            _update_batch(current_test=name,
-                          message=f"Running {idx + 1}/{total}: {name}")
-
+        def _sync_running_tests():
+            _sync_db = SessionLocal()
             try:
-                def _run_single_test():
+                _sync_repo = EvaluationRepository(_sync_db)
+                names = _sync_repo.get_running_tests(run_id)
+            finally:
+                _sync_db.close()
+            _update_batch(
+                current_test=names[0] if len(names) == 1 else f"{len(names)} tests",
+                message=f"Running {completed_count + len(names)}/{total}: {', '.join(names[:3])}{'...' if len(names) > 3 else ''}",
+            )
+
+        def _run_single_test(name, test_def):
+            if cancel_event.is_set():
+                return []
+            with _running_lock:
+                _add_db = SessionLocal()
+                try:
+                    EvaluationRepository(_add_db).add_running_test(run_id, name)
+                    _add_db.commit()
+                finally:
+                    _add_db.close()
+            _sync_running_tests()
+            try:
+                def _execute():
                     test_db = SessionLocal()
                     try:
                         test_runner = runner.with_db(test_db)
@@ -280,27 +309,70 @@ async def run_tests(
                     finally:
                         test_db.close()
 
-                with ThreadPoolExecutor(max_workers=1) as pool:
-                    future = pool.submit(_run_single_test)
-                    test_results = future.result(timeout=test_timeout)
-                all_results.extend(test_results)
-            except FuturesTimeoutError:
-                logger.error("test_timed_out", test=name, timeout=test_timeout)
-                from druppie.testing.runner import TestRunResult
-                all_results.append(TestRunResult(
-                    test_name=name, test_user="timeout", test_type="tool",
-                    assertion_results=[], status="error",
-                    duration_ms=test_timeout * 1000,
-                ))
-            except Exception as test_err:
-                logger.error("test_failed", test=name, error=str(test_err), exc_info=True)
+                with ThreadPoolExecutor(max_workers=1) as inner_pool:
+                    inner_future = inner_pool.submit(_execute)
+                    try:
+                        return inner_future.result(timeout=test_timeout)
+                    except FuturesTimeoutError:
+                        logger.error("test_timed_out", test=name, timeout=test_timeout)
+                        from druppie.testing.runner import TestRunResult
+                        return [TestRunResult(
+                            test_name=name, test_user="timeout", test_type="tool",
+                            assertion_results=[], status="error",
+                            duration_ms=test_timeout * 1000,
+                        )]
+            finally:
+                with _running_lock:
+                    _rem_db = SessionLocal()
+                    try:
+                        EvaluationRepository(_rem_db).remove_running_test(run_id, name)
+                        _rem_db.commit()
+                    finally:
+                        _rem_db.close()
+                _sync_running_tests()
 
-        passed = sum(1 for r in all_results if r.status == "passed")
-        _update_batch(
-            status="completed", current_test=None,
-            message=f"{passed}/{len(all_results)} passed",
-            completed_at=datetime.now(timezone.utc),
-        )
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            futures = {}
+            for name, test_def in tests_to_run:
+                if cancel_event.is_set():
+                    break
+                future = pool.submit(_run_single_test, name, test_def)
+                futures[future] = name
+
+            for future in as_completed(futures):
+                name = futures[future]
+                try:
+                    test_results = future.result()
+                    all_results.extend(test_results)
+                except Exception as test_err:
+                    logger.error("test_failed", test=name, error=str(test_err), exc_info=True)
+                    from druppie.testing.runner import TestRunResult
+                    all_results.append(TestRunResult(
+                        test_name=name, test_user="error", test_type="tool",
+                        assertion_results=[], status="error",
+                        duration_ms=0,
+                    ))
+                finally:
+                    completed_count += 1
+                    _sync_running_tests()
+                if cancel_event.is_set():
+                    for f in futures:
+                        f.cancel()
+                    break
+
+        if not cancel_event.is_set():
+            passed = sum(1 for r in all_results if r.status == "passed")
+            _update_batch(
+                status="completed", current_test=None,
+                message=f"{passed}/{len(all_results)} passed",
+                completed_at=datetime.now(timezone.utc),
+            )
+        _clr_db = SessionLocal()
+        try:
+            EvaluationRepository(_clr_db).clear_running_tests(run_id)
+            _clr_db.commit()
+        finally:
+            _clr_db.close()
 
     thread = threading.Thread(target=_run, daemon=True, name=f"test-run-{run_id}")
     thread.start()
@@ -326,10 +398,13 @@ async def get_run_status(
 
         completed_tests = repo.get_completed_test_runs(run_id)
 
+        running_tests = repo.get_running_tests(run_id)
+
         return {
             "status": batch.status,
             "message": batch.message,
             "current_test": batch.current_test,
+            "running_tests": running_tests,
             "total_tests": batch.total_tests,
             "completed_tests": completed_tests,
             "started_at": batch.started_at.isoformat() if batch.started_at else None,
@@ -358,17 +433,53 @@ async def get_active_run(user: dict = Depends(require_admin)):
             return {"active": False}
 
         completed_tests = repo.get_completed_test_runs(active.id)
+        running_tests = repo.get_running_tests(active.id)
         return {
             "active": True,
             "run_id": active.id,
             "status": active.status,
             "message": active.message,
             "current_test": active.current_test,
+            "running_tests": running_tests,
             "total_tests": active.total_tests,
             "completed_tests": completed_tests,
         }
     finally:
         db.close()
+
+
+@router.post("/evaluations/cancel-run/{run_id}")
+async def cancel_run(
+    run_id: str,
+    user: dict = Depends(require_admin),
+):
+    """Cancel a running test batch."""
+    from druppie.db.database import SessionLocal
+    from druppie.repositories.evaluation_repository import EvaluationRepository
+
+    event = _cancel_events.get(run_id)
+    if not event:
+        return JSONResponse(
+            status_code=404,
+            content={"error": "No active run found or run already finished"},
+        )
+    event.set()
+
+    db = SessionLocal()
+    try:
+        repo = EvaluationRepository(db)
+        repo.update_batch_run(
+            run_id, status="cancelled", current_test=None,
+            message="Cancelled by user",
+            completed_at=datetime.now(timezone.utc),
+        )
+        repo.clear_running_tests(run_id)
+        db.commit()
+    finally:
+        db.close()
+
+    logger.info("test_run_cancelled", run_id=run_id, user_id=user.get("sub"))
+    return {"success": True, "message": "Run cancelled"}
 
 
 @router.get("/evaluations/test-runs")
@@ -416,6 +527,41 @@ async def list_tags(
 ):
     """List all unique tags with test run counts."""
     return service.list_tags()
+
+
+@router.delete("/evaluations/test-batches/{batch_id}")
+async def delete_test_batch(
+    batch_id: str,
+    service: EvaluationService = Depends(get_evaluation_service),
+    user: dict = Depends(require_admin),
+):
+    """Delete a test result batch and all of its test runs."""
+    count = service.delete_test_batch(batch_id)
+    logger.info("test_batch_deleted_via_api", batch_id=batch_id, deleted_count=count, user_id=user.get("sub"))
+    return {"success": True, "deleted_count": count, "message": f"Deleted {count} test run(s)"}
+
+
+@router.delete("/evaluations/test-batches")
+async def delete_all_test_batches(
+    service: EvaluationService = Depends(get_evaluation_service),
+    user: dict = Depends(require_admin),
+):
+    """Delete all test batches and their runs."""
+    count = service.delete_all_test_batches()
+    logger.info("all_test_batches_deleted_via_api", deleted_count=count, user_id=user.get("sub"))
+    return {"success": True, "deleted_count": count, "message": f"Deleted {count} test run(s)"}
+
+
+@router.delete("/evaluations/test-runs/{test_run_id}")
+async def delete_test_run(
+    test_run_id: UUID,
+    service: EvaluationService = Depends(get_evaluation_service),
+    user: dict = Depends(require_admin),
+):
+    """Delete a single test run."""
+    service.delete_test_run(test_run_id)
+    logger.info("test_run_deleted_via_api", test_run_id=str(test_run_id), user_id=user.get("sub"))
+    return {"success": True, "message": "Test run deleted"}
 
 
 @router.delete("/evaluations/test-users")

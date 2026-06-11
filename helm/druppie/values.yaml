@@ -1,0 +1,233 @@
+# Druppie Platform - Helm Values
+# =================================
+
+# Global settings
+global:
+  instance: druppie
+  imagePullPolicy: IfNotPresent
+  # Override for image registry prefix (e.g. "ghcr.io/myorg/")
+  imageRegistry: ""
+  # Domain configuration — controls all external URLs
+  # Local dev: localhost (path-based routing on port 9080)
+  # Production: druppie.example.com
+  domain: localhost
+  # Toggle for ingress (set true for kind/prod, false for bare port-forward)
+  ingress:
+    enabled: true
+    className: nginx
+    port: 9080
+    # TLS config for production
+    tls:
+      enabled: false
+      secretName: ""
+    # Additional annotations (e.g., cert-manager)
+    annotations: {}
+
+# PostgreSQL database defaults
+postgresql:
+  image: postgres:15-alpine
+  druppie:
+    database: druppie
+    username: druppie
+    password: druppie_secret
+    port: 5432
+    storage: 5Gi
+  keycloak:
+    database: keycloak
+    username: keycloak
+    password: keycloak_secret
+    port: 5432
+    storage: 5Gi
+  gitea:
+    database: gitea
+    username: gitea
+    password: gitea_secret
+    port: 5432
+    storage: 5Gi
+
+# Keycloak Identity Provider
+keycloak:
+  image: quay.io/keycloak/keycloak:24.0
+  adminUser: admin
+  adminPassword: admin
+  hostname: ""
+  nodePort: 8080
+  resources:
+    requests:
+      memory: "384Mi"
+      cpu: "250m"
+    limits:
+      memory: "768Mi"
+      cpu: "1000m"
+  readinessProbe:
+    httpGet:
+      path: /health/ready
+      port: 8080
+    initialDelaySeconds: 60
+    periodSeconds: 10
+    failureThreshold: 15
+  livenessProbe:
+    httpGet:
+      path: /health/ready
+      port: 8080
+    initialDelaySeconds: 90
+    periodSeconds: 30
+    failureThreshold: 10
+
+# Gitea Git Server
+gitea:
+  image: gitea/gitea:1.21
+  adminUser: gitea_admin
+  adminPassword: GiteaAdmin123
+  adminEmail: admin@druppie.local
+  org: druppie
+  sshPort: 2222
+  httpPort: 3000
+  nodePort: 3000
+  storage: 5Gi
+
+# Backend API
+backend:
+  image:
+    repository: druppie-backend
+    tag: latest
+  port: 8000
+  nodePort: 8000
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "250m"
+    limits:
+      memory: "512Mi"
+      cpu: "1000m"
+  devMode: false
+  dockerSocket:
+    enabled: false
+  # LLM configuration
+  llm:
+    provider: zai
+    forceProvider: ""
+    forceModel: ""
+  # LLM provider settings
+  zai:
+    model: glm-4.7
+    baseUrl: https://api.z.ai/api/coding/paas/v4
+  deepseek:
+    model: deepseek-chat
+    baseUrl: https://api.deepseek.com/v1
+  deepinfra:
+    model: Qwen/Qwen3-32B
+    baseUrl: https://api.deepinfra.com/v1
+  foundry:
+    model: GPT-5-MINI
+    apiUrl: ""
+  # GitHub App
+  github:
+    appId: ""
+    appPrivateKeyPath: ""
+    appInstallationId: ""
+    repoOwner: ""
+    repoName: ""
+
+# Frontend
+frontend:
+  image:
+    repository: druppie-frontend
+    tag: latest
+  port: 5173
+  nodePort: 5173
+  # Vite environment variables
+  vite:
+    keycloakRealm: druppie
+    keycloakClientId: druppie-frontend
+
+# MCP Modules
+modules:
+  coding:
+    enabled: true
+    image:
+      repository: druppie-module-coding
+      tag: latest
+    port: 9001
+  docker:
+    enabled: true
+    image:
+      repository: druppie-module-docker
+      tag: latest
+    port: 9002
+  filesearch:
+    enabled: true
+    image:
+      repository: druppie-module-filesearch
+      tag: latest
+    port: 9004
+  web:
+    enabled: true
+    image:
+      repository: druppie-module-web
+      tag: latest
+    port: 9005
+  archimate:
+    enabled: true
+    image:
+      repository: druppie-module-archimate
+      tag: latest
+    port: 9006
+  registry:
+    enabled: true
+    image:
+      repository: druppie-module-registry
+      tag: latest
+    port: 9007
+  llm:
+    enabled: true
+    image:
+      repository: druppie-module-llm
+      tag: latest
+    port: 9008
+  vision:
+    enabled: true
+    image:
+      repository: druppie-module-vision
+      tag: latest
+    port: 9011
+
+# Init job
+init:
+  enabled: true
+  image:
+    repository: druppie-init
+    tag: latest
+
+# Sandbox configuration
+sandbox:
+  runtime: sysbox-runc
+  image: druppie-sandbox:latest
+  memoryLimit: 4g
+  cpuLimit: "2"
+
+# Networking (ingress config moved to global.ingress)
+
+# Persistence
+persistence:
+  enabled: true
+  storageClass: ""
+  workspace:
+    size: 10Gi
+  dataset:
+    size: 5Gi
+  sandboxBundles:
+    size: 5Gi
+
+# Secrets (override in production)
+secrets:
+  zaiApiKey: ""
+  deepseekApiKey: ""
+  deepinfraApiKey: ""
+  foundryApiKey: ""
+  internalApiKey: druppie-internal-secret-key
+  keycloakClientSecret: ""
+  giteaClientSecret: ""
+  giteaSecretKey: ""
+  giteaToken: ""
+  moduleApiToken: ""

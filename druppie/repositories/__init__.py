@@ -10,6 +10,8 @@ from .user_repository import UserRepository
 from .evaluation_repository import EvaluationRepository
 from .analytics_repository import AnalyticsRepository
 from .project_dependency_repository import ProjectDependencyRepository
+from .documentation_cache_repository import DocumentationCacheRepository
+from .job_repository import JobRepository
 
 __all__ = [
     "BaseRepository",
@@ -22,4 +24,6 @@ __all__ = [
     "EvaluationRepository",
     "AnalyticsRepository",
     "ProjectDependencyRepository",
+    "DocumentationCacheRepository",
+    "JobRepository",
 ]

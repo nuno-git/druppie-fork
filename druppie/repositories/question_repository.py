@@ -44,6 +44,8 @@ class QuestionRepository(BaseRepository):
         choices: list[dict[str, str]] | None = None,
         agent_id: str | None = None,
         expert_role: str | None = None,
+        question_english: str | None = None,
+        choices_english: list | None = None,
     ) -> Question:
         """Create a new question.
 
@@ -51,13 +53,15 @@ class QuestionRepository(BaseRepository):
             session_id: Session this question belongs to
             agent_run_id: Agent run that asked the question
             tool_call_id: ToolCall this question is for
-            question: The question text
+            question: The question text (display language)
             question_type: "text" or "choice"
-            choices: List of choice dicts [{"text": "Option A"}, ...]
+            choices: List of choice dicts [{"text": "Option A"}, ...] (display language)
             agent_id: ID of the agent asking (optional)
             expert_role: When set, route the question to users with this
                 Keycloak role instead of the session owner. Used by the
                 ask_expert tool family.
+            question_english: English original from agent (NULL if already English)
+            choices_english: English original choices (NULL if already English)
 
         Returns:
             Created Question model
@@ -69,8 +73,10 @@ class QuestionRepository(BaseRepository):
             tool_call_id=tool_call_id,
             agent_id=agent_id,
             question=question,
+            question_english=question_english,
             question_type=question_type,
             choices=choices,
+            choices_english=choices_english,
             status=QuestionStatus.PENDING.value,
             expert_role=expert_role,
         )
@@ -227,6 +233,19 @@ class QuestionRepository(BaseRepository):
                 session_title = row[0]
                 session_owner_username = row[1]
 
+        # Build English choices (same structure as display choices)
+        choices_english = None
+        if question.choices_english:
+            for idx, choice_data in enumerate(question.choices_english):
+                if choices_english is None:
+                    choices_english = []
+                selected = question.selected_indices or []
+                choices_english.append(QuestionChoice(
+                    index=idx,
+                    text=choice_data.get("text", ""),
+                    is_selected=idx in selected,
+                ))
+
         return QuestionDetail(
             id=question.id,
             session_id=question.session_id,
@@ -235,6 +254,8 @@ class QuestionRepository(BaseRepository):
             question=question.question,
             question_type=question.question_type or "text",
             choices=choices,
+            question_english=question.question_english,
+            choices_english=choices_english,
             status=QuestionStatus(question.status),
             answer=question.answer,
             answered_at=question.answered_at,

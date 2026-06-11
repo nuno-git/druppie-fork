@@ -27,6 +27,7 @@ from uuid import UUID
 import structlog
 
 from druppie.core.mcp_config import MCPConfig
+from druppie.core.translation import TranslationNotAvailableError
 from druppie.execution.mcp_http import MCPHttp, MCPHttpError
 from druppie.execution.path_validation import (
     FILE_WRITE_TOOLS,
@@ -629,7 +630,8 @@ class ToolExecutor:
                 agent_definition=agent_definition,
             )
             if needs_approval:
-                # Create Approval record and pause execution
+                # Translate design content before showing the approval card
+                await self._translate_design_content(tool_call)
                 return await self._create_approval_and_wait(tool_call, required_role)
 
         # Step 3.5: Check approval for builtin tools (via agent approval_overrides)
@@ -719,14 +721,19 @@ class ToolExecutor:
             return await self._execute_builtin_tool(tool_call)
         return await self._execute_mcp_tool(tool_call)
 
-    async def complete_after_answer(self, question_id: UUID, answer: str) -> str:
+    async def complete_after_answer(
+        self, question_id: UUID, answer_english: str, user_answer: str | None = None, selected_choices: list[int] | None = None
+    ) -> str:
         """Complete a HITL tool after the user answers.
 
         Called when user submits an answer to a question in the UI.
 
         Args:
             question_id: ID of the answered Question record
-            answer: User's answer
+            answer_english: User's answer translated to English (for the agent)
+            user_answer: Original answer in user's language (what the user typed).
+                         If None, uses answer_english for both.
+            selected_choices: Indices of selected multiple-choice options
 
         Returns:
             Final status: completed
@@ -737,8 +744,8 @@ class ToolExecutor:
             logger.error("question_not_found", question_id=str(question_id))
             return ToolCallStatus.FAILED
 
-        # Update question with answer
-        self.question_repo.update_answer(question_id, answer)
+        # Update question with the user's original answer (their language)
+        self.question_repo.update_answer(question_id, user_answer or answer_english, selected_choices)
 
         # Get associated tool call
         tool_call_id = question.tool_call_id
@@ -746,13 +753,24 @@ class ToolExecutor:
             logger.error("question_missing_tool_call_id", question_id=str(question_id))
             return ToolCallStatus.FAILED
 
-        # Build result that will be passed back to agent
+        # Build result — contains both English (for agent) and user's original (for frontend).
+        # message_history.py strips user_answer when reconstructing for agents.
+        choices = None
+        if question.choices:
+            try:
+                choices = [c["text"] if isinstance(c, dict) else c for c in question.choices]
+            except (TypeError, KeyError):
+                choices = question.choices
+
         result = {
             "status": "answered",
-            "answer": answer,
-            "question": question.question,
+            "answer_english": answer_english,
+            "user_answer": user_answer or answer_english,
+            "question": question.question_english or question.question,
             "question_type": question.question_type,
         }
+        if selected_choices is not None and choices:
+            result["selected_choices"] = [choices[i] for i in selected_choices if i < len(choices)]
 
         # Update tool call with result
         self.execution_repo.update_tool_call(
@@ -769,6 +787,104 @@ class ToolExecutor:
         )
 
         return ToolCallStatus.COMPLETED
+
+    # Dutch file path mapping for design documents
+    DESIGN_TRANSLATION_PATHS = {
+        "docs/functional-design.md": "docs/functioneel-ontwerp.md",
+        "docs/technical-design.md": "docs/technisch-ontwerp.md",
+        "docs/technical-research.md": "docs/technisch-onderzoek.md",
+    }
+
+    async def _translate_design_content(self, tool_call) -> None:
+        """Translate design content to Dutch before the approval gate.
+
+        For make_design calls in Dutch sessions, translates the English content
+        and adds translated_content/translated_path to tool_call.arguments.
+        The approval card shows the Dutch version; the MCP tool writes both files.
+        """
+        if tool_call.tool_name != "make_design":
+            return
+
+        from druppie.repositories import SessionRepository
+        session_repo = SessionRepository(self.db)
+        session = session_repo.get_by_id(tool_call.session_id)
+
+        if not session or not session.language or session.language != "nl":
+            return
+
+        args = tool_call.arguments or {}
+        content = args.get("content")
+        path = args.get("path")
+        if not content or not path:
+            return
+
+        translated_path = self.DESIGN_TRANSLATION_PATHS.get(path)
+        if not translated_path:
+            return
+
+        try:
+            from druppie.core.translation import get_translation_service
+            translator = get_translation_service()
+            translated_content = await self._translate_long_content(
+                translator, content, "nl"
+            )
+            if translated_content and translated_content != content:
+                enriched_args = dict(args)
+                enriched_args["translated_content"] = translated_content
+                enriched_args["translated_path"] = translated_path
+                tool_call.arguments = enriched_args
+                self.execution_repo.update_tool_call_arguments(
+                    tool_call.id, enriched_args
+                )
+                self.db.flush()
+                logger.info(
+                    "design_content_translated",
+                    tool_call_id=str(tool_call.id),
+                    path=path,
+                    translated_path=translated_path,
+                )
+        except TranslationNotAvailableError:
+            raise
+        except Exception as e:
+            logger.warning(
+                "design_translation_failed",
+                tool_call_id=str(tool_call.id),
+                path=path,
+                error=str(e),
+            )
+
+    async def _translate_long_content(
+        self, translator, content: str, target_language: str
+    ) -> str:
+        """Translate long markdown by splitting on heading boundaries."""
+        import re
+
+        if len(content) < 3000:
+            return await translator.translate_from_english(content, target_language)
+
+        sections = re.split(r"(^#{1,3}\s+.+$)", content, flags=re.MULTILINE)
+
+        chunks = []
+        current = ""
+        for part in sections:
+            if re.match(r"^#{1,3}\s+", part):
+                if current:
+                    chunks.append(current)
+                current = part
+            else:
+                current += part
+        if current:
+            chunks.append(current)
+
+        import asyncio
+
+        async def _translate_chunk(chunk):
+            if chunk.strip():
+                return await translator.translate_from_english(chunk, target_language)
+            return chunk
+
+        translated = await asyncio.gather(*[_translate_chunk(c) for c in chunks])
+        return "".join(translated)
 
     async def _create_approval_and_wait(self, tool_call, required_role: str | None) -> str:
         """Create an Approval record and set tool call to waiting.
@@ -817,6 +933,7 @@ class ToolExecutor:
         The difference is who can answer:
         - HITL: session owner only (expert_role is NULL)
         - ask_expert: any user with the agent-allowed expert_role
+        Translates English agent output to the user's language before storing.
 
         Args:
             tool_call: The ToolCall model
@@ -827,16 +944,62 @@ class ToolExecutor:
         args = tool_call.arguments or {}
         is_expert_tool = tool_call.tool_name in ASK_EXPERT_TOOLS
 
+        question_text = args.get("question", "")
+
         # Choices: both *_multiple_choice_* variants use the same shape
         if tool_call.tool_name in (
             "hitl_ask_multiple_choice_question",
             "ask_expert_multiple_choice_question",
         ):
             question_type = "choice"
-            choices = [{"text": c} for c in args.get("choices", [])]
+            raw_choices = args.get("choices", [])
         else:
             question_type = "text"
-            choices = None
+            raw_choices = []
+
+        # Save English originals before translation
+        english_question = question_text
+        english_choices = list(raw_choices) if raw_choices else None
+        is_translated = False
+
+        # Translate question and choices to the user's language
+        try:
+            from druppie.repositories import SessionRepository
+            from druppie.core.translation import get_translation_service
+            session_repo = SessionRepository(self.db)
+            session = session_repo.get_by_id(tool_call.session_id)
+            if session and session.language and session.language != "en":
+                translator = get_translation_service()
+                question_text = await translator.translate_from_english(
+                    question_text, session.language
+                )
+                if raw_choices:
+                    translated_choices = []
+                    for c in raw_choices:
+                        translated_choices.append(
+                            await translator.translate_from_english(c, session.language)
+                        )
+                    raw_choices = translated_choices
+                context_text = args.get("context", "")
+                if context_text:
+                    translated_context = await translator.translate_from_english(
+                        context_text, session.language
+                    )
+                    updated_args = dict(args)
+                    updated_args["context"] = translated_context
+                    self.execution_repo.update_tool_call_arguments(tool_call.id, updated_args)
+                is_translated = True
+                logger.info(
+                    "hitl_question_translated",
+                    tool_call_id=str(tool_call.id),
+                    target_language=session.language,
+                )
+        except TranslationNotAvailableError:
+            raise
+        except Exception as e:
+            logger.warning("hitl_question_translation_failed", error=str(e))
+
+        choices = [{"text": c} for c in raw_choices] if raw_choices else None
 
         # For ask_expert, validate that the requested expert_role is allowed
         # by the agent's YAML. Without this gate, an LLM could route any
@@ -894,10 +1057,12 @@ class ToolExecutor:
             session_id=tool_call.session_id,
             agent_run_id=tool_call.agent_run_id,
             tool_call_id=tool_call.id,
-            question=args.get("question", ""),
+            question=question_text,
             question_type=question_type,
             choices=choices,
             expert_role=expert_role,
+            question_english=english_question if is_translated else None,
+            choices_english=[{"text": c} for c in english_choices] if english_choices and is_translated else None,
         )
 
         # Update tool call status to waiting
@@ -1019,7 +1184,12 @@ class ToolExecutor:
         Returns:
             ToolCallStatus.COMPLETED or ToolCallStatus.FAILED
         """
-        args = tool_call.arguments or {}
+        # Copy to avoid mutating the ORM model's JSON dict in-place
+        args = dict(tool_call.arguments or {})
+
+        # Extract platform-injected translation fields before sending to MCP
+        translated_content = args.pop("translated_content", None)
+        translated_path = args.pop("translated_path", None)
 
         logger.info(
             "mcp_tool_pre_injection",
@@ -1084,6 +1254,28 @@ class ToolExecutor:
 
             # Check if result indicates failure
             is_success = result.get("success", True)
+
+            # Write translated design file after English original succeeds
+            if is_success and translated_content and translated_path:
+                try:
+                    await self.mcp_http.call(
+                        tool_call.mcp_server,
+                        "write_file",
+                        {**args, "path": translated_path, "content": translated_content},
+                        timeout_seconds=60.0,
+                    )
+                    logger.info(
+                        "translated_design_written",
+                        tool_call_id=str(tool_call.id),
+                        translated_path=translated_path,
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "translated_design_write_failed",
+                        tool_call_id=str(tool_call.id),
+                        translated_path=translated_path,
+                        error=str(e),
+                    )
 
             self.execution_repo.update_tool_call(
                 tool_call.id,

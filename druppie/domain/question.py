@@ -28,6 +28,8 @@ class QuestionDetail(BaseModel):
     question: str
     question_type: str  # text, multiple_choice
     choices: list[QuestionChoice] = []
+    question_english: str | None = None
+    choices_english: list[QuestionChoice] | None = None
     status: QuestionStatus
     answer: str | None
     answered_at: datetime | None

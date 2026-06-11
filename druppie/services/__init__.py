@@ -9,6 +9,8 @@ Architecture:
 Special services:
     - WorkflowService: Wraps MainLoop for workflow resumption
       (does not use repositories, uses execution engine instead)
+    - JobService: Manages cron job definitions and runs, coordinates
+      scheduler-triggered and manual job execution with the execution engine.
 """
 
 from .session_service import SessionService
@@ -21,6 +23,8 @@ from .skill_service import SkillService
 from .revert_service import RevertService
 from .github_app_service import GitHubAppService, get_github_app_service
 from .evaluation_service import EvaluationService
+from .documentation_service import DocumentationService
+from .job_service import JobService
 
 __all__ = [
     "SessionService",
@@ -34,4 +38,6 @@ __all__ = [
     "GitHubAppService",
     "get_github_app_service",
     "EvaluationService",
+    "DocumentationService",
+    "JobService",
 ]
