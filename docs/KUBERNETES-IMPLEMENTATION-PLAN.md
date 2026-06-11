@@ -13,14 +13,14 @@
 ## Acceptatiecriteria (Story 3)
 
 - [x] Druppie volledig deploybaar via Helm
-- [ ] Autoscaling: Backend en frontend schalen horizontaal (HPA)
-- [ ] High availability: Minimale redundantie voor kritieke services
+- [x] Autoscaling: Backend en frontend schalen horizontaal (HPA)
+- [x] High availability: Minimale redundantie voor kritieke services
 - [ ] Database: Productiegeschikte PostgreSQL oplossing (volgens spike)
-- [ ] Persistent storage via PVCs
-- [ ] Secrets + ConfigMaps correct ingericht
-- [ ] Complete flow werkt: login → chat → agent sessie
+- [x] Persistent storage via PVCs
+- [ ] Secrets + ConfigMaps correct ingericht (Sealed Secrets)
+- [x] Complete flow werkt: login → chat → agent sessie
 - [ ] Documentatie: setup, scaling gedrag, beperkingen
-- [ ] Backlog item: stateless maken backend (indien niet volledig af)
+- [x] Backlog item: stateless maken backend (al geïmplementeerd)
 
 ---
 
@@ -122,12 +122,12 @@ def create_session_task(session_id, coro, *, name=None):
 ```
 
 **Acceptatiecriteria:**
-- [ ] `_active_session_tasks` dict volledig verwijderd
-- [ ] `is_session_task_running()` leest uit database
-- [ ] `create_session_task()` guard via database (atomic)
-- [ ] Complete flow werkt op 1 replica: login → chat → agent sessie → approval → resume
-- [ ] Bestaande tests slagen
-- [ ] Kind deploy + smoke test slaagt
+- [x] `_active_session_tasks` dict volledig verwijderd
+- [x] `is_session_task_running()` leest uit database
+- [x] `create_session_task()` guard via database (atomic)
+- [x] Complete flow werkt op 1 replica: login → chat → agent sessie → approval → resume
+- [x] Bestaande tests slagen
+- [x] Kind deploy + smoke test slaagt
 
 ---
 
@@ -160,15 +160,15 @@ Aanmaken: iac/cluster.yaml
 - `kubectl` lokaal beschikbaar
 
 **Acceptatiecriteria:**
-- [ ] `hetzner-k3s create cluster --config iac/cluster.yaml` slaagt in <5 min
-- [ ] `kubectl get nodes` toont 3 servers + minimaal 1 infra + 1 app agent
-- [ ] Alle nodes `Ready`
-- [ ] Masters hebben `NoSchedule` taint (geen workloads)
-- [ ] Infra nodes hebben label `pool: infra`
-- [ ] App nodes hebben label `pool: app`
-- [ ] Traefik ingress controller actief (K3s standaard)
-- [ ] kube-prometheus-stack gedeployed in `monitoring` namespace
-- [ ] `kubectl get pods -A` toont alleen system/monitoring pods op masters
+- [x] `hetzner-k3s create cluster --config iac/cluster.yaml` slaagt in <5 min
+- [x] `kubectl get nodes` toont 3 servers + minimaal 1 infra + 1 app agent
+- [x] Alle nodes `Ready`
+- [x] Masters hebben `NoSchedule` taint (geen workloads)
+- [x] Infra nodes hebben label `pool: infra`
+- [x] App nodes hebben label `pool: app`
+- [x] Traefik ingress controller actief (K3s standaard)
+- [x] kube-prometheus-stack gedeployed in `monitoring` namespace
+- [x] `kubectl get pods -A` toont alleen system/monitoring pods op masters
 
 ---
 
@@ -224,11 +224,11 @@ Wijzigen: helm/druppie/templates/persistentvolumeclaims.yaml
 ```
 
 **Acceptatiecriteria:**
-- [ ] `helm template --validate` slaagt
-- [ ] `helm template -f values-prod.yaml` genereert geldige productie YAML
-- [ ] Elke Deployment heeft `resources.requests` en `resources.limits`
-- [ ] Replica counts configureerbaar per environment
-- [ ] PVCs hebben configureerbare `storageClassName`
+- [x] `helm template --validate` slaagt
+- [x] `helm template -f values-prod.yaml` genereert geldige productie YAML
+- [x] Elke Deployment heeft `resources.requests` en `resources.limits`
+- [x] Replica counts configureerbaar per environment
+- [x] PVCs hebben configureerbare `storageClassName`
 
 ---
 
@@ -264,10 +264,10 @@ Wijzigen: helm/druppie/values-prod.yaml
 ```
 
 **Acceptatiecriteria:**
-- [ ] `helm template` met `className: nginx` → NGINX Ingress (Kind blijft werken)
-- [ ] `helm template` met `className: traefik` → Traefik Ingress (geen NGINX annotations)
-- [ ] ClusterIssuer template gegenereerd wanneer `cert-manager.enabled: true`
-- [ ] TLS annotations aanwezig wanneer `tls.enabled: true`
+- [x] `helm template` met `className: nginx` → NGINX Ingress (Kind blijft werken)
+- [x] `helm template` met `className: traefik` → Traefik Ingress (geen NGINX annotations)
+- [x] ClusterIssuer template gegenereerd wanneer `cert-manager.enabled: true`
+- [x] TLS annotations aanwezig wanneer `tls.enabled: true`
 
 ---
 
@@ -373,10 +373,10 @@ Wijzigen: helm/druppie/values-prod.yaml
 ```
 
 **Acceptatiecriteria:**
-- [ ] `helm template` genereert HPA resources
-- [ ] Backend HPA: min 2, max 10, CPU 70%
-- [ ] Frontend HPA: min 2, max 8, CPU 70%
-- [ ] Stabilization windows geconfigureerd (geen oscillatie)
+- [x] `helm template` genereert HPA resources
+- [x] Backend HPA: min 2, max 10, CPU 70%
+- [x] Frontend HPA: min 2, max 8, CPU 70%
+- [x] Stabilization windows geconfigureerd (geen oscillatie)
 
 ---
 
@@ -418,8 +418,8 @@ async def lifespan(app: FastAPI):
 ```
 
 **Acceptatiecriteria:**
-- [ ] PDB's gedefinieerd: minAvailable 1 voor backend en frontend
-- [ ] Anti-affinity: pods verspreid over nodes
+- [x] PDB's gedefinieerd: minAvailable 1 voor backend en frontend
+- [x] Anti-affinity: pods verspreid over nodes
 - [ ] Graceful shutdown: SIGTERM → drain tasks → exit binnen 60s
 
 ---
@@ -441,9 +441,9 @@ Aanmaken: docs/monitoring-setup.md
 ```
 
 **Acceptatiecriteria:**
-- [ ] Installatie instructies compleet
-- [ ] Prometheus scrape alle pods
-- [ ] Grafana bereikbaar met dashboards
+- [x] Installatie instructies compleet
+- [x] Prometheus scrape alle pods
+- [x] Grafana bereikbaar met dashboards
 
 ---
 
