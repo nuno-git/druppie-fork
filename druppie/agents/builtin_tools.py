@@ -136,7 +136,7 @@ BUILTIN_TOOL_DEFS: dict[str, dict] = {
                     },
                     "project_id": {
                         "type": "string",
-                        "description": "For update_project: the ID of the project to update. For general_chat: optional project ID when the user is asking about a specific project (e.g., documentation questions). ONLY include this if the user mentions a specific project by name - otherwise OMIT this parameter entirely.",
+                        "description": "The ID of the project to work with. Required for update_project. Optional for general_chat when the user asks about a specific project by name. ONLY include this if the user mentions a specific project - otherwise OMIT this parameter entirely.",
                     },
                     "project_name": {
                         "type": "string",

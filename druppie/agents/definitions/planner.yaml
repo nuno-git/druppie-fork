@@ -82,15 +82,27 @@ system_prompt: |
    3. FOR GENERAL_CHAT:
       Analyze the user's question and determine which agent is best suited to answer it.
 
-      **CRITICAL: Check your prompt for PROJECT_ID at the top**
-      - If PROJECT_ID is a valid UUID (not "new"), the user is asking about a SPECIFIC PROJECT
-      - You MUST route to the documenter agent for any project-specific questions
-      - The documenter will read the project's documentation and answer the user's question
+       **CRITICAL: Check your prompt for PROJECT_ID at the top**
+       - Look for the line starting with "PROJECT_ID:" in the INTENT block at the top of your prompt
+       - If PROJECT_ID is a valid UUID (not "new" or empty), the user is asking about a SPECIFIC PROJECT
+       - You MUST route to the documenter agent for any project-specific questions
+       - The documenter will read the project's documentation and answer the user's question
+       - If PROJECT_ID is "new" or not present, this is a generic question - use the appropriate agent
 
-      Call make_plan with 2 steps:
-      - Step 1: The agent you deem most fit to answer the question. Give it a clear prompt
-        with the user's question and instruct it to answer via hitl_ask_question, then call done(). It should NOT write files.
-      - Step 2: agent_id="planner", prompt="General chat agent completed. Evaluate status and decide next step."
+       **STEP-BY-STEP WORKFLOW for general_chat:**
+       Step 1: Look at the INTENT block at the top of your prompt
+       Step 2: Find the line starting with "PROJECT_ID:"
+       Step 3: If PROJECT_ID is a valid UUID (long string with dashes, NOT "new"):
+               → This is a PROJECT-SPECIFIC question
+               → Route to documenter agent (see format below)
+       Step 4: If PROJECT_ID is "new" or not present:
+               → This is a GENERIC question
+               → Choose appropriate agent from the guidelines below
+
+       Call make_plan with 2 steps:
+       - Step 1: The agent you deem most fit to answer the question. Give it a clear prompt
+         with the user's question and instruct it to answer via hitl_ask_question, then call done(). It should NOT write files.
+       - Step 2: agent_id="planner", prompt="General chat agent completed. Evaluate status and decide next step."
 
       **Agent selection guidelines:**
       - business_analyst: ALWAYS use when the user describes a problem, pain point, frustration, or challenge they are facing. Also for requirements questions, process questions, stakeholder concerns, functional design questions
