@@ -146,6 +146,53 @@ mcps:
     tools: [read_file, write_file, edit_file, bash, grep, find, ls, list_dir, delete_file, batch_write_files, get_partial_output, run_tests, get_test_framework, get_coverage_report, install_test_dependencies, get_git_status, push_changes, create_pr]
     git: current_project
 
+sandbox_constraints:
+  allowed_paths:
+    - api/
+    - routes/
+    - server/
+    - services/
+    - controllers/
+    - middleware/
+    - domain/
+    - repositories/
+    - app/
+    - src/server/
+    - src/api/
+    - "*.py"
+    - Dockerfile
+    - docker-compose.*
+    - requirements.txt
+    - pyproject.toml
+    - setup.py
+    - setup.cfg
+    - package.json
+    - tsconfig.server.json
+    - "*.env.example"
+    - config.*
+    - settings.*
+    - test_*.py
+    - tests/
+    - "*.test.ts"
+  forbidden_paths:
+    - src/components/
+    - src/pages/
+    - public/
+    - styles/
+    - frontend/
+    - client/
+    - "*.css"
+    - "*.scss"
+    - "*.jsx"
+    - "*.tsx"
+    - "*.vue"
+    - "*.svelte"
+    - db/models/
+    - schemas/
+    - migrations/
+    - seed/
+    - fixtures/
+
 skills:
   - code-review
   - git-workflow

@@ -52,6 +52,8 @@ class SandboxConstraints(BaseModel):
 
     allowed_agents: list[str] | None = None
     allowed_repo_targets: list[str] | None = None
+    allowed_paths: list[str] | None = None
+    forbidden_paths: list[str] | None = None
 
 
 class SandboxConfig(BaseModel):

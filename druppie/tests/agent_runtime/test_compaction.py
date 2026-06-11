@@ -107,7 +107,7 @@ class TestCalibrate:
     def test_adjusts_ratio(self):
         compactor = MessageCompactor()
         msgs = [_msg("user", "a" * 1000)]
-        compactor.calibrate(250, msgs)
+        compactor.calibrate(200, msgs)  # 1000/200 = 5.0, not 4.0
         assert compactor.state.calibration_ratio != 4.0
         assert compactor.state.calibration_samples == 1
 

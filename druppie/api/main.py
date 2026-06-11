@@ -3,8 +3,10 @@
 Main entry point for the API.
 """
 
+import asyncio
 import os
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta, timezone
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -19,6 +21,9 @@ from druppie.agents import Agent
 from druppie.core.background_tasks import create_tracked_task, shutdown_background_tasks
 
 logger = structlog.get_logger()
+
+SANDBOX_WATCHDOG_INTERVAL = 120  # seconds
+SANDBOX_STUCK_TIMEOUT = 1800  # 30 min — tool calls waiting longer are stuck
 
 
 def _recover_zombie_sessions() -> None:
@@ -85,6 +90,64 @@ def _recover_orphaned_batch_runs() -> None:
         db.close()
 
 
+async def _sandbox_stuck_watchdog():
+    """Periodic check for tool calls stuck in WAITING_SANDBOX state.
+
+    If a sandbox container dies without calling back, the tool call stays in
+    WAITING_SANDBOX indefinitely. This watchdog detects such cases and marks
+    them as FAILED so the agent loop can recover.
+    """
+    from druppie.db.database import SessionLocal
+    from druppie.domain.common import SessionStatus
+    from druppie.repositories import ExecutionRepository, SessionRepository
+
+    while True:
+        await asyncio.sleep(SANDBOX_WATCHDOG_INTERVAL)
+        db = SessionLocal()
+        try:
+            cutoff = datetime.now(timezone.utc) - timedelta(seconds=SANDBOX_STUCK_TIMEOUT)
+            execution_repo = ExecutionRepository(db)
+            stuck_calls = execution_repo.get_stuck_sandbox_tool_calls(cutoff)
+
+            if not stuck_calls:
+                continue
+
+            logger.warning("sandbox_watchdog_found_stuck", count=len(stuck_calls))
+            session_repo = SessionRepository(db)
+
+            for tc in stuck_calls:
+                logger.warning(
+                    "sandbox_watchdog_failing_tool_call",
+                    tool_call_id=str(tc.id),
+                    tool_name=tc.tool_name,
+                    session_id=str(tc.session_id),
+                )
+                execution_repo.update_tool_call(
+                    tc.id,
+                    status="failed",
+                    error="Sandbox watchdog: tool call timed out in WAITING_SANDBOX state. "
+                          "The sandbox container may have crashed. Retry the operation.",
+                )
+
+                if tc.session_id:
+                    session_repo.update_status(
+                        tc.session_id,
+                        SessionStatus.PAUSED_CRASHED,
+                        error_message="Sandbox operation timed out — container may have crashed.",
+                    )
+
+            db.commit()
+            logger.info("sandbox_watchdog_recovered", count=len(stuck_calls))
+        except Exception as e:
+            logger.error("sandbox_watchdog_error", error=str(e))
+            try:
+                db.rollback()
+            except Exception:
+                pass
+        finally:
+            db.close()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan handler."""
@@ -120,9 +183,17 @@ async def lifespan(app: FastAPI):
             name="mcp-registry-retry",
         )
 
+    sandbox_watchdog = asyncio.create_task(_sandbox_stuck_watchdog())
+    logger.info("sandbox_stuck_watchdog_started", interval=SANDBOX_WATCHDOG_INTERVAL, timeout=SANDBOX_STUCK_TIMEOUT)
+
     yield
 
-    # Shutdown — wait for background tasks before exiting
+    # Shutdown — cancel watchdog and wait for background tasks
+    sandbox_watchdog.cancel()
+    try:
+        await sandbox_watchdog
+    except asyncio.CancelledError:
+        pass
     await shutdown_background_tasks(timeout=30.0)
     logger.info("druppie_stopping")
 

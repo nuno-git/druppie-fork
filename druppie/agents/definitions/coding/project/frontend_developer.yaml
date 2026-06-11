@@ -148,6 +148,58 @@ mcps:
     - fetch_url
     - get_page_info
 
+sandbox_constraints:
+  allowed_paths:
+    - src/components/
+    - src/pages/
+    - src/hooks/
+    - src/context/
+    - src/utils/
+    - src/App.*
+    - src/main.*
+    - src/index.*
+    - src/router.*
+    - src/routes.*
+    - public/
+    - static/
+    - assets/
+    - styles/
+    - frontend/
+    - client/
+    - app/
+    - pages/
+    - "*.css"
+    - "*.scss"
+    - "*.less"
+    - "*.jsx"
+    - "*.tsx"
+    - "*.vue"
+    - "*.svelte"
+    - "*.test.jsx"
+    - "*.test.tsx"
+    - "*.spec.*"
+    - tailwind.config.*
+    - postcss.config.*
+    - vite.config.*
+    - next.config.*
+    - tsconfig.json
+    - package.json
+    - package-lock.json
+    - pnpm-lock.yaml
+    - index.html
+  forbidden_paths:
+    - api/
+    - server/
+    - services/
+    - repositories/
+    - db/
+    - models/
+    - middleware/
+    - controllers/
+    - migrations/
+    - Dockerfile
+    - docker-compose.*
+
 skills:
   - code-review
   - git-workflow

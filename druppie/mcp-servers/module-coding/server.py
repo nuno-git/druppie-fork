@@ -1,6 +1,8 @@
 """Coding MCP Server — Version Router."""
 
+import asyncio
 import logging
+import time
 from contextlib import asynccontextmanager
 
 from module_router import create_module_app, run_module
@@ -8,6 +10,9 @@ from starlette.responses import JSONResponse
 from starlette.routing import Mount, Route
 
 _logger = logging.getLogger("coding-mcp")
+
+WATCHDOG_INTERVAL = 60  # seconds between health checks
+CONTAINER_MAX_IDLE = 3600  # 1 hour — remove containers idle longer than this
 
 
 async def cleanup_session(request):
@@ -60,6 +65,72 @@ _management_routes = [
     Route("/sandbox/warmup", warmup_pool, methods=["POST"]),
 ]
 
+async def _sandbox_watchdog():
+    """Periodic background task that monitors sandbox container health.
+
+    Detects dead containers and removes stale entries so the next tool call
+    gets a fresh container instead of hitting a dead one. Also removes
+    containers that have been idle beyond CONTAINER_MAX_IDLE.
+    """
+    from v1.tools import (
+        sandbox_containers,
+        _is_container_running,
+        _get_container_death_reason,
+        _destroy_container,
+    )
+
+    while True:
+        await asyncio.sleep(WATCHDOG_INTERVAL)
+        try:
+            now = time.time()
+            keys_to_check = list(sandbox_containers.keys())
+            dead_count = 0
+            stale_count = 0
+
+            for key in keys_to_check:
+                entry = sandbox_containers.get(key)
+                if not entry:
+                    continue
+
+                container_name = entry.get("container_name", "")
+                session_id = entry.get("session_id", "")
+                git_scope = entry.get("git_scope", "")
+
+                running = await _is_container_running(container_name)
+                if not running:
+                    reason = await _get_container_death_reason(container_name)
+                    _logger.warning(
+                        "Watchdog: dead container %s (session=%s, scope=%s): %s",
+                        container_name, session_id, git_scope, reason,
+                    )
+                    try:
+                        await _destroy_container(session_id, git_scope)
+                    except Exception:
+                        sandbox_containers.pop(key, None)
+                    dead_count += 1
+                    continue
+
+                age = now - entry.get("created_at", now)
+                if age > CONTAINER_MAX_IDLE:
+                    _logger.info(
+                        "Watchdog: removing stale container %s (age=%.0fs, session=%s)",
+                        container_name, age, session_id,
+                    )
+                    try:
+                        await _destroy_container(session_id, git_scope)
+                    except Exception:
+                        sandbox_containers.pop(key, None)
+                    stale_count += 1
+
+            if dead_count or stale_count:
+                _logger.info(
+                    "Watchdog cycle: removed %d dead, %d stale containers",
+                    dead_count, stale_count,
+                )
+        except Exception as exc:
+            _logger.warning("Watchdog error: %s", exc)
+
+
 app = create_module_app("coding", default_port=9001)
 
 _base_lifespan = app.router.lifespan_context
@@ -73,8 +144,19 @@ async def _extended_lifespan(app_ref):
     except Exception as exc:
         _logger.warning("Startup orphan cleanup failed: %s", exc)
 
+    watchdog_task = asyncio.create_task(_sandbox_watchdog())
+    _logger.info("Sandbox watchdog started (interval=%ds, max_idle=%ds)", WATCHDOG_INTERVAL, CONTAINER_MAX_IDLE)
+
     async with _base_lifespan(app_ref):
-        yield
+        try:
+            yield
+        finally:
+            watchdog_task.cancel()
+            try:
+                await watchdog_task
+            except asyncio.CancelledError:
+                pass
+            _logger.info("Sandbox watchdog stopped")
 
 app.router.lifespan_context = _extended_lifespan
 

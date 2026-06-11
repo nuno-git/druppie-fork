@@ -349,6 +349,121 @@ async def retry_run(
 
 
 # =============================================================================
+# REDIRECT AGENT RUN
+# =============================================================================
+
+
+class RedirectRequest(BaseModel):
+    """Body for redirect endpoint."""
+    target_agent: str
+    prompt: str | None = None
+
+
+async def _run_redirect_background(
+    session_id: UUID,
+    agent_run_id: UUID,
+    target_agent: str,
+    prompt: str | None = None,
+) -> None:
+    """Redirect an agent run to a different agent in background.
+
+    Stops the current run, changes it to the target agent, resets subsequent
+    runs, and re-executes the pipeline.
+    """
+
+    async def task(ctx):
+        from druppie.core.mcp_config import get_mcp_config
+        from druppie.execution.mcp_http import MCPHttp
+        from druppie.services import RevertService
+
+        mcp_http = MCPHttp(get_mcp_config())
+        revert_service = RevertService(ctx.execution_repo, ctx.session_repo, mcp_http)
+
+        # Revert the target run and all subsequent runs
+        result = await revert_service.retry_from_run(
+            session_id, agent_run_id, planned_prompt=prompt,
+        )
+        logger.info("redirect_revert_complete", session_id=str(session_id), result=result)
+
+        # Change the agent_id on the target run
+        ctx.execution_repo.redirect_run(agent_run_id, target_agent, new_prompt=prompt)
+        ctx.execution_repo.commit()
+        logger.info(
+            "redirect_agent_changed",
+            session_id=str(session_id),
+            agent_run_id=str(agent_run_id),
+            target_agent=target_agent,
+        )
+
+        # Re-execute the pipeline
+        await ctx.orchestrator.execute_pending_runs(session_id)
+
+    await run_session_task(session_id, task, "redirect_background")
+
+
+@router.post("/sessions/{session_id}/redirect/{agent_run_id}")
+async def redirect_run(
+    session_id: UUID,
+    agent_run_id: UUID,
+    body: RedirectRequest,
+    service: SessionService = Depends(get_session_service),
+    user: dict = Depends(get_current_user),
+):
+    """Redirect an agent run to a different agent.
+
+    Stops the current/completed run, changes it to the target agent,
+    resets all subsequent runs, and re-executes the pipeline.
+    This is an atomic "stop + change agent + retry" operation.
+
+    Args:
+        session_id: Session containing the run to redirect
+        agent_run_id: Agent run to redirect
+        body: Target agent ID and optional new prompt
+    """
+    user_id = UUID(user["sub"])
+    user_roles = get_user_roles(user)
+
+    service.get_detail(
+        session_id=session_id,
+        user_id=user_id,
+        user_roles=user_roles,
+    )
+
+    try:
+        service.lock_for_retry(session_id)
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+
+    logger.info(
+        "redirect_requested",
+        session_id=str(session_id),
+        agent_run_id=str(agent_run_id),
+        target_agent=body.target_agent,
+        user_id=str(user_id),
+    )
+
+    try:
+        create_tracked_task(
+            _run_redirect_background(
+                session_id=session_id,
+                agent_run_id=agent_run_id,
+                target_agent=body.target_agent,
+                prompt=body.prompt,
+            ),
+            name=f"redirect-{session_id}",
+        )
+    except Exception:
+        service.mark_failed(session_id, "Failed to start redirect background task")
+        raise
+
+    return {
+        "success": True,
+        "session_id": str(session_id),
+        "message": f"Redirect to {body.target_agent} started",
+    }
+
+
+# =============================================================================
 # RESUME PAUSED SESSION
 # =============================================================================
 

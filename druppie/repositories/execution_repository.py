@@ -944,6 +944,23 @@ class ExecutionRepository(BaseRepository):
             run.completion_tokens = 0
             run.total_tokens = 0
 
+    def redirect_run(self, agent_run_id: UUID, new_agent_id: str, new_prompt: str | None = None) -> None:
+        """Redirect a run to a different agent, resetting it to PENDING."""
+        run = self.db.query(AgentRun).filter(AgentRun.id == agent_run_id).first()
+        if not run:
+            raise ValueError(f"Agent run {agent_run_id} not found")
+        run.agent_id = new_agent_id
+        run.status = AgentRunStatus.PENDING.value
+        run.started_at = None
+        run.completed_at = None
+        run.error_message = None
+        run.iteration_count = 0
+        run.prompt_tokens = 0
+        run.completion_tokens = 0
+        run.total_tokens = 0
+        if new_prompt is not None:
+            run.planned_prompt = new_prompt
+
     def update_planned_prompt_batch(self, updates: dict[UUID, str]) -> None:
         """Batch update planned_prompt for multiple runs.
 

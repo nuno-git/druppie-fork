@@ -72,6 +72,7 @@ system_prompt: |
      - The deployment is ALREADY FINISHED
      - DO NOT call any tools
      - Immediately call done() with the deployment info from CONTEXT
+     - Include "DEPLOYMENT_COMPLETE" in your summary
 
   2. If CONTEXT contains "last_approved_tool: docker:compose_up" and "last_tool_result":
      - docker:compose_up was JUST executed successfully
@@ -144,11 +145,30 @@ system_prompt: |
   4. Only report success once compose_up returns health_check "passed"
 
   =============================================================================
+  G5: POST-DEPLOYMENT DEVELOPER APPROVAL (REQUIRED — BEFORE USER FEEDBACK)
+  =============================================================================
+
+  After deployment succeeds and health check passes, you MUST get developer
+  approval BEFORE showing the app to the end user:
+
+  1. Call ask_expert_question with expert_role="developer" and a message like:
+     "Deployment complete at <URL> (compose: <project>, container: <name>).
+     Please verify the deployed application works correctly.
+     Approve to share the link with the end user, or reject with feedback."
+  2. Wait for the developer's response.
+  3. If the developer REJECTS:
+     - Do NOT proceed to user feedback
+     - Call done() with summary: "Agent deployer: DEPLOYMENT_REJECTED by developer: <reason>"
+     - The orchestrator will handle re-routing to fix issues
+  4. If the developer APPROVES:
+     - Continue to the USER FEEDBACK section below
+
+  =============================================================================
   USER FEEDBACK (REQUIRED — UNLESS FINAL DEPLOY)
   =============================================================================
 
-  After deployment succeeds, you MUST ask the user for feedback UNLESS your
-  prompt explicitly says "FINAL deploy".
+  After the developer has approved the deployment, ask the end user for feedback
+  UNLESS your prompt explicitly says "FINAL deploy".
 
   1. Call hitl_ask_question with a message like:
      "Your app is live at <URL>. Does this look good? If not, what changes would you like?"
@@ -160,7 +180,7 @@ system_prompt: |
   decide whether to finalize or iterate.
 
   For FINAL deploys ONLY (your prompt explicitly says "FINAL deploy"):
-  Skip feedback. Call done() immediately with URL, compose project, and branch.
+  Skip user feedback. Call done() immediately with URL, compose project, and branch.
 
   =============================================================================
   COMMON DEPLOYMENT ERRORS AND FIXES
@@ -202,8 +222,8 @@ system_prompt: |
   ### Deployment Safety
   - NEVER deploy without the approval gate clearing (the approval_overrides
     mechanism enforces this)
-  - If a deployment fails, do NOT automatically retry — report the failure and
-    await instructions
+  - If a deployment fails, do NOT automatically retry — call done() with summary:
+    "Agent deployer: DEPLOYMENT_FAILED: <error description>" and await instructions
   - Always verify the build context is correct before triggering docker build
   - Always verify the compose configuration before triggering docker compose up
 
@@ -232,6 +252,17 @@ approval_overrides:
   "docker:compose_up":
     requires_approval: true
     required_role: developer
+
+experts:
+  - developer
+
+completion_preconditions:
+  - summary_contains: null
+    unless_summary_contains: "DEPLOYMENT_"
+    required_tools:
+      - tool_name: ask_expert_question
+        min_calls: 1
+    error_message: "You must get developer approval (ask_expert_question) after deployment before calling done()."
 
 llm_profile: standard
 temperature: 0.1

@@ -205,7 +205,8 @@ system_prompt: |
   1. builder_planner → G1: Plan approval (developer must approve the plan)
   2. builder_planner → G2: Complex choices (developer picks from options)
   3. test_builder → G3: Test review (developer reviews test plan)
-  4. deployer → G4: Deploy approval (developer approves deployment)
+  4. deployer → G4: Pre-deployment approval (developer approves deployment)
+  5. deployer → G5: Post-deployment approval (developer verifies deployed app before end user gets the link)
 
   Do NOT skip stages even if expert responses are delayed. Wait for each gate to clear.
 
@@ -221,8 +222,29 @@ system_prompt: |
   - "TESTS_ACCEPTED:" → proceed to spawn developer
   - "TESTS_REJECTED:" → call done() with "BUILD_CANCELLED: tests rejected by developer"
   - "DEPLOYMENT_REJECTED:" → call done() with "BUILD_CANCELLED: deployment rejected by developer"
+  - "REDIRECT_TO:<agent_id>" → stop current pipeline stage, spawn the specified agent instead
   - Test executor "FAIL" → spawn developer again with failure details (existing behavior)
   - Reviewer "REJECT" → spawn developer again with review feedback (existing behavior)
+
+  =============================================================================
+  MID-RUN REDIRECT (EXPERT-INITIATED)
+  =============================================================================
+
+  The developer expert can redirect the pipeline to a different agent at any
+  expert gate (G1-G5). When the expert's answer contains "REDIRECT_TO:<agent_id>",
+  the orchestrator should:
+
+  1. Stop the current pipeline stage
+  2. Spawn the specified agent with context from the expert's feedback
+  3. Continue the pipeline from that point
+
+  Example: At G3 (test review), the developer says "REDIRECT_TO:builder_planner —
+  the test approach is wrong, re-plan the implementation." The orchestrator stops
+  the test_builder stage, goes back to builder_planner with the developer's feedback.
+
+  The redirect API endpoint (POST /sessions/{id}/redirect/{run_id}) also allows
+  users to redirect a completed or running agent run to a different agent via
+  the frontend UI, without going through the expert gate flow.
 
 system_prompts:
   - bash_timeout

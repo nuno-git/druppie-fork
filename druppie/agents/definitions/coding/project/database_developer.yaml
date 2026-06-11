@@ -139,8 +139,52 @@ system_prompts:
 mcps:
   coding:
     networks: [internet]
-    tools: [read_file, write_file, edit_file, bash, grep, find, ls, list_dir, delete_file, batch_write_files, get_partial_output, get_git_status, push_changes, create_pr]
+    tools: [read_file, write_file, edit_file, bash, grep, find, ls, list_dir, delete_file, batch_write_files, get_partial_output, run_tests, get_test_framework, get_coverage_report, install_test_dependencies, get_git_status, push_changes, create_pr]
     git: current_project
+
+sandbox_constraints:
+  allowed_paths:
+    - db/
+    - models/
+    - schemas/
+    - migrations/
+    - alembic/
+    - repositories/
+    - seed/
+    - fixtures/
+    - "*.sql"
+    - prisma/
+    - drizzle/
+    - knex/
+    - typeorm/
+    - src/models/
+    - src/db/
+    - src/repositories/
+    - database.py
+    - models.py
+    - schema.prisma
+    - knexfile.*
+    - ormconfig.*
+    - test_*_repository.py
+    - test_models.*
+    - test_*_db.*
+  forbidden_paths:
+    - api/
+    - routes/
+    - controllers/
+    - services/
+    - src/components/
+    - src/pages/
+    - frontend/
+    - client/
+    - styles/
+    - "*.css"
+    - "*.jsx"
+    - "*.tsx"
+    - "*.vue"
+    - "*.svelte"
+    - Dockerfile
+    - docker-compose.*
 
 skills:
   - git-workflow
