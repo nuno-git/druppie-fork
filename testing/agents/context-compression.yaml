@@ -1,0 +1,62 @@
+## Agent test: Context compression triggers during complex implementation
+##
+## Setup: tool test creates a Flask API project with ~12 source files,
+##   large FD + TD, and a pending developer with an auth + RBAC task.
+##
+## The developer must read all existing files (~20K chars of source),
+## then modify nearly every file to add authentication. This generates
+## enough context (tool results + assistant messages) to trigger the
+## progressive compression in AgentLoop._compress_messages().
+##
+## Compression phases:
+##   Phase 1 (>50% tokens): old tool results truncated to head+tail
+##   Phase 2 (>70%): old turns replaced with one-line action summaries
+##   Phase 3 (>85%): LLM summarizes the compressed history
+##
+## The test verifies the agent completes coherently despite compression.
+
+agent-test:
+  name: context-compression
+  description: "Developer agent runs long enough to trigger context compression and still completes"
+  tags: [context-compression, agent-runtime, e2e, long-running]
+
+  setup:
+    - setup-context-compression
+
+  continue_session: true
+
+  message: |
+    Add JWT authentication and role-based access control to the existing task management API.
+    Read all existing source files first, then implement the changes across all files.
+    Make sure all tests pass before pushing.
+
+  agents: [developer]
+
+  assert:
+    - check: developer-completed
+    - check: auth-files-created
+
+  checks:
+    developer-completed:
+      description: "Developer agent completed successfully with a meaningful summary"
+      evaluate: |
+        The developer agent should have:
+        - Completed with status 'completed' (not auto-done or error)
+        - Made at least 15 tool calls (reading existing files + writing new ones)
+        - Called push_changes at least once
+        - Summary should mention authentication or auth implementation
+
+    auth-files-created:
+      description: "Authentication-related files were created or modified"
+      evaluate: |
+        The agent should have created or modified files related to authentication.
+        Look for evidence of: auth routes, JWT handling, user model changes,
+        or middleware additions in the tool call history.
+
+  judge:
+    context: [developer]
+    checks:
+      - "The developer read multiple existing source files before making changes. It should have read at least src/app.py, src/models.py, and some route files."
+      - "The developer made more than 15 tool calls total across its run, generating substantial context."
+      - "The developer completed with done() and a coherent summary — not an AUTO-DONE from context overflow. This indicates compression kept the context within limits."
+      - "The developer's implementation should be coherent — later changes should be consistent with earlier ones, even if earlier context was compressed."
