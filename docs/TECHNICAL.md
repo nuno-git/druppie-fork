@@ -1232,3 +1232,86 @@ The `sandbox_sessions` table maps control plane session IDs to Druppie users:
 
 The `tool_call_id` FK enables direct lookup from webhook → tool call without table scans. Events proxy (`GET /api/sandbox-sessions/{id}/events`) enforces ownership — non-owners get 403, admins bypass.
 
+---
+
+## 11. Translation Service
+
+The platform provides automatic translation so agents always work in English while users interact in their own language.
+
+### 11.1 Architecture
+
+| Component | Location | Responsibility |
+|-----------|----------|----------------|
+| `TranslationService` | `druppie/core/translation.py` | Singleton; calls DeepInfra's Qwen/Qwen3-32B for all translations |
+| `LanguageDetector` | `druppie/core/language_detection.py` | Hybrid detection: keyword heuristics + `langdetect` library |
+| `HumanInput` | `druppie/execution/human_input.py` | Wraps user text with detected language metadata |
+
+The translation service is separate from the main LLM provider — it always uses DeepInfra regardless of `LLM_PROVIDER`. This requires `DEEPINFRA_API_KEY` to be set. If the key is missing, `TranslationNotAvailableError` is raised on first use (not silently swallowed).
+
+### 11.2 Data Flow
+
+```
+User (Dutch) → Orchestrator → [detect language] → [translate to English] → Router/Planner/Agent
+                                                                                    │
+Agent (English) ← ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┘
+    │
+    ├─► HITL question → [translate question + choices to Dutch] → User
+    ├─► make_design   → [translate content] → Dutch file alongside English original
+    └─► done (summary) → [translate to Dutch] → Chat timeline
+```
+
+### 11.3 Integration Points
+
+| Point | File | What happens |
+|-------|------|--------------|
+| User message | `orchestrator.py` ~line 189 | Detect language, translate to English |
+| HITL answer | `orchestrator.py` ~line 748 | Translate answer to English (session language unchanged) |
+| HITL question | `tool_executor.py` ~line 877 | Translate question + choices to user's language |
+| Design document | `tool_executor.py` ~line 723 | Translate content, inject `translated_content`/`translated_path` |
+| MCP write | `tool_executor.py` ~line 1040 | Write Dutch file via second MCP `write_file` call |
+| Summarizer message | `builtin_tools.py` ~line 731 | Translate to session language before storing |
+| Agent prompt | `prompt_builder.py` ~line 82 | Inject English-only instruction block |
+
+### 11.3.1 HITL Answer Field Naming
+
+The tool call result for answered HITL questions stores two versions of the answer:
+
+| Field | Content | Consumed by |
+|-------|---------|-------------|
+| `user_answer` | Original answer in the user's language (what they typed) | Frontend display |
+| `answer_english` | Translated to English (for the agent) | Agent via `message_history.py` |
+
+`message_history.py` strips `user_answer` before reconstructing tool results for agent context, so agents only see the English version.
+
+### 11.3.2 HITL Question Bilingual Storage
+
+HITL questions store both the translated (display) and original (English) versions:
+
+| Column | Content | Where shown |
+|--------|---------|-------------|
+| `Question.question` | Translated to user's language | Chat timeline, HITL UI |
+| `Question.question_english` | Original English from agent | Debug/inspect panel, session API |
+| `Question.choices` | Translated choices | Chat timeline |
+| `Question.choices_english` | Original English choices | Debug/inspect panel |
+
+The debug panel (`DebugEventLog.jsx`) shows an "Original (English)" section on HITL tool calls when `question_english` is present, making it easy to compare what the agent generated vs what the user saw.
+
+### 11.4 Design Document Translation Paths
+
+| English path | Dutch path |
+|--------------|------------|
+| `docs/functional-design.md` | `docs/functioneel-ontwerp.md` |
+| `docs/technical-design.md` | `docs/technisch-ontwerp.md` |
+| `docs/technical-research.md` | `docs/technisch-onderzoek.md` |
+
+### 11.5 Session Language
+
+Stored in `sessions.language` (VARCHAR(10), nullable). Set on the first user message and locked — HITL answers do not update it, preventing a Dutch user's English-sounding answer from flipping the session language.
+
+### 11.6 Error Handling
+
+- `TranslationNotAvailableError` (missing API key) propagates — the session fails with a clear error message.
+- Transient translation errors (API timeouts, empty responses) fall back to the original English text with a logged warning.
+- Startup validation logs a warning when `DEEPINFRA_API_KEY` is not set.
+- Test framework pre-flight check: `runner.py` logs a warning before executing agent tests when `DEEPINFRA_API_KEY` is missing, and wraps `TranslationNotAvailableError` with a clear "set it in .env" message in test results.
+

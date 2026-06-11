@@ -36,11 +36,13 @@ class Question(Base):
     agent_id = Column(String(50))  # Direct reference to agent name (router, architect, etc.)
 
     question = Column(Text, nullable=False)
+    question_english = Column(Text)  # English original from agent; NULL when session is English
     question_type = Column(String(20), default="text")  # text, single_choice, multiple_choice
 
     # Choices for single_choice/multiple_choice questions as JSONB array.
     # Format: [{"text": "Option A"}, {"text": "Option B"}]
     choices = Column(JSON)
+    choices_english = Column(JSON)  # English original choices from agent; NULL when session is English
 
     # Which choices were selected (indices into the choices array).
     # Format: [0, 2] means first and third options selected.
@@ -76,8 +78,10 @@ class Question(Base):
             "tool_call_id": str(self.tool_call_id) if self.tool_call_id else None,
             "agent_id": self.agent_id,
             "question": self.question,
+            "question_english": self.question_english,
             "question_type": self.question_type,
             "choices": choices_with_selection,
+            "choices_english": self.choices_english,
             "status": self.status,
             "answer": self.answer,
             "answered_at": self.answered_at.isoformat() if self.answered_at else None,

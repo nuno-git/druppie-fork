@@ -26,6 +26,7 @@ import {
   extractSurfacedApprovals,
   extractOrderedItems,
   extractSurfacedFileWrites,
+  buildApprovalFileList,
   extractDependencyInstalls,
   findPendingQuestion,
   ProjectRepoContext,
@@ -42,6 +43,12 @@ import SandboxEventCard, {
   toolCategoryConfig,
   getToolCategory,
 } from './SandboxEventCard'
+
+// Fast-poll window after user actions (answer/approve/continue) so the
+// loading indicator appears promptly instead of waiting for the 2s paused poll.
+let _resumingUntil = 0
+const markResuming = () => { _resumingUntil = Date.now() + 10000 }
+const isResuming = () => Date.now() < _resumingUntil
 
 // --- Tool label helper ---
 
@@ -72,6 +79,7 @@ const InlineApproval = ({ tc, sessionId, sessionUserId }) => {
   const [pdfDownloading, setPdfDownloading] = useState(false)
 
   const invalidate = () => {
+    markResuming()
     queryClient.invalidateQueries({ queryKey: ['session', sessionId] })
     queryClient.invalidateQueries({ queryKey: ['tasks'] })
     queryClient.invalidateQueries({ queryKey: ['approvalHistory'] })
@@ -145,15 +153,9 @@ const InlineApproval = ({ tc, sessionId, sessionUserId }) => {
 
           {/* File preview for write operations */}
           {(() => {
-            const filePath = args.path || args.file_path
-            const content = args.content
-            const batchFiles = args.files
-            const isBatchWrite = !!batchFiles && Object.keys(batchFiles).length > 0
-            const hasFile = !!(content || isBatchWrite)
-            if (!hasFile) return null
-            const files = isBatchWrite
-              ? Object.entries(batchFiles).map(([p, c]) => ({ path: p, content: c }))
-              : [{ path: filePath || 'file', content }]
+            const files = buildApprovalFileList(args)
+            if (!files) return null
+            const displayPath = args.translated_path || args.path || args.file_path || 'file'
             return (
               <div className="mt-1.5">
                 <div className="flex items-center gap-2">
@@ -161,17 +163,17 @@ const InlineApproval = ({ tc, sessionId, sessionUserId }) => {
                     onClick={() => setShowFilePreview(true)}
                     className="flex items-center gap-1.5 text-xs text-blue-600 hover:text-blue-800 transition-colors"
                   >
-                    {isBatchWrite ? <FileCode className="w-3.5 h-3.5" /> : <FilePlus className="w-3.5 h-3.5" />}
-                    View {isBatchWrite ? `${files.length} files` : filePath || 'file'}
+                    {files.length > 1 && !args.translated_content ? <FileCode className="w-3.5 h-3.5" /> : <FilePlus className="w-3.5 h-3.5" />}
+                    View {files.length > 1 && !args.translated_content ? `${files.length} files` : displayPath}
                   </button>
-                  {!isBatchWrite && content && (
+                  {files.length === 1 && args.content && (
                     <DownloadMenu
                       variant="light"
                       loading={pdfDownloading}
-                      onDownloadMd={() => downloadAsMarkdown(content, filePath)}
+                      onDownloadMd={() => downloadAsMarkdown(args.content, displayPath)}
                       onDownloadPdf={async () => {
                         setPdfDownloading(true)
-                        try { await downloadContentAsPdf(content, filePath, repo) }
+                        try { await downloadContentAsPdf(args.content, displayPath, repo) }
                         finally { setPdfDownloading(false) }
                       }}
                     />
@@ -269,7 +271,7 @@ const TimelineQuestion = ({ tc, agentId, sessionId }) => {
 
   const answerMut = useMutation({
     mutationFn: ({ questionId, answer, selectedChoices = null }) => answerQuestion(questionId, answer, selectedChoices),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['session', sessionId] }),
+    onSuccess: () => { markResuming(); queryClient.invalidateQueries({ queryKey: ['session', sessionId] }) },
   })
 
   const isAnswered = tc.status === 'completed'
@@ -283,7 +285,7 @@ const TimelineQuestion = ({ tc, agentId, sessionId }) => {
   if (isAnswered && tc.result) {
     try {
       const parsed = typeof tc.result === 'string' ? JSON.parse(tc.result) : tc.result
-      displayAnswer = parsed.answer || parsed.text || (typeof parsed === 'string' ? parsed : tc.result)
+      displayAnswer = parsed.user_answer || parsed.display_answer || parsed.answer_english || parsed.answer || parsed.text || (typeof parsed === 'string' ? parsed : tc.result)
     } catch {
       displayAnswer = tc.result
     }
@@ -656,10 +658,11 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
       if (query.state.error) return false
       const status = query.state.data?.status
       if (status === 'completed' || status === 'failed') return false
+      // Fast poll briefly after submitting an answer/approval (translation in progress)
+      if (isResuming()) return 500
       if (status === 'paused_crashed') return 2000
       if (status === 'paused_sandbox') return 2000
       if (status === 'paused' || status === 'paused_approval' || status === 'paused_hitl') {
-        // Fast poll while stopping (agent still finishing current op), slow poll when fully paused
         const hasRunning = query.state.data?.timeline?.some(
           e => e.type === 'agent_run' && e.agent_run?.status === 'running'
         )
@@ -673,6 +676,7 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
   const continueMutation = useMutation({
     mutationFn: (message) => sendChat(message, sessionId),
     onSuccess: () => {
+      markResuming()
       setContinueInput('')
       queryClient.invalidateQueries({ queryKey: ['session', sessionId] })
       queryClient.invalidateQueries({ queryKey: ['sessions'] })
@@ -1175,6 +1179,23 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
             )
           })()}
           <div ref={timelineEndRef} />
+          </div>
+        </div>
+      )}
+
+      {/* Failed session banner — show error message so the user knows what went wrong */}
+      {data.status === 'failed' && viewMode !== 'inspect' && (
+        <div className="px-4 pb-4 pt-2 flex-shrink-0">
+          <div className="max-w-3xl mx-auto">
+            <div className="flex items-start gap-2.5 border border-red-200 rounded-2xl shadow-sm px-4 py-3.5 bg-red-50">
+              <XCircle className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-red-800">Session failed</p>
+                {data.error_message && (
+                  <p className="text-sm text-red-600 mt-0.5 break-words">{data.error_message}</p>
+                )}
+              </div>
+            </div>
           </div>
         </div>
       )}
