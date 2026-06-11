@@ -67,6 +67,8 @@ spec:
             failureThreshold: 5
           resources:
             {{- toYaml .Values.modules.docker.resources | nindent 12 }}
+      nodeSelector:
+        pool: infra
       volumes:
         - name: workspace
           persistentVolumeClaim:
