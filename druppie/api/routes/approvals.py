@@ -25,7 +25,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 import structlog
 
-from druppie.api.deps import get_current_user, get_user_roles, get_approval_service
+from druppie.api.deps import get_attachment_repository, get_current_user, get_user_roles, get_approval_service
+from druppie.repositories import AttachmentRepository
 from druppie.services import ApprovalService
 from druppie.domain import ApprovalDetail, ApprovalHistoryList, PendingApprovalList
 from druppie.core.background_tasks import create_session_task, run_session_task, SessionTaskConflict
@@ -48,6 +49,10 @@ class RejectRequest(BaseModel):
         min_length=1,
         max_length=1000,
         description="Reason for rejection",
+    )
+    attachment_ids: list[str] = Field(
+        default=[],
+        description="Attachment IDs to link to this rejection",
     )
 
 
@@ -195,6 +200,7 @@ async def reject(
     approval_id: UUID,
     request: RejectRequest,
     approval_service: ApprovalService = Depends(get_approval_service),
+    attachment_repo: AttachmentRepository = Depends(get_attachment_repository),
     user: dict = Depends(get_current_user),
 ) -> ApprovalResponse:
     """Reject a pending tool execution.
@@ -234,6 +240,14 @@ async def reject(
         user_roles=user_roles,
         reason=request.reason,
     )
+
+    # Step 1b: Link attachments to approval
+    if request.attachment_ids:
+        attachment_uuids = [UUID(aid) for aid in request.attachment_ids]
+        attachment_repo.link_to_approval(
+            attachment_uuids, approval_id, approval.session_id,
+        )
+        attachment_repo.db.commit()
 
     # Step 2: Spawn background task to resume workflow
     try:

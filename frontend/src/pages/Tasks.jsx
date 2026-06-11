@@ -16,6 +16,8 @@ import { useToast } from '../components/Toast'
 import PageHeader from '../components/shared/PageHeader'
 import { SkeletonTaskCard } from '../components/shared/Skeleton'
 import EmptyState from '../components/shared/EmptyState'
+import FileUploadButton from '../components/chat/FileUploadButton'
+import AttachmentChips from '../components/chat/AttachmentChips'
 
 const activeRunPolling = (query) => {
   const latestItems = query.state.data?.items || []
@@ -193,6 +195,7 @@ const formatAgentName = (agentId) => {
 
 const TaskCard = ({ task, onApprove, onReject }) => {
   const [rejectReason, setRejectReason] = useState('')
+  const [rejectAttachments, setRejectAttachments] = useState([])
   const [showReject, setShowReject] = useState(false)
   const [showDetails, setShowDetails] = useState(false)
   const [showCodePreview, setShowCodePreview] = useState(false)
@@ -296,17 +299,29 @@ const TaskCard = ({ task, onApprove, onReject }) => {
       {/* Reject form — appears below header when active */}
       {canApprove && showReject && (
         <div className="mt-3 space-y-2">
-          <textarea
-            value={rejectReason}
-            onChange={(e) => setRejectReason(e.target.value)}
-            placeholder="Reason for rejection..."
-            className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent text-sm"
-            rows={2}
-            autoFocus
+          <AttachmentChips
+            attachments={rejectAttachments}
+            onRemove={(id) => setRejectAttachments((prev) => prev.filter((a) => a.id !== id))}
           />
+          <div className="flex items-start gap-2">
+            <FileUploadButton
+              onUpload={(att) => setRejectAttachments((prev) => [...prev, att])}
+              onError={() => {}}
+              sessionId={task.session_id}
+              scope={`reject-${task.id}`}
+            />
+            <textarea
+              value={rejectReason}
+              onChange={(e) => setRejectReason(e.target.value)}
+              placeholder="Reason for rejection..."
+              className="flex-1 px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent text-sm"
+              rows={2}
+              autoFocus
+            />
+          </div>
           <div className="flex items-center gap-2 justify-end">
             <button
-              onClick={() => setShowReject(false)}
+              onClick={() => { setShowReject(false); setRejectAttachments([]) }}
               className="px-3 py-1.5 text-sm text-gray-500 hover:text-gray-700 rounded-lg"
             >
               Cancel
@@ -314,7 +329,7 @@ const TaskCard = ({ task, onApprove, onReject }) => {
             <button
               onClick={() => {
                 if (rejectReason.trim()) {
-                  onReject(task.id, rejectReason)
+                  onReject(task.id, rejectReason, rejectAttachments.map((a) => a.id))
                 }
               }}
               disabled={!rejectReason.trim()}
@@ -748,7 +763,7 @@ const Tasks = () => {
   })
 
   const rejectMutation = useMutation({
-    mutationFn: ({ taskId, reason }) => rejectTask(taskId, reason),
+    mutationFn: ({ taskId, reason, attachmentIds }) => rejectTask(taskId, reason, attachmentIds),
     onSuccess: () => {
       invalidateApprovalCaches()
       toast.success('Task Rejected', 'The task has been rejected.')
@@ -762,8 +777,8 @@ const Tasks = () => {
     approveMutation.mutate({ taskId, comment: '' })
   }
 
-  const handleReject = (taskId, reason) => {
-    rejectMutation.mutate({ taskId, reason })
+  const handleReject = (taskId, reason, attachmentIds = []) => {
+    rejectMutation.mutate({ taskId, reason, attachmentIds })
   }
 
   // Group tasks by required role (use first role from required_roles array)

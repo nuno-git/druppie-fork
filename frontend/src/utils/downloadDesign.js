@@ -31,7 +31,7 @@ async function downloadElementAsPdf(element, path) {
   ])
 
   const canvas = await html2canvas(element, {
-    scale: 2,
+    scale: 1.5,
     useCORS: true,
     logging: false,
     backgroundColor: '#ffffff',
@@ -97,7 +97,7 @@ async function downloadElementAsPdf(element, path) {
       const slice = document.createElement('canvas')
       slice.width = canvas.width; slice.height = h
       slice.getContext('2d').drawImage(canvas, 0, srcY, canvas.width, h, 0, 0, canvas.width, h)
-      pdf.addImage(slice.toDataURL('image/png'), 'PNG', margin, margin, contentW, h * pxToMm)
+      pdf.addImage(slice.toDataURL('image/jpeg', 0.85), 'JPEG', margin, margin, contentW, h * pxToMm, undefined, 'FAST')
       break
     }
 
@@ -109,7 +109,7 @@ async function downloadElementAsPdf(element, path) {
     const slice = document.createElement('canvas')
     slice.width = canvas.width; slice.height = h
     slice.getContext('2d').drawImage(canvas, 0, srcY, canvas.width, h, 0, 0, canvas.width, h)
-    pdf.addImage(slice.toDataURL('image/png'), 'PNG', margin, margin, contentW, h * pxToMm)
+    pdf.addImage(slice.toDataURL('image/jpeg', 0.85), 'JPEG', margin, margin, contentW, h * pxToMm, undefined, 'FAST')
     srcY += h
   }
 
@@ -181,7 +181,7 @@ function foreignObjectsToText(svgString) {
 // are rasterised to fill this width (scaled down only when they'd be too tall),
 // so they never come out tiny. The canvas renders at 2× for crisp output.
 const PDF_CONTENT_WIDTH = 704
-const PDF_MAX_DIAGRAM_HEIGHT = 900
+const PDF_MAX_DIAGRAM_HEIGHT = 1800
 
 // Rasterise an SVG string to a page-width <img> for reliable PDF capture.
 // Shared by the mermaid and archimate renderers. Drawing the (vector) SVG onto
@@ -216,7 +216,7 @@ async function svgToPdfImage(svgString) {
     ctx.drawImage(img, 0, 0, c.width, c.height)
 
     const replacement = document.createElement('img')
-    replacement.src = c.toDataURL('image/png')
+    replacement.src = c.toDataURL('image/jpeg', 0.90)
     replacement.width = displayW
     replacement.height = displayH
     replacement.style.cssText = 'max-width:100%;height:auto;display:block;margin:16px 0;'

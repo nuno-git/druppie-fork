@@ -90,6 +90,7 @@ class Message(Base):
     created_at = Column(DateTime(timezone=True), default=utcnow)
 
     agent_run = relationship("AgentRun", back_populates="messages")
+    attachments = relationship("MessageAttachment", back_populates="message")
 
     def to_dict(self) -> dict[str, Any]:
         return {

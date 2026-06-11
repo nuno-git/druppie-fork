@@ -32,6 +32,13 @@ jsonschema>=4.0.0
 # Cron job scheduling
 croniter>=2.0.0
 
+# PDF text extraction
+pypdf>=4.0.0
+
+# OCR for image-based PDFs
+pytesseract>=0.3.10
+pdf2image>=1.16.0
+
 # Logging
 structlog>=24.1.0
 

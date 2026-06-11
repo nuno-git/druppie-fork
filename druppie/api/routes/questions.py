@@ -28,7 +28,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 import structlog
 
-from druppie.api.deps import get_current_user, get_question_service, get_user_roles
+from druppie.api.deps import get_attachment_repository, get_current_user, get_question_service, get_user_roles
+from druppie.repositories import AttachmentRepository
 from druppie.services import QuestionService
 from druppie.domain import QuestionDetail
 from druppie.core.background_tasks import create_session_task, run_session_task, SessionTaskConflict
@@ -55,6 +56,10 @@ class AnswerRequest(BaseModel):
     selected_choices: list[int] | None = Field(
         default=None,
         description="For choice questions, indices of selected options",
+    )
+    attachment_ids: list[str] = Field(
+        default=[],
+        description="Attachment IDs to link to this answer",
     )
 
 
@@ -99,6 +104,7 @@ async def answer_question(
     question_id: UUID,
     request: AnswerRequest,
     question_service: QuestionService = Depends(get_question_service),
+    attachment_repo: AttachmentRepository = Depends(get_attachment_repository),
     user: dict = Depends(get_current_user),
 ) -> AnswerResponse:
     """Answer a pending HITL question and resume the workflow.
@@ -139,6 +145,14 @@ async def answer_question(
         selected_choices=request.selected_choices,
         is_admin="admin" in roles,
     )
+
+    # Step 1b: Link attachments to question
+    if request.attachment_ids:
+        attachment_uuids = [UUID(aid) for aid in request.attachment_ids]
+        attachment_repo.link_to_question(
+            attachment_uuids, question_id, question.session_id,
+        )
+        attachment_repo.db.commit()
 
     # Step 2: Spawn background task to resume workflow
     try:
