@@ -16,8 +16,9 @@ from azure.identity.aio import ClientSecretCredential
 
 logger = logging.getLogger("azuredevops-mcp")
 
-# Fixed resource ID for the Azure DevOps API. The ".default" scope yields a token
-# carrying whatever permissions the service principal was granted in Azure DevOps.
+# Microsoft's well-known Application ID for the Azure DevOps REST API — the same
+# across every Azure tenant. The ".default" suffix requests whatever permissions
+# have been assigned to the service principal in Entra ID.
 AZURE_DEVOPS_SCOPE = "499b84ac-1321-427f-aa17-267ca6975798/.default"
 
 API_VERSION = "7.0"

@@ -87,7 +87,7 @@ async def list_backlog_items(
         state: Optional state filter, e.g. "New", "Approved", "Committed", "In Progress", "Done".
         board_column: Optional board column filter (the lane on the board view), e.g. "New", "In Progress", "In Review", "Ready", "Done". Note: board_column can differ from state.
         iteration: Optional iteration/sprint path filter, e.g. "AI-platform\\Sprint 11". Use get_current_sprint() to find the current sprint path.
-        assigned_to: Optional filter by assignee name (partial match), e.g. "Nuno" or "Kraljevic".
+        assigned_to: Optional filter by assignee name (partial match), e.g. "Jane" or "Doe".
         limit: Maximum number of items to return (default 100).
 
     Returns:
@@ -161,7 +161,7 @@ async def create_work_item(
         title: Title of the work item (required).
         description: HTML description of the work item.
         state: Initial state, e.g. "New", "Approved". Defaults to "New".
-        assigned_to: Display name of the assignee, e.g. "Nuno Kraljevic".
+        assigned_to: Display name of the assignee, e.g. "Jane Doe".
         iteration: Iteration/sprint path, e.g. "AI-platform\\Sprint 11".
             Use get_current_sprint() to find available paths.
         area_path: Area path for classification. Defaults to project root.

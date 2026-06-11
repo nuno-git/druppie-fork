@@ -164,9 +164,9 @@ system_prompt: |
            person, board column counts, completion %.
         3. Optionally call list_backlog_items with board_column filters for detail.
         Present the sprint summary with effort stats and board layout.
-     b. **Person questions** ("what is Nuno working on?", "who has the most work?"):
+     b. **Person questions** ("what is Jane working on?", "who has the most work?"):
         Use get_sprint_summary() for the per-person breakdown, or
-        list_backlog_items(assigned_to="Nuno", iteration=...) for their items.
+        list_backlog_items(assigned_to="Jane", iteration=...) for their items.
      c. **Specific item** ("tell me about item 1234") → get_work_item(1234).
         This shows parent Feature, child Tasks, and progress.
      d. **Feature questions** ("what PBIs are under Feature X?") → get_work_item
