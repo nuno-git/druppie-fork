@@ -23,6 +23,7 @@ logger = structlog.get_logger()
 router = APIRouter()
 
 _running_lock = threading.Lock()
+_cancel_events: dict[str, threading.Event] = {}
 
 
 class RunTestsRequest(BaseModel):
@@ -130,6 +131,9 @@ async def run_tests(
     finally:
         db_check.close()
 
+    cancel_event = threading.Event()
+    _cancel_events[run_id] = cancel_event
+
     test_name = body.test_name
     test_names = body.test_names
     tag = body.tag
@@ -180,6 +184,8 @@ async def run_tests(
             logger.error("tests_run_fatal", run_id=run_id, error=str(e), exc_info=True)
             _update_batch(status="error", current_test=None,
                           message=str(e), completed_at=datetime.now(timezone.utc))
+        finally:
+            _cancel_events.pop(run_id, None)
 
     def _run_inner(run_id, test_name, test_names, tag, run_all,
                    execute, judge, input_values):
@@ -279,6 +285,8 @@ async def run_tests(
             )
 
         def _run_single_test(name, test_def):
+            if cancel_event.is_set():
+                return []
             with _running_lock:
                 _add_db = SessionLocal()
                 try:
@@ -326,6 +334,8 @@ async def run_tests(
         with ThreadPoolExecutor(max_workers=max_workers) as pool:
             futures = {}
             for name, test_def in tests_to_run:
+                if cancel_event.is_set():
+                    break
                 future = pool.submit(_run_single_test, name, test_def)
                 futures[future] = name
 
@@ -345,13 +355,18 @@ async def run_tests(
                 finally:
                     completed_count += 1
                     _sync_running_tests()
+                if cancel_event.is_set():
+                    for f in futures:
+                        f.cancel()
+                    break
 
-        passed = sum(1 for r in all_results if r.status == "passed")
-        _update_batch(
-            status="completed", current_test=None,
-            message=f"{passed}/{len(all_results)} passed",
-            completed_at=datetime.now(timezone.utc),
-        )
+        if not cancel_event.is_set():
+            passed = sum(1 for r in all_results if r.status == "passed")
+            _update_batch(
+                status="completed", current_test=None,
+                message=f"{passed}/{len(all_results)} passed",
+                completed_at=datetime.now(timezone.utc),
+            )
         _clr_db = SessionLocal()
         try:
             EvaluationRepository(_clr_db).clear_running_tests(run_id)
@@ -431,6 +446,40 @@ async def get_active_run(user: dict = Depends(require_admin)):
         }
     finally:
         db.close()
+
+
+@router.post("/evaluations/cancel-run/{run_id}")
+async def cancel_run(
+    run_id: str,
+    user: dict = Depends(require_admin),
+):
+    """Cancel a running test batch."""
+    from druppie.db.database import SessionLocal
+    from druppie.repositories.evaluation_repository import EvaluationRepository
+
+    event = _cancel_events.get(run_id)
+    if not event:
+        return JSONResponse(
+            status_code=404,
+            content={"error": "No active run found or run already finished"},
+        )
+    event.set()
+
+    db = SessionLocal()
+    try:
+        repo = EvaluationRepository(db)
+        repo.update_batch_run(
+            run_id, status="cancelled", current_test=None,
+            message="Cancelled by user",
+            completed_at=datetime.now(timezone.utc),
+        )
+        repo.clear_running_tests(run_id)
+        db.commit()
+    finally:
+        db.close()
+
+    logger.info("test_run_cancelled", run_id=run_id, user_id=user.get("sub"))
+    return {"success": True, "message": "Run cancelled"}
 
 
 @router.get("/evaluations/test-runs")
