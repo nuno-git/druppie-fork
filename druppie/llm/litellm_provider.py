@@ -200,7 +200,7 @@ PROVIDER_CONFIGS = {
         "default_base_url": "https://api.deepseek.com/v1",
     },
     "azure_foundry": {
-        "prefix": "azure",  # LiteLLM native Azure routing (deployment-based URLs)
+        "prefix": "azure",  # Overridden at runtime for Claude models → "anthropic"
         "default_model": "GPT-5-MINI",
         "api_key_env": "FOUNDRY_API_KEY",
         "model_env": "FOUNDRY_MODEL",
@@ -208,8 +208,10 @@ PROVIDER_CONFIGS = {
         "default_base_url": "https://druppie-resource.openai.azure.com",
         "use_max_completion_tokens": True,
         "default_temperature": 1.0,
-        "force_temperature": True,  # GPT-5-MINI only supports temperature=1.0
+        "force_temperature": True,
         "api_version": "2024-12-01-preview",
+        "anthropic_base_url_env": "FOUNDRY_ANTHROPIC_URL",
+        "anthropic_default_base_url": "https://druppie-resource.services.ai.azure.com/anthropic",
     },
     "ollama": {
         "prefix": "openai",  # Ollama is OpenAI-compatible
@@ -300,8 +302,24 @@ class ChatLiteLLM(BaseLLM):
         # Azure API version (required for azure/ prefix)
         self._api_version = config.get("api_version")
 
+        # Azure Foundry: Claude models use Anthropic Messages API, not OpenAI
+        is_claude = self._model.lower().startswith("claude")
+        if provider == "azure_foundry" and is_claude:
+            prefix = "anthropic"
+            anthropic_url = (
+                os.getenv(config.get("anthropic_base_url_env", ""), "")
+                or config.get("anthropic_default_base_url", "")
+            )
+            if anthropic_url:
+                self.api_base = anthropic_url.rstrip("/")
+                if not self.api_base.endswith("/anthropic"):
+                    self.api_base += "/anthropic"
+            self._api_version = None
+            self._use_max_completion_tokens = False
+        else:
+            prefix = config["prefix"]
+
         # LiteLLM model format (e.g., "openai/glm-4.7" for custom endpoints)
-        prefix = config["prefix"]
         if prefix and not self._model.startswith(f"{prefix}/"):
             self._litellm_model = f"{prefix}/{self._model}"
         else:
