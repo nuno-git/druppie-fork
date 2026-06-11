@@ -129,23 +129,28 @@ secrets:
   giteaToken: ""
   moduleApiToken: ""
 
-# Phase 1: No autoscaling yet (Task 7)
 autoscaling:
   backend:
-    enabled: false
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
   frontend:
-    enabled: false
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 8
+    targetCPUUtilizationPercentage: 70
 
 # Phase 1: No CNPG yet (Task 6)
 cnpg:
   enabled: false
 
-# Phase 1: No HA yet (Task 8)
 highAvailability:
   pdb:
-    enabled: false
+    enabled: true
+    minAvailable: 1
   antiAffinity:
-    enabled: false
+    enabled: true
 
 certManager:
   enabled: true
