@@ -21,7 +21,7 @@ async def cleanup_scope(request):
 
 
 async def sandbox_status(request):
-    from v1.tools import sandbox_containers, _warm_pool
+    from v1.tools import sandbox_containers
     containers = [
         {
             "key": key,
@@ -32,20 +32,14 @@ async def sandbox_status(request):
         }
         for key, entry in sandbox_containers.items()
     ]
-    warm_counts = {str(k): len(v) for k, v in _warm_pool.items()}
     return JSONResponse({
         "active_containers": containers,
         "count": len(containers),
-        "warm_pool": warm_counts,
     })
 
 
 async def warmup_pool(request):
-    from v1.tools import _pool_warm_up
-    await _pool_warm_up()
-    from v1.tools import _warm_pool
-    warm_counts = {str(k): len(v) for k, v in _warm_pool.items()}
-    return JSONResponse({"status": "warmed", "warm_pool": warm_counts})
+    return JSONResponse({"status": "noop", "message": "Warm pool not implemented"})
 
 
 _management_routes = [

@@ -794,6 +794,7 @@ async def _write_file_impl(
         return {"success": False, "error": str(e)}
 
 
+@mcp.tool(meta={"module_id": MODULE_ID, "version": MODULE_VERSION})
 async def write_file(
     path: str,
     content: str,
@@ -806,6 +807,21 @@ async def write_file(
     git_scope: str | None = None,
     sandbox_networks: list[str] | None = None,
 ) -> dict:
+    """Write (create or overwrite) a file in the sandbox workspace.
+
+    Args:
+        path: File path relative to workspace
+        content: File content to write
+        session_id: Session ID (auto-creates sandbox if needed)
+        project_id: Project ID (optional)
+        user_id: User ID (optional)
+        repo_name: Gitea repository name
+        repo_owner: Gitea repository owner
+        git_scope: Git scope (current_project, update_core, other_projects)
+
+    Returns:
+        Dict with success, path, size
+    """
     return await _write_file_impl(path, content, session_id, repo_name, repo_owner, git_scope, sandbox_networks)
 
 
@@ -1921,6 +1937,15 @@ async def create_pr(
             }
 
         # --- Gitea PR path ---
+        api_url = f"{GITEA_URL}/api/v1/repos/{resolved_repo_owner}/{resolved_repo_name}/pulls"
+        pr_body_clean = pr_body.replace("\\n", "\n")
+        payload = json.dumps({
+            "head": head_branch,
+            "base": base_branch,
+            "title": pr_title,
+            "body": pr_body_clean,
+        })
+
         curl_headers = ["Content-Type: application/json"]
         if GITEA_TOKEN:
             curl_headers.append(f"Authorization: token {GITEA_TOKEN}")
