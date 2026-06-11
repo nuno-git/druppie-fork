@@ -151,6 +151,19 @@ class QuestionRepository(BaseRepository):
                     is_selected=idx in selected,
                 ))
 
+        # Build English choices (same structure as display choices)
+        choices_english = None
+        if question.choices_english:
+            for idx, choice_data in enumerate(question.choices_english):
+                if choices_english is None:
+                    choices_english = []
+                selected = question.selected_indices or []
+                choices_english.append(QuestionChoice(
+                    index=idx,
+                    text=choice_data.get("text", ""),
+                    is_selected=idx in selected,
+                ))
+
         return QuestionDetail(
             id=question.id,
             session_id=question.session_id,
@@ -159,6 +172,8 @@ class QuestionRepository(BaseRepository):
             question=question.question,
             question_type=question.question_type or "text",
             choices=choices,
+            question_english=question.question_english,
+            choices_english=choices_english,
             status=QuestionStatus(question.status),
             answer=question.answer,
             answered_at=question.answered_at,

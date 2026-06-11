@@ -521,6 +521,13 @@ class SessionRepository(BaseRepository):
                         c["text"] if isinstance(c, dict) else c
                         for c in question.choices
                     ]
+                if question.question_english:
+                    arguments["question_english"] = question.question_english
+                if question.choices_english:
+                    arguments["choices_english"] = [
+                        c["text"] if isinstance(c, dict) else c
+                        for c in question.choices_english
+                    ]
 
         return ToolCallDetail(
             id=tc.id,

@@ -1128,6 +1128,30 @@ Agent (English) ← ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ 
 | Summarizer message | `builtin_tools.py` ~line 731 | Translate to session language before storing |
 | Agent prompt | `prompt_builder.py` ~line 82 | Inject English-only instruction block |
 
+### 11.3.1 HITL Answer Field Naming
+
+The tool call result for answered HITL questions stores two versions of the answer:
+
+| Field | Content | Consumed by |
+|-------|---------|-------------|
+| `user_answer` | Original answer in the user's language (what they typed) | Frontend display |
+| `answer_english` | Translated to English (for the agent) | Agent via `message_history.py` |
+
+`message_history.py` strips `user_answer` before reconstructing tool results for agent context, so agents only see the English version.
+
+### 11.3.2 HITL Question Bilingual Storage
+
+HITL questions store both the translated (display) and original (English) versions:
+
+| Column | Content | Where shown |
+|--------|---------|-------------|
+| `Question.question` | Translated to user's language | Chat timeline, HITL UI |
+| `Question.question_english` | Original English from agent | Debug/inspect panel, session API |
+| `Question.choices` | Translated choices | Chat timeline |
+| `Question.choices_english` | Original English choices | Debug/inspect panel |
+
+The debug panel (`DebugEventLog.jsx`) shows an "Original (English)" section on HITL tool calls when `question_english` is present, making it easy to compare what the agent generated vs what the user saw.
+
 ### 11.4 Design Document Translation Paths
 
 | English path | Dutch path |
@@ -1145,4 +1169,5 @@ Stored in `sessions.language` (VARCHAR(10), nullable). Set on the first user mes
 - `TranslationNotAvailableError` (missing API key) propagates — the session fails with a clear error message.
 - Transient translation errors (API timeouts, empty responses) fall back to the original English text with a logged warning.
 - Startup validation logs a warning when `DEEPINFRA_API_KEY` is not set.
+- Test framework pre-flight check: `runner.py` logs a warning before executing agent tests when `DEEPINFRA_API_KEY` is missing, and wraps `TranslationNotAvailableError` with a clear "set it in .env" message in test results.
 

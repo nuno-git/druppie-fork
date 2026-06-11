@@ -659,7 +659,7 @@ class ToolExecutor:
         return await self._execute_mcp_tool(tool_call)
 
     async def complete_after_answer(
-        self, question_id: UUID, answer: str, display_answer: str | None = None
+        self, question_id: UUID, answer_english: str, user_answer: str | None = None
     ) -> str:
         """Complete a HITL tool after the user answers.
 
@@ -667,9 +667,9 @@ class ToolExecutor:
 
         Args:
             question_id: ID of the answered Question record
-            answer: User's answer (translated to English for the agent)
-            display_answer: Original answer in user's language (for UI display).
-                            If None, uses answer for both.
+            answer_english: User's answer translated to English (for the agent)
+            user_answer: Original answer in user's language (what the user typed).
+                         If None, uses answer_english for both.
 
         Returns:
             Final status: completed
@@ -680,8 +680,8 @@ class ToolExecutor:
             logger.error("question_not_found", question_id=str(question_id))
             return ToolCallStatus.FAILED
 
-        # Update question with the display answer (user's original language)
-        self.question_repo.update_answer(question_id, display_answer or answer)
+        # Update question with the user's original answer (their language)
+        self.question_repo.update_answer(question_id, user_answer or answer_english)
 
         # Get associated tool call
         tool_call_id = question.tool_call_id
@@ -689,12 +689,12 @@ class ToolExecutor:
             logger.error("question_missing_tool_call_id", question_id=str(question_id))
             return ToolCallStatus.FAILED
 
-        # Build result — contains both English (for agent) and display (for frontend).
-        # message_history.py strips display-only fields when reconstructing for agents.
+        # Build result — contains both English (for agent) and user's original (for frontend).
+        # message_history.py strips user_answer when reconstructing for agents.
         result = {
             "status": "answered",
-            "answer": answer,
-            "display_answer": display_answer or answer,
+            "answer_english": answer_english,
+            "user_answer": user_answer or answer_english,
             "question": question.question_english or question.question,
             "question_type": question.question_type,
         }

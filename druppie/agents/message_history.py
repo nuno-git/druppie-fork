@@ -2,13 +2,13 @@
 
 import json
 
-DISPLAY_ONLY_KEYS = {"display_answer"}
+DISPLAY_ONLY_KEYS = {"user_answer"}
 
 
 def _strip_display_fields(result):
     """Remove display-only fields from a tool result before feeding to agents.
 
-    Tool results may contain translated display fields (e.g. display_answer)
+    Tool results may contain user-language fields (e.g. user_answer)
     that are only for the frontend. Agents must see English only.
     """
     if not result:

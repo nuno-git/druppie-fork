@@ -764,7 +764,7 @@ class Orchestrator:
         # Step 2.5: Complete the HITL tool call with translated answer (English for agent)
         # but preserve the original answer for display in the UI
         status = await tool_executor.complete_after_answer(
-            question_id, translated_answer, display_answer=answer
+            question_id, answer_english=translated_answer, user_answer=answer
         )
 
         if status != ToolCallStatus.COMPLETED:
