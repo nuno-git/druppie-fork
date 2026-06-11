@@ -107,7 +107,7 @@ class AzureDevOpsClient:
         # project returns 404, never another project's data.
         return await self._get(
             f"{self._project}/_apis/wit/workitems/{item_id}",
-            {"$expand": "fields"},
+            {"$expand": "all"},
         )
 
     async def get_team_iterations(self) -> list[dict]:
