@@ -588,8 +588,19 @@ def _update_planner_prompt(
                 if not project_name:
                     project_name = project.name
                 owner = project.repo_owner
-        except Exception:
-            pass
+            else:
+                logger.warning(
+                    "_update_planner_prompt_project_not_found",
+                    project_id=str(project_id),
+                    session_id=str(session_id),
+                )
+        except Exception as e:
+            logger.error(
+                "_update_planner_prompt_project_lookup_failed",
+                project_id=str(project_id),
+                session_id=str(session_id),
+                error=str(e),
+            )
 
     # Prepend intent context to the existing prompt
     if project_id:

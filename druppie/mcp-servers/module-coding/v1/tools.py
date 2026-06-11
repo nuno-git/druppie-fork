@@ -2066,17 +2066,31 @@ async def list_projects() -> dict:
 
     try:
         async with httpx.AsyncClient(timeout=15) as client:
-            # Use the search API to find repos across all owners (org and user)
-            response = await client.get(
-                f"{GITEA_URL}/api/v1/repos/search",
-                headers=_gitea_api_headers(),
-                params={"limit": 100, "template": "false"},
-            )
-            if response.status_code != 200:
-                return {"success": False, "error": f"Gitea API returned {response.status_code}"}
+            all_repos = []
+            page = 1
+            per_page = 100
+            
+            while True:
+                response = await client.get(
+                    f"{GITEA_URL}/api/v1/repos/search",
+                    headers=_gitea_api_headers(),
+                    params={
+                        "limit": per_page,
+                        "template": "false",
+                        "page": page,
+                    },
+                )
+                if response.status_code != 200:
+                    return {"success": False, "error": f"Gitea API returned {response.status_code}"}
 
-            data = response.json()
-            repos = data.get("data", [])
+                data = response.json()
+                repos = data.get("data", [])
+                all_repos.extend(repos)
+                
+                if len(repos) < per_page:
+                    break
+                page += 1
+            
             projects = [
                 {
                     "name": r["name"],
@@ -2085,7 +2099,7 @@ async def list_projects() -> dict:
                     "updated_at": r.get("updated_at", ""),
                     "default_branch": r.get("default_branch", "main"),
                 }
-                for r in repos
+                for r in all_repos
             ]
             return {"success": True, "count": len(projects), "projects": projects}
 
