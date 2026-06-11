@@ -1,4 +1,4 @@
-"""Thin async Azure DevOps REST client (read-only, single project).
+"""Thin async Azure DevOps REST client (single project).
 
 Authenticates with an Entra ID service principal (client credentials) and talks
 to the Azure DevOps REST API. Every call is hard-scoped to ONE project that is
@@ -24,7 +24,7 @@ API_VERSION = "7.0"
 
 
 class AzureDevOpsClient:
-    """Read-only client bound to a single Azure DevOps project."""
+    """REST client bound to a single Azure DevOps project."""
 
     def __init__(
         self,
@@ -47,6 +47,10 @@ class AzureDevOpsClient:
     @property
     def project(self) -> str:
         return self._project
+
+    @property
+    def org_url(self) -> str:
+        return self._org_url
 
     async def _auth_header(self) -> dict[str, str]:
         token = await self._credential.get_token(AZURE_DEVOPS_SCOPE)
@@ -71,6 +75,36 @@ class AzureDevOpsClient:
             resp = await client.get(
                 f"{self._org_url}/{path}",
                 params=query,
+                headers=headers,
+            )
+            resp.raise_for_status()
+            return resp.json()
+
+    async def _patch(self, path: str, operations: list[dict]) -> dict:
+        import json as _json
+
+        headers = await self._auth_header()
+        headers["Content-Type"] = "application/json-patch+json"
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.patch(
+                f"{self._org_url}/{path}",
+                params={"api-version": API_VERSION},
+                content=_json.dumps(operations),
+                headers=headers,
+            )
+            resp.raise_for_status()
+            return resp.json()
+
+    async def _post_patch(self, path: str, operations: list[dict]) -> dict:
+        import json as _json
+
+        headers = await self._auth_header()
+        headers["Content-Type"] = "application/json-patch+json"
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(
+                f"{self._org_url}/{path}",
+                params={"api-version": API_VERSION},
+                content=_json.dumps(operations),
                 headers=headers,
             )
             resp.raise_for_status()
@@ -116,6 +150,24 @@ class AzureDevOpsClient:
             f"{self._project}/_apis/work/teamsettings/iterations",
         )
         return result.get("value", [])
+
+    async def create_work_item(
+        self, work_item_type: str, operations: list[dict]
+    ) -> dict:
+        """Create a work item in the configured project."""
+        return await self._post_patch(
+            f"{self._project}/_apis/wit/workitems/${work_item_type}",
+            operations,
+        )
+
+    async def update_work_item(
+        self, item_id: int, operations: list[dict]
+    ) -> dict:
+        """Update a work item in the configured project."""
+        return await self._patch(
+            f"{self._project}/_apis/wit/workitems/{item_id}",
+            operations,
+        )
 
     async def close(self) -> None:
         await self._credential.close()

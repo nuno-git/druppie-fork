@@ -54,12 +54,16 @@ def _tool_functions(source_path: Path) -> dict[str, ast.AsyncFunctionDef]:
     return tools
 
 
-def test_tools_expose_exactly_the_three_read_tools():
+def test_tools_expose_exactly_the_expected_tools():
     tools = _tool_functions(_MOD_DIR / "v1" / "tools.py")
     assert set(tools) == {
+        "get_current_sprint",
+        "get_sprint_summary",
         "list_backlog_items",
         "get_work_item",
         "search_work_items",
+        "create_work_item",
+        "update_work_item",
     }
 
 
@@ -160,10 +164,15 @@ class _RecordingClient:
         self._real = real
         self.posts: list[tuple[str, dict]] = []
         self.gets: list[tuple[str, dict | None]] = []
+        self.patches: list[tuple[str, list]] = []
 
     @property
     def project(self):
         return self._real.project
+
+    @property
+    def org_url(self):
+        return self._real.org_url
 
     async def query_wiql(self, wiql, top):
         self.posts.append((f"{self._real.project}/_apis/wit/wiql", {"query": wiql}))
@@ -181,6 +190,30 @@ class _RecordingClient:
     async def get_work_item(self, item_id):
         self.gets.append((f"{self._real.project}/_apis/wit/workitems/{item_id}", None))
         return {"id": item_id, "fields": {"System.Title": "WI"}}
+
+    async def create_work_item(self, work_item_type, operations):
+        path = f"{self._real.project}/_apis/wit/workitems/${work_item_type}"
+        self.posts.append((path, {"operations": operations}))
+        return {
+            "id": 999,
+            "fields": {
+                "System.Title": "Created",
+                "System.WorkItemType": work_item_type,
+                "System.State": "New",
+            },
+        }
+
+    async def update_work_item(self, item_id, operations):
+        path = f"{self._real.project}/_apis/wit/workitems/{item_id}"
+        self.patches.append((path, operations))
+        return {
+            "id": item_id,
+            "fields": {
+                "System.Title": "Updated",
+                "System.WorkItemType": "Bug",
+                "System.State": "New",
+            },
+        }
 
 
 @pytest.mark.asyncio
@@ -222,3 +255,53 @@ def test_wiql_escaping_prevents_quote_breakout(monkeypatch):
     # Single quotes in user/config values must be doubled so they cannot break
     # out of the WIQL string literal (and thus cannot drop the project clause).
     assert module_mod._wiql_escape("a'b") == "a''b"
+
+
+@pytest.mark.asyncio
+async def test_create_work_item_is_project_scoped(monkeypatch):
+    module_mod = _load_module_under_test(monkeypatch)
+    mod = module_mod.AzureDevOpsModule()
+    rec = _RecordingClient(mod._client)
+    mod._client = rec
+
+    result = await mod.create_work_item(work_item_type="Bug", title="Test bug")
+    assert result["success"] is True
+
+    prefix = f"{_PROJECT}/_apis/"
+    for path, _ in rec.posts:
+        assert path.startswith(prefix), f"POST escaped project scope: {path}"
+
+
+@pytest.mark.asyncio
+async def test_update_work_item_is_project_scoped(monkeypatch):
+    module_mod = _load_module_under_test(monkeypatch)
+    mod = module_mod.AzureDevOpsModule()
+    rec = _RecordingClient(mod._client)
+    mod._client = rec
+
+    result = await mod.update_work_item(item_id=123, title="Updated title")
+    assert result["success"] is True
+
+    prefix = f"{_PROJECT}/_apis/"
+    for path, _ in rec.patches:
+        assert path.startswith(prefix), f"PATCH escaped project scope: {path}"
+
+
+@pytest.mark.asyncio
+async def test_create_work_item_rejects_invalid_type(monkeypatch):
+    module_mod = _load_module_under_test(monkeypatch)
+    mod = module_mod.AzureDevOpsModule()
+
+    result = await mod.create_work_item(work_item_type="Invalid", title="Test")
+    assert result["success"] is False
+    assert "Invalid" in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_update_work_item_rejects_empty_update(monkeypatch):
+    module_mod = _load_module_under_test(monkeypatch)
+    mod = module_mod.AzureDevOpsModule()
+
+    result = await mod.update_work_item(item_id=123)
+    assert result["success"] is False
+    assert "No fields" in result["error"]

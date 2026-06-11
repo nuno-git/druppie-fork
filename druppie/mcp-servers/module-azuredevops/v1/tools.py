@@ -1,8 +1,11 @@
 """Azure DevOps v1 — MCP Tool Definitions.
 
-Read-only access to backlog / work items of a SINGLE Azure DevOps project. The
-project is fixed by server configuration (AZURE_DEVOPS_PROJECT) and is never a
-tool argument, so an agent cannot read any other project in the organization.
+Access to backlog / work items of a SINGLE Azure DevOps project. The project is
+fixed by server configuration (AZURE_DEVOPS_PROJECT) and is never a tool
+argument, so an agent cannot access any other project in the organization.
+
+Write tools (create_work_item, update_work_item) are gated by HITL approval in
+the Druppie orchestration layer — they require human confirmation before executing.
 
 There is deliberately NO list_projects tool and no project parameter anywhere.
 """
@@ -22,9 +25,10 @@ mcp = FastMCP(
     "Azure DevOps v1",
     version=MODULE_VERSION,
     instructions=(
-        "Read-only access to the backlog and work items of a single, "
-        "pre-configured Azure DevOps project. You cannot choose or list other "
-        "projects — every tool operates on the one configured project."
+        "Access to the backlog and work items of a single, pre-configured "
+        "Azure DevOps project. You cannot choose or list other projects — "
+        "every tool operates on the one configured project. Write operations "
+        "(create, update) require human approval before execution."
     ),
 )
 
@@ -127,3 +131,110 @@ async def search_work_items(text: str, limit: int = 50) -> dict:
         Dict with the project name and matching items.
     """
     return await module.search_work_items(text, limit)
+
+
+@mcp.tool()
+async def create_work_item(
+    work_item_type: str,
+    title: str,
+    description: str | None = None,
+    state: str | None = None,
+    assigned_to: str | None = None,
+    iteration: str | None = None,
+    area_path: str | None = None,
+    effort: float | None = None,
+    tags: str | None = None,
+    parent_id: int | None = None,
+) -> dict:
+    """Create a new work item in the configured Azure DevOps project.
+
+    This tool requires human approval before execution. The approver will
+    see all the fields you provide, so include a clear title and description.
+
+    The hierarchy is: Epic > Feature > Product Backlog Item > Task > Bug.
+    Use parent_id to place the new item under an existing parent (e.g., set
+    parent_id to a Feature's id when creating a Product Backlog Item).
+
+    Args:
+        work_item_type: Type of work item. One of: "Epic", "Feature",
+            "Product Backlog Item", "Task", "Bug".
+        title: Title of the work item (required).
+        description: HTML description of the work item.
+        state: Initial state, e.g. "New", "Approved". Defaults to "New".
+        assigned_to: Display name of the assignee, e.g. "Nuno Kraljevic".
+        iteration: Iteration/sprint path, e.g. "AI-platform\\Sprint 11".
+            Use get_current_sprint() to find available paths.
+        area_path: Area path for classification. Defaults to project root.
+        effort: Story points (numeric). Typically used on PBIs.
+        tags: Semicolon-separated tags, e.g. "backend; api; urgent".
+        parent_id: Work item id of the parent to link under.
+
+    Returns:
+        Dict with success status and created item (id, title, type, state, url).
+    """
+    return await module.create_work_item(
+        work_item_type=work_item_type,
+        title=title,
+        description=description,
+        state=state,
+        assigned_to=assigned_to,
+        iteration=iteration,
+        area_path=area_path,
+        effort=effort,
+        tags=tags,
+        parent_id=parent_id,
+    )
+
+
+@mcp.tool()
+async def update_work_item(
+    item_id: int,
+    title: str | None = None,
+    description: str | None = None,
+    state: str | None = None,
+    assigned_to: str | None = None,
+    iteration: str | None = None,
+    area_path: str | None = None,
+    effort: float | None = None,
+    tags: str | None = None,
+    parent_id: int | None = None,
+) -> dict:
+    """Update an existing work item in the configured Azure DevOps project.
+
+    This tool requires human approval before execution. The approver will
+    see which fields you are changing, so only include fields you want to
+    modify — omitted fields are left unchanged.
+
+    Use get_work_item(item_id) first to see the current values before
+    making changes.
+
+    Args:
+        item_id: The id of the work item to update.
+        title: New title (omit to keep current).
+        description: New HTML description (omit to keep current).
+        state: New state, e.g. "New", "Approved", "Committed", "Done"
+            (omit to keep current).
+        assigned_to: New assignee display name (omit to keep current).
+        iteration: New iteration/sprint path (omit to keep current).
+        area_path: New area path (omit to keep current).
+        effort: New effort/story points (omit to keep current).
+        tags: New semicolon-separated tags. This REPLACES all existing
+            tags (omit to keep current).
+        parent_id: Add a parent link to this work item id. Note: this
+            adds a NEW parent link; it does not remove existing parents.
+
+    Returns:
+        Dict with success status and updated item (id, title, type, state, url).
+    """
+    return await module.update_work_item(
+        item_id=item_id,
+        title=title,
+        description=description,
+        state=state,
+        assigned_to=assigned_to,
+        iteration=iteration,
+        area_path=area_path,
+        effort=effort,
+        tags=tags,
+        parent_id=parent_id,
+    )

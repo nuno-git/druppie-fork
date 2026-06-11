@@ -1,4 +1,4 @@
-"""Azure DevOps module — orchestrates read-only backlog access for one project.
+"""Azure DevOps module — orchestrates backlog access for one project.
 
 Reads service-principal credentials and the single allowed project from the
 environment, builds an AzureDevOpsClient, and exposes high-level read operations
@@ -32,6 +32,19 @@ _DETAIL_FIELDS = _SUMMARY_FIELDS + [
     "System.BoardColumnDone",
 ]
 
+VALID_WORK_ITEM_TYPES = {"Epic", "Feature", "Product Backlog Item", "Task", "Bug"}
+
+_FIELD_MAP = {
+    "title": "System.Title",
+    "description": "System.Description",
+    "state": "System.State",
+    "assigned_to": "System.AssignedTo",
+    "iteration": "System.IterationPath",
+    "area_path": "System.AreaPath",
+    "effort": "Microsoft.VSTS.Scheduling.Effort",
+    "tags": "System.Tags",
+}
+
 
 def _wiql_escape(value: str) -> str:
     return value.replace("'", "''")
@@ -44,7 +57,7 @@ def _display_name(field_value) -> str | None:
 
 
 class AzureDevOpsModule:
-    """High-level read-only backlog operations for the configured project."""
+    """High-level backlog operations for the configured project."""
 
     def __init__(self) -> None:
         self._project = os.getenv("AZURE_DEVOPS_PROJECT", "").strip()
@@ -376,4 +389,136 @@ class AzureDevOpsModule:
             }
         except Exception as exc:
             logger.warning("search_work_items failed: %s", exc)
+            return {"success": False, "error": str(exc)}
+
+    @staticmethod
+    def _build_patch_operations(fields: dict) -> list[dict]:
+        ops = []
+        for key, value in fields.items():
+            if value is None:
+                continue
+            ado_path = _FIELD_MAP.get(key)
+            if ado_path is None:
+                continue
+            ops.append({
+                "op": "add",
+                "path": f"/fields/{ado_path}",
+                "value": value,
+            })
+        return ops
+
+    async def create_work_item(
+        self,
+        work_item_type: str,
+        title: str,
+        description: str | None = None,
+        state: str | None = None,
+        assigned_to: str | None = None,
+        iteration: str | None = None,
+        area_path: str | None = None,
+        effort: float | None = None,
+        tags: str | None = None,
+        parent_id: int | None = None,
+    ) -> dict:
+        """Create a new work item in the configured project."""
+        if work_item_type not in VALID_WORK_ITEM_TYPES:
+            return {
+                "success": False,
+                "error": f"Invalid work item type '{work_item_type}'. "
+                         f"Valid types: {', '.join(sorted(VALID_WORK_ITEM_TYPES))}",
+            }
+
+        fields = {
+            "title": title,
+            "description": description,
+            "state": state,
+            "assigned_to": assigned_to,
+            "iteration": iteration,
+            "area_path": area_path,
+            "effort": effort,
+            "tags": tags,
+        }
+        operations = self._build_patch_operations(fields)
+
+        if parent_id is not None:
+            operations.append({
+                "op": "add",
+                "path": "/relations/-",
+                "value": {
+                    "rel": "System.LinkTypes.Hierarchy-Reverse",
+                    "url": f"{self._client.org_url}/_apis/wit/workitems/{parent_id}",
+                },
+            })
+
+        try:
+            result = await self._client.create_work_item(work_item_type, operations)
+            return {
+                "success": True,
+                "project": self._project,
+                "item": {
+                    "id": result.get("id"),
+                    "title": result.get("fields", {}).get("System.Title"),
+                    "type": result.get("fields", {}).get("System.WorkItemType"),
+                    "state": result.get("fields", {}).get("System.State"),
+                    "url": result.get("_links", {}).get("html", {}).get("href"),
+                },
+            }
+        except Exception as exc:
+            logger.warning("create_work_item failed: %s", exc)
+            return {"success": False, "error": str(exc)}
+
+    async def update_work_item(
+        self,
+        item_id: int,
+        title: str | None = None,
+        description: str | None = None,
+        state: str | None = None,
+        assigned_to: str | None = None,
+        iteration: str | None = None,
+        area_path: str | None = None,
+        effort: float | None = None,
+        tags: str | None = None,
+        parent_id: int | None = None,
+    ) -> dict:
+        """Update an existing work item in the configured project."""
+        fields = {
+            "title": title,
+            "description": description,
+            "state": state,
+            "assigned_to": assigned_to,
+            "iteration": iteration,
+            "area_path": area_path,
+            "effort": effort,
+            "tags": tags,
+        }
+        operations = self._build_patch_operations(fields)
+
+        if parent_id is not None:
+            operations.append({
+                "op": "add",
+                "path": "/relations/-",
+                "value": {
+                    "rel": "System.LinkTypes.Hierarchy-Reverse",
+                    "url": f"{self._client.org_url}/_apis/wit/workitems/{parent_id}",
+                },
+            })
+
+        if not operations:
+            return {"success": False, "error": "No fields to update."}
+
+        try:
+            result = await self._client.update_work_item(item_id, operations)
+            return {
+                "success": True,
+                "project": self._project,
+                "item": {
+                    "id": result.get("id"),
+                    "title": result.get("fields", {}).get("System.Title"),
+                    "type": result.get("fields", {}).get("System.WorkItemType"),
+                    "state": result.get("fields", {}).get("System.State"),
+                    "url": result.get("_links", {}).get("html", {}).get("href"),
+                },
+            }
+        except Exception as exc:
+            logger.warning("update_work_item(%s) failed: %s", item_id, exc)
             return {"success": False, "error": str(exc)}
