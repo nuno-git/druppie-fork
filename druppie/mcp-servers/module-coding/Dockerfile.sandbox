@@ -34,6 +34,13 @@ RUN DOCKER_COMPOSE_VERSION=5.1.4 && \
 
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel uv
 
+RUN apt-get update && apt-get install -y --no-install-recommends unzip && rm -rf /var/lib/apt/lists/* && \
+    npm install -g pnpm && \
+    corepack enable && \
+    curl -fsSL https://bun.sh/install | bash && \
+    ln -s /root/.bun/bin/bun /usr/local/bin/bun && \
+    ln -s /root/.bun/bin/bunx /usr/local/bin/bunx
+
 RUN pip install playwright && \
     playwright install --with-deps chromium
 

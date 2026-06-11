@@ -291,6 +291,37 @@ async def _is_container_running(container_id: str) -> bool:
     return rc == 0 and "true" in stdout.lower()
 
 
+async def _get_container_death_reason(container_id: str) -> str | None:
+    """If a container has exited, return a human-readable reason. None if still running."""
+    rc, stdout, _ = await _docker_run(
+        ["docker", "inspect", "--format",
+         "{{.State.Running}}|{{.State.OOMKilled}}|{{.State.ExitCode}}|{{.State.Status}}",
+         container_id],
+        timeout=10,
+    )
+    if rc != 0:
+        return "container not found"
+    parts = stdout.strip().split("|")
+    if len(parts) < 4:
+        return None
+    running = parts[0].strip().lower() == "true"
+    oom_killed = parts[1].strip().lower() == "true"
+    exit_code = parts[2].strip()
+    status = parts[3].strip()
+
+    if running:
+        return None
+    if oom_killed:
+        return (
+            f"OOMKilled (exit code {exit_code}). "
+            f"Current memory limit: {SANDBOX_MEMORY}. "
+            f"Consider increasing DRUPPIE_DOCKER_MEMORY_LIMIT."
+        )
+    if exit_code != "0":
+        return f"Exited with code {exit_code} (status: {status})"
+    return f"Stopped (status: {status})"
+
+
 # =============================================================================
 # SANDBOX CONTAINER LIFECYCLE
 # =============================================================================
@@ -362,6 +393,10 @@ async def _create_sandbox_container(
             "-v", f"{SANDBOX_CACHE_VOLUME}:/cache",
             "-e", "UV_CACHE_DIR=/cache/uv",
             "-e", "PIP_CACHE_DIR=/cache/pip",
+            "-e", "NPM_CONFIG_CACHE=/cache/npm",
+            "-e", "PNPM_HOME=/cache/pnpm",
+            "-e", "YARN_CACHE_FOLDER=/cache/yarn",
+            "-e", "BUN_INSTALL_CACHE_DIR=/cache/bun",
             SANDBOX_IMAGE,
             "bash", "-c", "dockerd > /var/log/dockerd.log 2>&1 & sleep infinity",
         ]
@@ -383,6 +418,10 @@ async def _create_sandbox_container(
                 "-v", f"{SANDBOX_CACHE_VOLUME}:/cache",
                 "-e", "UV_CACHE_DIR=/cache/uv",
                 "-e", "PIP_CACHE_DIR=/cache/pip",
+                "-e", "NPM_CONFIG_CACHE=/cache/npm",
+                "-e", "PNPM_HOME=/cache/pnpm",
+                "-e", "YARN_CACHE_FOLDER=/cache/yarn",
+                "-e", "BUN_INSTALL_CACHE_DIR=/cache/bun",
                 SANDBOX_IMAGE,
                 "bash", "-c", "dockerd > /var/log/dockerd.log 2>&1 & sleep infinity",
             ]
@@ -597,7 +636,12 @@ async def _resolve_container(
             container_id = entry.get("container_id", entry["container_name"])
             if await _is_container_running(container_id):
                 return entry["container_name"]
-            logger.warning("Container %s not running, recreating", entry["container_name"])
+            reason = await _get_container_death_reason(container_id)
+            logger.warning(
+                "Container %s not running (%s), recreating",
+                entry["container_name"],
+                reason or "unknown reason",
+            )
             del sandbox_containers[key]
 
         return await _create_sandbox_container(
@@ -655,6 +699,39 @@ async def _destroy_all_for_session(session_id: str) -> None:
         logger.info(
             "Destroyed %d containers for session %s", len(keys_to_remove), session_id
         )
+
+
+async def _cleanup_orphan_containers() -> int:
+    """Remove druppie-sandbox containers left over from a previous server run.
+
+    Called once at server startup.
+    """
+    rc, stdout, _ = await _docker_run(
+        ["docker", "ps", "-a", "--filter", "name=druppie-", "--format", "{{.Names}}"],
+        timeout=30,
+    )
+    if rc != 0:
+        logger.warning("Failed to list containers for orphan cleanup: rc=%d", rc)
+        return 0
+
+    tracked_names = {entry["container_name"] for entry in sandbox_containers.values()}
+    orphan_names = [
+        name.strip() for name in stdout.strip().split("\n")
+        if name.strip() and name.strip() not in tracked_names
+    ]
+
+    cleaned = 0
+    for name in orphan_names:
+        logger.info("Removing orphan sandbox container: %s", name)
+        try:
+            await _docker_run(["docker", "rm", "-f", name], timeout=15)
+            cleaned += 1
+        except Exception as e:
+            logger.warning("Failed to remove orphan container %s: %s", name, e)
+
+    if cleaned:
+        logger.info("Cleaned up %d orphan sandbox container(s)", cleaned)
+    return cleaned
 
 
 # =============================================================================
@@ -1023,12 +1100,18 @@ async def get_partial_output(
     git_scope: str | None = None,
 ) -> dict:
     """Get partial output from a running bash command."""
-    container = await _resolve_container(session_id, git_scope, None, None)
-    output_file = f"/tmp/bash_{tool_call_id}.out"
-    rc, stdout, stderr = await _exec_in_container(
-        container, ["cat", output_file], timeout=5
-    )
-    return {"output": stdout, "exists": rc == 0}
+    try:
+        container = await _resolve_container(session_id, git_scope, None, None)
+        output_file = f"/tmp/bash_{tool_call_id}.out"
+        rc, stdout, stderr = await _exec_in_container(
+            container, ["cat", output_file], timeout=5
+        )
+        return {"output": stdout, "exists": rc == 0}
+    except ValueError as e:
+        return {"output": "", "exists": False, "error": str(e)}
+    except Exception as e:
+        logger.error("Error getting partial output: %s", e)
+        return {"output": "", "exists": False, "error": str(e)}
 
 
 @mcp.tool(meta={"module_id": MODULE_ID, "version": MODULE_VERSION})
@@ -2171,15 +2254,47 @@ def _detect_framework_from_container(files_json: str) -> str:
     return "unknown"
 
 
+async def _detect_package_manager(container: str) -> str:
+    """Detect the package manager from lock files in the sandbox workspace."""
+    lock_file_map = [
+        ("pnpm-lock.yaml", "pnpm"),
+        ("yarn.lock", "yarn"),
+        ("bun.lockb", "bun"),
+        ("package-lock.json", "npm"),
+        ("uv.lock", "uv"),
+        ("poetry.lock", "poetry"),
+        ("Pipfile.lock", "pipenv"),
+    ]
+    for lock_file, pm in lock_file_map:
+        rc, _, _ = await _exec_in_container(
+            container, ["test", "-f", f"/workspace/{lock_file}"], timeout=5
+        )
+        if rc == 0:
+            return pm
+
+    rc, _, _ = await _exec_in_container(
+        container, ["test", "-f", "/workspace/requirements.txt"], timeout=5
+    )
+    if rc == 0:
+        return "pip"
+
+    rc, _, _ = await _exec_in_container(
+        container, ["test", "-f", "/workspace/package.json"], timeout=5
+    )
+    if rc == 0:
+        return "npm"
+
+    return "unknown"
+
+
 async def _detect_test_framework(container: str) -> dict:
     """Detect test framework inside a sandbox container."""
-    # List files in workspace root
     rc, stdout, _ = await _exec_in_container(
         container, ["ls", "-1", "/workspace"], timeout=10
     )
     framework = _detect_framework_from_container(stdout)
+    pm = await _detect_package_manager(container)
 
-    # If package.json exists, check for test scripts
     if framework in ("npm", "vitest", "jest"):
         rc, pkg_stdout, _ = await _exec_in_container(
             container, ["cat", "/workspace/package.json"], timeout=10
@@ -2192,23 +2307,25 @@ async def _detect_test_framework(container: str) -> dict:
                     framework = "vitest"
                 elif "jest" in deps:
                     framework = "jest"
+                js_pm = pm if pm in ("npm", "pnpm", "yarn", "bun") else "npm"
                 if "scripts" in pkg and "test" in pkg["scripts"]:
                     return {
                         "framework": framework,
-                        "test_command": "npm test",
-                        "package_manager": "npm",
+                        "test_command": f"{js_pm} test",
+                        "package_manager": js_pm,
                     }
             except json.JSONDecodeError:
                 pass
 
     if framework == "pytest":
+        py_pm = pm if pm in ("pip", "uv", "poetry", "pipenv") else "pip"
         return {
             "framework": "pytest",
             "test_command": "pytest",
-            "package_manager": "pip",
+            "package_manager": py_pm,
         }
 
-    return {"framework": framework, "test_command": None, "package_manager": None}
+    return {"framework": framework, "test_command": None, "package_manager": pm if pm != "unknown" else None}
 
 
 def _parse_test_output(framework: str, stdout: str, stderr: str) -> dict:
@@ -2324,10 +2441,18 @@ async def run_tests(
                 }
 
             path_arg = test_path or ""
+            pm = info.get("package_manager", "npm")
             if framework == "pytest":
                 cmd = f"cd /workspace && python -m pytest {shlex.quote(path_arg)} -v --tb=short 2>&1"
             elif framework in ("vitest", "jest", "npm"):
-                cmd = f"cd /workspace && npm test -- {shlex.quote(path_arg)} 2>&1"
+                if pm == "pnpm":
+                    cmd = f"cd /workspace && pnpm test -- {shlex.quote(path_arg)} 2>&1"
+                elif pm == "yarn":
+                    cmd = f"cd /workspace && yarn test {shlex.quote(path_arg)} 2>&1"
+                elif pm == "bun":
+                    cmd = f"cd /workspace && bun test {shlex.quote(path_arg)} 2>&1"
+                else:
+                    cmd = f"cd /workspace && npm test -- {shlex.quote(path_arg)} 2>&1"
             else:
                 return {"success": False, "error": f"Unsupported framework: {framework}"}
 
@@ -2436,27 +2561,48 @@ async def install_test_dependencies(
             framework = info["framework"]
 
             results = []
+            pm = info.get("package_manager", "npm")
 
             if framework in ("vitest", "jest", "npm"):
+                pm_cmds = {
+                    "pnpm": "pnpm install",
+                    "yarn": "yarn install",
+                    "bun": "bun install",
+                }
+                install_cmd = pm_cmds.get(pm, "npm install")
                 rc, stdout, stderr = await _exec_bash_in_container(
-                    container, "cd /workspace && npm install 2>&1", timeout=300
+                    container, f"cd /workspace && {install_cmd} 2>&1", timeout=300
                 )
                 results.append({
-                    "dependency": "npm install (all)",
+                    "dependency": f"{pm} install (all)",
                     "success": rc == 0,
                     "output": (stdout + stderr)[:1000],
                 })
             elif framework == "pytest":
-                rc, _, _ = await _exec_in_container(
-                    container, ["test", "-f", "/workspace/requirements.txt"]
-                )
-                if rc == 0:
+                install_cmd = None
+                if pm == "uv":
+                    rc, _, _ = await _exec_in_container(
+                        container, ["test", "-f", "/workspace/requirements.txt"]
+                    )
+                    if rc == 0:
+                        install_cmd = "cd /workspace && uv pip install -r requirements.txt 2>&1"
+                elif pm == "poetry":
+                    install_cmd = "cd /workspace && poetry install 2>&1"
+                elif pm == "pipenv":
+                    install_cmd = "cd /workspace && pipenv install --dev 2>&1"
+                else:
+                    rc, _, _ = await _exec_in_container(
+                        container, ["test", "-f", "/workspace/requirements.txt"]
+                    )
+                    if rc == 0:
+                        install_cmd = "cd /workspace && pip install -r requirements.txt 2>&1"
+
+                if install_cmd:
                     rc, stdout, stderr = await _exec_bash_in_container(
-                        container, "cd /workspace && pip install -r requirements.txt 2>&1",
-                        timeout=300,
+                        container, install_cmd, timeout=300,
                     )
                     results.append({
-                        "dependency": "requirements.txt",
+                        "dependency": f"{pm} install (all)",
                         "success": rc == 0,
                         "output": (stdout + stderr)[:1000],
                     })
@@ -2464,17 +2610,19 @@ async def install_test_dependencies(
             if dependencies:
                 for dep in dependencies:
                     if framework in ("vitest", "jest", "npm"):
-                        rc, stdout, stderr = await _exec_bash_in_container(
-                            container,
-                            f"cd /workspace && npm install --save-dev {shlex.quote(dep)} 2>&1",
-                            timeout=120,
-                        )
+                        dep_cmds = {
+                            "pnpm": f"cd /workspace && pnpm add -D {shlex.quote(dep)} 2>&1",
+                            "yarn": f"cd /workspace && yarn add -D {shlex.quote(dep)} 2>&1",
+                            "bun": f"cd /workspace && bun add -d {shlex.quote(dep)} 2>&1",
+                        }
+                        dep_cmd = dep_cmds.get(pm, f"cd /workspace && npm install --save-dev {shlex.quote(dep)} 2>&1")
+                    elif pm == "uv":
+                        dep_cmd = f"uv pip install {shlex.quote(dep)} 2>&1"
                     else:
-                        rc, stdout, stderr = await _exec_bash_in_container(
-                            container,
-                            f"pip install {shlex.quote(dep)} 2>&1",
-                            timeout=120,
-                        )
+                        dep_cmd = f"pip install {shlex.quote(dep)} 2>&1"
+                    rc, stdout, stderr = await _exec_bash_in_container(
+                        container, dep_cmd, timeout=120,
+                    )
                     results.append({
                         "dependency": dep,
                         "success": rc == 0,
