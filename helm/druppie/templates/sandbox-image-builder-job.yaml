@@ -1,0 +1,33 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "druppie.fullname" . }}-sandbox-image-builder
+  labels:
+    {{- include "druppie.labels" . | nindent 4 }}
+    app.kubernetes.io/component: sandbox-image-builder
+  annotations:
+    helm.sh/hook: post-install
+    helm.sh/hook-weight: "-5"
+    helm.sh/hook-delete-policy: hook-succeeded
+spec:
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 300
+  template:
+    metadata:
+      labels:
+        {{- include "druppie.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: sandbox-image-builder
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: builder
+          image: {{ .Values.sandbox.image }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          command: ["echo", "Sandbox base image should be pre-built and pushed to registry"]
+          resources:
+            requests:
+              memory: "32Mi"
+              cpu: "50m"
+            limits:
+              memory: "64Mi"
+              cpu: "100m"

@@ -9,6 +9,7 @@ Single source of truth for tool contract:
 import os
 from fastmcp import FastMCP
 from .module import ArchiMateModule
+from .write_tools import register_write_tools
 
 MODULE_ID = "archimate"
 MODULE_VERSION = "1.0.0"
@@ -16,11 +17,23 @@ MODULE_VERSION = "1.0.0"
 mcp = FastMCP(
     "ArchiMate v1",
     version=MODULE_VERSION,
-    instructions="""Read-only ArchiMate architecture reference. Use for querying elements, relationships, views, and impact analysis.""",
+    instructions=(
+        "ArchiMate architecture model server. Read-only access to the WILMA "
+        "reference model via list_*/get_*/search_*/get_impact. Read-write "
+        "access to per-project models (docs/architecture.archimate) via "
+        "create_*/update_*/delete_*/add_to_view/save_model. Use ArchiMate for "
+        "high-level architecture views (cross-layer blueprints). For sequence, "
+        "state, flowchart, ER, Gantt or class diagrams use Mermaid instead — "
+        "ArchiMate is a blueprinting language, not a behavioral one."
+    ),
 )
 
 MODELS_DIR = os.getenv("MODELS_DIR", "/models")
 module = ArchiMateModule(models_dir=MODELS_DIR)
+
+# Register write-tools on the same MCP instance.
+# These operate on per-project workspace files, not on the read-only WILMA model.
+register_write_tools(mcp, module_id=MODULE_ID, module_version=MODULE_VERSION)
 
 
 @mcp.tool(

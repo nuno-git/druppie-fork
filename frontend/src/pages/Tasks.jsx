@@ -7,14 +7,23 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { CheckCircle, XCircle, Clock, Shield, AlertTriangle, AlertCircle, Loader2, MessageSquare, Bot, ExternalLink, ChevronDown, ChevronRight, History, User, FileCode, FilePlus, Terminal, GitBranch, Code, Eye, X } from 'lucide-react'
-import { getTasks, approveTask, rejectTask, getApprovalHistory } from '../services/api'
+import { CheckCircle, XCircle, Clock, Shield, AlertTriangle, AlertCircle, Loader2, MessageSquare, Bot, ExternalLink, ChevronDown, ChevronRight, History, User, FileCode, FilePlus, Terminal, GitBranch, Code, Eye, X, Calendar } from 'lucide-react'
+import { getTasks, approveTask, rejectTask, getApprovalHistory, getJobRuns, getJobs, triggerJob, getPendingJobApprovals, approveJob, rejectJob } from '../services/api'
 import { chatMarkdownComponents, ProjectRepoContext, SourceFileContext } from '../components/chat/ChatHelpers'
 import { useAuth } from '../App'
 import { hasRole } from '../services/keycloak'
 import { useToast } from '../components/Toast'
 import PageHeader from '../components/shared/PageHeader'
 import { SkeletonTaskCard } from '../components/shared/Skeleton'
+import EmptyState from '../components/shared/EmptyState'
+
+const activeRunPolling = (query) => {
+  const latestItems = query.state.data?.items || []
+  const hasActive = latestItems.some(
+    (r) => !['completed', 'failed', 'rejected', 'cancelled'].includes(r.status)
+  )
+  return hasActive ? 5000 : false
+}
 
 // Helper to check if a file path is a markdown file
 const isMarkdownFile = (path) => {
@@ -355,7 +364,14 @@ const TaskCard = ({ task, onApprove, onReject }) => {
                     View {isBatchWrite ? `${Object.keys(batchFiles).length} files` : 'file'}
                   </button>
                   {showCodePreview && (
-                    <ProjectRepoContext.Provider value={task.repo_url ? { repo_url: task.repo_url, default_branch: 'main' } : null}>
+                    <ProjectRepoContext.Provider
+                      value={task.repo_url || task.project_id ? {
+                        id: task.project_id,
+                        repo_url: task.repo_url,
+                        default_branch: 'main',
+                        session_id: task.session_id,
+                      } : null}
+                    >
                       <FilePreviewModal
                         files={
                           isBatchWrite
@@ -417,33 +433,307 @@ const TaskCard = ({ task, onApprove, onReject }) => {
   )
 }
 
+const JobCard = ({ job, onTrigger, isTriggering }) => {
+  const { data: runsResponse, isLoading: runsLoading } = useQuery({
+    queryKey: ['jobRuns', job.id],
+    queryFn: () => getJobRuns(job.id, null, 1, 5),
+    refetchInterval: activeRunPolling,
+  })
+  const jobRuns = runsResponse?.items || []
+
+  return (
+    <div className="bg-white rounded-xl border border-gray-100 p-4">
+      <div className="flex items-start justify-between gap-4">
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <Calendar className="w-4 h-4 text-blue-500 flex-shrink-0" />
+            <h3 className="font-medium text-gray-900">{job.name}</h3>
+            <span className={`px-2 py-0.5 text-xs rounded-full ${job.enabled ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
+              {job.enabled ? 'Enabled' : 'Disabled'}
+            </span>
+            {job.approval_required && (
+              <span className="px-2 py-0.5 bg-amber-100 text-amber-700 text-xs rounded-full flex items-center">
+                <Shield className="w-3 h-3 mr-1" />
+                Approval Required
+                {job.required_role && ` (${job.required_role})`}
+              </span>
+            )}
+          </div>
+          <p className="text-gray-400 text-sm mt-1">{job.description}</p>
+          <div className="flex items-center gap-4 mt-2 text-xs text-gray-500 flex-wrap">
+            <span className="flex items-center gap-1">
+              <Clock className="w-3 h-3" />
+              {job.schedule}
+            </span>
+            <span className="flex items-center gap-1">
+              <Bot className="w-3 h-3" />
+              Agent: {job.agent_id}
+            </span>
+          </div>
+        </div>
+        <button
+          onClick={() => onTrigger(job.id)}
+          disabled={isTriggering}
+          className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:bg-gray-300 flex items-center gap-1.5 flex-shrink-0 transition-colors"
+        >
+          {isTriggering ? (
+            <><Loader2 className="w-3.5 h-3.5 animate-spin" />Triggering…</>
+          ) : (
+            <><Calendar className="w-3.5 h-3.5" />Run Now</>
+          )}
+        </button>
+      </div>
+
+      {runsLoading ? (
+        <div className="mt-3 pt-3 border-t border-gray-50">
+          <div className="flex items-center gap-2 text-xs text-gray-400">
+            <Loader2 className="w-3 h-3 animate-spin" />
+            Loading runs...
+          </div>
+        </div>
+      ) : jobRuns.length > 0 && (
+        <div className="mt-3 pt-3 border-t border-gray-50">
+          <p className="text-xs font-medium text-gray-500 mb-2">Recent runs</p>
+          <div className="space-y-2">
+            {jobRuns.map((run) => (
+              <div key={run.id} className="flex items-center gap-3 text-xs">
+                <span className={`px-1.5 py-0.5 rounded-full ${
+                  run.status === 'completed'
+                    ? 'bg-green-100 text-green-700'
+                    : run.status === 'failed'
+                    ? 'bg-red-100 text-red-700'
+                    : run.status === 'rejected'
+                    ? 'bg-red-100 text-red-700'
+                    : run.status === 'running'
+                    ? 'bg-blue-100 text-blue-700'
+                    : run.status === 'waiting_approval'
+                    ? 'bg-amber-100 text-amber-700'
+                    : 'bg-gray-100 text-gray-600'
+                }`}>
+                  {run.status === 'waiting_approval' ? 'Waiting Approval' : run.status}
+                </span>
+                <span className="text-gray-400">{run.trigger_type}</span>
+                {run.started_at && (
+                  <span className="text-gray-400">{new Date(run.started_at).toLocaleString()}</span>
+                )}
+                {run.error_message && (
+                  <span className="text-red-500 truncate max-w-[200px]">{run.error_message}</span>
+                )}
+                {run.session_id && (
+                  <Link
+                    to={`/chat?session=${run.session_id}`}
+                    className="text-blue-600 hover:text-blue-800 hover:underline"
+                  >
+                    View Session
+                  </Link>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+const JobApprovalCard = ({ run, onApprove, onReject }) => {
+  const [rejectReason, setRejectReason] = useState('')
+  const [showReject, setShowReject] = useState(false)
+
+  const requiredRole = run.required_role || 'admin'
+  const canApprove = hasRole('admin') || hasRole(requiredRole)
+
+  return (
+    <div className={`bg-white rounded-xl border p-4 border-amber-100`}>
+      <div className="flex items-start justify-between gap-4">
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <Calendar className="w-4 h-4 text-purple-600 flex-shrink-0" />
+            <h3 className="font-medium text-gray-900">Scheduled Job Approval</h3>
+            <span className="text-xs text-gray-400">{run.trigger_type}</span>
+          </div>
+          <p className="text-gray-400 text-sm mt-0.5">
+            Requires <span className="font-semibold text-gray-700">{requiredRole}</span> role to execute
+          </p>
+          {run.error_message && (
+            <p className="text-red-500 text-sm mt-1">{run.error_message}</p>
+          )}
+          <div className="flex items-center gap-4 text-xs text-gray-400 flex-wrap mt-1">
+            <span>{new Date(run.created_at).toLocaleString()}</span>
+            {run.session_id && (
+              <Link to={`/chat?session=${run.session_id}`} className="text-blue-500 hover:text-blue-700 hover:underline flex items-center gap-1">
+                <MessageSquare className="w-3 h-3" />
+                Conversation
+              </Link>
+            )}
+          </div>
+        </div>
+
+        {canApprove ? (
+          <div className="flex items-center gap-2 flex-shrink-0">
+            {!showReject ? (
+              <>
+                <button
+                  onClick={() => onApprove(run.id)}
+                  className="px-3 py-1.5 text-sm text-white rounded-lg flex items-center focus:outline-none focus:ring-2 focus:ring-offset-2 bg-green-600 hover:bg-green-700 focus:ring-green-500"
+                  aria-label="Approve job run"
+                >
+                  <CheckCircle className="w-4 h-4 mr-1.5" aria-hidden="true" />
+                  Approve
+                </button>
+                <button
+                  onClick={() => setShowReject(true)}
+                  className="px-3 py-1.5 text-sm text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors focus:outline-none"
+                  aria-label="Reject job run"
+                >
+                  Reject
+                </button>
+              </>
+            ) : null}
+          </div>
+        ) : (
+          <span className="flex items-center gap-1.5 text-xs text-gray-400 flex-shrink-0">
+            <Clock className="w-3.5 h-3.5 animate-pulse" />
+            Needs {requiredRole}
+          </span>
+        )}
+      </div>
+
+      {canApprove && showReject && (
+        <div className="mt-3 space-y-2">
+          <textarea
+            value={rejectReason}
+            onChange={(e) => setRejectReason(e.target.value)}
+            placeholder="Reason for rejection..."
+            className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent text-sm"
+            rows={2}
+            autoFocus
+          />
+          <div className="flex items-center gap-2 justify-end">
+            <button
+              onClick={() => setShowReject(false)}
+              className="px-3 py-1.5 text-sm text-gray-500 hover:text-gray-700 rounded-lg"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={() => {
+                if (rejectReason.trim()) {
+                  onReject(run.id, rejectReason)
+                }
+              }}
+              disabled={!rejectReason.trim()}
+              className="px-3 py-1.5 text-sm bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50"
+            >
+              Confirm Reject
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 const Tasks = () => {
   const { user } = useAuth()
   const queryClient = useQueryClient()
   const toast = useToast()
   const [showHistory, setShowHistory] = useState(false)
+  const [showJobRuns, setShowJobRuns] = useState(false)
+  const [showJobs, setShowJobs] = useState(true)
+  const [triggeringJobId, setTriggeringJobId] = useState(null)
+  const isAdmin = hasRole('admin')
 
   const { data: tasksResponse, isLoading, isError, error, refetch: refetchTasks } = useQuery({
     queryKey: ['tasks'],
     queryFn: getTasks,
-    refetchInterval: 1000,
+    refetchInterval: 5000,
   })
 
-  // Fetch approval history (completed approvals)
+  const { data: jobRunsResponse, isLoading: jobRunsLoading } = useQuery({
+    queryKey: ['jobRuns'],
+    queryFn: () => getJobRuns(null, null, 1, 20),
+    enabled: showJobRuns && isAdmin,
+    refetchInterval: activeRunPolling,
+  })
+
+   // Fetch approval history (completed approvals)
   const { data: historyResponse, isLoading: historyLoading } = useQuery({
     queryKey: ['approvalHistory'],
     queryFn: () => getApprovalHistory(1, 20),
     enabled: showHistory, // Only fetch when history section is expanded
   })
 
+  const { data: jobsResponse, isLoading: jobsLoading, isError: jobsError, error: jobsErrorObj } = useQuery({
+    queryKey: ['jobs'],
+    queryFn: getJobs,
+    enabled: showJobs && isAdmin,
+  })
+
+  const triggerJobMutation = useMutation({
+    mutationFn: (jobDefinitionId) => triggerJob(jobDefinitionId),
+    onSuccess: (data) => {
+      setTriggeringJobId(null)
+      queryClient.invalidateQueries({ queryKey: ['jobs'] })
+      queryClient.invalidateQueries({ queryKey: ['jobRuns'] })
+      toast.success('Job Triggered', `Job run started. Session: ${data?.session_id?.slice(0, 8)}...`)
+    },
+    onError: (err) => {
+      setTriggeringJobId(null)
+      toast.error('Trigger Failed', err.message || 'Failed to trigger job.')
+    },
+  })
+
+  // Fetch pending job-level approvals
+  const { data: pendingJobApprovalsResponse, isLoading: pendingJobApprovalsLoading } = useQuery({
+    queryKey: ['pendingJobApprovals'],
+    queryFn: getPendingJobApprovals,
+    refetchInterval: 5000,
+  })
+
+  const approveJobMutation = useMutation({
+    mutationFn: (jobRunId) => approveJob(jobRunId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['pendingJobApprovals'] })
+      queryClient.invalidateQueries({ queryKey: ['jobRuns'] })
+      toast.success('Job Approved', 'The scheduled job has been approved and will execute.')
+    },
+    onError: (err) => {
+      toast.error('Approval Failed', err.message || 'Failed to approve the job. Please try again.')
+    },
+  })
+
+  const rejectJobMutation = useMutation({
+    mutationFn: ({ jobRunId, reason }) => rejectJob(jobRunId, reason),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['pendingJobApprovals'] })
+      queryClient.invalidateQueries({ queryKey: ['jobRuns'] })
+      toast.success('Job Rejected', 'The scheduled job has been rejected.')
+    },
+    onError: (err) => {
+      toast.error('Rejection Failed', err.message || 'Failed to reject the job. Please try again.')
+    },
+  })
+
+  const handleApproveJob = (jobRunId) => {
+    approveJobMutation.mutate(jobRunId)
+  }
+
+  const handleRejectJob = (jobRunId, reason) => {
+    rejectJobMutation.mutate({ jobRunId, reason })
+  }
+
   // Extract tasks array from paginated response
   const tasks = tasksResponse?.items || []
 
   const invalidateApprovalCaches = () => {
-    queryClient.invalidateQueries(['tasks'])
-    queryClient.invalidateQueries(['plans'])
-    queryClient.invalidateQueries(['approvalHistory'])
-    queryClient.invalidateQueries(['pending-approvals-count'])
+    queryClient.invalidateQueries({ queryKey: ['tasks'] })
+    queryClient.invalidateQueries({ queryKey: ['plans'] })
+    queryClient.invalidateQueries({ queryKey: ['approvalHistory'] })
+    queryClient.invalidateQueries({ queryKey: ['pending-approvals-count'] })
+    queryClient.invalidateQueries({ queryKey: ['pendingJobApprovals'] })
+    queryClient.invalidateQueries({ queryKey: ['jobRuns'] })
+    queryClient.invalidateQueries({ queryKey: ['jobs'] })
   }
 
   const approveMutation = useMutation({
@@ -485,9 +775,107 @@ const Tasks = () => {
     return acc
   }, {})
 
+  const jobs = jobsResponse?.items || []
+
   return (
     <div className="space-y-6">
-      <PageHeader title="Pending Approvals" subtitle="Review and approve tasks based on your role permissions.">
+      {isAdmin && (
+        <>
+      <PageHeader title="Scheduled Jobs" subtitle="Cron job definitions. Click Run Now to trigger manually.">
+        <div className="flex items-center gap-2">
+                <span className="text-sm text-gray-400">Jobs loaded from YAML definitions</span>
+        </div>
+      </PageHeader>
+
+      {jobsLoading ? (
+        <div className="space-y-4">
+          {Array.from({ length: 2 }).map((_, i) => (
+            <div key={i} className="bg-white rounded-xl border border-gray-100 p-4 animate-pulse">
+              <div className="w-32 h-4 bg-gray-200 rounded mb-2" />
+              <div className="w-3/4 h-3 bg-gray-100 rounded" />
+            </div>
+          ))}
+        </div>
+      ) : jobsError ? (
+        <EmptyState
+          icon={AlertCircle}
+          title="Failed to load jobs"
+          description={jobsErrorObj?.message || 'An unexpected error occurred'}
+        />
+      ) : jobs.length === 0 ? (
+        <EmptyState
+          icon={Calendar}
+          title="No scheduled jobs"
+          description="Add YAML definitions to druppie/jobs/definitions/"
+        />
+      ) : (
+        <div className="space-y-4">
+          {jobs.map((job) => (
+            <JobCard
+              key={job.id}
+              job={job}
+              onTrigger={(id) => {
+                setTriggeringJobId(id)
+                triggerJobMutation.mutate(id)
+              }}
+              isTriggering={triggeringJobId === job.id}
+            />
+          ))}
+        </div>
+      )}
+      <div className="border-t border-gray-200 pt-6" />
+    </>
+  )}
+
+      {isAdmin && (
+        <>
+          <PageHeader title="Pending Job Approvals" subtitle="Scheduled jobs awaiting approval before execution.">
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-gray-500">Your roles:</span>
+              {user?.roles?.slice(0, 3).map((role) => (
+                <span
+                  key={role}
+                  className="px-2 py-1 bg-blue-100 text-blue-700 text-xs rounded-full"
+                >
+                  {role}
+                </span>
+              ))}
+            </div>
+          </PageHeader>
+
+          {pendingJobApprovalsLoading ? (
+            <div className="space-y-4">
+              {Array.from({ length: 2 }).map((_, i) => (
+                <div key={i} className="bg-white rounded-xl border border-gray-100 p-4 animate-pulse">
+                  <div className="w-32 h-4 bg-gray-200 rounded mb-2" />
+                  <div className="w-3/4 h-3 bg-gray-100 rounded" />
+                </div>
+              ))}
+            </div>
+          ) : (pendingJobApprovalsResponse?.items || []).length === 0 ? (
+            <EmptyState
+              icon={CheckCircle}
+              title="No pending job approvals"
+              description="No scheduled jobs waiting for approval right now."
+            />
+          ) : (
+            <div className="space-y-4">
+              {(pendingJobApprovalsResponse?.items || []).map((run) => (
+                <JobApprovalCard
+                  key={run.id}
+                  run={run}
+                  onApprove={handleApproveJob}
+                  onReject={handleRejectJob}
+                />
+              ))}
+            </div>
+          )}
+
+          <div className="border-t border-gray-200 pt-6" />
+        </>
+      )}
+
+      <PageHeader title="Pending Tool Approvals" subtitle="Review and approve MCP tool executions based on your role permissions.">
         <div className="flex items-center gap-2">
           <span className="text-sm text-gray-500">Your roles:</span>
           {user?.roles?.slice(0, 3).map((role) => (
@@ -520,11 +908,11 @@ const Tasks = () => {
           </button>
         </div>
       ) : tasks.length === 0 ? (
-        <div className="text-center py-16 bg-white rounded-xl border border-gray-100">
-          <CheckCircle className="w-10 h-10 text-green-400 mx-auto mb-3" />
-          <h3 className="text-base font-medium text-gray-700">All clear</h3>
-          <p className="text-gray-400 text-sm mt-1">No pending approvals right now.</p>
-        </div>
+        <EmptyState
+          icon={CheckCircle}
+          title="All clear"
+          description="No pending approvals right now."
+        />
       ) : (
         <div className="space-y-8">
           {Object.entries(tasksByRole).map(([role, roleTasks]) => (
@@ -557,6 +945,127 @@ const Tasks = () => {
           ))}
         </div>
       )}
+
+      {isAdmin && (
+        <>
+      {/* Job Runs Section */}
+      <div className="mt-8 border-t pt-6">
+        <button
+          onClick={() => setShowJobRuns(!showJobRuns)}
+          className="flex items-center gap-2 text-lg font-semibold text-gray-700 hover:text-gray-900 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 rounded"
+          aria-expanded={showJobRuns}
+          aria-controls="job-runs"
+        >
+          {showJobRuns ? (
+            <ChevronDown className="w-5 h-5" />
+          ) : (
+            <ChevronRight className="w-5 h-5" />
+          )}
+          <Calendar className="w-5 h-5 text-blue-500" />
+          Job Runs
+        </button>
+
+        {showJobRuns && (
+          <div id="job-runs" className="mt-4">
+            {jobRunsLoading ? (
+              <div className="flex items-center justify-center h-32 bg-white rounded-xl border border-gray-100">
+                <Loader2 className="w-6 h-6 animate-spin text-blue-500" />
+                <span className="ml-2 text-gray-600">Loading job runs...</span>
+              </div>
+            ) : jobRunsResponse?.items?.length > 0 ? (
+              <div className="space-y-3">
+                {jobRunsResponse.items.map((run) => (
+                  <div
+                    key={run.id}
+                    className="bg-white rounded-lg border border-gray-100 p-4 hover:border-gray-200 transition-colors"
+                  >
+                    <div className="flex items-start justify-between">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-medium">Job Run</span>
+                          <span className={`px-2 py-0.5 text-xs rounded-full flex items-center ${
+                            run.status === 'completed'
+                              ? 'bg-green-100 text-green-700'
+                              : run.status === 'failed'
+                              ? 'bg-red-100 text-red-700'
+                              : run.status === 'rejected'
+                              ? 'bg-red-100 text-red-700'
+                              : run.status === 'running'
+                              ? 'bg-blue-100 text-blue-700'
+                              : 'bg-gray-100 text-gray-700'
+                          }`}>
+                            {run.status === 'completed' ? (
+                              <><CheckCircle className="w-3 h-3 mr-1" />Completed</>
+                            ) : run.status === 'failed' ? (
+                              <><XCircle className="w-3 h-3 mr-1" />Failed</>
+                            ) : run.status === 'rejected' ? (
+                              <><XCircle className="w-3 h-3 mr-1" />Rejected</>
+                            ) : run.status === 'running' ? (
+                              <><Loader2 className="w-3 h-3 mr-1 animate-spin" />Running</>
+                            ) : (
+                              <><Clock className="w-3 h-3 mr-1" />{run.status}</>
+                            )}
+                          </span>
+                          <span className="px-2 py-0.5 bg-purple-100 text-purple-600 text-xs rounded-full flex items-center">
+                            <Bot className="w-3 h-3 mr-1" />
+                            {run.trigger_type || 'scheduled'}
+                          </span>
+                        </div>
+                        {run.error_message && (
+                          <p className="text-red-500 text-sm mt-1 line-clamp-2">{run.error_message}</p>
+                        )}
+                        {run.logs && (
+                          <p className="text-gray-500 text-sm mt-1 line-clamp-2">{run.logs}</p>
+                        )}
+                        <div className="flex items-center gap-4 mt-2 text-xs text-gray-500 flex-wrap">
+                          {run.started_at && (
+                            <span className="flex items-center gap-1">
+                              <Clock className="w-3 h-3" />
+                              Started: {new Date(run.started_at).toLocaleString()}
+                            </span>
+                          )}
+                          {run.completed_at && (
+                            <span className="flex items-center gap-1">
+                              <CheckCircle className="w-3 h-3" />
+                              Completed: {new Date(run.completed_at).toLocaleString()}
+                            </span>
+                          )}
+                        </div>
+                        {run.session_id && (
+                          <div className="flex items-center gap-3 mt-2">
+                            <Link
+                              to={`/chat?session=${run.session_id}`}
+                              className="inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 hover:underline"
+                            >
+                              <MessageSquare className="w-3 h-3" />
+                              View Session
+                            </Link>
+                            <Link
+                              to={`/chat?session=${run.session_id}&mode=inspect`}
+                              className="inline-flex items-center gap-1 text-xs text-indigo-600 hover:text-indigo-800 hover:underline"
+                            >
+                              <ExternalLink className="w-3 h-3" />
+                              Inspect Trace
+                            </Link>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <EmptyState
+                icon={Calendar}
+                title="No job runs"
+                description="No job runs found."
+              />
+            )}
+          </div>
+        )}
+      </div>
+      </>
+    )}
 
       {/* Approval History Section */}
       <div className="mt-8 border-t pt-6">
@@ -668,10 +1177,11 @@ const Tasks = () => {
                 ))}
               </div>
             ) : (
-              <div className="text-center py-8 bg-white rounded-xl border border-gray-100">
-                <History className="w-8 h-8 text-gray-400 mx-auto mb-2" />
-                <p className="text-gray-500 text-sm">No approval history found.</p>
-              </div>
+              <EmptyState
+                icon={History}
+                title="No approval history"
+                description="No approval history found."
+              />
             )}
           </div>
         )}

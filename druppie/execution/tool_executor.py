@@ -659,7 +659,7 @@ class ToolExecutor:
         return await self._execute_mcp_tool(tool_call)
 
     async def complete_after_answer(
-        self, question_id: UUID, answer_english: str, user_answer: str | None = None
+        self, question_id: UUID, answer_english: str, user_answer: str | None = None, selected_choices: list[int] | None = None
     ) -> str:
         """Complete a HITL tool after the user answers.
 
@@ -670,6 +670,7 @@ class ToolExecutor:
             answer_english: User's answer translated to English (for the agent)
             user_answer: Original answer in user's language (what the user typed).
                          If None, uses answer_english for both.
+            selected_choices: Indices of selected multiple-choice options
 
         Returns:
             Final status: completed
@@ -681,7 +682,7 @@ class ToolExecutor:
             return ToolCallStatus.FAILED
 
         # Update question with the user's original answer (their language)
-        self.question_repo.update_answer(question_id, user_answer or answer_english)
+        self.question_repo.update_answer(question_id, user_answer or answer_english, selected_choices)
 
         # Get associated tool call
         tool_call_id = question.tool_call_id
@@ -691,6 +692,13 @@ class ToolExecutor:
 
         # Build result — contains both English (for agent) and user's original (for frontend).
         # message_history.py strips user_answer when reconstructing for agents.
+        choices = None
+        if question.choices:
+            try:
+                choices = [c["text"] if isinstance(c, dict) else c for c in question.choices]
+            except (TypeError, KeyError):
+                choices = question.choices
+
         result = {
             "status": "answered",
             "answer_english": answer_english,
@@ -698,6 +706,8 @@ class ToolExecutor:
             "question": question.question_english or question.question,
             "question_type": question.question_type,
         }
+        if selected_choices is not None and choices:
+            result["selected_choices"] = [choices[i] for i in selected_choices if i < len(choices)]
 
         # Update tool call with result
         self.execution_repo.update_tool_call(

@@ -1,6 +1,6 @@
 # Platform Technical Standards
 
-**Revision:** 2026-04-20
+**Revision:** 2026-06-01
 
 Every Druppie-created application follows these technical defaults. The
 Architect treats them as givens when writing `docs/technical-design.md` and only
@@ -49,6 +49,10 @@ registry:
 - File search inside a codebase → `module-filesearch`
 - ArchiMate / architecture reasoning → `module-archimate`
 - Shell / coding execution → `module-coding`
+- Document-heavy retrieval, knowledge-base search, citation-backed Q&A
+  → app-local pgvector via `app/rag.py` helper (storage + semantic search)
+  and `module-llm` `embed` tool (embeddings via SDK). Each app stores
+  vectors in its own database for full data isolation.
 
 If an existing module covers the capability, the TD references the module
 and the SDK call pattern — it does not design an alternative. Building a
@@ -79,7 +83,38 @@ Programming style — follow the Druppie core:
 - **Services compose repositories.** Services hold business logic; they
   never touch the DB directly. Route handlers call services.
 
-## 5. API conventions
+## 5. RAG defaults
+
+For doc-heavy applications (knowledge bases, document search,
+citation-backed Q&A, large-document retrieval) the platform defaults are:
+
+| Topic | Default |
+|---|---|
+| Vector storage | App's own Postgres with pgvector (`pgvector/pgvector:pg16` image). Use `app/rag.py` helper — never reimplement chunking or vector search from scratch. |
+| Embeddings | `module-llm` `embed` tool via the Druppie SDK (stateless, shared). Research recommends `multilingual-e5-large-instruct` (MIT, multilingual, CPU-feasible); `module-llm` config pins the active default. |
+| Retrieval | Semantic (cosine similarity) via `rag.py` `search()`. Hybrid (BM25 + dense) with RRF k=60 is a future upgrade — application-layer BM25 fusion until then. |
+| BM25 analyzer | Language-specific (`to_tsvector('<corpus-language>', ...)`) per field — application-layer |
+| Chunking | Recursive splitter, default `chunk_size=2048` / `chunk_overlap=256` characters (≈ 512 tokens, per the 2026 benchmarks in `docs/RAG/rag-patterns.md`) |
+| Re-ranking | BGE-reranker-v2-m3 self-hosted — application layer |
+| Citation metadata | `source_name` + `source_page` + `source_section` + `chunk_id` returned by every search result |
+| Citation format | Footnote style in formal Markdown output + anchor tags for interactive UI |
+| Document extraction | Caller-side; `rag.py` `index_documents()` accepts pre-extracted text + metadata |
+| Data isolation | Physical — each app owns its vectors in its own database. No shared vectorstore, no cross-app access. |
+
+Mandatory NFRs in the TD for any RAG component: retrieval latency,
+recall on a gold-set, faithfulness, citation precision, hallucination
+rate, freshness SLA, named content owner per domain, PII tagging
+before indexing, lineage per chunk. Use the `LS / HS / Batch`
+archetype defaults from the `rag-patterns` skill.
+
+The TD does not restate these defaults. It only documents deviations
+and the trigger that justifies them.
+
+For deeper guidance — chunking variants, advanced patterns
+(re-ranking, query rewriting, GraphRAG, agentic), NFR archetypes,
+anti-patterns — see the `rag-patterns` skill in the Druppie core.
+
+## 6. API conventions
 
 - FastAPI routers under `app/api/routes/`.
 - Routes are thin: validate input, call a service, return a domain model.
@@ -90,7 +125,7 @@ Programming style — follow the Druppie core:
 - All domain types are Pydantic models in `app/domain/`, exported from
   `app/domain/__init__.py`.
 
-## 6. Frontend conventions
+## 7. Frontend conventions
 
 - TypeScript, strict mode on.
 - Pages under `src/pages/`, reusable components under `src/components/`.
@@ -100,7 +135,7 @@ Programming style — follow the Druppie core:
   `druppie/templates/project/frontend/src/components/chat/`). Do not
   roll a new chat UI.
 
-## 7. Testing
+## 8. Testing
 
 - Backend: pytest. Integration tests target a real Postgres (via the
   template's `docker-compose.yaml`). Mocks only for external third-party
@@ -110,7 +145,7 @@ Programming style — follow the Druppie core:
 - The TD names the scenarios that need tests; test implementation
   details live in the repo, not the TD.
 
-## 8. Security (technical)
+## 9. Security (technical)
 
 - **Auth is handled by Druppie.** Every app is deployed behind the
   Druppie platform, which already does Keycloak-based auth. Apps read
@@ -126,7 +161,7 @@ Programming style — follow the Druppie core:
 The user-facing side of auth (no login screen, no role-admin UI) lives
 in the functional standards file.
 
-## 9. Explicitly out of scope (for now)
+## 10. Explicitly out of scope (for now)
 
 The following are platform concerns and should NOT appear in individual
 project TDs:
@@ -144,7 +179,7 @@ If a project has a genuine reason to do any of these itself (e.g. a
 compliance-driven exception), the Architect documents it as a platform-
 standard deviation with rationale.
 
-## 10. Deployment
+## 11. Deployment
 
 - Each app ships a `Dockerfile` and a `docker-compose.yaml` in the same
   shape as the template.
@@ -154,7 +189,7 @@ standard deviation with rationale.
 - Prod deployment is via the Druppie deploy pipeline; the TD does not
   describe Kubernetes manifests or cloud infra.
 
-## 11. Git
+## 12. Git
 
 - Conventional commits (`feat:`, `fix:`, `refactor:`, `docs:`, `test:`,
   `chore:`).
@@ -162,10 +197,10 @@ standard deviation with rationale.
 - One logical change per commit.
 - Every PR description states the why, not just the what.
 
-## 12. Referencing this file in the TD
+## 13. Referencing this file in the TD
 
 Every `technical-design.md` starts with a **Platform standards** line
 linking back here with the revision the TD was written against:
 
-> Platform standards: conforms to [docs/platform-technical-standards.md](./platform-technical-standards.md) rev 2026-04-20.
+> Platform standards: conforms to [docs/platform-technical-standards.md](./platform-technical-standards.md) rev 2026-06-01.
 > Only deviations are documented below.

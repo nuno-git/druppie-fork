@@ -45,12 +45,12 @@ from uuid import UUID
 import structlog
 
 from druppie.agents.prompt_builder import DEFAULT_LANGUAGE
-from druppie.domain.common import AgentRunStatus, SessionStatus
+from druppie.domain.common import AgentRunStatus, SessionStatus, ApprovalStatus
 from druppie.core.language_detection import LanguageDetector
 from druppie.execution.human_input import HumanInput
 
 if TYPE_CHECKING:
-    from druppie.repositories import SessionRepository, ExecutionRepository, ProjectRepository, QuestionRepository
+    from druppie.repositories import SessionRepository, ExecutionRepository, ProjectRepository, QuestionRepository, JobRepository
 
 logger = structlog.get_logger()
 
@@ -67,6 +67,7 @@ class Orchestrator:
         execution_repo: "ExecutionRepository",
         project_repo: "ProjectRepository",
         question_repo: "QuestionRepository",
+        job_repo: "JobRepository | None" = None,
     ):
         """Initialize orchestrator with repositories.
 
@@ -75,11 +76,13 @@ class Orchestrator:
             execution_repo: Repository for agent runs, tool calls
             project_repo: Repository for project operations
             question_repo: Repository for question operations
+            job_repo: Repository for job runs (optional, required for approval-gated jobs)
         """
         self.session_repo = session_repo
         self.execution_repo = execution_repo
         self.project_repo = project_repo
         self.question_repo = question_repo
+        self.job_repo = job_repo
         self.language_detector = LanguageDetector()
         # Updated on each user input (process_message / resume_after_answer).
         # Safe as instance state because Orchestrator is created per-request.
@@ -478,7 +481,7 @@ class Orchestrator:
         )
 
         # Create and run agent
-        agent = Agent(agent_id, db=self.execution_repo.db)
+        agent = Agent(agent_id, db=self.execution_repo.db, session_id=str(session_id))
         try:
             result = await agent.run(
                 prompt=prompt,
@@ -680,7 +683,7 @@ class Orchestrator:
 
         # Step 5: Build fresh context and continue the agent
         context = self.build_project_context(session_id)
-        agent = Agent(agent_run.agent_id, db=db)
+        agent = Agent(agent_run.agent_id, db=db, session_id=str(session_id))
         result = await agent.continue_run(
             session_id=session_id,
             agent_run_id=agent_run.id,
@@ -705,6 +708,7 @@ class Orchestrator:
         session_id: UUID,
         question_id: UUID,
         answer: str,
+        selected_choices: list[int] | None = None,
     ) -> UUID:
         """Resume execution after a HITL question is answered.
 
@@ -764,7 +768,8 @@ class Orchestrator:
         # Step 2.5: Complete the HITL tool call with translated answer (English for agent)
         # but preserve the original answer for display in the UI
         status = await tool_executor.complete_after_answer(
-            question_id, answer_english=translated_answer, user_answer=answer
+            question_id, answer_english=translated_answer, user_answer=answer,
+            selected_choices=selected_choices,
         )
 
         if status != ToolCallStatus.COMPLETED:
@@ -792,7 +797,7 @@ class Orchestrator:
 
         # Step 5: Build fresh context and continue the agent
         context = self.build_project_context(session_id)
-        agent = Agent(agent_run.agent_id, db=db)
+        agent = Agent(agent_run.agent_id, db=db, session_id=str(session_id))
         result = await agent.continue_run(
             session_id=session_id,
             agent_run_id=agent_run.id,
@@ -865,7 +870,7 @@ class Orchestrator:
                 # Already RUNNING — just continue it
                 db = self.execution_repo.db
                 context = self.build_project_context(session_id)
-                agent = Agent(orphan_run.agent_id, db=db)
+                agent = Agent(orphan_run.agent_id, db=db, session_id=str(session_id))
                 try:
                     result = await agent.continue_run(
                         session_id=session_id,
@@ -915,7 +920,7 @@ class Orchestrator:
         # Build fresh context and continue the agent
         db = self.execution_repo.db
         context = self.build_project_context(session_id)
-        agent = Agent(paused_run.agent_id, db=db)
+        agent = Agent(paused_run.agent_id, db=db, session_id=str(session_id))
         try:
             result = await agent.continue_run(
                 session_id=session_id,
@@ -1034,7 +1039,7 @@ class Orchestrator:
         # Build fresh context and continue the agent
         db = self.execution_repo.db
         context = self.build_project_context(session_id)
-        agent = Agent(agent_run.agent_id, db=db)
+        agent = Agent(agent_run.agent_id, db=db, session_id=str(session_id))
         try:
             result = await agent.continue_run(
                 session_id=session_id,

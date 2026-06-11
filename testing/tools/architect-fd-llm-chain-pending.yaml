@@ -1,0 +1,327 @@
+## Seeded session: BA wrote a multi-step in-app LLM workflow FD,
+## FD-approval gate PENDING.
+##
+## Starting point for manually testing the architect's
+## llm-orchestration detection flow. The FD describes a klacht-trieerder
+## (complaint triager) for a waterschap with an explicit
+## classify → validate → draft → quality-check chain with iteration
+## loop — a textbook in-app multi-step LLM workflow that should
+## trigger the `llm-orchestration-in-apps` skill. All FD sections are
+## complete so the architect won't bounce it back to the BA.
+##
+## To test:
+##   1. Run this test from the evaluations page → green.
+##   2. Log in (or switch) to a user with the `analyst` role
+##      (e.g. username `analyst`, password `Analyst123!`).
+##   3. Go to /tasks — pending FD-approval for docs/functional-design.md
+##      on a session named "klacht-trieerder".
+##   4. Open and review the FD — it describes an in-app LLM chain.
+##   5. Approve the FD.
+##   6. Resume the session. The planner schedules the architect.
+##   7. Watch the architect's actions in the session detail page.
+##      EXPECTED: in Step 1 (Intake) the architect calls
+##      invoke_skill(skill_name="llm-orchestration-in-apps") before
+##      designing.
+##   8. After research + design complete, open the produced
+##      docs/technical-design.md and confirm the architect stayed in its
+##      WHAT-lane (no framework names):
+##      - explicit workflow-pattern choice (#2 chain w/ loop, or #4)
+##      - agency decision (LLM + UI / single agent / multi-agent) with the
+##        decision-hierarchy rule that decided it
+##      - capability placement (in-app / extend template / evolve or new
+##        module) with a one-line reason
+##      - workflow-specific NFRs only where they drive design
+##      - it must NOT name a concrete framework/library (that is the
+##        builder_planner's call against the platform standard).
+##   9. When the build path runs, the builder_planner invokes
+##      invoke_skill(skill_name="llm-orchestration-standard") and its
+##      builder_plan.md names the standard (plain Python — linear, or a
+##      core-style tool-loop for a single agent; no framework) + the
+##      access-pattern — not a per-project framework.
+##
+## This test is intentionally NOT doc-heavy so it should not trigger
+## the `rag-patterns` skill (when that skill lands on colab-dev). The
+## scenario uses LLM logic on user-provided text input, no document
+## corpus.
+
+tool-test:
+  name: architect-fd-llm-chain-pending
+  description: "FD with a multi-step in-app LLM chain — paused on analyst-role FD approval gate, ready to validate architect llm-orchestration detection"
+  tags: [seed, paused, llm-orchestration, fd-approval-gate, ba]
+  session_status: paused
+
+  chain:
+    # =========================================================================
+    # Router
+    # =========================================================================
+    - agent: router
+      tool: builtin:set_intent
+      arguments:
+        intent: create_project
+        project_name: klacht-trieerder
+        description: "An AI assistant that classifies, validates and drafts a response (with quality-check loop) for citizen complaints submitted to the waterschap."
+      assert:
+        result:
+          - not_empty
+
+    - agent: router
+      tool: builtin:done
+      arguments:
+        summary: "Agent router: Classified as create_project for klacht-trieerder"
+
+    # =========================================================================
+    # Planner — plans the BA
+    # =========================================================================
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: business_analyst
+            prompt: "Gather requirements and create the functional design"
+          - agent_id: planner
+            prompt: "Re-evaluate after business analyst completes"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: Planned business_analyst to gather requirements and write the functional design"
+
+    # =========================================================================
+    # Business Analyst — writes the full FD, leaves FD-approval gate PENDING
+    # =========================================================================
+    - agent: business_analyst
+      tool: coding:make_design
+      arguments:
+        path: docs/functional-design.md
+        content: |
+          # Functioneel Ontwerp: Klacht-trieerder
+
+          > Platform standards applied: [docs/platform-functional-standards.md](./platform-functional-standards.md) rev `2026-04-20`.
+
+          ## 1. Huidige vs Gewenste Situatie
+
+          | Aspect | Huidige Situatie | Gewenste Situatie |
+          |--------|------------------|-------------------|
+          | Triage van meldingen | Een baliemedewerker leest elke melding handmatig en bepaalt de juiste afdeling | AI-assistent classificeert elke melding direct in één van zes hoofdcategorieën met urgentie-score |
+          | Validatie van inhoud | Medewerker controleert handmatig of locatie binnen beheergebied valt en of de zelf-gekozen categorie klopt | Geautomatiseerde validatie tegen het gebiedsregister en de zelf-indicatie |
+          | Conceptantwoord | Medewerker typt een ontvangstbevestiging vanaf nul, vaak in inconsistente toon | LLM stelt een conceptantwoord op in zakelijke maar empathische toon met de juiste afdeling en reactietermijn |
+          | Kwaliteitscontrole | Toon-controle gebeurt informeel; soms gaan onvolledige of incorrect getoonde antwoorden uit | Tweede LLM-stap controleert tone, feitelijke juistheid en compleetheid; max 2 iteraties |
+          | Reactietijd | Bij piekvolumes loopt het op tot &gt;1 week voor de eerste reactie | Concept klaar voor medewerker binnen 30 seconden; verstuurd binnen dezelfde werkdag |
+          | Audit | Versnipperde mailtrajecten; nauwelijks traceerbaar wat is gezegd | Compleet audit-log per melding inclusief alle LLM-iteraties |
+
+          ## 2. Problem Summary
+
+          **Wie is getroffen:**
+          - Burgers (langere reactietijden, inconsistente toon, soms onbruikbare ontvangstbevestiging)
+          - Baliemedewerkers (repetitief, foutgevoelig handwerk bij piekvolumes)
+          - Coördinatoren (geen overzicht of consistentie in afhandeling)
+          - Juridische zaken (audit-trail ontbreekt bij escalaties)
+
+          **Welk probleem ervaren ze:**
+          - Inconsistente classificatie tussen medewerkers leidt tot meldingen die bij verkeerde afdeling belanden
+          - Ontvangstbevestigingen verschillen sterk in kwaliteit en toon
+          - Validatie (binnen-beheergebied, juiste categorie) gebeurt soms wel, soms niet
+          - Bij piek (storm, droogte, lek) loopt de reactie-backlog op tot meer dan een week
+          - Geen reproduceerbaar audit-trail van wat door wie wanneer is geantwoord
+
+          **Waarom dit belangrijk is (bedrijfsimpact):**
+          - Burgervertrouwen lijdt onder lange en inconsistente reacties
+          - Verkeerd-gerouteerde meldingen vertragen daadwerkelijke afhandeling
+          - Bij escalaties of WOB-verzoeken kan het waterschap zijn reactie niet reconstrueren
+          - Personeelskosten bij piekvolumes zijn hoog door repetitief handwerk
+
+          **Wat succes betekent:**
+          - 95% van de meldingen heeft binnen 30 seconden een gevalideerd conceptantwoord klaar voor de medewerker
+          - Toon en compleetheid worden meetbaar consistent (faithfulness ≥90% op testset)
+          - Verkeerd-gerouteerde meldingen &lt;5% van het volume
+          - Volledig audit-trail per melding inclusief LLM-input/output van elke stap
+
+          ## 3. Functionele Vereisten
+
+          | ID | Bron | Eis | Verificatiemethode |
+          |----|------|-----|-------------------|
+          | FR-01 | BA | Burger dient een melding in via een webformulier met categorie-zelfindicatie, locatie (postcode + huisnummer of kaart-prik), vrije tekst-toelichting en contactgegevens. | Functionele test: formulier invullen en versturen |
+          | FR-02 | BA | De assistent classificeert de melding in één van zes hoofdcategorieën (waterkwaliteit, dijken & kades, peilbeheer, drijfvuil & overlast, vergunningen, anders) plus een urgentie-score laag/middel/hoog. | Functionele test: 20 historische meldingen, ≥85% match met handmatige classificatie |
+          | FR-03 | BA | De assistent valideert de melding: locatie binnen beheergebied via gebiedsregister; gekozen categorie past bij de inhoud; essentiële informatie aanwezig (locatie, contact, beschrijving). | Functionele test: meldingen buiten beheergebied of incompleet worden gemarkeerd |
+          | FR-04 | BA | De assistent stelt een conceptantwoord op in zakelijke maar empathische toon, met juiste afdeling, verwachte reactietermijn en eventuele vervolgvragen bij incompleetheid. | Functionele test: conceptantwoord bevat afdeling, termijn en (bij incompleetheid) een vervolgvraag |
+          | FR-05 | BA | Het concept wordt gecontroleerd door een tweede LLM-stap (quality-check) op tone-consistentie, feitelijke juistheid t.o.v. de melding, en compleetheid. | Functionele test: faithfulness-meting op gold-set van 100 meldingen |
+          | FR-06 | BA | Als de quality-check faalt, wordt het concept opnieuw opgesteld met de feedback verwerkt (max 2 iteraties). Slaagt het na 2 iteraties niet, dan wordt de melding gemarkeerd voor handmatige behandeling. | Functionele test: forceer kwaliteits-failure, verifieer max 2 iteraties en daarna escalatie-vlag |
+          | FR-07 | BA | Medewerker ziet in een werklijst per afdeling: melding-inhoud, classificatie, urgentie, validatie-vlaggen, conceptantwoord, kwaliteits-score. | Functionele test: log in als medewerker, open werklijst |
+          | FR-08 | BA | Medewerker kan het concept aanpassen, goedkeuren en versturen, of de melding afwijzen. | Functionele test: drie acties uitvoeren, e-mail-verzending controleren bij goedkeuring |
+          | FR-09 | BA | Bij goedkeuring wordt het antwoord per e-mail naar de burger gestuurd en de melding doorgezet naar de juiste afdeling. | Functionele test: verstuurd antwoord komt aan; melding zichtbaar in afdeling-werklijst |
+          | FR-10 | BA | Beheerder kan categorie-definities, toonregels en quality-criteria onderhouden via een admin-pagina. | Functionele test: wijzig toon-regel, verifieer dat nieuw concept de aangepaste regel volgt |
+          | FR-11 | BA | Audit-log per melding bevat: invoer, classificatie, validatie-uitkomsten, alle LLM-iteraties (input + output + score), uiteindelijk antwoord, medewerker-acties, tijdstempels. | Functionele test: melding doorlopen, audit-log openen, controleren op volledigheid |
+          | FR-12 | BA | Als de assistent geen geldige classificatie of conceptantwoord kan produceren, wordt de melding expliciet gemarkeerd voor handmatige behandeling zonder gefabriceerd antwoord. | Functionele test: forceer onbekende input, verifieer "handmatige behandeling vereist"-vlag |
+
+          ## 4. Business Rules & Logic
+
+          | Regel ID | Beschrijving | Conditie | Uitkomst |
+          |----------|--------------|----------|----------|
+          | BR-01 | Meldingen buiten beheergebied worden niet automatisch beantwoord | Locatie valt buiten gebiedsregister | Markeer voor handmatige beoordeling met advies "buiten beheergebied" |
+          | BR-02 | Urgentie "hoog" wordt direct doorgezet | Classificatie urgentie = hoog | Notificeer dienstdoende coördinator zonder te wachten op medewerker-goedkeuring |
+          | BR-03 | Maximaal 2 LLM-iteraties per melding | Quality-check faalt 2× | Markeer melding voor handmatige behandeling, log alle iteraties |
+          | BR-04 | Geen automatisch verzonden antwoord zonder medewerker-akkoord | Concept is gereed | Wacht op medewerker-actie alvorens te versturen (mens in de loop) |
+          | BR-05 | PII (NAW + contactgegevens) wordt niet meegestuurd in de LLM-prompts buiten wat strikt nodig is voor de toon | LLM-aanroep | Strip identificerende gegevens behalve voornaam/aanhef indien aanwezig |
+          | BR-06 | Audit-log retentie 5 jaar | Elke melding | Bewaar log 5 jaar, daarna automatisch verwijderen |
+
+          ## 5. Information Requirements
+
+          | Informatie | Beschrijving | Bron | Gebruikt door |
+          |------------|--------------|------|----------------|
+          | Meldingsinhoud | Vrije tekst van burger + categorie-zelfindicatie + locatie + contactgegevens | Webformulier | Classify, Validate, Draft |
+          | Categorie + urgentie | Door LLM bepaald | Classify-stap | Validate, Draft, werklijst |
+          | Gebiedsregister | Welke postcodes/coördinaten vallen binnen beheergebied | Extern gebiedsregister-API | Validate-stap |
+          | Categorie-definities | Naam, beschrijving, juiste afdeling per categorie | Beheerder-pagina | Classify, Draft |
+          | Toonregels | Stijl-richtlijnen voor conceptantwoord | Beheerder-pagina | Draft, Quality-check |
+          | Quality-criteria | Wat de quality-check controleert + drempelwaarden | Beheerder-pagina | Quality-check |
+          | LLM-iteratielog | Per stap: prompt, response, score, beslissing | Systeem | Audit-log, debugging |
+          | Audit-log | Per melding alle stappen + medewerker-acties | Systeem | Compliance, audit |
+
+          ## 6. User Journeys
+
+          ### Journey 1: Burger dient melding in
+
+          **Actor:** Inwoner van het beheergebied
+
+          **Doel:** Een probleem doorgeven en weten wanneer er antwoord komt
+
+          **Stappen:**
+          1. Burger opent het meldingsformulier op de waterschapssite
+          2. Vult categorie-zelfindicatie, locatie (kaart-prik of postcode + huisnummer), vrije-tekst toelichting en contactgegevens in
+          3. Verzendt de melding
+          4. Ziet een ontvangstpagina met meldingsnummer
+          5. Krijgt binnen enkele uren een ontvangstbevestiging per e-mail met de juiste afdeling, verwachte reactietermijn en eventuele vervolgvragen
+
+          ### Journey 2: Medewerker handelt werklijst af
+
+          **Actor:** Baliemedewerker
+
+          **Doel:** Snel meldingen beoordelen en versturen
+
+          **Stappen:**
+          1. Medewerker opent de werklijst van zijn afdeling
+          2. Ziet per melding: inhoud, classificatie + urgentie, validatie-vlaggen, conceptantwoord, kwaliteits-score
+          3. Bij groene quality-score klikt direct "Versturen"
+          4. Bij oranje quality-score of validatie-vlag: leest de melding + concept, past eventueel aan, kiest "Versturen", "Aanpassen" of "Afwijzen"
+          5. Bij "Afwijzen" wordt de melding teruggestuurd voor handmatige beoordeling
+          6. Doorloopt op deze manier 40-60 meldingen per dag (vs ~20 in de huidige situatie)
+
+          ### Journey 3: Coördinator onderhoudt categorieën en toonregels
+
+          **Actor:** Coördinator (beheerder)
+
+          **Doel:** Categorie- en toonregels actueel houden
+
+          **Stappen:**
+          1. Coördinator opent admin-pagina
+          2. Bewerkt een categorie-definitie (bijvoorbeeld nieuwe afdeling)
+          3. Past een toonregel aan (bijvoorbeeld "verwijs naar storingsnummer bij urgentie hoog")
+          4. Wijziging is direct actief voor nieuwe meldingen
+          5. Coördinator bekijkt audit-log overzicht om weekelijkse rapportage te maken
+
+          ## 7. Application Behaviour & Error Handling
+
+          | Situatie | Verwacht gedrag |
+          |----------|-----------------|
+          | LLM-call timeout (&gt;10s) | Markeer melding voor handmatige behandeling, log timeout in audit-log |
+          | LLM-call faalt met error | Retry 1× met exponential backoff, daarna markeer voor handmatige behandeling |
+          | Quality-check faalt 2× | Markeer voor handmatige behandeling, log alle iteraties |
+          | Locatie buiten beheergebied | Markeer met "buiten beheergebied"-vlag (BR-01) |
+          | Categorie kan niet bepaald worden | Markeer voor handmatige beoordeling met optie "Anders" |
+          | Gebiedsregister-API onbereikbaar | Validatie-stap overslaan met "validatie-skipped"-vlag, medewerker moet handmatig valideren |
+          | Concept bevat klaarblijkelijke PII van derde | Quality-check moet dit detecteren; bij twijfel: markeer voor medewerker-attentie |
+
+          ## 8. Niet-Functionele Vereisten
+
+          | ID | Bron | Eis | Reden |
+          |----|------|-----|------|
+          | NFR-01 | BA | Eind-tot-eind verwerking (melding ontvangen → concept klaar voor medewerker) binnen 30 seconden in 95% van de gevallen | Werkstroom-bruikbaarheid bij piekvolumes |
+          | NFR-02 | BA | Faithfulness van het conceptantwoord ten opzichte van de melding ≥90% op gold-set van 100 meldingen | Bestuurlijke en publieke betrouwbaarheid |
+          | NFR-03 | BA | Hallucinatie (claims in concept die niet uit de meldingsinhoud volgen) ≤3% op gold-set | Reputatie- en juridisch risico |
+          | NFR-04 | BA | Maximaal 2 LLM-iteraties per melding | Kostenbegrenzing |
+          | NFR-05 | BA | Beschikbaarheid 99,5% kantoortijd; piekbelasting tot 200 meldingen per uur opvangen | Continuïteit bij storm/droogte-piek |
+          | NFR-06 | BA | Alleen geautoriseerde waterschapsmedewerkers zien meldingsinhoud | Beveiliging |
+          | NFR-07 | BA | Persoonsgegevens worden niet meegenomen in modeltraining; LLM-aanroepen blijven binnen NL/EU | AVG-compliance |
+          | NFR-08 | BA | Werkt op Nederlandstalige invoer; Engels is optioneel voor v1 | Doelgroep |
+
+          ## 9. Security & Compliance Requirements
+
+          | Aspect | Eis |
+          |--------|-----|
+          | Auth | Standaard Druppie-platform-auth (Keycloak). Gebruikers van het waterschap. |
+          | Rolfiltering | Burger ziet alleen eigen meldingsstatus; medewerker ziet werklijst eigen afdeling; coördinator ziet alle afdelingen + admin |
+          | Audit | Per melding registratie van alle LLM-iteraties, validatie-uitkomsten, medewerker-acties — 5 jaar bewaartermijn |
+          | PII | Persoonsgegevens worden gemarkeerd, niet meegestuurd in LLM-prompts buiten wat strikt nodig is, niet zichtbaar buiten geautoriseerde rollen |
+          | Data-soevereiniteit | Alle LLM-aanroepen en opslag binnen NL/EU; geen API-only services zonder EU-hosting |
+          | AVG-rechtsgrond | Uitvoering publiekrechtelijke taak (waterschap-zorgplicht) |
+
+          ## 10. Aannames & Open Vragen
+
+          **Aannames:**
+          - Het gebiedsregister is beschikbaar als REST-API of dataset; integratie is eenvoudig (postcode → in/uit)
+          - LLM-aanroepen via een EU-gehoste provider zijn beschikbaar en kostentechnisch haalbaar (maximaal 3 calls per melding × 200/uur)
+          - Bestaande e-mailprovider van het waterschap is bruikbaar voor transactionele e-mail; geen nieuw contract nodig
+          - Het volume blijft onder 200 meldingen/uur; bij hogere piek schakelt het systeem terug naar handmatige triage
+
+          **Open vragen:**
+          - OQ-01: Hoe valideert de quality-check feitelijke juistheid wanneer de melding zelf ambigu is? Drempelwaarde voor "kan niet beoordelen"?
+          - OQ-02: Welke escalatie-flow geldt bij urgentie "hoog" — direct telefonisch, alleen e-mail-flag, of beide?
+          - OQ-03: Mag het systeem categorie-suggesties leren van medewerker-correcties (feedback-loop), of blijven categorieën beheerder-onderhouden?
+
+          ## 11. Out of Scope
+
+          - Geen volledig autonome beantwoording — mens-in-de-loop voor élke melding blijft v1-eis
+          - Geen integratie met bestaand zaaksysteem of DMS in v1
+          - Geen meertalige verwerking (alleen Nederlands)
+          - Geen sentiment-analyse buiten wat de quality-check al doet
+          - Geen mobiele app voor medewerker (web-only in v1)
+          - Geen real-time dashboard met SLA-metrics (post-v1)
+
+          ## 12. Process Flow Diagram
+
+          ```mermaid
+          flowchart TD
+            B["Burger dient melding in"] --> F["Webformulier"]
+            F --> C["Classify (LLM-stap 1)"]
+            C --> V["Validate"]
+            V --> D["Draft (LLM-stap 2)"]
+            D --> Q["Quality-check (LLM-stap 3)"]
+            Q -->|Score &lt; drempel| D
+            Q -->|2× gefaald| H["Markeer voor handmatige behandeling"]
+            Q -->|OK| W["Werklijst voor medewerker"]
+            W --> M["Medewerker beoordeelt"]
+            M -->|Versturen| E["E-mail naar burger"]
+            M -->|Afwijzen| H
+            M -->|Aanpassen| W
+          ```
+
+          ## 13. Possible Solution Direction
+
+          De oplossing vraagt om een **multi-step LLM-workflow binnen de
+          applicatie**: classify → validate → draft → quality-check met
+          een iteratie-loop. Dit is géén RAG (geen documentcorpus) en géén
+          nieuwe Druppie-agent (geen platform-rol). De Architect bepaalt het
+          WAT — welk workflow-patroon past, welk agency-niveau (LLM + UI /
+          single agent / multi-agent) en waar de capability hoort te leven —
+          zonder een concreet framework te benoemen. De builder_planner
+          kiest daarna het HOE (library + access-pattern) tegen de
+          platform-standaard.
+
+          ## 14. Platform Standard Deviations
+
+          | Standard | Deviation | Rationale |
+          |----------|-----------|-----------|
+          | (none)   |           |           |
+      assert:
+        result:
+          - { contains: "functional-design.md" }
+
+    # The chain ends here.
+    # - The BA does NOT call run_git / done because the FD make_design
+    #   approval gate is open. Resolving the gate is the user's job in
+    #   the UI; resuming will let the BA finish and the planner schedule
+    #   the architect.
+
+  verify:
+    # The Gitea repo for the project exists.
+    - gitea_repo_exists: true

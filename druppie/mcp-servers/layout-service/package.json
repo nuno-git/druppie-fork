@@ -1,0 +1,14 @@
+{
+  "name": "druppie-layout-service",
+  "version": "1.0.0",
+  "description": "ELK-based layout service for ArchiMate views",
+  "main": "server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "elkjs": "^0.9.3",
+    "express": "^4.19.2"
+  }
+}

@@ -67,6 +67,17 @@ class DeploymentStatus(str, Enum):
     FAILED = "failed"
 
 
+class JobRunStatus(str, Enum):
+    """Scheduled job run execution status."""
+    PENDING = "pending"
+    RUNNING = "running"
+    WAITING_APPROVAL = "waiting_approval"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+    REJECTED = "rejected"
+
+
 # =============================================================================
 # COMMON MODELS
 # =============================================================================

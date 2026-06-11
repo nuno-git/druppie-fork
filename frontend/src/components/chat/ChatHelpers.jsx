@@ -9,11 +9,12 @@ import remarkGfm from 'remark-gfm'
 import CodeBlock from '../CodeBlock'
 import ChartBlock from '../ChartBlock'
 import MermaidBlock from '../MermaidBlock'
+import ArchimateBlock from '../ArchimateBlock'
 import { getAgentConfig } from '../../utils/agentConfig'
 
 // --- Contexts for rewriting relative links in rendered markdown ---
 //
-// ProjectRepoContext  — set by SessionDetail to {repo_url, default_branch}
+// ProjectRepoContext  — set by SessionDetail to {id, repo_url, default_branch}
 // SourceFileContext   — set per file preview (e.g. `docs/functional-design.md`)
 //                       so `./foo.md` in that file resolves relative to the
 //                       file's directory, like Gitea/GitHub do.
@@ -96,6 +97,9 @@ export const chatMarkdownComponents = {
     const codeString = String(children).replace(/\n$/, '')
     if (match?.[1] === 'mermaid') {
       return <MermaidBlock code={codeString} />
+    }
+    if (match?.[1] === 'archimate') {
+      return <ArchimateBlock code={codeString} />
     }
     if (match?.[1] === 'chart') {
       return <ChartBlock code={codeString} />
@@ -422,7 +426,7 @@ export const extractSurfacedFileWrites = (agentRun) => {
       const toolName = tc.tool_name || ''
       const args = tc.arguments || {}
 
-      if (toolName.includes('write_file') && !toolName.includes('batch')) {
+      if ((toolName.includes('write_file') || toolName === 'make_design' || toolName.endsWith(':make_design')) && !toolName.includes('batch')) {
         if (args.path && args.content) {
           files.push({ path: args.path, content: args.content })
         }

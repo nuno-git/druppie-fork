@@ -1,0 +1,147 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "druppie.fullname" . }}-backend
+  labels:
+    {{- include "druppie.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "druppie.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: backend
+  template:
+    metadata:
+      labels:
+        {{- include "druppie.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: backend
+    spec:
+      initContainers:
+        - name: wait-for-druppie-db
+          image: {{ .Values.postgresql.image }}
+          command:
+            - sh
+            - -c
+            - |
+              until pg_isready -h {{ include "druppie.fullname" . }}-druppie-db -p 5432 -U {{ .Values.postgresql.druppie.username }}; do
+                echo "Waiting for druppie-db..."
+                sleep 2
+              done
+          resources:
+            requests:
+              memory: "32Mi"
+              cpu: "50m"
+            limits:
+              memory: "64Mi"
+              cpu: "100m"
+        - name: wait-for-keycloak
+          image: curlimages/curl:latest
+          command:
+            - sh
+            - -c
+            - |
+              until curl -sf http://{{ include "druppie.fullname" . }}-keycloak:8080/health/ready; do
+                echo "Waiting for keycloak..."
+                sleep 5
+              done
+          resources:
+            requests:
+              memory: "32Mi"
+              cpu: "50m"
+            limits:
+              memory: "64Mi"
+              cpu: "100m"
+        - name: wait-for-gitea
+          image: curlimages/curl:latest
+          command:
+            - sh
+            - -c
+            - |
+              until curl -sf http://{{ include "druppie.fullname" . }}-gitea:3000/api/healthz; do
+                echo "Waiting for gitea..."
+                sleep 5
+              done
+          resources:
+            requests:
+              memory: "32Mi"
+              cpu: "50m"
+            limits:
+              memory: "64Mi"
+              cpu: "100m"
+      containers:
+        - name: backend
+          image: {{ include "druppie.image" (dict "Values" .Values "image" .Values.backend.image) }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "druppie.fullname" . }}-config
+            - secretRef:
+                name: {{ include "druppie.fullname" . }}-secrets
+          env:
+            - name: DEV_MODE
+              value: {{ .Values.backend.devMode | quote }}
+            - name: LLM_FORCE_PROVIDER
+              value: {{ .Values.backend.llm.forceProvider | quote }}
+            - name: LLM_FORCE_MODEL
+              value: {{ .Values.backend.llm.forceModel | quote }}
+            - name: FOUNDRY_MODEL
+              value: {{ .Values.backend.foundry.model | quote }}
+            - name: FOUNDRY_API_URL
+              value: {{ .Values.backend.foundry.apiUrl | quote }}
+            - name: GITHUB_APP_ID
+              value: {{ .Values.backend.github.appId | quote }}
+            - name: GITHUB_APP_PRIVATE_KEY_PATH
+              value: {{ .Values.backend.github.appPrivateKeyPath | quote }}
+            - name: GITHUB_APP_INSTALLATION_ID
+              value: {{ .Values.backend.github.appInstallationId | quote }}
+            - name: DRUPPIE_REPO_OWNER
+              value: {{ .Values.backend.github.repoOwner | quote }}
+            - name: DRUPPIE_REPO_NAME
+              value: {{ .Values.backend.github.repoName | quote }}
+            - name: ONESHOT_SANDBOX_RUNTIME
+              value: {{ .Values.sandbox.runtime | quote }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.backend.port }}
+              protocol: TCP
+          volumeMounts:
+            - name: workspace
+              mountPath: /app/workspace
+            - name: sandbox-bundles
+              mountPath: /app/sandbox_bundles
+            {{- if .Values.backend.dockerSocket.enabled }}
+            - name: docker-sock
+              mountPath: /var/run/docker.sock
+            {{- end }}
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.backend.port }}
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 10
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.backend.port }}
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 10
+          resources:
+            {{- toYaml .Values.backend.resources | nindent 12 }}
+      volumes:
+        - name: workspace
+          persistentVolumeClaim:
+            claimName: {{ include "druppie.fullname" . }}-workspace
+        - name: sandbox-bundles
+          persistentVolumeClaim:
+            claimName: {{ include "druppie.fullname" . }}-sandbox-bundles
+        {{- if .Values.backend.dockerSocket.enabled }}
+        - name: docker-sock
+          hostPath:
+            path: /var/run/docker.sock
+            type: Socket
+        {{- end }}

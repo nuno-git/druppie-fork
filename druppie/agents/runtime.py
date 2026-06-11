@@ -62,10 +62,11 @@ class Agent:
     Context (language, project info) is always provided by the caller (orchestrator).
     """
 
-    def __init__(self, agent_id: str, db: "DBSession | None" = None):
+    def __init__(self, agent_id: str, db: "DBSession | None" = None, session_id: str | None = None):
         self.id = agent_id
         self.definition = self._load_definition(agent_id)
         self._db = db
+        self._session_id = session_id
         self._llm = None
         self._tool_executor = None
         self._mcp_config = None
@@ -107,7 +108,7 @@ class Agent:
     def llm(self):
         """Get LLM instance configured from agent definition (lazy loaded)."""
         if self._llm is None:
-            self._llm = get_llm_service().create_llm_for_agent(self.definition)
+            self._llm = get_llm_service().create_llm_for_agent(self.definition, session_id=self._session_id)
         return self._llm
 
     @property

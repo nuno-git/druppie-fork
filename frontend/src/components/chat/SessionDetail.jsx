@@ -2,9 +2,9 @@
  * Session Detail - right panel when a session is selected in Chat
  */
 
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useContext } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Send, CheckCircle, XCircle, Shield, ShieldOff, Loader2, ExternalLink, MessageSquare, FileCode, FilePlus, StopCircle, PlayCircle, ArrowUp, AlertTriangle, Terminal, ChevronDown, ChevronRight } from 'lucide-react'
+import { Send, CheckCircle, XCircle, Shield, ShieldOff, Loader2, ExternalLink, MessageSquare, FileCode, FilePlus, StopCircle, PlayCircle, ArrowUp, AlertTriangle, Terminal, ChevronDown, ChevronRight, Calendar } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -13,6 +13,8 @@ import { getUserInfo } from '../../services/keycloak'
 import { useAuth } from '../../App'
 import { getAgentConfig, getAgentMessageColors, formatToolName } from '../../utils/agentConfig'
 import { FilePreviewModal } from './ApprovalCard'
+import DownloadMenu from './DownloadMenu'
+import { downloadAsMarkdown, downloadContentAsPdf, buildChatTranscript } from '../../utils/downloadDesign'
 import HITLQuestionMessage from './HITLQuestionMessage'
 import WorkflowPipeline from './WorkflowPipeline'
 import DebugEventLog from './DebugEventLog'
@@ -29,6 +31,7 @@ import {
   findPendingQuestion,
   ProjectRepoContext,
 } from './ChatHelpers'
+import SurfacedFileCard from './SurfacedFileCard'
 import TestResultCard from './TestResultCard'
 import SandboxEventCard, {
   processEvents,
@@ -69,9 +72,11 @@ const getToolLabel = (toolName) => {
 const InlineApproval = ({ tc, sessionId, sessionUserId }) => {
   const queryClient = useQueryClient()
   const user = getUserInfo()
+  const repo = useContext(ProjectRepoContext)
   const [rejectMode, setRejectMode] = useState(false)
   const [rejectReason, setRejectReason] = useState('')
   const [showFilePreview, setShowFilePreview] = useState(false)
+  const [pdfDownloading, setPdfDownloading] = useState(false)
 
   const invalidate = () => {
     markResuming()
@@ -153,13 +158,27 @@ const InlineApproval = ({ tc, sessionId, sessionUserId }) => {
             const displayPath = args.translated_path || args.path || args.file_path || 'file'
             return (
               <div className="mt-1.5">
-                <button
-                  onClick={() => setShowFilePreview(true)}
-                  className="flex items-center gap-1.5 text-xs text-blue-600 hover:text-blue-800 transition-colors"
-                >
-                  {files.length > 1 && !args.translated_content ? <FileCode className="w-3.5 h-3.5" /> : <FilePlus className="w-3.5 h-3.5" />}
-                  View {files.length > 1 && !args.translated_content ? `${files.length} files` : displayPath}
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setShowFilePreview(true)}
+                    className="flex items-center gap-1.5 text-xs text-blue-600 hover:text-blue-800 transition-colors"
+                  >
+                    {files.length > 1 && !args.translated_content ? <FileCode className="w-3.5 h-3.5" /> : <FilePlus className="w-3.5 h-3.5" />}
+                    View {files.length > 1 && !args.translated_content ? `${files.length} files` : displayPath}
+                  </button>
+                  {files.length === 1 && args.content && (
+                    <DownloadMenu
+                      variant="light"
+                      loading={pdfDownloading}
+                      onDownloadMd={() => downloadAsMarkdown(args.content, displayPath)}
+                      onDownloadPdf={async () => {
+                        setPdfDownloading(true)
+                        try { await downloadContentAsPdf(args.content, displayPath, repo) }
+                        finally { setPdfDownloading(false) }
+                      }}
+                    />
+                  )}
+                </div>
                 {showFilePreview && (
                   <FilePreviewModal files={files} onClose={() => setShowFilePreview(false)} />
                 )}
@@ -292,8 +311,7 @@ const TimelineQuestion = ({ tc, agentId, sessionId }) => {
     <>
       <HITLQuestionMessage
         question={questionData}
-        onChoiceSelect={(answer) => answerMut.mutate({ questionId: tc.question_id, answer })}
-        onSubmitChoices={({ indices, answerText }) => answerMut.mutate({ questionId: tc.question_id, answer: answerText, selectedChoices: indices })}
+        onSubmitAnswer={({ indices, answerText }) => answerMut.mutate({ questionId: tc.question_id, answer: answerText, selectedChoices: indices })}
         isAnswering={answerMut.isPending}
         answered={isAnswered}
       />
@@ -310,13 +328,13 @@ const TimelineQuestion = ({ tc, agentId, sessionId }) => {
 
 // --- Agent Run ---
 
-const AgentRunItem = ({ run, timelineIndex, sessionId, hasFollowingMessage, sessionUserId }) => {
+const AgentRunItem = ({ run, timelineIndex, sessionId, hasFollowingMessage, sessionUserId, surfacedFiles }) => {
   const orderedItems = extractOrderedItems(run, hasFollowingMessage)
 
   // Show agent trace for completed runs that have no following message
   const showAgentTrace = !hasFollowingMessage && run.status !== 'running'
 
-  if (!showAgentTrace && orderedItems.length === 0) return null
+  if (!showAgentTrace && orderedItems.length === 0 && (!surfacedFiles || surfacedFiles.length === 0)) return null
 
   const config = getAgentConfig(run.agent_id)
   const AgentIcon = config.icon
@@ -365,6 +383,9 @@ const AgentRunItem = ({ run, timelineIndex, sessionId, hasFollowingMessage, sess
         }
         return null
       })}
+      {surfacedFiles.length > 0 && (
+        <SurfacedFileCard files={surfacedFiles} />
+      )}
     </div>
   )
 }
@@ -609,6 +630,7 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
   const prevLengthRef = useRef(0)
   const inputRef = useRef(null)
   const [continueInput, setContinueInput] = useState('')
+  const [transcriptPdfLoading, setTranscriptPdfLoading] = useState(false)
   const savedInspectScroll = useRef(0)
   const [viewMode, _setViewMode] = useState(() => {
     if (initialViewMode && VALID_VIEW_MODES.has(initialViewMode)) return initialViewMode
@@ -692,7 +714,7 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
   // When session has pending approvals, keep the tasks/badge cache fresh
   useEffect(() => {
     const status = data?.status
-    if (status === 'paused_approval' || status === 'waiting_approval') {
+    if (status === 'paused_approval') {
       queryClient.invalidateQueries({ queryKey: ['tasks'] })
       queryClient.invalidateQueries({ queryKey: ['pending-approvals-count'] })
     }
@@ -836,12 +858,20 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
         paused_tool: 'bg-amber-500 animate-pulse',
         paused_sandbox: 'bg-blue-500 animate-pulse',
         paused_approval: 'bg-amber-500 animate-pulse',
-        waiting_approval: 'bg-amber-500 animate-pulse',
         waiting_answer: 'bg-amber-500 animate-pulse',
       }[data.status] || 'bg-gray-400'
 
   const projectRepo = data?.project
-    ? { repo_url: data.project.repo_url, default_branch: data.project.default_branch || 'main' }
+    ? {
+        id: data.project.id,
+        repo_url: data.project.repo_url,
+        default_branch: data.project.default_branch || 'main',
+        // Carries the current session so embedded artifacts (e.g. the
+        // .archimate file referenced from a ```archimate``` block in the
+        // TD preview) can be fetched from the session workspace before
+        // the architect's commit reaches Gitea.
+        session_id: sessionId,
+      }
     : null
 
   return (
@@ -854,6 +884,12 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
           <h2 className="text-sm font-medium text-gray-900 truncate">
             {data.title || 'Untitled Session'}
           </h2>
+          {data.intent === 'scheduled_job' && (
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium text-purple-600 bg-purple-50 border border-purple-200 rounded-full">
+              <Calendar className="w-3 h-3" />
+              Scheduled Job
+            </span>
+          )}
           <div className="ml-auto flex items-center gap-3 flex-shrink-0">
             {/* Stopping indicator — session is paused but agent still finishing */}
             {isStopping && (
@@ -928,6 +964,24 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
                 {data.project.name}
               </a>
             )}
+            <DownloadMenu
+              loading={transcriptPdfLoading}
+              onDownloadMd={() => {
+                const md = buildChatTranscript(data)
+                const slug = (data.title || 'chat').replace(/[^a-z0-9]+/gi, '-').toLowerCase()
+                downloadAsMarkdown(md, `${slug}.md`)
+              }}
+              onDownloadPdf={async () => {
+                setTranscriptPdfLoading(true)
+                try {
+                  const md = buildChatTranscript(data)
+                  const slug = (data.title || 'chat').replace(/[^a-z0-9]+/gi, '-').toLowerCase()
+                  await downloadContentAsPdf(md, `${slug}.pdf`)
+                } finally {
+                  setTranscriptPdfLoading(false)
+                }
+              }}
+            />
             <CopyJsonButton
               getData={() => buildVisibleJson(data, timelineRef.current)}
               label="Copy JSON"
@@ -1045,9 +1099,10 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
 
                 const hasFollowingMessage = runsWithMessages.has(i)
                 const orderedItems = extractOrderedItems(entry.agent_run, hasFollowingMessage)
+                const surfacedFiles = extractSurfacedFileWrites(entry.agent_run)
                 // Show completed runs without a following message (e.g. architect)
                 const isCompletedWithoutMessage = !hasFollowingMessage && entry.agent_run.status !== 'running'
-                if (orderedItems.length === 0 && !isCompletedWithoutMessage) {
+                if (orderedItems.length === 0 && surfacedFiles.length === 0 && !isCompletedWithoutMessage) {
                   return null
                 }
                 return (
@@ -1058,6 +1113,7 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
                       sessionId={sessionId}
                       hasFollowingMessage={hasFollowingMessage}
                       sessionUserId={data?.user_id}
+                      surfacedFiles={surfacedFiles}
                     />
                     {renderAnnotation(i)}
                   </div>

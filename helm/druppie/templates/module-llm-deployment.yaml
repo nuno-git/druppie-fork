@@ -1,0 +1,73 @@
+{{- if .Values.modules.llm.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "druppie.fullname" . }}-module-llm
+  labels:
+    {{- include "druppie.labels" . | nindent 4 }}
+    app.kubernetes.io/component: module-llm
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "druppie.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: module-llm
+  template:
+    metadata:
+      labels:
+        {{- include "druppie.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: module-llm
+    spec:
+      containers:
+        - name: module-llm
+          image: {{ include "druppie.image" (dict "Values" .Values "image" .Values.modules.llm.image) }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          env:
+            - name: MCP_PORT
+              value: {{ .Values.modules.llm.port | quote }}
+            - name: ZAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "druppie.fullname" . }}-secrets
+                  key: ZAI_API_KEY
+            - name: ZAI_BASE_URL
+              value: {{ .Values.backend.zai.baseUrl | quote }}
+            - name: ZAI_MODEL
+              value: {{ .Values.backend.zai.model | quote }}
+            - name: DEEPINFRA_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "druppie.fullname" . }}-secrets
+                  key: DEEPINFRA_API_KEY
+          ports:
+            - name: http
+              containerPort: {{ .Values.modules.llm.port }}
+              protocol: TCP
+          livenessProbe:
+            exec:
+              command:
+                - python
+                - -c
+                - "import urllib.request; urllib.request.urlopen('http://localhost:{{ .Values.modules.llm.port }}/health')"
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 5
+          readinessProbe:
+            exec:
+              command:
+                - python
+                - -c
+                - "import urllib.request; urllib.request.urlopen('http://localhost:{{ .Values.modules.llm.port }}/health')"
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 5
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "256Mi"
+              cpu: "500m"
+{{- end }}
