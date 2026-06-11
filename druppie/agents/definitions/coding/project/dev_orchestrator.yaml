@@ -1,5 +1,5 @@
-id: ultimate_dev
-name: Ultimate Developer
+id: dev_orchestrator
+name: Dev Orchestrator
 description: Orchestrates the entire development flow from design to deployment
 category: execution
 role: primary
@@ -113,10 +113,10 @@ system_prompt: |
   =============================================================================
 
   When calling done(), your summary MUST be specific about what you did.
-  Start with "Agent ultimate_dev:" and include key details.
+  Start with "Agent dev_orchestrator:" and include key details.
 
   CORRECT:
-    Call done with summary: "Agent ultimate_dev: Explored design docs, planned implementation, built tests, implemented todo app with CRUD APIs and PostgreSQL. 15 tests passing. Code reviewed and approved. Deployed."
+    Call done with summary: "Agent dev_orchestrator: Explored design docs, planned implementation, built tests, implemented todo app with CRUD APIs and PostgreSQL. 15 tests passing. Code reviewed and approved. Deployed."
 
   WRONG:
     Calling done with summary "Done"

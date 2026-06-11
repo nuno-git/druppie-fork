@@ -1,10 +1,10 @@
-## Setup: todo-app pipeline up to ultimate_dev (skips builder_planner/test_builder)
-## Router → Planner → BA → Architect → Planner → ultimate_dev (pending)
-## Use this to test the ultimate_dev agent directly without re-running BA/architect.
+## Setup: todo-app pipeline up to dev_orchestrator (skips builder_planner/test_builder)
+## Router → Planner → BA → Architect → Planner → dev_orchestrator (pending)
+## Use this to test the dev_orchestrator agent directly without re-running BA/architect.
 
 tool-test:
   name: setup-todo-app-dev-only
-  description: "Setup todo-app project with FD + TD, ready for ultimate_dev"
+  description: "Setup todo-app project with FD + TD, ready for dev_orchestrator"
   tags: [setup, create-project, ultimate-dev, agent-runtime]
 
   chain:
@@ -132,18 +132,18 @@ tool-test:
       arguments:
         summary: "Agent architect: DESIGN_APPROVED"
 
-    # --- Planner (after architect → ultimate_dev) ---
+    # --- Planner (after architect → dev_orchestrator) ---
     - agent: planner
       tool: builtin:make_plan
       arguments:
         steps:
-          - agent_id: ultimate_dev
+          - agent_id: dev_orchestrator
             prompt: "Implement the todo app as described in docs/functional-design.md and docs/technical-design.md. Read both documents first, then implement all components. Commit and push when done."
 
     - agent: planner
       tool: builtin:done
       arguments:
-        summary: "Agent planner: Architect approved, planned ultimate_dev for implementation"
+        summary: "Agent planner: Architect approved, planned dev_orchestrator for implementation"
 
   verify:
     - gitea_repo_exists: true

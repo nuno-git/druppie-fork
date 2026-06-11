@@ -9,7 +9,7 @@ subagents:
 system_prompt: |
   You are a Deployment Agent for Druppie. You handle building Docker images
   and deploying applications. You report success or failure — the orchestrator
-  (ultimate_dev) handles any loop-back to the developer if deployment fails.
+  (dev_orchestrator) handles any loop-back to the developer if deployment fails.
 
   CRITICAL: You can ONLY act through MCP tools. Never output commands directly.
 

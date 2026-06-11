@@ -21,7 +21,7 @@ system_prompt: |
   #                                                                          #
   # In Step 2b you classify the project as one of:                           #
   #   CORE_UPDATE → modifies the Druppie repo → next_agent=ultimate_dev_core
-  #   PROJECT  → separate app, consumes Druppie only → next_agent=ultimate_dev
+  #   PROJECT  → separate app, consumes Druppie only → next_agent=dev_orchestrator
   #                                                                          #
   # Full rules + tie-breakers: see Step 2b. Use next_agent ONLY on           #
   # DESIGN_APPROVED — DESIGN_FEEDBACK and DESIGN_REJECTED leave routing      #
@@ -89,11 +89,11 @@ system_prompt: |
 
   | BUILD_PATH  | next_agent           | modules note in summary      |
   |-------------|----------------------|------------------------------|
-  | PROJECT  | ultimate_dev      | [reused modules]             |
+  | PROJECT  | dev_orchestrator      | [reused modules]             |
   | CORE_UPDATE | ultimate_dev_core  | [new/extended modules: <ids>]|
 
   Template:
-    Call done with summary: "Agent architect: DESIGN_APPROVED. BUILD_PATH=<PROJECT|CORE_UPDATE>. Reviewed docs/functional-design.md — passes all architecture checks. Wrote docs/technical-research.md comparing [N] approaches and analysing external integrations (<modules note>). Wrote docs/technical-design.md grounded in the chosen approach, with requirements ([X] functional, [Y] technical)." and next_agent: "<ultimate_dev|ultimate_dev_core>"
+    Call done with summary: "Agent architect: DESIGN_APPROVED. BUILD_PATH=<PROJECT|CORE_UPDATE>. Reviewed docs/functional-design.md — passes all architecture checks. Wrote docs/technical-research.md comparing [N] approaches and analysing external integrations (<modules note>). Wrote docs/technical-design.md grounded in the chosen approach, with requirements ([X] functional, [Y] technical)." and next_agent: "<dev_orchestrator|ultimate_dev_core>"
 
   ### STATUS: DESIGN_FEEDBACK
   Use when the functional design needs revision by the BA. Include specific feedback items.
@@ -127,7 +127,7 @@ system_prompt: |
      PROJECT) → write docs/technical-research.md (explore approaches +
      external integrations) → write docs/technical-design.md grounded in the
   research → signal DESIGN_APPROVED with next_agent="ultimate_dev_core"
-  (CORE_UPDATE) or "ultimate_dev" (PROJECT)
+  (CORE_UPDATE) or "dev_orchestrator" (PROJECT)
   2. **FEEDBACK**: FD needs revision → signal DESIGN_FEEDBACK with specific items
   3. **REJECT**: Fundamental issues → communicate with user → signal DESIGN_REJECTED
 
@@ -139,7 +139,7 @@ system_prompt: |
   =============================================================================
 
   You decide WHAT and WHY: components, reuse, data concepts, integrations,
-  principles, PII, platform-standard deviations. The ultimate_dev decides
+  principles, PII, platform-standard deviations. The dev_orchestrator decides
   HOW: framework, library versions, file layout, endpoint signatures, JSON
   schemas, test strategy. Do not pre-empt their work. NEVER name concrete
   frameworks or libraries (e.g. "React", "FastAPI", "Vite", "SQLAlchemy")
@@ -159,7 +159,7 @@ system_prompt: |
   interact with the BA directly — the Planner decides what happens next.
 
   After you call done():
-  - If DESIGN_APPROVED + PROJECT  → ultimate_dev runs next (via next_agent)
+  - If DESIGN_APPROVED + PROJECT  → dev_orchestrator runs next (via next_agent)
   - If DESIGN_APPROVED + CORE_UPDATE → ultimate_dev_core runs next (via next_agent)
   - If DESIGN_FEEDBACK → Planner sends the BA back to revise, then you review again
   - If DESIGN_REJECTED → Planner routes to summarizer (user has already been informed via hitl_ask_question)
@@ -909,7 +909,7 @@ approval_overrides:
 # Direct routing: architect classifies BUILD_PATH (Step 2b) and routes
 # directly to the correct dev agent after DESIGN_APPROVED.
 allowed_next_agents:
-  - ultimate_dev
+  - dev_orchestrator
   - ultimate_dev_core
 
 llm_profile: standard

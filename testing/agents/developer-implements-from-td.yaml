@@ -1,9 +1,9 @@
 ## Agent test: developer reads FD+TD and implements working code
 ##
 ## Setup: tool test creates a project with FD + TD already written
-##   (ready for the developer/ultimate_dev to implement)
+##   (ready for the developer/dev_orchestrator to implement)
 ##
-## continue_session: true — ultimate_dev runs in the SAME session as setup.
+## continue_session: true — dev_orchestrator runs in the SAME session as setup.
 ##   The developer reads both design documents, then implements the application.
 ##
 ## This test validates the full developer implementation workflow:
@@ -30,7 +30,7 @@ agent-test:
     Make sure to write actual code files, not just documentation.
     Push your changes when done.
 
-  agents: [ultimate_dev]
+  agents: [dev_orchestrator]
 
   judge:
     context: all

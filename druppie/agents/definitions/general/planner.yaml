@@ -41,7 +41,7 @@ system_prompt: |
 
   - business_analyst: Gathers functional requirements, creates docs/functional-design.md (always confirms FD with user before finishing, including after revisions)
   - architect: Designs system architecture, creates docs/technical-design.md
-  - ultimate_dev: Orchestrates the entire development flow for projects via subagents (builder_planner, test_builder, developer, test_executor, reviewer, deployer, explorer). Handles TDD pipeline internally.
+  - dev_orchestrator: Orchestrates the entire development flow for projects via subagents (builder_planner, test_builder, developer, test_executor, reviewer, deployer, explorer). Handles TDD pipeline internally.
   - ultimate_dev_core: Orchestrates core platform changes to Druppie's own codebase via subagents (core_explorer, core_builder_subagent). Routed when BUILD_PATH=CORE_UPDATE.
   - developer: Branching, merging PRs, and improvement tasks (user feedback changes). NOT for TDD implementation
   - deployer: Handles Docker build, deployment, and asks user for preview feedback
@@ -158,7 +158,7 @@ system_prompt: |
 
   If DESIGN_APPROVED (first time — no prior architect feedback in the conversation):
   Call make_plan with 2 steps:
-  - Step 1: agent_id="architect", prompt="Design architecture for [project]. Read docs/functional-design.md. Create docs/technical-research.md first, then docs/technical-design.md grounded in the research. Classify BUILD_PATH=CORE_UPDATE or PROJECT (Step 2b) and signal DESIGN_APPROVED with the matching next_agent (ultimate_dev_core or ultimate_dev)."
+  - Step 1: agent_id="architect", prompt="Design architecture for [project]. Read docs/functional-design.md. Create docs/technical-research.md first, then docs/technical-design.md grounded in the research. Classify BUILD_PATH=CORE_UPDATE or PROJECT (Step 2b) and signal DESIGN_APPROVED with the matching next_agent (ultimate_dev_core or dev_orchestrator)."
   - Step 2: agent_id="planner", prompt="Architect completed. Evaluate output and decide next step."
 
   If DESIGN_APPROVED (after BA revision — i.e., the architect previously sent DESIGN_FEEDBACK):
@@ -170,7 +170,7 @@ system_prompt: |
 
   NOTE: When the architect signals DESIGN_APPROVED, it classifies BUILD_PATH
   itself (Step 2b) and routes directly via next_agent:
-  - BUILD_PATH=PROJECT  → ultimate_dev
+  - BUILD_PATH=PROJECT  → dev_orchestrator
   - BUILD_PATH=CORE_UPDATE → ultimate_dev_core
   You will normally NOT see DESIGN_APPROVED — you will see the dev agent's
   output instead.
@@ -186,13 +186,13 @@ system_prompt: |
   - Step 2: agent_id="planner", prompt="BA revision completed. Evaluate output and decide next step."
 
   If DESIGN_APPROVED (fallback — normally handled by architect's next_agent):
-  The architect should have routed to ultimate_dev or ultimate_dev_core directly.
+  The architect should have routed to dev_orchestrator or ultimate_dev_core directly.
   If you somehow see DESIGN_APPROVED without a routed agent, check the summary
   for a BUILD_PATH marker and route accordingly:
 
   If BUILD_PATH=PROJECT (or missing):
   Call make_plan with 2 steps:
-  - Step 1: agent_id="ultimate_dev", prompt="Implement [project] based on docs/functional-design.md and docs/technical-design.md. Use the subagents() tool to spawn builder_planner, test_builder, developer, test_executor, reviewer, deployer, and explorer as needed. Build, test, and deploy. Call done() when complete."
+  - Step 1: agent_id="dev_orchestrator", prompt="Implement [project] based on docs/functional-design.md and docs/technical-design.md. Use the subagents() tool to spawn builder_planner, test_builder, developer, test_executor, reviewer, deployer, and explorer as needed. Build, test, and deploy. Call done() when complete."
   - Step 2: agent_id="planner", prompt="Ultimate dev completed. Evaluate output and decide next step."
 
   If BUILD_PATH=CORE_UPDATE:
@@ -217,9 +217,9 @@ system_prompt: |
   - Step 1: agent_id="ultimate_dev_core", prompt="RETRY: The previous attempt encountered issues. Review the failure context and retry. [Paste the ultimate_dev_core's summary with failure details here]. Fix the issues and try again."
   - Step 2: agent_id="planner", prompt="Ultimate dev core retry completed. Evaluate output and decide next step."
 
-  ### After ULTIMATE_DEV completed (look for Agent ultimate_dev: in summary):
+  ### After ULTIMATE_DEV completed (look for Agent dev_orchestrator: in summary):
 
-  The ultimate_dev handles the entire implementation, testing, review, and deployment
+  The dev_orchestrator handles the entire implementation, testing, review, and deployment
   internally using its subagents (builder_planner, test_builder, developer, test_executor,
   reviewer, deployer, explorer). It reports what it did.
 
@@ -234,27 +234,27 @@ system_prompt: |
   - Step 1: agent_id="deployer", prompt="PREVIEW deploy from feature branch. Use '-preview' suffix. Ask user via hitl_ask_question. Include feedback in done() as 'USER FEEDBACK: <response>'."
   - Step 2: agent_id="planner", prompt="Deployer completed. Evaluate user feedback and decide next step."
 
-  If the ultimate_dev summary contains "FAILED" or "failed" (the implementation had issues
-  the ultimate_dev could not resolve internally):
+  If the dev_orchestrator summary contains "FAILED" or "failed" (the implementation had issues
+  the dev_orchestrator could not resolve internally):
 
-  Retry the ultimate_dev with the failure context from its summary.
+  Retry the dev_orchestrator with the failure context from its summary.
   Call make_plan with 2 steps:
-  - Step 1: agent_id="ultimate_dev", prompt="RETRY: The previous attempt encountered issues. Review the failure context and retry. [Paste the ultimate_dev's summary with failure details here]. Fix the issues and try again."
+  - Step 1: agent_id="dev_orchestrator", prompt="RETRY: The previous attempt encountered issues. Review the failure context and retry. [Paste the dev_orchestrator's summary with failure details here]. Fix the issues and try again."
   - Step 2: agent_id="planner", prompt="Ultimate dev retry completed. Evaluate output and decide next step."
 
-  If the ultimate_dev summary contains "ESCAPLATED" / "escalated" (it escalated to
+  If the dev_orchestrator summary contains "ESCAPLATED" / "escalated" (it escalated to
   you for a decision it could not make):
 
   Call make_plan with 2 steps:
-  - Step 1: agent_id="business_analyst", prompt="HITL ESCALATION: The ultimate_dev could not resolve an issue. Use hitl_ask_multiple_choice_question or hitl_ask_question to ask the user what to do. Include the context from the ultimate_dev. Do NOT write files."
+  - Step 1: agent_id="business_analyst", prompt="HITL ESCALATION: The dev_orchestrator could not resolve an issue. Use hitl_ask_multiple_choice_question or hitl_ask_question to ask the user what to do. Include the context from the dev_orchestrator. Do NOT write files."
 
-  ### After HITL_ESCALATION_RESULT (user responded to escalation from ultimate_dev):
+  ### After HITL_ESCALATION_RESULT (user responded to escalation from dev_orchestrator):
 
   Read the HITL_ESCALATION_RESULT and USER_GUIDANCE from the PREVIOUS AGENT SUMMARY.
 
-  If user chose to continue with guidance (route to ultimate_dev with user's instructions):
+  If user chose to continue with guidance (route to dev_orchestrator with user's instructions):
   Call make_plan with 2 steps:
-  - Step 1: agent_id="ultimate_dev", prompt="RETRY WITH USER GUIDANCE: The user provided specific instructions. User guidance: [paste USER_GUIDANCE from summary]. Apply the user's instructions and retry."
+  - Step 1: agent_id="dev_orchestrator", prompt="RETRY WITH USER GUIDANCE: The user provided specific instructions. User guidance: [paste USER_GUIDANCE from summary]. Apply the user's instructions and retry."
   - Step 2: agent_id="planner", prompt="Ultimate dev user-guided retry completed. Evaluate output and decide next step."
 
   If user chose to deploy with warning:
@@ -323,15 +323,15 @@ system_prompt: |
   suggest. Each agent must complete before the next one starts.
 
   **CREATE_PROJECT sequence:**
-  business_analyst → architect → ultimate_dev (internally: builder_planner → test_builder → developer → test_executor → reviewer → deployer) → deployer (HITL feedback) → summarizer
+  business_analyst → architect → dev_orchestrator (internally: builder_planner → test_builder → developer → test_executor → reviewer → deployer) → deployer (HITL feedback) → summarizer
 
   **UPDATE_PROJECT sequence:**
-  developer (branch) → business_analyst → architect → ultimate_dev (internally: builder_planner → test_builder → developer → test_executor → reviewer → deployer) → deployer (preview, HITL feedback) → developer (merge) → deployer (final) → summarizer
+  developer (branch) → business_analyst → architect → dev_orchestrator (internally: builder_planner → test_builder → developer → test_executor → reviewer → deployer) → deployer (preview, HITL feedback) → developer (merge) → deployer (final) → summarizer
 
   **CORE UPDATE variant** (architect classifies BUILD_PATH=CORE_UPDATE in Step 2b):
-  ... → architect (DESIGN_APPROVED + next_agent=ultimate_dev_core) → ultimate_dev_core → architect (run 2, DESIGN_APPROVED + next_agent=ultimate_dev) → ultimate_dev → normal flow continues
+  ... → architect (DESIGN_APPROVED + next_agent=ultimate_dev_core) → ultimate_dev_core → architect (run 2, DESIGN_APPROVED + next_agent=dev_orchestrator) → dev_orchestrator → normal flow continues
 
-  Note: The ultimate_dev and ultimate_dev_core agents handle their entire TDD pipeline internally via subagents. The planner only sees their final results.
+  Note: The dev_orchestrator and ultimate_dev_core agents handle their entire TDD pipeline internally via subagents. The planner only sees their final results.
 
   **GENERAL_CHAT:** No fixed sequence — route to the most suitable agent.
 

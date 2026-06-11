@@ -1,5 +1,5 @@
-## Tool test: ultimate_dev spawns 2 subagents
-## Tests the subagent replay flow where ultimate_dev calls the subagents tool
+## Tool test: dev_orchestrator spawns 2 subagents
+## Tests the subagent replay flow where dev_orchestrator calls the subagents tool
 ## to spawn explorer and developer, both of which complete their work.
 
 tool-test:
@@ -14,7 +14,7 @@ tool-test:
       arguments:
         intent: create_project
         project_name: subagent-test
-        description: "A test project for verifying ultimate_dev subagent spawning"
+        description: "A test project for verifying dev_orchestrator subagent spawning"
 
     - agent: router
       tool: builtin:done
@@ -109,21 +109,21 @@ tool-test:
       arguments:
         summary: "Agent architect: TECHNICAL_DESIGN_APPROVED - Technical design created and approved"
 
-    # --- Planner → ultimate_dev ---
+    # --- Planner → dev_orchestrator ---
     - agent: planner
       tool: builtin:make_plan
       arguments:
         steps:
-          - agent_id: ultimate_dev
+          - agent_id: dev_orchestrator
             prompt: "Implement the greeting app. Use the explorer subagent to read design docs, then developer to implement."
 
     - agent: planner
       tool: builtin:done
       arguments:
-        summary: "Agent planner: Planned ultimate_dev"
+        summary: "Agent planner: Planned dev_orchestrator"
 
     # --- Ultimate Dev (calls subagents tool — mocked) ---
-    - agent: ultimate_dev
+    - agent: dev_orchestrator
       tool: builtin:subagents
       mock: true
       mock_result: '{"status": "success", "agents": ["explorer", "developer"]}'
@@ -136,7 +136,7 @@ tool-test:
 
     # --- Explorer subagent (mocked read, then done) ---
     - agent: explorer
-      parent_agent: ultimate_dev
+      parent_agent: dev_orchestrator
       tool: coding:read_file
       mock: true
       mock_result: "# Functional Design: Subagent Test App\n## Requirements\n- FR-01: Greeting endpoint\n- FR-02: Configurable greeting\n- FR-03: TypeScript"
@@ -150,7 +150,7 @@ tool-test:
 
     # --- Developer subagent (mocked read, then done) ---
     - agent: developer
-      parent_agent: ultimate_dev
+      parent_agent: dev_orchestrator
       tool: coding:read_file
       mock: true
       mock_result: "# Technical Design: Subagent Test App\n## Technology Stack\n- TypeScript, Node.js\n## Implementation Plan\n1. Create src/greeting.ts"
@@ -163,10 +163,10 @@ tool-test:
         summary: "Agent developer: Implemented src/greeting.ts with configurable greeting function. All files committed."
 
     # --- Ultimate Dev (done after subagents) ---
-    - agent: ultimate_dev
+    - agent: dev_orchestrator
       tool: builtin:done
       arguments:
-        summary: "Agent ultimate_dev: Explored design docs via explorer, implemented greeting app via developer. Application ready."
+        summary: "Agent dev_orchestrator: Explored design docs via explorer, implemented greeting app via developer. Application ready."
 
   assert:
     - check: all-agents-completed
