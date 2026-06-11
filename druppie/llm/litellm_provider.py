@@ -200,16 +200,16 @@ PROVIDER_CONFIGS = {
         "default_base_url": "https://api.deepseek.com/v1",
     },
     "azure_foundry": {
-        "prefix": "openai",  # OpenAI-compatible API
+        "prefix": "azure",  # LiteLLM native Azure routing (deployment-based URLs)
         "default_model": "GPT-5-MINI",
         "api_key_env": "FOUNDRY_API_KEY",
         "model_env": "FOUNDRY_MODEL",
         "base_url_env": "FOUNDRY_API_URL",
-        "default_base_url": "https://druppie.cognitiveservices.azure.com/openai/v1",
+        "default_base_url": "https://druppie-resource.openai.azure.com",
         "use_max_completion_tokens": True,
         "default_temperature": 1.0,
         "force_temperature": True,  # GPT-5-MINI only supports temperature=1.0
-        "auth_type": "bearer",  # Use Bearer token instead of api-key header
+        "api_version": "2024-12-01-preview",
     },
     "ollama": {
         "prefix": "openai",  # Ollama is OpenAI-compatible
@@ -291,11 +291,14 @@ class ChatLiteLLM(BaseLLM):
         if not self._ssl_verify and LITELLM_AVAILABLE:
             litellm.ssl_verify = False
 
-        # Bearer token auth (e.g. Azure Foundry) — send key as Authorization header
+        # Bearer token auth — send key as Authorization header
         self._auth_type = config.get("auth_type", "api_key")
         self._extra_headers: dict[str, str] = {}
         if self._auth_type == "bearer" and self.api_key:
             self._extra_headers["Authorization"] = f"Bearer {self.api_key}"
+
+        # Azure API version (required for azure/ prefix)
+        self._api_version = config.get("api_version")
 
         # LiteLLM model format (e.g., "openai/glm-4.7" for custom endpoints)
         prefix = config["prefix"]
@@ -372,6 +375,9 @@ class ChatLiteLLM(BaseLLM):
 
         if self.api_base:
             kwargs["api_base"] = self.api_base
+
+        if self._api_version:
+            kwargs["api_version"] = self._api_version
 
         if not self._ssl_verify:
             kwargs["ssl_verify"] = False
