@@ -16,7 +16,13 @@ spec:
       labels:
         {{- include "druppie.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: frontend
+      annotations:
+        cluster-autoscaler.kubernetes.io/safe-to-evict: "true"
     spec:
+      {{- if .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml .Values.global.imagePullSecrets | nindent 8 }}
+      {{- end }}
       {{- if .Values.highAvailability.antiAffinity.enabled }}
       affinity:
         podAntiAffinity:

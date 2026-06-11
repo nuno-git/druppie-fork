@@ -1,0 +1,50 @@
+{{- if and .Values.keda.enabled .Values.autoscaling.backend.enabled }}
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: {{ include "druppie.fullname" . }}-backend
+  labels:
+    {{- include "druppie.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backend
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "druppie.fullname" . }}-backend
+  pollingInterval: {{ .Values.keda.pollingInterval }}
+  cooldownPeriod: {{ .Values.keda.cooldownPeriod }}
+  minReplicaCount: {{ .Values.autoscaling.backend.minReplicas }}
+  maxReplicaCount: {{ .Values.autoscaling.backend.maxReplicas }}
+  triggers:
+    - type: postgresql
+      metadata:
+        {{- if .Values.cnpg.enabled }}
+        host: "{{ include "druppie.fullname" . }}-druppie-db-rw.{{ .Release.Namespace }}.svc.cluster.local"
+        {{- else }}
+        host: "{{ include "druppie.fullname" . }}-druppie-db.{{ .Release.Namespace }}.svc.cluster.local"
+        {{- end }}
+        port: "{{ .Values.postgresql.druppie.port }}"
+        dbName: {{ .Values.postgresql.druppie.database }}
+        userName: {{ .Values.postgresql.druppie.username }}
+        sslmode: {{ .Values.keda.sslmode | quote }}
+        query: {{ .Values.keda.backend.query | quote }}
+        targetQueryValue: {{ .Values.keda.backend.targetQueryValue | quote }}
+        activationTargetQueryValue: {{ .Values.keda.backend.activationTargetQueryValue | quote }}
+      authenticationRef:
+        name: {{ include "druppie.fullname" . }}-keda-db-auth
+  advanced:
+    horizontalPodAutoscalerConfig:
+      behavior:
+        scaleUp:
+          stabilizationWindowSeconds: 60
+          policies:
+            - type: Pods
+              value: 2
+              periodSeconds: 60
+        scaleDown:
+          stabilizationWindowSeconds: 300
+          policies:
+            - type: Percent
+              value: 50
+              periodSeconds: 60
+{{- end }}

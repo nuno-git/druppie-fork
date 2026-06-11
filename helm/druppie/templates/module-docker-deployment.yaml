@@ -17,6 +17,8 @@ spec:
       labels:
         {{- include "druppie.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: module-docker
+      annotations:
+        cluster-autoscaler.kubernetes.io/safe-to-evict: "true"
     spec:
       containers:
         - name: module-docker

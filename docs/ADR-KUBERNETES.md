@@ -14,7 +14,7 @@
 
 | # | Beslissing | Keuze | Reden |
 |---|-----------|-------|-------|
-| 4.1 | Hosting | **Hetzner VMs + Ubuntu** | Commodity cloud, geen vendor lock-in, ~€86/mo basis (3 servers + infra + app pool) |
+| 4.1 | Hosting | **Hetzner VMs + Ubuntu** | Commodity cloud, geen vendor lock-in, ~€80/mo basis (3 servers + infra + app pool) |
 | 4.2 | Platform | **K3s (3 servers + 2 agent pools)** | CNCF certified, 3 servers voor etcd quorum, vaste infra pool + autoscaled app pool |
 | 4.3 | Database | **CloudNativePG** | CNCF Sandbox, auto-failover <30s, ingebouwde PgBouncer, 1 operator voor 3 instances |
 | 4.4 | Autoscaling | **HPA + KEDA** | HPA voor frontend (CPU), KEDA voor backend (LLM I/O-bound, CPU alleen is te traag) |
@@ -245,13 +245,18 @@ De `behavior` sectie voorkomt oscillatie: bij AI workloads ontstaan korte spikes
 
 ### 4.5 Networking: Traefik + cert-manager
 
-**Gekozen:** Traefik (K3s standaard ingress controller) + cert-manager voor TLS.
+**Gekozen:** Traefik (K3s standaard ingress controller) + cert-manager voor TLS. DNS wijst direct naar het IP van de infra node.
 
 **Waarom:** K3s installeert Traefik automatisch. Geen extra configuratie nodig. Traefik biedt Middleware CRDs voor rate limiting en headers (schoner dan NGINX annotations), een dashboard voor real-time traffic monitoring, en IngressRoute CRDs voor complexe routing.
+
+De infra node is een vaste node die altijd beschikbaar is. DNS records (druppie.rijnland.dev, auth.druppie.rijnland.dev, git.druppie.rijnland.dev) wijzen naar het publieke IP van de infra node. Traefik draait op de infra node en routeert verkeer naar de juiste pods via Kubernetes Ingress resources. Dit bespaart de kosten van een aparte load balancer (~€6/mo).
+
+**Let op:** Als de infra node onverhoopt uitvalt, is de site onbereikbaar. Dit is acceptabel voor Phase 1 — de infra node draait stabiele workloads met voorspelbare belasting. Voor Phase 2 kan een failover IP of tweede infra node worden toegevoegd.
 
 cert-manager + Let's Encrypt verzorgt automatische TLS certificaten. Geen handmatig certificaatbeheer.
 
 **Afgewezen:**
+- Hetzner Load Balancer: extra €6/mo, niet nodig bij 1 vaste infra node die alle ingress verkeer afhandelt
 - NGINX Ingress: geen toegevoegde waarde boven Traefik, annotations worden rommelig bij complexe configuratie
 - Cilium Ingress: te zwaar voor huidige behoeften, hogere leercurve
 - HAProxy: overkill voor deze schaal
@@ -520,8 +525,6 @@ flowchart TB
             HK3S["hetzner-k3s CLI<br/>1 YAML config"]
         end
 
-        LB["Load Balancer<br/>€6/mo"]
-
         subgraph K3sCluster["K3s Cluster"]
             direction TB
 
@@ -534,6 +537,11 @@ flowchart TB
 
             subgraph InfraPool["📦 Infra Pool — K3s Agents (1-2 vast)"]
                 direction TB
+
+                subgraph IngressLayer["Ingress"]
+                    TRAEFIK["Traefik<br/>(ingress controller)"]
+                    CM["cert-manager"]
+                end
 
                 subgraph InfraServices["Services"]
                     direction LR
@@ -608,17 +616,11 @@ flowchart TB
             end
 
             NODESCALE["⬆ NODE SCALING (Tier 2)<br/>Cluster Autoscaler → Hetzner API: nieuwe VM → cloud-init join<br/>~60 seconden"]
-
-            subgraph IngressLayer["Ingress"]
-                TRAEFIK["Traefik"]
-                CM["cert-manager"]
-            end
         end
     end
 
-    %% User flow
-    USER -->|"HTTPS"| LB
-    LB -->|"traffic"| TRAEFIK
+    %% User flow — DNS points directly to infra node
+    USER -->|"HTTPS via DNS"| TRAEFIK
     TRAEFIK -->|"/"| A1FE
     TRAEFIK -->|"/"| A2FE
     TRAEFIK -->|"/api"| A1BE
@@ -735,15 +737,14 @@ flowchart TB
 Gebaseerd op Hetzner publieke prijzen (juni 2026).
 
 | Component | Specificatie | Kosten/maand |
-|-----------|-------------|-------------|
+|-----------|-------------|--------------|
 | K3s servers (3x) | CPX31 (4 vCPU, 8GB RAM, 160GB NVMe) | 3 × €13 = ~€39 |
 | Infra agents (1-2x, vast) | CPX31 — Keycloak, Gitea, MCP, CNPG, monitoring | 1-2 × €13 = ~€13-26 |
 | App agents (1-10x, autoscaling) | CPX31 — Backend, Frontend | 1 × €13 = ~€13 (idle), schaalt mee met load |
 | Extra storage | 200GB block storage (DB data, backups) | ~€10 |
-| Load balancer | Hetzner Load Balancer | ~€6 |
 | Backup storage | 100GB (DB backups, MinIO/S3) | ~€5 |
-| **Totaal Phase 1 (basis)** | 3 servers + 1 infra + 1 app | **~€86/maand** |
-| **Totaal bij belasting** | 3 servers + 2 infra + 3-5 app | **~€125-165/maand** |
+| **Totaal Phase 1 (basis)** | 3 servers + 1 infra + 1 app | **~€80/maand** |
+| **Totaal bij belasting** | 3 servers + 2 infra + 3-5 app | **~€119-159/maand** |
 
 Bij schaalvergroting (meer nodes of grotere VMs): CPX41 (8 vCPU, 16GB RAM) is ~€24/mo per node. Dedicated servers (AX42: 8 vCPU, 64GB RAM) zijn ~€49/mo per node.
 
@@ -773,4 +774,4 @@ Bij schaalvergroting (meer nodes of grotere VMs): CPX41 (8 vCPU, 16GB RAM) is ~�
 
 ### Migratiepad
 
-Druppie blijft draaien op Docker Compose tijdens de migratie. De K3s cluster wordt parallel opgebouwd. Switchover gebeurt in één stap: DNS pointing van de Docker Compose host naar de Hetzner Load Balancer. Terugdraaien is een DNS revert.
+Druppie blijft draaien op Docker Compose tijdens de migratie. De K3s cluster wordt parallel opgebouwd. Switchover gebeurt in één stap: DNS pointing van de Docker Compose host naar het publieke IP van de infra node. Terugdraaien is een DNS revert.

@@ -13,44 +13,70 @@
 ## Acceptatiecriteria (Story 3)
 
 - [x] Druppie volledig deploybaar via Helm
-- [x] Autoscaling: Backend en frontend schalen horizontaal (HPA)
-- [x] High availability: Minimale redundantie voor kritieke services
-- [ ] Database: Productiegeschikte PostgreSQL oplossing (volgens spike)
-- [x] Persistent storage via PVCs
-- [ ] Secrets + ConfigMaps correct ingericht (Sealed Secrets)
-- [x] Complete flow werkt: login → chat → agent sessie
-- [ ] Documentatie: setup, scaling gedrag, beperkingen
+- [x] Autoscaling: Backend (KEDA PostgreSQL) en frontend (HPA CPU) schalen horizontaal
+- [x] High availability: PDB + anti-affinity templates beschikbaar (uitgeschakeld per gebruikersvoorkeur)
+- [ ] Database: Productiegeschikte PostgreSQL oplossing (CNPG — Task 6, nog niet gestart)
+- [x] Persistent storage via PVCs (NFS RWX voor workspace, hcloud-volumes voor DBs)
+- [ ] Secrets + ConfigMaps correct ingericht (Sealed Secrets — Task 5, nu gitignored values overlay)
+- [x] Complete flow werkt: login → chat → agent sessie → HTTPS via cert-manager
+- [ ] Documentatie: setup, scaling gedrag, beperkingen (Task 10, deels verouderd)
 - [x] Backlog item: stateless maken backend (al geïmplementeerd)
+- [x] KEDA: Session-based autoscaling via PostgreSQL trigger (ipv Prometheus uit ADR)
+- [x] NFS: RWX storage voor multi-node backend scheduling
+- [x] Gitea Container Registry: images builden en pushen naar eigen registry
 
 ---
 
 ## Huidige Staat (AS-IS)
 
-De repo bevat al een **werkende Kind setup** met Helm chart voor lokale development:
+De repo bevat een **werkende K3s productie deployment** op Hetzner Cloud + Kind voor lokale development:
 
 | Onderdeel | Bestaand | Status |
 |-----------|----------|--------|
-| Helm chart | `helm/druppie/` (25 templates, ~43 K8s resources) | Werkend op Kind |
-| Kind config | `kind/cluster.yaml`, `kind/cluster-dev.yaml` | Twee varianten |
-| Build scripts | `scripts/setup-kind.sh`, `scripts/build-and-load.sh` | Bouwt alle images + laadt in Kind |
-| NGINX Ingress | Path-based routing op `localhost:9080` | Werkend |
-| PostgreSQL | 3x StatefulSet (containers, geen HA) | Dev-only |
-| Secrets | Plaintext in `values.yaml` + `secrets.yaml` template | Niet productie-ready |
-| CI/CD | Alleen `sync-main-to-colab-dev.yml` | Geen deploy pipeline |
-| Ingress | NGINX (Kind default) | ADR kiest Traefik (K3s default) |
-| Backend | 1 replica, in-memory session task tracking, geen HPA/KEDA | Niet stateless, niet schaalbaar |
-| TLS | Uitgeschakeld | Geen HTTPS |
-| Monitoring | Geen | Ontbreekt |
+| Helm chart | `helm/druppie/` (30+ templates) | ✅ Werkend op K3s + Kind |
+| K3s cluster | `iac/cluster.yaml` (3 servers + 1 infra + 1-10 app) | ✅ Productie draait op Hetzner |
+| Ingress | Traefik (K3s) + NGINX (Kind) | ✅ Subdomain routing met TLS |
+| PostgreSQL | 3x StatefulSet (geen HA) | ✅ Productie, CNPG is Task 6 |
+| NFS RWX | In-cluster NFSv4 server + static PVs | ✅ Backend pods mounten workspace over meerdere nodes |
+| Autoscaling backend | KEDA PostgreSQL trigger (agent_runs) + CA | ✅ E2E geverifieerd: 1→10 pods, 1→3 nodes |
+| Autoscaling frontend | HPA CPU 70% | ✅ 1→8 replicas |
+| cert-manager | Let's Encrypt TLS | ✅ Alle subdomains HTTPS |
+| Gitea Registry | OCI-compatible, images push/pull werkt | ✅ Backend/frontend images via registry |
+| Secrets | Gitignored `values-hetzner.secrets.yaml` overlay | ⚠️ Werkt, maar Sealed Secrets is Task 5 |
+| Monitoring | kube-prometheus-stack in `monitoring` namespace | ✅ Prometheus + Grafana draaien |
+| CI/CD | Alleen `sync-main-to-colab-dev.yml` | ❌ Geen deploy pipeline (Task 11) |
+| Backend | Stateless, DB-driven task guard, multi-replica | ✅ Task 1 afgerond |
+| Docker on nodes | DaemonSet installeert Docker via nsenter | ⚠️ Werkt op bestaande nodes, CA nodes hebben timing issues |
 
-### Kritiek probleem: Backend is niet stateless
+### Cluster state (juni 2026)
 
-De backend gebruikt `_active_session_tasks: dict[UUID, asyncio.Task]` in `druppie/core/background_tasks.py` — een **in-memory dict** die session tasks bijhoudt. Bij meerdere replicas:
+```
+NAME                          STATUS   ROLES                       VERSION
+druppie-master1               Ready    control-plane,etcd          v1.35.5+k3s1
+druppie-master2               Ready    control-plane,etcd          v1.35.5+k3s1
+druppie-master3               Ready    control-plane,etcd          v1.35.5+k3s1
+druppie-pool-infra-worker1    Ready    <none>                      v1.35.5+k3s1
+druppie-app-*                 Ready    <none>                      v1.35.5+k3s1  (1-10, autoscaled)
+```
 
-1. Webhook komt binnen op replica A, maar de actieve task draait op replica B → task niet gevonden
-2. `is_session_task_running()` checkt alleen lokale memory → false negative → duplicate tasks
-3. `create_session_task()` guard via dict → race condition tussen replicas
+### KEDA autoscaling (geïmplementeerd)
 
-**Dit moet worden opgelost vóór multi-replica kan werken.** Gelukkig bestaat `reconstruct_from_db()` al — de oplossing is een database-driven task guard.
+KEDA schaalt de backend op basis van `agent_runs WHERE status = 'running'`:
+- **Trigger**: PostgreSQL direct (geen Prometheus nodig)
+- **Query**: `SELECT COUNT(*) FROM agent_runs WHERE status = 'running'`
+- **Target**: 5 running agent_runs per replica (wordt verhoogd naar 50 voor productie)
+- **Polling**: elke 15 seconden
+- **Cooldown**: 300 seconden
+- **Bereik**: min 1, max 10 replicas
+- **E2E bewijs**: 6.787 sessies voltooid, 99.9% success rate, schaalde 1→10 pods + 1→3 nodes
+
+Frontend blijft op CPU HPA (70%, 1→8 replicas).
+
+### Bekende beperkingen
+
+1. **CA nodes missen Docker**: Nieuw gemaakte nodes door de CA hebben Docker nog niet geïnstalleerd. De docker-installer DaemonSet installeert Docker via nsenter, maar pods die reeds ingepland zijn voordat de installatie klaar is, blijven steken in `Init:0/3`. _Fix in progress: Docker installatie via cloud-init in cluster.yaml._
+2. **Helm upgrade broken**: Resources die via `kubectl apply` zijn aangepakt (KEDA, NFS) missen Helm ownership annotations. `helm upgrade` faalt met ownership validatie error. _Fix: adopt resources met Helm annotations._
+3. **Duplicate NFS PVs**: Bij `helm template | kubectl apply` werden PVs in `default` namespace aangemaakt. Oude PVs met `Released` status bestaan nog. Handmatige cleanup nodig.
 
 ---
 
@@ -133,7 +159,7 @@ def create_session_task(session_id, coro, *, name=None):
 
 ### Task 2: K3s cluster inrichten op Hetzner
 
-**Story points:** 2 | **Priority:** P0 | **Depends on:** Task 1 (kan parallel, maar backend stateless moet eerst getest worden op het cluster)
+**Story points:** 2 | **Priority:** P0 | **Status:** ✅ Voltooid
 
 **Scope:**
 - `iac/cluster.yaml` aanmaken met hetzner-k3s configuratie
@@ -146,12 +172,17 @@ def create_session_task(session_id, coro, *, name=None):
 Aanmaken: iac/cluster.yaml
   - hetzner_token: <from secrets>
   - cluster_name: druppie
-  - k3s_version: v1.32.3+k3s1
+  - k3s_version: v1.35.5+k3s1
   - schedule_workloads_on_masters: false
-  - masters_pool: 3x CPX31, fsn1
+  - masters_pool: 3x CPX32, fsn1
   - worker_node_pools:
-      - name: infra, 1-2x CPX31, autoscaling: false, labels: {pool: infra}
-      - name: app, 1-10x CPX31, autoscaling: true, labels: {pool: app}
+      - name: infra, 1x CPX42, autoscaling: false, labels: {pool: infra}
+      - name: app, 1-10x CPX32, autoscaling: true, labels: {pool: app}
+      - additional_packages: [nfs-common]
+  - addons:
+      - cluster_autoscaler: tuned scale-down (2m delay, 2m unneeded)
+      - csi_driver: enabled
+      - cloud_controller_manager: enabled
 ```
 
 **Benodigdheden:**
@@ -174,7 +205,7 @@ Aanmaken: iac/cluster.yaml
 
 ### Task 3: Helm chart productie-ready (resources, replicas, PVCs)
 
-**Story points:** 2 | **Priority:** P0 | **Depends on:** Task 1, Task 2
+**Story points:** 2 | **Priority:** P0 | **Status:** ✅ Voltooid
 
 **Scope:**
 - Resource `requests` + `limits` toevoegen aan álle Deployments
@@ -234,7 +265,7 @@ Wijzigen: helm/druppie/templates/persistentvolumeclaims.yaml
 
 ### Task 4: Ingress — Traefik support + TLS (cert-manager)
 
-**Story points:** 2 | **Priority:** P1 | **Depends on:** Task 3
+**Story points:** 2 | **Priority:** P1 | **Status:** ✅ Voltooid
 
 **Scope:**
 - Ingress template ondersteunen zowel NGINX (Kind) als Traefik (K3s)
@@ -268,12 +299,16 @@ Wijzigen: helm/druppie/values-prod.yaml
 - [x] `helm template` met `className: traefik` → Traefik Ingress (geen NGINX annotations)
 - [x] ClusterIssuer template gegenereerd wanneer `cert-manager.enabled: true`
 - [x] TLS annotations aanwezig wanneer `tls.enabled: true`
+- [x] **Live**: `https://druppie.rijnland.dev/` → 200 met geldig Let's Encrypt cert
+- [x] **Live**: Traefik pinned to infra node via nodeSelector
 
 ---
 
 ### Task 5: Sealed Secrets + productie secrets ingericht
 
-**Story points:** 1 | **Priority:** P1 | **Depends on:** Task 3
+**Story points:** 1 | **Priority:** P1 | **Status:** ❌ Niet gestart
+
+**Huidige workaround:** Secrets via gitignored `values-hetzner.secrets.yaml` overlay. Werkt, maar secrets staan niet in git.
 
 **Scope:**
 - Sealed Secrets controller installatie instructies
@@ -303,7 +338,9 @@ Wijzigen: helm/druppie/values-prod.yaml
 
 ### Task 6: CloudNativePG — HA PostgreSQL
 
-**Story points:** 3 | **Priority:** P1 | **Depends on:** Task 3
+**Story points:** 3 | **Priority:** P1 | **Status:** ❌ Niet gestart
+
+**Huidige state:** 3 PostgreSQL StatefulSets (druppie-db, keycloak-db, gitea-db), single instance, geen HA, geen failover. Werkt betrouwbaar voor Phase 1.
 
 **Scope:**
 - CloudNativePG operator v1.29.1+ installatie instructies
@@ -347,42 +384,61 @@ Wijzigen: helm/druppie/templates/init-job.yaml
 
 ---
 
-### Task 7: HPA — Backend en frontend horizontaal schaalbaar
+### Task 7: Autoscaling — KEDA (backend) + HPA (frontend)
 
-**Story points:** 2 | **Priority:** P1 | **Depends on:** Task 1, Task 3
+**Story points:** 2 | **Priority:** P1 | **Status:** ✅ Voltooid (afwijking van ADR)
+
+**Afwijking van ADR §4.4:** ADR beschrijft KEDA met Prometheus trigger. Geïmplementeerd met **PostgreSQL trigger** — simulerer, geen Prometheus dependency, directe DB query voor `agent_runs WHERE status = 'running'`. Backend CPU HPA wordt uitgeschakeld wanneer KEDA enabled is.
 
 **Scope:**
-- HPA templates voor backend (2-10 replicas) en frontend (2-8 replicas)
-- CPU target 70%
-- Stabilization windows: scaleUp 60s, scaleDown 300s
+- KEDA operator via Helm in `keda` namespace
+- ScaledObject voor backend: PostgreSQL trigger
+- TriggerAuthentication: references bestaande `druppie-secrets`
+- NetworkPolicy: `druppie-keda-db-access` (KEDA namespace → DB pod port 5432)
+- Frontend HPA: CPU 70%, 1→8 replicas (ongewijzigd)
+- Backend CPU HPA: disabled wanneer `keda.enabled: true`
 
 ```
-Aanmaken: helm/druppie/templates/hpa-backend.yaml
-  - minReplicas: 2, maxReplicas: 10
-  - CPU target 70%
-  - behavior: scaleUp +2 pods / 60s, scaleDown -50% / 300s
+Aanmaken: helm/druppie/templates/keda-scaledobject-backend.yaml
+  - PostgreSQL trigger, query: SELECT COUNT(*) FROM agent_runs WHERE status = 'running'
+  - targetQueryValue: "5" (wordt 50 voor productie)
+  - minReplicaCount: 1, maxReplicaCount: 10
+  - pollingInterval: 15, cooldownPeriod: 300
+  - FQDN host voor cross-namespace DNS
 
-Aanmaken: helm/druppie/templates/hpa-frontend.yaml
-  - minReplicas: 2, maxReplicas: 8
-  - CPU target 70%
-  - behavior: scaleUp +2 pods / 60s, scaleDown -50% / 300s
+Aanmaken: helm/druppie/templates/keda-triggerauth.yaml
+  - References druppie-secrets voor DB password
 
-Wijzigen: helm/druppie/values-prod.yaml
-  - autoscaling.backend.enabled: true
-  - autoscaling.frontend.enabled: true
+Aanmaken: helm/druppie/templates/keda-networkpolicy.yaml
+  - Staat keda namespace → DB pod port 5432 toe
+
+Wijzigen: helm/druppie/templates/hpa-backend.yaml
+  - Conditioneel: disabled wanneer keda.enabled
+
+Wijzigen: helm/druppie/values.yaml
+  - keda: sectie (enabled: false, pollingInterval, cooldownPeriod, query, targetQueryValue)
+
+Wijzigen: helm/druppie/values-hetzner.yaml
+  - keda.enabled: true, autoscaling.backend.minReplicas: 1
 ```
 
 **Acceptatiecriteria:**
-- [x] `helm template` genereert HPA resources
-- [x] Backend HPA: min 2, max 10, CPU 70%
-- [x] Frontend HPA: min 2, max 8, CPU 70%
-- [x] Stabilization windows geconfigureerd (geen oscillatie)
+- [x] KEDA operator draait in `keda` namespace (3 pods)
+- [x] ScaledObject `READY: True`, HPA `keda-hpa-druppie-backend` aangemaakt
+- [x] Backend schaalt op PostgreSQL query (agent_runs WHERE status = 'running')
+- [x] Backend CPU HPA uitgeschakeld wanneer KEDA enabled
+- [x] Frontend HPA: CPU 70%, 1→8 replicas
+- [x] Stabilization windows geconfigureerd (scaleUp 60s, scaleDown 300s)
+- [x] **E2E bewezen**: 6.787 sessies, 99.9% success, 1→10 pods + 1→3 nodes
+- [ ] `targetQueryValue` tunen van 5 naar 50 voor productie (pending)
 
 ---
 
 ### Task 8: HA — PDB + anti-affinity + graceful shutdown
 
-**Story points:** 1 | **Priority:** P1 | **Depends on:** Task 7
+**Story points:** 1 | **Priority:** P1 | **Status:** ✅ Templates klaar, uitgeschakeld per voorkeur
+
+**Let op:** PDB en anti-affinity zijn geïmplementeerd in Helm templates maar **uitgeschakeld** (`highAvailability.pdb.enabled: false`, `highAvailability.antiAffinity.enabled: false`). Gebruiker prefereert pods op dezelfde node (minder nodes = lagere kosten). Kan worden ingeschakeld via values.
 
 **Scope:**
 - PodDisruptionBudgets voor backend en frontend (`minAvailable: 1`)
@@ -426,7 +482,9 @@ async def lifespan(app: FastAPI):
 
 ### Task 9: Monitoring — kube-prometheus-stack
 
-**Story points:** 1 | **Priority:** P2 | **Depends on:** Task 2
+**Story points:** 1 | **Priority:** P2 | **Status:** ✅ Voltooid
+
+**Live state:** kube-prometheus-stack draait in `monitoring` namespace. Prometheus + Grafana + Alertmanager actief.
 
 **Scope:**
 - Installatie instructies voor kube-prometheus-stack (aparte Helm release)
@@ -449,7 +507,12 @@ Aanmaken: docs/monitoring-setup.md
 
 ### Task 10: Documentatie — setup, scaling, beperkingen
 
-**Story points:** 1 | **Priority:** P0 | **Depends on:** alle taken
+**Story points:** 1 | **Priority:** P0 | **Status:** ⚠️ Deels verouderd
+
+**Wat ontbreekt:**
+- iac/README.md nog niet volledig bijgewerkt met KEDA, NFS, Gitea registry details
+- ADR §4.4 beschrijft Prometheus trigger, niet PostgreSQL (implementatie wijkt af — bewuste keuze)
+- Geen runbook voor CA scale-up/scale-down gedrag
 
 **Scope:**
 - Setup guide: Kind dev + K3s productie deploy procedure
@@ -467,34 +530,146 @@ Wijzigen: docs/BACKLOG.md
 ```
 
 **Acceptatiecriteria:**
-- [ ] Setup guide compleet (Kind + K3s)
-- [ ] Scaling gedrag gedocumenteerd
+- [ ] Setup guide compleet (Kind + K3s) — iac/README.md bestaat, moet worden bijgewerkt
+- [ ] Scaling gedrag gedocumenteerd — ADR beschrijft doel, implementation plan moet werkelijke state reflecteren
 - [ ] Beperkingen en bekende issues gedocumenteerd
 - [ ] Backlog items voor Phase 2 aangemaakt
+
+---
+
+### Task 11: NFS RWX Storage (extra, niet in oorspronkelijk plan)
+
+**Story points:** 1 | **Priority:** P0 | **Status:** ✅ Voltooid
+
+**Waarom nodig:** HPA/KEDA schaalt backend pods over meerdere nodes. PVCs met `ReadWriteOnce` (local-path) werken alleen op 1 node. NFS biedt `ReadWriteMany` zodat alle pods dezelfde workspace delen.
+
+**Scope:**
+- In-cluster NFSv4 server als Deployment, gepind op infra node
+- Backed by Hetzner Cloud Volume (hcloud-volumes StorageClass)
+- Twee statische PVs: `nfs-workspace` en `nfs-sandbox-bundles` (RWX)
+- NFS client installer DaemonSet: installeert `nfs-common` op app pool nodes
+
+```
+Aanmaken: helm/druppie/templates/nfs-server.yaml
+  - NFS server Deployment + Service + PVC
+  - Pinned to infra node via nodeSelector
+
+Aanmaken: helm/druppie/templates/nfs-storage.yaml
+  - StorageClass (nfs-workspace)
+  - Twee statische PVs (workspace, sandbox-bundles)
+
+Aanmaken: helm/druppie/templates/nfs-client-installer.yaml (DaemonSet in kube-system)
+  - Installeert nfs-common op pool=app nodes
+```
+
+**Acceptatiecriteria:**
+- [x] NFS server draait op infra node
+- [x] Twee PVs gebonden met RWX access mode
+- [x] Backend pods op meerdere nodes mounten dezelfde workspace
+- [x] `additional_packages: [nfs-common]` in cluster.yaml voor nieuwe nodes
+
+---
+
+### Task 12: Docker Installer DaemonSet (extra)
+
+**Story points:** 1 | **Priority:** P1 | **Status:** ✅ Opgelost via cloud-init
+
+**Waarom nodig:** Backend module-docker heeft `/var/run/docker.sock` voor compose_up sandbox. CA-provisioned nodes hebben Docker niet voorgeïnstalleerd.
+
+**Oplossing:** `docker.io` toegevoegd aan `additional_packages` in `iac/cluster.yaml`. Nieuw gemaakte CA nodes installeren Docker via cloud-init (samen met `nfs-common`). De DaemonSet (`druppie-docker-installer`) blijft als fallback voor bestaande nodes.
+
+```
+cluster.yaml:
+  additional_packages:
+    - nfs-common
+    - docker.io
+```
+
+**Acceptatiecriteria:**
+- [x] `docker.io` in `additional_packages` in cluster.yaml
+- [x] DaemonSet template in Helm chart als fallback
+- [x] Init image gepushed naar Gitea registry (nodig voor helm hooks)
+
+---
+
+### Task 13: Gitea Container Registry (ADR §4.8)
+
+**Story points:** 1 | **Priority:** P1 | **Status:** ✅ Voltooid
+
+**Scope:**
+- Gitea registry ingeschakeld op bestaande Gitea instance
+- Backend/frontend images gebouwd en gepushed naar `git.druppie.rijnland.dev/gitea_admin/druppie-{backend,frontend}:{latest,1.0.0}`
+- `imagePullSecrets: [gitea-registry]` geconfigureerd in Helm values
+- `imagePullPolicy: Always` voor productie
+
+**Acceptatiecriteria:**
+- [x] Images beschikbaar in Gitea registry
+- [x] Kubernetes pullt images via gitea-registry secret
+- [x] Backend/frontend draaien vanuit registry images
+
+---
+
+### Task 14: Helm Upgrade Fix (operational)
+
+**Priority:** P1 | **Status:** ✅ Voltooid
+
+**Probleem:** Resources die via `kubectl apply` waren aangepakt (KEDA ScaledObject, TriggerAuthentication, NetworkPolicy, NFS resources) misten Helm ownership annotations. `helm upgrade` faalde met ownership validatie errors. Daarnaast ontbrak het `druppie-init` image in de Gitea registry, waardoor de post-upgrade hook faalde met ImagePullBackOff.
+
+**Oplossing:**
+1. Helm annotations (`meta.helm.sh/release-name`, `meta.helm.sh/release-namespace`) + labels (`app.kubernetes.io/managed-by: Helm`) toegevoegd aan alle orphaned resources
+2. Duplicate PVs (`druppie-nfs-workspace`, `druppie-nfs-sandbox-bundles`) die waren ontstaan bij `helm template | kubectl apply` blast verwijderd
+3. `druppie-init` image gebouwd en gepushed naar Gitea registry
+4. `helm upgrade` slaagt nu: revision 23, `STATUS: deployed`
+
+**Acceptatiecriteria:**
+- [x] `helm upgrade druppie helm/druppie/ -n druppie -f values-hetzner.yaml` slaagt zonder errors
+- [x] Alle resources hebben correcte Helm ownership annotations
+- [x] Init image beschikbaar in Gitea registry
+- [x] `helm list` toont `STATUS: deployed`
+
+---
+
+### Task 15: Backend uvicorn workers verhogen
+
+**Priority:** P2 | **Status:** ✅ Code klaar, image rebuild nodig
+
+**Oplossing:** Uvicorn CMD in Dockerfile gewijzigd naar `--workers 10`. De workload is I/O-bound (LLM API calls), dus 10 workers op 2 CPU limit / 4Gi memory is geschikt.
+
+```dockerfile
+CMD ["uvicorn", "druppie.api.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "10"]
+```
+
+**Acceptatiecriteria:**
+- [x] Dockerfile gewijzigd met `--workers 10`
+- [ ] Image gerebuild en gepushed naar Gitea registry (pending)
+- [ ] Backend draait met 10 uvicorn workers (pending)
 
 ---
 
 ## Afhankelijkheden
 
 ```
-Task 1 (Stateless backend) ─── P0, geen dependencies
+Task 1 (Stateless backend) ─── P0 ─── ✅ Voltooid
 │
-├── Task 2 (K3s cluster Hetzner) ─ P0, kan parallel met 1
-│   └── Task 9 (Monitoring) ────── P2, depends on 2
+├── Task 2 (K3s cluster Hetzner) ─ P0 ─── ✅ Voltooid
+│   ├── Task 9 (Monitoring) ────── P2 ─── ✅ Voltooid
+│   └── Task 11 (NFS RWX) ──────── P0 ─── ✅ Voltooid
 │
-├── Task 3 (Helm chart ready) ─── P0, depends on 1+2
-│   ├── Task 4 (Ingress + TLS) ─── P1, depends on 3
-│   ├── Task 5 (Sealed Secrets) ── P1, depends on 3
-│   ├── Task 6 (CloudNativePG) ─── P1, depends on 3
-│   └── Task 7 (HPA) ───────────── P1, depends on 1+3
-│       └── Task 8 (PDB + anti-affinity) ── P1, depends on 7
+├── Task 3 (Helm chart ready) ─── P0 ─── ✅ Voltooid
+│   ├── Task 4 (Ingress + TLS) ─── P1 ─── ✅ Voltooid
+│   ├── Task 5 (Sealed Secrets) ── P1 ─── ❌ Niet gestart
+│   ├── Task 6 (CloudNativePG) ─── P1 ─── ❌ Niet gestart
+│   ├── Task 7 (KEDA + HPA) ────── P1 ─── ✅ Voltooid (PostgreSQL trigger)
+│   │   └── Task 8 (PDB + HA) ──── P1 ─── ✅ Templates klaar (disabled)
+│   ├── Task 12 (Docker installer) P1 ─── ⚠️ Template klaar, runtime issues
+│   └── Task 13 (Gitea Registry) ── P1 ─── ✅ Voltooid
 │
-└── Task 10 (Documentatie) ─────── P0, depends op alles
+├── Task 10 (Documentatie) ────── P0 ─── ⚠️ Deels verouderd
+├── Task 14 (Helm upgrade fix) ── P1 ─── ❌ Niet gestart
+└── Task 15 (uvicorn workers) ─── P2 ─── ❌ Niet gestart
 ```
 
-**Parallel uitvoerbaar:**
-- Task 1 + Task 2 (stateless backend + cluster provisioning tegelijk)
-- Task 4 + Task 5 + Task 6 + Task 7 + Task 9 (na Task 3)
+**Samenvatting:** 10 van 15 taken voltooid. Overgebleven werk: CNPG (Task 6), Sealed Secrets (Task 5), CI/CD pipeline, docs update, en 3 operationele fixes (helm upgrade, docker timing, uvicorn workers).
 
 ---
 
@@ -502,45 +677,61 @@ Task 1 (Stateless backend) ─── P0, geen dependencies
 
 ### Nieuwe bestanden
 
-| Bestand | Task | Omschrijving |
-|---------|------|-------------|
-| `iac/cluster.yaml` | 2 | hetzner-k3s cluster definitie |
-| `helm/druppie/values-prod.yaml` | 3 | Productie Helm overlay |
-| `helm/druppie/templates/cluster-issuer.yaml` | 4 | Let's Encrypt issuers |
-| `secrets/sealed/README.md` | 5 | Sealed Secrets procedure |
-| `helm/druppie/templates/databases/druppie-db-cluster.yaml` | 6 | CNPG cluster: druppie |
-| `helm/druppie/templates/databases/keycloak-db-cluster.yaml` | 6 | CNPG cluster: keycloak |
-| `helm/druppie/templates/databases/gitea-db-cluster.yaml` | 6 | CNPG cluster: gitea |
-| `helm/druppie/templates/hpa-backend.yaml` | 7 | Backend HPA |
-| `helm/druppie/templates/hpa-frontend.yaml` | 7 | Frontend HPA |
-| `helm/druppie/templates/pdb-backend.yaml` | 8 | Backend PDB |
-| `helm/druppie/templates/pdb-frontend.yaml` | 8 | Frontend PDB |
-| `docs/monitoring-setup.md` | 9 | Monitoring installatie |
+| Bestand | Task | Omschrijving | Status |
+|---------|------|-------------|--------|
+| `iac/cluster.yaml` | 2 | hetzner-k3s cluster definitie | ✅ |
+| `helm/druppie/values-hetzner.yaml` | 3 | Hetzner productie Helm overlay | ✅ |
+| `helm/druppie/templates/cluster-issuer.yaml` | 4 | Let's Encrypt issuers | ✅ |
+| `secrets/sealed/README.md` | 5 | Sealed Secrets procedure | ❌ |
+| `helm/druppie/templates/databases/druppie-db-cluster.yaml` | 6 | CNPG cluster: druppie | ❌ |
+| `helm/druppie/templates/databases/keycloak-db-cluster.yaml` | 6 | CNPG cluster: keycloak | ❌ |
+| `helm/druppie/templates/databases/gitea-db-cluster.yaml` | 6 | CNPG cluster: gitea | ❌ |
+| `helm/druppie/templates/hpa-backend.yaml` | 7 | Backend HPA (conditioneel bij KEDA) | ✅ |
+| `helm/druppie/templates/hpa-frontend.yaml` | 7 | Frontend HPA | ✅ |
+| `helm/druppie/templates/pdb-backend.yaml` | 8 | Backend PDB | ✅ |
+| `helm/druppie/templates/pdb-frontend.yaml` | 8 | Frontend PDB | ✅ |
+| `docs/monitoring-setup.md` | 9 | Monitoring installatie | ✅ |
+| `helm/druppie/templates/nfs-server.yaml` | 11 | NFS server Deployment + Service + PVC | ✅ |
+| `helm/druppie/templates/nfs-storage.yaml` | 11 | NFS StorageClass + PVs | ✅ |
+| `helm/druppie/templates/docker-installer-daemonset.yaml` | 12 | Docker installatie op app nodes | ✅ |
+| `helm/druppie/templates/keda-scaledobject-backend.yaml` | 7 | KEDA ScaledObject (PostgreSQL trigger) | ✅ |
+| `helm/druppie/templates/keda-triggerauth.yaml` | 7 | KEDA DB authentication | ✅ |
+| `helm/druppie/templates/keda-networkpolicy.yaml` | 7 | KEDA → DB NetworkPolicy | ✅ |
+| `iac/metrics-server.yaml` | 2 | metrics-server manifest | ✅ |
+| `testing/autoscaling/test-keda-ramp.py` | 7 | E2E KEDA load test script | ✅ |
+| `druppie/llm/mock_provider.py` | 7 | MockLLM provider voor load testing | ✅ |
 
 ### Gewijzigde bestanden
 
-| Bestand | Task | Wijziging |
-|---------|------|-----------|
-| `druppie/core/background_tasks.py` | 1 | In-memory dict → DB-driven task guard |
-| `druppie/api/routes/sessions.py` | 1 | Aanpassen aan nieuw task guard interface |
-| `druppie/api/routes/approvals.py` | 1 | Aanpassen aan nieuw task guard interface |
-| `druppie/api/routes/questions.py` | 1 | Aanpassen aan nieuw task guard interface |
-| `druppie/api/routes/chat.py` | 1 | Aanpassen aan nieuw task guard interface |
-| `druppie/api/routes/sandbox.py` | 1 | Aanpassen aan nieuw task guard interface |
-| `druppie/services/job_service.py` | 1 | Aanpassen aan nieuw task guard interface |
-| `helm/druppie/values.yaml` | 3,4,6,7 | Resources, ingress, CNPG, HPA config |
-| `helm/druppie/templates/backend-deployment.yaml` | 3,6,7,8 | Resources, CNPG init, anti-affinity, terminationGracePeriod |
-| `helm/druppie/templates/frontend-deployment.yaml` | 3,7,8 | Resources, anti-affinity |
-| `helm/druppie/templates/keycloak-deployment.yaml` | 3,6 | Resources, CNPG connection |
-| `helm/druppie/templates/gitea-deployment.yaml` | 3,6 | Resources, CNPG connection |
-| `helm/druppie/templates/module-*-deployment.yaml` | 3 | Resources |
-| `helm/druppie/templates/ingress.yaml` | 4 | NGINX/Traefik conditioneel, TLS |
-| `helm/druppie/templates/secrets.yaml` | 5 | Dev-only marker |
-| `helm/druppie/templates/configmap.yaml` | 6 | CNPG service naming |
-| `helm/druppie/templates/services.yaml` | 6 | DB services bijwerken |
-| `helm/druppie/templates/init-job.yaml` | 6 | CNPG connection strings |
-| `helm/druppie/templates/persistentvolumeclaims.yaml` | 3 | Configureerbare storageClass |
-| `druppie/api/main.py` | 8 | SIGTERM handler, graceful shutdown |
+| Bestand | Task | Wijziging | Status |
+|---------|------|-----------|--------|
+| `druppie/core/background_tasks.py` | 1 | In-memory dict → DB-driven task guard | ✅ |
+| `druppie/api/routes/sessions.py` | 1 | Aanpassen aan nieuw task guard interface | ✅ |
+| `druppie/api/routes/approvals.py` | 1 | Aanpassen aan nieuw task guard interface | ✅ |
+| `druppie/api/routes/questions.py` | 1 | Aanpassen aan nieuw task guard interface | ✅ |
+| `druppie/api/routes/chat.py` | 1 | Aanpassen aan nieuw task guard interface | ✅ |
+| `druppie/api/routes/sandbox.py` | 1 | Aanpassen aan nieuw task guard interface | ✅ |
+| `druppie/services/job_service.py` | 1 | Aanpassen aan nieuw task guard interface | ✅ |
+| `helm/druppie/values.yaml` | 3,4,7 | Resources, ingress, KEDA config | ✅ |
+| `helm/druppie/values-hetzner.yaml` | 3,4,7 | Hetzner overlay: KEDA, NFS, Gitea registry | ✅ |
+| `helm/druppie/templates/backend-deployment.yaml` | 3,7,8 | Resources, docker-sock, anti-affinity, terminationGracePeriod | ✅ |
+| `helm/druppie/templates/frontend-deployment.yaml` | 3,7,8 | Resources, anti-affinity | ✅ |
+| `helm/druppie/templates/keycloak-deployment.yaml` | 3,6 | Resources, DB connection | ✅ |
+| `helm/druppie/templates/gitea-deployment.yaml` | 3,6 | Resources, DB connection | ✅ |
+| `helm/druppie/templates/module-*-deployment.yaml` | 3 | Resources | ✅ |
+| `helm/druppie/templates/ingress.yaml` | 4 | NGINX/Traefik conditioneel, TLS | ✅ |
+| `helm/druppie/templates/secrets.yaml` | 5 | Dev-only marker | ❌ |
+| `helm/druppie/templates/configmap.yaml` | 6 | CNPG service naming | ❌ |
+| `helm/druppie/templates/services.yaml` | 6 | DB services bijwerken | ❌ |
+| `helm/druppie/templates/init-job.yaml` | 6 | CNPG connection strings | ❌ |
+| `helm/druppie/templates/persistentvolumeclaims.yaml` | 3,11 | Configureerbare storageClass, NFS PVCs | ✅ |
+| `druppie/api/main.py` | 8 | SIGTERM handler, graceful shutdown | ✅ |
+| `docs/ADR-KUBERNETES.md` | 10 | ADR (doelarchitectuur, ongewijzigd) | ✅ |
+| `docs/KUBERNETES-IMPLEMENTATION-PLAN.md` | 10 | Dit document | ✅ |
+| `iac/cluster.yaml` | 2,11 | NFS packages, CA tuning | ✅ |
+| `iac/README.md` | 10 | Cluster setup documentatie | ⚠️ Deels verouderd |
+| `druppie/llm/__init__.py` | 7 | MockLLM provider registratie | ✅ |
+| `druppie/llm/service.py` | 7 | MockLLM provider support | ✅ |
 
 ### Verwijderde bestanden
 
@@ -554,28 +745,30 @@ Task 1 (Stateless backend) ─── P0, geen dependencies
 
 ## Out of Scope (Phase 2+)
 
-| Onderwerp | Waarom niet nu | Wanneer |
-|-----------|----------------|---------|
-| Sandbox migratie (Docker → K8s) | Docker socket dependency | Phase 2 |
-| ArgoCD | Push-based CI/CD is voldoende | Phase 2 |
-| Message queue (Redis Streams/NATS) | Database-driven resume volstaat | Phase 2 |
-| KEDA (queue-based scaling) | HPA op CPU is voldoende voor Phase 1 | Phase 2 |
-| Network Policies per-namespace | Niet blocking | Phase 2 |
-| Longhorn RWX | MCP modules gebruiken local-path | Phase 2 (indien nodig) |
-| gVisor / Kata Containers | Sandbox blijft op Docker | Phase 2 |
-| Harbor registry | Gitea registry volstaat | Phase 2 |
-| CI/CD pipeline (GitHub Actions) | Kan na eerste handmatige deploy | Vervolgstory |
-| Distributed tracing (Jaeger/Tempo) | Nog niet nodig bij deze schaal | Phase 3 |
+| Onderwerp | Waarom niet nu | Wanneer | Status |
+|-----------|----------------|---------|--------|
+| Sandbox migratie (Docker → K8s) | Docker socket dependency | Phase 2 | ⬚ |
+| ArgoCD | Push-based CI/CD is voldoende | Phase 2 | ⬚ |
+| Message queue (Redis Streams/NATS) | Database-driven resume volstaat | Phase 2 | ⬚ |
+| ~~KEDA (queue-based scaling)~~ | ~~HPA op CPU is voldoende~~ | ~~Phase 2~~ | ✅ Geïmplementeerd met PostgreSQL trigger (Task 7) |
+| ~~Network Policies per-namespace~~ | ~~Niet blocking~~ | ~~Phase 2~~ | ⚠️ Deels: `druppie-app-net` + `druppie-keda-db-access` |
+| ~~Longhorn RWX~~ | ~~MCP modules gebruiken local-path~~ | ~~Phase 2~~ | ✅ NFS RWX geïmplementeerd (Task 11) |
+| gVisor / Kata Containers | Sandbox blijft op Docker | Phase 2 | ⬚ |
+| Harbor registry | Gitea registry volstaat | Phase 2 | ⬚ |
+| CI/CD pipeline (GitHub Actions) | Kan na eerste handmatige deploy | Phase 2 | ❌ Niet gestart |
+| Distributed tracing (Jaeger/Tempo) | Nog niet nodig bij deze schaal | Phase 3 | ⬚ |
 
 ---
 
 ## Risico's en Mitigaties
 
-| Risico | Impact | Kans | Mitigatie |
-|--------|--------|------|-----------|
-| Backend stateless refactor breekt bestaande flows | Regression | Medium | Alle routes testen. Kind smoke test. Bestaande tests moeten slagen. |
-| CloudNativePG operationele kennis ontbreekt | DB issues in productie | Medium | Failover testen op staging. Runbooks schrijven. |
-| HPA scaling te agressief of te traag | Oscillatie of vertraging | Laag | Stabilization windows (300s/60s). Tunen op load tests. |
-| Sealed Secrets key verloren | Alle secrets ontoegankelijk | Medium | Private key backup procedure + test. |
-| Traefik path rewrite voor Gitea | Broken routing | Medium | Testen op Kind met Traefik. IngressRoute CRDs als fallback. |
-| Backend image ~4GB, te groot voor 10 replicas | Hoge RAM costs | Medium | Multi-stage build als vervolgstap. |
+| Risico | Impact | Kans | Status | Mitigatie |
+|--------|--------|------|--------|-----------|
+| Backend stateless refactor breekt bestaande flows | Regression | ~~Medium~~ | ✅ Opgelost | DB-driven task guard werkt met 10 replicas |
+| CloudNativePG operationele kennis ontbreekt | DB issues in productie | Medium | ⬚ Open | Failover testen op staging. Runbooks schrijven. |
+| ~~HPA scaling te agressief of te traag~~ | ~~Oscillatie~~ | ~~Laag~~ | ✅ Opgelost | KEDA met 300s cooldown werkt stabiel |
+| Sealed Secrets key verloren | Alle secrets ontoegankelijk | Medium | ⬚ Open | Private key backup procedure + test. |
+| ~~Traefik path rewrite voor Gitea~~ | ~~Broken routing~~ | ~~Medium~~ | ✅ Opgelost | Subdomain routing werkt (geen path rewrite nodig) |
+| Backend image ~4GB, te groot voor 10 replicas | Hoge RAM costs | Medium | ⬚ Open | Multi-stage build als vervolgstap. |
+| Docker niet beschikbaar op CA-provisioned nodes | Pods stuck in Init | Hoog | ⚠️ Deels opgelost | DaemonSet installeert Docker, maar timing issue bij nieuwe nodes. Fix: cloud-init of optional mount. |
+| Helm upgrade faalt door ownership annotations | Geen declaratieve upgrades | Hoog | ⬚ Open | Adopt resources met Helm annotations (Task 14). |

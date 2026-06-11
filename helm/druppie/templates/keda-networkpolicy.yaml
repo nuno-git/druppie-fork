@@ -1,0 +1,22 @@
+{{- if and .Values.keda.enabled .Values.autoscaling.backend.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "druppie.fullname" . }}-keda-db-access
+  labels:
+    {{- include "druppie.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: druppie-db
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              app.kubernetes.io/managed-by: keda
+      ports:
+        - port: {{ .Values.postgresql.druppie.port }}
+          protocol: TCP
+{{- end }}

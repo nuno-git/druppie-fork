@@ -103,17 +103,21 @@ worker_node_pools:
       - key: pool
         value: app                      # Scheduler hint for app workloads
     taints: []                          # No taints — fully schedulable
+    additional_packages:
+      - nfs-common                      # Required for NFS RWX volumes on new nodes
+      - docker.io                       # Required for compose_up sandbox (module-docker)
 
 # -- Addons ------------------------------------------------------------------
 # hetzner-k3s installs these automatically. Customize here if needed.
 addons:
   cluster_autoscaler:
     enabled: true                       # Required for worker pool autoscaling
-    # scan_interval: "10s"              # How often to check for Pending pods
-    # scale_down_delay_after_add: "10m"  # Wait before considering scale-down
-    # scale_down_delay_after_delete: "10s"
-    # scale_down_delay_after_failure: "3m"
-    # max_node_provision_time: "15m"
+    scan_interval: "10s"
+    scale_down_delay_after_add: "2m"    # Was 10m — faster scale-down for cost savings
+    scale_down_delay_after_delete: "10s"
+    scale_down_delay_after_failure: "3m"
+    scale_down_unneeded_time: "2m"      # Was default 10m
+    max_node_provision_time: "15m"
 
   csi_driver:
     enabled: true                       # Hetzner CSI for persistent volumes

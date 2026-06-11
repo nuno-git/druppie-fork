@@ -17,6 +17,8 @@ spec:
       labels:
         {{- include "druppie.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: module-coding
+      annotations:
+        cluster-autoscaler.kubernetes.io/safe-to-evict: "true"
     spec:
       initContainers:
         - name: wait-for-gitea

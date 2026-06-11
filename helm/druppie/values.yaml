@@ -7,6 +7,8 @@ global:
   imagePullPolicy: IfNotPresent
   # Override for image registry prefix (e.g. "ghcr.io/myorg/")
   imageRegistry: ""
+  # Registry credentials — list of secret names for private registries
+  imagePullSecrets: []
   # Domain configuration — controls all external URLs
   # Local dev: localhost (path-based routing on port 9080)
   # Production: druppie.example.com
@@ -334,6 +336,14 @@ persistence:
   sandboxBundles:
     size: 5Gi
 
+# NFS server for RWX storage (required for HPA multi-node scheduling)
+nfs:
+  enabled: false
+  storageClassName: nfs-workspace
+  storageClass: ""        # Backing storage class for NFS server PVC (e.g. hcloud-volumes)
+  storageSize: 30Gi       # Size of the backing volume for NFS server
+  nodeSelector: {}        # Pin NFS server to specific node (e.g. pool: infra)
+
 # Secrets (override in production)
 secrets:
   zaiApiKey: ""
@@ -360,6 +370,18 @@ autoscaling:
     minReplicas: 2
     maxReplicas: 8
     targetCPUUtilizationPercentage: 70
+
+# KEDA autoscaling — session-based scaling via PostgreSQL query (replaces CPU HPA for backend)
+keda:
+  enabled: false
+  pollingInterval: 15
+  cooldownPeriod: 300
+  sslmode: disable
+  backend:
+    # Counts agent runs currently executing — real-time "work in progress" metric
+    query: "SELECT COUNT(*) FROM agent_runs WHERE status = 'running'"
+    targetQueryValue: "50"
+    activationTargetQueryValue: "0"
 
 # CloudNativePG — HA PostgreSQL (set cnpg.enabled: true for production)
 cnpg:

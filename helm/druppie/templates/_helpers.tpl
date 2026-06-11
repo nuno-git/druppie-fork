@@ -150,3 +150,15 @@ Frontend external URL
 http://{{ .Values.global.domain }}:{{ .Values.frontend.nodePort }}
 {{- end -}}
 {{- end -}}
+
+{{/*
+Persistence storageClass: resolves to NFS class when NFS is enabled,
+otherwise falls back to the configured persistence.storageClass.
+*/}}
+{{- define "druppie.persistence.storageClass" -}}
+{{- if .Values.nfs.enabled -}}
+{{ .Values.nfs.storageClassName }}
+{{- else if .Values.persistence.storageClass -}}
+{{ .Values.persistence.storageClass }}
+{{- end -}}
+{{- end -}}
