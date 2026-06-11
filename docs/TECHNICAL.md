@@ -205,7 +205,7 @@ druppie/
 `module-azuredevops` (port 9012) gives agents **read-only** access to the backlog /
 work items of **exactly one** Azure DevOps project. It authenticates to Azure DevOps
 with an **Entra ID service principal** (`ClientSecretCredential`, resource scope
-`499b84ac-1321-427f-aa17-267ca6975798/.default`); tokens are fetched on demand and
+`{scope_id}/.default`); tokens are fetched on demand and
 never written to disk. Configuration is via env vars: `AZURE_DEVOPS_ORG_URL`,
 `AZURE_DEVOPS_PROJECT`, `AZURE_DEVOPS_TENANT_ID`, `AZURE_DEVOPS_CLIENT_ID`,
 `AZURE_DEVOPS_CLIENT_SECRET` (the server fails fast at startup if any are missing).
