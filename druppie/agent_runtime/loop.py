@@ -21,6 +21,7 @@ from druppie.agent_runtime.events import EventEmitter
 from druppie.agent_runtime.tools.done import DoneTool
 from druppie.agent_runtime.tools.mcp import MCPConnection
 from druppie.agent_runtime.tools.provider import ToolProvider
+from druppie.execution.path_validation import validate_file_path_access
 from druppie.agent_runtime.types import (
     AgentEvent,
     AgentResult,
@@ -522,7 +523,11 @@ class AgentLoop:
                 }
                 return tool_call, result_msg, False
         else:
-            result_data = await tool_provider.execute(tool_name, arguments)
+            path_error = self._check_path_constraints(agent, tool_name, arguments)
+            if path_error:
+                result_data = {"success": False, "error": path_error}
+            else:
+                result_data = await tool_provider.execute(tool_name, arguments)
             if result_data.get("_pending"):
                 is_pending = True
             if "allowed_tools" in result_data:
@@ -547,6 +552,22 @@ class AgentLoop:
             "content": result_content,
         }
         return tool_call, result_msg, is_pending
+
+    @staticmethod
+    def _check_path_constraints(
+        agent: AgentDefinition, tool_name: str, arguments: dict
+    ) -> str | None:
+        """Check file-path write constraints from agent sandbox_constraints."""
+        sc = agent.sandbox_constraints
+        if not sc or not isinstance(sc, dict):
+            return None
+        return validate_file_path_access(
+            tool_name=tool_name,
+            arguments=arguments,
+            agent_id=agent.id,
+            allowed_paths=sc.get("allowed_paths"),
+            forbidden_paths=sc.get("forbidden_paths"),
+        )
 
     def _check_done_called(
         self,

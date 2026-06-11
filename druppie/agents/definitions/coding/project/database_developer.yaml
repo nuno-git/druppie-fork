@@ -27,7 +27,7 @@ system_prompt: |
   - database.py, models.py, schema.prisma, knexfile.*, ormconfig.*
   - Test files for database code (test_*_repository.py, test_models.*)
 
-  FORBIDDEN — do NOT modify:
+  FORBIDDEN — do NOT write to (you may read these for context):
   - api/, routes/, controllers/ (API routing layer)
   - services/ (business logic — repositories call models, not services)
   - src/components/, src/pages/, frontend/, client/ (frontend code)

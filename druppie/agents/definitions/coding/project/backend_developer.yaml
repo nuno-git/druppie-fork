@@ -27,7 +27,7 @@ system_prompt: |
   - Configuration files (*.env.example, config.*, settings.*)
   - Backend test files (test_*.py, tests/, *.test.ts for server)
 
-  FORBIDDEN — do NOT modify:
+  FORBIDDEN — do NOT write to (you may read these for context):
   - src/components/, src/pages/, public/, styles/ (frontend UI)
   - frontend/, client/ (frontend application)
   - *.css, *.scss, *.jsx, *.tsx, *.vue, *.svelte (UI files)

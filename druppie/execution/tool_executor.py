@@ -21,8 +21,6 @@ Flow:
 All database operations go through repositories (no raw db session usage).
 """
 
-import fnmatch
-import posixpath
 from typing import TYPE_CHECKING
 from uuid import UUID
 
@@ -30,6 +28,13 @@ import structlog
 
 from druppie.core.mcp_config import MCPConfig
 from druppie.execution.mcp_http import MCPHttp, MCPHttpError
+from druppie.execution.path_validation import (
+    FILE_WRITE_TOOLS,
+    extract_file_paths,
+    normalize_path,
+    path_matches_pattern,
+    validate_file_path_access,
+)
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session as DBSession
@@ -288,95 +293,25 @@ class ToolExecutor:
             )
             return None
 
-    # Tools that operate on file paths in the sandbox workspace
-    FILE_PATH_TOOLS = {
-        "read_file", "write_file", "edit_file", "delete_file", "batch_write_files",
-    }
+    # Delegates to druppie.execution.path_validation (shared with agent_runtime)
+    FILE_PATH_TOOLS = FILE_WRITE_TOOLS
 
-    @staticmethod
-    def _extract_file_paths(tool_name: str, args: dict) -> list[str]:
-        """Extract file paths from tool arguments."""
-        paths = []
-        if tool_name == "batch_write_files":
-            for f in args.get("files", []):
-                if isinstance(f, dict) and f.get("path"):
-                    paths.append(f["path"])
-        elif "path" in args:
-            paths.append(args["path"])
-        elif "file_path" in args:
-            paths.append(args["file_path"])
-        return paths
-
-    @staticmethod
-    def _normalize_path(path: str) -> str:
-        """Normalize a file path for pattern matching (resolve ../, strip leading /)."""
-        return posixpath.normpath(path.replace("\\", "/")).lstrip("/")
-
-    @staticmethod
-    def _path_matches_pattern(normalized_path: str, pattern: str) -> bool:
-        """Check if a normalized path matches an allowed/forbidden pattern.
-
-        Patterns:
-        - "src/components/" — directory prefix, matches files under that dir
-        - "*.tsx" — extension glob, matches basename
-        - "src/App.*" — multi-segment glob, matched against full path
-        - "package.json" — exact filename, matched against basename
-        """
-        if pattern.endswith("/"):
-            return (
-                normalized_path.startswith(pattern)
-                or normalized_path + "/" == pattern
-            )
-        if "/" in pattern:
-            return fnmatch.fnmatch(normalized_path, pattern)
-        basename = normalized_path.rsplit("/", 1)[-1]
-        return fnmatch.fnmatch(basename, pattern)
+    _extract_file_paths = staticmethod(extract_file_paths)
+    _normalize_path = staticmethod(normalize_path)
+    _path_matches_pattern = staticmethod(path_matches_pattern)
 
     def _validate_file_path_access(self, tool_call, agent_definition) -> str | None:
-        """Validate that file paths in tool arguments comply with agent path constraints.
-
-        Forbidden paths are checked first — a match is immediately rejected.
-        Allowed paths are checked second — the path must match at least one.
-        Returns an error message if access is denied, None if allowed.
-        """
+        """Validate file paths against agent sandbox constraints (write-only)."""
         if not agent_definition or not agent_definition.sandbox_constraints:
             return None
-
         constraints = agent_definition.sandbox_constraints
-        if not constraints.allowed_paths and not constraints.forbidden_paths:
-            return None
-
-        if tool_call.tool_name not in self.FILE_PATH_TOOLS:
-            return None
-
-        paths = self._extract_file_paths(tool_call.tool_name, tool_call.arguments or {})
-        if not paths:
-            return None
-
-        for path in paths:
-            normalized = self._normalize_path(path)
-
-            if constraints.forbidden_paths:
-                for pattern in constraints.forbidden_paths:
-                    if self._path_matches_pattern(normalized, pattern):
-                        return (
-                            f"Agent '{agent_definition.id}' is forbidden from accessing "
-                            f"path '{path}' (matches forbidden pattern '{pattern}'). "
-                            f"Delegate to the appropriate specialist agent."
-                        )
-
-            if constraints.allowed_paths:
-                if not any(
-                    self._path_matches_pattern(normalized, pattern)
-                    for pattern in constraints.allowed_paths
-                ):
-                    return (
-                        f"Agent '{agent_definition.id}' is not allowed to access "
-                        f"path '{path}'. Allowed patterns: {constraints.allowed_paths}. "
-                        f"Delegate to the appropriate specialist agent."
-                    )
-
-        return None
+        return validate_file_path_access(
+            tool_name=tool_call.tool_name,
+            arguments=tool_call.arguments or {},
+            agent_id=agent_definition.id,
+            allowed_paths=constraints.allowed_paths,
+            forbidden_paths=constraints.forbidden_paths,
+        )
 
     def _validate_tool_arguments(self, tool_call) -> str | None:
         """Validate tool arguments against the tool's schema.

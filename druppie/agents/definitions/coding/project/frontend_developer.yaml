@@ -26,7 +26,7 @@ system_prompt: |
   - tsconfig.json, package.json (frontend-specific)
   - Test files for frontend code (*.test.jsx, *.test.tsx, *.spec.*)
 
-  FORBIDDEN — do NOT modify:
+  FORBIDDEN — do NOT write to (you may read these for context):
   - api/, server/, services/ (server-side business logic)
   - repositories/, db/, models/ (database layer)
   - middleware/, controllers/ (backend routing)
