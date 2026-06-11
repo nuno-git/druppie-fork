@@ -1,0 +1,162 @@
+# values-hetzner.yaml — Hetzner K3s multi-node deployment
+# Usage: helm upgrade druppie ./helm/druppie -n druppie \
+#          -f helm/druppie/values-hetzner.yaml \
+#          -f helm/druppie/values-hetzner.secrets.yaml \
+#          --wait
+
+global:
+  instance: druppie
+  imagePullPolicy: IfNotPresent    # Pre-loaded images found locally, public images pull from registry
+  imageRegistry: ""
+  domain: "druppie.rijnland.dev"  # Production domain with TLS
+  subdomains:
+    keycloak: "auth.druppie.rijnland.dev"
+    gitea: "git.druppie.rijnland.dev"
+  ingress:
+    enabled: true
+    className: traefik
+    port: 443
+    tls:
+      enabled: true
+      secretName: druppie-tls
+
+# PostgreSQL (StatefulSets — CNPG is Phase 1 Task 6)
+postgresql:
+  image: postgres:15-alpine
+  druppie:
+    database: druppie
+    username: druppie
+    password: druppie_secret
+    port: 5432
+    storage: 5Gi
+  keycloak:
+    database: keycloak
+    username: keycloak
+    password: keycloak_secret
+    port: 5432
+    storage: 5Gi
+  gitea:
+    database: gitea
+    username: gitea
+    password: gitea_secret
+    port: 5432
+    storage: 5Gi
+
+# Keycloak
+keycloak:
+  image: quay.io/keycloak/keycloak:24.0
+  adminUser: admin
+  adminPassword: admin
+  hostname: ""
+  nodePort: 30002
+  replicaCount: 1
+  resources:
+    requests:
+      memory: "512Mi"
+      cpu: "500m"
+    limits:
+      memory: "2Gi"
+      cpu: "2000m"
+
+# Gitea (also hosts Container Registry per ADR-001 §4.8)
+gitea:
+  image: gitea/gitea:1.21
+  adminUser: gitea_admin
+  adminPassword: GiteaAdmin123
+  adminEmail: admin@druppie.local
+  org: druppie
+  sshPort: 2222
+  httpPort: 3000
+  nodePort: 30003
+  storage: 10Gi
+  replicaCount: 1
+  resources:
+    requests:
+      memory: "512Mi"
+      cpu: "250m"
+    limits:
+      memory: "1Gi"
+      cpu: "1000m"
+
+# Backend
+backend:
+  image:
+    repository: druppie-backend
+    tag: latest
+  port: 8000
+  nodePort: 30000
+  composeDruppieUrl: "http://172.17.0.1:30000"   # Docker bridge gateway on Hetzner app nodes
+  replicaCount: 1
+  devMode: false
+  dockerSocket:
+    enabled: true                   # Needed for compose_up sandbox
+  resources:
+    requests:
+      memory: "1Gi"
+      cpu: "500m"
+    limits:
+      memory: "4Gi"
+      cpu: "2000m"
+
+# Frontend
+frontend:
+  image:
+    repository: druppie-frontend
+    tag: latest
+  port: 5173
+  nodePort: 30001
+  replicaCount: 1
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "250m"
+    limits:
+      memory: "512Mi"
+      cpu: "1000m"
+
+# Init
+init:
+  enabled: true
+  image:
+    repository: druppie-init
+    tag: latest
+
+# Secrets — populated from values-hetzner.secrets.yaml (gitignored)
+secrets:
+  zaiApiKey: ""
+  deepinfraApiKey: ""
+  internalApiKey: ""
+  giteaToken: ""
+  moduleApiToken: ""
+
+# Phase 1: No autoscaling yet (Task 7)
+autoscaling:
+  backend:
+    enabled: false
+  frontend:
+    enabled: false
+
+# Phase 1: No CNPG yet (Task 6)
+cnpg:
+  enabled: false
+
+# Phase 1: No HA yet (Task 8)
+highAvailability:
+  pdb:
+    enabled: false
+  antiAffinity:
+    enabled: false
+
+certManager:
+  enabled: true
+  email: "admin@rijnland.dev"
+
+persistence:
+  enabled: true
+  storageClass: "local-path"
+  workspace:
+    size: 10Gi
+  dataset:
+    size: 5Gi
+  sandboxBundles:
+    size: 5Gi

@@ -70,8 +70,13 @@ spec:
                 secretKeyRef:
                   name: {{ include "druppie.fullname" . }}-secrets
                   key: KEYCLOAK_ADMIN_PASSWORD
+            {{- if .Values.global.subdomains.keycloak }}
+            - name: KC_HOSTNAME
+              value: {{ .Values.global.subdomains.keycloak | quote }}
+            {{- else }}
             - name: KC_HOSTNAME
               value: {{ .Values.global.domain | quote }}
+            {{- end }}
             - name: KC_HOSTNAME_PORT
               {{- if .Values.global.ingress.tls.enabled }}
               value: "443"

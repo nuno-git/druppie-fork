@@ -71,8 +71,13 @@ spec:
               value: "{{ include "druppie.giteaExternalUrl" . }}/"
             - name: GITEA__server__HTTP_PORT
               value: {{ .Values.gitea.httpPort | quote }}
+            {{- if .Values.global.subdomains.gitea }}
+            - name: GITEA__server__DOMAIN
+              value: {{ .Values.global.subdomains.gitea | quote }}
+            {{- else }}
             - name: GITEA__server__DOMAIN
               value: {{ .Values.global.domain | quote }}
+            {{- end }}
             - name: GITEA__security__INSTALL_LOCK
               value: "true"
             - name: GITEA__service__DISABLE_REGISTRATION

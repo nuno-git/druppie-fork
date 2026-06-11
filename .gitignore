@@ -54,6 +54,7 @@ secrets
 
 # Helm secrets (contains API keys — use .example.yaml as template)
 helm/druppie/values-local.secrets.yaml
+helm/druppie/values-hetzner.secrets.yaml
 
 # Local config
 .druppie/

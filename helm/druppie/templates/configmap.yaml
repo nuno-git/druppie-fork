@@ -13,7 +13,7 @@ data:
   KEYCLOAK_REALM: "druppie"
   KEYCLOAK_CLIENT_ID: "druppie-backend"
   KEYCLOAK_SERVER_URL: "http://{{ include "druppie.fullname" . }}-keycloak:8080"
-  KEYCLOAK_ISSUER_URL: "{{ include "druppie.keycloakExternalUrl" . }}"
+  KEYCLOAK_ISSUER_URL: "{{ include "druppie.keycloakExternalUrl" . }}{{ if and .Values.global.ingress.enabled (eq (include "druppie.scheme" .) "https") }}:443{{ end }}"
 
   # Gitea
   GITEA_INTERNAL_URL: "http://{{ include "druppie.fullname" . }}-gitea:3000"
@@ -29,7 +29,7 @@ data:
   USE_MCP_MICROSERVICES: "true"
   {{- if not .Values.global.ingress.enabled }}
   # URL for compose_up apps to reach the backend (Docker-reachable, not K8s DNS)
-  COMPOSE_DRUPPIE_URL: "http://172.25.0.1:{{ .Values.backend.nodePort }}"
+  COMPOSE_DRUPPIE_URL: {{ (.Values.backend.composeDruppieUrl | default (printf "http://172.25.0.1:%d" (int .Values.backend.nodePort))) | quote }}
   {{- end }}
 
   # MCP module URLs

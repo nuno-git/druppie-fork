@@ -19,7 +19,11 @@ spec:
         {{- if .Values.global.ingress.enabled }}
         - namespaceSelector:
             matchLabels:
+              {{- if eq .Values.global.ingress.className "traefik" }}
+              app.kubernetes.io/name: traefik
+              {{- else }}
               app.kubernetes.io/name: ingress-nginx
+              {{- end }}
         {{- else }}
         # When ingress is disabled (NodePort mode), allow traffic from any source
         - ipBlock:

@@ -123,6 +123,16 @@ spec:
               {{- else }}
               value: ""
               {{- end }}
+            {{- if .Values.global.ingress.enabled }}
+            - name: INGRESS_ENABLED
+              value: "true"
+            - name: FRONTEND_URL
+              value: "{{ include "druppie.frontendExternalUrl" . }}"
+            - name: KEYCLOAK_EXTERNAL_URL
+              value: "{{ include "druppie.keycloakExternalUrl" . }}"
+            - name: GITEA_EXTERNAL_URL
+              value: "{{ include "druppie.giteaExternalUrl" . }}"
+            {{- end }}
           volumeMounts:
             - name: init-marker
               mountPath: /init-marker

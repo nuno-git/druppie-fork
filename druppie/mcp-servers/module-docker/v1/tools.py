@@ -64,6 +64,22 @@ PORT_RANGE_START = int(os.getenv("PORT_RANGE_START", "9100"))
 PORT_RANGE_END = int(os.getenv("PORT_RANGE_END", "9199"))
 BUILD_DIR = Path(os.getenv("BUILD_DIR", "/tmp/docker-builds"))
 
+# Ensure the Docker network exists (needed on fresh K8s nodes)
+if DOCKER_NETWORK:
+    try:
+        result = subprocess.run(
+            ["docker", "network", "inspect", DOCKER_NETWORK],
+            capture_output=True, text=True, timeout=10,
+        )
+        if result.returncode != 0:
+            subprocess.run(
+                ["docker", "network", "create", DOCKER_NETWORK],
+                capture_output=True, text=True, timeout=30,
+            )
+            logger.info("Created Docker network: %s", DOCKER_NETWORK)
+    except Exception as e:
+        logger.warning("Could not ensure Docker network %s: %s", DOCKER_NETWORK, e)
+
 # Gitea config for cloning
 GITEA_URL = os.getenv("GITEA_INTERNAL_URL", "http://gitea:3000")
 GITEA_USER = os.getenv("GITEA_USER", "gitea_admin")

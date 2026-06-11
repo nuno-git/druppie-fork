@@ -47,10 +47,31 @@ spec:
             limits:
               memory: "64Mi"
               cpu: "100m"
+      
       containers:
         - name: frontend
           image: {{ include "druppie.image" (dict "Values" .Values "image" .Values.frontend.image) }}
           imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          {{- if .Values.global.ingress.enabled }}
+          command:
+            - sh
+            - -c
+            - |
+              echo "Replacing build-time URLs with runtime config..."
+              cd /app/dist/assets
+              for f in *.js; do
+                sed -i 's|http://localhost:30002|{{ include "druppie.keycloakExternalUrl" . }}|g' "$f"
+                sed -i 's|http://localhost:30000|{{ include "druppie.backendExternalUrl" . }}|g' "$f"
+                sed -i 's|http://localhost:30003|{{ include "druppie.giteaExternalUrl" . }}|g' "$f"
+                sed -i 's|http://localhost:30001|{{ include "druppie.frontendExternalUrl" . }}|g' "$f"
+                sed -i 's|http://localhost:8180|{{ include "druppie.keycloakExternalUrl" . }}|g' "$f"
+                sed -i 's|http://localhost:3100|{{ include "druppie.giteaExternalUrl" . }}|g' "$f"
+                sed -i 's|http://localhost:8100|{{ include "druppie.backendExternalUrl" . }}|g' "$f"
+                sed -i 's|http://localhost:5273|{{ include "druppie.frontendExternalUrl" . }}|g' "$f"
+              done
+              echo "Starting frontend server..."
+              exec npx serve -s /app/dist -l {{ .Values.frontend.port }}
+          {{- end }}
           env:
             - name: VITE_API_URL
               value: "{{ include "druppie.backendExternalUrl" . }}"

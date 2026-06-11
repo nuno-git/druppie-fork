@@ -78,7 +78,7 @@ worker_node_pools:
   # Runs: Keycloak, Gitea, MCP modules, CloudNativePG, monitoring
   # Not autoscaled — stable workloads that must not be evicted
   - name: infra
-    instance_type: cpx32                # 4 vCPU, 8GB RAM, 160GB NVMe
+    instance_type: cpx42                # 8 vCPU, 16GB RAM, 320GB NVMe
     instance_count: 1                   # Start with 1, scale to 2 manually if needed
     location: fsn1
     autoscaling:

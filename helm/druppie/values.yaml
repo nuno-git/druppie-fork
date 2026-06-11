@@ -11,6 +11,11 @@ global:
   # Local dev: localhost (path-based routing on port 9080)
   # Production: druppie.example.com
   domain: localhost
+  # Subdomain routing — set per-environment to enable dedicated subdomains
+  # When empty, falls back to path-based routing under the main domain
+  subdomains:
+    keycloak: ""
+    gitea: ""
   # Toggle for ingress (set true for kind/prod, false for bare port-forward)
   ingress:
     enabled: true

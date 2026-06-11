@@ -115,7 +115,11 @@ Keycloak external URL
 */}}
 {{- define "druppie.keycloakExternalUrl" -}}
 {{- if .Values.global.ingress.enabled -}}
+{{- if .Values.global.subdomains.keycloak -}}
+{{ include "druppie.scheme" . }}://{{ .Values.global.subdomains.keycloak }}
+{{- else -}}
 {{ include "druppie.externalBaseUrl" . }}
+{{- end -}}
 {{- else -}}
 http://{{ .Values.global.domain }}:{{ .Values.keycloak.nodePort }}
 {{- end -}}
@@ -126,7 +130,11 @@ Gitea external URL
 */}}
 {{- define "druppie.giteaExternalUrl" -}}
 {{- if .Values.global.ingress.enabled -}}
+{{- if .Values.global.subdomains.gitea -}}
+{{ include "druppie.scheme" . }}://{{ .Values.global.subdomains.gitea }}
+{{- else -}}
 {{ include "druppie.externalBaseUrl" . }}/git
+{{- end -}}
 {{- else -}}
 http://{{ .Values.global.domain }}:{{ .Values.gitea.nodePort }}
 {{- end -}}
