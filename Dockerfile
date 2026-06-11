@@ -13,8 +13,6 @@ RUN apt-get update && apt-get install -y \
     nodejs \
     npm \
     chromium \
-    tesseract-ocr \
-    poppler-utils \
     && rm -rf /var/lib/apt/lists/*
 
 # Configure Puppeteer to use system Chromium (skip bundled download)

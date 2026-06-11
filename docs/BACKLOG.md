@@ -2,7 +2,7 @@
 
 Bugs, implementation gaps, technical debt, and improvement ideas for the Druppie platform.
 
-Last updated: 2026-06-03
+Last updated: 2026-06-11
 
 ---
 
@@ -33,6 +33,7 @@ Last updated: 2026-06-03
 - ~~Skills System~~ ✅ DONE
 - Skill: MCP Server Integration for Generated Applications
 - Language Matching
+- File Upload: Context Window Guardrails for Large Attachments
 - Prompt Injection Protection
 - Compliance Agent for Input Validation
 - TDD Retry Counting in Python Runtime
@@ -241,6 +242,18 @@ Last updated: 2026-06-03
   - Detecting the language of the user's initial message and storing it on the session
   - Injecting a language instruction as a system prompt or into each agent's system prompt
   - Ensuring the Planner's generated prompts for each agent also carry the language preference
+
+### File Upload: Context Window Guardrails for Large Attachments
+
+- **Location:** `druppie/services/attachment_service.py`, `druppie/agents/builtin_tools.py` (`read_attachment`)
+- **Current state:** Uploaded files are stored with extracted text (up to 50,000 chars). The `read_attachment` builtin tool returns the full extracted text to the agent. If a user uploads a very large PDF (e.g., 1000 pages), the extracted text could still be substantial and the agent may exceed its context window when combining the attachment content with its prompt, tool history, and conversation context.
+- **Desired improvement:**
+  - Add a per-attachment token estimate (rough char/4 heuristic or tiktoken) at upload time
+  - Add a per-session total attachment size warning or hard limit
+  - In `read_attachment`, support pagination or chunked reading (e.g., `offset`/`limit` parameters) so agents can read large files incrementally
+  - Consider a `summarize_attachment` builtin tool that returns an LLM-generated summary instead of full text for very large files
+  - Add a session-level context budget that tracks how much space is used by attachments vs. prompt vs. history
+- **Priority:** Medium — prevents agent crashes on large uploads, but the 50K char extraction limit provides a partial guardrail already.
 
 ### Prompt Injection Protection
 

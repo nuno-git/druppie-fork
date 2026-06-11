@@ -38,6 +38,5 @@ class MessageAttachment(Base):
             "original_filename": self.original_filename,
             "content_type": self.content_type,
             "file_size": self.file_size,
-            "storage_path": self.storage_path,
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }

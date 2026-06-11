@@ -237,23 +237,17 @@ class Orchestrator:
 
     @staticmethod
     def _build_attachment_context(attachments) -> str:
-        """Build text context from message attachments for LLM prompts."""
+        """Build a file listing for LLM prompts (agents use read_attachment tool for content)."""
         if not attachments:
             return ""
-        parts = []
+        lines = ["\n\nUPLOADED FILES (use the read_attachment tool to read file contents):"]
         for att in attachments:
-            if att.extracted_text:
-                parts.append(
-                    f"\n\n[Attached file: {att.original_filename}]\n"
-                    f"{att.extracted_text}\n"
-                    f"[End of {att.original_filename}]"
-                )
-            elif att.content_type == "application/pdf":
-                parts.append(
-                    f"\n\n[Attached PDF: {att.original_filename} "
-                    f"({att.file_size} bytes) — text extraction unavailable]"
-                )
-        return "".join(parts)
+            size_kb = att.file_size / 1024
+            lines.append(
+                f"- {att.original_filename} (id: {att.id}, type: {att.content_type}, "
+                f"size: {size_kb:.1f} KB)"
+            )
+        return "\n".join(lines)
 
     def _format_projects_for_router(self, projects: list) -> str:
         """Format user's projects for injection into router prompt."""

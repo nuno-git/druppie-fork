@@ -311,6 +311,7 @@ async def upload_attachment(
     session_id: str | None = Query(None),
     user: dict = Depends(get_current_user),
     attachment_repo: AttachmentRepository = Depends(get_attachment_repository),
+    session_repo: SessionRepository = Depends(get_session_repository),
 ):
     """Upload a file to attach to a chat message.
 
@@ -329,8 +330,16 @@ async def upload_attachment(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    # Create DB record first to get a real UUID
+    # Verify session ownership when session_id is provided
     sid = UUID(session_id) if session_id else None
+    if sid:
+        session = session_repo.get_by_id(sid)
+        if not session:
+            raise NotFoundError("session", str(sid))
+        user_id = UUID(user["sub"])
+        user_roles = get_user_roles(user)
+        if session.user_id != user_id and "admin" not in user_roles:
+            raise AuthorizationError("Cannot upload to this session")
     attachment = attachment_repo.create(
         original_filename=filename,
         content_type=content_type,
@@ -349,7 +358,7 @@ async def upload_attachment(
 
     storage_path = f"uploads/{attachment.id}/{safe_name}"
     attachment.storage_path = storage_path
-    attachment.extracted_text = attachment_service.extract_text(file_path, content_type)
+    attachment.extracted_text = await attachment_service.extract_text(file_path, content_type)
     attachment_repo.db.commit()
 
     return {
