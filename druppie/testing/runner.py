@@ -570,11 +570,9 @@ class TestRunner:
             # will fail for non-English sessions, producing confusing errors)
             if not os.getenv("DEEPINFRA_API_KEY"):
                 logger.warning(
-                    "deepinfra_key_missing_for_test",
-                    test_name=test.name,
-                    message="DEEPINFRA_API_KEY is not set. Tests with non-English "
-                    "messages will fail with TranslationNotAvailableError. "
-                    "Set DEEPINFRA_API_KEY in .env to enable translation.",
+                    "DEEPINFRA_API_KEY is not set — test '%s' may fail if the "
+                    "message is non-English. Set DEEPINFRA_API_KEY in .env to "
+                    "enable translation.", test.name,
                 )
 
             # Phase 2: Execute real agents
