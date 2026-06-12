@@ -510,12 +510,26 @@ class AzureDevOpsModule:
             logger.warning("create_work_item failed: %s", exc)
             return {"success": False, "error": str(exc)}
 
+    async def _discover_kanban_column_field(self, item_id: int) -> str | None:
+        """Find the WEF Kanban.Column field reference name from a work item.
+
+        Azure DevOps stores board column state in a team-specific field
+        like ``WEF_<hex>_Kanban.Column``.  ``System.BoardColumn`` is
+        read-only — this writable WEF field is what we need to PATCH.
+        """
+        item = await self._client.get_work_item(item_id)
+        for field_name in item.get("fields", {}):
+            if field_name.endswith("_Kanban.Column"):
+                return field_name
+        return None
+
     async def update_work_item(
         self,
         item_id: int,
         title: str | None = None,
         description: str | None = None,
         state: str | None = None,
+        board_column: str | None = None,
         assigned_to: str | None = None,
         iteration: str | None = None,
         area_path: str | None = None,
@@ -535,6 +549,21 @@ class AzureDevOpsModule:
             "tags": tags,
         }
         operations = self._build_patch_operations(fields)
+
+        if board_column:
+            kanban_field = await self._discover_kanban_column_field(item_id)
+            if kanban_field:
+                operations.append({
+                    "op": "add",
+                    "path": f"/fields/{kanban_field}",
+                    "value": board_column,
+                })
+            else:
+                return {
+                    "success": False,
+                    "error": "Could not discover the Kanban column field for this work item. "
+                             "The board may not be configured for this item type.",
+                }
 
         if parent_id is not None:
             operations.append({

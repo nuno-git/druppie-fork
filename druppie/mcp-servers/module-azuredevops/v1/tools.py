@@ -225,6 +225,7 @@ async def update_work_item(
     title: str | None = None,
     description: str | None = None,
     state: str | None = None,
+    board_column: str | None = None,
     assigned_to: str | None = None,
     iteration: str | None = None,
     area_path: str | None = None,
@@ -241,12 +242,21 @@ async def update_work_item(
     Use get_work_item(item_id) first to see the current values before
     making changes.
 
+    Prefer board_column over state when moving items on the board — Azure
+    DevOps will automatically set the matching state. Setting state alone
+    may not move the item to the expected board column when multiple columns
+    share the same state.
+
     Args:
         item_id: The id of the work item to update.
         title: New title (omit to keep current).
         description: New HTML description (omit to keep current).
         state: New state, e.g. "New", "Approved", "Committed", "Done"
-            (omit to keep current).
+            (omit to keep current). Prefer board_column instead.
+        board_column: New board column, e.g. "New", "Ready", "In Progress",
+            "In Review", "Done" (omit to keep current). Azure DevOps
+            automatically updates the state to match. This is the
+            recommended way to move items on the board.
         assigned_to: New assignee display name (omit to keep current).
         iteration: New iteration/sprint path (omit to keep current).
         area_path: New area path (omit to keep current).
@@ -264,6 +274,7 @@ async def update_work_item(
         title=title,
         description=description,
         state=state,
+        board_column=board_column,
         assigned_to=assigned_to,
         iteration=iteration,
         area_path=area_path,
