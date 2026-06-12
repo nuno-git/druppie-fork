@@ -28,7 +28,7 @@ mcp = FastMCP(
         "Access to the backlog and work items of a single, pre-configured "
         "Azure DevOps project. You cannot choose or list other projects — "
         "every tool operates on the one configured project. Write operations "
-        "(create, update) require human approval before execution."
+        "(create, update, add comment) require human approval before execution."
     ),
 )
 
@@ -131,6 +131,39 @@ async def search_work_items(text: str, limit: int = 50) -> dict:
         Dict with the project name and matching items.
     """
     return await module.search_work_items(text, limit)
+
+
+@mcp.tool()
+async def get_work_item_comments(item_id: int, top: int = 50) -> dict:
+    """Get comments on a work item, newest first.
+
+    Args:
+        item_id: The work item id.
+        top: Maximum number of comments to return (default 50).
+
+    Returns:
+        Dict with comments (id, text, created_by, created_date, modified_date)
+        and total_count.
+    """
+    return await module.get_work_item_comments(item_id, top)
+
+
+@mcp.tool()
+async def add_work_item_comment(item_id: int, text: str) -> dict:
+    """Add a comment to a work item.
+
+    This tool requires human approval before execution. The approver will
+    see the comment text you provide.
+
+    Args:
+        item_id: The work item id to comment on.
+        text: The comment text (plain text or HTML).
+
+    Returns:
+        Dict with success status and created comment (id, work_item_id, text,
+        created_by, created_date).
+    """
+    return await module.add_work_item_comment(item_id, text)
 
 
 @mcp.tool()

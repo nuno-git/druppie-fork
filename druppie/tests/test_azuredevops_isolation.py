@@ -64,6 +64,8 @@ def test_tools_expose_exactly_the_expected_tools():
         "search_work_items",
         "create_work_item",
         "update_work_item",
+        "get_work_item_comments",
+        "add_work_item_comment",
     }
 
 
@@ -215,6 +217,35 @@ class _RecordingClient:
             },
         }
 
+    async def get_work_item_comments(self, item_id, top=None, order="desc"):
+        path = f"{self._real.project}/_apis/wit/workItems/{item_id}/comments"
+        self.gets.append((path, {"top": top, "order": order}))
+        return {
+            "totalCount": 1,
+            "count": 1,
+            "comments": [
+                {
+                    "id": 1,
+                    "workItemId": item_id,
+                    "text": "Test comment",
+                    "createdBy": {"displayName": "Test User"},
+                    "createdDate": "2026-01-01T00:00:00Z",
+                    "modifiedDate": "2026-01-01T00:00:00Z",
+                }
+            ],
+        }
+
+    async def add_work_item_comment(self, item_id, text):
+        path = f"{self._real.project}/_apis/wit/workItems/{item_id}/comments"
+        self.posts.append((path, {"text": text}))
+        return {
+            "id": 42,
+            "workItemId": item_id,
+            "text": text,
+            "createdBy": {"displayName": "Test User"},
+            "createdDate": "2026-01-01T00:00:00Z",
+        }
+
 
 @pytest.mark.asyncio
 async def test_all_requests_are_scoped_to_configured_project(monkeypatch):
@@ -305,3 +336,36 @@ async def test_update_work_item_rejects_empty_update(monkeypatch):
     result = await mod.update_work_item(item_id=123)
     assert result["success"] is False
     assert "No fields" in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_get_comments_is_project_scoped(monkeypatch):
+    module_mod = _load_module_under_test(monkeypatch)
+    mod = module_mod.AzureDevOpsModule()
+    rec = _RecordingClient(mod._client)
+    mod._client = rec
+
+    result = await mod.get_work_item_comments(item_id=100, top=10)
+    assert result["success"] is True
+    assert result["work_item_id"] == 100
+    assert len(result["comments"]) == 1
+
+    prefix = f"{_PROJECT}/_apis/"
+    for path, _ in rec.gets:
+        assert path.startswith(prefix), f"GET escaped project scope: {path}"
+
+
+@pytest.mark.asyncio
+async def test_add_comment_is_project_scoped(monkeypatch):
+    module_mod = _load_module_under_test(monkeypatch)
+    mod = module_mod.AzureDevOpsModule()
+    rec = _RecordingClient(mod._client)
+    mod._client = rec
+
+    result = await mod.add_work_item_comment(item_id=100, text="Hello")
+    assert result["success"] is True
+    assert result["comment"]["text"] == "Hello"
+
+    prefix = f"{_PROJECT}/_apis/"
+    for path, _ in rec.posts:
+        assert path.startswith(prefix), f"POST escaped project scope: {path}"
