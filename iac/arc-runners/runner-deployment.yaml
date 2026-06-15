@@ -1,0 +1,37 @@
+# GitHub Actions self-hosted runner via ARC (actions-runner-controller).
+# Runs in the cluster with Docker-in-Docker for image building.
+#
+# Prerequisites:
+#   1. ARC controller: helm install arc-controller arc/actions-runner-controller -n arc-system --version 0.23.7
+#   2. Auth secret: kubectl create secret generic controller-manager -n arc-system --from-literal=github_token=ghp_XXX
+#   3. RBAC: kubectl apply -f iac/arc-runners/rbac.yaml
+#
+# Runner labels: [self-hosted, druppie] — workflows use: runs-on: [self-hosted, druppie]
+---
+apiVersion: actions.summerwind.dev/v1alpha1
+kind: RunnerDeployment
+metadata:
+  name: druppie-runner
+  namespace: arc-system
+spec:
+  replicas: 1
+  template:
+    spec:
+      repository: nuno-git/druppie-fork
+      labels:
+        - druppie
+      # DinD image — Docker daemon built-in for `docker build`/`docker push`
+      image: summerwind/actions-runner-dind:latest
+      dockerdWithinRunnerContainer: true
+      # SA with cluster-admin for kubectl/helm during deploy step
+      serviceAccountName: arc-runner-sa
+      resources:
+        requests:
+          cpu: "500m"
+          memory: "1Gi"
+        limits:
+          cpu: "4000m"
+          memory: "4Gi"
+      env:
+        - name: RUNNER_DEBUG
+          value: "true"
