@@ -687,7 +687,7 @@ Task 1 (Stateless backend) ─── P0 ─── ✅ Voltooid
 │
 ├── Task 3 (Helm chart ready) ─── P0 ─── ✅ Voltooid
 │   ├── Task 4 (Ingress + TLS) ─── P1 ─── ✅ Voltooid
-│   ├── Task 5 (Sealed Secrets) ── P1 ─── ❌ Niet gestart
+│   ├── Task 5 (Secrets) ─────── P1 ─── ✅ Gitignored overlay (Sealed Secrets uitgesteld)
 │   ├── Task 6 (CloudNativePG) ─── P1 ─── ✅ Voltooid (instances=1 + PgBouncer)
 │   ├── Task 7 (KEDA + HPA) ────── P1 ─── ✅ Voltooid (dual trigger: PG + CPU)
 │   │   └── Task 8 (PDB + HA) ──── P1 ─── ✅ Templates klaar (disabled)
@@ -700,7 +700,7 @@ Task 1 (Stateless backend) ─── P0 ─── ✅ Voltooid
 └── Task 16 (DB pool fix) ─────── P0 ─── ✅ Voltooid (pool_size=5 + PgBouncer)
 ```
 
-**Samenvatting:** 13 van 16 taken voltooid. Overgebleven werk: Sealed Secrets (Task 5), CI/CD pipeline, CNPG HA (instances=3 + tweede infra node), CNPG backups.
+**Samenvatting:** 14 van 16 taken voltooid. Overgebleven werk: CI/CD pipeline, CNPG HA (instances=3 + tweede infra node), CNPG backups.
 
 ---
 
@@ -799,7 +799,7 @@ Task 1 (Stateless backend) ─── P0 ─── ✅ Voltooid
 | Backend stateless refactor breekt bestaande flows | Regression | ~~Medium~~ | ✅ Opgelost | DB-driven task guard werkt met 10 replicas |
 | ~~CloudNativePG operationele kennis ontbreekt~~ | ~~DB issues in productie~~ | ~~Medium~~ | ✅ Geïmplementeerd | CNPG draait, data gemigreerd, PgBouncer actief. HA (instances=3) is volgende stap. |
 | ~~HPA scaling te agressief of te traag~~ | ~~Oscillatie~~ | ~~Laag~~ | ✅ Opgelost | KEDA dual-trigger (PG + CPU) met aggressive scale-up werkt stabiel |
-| Sealed Secrets key verloren | Alle secrets ontoegankelijk | Medium | ⬚ Open | Private key backup procedure + test. |
+| ~~Sealed Secrets key verloren~~ | ~~Alle secrets ontoegankelijk~~ | ~~Medium~~ | ✅ Opgelost | Sealed Secrets niet gebruikt — gitignored overlay is de productie-oplossing (Task 5). |
 | ~~Traefik path rewrite voor Gitea~~ | ~~Broken routing~~ | ~~Medium~~ | ✅ Opgelost | Subdomain routing werkt (geen path rewrite nodig) |
 | Backend image ~4GB, te groot voor 10 replicas | Hoge RAM costs | Medium | ⬚ Open | Multi-stage build als vervolgstap. |
 | Docker niet beschikbaar op CA-provisioned nodes | Pods stuck in Init | Hoog | ⚠️ Deels opgelost | DaemonSet installeert Docker, maar timing issue bij nieuwe nodes. Fix: cloud-init of optional mount. |
