@@ -806,4 +806,102 @@ Task 1 (Stateless backend) ─── P0 ─── ✅ Voltooid
 | ~~Helm upgrade faalt door ownership annotations~~ | ~~Geen declaratieve upgrades~~ | ~~Hoog~~ | ✅ Opgelost | Helm annotations toegevoegd, `helm upgrade` slaagt (revision 23+) |
 | CNPG instances=1 (single point of failure) | DB uitval bij infra node failure | Medium | ⬚ Open | `instances: 3` + tweede infra node voor HA. PgBouncer geeft connection-level resilience. |
 | DB pool exhaustion bij hoge load | Crashes bij 125+ rps | ~~Hoog~~ | ✅ Opgelost | pool_size=5/max_overflow=5 + PgBouncer transaction-mode multiplexing |
-| CNPG password drift | Auth failures na reconciliatie | Laag | ⚠️ Handmatig opgelost | ALTER USER + secret patch. Lange termijn: CNPG-managed secret reference. |
+| CNPG password drift | Auth failures na reconciliatie | Laag | ⚠️ Handmatig opgelost | ALTER USER + secret patch. Recovery procedure gedocumenteerd in Appendix A. |
+
+---
+
+## Appendix A: CNPG Password Recovery Runbook
+
+### Het probleem
+
+CloudNativePG genereert willekeurige wachtwoorden bij bootstrap en slaat deze op in CNPG-managed secrets (bijv. `druppie-druppie-db-app`). Onze Helm `postInitApplicationSQL` overschrijft het app user wachtwoord naar onze bekende waarde (`druppie_secret`, `keycloak_secret`, `gitea_secret`) **tijdens bootstrap**. Daarna roteert CNPG dit wachtwoord echter niet meer automatisch.
+
+**Risico scenario's:**
+1. **CNPG reconciliatie** die het app secret herschrijft (zeldzaam, maar mogelijk bij operator upgrades of handmatige `kubectl edit cluster`)
+2. **Cluster recreatie** (na PVC verlies of handmatige delete + recreate) — `postInitApplicationSQL` draait opnieuw, maar de superuser secret kan driften
+3. **Password mismatch** tussen CNPG-managed secret en PostgreSQL internals
+
+### Symptomen
+
+- Backend pods crashen met `FATAL: password authentication failed for user "druppie"`
+- Keycloak/Gitea kunnen niet verbinden met hun database
+- `kubectl logs <cnpg-pod>` toont auth failures
+
+### Recovery procedure
+
+#### Stap 1: Verifieer het probleem
+
+```bash
+# Check of backend auth faalt
+KUBECONFIG=./kubeconfig kubectl logs -n druppie -l app.kubernetes.io/component=backend --tail=20 | grep -i "auth\|password\|FATAL"
+
+# Check CNPG app secret (CNPG-managed, kan random wachtwoord bevatten)
+KUBECONFIG=./kubeconfig kubectl get secret -n druppie druppie-druppie-db-app -o jsonpath='{.data.password}' | base64 -d
+
+# Check onze superuser secret (Helm-managed, heeft ons bekende wachtwoord)
+KUBECONFIG=./kubeconfig kubectl get secret -n druppie druppie-druppie-db-superuser -o jsonpath='{.data.password}' | base64 -d
+```
+
+#### Stap 2: Reset wachtwoord in PostgreSQL
+
+```bash
+# Connect via CNPG superuser (onze superuser secret heeft het juiste wachtwoord)
+KUBECONFIG=./kubeconfig kubectl exec -n druppie druppie-druppie-db-1 -c postgres -- \
+  psql -U postgres -d druppie -c "ALTER USER druppie WITH PASSWORD 'druppie_secret';"
+
+# Herhaal voor keycloak en gitea indien nodig:
+KUBECONFIG=./kubeconfig kubectl exec -n druppie druppie-keycloak-db-1 -c postgres -- \
+  psql -U postgres -d keycloak -c "ALTER USER keycloak WITH PASSWORD 'keycloak_secret';"
+
+KUBECONFIG=./kubeconfig kubectl exec -n druppie druppie-gitea-db-1 -c postgres -- \
+  psql -U postgres -d gitea -c "ALTER USER gitea WITH PASSWORD 'gitea_secret';"
+```
+
+#### Stap 3: Patch CNPG-managed app secret
+
+CNPG heeft een eigen `-app` secret met mogelijk een verouderd wachtwoord. Patch deze zodat CNPG reconciliatie ons wachtwoord niet overschrijft:
+
+```bash
+# Druppie DB
+KUBECONFIG=./kubeconfig kubectl patch secret -n druppie druppie-druppie-db-app \
+  -p '{"data":{"password":"'"$(echo -n 'druppie_secret' | base64)"'"}}'
+
+# Keycloak DB
+KUBECONFIG=./kubeconfig kubectl patch secret -n druppie druppie-keycloak-db-app \
+  -p '{"data":{"password":"'"$(echo -n 'keycloak_secret' | base64)"'"}}'
+
+# Gitea DB
+KUBECONFIG=./kubeconfig kubectl patch secret -n druppie druppie-gitea-db-app \
+  -p '{"data":{"password":"'"$(echo -n 'gitea_secret' | base64)"'"}}'
+```
+
+#### Stap 4: Herstart affected workloads
+
+```bash
+# Restart backend pods (ze halen DATABASE_URL uit druppie-secrets, die klopt al)
+KUBECONFIG=./kubeconfig kubectl rollout restart deployment -n druppie druppie-backend
+
+# Restart PgBouncer (cache connection credentials)
+KUBECONFIG=./kubeconfig kubectl rollout restart deployment -n druppie druppie-druppie-db-pooler
+
+# Keycloak en Gitea herstarten automatisch bij Secret changes indien met envFrom geconfigureerd
+KUBECONFIG=./kubeconfig kubectl rollout restart statefulset -n druppie keycloak
+KUBECONFIG=./kubeconfig kubectl rollout restart statefulset -n druppie gitea
+```
+
+#### Stap 5: Verifieer
+
+```bash
+# Backend health check
+KUBECONFIG=./kubeconfig kubectl exec -n druppie deploy/druppie-backend -- \
+  curl -s http://localhost:8100/health | head -5
+
+# Direct PgBouncer query test
+KUBECONFIG=./kubeconfig kubectl exec -n druppie deploy/druppie-backend -- \
+  python -c "import asyncio; from druppie.db.database import get_session; print('DB OK')"
+```
+
+### Preventie
+
+- De `postInitApplicationSQL` in elke Cluster template (`helm/druppie/templates/databases/*.yaml`) zet ons wachtwoord bij bootstrap. Dit werkt alleen bij **nieuwe** clusters, niet bij reconciliatie van bestaande.
+- **Long-term fix:** Gebruik CNPG-managed secret references in `DATABASE_URL` in plaats van hardcoded wachtwoorden. CNPG genereert een `<cluster>-app` secret met `username`, `password`, `host`, `port`, `dbname` keys. De backend kan deze direct gebruiken zonder hardcoded wachtwoord.
