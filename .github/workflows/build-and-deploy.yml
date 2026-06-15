@@ -31,6 +31,14 @@ jobs:
             docker login git.druppie.rijnland.dev \
               -u gitea_admin --password-stdin
 
+      - name: Setup Docker BuildKit
+        run: |
+          mkdir -p /usr/local/lib/docker/cli-plugins
+          curl -sL -o /usr/local/lib/docker/cli-plugins/docker-buildx \
+            https://github.com/docker/buildx/releases/download/v0.12.1/buildx-v0.12.1.linux-amd64
+          chmod +x /usr/local/lib/docker/cli-plugins/docker-buildx
+          docker buildx version
+
       - name: Build and push backend
         run: |
           DOCKER_BUILDKIT=1 docker build \
@@ -221,6 +229,13 @@ jobs:
           echo "${{ secrets.GITEA_TOKEN }}" | \
             docker login git.druppie.rijnland.dev \
               -u gitea_admin --password-stdin
+
+      - name: Setup Docker BuildKit
+        run: |
+          mkdir -p /usr/local/lib/docker/cli-plugins
+          curl -sL -o /usr/local/lib/docker/cli-plugins/docker-buildx \
+            https://github.com/docker/buildx/releases/download/v0.12.1/buildx-v0.12.1.linux-amd64
+          chmod +x /usr/local/lib/docker/cli-plugins/docker-buildx
 
       - name: Build backend (PR preview)
         run: |
