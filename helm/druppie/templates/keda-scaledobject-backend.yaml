@@ -42,14 +42,14 @@ spec:
     horizontalPodAutoscalerConfig:
       behavior:
         scaleUp:
-          stabilizationWindowSeconds: 30
+          stabilizationWindowSeconds: 0
           policies:
             - type: Pods
-              value: 2
-              periodSeconds: 60
+              value: 4
+              periodSeconds: 30
             - type: Percent
-              value: 100
-              periodSeconds: 60
+              value: 200
+              periodSeconds: 30
         scaleDown:
           stabilizationWindowSeconds: 180  # 3 min before scale-down
           policies:

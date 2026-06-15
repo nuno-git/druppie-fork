@@ -34,6 +34,15 @@ spec:
         - podSelector:
             matchLabels:
               {{- include "druppie.selectorLabels" . | nindent 14 }}
+    {{- if .Values.cnpg.enabled }}
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/managed-by: cloudnative-pg
+      ports:
+        - port: 5432
+          protocol: TCP
+    {{- end }}
     - to:
         - ipBlock:
             cidr: 0.0.0.0/0

@@ -96,6 +96,15 @@ spec:
         - name: backend
           image: {{ include "druppie.image" (dict "Values" .Values "image" .Values.backend.image) }}
           imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          command:
+            - uvicorn
+            - druppie.api.main:app
+            - --host
+            - "0.0.0.0"
+            - --port
+            - {{ .Values.backend.port | quote }}
+            - --workers
+            - {{ .Values.backend.workers | default "2" | quote }}
           envFrom:
             - configMapRef:
                 name: {{ include "druppie.fullname" . }}-config

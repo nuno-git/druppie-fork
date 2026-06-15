@@ -6,9 +6,15 @@ metadata:
   labels:
     {{- include "druppie.labels" . | nindent 4 }}
 spec:
+  {{- if .Values.cnpg.enabled }}
+  podSelector:
+    matchLabels:
+      cnpg.io/cluster: {{ include "druppie.fullname" . }}-druppie-db
+  {{- else }}
   podSelector:
     matchLabels:
       app.kubernetes.io/component: druppie-db
+  {{- end }}
   policyTypes:
     - Ingress
   ingress:
@@ -16,6 +22,14 @@ spec:
         - namespaceSelector:
             matchLabels:
               app.kubernetes.io/managed-by: keda
+        {{- if .Values.cnpg.enabled }}
+        - podSelector:
+            matchLabels:
+              {{- include "druppie.selectorLabels" . | nindent 14 }}
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/managed-by: cloudnative-pg
+        {{- end }}
       ports:
         - port: {{ .Values.postgresql.druppie.port }}
           protocol: TCP

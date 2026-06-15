@@ -8,16 +8,37 @@ metadata:
     {{- include "druppie.labels" . | nindent 4 }}
     app.kubernetes.io/component: gitea-db
 spec:
-  instances: {{ .Values.cnpg.gitea.instances | default 3 }}
+  imageName: ghcr.io/cloudnative-pg/postgresql:15-standard-bookworm
+  instances: 1
+
+  superuserSecret:
+    name: {{ include "druppie.fullname" . }}-gitea-db-superuser
+
+  enableSuperuserAccess: true
+
   postgresql:
     parameters:
       shared_buffers: "128MB"
       max_connections: "100"
+
+  bootstrap:
+    initdb:
+      database: {{ .Values.postgresql.gitea.database | quote }}
+      owner: {{ .Values.postgresql.gitea.username | quote }}
+      postInitApplicationSQL:
+        - ALTER USER {{ .Values.postgresql.gitea.username }} WITH PASSWORD '{{ .Values.postgresql.gitea.password }}'
+
   storage:
     size: {{ .Values.cnpg.gitea.storage | default "5Gi" }}
     {{- if .Values.persistence.storageClass }}
     storageClass: {{ .Values.persistence.storageClass | quote }}
     {{- end }}
-  monitoring:
-    enablePodMonitor: {{ .Values.cnpg.monitoring.enabled | default false }}
+
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "250m"
+    limits:
+      memory: "1Gi"
+      cpu: "1000m"
 {{- end }}

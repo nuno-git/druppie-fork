@@ -29,6 +29,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
+import csv
 import httpx
 import matplotlib
 matplotlib.use("Agg")
@@ -50,12 +51,10 @@ READ_ENDPOINTS = [
 ]
 
 RAMP_STAGES = [
-    (10, 20),
-    (25, 20),
-    (50, 30),
-    (75, 30),
-    (100, 40),
-    (125, 40),
+    (75, 60),
+    (125, 60),
+    (175, 90),
+    (200, 120),
 ]
 
 
@@ -232,6 +231,28 @@ def percentile(data: list[float], pct: int) -> float:
     s = sorted(data)
     idx = min(int(len(s) * pct / 100), len(s) - 1)
     return s[idx]
+
+
+def save_csv(test_data: TestData, output_dir: Path, ts: str):
+    output_dir.mkdir(parents=True, exist_ok=True)
+    with open(output_dir / f"requests_{ts}.csv", "w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["timestamp", "elapsed_s", "stage", "method", "endpoint", "status", "latency_ms"])
+        for r in test_data.requests:
+            w.writerow([f"{r.timestamp:.3f}", f"{r.timestamp - test_data.start_time:.3f}",
+                        r.stage, r.method, r.endpoint, r.status, f"{r.latency_ms:.2f}"])
+    with open(output_dir / f"metrics_{ts}.csv", "w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["timestamp", "elapsed_s", "backend_pods", "backend_ready", "app_nodes",
+                     "backend_cpu_m", "backend_mem_mi", "db_cpu_m", "db_mem_mi",
+                     "db_connections", "running_agent_runs"])
+        for m in test_data.metrics:
+            w.writerow([f"{m.timestamp:.3f}", f"{m.timestamp - test_data.start_time:.3f}",
+                        m.backend_pods, m.backend_ready, m.app_nodes,
+                        m.backend_cpu_m, m.backend_mem_mi, m.db_cpu_m, m.db_mem_mi,
+                        m.db_connections, m.running_agent_runs])
+    print(f"  CSV: requests_{ts}.csv ({len(test_data.requests)} rows)")
+    print(f"  CSV: metrics_{ts}.csv ({len(test_data.metrics)} rows)")
 
 
 def generate_charts(test_data: TestData, output_dir: Path, domain: str):
@@ -465,6 +486,11 @@ async def main():
 
     stop_event.set()
     await metrics_task
+
+    print("\n" + "=" * 60)
+    print("  SAVING CSV DATA")
+    print("=" * 60)
+    save_csv(test_data, output_dir, datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S"))
 
     print("\n" + "=" * 60)
     print("  GENERATING CHARTS")
