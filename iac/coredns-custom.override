@@ -1,0 +1,1 @@
+rewrite name git.druppie.rijnland.dev traefik.traefik.svc.cluster.local
