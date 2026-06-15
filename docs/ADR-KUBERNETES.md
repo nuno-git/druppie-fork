@@ -274,27 +274,15 @@ cert-manager + Let's Encrypt verzorgt automatische TLS certificaten. Geen handma
 - Cilium Ingress: te zwaar voor huidige behoeften, hogere leercurve
 - HAProxy: overkill voor deze schaal
 
-### 4.6 Secrets: Sealed Secrets
+### 4.6 Secrets: Gitignored Values Overlay (beslissing overschreven)
 
-**Gekozen:** Sealed Secrets (Bitnami, v0.27+) voor alle gevoelige configuratie (API keys, DB wachtwoorden, HMAC secrets).
+**Gekozen:** Gitignored `values-hetzner.secrets.yaml` overlay. **Oorspronkelijke keuze was Sealed Secrets — overschreven tijdens implementatie.**
 
-**Waarom:** Sealed Secrets versleutelt Kubernetes Secrets asymmetrisch. De versleutelde `SealedSecret` resources gaan veilig in git. De controller in het cluster ontsleutelt ze naar gewone Kubernetes Secrets. Lage complexiteit, geen extra infrastructuur (alleen de controller in het cluster).
+> **Implementatie status (juni 2026):** ✅ De gitignored overlay wordt geaccepteerd als definitieve oplossing. Sealed Secrets is uitgesteld naar Phase 2 (indien ooit nodig).
 
-**Kritiek:** Backup van de Sealed Secrets controller private key is verplicht. Zonder deze key zijn alle sealed secrets ontoegankelijk na een cluster rebuild.
+**Waarom afgeweken van Sealed Secrets:** Bij implementatie bleek dat de gitignored overlay simpeler, veiliger (secrets staan letterlijk niet in de repo), en voldoende is voor een klein team. Sealed Secrets voegt een operator, key backup procedures, en encrypted secrets in git toe — complexiteit zonder duidelijke meerwaarde voor deze use case.
 
-```bash
-# Secret versleutelen
-kubectl create secret generic druppie-secrets \
-  --from-literal=zai-api-key=sk-xxx \
-  --from-literal=db-password=xxx \
-  --dry-run=client -o yaml | kubeseal > sealed-secrets.yaml
-```
-
-**Afgewezen:**
-- External Secrets Operator: vereist externe secret store, meer complexiteit
-- HashiCorp Vault: BSL 1.1 licentie (niet open source), zware infrastructuur (3+ nodes)
-- SOPS + age: geen automatische sync, handmatige deploy cyclus
-- Plaintext Helm values: niet veilig voor productie
+**Huidige aanpak:** Secrets in `values-hetzner.secrets.yaml` (gitignored), toegepast via `helm upgrade -f values-hetzner.secrets.yaml`. Backup offline in password manager.
 
 ### 4.7 Monitoring: kube-prometheus-stack
 

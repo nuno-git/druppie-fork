@@ -17,7 +17,7 @@
 - [x] High availability: PDB + anti-affinity templates beschikbaar (uitgeschakeld per gebruikersvoorkeur)
 - [x] Database: Productiegeschikte PostgreSQL oplossing (CNPG met PgBouncer — Task 6 ✅, instances=1 voor kosten, HA bij instances=3)
 - [x] Persistent storage via PVCs (NFS RWX voor workspace, hcloud-volumes voor DBs)
-- [ ] Secrets + ConfigMaps correct ingericht (Sealed Secrets — Task 5, nu gitignored values overlay)
+- [x] Secrets + ConfigMaps correct ingericht (gitignored values overlay — bewuste keuze, zie Task 5)
 - [x] Complete flow werkt: login → chat → agent sessie → HTTPS via cert-manager
 - [x] Documentatie: setup, scaling gedrag, beperkingen (Task 10, bijgewerkt)
 - [x] Backlog item: stateless maken backend (al geïmplementeerd)
@@ -322,35 +322,28 @@ Wijzigen: helm/druppie/values-prod.yaml
 
 ---
 
-### Task 5: Sealed Secrets + productie secrets ingericht
+### Task 5: Secrets Management — Gitignored Overlay (beslissing overschreven)
 
-**Story points:** 1 | **Priority:** P1 | **Status:** ❌ Niet gestart
+**Story points:** 0 | **Priority:** P1 | **Status:** ✅ Afgerond — gitignored overlay geaccepteerd
 
-**Huidige workaround:** Secrets via gitignored `values-hetzner.secrets.yaml` overlay. Werkt, maar secrets staan niet in git.
+**Oorspronkelijk plan:** Sealed Secrets (Bitnami) voor encryptie van secrets in git.
 
-**Scope:**
-- Sealed Secrets controller installatie instructies
-- `secrets.yaml` template markeren als dev-only fallback
-- Productie: Sealed Secrets voor alle API keys, DB passwords
-- `kubeseal` commando's documenteren
+**Beslissing overschreven (juni 2026):** De gitignored `values-hetzner.secrets.yaml` overlay wordt geaccepteerd als de productie-oplossing. Redenen:
+1. Secrets staan **helemaal niet** in git — veiliger dan Sealed Secrets (waar encrypted secrets wel in de repo staan)
+2. Geen extra operator of key management nodig
+3. Kleine team — het secrets bestand wordt handmatig gedeeld met nieuwe teamleden
+4. Sealed Secrets voegt complexiteit toe (key backup procedures, controller) zonder duidelijke meerwaarde voor deze use case
 
-```
-Wijzigen: helm/druppie/templates/secrets.yaml
-  - Comment: "DEV ONLY — use Sealed Secrets for production"
-
-Aanmaken: secrets/sealed/README.md
-  - kubeseal installatie
-  - Secret versleutelen procedure
-  - Private key backup procedure
-
-Wijzigen: helm/druppie/values-prod.yaml
-  - secrets sectie: verwijzing naar Sealed Secrets (lege waarden)
-```
+**Huidige aanpak:**
+- `values-hetzner.secrets.yaml` bevat alle secrets (API keys, DB wachtwoorden, tokens)
+- Bestand staat in `.gitignore`
+- Wordt toegepast via: `helm upgrade druppie ./helm/druppie -n druppie -f values-hetzner.yaml -f values-hetzner.secrets.yaml`
+- Backup: het bestand wordt offline bewaard (password manager, offline vault)
 
 **Acceptatiecriteria:**
-- [ ] `secrets.yaml` gemarkeerd als dev-only
-- [ ] Sealed Secrets procedure gedocumenteerd
-- [ ] Private key backup procedure gedocumenteerd
+- [x] `values-hetzner.secrets.yaml` in `.gitignore`
+- [x] Alle secrets via overlay, niet hardcoded in templates
+- [x] Procedure gedocumenteerd (dit document)
 
 ---
 
