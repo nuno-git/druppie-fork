@@ -37,7 +37,7 @@ jobs:
 
       - name: Build and push backend
         run: |
-          DOCKER_BUILDKIT=1 docker build \
+          DOCKER_BUILDKIT=1 docker build --network=host \
             -t $PUSH_REGISTRY/druppie-backend:$IMAGE_TAG \
             -f Dockerfile .
 
@@ -45,7 +45,7 @@ jobs:
 
       - name: Build and push frontend
         run: |
-          DOCKER_BUILDKIT=1 docker build \
+          DOCKER_BUILDKIT=1 docker build --network=host \
             --build-arg VITE_API_URL=https://druppie.rijnland.dev \
             --build-arg VITE_KEYCLOAK_URL=https://auth.druppie.rijnland.dev \
             --build-arg VITE_KEYCLOAK_REALM=druppie \
@@ -58,7 +58,7 @@ jobs:
 
       - name: Build and push init
         run: |
-          DOCKER_BUILDKIT=1 docker build \
+          DOCKER_BUILDKIT=1 docker build --network=host \
             -t $PUSH_REGISTRY/druppie-init:$IMAGE_TAG \
             -f Dockerfile.init .
 
@@ -66,70 +66,70 @@ jobs:
 
       - name: Build and push module-archimate
         run: |
-          DOCKER_BUILDKIT=1 docker build \
+          DOCKER_BUILDKIT=1 docker build --network=host \
             -t $PUSH_REGISTRY/druppie-module-archimate:$IMAGE_TAG \
             -f druppie/mcp-servers/module-archimate/Dockerfile druppie/
           docker push $PUSH_REGISTRY/druppie-module-archimate:$IMAGE_TAG
 
       - name: Build and push module-docker
         run: |
-          DOCKER_BUILDKIT=1 docker build \
+          DOCKER_BUILDKIT=1 docker build --network=host \
             -t $PUSH_REGISTRY/druppie-module-docker:$IMAGE_TAG \
             -f druppie/mcp-servers/module-docker/Dockerfile druppie/
           docker push $PUSH_REGISTRY/druppie-module-docker:$IMAGE_TAG
 
       - name: Build and push module-registry
         run: |
-          DOCKER_BUILDKIT=1 docker build \
+          DOCKER_BUILDKIT=1 docker build --network=host \
             -t $PUSH_REGISTRY/druppie-module-registry:$IMAGE_TAG \
             -f druppie/mcp-servers/module-registry/Dockerfile druppie/
           docker push $PUSH_REGISTRY/druppie-module-registry:$IMAGE_TAG
 
       - name: Build and push module-coding
         run: |
-          DOCKER_BUILDKIT=1 docker build \
+          DOCKER_BUILDKIT=1 docker build --network=host \
             -t $PUSH_REGISTRY/druppie-module-coding:$IMAGE_TAG \
             -f druppie/mcp-servers/module-coding/Dockerfile druppie/mcp-servers/
           docker push $PUSH_REGISTRY/druppie-module-coding:$IMAGE_TAG
 
       - name: Build and push module-data-access
         run: |
-          DOCKER_BUILDKIT=1 docker build \
+          DOCKER_BUILDKIT=1 docker build --network=host \
             -t $PUSH_REGISTRY/druppie-module-data-access:$IMAGE_TAG \
             -f druppie/mcp-servers/module-data-access/Dockerfile druppie/mcp-servers/
           docker push $PUSH_REGISTRY/druppie-module-data-access:$IMAGE_TAG
 
       - name: Build and push module-filesearch
         run: |
-          DOCKER_BUILDKIT=1 docker build \
+          DOCKER_BUILDKIT=1 docker build --network=host \
             -t $PUSH_REGISTRY/druppie-module-filesearch:$IMAGE_TAG \
             -f druppie/mcp-servers/module-filesearch/Dockerfile druppie/mcp-servers/
           docker push $PUSH_REGISTRY/druppie-module-filesearch:$IMAGE_TAG
 
       - name: Build and push module-llm
         run: |
-          DOCKER_BUILDKIT=1 docker build \
+          DOCKER_BUILDKIT=1 docker build --network=host \
             -t $PUSH_REGISTRY/druppie-module-llm:$IMAGE_TAG \
             -f druppie/mcp-servers/module-llm/Dockerfile druppie/mcp-servers/
           docker push $PUSH_REGISTRY/druppie-module-llm:$IMAGE_TAG
 
       - name: Build and push module-vision
         run: |
-          DOCKER_BUILDKIT=1 docker build \
+          DOCKER_BUILDKIT=1 docker build --network=host \
             -t $PUSH_REGISTRY/druppie-module-vision:$IMAGE_TAG \
             -f druppie/mcp-servers/module-vision/Dockerfile druppie/mcp-servers/
           docker push $PUSH_REGISTRY/druppie-module-vision:$IMAGE_TAG
 
       - name: Build and push module-web
         run: |
-          DOCKER_BUILDKIT=1 docker build \
+          DOCKER_BUILDKIT=1 docker build --network=host \
             -t $PUSH_REGISTRY/druppie-module-web:$IMAGE_TAG \
             -f druppie/mcp-servers/module-web/Dockerfile druppie/mcp-servers/
           docker push $PUSH_REGISTRY/druppie-module-web:$IMAGE_TAG
 
       - name: Build and push layout-service
         run: |
-          DOCKER_BUILDKIT=1 docker build \
+          DOCKER_BUILDKIT=1 docker build --network=host \
             -t $PUSH_REGISTRY/druppie-layout-service:$IMAGE_TAG \
             -f druppie/mcp-servers/layout-service/Dockerfile \
               druppie/mcp-servers/layout-service/
@@ -231,14 +231,14 @@ jobs:
 
       - name: Build backend (PR preview)
         run: |
-          DOCKER_BUILDKIT=1 docker build \
+          DOCKER_BUILDKIT=1 docker build --network=host \
             -t $PUSH_REGISTRY/druppie-backend:pr-${{ github.event.pull_request.number }} \
             -f Dockerfile .
           docker push $PUSH_REGISTRY/druppie-backend:pr-${{ github.event.pull_request.number }}
 
       - name: Build frontend (PR preview)
         run: |
-          DOCKER_BUILDKIT=1 docker build \
+          DOCKER_BUILDKIT=1 docker build --network=host \
             --build-arg VITE_API_URL=https://druppie.rijnland.dev \
             --build-arg VITE_KEYCLOAK_URL=https://auth.druppie.rijnland.dev \
             --build-arg VITE_KEYCLOAK_REALM=druppie \
