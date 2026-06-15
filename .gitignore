@@ -77,3 +77,8 @@ pi-coding-one-shot-agent/
 evaluation_config.yaml
 iac/cluster.secrets.yaml
 kubeconfig
+
+# Load test result images (backed up to ~/Downloads)
+testing/autoscaling/results/*.png
+testing/autoscaling/results/*.jpg
+testing/autoscaling/results/*.jpeg
