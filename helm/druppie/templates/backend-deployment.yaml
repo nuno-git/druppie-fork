@@ -146,7 +146,7 @@ spec:
             httpGet:
               path: /health
               port: {{ .Values.backend.port }}
-            initialDelaySeconds: 30
+            initialDelaySeconds: 120    # 50 workers need ~60-90s to start on 1 CPU
             periodSeconds: 10
             timeoutSeconds: 5
             failureThreshold: 10
@@ -154,7 +154,7 @@ spec:
             httpGet:
               path: /health
               port: {{ .Values.backend.port }}
-            initialDelaySeconds: 15
+            initialDelaySeconds: 60     # Wait for workers to bind port
             periodSeconds: 10
             timeoutSeconds: 5
             failureThreshold: 10

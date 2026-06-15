@@ -51,11 +51,11 @@ PROMETHEUS_PORT = 9090
 METRICS_INTERVAL = 15  # seconds between metric snapshots
 
 RAMP_STAGES = [
-    (10, 60),   # 10 sessions/sec for 60s  -- warmup
-    (25, 90),   # 25 sessions/sec for 90s  -- moderate
-    (50, 120),  # 50 sessions/sec for 120s -- heavy (KEDA should scale)
-    (75, 120),  # 75 sessions/sec for 120s -- peak (CA should provision)
-    (100, 120), # 100 sessions/sec for 120s -- max sustained
+    (5, 90),    # 5 sessions/sec for 90s   — warmup, 1→2 pods
+    (10, 90),   # 10 sessions/sec for 90s  — moderate, 2→3 pods
+    (15, 120),  # 15 sessions/sec for 120s — heavier, 3→5 pods
+    (20, 120),  # 20 sessions/sec for 120s — peak, 5→7 pods, 2nd node
+    (25, 120),  # 25 sessions/sec for 120s — max sustained, 7→8 pods
 ]
 
 API_ENDPOINTS = [

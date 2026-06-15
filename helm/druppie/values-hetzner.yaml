@@ -91,14 +91,14 @@ backend:
   replicaCount: 1
   devMode: false
   dockerSocket:
-    enabled: true                   # Needed for compose_up sandbox
+    enabled: false                  # Docker socket only needed on infra nodes (module-coding/module-docker)
   resources:
     requests:
-      memory: "1Gi"
+      memory: "1Gi"              # High request to fill nodes faster → triggers CA sooner
       cpu: "500m"
     limits:
-      memory: "4Gi"
-      cpu: "2000m"
+      memory: "2Gi"               # 2 uvicorn workers ~500Mi steady, ~1.2Gi startup
+      cpu: "1000m"                # I/O-bound async workers
 
 # Frontend
 frontend:
@@ -134,8 +134,8 @@ secrets:
 autoscaling:
   backend:
     enabled: true
-    minReplicas: 1
-    maxReplicas: 10
+    minReplicas: 1               # Single warm pod — 2 won't fit on one 8Gi node during startup
+    maxReplicas: 8                 # 8 pods × 1Gi req = 8Gi → fills 1 CPX32, triggers 2nd node
     targetCPUUtilizationPercentage: 70
   frontend:
     enabled: true
@@ -146,13 +146,14 @@ autoscaling:
 # KEDA session-based autoscaling (replaces backend CPU HPA)
 keda:
   enabled: true
-  pollingInterval: 15
-  cooldownPeriod: 300
+  pollingInterval: 5             # Check DB every 5s (was 15s) — 3x faster reaction
+  cooldownPeriod: 120            # 2 min before scale-down starts (was 5 min)
   sslmode: disable
   backend:
     query: "SELECT COUNT(*) FROM agent_runs WHERE status = 'running'"
-    targetQueryValue: "50"
-    activationTargetQueryValue: "0"
+    targetQueryValue: "10"
+    activationTargetQueryValue: "3"
+    targetCPUUtilization: "55"
 
 # Phase 1: No CNPG yet (Task 6)
 cnpg:

@@ -16,6 +16,12 @@ spec:
   minReplicaCount: {{ .Values.autoscaling.backend.minReplicas }}
   maxReplicaCount: {{ .Values.autoscaling.backend.maxReplicas }}
   triggers:
+    # Trigger 1: CPU-based — scales on read-heavy load (GET endpoints don't create agent_runs)
+    - type: cpu
+      metricType: Utilization
+      metadata:
+        value: "{{ .Values.keda.backend.targetCPUUtilization | default "60" }}"
+    # Trigger 2: PostgreSQL — scales based on active agent runs (write/chat load)
     - type: postgresql
       metadata:
         {{- if .Values.cnpg.enabled }}
@@ -36,15 +42,18 @@ spec:
     horizontalPodAutoscalerConfig:
       behavior:
         scaleUp:
-          stabilizationWindowSeconds: 60
+          stabilizationWindowSeconds: 30
           policies:
             - type: Pods
               value: 2
               periodSeconds: 60
-        scaleDown:
-          stabilizationWindowSeconds: 300
-          policies:
             - type: Percent
-              value: 50
+              value: 100
               periodSeconds: 60
+        scaleDown:
+          stabilizationWindowSeconds: 180  # 3 min before scale-down
+          policies:
+            - type: Pods
+              value: 1                     # Remove 1 pod at a time (gentle)
+              periodSeconds: 120           # Every 2 min — prevents oscillation
 {{- end }}

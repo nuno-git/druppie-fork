@@ -35,6 +35,17 @@ spec:
                   key: DRUPPIE_DB_PASSWORD
             - name: PGDATA
               value: "/var/lib/postgresql/data/pgdata"
+            - name: POSTGRES_INITDB_ARGS
+              value: "--encoding=UTF8 --locale=C"
+          args:
+            - -c
+            - shared_buffers=512MB
+            - -c
+            - work_mem=16MB
+            - -c
+            - effective_cache_size=1536MB
+            - -c
+            - random_page_cost=1.1
           ports:
             - name: postgres
               containerPort: 5432
@@ -64,11 +75,11 @@ spec:
             failureThreshold: 10
           resources:
             requests:
-              memory: "128Mi"
-              cpu: "100m"
+              memory: "512Mi"
+              cpu: "250m"
             limits:
-              memory: "256Mi"
-              cpu: "500m"
+              memory: "2Gi"
+              cpu: "2000m"
   volumeClaimTemplates:
     - metadata:
         name: postgres-data
