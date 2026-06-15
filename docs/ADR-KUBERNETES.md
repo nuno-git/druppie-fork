@@ -2,8 +2,8 @@
 
 | Veld | Waarde |
 |------|--------|
-| **Status** | Geaccepteerd |
-| **Datum** | 2026-06-09 |
+| **Status** | Geaccepteerd (geïmplementeerd — zie implementatie status hieronder) |
+| **Datum** | 2026-06-09 (besluit), 2026-06-15 (implementatie status update) |
 | **Auteur** | Druppie Team |
 | **Deciders** | Druppie architectuurteam |
 | **Referentie** | [KUBERNETES-STRATEGY.md](./KUBERNETES-STRATEGY.md) |
@@ -113,7 +113,13 @@ Ubuntu is de meest geteste OS voor K3s, heeft brede documentatie, en langdurige 
 
 ### 4.3 Database: CloudNativePG
 
-**Gekozen:** CloudNativePG operator (v1.29.1+) met 3 database clusters: `druppie-db`, `keycloak-db`, `gitea-db`. Elke cluster draait 3 instances (1 primary + 2 read replicas).
+**Gekozen:** CloudNativePG operator (v1.29.1+) met 3 database clusters: `druppie-db`, `keycloak-db`, `gitea-db`.
+
+> **Implementatie status (juni 2026):** ✅ Voltooid met afwijkingen:
+> - **instances=1** per cluster (ADR stelt 3 voor). Reden: kostenbesparing op CPX32 nodes. Upgrade naar `instances: 3` is een one-line values change wanneer een tweede infra node beschikbaar is.
+> - **PgBouncer Pooler** (2 instances, transaction-mode) toegevoegd voor druppie-db. Dit was niet in het oorspronkelijke plan maar essentieel gebleken: lost connection pool exhaustion op bij hoge load (125+ rps).
+> - Data succesvol gemigreerd van oude StatefulSet PVCs.
+> - **Nog ontbreken:** HA replicas (instances=3), backups naar S3/MinIO, geautomatiseerde password sync.
 
 **Waarom:** CloudNativePG is de enige PostgreSQL operator met CNCF Sandbox status. Het beheert de volledige lifecycle: provisioning, streaming replicatie, automatische failover (<30s), continuous backup naar S3/MinIO, point-in-time recovery, zero-downtime rolling updates, en ingebouwde PgBouncer connection pooling.
 
@@ -159,7 +165,14 @@ spec:
 
 ### 4.4 Autoscaling: HPA + KEDA
 
-**Gekozen:** HPA (CPU-based) voor frontend en backend, plus KEDA (Prometheus metric) voor de backend.
+**Gekozen:** HPA (CPU-based) voor frontend, KEDA (dual-trigger) voor backend.
+
+> **Implementatie status (juni 2026):** ✅ Voltooid met belangrijke afwijking:
+> - **Dual triggers** in plaats van Prometheus-only: PostgreSQL query (`agent_runs WHERE status='running'`) **+** CPU utilization 55%. Beide nodig: PG trigger vangt LLM I/O-bound werk op, CPU trigger vangt read-heavy GET load op.
+> - **minReplicas: 3** (proactieve baseline, niet 2 zoals ADR).
+> - **Aggressive scale-up:** +4 pods/30s, `stabilizationWindowSeconds: 0`.
+> - `metricType` op trigger niveau (KEDA v2.20 API — NIET in metadata).
+> - **Load test bewezen:** 125 rps → p95=508ms, 1→6 pods, 100% success rate.
 
 **Waarom HPA voor beide services:** Frontend is pure static file serving, CPU is een betrouwbare metric. Backend krijgt HPA als basislaag.
 
@@ -723,7 +736,7 @@ flowchart TB
 | Risico | Impact | Kans | Mitigatie |
 |--------|--------|------|-----------|
 | Backend multi-replica race conditions bij webhooks | Data inconsistentie | ~~Medium~~ Laag | Opgelost: session task concurrency via `SELECT FOR UPDATE` op DB. Singleton taken via PostgreSQL advisory lock leader election. Testen met 3+ replicas op staging. |
-| CloudNativePG operationele kennis ontbreekt | DB issues in productie | Medium | Failover scenario's testen op staging vóór productie. Runbooks schrijven. CNPG documentatie bestuderen. |
+| CloudNativePG operationele kennis ontbreekt | DB issues in productie | ~~Medium~~ Laag | ✅ Geïmplementeerd: CNPG draait, PgBouncer actief, data gemigreerd. HA (instances=3) is volgende stap bij tweede infra node. |
 | KEDA scaling te agressief of te traag | Oscillatie of vertraging | Laag | Stabilization windows configureren (300s scale-down, 60s scale-up). Tunen op basis van load tests. |
 | Sealed Secrets key verloren | Alle secrets ontoegankelijk | Medium | Private key backup procedure documenteren én testen. Key opslaan in offline vault. |
 | 3 nodes onvoldoende voor piekbelasting | Performance degradatie | Laag | K3s agent join is triviaal. Nieuwe VM toevoegen bij noodzaak. CPX31 → CPX41 upgrade is 1 klik in Hetzner console. |
@@ -771,6 +784,8 @@ Bij schaalvergroting (meer nodes of grotere VMs): CPX41 (8 vCPU, 16GB RAM) is ~�
 - Geen drift detection. Push-based CI/CD betekent dat handmatige cluster wijzigingen onopgemerkt blijven. ArgoCD (Phase 2) lost dit op.
 - Backend is stateless. Session task concurrency via database-level `SELECT FOR UPDATE`. Singleton achtergrondtaken (JobScheduler, sandbox watchdog) via PostgreSQL advisory lock leader election. Een message queue (Redis Streams/NATS) volgt in Phase 2 voor event-driven architectuur als de belasting het rechtvaardigt.
 - Geen sandbox runtime isolatie (gVisor/Kata). Pas relevant als sandboxes naar K8s migreren.
+- **CNPG draait met instances=1** (geen HA). Single-instance per database op de infra node. Auto-failover (<30s) is beschikbaar via `instances: 3` maar vereist een tweede infra node. PgBouncer (2 instances) geeft connection-level beschikbaarheid.
+- **DB pool sizing is kritiek.** Load testing bewees: `pool_size=20` per worker × 4 workers × 5 pods = 1000 connections vs PostgreSQL max 100 = crash. Oplossing: `pool_size=5` + PgBouncer transaction-mode multiplexing. 2 workers per pod is optimaal (niet 10).
 
 ### Migratiepad
 

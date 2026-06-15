@@ -2,8 +2,8 @@
 
 | Veld | Waarde |
 |------|--------|
-| **Status** | Geïmplementeerd |
-| **Datum** | 2026-06-09 |
+| **Status** | Geïmplementeerd (fase 1 + CNPG) |
+| **Datum** | 2026-06-15 (laatst bijgewerkt) |
 | **Gebaseerd op** | [ADR-KUBERNETES.md](./ADR-KUBERNETES.md) |
 | **Referentie** | [KUBERNETES-STRATEGY.md](./KUBERNETES-STRATEGY.md), [kubernetes.md](./kubernetes.md) |
 | **Delivery** | 1 PR naar `colab-dev` |
@@ -15,15 +15,16 @@
 - [x] Druppie volledig deploybaar via Helm
 - [x] Autoscaling: Backend (KEDA PostgreSQL) en frontend (HPA CPU) schalen horizontaal
 - [x] High availability: PDB + anti-affinity templates beschikbaar (uitgeschakeld per gebruikersvoorkeur)
-- [ ] Database: Productiegeschikte PostgreSQL oplossing (CNPG — Task 6, nog niet gestart)
+- [x] Database: Productiegeschikte PostgreSQL oplossing (CNPG met PgBouncer — Task 6 ✅, instances=1 voor kosten, HA bij instances=3)
 - [x] Persistent storage via PVCs (NFS RWX voor workspace, hcloud-volumes voor DBs)
 - [ ] Secrets + ConfigMaps correct ingericht (Sealed Secrets — Task 5, nu gitignored values overlay)
 - [x] Complete flow werkt: login → chat → agent sessie → HTTPS via cert-manager
-- [ ] Documentatie: setup, scaling gedrag, beperkingen (Task 10, deels verouderd)
+- [x] Documentatie: setup, scaling gedrag, beperkingen (Task 10, bijgewerkt)
 - [x] Backlog item: stateless maken backend (al geïmplementeerd)
-- [x] KEDA: Session-based autoscaling via PostgreSQL trigger (ipv Prometheus uit ADR)
+- [x] KEDA: Dual-trigger autoscaling (PostgreSQL + CPU 55%) met aggressive scale-up
 - [x] NFS: RWX storage voor multi-node backend scheduling
 - [x] Gitea Container Registry: images builden en pushen naar eigen registry
+- [x] DB connection pool fix: pool_size=5/max_overflow=5 + PgBouncer (was 20/30, crashde bij 125+ rps)
 
 ---
 
@@ -36,9 +37,9 @@ De repo bevat een **werkende K3s productie deployment** op Hetzner Cloud + Kind 
 | Helm chart | `helm/druppie/` (30+ templates) | ✅ Werkend op K3s + Kind |
 | K3s cluster | `iac/cluster.yaml` (3 servers + 1 infra + 1-10 app) | ✅ Productie draait op Hetzner |
 | Ingress | Traefik (K3s) + NGINX (Kind) | ✅ Subdomain routing met TLS |
-| PostgreSQL | 3x StatefulSet (geen HA) | ✅ Productie, CNPG is Task 6 |
+| PostgreSQL | 3x CNPG Cluster (instances=1) + PgBouncer pooler | ✅ Productie, PgBouncer lost pool exhaustion op |
 | NFS RWX | In-cluster NFSv4 server + static PVs | ✅ Backend pods mounten workspace over meerdere nodes |
-| Autoscaling backend | KEDA PostgreSQL trigger (agent_runs) + CA | ✅ E2E geverifieerd: 1→10 pods, 1→3 nodes |
+| Autoscaling backend | KEDA dual-trigger (PostgreSQL + CPU 55%) + CA | ✅ E2E geverifieerd: 1→6 pods @ 125 rps, p95=508ms |
 | Autoscaling frontend | HPA CPU 70% | ✅ 1→8 replicas |
 | cert-manager | Let's Encrypt TLS | ✅ Alle subdomains HTTPS |
 | Gitea Registry | OCI-compatible, images push/pull werkt | ✅ Backend/frontend images via registry |
@@ -46,6 +47,7 @@ De repo bevat een **werkende K3s productie deployment** op Hetzner Cloud + Kind 
 | Monitoring | kube-prometheus-stack in `monitoring` namespace | ✅ Prometheus + Grafana draaien |
 | CI/CD | Alleen `sync-main-to-colab-dev.yml` | ❌ Geen deploy pipeline (Task 11) |
 | Backend | Stateless, DB-driven task guard, multi-replica | ✅ Task 1 afgerond |
+| DB pool | pool_size=5, max_overflow=5 + PgBouncer | ✅ Was 20/30, crashde bij 125+ rps |
 | Docker on nodes | DaemonSet installeert Docker via nsenter | ⚠️ Werkt op bestaande nodes, CA nodes hebben timing issues |
 
 ### Cluster state (juni 2026)
@@ -61,22 +63,38 @@ druppie-app-*                 Ready    <none>                      v1.35.5+k3s1 
 
 ### KEDA autoscaling (geïmplementeerd)
 
-KEDA schaalt de backend op basis van `agent_runs WHERE status = 'running'`:
-- **Trigger**: PostgreSQL direct (geen Prometheus nodig)
-- **Query**: `SELECT COUNT(*) FROM agent_runs WHERE status = 'running'`
-- **Target**: 5 running agent_runs per replica (wordt verhoogd naar 50 voor productie)
-- **Polling**: elke 15 seconden
-- **Cooldown**: 300 seconden
-- **Bereik**: min 1, max 10 replicas
-- **E2E bewijs**: 6.787 sessies voltooid, 99.9% success rate, schaalde 1→10 pods + 1→3 nodes
+KEDA schaalt de backend met **dual triggers** — PostgreSQL query + CPU:
+
+| Trigger | Type | Doel | Reden |
+|---------|------|------|-------|
+| PostgreSQL | `SELECT COUNT(*) FROM agent_runs WHERE status = 'running'` | 5 running per replica | Reactief op daadwerkelijke LLM werkload |
+| CPU | Utilization 55% | Scale bij hoge CPU | Vangt read-heavy GET load op (sessions, projects) |
+
+**Gedrag:**
+- **minReplicas:** 3 (proactieve baseline)
+- **Scale-up:** +4 pods per 30s, `stabilizationWindowSeconds: 0` (agressief)
+- **Scale-down:** 300s stabilization
+- **Polling:** elke 15 seconden
+- **metricType:** op trigger niveau (KEDA v2.20 API — NIET in metadata)
+
+**Bewezen load test resultaten (CPX32, 3 runs):**
+
+| Run | Max RPS | p95 latency | Pods | Success rate | Opmerking |
+|-----|---------|-------------|------|--------------|-----------|
+| 1 (geen CPU trigger) | 50 | 7.163ms | 1 (stuck) | ~99% | PostgreSQL-only trigger te traag voor GET load |
+| 2 (CPU trigger toegevoegd) | 50 | 205ms | 1→3 | 100% | CPU trigger vangt read-heavy load op |
+| 3 (aggressive ramp) | 125 | 508ms | 1→6 | 100% | Bewijst PgBouncer lost pool exhaustion op |
+
+Multi-node: Piekt op 8 pods, 2 app nodes bij 200 rps.
 
 Frontend blijft op CPU HPA (70%, 1→8 replicas).
 
 ### Bekende beperkingen
 
-1. **CA nodes missen Docker**: Nieuw gemaakte nodes door de CA hebben Docker nog niet geïnstalleerd. De docker-installer DaemonSet installeert Docker via nsenter, maar pods die reeds ingepland zijn voordat de installatie klaar is, blijven steken in `Init:0/3`. _Fix in progress: Docker installatie via cloud-init in cluster.yaml._
-2. **Helm upgrade broken**: Resources die via `kubectl apply` zijn aangepakt (KEDA, NFS) missen Helm ownership annotations. `helm upgrade` faalt met ownership validatie error. _Fix: adopt resources met Helm annotations._
-3. **Duplicate NFS PVs**: Bij `helm template | kubectl apply` werden PVs in `default` namespace aangemaakt. Oude PVs met `Released` status bestaan nog. Handmatige cleanup nodig.
+1. **CNPG instances=1 (geen HA)**: Alle 3 databases draaien single-instance op de infra node. Geen auto-failover, geen read replicas. CNPG operator is aanwezig, `instances: 3` is een one-line values change, maar vereist een tweede infra node om nuttig te zijn (replica's op dezelfde node = geen echte HA). PgBouncer (2 instances) zorgt wel voor connection-level beschikbaarheid.
+2. **CA nodes missen Docker**: Nieuw gemaakte nodes door de CA hebben Docker nog niet geïnstalleerd. De docker-installer DaemonSet installeert Docker via nsenter, maar pods die reeds ingepland zijn voordat de installatie klaar is, blijven steken in `Init:0/3`. _Fix in progress: Docker installatie via cloud-init in cluster.yaml._
+3. **CNPG app user password management**: CNPG genereert willekeurige wachtwoorden bij bootstrap. Handmatig gesynchroniseerd via `ALTER USER` + secret patch. Bij toekomstige CNPG reconciliatie kan het wachtwoord overschreven worden. _Oplossing: CNPG-managed secret reference in DATABASE_URL in plaats van hardcoded wachtwoord._
+4. **DB data handmatig gemigreerd**: Data van oude StatefulSet PVCs naar CNPG gemigreerd via `pg_dump | psql`. Niet geautomatiseerd — bij een volgende migratie is handmatige interventie nodig.
 
 ---
 
@@ -338,49 +356,64 @@ Wijzigen: helm/druppie/values-prod.yaml
 
 ### Task 6: CloudNativePG — HA PostgreSQL
 
-**Story points:** 3 | **Priority:** P1 | **Status:** ❌ Niet gestart
+**Story points:** 3 | **Priority:** P1 | **Status:** ✅ Voltooid (afwijking: instances=1, PgBouncer pooler)
 
-**Huidige state:** 3 PostgreSQL StatefulSets (druppie-db, keycloak-db, gitea-db), single instance, geen HA, geen failover. Werkt betrouwbaar voor Phase 1.
+**Huidige state:** 3 CNPG Clusters operationeel (druppie, keycloak, gitea), elk met `instances: 1`. PgBouncer transaction-mode pooler (2 instances) voor druppie-db. Oude StatefulSets verwijderd. Data gemigreerd van oude PVCs.
 
 **Scope:**
-- CloudNativePG operator v1.29.1+ installatie instructies
-- 3 database cluster CRDs: druppie-db, keycloak-db, gitea-db
+- CloudNativePG operator v1.29.1+ geïnstalleerd (`cnpg-system` namespace)
+- 3 database cluster CRDs: druppie-db, keycloak-db, gitea-db (instances=1)
+- PgBouncer Pooler CRD voor druppie-db (2 instances, transaction mode)
 - Bestaande PostgreSQL StatefulSets vervangen
 - Alle deployments bijwerken: connection strings naar CNPG naming
+- NetworkPolicies bijgewerkt: CNPG egress/ingress rules
+- postInitApplicationSQL voor app user password sync bij bootstrap
 
 ```
-Aanmaken: helm/druppie/templates/databases/druppie-db-cluster.yaml
-Aanmaken: helm/druppie/templates/databases/keycloak-db-cluster.yaml
-Aanmaken: helm/druppie/templates/databases/gitea-db-cluster.yaml
+Aangemaakt: helm/druppie/templates/databases/druppie-db-cluster.yaml
+Aangemaakt: helm/druppie/templates/databases/keycloak-db-cluster.yaml
+Aangemaakt: helm/druppie/templates/databases/gitea-db-cluster.yaml
+Aangemaakt: helm/druppie/templates/databases/druppie-db-pooler.yaml (PgBouncer)
 
-Verwijderen: helm/druppie/templates/druppie-db-statefulset.yaml
-Verwijderen: helm/druppie/templates/keycloak-db-statefulset.yaml
-Verwijderen: helm/druppie/templates/gitea-db-statefulset.yaml
+Verwijderd: helm/druppie/templates/druppie-db-statefulset.yaml
+Verwijderd: helm/druppie/templates/keycloak-db-statefulset.yaml
+Verwijderd: helm/druppie/templates/gitea-db-statefulset.yaml
 
-Wijzigen: helm/druppie/templates/configmap.yaml
-  - DATABASE_URL → CNPG service naming (druppie-db-rw:5432)
+Gewijzigd: helm/druppie/templates/backend-deployment.yaml
+  - DATABASE_URL → CNPG pooler service (druppie-db-pooler-rw:5432)
+  - wait-for-db initContainer → CNPG rw service
 
-Wijzigen: helm/druppie/templates/services.yaml
-  - DB services bijwerken voor CNPG
+Gewijzigd: helm/druppie/templates/secrets.yaml
+  - 3 CNPG superuser secrets
+  - DATABASE_URL gebruikt pooler service
 
-Wijzigen: helm/druppie/templates/backend-deployment.yaml
-  - wait-for-db initContainer → CNPG service
+Gewijzigd: helm/druppie/templates/keda-networkpolicy.yaml
+  - CNPG label selector branch
+  - Ingress: KEDA + druppie namespace + cloudnative-pg managed pods
 
-Wijzigen: helm/druppie/templates/keycloak-deployment.yaml
-  - KC_DB_URL → CNPG service (keycloak-db-rw:5432)
+Gewijzigd: helm/druppie/templates/networkpolicy.yaml
+  - Egress rule voor cloudnative-pg managed pods (port 5432)
 
-Wijzigen: helm/druppie/templates/gitea-deployment.yaml
-  - GITEA__database__HOST → CNPG service (gitea-db-rw:5432)
-
-Wijzigen: helm/druppie/templates/init-job.yaml
-  - DB connection strings → CNPG
+Gewijzigd: helm/druppie/values-hetzner.yaml
+  - cnpg.enabled: true
+  - instances: 1 (cost-optimal, upgrade naar 3 voor HA)
 ```
 
 **Acceptatiecriteria:**
-- [ ] 3 CNPG Cluster CRDs gedefinieerd (elk 3 instances)
-- [ ] Oude StatefulSets verwijderd
-- [ ] `helm template` genereert CNPG clusters + bijgewerkte deployments
-- [ ] Connection strings verwijzen naar CNPG `-rw` service
+- [x] 3 CNPG Cluster CRDs gedefinieerd (elk instances=1, upgrade naar 3 voor HA)
+- [x] Oude StatefulSets verwijderd
+- [x] `helm template` genereert CNPG clusters + pooler + bijgewerkte deployments
+- [x] Connection strings verwijzen naar CNPG `-pooler-rw` service (PgBouncer)
+- [x] Backend verbindt via PgBouncer (transaction mode)
+- [x] Data gemigreerd van oude StatefulSet PVCs
+- [x] NetworkPolicies staan CNPG + PgBouncer traffic toe
+- [x] Load test bewijst: 125 rps, p95=508ms, 1→6 pods, 100% success
+
+** wat nog ontbreekt voor volledige HA:**
+- `instances: 3` (1 primary + 2 read replicas met auto-failover <30s)
+- Tweede infra node (replica's op zelfde node = geen echte HA)
+- CNPG backups naar S3/MinIO (`barmanObjectStore` in Cluster spec)
+- Geautomatiseerde password synchronisatie (ipv handmatige ALTER USER)
 
 ---
 
@@ -388,49 +421,45 @@ Wijzigen: helm/druppie/templates/init-job.yaml
 
 **Story points:** 2 | **Priority:** P1 | **Status:** ✅ Voltooid (afwijking van ADR)
 
-**Afwijking van ADR §4.4:** ADR beschrijft KEDA met Prometheus trigger. Geïmplementeerd met **PostgreSQL trigger** — simulerer, geen Prometheus dependency, directe DB query voor `agent_runs WHERE status = 'running'`. Backend CPU HPA wordt uitgeschakeld wanneer KEDA enabled is.
+**Afwijking van ADR §4.4:** ADR beschrijft KEDA met Prometheus trigger. Geïmplementeerd met **dual triggers**: PostgreSQL query (LLM workload) + CPU utilization 55% (read-heavy GET load). Beide triggers zijn nodig — de PostgreSQL-only trigger was te traag voor GET endpoint load (p95=7163ms), CPU trigger alleen mist LLM I/O-bound werk.
 
 **Scope:**
 - KEDA operator via Helm in `keda` namespace
-- ScaledObject voor backend: PostgreSQL trigger
-- TriggerAuthentication: references bestaande `druppie-secrets`
-- NetworkPolicy: `druppie-keda-db-access` (KEDA namespace → DB pod port 5432)
+- ScaledObject voor backend: **dual triggers** (PostgreSQL + CPU)
+- TriggerAuthentication: references CNPG app user secret
+- NetworkPolicy: `druppie-keda-db-access` (KEDA namespace + druppie namespace + CNPG pods → DB port 5432)
 - Frontend HPA: CPU 70%, 1→8 replicas (ongewijzigd)
-- Backend CPU HPA: disabled wanneer `keda.enabled: true`
+- Backend CPU HPA: disabled wanneer KEDA enabled (CPU trigger zit in KEDA)
 
 ```
-Aanmaken: helm/druppie/templates/keda-scaledobject-backend.yaml
-  - PostgreSQL trigger, query: SELECT COUNT(*) FROM agent_runs WHERE status = 'running'
-  - targetQueryValue: "5" (wordt 50 voor productie)
-  - minReplicaCount: 1, maxReplicaCount: 10
+Aangemaakt: helm/druppie/templates/keda-scaledobject-backend.yaml
+  - PostgreSQL trigger: SELECT COUNT(*) FROM agent_runs WHERE status = 'running'
+  - CPU trigger: Utilization 55% (metricType op trigger niveau, KEDA v2.20 API)
+  - targetQueryValue: "5"
+  - minReplicaCount: 3 (proactive baseline), maxReplicaCount: 10
   - pollingInterval: 15, cooldownPeriod: 300
+  - Aggressive scale-up: +4 pods/30s, stabilizationWindowSeconds: 0
   - FQDN host voor cross-namespace DNS
 
-Aanmaken: helm/druppie/templates/keda-triggerauth.yaml
-  - References druppie-secrets voor DB password
+Aangemaakt: helm/druppie/templates/keda-triggerauth.yaml
+  - References CNPG app user secret
 
-Aanmaken: helm/druppie/templates/keda-networkpolicy.yaml
-  - Staat keda namespace → DB pod port 5432 toe
-
-Wijzigen: helm/druppie/templates/hpa-backend.yaml
-  - Conditioneel: disabled wanneer keda.enabled
-
-Wijzigen: helm/druppie/values.yaml
-  - keda: sectie (enabled: false, pollingInterval, cooldownPeriod, query, targetQueryValue)
-
-Wijzigen: helm/druppie/values-hetzner.yaml
-  - keda.enabled: true, autoscaling.backend.minReplicas: 1
+Aangemaakt: helm/druppie/templates/keda-networkpolicy.yaml
+  - KEDA namespace + druppie selector pods + cloudnative-pg managed pods → CNPG DB port 5432
 ```
 
 **Acceptatiecriteria:**
 - [x] KEDA operator draait in `keda` namespace (3 pods)
 - [x] ScaledObject `READY: True`, HPA `keda-hpa-druppie-backend` aangemaakt
-- [x] Backend schaalt op PostgreSQL query (agent_runs WHERE status = 'running')
+- [x] Backend schaalt op dual triggers: PostgreSQL query + CPU 55%
 - [x] Backend CPU HPA uitgeschakeld wanneer KEDA enabled
 - [x] Frontend HPA: CPU 70%, 1→8 replicas
-- [x] Stabilization windows geconfigureerd (scaleUp 60s, scaleDown 300s)
-- [x] **E2E bewezen**: 6.787 sessies, 99.9% success, 1→10 pods + 1→3 nodes
-- [ ] `targetQueryValue` tunen van 5 naar 50 voor productie (pending)
+- [x] Stabilization windows: scaleUp 0s (aggressive), scaleDown 300s
+- [x] **Load test bewezen** (3 runs op CPX32):
+  - Run 1 (PostgreSQL-only): 50 rps, p95=7163ms, 1 pod stuck — trigger te traag
+  - Run 2 (+CPU trigger): 50 rps, p95=205ms, 1→3 pods, 100% success
+  - Run 3 (aggressive ramp): 125 rps, p95=508ms, 1→6 pods, 100% success
+- [x] Multi-node: 8 pods, 2 app nodes bij 200 rps bevestigd
 
 ---
 
@@ -629,20 +658,28 @@ cluster.yaml:
 
 ---
 
-### Task 15: Backend uvicorn workers verhogen
+### Task 15: Backend uvicorn workers
 
-**Priority:** P2 | **Status:** ✅ Code klaar, image rebuild nodig
+**Priority:** P2 | **Status:** ✅ Voltooid — 2 workers per pod optimaal
 
-**Oplossing:** Uvicorn CMD in Dockerfile gewijzigd naar `--workers 10`. De workload is I/O-bound (LLM API calls), dus 10 workers op 2 CPU limit / 4Gi memory is geschikt.
+**Bevinding:** Oorspronkelijk plan was 10 workers per pod. Load testing bewees dat **2 workers optimaal** is:
+- 4 workers crashde zelfs op CCX33 (8 vCPU/32GB) — DB pool exhaustion: 4 workers × pool_size=20 × 5 pods = 1000 connections vs PostgreSQL max 100
+- Met PgBouncer is `pool_size=5` voldoende, dus 2 workers × 5 pool = 10 connections per pod
+- Bij 10 pods: 10 × 10 = 100 connections (precies PostgreSQL max)
+- Meer workers per pod = meer memory pressure zonder performance win (I/O-bound workload)
 
-```dockerfile
-CMD ["uvicorn", "druppie.api.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "10"]
+Workers worden overschreven via Helm `command:` in backend-deployment.yaml:
+
+```yaml
+command: ["uvicorn", "druppie.api.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "{{ .Values.backend.workers }}"]
 ```
 
+`values-hetzner.yaml`: `backend.workers: "2"`
+
 **Acceptatiecriteria:**
-- [x] Dockerfile gewijzigd met `--workers 10`
-- [ ] Image gerebuild en gepushed naar Gitea registry (pending)
-- [ ] Backend draait met 10 uvicorn workers (pending)
+- [x] Dockerfile gebruikt configureerbare workers (via Helm override)
+- [x] Backend draait met 2 workers per pod op CPX32
+- [x] Load test bewijst: geen crashes bij 125 rps met 6 pods (PgBouncer + pool_size=5)
 
 ---
 
@@ -658,18 +695,19 @@ Task 1 (Stateless backend) ─── P0 ─── ✅ Voltooid
 ├── Task 3 (Helm chart ready) ─── P0 ─── ✅ Voltooid
 │   ├── Task 4 (Ingress + TLS) ─── P1 ─── ✅ Voltooid
 │   ├── Task 5 (Sealed Secrets) ── P1 ─── ❌ Niet gestart
-│   ├── Task 6 (CloudNativePG) ─── P1 ─── ❌ Niet gestart
-│   ├── Task 7 (KEDA + HPA) ────── P1 ─── ✅ Voltooid (PostgreSQL trigger)
+│   ├── Task 6 (CloudNativePG) ─── P1 ─── ✅ Voltooid (instances=1 + PgBouncer)
+│   ├── Task 7 (KEDA + HPA) ────── P1 ─── ✅ Voltooid (dual trigger: PG + CPU)
 │   │   └── Task 8 (PDB + HA) ──── P1 ─── ✅ Templates klaar (disabled)
 │   ├── Task 12 (Docker installer) P1 ─── ⚠️ Template klaar, runtime issues
-│   └── Task 13 (Gitea Registry) ── P1 ─── ✅ Voltooid
+│   ├── Task 13 (Gitea Registry) ─ P1 ─── ✅ Voltooid
+│   └── Task 14 (Helm upgrade fix) P1 ─── ✅ Voltooid
 │
-├── Task 10 (Documentatie) ────── P0 ─── ⚠️ Deels verouderd
-├── Task 14 (Helm upgrade fix) ── P1 ─── ❌ Niet gestart
-└── Task 15 (uvicorn workers) ─── P2 ─── ❌ Niet gestart
+├── Task 10 (Documentatie) ────── P0 ─── ✅ Bijgewerkt (dit document)
+├── Task 15 (uvicorn workers) ─── P2 ─── ✅ Voltooid (2 workers, niet 10)
+└── Task 16 (DB pool fix) ─────── P0 ─── ✅ Voltooid (pool_size=5 + PgBouncer)
 ```
 
-**Samenvatting:** 10 van 15 taken voltooid. Overgebleven werk: CNPG (Task 6), Sealed Secrets (Task 5), CI/CD pipeline, docs update, en 3 operationele fixes (helm upgrade, docker timing, uvicorn workers).
+**Samenvatting:** 13 van 16 taken voltooid. Overgebleven werk: Sealed Secrets (Task 5), CI/CD pipeline, CNPG HA (instances=3 + tweede infra node), CNPG backups.
 
 ---
 
@@ -683,9 +721,10 @@ Task 1 (Stateless backend) ─── P0 ─── ✅ Voltooid
 | `helm/druppie/values-hetzner.yaml` | 3 | Hetzner productie Helm overlay | ✅ |
 | `helm/druppie/templates/cluster-issuer.yaml` | 4 | Let's Encrypt issuers | ✅ |
 | `secrets/sealed/README.md` | 5 | Sealed Secrets procedure | ❌ |
-| `helm/druppie/templates/databases/druppie-db-cluster.yaml` | 6 | CNPG cluster: druppie | ❌ |
-| `helm/druppie/templates/databases/keycloak-db-cluster.yaml` | 6 | CNPG cluster: keycloak | ❌ |
-| `helm/druppie/templates/databases/gitea-db-cluster.yaml` | 6 | CNPG cluster: gitea | ❌ |
+| `helm/druppie/templates/databases/druppie-db-cluster.yaml` | 6 | CNPG cluster: druppie | ✅ |
+| `helm/druppie/templates/databases/keycloak-db-cluster.yaml` | 6 | CNPG cluster: keycloak | ✅ |
+| `helm/druppie/templates/databases/gitea-db-cluster.yaml` | 6 | CNPG cluster: gitea | ✅ |
+| `helm/druppie/templates/databases/druppie-db-pooler.yaml` | 6 | PgBouncer Pooler (2 instances) | ✅ |
 | `helm/druppie/templates/hpa-backend.yaml` | 7 | Backend HPA (conditioneel bij KEDA) | ✅ |
 | `helm/druppie/templates/hpa-frontend.yaml` | 7 | Frontend HPA | ✅ |
 | `helm/druppie/templates/pdb-backend.yaml` | 8 | Backend PDB | ✅ |
@@ -720,10 +759,10 @@ Task 1 (Stateless backend) ─── P0 ─── ✅ Voltooid
 | `helm/druppie/templates/gitea-deployment.yaml` | 3,6 | Resources, DB connection | ✅ |
 | `helm/druppie/templates/module-*-deployment.yaml` | 3 | Resources | ✅ |
 | `helm/druppie/templates/ingress.yaml` | 4 | NGINX/Traefik conditioneel, TLS | ✅ |
-| `helm/druppie/templates/secrets.yaml` | 5 | Dev-only marker | ❌ |
-| `helm/druppie/templates/configmap.yaml` | 6 | CNPG service naming | ❌ |
-| `helm/druppie/templates/services.yaml` | 6 | DB services bijwerken | ❌ |
-| `helm/druppie/templates/init-job.yaml` | 6 | CNPG connection strings | ❌ |
+| `helm/druppie/templates/secrets.yaml` | 5 | CNPG superuser secrets + DATABASE_URL (pooler) | ⚠️ Werkt, Sealed Secrets is Task 5 |
+| `helm/druppie/templates/configmap.yaml` | 6 | CNPG service naming | ✅ |
+| `helm/druppie/templates/services.yaml` | 6 | DB services bijgewerkt voor CNPG | ✅ |
+| `helm/druppie/templates/init-job.yaml` | 6 | CNPG connection strings | ✅ |
 | `helm/druppie/templates/persistentvolumeclaims.yaml` | 3,11 | Configureerbare storageClass, NFS PVCs | ✅ |
 | `druppie/api/main.py` | 8 | SIGTERM handler, graceful shutdown | ✅ |
 | `docs/ADR-KUBERNETES.md` | 10 | ADR (doelarchitectuur, ongewijzigd) | ✅ |
@@ -765,10 +804,13 @@ Task 1 (Stateless backend) ─── P0 ─── ✅ Voltooid
 | Risico | Impact | Kans | Status | Mitigatie |
 |--------|--------|------|--------|-----------|
 | Backend stateless refactor breekt bestaande flows | Regression | ~~Medium~~ | ✅ Opgelost | DB-driven task guard werkt met 10 replicas |
-| CloudNativePG operationele kennis ontbreekt | DB issues in productie | Medium | ⬚ Open | Failover testen op staging. Runbooks schrijven. |
-| ~~HPA scaling te agressief of te traag~~ | ~~Oscillatie~~ | ~~Laag~~ | ✅ Opgelost | KEDA met 300s cooldown werkt stabiel |
+| ~~CloudNativePG operationele kennis ontbreekt~~ | ~~DB issues in productie~~ | ~~Medium~~ | ✅ Geïmplementeerd | CNPG draait, data gemigreerd, PgBouncer actief. HA (instances=3) is volgende stap. |
+| ~~HPA scaling te agressief of te traag~~ | ~~Oscillatie~~ | ~~Laag~~ | ✅ Opgelost | KEDA dual-trigger (PG + CPU) met aggressive scale-up werkt stabiel |
 | Sealed Secrets key verloren | Alle secrets ontoegankelijk | Medium | ⬚ Open | Private key backup procedure + test. |
 | ~~Traefik path rewrite voor Gitea~~ | ~~Broken routing~~ | ~~Medium~~ | ✅ Opgelost | Subdomain routing werkt (geen path rewrite nodig) |
 | Backend image ~4GB, te groot voor 10 replicas | Hoge RAM costs | Medium | ⬚ Open | Multi-stage build als vervolgstap. |
 | Docker niet beschikbaar op CA-provisioned nodes | Pods stuck in Init | Hoog | ⚠️ Deels opgelost | DaemonSet installeert Docker, maar timing issue bij nieuwe nodes. Fix: cloud-init of optional mount. |
-| Helm upgrade faalt door ownership annotations | Geen declaratieve upgrades | Hoog | ⬚ Open | Adopt resources met Helm annotations (Task 14). |
+| ~~Helm upgrade faalt door ownership annotations~~ | ~~Geen declaratieve upgrades~~ | ~~Hoog~~ | ✅ Opgelost | Helm annotations toegevoegd, `helm upgrade` slaagt (revision 23+) |
+| CNPG instances=1 (single point of failure) | DB uitval bij infra node failure | Medium | ⬚ Open | `instances: 3` + tweede infra node voor HA. PgBouncer geeft connection-level resilience. |
+| DB pool exhaustion bij hoge load | Crashes bij 125+ rps | ~~Hoog~~ | ✅ Opgelost | pool_size=5/max_overflow=5 + PgBouncer transaction-mode multiplexing |
+| CNPG password drift | Auth failures na reconciliatie | Laag | ⚠️ Handmatig opgelost | ALTER USER + secret patch. Lange termijn: CNPG-managed secret reference. |
