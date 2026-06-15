@@ -1,21 +1,11 @@
-# Standalone Docker Registry — purpose-built for large image uploads.
-# Gitea's built-in registry times out (504) on multi-GB blob uploads.
-# This registry:2 handles streaming uploads natively without buffering.
+# Standalone Docker Registry — bypasses Traefik for large image pushes.
+# Push path: runner → 10.43.60.14:5000 (HTTP, direct service-to-service)
+# Pull path: containerd → registry.druppie.rijnland.dev (HTTPS via Traefik)
 ---
 apiVersion: v1
 kind: Namespace
 metadata:
   name: registry
----
-apiVersion: v1
-kind: Secret
-metadata:
-  name: registry-htpasswd
-  namespace: registry
-type: Opaque
-stringData:
-  htpasswd: |
-    druppie:$2b$12$jMN2ACFohD3gABBpdTxZFeg9luf.HGaeOnfuvo1M07LYKProt/aR.
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -39,6 +29,8 @@ metadata:
     app: registry
 spec:
   replicas: 1
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: registry
@@ -59,16 +51,9 @@ spec:
               value: /var/lib/registry
             - name: REGISTRY_STORAGE_DELETE_ENABLED
               value: "true"
-            - name: REGISTRY_AUTH_HTPASSWD_REALM
-              value: basic-realm
-            - name: REGISTRY_AUTH_HTPASSWD_PATH
-              value: /auth/htpasswd
           volumeMounts:
             - name: data
               mountPath: /var/lib/registry
-            - name: htpasswd
-              mountPath: /auth
-              readOnly: true
           readinessProbe:
             tcpSocket:
               port: 5000
@@ -81,18 +66,15 @@ spec:
             periodSeconds: 30
           resources:
             requests:
-              cpu: 100m
-              memory: 256Mi
-            limits:
-              cpu: 500m
+              cpu: 200m
               memory: 512Mi
+            limits:
+              cpu: 2000m
+              memory: 1Gi
       volumes:
         - name: data
           persistentVolumeClaim:
             claimName: registry-data
-        - name: htpasswd
-          secret:
-            secretName: registry-htpasswd
 ---
 apiVersion: v1
 kind: Service
@@ -100,6 +82,8 @@ metadata:
   name: registry
   namespace: registry
 spec:
+  type: ClusterIP
+  clusterIP: 10.43.60.14
   selector:
     app: registry
   ports:
@@ -113,8 +97,6 @@ metadata:
   namespace: registry
   annotations:
     cert-manager.io/cluster-issuer: letsencrypt-prod
-    # Allow large blob uploads — no body size limit
-    nginx.ingress.kubernetes.io/proxy-body-size: "0"
 spec:
   ingressClassName: traefik
   tls:

@@ -35,3 +35,11 @@ spec:
       env:
         - name: RUNNER_DEBUG
           value: "true"
+      volumes:
+        - name: docker-daemon-config
+          configMap:
+            name: docker-daemon-config
+      volumeMounts:
+        - name: docker-daemon-config
+          mountPath: /etc/docker/daemon.json
+          subPath: daemon.json

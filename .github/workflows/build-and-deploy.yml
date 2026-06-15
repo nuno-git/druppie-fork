@@ -1,6 +1,8 @@
 name: Build & Deploy
 
-# CI/CD pipeline: build images → push to standalone registry → helm upgrade on K3s
+# CI/CD pipeline: build images → push to registry (direct ClusterIP) → helm upgrade
+# Push path: runner → 10.43.60.14:5000 (HTTP, bypasses Traefik)
+# Pull path: containerd → registry.druppie.rijnland.dev (HTTPS via Traefik)
 # Runs on self-hosted ARC runner inside the cluster (DinD for image building).
 
 on:
@@ -11,7 +13,8 @@ on:
   workflow_dispatch:
 
 env:
-  REGISTRY: registry.druppie.rijnland.dev/druppie
+  PUSH_REGISTRY: 10.43.60.14:5000/druppie
+  PULL_REGISTRY: registry.druppie.rijnland.dev/druppie
   IMAGE_TAG: latest
 
 jobs:
@@ -24,12 +27,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Login to Container Registry
-        run: |
-          echo "${{ secrets.REGISTRY_PASSWORD }}" | \
-            docker login registry.druppie.rijnland.dev \
-              -u druppie --password-stdin
-
       - name: Setup Docker BuildKit
         run: |
           mkdir -p ~/.docker/cli-plugins
@@ -41,10 +38,10 @@ jobs:
       - name: Build and push backend
         run: |
           DOCKER_BUILDKIT=1 docker build \
-            -t $REGISTRY/druppie-backend:$IMAGE_TAG \
+            -t $PUSH_REGISTRY/druppie-backend:$IMAGE_TAG \
             -f Dockerfile .
 
-          docker push $REGISTRY/druppie-backend:$IMAGE_TAG
+          docker push $PUSH_REGISTRY/druppie-backend:$IMAGE_TAG
 
       - name: Build and push frontend
         run: |
@@ -54,89 +51,101 @@ jobs:
             --build-arg VITE_KEYCLOAK_REALM=druppie \
             --build-arg VITE_KEYCLOAK_CLIENT_ID=druppie-frontend \
             --build-arg VITE_GITEA_URL=https://git.druppie.rijnland.dev \
-            -t $REGISTRY/druppie-frontend:$IMAGE_TAG \
+            -t $PUSH_REGISTRY/druppie-frontend:$IMAGE_TAG \
             -f frontend/Dockerfile frontend/
 
-          docker push $REGISTRY/druppie-frontend:$IMAGE_TAG
+          docker push $PUSH_REGISTRY/druppie-frontend:$IMAGE_TAG
 
       - name: Build and push init
         run: |
           DOCKER_BUILDKIT=1 docker build \
-            -t $REGISTRY/druppie-init:$IMAGE_TAG \
+            -t $PUSH_REGISTRY/druppie-init:$IMAGE_TAG \
             -f Dockerfile.init .
 
-          docker push $REGISTRY/druppie-init:$IMAGE_TAG
+          docker push $PUSH_REGISTRY/druppie-init:$IMAGE_TAG
 
       - name: Build and push module-archimate
         run: |
           DOCKER_BUILDKIT=1 docker build \
-            -t $REGISTRY/druppie-module-archimate:$IMAGE_TAG \
+            -t $PUSH_REGISTRY/druppie-module-archimate:$IMAGE_TAG \
             -f druppie/mcp-servers/module-archimate/Dockerfile druppie/
-          docker push $REGISTRY/druppie-module-archimate:$IMAGE_TAG
+          docker push $PUSH_REGISTRY/druppie-module-archimate:$IMAGE_TAG
 
       - name: Build and push module-docker
         run: |
           DOCKER_BUILDKIT=1 docker build \
-            -t $REGISTRY/druppie-module-docker:$IMAGE_TAG \
+            -t $PUSH_REGISTRY/druppie-module-docker:$IMAGE_TAG \
             -f druppie/mcp-servers/module-docker/Dockerfile druppie/
-          docker push $REGISTRY/druppie-module-docker:$IMAGE_TAG
+          docker push $PUSH_REGISTRY/druppie-module-docker:$IMAGE_TAG
 
       - name: Build and push module-registry
         run: |
           DOCKER_BUILDKIT=1 docker build \
-            -t $REGISTRY/druppie-module-registry:$IMAGE_TAG \
+            -t $PUSH_REGISTRY/druppie-module-registry:$IMAGE_TAG \
             -f druppie/mcp-servers/module-registry/Dockerfile druppie/
-          docker push $REGISTRY/druppie-module-registry:$IMAGE_TAG
+          docker push $PUSH_REGISTRY/druppie-module-registry:$IMAGE_TAG
 
       - name: Build and push module-coding
         run: |
           DOCKER_BUILDKIT=1 docker build \
-            -t $REGISTRY/druppie-module-coding:$IMAGE_TAG \
+            -t $PUSH_REGISTRY/druppie-module-coding:$IMAGE_TAG \
             -f druppie/mcp-servers/module-coding/Dockerfile druppie/mcp-servers/
-          docker push $REGISTRY/druppie-module-coding:$IMAGE_TAG
+          docker push $PUSH_REGISTRY/druppie-module-coding:$IMAGE_TAG
 
       - name: Build and push module-data-access
         run: |
           DOCKER_BUILDKIT=1 docker build \
-            -t $REGISTRY/druppie-module-data-access:$IMAGE_TAG \
+            -t $PUSH_REGISTRY/druppie-module-data-access:$IMAGE_TAG \
             -f druppie/mcp-servers/module-data-access/Dockerfile druppie/mcp-servers/
-          docker push $REGISTRY/druppie-module-data-access:$IMAGE_TAG
+          docker push $PUSH_REGISTRY/druppie-module-data-access:$IMAGE_TAG
 
       - name: Build and push module-filesearch
         run: |
           DOCKER_BUILDKIT=1 docker build \
-            -t $REGISTRY/druppie-module-filesearch:$IMAGE_TAG \
+            -t $PUSH_REGISTRY/druppie-module-filesearch:$IMAGE_TAG \
             -f druppie/mcp-servers/module-filesearch/Dockerfile druppie/mcp-servers/
-          docker push $REGISTRY/druppie-module-filesearch:$IMAGE_TAG
+          docker push $PUSH_REGISTRY/druppie-module-filesearch:$IMAGE_TAG
 
       - name: Build and push module-llm
         run: |
           DOCKER_BUILDKIT=1 docker build \
-            -t $REGISTRY/druppie-module-llm:$IMAGE_TAG \
+            -t $PUSH_REGISTRY/druppie-module-llm:$IMAGE_TAG \
             -f druppie/mcp-servers/module-llm/Dockerfile druppie/mcp-servers/
-          docker push $REGISTRY/druppie-module-llm:$IMAGE_TAG
+          docker push $PUSH_REGISTRY/druppie-module-llm:$IMAGE_TAG
 
       - name: Build and push module-vision
         run: |
           DOCKER_BUILDKIT=1 docker build \
-            -t $REGISTRY/druppie-module-vision:$IMAGE_TAG \
+            -t $PUSH_REGISTRY/druppie-module-vision:$IMAGE_TAG \
             -f druppie/mcp-servers/module-vision/Dockerfile druppie/mcp-servers/
-          docker push $REGISTRY/druppie-module-vision:$IMAGE_TAG
+          docker push $PUSH_REGISTRY/druppie-module-vision:$IMAGE_TAG
 
       - name: Build and push module-web
         run: |
           DOCKER_BUILDKIT=1 docker build \
-            -t $REGISTRY/druppie-module-web:$IMAGE_TAG \
+            -t $PUSH_REGISTRY/druppie-module-web:$IMAGE_TAG \
             -f druppie/mcp-servers/module-web/Dockerfile druppie/mcp-servers/
-          docker push $REGISTRY/druppie-module-web:$IMAGE_TAG
+          docker push $PUSH_REGISTRY/druppie-module-web:$IMAGE_TAG
 
       - name: Build and push layout-service
         run: |
           DOCKER_BUILDKIT=1 docker build \
-            -t $REGISTRY/druppie-layout-service:$IMAGE_TAG \
+            -t $PUSH_REGISTRY/druppie-layout-service:$IMAGE_TAG \
             -f druppie/mcp-servers/layout-service/Dockerfile \
               druppie/mcp-servers/layout-service/
-          docker push $REGISTRY/druppie-layout-service:$IMAGE_TAG
+          docker push $PUSH_REGISTRY/druppie-layout-service:$IMAGE_TAG
+
+      - name: Sync manifests to pull registry
+        run: |
+          for img in druppie-backend druppie-frontend druppie-init \
+                     druppie-module-archimate druppie-module-docker druppie-module-registry \
+                     druppie-module-coding druppie-module-data-access druppie-module-filesearch \
+                     druppie-module-llm druppie-module-vision druppie-module-web \
+                     druppie-layout-service; do
+            docker tag $PUSH_REGISTRY/$img:$IMAGE_TAG \
+                       $PULL_REGISTRY/$img:$IMAGE_TAG
+            docker push $PULL_REGISTRY/$img:$IMAGE_TAG
+          done
 
       - name: Setup kubectl and helm
         run: |
@@ -167,15 +176,6 @@ jobs:
           kubectl config use-context in-cluster
 
           kubectl get pods -n druppie --no-headers | head -5
-
-      - name: Create image pull secret
-        run: |
-          kubectl create secret docker-registry registry-pull-secret \
-            --namespace=druppie \
-            --docker-server=registry.druppie.rijnland.dev \
-            --docker-username=druppie \
-            --docker-password="${{ secrets.REGISTRY_PASSWORD }}" \
-            --dry-run=client -o yaml | kubectl apply -f -
 
       - name: Create secrets values file
         run: |
@@ -222,12 +222,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Login to Container Registry
-        run: |
-          echo "${{ secrets.REGISTRY_PASSWORD }}" | \
-            docker login registry.druppie.rijnland.dev \
-              -u druppie --password-stdin
-
       - name: Setup Docker BuildKit
         run: |
           mkdir -p ~/.docker/cli-plugins
@@ -238,9 +232,9 @@ jobs:
       - name: Build backend (PR preview)
         run: |
           DOCKER_BUILDKIT=1 docker build \
-            -t $REGISTRY/druppie-backend:pr-${{ github.event.pull_request.number }} \
+            -t $PUSH_REGISTRY/druppie-backend:pr-${{ github.event.pull_request.number }} \
             -f Dockerfile .
-          docker push $REGISTRY/druppie-backend:pr-${{ github.event.pull_request.number }}
+          docker push $PUSH_REGISTRY/druppie-backend:pr-${{ github.event.pull_request.number }}
 
       - name: Build frontend (PR preview)
         run: |
@@ -250,6 +244,6 @@ jobs:
             --build-arg VITE_KEYCLOAK_REALM=druppie \
             --build-arg VITE_KEYCLOAK_CLIENT_ID=druppie-frontend \
             --build-arg VITE_GITEA_URL=https://git.druppie.rijnland.dev \
-            -t $REGISTRY/druppie-frontend:pr-${{ github.event.pull_request.number }} \
+            -t $PUSH_REGISTRY/druppie-frontend:pr-${{ github.event.pull_request.number }} \
             -f frontend/Dockerfile frontend/
-          docker push $REGISTRY/druppie-frontend:pr-${{ github.event.pull_request.number }}
+          docker push $PUSH_REGISTRY/druppie-frontend:pr-${{ github.event.pull_request.number }}

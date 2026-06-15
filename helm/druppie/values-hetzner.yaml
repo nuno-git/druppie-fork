@@ -8,8 +8,6 @@ global:
   instance: druppie
   imagePullPolicy: Always
   imageRegistry: "registry.druppie.rijnland.dev/druppie"
-  imagePullSecrets:
-    - name: registry-pull-secret
   domain: "druppie.rijnland.dev"  # Production domain with TLS
   subdomains:
     keycloak: "auth.druppie.rijnland.dev"
