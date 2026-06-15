@@ -7,9 +7,9 @@
 global:
   instance: druppie
   imagePullPolicy: Always
-  imageRegistry: "git.druppie.rijnland.dev/gitea_admin"
+  imageRegistry: "registry.druppie.rijnland.dev/druppie"
   imagePullSecrets:
-    - name: gitea-registry
+    - name: registry-pull-secret
   domain: "druppie.rijnland.dev"  # Production domain with TLS
   subdomains:
     keycloak: "auth.druppie.rijnland.dev"

@@ -1,6 +1,6 @@
 name: Build & Deploy
 
-# CI/CD pipeline: build images → push to Gitea registry → helm upgrade on K3s
+# CI/CD pipeline: build images → push to standalone registry → helm upgrade on K3s
 # Runs on self-hosted ARC runner inside the cluster (DinD for image building).
 
 on:
@@ -8,11 +8,10 @@ on:
     branches: [colab-dev]
   pull_request:
     branches: [colab-dev]
-  # Allow manual trigger for testing on any branch
   workflow_dispatch:
 
 env:
-  REGISTRY: git.druppie.rijnland.dev/gitea_admin
+  REGISTRY: registry.druppie.rijnland.dev/druppie
   IMAGE_TAG: latest
 
 jobs:
@@ -25,11 +24,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Login to Gitea Container Registry
+      - name: Login to Container Registry
         run: |
-          echo "${{ secrets.GITEA_TOKEN }}" | \
-            docker login git.druppie.rijnland.dev \
-              -u gitea_admin --password-stdin
+          echo "${{ secrets.REGISTRY_PASSWORD }}" | \
+            docker login registry.druppie.rijnland.dev \
+              -u druppie --password-stdin
 
       - name: Setup Docker BuildKit
         run: |
@@ -68,8 +67,6 @@ jobs:
 
           docker push $REGISTRY/druppie-init:$IMAGE_TAG
 
-      # MCP modules — context varies per module (see COPY patterns in each Dockerfile)
-      # Group A: context = druppie/ (COPY mcp-servers/module-xxx/)
       - name: Build and push module-archimate
         run: |
           DOCKER_BUILDKIT=1 docker build \
@@ -91,7 +88,6 @@ jobs:
             -f druppie/mcp-servers/module-registry/Dockerfile druppie/
           docker push $REGISTRY/druppie-module-registry:$IMAGE_TAG
 
-      # Group B: context = druppie/mcp-servers/ (COPY module-xxx/)
       - name: Build and push module-coding
         run: |
           DOCKER_BUILDKIT=1 docker build \
@@ -134,7 +130,6 @@ jobs:
             -f druppie/mcp-servers/module-web/Dockerfile druppie/mcp-servers/
           docker push $REGISTRY/druppie-module-web:$IMAGE_TAG
 
-      # Group C: context = druppie/mcp-servers/layout-service/
       - name: Build and push layout-service
         run: |
           DOCKER_BUILDKIT=1 docker build \
@@ -145,18 +140,14 @@ jobs:
 
       - name: Setup kubectl and helm
         run: |
-          # kubectl is available via in-cluster SA token
-          # Install helm
           curl -fsSL https://get.helm.sh/helm-v3.14.0-linux-amd64.tar.gz | tar -xz -C /tmp
           cp /tmp/linux-amd64/helm /usr/local/bin/helm
 
-          # Verify
           kubectl version --client
           helm version
 
       - name: Configure cluster access
         run: |
-          # Create kubeconfig from in-cluster ServiceAccount token
           SA_TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
           CA_CERT=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt
 
@@ -175,8 +166,16 @@ jobs:
 
           kubectl config use-context in-cluster
 
-          # Verify access
           kubectl get pods -n druppie --no-headers | head -5
+
+      - name: Create image pull secret
+        run: |
+          kubectl create secret docker-registry registry-pull-secret \
+            --namespace=druppie \
+            --docker-server=registry.druppie.rijnland.dev \
+            --docker-username=druppie \
+            --docker-password="${{ secrets.REGISTRY_PASSWORD }}" \
+            --dry-run=client -o yaml | kubectl apply -f -
 
       - name: Create secrets values file
         run: |
@@ -216,7 +215,6 @@ jobs:
           kubectl exec -n druppie deploy/druppie-backend -- \
             curl -s http://localhost:8100/health || echo "Health check failed"
 
-  # PR builds: build images only, don't deploy
   build-pr:
     runs-on: [self-hosted, druppie]
     if: github.event_name == 'pull_request'
@@ -224,11 +222,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Login to Gitea Container Registry
+      - name: Login to Container Registry
         run: |
-          echo "${{ secrets.GITEA_TOKEN }}" | \
-            docker login git.druppie.rijnland.dev \
-              -u gitea_admin --password-stdin
+          echo "${{ secrets.REGISTRY_PASSWORD }}" | \
+            docker login registry.druppie.rijnland.dev \
+              -u druppie --password-stdin
 
       - name: Setup Docker BuildKit
         run: |
