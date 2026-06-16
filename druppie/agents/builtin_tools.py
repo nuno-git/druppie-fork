@@ -907,10 +907,8 @@ async def done(
             continue
         run_summary = execution_repo.get_done_summary_for_run(run.id)
         if run_summary:
-            # Extract only the agent's own line(s) to avoid duplication.
-            # If the summary already contains accumulated lines from earlier agents,
-            # we only want the last line (this agent's own contribution).
-            # Look for "Agent <role>:" pattern to find individual lines.
+            # Collect all non-empty, non-duplicate lines from this run's summary.
+            # Deduplication handles the overlap from accumulated summaries.
             lines = run_summary.strip().split("\n")
             for line in lines:
                 stripped = line.strip()
@@ -918,7 +916,7 @@ async def done(
                     previous_summaries.append(stripped)
 
     # Build the accumulated summary: previous summaries + current agent's summary
-    # If the current summary already contains "Agent " lines from previous agents
+    # If the current summary contains lines already seen from previous agents
     # (because the agent copied them), strip those out to avoid duplication
     current_lines = summary.strip().split("\n")
     own_lines = []
