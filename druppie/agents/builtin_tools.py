@@ -138,11 +138,11 @@ BUILTIN_TOOL_DEFS: dict[str, dict] = {
                     },
                     "project_id": {
                         "type": "string",
-                        "description": "For update_project: the ID of the project to update",
+                        "description": "The ID of the project to work with. Required for update_project. Optional for general_chat when the user asks about a specific project by name. ONLY include this if the user mentions a specific project - otherwise OMIT this parameter entirely.",
                     },
                     "project_name": {
                         "type": "string",
-                        "description": "For create_project: the name for the new project",
+                        "description": "For create_project: the name for the new project. ONLY include this when intent is 'create_project' - otherwise OMIT this parameter entirely.",
                     },
                 },
                 "required": ["intent"],
@@ -369,6 +369,11 @@ async def set_intent(
         project_name=project_name,
     )
 
+    if project_id and isinstance(project_id, str):
+        normalized = project_id.lower().strip()
+        if normalized in ("null", "none") or normalized == "":
+            project_id = None
+
     valid_intents = ("create_project", "update_project", "general_chat")
     if intent not in valid_intents:
         return {
@@ -529,10 +534,27 @@ async def set_intent(
             }
 
     else:  # general_chat
-        result["message"] = "Intent set to general_chat"
+        if project_id:
+            try:
+                session_repo.update_project(session_id, UUID(project_id))
+                final_project_id = UUID(project_id)
+                result["project_id"] = project_id
+                result["message"] = f"Intent set to general_chat with project context: {project_id}"
+            except ValueError:
+                return {
+                    "success": False,
+                    "error": f"Invalid project_id format: {project_id}",
+                }
+        else:
+            result["message"] = "Intent set to general_chat"
 
-    # Update the pending planner's prompt with intent context
-    _update_planner_prompt(execution_repo, session_id, intent, final_project_id)
+    _update_planner_prompt(
+        execution_repo,
+        session_id,
+        intent,
+        final_project_id,
+        project_name if intent == "create_project" else None,
+    )
 
     db.flush()
 
@@ -551,6 +573,7 @@ def _update_planner_prompt(
     session_id: UUID,
     intent: str,
     project_id: UUID | None,
+    project_name: str | None = None,
 ) -> None:
     """Update the pending planner's prompt with intent context.
 
@@ -562,7 +585,10 @@ def _update_planner_prompt(
         session_id: Session UUID
         intent: Intent type
         project_id: Project UUID (or None)
+        project_name: Project name (optional, for create_project)
     """
+    from druppie.repositories import ProjectRepository
+
     planner_run = execution_repo.get_pending_by_agent_id(session_id, "planner")
 
     if not planner_run:
@@ -572,11 +598,34 @@ def _update_planner_prompt(
         )
         return
 
+    owner = None
+    if project_id:
+        try:
+            project_repo = ProjectRepository(execution_repo.db)
+            project = project_repo.get_by_id(project_id)
+            if project:
+                if not project_name:
+                    project_name = project.name
+                owner = project.repo_owner
+            else:
+                logger.warning(
+                    "_update_planner_prompt_project_not_found",
+                    project_id=str(project_id),
+                    session_id=str(session_id),
+                )
+        except Exception as e:
+            logger.error(
+                "_update_planner_prompt_project_lookup_failed",
+                project_id=str(project_id),
+                session_id=str(session_id),
+                error=str(e),
+            )
+
     # Prepend intent context to the existing prompt
     if project_id:
-        intent_context = f"INTENT: {intent}\nPROJECT_ID: {str(project_id)}\n\n"
+        intent_context = f"INTENT: {intent}\nPROJECT_ID: {str(project_id)}\nPROJECT_NAME: {project_name or 'unknown'}\nOWNER: {owner or 'unknown'}\n\n"
     else:
-        intent_context = f"INTENT: {intent}\nPROJECT_ID: new\n\n"
+        intent_context = f"INTENT: {intent}\nPROJECT_ID: new\nPROJECT_NAME: {project_name or 'unknown'}\nOWNER: unknown\n\n"
     new_prompt = intent_context + (planner_run.planned_prompt or "")
     execution_repo.update_planned_prompt(planner_run.id, new_prompt)
 
