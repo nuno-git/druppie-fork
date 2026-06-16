@@ -182,19 +182,22 @@ class Orchestrator:
         # Step 3.6: Translate to English if non-English (agents work in English)
         translated_message = message
         if human_input.detected_language and human_input.detected_language != "en":
-            from druppie.core.translation import get_translation_service
-            translator = get_translation_service()
-            translated_message = await translator.translate_to_english(
-                message, human_input.detected_language
-            )
-            if translated_message != message:
-                logger.info(
-                    "message_translated",
-                    session_id=str(current_session_id),
-                    source_language=human_input.detected_language,
-                    original_preview=message[:80],
-                    translated_preview=translated_message[:80],
+            try:
+                from druppie.core.translation import get_translation_service, TranslationNotAvailableError
+                translator = get_translation_service()
+                translated_message = await translator.translate_to_english(
+                    message, human_input.detected_language
                 )
+                if translated_message != message:
+                    logger.info(
+                        "message_translated",
+                        session_id=str(current_session_id),
+                        source_language=human_input.detected_language,
+                        original_preview=message[:80],
+                        translated_preview=translated_message[:80],
+                    )
+            except TranslationNotAvailableError:
+                logger.warning("translation_skipped_no_api_key", session_id=str(current_session_id))
 
         # Step 3b: Save user message to the timeline (after translation so we can store both versions)
         self.execution_repo.create_message(
@@ -752,18 +755,21 @@ class Orchestrator:
 
         translated_answer = answer
         if human_input.detected_language and human_input.detected_language != "en":
-            from druppie.core.translation import get_translation_service
-            translator = get_translation_service()
-            translated_answer = await translator.translate_to_english(
-                answer, human_input.detected_language
-            )
-            if translated_answer != answer:
-                logger.info(
-                    "hitl_answer_translated",
-                    session_id=str(session_id),
-                    question_id=str(question_id),
-                    source_language=human_input.detected_language,
+            try:
+                from druppie.core.translation import get_translation_service, TranslationNotAvailableError
+                translator = get_translation_service()
+                translated_answer = await translator.translate_to_english(
+                    answer, human_input.detected_language
                 )
+                if translated_answer != answer:
+                    logger.info(
+                        "hitl_answer_translated",
+                        session_id=str(session_id),
+                        question_id=str(question_id),
+                        source_language=human_input.detected_language,
+                    )
+            except TranslationNotAvailableError:
+                logger.warning("translation_skipped_no_api_key", session_id=str(session_id))
 
         # Step 2.5: Complete the HITL tool call with translated answer (English for agent)
         # but preserve the original answer for display in the UI
