@@ -185,6 +185,12 @@ modules:
       repository: druppie-module-llm
       tag: latest
     port: 9008
+  kubernetes:
+    enabled: true
+    image:
+      repository: druppie-module-kubernetes
+      tag: latest
+    port: 9013
   vision:
     enabled: true
     image:

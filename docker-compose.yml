@@ -465,6 +465,25 @@ services:
       retries: 5
       start_period: 10s
 
+  module-kubernetes:
+    build:
+      context: ./druppie/mcp-servers
+      dockerfile: module-kubernetes/Dockerfile
+    container_name: druppie-module-kubernetes
+    profiles: [infra, dev, prod]
+    environment:
+      MCP_PORT: "9013"
+    ports:
+      - "${MCP_KUBERNETES_PORT:-9013}:9013"
+    networks:
+      - druppie-new-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9013/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
   # ===========================================================================
   # SANDBOX INFRASTRUCTURE (background-agents)
   # ===========================================================================
@@ -664,6 +683,7 @@ services:
       MCP_WEB_URL: ${MCP_WEB_URL:-http://module-web:9005}
       MCP_ARCHIMATE_URL: ${MCP_ARCHIMATE_URL:-http://module-archimate:9006}
       MCP_REGISTRY_URL: ${MCP_REGISTRY_URL:-http://module-registry:9007}
+      MCP_KUBERNETES_URL: ${MCP_KUBERNETES_URL:-http://module-kubernetes:9013}
       SANDBOX_CONTROL_PLANE_URL: http://sandbox-control-plane:8787
       SANDBOX_MANAGER_URL: http://sandbox-manager:8000
       SANDBOX_API_SECRET: ${SANDBOX_API_SECRET:-sandbox-dev-secret}
@@ -751,6 +771,7 @@ services:
       MCP_WEB_URL: ${MCP_WEB_URL:-http://module-web:9005}
       MCP_ARCHIMATE_URL: ${MCP_ARCHIMATE_URL:-http://module-archimate:9006}
       MCP_REGISTRY_URL: ${MCP_REGISTRY_URL:-http://module-registry:9007}
+      MCP_KUBERNETES_URL: ${MCP_KUBERNETES_URL:-http://module-kubernetes:9013}
       SANDBOX_CONTROL_PLANE_URL: http://sandbox-control-plane:8787
       SANDBOX_API_SECRET: ${SANDBOX_API_SECRET:-sandbox-dev-secret}
       SANDBOX_MODEL: ${SANDBOX_MODEL:-}

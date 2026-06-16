@@ -198,6 +198,11 @@ druppie/
       v1/tools.py        # 3 read-only @mcp.tool()s — no project picker
       v1/module.py       # backlog ops, hard-scoped to AZURE_DEVOPS_PROJECT
       v1/client.py       # async ADO REST client, service-principal auth
+    module-kubernetes/   # Port 9013 — read-only Kubernetes cluster status
+      MODULE.yaml
+      server.py
+      v1/tools.py        # 4 read-only @mcp.tool()s — list_pods, list_nodes, list_services, get_cluster_health
+      v1/module.py       # K8s client, in-cluster or kubeconfig auth
 ```
 
 ### Azure DevOps backlog MCP (single-project isolation)

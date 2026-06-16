@@ -41,7 +41,7 @@ build_all() {
 
     # MCP Modules - build from mcp-servers context
     local MCP_DIR="$SOURCE_DIR/druppie/mcp-servers"
-    for module in coding docker filesearch web archimate registry llm vision; do
+    for module in coding docker filesearch web archimate registry llm vision kubernetes; do
         if [ -f "$MCP_DIR/module-$module/Dockerfile" ]; then
             build_and_load "druppie-module-$module" "$MCP_DIR/module-$module/Dockerfile" "$MCP_DIR"
         fi
@@ -71,7 +71,7 @@ case "${1:-all}" in
         ;;
     *)
         echo "Usage: $0 {all|backend|frontend|module-<name>}"
-        echo "  Modules: coding, docker, filesearch, web, archimate, registry, llm, vision"
+        echo "  Modules: coding, docker, filesearch, web, archimate, registry, llm, vision, kubernetes"
         exit 1
         ;;
 esac

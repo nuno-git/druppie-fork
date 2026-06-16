@@ -269,6 +269,26 @@ spec:
       port: {{ .Values.modules.llm.port }}
       targetPort: http
 {{- end }}
+{{- if .Values.modules.kubernetes.enabled }}
+---
+# Module Kubernetes Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "druppie.fullname" . }}-module-kubernetes
+  labels:
+    {{- include "druppie.labels" . | nindent 4 }}
+    app.kubernetes.io/component: module-kubernetes
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "druppie.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: module-kubernetes
+  ports:
+    - name: http
+      port: {{ .Values.modules.kubernetes.port }}
+      targetPort: http
+{{- end }}
 {{- if .Values.modules.vision.enabled }}
 ---
 # Module Vision Service

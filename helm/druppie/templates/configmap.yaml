@@ -36,6 +36,7 @@ data:
   MCP_REGISTRY_URL: "http://{{ include "druppie.fullname" . }}-module-registry:9007"
   MCP_LLM_URL: "http://{{ include "druppie.fullname" . }}-module-llm:{{ .Values.modules.llm.port }}"
   MCP_VISION_URL: "http://{{ include "druppie.fullname" . }}-module-vision:{{ .Values.modules.vision.port }}"
+  MCP_KUBERNETES_URL: "http://{{ include "druppie.fullname" . }}-module-kubernetes:{{ .Values.modules.kubernetes.port }}"
 
   # CORS
   CORS_ORIGINS: "{{ include "druppie.externalBaseUrl" . }}"
