@@ -147,7 +147,7 @@ class LLMSettings(BaseSettings):
     deepinfra_api_key: str = Field(
         default="",
         alias="DEEPINFRA_API_KEY",
-        description="DeepInfra API key (required for translation service)",
+        description="DeepInfra API key",
     )
 
 
@@ -354,18 +354,19 @@ class Settings(BaseSettings):
                     "GITHUB_APP_* variables to disable the feature."
                 )
 
-        # Translation: warn when DEEPINFRA_API_KEY is not set. The translation
-        # service uses DeepInfra regardless of LLM_PROVIDER, so a missing key
-        # silently disables all translation — Dutch users see English text with
-        # no error. We warn (not crash) because English-only deployments work
-        # fine without it.
-        if not self.llm.deepinfra_api_key:
+        # Translation: check if any LLM provider is available. The translation
+        # service will use whatever provider is configured (LLM_PROVIDER or any
+        # provider with an API key). Warn only when nothing is available at all.
+        try:
+            from druppie.core.translation import _resolve_translation_provider
+            _resolve_translation_provider()
+        except Exception:
             logger.warning(
-                "deepinfra_api_key_not_configured",
+                "translation_no_provider",
                 message=(
-                    "DEEPINFRA_API_KEY is not set — the translation service will "
-                    "not work. Non-English users will see an error when starting "
-                    "a session. Set DEEPINFRA_API_KEY in .env to enable translation."
+                    "No LLM provider is configured for translation. "
+                    "Non-English users will see an error when starting "
+                    "a session. Set at least one provider API key in .env."
                 ),
             )
 

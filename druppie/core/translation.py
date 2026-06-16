@@ -1,9 +1,8 @@
-"""Translation service — translates text between languages via DeepInfra.
+"""Translation service — translates text between languages via any available LLM.
 
-Uses a dedicated lightweight LLM instance (Qwen/Qwen3-32B on DeepInfra) for
-translations. Raises TranslationNotAvailableError on first use when
-DEEPINFRA_API_KEY is not configured, so callers surface a clear error instead
-of silently serving untranslated text.
+Uses the configured LLM provider (LLM_PROVIDER env var) or falls back through
+providers that have API keys set. Raises TranslationNotAvailableError only when
+no provider is available at all.
 """
 
 import os
@@ -29,8 +28,34 @@ def _language_name(code: str) -> str:
     return code
 
 
+def _resolve_translation_provider() -> tuple[str, str | None]:
+    """Find the best available provider for translation.
+
+    Returns (provider_name, model_override_or_None).
+    """
+    from druppie.llm.litellm_provider import PROVIDER_CONFIGS
+
+    primary = os.getenv("LLM_PROVIDER", "")
+    if primary and primary in PROVIDER_CONFIGS:
+        config = PROVIDER_CONFIGS[primary]
+        key_env = config["api_key_env"]
+        if os.getenv(key_env) or config.get("api_key_optional"):
+            return primary, None
+
+    for name, config in PROVIDER_CONFIGS.items():
+        key_env = config["api_key_env"]
+        if os.getenv(key_env) or config.get("api_key_optional"):
+            return name, None
+
+    raise TranslationNotAvailableError(
+        "No LLM provider is configured. Translation requires at least one "
+        "provider with an API key set (e.g. ZAI_API_KEY, DEEPINFRA_API_KEY, "
+        "DEEPSEEK_API_KEY). Check your .env file."
+    )
+
+
 class TranslationService:
-    """Translates text between languages using Qwen/Qwen3-32B on DeepInfra."""
+    """Translates text between languages using any available LLM provider."""
 
     def __init__(self):
         self._llm = None
@@ -38,21 +63,17 @@ class TranslationService:
     @property
     def llm(self):
         if self._llm is None:
-            if not os.getenv("DEEPINFRA_API_KEY"):
-                raise TranslationNotAvailableError(
-                    "DEEPINFRA_API_KEY is not set. Translation requires a valid "
-                    "DeepInfra API key. Set DEEPINFRA_API_KEY in your .env file "
-                    "to enable translation for non-English sessions."
-                )
+            provider, model = _resolve_translation_provider()
             from druppie.llm.litellm_provider import ChatLiteLLM
             self._llm = ChatLiteLLM(
-                provider="deepinfra",
-                model="Qwen/Qwen3-32B",
+                provider=provider,
+                model=model,
                 temperature=0.1,
                 max_tokens=4096,
                 timeout=15.0,
                 max_retries=1,
             )
+            logger.info("translation_provider_resolved", provider=provider, model=model)
         return self._llm
 
     async def translate_to_english(self, text: str, source_language: str) -> str:
