@@ -470,15 +470,25 @@ services:
       context: ./druppie/mcp-servers
       dockerfile: module-kubernetes/Dockerfile
     container_name: druppie-module-kubernetes
-    profiles: [infra, dev, prod]
+    # Opt-in profile: this module needs a reachable cluster and the external
+    # `kind` network, so it is NOT part of the default dev/infra/prod stack.
+    # Start it alongside the app, e.g.:
+    #   docker compose --profile dev --profile kubernetes up -d
+    profiles: [kubernetes]
     environment:
       MCP_PORT: "9013"
     volumes:
-      - ${HOME}/.kube/config:/root/.kube/config:ro
+      # Read-only kubeconfig for local dev (Helm uses in-cluster config instead).
+      # kind's standard kubeconfig points the API server at 127.0.0.1, which is
+      # the container's own loopback. Use the --internal kubeconfig instead — it
+      # targets the control-plane container over the `kind` network below:
+      #   kind get kubeconfig --name druppie --internal > ~/.kube/druppie-mcp.yaml
+      - ${HOME}/.kube/druppie-mcp.yaml:/root/.kube/config:ro
     ports:
       - "${MCP_KUBERNETES_PORT:-9013}:9013"
     networks:
       - druppie-new-network
+      - kind
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9013/health"]
       interval: 10s
@@ -1082,6 +1092,11 @@ networks:
   druppie-new-network:
     name: druppie-new-network
     driver: bridge
+  # Created by `kind`; the kubernetes module joins it to reach the cluster's
+  # control-plane container. Only required by the opt-in `kubernetes` profile.
+  kind:
+    name: kind
+    external: true
   druppie-sandbox-network:
     name: druppie-sandbox-network
     driver: bridge
