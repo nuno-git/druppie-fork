@@ -58,7 +58,10 @@ const SessionSidebar = ({ activeSessionId, onSelectSession, onNewChat, onCollaps
       const { page, limit, total } = lastPage
       return page * limit < total ? page + 1 : undefined
     },
-    refetchInterval: 5000,
+    refetchInterval: (query) => {
+      const pageCount = query.state.data?.pages?.length ?? 0
+      return pageCount > 1 ? 30000 : 5000
+    },
   })
 
   const deleteMutation = useMutation({
@@ -228,7 +231,7 @@ const SessionSidebar = ({ activeSessionId, onSelectSession, onNewChat, onCollaps
             <Loader2 className="w-4 h-4 text-gray-400 animate-spin" />
           </div>
         )}
-        {!isLoading && !hasNextPage && sessions.length > 0 && sessions.length < total && (
+        {!isLoading && !hasNextPage && sessions.length > 0 && total > PAGE_SIZE && (
           <p className="text-gray-300 text-xs text-center py-2">All sessions loaded</p>
         )}
       </div>
