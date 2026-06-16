@@ -9,7 +9,7 @@ metadata:
     app.kubernetes.io/component: keycloak-db
 spec:
   imageName: ghcr.io/cloudnative-pg/postgresql:15-standard-bookworm
-  instances: 1
+  instances: {{ .Values.cnpg.keycloak.instances | default 1 }}
 
   superuserSecret:
     name: {{ include "druppie.fullname" . }}-keycloak-db-superuser

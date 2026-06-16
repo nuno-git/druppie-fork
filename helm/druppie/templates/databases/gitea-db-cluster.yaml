@@ -9,7 +9,7 @@ metadata:
     app.kubernetes.io/component: gitea-db
 spec:
   imageName: ghcr.io/cloudnative-pg/postgresql:15-standard-bookworm
-  instances: 1
+  instances: {{ .Values.cnpg.gitea.instances | default 1 }}
 
   superuserSecret:
     name: {{ include "druppie.fullname" . }}-gitea-db-superuser
