@@ -473,6 +473,8 @@ services:
     profiles: [infra, dev, prod]
     environment:
       MCP_PORT: "9013"
+    volumes:
+      - ${HOME}/.kube/config:/root/.kube/config:ro
     ports:
       - "${MCP_KUBERNETES_PORT:-9013}:9013"
     networks:

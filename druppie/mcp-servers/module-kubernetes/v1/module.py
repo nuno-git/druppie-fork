@@ -24,8 +24,16 @@ class KubernetesModule:
                 config.load_incluster_config()
                 logger.info("Loaded in-cluster Kubernetes config")
             except ConfigException:
-                config.load_kube_config()
-                logger.info("Loaded kubeconfig from default location")
+                try:
+                    config.load_kube_config()
+                    logger.info("Loaded kubeconfig from default location")
+                except ConfigException:
+                    raise RuntimeError(
+                        "No Kubernetes cluster is configured. "
+                        "No in-cluster config or kubeconfig found. "
+                        "Please set up a cluster (e.g. kind create cluster) "
+                        "and ensure ~/.kube/config is mounted into the container."
+                    )
             self._core = client.CoreV1Api()
         return self._core
 
