@@ -336,6 +336,12 @@ class Orchestrator:
             # from previous agents (e.g., set_intent creates project/repo)
             context = self.build_project_context(session_id)
 
+            # Planner needs the accumulated summary from all completed agents
+            # so it knows what has been done. Build it fresh from the DB.
+            prompt = next_run.planned_prompt or ""
+            if next_run.agent_id == "planner":
+                prompt = self._prepend_agent_summary(session_id, prompt)
+
             logger.info(
                 "executing_agent_run",
                 session_id=str(session_id),
@@ -353,7 +359,7 @@ class Orchestrator:
                 session_id=session_id,
                 agent_run_id=next_run.id,
                 agent_id=next_run.agent_id,
-                prompt=next_run.planned_prompt or "",
+                prompt=prompt,
                 context=context,
             )
 
@@ -378,6 +384,35 @@ class Orchestrator:
                 return
 
             # Otherwise "completed" — loop continues to next pending run
+
+    def _prepend_agent_summary(self, session_id: UUID, prompt: str) -> str:
+        """Build accumulated summary from completed runs and prepend to prompt.
+
+        Reads all done() summaries from completed agent runs, deduplicates
+        lines, and prepends the result as PREVIOUS AGENT SUMMARY.
+        """
+        completed_runs = self.execution_repo.get_completed_runs(session_id)
+        seen = []
+        for run in completed_runs:
+            run_summary = self.execution_repo.get_done_summary_for_run(run.id)
+            if not run_summary:
+                continue
+            for line in run_summary.strip().split("\n"):
+                stripped = line.strip()
+                if stripped and stripped not in seen:
+                    seen.append(stripped)
+
+        if not seen:
+            return prompt
+
+        accumulated = "\n".join(seen)
+        logger.info(
+            "planner_summary_prepended",
+            session_id=str(session_id),
+            summary_lines=len(seen),
+            preview=accumulated[:200],
+        )
+        return f"PREVIOUS AGENT SUMMARY:\n{accumulated}\n\n---\n\n{prompt}"
 
     def build_project_context(self, session_id: UUID) -> dict | None:
         """Build project context for agents.

@@ -859,9 +859,8 @@ async def done(
     """Signal that the agent has completed its task.
 
     This does NOT pause execution - it signals completion immediately.
-    Auto-collects previous agent summaries and prepends them to create
-    an accumulated summary. Relays the full accumulated summary to the
-    next pending agent by prepending it to that agent's planned_prompt.
+    Stores the agent's summary for later retrieval. The orchestrator
+    handles building the accumulated summary when starting planner runs.
 
     When next_agent is specified, creates a direct pending run for that agent
     (plus a follow-up planner run), bypassing the normal Planner routing.
@@ -896,47 +895,6 @@ async def done(
         session_id=str(session_id),
         agent_run_id=str(agent_run_id),
         summary=summary[:200] if summary else "",
-    )
-
-    # Auto-collect previous agent summaries from completed runs
-    previous_summaries = []
-    completed_runs = execution_repo.get_completed_runs(session_id)
-    for run in completed_runs:
-        # Skip the current run (it's not completed yet at this point)
-        if run.id == agent_run_id:
-            continue
-        run_summary = execution_repo.get_done_summary_for_run(run.id)
-        if run_summary:
-            # Extract only the agent's own line(s) to avoid duplication.
-            # If the summary already contains accumulated lines from earlier agents,
-            # we only want the last line (this agent's own contribution).
-            # Look for "Agent <role>:" pattern to find individual lines.
-            lines = run_summary.strip().split("\n")
-            for line in lines:
-                stripped = line.strip()
-                if stripped and stripped.startswith("Agent ") and stripped not in previous_summaries:
-                    previous_summaries.append(stripped)
-
-    # Build the accumulated summary: previous summaries + current agent's summary
-    # If the current summary already contains "Agent " lines from previous agents
-    # (because the agent copied them), strip those out to avoid duplication
-    current_lines = summary.strip().split("\n")
-    own_lines = []
-    for line in current_lines:
-        stripped = line.strip()
-        if stripped and stripped not in previous_summaries:
-            own_lines.append(stripped)
-
-    # Combine: previous summaries first, then this agent's own lines
-    all_lines = previous_summaries + own_lines
-    accumulated_summary = "\n".join(all_lines) if all_lines else summary
-
-    logger.info(
-        "agent_done_accumulated",
-        session_id=str(session_id),
-        agent_run_id=str(agent_run_id),
-        previous_count=len(previous_summaries),
-        accumulated_preview=accumulated_summary[:200],
     )
 
     # Direct routing: if next_agent is specified, validate it against the
@@ -991,7 +949,7 @@ async def done(
                 session_id=session_id,
                 agent_id=next_agent,
                 status=AgentRunStatus.PENDING,
-                planned_prompt="",  # Will be filled by relay below
+                planned_prompt="",
                 sequence_number=start_seq,
             )
             execution_repo.flush()
@@ -1005,28 +963,9 @@ async def done(
         else:
             next_agent = None  # Ignored — planner will decide as usual
 
-    # Relay accumulated summary to the next pending planner only.
-    # Non-planner agents are self-contained — they read files from the
-    # workspace, not summary chains from previous agents.
-    next_run = execution_repo.get_next_pending(session_id)
-    if next_run and next_run.agent_id == "planner":
-        existing_prompt = next_run.planned_prompt or ""
-        new_prompt = (
-            f"PREVIOUS AGENT SUMMARY:\n{accumulated_summary}\n\n---\n\n"
-            + existing_prompt
-        )
-        execution_repo.update_planned_prompt(next_run.id, new_prompt)
-        execution_repo.flush()
-        logger.info(
-            "summary_relayed_to_planner",
-            session_id=str(session_id),
-            from_agent_run=str(agent_run_id),
-            to_agent_run=str(next_run.id),
-        )
-
     result = {
         "status": "completed",
-        "summary": accumulated_summary,
+        "summary": summary,
     }
     if next_agent:
         result["next_agent"] = next_agent
