@@ -148,7 +148,14 @@ async def answer_question(
 
     # Step 1b: Link attachments to question
     if request.attachment_ids:
-        attachment_uuids = [UUID(aid) for aid in request.attachment_ids]
+        try:
+            attachment_uuids = [UUID(aid) for aid in request.attachment_ids]
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid attachment ID format")
+        try:
+            attachment_repo.validate_ownership(attachment_uuids, question.session_id)
+        except ValueError as e:
+            raise HTTPException(status_code=403, detail=str(e))
         attachment_repo.link_to_question(
             attachment_uuids, question_id, question.session_id,
         )

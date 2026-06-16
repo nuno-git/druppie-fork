@@ -200,7 +200,15 @@ async def chat(
         )
 
         # Step 2: Spawn background task (does NOT block)
-        attachment_uuids = [UUID(aid) for aid in request.attachment_ids] if request.attachment_ids else None
+        try:
+            attachment_uuids = [UUID(aid) for aid in request.attachment_ids] if request.attachment_ids else None
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid attachment ID format")
+        if attachment_uuids:
+            try:
+                attachment_repo.validate_ownership(attachment_uuids, current_session_id)
+            except ValueError as e:
+                raise HTTPException(status_code=403, detail=str(e))
 
         try:
             create_session_task(

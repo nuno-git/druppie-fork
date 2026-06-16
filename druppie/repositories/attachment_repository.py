@@ -122,6 +122,27 @@ class AttachmentRepository(BaseRepository):
             .all()
         )
 
+    def validate_ownership(
+        self,
+        attachment_ids: list[UUID],
+        session_id: UUID,
+    ) -> None:
+        """Verify attachments are unlinked or belong to the given session.
+
+        Raises ValueError if any attachment doesn't exist or belongs to a
+        different session.
+        """
+        if not attachment_ids:
+            return
+        attachments = self.get_by_ids(attachment_ids)
+        found_ids = {a.id for a in attachments}
+        missing = set(attachment_ids) - found_ids
+        if missing:
+            raise ValueError(f"Attachment(s) not found: {', '.join(str(m) for m in missing)}")
+        for a in attachments:
+            if a.session_id is not None and a.session_id != session_id:
+                raise ValueError(f"Attachment {a.id} belongs to a different session")
+
     def get_for_session(self, session_id: UUID) -> list[MessageAttachment]:
         return (
             self.db.query(MessageAttachment)
