@@ -47,9 +47,10 @@ build_all() {
         fi
     done
 
-    # Sandbox image
-    if [ -f "$MCP_DIR/module-coding/Dockerfile.sandbox" ]; then
-        build_and_load "druppie-sandbox" "$MCP_DIR/module-coding/Dockerfile.sandbox" "$MCP_DIR"
+    # Sandbox image (context must be background-agents root for COPY paths)
+    local SANDBOX_DIR="$SOURCE_DIR/background-agents/packages/local-sandbox-manager"
+    if [ -f "$SANDBOX_DIR/Dockerfile.sandbox" ]; then
+        build_and_load "druppie-sandbox" "$SANDBOX_DIR/Dockerfile.sandbox" "$SOURCE_DIR/background-agents"
     fi
 
     log "All images built and loaded!"
