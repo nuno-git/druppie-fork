@@ -64,6 +64,22 @@ PORT_RANGE_START = int(os.getenv("PORT_RANGE_START", "9100"))
 PORT_RANGE_END = int(os.getenv("PORT_RANGE_END", "9199"))
 BUILD_DIR = Path(os.getenv("BUILD_DIR", "/tmp/docker-builds"))
 
+# Ensure the Docker network exists (needed on fresh K8s nodes)
+if DOCKER_NETWORK:
+    try:
+        result = subprocess.run(
+            ["docker", "network", "inspect", DOCKER_NETWORK],
+            capture_output=True, text=True, timeout=10,
+        )
+        if result.returncode != 0:
+            subprocess.run(
+                ["docker", "network", "create", DOCKER_NETWORK],
+                capture_output=True, text=True, timeout=30,
+            )
+            logger.info("Created Docker network: %s", DOCKER_NETWORK)
+    except Exception as e:
+        logger.warning("Could not ensure Docker network %s: %s", DOCKER_NETWORK, e)
+
 # Gitea config for cloning
 GITEA_URL = os.getenv("GITEA_INTERNAL_URL", "http://gitea:3000")
 GITEA_USER = os.getenv("GITEA_USER", "gitea_admin")
@@ -766,10 +782,10 @@ async def compose_up(
             env = {
                 **os.environ,
                 "APP_PORT": str(host_port),
-                "DRUPPIE_URL": os.environ.get("DRUPPIE_URL", "http://druppie-backend:8000"),
-                # Shared secret for the /api/modules/{id}/call proxy. Apps
-                # forward this back via the X-Druppie-Token header through
-                # the Druppie SDK. Empty string = dev mode / no auth.
+                "DRUPPIE_URL": os.environ.get(
+                    "COMPOSE_DRUPPIE_URL",
+                    os.environ.get("DRUPPIE_URL", "http://druppie-backend:8000"),
+                ),
                 "DRUPPIE_MODULE_API_TOKEN": os.environ.get("DRUPPIE_MODULE_API_TOKEN", ""),
             }
             compose_result = await asyncio.to_thread(
@@ -794,16 +810,24 @@ async def compose_up(
             # Step 7: Track port mapping
             compose_port_registry[project_name] = host_port
 
-            # Step 8: Health check via Docker network (not localhost)
-            # Discover the container port from the compose file instead of hardcoding
+            # Step 8: Health check
+            # Strategy (ordered by environment):
+            # 1. Docker DNS (works when module-docker runs as a Docker container)
+            # 2. localhost (works when module-docker has hostNetwork or runs on host)
+            # 3. docker exec curl (works everywhere — executes inside the container's namespace)
             container_port = _discover_container_port(compose_file)
             app_container = f"{project_name}-app-1"
-            health_url = f"http://{app_container}:{container_port}{health_path}"
+            health_url_docker = f"http://{app_container}:{container_port}{health_path}"
+            health_url_local = f"http://localhost:{host_port}{health_path}"
+            health_exec_cmd = ["docker", "exec", app_container,
+                               "curl", "-sf", "-o", "/dev/null", "-w", "%{http_code}",
+                               f"http://localhost:{container_port}{health_path}"]
             health_passed = False
 
             for elapsed in range(health_timeout):
+                # Try Docker DNS first (container-to-container)
                 try:
-                    req = urllib.request.Request(health_url)
+                    req = urllib.request.Request(health_url_docker)
                     resp = await asyncio.to_thread(
                         urllib.request.urlopen, req, timeout=2
                     )
@@ -814,6 +838,34 @@ async def compose_up(
                     resp.close()
                 except Exception:
                     pass
+
+                # Try localhost (hostNetwork / Docker Compose native)
+                try:
+                    req = urllib.request.Request(health_url_local)
+                    resp = await asyncio.to_thread(
+                        urllib.request.urlopen, req, timeout=2
+                    )
+                    if resp.status == 200:
+                        health_passed = True
+                        resp.close()
+                        break
+                    resp.close()
+                except Exception:
+                    pass
+
+                # Try docker exec (works from any network namespace)
+                try:
+                    exec_result = await asyncio.to_thread(
+                        subprocess.run,
+                        health_exec_cmd,
+                        capture_output=True, text=True, timeout=5,
+                    )
+                    if exec_result.returncode == 0 and exec_result.stdout.strip() == "200":
+                        health_passed = True
+                        break
+                except Exception:
+                    pass
+
                 if elapsed % 30 == 29:
                     logger.info(
                         "compose_up: health check pending (%ds/%ds)", elapsed + 1, health_timeout

@@ -1,0 +1,293 @@
+{{- if not .Values.cnpg.enabled }}
+# Database Services
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "druppie.fullname" . }}-druppie-db
+  labels:
+    {{- include "druppie.labels" . | nindent 4 }}
+    app.kubernetes.io/component: druppie-db
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "druppie.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: druppie-db
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "druppie.fullname" . }}-keycloak-db
+  labels:
+    {{- include "druppie.labels" . | nindent 4 }}
+    app.kubernetes.io/component: keycloak-db
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "druppie.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: keycloak-db
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "druppie.fullname" . }}-gitea-db
+  labels:
+    {{- include "druppie.labels" . | nindent 4 }}
+    app.kubernetes.io/component: gitea-db
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "druppie.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: gitea-db
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres
+{{- end }}
+---
+# Keycloak Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "druppie.fullname" . }}-keycloak
+  labels:
+    {{- include "druppie.labels" . | nindent 4 }}
+    app.kubernetes.io/component: keycloak
+spec:
+  type: NodePort
+  selector:
+    {{- include "druppie.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: keycloak
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+      nodePort: 30002
+---
+# Gitea Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "druppie.fullname" . }}-gitea
+  labels:
+    {{- include "druppie.labels" . | nindent 4 }}
+    app.kubernetes.io/component: gitea
+spec:
+  type: NodePort
+  selector:
+    {{- include "druppie.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: gitea
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http
+      nodePort: 30003
+    - name: ssh
+      port: 2222
+      targetPort: ssh
+---
+# Backend Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "druppie.fullname" . }}-backend
+  labels:
+    {{- include "druppie.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backend
+spec:
+  type: NodePort
+  selector:
+    {{- include "druppie.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: backend
+  ports:
+    - name: http
+      port: {{ .Values.backend.port }}
+      targetPort: http
+      nodePort: 30000
+---
+# Frontend Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "druppie.fullname" . }}-frontend
+  labels:
+    {{- include "druppie.labels" . | nindent 4 }}
+    app.kubernetes.io/component: frontend
+spec:
+  type: NodePort
+  selector:
+    {{- include "druppie.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: frontend
+  ports:
+    - name: http
+      port: {{ .Values.frontend.port }}
+      targetPort: http
+      nodePort: 30001
+{{- if .Values.modules.coding.enabled }}
+---
+# Module Coding Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "druppie.fullname" . }}-module-coding
+  labels:
+    {{- include "druppie.labels" . | nindent 4 }}
+    app.kubernetes.io/component: module-coding
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "druppie.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: module-coding
+  ports:
+    - name: http
+      port: {{ .Values.modules.coding.port }}
+      targetPort: http
+{{- end }}
+{{- if .Values.modules.docker.enabled }}
+---
+# Module Docker Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "druppie.fullname" . }}-module-docker
+  labels:
+    {{- include "druppie.labels" . | nindent 4 }}
+    app.kubernetes.io/component: module-docker
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "druppie.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: module-docker
+  ports:
+    - name: http
+      port: {{ .Values.modules.docker.port }}
+      targetPort: http
+{{- end }}
+{{- if .Values.modules.filesearch.enabled }}
+---
+# Module Filesearch Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "druppie.fullname" . }}-module-filesearch
+  labels:
+    {{- include "druppie.labels" . | nindent 4 }}
+    app.kubernetes.io/component: module-filesearch
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "druppie.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: module-filesearch
+  ports:
+    - name: http
+      port: {{ .Values.modules.filesearch.port }}
+      targetPort: http
+{{- end }}
+{{- if .Values.modules.web.enabled }}
+---
+# Module Web Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "druppie.fullname" . }}-module-web
+  labels:
+    {{- include "druppie.labels" . | nindent 4 }}
+    app.kubernetes.io/component: module-web
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "druppie.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: module-web
+  ports:
+    - name: http
+      port: {{ .Values.modules.web.port }}
+      targetPort: http
+{{- end }}
+{{- if .Values.modules.archimate.enabled }}
+---
+# Module Archimate Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "druppie.fullname" . }}-module-archimate
+  labels:
+    {{- include "druppie.labels" . | nindent 4 }}
+    app.kubernetes.io/component: module-archimate
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "druppie.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: module-archimate
+  ports:
+    - name: http
+      port: {{ .Values.modules.archimate.port }}
+      targetPort: http
+{{- end }}
+{{- if .Values.modules.registry.enabled }}
+---
+# Module Registry Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "druppie.fullname" . }}-module-registry
+  labels:
+    {{- include "druppie.labels" . | nindent 4 }}
+    app.kubernetes.io/component: module-registry
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "druppie.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: module-registry
+  ports:
+    - name: http
+      port: {{ .Values.modules.registry.port }}
+      targetPort: http
+{{- end }}
+{{- if .Values.modules.llm.enabled }}
+---
+# Module LLM Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "druppie.fullname" . }}-module-llm
+  labels:
+    {{- include "druppie.labels" . | nindent 4 }}
+    app.kubernetes.io/component: module-llm
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "druppie.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: module-llm
+  ports:
+    - name: http
+      port: {{ .Values.modules.llm.port }}
+      targetPort: http
+{{- end }}
+{{- if .Values.modules.vision.enabled }}
+---
+# Module Vision Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "druppie.fullname" . }}-module-vision
+  labels:
+    {{- include "druppie.labels" . | nindent 4 }}
+    app.kubernetes.io/component: module-vision
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "druppie.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: module-vision
+  ports:
+    - name: http
+      port: {{ .Values.modules.vision.port }}
+      targetPort: http
+{{- end }}

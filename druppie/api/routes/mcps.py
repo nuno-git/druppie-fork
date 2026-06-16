@@ -139,8 +139,8 @@ async def list_mcps(
     for server_id, server_config in config.get("mcps", {}).items():
         tools = []
         for tool in server_config.get("tools", []):
-            # Check if user can access this tool based on required_roles
-            required_roles = tool.get("required_roles", [])
+            role = tool.get("required_role")
+            required_roles = [role] if role else []
             if required_roles and "admin" not in user_roles:
                 if not any(r in required_roles for r in user_roles):
                     continue
@@ -256,7 +256,8 @@ async def get_tool(
         raise NotFoundError("tool", tool_id)
 
     user_roles = user.get("realm_access", {}).get("roles", [])
-    required_roles = tool_config.get("required_roles", [])
+    role = tool_config.get("required_role")
+    required_roles = [role] if role else []
 
     # Check if user can approve
     can_approve = (
@@ -296,7 +297,8 @@ async def get_mcp_server(
 
     tools = []
     for tool in server_config.get("tools", []):
-        required_roles = tool.get("required_roles", [])
+        role = tool.get("required_role")
+        required_roles = [role] if role else []
         if required_roles and "admin" not in user_roles:
             if not any(r in required_roles for r in user_roles):
                 continue

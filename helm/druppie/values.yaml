@@ -1,0 +1,412 @@
+# Druppie Platform - Helm Values
+# =================================
+
+# Global settings
+global:
+  instance: druppie
+  imagePullPolicy: IfNotPresent
+  # Override for image registry prefix (e.g. "ghcr.io/myorg/")
+  imageRegistry: ""
+  # Registry credentials — list of secret names for private registries
+  imagePullSecrets: []
+  # Domain configuration — controls all external URLs
+  # Local dev: localhost (path-based routing on port 9080)
+  # Production: druppie.example.com
+  domain: localhost
+  # Subdomain routing — set per-environment to enable dedicated subdomains
+  # When empty, falls back to path-based routing under the main domain
+  subdomains:
+    keycloak: ""
+    gitea: ""
+  # Toggle for ingress (set true for kind/prod, false for bare port-forward)
+  ingress:
+    enabled: true
+    className: nginx
+    port: 9080
+    # TLS config for production
+    tls:
+      enabled: false
+      secretName: ""
+    # Additional annotations (e.g., cert-manager)
+    annotations: {}
+
+# PostgreSQL database defaults
+postgresql:
+  image: postgres:15-alpine
+  druppie:
+    database: druppie
+    username: druppie
+    password: druppie_secret
+    port: 5432
+    storage: 5Gi
+  keycloak:
+    database: keycloak
+    username: keycloak
+    password: keycloak_secret
+    port: 5432
+    storage: 5Gi
+  gitea:
+    database: gitea
+    username: gitea
+    password: gitea_secret
+    port: 5432
+    storage: 5Gi
+
+# Keycloak Identity Provider
+keycloak:
+  image: quay.io/keycloak/keycloak:24.0
+  adminUser: admin
+  adminPassword: admin
+  hostname: ""
+  nodePort: 8080
+  replicaCount: 1
+  resources:
+    requests:
+      memory: "512Mi"
+      cpu: "500m"
+    limits:
+      memory: "1Gi"
+      cpu: "2000m"
+  readinessProbe:
+    httpGet:
+      path: /health/ready
+      port: 8080
+    initialDelaySeconds: 60
+    periodSeconds: 10
+    failureThreshold: 15
+  livenessProbe:
+    httpGet:
+      path: /health/ready
+      port: 8080
+    initialDelaySeconds: 90
+    periodSeconds: 30
+    failureThreshold: 10
+
+# Gitea Git Server
+gitea:
+  image: gitea/gitea:1.21
+  adminUser: gitea_admin
+  adminPassword: GiteaAdmin123
+  adminEmail: admin@druppie.local
+  org: druppie
+  sshPort: 2222
+  httpPort: 3000
+  nodePort: 3000
+  storage: 5Gi
+  replicaCount: 1
+  resources:
+    requests:
+      memory: "512Mi"
+      cpu: "250m"
+    limits:
+      memory: "1Gi"
+      cpu: "1000m"
+
+# Backend API
+backend:
+  image:
+    repository: druppie-backend
+    tag: latest
+  port: 8000
+  nodePort: 8000
+  replicaCount: 1
+  resources:
+    requests:
+      memory: "512Mi"
+      cpu: "250m"
+    limits:
+      memory: "1Gi"
+      cpu: "2000m"
+  devMode: false
+  dockerSocket:
+    enabled: false
+  # LLM configuration
+  llm:
+    provider: zai
+    forceProvider: ""
+    forceModel: ""
+  # LLM provider settings
+  zai:
+    model: glm-4.7
+    baseUrl: https://api.z.ai/api/coding/paas/v4
+  deepseek:
+    model: deepseek-chat
+    baseUrl: https://api.deepseek.com/v1
+  deepinfra:
+    model: Qwen/Qwen3-32B
+    baseUrl: https://api.deepinfra.com/v1
+  foundry:
+    model: GPT-5-MINI
+    apiUrl: ""
+  # GitHub App
+  github:
+    appId: ""
+    appPrivateKeyPath: ""
+    appInstallationId: ""
+    repoOwner: ""
+    repoName: ""
+
+# Frontend
+frontend:
+  image:
+    repository: druppie-frontend
+    tag: latest
+  port: 5173
+  nodePort: 5173
+  replicaCount: 1
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "250m"
+    limits:
+      memory: "512Mi"
+      cpu: "1000m"
+  # Vite environment variables
+  vite:
+    keycloakRealm: druppie
+    keycloakClientId: druppie-frontend
+
+# MCP Modules
+modules:
+  coding:
+    enabled: true
+    replicaCount: 1
+    image:
+      repository: druppie-module-coding
+      tag: latest
+    port: 9001
+    resources:
+      requests:
+        memory: "512Mi"
+        cpu: "250m"
+      limits:
+        memory: "2Gi"
+        cpu: "2000m"
+  docker:
+    enabled: true
+    replicaCount: 1
+    image:
+      repository: druppie-module-docker
+      tag: latest
+    port: 9002
+    resources:
+      requests:
+        memory: "512Mi"
+        cpu: "250m"
+      limits:
+        memory: "2Gi"
+        cpu: "2000m"
+  filesearch:
+    enabled: true
+    replicaCount: 1
+    image:
+      repository: druppie-module-filesearch
+      tag: latest
+    port: 9004
+    resources:
+      requests:
+        memory: "256Mi"
+        cpu: "250m"
+      limits:
+        memory: "512Mi"
+        cpu: "1000m"
+  web:
+    enabled: true
+    replicaCount: 1
+    image:
+      repository: druppie-module-web
+      tag: latest
+    port: 9005
+    resources:
+      requests:
+        memory: "256Mi"
+        cpu: "250m"
+      limits:
+        memory: "512Mi"
+        cpu: "1000m"
+  archimate:
+    enabled: true
+    replicaCount: 1
+    image:
+      repository: druppie-module-archimate
+      tag: latest
+    port: 9006
+    resources:
+      requests:
+        memory: "256Mi"
+        cpu: "250m"
+      limits:
+        memory: "512Mi"
+        cpu: "1000m"
+  registry:
+    enabled: true
+    replicaCount: 1
+    image:
+      repository: druppie-module-registry
+      tag: latest
+    port: 9007
+    resources:
+      requests:
+        memory: "256Mi"
+        cpu: "250m"
+      limits:
+        memory: "512Mi"
+        cpu: "1000m"
+  llm:
+    enabled: true
+    replicaCount: 1
+    image:
+      repository: druppie-module-llm
+      tag: latest
+    port: 9008
+    resources:
+      requests:
+        memory: "256Mi"
+        cpu: "250m"
+      limits:
+        memory: "512Mi"
+        cpu: "1000m"
+  vision:
+    enabled: true
+    replicaCount: 1
+    image:
+      repository: druppie-module-vision
+      tag: latest
+    port: 9011
+    resources:
+      requests:
+        memory: "256Mi"
+        cpu: "250m"
+      limits:
+        memory: "512Mi"
+        cpu: "1000m"
+  data_access:
+    enabled: true
+    replicaCount: 1
+    image:
+      repository: druppie-module-data-access
+      tag: latest
+    port: 9010
+    resources:
+      requests:
+        memory: "256Mi"
+        cpu: "250m"
+      limits:
+        memory: "512Mi"
+        cpu: "1000m"
+  layout_service:
+    enabled: true
+    replicaCount: 1
+    image:
+      repository: druppie-layout-service
+      tag: latest
+    port: 8090
+    resources:
+      requests:
+        memory: "128Mi"
+        cpu: "100m"
+      limits:
+        memory: "256Mi"
+        cpu: "500m"
+
+# Init job
+init:
+  enabled: true
+  image:
+    repository: druppie-init
+    tag: latest
+
+# Sandbox configuration
+sandbox:
+  runtime: sysbox-runc
+  image: druppie-sandbox:latest
+  memoryLimit: 4g
+  cpuLimit: "2"
+
+# Networking (ingress config moved to global.ingress)
+
+# Persistence
+persistence:
+  enabled: true
+  storageClass: ""
+  workspace:
+    size: 10Gi
+  dataset:
+    size: 5Gi
+  sandboxBundles:
+    size: 5Gi
+
+# NFS server for RWX storage (required for HPA multi-node scheduling)
+nfs:
+  enabled: false
+  storageClassName: nfs-workspace
+  storageClass: ""        # Backing storage class for NFS server PVC (e.g. hcloud-volumes)
+  storageSize: 30Gi       # Size of the backing volume for NFS server
+  nodeSelector: {}        # Pin NFS server to specific node (e.g. pool: infra)
+
+# Secrets (override in production)
+secrets:
+  zaiApiKey: ""
+  deepseekApiKey: ""
+  deepinfraApiKey: ""
+  foundryApiKey: ""
+  internalApiKey: druppie-internal-secret-key
+  keycloakClientSecret: ""
+  giteaClientSecret: ""
+  giteaSecretKey: ""
+  giteaToken: ""
+  moduleApiToken: ""
+  githubAppPrivateKey: ""
+
+# Autoscaling (HPA)
+autoscaling:
+  backend:
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+  frontend:
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 8
+    targetCPUUtilizationPercentage: 70
+
+# KEDA autoscaling — session-based scaling via PostgreSQL query (replaces CPU HPA for backend)
+keda:
+  enabled: false
+  pollingInterval: 15
+  cooldownPeriod: 300
+  sslmode: disable
+  backend:
+    # Counts agent runs currently executing — real-time "work in progress" metric
+    query: "SELECT COUNT(*) FROM agent_runs WHERE status = 'running'"
+    targetQueryValue: "50"
+    activationTargetQueryValue: "0"
+
+# CloudNativePG — HA PostgreSQL (set cnpg.enabled: true for production)
+cnpg:
+  enabled: false  # Use StatefulSets for Kind, CNPG for K3s production
+  monitoring:
+    enabled: false
+  druppie:
+    instances: 3
+    storage: 20Gi
+  keycloak:
+    instances: 3
+    storage: 5Gi
+  gitea:
+    instances: 3
+    storage: 5Gi
+
+# High Availability
+highAvailability:
+  pdb:
+    enabled: false
+    minAvailable: 1
+  antiAffinity:
+    enabled: false
+
+# cert-manager integration
+certManager:
+  enabled: false
+  email: ""

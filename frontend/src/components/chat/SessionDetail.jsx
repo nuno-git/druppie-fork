@@ -2,17 +2,19 @@
  * Session Detail - right panel when a session is selected in Chat
  */
 
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useContext } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Send, CheckCircle, XCircle, Shield, ShieldOff, Loader2, ExternalLink, MessageSquare, FileCode, FilePlus, StopCircle, PlayCircle, ArrowUp, AlertTriangle, Terminal, ChevronDown, ChevronRight } from 'lucide-react'
+import { Send, CheckCircle, XCircle, Shield, ShieldOff, Loader2, ExternalLink, MessageSquare, FileCode, FilePlus, FileText, FileType, StopCircle, PlayCircle, ArrowUp, AlertTriangle, Terminal, ChevronDown, ChevronRight, Calendar } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { getSession, sendChat, cancelChat, resumeSession, approveApproval, rejectApproval, answerQuestion, getSandboxEvents } from '../../services/api'
+import { getSession, sendChat, cancelChat, resumeSession, approveApproval, rejectApproval, answerQuestion, getSandboxEvents, getAttachmentUrl } from '../../services/api'
 import { getUserInfo } from '../../services/keycloak'
 import { useAuth } from '../../App'
 import { getAgentConfig, getAgentMessageColors, formatToolName } from '../../utils/agentConfig'
 import { FilePreviewModal } from './ApprovalCard'
+import DownloadMenu from './DownloadMenu'
+import { downloadAsMarkdown, downloadContentAsPdf, buildChatTranscript } from '../../utils/downloadDesign'
 import HITLQuestionMessage from './HITLQuestionMessage'
 import WorkflowPipeline from './WorkflowPipeline'
 import DebugEventLog from './DebugEventLog'
@@ -24,10 +26,14 @@ import {
   extractSurfacedApprovals,
   extractOrderedItems,
   extractSurfacedFileWrites,
+  buildApprovalFileList,
   extractDependencyInstalls,
   findPendingQuestion,
   ProjectRepoContext,
 } from './ChatHelpers'
+import FileUploadButton from './FileUploadButton'
+import AttachmentChips from './AttachmentChips'
+import SurfacedFileCard from './SurfacedFileCard'
 import TestResultCard from './TestResultCard'
 import SandboxEventCard, {
   processEvents,
@@ -39,6 +45,12 @@ import SandboxEventCard, {
   toolCategoryConfig,
   getToolCategory,
 } from './SandboxEventCard'
+
+// Fast-poll window after user actions (answer/approve/continue) so the
+// loading indicator appears promptly instead of waiting for the 2s paused poll.
+let _resumingUntil = 0
+const markResuming = () => { _resumingUntil = Date.now() + 10000 }
+const isResuming = () => Date.now() < _resumingUntil
 
 // --- Tool label helper ---
 
@@ -62,11 +74,15 @@ const getToolLabel = (toolName) => {
 const InlineApproval = ({ tc, sessionId, sessionUserId }) => {
   const queryClient = useQueryClient()
   const user = getUserInfo()
+  const repo = useContext(ProjectRepoContext)
   const [rejectMode, setRejectMode] = useState(false)
   const [rejectReason, setRejectReason] = useState('')
+  const [rejectAttachments, setRejectAttachments] = useState([])
   const [showFilePreview, setShowFilePreview] = useState(false)
+  const [pdfDownloading, setPdfDownloading] = useState(false)
 
   const invalidate = () => {
+    markResuming()
     queryClient.invalidateQueries({ queryKey: ['session', sessionId] })
     queryClient.invalidateQueries({ queryKey: ['tasks'] })
     queryClient.invalidateQueries({ queryKey: ['approvalHistory'] })
@@ -79,11 +95,12 @@ const InlineApproval = ({ tc, sessionId, sessionUserId }) => {
   })
 
   const rejectMut = useMutation({
-    mutationFn: ({ approvalId, reason }) => rejectApproval(approvalId, reason || ''),
+    mutationFn: ({ approvalId, reason, attachmentIds }) => rejectApproval(approvalId, reason || '', attachmentIds || []),
     onSuccess: () => {
       invalidate()
       setRejectMode(false)
       setRejectReason('')
+      setRejectAttachments([])
     },
   })
 
@@ -138,26 +155,60 @@ const InlineApproval = ({ tc, sessionId, sessionUserId }) => {
             </div>
           )}
 
+          {isRejected && tc.approval.rejection_reason && (
+            <div className="mt-1.5 text-xs text-red-700 whitespace-pre-wrap">{tc.approval.rejection_reason}</div>
+          )}
+          {isRejected && tc.approval.attachments?.length > 0 && (
+            <div className="mt-1.5 flex flex-wrap gap-1.5">
+              {tc.approval.attachments.map((att) => {
+                const Icon = att.content_type === 'application/pdf' ? FileType : FileText
+                return (
+                  <button
+                    key={att.id}
+                    type="button"
+                    onClick={() => {
+                      if (window.confirm(`Download "${att.original_filename}"?`)) {
+                        window.open(getAttachmentUrl(att.id), '_blank')
+                      }
+                    }}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-white/60 rounded-lg text-xs text-gray-600 hover:bg-white transition-colors cursor-pointer"
+                  >
+                    <Icon className="w-3.5 h-3.5 text-gray-400" />
+                    <span className="truncate max-w-[120px]">{att.original_filename}</span>
+                  </button>
+                )
+              })}
+            </div>
+          )}
+
           {/* File preview for write operations */}
           {(() => {
-            const filePath = args.path || args.file_path
-            const content = args.content
-            const batchFiles = args.files
-            const isBatchWrite = !!batchFiles && Object.keys(batchFiles).length > 0
-            const hasFile = !!(content || isBatchWrite)
-            if (!hasFile) return null
-            const files = isBatchWrite
-              ? Object.entries(batchFiles).map(([p, c]) => ({ path: p, content: c }))
-              : [{ path: filePath || 'file', content }]
+            const files = buildApprovalFileList(args)
+            if (!files) return null
+            const displayPath = args.translated_path || args.path || args.file_path || 'file'
             return (
               <div className="mt-1.5">
-                <button
-                  onClick={() => setShowFilePreview(true)}
-                  className="flex items-center gap-1.5 text-xs text-blue-600 hover:text-blue-800 transition-colors"
-                >
-                  {isBatchWrite ? <FileCode className="w-3.5 h-3.5" /> : <FilePlus className="w-3.5 h-3.5" />}
-                  View {isBatchWrite ? `${files.length} files` : filePath || 'file'}
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setShowFilePreview(true)}
+                    className="flex items-center gap-1.5 text-xs text-blue-600 hover:text-blue-800 transition-colors"
+                  >
+                    {files.length > 1 && !args.translated_content ? <FileCode className="w-3.5 h-3.5" /> : <FilePlus className="w-3.5 h-3.5" />}
+                    View {files.length > 1 && !args.translated_content ? `${files.length} files` : displayPath}
+                  </button>
+                  {files.length === 1 && args.content && (
+                    <DownloadMenu
+                      variant="light"
+                      loading={pdfDownloading}
+                      onDownloadMd={() => downloadAsMarkdown(args.content, displayPath)}
+                      onDownloadPdf={async () => {
+                        setPdfDownloading(true)
+                        try { await downloadContentAsPdf(args.content, displayPath, repo) }
+                        finally { setPdfDownloading(false) }
+                      }}
+                    />
+                  )}
+                </div>
                 {showFilePreview && (
                   <FilePreviewModal files={files} onClose={() => setShowFilePreview(false)} />
                 )}
@@ -187,38 +238,57 @@ const InlineApproval = ({ tc, sessionId, sessionUserId }) => {
                     </button>
                   </div>
                 ) : (
-                  <div className="flex items-center gap-1.5">
-                    <input
-                      type="text"
+                  <div className="space-y-1.5">
+                    <AttachmentChips
+                      attachments={rejectAttachments}
+                      onRemove={(id) => setRejectAttachments((prev) => prev.filter((a) => a.id !== id))}
+                    />
+                    <textarea
                       value={rejectReason}
                       onChange={(e) => setRejectReason(e.target.value)}
-                      placeholder="Reason..."
+                      placeholder="Reason for rejection..."
                       aria-label="Rejection reason"
-                      className="flex-1 min-w-0 px-2 py-1 text-xs border border-gray-200 rounded-md focus:outline-none focus:ring-1 focus:ring-red-400"
+                      className="w-full px-2 py-1 text-xs border border-gray-200 rounded-md focus:outline-none focus:ring-1 focus:ring-red-400 resize-y"
+                      rows={3}
+                      maxLength={10000}
                       autoFocus
                       onKeyDown={(e) => {
-                        if (e.key === 'Enter' && rejectReason.trim()) {
-                          rejectMut.mutate({ approvalId: tc.approval.id, reason: rejectReason })
-                        }
                         if (e.key === 'Escape') {
                           setRejectMode(false)
                           setRejectReason('')
+                          setRejectAttachments([])
+                        }
+                        if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && rejectReason.trim() && !isProcessing) {
+                          e.preventDefault()
+                          rejectMut.mutate({ approvalId: tc.approval.id, reason: rejectReason, attachmentIds: rejectAttachments.map((a) => a.id) })
                         }
                       }}
                     />
-                    <button
-                      onClick={() => rejectMut.mutate({ approvalId: tc.approval.id, reason: rejectReason })}
-                      disabled={isProcessing || !rejectReason.trim()}
-                      className="px-2 py-1 text-xs bg-red-600 text-white rounded-md hover:bg-red-700 disabled:opacity-50 transition-colors"
-                    >
-                      Reject
-                    </button>
-                    <button
-                      onClick={() => { setRejectMode(false); setRejectReason('') }}
-                      className="px-2 py-1 text-xs text-gray-400 hover:text-gray-600 transition-colors"
-                    >
-                      Cancel
-                    </button>
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-gray-400">{rejectReason.length} / 10,000</span>
+                      <div className="flex items-center gap-1.5">
+                        <FileUploadButton
+                          onUpload={(att) => setRejectAttachments((prev) => [...prev, att])}
+                          onError={() => {}}
+                          sessionId={sessionId}
+                          scope={`reject-${tc.approval.id}`}
+                          disabled={isProcessing}
+                        />
+                        <button
+                          onClick={() => rejectMut.mutate({ approvalId: tc.approval.id, reason: rejectReason, attachmentIds: rejectAttachments.map((a) => a.id) })}
+                          disabled={isProcessing || !rejectReason.trim()}
+                          className="px-2 py-1 text-xs bg-red-600 text-white rounded-md hover:bg-red-700 disabled:opacity-50 transition-colors"
+                        >
+                          Reject
+                        </button>
+                        <button
+                          onClick={() => { setRejectMode(false); setRejectReason(''); setRejectAttachments([]) }}
+                          className="px-2 py-1 text-xs text-gray-400 hover:text-gray-600 transition-colors"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
                   </div>
                 )
               ) : (
@@ -245,12 +315,16 @@ const InlineApproval = ({ tc, sessionId, sessionUserId }) => {
 
 // --- Timeline HITL Question ---
 
-const TimelineQuestion = ({ tc, agentId, sessionId }) => {
+const TimelineQuestion = ({ tc, agentId, sessionId, attachments = [], onAttachmentsConsumed }) => {
   const queryClient = useQueryClient()
 
   const answerMut = useMutation({
-    mutationFn: ({ questionId, answer, selectedChoices = null }) => answerQuestion(questionId, answer, selectedChoices),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['session', sessionId] }),
+    mutationFn: ({ questionId, answer, selectedChoices = null, attachmentIds = [] }) => answerQuestion(questionId, answer, selectedChoices, attachmentIds),
+    onSuccess: () => {
+      onAttachmentsConsumed?.()
+      markResuming()
+      queryClient.invalidateQueries({ queryKey: ['session', sessionId] })
+    },
   })
 
   const isAnswered = tc.status === 'completed'
@@ -264,7 +338,7 @@ const TimelineQuestion = ({ tc, agentId, sessionId }) => {
   if (isAnswered && tc.result) {
     try {
       const parsed = typeof tc.result === 'string' ? JSON.parse(tc.result) : tc.result
-      displayAnswer = parsed.answer || parsed.text || (typeof parsed === 'string' ? parsed : tc.result)
+      displayAnswer = parsed.user_answer || parsed.display_answer || parsed.answer_english || parsed.answer || parsed.text || (typeof parsed === 'string' ? parsed : tc.result)
     } catch {
       displayAnswer = tc.result
     }
@@ -290,14 +364,38 @@ const TimelineQuestion = ({ tc, agentId, sessionId }) => {
     <>
       <HITLQuestionMessage
         question={questionData}
-        onSubmitAnswer={({ indices, answerText }) => answerMut.mutate({ questionId: tc.question_id, answer: answerText, selectedChoices: indices })}
+        onSubmitAnswer={({ indices, answerText }) => answerMut.mutate({ questionId: tc.question_id, answer: answerText, selectedChoices: indices, attachmentIds: attachments.map((a) => a.id) })}
         isAnswering={answerMut.isPending}
         answered={isAnswered}
       />
       {isAnswered && displayAnswer && (
         <div className="flex justify-end">
           <div className="max-w-[85%] rounded-2xl px-4 py-2.5 text-sm bg-gray-100 text-gray-900">
-            <div className="whitespace-pre-wrap">{displayAnswer}</div>
+            {!(tc.attachments?.length > 0 && displayAnswer.startsWith('See uploaded files:')) && (
+              <div className="whitespace-pre-wrap">{displayAnswer}</div>
+            )}
+            {tc.attachments?.length > 0 && (
+              <div className={`flex flex-wrap gap-1.5${displayAnswer && !displayAnswer.startsWith('See uploaded files:') ? ' mt-2' : ''}`}>
+                {tc.attachments.map((att) => {
+                  const Icon = att.content_type === 'application/pdf' ? FileType : FileText
+                  return (
+                    <button
+                      key={att.id}
+                      type="button"
+                      onClick={() => {
+                        if (window.confirm(`Download "${att.original_filename}"?`)) {
+                          window.open(getAttachmentUrl(att.id), '_blank')
+                        }
+                      }}
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-white/60 rounded-lg text-xs text-gray-600 hover:bg-white transition-colors cursor-pointer"
+                    >
+                      <Icon className="w-3.5 h-3.5 text-gray-400" />
+                      <span className="truncate max-w-[120px]">{att.original_filename}</span>
+                    </button>
+                  )
+                })}
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -307,13 +405,13 @@ const TimelineQuestion = ({ tc, agentId, sessionId }) => {
 
 // --- Agent Run ---
 
-const AgentRunItem = ({ run, timelineIndex, sessionId, hasFollowingMessage, sessionUserId }) => {
+const AgentRunItem = ({ run, timelineIndex, sessionId, hasFollowingMessage, sessionUserId, surfacedFiles, attachments, onAttachmentsConsumed }) => {
   const orderedItems = extractOrderedItems(run, hasFollowingMessage)
 
   // Show agent trace for completed runs that have no following message
   const showAgentTrace = !hasFollowingMessage && run.status !== 'running'
 
-  if (!showAgentTrace && orderedItems.length === 0) return null
+  if (!showAgentTrace && orderedItems.length === 0 && (!surfacedFiles || surfacedFiles.length === 0)) return null
 
   const config = getAgentConfig(run.agent_id)
   const AgentIcon = config.icon
@@ -342,7 +440,7 @@ const AgentRunItem = ({ run, timelineIndex, sessionId, hasFollowingMessage, sess
         if (item.type === 'question') {
           return (
             <div key={i} className="mt-3">
-              <TimelineQuestion tc={item.tc} agentId={item.agentId} sessionId={sessionId} />
+              <TimelineQuestion tc={item.tc} agentId={item.agentId} sessionId={sessionId} attachments={attachments} onAttachmentsConsumed={onAttachmentsConsumed} />
             </div>
           )
         }
@@ -362,6 +460,9 @@ const AgentRunItem = ({ run, timelineIndex, sessionId, hasFollowingMessage, sess
         }
         return null
       })}
+      {surfacedFiles.length > 0 && (
+        <SurfacedFileCard files={surfacedFiles} />
+      )}
     </div>
   )
 }
@@ -376,13 +477,40 @@ const MessageItem = ({ message, agentRun, sessionId }) => {
     : []
 
   if (isUser) {
+    const atts = message.attachments || []
+    const attNames = atts.map((a) => a.original_filename).join(', ')
+    const isAttachmentOnly = atts.length > 0 && (message.content === 'See attached' || message.content === attNames)
     return (
       <div className="group flex justify-end gap-2">
         <span className="text-xs text-gray-300 self-end pb-1">
           {message.created_at && new Date(message.created_at).toLocaleTimeString()}
         </span>
         <div className="max-w-[85%] rounded-2xl px-4 py-2.5 text-sm bg-gray-100 text-gray-900 overflow-hidden">
-          <div className="whitespace-pre-wrap break-words">{message.content}</div>
+          {!isAttachmentOnly && (
+            <div className="whitespace-pre-wrap break-words">{message.content}</div>
+          )}
+          {atts.length > 0 && (
+            <div className={`flex flex-wrap gap-1.5${isAttachmentOnly ? '' : ' mt-2'}`}>
+              {atts.map((att) => {
+                const Icon = att.content_type === 'application/pdf' ? FileType : FileText
+                return (
+                  <button
+                    key={att.id}
+                    type="button"
+                    onClick={() => {
+                      if (window.confirm(`Download "${att.original_filename}"?`)) {
+                        window.open(getAttachmentUrl(att.id), '_blank')
+                      }
+                    }}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-white/60 rounded-lg text-xs text-gray-600 hover:bg-white transition-colors cursor-pointer"
+                  >
+                    <Icon className="w-3.5 h-3.5 text-gray-400" />
+                    <span className="truncate max-w-[120px]">{att.original_filename}</span>
+                  </button>
+                )
+              })}
+            </div>
+          )}
         </div>
       </div>
     )
@@ -606,6 +734,9 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
   const prevLengthRef = useRef(0)
   const inputRef = useRef(null)
   const [continueInput, setContinueInput] = useState('')
+  const [attachments, setAttachments] = useState([])
+  const [uploadError, setUploadError] = useState(null)
+  const [transcriptPdfLoading, setTranscriptPdfLoading] = useState(false)
   const savedInspectScroll = useRef(0)
   const [viewMode, _setViewMode] = useState(() => {
     if (initialViewMode && VALID_VIEW_MODES.has(initialViewMode)) return initialViewMode
@@ -633,10 +764,11 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
       if (query.state.error) return false
       const status = query.state.data?.status
       if (status === 'completed' || status === 'failed') return false
+      // Fast poll briefly after submitting an answer/approval (translation in progress)
+      if (isResuming()) return 500
       if (status === 'paused_crashed') return 2000
       if (status === 'paused_sandbox') return 2000
       if (status === 'paused' || status === 'paused_approval' || status === 'paused_hitl') {
-        // Fast poll while stopping (agent still finishing current op), slow poll when fully paused
         const hasRunning = query.state.data?.timeline?.some(
           e => e.type === 'agent_run' && e.agent_run?.status === 'running'
         )
@@ -648,9 +780,12 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
   })
 
   const continueMutation = useMutation({
-    mutationFn: (message) => sendChat(message, sessionId),
+    mutationFn: ({ message, attachmentIds }) => sendChat(message, sessionId, null, attachmentIds),
     onSuccess: () => {
+      markResuming()
       setContinueInput('')
+      setAttachments([])
+      setUploadError(null)
       queryClient.invalidateQueries({ queryKey: ['session', sessionId] })
       queryClient.invalidateQueries({ queryKey: ['sessions'] })
     },
@@ -687,7 +822,7 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
   // When session has pending approvals, keep the tasks/badge cache fresh
   useEffect(() => {
     const status = data?.status
-    if (status === 'paused_approval' || status === 'waiting_approval') {
+    if (status === 'paused_approval') {
       queryClient.invalidateQueries({ queryKey: ['tasks'] })
       queryClient.invalidateQueries({ queryKey: ['pending-approvals-count'] })
     }
@@ -802,11 +937,17 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
 
   const handleContinueSend = () => {
     const trimmed = continueInput.trim()
-    if (!trimmed) return
+    if (!trimmed && !attachments.length) return
     if (pendingQuestion) {
-      answerQuestion(pendingQuestion.tc.question_id, trimmed)
+      const fileNames = attachments.map((a) => a.original_filename).join(', ')
+      const answer = trimmed
+        || (attachments.length ? `See uploaded files: ${fileNames}` : '')
+      if (!answer) return
+      const attIds = attachments.map((a) => a.id)
+      answerQuestion(pendingQuestion.tc.question_id, answer, null, attIds)
         .then(() => {
           setContinueInput('')
+          setAttachments([])
           queryClient.invalidateQueries({ queryKey: ['session', sessionId] })
         })
         .catch((err) => {
@@ -814,7 +955,12 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
         })
       return
     }
-    continueMutation.mutate(trimmed)
+    setUploadError(null)
+    const fallback = attachments.length
+      ? attachments.map((a) => a.original_filename).join(', ')
+      : 'See attached'
+    const message = trimmed || fallback
+    continueMutation.mutate({ message, attachmentIds: attachments.map((a) => a.id) })
   }
 
   const statusDotColor = isStopping
@@ -831,12 +977,20 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
         paused_tool: 'bg-amber-500 animate-pulse',
         paused_sandbox: 'bg-blue-500 animate-pulse',
         paused_approval: 'bg-amber-500 animate-pulse',
-        waiting_approval: 'bg-amber-500 animate-pulse',
         waiting_answer: 'bg-amber-500 animate-pulse',
       }[data.status] || 'bg-gray-400'
 
   const projectRepo = data?.project
-    ? { repo_url: data.project.repo_url, default_branch: data.project.default_branch || 'main' }
+    ? {
+        id: data.project.id,
+        repo_url: data.project.repo_url,
+        default_branch: data.project.default_branch || 'main',
+        // Carries the current session so embedded artifacts (e.g. the
+        // .archimate file referenced from a ```archimate``` block in the
+        // TD preview) can be fetched from the session workspace before
+        // the architect's commit reaches Gitea.
+        session_id: sessionId,
+      }
     : null
 
   return (
@@ -849,6 +1003,12 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
           <h2 className="text-sm font-medium text-gray-900 truncate">
             {data.title || 'Untitled Session'}
           </h2>
+          {data.intent === 'scheduled_job' && (
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium text-purple-600 bg-purple-50 border border-purple-200 rounded-full">
+              <Calendar className="w-3 h-3" />
+              Scheduled Job
+            </span>
+          )}
           <div className="ml-auto flex items-center gap-3 flex-shrink-0">
             {/* Stopping indicator — session is paused but agent still finishing */}
             {isStopping && (
@@ -923,6 +1083,24 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
                 {data.project.name}
               </a>
             )}
+            <DownloadMenu
+              loading={transcriptPdfLoading}
+              onDownloadMd={() => {
+                const md = buildChatTranscript(data)
+                const slug = (data.title || 'chat').replace(/[^a-z0-9]+/gi, '-').toLowerCase()
+                downloadAsMarkdown(md, `${slug}.md`)
+              }}
+              onDownloadPdf={async () => {
+                setTranscriptPdfLoading(true)
+                try {
+                  const md = buildChatTranscript(data)
+                  const slug = (data.title || 'chat').replace(/[^a-z0-9]+/gi, '-').toLowerCase()
+                  await downloadContentAsPdf(md, `${slug}.pdf`)
+                } finally {
+                  setTranscriptPdfLoading(false)
+                }
+              }}
+            />
             <CopyJsonButton
               getData={() => buildVisibleJson(data, timelineRef.current)}
               label="Copy JSON"
@@ -1040,9 +1218,10 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
 
                 const hasFollowingMessage = runsWithMessages.has(i)
                 const orderedItems = extractOrderedItems(entry.agent_run, hasFollowingMessage)
+                const surfacedFiles = extractSurfacedFileWrites(entry.agent_run)
                 // Show completed runs without a following message (e.g. architect)
                 const isCompletedWithoutMessage = !hasFollowingMessage && entry.agent_run.status !== 'running'
-                if (orderedItems.length === 0 && !isCompletedWithoutMessage) {
+                if (orderedItems.length === 0 && surfacedFiles.length === 0 && !isCompletedWithoutMessage) {
                   return null
                 }
                 return (
@@ -1053,6 +1232,9 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
                       sessionId={sessionId}
                       hasFollowingMessage={hasFollowingMessage}
                       sessionUserId={data?.user_id}
+                      surfacedFiles={surfacedFiles}
+                      attachments={attachments}
+                      onAttachmentsConsumed={() => { setAttachments([]); setUploadError(null) }}
                     />
                     {renderAnnotation(i)}
                   </div>
@@ -1122,6 +1304,23 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
         </div>
       )}
 
+      {/* Failed session banner — show error message so the user knows what went wrong */}
+      {data.status === 'failed' && viewMode !== 'inspect' && (
+        <div className="px-4 pb-4 pt-2 flex-shrink-0">
+          <div className="max-w-3xl mx-auto">
+            <div className="flex items-start gap-2.5 border border-red-200 rounded-2xl shadow-sm px-4 py-3.5 bg-red-50">
+              <XCircle className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-red-800">Session failed</p>
+                {data.error_message && (
+                  <p className="text-sm text-red-600 mt-0.5 break-words">{data.error_message}</p>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Sandbox waiting bar — replaces input when sandbox is running */}
       {data.status === 'paused_sandbox' && viewMode !== 'inspect' && (
         <div className="px-4 pb-4 pt-2 flex-shrink-0">
@@ -1138,7 +1337,18 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
       {data.status !== 'failed' && data.status !== 'paused_sandbox' && viewMode !== 'inspect' && (
         <div className="px-4 pb-4 pt-2 flex-shrink-0">
           <div className="max-w-3xl mx-auto">
-            <div className="flex items-end gap-2 border border-gray-200 rounded-2xl shadow-lg px-4 py-3 bg-white focus-within:border-gray-300 focus-within:shadow-xl transition-shadow">
+            <div className="border border-gray-200 rounded-2xl shadow-lg px-4 py-3 bg-white focus-within:border-gray-300 focus-within:shadow-xl transition-shadow">
+              <AttachmentChips
+                attachments={attachments}
+                onRemove={(id) => setAttachments((prev) => prev.filter((a) => a.id !== id))}
+              />
+              <div className="flex items-end gap-2">
+              <FileUploadButton
+                onUpload={(att) => { setUploadError(null); setAttachments((prev) => [...prev, att]) }}
+                onError={setUploadError}
+                sessionId={sessionId}
+                disabled={continueMutation.isPending}
+              />
               <textarea
                 ref={inputRef}
                 value={continueInput}
@@ -1198,7 +1408,7 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
               ) : (
                 <button
                   onClick={handleContinueSend}
-                  disabled={!continueInput.trim() || continueMutation.isPending}
+                  disabled={(!continueInput.trim() && !attachments.length) || continueMutation.isPending}
                   className="flex-shrink-0 p-2 rounded-xl bg-gray-900 text-white hover:bg-gray-700 disabled:opacity-30 disabled:hover:bg-gray-900 transition-colors"
                   aria-label="Send message"
                 >
@@ -1209,10 +1419,11 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
                   )}
                 </button>
               )}
+              </div>
             </div>
-            {continueMutation.isError && (
+            {(continueMutation.isError || uploadError) && (
               <p className="mt-2 text-xs text-red-600 text-center">
-                {continueMutation.error.message}
+                {continueMutation.error?.message || uploadError}
               </p>
             )}
           </div>

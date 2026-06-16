@@ -53,19 +53,21 @@ class BoundedOrchestrator:
     async def run(self, message: str, session_id: UUID | None = None) -> UUID:
         from druppie.execution.orchestrator import Orchestrator
         from druppie.repositories import (
-            ExecutionRepository, ProjectRepository, QuestionRepository, SessionRepository,
+            ExecutionRepository, ProjectRepository, QuestionRepository, SessionRepository, JobRepository,
         )
 
         session_repo = SessionRepository(self._db)
         execution_repo = ExecutionRepository(self._db)
         project_repo = ProjectRepository(self._db)
         question_repo = QuestionRepository(self._db)
+        job_repo = JobRepository(self._db)
 
         orchestrator = Orchestrator(
             session_repo=session_repo,
             execution_repo=execution_repo,
             project_repo=project_repo,
             question_repo=question_repo,
+            job_repo=job_repo,
         )
 
         if not self._real_agents:

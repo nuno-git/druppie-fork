@@ -1,0 +1,80 @@
+# docker-installer DaemonSet — installs Docker on app pool nodes
+# Required for compose_up sandbox (module-docker mounts /var/run/docker.sock)
+# When Cluster Autoscaler provisions new app nodes, this DaemonSet ensures
+# Docker is installed before any workload that needs it.
+#
+# This is a Phase 1 workaround. Phase 2 will migrate sandboxes to K8s natively.
+{{- if .Values.backend.dockerSocket.enabled }}
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ include "druppie.fullname" . }}-docker-installer
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "druppie.labels" . | nindent 4 }}
+    app.kubernetes.io/component: docker-installer
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-5"
+    helm.sh/hook-delete-policy: before-hook-creation
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: docker-installer
+      {{- include "druppie.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/component: docker-installer
+        {{- include "druppie.selectorLabels" . | nindent 8 }}
+    spec:
+      hostPID: true
+      hostNetwork: true
+      # Only run on app pool nodes (where backend/docker-module run)
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: pool
+                    operator: In
+                    values:
+                      - app
+      tolerations:
+        - operator: Exists  # Tolerate all taints
+      initContainers:
+        - name: install-docker
+          image: {{ .Values.postgresql.image }}
+          securityContext:
+            privileged: true
+          command:
+            - /bin/sh
+            - -c
+            - |
+              # Check if Docker is already installed
+              if command -v docker &>/dev/null && systemctl is-active --quiet docker; then
+                echo "Docker already installed and running"
+                exit 0
+              fi
+
+              echo "Installing Docker via get.docker.com..."
+              # Use nsenter to run in the host's PID namespace
+              nsenter -t 1 -m -u -i -n -- sh -c '
+                curl -fsSL https://get.docker.com | sh
+                systemctl enable docker
+                systemctl start docker
+                echo "Docker installed successfully: $(docker --version)"
+              '
+      containers:
+        - name: pause
+          image: {{ .Values.postgresql.image }}
+          command: ["sleep", "infinity"]
+          resources:
+            requests:
+              cpu: "10m"
+              memory: "16Mi"
+            limits:
+              cpu: "50m"
+              memory: "32Mi"
+      terminationGracePeriodSeconds: 5
+{{- end }}

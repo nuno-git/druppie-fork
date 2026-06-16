@@ -4,7 +4,7 @@ from pydantic import BaseModel
 from uuid import UUID
 from datetime import datetime
 
-from .common import ApprovalStatus
+from .common import Attachment, ApprovalStatus
 
 
 class ApprovalSummary(BaseModel):
@@ -14,20 +14,21 @@ class ApprovalSummary(BaseModel):
     required_role: str
     resolved_by: UUID | None = None
     resolved_at: datetime | None = None
+    rejection_reason: str | None = None
+    attachments: list[Attachment] = []
 
 
 class ApprovalDetail(ApprovalSummary):
     """Full approval with context. Inherits from ApprovalSummary."""
     session_id: UUID
     agent_run_id: UUID | None
-    tool_call_id: UUID
+    tool_call_id: UUID | None
     # Tool info
     mcp_server: str
     tool_name: str
     arguments: dict
     # Context
     agent_id: str | None
-    rejection_reason: str | None = None
     created_at: datetime
     # Session owner ID — populated for session_owner approvals so the frontend
     # can determine if the current user is the session owner.
@@ -36,6 +37,11 @@ class ApprovalDetail(ApprovalSummary):
     # so the Tasks page can resolve relative markdown links in FD/TD previews
     # to Gitea URLs (same behaviour as the chat view).
     repo_url: str | None = None
+    # Project id — needed by the ArchimateBlock renderer to fetch the
+    # referenced .archimate file via /api/projects/{id}/file or
+    # /api/projects/{id}/file/workspace. Without it the embedded plate
+    # preview fails with "No project context".
+    project_id: UUID | None = None
 
 
 class PendingApprovalList(BaseModel):

@@ -11,6 +11,7 @@ messages          Message             Message
 agent_runs        AgentRun            AgentRunSummary, AgentRunDetail
 llm_calls         LlmCall             LlmCallSummary
 tool_calls        ToolCall            ToolCallSummary, ToolCallDetail
+message_attachments MessageAttachment Attachment
 llm_retries       LlmRetry            LLMRetryDetail
 tool_call_normalizations ToolCallNormalization NormalizationDetail
 approvals         Approval            ApprovalSummary, ApprovalDetail
@@ -25,6 +26,10 @@ Removed tables (handled by MCPs):
 - builds: Docker MCP tracks via container labels
 - deployments: Docker MCP tracks via container labels
 - session_events: Derived from other tables, not stored
+
+New tables (cron job pipeline):
+- job_definitions  JobDefinition       JobDefinitionSummary, JobDefinitionDetail
+- job_runs         JobRun              JobRunSummary, JobRunDetail
 """
 
 # Agent execution models
@@ -45,6 +50,7 @@ from .test_run import TestRun
 from .test_run_tag import TestRunTag
 from .test_running_status import TestRunningStatus
 from .llm_call import LlmCall
+from .message_attachment import MessageAttachment
 from .llm_retry import LlmRetry
 
 # Project model
@@ -56,6 +62,8 @@ from .documentation_cache import DocumentationCache
 
 # Question model (HITL questions from agents)
 from .question import Question
+
+from .job import JobDefinition, JobRun
 
 # Sandbox session ownership mapping
 from .sandbox_session import SandboxSession
@@ -91,6 +99,8 @@ __all__ = [
     "LlmCall",
     "LlmRetry",
     "ToolCallNormalization",
+    # Message attachments
+    "MessageAttachment",
     # Approval
     "Approval",
     # Question
@@ -106,4 +116,7 @@ __all__ = [
     "TestRunTag",
     "TestAssertionResult",
     "TestRunningStatus",
+    # Cron jobs
+    "JobDefinition",
+    "JobRun",
 ]
