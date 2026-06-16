@@ -119,6 +119,9 @@ export const resumeSession = (sessionId) =>
 export const deleteSession = (sessionId) =>
   request(`/api/sessions/${sessionId}`, { method: 'DELETE' })
 
+export const deleteAllSessions = () =>
+  request('/api/sessions', { method: 'DELETE' })
+
 export const retryFromRun = (sessionId, agentRunId, plannedPrompt = null) =>
   request(`/api/sessions/${sessionId}/retry-from/${agentRunId}`, {
     method: 'POST',

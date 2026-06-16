@@ -123,6 +123,30 @@ async def get_session(
     return detail
 
 
+@router.delete("/sessions")
+async def delete_all_sessions(
+    service: SessionService = Depends(get_session_service),
+    user: dict = Depends(get_current_user),
+):
+    """Delete all sessions for the current user (admins: all sessions).
+
+    Cascades to delete all related data (messages, agent runs, tool calls, etc.)
+    and cleans up attachment files from disk.
+
+    Returns:
+        Success confirmation with count of deleted sessions
+    """
+    user_id = UUID(user["sub"])
+    user_roles = get_user_roles(user)
+
+    if "admin" in user_roles:
+        user_id = None
+
+    count = service.delete_all_for_user(user_id)
+    logger.info("all_sessions_deleted", user_id=str(user["sub"]), count=count)
+    return {"success": True, "deleted_count": count}
+
+
 @router.delete("/sessions/{session_id}")
 async def delete_session(
     session_id: UUID,

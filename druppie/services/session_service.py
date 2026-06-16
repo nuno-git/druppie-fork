@@ -86,6 +86,27 @@ class SessionService:
         self.session_repo.commit()
         logger.info("session_deleted", session_id=str(session_id), by_user=str(user_id))
 
+    def delete_all_for_user(self, user_id: UUID | None) -> int:
+        """Delete all sessions for a user (None = all sessions), including attachment files."""
+        sessions, _ = self.session_repo.list_for_user(user_id, limit=10000, offset=0)
+        if not sessions:
+            return 0
+
+        session_ids = [s.id for s in sessions]
+
+        attachments = (
+            self.session_repo.db.query(MessageAttachment)
+            .filter(MessageAttachment.session_id.in_(session_ids))
+            .all()
+        )
+        for att in attachments:
+            attachment_service.delete_file(att.storage_path)
+
+        self.session_repo.delete_all_for_user(user_id)
+        self.session_repo.commit()
+        logger.info("all_sessions_deleted", user_id=str(user_id), count=len(session_ids))
+        return len(session_ids)
+
     def lock_for_retry(self, session_id: UUID) -> None:
         """Atomically lock and transition session to ACTIVE for retry.
 

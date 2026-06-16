@@ -5,7 +5,7 @@
 import { useState, useMemo, useCallback, useRef, useEffect } from 'react'
 import { useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Plus, Search, PanelLeftClose, Trash2, Loader2 } from 'lucide-react'
-import { getSessions, deleteSession } from '../../services/api'
+import { getSessions, deleteSession, deleteAllSessions } from '../../services/api'
 import { timeAgo, ACTIVE_STATUSES } from './ChatHelpers'
 import { SkeletonSidebarItem } from '../shared/Skeleton'
 
@@ -74,6 +74,21 @@ const SessionSidebar = ({ activeSessionId, onSelectSession, onNewChat, onCollaps
     },
     onError: () => setDeletingId(null),
   })
+
+  const deleteAllMutation = useMutation({
+    mutationFn: deleteAllSessions,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['sessions'] })
+      onNewChat()
+    },
+  })
+
+  const handleDeleteAll = () => {
+    if (sessions.length === 0) return
+    if (window.confirm(`Delete all ${sessions.length} sessions?\n\nThis will permanently delete all your sessions and their data. This cannot be undone.`)) {
+      deleteAllMutation.mutate()
+    }
+  }
 
   const handleDelete = (e, session) => {
     e.stopPropagation()
@@ -235,6 +250,22 @@ const SessionSidebar = ({ activeSessionId, onSelectSession, onNewChat, onCollaps
           <p className="text-gray-300 text-xs text-center py-2">All sessions loaded</p>
         )}
       </div>
+      {sessions.length > 0 && (
+        <div className="px-3 py-2 border-t">
+          <button
+            onClick={handleDeleteAll}
+            disabled={deleteAllMutation.isPending}
+            className="w-full flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-50"
+          >
+            {deleteAllMutation.isPending ? (
+              <div className="w-3.5 h-3.5 border-2 border-red-600 border-t-transparent rounded-full animate-spin" />
+            ) : (
+              <Trash2 className="w-3.5 h-3.5" />
+            )}
+            {deleteAllMutation.isPending ? 'Deleting…' : 'Delete all sessions'}
+          </button>
+        </div>
+      )}
     </div>
   )
 }

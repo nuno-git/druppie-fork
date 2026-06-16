@@ -219,6 +219,17 @@ class SessionRepository(BaseRepository):
         """Delete session (cascades to related data)."""
         self.db.query(SessionModel).filter_by(id=session_id).delete()
 
+    def delete_all_for_user(self, user_id: UUID | None) -> list[UUID]:
+        """Delete all sessions for a user (None = all sessions). Returns deleted session IDs."""
+        query = self.db.query(SessionModel.id)
+        if user_id is not None:
+            query = query.filter_by(user_id=user_id)
+        sessions = query.all()
+        ids = [s.id for s in sessions]
+        if ids:
+            self.db.query(SessionModel).filter(SessionModel.id.in_(ids)).delete(synchronize_session="fetch")
+        return ids
+
     def _to_summary(self, session: SessionModel) -> SessionSummary:
         """Convert session model to summary domain object."""
         # Look up username from users table
