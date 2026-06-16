@@ -208,38 +208,41 @@ const InlineApproval = ({ tc, sessionId, sessionUserId }) => {
                     </button>
                   </div>
                 ) : (
-                  <div className="flex items-center gap-1.5">
-                    <input
-                      type="text"
+                  <div className="space-y-1.5">
+                    <textarea
                       value={rejectReason}
                       onChange={(e) => setRejectReason(e.target.value)}
-                      placeholder="Reason..."
+                      placeholder="Reason for rejection..."
                       aria-label="Rejection reason"
-                      className="flex-1 min-w-0 px-2 py-1 text-xs border border-gray-200 rounded-md focus:outline-none focus:ring-1 focus:ring-red-400"
+                      className="w-full px-2 py-1 text-xs border border-gray-200 rounded-md focus:outline-none focus:ring-1 focus:ring-red-400 resize-y"
+                      rows={3}
+                      maxLength={10000}
                       autoFocus
                       onKeyDown={(e) => {
-                        if (e.key === 'Enter' && rejectReason.trim()) {
-                          rejectMut.mutate({ approvalId: tc.approval.id, reason: rejectReason })
-                        }
                         if (e.key === 'Escape') {
                           setRejectMode(false)
                           setRejectReason('')
                         }
                       }}
                     />
-                    <button
-                      onClick={() => rejectMut.mutate({ approvalId: tc.approval.id, reason: rejectReason })}
-                      disabled={isProcessing || !rejectReason.trim()}
-                      className="px-2 py-1 text-xs bg-red-600 text-white rounded-md hover:bg-red-700 disabled:opacity-50 transition-colors"
-                    >
-                      Reject
-                    </button>
-                    <button
-                      onClick={() => { setRejectMode(false); setRejectReason('') }}
-                      className="px-2 py-1 text-xs text-gray-400 hover:text-gray-600 transition-colors"
-                    >
-                      Cancel
-                    </button>
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-gray-400">{rejectReason.length} / 10,000</span>
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          onClick={() => rejectMut.mutate({ approvalId: tc.approval.id, reason: rejectReason })}
+                          disabled={isProcessing || !rejectReason.trim()}
+                          className="px-2 py-1 text-xs bg-red-600 text-white rounded-md hover:bg-red-700 disabled:opacity-50 transition-colors"
+                        >
+                          Reject
+                        </button>
+                        <button
+                          onClick={() => { setRejectMode(false); setRejectReason('') }}
+                          className="px-2 py-1 text-xs text-gray-400 hover:text-gray-600 transition-colors"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
                   </div>
                 )
               ) : (

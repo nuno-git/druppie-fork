@@ -486,14 +486,18 @@ const ApprovalCard = ({ approval, onApprove, onReject, isProcessing, currentUser
               {/* Reject reason input */}
               {showRejectInput && (
                 <div className="mb-3">
-                  <input
-                    type="text"
+                  <textarea
                     value={rejectReason}
                     onChange={(e) => setRejectReason(e.target.value)}
                     placeholder="Enter reason for rejection..."
-                    className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent text-sm"
+                    className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent text-sm resize-y"
+                    rows={3}
+                    maxLength={10000}
                     autoFocus
                   />
+                  <div className="text-xs text-gray-400 text-right mt-1">
+                    {rejectReason.length} / 10,000
+                  </div>
                 </div>
               )}
 
