@@ -538,6 +538,13 @@ class AzureDevOpsModule:
         parent_id: int | None = None,
     ) -> dict:
         """Update an existing work item in the configured project."""
+        if state and board_column:
+            return {
+                "success": False,
+                "error": "Cannot set both state and board_column — "
+                         "board_column automatically updates the state.",
+            }
+
         fields = {
             "title": title,
             "description": description,
