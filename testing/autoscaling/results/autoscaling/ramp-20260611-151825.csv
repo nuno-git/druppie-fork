@@ -1,0 +1,1 @@
+timestamp,stage,concurrency,total_reqs,post_ok,post_fail,rps,lat_avg_ms,lat_p50_ms,lat_p95_ms,lat_p99_ms,lat_max_ms,poll_avg_count,elapsed_s,backend_replicas,backend_cpu_pct,app_nodes

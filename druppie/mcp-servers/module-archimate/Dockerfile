@@ -2,20 +2,17 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install curl for healthcheck
 RUN apt-get update && \
     apt-get install -y curl && \
     rm -rf /var/lib/apt/lists/*
 
-COPY module-archimate/requirements.txt .
+COPY mcp-servers/module-archimate/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy shared router factory and module code
-COPY module_router.py .
-COPY module-archimate/ .
+COPY mcp-servers/module_router.py .
+COPY mcp-servers/module-archimate/ .
 
-# Create default models directory
-RUN mkdir -p /models
+COPY mcp-servers/module-archimate/models/ /models/
 
 ENV MODELS_DIR=/models
 ENV PYTHONUNBUFFERED=1

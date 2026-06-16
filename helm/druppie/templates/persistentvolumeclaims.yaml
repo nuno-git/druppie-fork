@@ -9,10 +9,12 @@ metadata:
     app.kubernetes.io/component: workspace
 spec:
   accessModes:
+    {{- if .Values.nfs.enabled }}
+    - ReadWriteMany
+    {{- else }}
     - ReadWriteOnce
-  {{- if .Values.persistence.storageClass }}
-  storageClassName: {{ .Values.persistence.storageClass | quote }}
-  {{- end }}
+    {{- end }}
+  storageClassName: {{ include "druppie.persistence.storageClass" . | quote }}
   resources:
     requests:
       storage: {{ .Values.persistence.workspace.size }}
@@ -43,10 +45,12 @@ metadata:
     app.kubernetes.io/component: sandbox-bundles
 spec:
   accessModes:
+    {{- if .Values.nfs.enabled }}
+    - ReadWriteMany
+    {{- else }}
     - ReadWriteOnce
-  {{- if .Values.persistence.storageClass }}
-  storageClassName: {{ .Values.persistence.storageClass | quote }}
-  {{- end }}
+    {{- end }}
+  storageClassName: {{ include "druppie.persistence.storageClass" . | quote }}
   resources:
     requests:
       storage: {{ .Values.persistence.sandboxBundles.size }}

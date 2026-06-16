@@ -1,0 +1,44 @@
+{{- if .Values.cnpg.enabled }}
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: {{ include "druppie.fullname" . }}-keycloak-db
+  labels:
+    {{- include "druppie.labels" . | nindent 4 }}
+    app.kubernetes.io/component: keycloak-db
+spec:
+  imageName: ghcr.io/cloudnative-pg/postgresql:15-standard-bookworm
+  instances: 1
+
+  superuserSecret:
+    name: {{ include "druppie.fullname" . }}-keycloak-db-superuser
+
+  enableSuperuserAccess: true
+
+  postgresql:
+    parameters:
+      shared_buffers: "128MB"
+      max_connections: "100"
+
+  bootstrap:
+    initdb:
+      database: {{ .Values.postgresql.keycloak.database | quote }}
+      owner: {{ .Values.postgresql.keycloak.username | quote }}
+      postInitApplicationSQL:
+        - ALTER USER {{ .Values.postgresql.keycloak.username }} WITH PASSWORD '{{ .Values.postgresql.keycloak.password }}'
+
+  storage:
+    size: {{ .Values.cnpg.keycloak.storage | default "5Gi" }}
+    {{- if .Values.persistence.storageClass }}
+    storageClass: {{ .Values.persistence.storageClass | quote }}
+    {{- end }}
+
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "250m"
+    limits:
+      memory: "1Gi"
+      cpu: "1000m"
+{{- end }}

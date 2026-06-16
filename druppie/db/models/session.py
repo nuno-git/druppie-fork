@@ -18,7 +18,7 @@ class Session(Base):
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"))
     project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"))
     title = Column(String(500))
-    status = Column(String(20), default="active")  # active, paused, paused_approval, paused_hitl, paused_crashed, completed, failed
+    status = Column(String(20), default="active", index=True)  # active, paused, paused_approval, paused_hitl, paused_crashed, completed, failed
     error_message = Column(Text)  # Error details when status is 'failed'
     intent = Column(String(50))  # create_project, update_project, general_chat
     branch_name = Column(String(255), nullable=True)  # Feature branch for update_project
@@ -30,7 +30,7 @@ class Session(Base):
     completion_tokens = Column(Integer, default=0)
     total_tokens = Column(Integer, default=0)
 
-    created_at = Column(DateTime(timezone=True), default=utcnow)
+    created_at = Column(DateTime(timezone=True), default=utcnow, index=True)
     updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
     def to_dict(self) -> dict[str, Any]:

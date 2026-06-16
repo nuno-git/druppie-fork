@@ -39,11 +39,12 @@ build_all() {
     # Init
     build_and_load "druppie-init" "$SOURCE_DIR/Dockerfile.init" "$SOURCE_DIR"
 
-    # MCP Modules - build from mcp-servers context
+    # MCP Modules - build from druppie/ context (Dockerfiles reference sdk/ and mcp-servers/)
+    local DRUPPIE_DIR="$SOURCE_DIR/druppie"
     local MCP_DIR="$SOURCE_DIR/druppie/mcp-servers"
     for module in coding docker filesearch web archimate registry llm vision kubernetes; do
         if [ -f "$MCP_DIR/module-$module/Dockerfile" ]; then
-            build_and_load "druppie-module-$module" "$MCP_DIR/module-$module/Dockerfile" "$MCP_DIR"
+            build_and_load "druppie-module-$module" "$MCP_DIR/module-$module/Dockerfile" "$DRUPPIE_DIR"
         fi
     done
 
@@ -65,7 +66,7 @@ case "${1:-all}" in
         ;;
     module-*)
         module="${1#module-}"
-        build_and_load "druppie-module-$module" "$SOURCE_DIR/druppie/mcp-servers/module-$module/Dockerfile" "$SOURCE_DIR/druppie/mcp-servers"
+        build_and_load "druppie-module-$module" "$SOURCE_DIR/druppie/mcp-servers/module-$module/Dockerfile" "$SOURCE_DIR/druppie"
         ;;
     all)
         build_all

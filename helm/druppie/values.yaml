@@ -7,10 +7,17 @@ global:
   imagePullPolicy: IfNotPresent
   # Override for image registry prefix (e.g. "ghcr.io/myorg/")
   imageRegistry: ""
+  # Registry credentials — list of secret names for private registries
+  imagePullSecrets: []
   # Domain configuration — controls all external URLs
   # Local dev: localhost (path-based routing on port 9080)
   # Production: druppie.example.com
   domain: localhost
+  # Subdomain routing — set per-environment to enable dedicated subdomains
+  # When empty, falls back to path-based routing under the main domain
+  subdomains:
+    keycloak: ""
+    gitea: ""
   # Toggle for ingress (set true for kind/prod, false for bare port-forward)
   ingress:
     enabled: true
@@ -52,13 +59,14 @@ keycloak:
   adminPassword: admin
   hostname: ""
   nodePort: 8080
+  replicaCount: 1
   resources:
     requests:
-      memory: "384Mi"
-      cpu: "250m"
+      memory: "512Mi"
+      cpu: "500m"
     limits:
-      memory: "768Mi"
-      cpu: "1000m"
+      memory: "1Gi"
+      cpu: "2000m"
   readinessProbe:
     httpGet:
       path: /health/ready
@@ -85,6 +93,14 @@ gitea:
   httpPort: 3000
   nodePort: 3000
   storage: 5Gi
+  replicaCount: 1
+  resources:
+    requests:
+      memory: "512Mi"
+      cpu: "250m"
+    limits:
+      memory: "1Gi"
+      cpu: "1000m"
 
 # Backend API
 backend:
@@ -93,13 +109,14 @@ backend:
     tag: latest
   port: 8000
   nodePort: 8000
+  replicaCount: 1
   resources:
     requests:
-      memory: "256Mi"
+      memory: "512Mi"
       cpu: "250m"
     limits:
-      memory: "512Mi"
-      cpu: "1000m"
+      memory: "1Gi"
+      cpu: "2000m"
   devMode: false
   dockerSocket:
     enabled: false
@@ -136,6 +153,14 @@ frontend:
     tag: latest
   port: 5173
   nodePort: 5173
+  replicaCount: 1
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "250m"
+    limits:
+      memory: "512Mi"
+      cpu: "1000m"
   # Vite environment variables
   vite:
     keycloakRealm: druppie
@@ -145,46 +170,102 @@ frontend:
 modules:
   coding:
     enabled: true
+    replicaCount: 1
     image:
       repository: druppie-module-coding
       tag: latest
     port: 9001
+    resources:
+      requests:
+        memory: "512Mi"
+        cpu: "250m"
+      limits:
+        memory: "2Gi"
+        cpu: "2000m"
   docker:
     enabled: true
+    replicaCount: 1
     image:
       repository: druppie-module-docker
       tag: latest
     port: 9002
+    resources:
+      requests:
+        memory: "512Mi"
+        cpu: "250m"
+      limits:
+        memory: "2Gi"
+        cpu: "2000m"
   filesearch:
     enabled: true
+    replicaCount: 1
     image:
       repository: druppie-module-filesearch
       tag: latest
     port: 9004
+    resources:
+      requests:
+        memory: "256Mi"
+        cpu: "250m"
+      limits:
+        memory: "512Mi"
+        cpu: "1000m"
   web:
     enabled: true
+    replicaCount: 1
     image:
       repository: druppie-module-web
       tag: latest
     port: 9005
+    resources:
+      requests:
+        memory: "256Mi"
+        cpu: "250m"
+      limits:
+        memory: "512Mi"
+        cpu: "1000m"
   archimate:
     enabled: true
+    replicaCount: 1
     image:
       repository: druppie-module-archimate
       tag: latest
     port: 9006
+    resources:
+      requests:
+        memory: "256Mi"
+        cpu: "250m"
+      limits:
+        memory: "512Mi"
+        cpu: "1000m"
   registry:
     enabled: true
+    replicaCount: 1
     image:
       repository: druppie-module-registry
       tag: latest
     port: 9007
+    resources:
+      requests:
+        memory: "256Mi"
+        cpu: "250m"
+      limits:
+        memory: "512Mi"
+        cpu: "1000m"
   llm:
     enabled: true
+    replicaCount: 1
     image:
       repository: druppie-module-llm
       tag: latest
     port: 9008
+    resources:
+      requests:
+        memory: "256Mi"
+        cpu: "250m"
+      limits:
+        memory: "512Mi"
+        cpu: "1000m"
   kubernetes:
     enabled: true
     image:
@@ -193,10 +274,46 @@ modules:
     port: 9013
   vision:
     enabled: true
+    replicaCount: 1
     image:
       repository: druppie-module-vision
       tag: latest
     port: 9011
+    resources:
+      requests:
+        memory: "256Mi"
+        cpu: "250m"
+      limits:
+        memory: "512Mi"
+        cpu: "1000m"
+  data_access:
+    enabled: true
+    replicaCount: 1
+    image:
+      repository: druppie-module-data-access
+      tag: latest
+    port: 9010
+    resources:
+      requests:
+        memory: "256Mi"
+        cpu: "250m"
+      limits:
+        memory: "512Mi"
+        cpu: "1000m"
+  layout_service:
+    enabled: true
+    replicaCount: 1
+    image:
+      repository: druppie-layout-service
+      tag: latest
+    port: 8090
+    resources:
+      requests:
+        memory: "128Mi"
+        cpu: "100m"
+      limits:
+        memory: "256Mi"
+        cpu: "500m"
 
 # Init job
 init:
@@ -225,6 +342,14 @@ persistence:
   sandboxBundles:
     size: 5Gi
 
+# NFS server for RWX storage (required for HPA multi-node scheduling)
+nfs:
+  enabled: false
+  storageClassName: nfs-workspace
+  storageClass: ""        # Backing storage class for NFS server PVC (e.g. hcloud-volumes)
+  storageSize: 30Gi       # Size of the backing volume for NFS server
+  nodeSelector: {}        # Pin NFS server to specific node (e.g. pool: infra)
+
 # Secrets (override in production)
 secrets:
   zaiApiKey: ""
@@ -237,3 +362,57 @@ secrets:
   giteaSecretKey: ""
   giteaToken: ""
   moduleApiToken: ""
+  githubAppPrivateKey: ""
+
+# Autoscaling (HPA)
+autoscaling:
+  backend:
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+  frontend:
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 8
+    targetCPUUtilizationPercentage: 70
+
+# KEDA autoscaling — session-based scaling via PostgreSQL query (replaces CPU HPA for backend)
+keda:
+  enabled: false
+  pollingInterval: 15
+  cooldownPeriod: 300
+  sslmode: disable
+  backend:
+    # Counts agent runs currently executing — real-time "work in progress" metric
+    query: "SELECT COUNT(*) FROM agent_runs WHERE status = 'running'"
+    targetQueryValue: "50"
+    activationTargetQueryValue: "0"
+
+# CloudNativePG — HA PostgreSQL (set cnpg.enabled: true for production)
+cnpg:
+  enabled: false  # Use StatefulSets for Kind, CNPG for K3s production
+  monitoring:
+    enabled: false
+  druppie:
+    instances: 3
+    storage: 20Gi
+  keycloak:
+    instances: 3
+    storage: 5Gi
+  gitea:
+    instances: 3
+    storage: 5Gi
+
+# High Availability
+highAvailability:
+  pdb:
+    enabled: false
+    minAvailable: 1
+  antiAffinity:
+    enabled: false
+
+# cert-manager integration
+certManager:
+  enabled: false
+  email: ""

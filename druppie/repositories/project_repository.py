@@ -1,5 +1,7 @@
 """Project repository for database access."""
 
+import os
+from urllib.parse import urljoin
 from uuid import UUID
 from sqlalchemy import func
 
@@ -13,6 +15,24 @@ from ..domain import (
 )
 from ..db.models import Project, Session as SessionModel
 from ..db.models.user import User as UserModel
+
+
+def _derive_repo_url(repo_url: str | None, repo_owner: str | None, repo_name: str | None) -> str | None:
+    """Construct repo_url from current GITEA_URL + repo_owner/repo_name.
+
+    This ensures repo_url is always correct regardless of domain changes.
+    Falls back to the stored repo_url if owner/name are missing.
+    """
+    if repo_owner and repo_name:
+        gitea_url = os.getenv("GITEA_URL", "").rstrip("/")
+        if gitea_url:
+            return f"{gitea_url}/{repo_owner}/{repo_name}"
+    return repo_url
+
+
+def _project_repo_url(project: Project) -> str | None:
+    """Convenience wrapper for Project model objects."""
+    return _derive_repo_url(project.repo_url, project.repo_owner, project.repo_name)
 
 
 class ProjectRepository(BaseRepository):
@@ -97,11 +117,10 @@ class ProjectRepository(BaseRepository):
         sessions = self._get_recent_sessions(project_id, session_limit)
 
         return ProjectDetail(
-            # Inherited from ProjectSummary
             id=project.id,
             name=project.name,
             description=project.description,
-            repo_url=project.repo_url,
+            repo_url=_project_repo_url(project),
             repo_name=project.repo_name,
             repo_owner=project.repo_owner,
             created_at=project.created_at,
@@ -149,7 +168,7 @@ class ProjectRepository(BaseRepository):
             id=project.id,
             name=project.name,
             description=project.description,
-            repo_url=project.repo_url,
+            repo_url=_project_repo_url(project),
             repo_name=project.repo_name,
             repo_owner=project.repo_owner,
             username=username,
