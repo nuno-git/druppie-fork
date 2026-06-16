@@ -794,6 +794,24 @@ The dashboards goal is to provide an overview of platform activity. This page is
 
 ---
 
+## Deployments Dashboard
+
+The **Deployments page** (`/deployments`) provides visibility into deployed applications managed by the platform. It is available to all authenticated users.
+
+- **User-scoped**: Non-admin users see only their own deployments. Admins see all.
+- **Stats row**: Total containers, running, stopped, unhealthy counts at a glance.
+- **Search**: Filter deployments by container name, image, or project.
+- **Actions**: Start, stop, restart containers directly from the dashboard.
+- **Logs viewer**: Side-drawer with terminal-style log output (last 300 lines) per container.
+- **App links**: Running containers with an `app_url` show a direct link to the deployed application.
+- **Polling**: Refreshes every 5 seconds to reflect container state changes.
+
+The backend API (`/api/deployments`) proxies to the Docker MCP server via MCPHttp bridge and enforces ownership checks on all mutating operations.
+
+For admin-level operations (wipe projects, view all containers regardless of ownership), use the **Platform page** (`/admin/platform`).
+
+---
+
 ## Kubernetes Deployment (Helm Chart)
 
 Druppie can be deployed to Kubernetes using the included Helm chart (`helm/druppie/`). The chart packages all platform components — backend, frontend, Keycloak, Gitea, 8 MCP modules, and 3 PostgreSQL databases — into ~43 Kubernetes resources managed as a single release.
