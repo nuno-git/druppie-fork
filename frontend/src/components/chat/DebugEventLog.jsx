@@ -107,6 +107,16 @@ const StatusBadge = ({ status }) => {
 
 const copyBtnClass = 'inline-flex items-center gap-1 px-2 py-0.5 text-xs rounded hover:bg-gray-100 transition-colors text-gray-500'
 
+const detectCompression = (messages) => {
+  if (!messages?.length) return null
+  for (const msg of messages) {
+    const content = typeof msg.content === 'string' ? msg.content : ''
+    if (content.includes('[CONVERSATION SUMMARY')) return { phase: 3, label: 'LLM Summary' }
+    if (content.includes('[COMPRESSED HISTORY')) return { phase: 2, label: 'Condensed' }
+  }
+  return null
+}
+
 // ─── Inspect Summary ─────────────────────────────────────────────────────────
 
 const InspectSummary = ({ agentRuns, data }) => {
@@ -115,6 +125,7 @@ const InspectSummary = ({ agentRuns, data }) => {
     let toolCallCount = 0
     let subagentCount = 0
     const agentTokens = {}
+    let compressedCalls = 0
     const countRun = (run) => {
       const config = getAgentConfig(run.agent_id)
       const tokens = run.token_usage?.total_tokens || 0
@@ -122,6 +133,7 @@ const InspectSummary = ({ agentRuns, data }) => {
       run.llm_calls?.forEach((llm) => {
         llmCallCount++
         toolCallCount += llm.tool_calls?.length || 0
+        if (detectCompression(llm.messages)) compressedCalls++
       })
     }
     agentRuns.forEach((run) => {
@@ -131,7 +143,7 @@ const InspectSummary = ({ agentRuns, data }) => {
         countRun(sub)
       })
     })
-    return { agentCount: agentRuns.length, subagentCount, llmCallCount, toolCallCount, totalTokens: data.token_usage?.total_tokens || 0, agentTokens }
+    return { agentCount: agentRuns.length, subagentCount, llmCallCount, toolCallCount, totalTokens: data.token_usage?.total_tokens || 0, agentTokens, compressedCalls }
   }, [agentRuns, data])
 
   return (
@@ -141,6 +153,12 @@ const InspectSummary = ({ agentRuns, data }) => {
       <span className="flex items-center gap-1"><Bot className="w-3 h-3" />{stats.llmCallCount} LLM calls</span>
       <span className="flex items-center gap-1"><Zap className="w-3 h-3" />{stats.toolCallCount} tools</span>
       {stats.totalTokens > 0 && <span>{formatTokens(stats.totalTokens)} tokens</span>}
+      {stats.compressedCalls > 0 && (
+        <span className="flex items-center gap-1 text-purple-600">
+          <span className="w-2 h-2 bg-purple-400 rounded-full" />
+          {stats.compressedCalls} compressed
+        </span>
+      )}
       {Object.keys(stats.agentTokens).length > 0 && (
         <>
           <span className="text-gray-300">|</span>
@@ -390,6 +408,7 @@ const LlmCallSection = ({ llm, index, isOnly }) => {
   const toolCount = llm.tool_calls?.length || 0
   const [responseMode, setResponseMode] = useState('parsed')
   const [requestMode, setRequestMode] = useState('parsed')
+  const compression = useMemo(() => detectCompression(llm.messages), [llm.messages])
 
   const Toggle = ({ value, onChange }) => (
     <span className="inline-flex rounded overflow-hidden border border-gray-200">
@@ -417,6 +436,18 @@ const LlmCallSection = ({ llm, index, isOnly }) => {
           <code className="text-gray-600">{llm.model}</code>
           {tokens > 0 && <span>{formatTokens(tokens)} tok</span>}
           {dur && <span>&middot; {dur}</span>}
+          {compression && (
+            <span className="bg-purple-50 text-purple-700 text-[10px] font-medium px-1.5 py-0.5 rounded border border-purple-200">
+              Compressed (Phase {compression.phase}: {compression.label})
+            </span>
+          )}
+        </div>
+      )}
+      {isOnly && compression && (
+        <div className="flex items-center gap-1.5 text-xs mb-2">
+          <span className="bg-purple-50 text-purple-700 text-[10px] font-medium px-1.5 py-0.5 rounded border border-purple-200">
+            Compressed (Phase {compression.phase}: {compression.label})
+          </span>
         </div>
       )}
 

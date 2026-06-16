@@ -582,6 +582,18 @@ def create_event_persister(
                     execution_repo.update_tokens(agent_run_id, prompt_tokens=pt, completion_tokens=ct)
                     execution_repo.db.commit()
 
+            elif event.type == "context_compressed":
+                phase = event.data.get("phase", "?")
+                tokens_after = event.data.get("tokens_after", 0)
+                turns_compressed = event.data.get("turns_compressed", 0)
+                logger.info(
+                    "context_compressed",
+                    agent_run_id=str(agent_run_id),
+                    phase=phase,
+                    tokens_after=tokens_after,
+                    turns_compressed=turns_compressed,
+                )
+
             elif event.type == "context_overflow":
                 logger.warning("Context overflow for agent_run %s", agent_run_id)
         except Exception as e:

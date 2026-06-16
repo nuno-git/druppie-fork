@@ -152,6 +152,12 @@ class MessageCompactor:
         max_tokens = self.config.max_context_tokens
 
         if token_count <= int(max_tokens * self.config.phase1_threshold):
+            logger.debug(
+                "compress_skip",
+                estimated_tokens=token_count,
+                threshold=int(max_tokens * self.config.phase1_threshold),
+                ratio=round(token_count / max_tokens, 2),
+            )
             return messages
 
         groups = self._group_into_turns(messages)
