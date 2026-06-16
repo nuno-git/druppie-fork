@@ -914,7 +914,7 @@ async def done(
             lines = run_summary.strip().split("\n")
             for line in lines:
                 stripped = line.strip()
-                if stripped and stripped.startswith("Agent ") and stripped not in previous_summaries:
+                if stripped and stripped not in previous_summaries:
                     previous_summaries.append(stripped)
 
     # Build the accumulated summary: previous summaries + current agent's summary
