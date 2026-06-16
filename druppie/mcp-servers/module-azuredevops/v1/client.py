@@ -57,6 +57,17 @@ class AzureDevOpsClient:
         token = await self._credential.get_token(AZURE_DEVOPS_SCOPE)
         return {"Authorization": f"Bearer {token.token}"}
 
+    @staticmethod
+    def _raise_for_status(resp: httpx.Response) -> None:
+        if resp.is_success:
+            return
+        body = resp.text[:2000]
+        raise httpx.HTTPStatusError(
+            f"{resp.status_code} {resp.reason_phrase} for url '{resp.url}'\n{body}",
+            request=resp.request,
+            response=resp,
+        )
+
     async def _post(self, path: str, json_body: dict, *, api_version: str = API_VERSION) -> dict:
         headers = await self._auth_header()
         async with httpx.AsyncClient(timeout=30.0) as client:
@@ -66,7 +77,7 @@ class AzureDevOpsClient:
                 json=json_body,
                 headers=headers,
             )
-            resp.raise_for_status()
+            self._raise_for_status(resp)
             return resp.json()
 
     async def _get(self, path: str, params: dict | None = None, *, api_version: str = API_VERSION) -> dict:
@@ -78,7 +89,7 @@ class AzureDevOpsClient:
                 params=query,
                 headers=headers,
             )
-            resp.raise_for_status()
+            self._raise_for_status(resp)
             return resp.json()
 
     async def _patch(self, path: str, operations: list[dict]) -> dict:
@@ -93,7 +104,7 @@ class AzureDevOpsClient:
                 content=_json.dumps(operations),
                 headers=headers,
             )
-            resp.raise_for_status()
+            self._raise_for_status(resp)
             return resp.json()
 
     async def _post_patch(self, path: str, operations: list[dict]) -> dict:
@@ -108,7 +119,7 @@ class AzureDevOpsClient:
                 content=_json.dumps(operations),
                 headers=headers,
             )
-            resp.raise_for_status()
+            self._raise_for_status(resp)
             return resp.json()
 
     async def query_wiql(self, wiql: str, top: int) -> list[int]:
