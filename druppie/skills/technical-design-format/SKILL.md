@@ -25,9 +25,9 @@ description: >
 [What is the business question?]
 
 ### Research
-Gebaseerd op [docs/technical-research.md](./technical-research.md). Gekozen
-benadering: **[A / B / C — naam]**. Zie het onderzoeksdocument voor de
-vergelijking van alternatieven en de externe-koppelingen analyse.
+Based on [docs/technical-research.md](./technical-research.md). Chosen
+approach: **[A / B / C — name]**. See the research document for the
+comparison of alternatives and the external connections analysis.
 
 ## Solution
 
@@ -77,26 +77,25 @@ Source: BA = from Business Analyst (FR/NFR) | AR = from Architect (TR)
   with external consumers (other Druppie agents, user-facing apps, 3rd party
   APIs) are pinned here. Internal endpoint signatures are builder_planner's call.]
 
-  Voor elke externe koppeling MOET de TD een expliciete modulekeuze
-  opnemen (overgenomen uit docs/technical-research.md):
+  For each external connection the TD MUST include an explicit module
+  decision (taken from docs/technical-research.md):
 
-  | Extern systeem | Categorie | Beslissing | Module | Toelichting |
+  | External system | Category | Decision | Module | Explanation |
   |----------------|-----------|------------|--------|-------------|
-  | ... | organizational / other | REUSE / EXTEND / NEW / PROJECT-SPECIFIC | `<module_id>` of "n.v.t." | ... |
+  | ... | organizational / other | REUSE / EXTEND / NEW / PROJECT-SPECIFIC | `<module_id>` or "n/a" | ... |
 
-  Regels voor deze tabel:
-  - `organizational` koppelingen (waterschap bronsystemen, zaaksysteem,
-    DMS, archiefsysteem, referentiedata, waterschap-auth, …) MOETEN één
-    van REUSE / EXTEND / NEW hebben. PROJECT-SPECIFIC is hier niet
-    toegestaan.
-  - PROJECT-SPECIFIC is alleen toegestaan bij `other`, en vereist een
-    sectie "Direct integration rationale" direct onder de tabel met
-    (a) waarom niet herbruikbaar, (b) waarom geen module, (c) welk
-    hergebruik-risico geaccepteerd wordt.
-  - "Niet van toepassing" / "geen modules nodig" als verdict over de
-    koppelingen is niet acceptabel als er één of meer organizational
-    koppelingen in scope zijn — noem dan expliciet welke modules
-    (REUSE/EXTEND/NEW) elke koppeling afdekken.
+  Rules for this table:
+  - `organizational` connections (water authority source systems, case management,
+    DMS, archive system, reference data, water authority auth, …) MUST have one
+    of REUSE / EXTEND / NEW. PROJECT-SPECIFIC is not allowed here.
+  - PROJECT-SPECIFIC is only allowed for `other`, and requires a
+    "Direct integration rationale" section directly below the table with
+    (a) why not reusable, (b) why not a module, (c) which reuse risk
+    is accepted.
+  - "Not applicable" / "no modules needed" as a verdict on the
+    connections is not acceptable if one or more organizational
+    connections are in scope — explicitly name which modules
+    (REUSE/EXTEND/NEW) cover each connection.
 
 #### 3. RAG choices (only if the design contains a RAG component)
 Invoke the `rag-patterns` skill for the decision guides. **Stay
@@ -169,7 +168,7 @@ making-archimate-diagrams skill, and follow the corresponding skill's
 syntax exactly (making-archimate-diagrams or making-mermaid-diagrams).
 Detailed enough for builder_planner to plan implementation — framework, versions, endpoint signatures and file layout are their call, not the TD's.
 
-### Module Samenvatting (alleen bij een nieuwe module)
+### Module Summary (only when introducing a new module)
 Only include this section when the design introduces a new Druppie MCP
 module — i.e. when BUILD_PATH=CORE_UPDATE with at least one NEW module
 (see Step 2b). Keep this concise — the update_core_builder reads the
@@ -178,9 +177,9 @@ full module convention from docs/module-specification.md.
 - **Module ID:** <name>
 - **Type:** core | module | both
 - **Stateful/Stateless:** <yes/no>
-- **Beschrijving:** <korte beschrijving van wat de module doet>
+- **Description:** <brief description of what the module does>
 - **Tools:**
-  | Tool naam | Beschrijving |
+  | Tool name | Description |
   |-----------|-------------|
-  | tool_1 | Wat deze tool doet |
-  | tool_2 | Wat deze tool doet |
+  | tool_1 | What this tool does |
+  | tool_2 | What this tool does |

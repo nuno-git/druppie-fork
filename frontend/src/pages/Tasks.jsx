@@ -303,40 +303,48 @@ const TaskCard = ({ task, onApprove, onReject }) => {
             attachments={rejectAttachments}
             onRemove={(id) => setRejectAttachments((prev) => prev.filter((a) => a.id !== id))}
           />
-          <div className="flex items-start gap-2">
-            <FileUploadButton
-              onUpload={(att) => setRejectAttachments((prev) => [...prev, att])}
-              onError={() => {}}
-              sessionId={task.session_id}
-              scope={`reject-${task.id}`}
-            />
-            <textarea
-              value={rejectReason}
-              onChange={(e) => setRejectReason(e.target.value)}
-              placeholder="Reason for rejection..."
-              className="flex-1 px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent text-sm"
-              rows={2}
-              autoFocus
-            />
-          </div>
-          <div className="flex items-center gap-2 justify-end">
-            <button
-              onClick={() => { setShowReject(false); setRejectAttachments([]) }}
-              className="px-3 py-1.5 text-sm text-gray-500 hover:text-gray-700 rounded-lg"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={() => {
-                if (rejectReason.trim()) {
-                  onReject(task.id, rejectReason, rejectAttachments.map((a) => a.id))
-                }
-              }}
-              disabled={!rejectReason.trim()}
-              className="px-3 py-1.5 text-sm bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50"
-            >
-              Confirm Reject
-            </button>
+          <textarea
+            value={rejectReason}
+            onChange={(e) => setRejectReason(e.target.value)}
+            placeholder="Reason for rejection..."
+            className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent text-sm resize-y"
+            rows={3}
+            maxLength={10000}
+            autoFocus
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && rejectReason.trim()) {
+                e.preventDefault()
+                onReject(task.id, rejectReason, rejectAttachments.map((a) => a.id))
+              }
+            }}
+          />
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-gray-400">{rejectReason.length} / 10,000</span>
+            <div className="flex items-center gap-2">
+              <FileUploadButton
+                onUpload={(att) => setRejectAttachments((prev) => [...prev, att])}
+                onError={() => {}}
+                sessionId={task.session_id}
+                scope={`reject-${task.id}`}
+              />
+              <button
+                onClick={() => { setShowReject(false); setRejectAttachments([]) }}
+                className="px-3 py-1.5 text-sm text-gray-500 hover:text-gray-700 rounded-lg"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  if (rejectReason.trim()) {
+                    onReject(task.id, rejectReason, rejectAttachments.map((a) => a.id))
+                  }
+                }}
+                disabled={!rejectReason.trim()}
+                className="px-3 py-1.5 text-sm bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50"
+              >
+                Confirm Reject
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -620,28 +628,38 @@ const JobApprovalCard = ({ run, onApprove, onReject }) => {
             value={rejectReason}
             onChange={(e) => setRejectReason(e.target.value)}
             placeholder="Reason for rejection..."
-            className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent text-sm"
-            rows={2}
+            className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent text-sm resize-y"
+            rows={3}
+            maxLength={10000}
             autoFocus
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && rejectReason.trim()) {
+                e.preventDefault()
+                onReject(run.id, rejectReason)
+              }
+            }}
           />
-          <div className="flex items-center gap-2 justify-end">
-            <button
-              onClick={() => setShowReject(false)}
-              className="px-3 py-1.5 text-sm text-gray-500 hover:text-gray-700 rounded-lg"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={() => {
-                if (rejectReason.trim()) {
-                  onReject(run.id, rejectReason)
-                }
-              }}
-              disabled={!rejectReason.trim()}
-              className="px-3 py-1.5 text-sm bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50"
-            >
-              Confirm Reject
-            </button>
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-gray-400">{rejectReason.length} / 10,000</span>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setShowReject(false)}
+                className="px-3 py-1.5 text-sm text-gray-500 hover:text-gray-700 rounded-lg"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  if (rejectReason.trim()) {
+                    onReject(run.id, rejectReason)
+                  }
+                }}
+                disabled={!rejectReason.trim()}
+                className="px-3 py-1.5 text-sm bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50"
+              >
+                Confirm Reject
+              </button>
+            </div>
           </div>
         </div>
       )}

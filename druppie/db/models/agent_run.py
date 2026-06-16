@@ -81,6 +81,7 @@ class Message(Base):
 
     role = Column(String(20), nullable=False)  # user, assistant, system, tool
     content = Column(Text, nullable=False)
+    content_english = Column(Text)  # English version for agent consumption; NULL when content is already English
 
     agent_id = Column(String(100))  # For assistant messages
     tool_name = Column(String(200))  # For tool messages
@@ -99,6 +100,7 @@ class Message(Base):
             "agent_run_id": str(self.agent_run_id) if self.agent_run_id else None,
             "role": self.role,
             "content": self.content,
+            "content_english": self.content_english,
             "agent_id": self.agent_id,
             "tool_name": self.tool_name,
             "tool_call_id": self.tool_call_id,

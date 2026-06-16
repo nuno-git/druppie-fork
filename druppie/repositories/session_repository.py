@@ -548,7 +548,8 @@ class SessionRepository(BaseRepository):
             if child_run_db:
                 child_run = self._build_agent_run_detail(child_run_db)
 
-        # Get question_id and attachments for HITL tools
+        # For HITL tools, get question_id, attachments, and use the Question
+        # record's translated text instead of the raw tool call arguments
         question_id = None
         question_attachments = []
         if tc.tool_name in ("hitl_ask_question", "hitl_ask_multiple_choice_question"):
@@ -575,6 +576,21 @@ class SessionRepository(BaseRepository):
                     )
                     for a in att_rows
                 ]
+                arguments = dict(arguments)
+                if question.question:
+                    arguments["question"] = question.question
+                if question.choices:
+                    arguments["choices"] = [
+                        c["text"] if isinstance(c, dict) else c
+                        for c in question.choices
+                    ]
+                if question.question_english:
+                    arguments["question_english"] = question.question_english
+                if question.choices_english:
+                    arguments["choices_english"] = [
+                        c["text"] if isinstance(c, dict) else c
+                        for c in question.choices_english
+                    ]
 
         return ToolCallDetail(
             id=tc.id,

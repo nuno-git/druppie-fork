@@ -187,14 +187,49 @@ class Orchestrator:
         human_input = HumanInput(message, self.language_detector)
         self._last_language_info = human_input.language_info()
         if human_input.detected_language:  # None means text too short - preserve existing language
-            self.session_repo.update_language(current_session_id, human_input.detected_language)
+            # Only nl and en are conversational languages; others map to en for session
+            session_language = (
+                human_input.detected_language
+                if human_input.detected_language in ("nl", "en")
+                else "en"
+            )
+            self.session_repo.update_language(current_session_id, session_language)
             logger.info(
                 "language_detected",
                 session_id=str(current_session_id),
-                language=human_input.detected_language,
+                detected_language=human_input.detected_language,
+                session_language=session_language,
             )
             self.session_repo.commit()
         # If None, keep existing session language unchanged
+
+        # Step 3.6: Translate to English if non-English (agents work in English)
+        translated_message = message
+        if human_input.detected_language and human_input.detected_language != "en":
+            from druppie.core.translation import get_translation_service
+            translator = get_translation_service()
+            translated_message = await translator.translate_to_english(
+                message, human_input.detected_language
+            )
+            if translated_message != message:
+                logger.info(
+                    "message_translated",
+                    session_id=str(current_session_id),
+                    source_language=human_input.detected_language,
+                    original_preview=message[:80],
+                    translated_preview=translated_message[:80],
+                )
+
+        # Step 3b: Save user message to the timeline (after translation so we can store both versions)
+        self.execution_repo.create_message(
+            session_id=current_session_id,
+            role="user",
+            content=message,
+            content_english=translated_message if translated_message != message else None,
+            sequence_number=next_seq,
+        )
+        next_seq += 1
+        self.execution_repo.commit()
 
         # Step 4: Get user's projects for router injection
         user_projects = self.project_repo.get_by_user(user_id)
@@ -203,9 +238,9 @@ class Orchestrator:
         # Step 5: Create router + planner (both PENDING)
         # Router will call set_intent() which updates planner's prompt
         if conversation_history:
-            router_prompt = f"{projects_context}\n\n{conversation_history}\n\nNEW USER MESSAGE:\n{message}{attachment_context}"
+            router_prompt = f"{projects_context}\n\n{conversation_history}\n\nNEW USER MESSAGE:\n{translated_message}{attachment_context}"
         else:
-            router_prompt = f"{projects_context}\n\nUSER REQUEST:\n{message}{attachment_context}"
+            router_prompt = f"{projects_context}\n\nUSER REQUEST:\n{translated_message}{attachment_context}"
         self.execution_repo.create_agent_run(
             session_id=current_session_id,
             agent_id="router",
@@ -216,9 +251,9 @@ class Orchestrator:
 
         # Planner starts with basic prompt - set_intent will update it with context
         if conversation_history:
-            planner_prompt = f"{conversation_history}\n\nNEW USER MESSAGE:\n{message}{attachment_context}"
+            planner_prompt = f"{conversation_history}\n\nNEW USER MESSAGE:\n{translated_message}{attachment_context}"
         else:
-            planner_prompt = f"USER REQUEST:\n{message}{attachment_context}"
+            planner_prompt = f"USER REQUEST:\n{translated_message}{attachment_context}"
         self.execution_repo.create_agent_run(
             session_id=current_session_id,
             agent_id="planner",
@@ -294,7 +329,8 @@ class Orchestrator:
         lines = ["CONVERSATION HISTORY:"]
         for msg in messages:
             role_label = "User" if msg.role == "user" else "Assistant"
-            lines.append(f"{role_label}: {msg.content}")
+            text = msg.content_english or msg.content
+            lines.append(f"{role_label}: {text}")
 
         logger.info(
             "conversation_history_built",
@@ -490,7 +526,7 @@ class Orchestrator:
         )
 
         # Create and run agent
-        agent = Agent(agent_id, db=self.execution_repo.db)
+        agent = Agent(agent_id, db=self.execution_repo.db, session_id=str(session_id))
         try:
             result = await agent.run(
                 prompt=prompt,
@@ -692,7 +728,7 @@ class Orchestrator:
 
         # Step 5: Build fresh context and continue the agent
         context = self.build_project_context(session_id)
-        agent = Agent(agent_run.agent_id, db=db)
+        agent = Agent(agent_run.agent_id, db=db, session_id=str(session_id))
         result = await agent.continue_run(
             session_id=session_id,
             agent_run_id=agent_run.id,
@@ -752,22 +788,34 @@ class Orchestrator:
             await self.execute_pending_runs(session_id)
             return session_id
 
-        # Step 2: Complete the HITL tool call (saves answer to DB)
-        status = await tool_executor.complete_after_answer(question_id, answer, selected_choices)
-
-        # Step 2.5: Detect and update language from HITL answer (only if detection succeeds)
+        # Step 2: Detect language for translation but do NOT update session language.
+        # Session language is locked by the initial user message to prevent
+        # HITL answers from flipping it (e.g. a Dutch user giving one
+        # English-sounding answer would switch the entire session to English).
         human_input = HumanInput(answer, self.language_detector)
         self._last_language_info = human_input.language_info()
-        if human_input.detected_language:  # None means answer too short - preserve existing language
-            self.session_repo.update_language(session_id, human_input.detected_language)
-            logger.info(
-                "language_detected_from_hitl_answer",
-                session_id=str(session_id),
-                question_id=str(question_id),
-                language=human_input.detected_language,
+
+        translated_answer = answer
+        if human_input.detected_language and human_input.detected_language != "en":
+            from druppie.core.translation import get_translation_service
+            translator = get_translation_service()
+            translated_answer = await translator.translate_to_english(
+                answer, human_input.detected_language
             )
-            self.session_repo.commit()
-        # If None, keep existing session language unchanged
+            if translated_answer != answer:
+                logger.info(
+                    "hitl_answer_translated",
+                    session_id=str(session_id),
+                    question_id=str(question_id),
+                    source_language=human_input.detected_language,
+                )
+
+        # Step 2.5: Complete the HITL tool call with translated answer (English for agent)
+        # but preserve the original answer for display in the UI
+        status = await tool_executor.complete_after_answer(
+            question_id, answer_english=translated_answer, user_answer=answer,
+            selected_choices=selected_choices,
+        )
 
         if status != ToolCallStatus.COMPLETED:
             logger.error("complete_after_answer_failed", status=status)
@@ -794,7 +842,7 @@ class Orchestrator:
 
         # Step 5: Build fresh context and continue the agent
         context = self.build_project_context(session_id)
-        agent = Agent(agent_run.agent_id, db=db)
+        agent = Agent(agent_run.agent_id, db=db, session_id=str(session_id))
         result = await agent.continue_run(
             session_id=session_id,
             agent_run_id=agent_run.id,
@@ -867,7 +915,7 @@ class Orchestrator:
                 # Already RUNNING — just continue it
                 db = self.execution_repo.db
                 context = self.build_project_context(session_id)
-                agent = Agent(orphan_run.agent_id, db=db)
+                agent = Agent(orphan_run.agent_id, db=db, session_id=str(session_id))
                 try:
                     result = await agent.continue_run(
                         session_id=session_id,
@@ -917,7 +965,7 @@ class Orchestrator:
         # Build fresh context and continue the agent
         db = self.execution_repo.db
         context = self.build_project_context(session_id)
-        agent = Agent(paused_run.agent_id, db=db)
+        agent = Agent(paused_run.agent_id, db=db, session_id=str(session_id))
         try:
             result = await agent.continue_run(
                 session_id=session_id,
@@ -1036,7 +1084,7 @@ class Orchestrator:
         # Build fresh context and continue the agent
         db = self.execution_repo.db
         context = self.build_project_context(session_id)
-        agent = Agent(agent_run.agent_id, db=db)
+        agent = Agent(agent_run.agent_id, db=db, session_id=str(session_id))
         try:
             result = await agent.continue_run(
                 session_id=session_id,

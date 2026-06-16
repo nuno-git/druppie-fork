@@ -24,6 +24,7 @@ import {
   getActiveRun,
   deleteTestUsers,
   runTests,
+  cancelTestRun,
 } from '../services/api'
 
 import { TestSelectorModal, RunProgress, UnitTestsSection } from './evaluations/TestRunner'
@@ -61,6 +62,7 @@ export default function Evaluations() {
   const [judgeEnabled, setJudgeEnabled] = useState(true)
   const [deletingUsers, setDeletingUsers] = useState(false)
   const [runProgress, setRunProgress] = useState(null)
+  const [currentRunId, setCurrentRunId] = useState(null)
 
   // Effective selected count for display (respects both the mode filter and the
   // search query when selectAll, so the count matches what actually runs)
@@ -100,6 +102,7 @@ export default function Evaluations() {
             total_tests: activeRun.total_tests || 0,
           })
           pollRunStatus(activeRun.run_id)
+          setCurrentRunId(activeRun.run_id)
         }
       } catch (err) {
         setTestsError(err.message)
@@ -109,6 +112,19 @@ export default function Evaluations() {
     }
     fetch()
   }, [])
+
+  useEffect(() => {
+    if (!isRunning) setCurrentRunId(null)
+  }, [isRunning])
+
+  const handleCancel = async () => {
+    if (!currentRunId) return
+    try {
+      await cancelTestRun(currentRunId)
+    } catch (err) {
+      alert('Failed to cancel: ' + err.message)
+    }
+  }
 
   const handleRun = async () => {
     if (isRunning) return
@@ -147,6 +163,7 @@ export default function Evaluations() {
 
       const response = await runTests(options)
       const { run_id } = response
+      setCurrentRunId(run_id)
       pollRunStatus(run_id)
     } catch (err) {
       setIsRunning(false)
@@ -285,7 +302,7 @@ export default function Evaluations() {
 
           {/* Running progress */}
           {isRunning && (
-            <RunProgress runMessage={runMessage} runProgress={runProgress} />
+            <RunProgress runMessage={runMessage} runProgress={runProgress} onCancel={handleCancel} />
           )}
 
           {/* ============ SECTION 2: Test Results (grouped by batch) ============ */}

@@ -47,8 +47,8 @@ class RejectRequest(BaseModel):
     reason: str = Field(
         ...,
         min_length=1,
-        max_length=1000,
-        description="Reason for rejection",
+        max_length=10000,
+        description="Reason for rejection (1-10000 characters)",
     )
     attachment_ids: list[str] = Field(
         default=[],
