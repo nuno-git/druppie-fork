@@ -118,6 +118,7 @@ async def chat(
     request: ChatRequest,
     user: dict | None = Depends(get_optional_user),
     session_repo: SessionRepository = Depends(get_session_repository),
+    attachment_repo: AttachmentRepository = Depends(get_attachment_repository),
 ) -> ChatResponse:
     """Process a chat message.
 
@@ -236,6 +237,8 @@ async def chat(
             message="Processing started",
         )
 
+    except (HTTPException, AuthorizationError, NotFoundError):
+        raise
     except Exception as e:
         logger.error(
             "chat_error",
