@@ -27,13 +27,18 @@ class KubernetesModule:
                 try:
                     config.load_kube_config()
                     logger.info("Loaded kubeconfig from default location")
-                except ConfigException:
+                except ConfigException as exc:
+                    # Distinguish "no kubeconfig at all" from "kubeconfig present
+                    # but invalid/incomplete" — the latter is common when a kind
+                    # cluster is still being created and the file has no
+                    # current-context yet. Collapsing both into one generic
+                    # message hides the real cause.
                     raise RuntimeError(
-                        "No Kubernetes cluster is configured. "
-                        "No in-cluster config or kubeconfig found. "
-                        "Please set up a cluster (e.g. kind create cluster) "
-                        "and ensure ~/.kube/config is mounted into the container."
-                    )
+                        "Cannot load Kubernetes config. No in-cluster config, "
+                        f"and the kubeconfig could not be loaded: {exc}. "
+                        "Ensure a cluster exists (e.g. kind create cluster) and "
+                        "a complete ~/.kube/config is mounted into the container."
+                    ) from exc
             self._core = client.CoreV1Api()
         return self._core
 
