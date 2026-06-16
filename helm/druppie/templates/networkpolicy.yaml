@@ -16,14 +16,33 @@ spec:
         - podSelector:
             matchLabels:
               {{- include "druppie.selectorLabels" . | nindent 14 }}
+        {{- if .Values.global.ingress.enabled }}
         - namespaceSelector:
             matchLabels:
+              {{- if eq .Values.global.ingress.className "traefik" }}
+              app.kubernetes.io/name: traefik
+              {{- else }}
               app.kubernetes.io/name: ingress-nginx
+              {{- end }}
+        {{- else }}
+        # When ingress is disabled (NodePort mode), allow traffic from any source
+        - ipBlock:
+            cidr: 0.0.0.0/0
+        {{- end }}
   egress:
     - to:
         - podSelector:
             matchLabels:
               {{- include "druppie.selectorLabels" . | nindent 14 }}
+    {{- if .Values.cnpg.enabled }}
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/managed-by: cloudnative-pg
+      ports:
+        - port: 5432
+          protocol: TCP
+    {{- end }}
     - to:
         - ipBlock:
             cidr: 0.0.0.0/0

@@ -168,6 +168,8 @@ class ApprovalRepository(BaseRepository):
                 self.db.query(
                     SessionModel.user_id,
                     ProjectModel.repo_url,
+                    ProjectModel.repo_owner,
+                    ProjectModel.repo_name,
                     ProjectModel.id,
                 )
                 .outerjoin(ProjectModel, SessionModel.project_id == ProjectModel.id)
@@ -177,7 +179,8 @@ class ApprovalRepository(BaseRepository):
             if row:
                 if approval.required_role == "session_owner":
                     session_user_id = row.user_id
-                repo_url = row.repo_url
+                from ..repositories.project_repository import _derive_repo_url
+                repo_url = _derive_repo_url(row.repo_url, row.repo_owner, row.repo_name)
                 project_id = row.id
 
         return ApprovalDetail(

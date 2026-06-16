@@ -520,3 +520,22 @@ Branch `Archimate-end-to-end` delivers ArchiMate generation, rendering, and incr
 - **Current state (v1):** Write-MCP creates elements with inline properties using existing propertyDefinitions from the loaded file (or skips properties).
 - **Desired improvement:** Full `propertyDefinition` management — `create_property_definition`, `update_property_definition`, validation that properties on elements reference valid definitions.
 - **Priority:** Medium — needed once architects define organization-specific properties (e.g., "Compliance-status", "Owner-department").
+
+---
+
+## Kubernetes Phase 2
+
+Deze items zijn out-of-scope voor de eerste Kubernetes migratie (Story 3) en worden in Phase 2 opgepakt.
+
+| Item | Omschrijving | Prioriteit |
+|------|-------------|-----------|
+| KEDA queue-based scaling | KEDA ScaledObject met Prometheus trigger `druppie_pending_agent_runs` voor workload-aware backend scaling | Medium |
+| CI/CD pipeline | GitHub Actions workflow: push naar colab-dev → build images → push naar Gitea registry → helm upgrade | Hoog |
+| Sandbox migratie | Docker socket dependency vervangen door Kubernetes Jobs of Agent Sandbox operator | Medium |
+| ArgoCD | GitOps deployment pipeline met drift detection | Laag |
+| Message queue | Redis Streams of NATS voor event-driven backend (vervangt database-driven resume) | Laag |
+| Network Policies | Per-namespace netwerkisolatie (backend kan alleen naar DB, niet naar Keycloak direct) | Medium |
+| Backend Dockerfile optimalisatie | Multi-stage build om image van ~4GB te verkleinen (Chromium/Mermaid alleen in builder stage) | Medium |
+| gVisor runtime | Runtime isolatie voor sandbox workloads | Laag |
+| Longhorn RWX | Alleen nodig als MCP modules onafhankelijk moeten schalen (wordt herbouwd als built-in tools) | Laag |
+| Harbor registry | Vulnerability scanning en image signing (Gitea registry volstaat voor Phase 1) | Laag |

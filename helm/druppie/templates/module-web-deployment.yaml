@@ -7,7 +7,7 @@ metadata:
     {{- include "druppie.labels" . | nindent 4 }}
     app.kubernetes.io/component: module-web
 spec:
-  replicas: 1
+  replicas: {{ .Values.modules.web.replicaCount }}
   selector:
     matchLabels:
       {{- include "druppie.selectorLabels" . | nindent 6 }}
@@ -51,12 +51,7 @@ spec:
             timeoutSeconds: 5
             failureThreshold: 5
           resources:
-            requests:
-              memory: "128Mi"
-              cpu: "100m"
-            limits:
-              memory: "256Mi"
-              cpu: "500m"
+            {{- toYaml .Values.modules.web.resources | nindent 12 }}
       volumes:
         - name: dataset
           persistentVolumeClaim:

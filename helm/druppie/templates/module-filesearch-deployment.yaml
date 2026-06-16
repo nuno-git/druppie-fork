@@ -7,7 +7,7 @@ metadata:
     {{- include "druppie.labels" . | nindent 4 }}
     app.kubernetes.io/component: module-filesearch
 spec:
-  replicas: 1
+  replicas: {{ .Values.modules.filesearch.replicaCount }}
   selector:
     matchLabels:
       {{- include "druppie.selectorLabels" . | nindent 6 }}
@@ -51,12 +51,7 @@ spec:
             timeoutSeconds: 5
             failureThreshold: 5
           resources:
-            requests:
-              memory: "128Mi"
-              cpu: "100m"
-            limits:
-              memory: "256Mi"
-              cpu: "500m"
+            {{- toYaml .Values.modules.filesearch.resources | nindent 12 }}
       volumes:
         - name: dataset
           persistentVolumeClaim:

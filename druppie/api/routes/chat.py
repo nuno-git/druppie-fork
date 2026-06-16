@@ -201,6 +201,10 @@ async def chat(
         )
 
         # Step 2: Spawn background task (does NOT block)
+        # New sessions: skip_lock=True — just created, no other request can
+        # reference this session_id yet, so no race is possible.
+        # Existing sessions: guard via SELECT FOR UPDATE in create_session_task.
+        is_new_session = session_id_param is None
         try:
             attachment_uuids = [UUID(aid) for aid in request.attachment_ids] if request.attachment_ids else None
         except ValueError:
@@ -222,11 +226,14 @@ async def chat(
                     attachment_ids=attachment_uuids,
                 ),
                 name=f"orchestrator-{current_session_id}",
+                skip_lock=is_new_session,
             )
         except SessionTaskConflict:
-            raise HTTPException(
-                status_code=409,
-                detail="A task is already running for this session",
+            return ChatResponse(
+                success=False,
+                session_id=str(current_session_id),
+                status="error",
+                message="A task is already running for this session",
             )
 
         # Step 3: Return immediately

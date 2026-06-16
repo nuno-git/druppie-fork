@@ -27,7 +27,7 @@ from druppie.api.deps import (
 )
 from druppie.services import SessionService
 from druppie.domain import SessionDetail
-from druppie.core.background_tasks import create_session_task, SessionTaskConflict, run_session_task
+from druppie.core.background_tasks import create_session_task, run_session_task, SessionTaskConflict
 
 logger = structlog.get_logger()
 
@@ -237,15 +237,6 @@ async def retry_from_run(
         user_roles=user_roles,
     )
 
-    # Reject if a background task is already running for this session.
-    # Must check BEFORE lock_for_retry (which changes DB status to active).
-    from druppie.core.background_tasks import is_session_task_running
-    if is_session_task_running(session_id):
-        raise HTTPException(
-            status_code=409,
-            detail="A task is already running for this session",
-        )
-
     # Atomically lock and transition session to ACTIVE
     try:
         service.lock_for_retry(session_id)
@@ -259,8 +250,8 @@ async def retry_from_run(
         user_id=str(user_id),
     )
 
-    # Spawn background task — if this fails, revert session status so it
-    # doesn't stay stuck as ACTIVE with no background task running.
+    # skip_lock=True: lock_for_retry already atomically set status to ACTIVE.
+    # The DB lock there prevents concurrent retries.
     try:
         create_session_task(
             session_id,
@@ -270,12 +261,7 @@ async def retry_from_run(
                 planned_prompt=body.planned_prompt if body else None,
             ),
             name=f"retry-{session_id}",
-        )
-    except SessionTaskConflict:
-        service.mark_failed(session_id, "Failed to start retry: task conflict")
-        raise HTTPException(
-            status_code=409,
-            detail="A task is already running for this session",
+            skip_lock=True,
         )
     except Exception:
         service.mark_failed(session_id, "Failed to start retry background task")
@@ -323,15 +309,6 @@ async def resume_session(
         user_roles=user_roles,
     )
 
-    # Reject if a background task is already running for this session.
-    # Must check BEFORE lock_for_resume (which changes DB status to active).
-    from druppie.core.background_tasks import is_session_task_running
-    if is_session_task_running(session_id):
-        raise HTTPException(
-            status_code=409,
-            detail="A task is already running for this session",
-        )
-
     # Atomically lock and transition session to ACTIVE
     try:
         service.lock_for_resume(session_id)
@@ -344,19 +321,13 @@ async def resume_session(
         user_id=str(user_id),
     )
 
-    # Spawn background task — if this fails, revert session status so it
-    # doesn't stay stuck as ACTIVE with no background task running.
+    # skip_lock=True: lock_for_resume already atomically set status to ACTIVE.
     try:
         create_session_task(
             session_id,
             _run_resume_background(session_id=session_id),
             name=f"resume-{session_id}",
-        )
-    except SessionTaskConflict:
-        service.mark_failed(session_id, "Failed to resume: task conflict")
-        raise HTTPException(
-            status_code=409,
-            detail="A task is already running for this session",
+            skip_lock=True,
         )
     except Exception:
         service.mark_failed(session_id, "Failed to start resume background task")
