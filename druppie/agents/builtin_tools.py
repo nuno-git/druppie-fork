@@ -34,7 +34,7 @@ VALID_REPO_TARGETS = ("project", "druppie_core")
 # =============================================================================
 
 # Default builtin tools every agent gets (unless overridden in YAML)
-DEFAULT_BUILTIN_TOOLS = ["done", "hitl_ask_question", "hitl_ask_multiple_choice_question"]
+DEFAULT_BUILTIN_TOOLS = ["done", "hitl_ask_question", "hitl_ask_multiple_choice_question", "read_attachment"]
 
 # All builtin tool definitions, keyed by tool name
 BUILTIN_TOOL_DEFS: dict[str, dict] = {
@@ -278,6 +278,23 @@ BUILTIN_TOOL_DEFS: dict[str, dict] = {
                     },
                 },
                 "required": ["iteration", "tests_passed", "summary"],
+            },
+        },
+    },
+    "read_attachment": {
+        "type": "function",
+        "function": {
+            "name": "read_attachment",
+            "description": "Read the content of a file uploaded by the user. Use this when you need to see the contents of an attached file listed in the session context.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "attachment_id": {
+                        "type": "string",
+                        "description": "The UUID of the attachment to read",
+                    },
+                },
+                "required": ["attachment_id"],
             },
         },
     },
@@ -1338,6 +1355,45 @@ async def test_report(
     }
 
 
+async def read_attachment(
+    attachment_id: str,
+    session_id: UUID,
+    execution_repo: "ExecutionRepository",
+) -> dict:
+    """Read the content of an uploaded attachment."""
+    from druppie.db.models import MessageAttachment
+
+    try:
+        att_uuid = UUID(attachment_id)
+    except (ValueError, AttributeError):
+        return {"success": False, "error": f"Invalid attachment ID: {attachment_id}"}
+
+    attachment = (
+        execution_repo.db.query(MessageAttachment)
+        .filter(
+            MessageAttachment.id == att_uuid,
+            MessageAttachment.session_id == session_id,
+        )
+        .first()
+    )
+    if not attachment:
+        return {"success": False, "error": f"Attachment not found: {attachment_id}"}
+
+    if attachment.extracted_text:
+        return {
+            "success": True,
+            "filename": attachment.original_filename,
+            "content_type": attachment.content_type,
+            "content": attachment.extracted_text,
+        }
+
+    return {
+        "success": False,
+        "filename": attachment.original_filename,
+        "error": "No extracted text available for this file",
+    }
+
+
 # =============================================================================
 # TOOL EXECUTION (called by ToolExecutor)
 # =============================================================================
@@ -1425,6 +1481,12 @@ async def execute_builtin(
             error_classification=args.get("error_classification"),
             strategy=args.get("strategy"),
         )
+    elif tool_name == "read_attachment":
+        return await read_attachment(
+            attachment_id=args.get("attachment_id", ""),
+            session_id=session_id,
+            execution_repo=execution_repo,
+        )
     else:
         return {
             "success": False,
@@ -1444,6 +1506,7 @@ def is_builtin_tool(tool_name: str) -> bool:
         "invoke_skill",
         "execute_coding_task",
         "test_report",
+        "read_attachment",
     )
 
 

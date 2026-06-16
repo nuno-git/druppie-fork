@@ -47,10 +47,13 @@ class PromptBuilder:
         clarifications = context.get("clarifications", [])
         language = context.get("conversational_language", DEFAULT_LANGUAGE)
 
-        # Build context string WITHOUT clarifications, conversational_language, and language_info
+        # Extract attachment context for separate section
+        attachment_context = context.get("attachment_context", "")
+
+        # Build context string WITHOUT special keys
         context_items = {
             k: v for k, v in context.items()
-            if k not in ("clarifications", "conversational_language", "language_info")
+            if k not in ("clarifications", "conversational_language", "language_info", "attachment_context")
         }
         context_str = "\n".join(
             f"- {key}: {value}" for key, value in context_items.items()
@@ -71,7 +74,7 @@ User's answer: {answer}
 
         return f"""CONTEXT:
 {context_str}
-
+{attachment_context}
 TASK:
 {prompt}{user_response_str}"""
 
