@@ -20,6 +20,7 @@ Druppie is a full-stack platform composed of the following services:
 | MCP File Search | Python / FastMCP | 9004 | Local file search within datasets |
 | MCP Web | Python / FastMCP | 9005 | Web browsing, URL fetching, web search |
 | MCP ArchiMate | Python / FastMCP | 9006 | ArchiMate model operations (list, read, search, export) |
+| MCP Azure DevOps | Python / FastMCP | 9012 | Read-only backlog / work items for a single Azure DevOps project |
 | Sandbox Control Plane | Node.js | 8787 | Sandbox session/event management, coordinates sandbox lifecycle |
 | Sandbox Manager | Node.js | 8000 | Creates/manages sandbox Docker containers, enforces resource limits |
 | Sandbox Image Builder | Docker | — | One-shot build producing `open-inspect-sandbox:latest` image |
@@ -191,7 +192,36 @@ druppie/
     module-web/          # Port 9005 — web browsing/search
     module-archimate/    # Port 9006 — ArchiMate model ops
     module-registry/     # Port 9007 — platform catalog/discovery
+    module-azuredevops/  # Port 9012 — read-only Azure DevOps backlog (single project)
+      MODULE.yaml
+      server.py
+      v1/tools.py        # 3 read-only @mcp.tool()s — no project picker
+      v1/module.py       # backlog ops, hard-scoped to AZURE_DEVOPS_PROJECT
+      v1/client.py       # async ADO REST client, service-principal auth
 ```
+
+### Azure DevOps backlog MCP (single-project isolation)
+
+`module-azuredevops` (port 9012) gives agents **read-only** access to the backlog /
+work items of **exactly one** Azure DevOps project. It authenticates to Azure DevOps
+with an **Entra ID service principal** (`ClientSecretCredential`, resource scope
+`{scope_id}/.default`); tokens are fetched on demand and
+never written to disk. Configuration is via env vars: `AZURE_DEVOPS_ORG_URL`,
+`AZURE_DEVOPS_PROJECT`, `AZURE_DEVOPS_TENANT_ID`, `AZURE_DEVOPS_CLIENT_ID`,
+`AZURE_DEVOPS_CLIENT_SECRET` (the server fails fast at startup if any are missing).
+
+Project isolation is enforced in two independent layers:
+
+1. **Azure-side (the real boundary):** grant the service principal read-only access to
+   only the one project. Any other project returns 403 from Azure itself.
+2. **Server-side allowlist:** every tool is hard-scoped to `AZURE_DEVOPS_PROJECT` — the
+   project is put in the REST path and the WIQL `[System.TeamProject]` clause, is never a
+   tool argument, and there is no `list_projects` tool. So the server cannot be steered
+   at another project even if the credential were over-scoped.
+
+Tools: `list_backlog_items`, `get_work_item`, `search_work_items` (all
+`requires_approval: false`). Consumed by the **Product Owner** agent. Isolation is pinned
+by `druppie/tests/test_azuredevops_isolation.py`.
 
 ---
 
@@ -1231,4 +1261,87 @@ The `sandbox_sessions` table maps control plane session IDs to Druppie users:
 | `webhook_secret` | str (nullable) | Per-session HMAC secret |
 
 The `tool_call_id` FK enables direct lookup from webhook → tool call without table scans. Events proxy (`GET /api/sandbox-sessions/{id}/events`) enforces ownership — non-owners get 403, admins bypass.
+
+---
+
+## 11. Translation Service
+
+The platform provides automatic translation so agents always work in English while users interact in their own language.
+
+### 11.1 Architecture
+
+| Component | Location | Responsibility |
+|-----------|----------|----------------|
+| `TranslationService` | `druppie/core/translation.py` | Singleton; calls DeepInfra's Qwen/Qwen3-32B for all translations |
+| `LanguageDetector` | `druppie/core/language_detection.py` | Hybrid detection: keyword heuristics + `langdetect` library |
+| `HumanInput` | `druppie/execution/human_input.py` | Wraps user text with detected language metadata |
+
+The translation service is separate from the main LLM provider — it always uses DeepInfra regardless of `LLM_PROVIDER`. This requires `DEEPINFRA_API_KEY` to be set. If the key is missing, `TranslationNotAvailableError` is raised on first use (not silently swallowed).
+
+### 11.2 Data Flow
+
+```
+User (Dutch) → Orchestrator → [detect language] → [translate to English] → Router/Planner/Agent
+                                                                                    │
+Agent (English) ← ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┘
+    │
+    ├─► HITL question → [translate question + choices to Dutch] → User
+    ├─► make_design   → [translate content] → Dutch file alongside English original
+    └─► done (summary) → [translate to Dutch] → Chat timeline
+```
+
+### 11.3 Integration Points
+
+| Point | File | What happens |
+|-------|------|--------------|
+| User message | `orchestrator.py` ~line 189 | Detect language, translate to English |
+| HITL answer | `orchestrator.py` ~line 748 | Translate answer to English (session language unchanged) |
+| HITL question | `tool_executor.py` ~line 877 | Translate question + choices to user's language |
+| Design document | `tool_executor.py` ~line 723 | Translate content, inject `translated_content`/`translated_path` |
+| MCP write | `tool_executor.py` ~line 1040 | Write Dutch file via second MCP `write_file` call |
+| Summarizer message | `builtin_tools.py` ~line 731 | Translate to session language before storing |
+| Agent prompt | `prompt_builder.py` ~line 82 | Inject English-only instruction block |
+
+### 11.3.1 HITL Answer Field Naming
+
+The tool call result for answered HITL questions stores two versions of the answer:
+
+| Field | Content | Consumed by |
+|-------|---------|-------------|
+| `user_answer` | Original answer in the user's language (what they typed) | Frontend display |
+| `answer_english` | Translated to English (for the agent) | Agent via `message_history.py` |
+
+`message_history.py` strips `user_answer` before reconstructing tool results for agent context, so agents only see the English version.
+
+### 11.3.2 HITL Question Bilingual Storage
+
+HITL questions store both the translated (display) and original (English) versions:
+
+| Column | Content | Where shown |
+|--------|---------|-------------|
+| `Question.question` | Translated to user's language | Chat timeline, HITL UI |
+| `Question.question_english` | Original English from agent | Debug/inspect panel, session API |
+| `Question.choices` | Translated choices | Chat timeline |
+| `Question.choices_english` | Original English choices | Debug/inspect panel |
+
+The debug panel (`DebugEventLog.jsx`) shows an "Original (English)" section on HITL tool calls when `question_english` is present, making it easy to compare what the agent generated vs what the user saw.
+
+### 11.4 Design Document Translation Paths
+
+| English path | Dutch path |
+|--------------|------------|
+| `docs/functional-design.md` | `docs/functioneel-ontwerp.md` |
+| `docs/technical-design.md` | `docs/technisch-ontwerp.md` |
+| `docs/technical-research.md` | `docs/technisch-onderzoek.md` |
+
+### 11.5 Session Language
+
+Stored in `sessions.language` (VARCHAR(10), nullable). Set on the first user message and locked — HITL answers do not update it, preventing a Dutch user's English-sounding answer from flipping the session language.
+
+### 11.6 Error Handling
+
+- `TranslationNotAvailableError` (missing API key) propagates — the session fails with a clear error message.
+- Transient translation errors (API timeouts, empty responses) fall back to the original English text with a logged warning.
+- Startup validation logs a warning when `DEEPINFRA_API_KEY` is not set.
+- Test framework pre-flight check: `runner.py` logs a warning before executing agent tests when `DEEPINFRA_API_KEY` is missing, and wraps `TranslationNotAvailableError` with a clear "set it in .env" message in test results.
 

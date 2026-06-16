@@ -207,15 +207,16 @@ class SessionTaskContext:
     so task functions don't need to create their own.
     """
 
-    __slots__ = ("db", "session_repo", "execution_repo", "project_repo", "question_repo", "job_repo", "orchestrator")
+    __slots__ = ("db", "session_repo", "execution_repo", "project_repo", "question_repo", "job_repo", "attachment_repo", "orchestrator")
 
-    def __init__(self, db, session_repo, execution_repo, project_repo, question_repo, job_repo, orchestrator):
+    def __init__(self, db, session_repo, execution_repo, project_repo, question_repo, job_repo, attachment_repo, orchestrator):
         self.db = db
         self.session_repo = session_repo
         self.execution_repo = execution_repo
         self.project_repo = project_repo
         self.question_repo = question_repo
         self.job_repo = job_repo
+        self.attachment_repo = attachment_repo
         self.orchestrator = orchestrator
 
 
@@ -248,6 +249,7 @@ async def run_session_task(
         ExecutionRepository,
         ProjectRepository,
         QuestionRepository,
+        AttachmentRepository,
     )
     from druppie.execution import Orchestrator
 
@@ -259,6 +261,7 @@ async def run_session_task(
         question_repo = QuestionRepository(db)
         from druppie.repositories import JobRepository
         job_repo = JobRepository(db)
+        attachment_repo = AttachmentRepository(db)
 
         orchestrator = Orchestrator(
             session_repo=session_repo,
@@ -266,6 +269,7 @@ async def run_session_task(
             project_repo=project_repo,
             question_repo=question_repo,
             job_repo=job_repo,
+            attachment_repo=attachment_repo,
         )
 
         ctx = SessionTaskContext(
@@ -275,6 +279,7 @@ async def run_session_task(
             project_repo=project_repo,
             question_repo=question_repo,
             job_repo=job_repo,
+            attachment_repo=attachment_repo,
             orchestrator=orchestrator,
         )
 

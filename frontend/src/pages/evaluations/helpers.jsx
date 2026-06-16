@@ -9,6 +9,31 @@ export const formatDate = (dateStr) => {
   }
 }
 
+// Filter the available tests by mode (all/agent/tool/manual/...) and a free-text
+// search query. Shared by the selector list, the selection counts, and the run
+// resolution so what you see, what's counted, and what runs all stay in sync.
+export const filterTests = (tests, modeFilter = 'all', searchQuery = '') => {
+  const q = searchQuery.trim().toLowerCase()
+  const matchesMode = (t) => {
+    if (modeFilter === 'all') return true
+    if (modeFilter === 'manual') return t.manual_input
+    if (modeFilter === 'tool') return t.type === 'tool'
+    if (modeFilter === 'agent') return t.type === 'agent' && !t.manual_input
+    return t.type === modeFilter && !t.manual_input
+  }
+  const matchesSearch = (t) => {
+    if (!q) return true
+    return (
+      t.name.toLowerCase().includes(q) ||
+      (t.description && t.description.toLowerCase().includes(q)) ||
+      (t.tags && t.tags.some((tag) => tag.toLowerCase().includes(q))) ||
+      (t.agents && t.agents.some((a) => a.toLowerCase().includes(q))) ||
+      (t.message && t.message.toLowerCase().includes(q))
+    )
+  }
+  return tests.filter((t) => matchesMode(t) && matchesSearch(t))
+}
+
 export const formatDuration = (ms) => {
   if (ms === null || ms === undefined) return '-'
   if (ms < 1000) return `${ms}ms`

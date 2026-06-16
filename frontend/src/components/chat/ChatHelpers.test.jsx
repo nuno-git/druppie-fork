@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { resolveRelativePath, rewriteRelativeLink } from './ChatHelpers'
+import { resolveRelativePath, rewriteRelativeLink, extractOrderedItems, buildApprovalFileList } from './ChatHelpers'
 
 describe('resolveRelativePath', () => {
   it('resolves ./foo.md against a docs/ source', () => {
@@ -71,5 +71,132 @@ describe('rewriteRelativeLink', () => {
   it('returns null when no repo context is available', () => {
     expect(rewriteRelativeLink('./foo.md', null, 'docs/fd.md')).toBeNull()
     expect(rewriteRelativeLink('./foo.md', { repo_url: null }, 'docs/fd.md')).toBeNull()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// extractOrderedItems
+// ---------------------------------------------------------------------------
+
+describe('extractOrderedItems', () => {
+  const makeRun = (toolCalls) => ({
+    agent_id: 'business_analyst',
+    llm_calls: [{ tool_calls: toolCalls }],
+  })
+
+  it('skips HITL questions with pending status (translation in progress)', () => {
+    const run = makeRun([
+      { tool_name: 'hitl_ask_question', status: 'pending', arguments: { question: 'English?' } },
+    ])
+    expect(extractOrderedItems(run, false)).toEqual([])
+  })
+
+  it('includes HITL questions with waiting_answer status', () => {
+    const tc = { tool_name: 'hitl_ask_question', status: 'waiting_answer', arguments: { question: 'Dutch?' } }
+    const run = makeRun([tc])
+    const items = extractOrderedItems(run, false)
+    expect(items).toHaveLength(1)
+    expect(items[0]).toEqual({ type: 'question', tc, agentId: 'business_analyst' })
+  })
+
+  it('includes HITL questions with completed status', () => {
+    const tc = { tool_name: 'hitl_ask_multiple_choice_question', status: 'completed', arguments: {} }
+    const run = makeRun([tc])
+    expect(extractOrderedItems(run, false)).toHaveLength(1)
+  })
+
+  it('includes approvals when no following message', () => {
+    const tc = { tool_name: 'make_design', status: 'completed', approval: { status: 'approved' } }
+    const run = makeRun([tc])
+    const items = extractOrderedItems(run, false)
+    expect(items).toHaveLength(1)
+    expect(items[0].type).toBe('approval')
+  })
+
+  it('excludes approvals when there is a following message', () => {
+    const tc = { tool_name: 'make_design', status: 'completed', approval: { status: 'approved' } }
+    const run = makeRun([tc])
+    expect(extractOrderedItems(run, true)).toEqual([])
+  })
+
+  it('excludes pending approvals', () => {
+    const tc = { tool_name: 'make_design', status: 'waiting_approval', approval: { status: 'pending' } }
+    const run = makeRun([tc])
+    expect(extractOrderedItems(run, false)).toEqual([])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// buildApprovalFileList
+// ---------------------------------------------------------------------------
+
+describe('buildApprovalFileList', () => {
+  it('returns null when no content is present', () => {
+    expect(buildApprovalFileList({ path: 'docs/fd.md' })).toBeNull()
+    expect(buildApprovalFileList({})).toBeNull()
+  })
+
+  it('returns single file for English-only design', () => {
+    const files = buildApprovalFileList({
+      path: 'docs/functional-design.md',
+      content: '# Functional Design',
+    })
+    expect(files).toEqual([
+      { path: 'docs/functional-design.md', content: '# Functional Design' },
+    ])
+  })
+
+  it('returns translated file first when translation exists', () => {
+    const files = buildApprovalFileList({
+      path: 'docs/functional-design.md',
+      content: '# Functional Design',
+      translated_path: 'docs/functioneel-ontwerp.md',
+      translated_content: '# Functioneel Ontwerp',
+    })
+    expect(files).toHaveLength(2)
+    expect(files[0]).toEqual({
+      path: 'docs/functioneel-ontwerp.md',
+      content: '# Functioneel Ontwerp',
+    })
+    expect(files[1]).toEqual({
+      path: 'docs/functional-design.md (English)',
+      content: '# Functional Design',
+    })
+  })
+
+  it('ignores partial translation (content without path)', () => {
+    const files = buildApprovalFileList({
+      path: 'docs/functional-design.md',
+      content: '# FD',
+      translated_content: '# FO',
+    })
+    expect(files).toEqual([
+      { path: 'docs/functional-design.md', content: '# FD' },
+    ])
+  })
+
+  it('ignores partial translation (path without content)', () => {
+    const files = buildApprovalFileList({
+      path: 'docs/functional-design.md',
+      content: '# FD',
+      translated_path: 'docs/functioneel-ontwerp.md',
+    })
+    expect(files).toEqual([
+      { path: 'docs/functional-design.md', content: '# FD' },
+    ])
+  })
+
+  it('handles batch file writes', () => {
+    const files = buildApprovalFileList({
+      files: { 'a.md': 'aaa', 'b.md': 'bbb' },
+    })
+    expect(files).toHaveLength(2)
+    expect(files[0]).toEqual({ path: 'a.md', content: 'aaa' })
+    expect(files[1]).toEqual({ path: 'b.md', content: 'bbb' })
+  })
+
+  it('uses "file" as fallback path when path is missing', () => {
+    const files = buildApprovalFileList({ content: 'hello' })
+    expect(files).toEqual([{ path: 'file', content: 'hello' }])
   })
 })

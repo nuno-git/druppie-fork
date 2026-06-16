@@ -6,7 +6,7 @@
  * a contact popup to find users who can approve.
  */
 
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useContext } from 'react'
 import { Link } from 'react-router-dom'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -30,7 +30,7 @@ import {
   Clock,
 } from 'lucide-react'
 import { getUsersByRole } from '../../services/api'
-import { chatMarkdownComponents, SourceFileContext } from './ChatHelpers'
+import { chatMarkdownComponents, SourceFileContext, ProjectRepoContext } from './ChatHelpers'
 import DownloadMenu from './DownloadMenu'
 import { downloadAsMarkdown, downloadContentAsPdf } from '../../utils/downloadDesign'
 
@@ -117,7 +117,7 @@ const FilePreviewModal = ({ files, onClose }) => {
                       onDownloadPdf={async () => {
                         setPdfLoading((prev) => ({ ...prev, [path]: true }))
                         try {
-                          await downloadContentAsPdf(content, path)
+                          await downloadContentAsPdf(content, path, repo)
                         } finally {
                           setPdfLoading((prev) => ({ ...prev, [path]: false }))
                         }
@@ -210,6 +210,7 @@ const getToolInfo = (toolName) => {
 }
 
 const ApprovalCard = ({ approval, onApprove, onReject, isProcessing, currentUserId, sessionId, userRoles = [], chatInline = false, resolved = false }) => {
+  const repo = useContext(ProjectRepoContext)
   const [showRejectInput, setShowRejectInput] = useState(false)
   const [rejectReason, setRejectReason] = useState('')
   const [showNewContent, setShowNewContent] = useState(false)
@@ -422,7 +423,7 @@ const ApprovalCard = ({ approval, onApprove, onReject, isProcessing, currentUser
                   onDownloadMd={() => downloadAsMarkdown(newContent, filePath)}
                   onDownloadPdf={async () => {
                     setCardPdfLoading(true)
-                    try { await downloadContentAsPdf(newContent, filePath) }
+                    try { await downloadContentAsPdf(newContent, filePath, repo) }
                     finally { setCardPdfLoading(false) }
                   }}
                 />
@@ -485,14 +486,24 @@ const ApprovalCard = ({ approval, onApprove, onReject, isProcessing, currentUser
               {/* Reject reason input */}
               {showRejectInput && (
                 <div className="mb-3">
-                  <input
-                    type="text"
+                  <textarea
                     value={rejectReason}
                     onChange={(e) => setRejectReason(e.target.value)}
                     placeholder="Enter reason for rejection..."
-                    className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent text-sm"
+                    className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent text-sm resize-y"
+                    rows={3}
+                    maxLength={10000}
                     autoFocus
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && rejectReason.trim() && !isProcessing) {
+                        e.preventDefault()
+                        handleReject()
+                      }
+                    }}
                   />
+                  <div className="text-xs text-gray-400 text-right mt-1">
+                    {rejectReason.length} / 10,000
+                  </div>
                 </div>
               )}
 

@@ -5,106 +5,105 @@ description: >
   the technical research document during the architect phase.
 ---
 
-# Technisch Onderzoek
+# Technical Research
 
-## Inleiding
+## Introduction
 
-### Onderwerp
-[Korte beschrijving van wat onderzocht wordt — samengevat uit de FD.]
+### Subject
+[Brief description of what is being researched — summarized from the FD.]
 
-### Onderzoeksvraag
-[Welke architectuurkeuze moet dit onderzoek ondersteunen? Formuleer als vraag.]
+### Research Question
+[Which architectural decision must this research support? Formulate as a question.]
 
-### Uitgangspunten
-[Relevante platform-standaarden, NORA-lagen, Water Authority principes en
-harde constraints (wetgeving, bestaande systemen, PII) die elke oplossing
-moet respecteren.]
+### Assumptions
+[Relevant platform standards, NORA layers, Water Authority principles and
+hard constraints (legislation, existing systems, PII) that every solution
+must respect.]
 
-## Overwogen Benaderingen
+## Considered Approaches
 
-Beschouw minimaal 2, bij voorkeur 3 wezenlijk verschillende benaderingen.
-Herhaal het onderstaande blok voor elke benadering.
+Consider at least 2, preferably 3 substantially different approaches.
+Repeat the block below for each approach.
 
-### Benadering A — [naam]
-* **Beschrijving:** [hoe lost deze benadering het probleem op?]
-* **Hergebruik:** [welke Druppie-modules, componenten of template-onderdelen?]
-* **Voor- en nadelen:**
-    | Aspect | Score | Toelichting |
+### Approach A — [name]
+* **Description:** [how does this approach solve the problem?]
+* **Reuse:** [which Druppie modules, components or template parts?]
+* **Pros and cons:**
+    | Aspect | Score | Explanation |
     |--------|-------|-------------|
-    | Complexiteit | + / - | ... |
-    | Herbruikbaarheid | + / - | ... |
-    | Operationele kosten | + / - | ... |
-    | Risico | + / - | ... |
-    | Fit met principes | + / - | ... |
-* **Wanneer geschikt:** [in welk scenario zou je hiervoor kiezen?]
+    | Complexity | + / - | ... |
+    | Reusability | + / - | ... |
+    | Operational costs | + / - | ... |
+    | Risk | + / - | ... |
+    | Fit with principles | + / - | ... |
+* **When suitable:** [in which scenario would you choose this?]
 
-### Benadering B — [naam]
-[idem]
+### Approach B — [name]
+[same as above]
 
-### Benadering C — [naam]
-[idem — overslaan alleen als er aantoonbaar geen derde zinvolle variant is]
+### Approach C — [name]
+[same as above — skip only if there is demonstrably no meaningful third variant]
 
-## Externe Systeemkoppelingen (VERPLICHT)
+## External System Connections (MANDATORY)
 
-Binnen Druppie worden koppelingen met externe systemen in principe
-gerealiseerd als **MCP-modules**, zodat ze herbruikbaar zijn voor
-toekomstige projecten. Afwijken van dit uitgangspunt mag, maar vereist
-een expliciete onderbouwing.
+Within Druppie, connections to external systems are in principle
+implemented as **MCP modules**, so they are reusable for
+future projects. Deviating from this principle is allowed, but requires
+an explicit justification.
 
-### Inventarisatie koppelingen
-| # | Extern systeem | Categorie | Richting | Protocol / auth | Sync/Async | Data (kort) |
+### Connection inventory
+| # | External system | Category | Direction | Protocol / auth | Sync/Async | Data (brief) |
 |---|----------------|-----------|----------|------------------|-----------|-------------|
-| 1 | ... | organizational / other | in / uit / beide | ... | ... | ... |
+| 1 | ... | organizational / other | in / out / both | ... | ... | ... |
 | 2 | ... | ... | ... | ... | ... | ... |
 
-De kolom **Categorie** is bindend: `organizational` voor waterschap/HHR
-systemen (bronsystemen, zaaksysteem, DMS, archiefsysteem, referentiedata,
-waterschap-auth, …), `other` voor 3rd-party SaaS, publieke APIs, etc.
+The **Category** column is binding: `organizational` for water authority/HHR
+systems (source systems, case management, DMS, archive system, reference data,
+water authority auth, …), `other` for 3rd-party SaaS, public APIs, etc.
 
-### Per koppeling: hergebruik-analyse
-Herhaal per koppeling uit de tabel hierboven:
+### Per connection: reuse analysis
+Repeat for each connection from the table above:
 
-#### Koppeling 1 — [extern systeem]
-* **Categorie:** organizational / other
-* **Bestaande module gecheckt:** [zoekopdrachten via registry_search_modules
-  en registry_list_modules + resultaat]
-* **Beslissing (kies er exact één):**
-    - [ ] REUSE — bestaande module `<module_id>` dekt de behoefte
-    - [ ] EXTEND — bestaande module `<module_id>` wordt uitgebreid met
-          tools: [namen + korte beschrijving]
-    - [ ] NEW MODULE — nieuwe module `<voorgestelde_naam>` met tools:
-          [namen + korte beschrijving]
-    - [ ] PROJECT-SPECIFIC — geen module (**alleen toegestaan voor categorie
-          `other`** — voor `organizational` is deze optie niet geldig)
-* **Onderbouwing:** [waarom deze keuze; verwijs naar principes zoals
-  hergebruik, loose coupling en standaardisatie.]
-* **Direct integration rationale** (VERPLICHT als je PROJECT-SPECIFIC kiest,
-  anders weglaten):
-    - (a) Waarom is deze koppeling niet herbruikbaar voor toekomstige
-          projecten?
-    - (b) Waarom zou een module hier onevenredige overhead opleveren?
-    - (c) Welk toekomstig hergebruik-risico accepteer je expliciet?
-* **Impact op TD:** [wat verandert hierdoor in de component-structuur /
-  integration points van het TD?]
+#### Connection 1 — [external system]
+* **Category:** organizational / other
+* **Existing module checked:** [search queries via registry_search_modules
+  and registry_list_modules + result]
+* **Decision (choose exactly one):**
+    - [ ] REUSE — existing module `<module_id>` covers the need
+    - [ ] EXTEND — existing module `<module_id>` will be extended with
+          tools: [names + brief description]
+    - [ ] NEW MODULE — new module `<proposed_name>` with tools:
+          [names + brief description]
+    - [ ] PROJECT-SPECIFIC — no module (**only allowed for category
+          `other`** — for `organizational` this option is not valid)
+* **Justification:** [why this choice; reference principles such as
+  reuse, loose coupling and standardization.]
+* **Direct integration rationale** (MANDATORY if you choose PROJECT-SPECIFIC,
+  otherwise omit):
+    - (a) Why is this connection not reusable for future projects?
+    - (b) Why would a module create disproportionate overhead here?
+    - (c) Which future reuse risk do you explicitly accept?
+* **Impact on TD:** [what changes in the component structure /
+  integration points of the TD as a result?]
 
-#### Koppeling 2 — [extern systeem]
-[idem]
+#### Connection 2 — [external system]
+[same as above]
 
-### Samenvatting nieuwe/uitgebreide modules
-| Module | Type | Tools | Reden |
-|--------|------|-------|-------|
+### Summary of new/extended modules
+| Module | Type | Tools | Reason |
+|--------|------|-------|--------|
 | ... | new / extend | ... | ... |
 
-Rijen in deze tabel betekenen BUILD_PATH=CORE_UPDATE (zie Stap 2b).
+Rows in this table mean BUILD_PATH=CORE_UPDATE (see Step 2b).
 
-## Aanbeveling
+## Recommendation
 
-* **Gekozen benadering:** [A / B / C]
-* **Rationale:** [verwijs naar de trade-off tabellen en de
-  externe-koppelingen analyse.]
-* **Afgeleide beslissingen voor TD:** [welke onderzoekskeuzes worden
-  architectuurbeslissingen in docs/technical-design.md?]
-* **Afgeleide Technical Requirements:** [welke onderzoeksuitkomsten
-  moeten als TR-xx in het TD terechtkomen?]
-* **Openstaande aannames/risico's:** [punten die gevalideerd moeten
-  worden tijdens build/test of in een latere iteratie.]
+* **Chosen approach:** [A / B / C]
+* **Rationale:** [reference the trade-off tables and the
+  external connections analysis.]
+* **Derived decisions for TD:** [which research choices become
+  architectural decisions in docs/technical-design.md?]
+* **Derived Technical Requirements:** [which research outcomes
+  must appear as TR-xx in the TD?]
+* **Outstanding assumptions/risks:** [points that must be validated
+  during build/test or in a later iteration.]

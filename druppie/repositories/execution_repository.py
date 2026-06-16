@@ -333,6 +333,12 @@ class ExecutionRepository(BaseRepository):
             .first()
         )
 
+    def update_tool_call_arguments(self, tool_call_id: UUID, arguments: dict) -> None:
+        """Update tool call arguments (e.g. to add translated design content)."""
+        self.db.query(ToolCall).filter(ToolCall.id == tool_call_id).update(
+            {"arguments": arguments}
+        )
+
     def get_tool_calls_for_run(self, agent_run_id: UUID) -> list[ToolCall]:
         """Get all tool calls for an agent run."""
         return (
@@ -563,6 +569,7 @@ class ExecutionRepository(BaseRepository):
         session_id: UUID,
         role: str,
         content: str,
+        content_english: str | None = None,
         agent_run_id: UUID | None = None,
         agent_id: str | None = None,
         sequence_number: int = 0,
@@ -572,7 +579,8 @@ class ExecutionRepository(BaseRepository):
         Args:
             session_id: Session ID
             role: Message role (user, assistant, system)
-            content: Message content
+            content: Message content (display language)
+            content_english: English version for agent consumption (NULL if already English)
             agent_run_id: Optional agent run ID (for agent messages)
             agent_id: Optional agent ID (for assistant messages)
             sequence_number: Sequence number within session
@@ -585,6 +593,7 @@ class ExecutionRepository(BaseRepository):
             agent_run_id=agent_run_id,
             role=role,
             content=content,
+            content_english=content_english,
             agent_id=agent_id,
             sequence_number=sequence_number,
         )

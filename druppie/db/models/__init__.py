@@ -11,6 +11,7 @@ messages          Message             Message
 agent_runs        AgentRun            AgentRunSummary, AgentRunDetail
 llm_calls         LlmCall             LlmCallSummary
 tool_calls        ToolCall            ToolCallSummary, ToolCallDetail
+message_attachments MessageAttachment Attachment
 llm_retries       LlmRetry            LLMRetryDetail
 tool_call_normalizations ToolCallNormalization NormalizationDetail
 approvals         Approval            ApprovalSummary, ApprovalDetail
@@ -49,6 +50,7 @@ from .test_run import TestRun
 from .test_run_tag import TestRunTag
 from .test_running_status import TestRunningStatus
 from .llm_call import LlmCall
+from .message_attachment import MessageAttachment
 from .llm_retry import LlmRetry
 
 # Project model
@@ -97,6 +99,8 @@ __all__ = [
     "LlmCall",
     "LlmRetry",
     "ToolCallNormalization",
+    # Message attachments
+    "MessageAttachment",
     # Approval
     "Approval",
     # Question

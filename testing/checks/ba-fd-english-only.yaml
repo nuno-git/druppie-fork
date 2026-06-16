@@ -1,0 +1,13 @@
+check:
+  name: ba-fd-english-only
+  description: "For English sessions: FD has no Dutch translation fields (translated_content/translated_path must be absent)"
+  tags: [business_analyst, language, translation]
+  assert:
+    - agent: business_analyst
+      tool: coding:make_design
+      arguments:
+        path: docs/functional-design.md
+  judge:
+    context: business_analyst
+    checks:
+      - "The coding:make_design tool call arguments for docs/functional-design.md must NOT contain a 'translated_content' field or a 'translated_path' field. In an English session, the platform should not inject any translation — only the English original is produced. If either field is present, this check fails."
