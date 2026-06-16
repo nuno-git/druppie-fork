@@ -35,7 +35,8 @@ create_cluster() {
 
     log "Creating kind cluster '$CLUSTER_NAME'..."
     kind create cluster \
-        --config "$PROJECT_DIR/kind/cluster.yaml"
+        --config "$PROJECT_DIR/kind/cluster.yaml" \
+        --image kindest/node:v1.32.2
 
     log "Waiting for nodes to be ready..."
     kubectl wait --for=condition=ready nodes --all --timeout=120s
