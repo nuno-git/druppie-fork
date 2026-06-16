@@ -2,9 +2,9 @@
  * Session Sidebar - left panel showing session list in Chat
  */
 
-import { useState, useMemo } from 'react'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Plus, Search, PanelLeftClose, Trash2 } from 'lucide-react'
+import { useState, useMemo, useCallback, useRef, useEffect } from 'react'
+import { useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { Plus, Search, PanelLeftClose, Trash2, Loader2 } from 'lucide-react'
 import { getSessions, deleteSession } from '../../services/api'
 import { timeAgo, ACTIVE_STATUSES } from './ChatHelpers'
 import { SkeletonSidebarItem } from '../shared/Skeleton'
@@ -37,13 +37,27 @@ const groupSessionsByDate = (sessions) => {
   ].filter((g) => g.sessions.length > 0)
 }
 
+const PAGE_SIZE = 50
+
 const SessionSidebar = ({ activeSessionId, onSelectSession, onNewChat, onCollapse }) => {
   const [search, setSearch] = useState('')
   const [deletingId, setDeletingId] = useState(null)
   const queryClient = useQueryClient()
-  const { data, isLoading } = useQuery({
+  const scrollRef = useRef(null)
+
+  const {
+    data,
+    isLoading,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+  } = useInfiniteQuery({
     queryKey: ['sessions'],
-    queryFn: () => getSessions(1, 50),
+    queryFn: ({ pageParam = 1 }) => getSessions(pageParam, PAGE_SIZE),
+    getNextPageParam: (lastPage) => {
+      const { page, limit, total } = lastPage
+      return page * limit < total ? page + 1 : undefined
+    },
     refetchInterval: 5000,
   })
 
@@ -65,7 +79,12 @@ const SessionSidebar = ({ activeSessionId, onSelectSession, onNewChat, onCollaps
     }
   }
 
-  const sessions = data?.items || []
+  const sessions = useMemo(
+    () => data?.pages?.flatMap((p) => p.items) || [],
+    [data]
+  )
+  const total = data?.pages?.[0]?.total ?? 0
+
   const filtered = search
     ? sessions.filter((s) =>
         (s.title || '').toLowerCase().includes(search.toLowerCase()) ||
@@ -74,6 +93,21 @@ const SessionSidebar = ({ activeSessionId, onSelectSession, onNewChat, onCollaps
     : sessions
 
   const grouped = useMemo(() => groupSessionsByDate(filtered), [filtered])
+
+  const handleScroll = useCallback(() => {
+    const el = scrollRef.current
+    if (!el || !hasNextPage || isFetchingNextPage) return
+    if (el.scrollHeight - el.scrollTop - el.clientHeight < 200) {
+      fetchNextPage()
+    }
+  }, [hasNextPage, isFetchingNextPage, fetchNextPage])
+
+  useEffect(() => {
+    const el = scrollRef.current
+    if (!el) return
+    el.addEventListener('scroll', handleScroll)
+    return () => el.removeEventListener('scroll', handleScroll)
+  }, [handleScroll])
 
   return (
     <div className="flex flex-col h-full">
@@ -110,7 +144,7 @@ const SessionSidebar = ({ activeSessionId, onSelectSession, onNewChat, onCollaps
           />
         </div>
       </div>
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 overflow-y-auto" ref={scrollRef}>
         {isLoading && (
           <div className="space-y-1 py-2">
             {Array.from({ length: 5 }).map((_, i) => <SkeletonSidebarItem key={i} />)}
@@ -189,6 +223,14 @@ const SessionSidebar = ({ activeSessionId, onSelectSession, onNewChat, onCollaps
             })}
           </div>
         ))}
+        {isFetchingNextPage && (
+          <div className="flex items-center justify-center py-3">
+            <Loader2 className="w-4 h-4 text-gray-400 animate-spin" />
+          </div>
+        )}
+        {!isLoading && !hasNextPage && sessions.length > 0 && sessions.length < total && (
+          <p className="text-gray-300 text-xs text-center py-2">All sessions loaded</p>
+        )}
       </div>
     </div>
   )
