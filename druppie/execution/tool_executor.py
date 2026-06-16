@@ -781,7 +781,7 @@ class ToolExecutor:
                     translated_path=translated_path,
                 )
         except TranslationNotAvailableError:
-            raise
+            logger.warning("translation_skipped_no_api_key", tool_call_id=str(tool_call.id))
         except Exception as e:
             logger.warning(
                 "design_translation_failed",
