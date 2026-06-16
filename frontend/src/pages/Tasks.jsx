@@ -304,6 +304,12 @@ const TaskCard = ({ task, onApprove, onReject }) => {
             rows={3}
             maxLength={10000}
             autoFocus
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && rejectReason.trim()) {
+                e.preventDefault()
+                onReject(task.id, rejectReason)
+              }
+            }}
           />
           <div className="flex items-center justify-between">
             <span className="text-xs text-gray-400">{rejectReason.length} / 10,000</span>
@@ -613,6 +619,12 @@ const JobApprovalCard = ({ run, onApprove, onReject }) => {
             rows={3}
             maxLength={10000}
             autoFocus
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && rejectReason.trim()) {
+                e.preventDefault()
+                onReject(run.id, rejectReason)
+              }
+            }}
           />
           <div className="flex items-center justify-between">
             <span className="text-xs text-gray-400">{rejectReason.length} / 10,000</span>

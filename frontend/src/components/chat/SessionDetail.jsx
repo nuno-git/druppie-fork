@@ -223,6 +223,10 @@ const InlineApproval = ({ tc, sessionId, sessionUserId }) => {
                           setRejectMode(false)
                           setRejectReason('')
                         }
+                        if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && rejectReason.trim() && !isProcessing) {
+                          e.preventDefault()
+                          rejectMut.mutate({ approvalId: tc.approval.id, reason: rejectReason })
+                        }
                       }}
                     />
                     <div className="flex items-center justify-between">

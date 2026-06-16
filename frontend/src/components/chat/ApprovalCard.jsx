@@ -494,6 +494,12 @@ const ApprovalCard = ({ approval, onApprove, onReject, isProcessing, currentUser
                     rows={3}
                     maxLength={10000}
                     autoFocus
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && rejectReason.trim() && !isProcessing) {
+                        e.preventDefault()
+                        handleReject()
+                      }
+                    }}
                   />
                   <div className="text-xs text-gray-400 text-right mt-1">
                     {rejectReason.length} / 10,000
