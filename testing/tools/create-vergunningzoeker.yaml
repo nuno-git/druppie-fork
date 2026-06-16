@@ -418,20 +418,19 @@ tool-test:
               import base64
               import json
               import logging
-              from datetime import date
+              import threading
+              from datetime import date, datetime, timezone, timedelta
               from flask import Blueprint, jsonify, request
               from druppie_sdk import DruppieClient
-              from app.database import get_db
+              from app.database import SessionLocal, get_db
               from app.models import Permit
 
               logger = logging.getLogger(__name__)
               api = Blueprint("api", __name__)
-              druppie = DruppieClient()
 
               ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "gif", "bmp", "tiff", "webp", "pdf"}
               MAX_FILE_SIZE = 25 * 1024 * 1024
 
-              # Selectielijst waterschappen 2012 — simplified lookup
               SELECTIELIJST = {
                   "watervergunning_lozing": {"nominatie": "vernietigen", "jaren": 20},
                   "watervergunning_onttrekking": {"nominatie": "vernietigen", "jaren": 20},
@@ -472,7 +471,6 @@ tool-test:
 
 
               def _compute_archive_status(permit_type, issue_date_str):
-                  """Compute archive nomination, retention, and status per selectielijst."""
                   key = (permit_type or "").strip().lower().replace(" ", "_")
                   info = SELECTIELIJST.get(key, {"nominatie": "onbekend", "jaren": None})
                   nominatie = info["nominatie"]
@@ -490,9 +488,9 @@ tool-test:
                           else:
                               status = f"te bewaren tot {destroy_date.isoformat()}"
                       except (ValueError, OverflowError):
-                          status = f"te bewaren ({jaren} jaar na uitgifte)"
+                          status = f"te bewaren ({jaren} jaar na uitgiftte)"
                   elif nominatie == "vernietigen":
-                      status = f"te bewaren ({jaren} jaar na uitgifte)" if jaren else "onbekend"
+                      status = f"te bewaren ({jaren} jaar na uitgiftte)" if jaren else "onbekend"
 
                   return nominatie, jaren, status
 
@@ -503,9 +501,110 @@ tool-test:
                   return jsonify(app_name=settings.app_name)
 
 
+              def _recover_stuck_permits():
+                  cutoff = datetime.now(timezone.utc) - timedelta(minutes=10)
+                  db = SessionLocal()
+                  try:
+                      stuck = db.query(Permit).filter(
+                          Permit.status == "processing",
+                          Permit.upload_date < cutoff,
+                      ).all()
+                      for p in stuck:
+                          logger.info("Recovering stuck permit %s (processing since %s)", p.id, p.upload_date)
+                          p.status = "error"
+                          p.error_message = "Verwerking timeout — probeer opnieuw"
+                      if stuck:
+                          db.commit()
+                  except Exception as e:
+                      logger.error("Stuck permit recovery failed: %s", e)
+                  finally:
+                      db.close()
+
+
+              @api.before_app_request
+              def _check_stuck_on_startup():
+                  if not getattr(api, "_recovery_done", False):
+                      api._recovery_done = True
+                      _recover_stuck_permits()
+
+
+              def _process_permit(permit_id, data_uri):
+                  db = SessionLocal()
+                  try:
+                      permit = db.query(Permit).filter(Permit.id == permit_id).first()
+                      if not permit:
+                          return
+                      try:
+                          druppie = DruppieClient()
+                          ocr_result = druppie.call("vision", "ocr", {
+                              "image_source": data_uri,
+                              "prompt": "Extraheer alle tekst uit dit vergunningdocument. Bewaar de structuur.",
+                          })
+                          extracted_text = ocr_result.get("text", "")
+                          permit.extracted_text = extracted_text
+
+                          meta_result = druppie.call("llm", "chat", {
+                              "prompt": METADATA_EXTRACTION_PROMPT + extracted_text[:4000],
+                              "system": "Je bent een metadata-extractie specialist voor Nederlandse watervergunningen. Antwoord ALLEEN met valid JSON.",
+                          })
+                          raw_answer = meta_result.get("answer", "{}")
+
+                          json_str = raw_answer
+                          if "```" in json_str:
+                              json_str = json_str.split("```")[1]
+                              if json_str.startswith("json"):
+                                  json_str = json_str[4:]
+                              json_str = json_str.strip()
+
+                          try:
+                              meta = json.loads(json_str)
+                          except json.JSONDecodeError:
+                              meta = {}
+                              logger.warning("Failed to parse metadata JSON: %s", raw_answer[:200])
+
+                          permit.permit_number = permit.permit_number or meta.get("permit_number") or None
+                          permit.applicant_name = permit.applicant_name or meta.get("applicant_name") or None
+                          permit.permit_holder_name = meta.get("permit_holder_name") or None
+                          permit.issuer_name = meta.get("issuer_name") or None
+                          permit.location = meta.get("location") or None
+                          permit.applicable_law = meta.get("applicable_law") or None
+                          permit.work_type = meta.get("work_type") or None
+                          permit.water_type = meta.get("water_type") or None
+                          permit.embankment_type = meta.get("embankment_type") or None
+                          permit.permit_type = meta.get("permit_type", "onbekend") or "onbekend"
+                          permit.source_system = permit.source_system or meta.get("source_system") or "upload"
+
+                          for field, key in [("issue_date", "issue_date"), ("expiry_date", "expiry_date")]:
+                              val = meta.get(key)
+                              if val:
+                                  try:
+                                      setattr(permit, field, date.fromisoformat(val))
+                                  except (ValueError, TypeError):
+                                      pass
+
+                          nominatie, jaren, arch_status = _compute_archive_status(
+                              permit.permit_type,
+                              permit.issue_date.isoformat() if permit.issue_date else None,
+                          )
+                          permit.archive_nomination = nominatie
+                          permit.retention_years = jaren
+                          permit.archive_status = arch_status
+                          permit.status = "processed"
+
+                      except Exception as e:
+                          logger.error("Processing failed for permit %s: %s", permit.id, e)
+                          permit.status = "error"
+                          permit.error_message = str(e)[:500]
+
+                      db.commit()
+                  except Exception as e:
+                      logger.error("Background processing fatal error for permit %s: %s", permit_id, e)
+                  finally:
+                      db.close()
+
+
               @api.route("/permits/upload", methods=["POST"])
               def upload_permit():
-                  """Upload permit document — OCR + metadata extraction + archive classification."""
                   if "file" not in request.files:
                       return jsonify(error="Geen bestand geüpload."), 400
                   file = request.files["file"]
@@ -517,159 +616,107 @@ tool-test:
                   if not file_bytes:
                       return jsonify(error="Leeg bestand."), 400
 
-                  db = next(get_db())
-                  permit = Permit(
-                      permit_number=request.form.get("permit_number", "").strip() or None,
-                      applicant_name=request.form.get("applicant_name", "").strip() or None,
-                      source_file=file.filename,
-                      source_system=request.form.get("source_system", "upload").strip(),
-                      status="processing",
-                  )
-                  db.add(permit)
-                  db.commit()
-                  db.refresh(permit)
-
                   ext = file.filename.rsplit(".", 1)[1].lower()
                   mime_map = {"jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png",
                               "pdf": "application/pdf", "tiff": "image/tiff", "webp": "image/webp"}
                   mime = mime_map.get(ext, "application/octet-stream")
                   data_uri = f"data:{mime};base64,{base64.b64encode(file_bytes).decode()}"
 
-                  try:
-                      # Step 1: OCR — extract text from document
-                      ocr_result = druppie.call("vision", "ocr", {
-                          "image_source": data_uri,
-                          "prompt": "Extraheer alle tekst uit dit vergunningdocument. Bewaar de structuur.",
-                      })
-                      extracted_text = ocr_result.get("text", "")
-                      permit.extracted_text = extracted_text
-
-                      # Step 2: LLM — extract structured metadata from text
-                      meta_result = druppie.call("llm", "chat", {
-                          "prompt": METADATA_EXTRACTION_PROMPT + extracted_text[:4000],
-                          "system": "Je bent een metadata-extractie specialist voor Nederlandse watervergunningen. Antwoord ALLEEN met valid JSON.",
-                      })
-                      raw_answer = meta_result.get("answer", "{}")
-
-                      # Parse JSON from LLM response (handle markdown code blocks)
-                      json_str = raw_answer
-                      if "```" in json_str:
-                          json_str = json_str.split("```")[1]
-                          if json_str.startswith("json"):
-                              json_str = json_str[4:]
-                          json_str = json_str.strip()
-
-                      try:
-                          meta = json.loads(json_str)
-                      except json.JSONDecodeError:
-                          meta = {}
-                          logger.warning("Failed to parse metadata JSON: %s", raw_answer[:200])
-
-                      # Apply extracted metadata (LLM fills gaps, user input takes priority)
-                      permit.permit_number = permit.permit_number or meta.get("permit_number") or None
-                      permit.applicant_name = permit.applicant_name or meta.get("applicant_name") or None
-                      permit.permit_holder_name = meta.get("permit_holder_name") or None
-                      permit.issuer_name = meta.get("issuer_name") or None
-                      permit.location = meta.get("location") or None
-                      permit.applicable_law = meta.get("applicable_law") or None
-                      permit.work_type = meta.get("work_type") or None
-                      permit.water_type = meta.get("water_type") or None
-                      permit.embankment_type = meta.get("embankment_type") or None
-                      permit.permit_type = meta.get("permit_type", "onbekend") or "onbekend"
-                      permit.source_system = permit.source_system or meta.get("source_system") or "upload"
-
-                      # Parse dates
-                      for field, key in [("issue_date", "issue_date"), ("expiry_date", "expiry_date")]:
-                          val = meta.get(key)
-                          if val:
-                              try:
-                                  setattr(permit, field, date.fromisoformat(val))
-                              except (ValueError, TypeError):
-                                  pass
-
-                      # Step 3: Compute archive status (BR-01 to BR-06)
-                      nominatie, jaren, arch_status = _compute_archive_status(
-                          permit.permit_type,
-                          permit.issue_date.isoformat() if permit.issue_date else None,
+                  with get_db() as db:
+                      permit = Permit(
+                          permit_number=request.form.get("permit_number", "").strip() or None,
+                          applicant_name=request.form.get("applicant_name", "").strip() or None,
+                          source_file=file.filename,
+                          source_system=request.form.get("source_system", "upload").strip(),
+                          status="processing",
                       )
-                      permit.archive_nomination = nominatie
-                      permit.retention_years = jaren
-                      permit.archive_status = arch_status
-                      permit.status = "processed"
+                      db.add(permit)
+                      db.commit()
+                      db.refresh(permit)
+                      result = _permit_summary(permit)
 
-                  except Exception as e:
-                      logger.error("Processing failed for permit %s: %s", permit.id, e)
-                      permit.status = "error"
-                      permit.error_message = str(e)[:500]
-
-                  db.commit()
-                  db.refresh(permit)
-                  return jsonify(_permit_to_dict(permit))
+                  threading.Thread(target=_process_permit, args=(permit.id, data_uri), daemon=True).start()
+                  return jsonify(result)
 
 
               @api.route("/permits")
               def list_permits():
-                  db = next(get_db())
-                  permits = db.query(Permit).order_by(Permit.created_at.desc()).all()
-                  return jsonify([_permit_summary(p) for p in permits])
+                  with get_db() as db:
+                      permits = db.query(Permit).order_by(Permit.created_at.desc()).all()
+                      return jsonify([_permit_summary(p) for p in permits])
 
 
               @api.route("/permits/<int:permit_id>")
               def get_permit(permit_id):
-                  db = next(get_db())
-                  permit = db.query(Permit).filter(Permit.id == permit_id).first()
-                  if not permit:
-                      return jsonify(error="Niet gevonden"), 404
-                  return jsonify(_permit_to_dict(permit))
+                  with get_db() as db:
+                      permit = db.query(Permit).filter(Permit.id == permit_id).first()
+                      if not permit:
+                          return jsonify(error="Niet gevonden"), 404
+                      return jsonify(_permit_to_dict(permit))
 
 
               @api.route("/permits/<int:permit_id>", methods=["DELETE"])
               def delete_permit(permit_id):
-                  db = next(get_db())
-                  permit = db.query(Permit).filter(Permit.id == permit_id).first()
-                  if not permit:
-                      return jsonify(error="Niet gevonden"), 404
-                  db.delete(permit)
-                  db.commit()
-                  return jsonify(ok=True)
+                  with get_db() as db:
+                      permit = db.query(Permit).filter(Permit.id == permit_id).first()
+                      if not permit:
+                          return jsonify(error="Niet gevonden"), 404
+                      db.delete(permit)
+                      db.commit()
+                      return jsonify(ok=True)
+
+
+              @api.route("/permits/<int:permit_id>/retry", methods=["POST"])
+              def retry_permit(permit_id):
+                  db = SessionLocal()
+                  try:
+                      permit = db.query(Permit).filter(Permit.id == permit_id).first()
+                      if not permit:
+                          return jsonify(error="Niet gevonden"), 404
+                      if permit.status not in ("processing", "error"):
+                          return jsonify(error=f"Kan niet opnieuw proberen: status is '{permit.status}'"), 400
+                      permit.status = "processing"
+                      permit.error_message = None
+                      db.commit()
+                  finally:
+                      db.close()
+                  return jsonify(ok=True, message="Opnieuw verwerken gestart")
 
 
               @api.route("/permits/search")
               def search_permits():
-                  """Search across all metadata fields (FR-01)."""
                   q = request.args.get("q", "").strip()
-                  db = next(get_db())
-                  if not q:
-                      return jsonify([_permit_summary(p) for p in db.query(Permit).order_by(Permit.created_at.desc()).all()])
-                  like = f"%{q}%"
-                  results = db.query(Permit).filter(
-                      Permit.permit_number.ilike(like)
-                      | Permit.applicant_name.ilike(like)
-                      | Permit.permit_holder_name.ilike(like)
-                      | Permit.location.ilike(like)
-                      | Permit.permit_type.ilike(like)
-                      | Permit.applicable_law.ilike(like)
-                      | Permit.work_type.ilike(like)
-                      | Permit.water_type.ilike(like)
-                      | Permit.extracted_text.ilike(like)
-                  ).order_by(Permit.created_at.desc()).all()
-                  return jsonify([_permit_summary(p) for p in results])
+                  with get_db() as db:
+                      if not q:
+                          return jsonify([_permit_summary(p) for p in db.query(Permit).order_by(Permit.created_at.desc()).all()])
+                      like = f"%{q}%"
+                      results = db.query(Permit).filter(
+                          Permit.permit_number.ilike(like)
+                          | Permit.applicant_name.ilike(like)
+                          | Permit.permit_holder_name.ilike(like)
+                          | Permit.location.ilike(like)
+                          | Permit.permit_type.ilike(like)
+                          | Permit.applicable_law.ilike(like)
+                          | Permit.work_type.ilike(like)
+                          | Permit.water_type.ilike(like)
+                          | Permit.extracted_text.ilike(like)
+                      ).order_by(Permit.created_at.desc()).all()
+                      return jsonify([_permit_summary(p) for p in results])
 
 
               @api.route("/permits/stats")
               def permit_stats():
-                  """Dashboard stats."""
-                  db = next(get_db())
-                  total = db.query(Permit).count()
-                  by_type = {}
-                  for p in db.query(Permit).all():
-                      t = (p.permit_type or "onbekend").lower()
-                      by_type[t] = by_type.get(t, 0) + 1
-                  by_archive = {}
-                  for p in db.query(Permit).all():
-                      s = p.archive_status or "onbekend"
-                      by_archive[s] = by_archive.get(s, 0) + 1
-                  return jsonify(total=total, by_type=by_type, by_archive=by_archive)
+                  with get_db() as db:
+                      total = db.query(Permit).count()
+                      by_type = {}
+                      for p in db.query(Permit).all():
+                          t = (p.permit_type or "onbekend").lower()
+                          by_type[t] = by_type.get(t, 0) + 1
+                      by_archive = {}
+                      for p in db.query(Permit).all():
+                          s = p.archive_status or "onbekend"
+                          by_archive[s] = by_archive.get(s, 0) + 1
+                      return jsonify(total=total, by_type=by_type, by_archive=by_archive)
 
 
               def _permit_summary(p):
@@ -738,11 +785,12 @@ tool-test:
               COPY app/ ./app/
               COPY --from=frontend /build/dist ./static/
               EXPOSE 8000
-              CMD ["gunicorn", "--bind", "0.0.0.0:8000", "--workers", "2", "--timeout", "300", "--preload", "app:create_app()"]
+              CMD ["gunicorn", "--bind", "0.0.0.0:8000", "--workers", "2", "--timeout", "600", "app:create_app()"]
 
           - path: app/database.py
             content: |
               import logging
+              from contextlib import contextmanager
               from sqlalchemy import create_engine, text
               from sqlalchemy.orm import DeclarativeBase, sessionmaker
               from app.config import settings
@@ -754,6 +802,7 @@ tool-test:
               class Base(DeclarativeBase):
                   pass
 
+              @contextmanager
               def get_db():
                   db = SessionLocal()
                   try:
