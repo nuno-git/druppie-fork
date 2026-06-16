@@ -123,15 +123,21 @@ async def get_session(
     return detail
 
 
+class BatchDeleteSessionsRequest(BaseModel):
+    """Optional body for batch session deletion."""
+    session_ids: list[UUID] | None = None
+
+
 @router.delete("/sessions")
-async def delete_all_sessions(
+async def delete_sessions_batch(
+    body: BatchDeleteSessionsRequest | None = Body(None),
     service: SessionService = Depends(get_session_service),
     user: dict = Depends(get_current_user),
 ):
-    """Delete all sessions for the current user (admins: all sessions).
+    """Delete sessions in batch.
 
-    Cascades to delete all related data (messages, agent runs, tool calls, etc.)
-    and cleans up attachment files from disk.
+    If session_ids is provided, deletes only those sessions.
+    If session_ids is omitted/null, deletes all sessions for the user (admins: all sessions).
 
     Returns:
         Success confirmation with count of deleted sessions
@@ -139,11 +145,14 @@ async def delete_all_sessions(
     user_id = UUID(user["sub"])
     user_roles = get_user_roles(user)
 
-    if "admin" in user_roles:
-        user_id = None
+    if body and body.session_ids is not None:
+        count = service.delete_many(body.session_ids, user_id, user_roles)
+    else:
+        if "admin" in user_roles:
+            user_id = None
+        count = service.delete_all_for_user(user_id)
 
-    count = service.delete_all_for_user(user_id)
-    logger.info("all_sessions_deleted", user_id=str(user["sub"]), count=count)
+    logger.info("sessions_batch_deleted", user_id=str(user["sub"]), count=count)
     return {"success": True, "deleted_count": count}
 
 

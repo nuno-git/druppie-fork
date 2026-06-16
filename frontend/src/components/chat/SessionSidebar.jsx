@@ -4,8 +4,8 @@
 
 import { useState, useMemo, useCallback, useRef, useEffect } from 'react'
 import { useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Plus, Search, PanelLeftClose, Trash2, Loader2 } from 'lucide-react'
-import { getSessions, deleteSession, deleteAllSessions } from '../../services/api'
+import { Plus, Search, PanelLeftClose, Trash2, CheckSquare, Square, X, Loader2 } from 'lucide-react'
+import { getSessions, deleteSession, deleteSessions } from '../../services/api'
 import { timeAgo, ACTIVE_STATUSES } from './ChatHelpers'
 import { SkeletonSidebarItem } from '../shared/Skeleton'
 
@@ -42,6 +42,8 @@ const PAGE_SIZE = 50
 const SessionSidebar = ({ activeSessionId, onSelectSession, onNewChat, onCollapse }) => {
   const [search, setSearch] = useState('')
   const [deletingId, setDeletingId] = useState(null)
+  const [selectionMode, setSelectionMode] = useState(false)
+  const [selectedIds, setSelectedIds] = useState(new Set())
   const queryClient = useQueryClient()
   const scrollRef = useRef(null)
 
@@ -75,26 +77,51 @@ const SessionSidebar = ({ activeSessionId, onSelectSession, onNewChat, onCollaps
     onError: () => setDeletingId(null),
   })
 
-  const deleteAllMutation = useMutation({
-    mutationFn: deleteAllSessions,
+  const batchDeleteMutation = useMutation({
+    mutationFn: (ids) => deleteSessions(ids.length === sessions.length ? null : [...ids]),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['sessions'] })
-      onNewChat()
+      if (selectedIds.has(activeSessionId)) onNewChat()
+      setSelectionMode(false)
+      setSelectedIds(new Set())
     },
   })
-
-  const handleDeleteAll = () => {
-    if (sessions.length === 0) return
-    if (window.confirm(`Delete all ${sessions.length} sessions?\n\nThis will permanently delete all your sessions and their data. This cannot be undone.`)) {
-      deleteAllMutation.mutate()
-    }
-  }
 
   const handleDelete = (e, session) => {
     e.stopPropagation()
     if (window.confirm(`Delete session "${session.title || 'Untitled'}"?\n\nThis will permanently delete the session and all its data.`)) {
       deleteMutation.mutate(session.id)
     }
+  }
+
+  const handleBatchDelete = () => {
+    if (selectedIds.size === 0) return
+    const label = selectedIds.size === sessions.length ? 'all' : selectedIds.size
+    if (window.confirm(`Delete ${label} session${selectedIds.size === 1 ? '' : 's'}?\n\nThis will permanently delete the selected sessions and all their data. This cannot be undone.`)) {
+      batchDeleteMutation.mutate(selectedIds)
+    }
+  }
+
+  const toggleSelection = (id) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const toggleSelectAll = () => {
+    if (selectedIds.size === filtered.length) {
+      setSelectedIds(new Set())
+    } else {
+      setSelectedIds(new Set(filtered.map((s) => s.id)))
+    }
+  }
+
+  const exitSelectionMode = () => {
+    setSelectionMode(false)
+    setSelectedIds(new Set())
   }
 
   const sessions = useMemo(
@@ -134,6 +161,19 @@ const SessionSidebar = ({ activeSessionId, onSelectSession, onNewChat, onCollaps
           Sessions
         </h2>
         <div className="flex items-center gap-1">
+          {sessions.length > 0 && (
+            <button
+              onClick={() => selectionMode ? exitSelectionMode() : setSelectionMode(true)}
+              className={`p-1.5 rounded-lg transition-colors ${
+                selectionMode
+                  ? 'bg-blue-100 text-blue-600 hover:bg-blue-200'
+                  : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'
+              }`}
+              title={selectionMode ? 'Exit selection mode' : 'Select sessions'}
+            >
+              {selectionMode ? <X className="w-4 h-4" /> : <CheckSquare className="w-4 h-4" />}
+            </button>
+          )}
           <button
             onClick={onNewChat}
             className="p-1.5 rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-colors"
@@ -162,6 +202,19 @@ const SessionSidebar = ({ activeSessionId, onSelectSession, onNewChat, onCollaps
           />
         </div>
       </div>
+
+      {selectionMode && filtered.length > 0 && (
+        <div className="px-3 py-1.5 border-b bg-blue-50/50 flex items-center justify-between">
+          <button
+            onClick={toggleSelectAll}
+            className="text-xs text-blue-600 hover:text-blue-800 font-medium"
+          >
+            {selectedIds.size === filtered.length ? 'Deselect all' : 'Select all'}
+          </button>
+          <span className="text-xs text-gray-500">{selectedIds.size} selected</span>
+        </div>
+      )}
+
       <div className="flex-1 overflow-y-auto" ref={scrollRef}>
         {isLoading && (
           <div className="space-y-1 py-2">
@@ -184,30 +237,42 @@ const SessionSidebar = ({ activeSessionId, onSelectSession, onNewChat, onCollaps
               const isPaused = s.status === 'paused' || (s.status?.startsWith('paused_') && s.status !== 'paused_crashed') || s.status?.startsWith('waiting_')
               const isCrashed = s.status === 'paused_crashed'
               const isFailed = s.status === 'failed'
+              const isSelected = selectedIds.has(s.id)
               return (
                 <div
                   key={s.id}
                   className={`group relative w-full text-left px-4 py-2.5 hover:bg-gray-50 transition-colors cursor-pointer ${
-                    activeSessionId === s.id
+                    selectionMode && isSelected
                       ? 'bg-blue-50 border-l-2 border-l-blue-600'
-                      : 'border-l-2 border-l-transparent'
+                      : activeSessionId === s.id && !selectionMode
+                        ? 'bg-blue-50 border-l-2 border-l-blue-600'
+                        : 'border-l-2 border-l-transparent'
                   }`}
-                  onClick={() => onSelectSession(s.id)}
+                  onClick={() => selectionMode ? toggleSelection(s.id) : onSelectSession(s.id)}
                 >
                   <div className="flex items-center gap-2">
-                    {isActive && (
+                    {selectionMode && (
+                      <span className="flex-shrink-0">
+                        {isSelected ? (
+                          <CheckSquare className="w-4 h-4 text-blue-600" />
+                        ) : (
+                          <Square className="w-4 h-4 text-gray-400" />
+                        )}
+                      </span>
+                    )}
+                    {!selectionMode && isActive && (
                       <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 animate-pulse ${
                         isPaused ? 'bg-amber-500' : 'bg-blue-500'
                       }`} />
                     )}
-                    {(isFailed || isCrashed) && (
+                    {!selectionMode && (isFailed || isCrashed) && (
                       <span className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-red-400" />
                     )}
                     <span className="text-sm font-medium truncate text-gray-900 pr-6">
                       {s.title || 'Untitled'}
                     </span>
                   </div>
-                  <div className={`flex items-center gap-2 mt-0.5 ${isActive || isFailed || isCrashed ? 'ml-3.5' : ''}`}>
+                  <div className={`flex items-center gap-2 mt-0.5 ${selectionMode || isActive || isFailed || isCrashed ? 'ml-3.5' : ''}`}>
                     {s.username && (
                       <span className={`text-xs font-medium truncate ${
                         s.username.startsWith('t-') ? 'text-orange-500' : 'text-blue-400'
@@ -224,18 +289,20 @@ const SessionSidebar = ({ activeSessionId, onSelectSession, onNewChat, onCollaps
                       {timeAgo(s.updated_at || s.created_at)}
                     </span>
                   </div>
-                  <button
-                    onClick={(e) => handleDelete(e, s)}
-                    disabled={deletingId === s.id}
-                    className="absolute top-2 right-2 p-1 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded opacity-0 group-hover:opacity-100 transition-all focus:opacity-100 focus:outline-none"
-                    aria-label={`Delete session ${s.title || 'Untitled'}`}
-                  >
-                    {deletingId === s.id ? (
-                      <div className="w-3.5 h-3.5 border-2 border-red-600 border-t-transparent rounded-full animate-spin" />
-                    ) : (
-                      <Trash2 className="w-3.5 h-3.5" />
-                    )}
-                  </button>
+                  {!selectionMode && (
+                    <button
+                      onClick={(e) => handleDelete(e, s)}
+                      disabled={deletingId === s.id}
+                      className="absolute top-2 right-2 p-1 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded opacity-0 group-hover:opacity-100 transition-all focus:opacity-100 focus:outline-none"
+                      aria-label={`Delete session ${s.title || 'Untitled'}`}
+                    >
+                      {deletingId === s.id ? (
+                        <div className="w-3.5 h-3.5 border-2 border-red-600 border-t-transparent rounded-full animate-spin" />
+                      ) : (
+                        <Trash2 className="w-3.5 h-3.5" />
+                      )}
+                    </button>
+                  )}
                 </div>
               )
             })}
@@ -250,19 +317,22 @@ const SessionSidebar = ({ activeSessionId, onSelectSession, onNewChat, onCollaps
           <p className="text-gray-300 text-xs text-center py-2">All sessions loaded</p>
         )}
       </div>
-      {sessions.length > 0 && (
-        <div className="px-3 py-2 border-t">
+
+      {selectionMode && selectedIds.size > 0 && (
+        <div className="px-3 py-2 border-t bg-red-50">
           <button
-            onClick={handleDeleteAll}
-            disabled={deleteAllMutation.isPending}
-            className="w-full flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-50"
+            onClick={handleBatchDelete}
+            disabled={batchDeleteMutation.isPending}
+            className="w-full flex items-center justify-center gap-1.5 px-3 py-1.5 text-sm text-white bg-red-600 hover:bg-red-700 rounded-lg transition-colors disabled:opacity-50 font-medium"
           >
-            {deleteAllMutation.isPending ? (
-              <div className="w-3.5 h-3.5 border-2 border-red-600 border-t-transparent rounded-full animate-spin" />
+            {batchDeleteMutation.isPending ? (
+              <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
             ) : (
-              <Trash2 className="w-3.5 h-3.5" />
+              <Trash2 className="w-4 h-4" />
             )}
-            {deleteAllMutation.isPending ? 'Deleting…' : 'Delete all sessions'}
+            {batchDeleteMutation.isPending
+              ? 'Deleting...'
+              : `Delete ${selectedIds.size} session${selectedIds.size === 1 ? '' : 's'}`}
           </button>
         </div>
       )}

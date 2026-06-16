@@ -18,9 +18,11 @@ import {
   Loader2,
   AlertCircle,
   Eye,
+  CheckSquare,
+  X,
 } from 'lucide-react'
 
-import { getProjects, getDeployments, stopDeployment, deleteProject } from '../services/api'
+import { getProjects, getDeployments, stopDeployment, deleteProject, deleteProjects } from '../services/api'
 import { useToast } from '../components/Toast'
 import PageHeader from '../components/shared/PageHeader'
 import SharedCopyButton from '../components/shared/CopyButton'
@@ -56,7 +58,7 @@ const StatusBadge = ({ isRunning, hasRepo }) => {
 
 const CopyButton = SharedCopyButton
 
-const ProjectCard = ({ project, deployment, onDelete, isDeleting, onViewDetails, onStop, isStopping }) => {
+const ProjectCard = ({ project, deployment, onDelete, isDeleting, onViewDetails, onStop, isStopping, selectionMode, isSelected, onToggleSelect }) => {
   const repoUrl = project.repo_url
   const hasRepo = !!repoUrl
   const isRunning = !!deployment
@@ -69,26 +71,50 @@ const ProjectCard = ({ project, deployment, onDelete, isDeleting, onViewDetails,
     }
   }
 
+  const handleClick = () => {
+    if (selectionMode) {
+      onToggleSelect(project.id)
+    }
+  }
+
   return (
     <div
-      className={`p-4 rounded-xl border border-gray-100 transition-all relative group bg-white hover:border-gray-200 hover:bg-gray-50/30 ${isDeleting ? 'opacity-50 pointer-events-none' : ''}`}
+      className={`p-4 rounded-xl border transition-all relative group bg-white ${
+        selectionMode && isSelected
+          ? 'border-blue-400 bg-blue-50/30 ring-1 ring-blue-200'
+          : 'border-gray-100 hover:border-gray-200 hover:bg-gray-50/30'
+      } ${isDeleting ? 'opacity-50 pointer-events-none' : ''} ${selectionMode ? 'cursor-pointer' : ''}`}
+      onClick={handleClick}
     >
+      {/* Selection checkbox */}
+      {selectionMode && (
+        <div className="absolute top-3 left-3 z-10">
+          {isSelected ? (
+            <CheckSquare className="w-5 h-5 text-blue-600" />
+          ) : (
+            <Square className="w-5 h-5 text-gray-400" />
+          )}
+        </div>
+      )}
+
       {/* Delete Button */}
-      <button
-        onClick={handleDelete}
-        disabled={isDeleting}
-        className="absolute top-2 right-2 p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg opacity-0 group-hover:opacity-100 transition-all focus:opacity-100 focus:outline-none focus:ring-2 focus:ring-red-500"
-        aria-label={`Delete project ${project.name}`}
-      >
-        {isDeleting ? (
-          <div className="w-4 h-4 border-2 border-red-600 border-t-transparent rounded-full animate-spin" />
-        ) : (
-          <Trash2 className="w-4 h-4" />
-        )}
-      </button>
+      {!selectionMode && (
+        <button
+          onClick={handleDelete}
+          disabled={isDeleting}
+          className="absolute top-2 right-2 p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg opacity-0 group-hover:opacity-100 transition-all focus:opacity-100 focus:outline-none focus:ring-2 focus:ring-red-500"
+          aria-label={`Delete project ${project.name}`}
+        >
+          {isDeleting ? (
+            <div className="w-4 h-4 border-2 border-red-600 border-t-transparent rounded-full animate-spin" />
+          ) : (
+            <Trash2 className="w-4 h-4" />
+          )}
+        </button>
+      )}
 
       {/* Header */}
-      <div className="flex items-start justify-between mb-3 pr-8">
+      <div className={`flex items-start justify-between mb-3 pr-8 ${selectionMode ? 'ml-7' : ''}`}>
         <div className="flex items-center">
           <Folder className="w-5 h-5 mr-2 text-yellow-500" />
           <h3 className="font-semibold text-gray-900 truncate">{project.name}</h3>
@@ -96,7 +122,7 @@ const ProjectCard = ({ project, deployment, onDelete, isDeleting, onViewDetails,
         <StatusBadge hasRepo={hasRepo} isRunning={isRunning} />
       </div>
       {project.username && (
-        <div className="mb-2">
+        <div className={`mb-2 ${selectionMode ? 'ml-7' : ''}`}>
           <span className={`text-xs font-medium ${
             project.username.startsWith('t-') ? 'text-orange-500' : 'text-blue-500'
           }`}>
@@ -107,7 +133,7 @@ const ProjectCard = ({ project, deployment, onDelete, isDeleting, onViewDetails,
 
       {/* Description */}
       {project.description && (
-        <p className="text-sm text-gray-600 mb-3 line-clamp-2">{project.description}</p>
+        <p className={`text-sm text-gray-600 mb-3 line-clamp-2 ${selectionMode ? 'ml-7' : ''}`}>{project.description}</p>
       )}
 
       {/* Repo URL */}
@@ -194,36 +220,38 @@ const ProjectCard = ({ project, deployment, onDelete, isDeleting, onViewDetails,
       </div>
 
       {/* Action Buttons */}
-      <div className="mt-3 flex items-center space-x-2">
-        <button
-          onClick={(e) => {
-            e.stopPropagation()
-            onViewDetails(project.id)
-          }}
-          className="flex-1 py-2 px-3 text-sm text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-lg transition-colors flex items-center justify-center focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
-          aria-label={`View details for ${project.name}`}
-        >
-          <Eye className="w-4 h-4 mr-1.5" />
-          Details
-        </button>
-        {isRunning && (
+      {!selectionMode && (
+        <div className="mt-3 flex items-center space-x-2">
           <button
             onClick={(e) => {
               e.stopPropagation()
-              onStop(deployment.container_name)
+              onViewDetails(project.id)
             }}
-            disabled={isStopping}
-            className="py-2 px-3 text-sm text-red-600 bg-red-50 hover:bg-red-100 rounded-lg transition-colors flex items-center justify-center focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 disabled:opacity-50"
-            aria-label={`Stop ${project.name}`}
+            className="flex-1 py-2 px-3 text-sm text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-lg transition-colors flex items-center justify-center focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+            aria-label={`View details for ${project.name}`}
           >
-            {isStopping ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
-            ) : (
-              <Square className="w-4 h-4" />
-            )}
+            <Eye className="w-4 h-4 mr-1.5" />
+            Details
           </button>
-        )}
-      </div>
+          {isRunning && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation()
+                onStop(deployment.container_name)
+              }}
+              disabled={isStopping}
+              className="py-2 px-3 text-sm text-red-600 bg-red-50 hover:bg-red-100 rounded-lg transition-colors flex items-center justify-center focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 disabled:opacity-50"
+              aria-label={`Stop ${project.name}`}
+            >
+              {isStopping ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Square className="w-4 h-4" />
+              )}
+            </button>
+          )}
+        </div>
+      )}
     </div>
   )
 }
@@ -231,6 +259,8 @@ const ProjectCard = ({ project, deployment, onDelete, isDeleting, onViewDetails,
 const Projects = () => {
   const [deletingId, setDeletingId] = useState(null)
   const [stoppingName, setStoppingName] = useState(null)
+  const [selectionMode, setSelectionMode] = useState(false)
+  const [selectedIds, setSelectedIds] = useState(new Set())
 
   const navigate = useNavigate()
   const queryClient = useQueryClient()
@@ -278,6 +308,18 @@ const Projects = () => {
     },
   })
 
+  const batchDeleteMutation = useMutation({
+    mutationFn: (ids) => deleteProjects(ids.length === projects.length ? null : [...ids]),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['projects'] })
+      setSelectionMode(false)
+      setSelectedIds(new Set())
+    },
+    onError: (err) => {
+      toast.error('Delete Failed', `Could not delete projects: ${err.message}`)
+    },
+  })
+
   const stopMutation = useMutation({
     mutationFn: stopDeployment,
     onMutate: (containerName) => setStoppingName(containerName),
@@ -292,11 +334,87 @@ const Projects = () => {
     },
   })
 
+  const toggleSelection = (id) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const toggleSelectAll = () => {
+    if (selectedIds.size === projects.length) {
+      setSelectedIds(new Set())
+    } else {
+      setSelectedIds(new Set(projects.map((p) => p.id)))
+    }
+  }
+
+  const exitSelectionMode = () => {
+    setSelectionMode(false)
+    setSelectedIds(new Set())
+  }
+
+  const handleBatchDelete = () => {
+    if (selectedIds.size === 0) return
+    const label = selectedIds.size === projects.length ? 'all' : selectedIds.size
+    if (window.confirm(`Delete ${label} project${selectedIds.size === 1 ? '' : 's'}?\n\nThis will permanently delete the selected projects and their Gitea repositories. This cannot be undone.`)) {
+      batchDeleteMutation.mutate(selectedIds)
+    }
+  }
+
   return (
     <div className="space-y-6">
       <PageHeader title="Projects" subtitle="View your created projects and their repositories.">
-        {!isLoading && <span className="text-sm text-gray-500">{projects.length} projects</span>}
+        <div className="flex items-center gap-2">
+          {!isLoading && projects.length > 0 && (
+            <button
+              onClick={() => selectionMode ? exitSelectionMode() : setSelectionMode(true)}
+              className={`p-1.5 rounded-lg transition-colors ${
+                selectionMode
+                  ? 'bg-blue-100 text-blue-600 hover:bg-blue-200'
+                  : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'
+              }`}
+              title={selectionMode ? 'Exit selection mode' : 'Select projects'}
+            >
+              {selectionMode ? <X className="w-4 h-4" /> : <CheckSquare className="w-4 h-4" />}
+            </button>
+          )}
+          {!isLoading && <span className="text-sm text-gray-500">{projects.length} projects</span>}
+        </div>
       </PageHeader>
+
+      {/* Selection bar */}
+      {selectionMode && projects.length > 0 && (
+        <div className="flex items-center justify-between px-4 py-2 bg-blue-50 rounded-lg border border-blue-200">
+          <div className="flex items-center gap-3">
+            <button
+              onClick={toggleSelectAll}
+              className="text-sm text-blue-600 hover:text-blue-800 font-medium"
+            >
+              {selectedIds.size === projects.length ? 'Deselect all' : 'Select all'}
+            </button>
+            <span className="text-sm text-gray-500">{selectedIds.size} selected</span>
+          </div>
+          {selectedIds.size > 0 && (
+            <button
+              onClick={handleBatchDelete}
+              disabled={batchDeleteMutation.isPending}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-white bg-red-600 hover:bg-red-700 rounded-lg transition-colors disabled:opacity-50 font-medium"
+            >
+              {batchDeleteMutation.isPending ? (
+                <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+              ) : (
+                <Trash2 className="w-4 h-4" />
+              )}
+              {batchDeleteMutation.isPending
+                ? 'Deleting...'
+                : `Delete ${selectedIds.size}`}
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Loading */}
       {isLoading && (
@@ -333,6 +451,9 @@ const Projects = () => {
               onViewDetails={(id) => navigate(`/projects/${id}`)}
               onStop={(containerName) => stopMutation.mutate(containerName)}
               isStopping={stoppingName === deploymentsByProject[project.id]?.container_name}
+              selectionMode={selectionMode}
+              isSelected={selectedIds.has(project.id)}
+              onToggleSelect={toggleSelection}
             />
           ))}
 

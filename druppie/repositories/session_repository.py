@@ -219,6 +219,13 @@ class SessionRepository(BaseRepository):
         """Delete session (cascades to related data)."""
         self.db.query(SessionModel).filter_by(id=session_id).delete()
 
+    def delete_many(self, session_ids: list[UUID]) -> int:
+        """Delete sessions by IDs. Returns count deleted."""
+        if not session_ids:
+            return 0
+        count = self.db.query(SessionModel).filter(SessionModel.id.in_(session_ids)).delete(synchronize_session="fetch")
+        return count
+
     def delete_all_for_user(self, user_id: UUID | None) -> list[UUID]:
         """Delete all sessions for a user (None = all sessions). Returns deleted session IDs."""
         query = self.db.query(SessionModel.id)

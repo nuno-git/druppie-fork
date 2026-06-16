@@ -119,8 +119,11 @@ export const resumeSession = (sessionId) =>
 export const deleteSession = (sessionId) =>
   request(`/api/sessions/${sessionId}`, { method: 'DELETE' })
 
-export const deleteAllSessions = () =>
-  request('/api/sessions', { method: 'DELETE' })
+export const deleteSessions = (sessionIds) =>
+  request('/api/sessions', {
+    method: 'DELETE',
+    body: sessionIds ? JSON.stringify({ session_ids: sessionIds }) : undefined,
+  })
 
 export const retryFromRun = (sessionId, agentRunId, plannedPrompt = null) =>
   request(`/api/sessions/${sessionId}/retry-from/${agentRunId}`, {
@@ -239,6 +242,11 @@ export const stopProject = (projectId) =>
   request(`/api/projects/${projectId}/stop`, { method: 'POST' })
 export const deleteProject = (projectId) =>
   request(`/api/projects/${projectId}`, { method: 'DELETE' })
+export const deleteProjects = (projectIds) =>
+  request('/api/projects', {
+    method: 'DELETE',
+    body: projectIds ? JSON.stringify({ project_ids: projectIds }) : undefined,
+  })
 export const getProjectStatus = (projectId) =>
   request(`/api/projects/${projectId}/status`)
 export const updateProject = (projectId, data) =>
