@@ -17,6 +17,7 @@ Three families of chart types share three data shapes:
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 ChartType = str
@@ -30,6 +31,99 @@ MULTI_SERIES_TYPES: tuple[ChartType, ...] = (
     "multi_line",
 )
 SUPPORTED_CHART_TYPES: tuple[ChartType, ...] = XY_TYPES + NAME_VALUE_TYPES + MULTI_SERIES_TYPES
+
+_YEAR_RE = re.compile(r"^(19|20)\d{2}$")
+_DATE_RE = re.compile(
+    r"^\d{4}[-/]\d{1,2}([-/]\d{1,2})?$"
+    r"|^\d{1,2}[-/]\d{1,2}[-/]\d{2,4}$"
+    r"|^\d{4}[-/]Q[1-4]$"
+    r"|^Q[1-4][-/ ]\d{4}$"
+)
+
+_LABEL_ABBREVIATIONS: dict[str, str] = {
+    "avg": "Average",
+    "cnt": "Count",
+    "num": "Number",
+    "pct": "Percentage",
+    "qty": "Quantity",
+    "amt": "Amount",
+    "desc": "Description",
+    "id": "ID",
+}
+
+
+def is_temporal(values: list) -> bool:
+    """Return True if the majority of non-None values look like years or dates."""
+    candidates = [v for v in values if v is not None]
+    if not candidates:
+        return False
+    hits = sum(
+        1
+        for v in candidates
+        if (isinstance(v, (int, float)) and 1900 <= v <= 2100)
+        or (isinstance(v, str) and (_YEAR_RE.match(v) or _DATE_RE.match(v)))
+    )
+    return hits >= len(candidates) * 0.6
+
+
+def humanize_label(column_name: str | None) -> str:
+    """Turn a technical column name into a readable chart label.
+
+    "total_revenue" → "Total Revenue", "avg" → "Average".
+    """
+    if not column_name:
+        return ""
+    parts = re.split(r"[_\s]+", column_name.strip())
+    result = []
+    for p in parts:
+        low = p.lower()
+        if low in _LABEL_ABBREVIATIONS:
+            result.append(_LABEL_ABBREVIATIONS[low])
+        else:
+            result.append(p.capitalize())
+    return " ".join(result)
+
+
+def infer_number_format(data: list[dict], value_key: str) -> str | None:
+    """Return "compact" if values are large enough to benefit from K/M formatting."""
+    values = []
+    for row in data:
+        v = row.get(value_key)
+        if isinstance(v, (int, float)):
+            values.append(abs(v))
+    if not values:
+        return None
+    return "compact" if max(values) >= 10_000 else None
+
+
+def recommend_chart_type(
+    data: list[dict],
+    x_column: str,
+    y_column: str | None,
+    series_column: str | None,
+    aggregation: str,
+) -> ChartType:
+    """Deterministic chart type recommendation based on data shape."""
+    x_values = [row.get(x_column) for row in data if row.get(x_column) is not None]
+    n_categories = len(set(str(v) for v in x_values))
+
+    if series_column:
+        if is_temporal(x_values):
+            return "multi_line"
+        return "stacked_bar"
+
+    if is_temporal(x_values):
+        return "line"
+
+    max_label_len = max((len(str(v)) for v in x_values), default=0)
+
+    if max_label_len > 20:
+        return "horizontal_bar"
+    if n_categories <= 6 and aggregation in ("count", "sum"):
+        return "pie"
+    if n_categories > 15:
+        return "treemap"
+    return "bar"
 
 
 def _coerce_number(value: Any, *, column: str) -> float:
@@ -60,6 +154,7 @@ def build_chart_spec(
     title: str = "",
     x_label: str | None = None,
     y_label: str | None = None,
+    number_format: str | None = None,
 ) -> dict:
     """Build a validated single-series chart spec.
 
@@ -113,13 +208,16 @@ def build_chart_spec(
                 }
             )
 
-    return {
+    spec = {
         "type": chart_type,
         "title": title or "",
         "x_label": x_label,
         "y_label": y_label,
         "data": points,
     }
+    if number_format:
+        spec["number_format"] = number_format
+    return spec
 
 
 def build_multi_series_chart_spec(
@@ -130,6 +228,7 @@ def build_multi_series_chart_spec(
     title: str = "",
     x_label: str | None = None,
     y_label: str | None = None,
+    number_format: str | None = None,
 ) -> dict:
     """Build a validated multi-series chart spec.
 
@@ -176,7 +275,7 @@ def build_multi_series_chart_spec(
                     out[s] = 0.0
         points.append(out)
 
-    return {
+    spec = {
         "type": chart_type,
         "title": title or "",
         "x_label": x_label,
@@ -184,6 +283,9 @@ def build_multi_series_chart_spec(
         "series": [{"key": s, "label": s} for s in series],
         "data": points,
     }
+    if number_format:
+        spec["number_format"] = number_format
+    return spec
 
 
 def spec_to_markdown(spec: dict) -> str:
@@ -204,6 +306,7 @@ def build_sql_aggregation_query(
     series_column: str | None = None,
     filter_expr: str | None = None,
     top_n: int | None = None,
+    sort_by: str = "value",
 ) -> str:
     """Build a GROUP BY aggregation query for a SQL source.
 
@@ -248,11 +351,12 @@ def build_sql_aggregation_query(
         )
 
     top = f"TOP {int(top_n)} " if top_n else ""
+    order = f"{_quote_ident(x_column)} ASC" if sort_by == "label" else f"{agg_expr} DESC"
     return (
         f"SELECT {top}{_quote_ident(x_column)} AS x, {agg_expr} AS y "
         f"FROM {table_ref}{where} "
         f"GROUP BY {_quote_ident(x_column)} "
-        f"ORDER BY {agg_expr} DESC"
+        f"ORDER BY {order}"
     )
 
 
@@ -265,8 +369,12 @@ def aggregate_rows(
     y_column: str | None,
     aggregation: str,
     top_n: int | None = None,
+    sort_by: str = "value",
 ) -> tuple[list[dict], str]:
     """Group rows by `x_column` and aggregate over `y_column` (single series).
+
+    sort_by: "value" (descending by aggregated value), "label" (ascending by
+    x_column — natural order for chronological/alphabetical data).
 
     Returns `(rows, agg_column_name)` — see module docstring for shape.
     """
@@ -329,7 +437,10 @@ def aggregate_rows(
             result.append({x_column: x, y_column: agg})
         agg_column = y_column  # type: ignore[assignment]
 
-    result.sort(key=lambda r: r[agg_column], reverse=True)
+    if sort_by == "label":
+        result.sort(key=lambda r: str(r[x_column]))
+    else:
+        result.sort(key=lambda r: r[agg_column], reverse=True)
     if top_n is not None and top_n > 0:
         result = result[:top_n]
     return result, agg_column
@@ -343,6 +454,7 @@ def aggregate_multi_series(
     aggregation: str,
     top_n: int | None = None,
     max_series: int | None = 10,
+    sort_by: str = "value",
 ) -> tuple[list[dict], list[str]]:
     """Pivot-aggregate rows for a multi-series chart.
 
@@ -413,7 +525,10 @@ def aggregate_multi_series(
         x_totals[x] = x_totals.get(x, 0.0) + v
         s_totals[s] = s_totals.get(s, 0.0) + v
 
-    x_order = sorted(x_totals.items(), key=lambda kv: kv[1], reverse=True)
+    if sort_by == "label":
+        x_order = sorted(x_totals.items(), key=lambda kv: str(kv[0]))
+    else:
+        x_order = sorted(x_totals.items(), key=lambda kv: kv[1], reverse=True)
     if top_n is not None and top_n > 0:
         x_order = x_order[:top_n]
     kept_x = [x for x, _ in x_order]

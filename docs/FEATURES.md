@@ -240,7 +240,10 @@ The primary interface is a chat page where users submit natural language request
 The Data Analyst agent can render charts **inline in the chat** from data in the configured sources (Azure SQL, Azure Data Lake), via the Data Access MCP.
 
 - **Ask in natural language**: "Show me a chart of assets per category", "visualize subscriptions by type as a donut", "break it down by year". The agent picks an appropriate chart type, aggregates the data, and shows the result inline.
-- **13 chart types**: bar, line, area, horizontal bar, scatter, pie, donut, treemap, funnel, and multi-series stacked bar / grouped bar / stacked area / multi-line.
+- **13 chart types + auto**: bar, line, area, horizontal bar, scatter, pie, donut, treemap, funnel, and multi-series stacked bar / grouped bar / stacked area / multi-line. `chart_type="auto"` lets the server pick the best fit based on data shape and cardinality.
+- **Sample-first intelligence**: the agent samples actual data values (not just schema types) before charting — detecting years, dates, long labels, and category counts to pick the right chart type and axis order.
+- **Smart sorting**: `sort_by="natural"` (the default) auto-detects whether x-values are temporal (years, dates) and sorts chronologically, or sorts by value for rankings. Can also be set explicitly to `"label"` or `"value"`.
+- **Readable defaults**: column names are humanized for titles and axis labels (`total_revenue` → `Total Revenue`), large numbers use compact formatting (1K, 1M) on Y-axes and tooltips, long X-axis labels auto-rotate, and treemap cells show both name and value.
 - **Deliberate type selection**: the agent follows a decision matrix — counts per category → bar, long category names → horizontal bar, long-tail distributions → treemap, proportions → pie/donut, breakdowns by a second dimension → stacked/grouped, trends → line/area, correlation → scatter.
 - **Whole-dataset accuracy**: aggregation runs over the **entire** dataset (the database does it for SQL; the whole file is read server-side for Data Lake), so counts and sums are exact rather than sampled. The agent flags when a result is ever a sample.
 - **Data stays private**: raw rows never enter the LLM context and nothing is written to the workspace — only a compact chart spec is produced, stored in the chat transcript so charts survive a reload.

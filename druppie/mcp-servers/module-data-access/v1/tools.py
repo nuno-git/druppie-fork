@@ -16,11 +16,16 @@ from typing import Literal
 from fastmcp import FastMCP
 from .charts import (
     MULTI_SERIES_TYPES,
+    _quote_ident,
     aggregate_multi_series,
     aggregate_rows,
     build_chart_spec,
     build_multi_series_chart_spec,
     build_sql_aggregation_query,
+    humanize_label,
+    infer_number_format,
+    is_temporal,
+    recommend_chart_type,
     spec_to_markdown,
 )
 
@@ -261,6 +266,7 @@ async def create_chart_from_source(
     source_id: str,
     data_id: str,
     chart_type: Literal[
+        "auto",
         "bar", "line", "area", "horizontal_bar", "scatter",
         "pie", "donut", "treemap", "funnel",
         "stacked_bar", "grouped_bar", "stacked_area", "multi_line",
@@ -269,6 +275,7 @@ async def create_chart_from_source(
     y_column: str | None = None,
     series_column: str | None = None,
     aggregation: Literal["count", "sum", "avg", "min", "max"] = "count",
+    sort_by: Literal["value", "label", "natural"] = "natural",
     filter_expr: str | None = None,
     top_n: int | None = 20,
     max_series: int | None = 10,
@@ -296,6 +303,8 @@ async def create_chart_from_source(
     context and will overflow the LLM. This tool keeps your context small.
 
     Chart type families and required columns:
+      - "auto": let the server pick the best chart type based on data shape,
+        cardinality, and whether x values are temporal. Recommended when unsure.
       - Single-series (x/y axes):       bar | line | area | horizontal_bar | scatter
         → set x_column + y_column (or aggregation="count" for y)
       - Proportions (name/value):       pie | donut | treemap | funnel
@@ -317,6 +326,9 @@ async def create_chart_from_source(
         series_column: Second grouping column — REQUIRED for multi-series chart types,
                        ignored otherwise. Each unique value becomes a series.
         aggregation:   count | sum | avg | min | max
+        sort_by:       "value" (descending by aggregated value — good for rankings),
+                       "label" (ascending by x value — good for chronological/alphabetical),
+                       "natural" (default — auto-detects: temporal x → label, else value)
         filter_expr:   Optional pre-aggregation filter
         top_n:         Keep only top N x_column values by total aggregated value (default 20)
         max_series:    For multi-series only — cap the number of series kept (default 10)
@@ -345,17 +357,18 @@ async def create_chart_from_source(
             "error": f"chart_type={chart_type!r} requires series_column",
         }
 
+    # --- Humanized default labels ---
+    agg_label = humanize_label(y_column) if y_column else "Count"
+    x_human = humanize_label(x_column)
     default_title = title or (
-        f"{aggregation}({y_column or '*'}) by {x_column}"
-        + (f" / {series_column}" if is_multi else "")
+        f"{agg_label} by {x_human}"
+        + (f" / {humanize_label(series_column)}" if is_multi and series_column else "")
     )
     default_y_label = y_label or (
-        "count" if aggregation == "count" else f"{aggregation}({y_column})"
+        "Count" if aggregation == "count" else f"{humanize_label(aggregation)}({agg_label})"
     )
 
-    # Identify the source type so we can aggregate the FULL dataset:
-    #   SQL  -> push GROUP BY into the database (no row transfer)
-    #   else -> read the whole file server-side and aggregate in Python
+    # --- Identify source type ---
     src_type = None
     for s in module.list_sources().get("sources", []):
         if s.get("source_id") == source_id:
@@ -365,6 +378,33 @@ async def create_chart_from_source(
 
     rows_scanned = 0
     full_dataset = True
+
+    # --- Resolve "natural" sort_by: read a sample to detect temporal x ---
+    resolved_sort = sort_by
+    if sort_by == "natural":
+        if is_sql:
+            try:
+                sample_q = f"SELECT TOP 10 {_quote_ident(x_column)} FROM "
+                if "." in data_id:
+                    schema, table = data_id.split(".", 1)
+                    sample_q += f"{_quote_ident(schema)}.{_quote_ident(table)}"
+                else:
+                    sample_q += _quote_ident(data_id)
+                sample_result = await module.execute_query(source_id, sample_q, limit=10)
+                if sample_result.get("success"):
+                    sample_vals = [r.get(x_column) or r.get("x") for r in sample_result.get("data", [])]
+                    resolved_sort = "label" if is_temporal(sample_vals) else "value"
+                else:
+                    resolved_sort = "value"
+            except Exception:
+                resolved_sort = "value"
+        else:
+            sample_result = await module.read_data(source_id, data_id, limit=10)
+            if sample_result.get("success"):
+                sample_vals = [r.get(x_column) for r in sample_result.get("data", [])]
+                resolved_sort = "label" if is_temporal(sample_vals) else "value"
+            else:
+                resolved_sort = "value"
 
     if is_sql:
         try:
@@ -376,12 +416,11 @@ async def create_chart_from_source(
                 series_column=series_column if is_multi else None,
                 filter_expr=normalized_filter,
                 top_n=None if is_multi else top_n,
+                sort_by=resolved_sort,
             )
         except ValueError as exc:
             return {"success": False, "error": str(exc)}
 
-        # High limit guards the grouped result only (categories × series),
-        # not the source rows — the DB already aggregated those.
         q_result = await module.execute_query(source_id, query, limit=100000)
         if not q_result.get("success"):
             return {
@@ -393,16 +432,15 @@ async def create_chart_from_source(
             return {"success": False, "error": "aggregation produced no rows"}
 
         if is_multi:
-            # grouped rows are [{x, s, y}] already aggregated — pivot only
-            # (sum pass-through, since each (x, s) appears once).
             aggregated, series_keys = aggregate_multi_series(
                 data=grouped, x_column="x", series_column="s",
                 y_column="y", aggregation="sum",
                 top_n=top_n, max_series=max_series,
+                sort_by=resolved_sort,
             )
             agg_x_col, agg_y_col = "x", "y"
         else:
-            aggregated = grouped  # [{x, y}]
+            aggregated = grouped
             agg_x_col, agg_y_col = "x", "y"
     else:
         read_result = await module.read_data(
@@ -425,12 +463,14 @@ async def create_chart_from_source(
                     data=rows, x_column=x_column, series_column=series_column,  # type: ignore[arg-type]
                     y_column=y_column, aggregation=aggregation,
                     top_n=top_n, max_series=max_series,
+                    sort_by=resolved_sort,
                 )
                 agg_x_col = x_column
             else:
                 aggregated, agg_col = aggregate_rows(
                     data=rows, x_column=x_column, y_column=y_column,
                     aggregation=aggregation, top_n=top_n,
+                    sort_by=resolved_sort,
                 )
                 agg_x_col, agg_y_col = x_column, agg_col
         except ValueError as exc:
@@ -442,18 +482,35 @@ async def create_chart_from_source(
             "error": "aggregation produced no rows (check x_column / series_column have non-null values)",
         }
 
+    # --- Resolve "auto" chart type ---
+    resolved_chart_type = chart_type
+    if chart_type == "auto":
+        resolved_chart_type = recommend_chart_type(
+            data=aggregated,
+            x_column=agg_x_col,
+            y_column=agg_y_col if not is_multi else None,
+            series_column=series_column,
+            aggregation=aggregation,
+        )
+
+    # --- Infer number format ---
+    value_key = agg_y_col if not is_multi else (series_keys[0] if series_keys else None)
+    num_fmt = infer_number_format(aggregated, value_key) if value_key else None
+
     try:
         if is_multi:
             spec = build_multi_series_chart_spec(
-                data=aggregated, chart_type=chart_type, x_column=agg_x_col,
+                data=aggregated, chart_type=resolved_chart_type, x_column=agg_x_col,
                 series=series_keys, title=default_title,
-                x_label=x_label or x_column, y_label=default_y_label,
+                x_label=x_label or x_human, y_label=default_y_label,
+                number_format=num_fmt,
             )
         else:
             spec = build_chart_spec(
-                data=aggregated, chart_type=chart_type, x_column=agg_x_col,
+                data=aggregated, chart_type=resolved_chart_type, x_column=agg_x_col,
                 y_column=agg_y_col, title=default_title,
-                x_label=x_label or x_column, y_label=default_y_label,
+                x_label=x_label or x_human, y_label=default_y_label,
+                number_format=num_fmt,
             )
     except ValueError as exc:
         return {"success": False, "error": str(exc)}
@@ -466,6 +523,10 @@ async def create_chart_from_source(
         "full_dataset": full_dataset,
         "aggregated_in": "database" if is_sql else "server",
     }
+    if chart_type == "auto":
+        result["auto_chart_type"] = resolved_chart_type
+    if sort_by == "natural":
+        result["auto_sort_by"] = resolved_sort
     if not is_sql:
         result["rows_scanned"] = rows_scanned
     if is_multi:

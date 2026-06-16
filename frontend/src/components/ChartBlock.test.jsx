@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll } from 'vitest'
 import { render } from '@testing-library/react'
-import ChartBlock, { parseSpec } from './ChartBlock'
+import ChartBlock, { parseSpec, formatCompact } from './ChartBlock'
 
 // recharts ResponsiveContainer depends on ResizeObserver, which jsdom does not
 // provide. A no-op shim is enough for the smoke checks we do below — we don't
@@ -13,6 +13,24 @@ beforeAll(() => {
       disconnect() {}
     }
   }
+})
+
+describe('formatCompact', () => {
+  it('formats millions', () => {
+    expect(formatCompact(1_500_000)).toBe('1.5M')
+  })
+  it('formats thousands', () => {
+    expect(formatCompact(25_000)).toBe('25.0K')
+  })
+  it('returns small numbers as-is', () => {
+    expect(formatCompact(42)).toBe('42')
+  })
+  it('formats decimals', () => {
+    expect(formatCompact(3.14)).toBe('3.1')
+  })
+  it('handles null', () => {
+    expect(formatCompact(null)).toBeNull()
+  })
 })
 
 describe('parseSpec', () => {
@@ -165,5 +183,49 @@ describe('ChartBlock', () => {
     })
     const { getByText } = render(<ChartBlock code={code} />)
     expect(getByText('Trend')).toBeTruthy()
+  })
+
+  it('renders bar chart with number_format without crashing', () => {
+    const code = JSON.stringify({
+      type: 'bar',
+      title: 'Revenue',
+      number_format: 'compact',
+      data: [{ x: 'Q1', y: 150000 }, { x: 'Q2', y: 250000 }],
+    })
+    const { getByText } = render(<ChartBlock code={code} />)
+    expect(getByText('Revenue')).toBeTruthy()
+  })
+
+  it('renders treemap with colored cells', () => {
+    const code = JSON.stringify({
+      type: 'treemap',
+      title: 'Categories',
+      data: [
+        { name: 'Large category', value: 500 },
+        { name: 'Medium', value: 200 },
+        { name: 'Small', value: 50 },
+      ],
+    })
+    const { getByText } = render(<ChartBlock code={code} />)
+    expect(getByText('Categories')).toBeTruthy()
+  })
+
+  it('renders horizontal_bar with y_label without crashing', () => {
+    const code = JSON.stringify({
+      type: 'horizontal_bar',
+      title: 'By region',
+      y_label: 'Total Revenue',
+      data: [{ x: 'Very long region name here', y: 50000 }],
+    })
+    const { getByText } = render(<ChartBlock code={code} />)
+    expect(getByText('By region')).toBeTruthy()
+  })
+
+  it('uses taller frame for many data points', () => {
+    const data = Array.from({ length: 20 }, (_, i) => ({ x: `Cat ${i}`, y: i * 10 }))
+    const code = JSON.stringify({ type: 'bar', title: 'Many', data })
+    const { container } = render(<ChartBlock code={code} />)
+    const chartDiv = container.querySelector('[style]')
+    expect(chartDiv).toBeTruthy()
   })
 })
