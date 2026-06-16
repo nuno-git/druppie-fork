@@ -873,7 +873,7 @@ async def done(
         next_agent: Optional agent ID to route to directly
 
     Returns:
-        Completion status with accumulated summary
+        Completion status with the agent's own summary
     """
     # Check completion preconditions before proceeding
     precondition_error = _check_completion_preconditions(

@@ -393,13 +393,15 @@ class Orchestrator:
         """
         completed_runs = self.execution_repo.get_completed_runs(session_id)
         seen = []
+        seen_set = set()
         for run in completed_runs:
             run_summary = self.execution_repo.get_done_summary_for_run(run.id)
             if not run_summary:
                 continue
             for line in run_summary.strip().split("\n"):
                 stripped = line.strip()
-                if stripped and stripped not in seen:
+                if stripped and stripped not in seen_set:
+                    seen_set.add(stripped)
                     seen.append(stripped)
 
         if not seen:
