@@ -310,7 +310,7 @@ services:
       LAYOUT_SERVICE_URL: ${LAYOUT_SERVICE_URL:-http://layout-service:8090}
     volumes:
       - ./druppie/mcp-servers/module-archimate/models:/models:ro
-      - druppie_new_workspace:/workspaces
+      - workspace:/workspaces
     ports:
       - "${MCP_ARCHIMATE_PORT:-9006}:9006"
     networks:
@@ -337,7 +337,7 @@ services:
     ports:
       - "${LAYOUT_SERVICE_PORT:-8090}:8090"
     networks:
-      - druppie-new-network
+      - app-net
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8090/health"]
       interval: 10s
@@ -457,11 +457,11 @@ services:
       DATA_SOURCE_2: ${DATA_SOURCE_2:-}
       DATA_SOURCE_3: ${DATA_SOURCE_3:-}
     volumes:
-      - druppie_new_workspace:/workspaces
+      - workspace:/workspaces
     ports:
       - "${MCP_DATA_ACCESS_PORT:-9010}:9010"
     networks:
-      - druppie-new-network
+      - app-net
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9010/health"]
       interval: 10s
