@@ -112,7 +112,7 @@ class LLMSettings(BaseSettings):
     provider: str = Field(
         default="auto",
         alias="LLM_PROVIDER",
-        description="LLM provider (auto, zai, mock)",
+        description="LLM provider (auto, zai, deepinfra, azure_foundry, openrouter, ollama, mock)",
     )
     zai_api_key: str = Field(
         default="",
@@ -128,6 +128,21 @@ class LLMSettings(BaseSettings):
         default="https://api.z.ai/api/coding/paas/v4",
         alias="ZAI_BASE_URL",
         description="Z.AI API base URL",
+    )
+    openrouter_api_key: str = Field(
+        default="",
+        alias="OPENROUTER_API_KEY",
+        description="OpenRouter API key",
+    )
+    openrouter_model: str = Field(
+        default="z-ai/glm-4.7",
+        alias="OPENROUTER_MODEL",
+        description="OpenRouter model slug (e.g. z-ai/glm-4.7)",
+    )
+    openrouter_provider_order: str = Field(
+        default="Cerebras",
+        alias="OPENROUTER_PROVIDER_ORDER",
+        description="Comma-separated upstream providers to pin (e.g. Cerebras). Disables load balancing/fallbacks.",
     )
     foundry_api_key: str = Field(
         default="",

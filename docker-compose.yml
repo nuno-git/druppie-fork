@@ -113,7 +113,7 @@ services:
       KC_HOSTNAME_STRICT: "false"
       KC_HOSTNAME_STRICT_HTTPS: "false"
       KC_HTTP_ENABLED: "true"
-      KC_PROXY: edge
+      KC_PROXY: ${KC_PROXY:-edge}
       KC_HEALTH_ENABLED: "true"
       JAVA_OPTS_APPEND: "-Xms256m -Xmx512m -XX:MaxGCPauseMillis=100 -Djava.net.preferIPv4Stack=true"
       KC_CACHE: local
@@ -217,8 +217,8 @@ services:
 
   module-docker:
     build:
-      context: ./druppie/mcp-servers
-      dockerfile: module-docker/Dockerfile
+      context: ./druppie
+      dockerfile: mcp-servers/module-docker/Dockerfile
     container_name: druppie-module-docker
     profiles: [infra, dev, prod]
     environment:
@@ -271,8 +271,8 @@ services:
 
   module-archimate:
     build:
-      context: ./druppie/mcp-servers
-      dockerfile: module-archimate/Dockerfile
+      context: ./druppie
+      dockerfile: mcp-servers/module-archimate/Dockerfile
     container_name: druppie-module-archimate
     profiles: [infra, dev, prod]
     environment:
@@ -340,8 +340,8 @@ services:
 
   module-registry:
     build:
-      context: ./druppie/mcp-servers
-      dockerfile: module-registry/Dockerfile
+      context: ./druppie
+      dockerfile: mcp-servers/module-registry/Dockerfile
     container_name: druppie-module-registry
     profiles: [infra, dev, prod]
     environment:
@@ -635,6 +635,9 @@ services:
       LLM_PROVIDER: ${LLM_PROVIDER:-zai}
       LLM_FORCE_PROVIDER: ${LLM_FORCE_PROVIDER:-}
       LLM_FORCE_MODEL: ${LLM_FORCE_MODEL:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENROUTER_MODEL: ${OPENROUTER_MODEL:-z-ai/glm-4.7}
+      OPENROUTER_PROVIDER_ORDER: ${OPENROUTER_PROVIDER_ORDER:-Cerebras}
       ZAI_API_KEY: ${ZAI_API_KEY:-}
       ZAI_MODEL: ${ZAI_MODEL:-glm-4.7}
       ZAI_BASE_URL: ${ZAI_BASE_URL:-https://api.z.ai/api/coding/paas/v4}
@@ -725,6 +728,9 @@ services:
       LLM_PROVIDER: ${LLM_PROVIDER:-zai}
       LLM_FORCE_PROVIDER: ${LLM_FORCE_PROVIDER:-}
       LLM_FORCE_MODEL: ${LLM_FORCE_MODEL:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENROUTER_MODEL: ${OPENROUTER_MODEL:-z-ai/glm-4.7}
+      OPENROUTER_PROVIDER_ORDER: ${OPENROUTER_PROVIDER_ORDER:-Cerebras}
       ZAI_API_KEY: ${ZAI_API_KEY:-}
       ZAI_MODEL: ${ZAI_MODEL:-glm-4.7}
       ZAI_BASE_URL: ${ZAI_BASE_URL:-https://api.z.ai/api/coding/paas/v4}

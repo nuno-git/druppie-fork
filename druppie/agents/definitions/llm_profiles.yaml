@@ -5,41 +5,27 @@
 # and optionally sets up the second as a FallbackLLM.
 #
 # Agents reference a profile by name in their YAML: llm_profile: standard
+#
+# All profiles route through OpenRouter. The primary entry is pinned to
+# Cerebras via OPENROUTER_PROVIDER_ORDER. The second entry lets OpenRouter
+# choose the upstream itself (default price-weighted load balancing) as a
+# fallback when Cerebras is unavailable.
 
 profiles:
   standard:
-    - provider: zai
-      model: glm-5
-    - provider: deepinfra
-      model: moonshotai/Kimi-K2.5-Turbo
-    - provider: zai
-      model: glm-4.7
-    - provider: ollama
-      model: gpt-oss:120b
-    - provider: azure_foundry
-      model: GPT-5-MINI
+    - provider: openrouter
+      model: z-ai/glm-4.7
+    - provider: openrouter_balanced
+      model: z-ai/glm-4.7
 
   cheap:
-    - provider: zai
-      model: glm-5
-    - provider: deepinfra
-      model: moonshotai/Kimi-K2.5-Turbo
-    - provider: zai
-      model: glm-4.7
-    - provider: ollama
-      model: gpt-oss:20b
-    - provider: azure_foundry
-      model: GPT-5-MINI
-
+    - provider: openrouter
+      model: z-ai/glm-4.7
+    - provider: openrouter_balanced
+      model: z-ai/glm-4.7
 
   ollama:
-    - provider: ollama
-      model: gpt-oss:120b
-    - provider: ollama
-      model: gpt-oss:20b
-    - provider: ollama
-      model: qwen3-coder:30b
-    - provider: ollama
-      model: deepseek-r1:32b
-    - provider: ollama
-      model: gemma3:27b
+    - provider: openrouter
+      model: z-ai/glm-4.7
+    - provider: openrouter_balanced
+      model: z-ai/glm-4.7

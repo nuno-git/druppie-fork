@@ -36,6 +36,7 @@ PROVIDER_API_KEYS = {
     "zai": "ZAI_API_KEY",
     "deepseek": "DEEPSEEK_API_KEY",
     "deepinfra": "DEEPINFRA_API_KEY",
+    "openrouter": "OPENROUTER_API_KEY",
     "openai": "OPENAI_API_KEY",
     "anthropic": "ANTHROPIC_API_KEY",
 }
