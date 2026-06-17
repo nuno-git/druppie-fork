@@ -72,3 +72,6 @@ mcps:
     - fetch_url
     - get_page_info
   #docker: [build, run]
+
+compression:
+  max_compactions: 5

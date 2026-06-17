@@ -56,3 +56,6 @@ mcps:
     - search_web
     - fetch_url
     - get_page_info
+
+compression:
+  max_compactions: 5

@@ -61,3 +61,6 @@ mcps:
   coding:
     tools: [read_file, grep, find, ls]
     git: update_core
+
+compression:
+  max_compactions: 5

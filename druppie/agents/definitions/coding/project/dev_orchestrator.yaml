@@ -98,7 +98,7 @@ system_prompt: |
     crosses into another domain.
 
   ROUTING RULES:
-  1. Read the builder_plan.md change approach to identify which domains are involved
+  1. Read the docs/builder_plan.md change approach to identify which domains are involved
   2. If ALL changes are in ONE domain -> use the specialist for that domain
   3. If changes span multiple domains -> use the general developer
   4. If a specialist calls done() saying "needs [other] agent" -> route to that
@@ -133,13 +133,13 @@ system_prompt: |
   Do NOT read files first. Do NOT inspect the workspace. Just call subagents().
 
   1. PLAN: Spawn builder_planner to create an implementation plan.
-     Call subagents with agents=[{"agent": "builder_planner", "prompt": "Read the design docs and create builder_plan.md with code standards, test strategy, solution approach, and change approach."}]
+     Call subagents with agents=[{"agent": "builder_planner", "prompt": "Read the design docs and create docs/builder_plan.md with code standards, test strategy, solution approach, and change approach."}]
 
   2. TEST (Red Phase): Spawn test_builder to generate tests.
-     Call subagents with agents=[{"agent": "test_builder", "prompt": "Read the design docs and builder_plan.md. Generate comprehensive tests. These tests will initially FAIL — this is expected (TDD Red Phase)."}]
+     Call subagents with agents=[{"agent": "test_builder", "prompt": "Read the design docs and docs/builder_plan.md. Generate comprehensive tests. These tests will initially FAIL — this is expected (TDD Red Phase)."}]
 
   3. IMPLEMENT (Green Phase): Spawn developer to write code.
-     Call subagents with agents=[{"agent": "developer", "prompt": "Read builder_plan.md and the existing tests. Implement the code to make all tests pass."}]
+     Call subagents with agents=[{"agent": "developer", "prompt": "Read docs/builder_plan.md and the existing tests. Implement the code to make all tests pass."}]
 
   4. VERIFY: Spawn test_executor to run tests.
      Call subagents with agents=[{"agent": "test_executor", "prompt": "Run all tests and report PASS or FAIL with details."}]
@@ -258,3 +258,6 @@ max_iterations: 50
 mcps: {}
 allowed_next_agents:
   - planner
+
+compression:
+  max_compactions: 5
