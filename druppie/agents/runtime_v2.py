@@ -50,7 +50,7 @@ class AgentV2:
     from agent_runtime/loop.py via compat.py adapters.
     """
 
-    def __init__(self, agent_id: str, db: DBSession | None = None):
+    def __init__(self, agent_id: str, db: DBSession | None = None, **kwargs):
         self.id = agent_id
         self.definition = self._load_definition(agent_id)
         self._db = db

@@ -225,38 +225,6 @@ const HITLQuestionMessage = ({ question, onSubmitAnswer, isAnswering, answered =
             )}
           </div>
         )}
-
-        {!hasOptions && !showFreeText && !answered && (
-          <div className="mt-2">
-            <div className="flex items-end gap-2 border border-gray-200 rounded-lg px-3 py-2 bg-white focus-within:border-gray-300 transition-colors">
-              <textarea
-                value={freeText}
-                onChange={(e) => setFreeText(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !e.shiftKey && !isAnswering) {
-                    e.preventDefault()
-                    handleFreeTextSubmit()
-                  }
-                }}
-                placeholder="Type your answer..."
-                rows={2}
-                disabled={isAnswering}
-                className="flex-1 resize-none bg-transparent outline-none text-sm leading-6 min-w-0"
-              />
-              <button
-                onClick={handleFreeTextSubmit}
-                disabled={!freeText.trim() || isAnswering}
-                className="flex-shrink-0 p-1.5 rounded-lg bg-gray-900 text-white hover:bg-gray-700 disabled:opacity-30 transition-colors"
-              >
-                {isAnswering ? (
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                ) : (
-                  <Send className="w-3.5 h-3.5" />
-                )}
-              </button>
-            </div>
-          </div>
-        )}
       </div>
     </div>
   )
