@@ -222,25 +222,25 @@ class RevertService:
     ) -> dict:
         """Retry a nested subagent run.
 
-        Resets the target subagent, DELETES all later siblings (and their
-        descendants), deletes the target's descendants, then walks the entire
-        parent chain resetting each ancestor (delete done(), clear subagents()
-        ToolCall result, set to RUNNING).
+        Resets the target subagent and deletes its descendants.  Later
+        siblings that are still PENDING (never started) are deleted along
+        with their descendants.  Later siblings that have already started
+        (PAUSED_USER, COMPLETED, etc.) are left untouched so the caller
+        can continue them from where they left off.
 
-        Later siblings are DELETED — not reset to PENDING — because the parent
-        will re-spawn whatever agents it needs when it resumes. Keeping stale
-        PENDING siblings causes incorrect auto-execution.
-
-        Descendants of the target are also deleted recursively because the
-        target will re-execute from scratch and may spawn different children.
+        Then walks the entire parent chain resetting each ancestor (delete
+        done(), clear subagents() ToolCall result, set to RUNNING).
 
         The caller is responsible for:
         1. Re-running the target subagent via orchestrator.run_agent()
-        2. Patching the subagents ToolCall result via _patch_paused_subagents_tool_call()
-        3. Continuing the parent via agent.continue_run()
+        2. Continuing any paused siblings via orchestrator._resume_single_paused_leaf()
+        3. Patching the subagents ToolCall result via _patch_paused_subagents_tool_call()
+        4. Continuing the parent via agent.continue_run()
 
         Returns:
-            Dict with reset details including parent_run_id and sibling_ids.
+            Dict with reset details including parent_run_id,
+            deleted_sibling_ids (PENDING, removed) and
+            paused_sibling_ids (already started, kept for continuation).
         """
         # Validate target exists
         target = self.execution_repo.get_by_id_for_session(agent_run_id, session_id)
@@ -260,24 +260,28 @@ class RevertService:
             after_child_id=agent_run_id,
         )
 
+        pending_siblings = [s for s in later_siblings if s.status == AgentRunStatus.PENDING.value]
+        paused_siblings = [s for s in later_siblings if s.status != AgentRunStatus.PENDING.value]
+
         logger.info(
             "retry_nested_later_siblings",
             session_id=str(session_id),
             target_id=str(agent_run_id),
-            later_siblings=[(s.agent_id, str(s.id)) for s in later_siblings],
+            pending_deleted=[(s.agent_id, str(s.id)) for s in pending_siblings],
+            paused_kept=[(s.agent_id, str(s.id)) for s in paused_siblings],
         )
 
         target_descendants = self._collect_descendants(agent_run_id)
         sibling_descendants: list[UUID] = []
-        for sibling in later_siblings:
+        for sibling in pending_siblings:
             sibling_descendants.extend(self._collect_descendants(sibling.id))
 
         if target_descendants:
             self.execution_repo.delete_runs_fully(target_descendants)
         if sibling_descendants:
             self.execution_repo.delete_runs_fully(sibling_descendants)
-        if later_siblings:
-            self.execution_repo.delete_runs_fully([s.id for s in later_siblings])
+        if pending_siblings:
+            self.execution_repo.delete_runs_fully([s.id for s in pending_siblings])
 
         self.execution_repo.clear_execution_artifacts([agent_run_id])
         self.execution_repo.reset_runs_to_pending([agent_run_id])
@@ -299,7 +303,8 @@ class RevertService:
             "retry_nested_subagent_complete",
             session_id=str(session_id),
             target_id=str(agent_run_id),
-            later_siblings_deleted=len(later_siblings),
+            pending_siblings_deleted=len(pending_siblings),
+            paused_siblings_kept=len(paused_siblings),
             descendants_deleted=len(target_descendants) + len(sibling_descendants),
             parent_run_id=str(target.parent_run_id),
         )
@@ -309,7 +314,8 @@ class RevertService:
             "agent_run_id": str(agent_run_id),
             "parent_run_id": str(target.parent_run_id),
             "spawning_tool_call_id": str(target.spawning_tool_call_id) if target.spawning_tool_call_id else None,
-            "later_sibling_ids": [str(s.id) for s in later_siblings],
+            "deleted_sibling_ids": [str(s.id) for s in pending_siblings],
+            "paused_sibling_ids": [str(s.id) for s in paused_siblings],
         }
 
     def _collect_descendants(self, run_id: UUID) -> list[UUID]:

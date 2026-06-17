@@ -402,9 +402,8 @@ class AgentV2:
 
         # Create cancellation token that polls for session PAUSED status
         cancellation_token = SessionPauseToken(
-            db_session_factory=None,  # uses SessionLocal internally
+            db_session_factory=None,
             session_id=session_id,
-            poll_interval=2.0,
         )
         cancellation_token.start_polling()
 
@@ -443,6 +442,7 @@ class AgentV2:
                     spawning_tool_call_id=spawning_tool_call_id,
                 )
                 self.db.flush()
+                self.db.commit()
                 child_tp = DruppieToolProvider(
                     execution_repo=child_repo,
                     tool_executor=self.tool_executor,

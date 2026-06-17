@@ -204,50 +204,86 @@ async def _run_retry_background(
                 logger.warning("retry_revert_warning", session_id=str(session_id), warning=warning)
             await ctx.orchestrator.execute_pending_runs(session_id)
         else:
-            # Nested run: reset target + later siblings, clean parent state, re-run chain
+            # Nested run: reset target only, keep paused siblings, run ALL in parallel
             result = await revert_service.retry_nested_subagent_run(
                 session_id, agent_run_id, planned_prompt=planned_prompt,
             )
             logger.info("retry_nested_reset_complete", session_id=str(session_id), result=result)
 
             parent_run_id = UUID(result["parent_run_id"])
-            later_sibling_ids = [UUID(sid) for sid in result.get("later_sibling_ids", [])]
 
-            # Run the target subagent
-            agent_run = ctx.execution_repo.get_by_id_for_session(agent_run_id, session_id)
-            context = ctx.orchestrator.build_project_context(session_id)
-
-            target_result = await ctx.orchestrator.run_agent(
-                session_id=session_id,
-                agent_run_id=agent_run_id,
-                agent_id=agent_run.agent_id,
-                prompt=planned_prompt or agent_run.planned_prompt or "",
-                context=context,
-            )
-
-            if target_result == "paused":
-                return  # Target paused — session status already set by run_agent
-
-            # Run remaining later siblings sequentially
-            for sibling_id in later_sibling_ids:
-                sibling_run = ctx.execution_repo.get_by_id_for_session(sibling_id, session_id)
-                if not sibling_run:
-                    continue
-                sibling_context = ctx.orchestrator.build_project_context(session_id)
-                sibling_result = await ctx.orchestrator.run_agent(
-                    session_id=session_id,
-                    agent_run_id=sibling_id,
-                    agent_id=sibling_run.agent_id,
-                    prompt=sibling_run.planned_prompt or "",
-                    context=sibling_context,
-                )
-                if sibling_result == "paused":
-                    return  # Sibling paused — stop chain
-
-            # All siblings done — patch subagents ToolCall and resume parent
+            from druppie.db.models.agent_run import AgentRun as AgentRunModel
             from druppie.agents.runtime_v2 import AgentV2 as Agent
             from druppie.domain.common import AgentRunStatus
+            import asyncio
 
+            # Query siblings BEFORE launching anything so we know the full set
+            paused_siblings = (
+                ctx.execution_repo.db.query(AgentRunModel)
+                .filter(
+                    AgentRunModel.session_id == session_id,
+                    AgentRunModel.parent_run_id == parent_run_id,
+                    AgentRunModel.id != agent_run_id,
+                    AgentRunModel.status == AgentRunStatus.PAUSED_USER.value,
+                )
+                .order_by(AgentRunModel.created_at)
+                .all()
+            )
+
+            agent_run = ctx.execution_repo.get_by_id_for_session(agent_run_id, session_id)
+            target_prompt = planned_prompt or agent_run.planned_prompt or ""
+
+            async def _run_in_own_db(run_id, agent_id, prompt, is_continue):
+                from druppie.db.database import SessionLocal
+                from druppie.repositories import ExecutionRepository, SessionRepository
+                from druppie.execution import Orchestrator
+
+                db = SessionLocal()
+                try:
+                    orch = Orchestrator(
+                        session_repo=SessionRepository(db),
+                        execution_repo=ExecutionRepository(db),
+                        project_repo=ctx.project_repo,
+                        question_repo=ctx.question_repo,
+                    )
+                    ctx_build = orch.build_project_context(session_id)
+                    if is_continue:
+                        orch.execution_repo.update_status(run_id, AgentRunStatus.RUNNING)
+                        orch.execution_repo.commit()
+                        ag = Agent(agent_id, db=db, session_id=str(session_id))
+                        res = await ag.continue_run(
+                            session_id=session_id,
+                            agent_run_id=run_id,
+                            context=ctx_build,
+                        )
+                        return orch._handle_agent_resume_result(
+                            session_id, run_id, res, agent_id=agent_id,
+                        )
+                    else:
+                        return await orch.run_agent(
+                            session_id=session_id,
+                            agent_run_id=run_id,
+                            agent_id=agent_id,
+                            prompt=prompt,
+                            context=ctx_build,
+                        )
+                finally:
+                    db.close()
+
+            tasks = [
+                _run_in_own_db(agent_run_id, agent_run.agent_id, target_prompt, False)
+            ] + [
+                _run_in_own_db(s.id, s.agent_id, None, True)
+                for s in paused_siblings
+            ]
+
+            all_results = await asyncio.gather(*tasks)
+
+            if any(r == "paused" for r in all_results):
+                return
+
+            # All children done — patch subagents ToolCall and resume parent
+            ctx.session_repo.db.expire_all()
             ctx.orchestrator._patch_paused_subagents_tool_call(parent_run_id, session_id)
             ctx.execution_repo.update_status(parent_run_id, AgentRunStatus.RUNNING)
             ctx.session_repo.update_status(session_id, SessionStatus.ACTIVE)
@@ -266,7 +302,6 @@ async def _run_retry_background(
             )
 
             if parent_status == "paused":
-                # Walk parent chain in case parent is also a subagent
                 ctx.session_repo.db.expire_all()
                 refreshed_parent = ctx.execution_repo.get_by_id(parent_run_id)
                 chain_done = await ctx.orchestrator._walk_parent_chain(
@@ -275,7 +310,6 @@ async def _run_retry_background(
                 if chain_done:
                     await ctx.orchestrator.execute_pending_runs(session_id)
             else:
-                # Parent completed — check for pending runs, then mark session completed
                 ctx.session_repo.db.expire_all()
                 next_pending = ctx.execution_repo.get_next_pending(session_id)
                 if next_pending:

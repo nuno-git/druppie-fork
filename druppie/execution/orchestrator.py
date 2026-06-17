@@ -502,6 +502,9 @@ class Orchestrator:
             has_context=bool(context),
         )
 
+        self.execution_repo.update_status(agent_run_id, AgentRunStatus.RUNNING)
+        self.execution_repo.commit()
+
         # Create and run agent
         agent = Agent(agent_id, db=self.execution_repo.db, session_id=str(session_id))
         try:

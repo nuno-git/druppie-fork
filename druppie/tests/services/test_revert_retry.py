@@ -1,8 +1,9 @@
 """Tests for RevertService.retry_nested_subagent_run.
 
 Verifies the retry behavior for nested subagent runs:
-- Later siblings are DELETED (not reset to PENDING)
-- Descendants of target and siblings are recursively cleaned up
+- PENDING later siblings are DELETED (never started, safe to remove)
+- PAUSED_USER / COMPLETED later siblings are PRESERVED (already started)
+- Descendants of target and PENDING siblings are recursively cleaned up
 - Parent chain is properly reset (done() TC deleted, subagents() TC cleared)
 - Deeply nested subsubagents work correctly
 """
@@ -55,17 +56,17 @@ def _patch_no_parent_chain(svc):
     return patch.object(svc, "_reset_parent_chain_for_retry")
 
 
-class TestRetryDeletesLaterSiblings:
-    """BUG: Retry first of 3 subagents -> later 2 should be DELETED, not PENDING."""
+class TestRetrySiblingPreservation:
+    """PENDING siblings deleted; PAUSED_USER / COMPLETED siblings preserved."""
 
     @pytest.mark.asyncio
-    async def test_later_siblings_are_deleted_not_reset(self):
+    async def test_pending_siblings_are_deleted(self):
         parent_run_id = uuid4()
         session_id = uuid4()
 
         target = _make_run(parent_run_id=parent_run_id, agent_id="test_builder")
-        sibling_2 = _make_run(parent_run_id=parent_run_id, agent_id="developer")
-        sibling_3 = _make_run(parent_run_id=parent_run_id, agent_id="test_executor")
+        sibling_2 = _make_run(parent_run_id=parent_run_id, agent_id="developer", status="pending")
+        sibling_3 = _make_run(parent_run_id=parent_run_id, agent_id="test_executor", status="pending")
 
         repo = MagicMock()
         repo.get_by_id_for_session.return_value = target
@@ -87,6 +88,92 @@ class TestRetryDeletesLaterSiblings:
         assert sibling_2.id in deleted_ids
         assert sibling_3.id in deleted_ids
         assert target.id not in deleted_ids
+
+    @pytest.mark.asyncio
+    async def test_paused_user_siblings_are_preserved(self):
+        parent_run_id = uuid4()
+        session_id = uuid4()
+
+        target = _make_run(parent_run_id=parent_run_id, agent_id="test_builder")
+        sibling = _make_run(parent_run_id=parent_run_id, agent_id="developer", status="paused_user")
+
+        repo = MagicMock()
+        repo.get_by_id_for_session.return_value = target
+        repo.get_children_after.return_value = [sibling]
+        repo.db = MagicMock()
+
+        svc = _make_revert_service(execution_repo=repo)
+
+        with patch.object(svc, "_collect_descendants", return_value=[]), \
+             _patch_no_parent_chain(svc):
+            result = await svc.retry_nested_subagent_run(session_id, target.id)
+
+        delete_calls = repo.delete_runs_fully.call_args_list
+        deleted_ids = set()
+        for call in delete_calls:
+            for run_id in call[0][0]:
+                deleted_ids.add(run_id)
+
+        assert sibling.id not in deleted_ids
+        assert str(sibling.id) in result["paused_sibling_ids"]
+
+    @pytest.mark.asyncio
+    async def test_completed_siblings_are_preserved(self):
+        parent_run_id = uuid4()
+        session_id = uuid4()
+
+        target = _make_run(parent_run_id=parent_run_id, agent_id="test_builder")
+        sibling = _make_run(parent_run_id=parent_run_id, agent_id="developer", status="completed")
+
+        repo = MagicMock()
+        repo.get_by_id_for_session.return_value = target
+        repo.get_children_after.return_value = [sibling]
+        repo.db = MagicMock()
+
+        svc = _make_revert_service(execution_repo=repo)
+
+        with patch.object(svc, "_collect_descendants", return_value=[]), \
+             _patch_no_parent_chain(svc):
+            await svc.retry_nested_subagent_run(session_id, target.id)
+
+        delete_calls = repo.delete_runs_fully.call_args_list
+        deleted_ids = set()
+        for call in delete_calls:
+            for run_id in call[0][0]:
+                deleted_ids.add(run_id)
+
+        assert sibling.id not in deleted_ids
+
+    @pytest.mark.asyncio
+    async def test_mixed_siblings_pending_deleted_paused_kept(self):
+        parent_run_id = uuid4()
+        session_id = uuid4()
+
+        target = _make_run(parent_run_id=parent_run_id, agent_id="builder")
+        pending_sib = _make_run(parent_run_id=parent_run_id, agent_id="developer", status="pending")
+        paused_sib = _make_run(parent_run_id=parent_run_id, agent_id="tester", status="paused_user")
+
+        repo = MagicMock()
+        repo.get_by_id_for_session.return_value = target
+        repo.get_children_after.return_value = [pending_sib, paused_sib]
+        repo.db = MagicMock()
+
+        svc = _make_revert_service(execution_repo=repo)
+
+        with patch.object(svc, "_collect_descendants", return_value=[]), \
+             _patch_no_parent_chain(svc):
+            result = await svc.retry_nested_subagent_run(session_id, target.id)
+
+        delete_calls = repo.delete_runs_fully.call_args_list
+        deleted_ids = set()
+        for call in delete_calls:
+            for run_id in call[0][0]:
+                deleted_ids.add(run_id)
+
+        assert pending_sib.id in deleted_ids
+        assert paused_sib.id not in deleted_ids
+        assert str(pending_sib.id) in result["deleted_sibling_ids"]
+        assert str(paused_sib.id) in result["paused_sibling_ids"]
 
     @pytest.mark.asyncio
     async def test_only_target_is_reset_to_pending(self):
@@ -155,11 +242,11 @@ class TestRetryRecursiveDescendantCleanup:
         assert grandchild.id in deleted_ids
 
     @pytest.mark.asyncio
-    async def test_descendants_of_later_siblings_are_deleted(self):
+    async def test_descendants_of_pending_siblings_are_deleted(self):
         parent_run_id = uuid4()
         session_id = uuid4()
         target = _make_run(parent_run_id=parent_run_id, agent_id="test_builder")
-        sibling = _make_run(parent_run_id=parent_run_id, agent_id="developer")
+        sibling = _make_run(parent_run_id=parent_run_id, agent_id="developer", status="pending")
         niece = _make_run(parent_run_id=sibling.id, agent_id="core_builder")
 
         repo = MagicMock()

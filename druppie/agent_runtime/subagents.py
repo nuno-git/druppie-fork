@@ -291,6 +291,18 @@ class SubagentsMCP:
                     "result": child_result,
                     "error": None,
                 }
+            except asyncio.CancelledError:
+                # User clicked Stop — mark child PAUSED_USER before re-raising.
+                # CancelledError is BaseException (Python 3.8+), so the
+                # except Exception below does NOT catch it.  Without this
+                # handler the child agent_run stays RUNNING forever and
+                # /resumable never lists it as a leaf.
+                child_repo = getattr(child_tool_provider, '_execution_repo', None)
+                child_run_id = getattr(child_tool_provider, '_agent_run_id', None)
+                if child_repo is not None and child_run_id is not None:
+                    child_repo.update_status(child_run_id, AgentRunStatus.PAUSED_USER)
+                    child_repo.commit()
+                raise
             except Exception as e:
                 # Mark child agent_run as failed
                 child_repo = getattr(child_tool_provider, '_execution_repo', None)

@@ -281,9 +281,10 @@ async def stop_session(
             detail=f"Cannot stop session with status '{session.status}'",
         )
 
-    # Set session status to paused — the background task will detect this
-    # via its SessionPauseToken polling. Use a fresh DB session to avoid
-    # blocking on the background task's open transaction.
+    # Signal the pause two ways:
+    # 1. Direct in-memory cancel (zero latency — agent loop checks is_cancelled)
+    # 2. DB status flag (fallback if token not registered yet, or for resume flows)
+    from druppie.agent_runtime.types import SessionPauseToken
     from druppie.db.database import SessionLocal
     _db = SessionLocal()
     try:
@@ -292,6 +293,8 @@ async def stop_session(
         _db.commit()
     finally:
         _db.close()
+
+    SessionPauseToken.cancel_session(session_id)
 
     try:
         import os
