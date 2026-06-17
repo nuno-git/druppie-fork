@@ -1,10 +1,10 @@
 /**
- * ContinueDialog - Shows paused agent tree with optional context input before resuming.
+ * ContinueDialog - Shows paused agents with optional per-agent context input.
  *
- * Fetches /sessions/{id}/resumable, displays tree of paused runs,
- * lets user optionally add context message, then resumes.
+ * Fetches /sessions/{id}/resumable, displays each leaf agent with a textarea.
+ * All agents resume on confirm — no selection.
  */
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { PlayCircle, Loader2, ChevronRight } from 'lucide-react'
 import { getResumableRuns, resumeSession } from '../../services/api'
@@ -12,8 +12,7 @@ import { getAgentConfig, getAgentMessageColors } from '../../utils/agentConfig'
 
 const ContinueDialog = ({ sessionId, onClose }) => {
   const queryClient = useQueryClient()
-  const [context, setContext] = useState('')
-  const [selectedLeafId, setSelectedLeafId] = useState(null)
+  const [contexts, setContexts] = useState({})
 
   const { data: resumableData, isLoading } = useQuery({
     queryKey: ['resumable', sessionId],
@@ -23,18 +22,14 @@ const ContinueDialog = ({ sessionId, onClose }) => {
   })
 
   const runs = resumableData?.runs || []
-  const leafIds = resumableData?.leaf_ids || []
-
-  // Auto-select first leaf when data loads
-  useEffect(() => {
-    if (leafIds.length === 1) setSelectedLeafId(leafIds[0])
-  }, [leafIds])
 
   const resumeMutation = useMutation({
     mutationFn: () => {
-      const ctx = context.trim() || null
-      const target = selectedLeafId || (leafIds.length === 1 ? leafIds[0] : null)
-      return resumeSession(sessionId, ctx, target)
+      const filtered = {}
+      for (const [id, text] of Object.entries(contexts)) {
+        if (text.trim()) filtered[id] = text.trim()
+      }
+      return resumeSession(sessionId, Object.keys(filtered).length > 0 ? filtered : null)
     },
     onSuccess: () => {
       queryClient.refetchQueries({ queryKey: ['session', sessionId] })
@@ -43,16 +38,12 @@ const ContinueDialog = ({ sessionId, onClose }) => {
     },
   })
 
-  const handleSubmit = (e) => {
-    e.preventDefault()
-    resumeMutation.mutate()
-  }
+  const leafRuns = runs.filter(r => r.is_leaf)
 
   return (
     <>
       <div className="fixed inset-0 bg-black/30 z-30" onClick={onClose} />
-      <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-40 bg-white rounded-lg shadow-2xl border border-gray-200 p-5 w-[32rem]">
-        {/* Header */}
+      <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-40 bg-white rounded-lg shadow-2xl border border-gray-200 p-5 w-[34rem] max-h-[85vh] overflow-y-auto">
         <div className="flex items-center gap-2 mb-3">
           <PlayCircle className="w-5 h-5 text-green-600" />
           <h3 className="text-sm font-semibold text-gray-900">Continue session</h3>
@@ -65,42 +56,31 @@ const ContinueDialog = ({ sessionId, onClose }) => {
           </div>
         )}
 
-        {/* Paused agents tree */}
-        {!isLoading && runs.length > 0 && (
+        {!isLoading && leafRuns.length > 0 && (
           <div className="mb-4">
-            <label className="block text-xs font-medium text-gray-500 mb-2">
-              {leafIds.length > 1 ? 'Select agent to resume' : 'Paused agents'}
-            </label>
-            <div className="space-y-1 max-h-48 overflow-y-auto bg-gray-50 border border-gray-200 rounded p-2">
-              {runs.map((run) => {
+            <p className="text-xs text-gray-500 mb-3">
+              All {leafRuns.length} agent{leafRuns.length !== 1 ? 's' : ''} will resume. Add optional context below any agent.
+            </p>
+            <div className="space-y-3">
+              {leafRuns.map((run) => {
                 const config = getAgentConfig(run.agent_id)
                 const colors = getAgentMessageColors(config.color)
                 const AgentIcon = config.icon
-                const selectable = run.is_leaf && leafIds.length > 1
-                const isSelected = selectedLeafId === run.id
                 return (
-                  <div
-                    key={run.id}
-                    onClick={selectable ? () => setSelectedLeafId(isSelected ? null : run.id) : undefined}
-                    className={`flex items-center gap-1.5 px-2 py-1 rounded text-xs ${
-                      selectable ? 'cursor-pointer hover:bg-white' : ''
-                    } ${isSelected ? 'bg-green-50 ring-1 ring-green-300' : ''}`}
-                    style={{ paddingLeft: `${0.5 + run.depth * 1.2}rem` }}
-                  >
-                    {run.depth > 0 && (
-                      <ChevronRight className="w-3 h-3 text-gray-300 flex-shrink-0" />
-                    )}
-                    <AgentIcon className={`w-3.5 h-3.5 flex-shrink-0 ${colors.accent}`} />
-                    <span className={`font-medium ${colors.accent}`}>{config.name}</span>
-                    {!run.is_leaf && (
-                      <span className="text-gray-400 ml-1">(parent)</span>
-                    )}
-                    {run.is_leaf && leafIds.length <= 1 && (
-                      <span className="text-green-600 ml-auto text-[10px]">will resume</span>
-                    )}
-                    {isSelected && (
-                      <span className="text-green-600 ml-auto text-[10px]">selected</span>
-                    )}
+                  <div key={run.id} className="bg-gray-50 border border-gray-200 rounded p-2.5">
+                    <div className="flex items-center gap-1.5 px-1 mb-1.5" style={{ paddingLeft: `${0.5 + run.depth * 1.0}rem` }}>
+                      {run.depth > 0 && <ChevronRight className="w-3 h-3 text-gray-300 flex-shrink-0" />}
+                      <AgentIcon className={`w-3.5 h-3.5 flex-shrink-0 ${colors.accent}`} />
+                      <span className={`text-xs font-medium ${colors.accent}`}>{config.name}</span>
+                    </div>
+                    <textarea
+                      value={contexts[run.id] || ''}
+                      onChange={(e) => setContexts(prev => ({ ...prev, [run.id]: e.target.value }))}
+                      disabled={resumeMutation.isPending}
+                      placeholder="Optional context…"
+                      rows={2}
+                      className="w-full text-xs font-mono bg-white border border-gray-200 rounded p-2 resize-y focus:outline-none focus:ring-1 focus:ring-green-400 focus:border-green-400 disabled:opacity-50"
+                    />
                   </div>
                 )
               })}
@@ -108,32 +88,12 @@ const ContinueDialog = ({ sessionId, onClose }) => {
           </div>
         )}
 
-        {/* Context textarea */}
-        <div className="mb-4">
-          <label className="block text-xs font-medium text-gray-500 mb-1">
-            Additional context (optional)
-          </label>
-          <textarea
-            value={context}
-            onChange={(e) => setContext(e.target.value)}
-            disabled={resumeMutation.isPending}
-            placeholder="Add context or instructions for the agent…"
-            rows={3}
-            className="w-full text-xs font-mono bg-gray-50 border border-gray-200 rounded p-2.5 resize-y focus:outline-none focus:ring-1 focus:ring-green-400 focus:border-green-400 disabled:opacity-50"
-          />
-          <p className="text-[10px] text-gray-400 mt-1">
-            Injected as a system message before the agent continues.
-          </p>
-        </div>
-
-        {/* Error */}
         {resumeMutation.isError && (
           <div className="mb-3 bg-red-50 border border-red-200 rounded p-2 text-xs text-red-700">
             Resume failed: {resumeMutation.error?.message || 'Unknown error'}
           </div>
         )}
 
-        {/* Actions */}
         <div className="flex justify-end gap-2">
           <button
             onClick={onClose}
@@ -143,8 +103,8 @@ const ContinueDialog = ({ sessionId, onClose }) => {
             Cancel
           </button>
           <button
-            onClick={handleSubmit}
-            disabled={resumeMutation.isPending || isLoading || (leafIds.length > 1 && !selectedLeafId)}
+            onClick={(e) => { e.preventDefault(); resumeMutation.mutate() }}
+            disabled={resumeMutation.isPending || isLoading}
             className="px-3 py-1.5 text-sm font-medium bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50 transition-colors flex items-center gap-1.5"
           >
             {resumeMutation.isPending ? (
@@ -152,7 +112,7 @@ const ContinueDialog = ({ sessionId, onClose }) => {
             ) : (
               <PlayCircle className="w-3.5 h-3.5" />
             )}
-            Continue
+            Continue all
           </button>
         </div>
       </div>

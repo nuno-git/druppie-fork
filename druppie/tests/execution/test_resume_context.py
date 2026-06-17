@@ -1,9 +1,8 @@
-"""Tests for resume session with context and correct leaf targeting.
+"""Tests for resume session with per-agent context and correct leaf targeting.
 
 Verifies:
 - Resume targets the PAUSED_USER leaf (subagent), not the parent orchestrator
-- Resume accepts optional context that gets injected into the resumed agent
-- Resume accepts optional target_agent_run_id for explicit targeting
+- Resume accepts optional per-agent contexts dict injected into each resumed agent
 - GET /sessions/{id}/resumable returns the tree of paused runs
 """
 
@@ -153,7 +152,7 @@ class TestResumeWithContext:
 
     @pytest.mark.asyncio
     async def test_resume_passes_context_to_continue_run(self):
-        """Context string should be forwarded to resume_paused_session."""
+        """Per-agent context should be forwarded to resume_paused_session."""
         session_id = uuid4()
         child_id = uuid4()
         parent_id = uuid4()
@@ -179,13 +178,9 @@ class TestResumeWithContext:
             MockAgent.return_value = mock_agent
 
             await orch.resume_paused_session(
-                session_id, context="Focus on auth tests, skip UI tests"
+                session_id, contexts={str(child_id): "Focus on auth tests, skip UI tests"}
             )
 
-        # The context should be visible in the continue_run call
-        call_kwargs = mock_agent.continue_run.call_args
-        # Context should be passed somehow — either in context dict or as a param
-        # The exact mechanism depends on implementation, but the call must happen
         assert mock_agent.continue_run.called
 
     @pytest.mark.asyncio
@@ -215,80 +210,23 @@ class TestResumeWithContext:
 
 
 # =============================================================================
-# Test: Resume with explicit target_agent_run_id
-# =============================================================================
-
-class TestResumeWithTarget:
-    """Resume should accept target_agent_run_id for explicit targeting."""
-
-    @pytest.mark.asyncio
-    async def test_resume_specific_target_overrides_leaf_detection(self):
-        """When target_agent_run_id is provided, resume that specific run."""
-        session_id = uuid4()
-        target_id = uuid4()
-
-        target_run = _make_run(run_id=target_id, agent_id="test_builder")
-
-        orch = _make_orchestrator()
-        # get_user_paused_leaves would return a different run, but we override
-        orch.execution_repo.get_user_paused_leaves.return_value = []
-        orch.execution_repo.get_paused_run.return_value = None
-        orch.execution_repo.get_running_run.return_value = None
-        orch.execution_repo.get_by_id.return_value = target_run
-        orch.execution_repo.db = MagicMock()
-        orch._handle_agent_resume_result = MagicMock(return_value="completed")
-        orch._walk_parent_chain = AsyncMock(return_value=True)
-        orch.execute_pending_runs = AsyncMock()
-
-        with patch("druppie.agents.runtime_v2.AgentV2") as MockAgent, \
-             patch.object(orch, "build_project_context", return_value={}):
-            mock_agent = MagicMock()
-            mock_agent.continue_run = AsyncMock(return_value={"status": "completed"})
-            MockAgent.return_value = mock_agent
-
-            await orch.resume_paused_session(
-                session_id, target_agent_run_id=target_id
-            )
-
-        assert mock_agent.continue_run.called
-        call_kwargs = mock_agent.continue_run.call_args
-        assert call_kwargs.kwargs.get("agent_run_id") == target_id
-
-
-# =============================================================================
-# Test: resume_paused_session signature accepts new params
+# Test: resume_paused_session signature accepts contexts param
 # =============================================================================
 
 class TestResumePausedSessionSignature:
-    """Verify resume_paused_session accepts context and target_agent_run_id."""
+    """Verify resume_paused_session accepts contexts dict."""
 
-    def test_accepts_context_param(self):
-        """resume_paused_session must accept a 'context' keyword argument."""
+    def test_accepts_contexts_param(self):
+        """resume_paused_session must accept a 'contexts' keyword argument."""
         import inspect
         from druppie.execution.orchestrator import Orchestrator
 
         sig = inspect.signature(Orchestrator.resume_paused_session)
-        assert "context" in sig.parameters, "resume_paused_session must accept 'context' param"
+        assert "contexts" in sig.parameters, "resume_paused_session must accept 'contexts' param"
 
-    def test_accepts_target_agent_run_id_param(self):
-        """resume_paused_session must accept 'target_agent_run_id' keyword argument."""
+    def test_contexts_defaults_to_none(self):
         import inspect
         from druppie.execution.orchestrator import Orchestrator
 
         sig = inspect.signature(Orchestrator.resume_paused_session)
-        assert "target_agent_run_id" in sig.parameters, \
-            "resume_paused_session must accept 'target_agent_run_id' param"
-
-    def test_context_defaults_to_none(self):
-        import inspect
-        from druppie.execution.orchestrator import Orchestrator
-
-        sig = inspect.signature(Orchestrator.resume_paused_session)
-        assert sig.parameters["context"].default is None
-
-    def test_target_agent_run_id_defaults_to_none(self):
-        import inspect
-        from druppie.execution.orchestrator import Orchestrator
-
-        sig = inspect.signature(Orchestrator.resume_paused_session)
-        assert sig.parameters["target_agent_run_id"].default is None
+        assert sig.parameters["contexts"].default is None

@@ -466,22 +466,19 @@ async def redirect_run(
 
 class ResumeRequest(BaseModel):
     """Optional body for resume endpoint."""
-    context: str | None = None
-    target_agent_run_id: UUID | None = None
+    contexts: dict[str, str] | None = None
 
 
 async def _run_resume_background(
     session_id: UUID,
-    context: str | None = None,
-    target_agent_run_id: UUID | None = None,
+    contexts: dict[str, str] | None = None,
 ) -> None:
     """Resume a paused session in background."""
 
     async def task(ctx):
         await ctx.orchestrator.resume_paused_session(
             session_id,
-            context=context,
-            target_agent_run_id=target_agent_run_id,
+            contexts=contexts,
         )
 
     await run_session_task(session_id, task, "resume_background")
@@ -525,8 +522,7 @@ async def resume_session(
         create_tracked_task(
             _run_resume_background(
                 session_id=session_id,
-                context=body.context if body else None,
-                target_agent_run_id=body.target_agent_run_id if body else None,
+                contexts=body.contexts if body else None,
             ),
             name=f"resume-{session_id}",
         )

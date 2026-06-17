@@ -1045,42 +1045,30 @@ class Orchestrator:
     async def resume_paused_session(
         self,
         session_id: UUID,
-        context: str | None = None,
-        target_agent_run_id: UUID | None = None,
+        contexts: dict[str, str] | None = None,
     ) -> UUID:
         """Resume a paused or failed session.
 
         Priority order:
-        1. If target_agent_run_id provided → resume that specific run
-        2. PAUSED_USER agent run → continue via continue_run()
-        3. PAUSED_TOOL/HITL agent run → restore waiting status
-        4. Orphaned RUNNING agent run → continue via continue_run()
+        1. PAUSED_USER agent run → continue via continue_run()
+        2. PAUSED_TOOL/HITL agent run → restore waiting status
+        3. Orphaned RUNNING agent run → continue via continue_run()
            (handles infrastructure crashes where the run stayed 'running')
-        5. No paused/running run → execute pending runs directly
+        4. No paused/running run → execute pending runs directly
 
         Args:
             session_id: Session to resume
-            context: Optional user context string injected into resumed agent
-            target_agent_run_id: Optional specific run to resume (overrides leaf detection)
+            contexts: Optional dict of agent_run_id -> context string for each leaf
         """
         from druppie.agents.runtime_v2 import AgentV2 as Agent
 
         logger.info(
             "resume_paused_session",
             session_id=str(session_id),
-            has_context=bool(context),
-            target_run=str(target_agent_run_id) if target_agent_run_id else None,
+            has_context=bool(contexts),
         )
 
         # Session is already set to ACTIVE by the endpoint's lock_for_resume()
-
-        if target_agent_run_id:
-            target_run = self.execution_repo.get_by_id(target_agent_run_id)
-            if target_run and target_run.status == AgentRunStatus.PAUSED_USER.value:
-                await self._resume_single_paused_leaf(
-                    session_id, target_run, user_context=context,
-                )
-                return session_id
 
         paused_leaves = self.execution_repo.get_user_paused_leaves(session_id)
 
@@ -1167,11 +1155,16 @@ class Orchestrator:
         )
 
         if len(paused_leaves) == 1:
-            await self._resume_single_paused_leaf(session_id, paused_leaves[0], user_context=context)
+            leaf = paused_leaves[0]
+            ctx = contexts.get(str(leaf.id)) if contexts else None
+            await self._resume_single_paused_leaf(session_id, leaf, user_context=ctx)
         else:
             import asyncio as _asyncio
             await _asyncio.gather(*[
-                self._resume_leaf_with_own_db(session_id, leaf, user_context=context)
+                self._resume_leaf_with_own_db(
+                    session_id, leaf,
+                    user_context=contexts.get(str(leaf.id)) if contexts else None,
+                )
                 for leaf in paused_leaves
             ])
 
