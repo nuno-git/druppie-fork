@@ -12,7 +12,7 @@ For deployment management (stop/restart/logs), see deployments.py.
 
 from uuid import UUID
 
-from fastapi import APIRouter, Body, Depends, Query, status
+from fastapi import APIRouter, Body, Depends, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 import structlog
@@ -139,21 +139,22 @@ async def get_project(
     return service.get_detail(project_id, user_id, user_roles)
 
 
-class BatchDeleteProjectsRequest(BaseModel):
-    """Optional body for batch project deletion."""
+class DeleteProjectsRequest(BaseModel):
+    """Body for project deletion."""
     project_ids: list[UUID] | None = None
 
 
 @router.delete("/projects")
-async def delete_projects_batch(
-    body: BatchDeleteProjectsRequest | None = Body(None),
+async def delete_projects(
+    body: DeleteProjectsRequest | None = Body(None),
     service: ProjectService = Depends(get_project_service),
     user: dict = Depends(get_current_user),
 ):
-    """Delete projects in batch.
+    """Delete projects.
 
-    If project_ids is provided, deletes only those projects.
-    If project_ids is omitted/null, deletes all projects for the user (admins: all).
+    Unified endpoint for single and batch deletion:
+    - If project_ids is provided, deletes those specific projects.
+    - If project_ids is omitted/null, deletes all projects for the user (admins: all).
 
     Returns:
         Success confirmation with count of deleted projects
@@ -167,29 +168,8 @@ async def delete_projects_batch(
         user_roles=user_roles,
     )
 
-    logger.info("projects_batch_deleted", user_id=str(user["sub"]), count=count)
+    logger.info("projects_deleted", user_id=str(user["sub"]), count=count)
     return {"success": True, "deleted_count": count}
-
-
-@router.delete("/projects/{project_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_project(
-    project_id: UUID,
-    service: ProjectService = Depends(get_project_service),
-    user: dict = Depends(get_current_user),
-) -> None:
-    """Delete a project and its Gitea repository.
-
-    Args:
-        project_id: Project UUID
-
-    Raises:
-        NotFoundError: Project doesn't exist
-        AuthorizationError: User doesn't own the project
-    """
-    user_id = UUID(user["sub"])
-    user_roles = get_user_roles(user)
-
-    await service.delete(project_id, user_id, user_roles)
 
 
 @router.get("/projects/{project_id}/file", response_model=ProjectFileResponse)

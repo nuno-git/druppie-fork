@@ -5,7 +5,7 @@
 import { useState, useMemo, useCallback, useRef, useEffect } from 'react'
 import { useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Plus, Search, PanelLeftClose, Trash2, CheckSquare, Square, X, Loader2 } from 'lucide-react'
-import { getSessions, deleteSession, deleteSessions } from '../../services/api'
+import { getSessions, deleteSessions } from '../../services/api'
 import { timeAgo, ACTIVE_STATUSES } from './ChatHelpers'
 import { SkeletonSidebarItem } from '../shared/Skeleton'
 
@@ -67,7 +67,7 @@ const SessionSidebar = ({ activeSessionId, onSelectSession, onNewChat, onCollaps
   })
 
   const deleteMutation = useMutation({
-    mutationFn: deleteSession,
+    mutationFn: (id) => deleteSessions([id]),
     onMutate: (id) => setDeletingId(id),
     onSuccess: (_, deletedId) => {
       queryClient.invalidateQueries({ queryKey: ['sessions'] })

@@ -22,7 +22,7 @@ import {
   X,
 } from 'lucide-react'
 
-import { getProjects, getDeployments, stopDeployment, deleteProject, deleteProjects } from '../services/api'
+import { getProjects, getDeployments, stopDeployment, deleteProjects } from '../services/api'
 import { useToast } from '../components/Toast'
 import PageHeader from '../components/shared/PageHeader'
 import SharedCopyButton from '../components/shared/CopyButton'
@@ -296,7 +296,7 @@ const Projects = () => {
   }
 
   const deleteMutation = useMutation({
-    mutationFn: deleteProject,
+    mutationFn: (projectId) => deleteProjects([projectId]),
     onMutate: (projectId) => setDeletingId(projectId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['projects'] })

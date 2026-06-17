@@ -116,9 +116,6 @@ export const getSession = (sessionId) => request(`/api/sessions/${sessionId}`)
 export const resumeSession = (sessionId) =>
   request(`/api/sessions/${sessionId}/resume`, { method: 'POST' })
 
-export const deleteSession = (sessionId) =>
-  request(`/api/sessions/${sessionId}`, { method: 'DELETE' })
-
 export const deleteSessions = (sessionIds) =>
   request('/api/sessions', {
     method: 'DELETE',
@@ -240,8 +237,6 @@ export const runProject = (projectId) =>
   request(`/api/projects/${projectId}/run`, { method: 'POST' })
 export const stopProject = (projectId) =>
   request(`/api/projects/${projectId}/stop`, { method: 'POST' })
-export const deleteProject = (projectId) =>
-  request(`/api/projects/${projectId}`, { method: 'DELETE' })
 export const deleteProjects = (projectIds) =>
   request('/api/projects', {
     method: 'DELETE',
