@@ -423,3 +423,27 @@ mcps:
 
       - name: create_chart_from_source
         requires_approval: false
+
+  # Azure DevOps backlog for ONE configured project (AZURE_DEVOPS_PROJECT).
+  # No cross-project access — the project is fixed server-side.
+  # Write tools require session_owner approval (the user who started the chat).
+  azuredevops:
+    url: ${MCP_AZUREDEVOPS_URL:-http://module-azuredevops:9012}
+    type: module
+    tools:
+      - name: list_backlog_items
+        requires_approval: false
+      - name: get_work_item
+        requires_approval: false
+      - name: search_work_items
+        requires_approval: false
+      - name: get_current_sprint
+        requires_approval: false
+      - name: get_sprint_summary
+        requires_approval: false
+      - name: create_work_item
+        requires_approval: true
+        required_role: session_owner
+      - name: update_work_item
+        requires_approval: true
+        required_role: session_owner

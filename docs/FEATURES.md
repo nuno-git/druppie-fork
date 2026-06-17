@@ -18,7 +18,7 @@ Because all actions are tool calls, every action can be logged, inspected, and g
 
 ## Agent Pipeline
 
-Thirteen agents are defined. Twelve are functional; one is a stub.
+Fourteen agents are defined. Thirteen are functional; one is a stub.
 
 ### Functional Agents
 
@@ -36,6 +36,7 @@ Thirteen agents are defined. Twelve are functional; one is a stub.
 | **Update Core Builder** | Implements Druppie core changes | Delegates coding to a dual-repo sandbox via `execute_coding_task` with the `druppie-core-builder` sandbox agent. The sandbox clones Druppie's GitHub repo into `/workspace/druppie-core/` and the project repo (with FD/TD) into `/workspace/project-<name>/`. Creates a PR targeting `colab-dev` on GitHub. The `done()` tool requires approval from a user with the `developer` role — the reviewer merges the PR on GitHub before approving. Max 100 iterations. |
 | **Developer** | Writes and modifies code | Implements features in git-managed workspaces. Handles branch creation, file writes, commits, pull requests, and merges. Can delegate to sandbox agents via `execute_coding_task`. For `create_project`, works on main; for `update_project`, works on feature branches. Max 100 iterations. |
 | **Deployer** | Builds and deploys via Docker | Clones from git, builds Docker images, runs containers with auto-assigned ports (9100-9199). Verifies health via container logs. For preview deploys, asks the user for feedback before finalizing. Max 100 iterations. |
+| **Product Owner** | Answers backlog questions | Reads the backlog / work items (user stories, bugs, tasks, epics) of the configured Azure DevOps project via the read-only `azuredevops` MCP and answers the user in chat. Read-only, single project — cannot create/edit work items or see any other project. General chat only. Max 50 iterations. |
 | **Reviewer** | Code review | Reviews code for quality, security, and best practices. |
 | **Tester** | Testing | Writes and runs tests to validate implementations. |
 | **Summarizer** | Creates completion messages | Reads all previous agent summaries and produces a concise, user-friendly message. Always the final step. Max 5 iterations. |
@@ -790,6 +791,24 @@ The dashboards goal is to provide an overview of platform activity. This page is
 - **Recent approvals**: Last 5 pending approval items
 - **User roles**: Current user's assigned roles
 - **System status**: Health indicators for Keycloak, Database, LLM provider, and Gitea
+
+---
+
+## Deployments Dashboard
+
+The **Deployments page** (`/deployments`) provides visibility into deployed applications managed by the platform. It is available to all authenticated users.
+
+- **User-scoped**: Non-admin users see only their own deployments. Admins see all.
+- **Stats row**: Total containers, running, stopped, unhealthy counts at a glance.
+- **Search**: Filter deployments by container name, image, or project.
+- **Actions**: Start, stop, restart containers directly from the dashboard.
+- **Logs viewer**: Side-drawer with terminal-style log output (last 300 lines) per container.
+- **App links**: Running containers with an `app_url` show a direct link to the deployed application.
+- **Polling**: Refreshes every 5 seconds to reflect container state changes.
+
+The backend API (`/api/deployments`) proxies to the Docker MCP server via MCPHttp bridge and enforces ownership checks on all mutating operations.
+
+For admin-level operations (wipe projects, view all containers regardless of ownership), use the **Platform page** (`/admin/platform`).
 
 ---
 

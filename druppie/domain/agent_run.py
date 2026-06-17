@@ -8,7 +8,7 @@ from uuid import UUID
 from pydantic import BaseModel
 
 from .approval import ApprovalSummary
-from .common import AgentRunStatus, LLMMessage, TokenUsage, ToolCallStatus
+from .common import AgentRunStatus, Attachment, LLMMessage, TokenUsage, ToolCallStatus
 from .tool import ToolType
 
 
@@ -74,6 +74,8 @@ class ToolCallDetail(BaseModel):
 
     # For HITL tools - the question that was created (for answering)
     question_id: UUID | None = None
+    # Attachments uploaded with a HITL answer
+    attachments: list[Attachment] = []
 
     # Normalization audit trail
     normalizations: list[NormalizationDetail] = []

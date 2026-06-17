@@ -14,8 +14,8 @@ from uuid import UUID
 from datetime import datetime
 from enum import Enum
 
-from .common import TokenUsage, SessionStatus
-from .agent_run import AgentRunDetail
+from .common import Attachment, TokenUsage, SessionStatus
+from .agent_run import AgentRunSummary, AgentRunDetail
 from .project import ProjectSummary
 
 
@@ -37,6 +37,7 @@ class Message(BaseModel):
     agent_run_id: UUID | None = None
     sequence_number: int = 0
     created_at: datetime
+    attachments: list[Attachment] = []
 
 
 class TimelineEntry(BaseModel):

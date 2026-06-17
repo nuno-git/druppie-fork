@@ -28,7 +28,7 @@ from druppie.api.deps import (
 )
 from druppie.services import SessionService
 from druppie.domain import SessionDetail, SessionStatus
-from druppie.core.background_tasks import create_tracked_task, run_session_task
+from druppie.core.background_tasks import create_session_task, run_session_task, SessionTaskConflict
 
 logger = structlog.get_logger()
 
@@ -125,41 +125,38 @@ async def get_session(
     return detail
 
 
-@router.delete("/sessions/{session_id}")
-async def delete_session(
-    session_id: UUID,
+class DeleteSessionsRequest(BaseModel):
+    """Body for session deletion."""
+    session_ids: list[UUID] | None = None
+
+
+@router.delete("/sessions")
+async def delete_sessions(
+    body: DeleteSessionsRequest | None = Body(None),
     service: SessionService = Depends(get_session_service),
     user: dict = Depends(get_current_user),
 ):
-    """Delete a session and all related data.
+    """Delete sessions.
 
-    Only the session owner or an admin can delete a session.
-    This cascades to delete all related data:
-    - Messages
-    - Agent runs
-    - Tool calls
-    - LLM calls
-    - Approvals
-    - HITL questions
+    Unified endpoint for single and batch deletion:
+    - If session_ids is provided, deletes those specific sessions.
+    - If session_ids is omitted/null, deletes all sessions for the user (admins: all sessions).
 
     Returns:
-        Success confirmation
-
-    Raises:
-        NotFoundError: Session not found
-        AuthorizationError: User cannot delete this session
+        Success confirmation with count of deleted sessions
     """
     user_id = UUID(user["sub"])
     user_roles = get_user_roles(user)
 
-    service.delete(
-        session_id=session_id,
-        user_id=user_id,
-        user_roles=user_roles,
-    )
+    if body and body.session_ids is not None:
+        count = service.delete_many(body.session_ids, user_id, user_roles)
+    else:
+        if "admin" in user_roles:
+            user_id = None
+        count = service.delete_all_for_user(user_id)
 
-    logger.info("session_deleted", session_id=str(session_id), user_id=str(user_id))
-    return {"success": True, "message": "Session deleted"}
+    logger.info("sessions_deleted", user_id=str(user["sub"]), count=count)
+    return {"success": True, "deleted_count": count}
 
 
 # =============================================================================
@@ -364,13 +361,15 @@ async def retry_run(
     )
 
     try:
-        create_tracked_task(
+        create_session_task(
+            session_id,
             _run_retry_background(
                 session_id=session_id,
                 agent_run_id=agent_run_id,
                 planned_prompt=body.planned_prompt if body else None,
             ),
             name=f"retry-{session_id}",
+            skip_lock=True,
         )
     except Exception:
         service.mark_failed(session_id, "Failed to start retry background task")
@@ -478,7 +477,8 @@ async def redirect_run(
     )
 
     try:
-        create_tracked_task(
+        create_session_task(
+            session_id,
             _run_redirect_background(
                 session_id=session_id,
                 agent_run_id=agent_run_id,
@@ -486,7 +486,7 @@ async def redirect_run(
                 prompt=body.prompt,
             ),
             name=f"redirect-{session_id}",
-        )
+            skip_lock=True,
     except Exception:
         service.mark_failed(session_id, "Failed to start redirect background task")
         raise
@@ -553,12 +553,14 @@ async def resume_session(
     )
 
     try:
-        create_tracked_task(
+        create_session_task(
+            session_id,
             _run_resume_background(
                 session_id=session_id,
                 contexts=body.contexts if body else None,
             ),
             name=f"resume-{session_id}",
+            skip_lock=True,
         )
     except Exception:
         service.mark_failed(session_id, "Failed to start resume background task")

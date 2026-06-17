@@ -66,6 +66,7 @@ BUILTIN_TOOLS = {
     "create_message",
     "invoke_skill",
     "test_report",
+    "read_attachment",
 }
 
 # HITL tools require user answer (create Question record).
@@ -844,7 +845,7 @@ class ToolExecutor:
                     translated_path=translated_path,
                 )
         except TranslationNotAvailableError:
-            raise
+            logger.warning("translation_skipped_no_api_key", tool_call_id=str(tool_call.id))
         except Exception as e:
             logger.warning(
                 "design_translation_failed",
@@ -995,7 +996,7 @@ class ToolExecutor:
                     target_language=session.language,
                 )
         except TranslationNotAvailableError:
-            raise
+            logger.warning("translation_skipped_no_api_key", tool_call_id=str(tool_call.id))
         except Exception as e:
             logger.warning("hitl_question_translation_failed", error=str(e))
 

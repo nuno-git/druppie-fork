@@ -1,6 +1,7 @@
 """Common domain models shared across entities."""
 
 from enum import Enum
+from uuid import UUID
 from pydantic import BaseModel
 from datetime import datetime
 from typing import Any
@@ -82,6 +83,15 @@ class JobRunStatus(str, Enum):
 # =============================================================================
 # COMMON MODELS
 # =============================================================================
+
+class Attachment(BaseModel):
+    """A file attached to a message or HITL answer."""
+    id: UUID
+    original_filename: str
+    content_type: str
+    file_size: int
+    created_at: datetime
+
 
 class TokenUsage(BaseModel):
     """Token usage tracking."""

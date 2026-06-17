@@ -25,7 +25,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 import structlog
 
-from druppie.api.deps import get_current_user, get_user_roles, get_approval_service
+from druppie.api.deps import get_attachment_repository, get_current_user, get_user_roles, get_approval_service
+from druppie.repositories import AttachmentRepository
 from druppie.services import ApprovalService
 from druppie.domain import ApprovalDetail, ApprovalHistoryList, PendingApprovalList
 from druppie.core.background_tasks import create_tracked_task, run_session_task
@@ -46,8 +47,12 @@ class RejectRequest(BaseModel):
     reason: str = Field(
         ...,
         min_length=1,
-        max_length=1000,
-        description="Reason for rejection",
+        max_length=10000,
+        description="Reason for rejection (1-10000 characters)",
+    )
+    attachment_ids: list[str] = Field(
+        default=[],
+        description="Attachment IDs to link to this rejection",
     )
 
 
@@ -194,6 +199,7 @@ async def reject(
     approval_id: UUID,
     request: RejectRequest,
     approval_service: ApprovalService = Depends(get_approval_service),
+    attachment_repo: AttachmentRepository = Depends(get_attachment_repository),
     user: dict = Depends(get_current_user),
 ) -> ApprovalResponse:
     """Reject a pending tool execution.
@@ -233,6 +239,21 @@ async def reject(
         user_roles=user_roles,
         reason=request.reason,
     )
+
+    # Step 1b: Link attachments to approval
+    if request.attachment_ids:
+        try:
+            attachment_uuids = [UUID(aid) for aid in request.attachment_ids]
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid attachment ID format")
+        try:
+            attachment_repo.validate_ownership(attachment_uuids, approval.session_id)
+        except ValueError as e:
+            raise HTTPException(status_code=403, detail=str(e))
+        attachment_repo.link_to_approval(
+            attachment_uuids, approval_id, approval.session_id,
+        )
+        attachment_repo.db.commit()
 
     # Step 2: Spawn background task to resume workflow
     try:

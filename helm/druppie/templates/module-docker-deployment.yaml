@@ -7,7 +7,7 @@ metadata:
     {{- include "druppie.labels" . | nindent 4 }}
     app.kubernetes.io/component: module-docker
 spec:
-  replicas: 1
+  replicas: {{ .Values.modules.docker.replicaCount }}
   selector:
     matchLabels:
       {{- include "druppie.selectorLabels" . | nindent 6 }}
@@ -17,6 +17,8 @@ spec:
       labels:
         {{- include "druppie.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: module-docker
+      annotations:
+        cluster-autoscaler.kubernetes.io/safe-to-evict: "true"
     spec:
       containers:
         - name: module-docker
@@ -25,26 +27,17 @@ spec:
           env:
             - name: MCP_PORT
               value: {{ .Values.modules.docker.port | quote }}
-            - name: WORKSPACE_ROOT
-              value: "/workspaces"
-            - name: DOCKER_NETWORK
-              value: "{{ .Values.global.instance }}-network"
             - name: DRUPPIE_URL
               value: "http://{{ include "druppie.fullname" . }}-backend:{{ .Values.backend.port }}"
-            - name: DRUPPIE_MODULE_API_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "druppie.fullname" . }}-secrets
-                  key: DRUPPIE_MODULE_API_TOKEN
-            - name: DEEPINFRA_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "druppie.fullname" . }}-secrets
-                  key: DEEPINFRA_API_KEY
             {{- if .Values.backend.dockerSocket.enabled }}
             - name: DOCKER_HOST
               value: "unix:///var/run/docker.sock"
             {{- end }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "druppie.fullname" . }}-config
+            - secretRef:
+                name: {{ include "druppie.fullname" . }}-secrets
           ports:
             - name: http
               containerPort: {{ .Values.modules.docker.port }}
@@ -73,12 +66,9 @@ spec:
             timeoutSeconds: 5
             failureThreshold: 5
           resources:
-            requests:
-              memory: "128Mi"
-              cpu: "100m"
-            limits:
-              memory: "256Mi"
-              cpu: "500m"
+            {{- toYaml .Values.modules.docker.resources | nindent 12 }}
+      nodeSelector:
+        pool: infra
       volumes:
         - name: workspace
           persistentVolumeClaim:

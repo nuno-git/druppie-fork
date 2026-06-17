@@ -28,6 +28,8 @@ ENV/
 # Node.js
 node_modules/
 package-lock.json
+# Un-ignore background-agents lockfile (required by sandbox Dockerfiles)
+!background-agents/package-lock.json
 
 # IDE
 .idea/
@@ -46,6 +48,14 @@ test-results/
 instance/
 *.db
 
+# Secrets (private keys, certificates)
+secrets/
+secrets
+
+# Helm secrets (contains API keys — use .example.yaml as template)
+helm/druppie/values-local.secrets.yaml
+helm/druppie/values-hetzner.secrets.yaml
+
 # Local config
 .druppie/
 .playwright-mcp/
@@ -57,14 +67,20 @@ druppie-app/
 
 # Personal compose overrides
 docker-compose.robbe.yml
+testing/reports/*.md
 
-# GitHub App
-*.pem
-github-app-*.pem
-.sisyphus/
-*.png
+# Debug/temp files
+debug_*.png
+debug_*.js
+analyze_storage.sh
+pi-coding-one-shot-agent/
 evaluation_config.yaml
+iac/cluster.secrets.yaml
+kubeconfig
 
-# OpenCode runtime session state
-.omo/run-continuation/
-pr-190-review.md
+# Load test result images (backed up to ~/Downloads)
+testing/autoscaling/results/*.png
+testing/autoscaling/results/*.jpg
+testing/autoscaling/results/*.jpeg
+.omo/
+.claude/

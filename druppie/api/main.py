@@ -3,27 +3,23 @@
 Main entry point for the API.
 """
 
-import asyncio
 import os
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta, timezone
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import httpx
 import structlog
 
-from druppie.api.routes import agent_test, agents, approvals, cache, chat, deployments, documentation, evaluations, jobs, mcp_bridge, mcps, modules, projects, questions, sessions, tool_output, workspace
+from druppie.api.routes import agents, approvals, cache, chat, deployments, documentation, evaluations, jobs, mcp_bridge, mcps, modules, projects, questions, sandbox, sessions, workspace
 from druppie.api.errors import register_exception_handlers
 from druppie.core.auth import get_auth_service
 from druppie.core.config import get_settings
 from druppie.agents import Agent
 from druppie.core.background_tasks import create_tracked_task, shutdown_background_tasks
+from druppie.core.leader_election import try_acquire_leader_lock
 
 logger = structlog.get_logger()
-
-SANDBOX_WATCHDOG_INTERVAL = 120  # seconds
-SANDBOX_STUCK_TIMEOUT = 1800  # 30 min — tool calls waiting longer are stuck
 
 
 def _recover_zombie_sessions() -> None:
@@ -133,64 +129,6 @@ def _recover_orphaned_batch_runs() -> None:
         db.close()
 
 
-async def _sandbox_stuck_watchdog():
-    """Periodic check for tool calls stuck in WAITING_SANDBOX state.
-
-    If a sandbox container dies without calling back, the tool call stays in
-    WAITING_SANDBOX indefinitely. This watchdog detects such cases and marks
-    them as FAILED so the agent loop can recover.
-    """
-    from druppie.db.database import SessionLocal
-    from druppie.domain.common import SessionStatus
-    from druppie.repositories import ExecutionRepository, SessionRepository
-
-    while True:
-        await asyncio.sleep(SANDBOX_WATCHDOG_INTERVAL)
-        db = SessionLocal()
-        try:
-            cutoff = datetime.now(timezone.utc) - timedelta(seconds=SANDBOX_STUCK_TIMEOUT)
-            execution_repo = ExecutionRepository(db)
-            stuck_calls = execution_repo.get_stuck_sandbox_tool_calls(cutoff)
-
-            if not stuck_calls:
-                continue
-
-            logger.warning("sandbox_watchdog_found_stuck", count=len(stuck_calls))
-            session_repo = SessionRepository(db)
-
-            for tc in stuck_calls:
-                logger.warning(
-                    "sandbox_watchdog_failing_tool_call",
-                    tool_call_id=str(tc.id),
-                    tool_name=tc.tool_name,
-                    session_id=str(tc.session_id),
-                )
-                execution_repo.update_tool_call(
-                    tc.id,
-                    status="failed",
-                    error="Sandbox watchdog: tool call timed out in WAITING_SANDBOX state. "
-                          "The sandbox container may have crashed. Retry the operation.",
-                )
-
-                if tc.session_id:
-                    session_repo.update_status(
-                        tc.session_id,
-                        SessionStatus.PAUSED_CRASHED,
-                        error_message="Sandbox operation timed out — container may have crashed.",
-                    )
-
-            db.commit()
-            logger.info("sandbox_watchdog_recovered", count=len(stuck_calls))
-        except Exception as e:
-            logger.error("sandbox_watchdog_error", error=str(e))
-            try:
-                db.rollback()
-            except Exception:
-                pass
-        finally:
-            db.close()
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan handler."""
@@ -210,6 +148,10 @@ async def lifespan(app: FastAPI):
 
     _recover_stuck_job_runs()
 
+    # Clean up orphaned sandbox Gitea users from previous runs
+    from druppie.opencode.gitea_cleanup import cleanup_orphaned_sandbox_users
+    await cleanup_orphaned_sandbox_users()
+
     # Initialize tool registry (discovers MCP tools from servers via tools/list)
     from druppie.core.tool_registry import initialize_tool_registry, get_tool_registry
     try:
@@ -228,8 +170,14 @@ async def lifespan(app: FastAPI):
             name="mcp-registry-retry",
         )
 
-    sandbox_watchdog = asyncio.create_task(_sandbox_stuck_watchdog())
-    logger.info("sandbox_stuck_watchdog_started", interval=SANDBOX_WATCHDOG_INTERVAL, timeout=SANDBOX_STUCK_TIMEOUT)
+    # Start sandbox watchdog (detects stuck WAITING_SANDBOX tool calls).
+    # Leader election: only one replica runs the watchdog to avoid duplicate
+    # timeout actions. Uses PostgreSQL advisory lock — no extra infra needed.
+    if try_acquire_leader_lock("sandbox-watchdog"):
+        from druppie.api.routes.sandbox import sandbox_watchdog_loop
+        create_tracked_task(sandbox_watchdog_loop(), name="sandbox-watchdog")
+    else:
+        logger.info("sandbox_watchdog_skipped", hint="another_replica_is_leader")
 
     from druppie.db.database import SessionLocal
     from druppie.repositories import JobRepository, SessionRepository, ExecutionRepository
@@ -254,21 +202,22 @@ async def lifespan(app: FastAPI):
     finally:
         job_db.close()
 
-    app.state.job_scheduler = JobScheduler(_get_job_service)
-    app.state.job_scheduler.start()
+    # JobScheduler: leader election ensures only one replica runs the cron loop.
+    # The scheduler itself already uses claim_job_trigger() for DB-level
+    # deduplication, but leader election avoids N replicas polling every 60s.
+    if try_acquire_leader_lock("job-scheduler"):
+        app.state.job_scheduler = JobScheduler(_get_job_service)
+        app.state.job_scheduler.start()
+    else:
+        logger.info("job_scheduler_skipped", hint="another_replica_is_leader")
+        app.state.job_scheduler = None
 
     yield
 
-    # Shutdown — cancel watchdog and wait for background tasks
-    sandbox_watchdog.cancel()
-    try:
-        await sandbox_watchdog
-    except asyncio.CancelledError:
-        pass
-
-    if hasattr(app.state, "job_scheduler"):
+    if hasattr(app.state, "job_scheduler") and app.state.job_scheduler is not None:
         app.state.job_scheduler.stop()
 
+    # Shutdown — wait for background tasks before exiting
     await shutdown_background_tasks(timeout=30.0)
     logger.info("druppie_stopping")
 
@@ -312,11 +261,10 @@ def create_app() -> FastAPI:
     app.include_router(agents.router, prefix="/api", tags=["Agents"])
     app.include_router(mcps.router, prefix="/api", tags=["MCPs"])
     app.include_router(mcp_bridge.router, prefix="/api/mcp", tags=["MCP Bridge"])
+    app.include_router(sandbox.router, prefix="/api", tags=["Sandbox"])
     app.include_router(evaluations.router, prefix="/api", tags=["Evaluations"])
     app.include_router(cache.router, prefix="/api", tags=["Cache"])
     app.include_router(modules.router, prefix="/api", tags=["Modules"])
-    app.include_router(agent_test.router, prefix="/api", tags=["Agent Test"])
-    app.include_router(tool_output.router, prefix="/api", tags=["Tool Output"])
     app.include_router(documentation.router, prefix="/api", tags=["Documentation"])
     app.include_router(jobs.router, prefix="/api/jobs", tags=["Jobs"])
 

@@ -1,5 +1,7 @@
 """Project repository for database access."""
 
+import os
+from urllib.parse import urljoin
 from uuid import UUID
 from sqlalchemy import func
 
@@ -13,6 +15,24 @@ from ..domain import (
 )
 from ..db.models import Project, Session as SessionModel
 from ..db.models.user import User as UserModel
+
+
+def _derive_repo_url(repo_url: str | None, repo_owner: str | None, repo_name: str | None) -> str | None:
+    """Construct repo_url from current GITEA_URL + repo_owner/repo_name.
+
+    This ensures repo_url is always correct regardless of domain changes.
+    Falls back to the stored repo_url if owner/name are missing.
+    """
+    if repo_owner and repo_name:
+        gitea_url = os.getenv("GITEA_URL", "").rstrip("/")
+        if gitea_url:
+            return f"{gitea_url}/{repo_owner}/{repo_name}"
+    return repo_url
+
+
+def _project_repo_url(project: Project) -> str | None:
+    """Convenience wrapper for Project model objects."""
+    return _derive_repo_url(project.repo_url, project.repo_owner, project.repo_name)
 
 
 class ProjectRepository(BaseRepository):
@@ -93,23 +113,14 @@ class ProjectRepository(BaseRepository):
             .first()
         )
 
-        # Get username from users table
-        username = None
-        if project.owner_id:
-            user = self.db.query(UserModel).filter_by(id=project.owner_id).first()
-            if user:
-                username = user.username
-
         # Get recent sessions
         sessions = self._get_recent_sessions(project_id, session_limit)
 
         return ProjectDetail(
-            # Inherited from ProjectSummary
             id=project.id,
             name=project.name,
             description=project.description,
-            repo_url=project.repo_url,
-            username=username,
+            repo_url=_project_repo_url(project),
             repo_name=project.repo_name,
             repo_owner=project.repo_owner,
             created_at=project.created_at,
@@ -145,6 +156,25 @@ class ProjectRepository(BaseRepository):
         """Delete project."""
         self.db.query(Project).filter_by(id=project_id).delete()
 
+    def delete_many(self, project_ids: list[UUID]) -> int:
+        """Delete projects by IDs. Returns count deleted."""
+        if not project_ids:
+            return 0
+        return self.db.query(Project).filter(Project.id.in_(project_ids)).delete(synchronize_session="fetch")
+
+    def get_many_by_ids(self, project_ids: list[UUID]) -> list[Project]:
+        """Get multiple projects by IDs."""
+        if not project_ids:
+            return []
+        return self.db.query(Project).filter(Project.id.in_(project_ids)).all()
+
+    def get_all_for_user(self, user_id: UUID | None) -> list[Project]:
+        """Get all projects, optionally filtered by user."""
+        query = self.db.query(Project)
+        if user_id is not None:
+            query = query.filter_by(owner_id=user_id)
+        return query.all()
+
     def _to_summary(self, project: Project) -> ProjectSummary:
         """Convert project model to summary domain object."""
         # Look up username from users table
@@ -157,7 +187,7 @@ class ProjectRepository(BaseRepository):
             id=project.id,
             name=project.name,
             description=project.description,
-            repo_url=project.repo_url,
+            repo_url=_project_repo_url(project),
             repo_name=project.repo_name,
             repo_owner=project.repo_owner,
             username=username,

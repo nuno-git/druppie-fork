@@ -51,13 +51,7 @@ from druppie.domain.common import AgentRunStatus, SessionStatus, ApprovalStatus
 from druppie.execution.human_input import HumanInput
 
 if TYPE_CHECKING:
-    from druppie.repositories import (
-        ExecutionRepository,
-        JobRepository,
-        ProjectRepository,
-        QuestionRepository,
-        SessionRepository,
-    )
+    from druppie.repositories import SessionRepository, ExecutionRepository, ProjectRepository, QuestionRepository, JobRepository, AttachmentRepository
 
 logger = structlog.get_logger()
 
@@ -88,6 +82,7 @@ class Orchestrator:
         project_repo: "ProjectRepository",
         question_repo: "QuestionRepository",
         job_repo: "JobRepository | None" = None,
+        attachment_repo: "AttachmentRepository | None" = None,
     ):
         """Initialize orchestrator with repositories.
 
@@ -97,12 +92,14 @@ class Orchestrator:
             project_repo: Repository for project operations
             question_repo: Repository for question operations
             job_repo: Repository for job runs (optional, required for approval-gated jobs)
+            attachment_repo: Repository for message attachments (optional)
         """
         self.session_repo = session_repo
         self.execution_repo = execution_repo
         self.project_repo = project_repo
         self.question_repo = question_repo
         self.job_repo = job_repo
+        self.attachment_repo = attachment_repo
         self.language_detector = LanguageDetector()
         # Updated on each user input (process_message / resume_after_answer).
         # Safe as instance state because Orchestrator is created per-request.
@@ -114,6 +111,7 @@ class Orchestrator:
         user_id: UUID,
         session_id: UUID | None = None,
         project_id: UUID | None = None,
+        attachment_ids: list[UUID] | None = None,
     ) -> UUID:
         """Process a user message.
 
@@ -202,22 +200,25 @@ class Orchestrator:
         # Step 3.6: Translate to English if non-English (agents work in English)
         translated_message = message
         if human_input.detected_language and human_input.detected_language != "en":
-            from druppie.core.translation import get_translation_service
-            translator = get_translation_service()
-            translated_message = await translator.translate_to_english(
-                message, human_input.detected_language
-            )
-            if translated_message != message:
-                logger.info(
-                    "message_translated",
-                    session_id=str(current_session_id),
-                    source_language=human_input.detected_language,
-                    original_preview=message[:80],
-                    translated_preview=translated_message[:80],
+            try:
+                from druppie.core.translation import get_translation_service, TranslationNotAvailableError
+                translator = get_translation_service()
+                translated_message = await translator.translate_to_english(
+                    message, human_input.detected_language
                 )
+                if translated_message != message:
+                    logger.info(
+                        "message_translated",
+                        session_id=str(current_session_id),
+                        source_language=human_input.detected_language,
+                        original_preview=message[:80],
+                        translated_preview=translated_message[:80],
+                    )
+            except TranslationNotAvailableError:
+                logger.warning("translation_skipped_no_api_key", session_id=str(current_session_id))
 
         # Step 3b: Save user message to the timeline (after translation so we can store both versions)
-        self.execution_repo.create_message(
+        message_id = self.execution_repo.create_message(
             session_id=current_session_id,
             role="user",
             content=message,
@@ -225,6 +226,16 @@ class Orchestrator:
             sequence_number=next_seq,
         )
         next_seq += 1
+
+        # Step 3c: Link uploaded attachments to the user message
+        attachment_context = ""
+        if attachment_ids and self.attachment_repo:
+            self.attachment_repo.link_to_message(
+                attachment_ids, message_id, current_session_id,
+            )
+            attachments = self.attachment_repo.get_by_ids(attachment_ids)
+            attachment_context = self._build_attachment_context(attachments)
+
         self.execution_repo.commit()
 
         # Step 4: Get user's projects for router injection
@@ -234,9 +245,9 @@ class Orchestrator:
         # Step 5: Create router + planner (both PENDING)
         # Router will call set_intent() which updates planner's prompt
         if conversation_history:
-            router_prompt = f"{projects_context}\n\n{conversation_history}\n\nNEW USER MESSAGE:\n{translated_message}"
+            router_prompt = f"{projects_context}\n\n{conversation_history}\n\nNEW USER MESSAGE:\n{translated_message}{attachment_context}"
         else:
-            router_prompt = f"{projects_context}\n\nUSER REQUEST:\n{translated_message}"
+            router_prompt = f"{projects_context}\n\nUSER REQUEST:\n{translated_message}{attachment_context}"
         self.execution_repo.create_agent_run(
             session_id=current_session_id,
             agent_id="router",
@@ -247,9 +258,9 @@ class Orchestrator:
 
         # Planner starts with basic prompt - set_intent will update it with context
         if conversation_history:
-            planner_prompt = f"{conversation_history}\n\nNEW USER MESSAGE:\n{translated_message}"
+            planner_prompt = f"{conversation_history}\n\nNEW USER MESSAGE:\n{translated_message}{attachment_context}"
         else:
-            planner_prompt = f"USER REQUEST:\n{translated_message}"
+            planner_prompt = f"USER REQUEST:\n{translated_message}{attachment_context}"
         self.execution_repo.create_agent_run(
             session_id=current_session_id,
             agent_id="planner",
@@ -265,6 +276,20 @@ class Orchestrator:
         await self.execute_pending_runs(current_session_id)
 
         return current_session_id
+
+    @staticmethod
+    def _build_attachment_context(attachments) -> str:
+        """Build a file listing for LLM prompts (agents use read_attachment tool for content)."""
+        if not attachments:
+            return ""
+        lines = ["\n\nUPLOADED FILES (use the read_attachment tool to read file contents):"]
+        for att in attachments:
+            size_kb = att.file_size / 1024
+            lines.append(
+                f"- {att.original_filename} (id: {att.id}, type: {att.content_type}, "
+                f"size: {size_kb:.1f} KB)"
+            )
+        return "\n".join(lines)
 
     def _format_projects_for_router(self, projects: list) -> str:
         """Format user's projects for injection into router prompt."""
@@ -357,6 +382,12 @@ class Orchestrator:
             # from previous agents (e.g., set_intent creates project/repo)
             context = self.build_project_context(session_id)
 
+            # Planner needs the accumulated summary from all completed agents
+            # so it knows what has been done. Build it fresh from the DB.
+            prompt = next_run.planned_prompt or ""
+            if next_run.agent_id == "planner":
+                prompt = self._prepend_agent_summary(session_id, prompt)
+
             logger.info(
                 "executing_agent_run",
                 session_id=str(session_id),
@@ -374,7 +405,7 @@ class Orchestrator:
                 session_id=session_id,
                 agent_run_id=next_run.id,
                 agent_id=next_run.agent_id,
-                prompt=next_run.planned_prompt or "",
+                prompt=prompt,
                 context=context,
             )
 
@@ -399,6 +430,37 @@ class Orchestrator:
                 return
 
             # Otherwise "completed" — loop continues to next pending run
+
+    def _prepend_agent_summary(self, session_id: UUID, prompt: str) -> str:
+        """Build accumulated summary from completed runs and prepend to prompt.
+
+        Reads all done() summaries from completed agent runs, deduplicates
+        lines, and prepends the result as PREVIOUS AGENT SUMMARY.
+        """
+        completed_runs = self.execution_repo.get_completed_runs(session_id)
+        seen = []
+        seen_set = set()
+        for run in completed_runs:
+            run_summary = self.execution_repo.get_done_summary_for_run(run.id)
+            if not run_summary:
+                continue
+            for line in run_summary.strip().split("\n"):
+                stripped = line.strip()
+                if stripped and stripped not in seen_set:
+                    seen_set.add(stripped)
+                    seen.append(stripped)
+
+        if not seen:
+            return prompt
+
+        accumulated = "\n".join(seen)
+        logger.info(
+            "planner_summary_prepended",
+            session_id=str(session_id),
+            summary_lines=len(seen),
+            preview=accumulated[:200],
+        )
+        return f"PREVIOUS AGENT SUMMARY:\n{accumulated}\n\n---\n\n{prompt}"
 
     def build_project_context(self, session_id: UUID) -> dict | None:
         """Build project context for agents.
@@ -459,6 +521,13 @@ class Orchestrator:
                     project_id=str(project.id),
                     has_repo=bool(project.repo_name),
                 )
+
+        # Include session-level attachment context so ALL agents see uploaded files
+        if self.attachment_repo:
+            attachments = self.attachment_repo.get_for_session(session_id)
+            att_ctx = self._build_attachment_context(attachments)
+            if att_ctx:
+                context["attachment_context"] = att_ctx
 
         logger.debug(
             "context_built",
@@ -868,18 +937,21 @@ class Orchestrator:
 
         translated_answer = answer
         if human_input.detected_language and human_input.detected_language != "en":
-            from druppie.core.translation import get_translation_service
-            translator = get_translation_service()
-            translated_answer = await translator.translate_to_english(
-                answer, human_input.detected_language
-            )
-            if translated_answer != answer:
-                logger.info(
-                    "hitl_answer_translated",
-                    session_id=str(session_id),
-                    question_id=str(question_id),
-                    source_language=human_input.detected_language,
+            try:
+                from druppie.core.translation import get_translation_service, TranslationNotAvailableError
+                translator = get_translation_service()
+                translated_answer = await translator.translate_to_english(
+                    answer, human_input.detected_language
                 )
+                if translated_answer != answer:
+                    logger.info(
+                        "hitl_answer_translated",
+                        session_id=str(session_id),
+                        question_id=str(question_id),
+                        source_language=human_input.detected_language,
+                    )
+            except TranslationNotAvailableError:
+                logger.warning("translation_skipped_no_api_key", session_id=str(session_id))
 
         # Step 2.5: Complete the HITL tool call with translated answer (English for agent)
         # but preserve the original answer for display in the UI

@@ -2,13 +2,12 @@
  * Session Sidebar - left panel showing session list in Chat
  */
 
-import { useState, useMemo } from 'react'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Plus, Search, PanelLeftClose, Trash2, Users } from 'lucide-react'
-import { getSessions, deleteSession } from '../../services/api'
+import { useState, useMemo, useCallback, useRef, useEffect } from 'react'
+import { useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { Plus, Search, PanelLeftClose, Trash2, CheckSquare, Square, X, Loader2 } from 'lucide-react'
+import { getSessions, deleteSessions } from '../../services/api'
 import { timeAgo, ACTIVE_STATUSES } from './ChatHelpers'
 import { SkeletonSidebarItem } from '../shared/Skeleton'
-import { useAuth } from '../../App'
 
 const groupSessionsByDate = (sessions) => {
   // Sort by most recent interaction first
@@ -38,20 +37,37 @@ const groupSessionsByDate = (sessions) => {
   ].filter((g) => g.sessions.length > 0)
 }
 
+const PAGE_SIZE = 50
+
 const SessionSidebar = ({ activeSessionId, onSelectSession, onNewChat, onCollapse }) => {
   const [search, setSearch] = useState('')
   const [deletingId, setDeletingId] = useState(null)
+  const [selectionMode, setSelectionMode] = useState(false)
+  const [selectedIds, setSelectedIds] = useState(new Set())
   const queryClient = useQueryClient()
-  const { user } = useAuth()
-  const currentUsername = user?.username
-  const { data, isLoading } = useQuery({
+  const scrollRef = useRef(null)
+
+  const {
+    data,
+    isLoading,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+  } = useInfiniteQuery({
     queryKey: ['sessions'],
-    queryFn: () => getSessions(1, 50),
-    refetchInterval: 5000,
+    queryFn: ({ pageParam = 1 }) => getSessions(pageParam, PAGE_SIZE),
+    getNextPageParam: (lastPage) => {
+      const { page, limit, total } = lastPage
+      return page * limit < total ? page + 1 : undefined
+    },
+    refetchInterval: (query) => {
+      const pageCount = query.state.data?.pages?.length ?? 0
+      return pageCount > 1 ? 30000 : 5000
+    },
   })
 
   const deleteMutation = useMutation({
-    mutationFn: deleteSession,
+    mutationFn: (id) => deleteSessions([id]),
     onMutate: (id) => setDeletingId(id),
     onSuccess: (_, deletedId) => {
       queryClient.invalidateQueries({ queryKey: ['sessions'] })
@@ -61,6 +77,16 @@ const SessionSidebar = ({ activeSessionId, onSelectSession, onNewChat, onCollaps
     onError: () => setDeletingId(null),
   })
 
+  const batchDeleteMutation = useMutation({
+    mutationFn: (ids) => deleteSessions(ids.length === sessions.length ? null : [...ids]),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['sessions'] })
+      if (selectedIds.has(activeSessionId)) onNewChat()
+      setSelectionMode(false)
+      setSelectedIds(new Set())
+    },
+  })
+
   const handleDelete = (e, session) => {
     e.stopPropagation()
     if (window.confirm(`Delete session "${session.title || 'Untitled'}"?\n\nThis will permanently delete the session and all its data.`)) {
@@ -68,7 +94,42 @@ const SessionSidebar = ({ activeSessionId, onSelectSession, onNewChat, onCollaps
     }
   }
 
-  const sessions = data?.items || []
+  const handleBatchDelete = () => {
+    if (selectedIds.size === 0) return
+    const label = selectedIds.size === sessions.length ? 'all' : selectedIds.size
+    if (window.confirm(`Delete ${label} session${selectedIds.size === 1 ? '' : 's'}?\n\nThis will permanently delete the selected sessions and all their data. This cannot be undone.`)) {
+      batchDeleteMutation.mutate(selectedIds)
+    }
+  }
+
+  const toggleSelection = (id) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const toggleSelectAll = () => {
+    if (selectedIds.size === filtered.length) {
+      setSelectedIds(new Set())
+    } else {
+      setSelectedIds(new Set(filtered.map((s) => s.id)))
+    }
+  }
+
+  const exitSelectionMode = () => {
+    setSelectionMode(false)
+    setSelectedIds(new Set())
+  }
+
+  const sessions = useMemo(
+    () => data?.pages?.flatMap((p) => p.items) || [],
+    [data]
+  )
+  const total = data?.pages?.[0]?.total ?? 0
+
   const filtered = search
     ? sessions.filter((s) =>
         (s.title || '').toLowerCase().includes(search.toLowerCase()) ||
@@ -78,6 +139,21 @@ const SessionSidebar = ({ activeSessionId, onSelectSession, onNewChat, onCollaps
 
   const grouped = useMemo(() => groupSessionsByDate(filtered), [filtered])
 
+  const handleScroll = useCallback(() => {
+    const el = scrollRef.current
+    if (!el || !hasNextPage || isFetchingNextPage) return
+    if (el.scrollHeight - el.scrollTop - el.clientHeight < 200) {
+      fetchNextPage()
+    }
+  }, [hasNextPage, isFetchingNextPage, fetchNextPage])
+
+  useEffect(() => {
+    const el = scrollRef.current
+    if (!el) return
+    el.addEventListener('scroll', handleScroll)
+    return () => el.removeEventListener('scroll', handleScroll)
+  }, [handleScroll])
+
   return (
     <div className="flex flex-col h-full">
       <div className="px-3 py-3 border-b flex items-center justify-between gap-2">
@@ -85,6 +161,19 @@ const SessionSidebar = ({ activeSessionId, onSelectSession, onNewChat, onCollaps
           Sessions
         </h2>
         <div className="flex items-center gap-1">
+          {sessions.length > 0 && (
+            <button
+              onClick={() => selectionMode ? exitSelectionMode() : setSelectionMode(true)}
+              className={`p-1.5 rounded-lg transition-colors ${
+                selectionMode
+                  ? 'bg-blue-100 text-blue-600 hover:bg-blue-200'
+                  : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'
+              }`}
+              title={selectionMode ? 'Exit selection mode' : 'Select sessions'}
+            >
+              {selectionMode ? <X className="w-4 h-4" /> : <CheckSquare className="w-4 h-4" />}
+            </button>
+          )}
           <button
             onClick={onNewChat}
             className="p-1.5 rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-colors"
@@ -113,7 +202,20 @@ const SessionSidebar = ({ activeSessionId, onSelectSession, onNewChat, onCollaps
           />
         </div>
       </div>
-      <div className="flex-1 overflow-y-auto">
+
+      {selectionMode && filtered.length > 0 && (
+        <div className="px-3 py-1.5 border-b bg-blue-50/50 flex items-center justify-between">
+          <button
+            onClick={toggleSelectAll}
+            className="text-xs text-blue-600 hover:text-blue-800 font-medium"
+          >
+            {selectedIds.size === filtered.length ? 'Deselect all' : 'Select all'}
+          </button>
+          <span className="text-xs text-gray-500">{selectedIds.size} selected</span>
+        </div>
+      )}
+
+      <div className="flex-1 overflow-y-auto" ref={scrollRef}>
         {isLoading && (
           <div className="space-y-1 py-2">
             {Array.from({ length: 5 }).map((_, i) => <SkeletonSidebarItem key={i} />)}
@@ -135,49 +237,49 @@ const SessionSidebar = ({ activeSessionId, onSelectSession, onNewChat, onCollaps
               const isPaused = s.status === 'paused' || (s.status?.startsWith('paused_') && s.status !== 'paused_crashed') || s.status?.startsWith('waiting_')
               const isCrashed = s.status === 'paused_crashed'
               const isFailed = s.status === 'failed'
-              // A session belongs to "someone else" when its owner username
-              // exists and differs from the current user. Used to flag
-              // sessions the current user is only viewing as an expert.
-              const isOthersSession =
-                !!s.username && !!currentUsername && s.username !== currentUsername
+              const isSelected = selectedIds.has(s.id)
               return (
                 <div
                   key={s.id}
                   className={`group relative w-full text-left px-4 py-2.5 hover:bg-gray-50 transition-colors cursor-pointer ${
-                    activeSessionId === s.id
+                    selectionMode && isSelected
                       ? 'bg-blue-50 border-l-2 border-l-blue-600'
-                      : isOthersSession
-                      ? 'border-l-2 border-l-purple-300'
-                      : 'border-l-2 border-l-transparent'
+                      : activeSessionId === s.id && !selectionMode
+                        ? 'bg-blue-50 border-l-2 border-l-blue-600'
+                        : 'border-l-2 border-l-transparent'
                   }`}
-                  onClick={() => onSelectSession(s.id)}
+                  onClick={() => selectionMode ? toggleSelection(s.id) : onSelectSession(s.id)}
                 >
                   <div className="flex items-center gap-2">
-                    {isActive && (
+                    {selectionMode && (
+                      <span className="flex-shrink-0">
+                        {isSelected ? (
+                          <CheckSquare className="w-4 h-4 text-blue-600" />
+                        ) : (
+                          <Square className="w-4 h-4 text-gray-400" />
+                        )}
+                      </span>
+                    )}
+                    {!selectionMode && isActive && (
                       <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 animate-pulse ${
                         isPaused ? 'bg-amber-500' : 'bg-blue-500'
                       }`} />
                     )}
-                    {(isFailed || isCrashed) && (
+                    {!selectionMode && (isFailed || isCrashed) && (
                       <span className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-red-400" />
                     )}
                     <span className="text-sm font-medium truncate text-gray-900 pr-6">
                       {s.title || 'Untitled'}
                     </span>
                   </div>
-                  <div className={`flex items-center gap-2 mt-0.5 ${isActive || isFailed || isCrashed ? 'ml-3.5' : ''}`}>
-                    {isOthersSession ? (
-                      <span className="text-xs font-medium truncate text-purple-600 flex items-center gap-1">
-                        <Users className="w-3 h-3" />
-                        started by {s.username}
-                      </span>
-                    ) : s.username ? (
+                  <div className={`flex items-center gap-2 mt-0.5 ${selectionMode || isActive || isFailed || isCrashed ? 'ml-3.5' : ''}`}>
+                    {s.username && (
                       <span className={`text-xs font-medium truncate ${
                         s.username.startsWith('t-') ? 'text-orange-500' : 'text-blue-400'
                       }`}>
                         {s.username}
                       </span>
-                    ) : null}
+                    )}
                     {s.project_name && (
                       <span className="text-xs text-gray-400 truncate">
                         {s.project_name}
@@ -187,7 +289,7 @@ const SessionSidebar = ({ activeSessionId, onSelectSession, onNewChat, onCollaps
                       {timeAgo(s.updated_at || s.created_at)}
                     </span>
                   </div>
-                  {!isOthersSession && (
+                  {!selectionMode && (
                     <button
                       onClick={(e) => handleDelete(e, s)}
                       disabled={deletingId === s.id}
@@ -206,7 +308,34 @@ const SessionSidebar = ({ activeSessionId, onSelectSession, onNewChat, onCollaps
             })}
           </div>
         ))}
+        {isFetchingNextPage && (
+          <div className="flex items-center justify-center py-3">
+            <Loader2 className="w-4 h-4 text-gray-400 animate-spin" />
+          </div>
+        )}
+        {!isLoading && !hasNextPage && sessions.length > 0 && total > PAGE_SIZE && (
+          <p className="text-gray-300 text-xs text-center py-2">All sessions loaded</p>
+        )}
       </div>
+
+      {selectionMode && selectedIds.size > 0 && (
+        <div className="px-3 py-2 border-t bg-red-50">
+          <button
+            onClick={handleBatchDelete}
+            disabled={batchDeleteMutation.isPending}
+            className="w-full flex items-center justify-center gap-1.5 px-3 py-1.5 text-sm text-white bg-red-600 hover:bg-red-700 rounded-lg transition-colors disabled:opacity-50 font-medium"
+          >
+            {batchDeleteMutation.isPending ? (
+              <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+            ) : (
+              <Trash2 className="w-4 h-4" />
+            )}
+            {batchDeleteMutation.isPending
+              ? 'Deleting...'
+              : `Delete ${selectedIds.size} session${selectedIds.size === 1 ? '' : 's'}`}
+          </button>
+        </div>
+      )}
     </div>
   )
 }

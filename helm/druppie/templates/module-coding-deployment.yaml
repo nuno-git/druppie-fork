@@ -7,7 +7,7 @@ metadata:
     {{- include "druppie.labels" . | nindent 4 }}
     app.kubernetes.io/component: module-coding
 spec:
-  replicas: 1
+  replicas: {{ .Values.modules.coding.replicaCount }}
   selector:
     matchLabels:
       {{- include "druppie.selectorLabels" . | nindent 6 }}
@@ -17,6 +17,8 @@ spec:
       labels:
         {{- include "druppie.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: module-coding
+      annotations:
+        cluster-autoscaler.kubernetes.io/safe-to-evict: "true"
     spec:
       initContainers:
         - name: wait-for-gitea
@@ -41,55 +43,17 @@ spec:
           image: {{ include "druppie.image" (dict "Values" .Values "image" .Values.modules.coding.image) }}
           imagePullPolicy: {{ .Values.global.imagePullPolicy }}
           env:
-            - name: WORKSPACE_ROOT
-              value: "/workspaces"
             - name: MCP_PORT
               value: {{ .Values.modules.coding.port | quote }}
-            - name: GITEA_INTERNAL_URL
-              value: "http://{{ include "druppie.fullname" . }}-gitea:3000"
-            - name: GITEA_ORG
-              value: {{ .Values.gitea.org | quote }}
-            - name: GITEA_USER
-              value: {{ .Values.gitea.adminUser | quote }}
-            - name: GITEA_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "druppie.fullname" . }}-secrets
-                  key: GITEA_ADMIN_PASSWORD
-            - name: GITEA_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "druppie.fullname" . }}-secrets
-                  key: GITEA_TOKEN
-            - name: BACKEND_URL
-              value: "http://{{ include "druppie.fullname" . }}-backend:{{ .Values.backend.port }}"
-            - name: INTERNAL_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "druppie.fullname" . }}-secrets
-                  key: INTERNAL_API_KEY
-            - name: DRUPPIE_SANDBOX_RUNTIME
-              value: {{ .Values.sandbox.runtime | quote }}
-            - name: DRUPPIE_SANDBOX_CACHE_VOLUME
-              value: "{{ .Values.global.instance }}_sandbox_dep_cache"
-            - name: DRUPPIE_SANDBOX_USER
-              value: {{ .Values.global.instance | quote }}
-            - name: DRUPPIE_SANDBOX_IMAGE
-              value: {{ .Values.sandbox.image | quote }}
-            - name: DRUPPIE_SANDBOX_NETWORK
-              value: "{{ .Values.global.instance }}-sandbox-net"
-            - name: DRUPPIE_SANDBOX_INET_NETWORK
-              value: "{{ .Values.global.instance }}-sandbox-inet"
-            - name: DRUPPIE_SANDBOX_MODULES_NETWORK
-              value: "{{ .Values.global.instance }}-sandbox-modules"
-            - name: DRUPPIE_DOCKER_MEMORY_LIMIT
-              value: {{ .Values.sandbox.memoryLimit | quote }}
-            - name: DRUPPIE_DOCKER_CPU_LIMIT
-              value: {{ .Values.sandbox.cpuLimit | quote }}
             {{- if .Values.backend.dockerSocket.enabled }}
             - name: DOCKER_HOST
               value: "unix:///var/run/docker.sock"
             {{- end }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "druppie.fullname" . }}-config
+            - secretRef:
+                name: {{ include "druppie.fullname" . }}-secrets
           ports:
             - name: http
               containerPort: {{ .Values.modules.coding.port }}
@@ -118,12 +82,9 @@ spec:
             timeoutSeconds: 5
             failureThreshold: 5
           resources:
-            requests:
-              memory: "128Mi"
-              cpu: "100m"
-            limits:
-              memory: "256Mi"
-              cpu: "500m"
+            {{- toYaml .Values.modules.coding.resources | nindent 12 }}
+      nodeSelector:
+        pool: infra
       volumes:
         - name: workspace
           persistentVolumeClaim:
