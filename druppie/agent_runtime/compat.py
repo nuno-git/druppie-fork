@@ -584,15 +584,34 @@ def create_event_persister(
 
             elif event.type == "context_compressed":
                 phase = event.data.get("phase", "?")
+                tokens_before = event.data.get("tokens_before", 0)
                 tokens_after = event.data.get("tokens_after", 0)
                 turns_compressed = event.data.get("turns_compressed", 0)
+                summary_text = event.data.get("summary_text")
+                current_llm_call_id = getattr(tool_provider, "_llm_call_id", None)
+
                 logger.info(
                     "context_compressed",
                     agent_run_id=str(agent_run_id),
                     phase=phase,
+                    tokens_before=tokens_before,
                     tokens_after=tokens_after,
                     turns_compressed=turns_compressed,
                 )
+
+                from druppie.repositories import CompactionEventRepository
+                compaction_repo = CompactionEventRepository(execution_repo.db)
+                compaction_repo.create(
+                    session_id=session_id,
+                    agent_run_id=agent_run_id,
+                    llm_call_id=current_llm_call_id,
+                    phase=phase,
+                    tokens_before=tokens_before,
+                    tokens_after=tokens_after,
+                    turns_compressed=turns_compressed,
+                    summary_text=summary_text,
+                )
+                execution_repo.db.commit()
 
             elif event.type == "context_overflow":
                 logger.warning("Context overflow for agent_run %s", agent_run_id)

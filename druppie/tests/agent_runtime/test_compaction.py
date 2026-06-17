@@ -10,15 +10,7 @@ from druppie.agent_runtime.compaction import (
     CompactionConfig,
     CompactionState,
     MessageCompactor,
-    ToolResultMeta,
-    _extract_code_structures,
-    _extract_test_summary,
 )
-
-
-# ------------------------------------------------------------------
-# Fixtures and helpers
-# ------------------------------------------------------------------
 
 
 def _msg(role, content="", **kwargs):
@@ -47,7 +39,6 @@ def _tool_result(call_id, content):
 
 
 def _build_conversation(num_turns, tool_result_size=100):
-    """Build a conversation with system + user + N tool turns."""
     messages = [
         _msg("system", "You are a developer agent."),
         _msg("user", "Implement the feature."),
@@ -61,9 +52,25 @@ def _build_conversation(num_turns, tool_result_size=100):
     return messages
 
 
-# ------------------------------------------------------------------
-# Token estimation
-# ------------------------------------------------------------------
+def _make_agent():
+    from druppie.agent_runtime.definition import AgentDefinition
+    return AgentDefinition(
+        id="test",
+        name="Test Agent",
+        description="Test",
+        system_prompt="Test prompt",
+        llm_profile="standard",
+    )
+
+
+def _mock_llm(summary_text="Summary of conversation."):
+    async def llm(**kwargs):
+        return {
+            "choices": [{
+                "message": {"content": summary_text},
+            }],
+        }
+    return llm
 
 
 class TestEstimateTokens:
@@ -76,7 +83,6 @@ class TestEstimateTokens:
 
     def test_no_double_counting_tool_calls(self):
         compactor = MessageCompactor()
-        args_str = json.dumps({"path": "/a/b/c.py"})
         msg = _assistant_with_tool("read_file", {"path": "/a/b/c.py"})
         tokens_structured = compactor.estimate_tokens([msg])
 
@@ -92,11 +98,6 @@ class TestEstimateTokens:
         assert compactor.estimate_tokens(long) > compactor.estimate_tokens(short)
 
 
-# ------------------------------------------------------------------
-# Calibration
-# ------------------------------------------------------------------
-
-
 class TestCalibrate:
     def test_skips_small_token_count(self):
         compactor = MessageCompactor()
@@ -107,7 +108,7 @@ class TestCalibrate:
     def test_adjusts_ratio(self):
         compactor = MessageCompactor()
         msgs = [_msg("user", "a" * 1000)]
-        compactor.calibrate(200, msgs)  # 1000/200 = 5.0, not 4.0
+        compactor.calibrate(200, msgs)
         assert compactor.state.calibration_ratio != 4.0
         assert compactor.state.calibration_samples == 1
 
@@ -130,200 +131,36 @@ class TestCalibrate:
         assert abs(compactor.state.calibration_ratio - 4.0) < 0.5
 
 
-# ------------------------------------------------------------------
-# Content-aware summarization
-# ------------------------------------------------------------------
-
-
-class TestContentAwareSummarization:
-    def test_file_read_preserves_structures(self):
-        compactor = MessageCompactor()
-        content = """import os
-from flask import Flask
-
-class App:
-    pass
-
-def create_app():
-    pass
-
-@app.route('/api/users')
-def get_users():
-    pass
-""" + "# padding\n" * 100
-        result = compactor._summarize_file_read(content, "src/app.py")
-        assert "src/app.py" in result
-        assert "class App" in result
-        assert "def create_app" in result
-
-    def test_bash_preserves_errors(self):
-        compactor = MessageCompactor()
-        lines = ["$ npm test"] + ["ok line"] * 50 + ["ERROR: test_auth failed"] + ["ok"] * 10 + ["Tests: 9 passed, 1 failed"]
-        content = "\n".join(lines)
-        result = compactor._summarize_bash(content)
-        assert "ERROR" in result or "error" in result.lower()
-        assert "Last lines:" in result
-
-    def test_search_keeps_first_results(self):
-        compactor = MessageCompactor()
-        lines = [f"src/file_{i}.py:10: match" for i in range(30)]
-        content = "\n".join(lines)
-        result = compactor._summarize_search(content)
-        assert "30 result lines" in result
-        assert "15 more results" in result
-
-    def test_write_short_passes_through(self):
-        compactor = MessageCompactor()
-        content = '{"success": true}'
-        result = compactor._summarize_write(content)
-        assert result == content
-
-    def test_blind_truncate_fallback(self):
-        result = MessageCompactor._blind_truncate("a" * 1000, 100, 50)
-        assert len(result) < 1000
-        assert "truncated" in result
-
-
-# ------------------------------------------------------------------
-# Code structure extraction
-# ------------------------------------------------------------------
-
-
-class TestCodeStructures:
-    def test_python(self):
-        code = "class Foo:\n    pass\ndef bar():\n    pass\nimport os"
-        structs = _extract_code_structures(code, "app.py")
-        assert "class Foo" in structs
-        assert "def bar" in structs
-
-    def test_javascript(self):
-        code = "export default class App {}\nfunction helper() {}\nimport React from 'react'"
-        structs = _extract_code_structures(code, "app.tsx")
-        assert any("App" in s for s in structs)
-
-    def test_json_keys(self):
-        code = json.dumps({"name": "test", "version": "1.0", "scripts": {}})
-        structs = _extract_code_structures(code, "package.json")
-        assert any("name" in s for s in structs)
-
-    def test_routes(self):
-        code = "@app.route('/api/users')\ndef get_users(): pass"
-        structs = _extract_code_structures(code, "app.py")
-        assert any("/api/users" in s for s in structs)
-
-
-# ------------------------------------------------------------------
-# Test summary extraction
-# ------------------------------------------------------------------
-
-
-class TestTestSummary:
-    def test_passed_failed(self):
-        content = "some output\n10 passed, 2 failed\n"
-        result = _extract_test_summary(content)
-        assert "10" in result and "2" in result
-
-    def test_passing_only(self):
-        content = "output\n5 tests passed\n"
-        result = _extract_test_summary(content)
-        assert "5" in result
-
-    def test_no_match(self):
-        result = _extract_test_summary("no test output here")
-        assert result == ""
-
-
-# ------------------------------------------------------------------
-# Phase 2: Rich condensed summaries
-# ------------------------------------------------------------------
-
-
-class TestCondenseTurnGroup:
-    def test_basic_tool_call(self):
-        compactor = MessageCompactor()
-        group = [
-            _assistant_with_tool("read_file", {"path": "src/app.py"}, call_id="c1"),
-            _tool_result("c1", '{"success": true, "data": "file contents"}'),
+class TestSplitHeaderBody:
+    def test_basic_split(self):
+        msgs = [
+            _msg("system", "sys"),
+            _msg("user", "task"),
+            _assistant_with_tool("read", {}, call_id="c1"),
+            _tool_result("c1", "result"),
         ]
-        line = compactor._condense_turn_group(group)
-        assert "read_file(src/app.py)" in line
-        assert "→ok" in line
+        header, body = MessageCompactor._split_header_body(msgs)
+        assert len(header) == 2
+        assert len(body) == 2
+        assert header[0]["role"] == "system"
+        assert header[1]["role"] == "user"
 
-    def test_error_detection(self):
-        compactor = MessageCompactor()
-        group = [
-            _assistant_with_tool("bash", {"command": "npm test"}, call_id="c1"),
-            _tool_result("c1", '{"success": false, "error": "tests failed"}'),
-        ]
-        line = compactor._condense_turn_group(group)
-        assert "→err" in line
+    def test_no_body(self):
+        msgs = [_msg("system", "sys"), _msg("user", "task")]
+        header, body = MessageCompactor._split_header_body(msgs)
+        assert len(header) == 2
+        assert len(body) == 0
 
-    def test_with_metadata_annotation(self):
-        compactor = MessageCompactor()
-        compactor.state.tool_result_metadata["c1"] = ToolResultMeta(
-            tool_name="read_file",
-            line_count=120,
-            structures=["class App", "def create_app"],
-        )
-        group = [
-            _assistant_with_tool("read_file", {"path": "src/app.py"}, call_id="c1"),
-            _tool_result("c1", "file contents"),
-        ]
-        line = compactor._condense_turn_group(group)
-        assert "120 lines" in line
-        assert "class App" in line
-
-    def test_user_message(self):
-        compactor = MessageCompactor()
-        line = compactor._condense_turn_group([_msg("user", "Do something")])
-        assert "[user]" in line
-
-    def test_system_nudge_skipped(self):
-        compactor = MessageCompactor()
-        line = compactor._condense_turn_group([_msg("user", "[SYSTEM] Call done()")])
-        assert line is None
-
-
-# ------------------------------------------------------------------
-# Adaptive keep_recent
-# ------------------------------------------------------------------
-
-
-class TestAdaptiveKeepRecent:
-    def test_low_pressure(self):
-        compactor = MessageCompactor(CompactionConfig(keep_recent=6, adaptive_recent=True))
-        result = compactor._compute_keep_recent(total_groups=20, token_ratio=0.3)
-        assert result == 10  # base + 4
-
-    def test_medium_pressure(self):
-        compactor = MessageCompactor(CompactionConfig(keep_recent=6, adaptive_recent=True))
-        result = compactor._compute_keep_recent(total_groups=20, token_ratio=0.7)
-        assert result == 6  # base
-
-    def test_high_pressure(self):
-        compactor = MessageCompactor(CompactionConfig(keep_recent=6, adaptive_recent=True))
-        result = compactor._compute_keep_recent(total_groups=20, token_ratio=0.9)
-        assert result == 4  # max(3, base-2)
-
-    def test_disabled(self):
-        compactor = MessageCompactor(CompactionConfig(keep_recent=6, adaptive_recent=False))
-        result = compactor._compute_keep_recent(total_groups=20, token_ratio=0.3)
-        assert result == 6
-
-    def test_clamped_to_total(self):
-        compactor = MessageCompactor(CompactionConfig(keep_recent=6, adaptive_recent=True))
-        result = compactor._compute_keep_recent(total_groups=5, token_ratio=0.3)
-        assert result == 3  # min(10, 5-2)
-
-
-# ------------------------------------------------------------------
-# Full compression pipeline
-# ------------------------------------------------------------------
+    def test_assistant_first(self):
+        msgs = [_msg("assistant", "hello")]
+        header, body = MessageCompactor._split_header_body(msgs)
+        assert len(header) == 0
+        assert len(body) == 1
 
 
 class TestCompress:
     @pytest.mark.asyncio
-    async def test_no_compression_under_threshold(self):
+    async def test_skip_under_threshold(self):
         compactor = MessageCompactor(CompactionConfig(
             max_context_tokens=1_000_000,
         ))
@@ -332,53 +169,117 @@ class TestCompress:
         assert result == msgs
 
     @pytest.mark.asyncio
-    async def test_phase1_triggers(self):
+    async def test_full_replacement_with_llm(self):
         compactor = MessageCompactor(CompactionConfig(
             max_context_tokens=500,
-            phase1_threshold=0.1,
-            phase2_threshold=0.99,
-        ))
-        msgs = _build_conversation(10, tool_result_size=200)
-        result = await compactor.compress(msgs, None, _make_agent(), None)
-        assert len(str(result)) < len(str(msgs))
-
-    @pytest.mark.asyncio
-    async def test_phase2_triggers(self):
-        compactor = MessageCompactor(CompactionConfig(
-            max_context_tokens=300,
-            phase1_threshold=0.01,
-            phase2_threshold=0.02,
-            phase3_threshold=0.99,
+            summarization_threshold=0.05,
         ))
         msgs = _build_conversation(15, tool_result_size=200)
-        result = await compactor.compress(msgs, None, _make_agent(), None)
+        result = await compactor.compress(msgs, _mock_llm("Did stuff."), _make_agent(), None)
         text = str(result)
-        assert "COMPRESSED HISTORY" in text
+        assert "[CONVERSATION SUMMARY]" in text
+        assert "Did stuff." in text
+        assert len(result) <= 3
 
     @pytest.mark.asyncio
-    async def test_metadata_persists(self):
+    async def test_header_preserved(self):
         compactor = MessageCompactor(CompactionConfig(
             max_context_tokens=500,
-            phase1_threshold=0.01,
-            phase2_threshold=0.99,
-            content_aware=True,
+            summarization_threshold=0.05,
         ))
-        python_content = "class Foo:\n    pass\n" + "# line\n" * 100
-        msgs = [
-            _msg("system", "system prompt"),
-            _msg("user", "do task"),
+        msgs = _build_conversation(15, tool_result_size=200)
+        result = await compactor.compress(msgs, _mock_llm("Summary."), _make_agent(), None)
+        assert result[0]["role"] == "system"
+        assert result[1]["role"] == "user"
+        assert result[1]["content"] == "Implement the feature."
+        assert result[2]["role"] == "user"
+        assert "[CONVERSATION SUMMARY]" in result[2]["content"]
+
+    @pytest.mark.asyncio
+    async def test_emits_event_on_summarize(self):
+        events = []
+
+        class MockEmitter:
+            def emit(self, event):
+                events.append(event)
+
+        compactor = MessageCompactor(CompactionConfig(
+            max_context_tokens=500,
+            summarization_threshold=0.05,
+        ))
+        msgs = _build_conversation(15, tool_result_size=200)
+        await compactor.compress(msgs, _mock_llm("Summary."), _make_agent(), MockEmitter())
+
+        assert len(events) == 1
+        assert events[0].type == "context_compressed"
+        assert events[0].data["phase"] == "summarized"
+        assert events[0].data["tokens_before"] > 0
+        assert "summary_text" in events[0].data
+
+    @pytest.mark.asyncio
+    async def test_fallback_when_llm_fails(self):
+        async def failing_llm(**kwargs):
+            raise RuntimeError("API error")
+
+        compactor = MessageCompactor(CompactionConfig(
+            max_context_tokens=500,
+            summarization_threshold=0.05,
+        ))
+        msgs = _build_conversation(15, tool_result_size=200)
+        result = await compactor.compress(msgs, failing_llm, _make_agent(), None)
+        text = str(result)
+        assert "[CONVERSATION SUMMARY" in text
+        assert len(result) <= 3
+
+    @pytest.mark.asyncio
+    async def test_fallback_when_no_llm(self):
+        events = []
+
+        class MockEmitter:
+            def emit(self, event):
+                events.append(event)
+
+        compactor = MessageCompactor(CompactionConfig(
+            max_context_tokens=500,
+            summarization_threshold=0.05,
+        ))
+        msgs = _build_conversation(15, tool_result_size=200)
+        result = await compactor.compress(msgs, None, _make_agent(), MockEmitter())
+
+        assert len(events) == 1
+        assert events[0].data["phase"] == "summarized_fallback"
+        assert len(result) <= 3
+
+    @pytest.mark.asyncio
+    async def test_no_body_unchanged(self):
+        compactor = MessageCompactor(CompactionConfig(
+            max_context_tokens=10,
+            summarization_threshold=0.01,
+        ))
+        msgs = [_msg("system", "sys"), _msg("user", "task")]
+        result = await compactor.compress(msgs, _mock_llm(), _make_agent(), None)
+        assert result == msgs
+
+
+class TestSerializeBody:
+    def test_includes_all_roles(self):
+        compactor = MessageCompactor()
+        body = [
+            _msg("assistant", "hello"),
+            _tool_result("c1", "result"),
+            _msg("assistant", "world"),
         ]
-        for i in range(10):
-            cid = f"call_{i}"
-            msgs.append(_assistant_with_tool("coding_read_file", {"path": f"file_{i}.py"}, call_id=cid))
-            msgs.append(_tool_result(cid, python_content))
-        await compactor.compress(msgs, None, _make_agent(), None)
-        assert len(compactor.state.tool_result_metadata) > 0
+        text = compactor._serialize_body(body)
+        assert "[assistant]" in text
+        assert "[tool]" in text
+        assert "hello" in text
+        assert "result" in text
 
-
-# ------------------------------------------------------------------
-# Tool result truncation (static)
-# ------------------------------------------------------------------
+    def test_caps_at_max_input_chars(self):
+        compactor = MessageCompactor(CompactionConfig(max_input_chars=50))
+        body = [_msg("user", "x" * 500)]
+        text = compactor._serialize_body(body)
+        assert len(text) <= 50
 
 
 class TestTruncateToolResult:
@@ -395,41 +296,3 @@ class TestTruncateToolResult:
         content = "x" * 60000
         result = MessageCompactor.truncate_tool_result(content)
         assert len(result) < 10000
-
-
-# ------------------------------------------------------------------
-# Group into turns
-# ------------------------------------------------------------------
-
-
-class TestGroupIntoTurns:
-    def test_basic_grouping(self):
-        msgs = [
-            _msg("system", "sys"),
-            _msg("user", "task"),
-            _assistant_with_tool("read", {}, call_id="c1"),
-            _tool_result("c1", "result"),
-        ]
-        groups = MessageCompactor._group_into_turns(msgs)
-        assert len(groups) == 3  # system, user, assistant+tool
-
-    def test_standalone_messages(self):
-        msgs = [_msg("user", "hello"), _msg("user", "world")]
-        groups = MessageCompactor._group_into_turns(msgs)
-        assert len(groups) == 2
-
-
-# ------------------------------------------------------------------
-# Helpers
-# ------------------------------------------------------------------
-
-
-def _make_agent():
-    from druppie.agent_runtime.definition import AgentDefinition
-    return AgentDefinition(
-        id="test",
-        name="Test Agent",
-        description="Test",
-        system_prompt="Test prompt",
-        llm_profile="standard",
-    )
