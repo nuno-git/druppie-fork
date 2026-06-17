@@ -382,6 +382,46 @@ class RevertService:
                 subagents_tc.result = None
                 subagents_tc.status = "executing"
 
+                from druppie.db.models.llm_call import LlmCall
+                from druppie.db.models.llm_retry import LlmRetry
+                from druppie.db.models.tool_call_normalization import ToolCallNormalization
+
+                cutoff = subagents_tc.created_at
+
+                later_tc_ids = [
+                    tc.id for tc in
+                    self.execution_repo.db.query(ToolCallModel)
+                    .filter(
+                        ToolCallModel.agent_run_id == current_id,
+                        ToolCallModel.created_at > cutoff,
+                    )
+                    .all()
+                ]
+                if later_tc_ids:
+                    self.execution_repo.db.query(ToolCallNormalization).filter(
+                        ToolCallNormalization.tool_call_id.in_(later_tc_ids)
+                    ).delete(synchronize_session="fetch")
+                    self.execution_repo.db.query(ToolCallModel).filter(
+                        ToolCallModel.id.in_(later_tc_ids)
+                    ).delete(synchronize_session="fetch")
+
+                later_llm_ids = [
+                    lc.id for lc in
+                    self.execution_repo.db.query(LlmCall)
+                    .filter(
+                        LlmCall.agent_run_id == current_id,
+                        LlmCall.created_at > cutoff,
+                    )
+                    .all()
+                ]
+                if later_llm_ids:
+                    self.execution_repo.db.query(LlmRetry).filter(
+                        LlmRetry.llm_call_id.in_(later_llm_ids)
+                    ).delete(synchronize_session="fetch")
+                    self.execution_repo.db.query(LlmCall).filter(
+                        LlmCall.id.in_(later_llm_ids)
+                    ).delete(synchronize_session="fetch")
+
             parent.status = AgentRunStatus.RUNNING.value
             parent.completed_at = None
 

@@ -1118,30 +1118,6 @@ class Orchestrator:
 
             parent_context = self.build_project_context(session_id)
 
-            if parent_run.pending_user_context:
-                ctx = parent_run.pending_user_context
-                self.execution_repo.clear_pending_user_context(parent_run.id)
-                if parent_context is not None:
-                    parent_context["user_context"] = ctx
-                from druppie.db.models.resume_context_event import ResumeContextEvent
-                from druppie.db.models.llm_call import LlmCall
-                llm_call_count = db.query(LlmCall).filter_by(agent_run_id=parent_run.id).count()
-                next_seq = self.execution_repo.get_next_sequence_number(session_id)
-                self.execution_repo.create_message(
-                    session_id=session_id,
-                    role="user",
-                    content=ctx,
-                    agent_run_id=parent_run.id,
-                    sequence_number=next_seq,
-                )
-                db.add(ResumeContextEvent(
-                    session_id=session_id,
-                    agent_run_id=parent_run.id,
-                    content=ctx,
-                    llm_call_index=llm_call_count,
-                ))
-                self.execution_repo.commit()
-
             parent_agent = Agent(parent_run.agent_id, db=db)
             parent_result = await parent_agent.continue_run(
                 session_id=session_id,
@@ -1270,12 +1246,32 @@ class Orchestrator:
         )
 
         if contexts:
+            from druppie.db.models.resume_context_event import ResumeContextEvent
+            from druppie.db.models.llm_call import LlmCall
+
             leaf_ids = {str(l.id) for l in paused_leaves}
             all_paused = self.execution_repo.get_all_paused_user_runs(session_id)
+            db = self.execution_repo.db
             for run in all_paused:
                 run_id_str = str(run.id)
                 if run_id_str not in leaf_ids and run_id_str in contexts:
-                    self.execution_repo.set_pending_user_context(run.id, contexts[run_id_str])
+                    ctx = contexts[run_id_str]
+                    self.execution_repo.set_pending_user_context(run.id, ctx)
+                    llm_call_count = db.query(LlmCall).filter_by(agent_run_id=run.id).count()
+                    next_seq = self.execution_repo.get_next_sequence_number(session_id)
+                    self.execution_repo.create_message(
+                        session_id=session_id,
+                        role="user",
+                        content=ctx,
+                        agent_run_id=run.id,
+                        sequence_number=next_seq,
+                    )
+                    db.add(ResumeContextEvent(
+                        session_id=session_id,
+                        agent_run_id=run.id,
+                        content=ctx,
+                        llm_call_index=llm_call_count,
+                    ))
             self.execution_repo.commit()
 
         if len(paused_leaves) == 1:
