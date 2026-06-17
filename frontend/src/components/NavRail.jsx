@@ -23,6 +23,7 @@ import {
   Package,
   BookOpen,
   Boxes,
+  Rocket,
 } from 'lucide-react'
 
 import { useAuth } from '../App'
@@ -206,6 +207,7 @@ const NavRail = () => {
       <NavRailItem to="/tools/mcp" icon={Wrench} label="MCP Tools" active={isActive('/tools/mcp')} />
       <NavRailItem to="/tools/infrastructure" icon={Server} label="Infrastructure" active={isActive('/tools/infrastructure')} />
       <NavRailItem to="/tools/cache" icon={Package} label="Dep Cache" active={isActive('/tools/cache')} />
+      <NavRailItem to="/deployments" icon={Rocket} label="Deployments" active={isActive('/deployments')} />
 
       {/* Doc Portal */}
       <div className='mt-1 pt-1 border-t border-gray-800 w-8'></div>

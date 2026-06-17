@@ -13,12 +13,13 @@ data:
   KEYCLOAK_REALM: "druppie"
   KEYCLOAK_CLIENT_ID: "druppie-backend"
   KEYCLOAK_SERVER_URL: "http://{{ include "druppie.fullname" . }}-keycloak:8080"
-  KEYCLOAK_ISSUER_URL: "{{ include "druppie.externalBaseUrl" . }}"
+  KEYCLOAK_ISSUER_URL: "{{ include "druppie.keycloakExternalUrl" . }}{{ if and .Values.global.ingress.enabled (eq (include "druppie.scheme" .) "https") }}:443{{ end }}"
 
   # Gitea
   GITEA_INTERNAL_URL: "http://{{ include "druppie.fullname" . }}-gitea:3000"
-  GITEA_URL: "{{ include "druppie.externalBaseUrl" . }}/git"
+  GITEA_URL: "{{ include "druppie.giteaExternalUrl" . }}"
   GITEA_ORG: {{ .Values.gitea.org | quote }}
+  GITEA_USER: {{ .Values.gitea.adminUser | quote }}
   GITEA_ADMIN_USER: {{ .Values.gitea.adminUser | quote }}
   GITEA_ADMIN_EMAIL: {{ .Values.gitea.adminEmail | quote }}
 
@@ -26,6 +27,10 @@ data:
   BACKEND_URL: "http://{{ include "druppie.fullname" . }}-backend:8000"
   WORKSPACE_PATH: "/app/workspace"
   USE_MCP_MICROSERVICES: "true"
+  {{- if not .Values.global.ingress.enabled }}
+  # URL for compose_up apps to reach the backend (Docker-reachable, not K8s DNS)
+  COMPOSE_DRUPPIE_URL: {{ (.Values.backend.composeDruppieUrl | default (printf "http://172.25.0.1:%d" (int .Values.backend.nodePort))) | quote }}
+  {{- end }}
 
   # MCP module URLs
   MCP_CODING_URL: "http://{{ include "druppie.fullname" . }}-module-coding:9001"
@@ -36,9 +41,11 @@ data:
   MCP_REGISTRY_URL: "http://{{ include "druppie.fullname" . }}-module-registry:9007"
   MCP_LLM_URL: "http://{{ include "druppie.fullname" . }}-module-llm:{{ .Values.modules.llm.port }}"
   MCP_VISION_URL: "http://{{ include "druppie.fullname" . }}-module-vision:{{ .Values.modules.vision.port }}"
+  MCP_DATA_ACCESS_URL: "http://{{ include "druppie.fullname" . }}-module-data-access:9010"
+  LAYOUT_SERVICE_URL: "http://{{ include "druppie.fullname" . }}-layout-service:8090"
 
   # CORS
-  CORS_ORIGINS: "{{ include "druppie.externalBaseUrl" . }}"
+  CORS_ORIGINS: "{{ include "druppie.frontendExternalUrl" . }}"
 
   # LLM defaults
   LLM_PROVIDER: {{ .Values.backend.llm.provider | quote }}
@@ -52,12 +59,19 @@ data:
   # Sandbox
   DRUPPIE_SANDBOX_RUNTIME: {{ .Values.sandbox.runtime | quote }}
   DRUPPIE_SANDBOX_IMAGE: {{ .Values.sandbox.image | quote }}
+  DRUPPIE_SANDBOX_USER: {{ .Values.global.instance | quote }}
+  DRUPPIE_SANDBOX_NETWORK: "{{ .Values.global.instance }}-sandbox-net"
+  DRUPPIE_SANDBOX_INET_NETWORK: "{{ .Values.global.instance }}-sandbox-inet"
+  DRUPPIE_SANDBOX_MODULES_NETWORK: "{{ .Values.global.instance }}-sandbox-modules"
+  DRUPPIE_SANDBOX_CACHE_VOLUME: "{{ .Values.global.instance }}_sandbox_dep_cache"
   DRUPPIE_DOCKER_MEMORY_LIMIT: {{ .Values.sandbox.memoryLimit | quote }}
   DRUPPIE_DOCKER_CPU_LIMIT: {{ .Values.sandbox.cpuLimit | quote }}
+  WORKSPACE_ROOT: "/workspaces"
+  DOCKER_NETWORK: "{{ .Values.global.instance }}-network"
 
   # Frontend Vite
-  VITE_API_URL: "{{ include "druppie.externalBaseUrl" . }}"
-  VITE_KEYCLOAK_URL: "{{ include "druppie.externalBaseUrl" . }}"
+  VITE_API_URL: "{{ include "druppie.backendExternalUrl" . }}"
+  VITE_KEYCLOAK_URL: "{{ include "druppie.keycloakExternalUrl" . }}"
   VITE_KEYCLOAK_REALM: {{ .Values.frontend.vite.keycloakRealm | quote }}
   VITE_KEYCLOAK_CLIENT_ID: {{ .Values.frontend.vite.keycloakClientId | quote }}
-  VITE_GITEA_URL: "{{ include "druppie.externalBaseUrl" . }}/git"
+  VITE_GITEA_URL: "{{ include "druppie.giteaExternalUrl" . }}"

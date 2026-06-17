@@ -1,0 +1,198 @@
+# values-hetzner.yaml — Hetzner K3s multi-node deployment
+# Usage: helm upgrade druppie ./helm/druppie -n druppie \
+#          -f helm/druppie/values-hetzner.yaml \
+#          -f helm/druppie/values-hetzner.secrets.yaml \
+#          --wait
+
+global:
+  instance: druppie
+  imagePullPolicy: Always
+  imageRegistry: "registry.druppie.rijnland.dev/druppie"
+  domain: "druppie.rijnland.dev"  # Production domain with TLS
+  subdomains:
+    keycloak: "auth.druppie.rijnland.dev"
+    gitea: "git.druppie.rijnland.dev"
+  ingress:
+    enabled: true
+    className: traefik
+    port: 443
+    tls:
+      enabled: true
+      secretName: druppie-tls
+
+# PostgreSQL (StatefulSets — CNPG is Phase 1 Task 6)
+postgresql:
+  image: postgres:15-alpine
+  druppie:
+    database: druppie
+    username: druppie
+    password: druppie_secret
+    port: 5432
+    storage: 5Gi
+  keycloak:
+    database: keycloak
+    username: keycloak
+    password: keycloak_secret
+    port: 5432
+    storage: 5Gi
+  gitea:
+    database: gitea
+    username: gitea
+    password: gitea_secret
+    port: 5432
+    storage: 5Gi
+
+# Keycloak
+keycloak:
+  image: quay.io/keycloak/keycloak:24.0
+  adminUser: admin
+  adminPassword: admin
+  hostname: ""
+  nodePort: 30002
+  replicaCount: 1
+  resources:
+    requests:
+      memory: "512Mi"
+      cpu: "500m"
+    limits:
+      memory: "2Gi"
+      cpu: "2000m"
+
+# Gitea (also hosts Container Registry per ADR-001 §4.8)
+gitea:
+  image: gitea/gitea:1.21
+  adminUser: gitea_admin
+  adminPassword: GiteaAdmin123
+  adminEmail: admin@druppie.local
+  org: druppie
+  sshPort: 2222
+  httpPort: 3000
+  nodePort: 30003
+  storage: 10Gi
+  replicaCount: 1
+  resources:
+    requests:
+      memory: "512Mi"
+      cpu: "250m"
+    limits:
+      memory: "1Gi"
+      cpu: "1000m"
+
+# Backend
+backend:
+  image:
+    repository: druppie-backend
+    tag: latest
+  port: 8000
+  workers: "2"
+  nodePort: 30000
+  composeDruppieUrl: "http://172.17.0.1:30000"   # Docker bridge gateway on Hetzner app nodes
+  replicaCount: 1
+  devMode: false
+  dockerSocket:
+    enabled: false                  # Docker socket only needed on infra nodes (module-coding/module-docker)
+  resources:
+    requests:
+      memory: "1Gi"
+      cpu: "500m"
+    limits:
+      memory: "3Gi"
+      cpu: "2000m"
+
+# Frontend
+frontend:
+  image:
+    repository: druppie-frontend
+    tag: latest
+  port: 5173
+  nodePort: 30001
+  replicaCount: 1
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "250m"
+    limits:
+      memory: "512Mi"
+      cpu: "1000m"
+
+# Init
+init:
+  enabled: true
+  image:
+    repository: druppie-init
+    tag: latest
+
+# Secrets — populated from values-hetzner.secrets.yaml (gitignored)
+secrets:
+  zaiApiKey: ""
+  deepinfraApiKey: ""
+  internalApiKey: ""
+  giteaToken: ""
+  moduleApiToken: ""
+
+autoscaling:
+  backend:
+    enabled: true
+    minReplicas: 3               # Proactive baseline — 3 pods × 4 workers = 12 workers always ready
+    maxReplicas: 8                 # 8 pods × 1Gi req = 8Gi → fills 1 CPX32, triggers 2nd node
+    targetCPUUtilizationPercentage: 70
+  frontend:
+    enabled: true
+    minReplicas: 1
+    maxReplicas: 8
+    targetCPUUtilizationPercentage: 70
+
+# KEDA session-based autoscaling (replaces backend CPU HPA)
+keda:
+  enabled: true
+  pollingInterval: 5             # Check DB every 5s (was 15s) — 3x faster reaction
+  cooldownPeriod: 120            # 2 min before scale-down starts (was 5 min)
+  sslmode: disable
+  backend:
+    query: "SELECT COUNT(*) FROM agent_runs WHERE status = 'running'"
+    targetQueryValue: "10"
+    activationTargetQueryValue: "3"
+    targetCPUUtilization: "55"
+
+# Phase 1: No CNPG yet (Task 6)
+cnpg:
+  enabled: true
+  monitoring:
+    enabled: false
+  druppie:
+    instances: 1
+    storage: 20Gi
+  keycloak:
+    instances: 1
+    storage: 5Gi
+  gitea:
+    instances: 1
+    storage: 5Gi
+
+highAvailability:
+  pdb:
+    enabled: false
+  antiAffinity:
+    enabled: false
+
+certManager:
+  enabled: true
+  email: "admin@rijnland.dev"
+
+persistence:
+  enabled: true
+  storageClass: "local-path"
+  workspace:
+    size: 30Gi
+  dataset:
+    size: 5Gi
+  sandboxBundles:
+    size: 30Gi
+
+nfs:
+  enabled: true
+  storageClassName: nfs-workspace
+  storageClass: "hcloud-volumes"
+  storageSize: 30Gi
+  nodeSelector:
+    pool: infra

@@ -6,7 +6,7 @@ metadata:
     {{- include "druppie.labels" . | nindent 4 }}
     app.kubernetes.io/component: backend
 spec:
-  replicas: 1
+  replicas: {{ .Values.backend.replicaCount }}
   selector:
     matchLabels:
       {{- include "druppie.selectorLabels" . | nindent 6 }}
@@ -16,7 +16,26 @@ spec:
       labels:
         {{- include "druppie.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: backend
+      annotations:
+        cluster-autoscaler.kubernetes.io/safe-to-evict: "true"
     spec:
+      {{- if .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml .Values.global.imagePullSecrets | nindent 8 }}
+      {{- end }}
+      terminationGracePeriodSeconds: 60
+      {{- if .Values.highAvailability.antiAffinity.enabled }}
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    {{- include "druppie.selectorLabels" . | nindent 20 }}
+                    app.kubernetes.io/component: backend
+                topologyKey: kubernetes.io/hostname
+      {{- end }}
       initContainers:
         - name: wait-for-druppie-db
           image: {{ .Values.postgresql.image }}
@@ -24,7 +43,11 @@ spec:
             - sh
             - -c
             - |
+              {{- if .Values.cnpg.enabled }}
+              until pg_isready -h {{ include "druppie.fullname" . }}-druppie-db-rw -p 5432 -U {{ .Values.postgresql.druppie.username }}; do
+              {{- else }}
               until pg_isready -h {{ include "druppie.fullname" . }}-druppie-db -p 5432 -U {{ .Values.postgresql.druppie.username }}; do
+              {{- end }}
                 echo "Waiting for druppie-db..."
                 sleep 2
               done
@@ -73,6 +96,15 @@ spec:
         - name: backend
           image: {{ include "druppie.image" (dict "Values" .Values "image" .Values.backend.image) }}
           imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          command:
+            - uvicorn
+            - druppie.api.main:app
+            - --host
+            - "0.0.0.0"
+            - --port
+            - {{ .Values.backend.port | quote }}
+            - --workers
+            - {{ .Values.backend.workers | default "2" | quote }}
           envFrom:
             - configMapRef:
                 name: {{ include "druppie.fullname" . }}-config
@@ -114,11 +146,16 @@ spec:
             - name: docker-sock
               mountPath: /var/run/docker.sock
             {{- end }}
+            {{- if .Values.secrets.githubAppPrivateKey }}
+            - name: github-app-key
+              mountPath: /app/secrets
+              readOnly: true
+            {{- end }}
           livenessProbe:
             httpGet:
               path: /health
               port: {{ .Values.backend.port }}
-            initialDelaySeconds: 30
+            initialDelaySeconds: 120    # 50 workers need ~60-90s to start on 1 CPU
             periodSeconds: 10
             timeoutSeconds: 5
             failureThreshold: 10
@@ -126,7 +163,7 @@ spec:
             httpGet:
               path: /health
               port: {{ .Values.backend.port }}
-            initialDelaySeconds: 15
+            initialDelaySeconds: 60     # Wait for workers to bind port
             periodSeconds: 10
             timeoutSeconds: 5
             failureThreshold: 10
@@ -144,4 +181,12 @@ spec:
           hostPath:
             path: /var/run/docker.sock
             type: Socket
+        {{- end }}
+        {{- if .Values.secrets.githubAppPrivateKey }}
+        - name: github-app-key
+          secret:
+            secretName: {{ include "druppie.fullname" . }}-github-app-key
+            items:
+              - key: github-app-private-key.pem
+                path: github-app-private-key.pem
         {{- end }}

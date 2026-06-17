@@ -1,0 +1,50 @@
+{{- if .Values.cnpg.enabled }}
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: {{ include "druppie.fullname" . }}-druppie-db
+  labels:
+    {{- include "druppie.labels" . | nindent 4 }}
+    app.kubernetes.io/component: druppie-db
+spec:
+  imageName: ghcr.io/cloudnative-pg/postgresql:15-standard-bookworm
+  instances: {{ .Values.cnpg.druppie.instances | default 3 }}
+  primaryUpdateStrategy: unsupervised
+
+  superuserSecret:
+    name: {{ include "druppie.fullname" . }}-druppie-db-superuser
+
+  enableSuperuserAccess: true
+
+  postgresql:
+    parameters:
+      shared_buffers: "512MB"
+      work_mem: "16MB"
+      effective_cache_size: "1536MB"
+      random_page_cost: "1.1"
+      max_connections: "100"
+
+  bootstrap:
+    initdb:
+      database: {{ .Values.postgresql.druppie.database | quote }}
+      owner: {{ .Values.postgresql.druppie.username | quote }}
+      postInitSQL:
+        - create extension if not exists pg_stat_statements
+      postInitApplicationSQL:
+        - ALTER USER {{ .Values.postgresql.druppie.username }} WITH PASSWORD '{{ .Values.postgresql.druppie.password }}'
+
+  storage:
+    size: {{ .Values.cnpg.druppie.storage | default "20Gi" }}
+    {{- if .Values.persistence.storageClass }}
+    storageClass: {{ .Values.persistence.storageClass | quote }}
+    {{- end }}
+
+  resources:
+    requests:
+      memory: "512Mi"
+      cpu: "250m"
+    limits:
+      memory: "2Gi"
+      cpu: "2000m"
+{{- end }}

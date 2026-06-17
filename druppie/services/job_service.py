@@ -437,6 +437,7 @@ class JobService:
             session_id,
             run_session_task(session_id, _execute, "job_execution"),
             name=f"job_execution-{session_id}",
+            skip_lock=True,
         )
 
 
@@ -609,6 +610,7 @@ class JobScheduler:
             session_id,
             run_session_task(session_id, _execute, "job_execution"),
             name=f"job_execution-{session_id}",
+            skip_lock=True,
         )
 
     def _should_run(self, definition: JobDefinitionDetail, now: datetime) -> tuple[bool, datetime | None]:

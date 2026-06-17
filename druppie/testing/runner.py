@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -565,6 +566,15 @@ class TestRunner:
         self._db.flush()
 
         if execute and test.message:
+            # Pre-flight: warn if DEEPINFRA_API_KEY is missing (translation
+            # will fail for non-English sessions, producing confusing errors)
+            if not os.getenv("DEEPINFRA_API_KEY"):
+                logger.warning(
+                    "DEEPINFRA_API_KEY is not set — test '%s' may fail if the "
+                    "message is non-English. Set DEEPINFRA_API_KEY in .env to "
+                    "enable translation.", test.name,
+                )
+
             # Phase 2: Execute real agents
             hitl_profile: HITLProfile | None = None
             if hitl_name == "inline" and isinstance(test.hitl, HITLProfile):
@@ -588,7 +598,14 @@ class TestRunner:
                     session_id=continue_session_id,
                 )
             except Exception as e:
-                execution_error = f"{type(e).__name__}: {e}"
+                from druppie.core.translation import TranslationNotAvailableError
+                if isinstance(e, TranslationNotAvailableError):
+                    execution_error = (
+                        f"Translation failed: DEEPINFRA_API_KEY is not configured. "
+                        f"Set it in .env to run tests with non-English messages."
+                    )
+                else:
+                    execution_error = f"{type(e).__name__}: {e}"
                 logger.error("Agent execution failed: test=%s error=%s",
                              test.name, execution_error, exc_info=True)
 

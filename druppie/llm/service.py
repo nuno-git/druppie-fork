@@ -44,6 +44,7 @@ class LLMService:
         "deepinfra": "DEEPINFRA_API_KEY",
         "azure_foundry": "FOUNDRY_API_KEY",
         "ollama": None,
+        "mock": None,
     }
 
     def __init__(self):
@@ -88,6 +89,13 @@ class LLMService:
 
         provider = self.get_provider()
 
+        if provider == "mock":
+            from .mock_provider import MockLLM
+
+            self._llm = MockLLM()
+            logger.info("llm_initialized", provider="mock", model="mock/model")
+            return self._llm
+
         # All providers use LiteLLM
         self._llm = ChatLiteLLM(provider=provider)
 
@@ -114,6 +122,13 @@ class LLMService:
             raise LLMConfigurationError(
                 "litellm is not installed. Install it with: pip install litellm"
             )
+
+        provider = os.getenv("LLM_PROVIDER", "zai").lower()
+        if provider == "mock":
+            from .mock_provider import MockLLM
+
+            logger.info("llm_created_for_agent", agent_id=agent_def.id, provider="mock")
+            return MockLLM(model=f"mock/{agent_def.id}")
 
         resolved = resolve_model(agent_def)
 

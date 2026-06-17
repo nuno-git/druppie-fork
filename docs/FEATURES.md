@@ -18,7 +18,7 @@ Because all actions are tool calls, every action can be logged, inspected, and g
 
 ## Agent Pipeline
 
-Thirteen agents are defined. Twelve are functional; one is a stub.
+Fourteen agents are defined. Thirteen are functional; one is a stub.
 
 ### Functional Agents
 
@@ -36,6 +36,7 @@ Thirteen agents are defined. Twelve are functional; one is a stub.
 | **Update Core Builder** | Implements Druppie core changes | Delegates coding to a dual-repo sandbox via `execute_coding_task` with the `druppie-core-builder` sandbox agent. The sandbox clones Druppie's GitHub repo into `/workspace/druppie-core/` and the project repo (with FD/TD) into `/workspace/project-<name>/`. Creates a PR targeting `colab-dev` on GitHub. The `done()` tool requires approval from a user with the `developer` role — the reviewer merges the PR on GitHub before approving. Max 100 iterations. |
 | **Developer** | Writes and modifies code | Implements features in git-managed workspaces. Handles branch creation, file writes, commits, pull requests, and merges. Can delegate to sandbox agents via `execute_coding_task`. For `create_project`, works on main; for `update_project`, works on feature branches. Max 100 iterations. |
 | **Deployer** | Builds and deploys via Docker | Clones from git, builds Docker images, runs containers with auto-assigned ports (9100-9199). Verifies health via container logs. For preview deploys, asks the user for feedback before finalizing. Max 100 iterations. |
+| **Product Owner** | Answers backlog questions | Reads the backlog / work items (user stories, bugs, tasks, epics) of the configured Azure DevOps project via the read-only `azuredevops` MCP and answers the user in chat. Read-only, single project — cannot create/edit work items or see any other project. General chat only. Max 50 iterations. |
 | **Reviewer** | Code review | Reviews code for quality, security, and best practices. |
 | **Tester** | Testing | Writes and runs tests to validate implementations. |
 | **Summarizer** | Creates completion messages | Reads all previous agent summaries and produces a concise, user-friendly message. Always the final step. Max 5 iterations. |
@@ -793,6 +794,24 @@ The dashboards goal is to provide an overview of platform activity. This page is
 
 ---
 
+## Deployments Dashboard
+
+The **Deployments page** (`/deployments`) provides visibility into deployed applications managed by the platform. It is available to all authenticated users.
+
+- **User-scoped**: Non-admin users see only their own deployments. Admins see all.
+- **Stats row**: Total containers, running, stopped, unhealthy counts at a glance.
+- **Search**: Filter deployments by container name, image, or project.
+- **Actions**: Start, stop, restart containers directly from the dashboard.
+- **Logs viewer**: Side-drawer with terminal-style log output (last 300 lines) per container.
+- **App links**: Running containers with an `app_url` show a direct link to the deployed application.
+- **Polling**: Refreshes every 5 seconds to reflect container state changes.
+
+The backend API (`/api/deployments`) proxies to the Docker MCP server via MCPHttp bridge and enforces ownership checks on all mutating operations.
+
+For admin-level operations (wipe projects, view all containers regardless of ownership), use the **Platform page** (`/admin/platform`).
+
+---
+
 ## Kubernetes Deployment (Helm Chart)
 
 Druppie can be deployed to Kubernetes using the included Helm chart (`helm/druppie/`). The chart packages all platform components — backend, frontend, Keycloak, Gitea, 8 MCP modules, and 3 PostgreSQL databases — into ~43 Kubernetes resources managed as a single release.
@@ -831,6 +850,43 @@ The Settings page displays system configuration and status (read-only). This pag
 - Environment, version, and LLM provider/model info
 - Configured MCP servers with their available tools
 - Configured agents with model parameters (model, temperature, max tokens) and MCP access
+
+---
+
+## Automated Translation (Bilingual Support)
+
+The platform detects the user's language and automatically translates between the user's language and English. Agents always work in English internally; the platform handles all translation transparently.
+
+### How It Works
+
+1. **Language detection** -- The user's first message is analyzed using keyword heuristics (Dutch/English word lists) and the `langdetect` library. The detected language is stored on the session and locked for its lifetime (HITL answers do not flip the session language).
+2. **User → Agent translation** -- Non-English user messages are translated to English before being passed to the router, planner, and downstream agents.
+3. **Agent → User translation** -- Agent output is translated back to the user's language at each output point:
+   - **HITL questions and choices** are translated before being shown to the user.
+   - **Design documents** (`functional-design.md`, `technical-design.md`, etc.) are translated and saved as parallel Dutch files (`functioneel-ontwerp.md`, `technisch-ontwerp.md`, etc.) alongside the English originals.
+   - **Summarizer messages** are translated before being posted to the chat timeline.
+4. **Agent prompts** -- Every agent receives a fixed English-only instruction block at the top of its system prompt, ensuring agents always produce English output regardless of session language.
+
+### Supported Languages
+
+- **Dutch (nl)** -- Full support: detection, input/output translation, bilingual design documents.
+- **English (en)** -- Native. No translation needed.
+- **Other languages** -- Detected and translated to English for the agent, but the session language defaults to English (no output translation).
+
+### Configuration
+
+Requires `DEEPINFRA_API_KEY` in `.env`. The translation service uses Qwen/Qwen3-32B on DeepInfra, independent of the main `LLM_PROVIDER`. If the key is missing, the backend logs a warning at startup and non-English sessions will fail with a clear error.
+
+### Design Documents
+
+When a Dutch user's session produces a design document, the platform:
+1. Agents write the English original (e.g., `docs/functional-design.md`).
+2. The platform translates the content and writes a Dutch copy (e.g., `docs/functioneel-ontwerp.md`).
+3. The approval card shows the Dutch version to Dutch users.
+
+Both files are committed to the project repository.
+
+See [docs/TRANSLATION.md](TRANSLATION.md) for detailed architecture and data flow.
 
 ## ArchiMate Diagrams in Technical Designs
 

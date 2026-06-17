@@ -1,0 +1,12 @@
+check:
+  name: architect-reads-english-fd
+  description: "Architect reads the English functional-design.md (not the Dutch functioneel-ontwerp.md)"
+  tags: [architect, language, bilingual]
+  assert:
+    - agent: architect
+      tool: coding:read_file
+  judge:
+    context: architect
+    checks:
+      - "The architect must have called coding:read_file to read docs/functional-design.md (the English canonical version). It must NOT have read docs/functioneel-ontwerp.md (the Dutch translation). The architect works in English and bases its technical design on the English FD."
+      - "The technical design content passed to coding:make_design for docs/technical-design.md must be written in English. All section headings, architecture decisions, component descriptions, and data models must be in English. The architect received an English FD and must produce an English TD."

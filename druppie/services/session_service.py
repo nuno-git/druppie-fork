@@ -5,9 +5,11 @@ from uuid import UUID
 import structlog
 
 from ..api.errors import AuthorizationError, NotFoundError
+from ..db.models import MessageAttachment
 from ..domain import SessionDetail, SessionSummary
 from ..domain.common import SessionStatus
 from ..repositories import SessionRepository
+from ..services import attachment_service
 
 logger = structlog.get_logger()
 
@@ -71,6 +73,14 @@ class SessionService:
 
         if not is_owner and not is_admin:
             raise AuthorizationError("Only owner or admin can delete")
+
+        attachments = (
+            self.session_repo.db.query(MessageAttachment)
+            .filter(MessageAttachment.session_id == session_id)
+            .all()
+        )
+        for att in attachments:
+            attachment_service.delete_file(att.storage_path)
 
         self.session_repo.delete(session_id)
         self.session_repo.commit()

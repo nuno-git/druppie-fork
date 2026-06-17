@@ -1,0 +1,19 @@
+## Agent test: BA produces English-only FD for English-speaking user
+##
+## Verifies that when the session language is English, no Dutch translation
+## is added — only docs/functional-design.md is produced, with no
+## translated_content or translated_path in the tool call arguments.
+
+agent-test:
+  name: ba-english-fd-no-translation
+  description: "English session: FD is English only, no Dutch translation added"
+  tags: [business_analyst, translation, bilingual, language, english]
+
+  message: "I want an application for registering and tracking citizen complaints about water quality"
+  agents: [router, planner, business_analyst]
+  hitl: non-technical-pm
+
+  assert:
+    - check: ba-fd-in-english
+    - check: ba-fd-english-only
+    - check: ba-git-commit

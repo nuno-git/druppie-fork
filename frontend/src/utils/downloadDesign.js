@@ -30,87 +30,108 @@ async function downloadElementAsPdf(element, path) {
     import('jspdf'),
   ])
 
-  const canvas = await html2canvas(element, {
-    scale: 2,
-    useCORS: true,
-    logging: false,
-    backgroundColor: '#ffffff',
-  })
+  const scale = 1.5
+  const sourceWidth = element.scrollWidth
+  const sourceHeight = element.scrollHeight
+  const canvasWidth = Math.ceil(sourceWidth * scale)
 
   const pdf = new jsPDF('p', 'mm', 'a4')
   const margin = 10
   const contentW = pdf.internal.pageSize.getWidth() - margin * 2
   const contentH = pdf.internal.pageSize.getHeight() - margin * 2
-  const pxToMm = contentW / canvas.width
+  const pxToMm = contentW / canvasWidth
   const pageHeightPx = Math.floor(contentH / pxToMm)
 
-  const ctx = canvas.getContext('2d')
-  let pixels = null
-  try {
-    pixels = ctx.getImageData(0, 0, canvas.width, canvas.height).data
-  } catch { /* tainted canvas */ }
+  const MAX_SEGMENT_PIXELS = 16_000_000
+  const maxSegCanvasH = Math.floor(MAX_SEGMENT_PIXELS / canvasWidth)
+  const maxSegSourceH = Math.floor(maxSegCanvasH / scale)
 
-  const stride = canvas.width * 4
-  const cols = []
-  for (let i = 1; i <= 10; i++) cols.push(Math.floor(canvas.width * i / 11))
-
-  // Strict per-column check: every sample point must be nearly pure white.
-  // This rejects rows with even faint anti-aliased text edges (which the
-  // old average-brightness approach let through at ~253).
-  function isGapRow(y) {
-    if (!pixels || y < 0 || y >= canvas.height) return false
-    const base = y * stride
-    for (const col of cols) {
-      const idx = base + col * 4
-      if (pixels[idx] < 252 || pixels[idx + 1] < 252 || pixels[idx + 2] < 252) return false
-    }
-    return true
-  }
-
-  // Find 20+ consecutive gap rows (a real inter-line space).
-  // Returns the middle of the run so both pages get whitespace margin.
-  function findGap(idealEnd, pageStart) {
-    if (!pixels) return null
-    const need = 20
-    const hi = Math.min(Math.floor(idealEnd), canvas.height - 1)
-    const lo = Math.max(Math.floor(pageStart + pageHeightPx * 0.5), 0)
-    let run = 0
-    for (let y = hi; y >= lo; y--) {
-      if (isGapRow(y)) {
-        if (++run >= need) return y + Math.floor(run / 2)
-      } else {
-        run = 0
-      }
-    }
-    return null
-  }
-
-  let srcY = 0
+  let absoluteSourceY = 0
   let page = 0
 
-  while (srcY < canvas.height) {
-    if (page++ > 0) pdf.addPage()
+  while (absoluteSourceY < sourceHeight) {
+    const segSourceH = Math.min(maxSegSourceH, sourceHeight - absoluteSourceY)
+    const isLastSegment = absoluteSourceY + segSourceH >= sourceHeight
 
-    const idealEnd = srcY + pageHeightPx
-    if (idealEnd >= canvas.height) {
-      const h = canvas.height - srcY
-      const slice = document.createElement('canvas')
-      slice.width = canvas.width; slice.height = h
-      slice.getContext('2d').drawImage(canvas, 0, srcY, canvas.width, h, 0, 0, canvas.width, h)
-      pdf.addImage(slice.toDataURL('image/png'), 'PNG', margin, margin, contentW, h * pxToMm)
-      break
+    const canvas = await html2canvas(element, {
+      scale,
+      useCORS: true,
+      logging: false,
+      backgroundColor: '#ffffff',
+      y: absoluteSourceY,
+      height: segSourceH,
+    })
+
+    let pixels = null
+    try {
+      pixels = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data
+    } catch { /* tainted canvas */ }
+
+    const stride = canvas.width * 4
+    const cols = []
+    for (let i = 1; i <= 10; i++) cols.push(Math.floor(canvas.width * i / 11))
+
+    function isGapRow(y) {
+      if (!pixels || y < 0 || y >= canvas.height) return false
+      const base = y * stride
+      for (const col of cols) {
+        const idx = base + col * 4
+        if (pixels[idx] < 252 || pixels[idx + 1] < 252 || pixels[idx + 2] < 252) return false
+      }
+      return true
     }
 
-    const gap = findGap(idealEnd, srcY)
-    const endY = gap !== null ? gap : Math.round(idealEnd)
-    const h = Math.min(endY - srcY, canvas.height - srcY)
-    if (h <= 0) break
+    function findGap(idealEnd, pageStart) {
+      if (!pixels) return null
+      const need = 20
+      const hi = Math.min(Math.floor(idealEnd), canvas.height - 1)
+      const lo = Math.max(Math.floor(pageStart + pageHeightPx * 0.5), 0)
+      let run = 0
+      for (let y = hi; y >= lo; y--) {
+        if (isGapRow(y)) {
+          if (++run >= need) return y + Math.floor(run / 2)
+        } else {
+          run = 0
+        }
+      }
+      return null
+    }
 
-    const slice = document.createElement('canvas')
-    slice.width = canvas.width; slice.height = h
-    slice.getContext('2d').drawImage(canvas, 0, srcY, canvas.width, h, 0, 0, canvas.width, h)
-    pdf.addImage(slice.toDataURL('image/png'), 'PNG', margin, margin, contentW, h * pxToMm)
-    srcY += h
+    let localY = 0
+
+    while (localY < canvas.height) {
+      const idealEnd = localY + pageHeightPx
+
+      if (idealEnd >= canvas.height && isLastSegment) {
+        if (page++ > 0) pdf.addPage()
+        const h = canvas.height - localY
+        if (h <= 0) break
+        const slice = document.createElement('canvas')
+        slice.width = canvas.width; slice.height = h
+        slice.getContext('2d').drawImage(canvas, 0, localY, canvas.width, h, 0, 0, canvas.width, h)
+        pdf.addImage(slice.toDataURL('image/jpeg', 0.85), 'JPEG', margin, margin, contentW, h * pxToMm, undefined, 'FAST')
+        localY = canvas.height
+        break
+      }
+
+      if (idealEnd > canvas.height) break
+
+      if (page++ > 0) pdf.addPage()
+      const gap = findGap(idealEnd, localY)
+      const endY = gap !== null ? gap : Math.round(idealEnd)
+      const h = Math.min(endY - localY, canvas.height - localY)
+      if (h <= 0) break
+
+      const slice = document.createElement('canvas')
+      slice.width = canvas.width; slice.height = h
+      slice.getContext('2d').drawImage(canvas, 0, localY, canvas.width, h, 0, 0, canvas.width, h)
+      pdf.addImage(slice.toDataURL('image/jpeg', 0.85), 'JPEG', margin, margin, contentW, h * pxToMm, undefined, 'FAST')
+      localY += h
+    }
+
+    absoluteSourceY += localY / scale
+    pixels = null
+    if (localY === 0) break
   }
 
   pdf.save(filename)
@@ -181,7 +202,7 @@ function foreignObjectsToText(svgString) {
 // are rasterised to fill this width (scaled down only when they'd be too tall),
 // so they never come out tiny. The canvas renders at 2× for crisp output.
 const PDF_CONTENT_WIDTH = 704
-const PDF_MAX_DIAGRAM_HEIGHT = 900
+const PDF_MAX_DIAGRAM_HEIGHT = 1800
 
 // Rasterise an SVG string to a page-width <img> for reliable PDF capture.
 // Shared by the mermaid and archimate renderers. Drawing the (vector) SVG onto
@@ -216,7 +237,7 @@ async function svgToPdfImage(svgString) {
     ctx.drawImage(img, 0, 0, c.width, c.height)
 
     const replacement = document.createElement('img')
-    replacement.src = c.toDataURL('image/png')
+    replacement.src = c.toDataURL('image/jpeg', 0.90)
     replacement.width = displayW
     replacement.height = displayH
     replacement.style.cssText = 'max-width:100%;height:auto;display:block;margin:16px 0;'
@@ -445,6 +466,9 @@ export async function downloadContentAsPdf(markdownContent, path, repoContext = 
     await renderMermaidForPdf(container)
     await renderArchimateForPdf(container, repoContext)
     await downloadElementAsPdf(container.firstElementChild, path)
+  } catch (err) {
+    console.error('[PDF] generation failed:', err)
+    alert('PDF generation failed for this document — try downloading as Markdown instead.')
   } finally {
     document.body.removeChild(container)
   }

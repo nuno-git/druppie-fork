@@ -470,8 +470,8 @@ export const extractOrderedItems = (agentRun, hasFollowingMessage) => {
       if (!hasFollowingMessage && tc.approval && tc.approval.status !== 'pending') {
         items.push({ type: 'approval', tc })
       }
-      // HITL questions
-      if (tc.tool_name?.includes('hitl_ask')) {
+      // HITL questions — skip pending (translation in progress, args still English)
+      if (tc.tool_name?.includes('hitl_ask') && tc.status !== 'pending') {
         items.push({ type: 'question', tc, agentId: agentRun.agent_id })
       }
       // Test results
@@ -491,6 +491,28 @@ export const extractOrderedItems = (agentRun, hasFollowingMessage) => {
     })
   })
   return items
+}
+
+// --- Build file list for approval preview (handles bilingual design documents) ---
+
+export const buildApprovalFileList = (args) => {
+  const filePath = args.path || args.file_path
+  const content = args.content
+  const batchFiles = args.files
+  const isBatchWrite = !!batchFiles && typeof batchFiles === 'object' && Object.keys(batchFiles).length > 0
+  const hasFile = !!(content || isBatchWrite)
+  if (!hasFile) return null
+  const hasTranslation = !!args.translated_content && !!args.translated_path
+  if (isBatchWrite) {
+    return Object.entries(batchFiles).map(([p, c]) => ({ path: p, content: c }))
+  }
+  if (hasTranslation) {
+    return [
+      { path: args.translated_path, content: args.translated_content },
+      { path: filePath + ' (English)', content },
+    ]
+  }
+  return [{ path: filePath || 'file', content }]
 }
 
 // Statuses that indicate a session is actively doing work or waiting for external input

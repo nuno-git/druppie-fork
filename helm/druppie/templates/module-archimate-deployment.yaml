@@ -7,7 +7,7 @@ metadata:
     {{- include "druppie.labels" . | nindent 4 }}
     app.kubernetes.io/component: module-archimate
 spec:
-  replicas: 1
+  replicas: {{ .Values.modules.archimate.replicaCount }}
   selector:
     matchLabels:
       {{- include "druppie.selectorLabels" . | nindent 6 }}
@@ -27,14 +27,22 @@ spec:
               value: "/models"
             - name: MCP_PORT
               value: {{ .Values.modules.archimate.port | quote }}
+            - name: LAYOUT_SERVICE_URL
+              value: "http://{{ include "druppie.fullname" . }}-layout-service:8090"
+            - name: WORKSPACE_ROOT
+              value: "/workspaces"
+          envFrom:
+            - configMapRef:
+                name: {{ include "druppie.fullname" . }}-config
+            - secretRef:
+                name: {{ include "druppie.fullname" . }}-secrets
           ports:
             - name: http
               containerPort: {{ .Values.modules.archimate.port }}
               protocol: TCP
           volumeMounts:
-            - name: archimate-models
-              mountPath: /models
-              readOnly: true
+            - name: workspace
+              mountPath: /workspaces
           livenessProbe:
             httpGet:
               path: /health
@@ -52,15 +60,9 @@ spec:
             timeoutSeconds: 5
             failureThreshold: 5
           resources:
-            requests:
-              memory: "128Mi"
-              cpu: "100m"
-            limits:
-              memory: "256Mi"
-              cpu: "500m"
+            {{- toYaml .Values.modules.archimate.resources | nindent 12 }}
       volumes:
-        - name: archimate-models
-          configMap:
-            name: {{ include "druppie.fullname" . }}-archimate-models
-            optional: true
+        - name: workspace
+          persistentVolumeClaim:
+            claimName: {{ include "druppie.fullname" . }}-workspace
 {{- end }}

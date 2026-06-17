@@ -98,3 +98,67 @@ External base URL: scheme://domain(:port if non-standard)
 {{- printf "%s://%s:%d" $scheme $domain $port -}}
 {{- end -}}
 {{- end -}}
+
+{{/*
+Backend external URL: ingress path or direct NodePort
+*/}}
+{{- define "druppie.backendExternalUrl" -}}
+{{- if .Values.global.ingress.enabled -}}
+{{ include "druppie.externalBaseUrl" . }}
+{{- else -}}
+http://{{ .Values.global.domain }}:{{ .Values.backend.nodePort }}
+{{- end -}}
+{{- end -}}
+
+{{/*
+Keycloak external URL
+*/}}
+{{- define "druppie.keycloakExternalUrl" -}}
+{{- if .Values.global.ingress.enabled -}}
+{{- if .Values.global.subdomains.keycloak -}}
+{{ include "druppie.scheme" . }}://{{ .Values.global.subdomains.keycloak }}
+{{- else -}}
+{{ include "druppie.externalBaseUrl" . }}
+{{- end -}}
+{{- else -}}
+http://{{ .Values.global.domain }}:{{ .Values.keycloak.nodePort }}
+{{- end -}}
+{{- end -}}
+
+{{/*
+Gitea external URL
+*/}}
+{{- define "druppie.giteaExternalUrl" -}}
+{{- if .Values.global.ingress.enabled -}}
+{{- if .Values.global.subdomains.gitea -}}
+{{ include "druppie.scheme" . }}://{{ .Values.global.subdomains.gitea }}
+{{- else -}}
+{{ include "druppie.externalBaseUrl" . }}/git
+{{- end -}}
+{{- else -}}
+http://{{ .Values.global.domain }}:{{ .Values.gitea.nodePort }}
+{{- end -}}
+{{- end -}}
+
+{{/*
+Frontend external URL
+*/}}
+{{- define "druppie.frontendExternalUrl" -}}
+{{- if .Values.global.ingress.enabled -}}
+{{ include "druppie.externalBaseUrl" . }}
+{{- else -}}
+http://{{ .Values.global.domain }}:{{ .Values.frontend.nodePort }}
+{{- end -}}
+{{- end -}}
+
+{{/*
+Persistence storageClass: resolves to NFS class when NFS is enabled,
+otherwise falls back to the configured persistence.storageClass.
+*/}}
+{{- define "druppie.persistence.storageClass" -}}
+{{- if .Values.nfs.enabled -}}
+{{ .Values.nfs.storageClassName }}
+{{- else if .Values.persistence.storageClass -}}
+{{ .Values.persistence.storageClass }}
+{{- end -}}
+{{- end -}}

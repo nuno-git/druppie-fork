@@ -2,7 +2,7 @@
 
 Bugs, implementation gaps, technical debt, and improvement ideas for the Druppie platform.
 
-Last updated: 2026-06-03
+Last updated: 2026-06-11
 
 ---
 
@@ -32,7 +32,8 @@ Last updated: 2026-06-03
 - Agents Should Be Able to Spawn Sub-Agents and Inject Next Steps
 - ~~Skills System~~ ✅ DONE
 - Skill: MCP Server Integration for Generated Applications
-- Language Matching
+- ~~Language Matching~~ ✅ DONE
+- File Upload: Context Window Guardrails for Large Attachments
 - Prompt Injection Protection
 - Compliance Agent for Input Validation
 - TDD Retry Counting in Python Runtime
@@ -234,13 +235,21 @@ Last updated: 2026-06-03
   2. **MCP integration skill** — A prompt/template that instructs the Developer agent on how to use the core Druppie MCP servers in the applications it creates, following a standardized integration pattern. Depends on the skills system being implemented *(Owner: Nuno)*
   3. **Dynamic skill updates** — Automatically update the MCP integration skill/prompt with the currently available MCP servers and tools in core Druppie, so the Developer agent always has an up-to-date view of what it can integrate *(Owners: Nuno, Robbe)*
 
-### Language Matching
+### ~~Language Matching~~ ✅ DONE
 
-- **Current state:** Agents always respond in English regardless of the language the user communicates in.
-- **Desired improvement:** The system should detect the user's language and ensure all agent responses, HITL questions, and summaries are in the same language. This could be implemented by:
-  - Detecting the language of the user's initial message and storing it on the session
-  - Injecting a language instruction as a system prompt or into each agent's system prompt
-  - Ensuring the Planner's generated prompts for each agent also carry the language preference
+- **Implemented:** Automated bilingual translation. The platform detects the user's language, translates user messages to English for agents, and translates all agent output (HITL questions, design documents, summaries) back to the user's language. Agents always work in English; the platform handles translation transparently via a dedicated DeepInfra/Qwen service. See [docs/TRANSLATION.md](TRANSLATION.md) for details.
+
+### File Upload: Context Window Guardrails for Large Attachments
+
+- **Location:** `druppie/services/attachment_service.py`, `druppie/agents/builtin_tools.py` (`read_attachment`)
+- **Current state:** Uploaded files are stored with extracted text (up to 50,000 chars). The `read_attachment` builtin tool returns the full extracted text to the agent. If a user uploads a very large PDF (e.g., 1000 pages), the extracted text could still be substantial and the agent may exceed its context window when combining the attachment content with its prompt, tool history, and conversation context.
+- **Desired improvement:**
+  - Add a per-attachment token estimate (rough char/4 heuristic or tiktoken) at upload time
+  - Add a per-session total attachment size warning or hard limit
+  - In `read_attachment`, support pagination or chunked reading (e.g., `offset`/`limit` parameters) so agents can read large files incrementally
+  - Consider a `summarize_attachment` builtin tool that returns an LLM-generated summary instead of full text for very large files
+  - Add a session-level context budget that tracks how much space is used by attachments vs. prompt vs. history
+- **Priority:** Medium — prevents agent crashes on large uploads, but the 50K char extraction limit provides a partial guardrail already.
 
 ### Prompt Injection Protection
 
@@ -511,3 +520,22 @@ Branch `Archimate-end-to-end` delivers ArchiMate generation, rendering, and incr
 - **Current state (v1):** Write-MCP creates elements with inline properties using existing propertyDefinitions from the loaded file (or skips properties).
 - **Desired improvement:** Full `propertyDefinition` management — `create_property_definition`, `update_property_definition`, validation that properties on elements reference valid definitions.
 - **Priority:** Medium — needed once architects define organization-specific properties (e.g., "Compliance-status", "Owner-department").
+
+---
+
+## Kubernetes Phase 2
+
+Deze items zijn out-of-scope voor de eerste Kubernetes migratie (Story 3) en worden in Phase 2 opgepakt.
+
+| Item | Omschrijving | Prioriteit |
+|------|-------------|-----------|
+| KEDA queue-based scaling | KEDA ScaledObject met Prometheus trigger `druppie_pending_agent_runs` voor workload-aware backend scaling | Medium |
+| CI/CD pipeline | GitHub Actions workflow: push naar colab-dev → build images → push naar Gitea registry → helm upgrade | Hoog |
+| Sandbox migratie | Docker socket dependency vervangen door Kubernetes Jobs of Agent Sandbox operator | Medium |
+| ArgoCD | GitOps deployment pipeline met drift detection | Laag |
+| Message queue | Redis Streams of NATS voor event-driven backend (vervangt database-driven resume) | Laag |
+| Network Policies | Per-namespace netwerkisolatie (backend kan alleen naar DB, niet naar Keycloak direct) | Medium |
+| Backend Dockerfile optimalisatie | Multi-stage build om image van ~4GB te verkleinen (Chromium/Mermaid alleen in builder stage) | Medium |
+| gVisor runtime | Runtime isolatie voor sandbox workloads | Laag |
+| Longhorn RWX | Alleen nodig als MCP modules onafhankelijk moeten schalen (wordt herbouwd als built-in tools) | Laag |
+| Harbor registry | Vulnerability scanning en image signing (Gitea registry volstaat voor Phase 1) | Laag |

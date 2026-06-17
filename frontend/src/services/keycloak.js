@@ -83,65 +83,29 @@ export const initKeycloak = async () => {
     return keycloakInstance
   }
 
-  // First, check if Keycloak is available
-  keycloakAvailable = await waitForKeycloak(3, 2000)
-
-  if (!keycloakAvailable) {
-    // Keycloak unavailable - app will run in unauthenticated mode
-    clearTokens()
-    // Return a mock keycloak object that allows showing login button
-    keycloakInstance = {
-      authenticated: false,
-      login: () => {
-        // Try to redirect to Keycloak login anyway - it might work by then
-        window.location.href = `${keycloakConfig.url}/realms/${keycloakConfig.realm}/protocol/openid-connect/auth?client_id=${keycloakConfig.clientId}&redirect_uri=${encodeURIComponent(window.location.origin)}&response_type=code&scope=openid`
-      },
-      logout: () => {
-        clearTokens()
-        window.location.reload()
-      },
-    }
-    return keycloakInstance
-  }
-
   keycloakInstance = new Keycloak(keycloakConfig)
 
-  // Load saved tokens
   const savedTokens = loadTokens()
 
   try {
-    // Add timeout for Keycloak init - longer timeout since we already verified availability
-    const initPromise = keycloakInstance.init({
+    const authenticated = await keycloakInstance.init({
       onLoad: 'check-sso',
-      silentCheckSsoRedirectUri: window.location.origin + '/silent-check-sso.html',
       checkLoginIframe: false,
       token: savedTokens.token,
       refreshToken: savedTokens.refreshToken,
-      // Shorter silent SSO timeout since Keycloak is confirmed available
-      silentCheckSsoFallback: false,
+      silentCheckSsoFallback: true,
     })
-
-    const timeoutPromise = new Promise((_, reject) => {
-      // 30 second timeout for init after health check passed (increased for slow VMs)
-      setTimeout(() => reject(new Error('Keycloak init timeout')), 30000)
-    })
-
-    const authenticated = await Promise.race([initPromise, timeoutPromise])
 
     if (authenticated) {
-      // Save tokens on successful auth
       saveTokens(keycloakInstance.token, keycloakInstance.refreshToken)
     } else {
       clearTokens()
     }
 
-    // Setup token refresh
     keycloakInstance.onTokenExpired = () => {
       keycloakInstance.updateToken(30).then(() => {
-        // Save refreshed tokens
         saveTokens(keycloakInstance.token, keycloakInstance.refreshToken)
       }).catch(() => {
-        console.error('Failed to refresh Keycloak token')
         clearTokens()
         keycloakInstance.logout()
       })
@@ -149,11 +113,7 @@ export const initKeycloak = async () => {
 
     return keycloakInstance
   } catch (error) {
-    console.error('Keycloak initialization failed:', error)
-    // Clear any invalid stored tokens
     clearTokens()
-    // Return the keycloak instance with authenticated: false
-    // This allows the login button to work even if silent SSO failed
     if (keycloakInstance) {
       keycloakInstance.authenticated = false
     }

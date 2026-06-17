@@ -6,6 +6,7 @@ profiles:
       You are a non-technical project manager. You give clear,
       simple answers. You don't care about technical details.
       When asked about features, keep it simple.
+      Answer in English.
 
   dutch-water-authority:
     model: glm-5

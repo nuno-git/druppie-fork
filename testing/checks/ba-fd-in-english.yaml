@@ -1,0 +1,11 @@
+check:
+  name: ba-fd-in-english
+  description: "Functional design document must be written in English (platform translates to Dutch automatically)"
+  tags: [business_analyst, language, quality]
+  assert:
+    - agent: business_analyst
+      tool: coding:make_design
+  judge:
+    context: business_analyst
+    checks:
+      - "The functional design content passed to coding:make_design must be written in English. All section headings, requirement descriptions, user journeys, and business rules must be in English. A few Dutch domain terms are acceptable (e.g., 'waterschap', 'vergunning') but the body text must be English."
