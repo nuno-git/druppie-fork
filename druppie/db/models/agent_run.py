@@ -38,6 +38,7 @@ class AgentRun(Base):
     # For pending runs created by planner
     planned_prompt = Column(Text)  # Task description for the agent
     sequence_number = Column(Integer)  # Execution order (0, 1, 2...)
+    pending_user_context = Column(Text)  # User context to inject when this parent resumes after children
 
     prompt_tokens = Column(Integer, default=0)
     completion_tokens = Column(Integer, default=0)

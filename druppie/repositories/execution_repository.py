@@ -185,6 +185,18 @@ class ExecutionRepository(BaseRepository):
         leaves = self.get_user_paused_leaves(session_id)
         return leaves[0] if leaves else None
 
+    def get_all_paused_user_runs(self, session_id: UUID) -> list[AgentRunSummary]:
+        """Get ALL PAUSED_USER runs for a session (parents + leaves)."""
+        paused = (
+            self.db.query(AgentRun)
+            .filter(
+                AgentRun.session_id == session_id,
+                AgentRun.status == AgentRunStatus.PAUSED_USER.value,
+            )
+            .all()
+        )
+        return [self._to_summary(r) for r in paused]
+
     def get_running_run(self, session_id: UUID) -> AgentRunSummary | None:
         """Get a running agent run for a session.
 
@@ -238,6 +250,16 @@ class ExecutionRepository(BaseRepository):
         agent_run = self.db.query(AgentRun).filter(AgentRun.id == agent_run_id).first()
         if agent_run:
             agent_run.planned_prompt = planned_prompt
+
+    def set_pending_user_context(self, agent_run_id: UUID, context: str) -> None:
+        agent_run = self.db.query(AgentRun).filter(AgentRun.id == agent_run_id).first()
+        if agent_run:
+            agent_run.pending_user_context = context
+
+    def clear_pending_user_context(self, agent_run_id: UUID) -> None:
+        agent_run = self.db.query(AgentRun).filter(AgentRun.id == agent_run_id).first()
+        if agent_run:
+            agent_run.pending_user_context = None
 
     def get_pending_by_agent_id(self, session_id: UUID, agent_id: str) -> AgentRunSummary | None:
         """Get a pending agent run by session and agent ID."""
@@ -305,6 +327,7 @@ class ExecutionRepository(BaseRepository):
             sequence_number=agent_run.sequence_number,
             spawning_tool_call_id=agent_run.spawning_tool_call_id,
             parent_run_id=agent_run.parent_run_id,
+            pending_user_context=agent_run.pending_user_context,
             token_usage=TokenUsage(
                 prompt_tokens=agent_run.prompt_tokens or 0,
                 completion_tokens=agent_run.completion_tokens or 0,

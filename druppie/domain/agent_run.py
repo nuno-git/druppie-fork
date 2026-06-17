@@ -126,6 +126,8 @@ class AgentRunSummary(BaseModel):
     sequence_number: int | None = None
     spawning_tool_call_id: UUID | None = None
 
+    pending_user_context: str | None = None
+
     # For completed runs
     token_usage: TokenUsage
     started_at: datetime | None = None
