@@ -73,7 +73,6 @@ async def list_sessions(
         page=page,
         limit=limit,
         status=status,
-        user_roles=user_roles,
     )
 
     return {
