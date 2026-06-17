@@ -1,18 +1,50 @@
-/**
- * ContinueDialog - Shows paused agents with optional per-agent context input.
- *
- * Fetches /sessions/{id}/resumable, displays each leaf agent with a textarea.
- * All agents resume on confirm — no selection.
- */
-import { useState } from 'react'
+import { useState, useMemo, useCallback } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { PlayCircle, Loader2, ChevronRight } from 'lucide-react'
+import { PlayCircle, Loader2, ChevronRight, ChevronDown } from 'lucide-react'
 import { getResumableRuns, resumeSession } from '../../services/api'
 import { getAgentConfig, getAgentMessageColors } from '../../utils/agentConfig'
+
+const AgentRow = ({ run, context, onContextChange, isExpanded, onTogglePrompt, disabled }) => {
+  const config = getAgentConfig(run.agent_id)
+  const colors = getAgentMessageColors(config.color)
+  const AgentIcon = config.icon
+  return (
+    <div className="bg-gray-50 border border-gray-200 rounded p-2.5">
+      <div className="flex items-center gap-1.5 px-1 mb-1.5" style={{ paddingLeft: `${0.5 + run.depth * 1.0}rem` }}>
+        {run.depth > 0 && <ChevronRight className="w-3 h-3 text-gray-300 flex-shrink-0" />}
+        <AgentIcon className={`w-3.5 h-3.5 flex-shrink-0 ${colors.accent}`} />
+        <span className={`text-xs font-medium ${colors.accent}`}>{config.name}</span>
+        {run.planned_prompt && (
+          <button
+            onClick={() => onTogglePrompt(run.id)}
+            className="ml-auto text-gray-400 hover:text-gray-600 transition-colors"
+            title={isExpanded ? 'Hide prompt' : 'Show prompt'}
+          >
+            {isExpanded
+              ? <ChevronDown className="w-3.5 h-3.5" />
+              : <ChevronRight className="w-3.5 h-3.5" />}
+          </button>
+        )}
+      </div>
+      {isExpanded && run.planned_prompt && (
+        <pre className="text-[10px] font-mono text-gray-500 bg-white border border-gray-100 rounded p-2 mb-2 max-h-32 overflow-y-auto whitespace-pre-wrap">{run.planned_prompt}</pre>
+      )}
+      <textarea
+        value={context || ''}
+        onChange={(e) => onContextChange(run.id, e.target.value)}
+        disabled={disabled}
+        placeholder="Optional context…"
+        rows={2}
+        className="w-full text-xs font-mono bg-white border border-gray-200 rounded p-2 resize-y focus:outline-none focus:ring-1 focus:ring-green-400 focus:border-green-400 disabled:opacity-50"
+      />
+    </div>
+  )
+}
 
 const ContinueDialog = ({ sessionId, onClose }) => {
   const queryClient = useQueryClient()
   const [contexts, setContexts] = useState({})
+  const [expandedPrompts, setExpandedPrompts] = useState({})
 
   const { data: resumableData, isLoading } = useQuery({
     queryKey: ['resumable', sessionId],
@@ -40,6 +72,21 @@ const ContinueDialog = ({ sessionId, onClose }) => {
 
   const leafRuns = runs.filter(r => r.is_leaf)
 
+  const grouped = useMemo(() => {
+    const map = {}
+    for (const run of leafRuns) {
+      if (!map[run.agent_id]) map[run.agent_id] = []
+      map[run.agent_id].push(run)
+    }
+    return Object.values(map)
+  }, [leafRuns])
+
+  const togglePrompt = useCallback((runId) =>
+    setExpandedPrompts(prev => ({ ...prev, [runId]: !prev[runId] })), [])
+
+  const handleContextChange = useCallback((runId, value) =>
+    setContexts(prev => ({ ...prev, [runId]: value })), [])
+
   return (
     <>
       <div className="fixed inset-0 bg-black/30 z-30" onClick={onClose} />
@@ -62,25 +109,41 @@ const ContinueDialog = ({ sessionId, onClose }) => {
               All {leafRuns.length} agent{leafRuns.length !== 1 ? 's' : ''} will resume. Add optional context below any agent.
             </p>
             <div className="space-y-3">
-              {leafRuns.map((run) => {
-                const config = getAgentConfig(run.agent_id)
-                const colors = getAgentMessageColors(config.color)
-                const AgentIcon = config.icon
-                return (
-                  <div key={run.id} className="bg-gray-50 border border-gray-200 rounded p-2.5">
-                    <div className="flex items-center gap-1.5 px-1 mb-1.5" style={{ paddingLeft: `${0.5 + run.depth * 1.0}rem` }}>
-                      {run.depth > 0 && <ChevronRight className="w-3 h-3 text-gray-300 flex-shrink-0" />}
-                      <AgentIcon className={`w-3.5 h-3.5 flex-shrink-0 ${colors.accent}`} />
-                      <span className={`text-xs font-medium ${colors.accent}`}>{config.name}</span>
-                    </div>
-                    <textarea
-                      value={contexts[run.id] || ''}
-                      onChange={(e) => setContexts(prev => ({ ...prev, [run.id]: e.target.value }))}
+              {grouped.map((group) => {
+                if (group.length === 1) {
+                  const run = group[0]
+                  return (
+                    <AgentRow
+                      key={run.id}
+                      run={run}
+                      context={contexts[run.id]}
+                      onContextChange={handleContextChange}
+                      isExpanded={expandedPrompts[run.id]}
+                      onTogglePrompt={togglePrompt}
                       disabled={resumeMutation.isPending}
-                      placeholder="Optional context…"
-                      rows={2}
-                      className="w-full text-xs font-mono bg-white border border-gray-200 rounded p-2 resize-y focus:outline-none focus:ring-1 focus:ring-green-400 focus:border-green-400 disabled:opacity-50"
                     />
+                  )
+                }
+                const config = getAgentConfig(group[0].agent_id)
+                const colors = getAgentMessageColors(config.color)
+                return (
+                  <div key={group[0].agent_id} className="space-y-2">
+                    <div className="flex items-center gap-1.5 px-1">
+                      <span className={`text-xs font-bold ${colors.accent}`}>
+                        {group.length} {config.name}
+                      </span>
+                    </div>
+                    {group.map(run => (
+                      <AgentRow
+                        key={run.id}
+                        run={run}
+                        context={contexts[run.id]}
+                        onContextChange={handleContextChange}
+                        isExpanded={expandedPrompts[run.id]}
+                        onTogglePrompt={togglePrompt}
+                        disabled={resumeMutation.isPending}
+                      />
+                    ))}
                   </div>
                 )
               })}
