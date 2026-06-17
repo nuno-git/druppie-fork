@@ -1,7 +1,8 @@
 # Agent Internet Safety: Unified Defense Architecture for Mixed Data Source Workflows
 
-> **Status:** Unified Architecture (Merged v2 Network Isolation + Context-Aware Approval + IFC)
+> **Status:** Revised v3 (Colleague Feedback Incorporated)
 > **Date:** 2026-06-15
+> **Revised:** 2026-06-17
 > **Scope:** Securing AI agents that require BOTH public internet data AND proprietary data — integrating temporal separation (v2), context-aware approval, and Information Flow Control.
 
 ---
@@ -389,6 +390,7 @@ If the developer phase needs a package not in the base image:
 **Requirements for Tier B:**
 - Proxy is pre-seeded and allow-listed by the platform team
 - `SessionContext.data_origins` must NOT contain `DATAACCESS` or `CODING` at the time of install
+- With **Per-File Origin Tracking (PFOT, Section 8.5.2)**, the check is finer-grained: no `module_derived` files may have been opened
 - Session enters a temporary "install mode" where only package-manager traffic is allowed
 
 **Tier C: Clean Room (Last Resort)**
@@ -444,6 +446,8 @@ A new `repo_initializer` agent runs with **no network access** (isolated tier) t
    - Files with suspicious dependency declarations (typo-squatted packages, unknown URLs) → marked `UNTRUSTED`
    - Standard source files, tests, configs → marked `CODING`
 3. Write the manifest to the session context
+
+The `RepoDataMap` is the runtime implementation of **Per-File Origin Tracking (PFOT, Section 8.5.2)**. It ensures the session is not globally tainted by the existence of module-derived files in the workspace — only by the act of opening them into the LLM context. If the `RepoDataMap` shows `MODULE-TAINTED` classification, the orchestrator may also initiate a **Context Window Segmentation (CWS, Section 8.5.3)** round to fetch documentation in a clean sub-segment before the developer phase begins.
 
 **Phase B: Classification-Driven Pipeline**
 
@@ -532,20 +536,26 @@ This tracking enables the system to recognize when a risky combination exists (e
 ```python
 @dataclass
 class SessionContext:
-    tools_used: Set[str] = field(default_factory=set)
-    data_origins: Set[DataOrigin] = field(default_factory=set)
-    
-    def record_tool_call(self, tool_name: str, mcp_name: str):
-        full_name = f"{mcp_name}:{tool_name}"
-        self.tools_used.add(full_name)
-        
-        if mcp_name == "web":
-            self.data_origins.add(DataOrigin.WEB)
-        elif mcp_name == "dataaccess":
-            self.data_origins.add(DataOrigin.DATAACCESS)
-        elif mcp_name == "coding":
-            self.data_origins.add(DataOrigin.CODING)
-```
+     tools_used: Set[str] = field(default_factory=set)
+     data_origins: Set[DataOrigin] = field(default_factory=set)
+     file_origins: Dict[str, DataLabel] = field(default_factory=dict)  # PFOT registry
+     
+     def record_tool_call(self, tool_name: str, mcp_name: str):
+         full_name = f"{mcp_name}:{tool_name}"
+         self.tools_used.add(full_name)
+         
+         if mcp_name == "web":
+             self.data_origins.add(DataOrigin.WEB)
+         elif mcp_name == "dataaccess":
+             self.data_origins.add(DataOrigin.DATAACCESS)
+         elif mcp_name == "coding":
+             self.data_origins.add(DataOrigin.CODING)
+ 
+     def record_file_open(self, file_path: str, label: DataLabel):
+         """Per-File Origin Tracking (PFOT): register origin of opened files."""
+         self.file_origins[file_path] = label
+         self.data_origins.add(label.origin)
+ ```
 
 **Step 3: Enforce in ToolExecutor**
 
@@ -676,6 +686,16 @@ Users should rarely see approval prompts in normal workflows. If they're seeing 
    - Requires `developer` or `architect` role
    - Must include written justification, stored in audit log
 
+**Context Window Segmentation (CWS, Section 8.5.3) Integration:**
+
+When a developer needs live internet for documentation mid-workflow (even after module data has entered the session), Expert-in-the-Loop can approve a **CWS sub-segment**. The sub-segment:
+- Runs in a fresh container with empty LLM context
+- Mounts a **subset workspace view** that excludes `/workspace/module_data/`
+- Fetches documentation via `fetch_url` and writes it to the shared workspace
+- Is destroyed before the main agent resumes
+
+The main agent now has the fetched docs in its workspace (tagged `WEB` when subsequently read) plus its original module data, but it never held both simultaneously in the same context window. Temporal separation is preserved at the context-window level, even if the overall workflow is iterative.
+
 **Safeguards:**
 - Overrides are **session-scoped** — they never change global policy
 - All overrides are logged with user identity, timestamp, justification, and diff of the approved changes
@@ -720,11 +740,19 @@ This allows the system to make policy decisions like "data from `DATAACCESS` ori
 
 **DataOrigin** — The source of the data:
 - `WEB` — Content from public internet (untrusted)
+- `SANITIZED_WEB` — Content from public internet that has passed through Layer 3 sanitisation (still untrusted, but reduced attack surface)
 - `USER` — Input from authenticated user (trusted)
 - `SYSTEM` — System prompts and configuration (trusted)
 - `DATAACCESS` — Proprietary data from databases (confidential)
 - `CODING` — Workspace files and source code (confidential)
 - `INTERNAL` — Druppie internal APIs (internal)
+
+**Why `SANITIZED_WEB` is distinct from `CODING`:**
+
+A file written to `/workspace/` or `/docs/cache/` is physically local, but its *provenance* matters for policy decisions. `CODING` implies the user or a previous agent created it deliberately. `SANITIZED_WEB` means it originated from an untrusted remote source and was processed through sanitisation heuristics that are **probabilistic, not deterministic**. It must retain a higher-risk classification so that:
+1. The system does not trust it as if it were user-authored code
+2. Cross-origin policies (e.g., `no_exfiltration`) still treat the session as containing web-originated content
+3. Re-validation is triggered when the file is opened in a module-tainted context
 
 **DataSensitivity** — Classification of how sensitive the data is:
 - `PUBLIC` — Can be freely shared
@@ -814,12 +842,20 @@ class PolicyEngine:
     
     def _check_exfiltration(self, tool_call: ToolCall, context: SessionContext) -> PolicyResult:
         if tool_call.mcp_name == "web" and tool_call.tool_name == "fetch_url":
+            # Coarse-grained check: any DATAACCESS or CODING origin blocks fetch_url
             proprietary_origins = {DataOrigin.DATAACCESS, DataOrigin.CODING}
             if context.data_origins.intersection(proprietary_origins):
-                return PolicyResult.blocked(
-                    reason="Cannot fetch URLs after accessing proprietary data",
-                    suggestion="Use dataaccess_create_chart_from_source"
-                )
+                # Fine-grained override (PFOT, Section 8.5.2):
+                # If the session ONLY has non-module CODING files open, allow fetch_url
+                module_derived_files = [
+                    path for path, label in context.file_origins.items()
+                    if label.origin == DataOrigin.CODING and getattr(label, "module_derived", False)
+                ]
+                if module_derived_files:
+                    return PolicyResult.blocked(
+                        reason=f"Cannot fetch URLs after opening module-derived files: {module_derived_files}",
+                        suggestion="Use Context Window Segmentation (CWS) or Trusted Documentation Cache (TDC)"
+                    )
         return PolicyResult.allowed()
 ```
 
@@ -840,6 +876,10 @@ dataaccess_create_chart_from_source. This keeps proprietary data server-side.
 NEVER call dataaccess_read_data followed by dataaccess_create_chart.
 """
 ```
+
+**Integration with Safe Summarisation Gateway (SSG, Section 8.5.5):**
+
+For use cases where an internet-phase agent needs to generate public-facing charts *about* proprietary data (e.g., a business analyst creating a dashboard), the raw module data should flow through the SSG first. The gateway produces statistical aggregates (schema, counts, distributions) with a downgraded `INTERNAL` label. These summaries can then safely enter an internet-facing context for template fetching and styling, because no raw values are present. The actual rendering should still use `dataaccess_create_chart_from_source` to keep the final image server-side.
 
 ### 7.2 Web Content Sanitization
 
@@ -867,6 +907,18 @@ def sanitize_documentation_content(html: str) -> str:
     # 4. Wrap with delimiters
     return f"[BEGIN UNTRUSTED WEB CONTENT: {url}]\n{text}\n[END UNTRUSTED WEB CONTENT]"
 ```
+
+**⚠️ CRITICAL CAVEAT: Sanitization is NOT a guarantee**
+
+The four steps above reduce the injection surface but do not eliminate it. Hidden text extraction may miss embedded JavaScript that executes during later rendering. Zero-width characters can be encoded in ways that `remove_invisible_chars` does not catch. New injection patterns (e.g., Unicode homoglyphs, steganographic HTML comments) may not match existing regexes. Most importantly, the `[BEGIN UNTRUSTED...]` delimiters are **advisory**: the LLM may still be influenced by content inside the block, especially if the injection uses social engineering rather than explicit system-prompt overrides.
+
+**Implication for Trusted Documentation Cache (TDC):**
+
+When sanitized content is written to `/docs/cache/`, it must retain the `SANITIZED_WEB` origin — it must **NOT** be reclassified as `CODING` simply because it now lives on a local filesystem. Treating it as `CODING` would create a "trust downgrade" vulnerability: poisoned docs that survived sanitization would be cached as "trusted local files" and opened in module-tainted contexts without re-validation. See Section 8.5.4 for TDC trust boundaries.
+
+**Integration with TDC (Section 8.5.4):**
+
+Sanitised documentation content can be written to the TDC (`/docs/cache/`) with origin `SANITIZED_WEB`. In subsequent module-tainted phases, agents read docs from the cache. Because the origin is still `SANITIZED_WEB` (not `CODING`), the system knows the content came from the internet and retains a reduced but non-zero suspicion level. PFOT (Section 8.5.2) distinguishes cache files from module-derived files, so the exfiltration policy is not triggered by the cache itself — but the agent is still protected by Layer 0 (no live internet) even if an injection in the cached docs attempts to trigger `fetch_url`.
 
 ### 7.3 Parameter Scanning
 
@@ -939,6 +991,14 @@ User: "Build a dashboard with CBS data + our demographics module"
 │    • Replace mocks with real SDK                                │
 │    • Module data enters, internet disconnected                  │
 │    • NO exfiltration path                                       │
+│                                                                 │
+│  *Flexibility note:* With Per-File Origin Tracking (PFOT,       │
+│    Section 8.5.2), module_integrator could still read local     │
+│    /docs/cache/ (Trusted Documentation Cache, TDC,              │
+│    Section 8.5.4) for library API references without            │
+│    triggering the exfiltration policy, because cache files      │
+│    carry `SANITIZED_WEB` origin — not module-derived, and       │
+│    re-scanned on read (Section 8.5.4).                          │
 └─────────────────────────────────────────────────────────────────┘
                               │
                               ▼ (if Layer 0 fails)
@@ -996,6 +1056,14 @@ Attack: Malicious CBS documentation page contains:
 │    • fetch_url would fail (no route to internet)                │
 │    • Network-level blocking                                     │
 │                                                                 │
+│  LAYER 3: Trusted Documentation Cache (TDC)                     │
+│    • Library documentation was pre-fetched during Phase 1       │
+│    • Agent reads from /docs/cache/ (SANITIZED_WEB origin)       │
+│    • No live fetch_url needed in module phase                   │
+│    • If injection survived sanitization, re-scan on read        │
+│      catches known patterns (Section 8.5.4)                     │
+│    • Even if re-scan misses, no outbound channel exists         │
+│                                                                 │
 │  LAYER 2: IFC backup:                                           │
 │    • If somehow internet available, IFC blocks                  │
 │    • Policy: "Block web outbound after DATAACCESS"              │
@@ -1004,12 +1072,14 @@ Attack: Malicious CBS documentation page contains:
 
 ### 8.3 Complementary Strengths
 
-| Layer | Handles | Catches |
-|-------|---------|---------|
-| **Layer 0** (Temporal) | Infrastructure attacks, DNS tunneling, direct exfiltration | Network-level bypasses |
-| **Layer 1** (Approval) | User-facing violations, edge cases | Policy escapes, new attack patterns |
-| **Layer 2** (IFC) | Application-level exfiltration, multi-step attacks | Logic errors, timing attacks |
-| **Layer 3** (Safeguards) | Injection content, parameter smuggling | Content-based attacks |
+| Layer | Handles | Catches | Flexibility |
+|-------|---------|---------|-------------|
+| **Layer 0** (Temporal) | Infrastructure attacks, DNS tunneling, direct exfiltration | Network-level bypasses | Low — rigid pipeline ordering limits legitimate re-planning |
+| **Layer 1** (Approval) | User-facing violations, edge cases | Policy escapes, new attack patterns | Medium — human override, but approval fatigue risk |
+| **Layer 2** (IFC) | Application-level exfiltration, multi-step attacks | Logic errors, timing attacks | **High potential** — coarse-grained today, but designed for fine-grained labels |
+| **Layer 3** (Safeguards) | Injection content, parameter smuggling | Content-based attacks | Low — sanitisation is mandatory, not configurable |
+
+**The insight:** Layer 0 (Temporal) is intentionally rigid — it cannot be relaxed because network isolation is the load-bearing wall. But **Layer 2 (IFC) can be made dramatically more flexible** without weakening security, by moving from session-level binary flags to per-file, per-context labels. See Section 8.5.
 
 ### 8.4 Cross-Session Data Transfer (Git Commits)
 
@@ -1060,6 +1130,151 @@ IFC as written blocks `fetch_url`, but committed data can still leave through:
 - **Query Parameter Scanning:** `dataaccess:execute_query` already falls under IFC. If `CODING` data is used as query parameters, the system treats the query as carrying both origins and applies the stricter `DATAACCESS` policy set (no web outbound, no unapproved pushes).
 
 **Summary:** The multi-session data transfer is **not an IFC bypass**, but it does degrade the precision of origin tracking. Repository provenance tagging restores cross-session awareness and prevents silent downgrades of data sensitivity.
+
+### 8.5 Flexibility Without Compromise: Fine-Grained IFC
+
+**The concern:** The rigid temporal separation and coarse-grained origin tracking create friction for legitimate workflows. Can the system be made more flexible without losing its security guarantees?
+
+**The answer:** Yes. The security invariant — *"no single agent context window may simultaneously contain proprietary data and an outbound internet channel"* — is non-negotiable. But **how we enforce it** can be upgraded from a sledgehammer (session-level binary flags) to a scalpel (per-file, per-context labels). The flexibility gain comes from **Layer 2 (IFC)**, not from relaxing Layer 0.
+
+#### 8.5.1 The Load-Bearing Wall vs. the Implementation Artifact
+
+| What Must Stay Rigid | What Can Be Made Flexible |
+|---|---|
+| **No simultaneous proprietary data + outbound internet in the same LLM context** | Which *files* trigger the `CODING` origin flag |
+| **One-way network transitions (internet → modules)** | Whether an agent can fetch docs if it has never *opened* a module-derived file |
+| **Clean Room for unknown packages when module data is present** | Pre-staging and proxy strategies that avoid hitting the Clean Room |
+| **Approval gates for policy overrides** | The granularity of what triggers a gate |
+
+**Key insight:** The inflexibility is an *implementation limitation* (session-level binary flags), not a *theoretical constraint*. Upgrading IFC to track origins per-file and per-context-window restores flexibility.
+
+#### 8.5.2 Mechanism 1: Per-File Origin Tracking (PFOT)
+
+Replace the session-level `CODING` flag with a **file-level registry**:
+
+```python
+@dataclass
+class FileOriginMap:
+    """Tracks the DataOrigin of every file in the workspace."""
+    path: str
+    origin: DataOrigin
+    sensitivity: DataSensitivity
+    module_derived: bool  # True if this file originated from DATAACCESS
+```
+
+**How it improves flexibility:**
+- A developer opens `README.md` (origin: `CODING`, `module_derived: false`) → `fetch_url` for matplotlib docs is **allowed**
+- A developer opens `customer_segments.py` (origin: `CODING`, `module_derived: true`) → `fetch_url` is **blocked**
+- The session is not globally tainted by the existence of module-derived files in the workspace; only by the act of **reading them into context**
+
+**Security preserved:** The LLM context window still never contains both module data and an outbound channel. We merely stop penalising the agent for files it has not opened.
+
+#### 8.5.3 Mechanism 2: Context Window Segmentation (CWS)
+
+CWS introduces **segment boundaries** in the agent conversation. After a module data access phase, the system can spin up a **new context segment** with a fresh, empty `SessionContext` for a specific, narrow task.
+
+**Use case: Developer needs docs while working on module-tainted code**
+
+```
+Segment 1: Module Integration
+  - Agent reads module data (origin: DATAACCESS)
+  - Agent writes code using module data
+  - Segment ends. Workspace state persists.
+
+[BOUNDARY: Context cleared, data_origins reset for Segment 2]
+
+Segment 2: Documentation Fetch (expert-approved)
+  - New agent instance, EMPTY context window
+  - NO module data in workspace mount (read-only shadow of non-module files)
+  - fetch_url allowed → docs saved to shared workspace
+  - Segment ends. Agent destroyed.
+
+[BOUNDARY: Context cleared]
+
+Segment 3: Development Resumes
+  - Original agent resumes with module data + fetched docs in workspace
+  - data_origins = {CODING, DATAACCESS} (because module file is still open)
+  - fetch_url remains blocked, but coding:write_file is allowed
+```
+
+**Safeguards:**
+- Segment 2 requires **Expert-in-the-Loop** approval (Section 5.5)
+- Segment 2's workspace mount is a **subset view** — it cannot see `/workspace/module_data/`
+- Fetched docs are tagged with origin `WEB` when they enter Segment 3, so IFC still tracks the full provenance
+
+#### 8.5.4 Mechanism 3: Trusted Documentation Cache (TDC)
+
+Eliminate the need for live `fetch_url` during development phases by maintaining a **pre-fetched, read-only documentation cache** in the sandbox.
+
+```python
+# Agent system prompt (always present)
+"""
+When you need documentation, FIRST check:
+  /docs/cache/python/pandas/    ← read-only, no network needed
+  /docs/cache/python/plotly/
+If the docs are missing, request segmented fetch (Section 8.5.3).
+"""
+```
+
+**How it works:**
+- The platform operator pre-populates `/docs/cache/` with common library documentation during image build
+- The `data_fetcher` phase (internet) also triggers a background "cache warmer" that fetches docs for all packages in `requirements.txt`
+- During the developer phase (which may have module data in context), docs are read from cache → tagged `CODING` (since they are now local files) → but the agent has **zero need for live internet**
+
+**TDC Trust Boundaries and Re-Validation**
+
+The TDC is **not** a trust downgrade mechanism. It is a network-elimination mechanism. The following rules govern how cached content is treated:
+
+1. **Origin persistence:** All TDC content carries `SANITIZED_WEB` origin, never `CODING`. Origin is derived from provenance, not filesystem location.
+2. **Re-scan on read:** When an agent in a module-tainted phase opens a TDC file, the system re-runs `sanitize_documentation_content()` on the cached bytes before injecting them into the LLM context. If new injection markers are detected (e.g., the file was poisoned after caching), the open is blocked and an approval gate is raised.
+3. **Immutability:** TDC files are mounted read-only. Agents cannot modify cached docs, preventing a compromised agent from injecting payloads into the cache for future sessions.
+4. **Cache invalidation:** If a cached file fails re-scan, it is quarantined and the system falls back to a **Context Window Segmentation** fetch (Section 8.5.3) with Expert-in-the-Loop approval.
+
+**Why re-scanning matters:** Sanitization heuristics improve over time. A file that passed sanitization in Week 1 may be caught by an updated pattern in Week 4. Re-scanning on read ensures the cache does not become a repository of "grandfathered" poisoned content.
+
+**Security preserved:** No outbound requests during module-tainted phases. The cache is built during the safe internet phase, but its contents are still treated as web-originated (`SANITIZED_WEB`) and re-validated before every LLM injection. Even if a sophisticated injection survives both initial sanitization and re-scan, Layer 0 (no live internet) and Layer 2 (IFC blocks outbound tool calls) remain in force.
+
+#### 8.5.5 Mechanism 4: Safe Summarisation Gateway
+
+Before module data enters an internet-facing context, it can be passed through a **sanitising summariser** that strips sensitive values and outputs only **statistical aggregates or schema descriptions**.
+
+```python
+class SafeSummariser:
+    """Reduces module data to a safe representation that can enter internet phases."""
+    
+    def summarise(self, raw_data: DataFrame, label: DataLabel) -> ToolResult:
+        if label.origin == DataOrigin.DATAACCESS:
+            summary = {
+                "schema": list(raw_data.columns),
+                "row_count": len(raw_data),
+                "distributions": self._hist(raw_data)  # binned, no raw values
+            }
+            return ToolResult(
+                success=True,
+                data=summary,
+                data_label=DataLabel(
+                    origin=DataOrigin.CODING,  # "downgraded" origin
+                    sensitivity=DataSensitivity.INTERNAL,
+                    source="safe_summary",
+                    timestamp=datetime.now()
+                )
+            )
+```
+
+**Use case:** A business analyst wants to generate a public-facing chart using module data. Instead of sending raw rows to a plotting agent with internet access, the raw data is summarised in the module phase. The summary (origin: `CODING`, sensitivity: `INTERNAL`) can then be handed to an internet-phase agent that fetches chart templates and styling from the web — because the context contains no raw proprietary values.
+
+**Safeguard:** The summariser is a **trusted component** (part of the platform, not an agent). It cannot be bypassed by agent instructions.
+
+#### 8.5.6 Summary: Flexibility vs. Security
+
+| Mechanism | What Becomes Flexible | What Stays Rigid |
+|---|---|---|
+| **Per-File Origin Tracking** | Internet allowed for non-module files in same workspace | Internet still blocked when module-derived file is opened |
+| **Context Window Segmentation** | Agent can fetch docs mid-workflow via approved sub-segment | Proprietary data never enters the sub-segment's context |
+| **Trusted Documentation Cache** | No live internet needed during coding | Cache is built only during safe phases |
+| **Safe Summarisation Gateway** | Internet-phase agents can work with module-derived *insights* | Raw module data never reaches internet context |
+
+**The colleague's concern is fully addressed:** The architecture can support complex, iterative, real-world workflows — including updating projects, adding late dependencies, and working with mixed-origin repositories — without ever violating the core invariant. The upgrades all live in **Layer 2 (IFC)**, making Layer 0 (temporal separation) a backstop rather than a daily obstacle.
 
 ---
 
@@ -1256,7 +1471,10 @@ This document focuses on **session-level runtime isolation**. The following real
 3. **Human override (Section 5.5):** Expert-in-the-Loop for legitimate policy violations and re-planning, positioned as a Layer 1 safety valve.
 4. **Cross-session data (Section 8.4):** Git commits carrying module data into future sessions. Addressed through repository provenance tagging, which restores `DATAACCESS` origin labels across session boundaries.
 
+5. **Flexibility vs. rigidity (Section 8.5):** The system was initially criticised for being too restrictive. Addressed through four fine-grained IFC mechanisms: Per-File Origin Tracking, Context Window Segmentation, Trusted Documentation Cache, and Safe Summarisation Gateway. These allow iterative, real-world workflows without relaxing the core security invariant.
+
 **What remains open for future work:**
 - Real-time repo sanitisation during clone (e.g., stripping hidden injection characters from existing markdown)
 - Automatic detection of typo-squatted packages in historical `requirements.txt`
 - Machine-learning-assisted review of Expert-in-the-Loop justifications to detect manipulation
+- Formal verification that Context Window Segmentation cannot be bypassed by agent prompt engineering
