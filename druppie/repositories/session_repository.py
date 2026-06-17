@@ -637,6 +637,5 @@ class SessionRepository(BaseRepository):
             repo_name=project.repo_name,
             repo_owner=project.repo_owner,
             username=username,
-            repo_name=project.repo_name,
             created_at=project.created_at,
         )

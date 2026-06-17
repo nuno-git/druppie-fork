@@ -16,7 +16,7 @@ from ..repositories import JobRepository, SessionRepository, ExecutionRepository
 from ..domain.job import JobDefinitionList, JobDefinitionDetail, JobRunList, JobRunDetail
 from ..db.models.job import JobDefinition
 from ..domain.common import AgentRunStatus, SessionStatus, JobRunStatus
-from ..core.background_tasks import create_session_task, run_session_task
+from ..core.background_tasks import create_tracked_task, run_session_task
 
 logger = structlog.get_logger()
 
@@ -433,8 +433,7 @@ class JobService:
                 )
                 job_repo.commit()
 
-        create_session_task(
-            session_id,
+        create_tracked_task(
             run_session_task(session_id, _execute, "job_execution"),
             name=f"job_execution-{session_id}",
         )
@@ -605,8 +604,7 @@ class JobScheduler:
                 )
                 job_repo.commit()
 
-        create_session_task(
-            session_id,
+        create_tracked_task(
             run_session_task(session_id, _execute, "job_execution"),
             name=f"job_execution-{session_id}",
         )
