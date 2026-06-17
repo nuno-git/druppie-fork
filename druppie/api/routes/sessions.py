@@ -487,6 +487,7 @@ async def redirect_run(
             ),
             name=f"redirect-{session_id}",
             skip_lock=True,
+        )
     except Exception:
         service.mark_failed(session_id, "Failed to start redirect background task")
         raise

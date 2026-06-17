@@ -216,7 +216,8 @@ async def chat(
                 raise HTTPException(status_code=403, detail=str(e))
 
         try:
-            create_tracked_task(
+            create_session_task(
+                current_session_id,
                 _run_orchestrator_background(
                     message=request.message,
                     user_id=user_id,

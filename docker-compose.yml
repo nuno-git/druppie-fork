@@ -486,7 +486,7 @@ services:
     ports:
       - "${MCP_AZUREDEVOPS_PORT:-9012}:9012"
     networks:
-      - druppie-new-network
+      - app-net
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9012/health"]
       interval: 10s
@@ -811,9 +811,9 @@ services:
         echo "Preserving user tables (users, user_roles, user_tokens)"
         echo ""
         echo "Waiting for database..."
-        until docker compose exec db pg_isready -U druppie; do sleep 1; done
+        until docker compose exec druppie-db pg_isready -U druppie; do sleep 1; done
         echo "Dropping application tables..."
-        docker compose exec db psql -U druppie -d druppie -c "
+        docker compose exec druppie-db psql -U druppie -d druppie -c "
           DROP TABLE IF EXISTS sandbox_sessions CASCADE;
           DROP TABLE IF EXISTS tool_call_normalizations CASCADE;
           DROP TABLE IF EXISTS llm_retries CASCADE;

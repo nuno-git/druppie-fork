@@ -122,7 +122,7 @@ def get_session_service(
     (and sidebar visibility) to non-owner users who were pulled into a
     session as an expert via the ask_expert tool family.
     """
-    return SessionService(session_repo, question_repo=question_repo)
+    return SessionService(session_repo)
 
 
 def get_approval_service(

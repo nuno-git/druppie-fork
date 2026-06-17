@@ -70,6 +70,9 @@ from .question import Question
 
 from .job import JobDefinition, JobRun
 
+# Sandbox session model
+from .sandbox_session import SandboxSession
+
 # Session model
 from .session import Session
 from .tool_call import ToolCall
@@ -121,4 +124,5 @@ __all__ = [
     # Cron jobs
     "JobDefinition",
     "JobRun",
+    "SandboxSession",
 ]

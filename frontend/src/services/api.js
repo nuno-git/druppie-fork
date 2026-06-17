@@ -102,6 +102,22 @@ export const getAttachmentUrl = (attachmentId) => {
   return `${API_URL}/api/attachments/${attachmentId}${params}`
 }
 
+export const getSandboxEvents = async (sessionId, messageId) => {
+  const allEvents = []
+  let cursor = null
+  while (true) {
+    let url = `/api/sandbox-sessions/${sessionId}/events?limit=500`
+    if (messageId) url += `&message_id=${messageId}`
+    if (cursor) url += `&cursor=${cursor}`
+    const data = await request(url)
+    const events = data.events || []
+    allEvents.push(...events)
+    if (!data.hasMore || !data.cursor) break
+    cursor = data.cursor
+  }
+  return { events: allEvents }
+}
+
 export const cancelChat = (sessionId) =>
   request(`/api/chat/${sessionId}/cancel`, { method: 'POST' })
 
