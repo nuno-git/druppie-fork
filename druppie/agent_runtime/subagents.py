@@ -339,7 +339,9 @@ class SubagentsMCP:
                 })
             else:
                 results_list.append(r)
-        any_paused = any(r.get("status") == "paused" for r in results_list)
+        any_paused = any(
+            r.get("status") in ("paused", "cancelled") for r in results_list
+        )
         if any_paused:
             return {"results": results_list, "_pending": True}
         return results_list

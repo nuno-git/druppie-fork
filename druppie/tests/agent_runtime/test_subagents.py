@@ -9,6 +9,7 @@ from druppie.agent_runtime.subagents import SubagentsMCP
 from druppie.agent_runtime.tools.mcp import MCPConnection
 from druppie.agent_runtime.tools.provider import MCPToolProvider
 from druppie.agent_runtime.types import AgentResult, LoopConfig
+from druppie.domain.common import AgentRunStatus
 
 
 def _make_agent(
@@ -703,3 +704,175 @@ class TestRecursiveSubagents:
 
             if "core_explorer" not in chain:
                 assert results[0]["status"] == "success", f"Failed at depth {depth}"
+
+
+class TestCancellation:
+
+    @pytest.mark.asyncio
+    async def test_cancelled_returns_pending_dict(self):
+        from druppie.agent_runtime.types import CancellationToken
+
+        builder = _make_agent("builder", "Builds")
+        parent = _make_agent("dev", "Dev", subagents=["builder"])
+        token = CancellationToken()
+        token.cancel()
+
+        mcp = SubagentsMCP(
+            agent_loader=_make_agent_loader({"builder": builder}),
+            loop_runner=_make_loop_runner(),
+        )
+
+        result = await mcp.execute(
+            agents=[{"agent": "builder", "prompt": "build"}],
+            parent_agent=parent,
+            parent_tool_provider=MagicMock(),
+            parent_git_scope=None,
+            parent_sandbox_conn=None,
+            llm=AsyncMock(),
+            config=LoopConfig(),
+            cancellation_token=token,
+        )
+
+        assert isinstance(result, dict)
+        assert result.get("_pending") is True
+        results_list = result.get("results", [])
+        assert len(results_list) == 1
+        assert results_list[0]["status"] == "cancelled"
+
+    @pytest.mark.asyncio
+    async def test_cancelled_child_marked_paused_user(self):
+        from druppie.agent_runtime.types import CancellationToken
+
+        builder = _make_agent("builder", "Builds")
+        parent = _make_agent("dev", "Dev", subagents=["builder"])
+        token = CancellationToken()
+        token.cancel()
+
+        mock_repo = MagicMock()
+        mock_run_id = "test-run-id"
+
+        def factory(*, child_defn, child_sandbox_conn, parent_tool_provider,
+                     spawning_tool_call_id=None, current_depth=0, agent_chain=None):
+            tp = MCPToolProvider({})
+            tp._execution_repo = mock_repo
+            tp._agent_run_id = mock_run_id
+            return tp
+
+        mcp = SubagentsMCP(
+            agent_loader=_make_agent_loader({"builder": builder}),
+            loop_runner=_make_loop_runner(),
+            child_tool_provider_factory=factory,
+        )
+
+        await mcp.execute(
+            agents=[{"agent": "builder", "prompt": "build"}],
+            parent_agent=parent,
+            parent_tool_provider=MagicMock(),
+            parent_git_scope=None,
+            parent_sandbox_conn=None,
+            llm=AsyncMock(),
+            config=LoopConfig(),
+            cancellation_token=token,
+        )
+
+        mock_repo.update_status.assert_called_once_with(
+            mock_run_id, AgentRunStatus.PAUSED_USER,
+        )
+
+    @pytest.mark.asyncio
+    async def test_cancelled_with_multiple_children(self):
+        from druppie.agent_runtime.types import CancellationToken
+
+        builder = _make_agent("builder", "Builds")
+        tester = _make_agent("tester", "Tests")
+        parent = _make_agent("dev", "Dev", subagents=["builder", "tester"])
+        token = CancellationToken()
+        token.cancel()
+
+        mcp = SubagentsMCP(
+            agent_loader=_make_agent_loader({"builder": builder, "tester": tester}),
+            loop_runner=_make_loop_runner(),
+        )
+
+        result = await mcp.execute(
+            agents=[
+                {"agent": "builder", "prompt": "build"},
+                {"agent": "tester", "prompt": "test"},
+            ],
+            parent_agent=parent,
+            parent_tool_provider=MagicMock(),
+            parent_git_scope=None,
+            parent_sandbox_conn=None,
+            llm=AsyncMock(),
+            config=LoopConfig(),
+            cancellation_token=token,
+        )
+
+        assert isinstance(result, dict)
+        assert result.get("_pending") is True
+        results_list = result.get("results", [])
+        assert len(results_list) == 2
+        assert all(r["status"] == "cancelled" for r in results_list)
+
+    @pytest.mark.asyncio
+    async def test_mixed_paused_and_cancelled_returns_pending(self):
+        from druppie.agent_runtime.types import CancellationToken
+
+        builder = _make_agent("builder", "Builds")
+        tester = _make_agent("tester", "Tests")
+        parent = _make_agent("dev", "Dev", subagents=["builder", "tester"])
+
+        token = CancellationToken()
+        token.cancel()
+
+        async def mixed_runner(**kwargs) -> AgentResult:
+            agent: AgentDefinition = kwargs["agent"]
+            if agent.id == "builder":
+                return AgentResult(status="paused")
+            return AgentResult(status="completed", done_result={"summary": "ok"})
+
+        mcp = SubagentsMCP(
+            agent_loader=_make_agent_loader({"builder": builder, "tester": tester}),
+            loop_runner=mixed_runner,
+        )
+
+        result = await mcp.execute(
+            agents=[
+                {"agent": "builder", "prompt": "build"},
+                {"agent": "tester", "prompt": "test"},
+            ],
+            parent_agent=parent,
+            parent_tool_provider=MagicMock(),
+            parent_git_scope=None,
+            parent_sandbox_conn=None,
+            llm=AsyncMock(),
+            config=LoopConfig(),
+            cancellation_token=token,
+        )
+
+        assert isinstance(result, dict)
+        assert result.get("_pending") is True
+
+    @pytest.mark.asyncio
+    async def test_no_cancellation_returns_plain_list(self):
+        builder = _make_agent("builder", "Builds")
+        parent = _make_agent("dev", "Dev", subagents=["builder"])
+
+        mcp = SubagentsMCP(
+            agent_loader=_make_agent_loader({"builder": builder}),
+            loop_runner=_make_loop_runner(),
+        )
+
+        result = await mcp.execute(
+            agents=[{"agent": "builder", "prompt": "build"}],
+            parent_agent=parent,
+            parent_tool_provider=MagicMock(),
+            parent_git_scope=None,
+            parent_sandbox_conn=None,
+            llm=AsyncMock(),
+            config=LoopConfig(),
+        )
+
+        assert isinstance(result, list)
+        assert len(result) == 1
+        assert result[0]["status"] == "success"

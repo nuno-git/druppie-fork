@@ -24,6 +24,7 @@ from druppie.api.deps import (
     get_current_user,
     get_user_roles,
     get_session_service,
+    get_execution_repository,
 )
 from druppie.services import SessionService
 from druppie.domain import SessionDetail, SessionStatus
@@ -538,3 +539,74 @@ async def resume_session(
         "session_id": str(session_id),
         "message": "Session resuming",
     }
+
+
+@router.get("/sessions/{session_id}/resumable")
+async def get_resumable_runs(
+    session_id: UUID,
+    service: SessionService = Depends(get_session_service),
+    execution_repo=Depends(get_execution_repository),
+    user: dict = Depends(get_current_user),
+):
+    user_id = UUID(user["sub"])
+    user_roles = get_user_roles(user)
+
+    service.require_owner_or_admin(
+        session_id=session_id,
+        user_id=user_id,
+        user_roles=user_roles,
+    )
+
+    from druppie.db.models.agent_run import AgentRun as AgentRunModel
+    from druppie.domain.common import AgentRunStatus
+
+    db_runs = (
+        execution_repo.db.query(AgentRunModel)
+        .filter(
+            AgentRunModel.session_id == session_id,
+            AgentRunModel.status == AgentRunStatus.PAUSED_USER.value,
+        )
+        .order_by(AgentRunModel.sequence_number)
+        .all()
+    )
+
+    if not db_runs:
+        return {"runs": [], "leaf_ids": []}
+
+    paused_ids = {r.id for r in db_runs}
+
+    parent_depth: dict = {}
+    def compute_depth(run_id):
+        if run_id in parent_depth:
+            return parent_depth[run_id]
+        run = next((r for r in db_runs if r.id == run_id), None)
+        if not run or run.parent_run_id is None:
+            parent_depth[run_id] = 0
+            return 0
+        d = compute_depth(run.parent_run_id) + 1
+        parent_depth[run_id] = d
+        return d
+
+    runs_out = []
+    leaf_ids = []
+    for r in db_runs:
+        has_paused_child = any(
+            child.parent_run_id == r.id and child.id in paused_ids
+            for child in db_runs
+        )
+        is_leaf = not has_paused_child
+        if is_leaf:
+            leaf_ids.append(str(r.id))
+
+        runs_out.append({
+            "id": str(r.id),
+            "agent_id": r.agent_id,
+            "status": r.status,
+            "parent_run_id": str(r.parent_run_id) if r.parent_run_id else None,
+            "planned_prompt": r.planned_prompt,
+            "sequence_number": r.sequence_number,
+            "depth": compute_depth(r.id),
+            "is_leaf": is_leaf,
+        })
+
+    return {"runs": runs_out, "leaf_ids": leaf_ids}
