@@ -28,7 +28,8 @@ The runtime handles:
 - `done()` enforcement and validation
 - Pause/resume for long-running operations
 - Event tracking and serialization
-- Context overflow handling
+- Context overflow handling (forces done() when context limit approached)
+- Context compaction (LLM summarization when context pressure exceeds threshold)
 - Cancellation support
 
 ## Agent Definition Format (YAML)
@@ -648,6 +649,99 @@ class CancellationToken:
 ```
 
 Passed to `run()` for cancellation support. The runtime checks this between turns and raises `AgentCancelledError` if set.
+
+## Context Compaction
+
+When the conversation grows large, the compactor replaces the entire conversation body with an LLM-generated summary. This gives the agent a clean slate while preserving the system prompt and original user instruction.
+
+### When It Fires
+
+At the start of each turn, `MessageCompactor.compress()` estimates token count from message content. If tokens exceed `summarization_threshold * max_context_tokens`, the entire conversation (minus header) is serialized and sent to the LLM for summarization. The summary replaces all body messages.
+
+**Header** = leading `system` + `user` messages (agent prompt + initial instruction). These are always preserved.
+
+**Body** = everything after the header (assistant responses, tool calls, tool results). This is what gets replaced.
+
+The result is always: `[system, user, summary_message]` — three messages, minimal context, agent starts fresh.
+
+### CompactionConfig
+
+```python
+@dataclass
+class CompactionConfig:
+    max_context_tokens: int = 150_000
+    summarization_threshold: float = 0.70
+    max_compactions: int = 10
+    max_input_chars: int = 30_000
+    max_output_tokens: int = 1024
+    tool_result_max_chars: int = 15_000
+```
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `max_context_tokens` | 150000 | Context window size estimate |
+| `summarization_threshold` | 0.70 | Fraction of max_context_tokens that triggers compaction (e.g., 0.70 = 105K tokens) |
+| `max_compactions` | 10 | Maximum compactions before forcing done(). After this, agent is forced to finish |
+| `max_input_chars` | 30000 | Max characters of conversation history sent to LLM for summarization |
+| `max_output_tokens` | 1024 | Max tokens for the summary response |
+| `tool_result_max_chars` | 15000 | Truncation limit for individual tool results in the conversation |
+
+### max_compactions Limit
+
+Each successful compaction increments a counter on `CompactionState.compactions_performed`. When the counter reaches `max_compactions`:
+
+1. The loop restricts tools to `done()` only
+2. A system message is injected: *"You have reached the maximum number of context compactions. Call done() NOW with a summary of your progress so far."*
+3. The agent gets one turn to comply
+4. If the agent does not call `done()`, the loop AUTO-DONEs with `reason: "max_compactions_exceeded"`
+
+This prevents infinite compaction loops where summarization quality degrades with each cycle.
+
+### YAML Configuration
+
+Compaction is configured per-agent via the `compression` key:
+
+```yaml
+id: developer
+# ... other fields ...
+compression:
+  summarization_threshold: 0.65
+  max_compactions: 10
+```
+
+If `compression` is omitted, defaults apply (`threshold=0.70`, `max_compactions=10`).
+
+### Compaction Events
+
+Each compaction emits a `context_compressed` event with:
+
+```python
+{
+    "phase": "summarized",          # or "summarized_fallback" if LLM failed
+    "tokens_before": 105000,         # Estimated tokens before compaction
+    "tokens_after": 3200,            # Estimated tokens after compaction
+    "turns_compressed": 42,          # Number of messages replaced
+    "summary_text": "...",           # The LLM-generated summary (absent in fallback)
+}
+```
+
+Events are persisted to the `compaction_events` table via `CompactionEventRepository` and surfaced in the session detail API as `compaction_events` on each `AgentRunDetail`.
+
+### Tool Result Truncation
+
+Large tool results are truncated before they enter the conversation to delay compaction:
+
+```python
+MessageCompactor.truncate_tool_result(content, max_chars=15_000)
+```
+
+- Content under 15K chars: unchanged
+- Content 15K–50K chars: first 5K + last 2K with truncation notice
+- Content over 50K chars: first 3K + last 1K with truncation notice
+
+### Fallback Behavior
+
+If the LLM call for summarization fails (network error, rate limit, etc.), the compactor falls back to a generic placeholder message: `"[CONVERSATION SUMMARY — older turns dropped due to context limit]"`. The fallback still counts toward `max_compactions`.
 
 ## LLM Interface
 
