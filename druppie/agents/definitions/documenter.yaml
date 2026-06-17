@@ -168,3 +168,6 @@ llm_profile: cheap
 temperature: 0.2
 max_tokens: 8192
 max_iterations: 100
+
+compression:
+  max_compactions: 5

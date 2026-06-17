@@ -1081,3 +1081,6 @@ llm_profile: standard
 temperature: 0.2
 max_tokens: 100000
 max_iterations: 150
+
+compression:
+  max_compactions: 5
