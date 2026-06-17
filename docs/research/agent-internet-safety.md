@@ -371,7 +371,31 @@ def validate_plan_network_order(steps: list[dict]) -> tuple[bool, str]:
 
 ### 4.9 Re-planning and Clean Room Process
 
-**When the module_integrator discovers it needs another dependency:**
+**The concern:** If an agent discovers it needs a new dependency after module data has already entered the workspace, the Clean Room process (below) is heavy-weight by design. We need a **tiered strategy** that balances security with developer velocity.
+
+**Tier A: Pre-staged Base Image**
+
+The sandbox base image carries a curated set of common data-science packages (`pandas`, `numpy`, `requests`, `plotly`, `scikit-learn`, etc.) baked into the image. The `installer` agent can still request additional packages, but the 90% case is already covered. This eliminates the "missing package" problem for routine libraries.
+
+**Tier B: Trusted Package Proxy (Fast Path)**
+
+If the developer phase needs a package not in the base image:
+
+1. System checks `SessionContext.data_origins`
+2. If **no module data exists yet** in this session, the agent can install from a **trusted, read-only package proxy** (sanctioned PyPI/Conda mirror) without triggering the Clean Room.
+3. The proxy logs every downloaded package and hashes it. The temporary internet connection is session-scoped.
+4. Session continues normally.
+
+**Requirements for Tier B:**
+- Proxy is pre-seeded and allow-listed by the platform team
+- `SessionContext.data_origins` must NOT contain `DATAACCESS` or `CODING` at the time of install
+- Session enters a temporary "install mode" where only package-manager traffic is allowed
+
+**Tier C: Clean Room (Last Resort)**
+
+Only unknown, unlisted, or newly requested packages trigger the full Clean Room when module data is already present. This remains the safety guarantee when the workspace is "hot."
+
+**Clean Room Protocol (Tier C):**
 
 1. **Agent calls `done()`** with structured reason:
    ```
@@ -399,6 +423,39 @@ def validate_plan_network_order(steps: list[dict]) -> tuple[bool, str]:
    - Fresh workspace volume created, git clone restores code
    - Transfer volume contents (installed packages) extracted
    - New container with `[modules]` network, full workspace restored
+
+---
+
+### 4.10 Updating Existing Projects
+
+**The concern:** The current architecture is optimized for **greenfield** development (fetch public data → write code → integrate modules). In practice, most work starts with an **existing repository** that may already contain files of unknown provenance — including historical module data, injected dependencies, or poisoned markdown files.
+
+**Two-Phase Entry Protocol**
+
+When a user asks to "update an existing project," the session must start with a **Safe Initialisation Agent** before any internet-enabled phases run.
+
+**Phase A: Repo Initialiser (isolated tier)**
+
+A new `repo_initializer` agent runs with **no network access** (isolated tier) to:
+
+1. Clone the target repository into a scratch workspace
+2. Generate a `RepoDataMap` — a manifest of all files classified by probable origin:
+   - Files with SQL connection strings, API keys, or `dataaccess` patterns → marked `DATAACCESS_DERIVED`
+   - Files with suspicious dependency declarations (typo-squatted packages, unknown URLs) → marked `UNTRUSTED`
+   - Standard source files, tests, configs → marked `CODING`
+3. Write the manifest to the session context
+
+**Phase B: Classification-Driven Pipeline**
+
+The `RepoDataMap` acts like a preliminary `SessionContext`. The orchestrator selects the pipeline based on the classification:
+
+| RepoDataMap Classification | Pipeline Behaviour |
+|---|---|
+| No module indicators | Proceed with standard internet phases (installer → developer → ...). Treat repo as `CODING` only. |
+| Contains module indicators | Pre-classify session as `MODULE-TAINTED`. Internet phases run in a **shadow workspace** (read-only docs/package cache). Main workspace stays isolated until module phase. |
+| Contains `UNTRUSTED` markers | Block all agents. Raise approval gate to architect/admin for manual sanitisation. |
+
+**This does not replace IFC.** It ensures that when `coding:read_file` is called in the developer phase, the system already knows whether the repo contains module-derived data and can pre-populate `data_origins` accordingly.
 
 ---
 
@@ -579,6 +636,52 @@ The safest architecture uses **IFC (Layer 2) as the primary defense** — it det
 - A learning system (approval patterns inform policy refinement)
 
 Users should rarely see approval prompts in normal workflows. If they're seeing them frequently, the pipeline design or IFC policies need adjustment.
+
+### 5.5 Expert-in-the-Loop (Human Plan Override)
+
+**The concern:** *"can we not add an expert in the loop?"* The current architecture is fully automated. A human cannot say, "I know this workflow is safe, let me approve the deviation from the plan."
+
+**The answer:** Yes. But it must be **proactive plan review**, not reactive tool-call approval. Context-aware approval (Section 5.3) gates individual tool calls. Expert-in-the-Loop gates **policy overrides and plan deviations** before or during re-planning.
+
+**When it triggers:**
+- A pipeline validation violation is detected (e.g., developer needs internet AFTER module data was read)
+- The Clean Room process is requested (Tier C dependency install)
+- A repo with `MODULE-TAINTED` classification is being onboarded, and the user wants to override the shadow-workflow restriction
+
+**Approval Gate UI:**
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ EXPERT REVIEW REQUIRED                                          │
+│                                                                 │
+│ Policy violated: Temporal separation (internet after module)    │
+│ Agent: module_integrator                                        │
+│ Data origins in context: {CODING, DATAACCESS}                   │
+│ User workflow: "Update existing project with new visuals"       │
+│                                                                 │
+│ [Deny]                [Approve with Override]                   │
+│                       (requires justification)                  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Two Override Modes:**
+
+1. **Action Override (single-shot):**
+   - Allows one specific action (e.g., let this agent call `fetch_url` once)
+   - Requires `"Yes, I understand the risk"` checkbox
+   - Auto-expires at end of session
+
+2. **Workflow Override (re-plan):**
+   - Allows a full re-plan (e.g., "Approve Clean Room to install `scipy`")
+   - Requires `developer` or `architect` role
+   - Must include written justification, stored in audit log
+
+**Safeguards:**
+- Overrides are **session-scoped** — they never change global policy
+- All overrides are logged with user identity, timestamp, justification, and diff of the approved changes
+- Progressive escalation: if a user requests 3+ overrides in one session, future overrides require `architect` or `admin`
+
+**Position in the architecture:** Expert-in-the-Loop belongs in **Layer 1**. It is a human override for legitimate edge cases, not a replacement for deterministic controls. If the expert makes a mistake, Layer 0 (temporal separation) and Layer 2 (IFC) still provide protection.
 
 ---
 
@@ -908,6 +1011,56 @@ Attack: Malicious CBS documentation page contains:
 | **Layer 2** (IFC) | Application-level exfiltration, multi-step attacks | Logic errors, timing attacks |
 | **Layer 3** (Safeguards) | Injection content, parameter smuggling | Content-based attacks |
 
+### 8.4 Cross-Session Data Transfer (Git Commits)
+
+**The concern:** *"What if data is committed to git and then a new session is started?"* Session A may read proprietary module data, commit it to a repo, and Session B may clone that repo. Session B then has module-originated data in its workspace. If Session B is allowed internet access, has the temporal separation been bypassed?
+
+**IFC already bounds the risk:** When Session B calls `coding:read_file`, the origin is tagged as `CODING`. The `no_exfiltration` policy blocks `fetch_url` whenever `DATAACCESS` or `CODING` origins are present. Therefore, Session B cannot exfiltrate through `fetch_url` — the architecture is not bypassed in the way the question initially suggests.
+
+**However, three residual risks remain:**
+
+**1. Coarse-Grained Origin Tracking**
+
+The current IFC model uses a binary flag: once any file is read, the entire session is marked `CODING`. This means Session B cannot use `fetch_url` at all — not even for documentation — even if it only intends to edit an unrelated `README.md`. The security posture is correct, but the user experience is punishing.
+
+**Mitigation:** The `RepoDataMap` (Section 4.10) allows per-file origin tracking. A session that clones a module-tainted repo can still access the internet for files it has NOT opened, provided it stays within the shadow workspace rules.
+
+**2. Origin Is Lost at the Git Boundary**
+
+When data flows `DATAACCESS` → `coding:write_file` → `git commit` → `git clone` → `coding:read_file`, the `DATAACCESS` label is destroyed. Session B sees only `CODING`. The system no longer knows that this specific file was once module-derived, which means:
+- Stricter policies for module-derived files (e.g., "never leave the organisation") cannot be enforced once data hits git
+- Policies cannot distinguish between "my own config.yaml" and "exfiltrated customer table.csv"
+
+**Mitigation — Repository Provenance Tagging:**
+
+When Session A commits files that originated from `DATAACCESS`, the system tags the repository with a **provenance marker** (e.g., a `.druppie-provenance` file or commit metadata):
+
+```
+# .druppie-provenance (auto-generated, committed by deployer agent)
+module_derived_files:
+  - src/features/customer_segments.py   # derived from Azure SQL
+  - data/sales_q4.parquet               # derived from Data Lake
+provenance_version: 1
+generated_by: deployer-agent
+session_id: ses_abc123
+```
+
+When Session B clones the repo, the orchestrator detects the provenance marker and **pre-populates** `SessionContext.data_origins` with `{CODING, DATAACCESS}`. This preserves the stricter policy set for module-derived data across session boundaries.
+
+**3. Non-`fetch_url` Exfiltration Channels**
+
+IFC as written blocks `fetch_url`, but committed data can still leave through:
+- `coding:commit_and_push` to an external remote (if the remote URL is attacker-controlled)
+- `dataaccess:execute_query` using committed values to trigger outbound actions
+- Embedding data in tool parameters sent through other MCP tools
+
+**Mitigation:**
+- **Remote URL Allowlisting:** The `coding:commit_and_push` tool must validate the remote URL against an allowlist. Unknown remotes trigger an approval gate.
+- **Push-Time Scanning:** Before any `commit_and_push`, a `repository_guard` agent (isolated tier) scans the diff for high-entropy strings, data patterns, and known PII. If suspicious content is detected, the push is blocked.
+- **Query Parameter Scanning:** `dataaccess:execute_query` already falls under IFC. If `CODING` data is used as query parameters, the system treats the query as carrying both origins and applies the stricter `DATAACCESS` policy set (no web outbound, no unapproved pushes).
+
+**Summary:** The multi-session data transfer is **not an IFC bypass**, but it does degrade the precision of origin tracking. Repository provenance tagging restores cross-session awareness and prevents silent downgrades of data sensitivity.
+
 ---
 
 ## 9. Implementation Roadmap
@@ -1093,3 +1246,17 @@ This unified architecture provides **defense in depth** against the lethal trife
    Strategies include: IFC as primary defense, minimizing approval frequency, smart defaults (auto-deny), progressive escalation, and rich context in approval UI.
 
 Together, these layers create a robust defense that preserves legitimate workflows while preventing data exfiltration, even when users make errors or attackers are sophisticated.
+
+### Known Limitations & Revision Notes
+
+This document focuses on **session-level runtime isolation**. The following real-world workflows required additional design work and are now incorporated above:
+
+1. **Updating existing projects (Section 4.10):** Safe onboarding of untrusted repositories that may already contain module-derived data or injected dependencies.
+2. **Dynamic dependencies (Section 4.9):** Practical package installation after the initial `installer` phase, via a tiered strategy (pre-staged image → trusted proxy → Clean Room).
+3. **Human override (Section 5.5):** Expert-in-the-Loop for legitimate policy violations and re-planning, positioned as a Layer 1 safety valve.
+4. **Cross-session data (Section 8.4):** Git commits carrying module data into future sessions. Addressed through repository provenance tagging, which restores `DATAACCESS` origin labels across session boundaries.
+
+**What remains open for future work:**
+- Real-time repo sanitisation during clone (e.g., stripping hidden injection characters from existing markdown)
+- Automatic detection of typo-squatted packages in historical `requirements.txt`
+- Machine-learning-assisted review of Expert-in-the-Loop justifications to detect manipulation
