@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import httpx
 import structlog
 
-from druppie.api.routes import agent_test, agents, approvals, cache, chat, deployments, documentation, evaluations, jobs, mcp_bridge, mcps, modules, projects, questions, sandbox, sessions, tool_output, workspace
+from druppie.api.routes import agent_test, agents, approvals, cache, chat, deployments, documentation, evaluations, jobs, mcp_bridge, mcps, modules, projects, questions, sessions, tool_output, workspace
 from druppie.api.errors import register_exception_handlers
 from druppie.core.auth import get_auth_service
 from druppie.core.config import get_settings
@@ -209,11 +209,6 @@ async def lifespan(app: FastAPI):
     _recover_orphaned_batch_runs()
 
     _recover_stuck_job_runs()
-
-    # Clean up orphaned sandbox Gitea users from previous runs
-    from druppie.opencode.gitea_cleanup import cleanup_orphaned_sandbox_users
-    await cleanup_orphaned_sandbox_users()
-
 
     # Initialize tool registry (discovers MCP tools from servers via tools/list)
     from druppie.core.tool_registry import initialize_tool_registry, get_tool_registry

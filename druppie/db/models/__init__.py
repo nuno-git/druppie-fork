@@ -63,10 +63,6 @@ from .question import Question
 
 from .job import JobDefinition, JobRun
 
-# Sandbox session ownership mapping
-from .sandbox_session import SandboxSession
-
-
 # Session model
 from .session import Session
 from .tool_call import ToolCall
