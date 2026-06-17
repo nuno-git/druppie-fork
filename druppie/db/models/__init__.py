@@ -34,6 +34,9 @@ New tables (cron job pipeline):
 # Agent execution models
 from .agent_run import AgentRun, Message
 
+# Compaction event model
+from .compaction_event import CompactionEvent
+
 # Approval model
 from .approval import Approval
 from .base import Base, new_uuid, utcnow
@@ -90,6 +93,7 @@ __all__ = [
     # Agent execution
     "AgentRun",
     "Message",
+    "CompactionEvent",
     "ToolCall",
     "LlmCall",
     "LlmRetry",

@@ -21,6 +21,20 @@ class LLMRetryDetail(BaseModel):
     delay_seconds: int | None = None
 
 
+class CompactionEventDetail(BaseModel):
+    """A single context compaction event during an agent run."""
+
+    id: UUID
+    agent_run_id: UUID
+    llm_call_id: UUID | None = None
+    phase: str
+    tokens_before: int = 0
+    tokens_after: int = 0
+    turns_compressed: int = 0
+    summary_text: str | None = None
+    created_at: datetime
+
+
 class NormalizationDetail(BaseModel):
     """A single field that was normalized in a tool call."""
 
@@ -122,4 +136,5 @@ class AgentRunDetail(AgentRunSummary):
     # The execution trace - each LLM call includes its tool executions
     llm_calls: list[LLMCallDetail] = []
     subagent_runs: list[AgentRunDetail] = []
+    compaction_events: list[CompactionEventDetail] = []
 
