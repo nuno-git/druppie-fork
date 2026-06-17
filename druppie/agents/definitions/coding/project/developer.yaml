@@ -263,7 +263,4 @@ max_tokens: 16384
 max_iterations: 100
 
 compression:
-  keep_recent: 8
-  phase1_threshold: 0.45
-  content_aware: true
-  adaptive_recent: true
+  summarization_threshold: 0.65

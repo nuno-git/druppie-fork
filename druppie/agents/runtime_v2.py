@@ -584,18 +584,8 @@ class AgentV2:
         )
         compression = getattr(self.definition, "compression", None)
         if compression and isinstance(compression, dict):
-            if "keep_recent" in compression:
-                cc.keep_recent = compression["keep_recent"]
-            if "phase1_threshold" in compression:
-                cc.phase1_threshold = compression["phase1_threshold"]
-            if "phase2_threshold" in compression:
-                cc.phase2_threshold = compression["phase2_threshold"]
-            if "phase3_threshold" in compression:
-                cc.phase3_threshold = compression["phase3_threshold"]
-            if "content_aware" in compression:
-                cc.content_aware = compression["content_aware"]
-            if "adaptive_recent" in compression:
-                cc.adaptive_recent = compression["adaptive_recent"]
+            if "summarization_threshold" in compression:
+                cc.summarization_threshold = compression["summarization_threshold"]
         return cc
 
     # ------------------------------------------------------------------
