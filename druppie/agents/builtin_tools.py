@@ -34,7 +34,7 @@ VALID_REPO_TARGETS = ("project", "druppie_core")
 # =============================================================================
 
 # Default builtin tools every agent gets (unless overridden in YAML)
-DEFAULT_BUILTIN_TOOLS = ["done", "hitl_ask_question", "hitl_ask_multiple_choice_question"]
+DEFAULT_BUILTIN_TOOLS = ["done", "hitl_ask_question", "hitl_ask_multiple_choice_question", "read_attachment"]
 
 # All builtin tool definitions, keyed by tool name
 BUILTIN_TOOL_DEFS: dict[str, dict] = {
@@ -138,11 +138,11 @@ BUILTIN_TOOL_DEFS: dict[str, dict] = {
                     },
                     "project_id": {
                         "type": "string",
-                        "description": "For update_project: the ID of the project to update",
+                        "description": "The ID of the project to work with. Required for update_project. Optional for general_chat when the user asks about a specific project by name. ONLY include this if the user mentions a specific project - otherwise OMIT this parameter entirely.",
                     },
                     "project_name": {
                         "type": "string",
-                        "description": "For create_project: the name for the new project",
+                        "description": "For create_project: the name for the new project. ONLY include this when intent is 'create_project' - otherwise OMIT this parameter entirely.",
                     },
                 },
                 "required": ["intent"],
@@ -281,6 +281,23 @@ BUILTIN_TOOL_DEFS: dict[str, dict] = {
             },
         },
     },
+    "read_attachment": {
+        "type": "function",
+        "function": {
+            "name": "read_attachment",
+            "description": "Read the content of a file uploaded by the user. Use this when you need to see the contents of an attached file listed in the session context.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "attachment_id": {
+                        "type": "string",
+                        "description": "The UUID of the attachment to read",
+                    },
+                },
+                "required": ["attachment_id"],
+            },
+        },
+    },
 }
 
 
@@ -351,6 +368,11 @@ async def set_intent(
         project_id=project_id,
         project_name=project_name,
     )
+
+    if project_id and isinstance(project_id, str):
+        normalized = project_id.lower().strip()
+        if normalized in ("null", "none") or normalized == "":
+            project_id = None
 
     valid_intents = ("create_project", "update_project", "general_chat")
     if intent not in valid_intents:
@@ -512,10 +534,27 @@ async def set_intent(
             }
 
     else:  # general_chat
-        result["message"] = "Intent set to general_chat"
+        if project_id:
+            try:
+                session_repo.update_project(session_id, UUID(project_id))
+                final_project_id = UUID(project_id)
+                result["project_id"] = project_id
+                result["message"] = f"Intent set to general_chat with project context: {project_id}"
+            except ValueError:
+                return {
+                    "success": False,
+                    "error": f"Invalid project_id format: {project_id}",
+                }
+        else:
+            result["message"] = "Intent set to general_chat"
 
-    # Update the pending planner's prompt with intent context
-    _update_planner_prompt(execution_repo, session_id, intent, final_project_id)
+    _update_planner_prompt(
+        execution_repo,
+        session_id,
+        intent,
+        final_project_id,
+        project_name if intent == "create_project" else None,
+    )
 
     db.flush()
 
@@ -534,6 +573,7 @@ def _update_planner_prompt(
     session_id: UUID,
     intent: str,
     project_id: UUID | None,
+    project_name: str | None = None,
 ) -> None:
     """Update the pending planner's prompt with intent context.
 
@@ -545,7 +585,10 @@ def _update_planner_prompt(
         session_id: Session UUID
         intent: Intent type
         project_id: Project UUID (or None)
+        project_name: Project name (optional, for create_project)
     """
+    from druppie.repositories import ProjectRepository
+
     planner_run = execution_repo.get_pending_by_agent_id(session_id, "planner")
 
     if not planner_run:
@@ -555,11 +598,34 @@ def _update_planner_prompt(
         )
         return
 
+    owner = None
+    if project_id:
+        try:
+            project_repo = ProjectRepository(execution_repo.db)
+            project = project_repo.get_by_id(project_id)
+            if project:
+                if not project_name:
+                    project_name = project.name
+                owner = project.repo_owner
+            else:
+                logger.warning(
+                    "_update_planner_prompt_project_not_found",
+                    project_id=str(project_id),
+                    session_id=str(session_id),
+                )
+        except Exception as e:
+            logger.error(
+                "_update_planner_prompt_project_lookup_failed",
+                project_id=str(project_id),
+                session_id=str(session_id),
+                error=str(e),
+            )
+
     # Prepend intent context to the existing prompt
     if project_id:
-        intent_context = f"INTENT: {intent}\nPROJECT_ID: {str(project_id)}\n\n"
+        intent_context = f"INTENT: {intent}\nPROJECT_ID: {str(project_id)}\nPROJECT_NAME: {project_name or 'unknown'}\nOWNER: {owner or 'unknown'}\n\n"
     else:
-        intent_context = f"INTENT: {intent}\nPROJECT_ID: new\n\n"
+        intent_context = f"INTENT: {intent}\nPROJECT_ID: new\nPROJECT_NAME: {project_name or 'unknown'}\nOWNER: unknown\n\n"
     new_prompt = intent_context + (planner_run.planned_prompt or "")
     execution_repo.update_planned_prompt(planner_run.id, new_prompt)
 
@@ -859,9 +925,8 @@ async def done(
     """Signal that the agent has completed its task.
 
     This does NOT pause execution - it signals completion immediately.
-    Auto-collects previous agent summaries and prepends them to create
-    an accumulated summary. Relays the full accumulated summary to the
-    next pending agent by prepending it to that agent's planned_prompt.
+    Stores the agent's summary for later retrieval. The orchestrator
+    handles building the accumulated summary when starting planner runs.
 
     When next_agent is specified, creates a direct pending run for that agent
     (plus a follow-up planner run), bypassing the normal Planner routing.
@@ -874,7 +939,7 @@ async def done(
         next_agent: Optional agent ID to route to directly
 
     Returns:
-        Completion status with accumulated summary
+        Completion status with the agent's own summary
     """
     # Check completion preconditions before proceeding
     precondition_error = _check_completion_preconditions(
@@ -896,47 +961,6 @@ async def done(
         session_id=str(session_id),
         agent_run_id=str(agent_run_id),
         summary=summary[:200] if summary else "",
-    )
-
-    # Auto-collect previous agent summaries from completed runs
-    previous_summaries = []
-    completed_runs = execution_repo.get_completed_runs(session_id)
-    for run in completed_runs:
-        # Skip the current run (it's not completed yet at this point)
-        if run.id == agent_run_id:
-            continue
-        run_summary = execution_repo.get_done_summary_for_run(run.id)
-        if run_summary:
-            # Extract only the agent's own line(s) to avoid duplication.
-            # If the summary already contains accumulated lines from earlier agents,
-            # we only want the last line (this agent's own contribution).
-            # Look for "Agent <role>:" pattern to find individual lines.
-            lines = run_summary.strip().split("\n")
-            for line in lines:
-                stripped = line.strip()
-                if stripped and stripped.startswith("Agent ") and stripped not in previous_summaries:
-                    previous_summaries.append(stripped)
-
-    # Build the accumulated summary: previous summaries + current agent's summary
-    # If the current summary already contains "Agent " lines from previous agents
-    # (because the agent copied them), strip those out to avoid duplication
-    current_lines = summary.strip().split("\n")
-    own_lines = []
-    for line in current_lines:
-        stripped = line.strip()
-        if stripped and stripped not in previous_summaries:
-            own_lines.append(stripped)
-
-    # Combine: previous summaries first, then this agent's own lines
-    all_lines = previous_summaries + own_lines
-    accumulated_summary = "\n".join(all_lines) if all_lines else summary
-
-    logger.info(
-        "agent_done_accumulated",
-        session_id=str(session_id),
-        agent_run_id=str(agent_run_id),
-        previous_count=len(previous_summaries),
-        accumulated_preview=accumulated_summary[:200],
     )
 
     # Direct routing: if next_agent is specified, validate it against the
@@ -991,7 +1015,7 @@ async def done(
                 session_id=session_id,
                 agent_id=next_agent,
                 status=AgentRunStatus.PENDING,
-                planned_prompt="",  # Will be filled by relay below
+                planned_prompt="",
                 sequence_number=start_seq,
             )
             execution_repo.flush()
@@ -1005,28 +1029,9 @@ async def done(
         else:
             next_agent = None  # Ignored — planner will decide as usual
 
-    # Relay accumulated summary to the next pending planner only.
-    # Non-planner agents are self-contained — they read files from the
-    # workspace, not summary chains from previous agents.
-    next_run = execution_repo.get_next_pending(session_id)
-    if next_run and next_run.agent_id == "planner":
-        existing_prompt = next_run.planned_prompt or ""
-        new_prompt = (
-            f"PREVIOUS AGENT SUMMARY:\n{accumulated_summary}\n\n---\n\n"
-            + existing_prompt
-        )
-        execution_repo.update_planned_prompt(next_run.id, new_prompt)
-        execution_repo.flush()
-        logger.info(
-            "summary_relayed_to_planner",
-            session_id=str(session_id),
-            from_agent_run=str(agent_run_id),
-            to_agent_run=str(next_run.id),
-        )
-
     result = {
         "status": "completed",
-        "summary": accumulated_summary,
+        "summary": summary,
     }
     if next_agent:
         result["next_agent"] = next_agent
@@ -1338,6 +1343,45 @@ async def test_report(
     }
 
 
+async def read_attachment(
+    attachment_id: str,
+    session_id: UUID,
+    execution_repo: "ExecutionRepository",
+) -> dict:
+    """Read the content of an uploaded attachment."""
+    from druppie.db.models import MessageAttachment
+
+    try:
+        att_uuid = UUID(attachment_id)
+    except (ValueError, AttributeError):
+        return {"success": False, "error": f"Invalid attachment ID: {attachment_id}"}
+
+    attachment = (
+        execution_repo.db.query(MessageAttachment)
+        .filter(
+            MessageAttachment.id == att_uuid,
+            MessageAttachment.session_id == session_id,
+        )
+        .first()
+    )
+    if not attachment:
+        return {"success": False, "error": f"Attachment not found: {attachment_id}"}
+
+    if attachment.extracted_text:
+        return {
+            "success": True,
+            "filename": attachment.original_filename,
+            "content_type": attachment.content_type,
+            "content": attachment.extracted_text,
+        }
+
+    return {
+        "success": False,
+        "filename": attachment.original_filename,
+        "error": "No extracted text available for this file",
+    }
+
+
 # =============================================================================
 # TOOL EXECUTION (called by ToolExecutor)
 # =============================================================================
@@ -1425,6 +1469,12 @@ async def execute_builtin(
             error_classification=args.get("error_classification"),
             strategy=args.get("strategy"),
         )
+    elif tool_name == "read_attachment":
+        return await read_attachment(
+            attachment_id=args.get("attachment_id", ""),
+            session_id=session_id,
+            execution_repo=execution_repo,
+        )
     else:
         return {
             "success": False,
@@ -1444,6 +1494,7 @@ def is_builtin_tool(tool_name: str) -> bool:
         "invoke_skill",
         "execute_coding_task",
         "test_report",
+        "read_attachment",
     )
 
 

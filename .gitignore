@@ -82,3 +82,5 @@ kubeconfig
 testing/autoscaling/results/*.png
 testing/autoscaling/results/*.jpg
 testing/autoscaling/results/*.jpeg
+.omo/
+.claude/

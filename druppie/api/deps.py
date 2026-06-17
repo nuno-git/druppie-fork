@@ -100,6 +100,12 @@ def get_job_repository(db: Session = Depends(get_db)) -> JobRepository:
     return JobRepository(db)
 
 
+def get_attachment_repository(db: Session = Depends(get_db)) -> "AttachmentRepository":
+    """Get AttachmentRepository with DB session injected."""
+    from druppie.repositories import AttachmentRepository
+    return AttachmentRepository(db)
+
+
 # =============================================================================
 # SERVICE DEPENDENCIES
 # =============================================================================

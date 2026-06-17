@@ -58,6 +58,7 @@ BUILTIN_TOOLS = {
     "invoke_skill",
     "execute_coding_task",
     "test_report",
+    "read_attachment",
 }
 
 # HITL tools require user answer (create Question record)

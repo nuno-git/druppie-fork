@@ -25,15 +25,18 @@ approvals/questions and uses:
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 import structlog
 
-from druppie.api.deps import get_current_user, get_optional_user, get_session_repository, get_user_roles
+from druppie.api.deps import get_attachment_repository, get_current_user, get_optional_user, get_session_repository, get_user_roles
 from druppie.repositories import SessionRepository
+from druppie.repositories.attachment_repository import AttachmentRepository
 from druppie.domain.common import SessionStatus
 from druppie.api.errors import NotFoundError, AuthorizationError
-from druppie.core.background_tasks import create_session_task, run_session_task, SessionTaskConflict
+from druppie.core.background_tasks import create_session_task, SessionTaskConflict, run_session_task
+from druppie.services import attachment_service
 
 logger = structlog.get_logger()
 
@@ -61,6 +64,10 @@ class ChatRequest(BaseModel):
         None,
         description="Project ID to work on",
     )
+    attachment_ids: list[str] = Field(
+        default=[],
+        description="Attachment IDs from prior upload calls",
+    )
 
 
 class ChatResponse(BaseModel):
@@ -85,6 +92,7 @@ async def _run_orchestrator_background(
     user_id: UUID,
     session_id: UUID,
     project_id: UUID | None,
+    attachment_ids: list[UUID] | None = None,
 ) -> None:
     """Run orchestrator in background with its own DB session."""
 
@@ -94,6 +102,7 @@ async def _run_orchestrator_background(
             user_id=user_id,
             session_id=session_id,
             project_id=project_id,
+            attachment_ids=attachment_ids or [],
         )
 
     await run_session_task(session_id, task, "background_orchestrator")
@@ -109,6 +118,7 @@ async def chat(
     request: ChatRequest,
     user: dict | None = Depends(get_optional_user),
     session_repo: SessionRepository = Depends(get_session_repository),
+    attachment_repo: AttachmentRepository = Depends(get_attachment_repository),
 ) -> ChatResponse:
     """Process a chat message.
 
@@ -196,6 +206,16 @@ async def chat(
         # Existing sessions: guard via SELECT FOR UPDATE in create_session_task.
         is_new_session = session_id_param is None
         try:
+            attachment_uuids = [UUID(aid) for aid in request.attachment_ids] if request.attachment_ids else None
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid attachment ID format")
+        if attachment_uuids:
+            try:
+                attachment_repo.validate_ownership(attachment_uuids, current_session_id)
+            except ValueError as e:
+                raise HTTPException(status_code=403, detail=str(e))
+
+        try:
             create_session_task(
                 current_session_id,
                 _run_orchestrator_background(
@@ -203,6 +223,7 @@ async def chat(
                     user_id=user_id,
                     session_id=current_session_id,
                     project_id=project_id,
+                    attachment_ids=attachment_uuids,
                 ),
                 name=f"orchestrator-{current_session_id}",
                 skip_lock=is_new_session,
@@ -223,6 +244,8 @@ async def chat(
             message="Processing started",
         )
 
+    except (HTTPException, AuthorizationError, NotFoundError):
+        raise
     except Exception as e:
         logger.error(
             "chat_error",
@@ -293,3 +316,120 @@ async def stop_session(
         "session_id": str(session_id),
         "message": "Session stopped",
     }
+
+
+# =============================================================================
+# FILE UPLOAD
+# =============================================================================
+
+
+@router.post("/chat/upload")
+async def upload_attachment(
+    file: UploadFile = File(...),
+    session_id: str | None = Query(None),
+    user: dict = Depends(get_current_user),
+    attachment_repo: AttachmentRepository = Depends(get_attachment_repository),
+    session_repo: SessionRepository = Depends(get_session_repository),
+):
+    """Upload a file to attach to a chat message.
+
+    Files are stored on disk and metadata saved to DB. The returned
+    attachment ID should be passed in the next POST /api/chat request
+    via the attachment_ids field.
+    """
+    filename = file.filename or "unnamed"
+    content_type = attachment_service.resolve_content_type(filename, file.content_type)
+
+    # Read and validate file content
+    content = await file.read()
+    file_size = len(content)
+    try:
+        attachment_service.validate_file(filename, content_type, file_size)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    # Verify session ownership when session_id is provided
+    sid = UUID(session_id) if session_id else None
+    if sid:
+        session = session_repo.get_by_id(sid)
+        if not session:
+            raise NotFoundError("session", str(sid))
+        user_id = UUID(user["sub"])
+        user_roles = get_user_roles(user)
+        if session.user_id != user_id and "admin" not in user_roles:
+            raise AuthorizationError("Cannot upload to this session")
+    attachment = attachment_repo.create(
+        original_filename=filename,
+        content_type=content_type,
+        file_size=file_size,
+        storage_path="pending",
+        session_id=sid,
+    )
+    attachment_repo.db.flush()
+
+    # Store file to disk keyed by attachment ID
+    safe_name = attachment_service._sanitize_filename(filename)
+    dir_path = attachment_service.UPLOAD_DIR / str(attachment.id)
+    dir_path.mkdir(parents=True, exist_ok=True)
+    file_path = dir_path / safe_name
+    file_path.write_bytes(content)
+
+    storage_path = f"uploads/{attachment.id}/{safe_name}"
+    attachment.storage_path = storage_path
+    attachment.extracted_text = await attachment_service.extract_text(file_path, content_type)
+    attachment_repo.db.commit()
+
+    return {
+        "id": str(attachment.id),
+        "original_filename": attachment.original_filename,
+        "content_type": attachment.content_type,
+        "file_size": attachment.file_size,
+    }
+
+
+@router.get("/attachments/{attachment_id}")
+async def get_attachment(
+    attachment_id: UUID,
+    token: str | None = Query(None),
+    user: dict | None = Depends(get_optional_user),
+    attachment_repo: AttachmentRepository = Depends(get_attachment_repository),
+    session_repo: SessionRepository = Depends(get_session_repository),
+):
+    """Serve an uploaded attachment file.
+
+    Accepts auth via either the Authorization header or a ?token= query param
+    so that <img src> and <a href> work without custom fetch logic.
+    """
+    # If no user from header, try the token query param
+    if not user and token:
+        from druppie.core.auth import get_auth_service
+        auth = get_auth_service()
+        user = auth.validate_request(f"Bearer {token}")
+
+    if not user:
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    attachment = attachment_repo.get_by_id(attachment_id)
+    if not attachment:
+        raise NotFoundError("attachment", str(attachment_id))
+
+    # Check access: user must own the session or be admin
+    if attachment.session_id:
+        session = session_repo.get_by_id(attachment.session_id)
+        if session:
+            user_id = UUID(user["sub"])
+            user_roles = get_user_roles(user)
+            is_owner = session.user_id == user_id
+            is_admin = "admin" in user_roles
+            if not is_owner and not is_admin:
+                raise AuthorizationError("Cannot access this attachment")
+
+    file_path = attachment_service.get_file_path(attachment.storage_path)
+    if not file_path.exists():
+        raise NotFoundError("attachment file", str(attachment_id))
+
+    return FileResponse(
+        path=str(file_path),
+        media_type=attachment.content_type,
+        filename=attachment.original_filename,
+    )
