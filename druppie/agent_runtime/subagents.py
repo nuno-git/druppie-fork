@@ -190,6 +190,7 @@ class SubagentsMCP:
                     spawning_tool_call_id=spawning_tool_call_id,
                     current_depth=new_depth,
                     agent_chain=chain + [parent_agent.id],
+                    child_prompt=prompt,
                 )
             elif child_sandbox_conn is not None:
                 child_tool_provider = MCPToolProvider(

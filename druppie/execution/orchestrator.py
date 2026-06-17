@@ -714,7 +714,7 @@ class Orchestrator:
             .filter(
                 ToolCallModel.agent_run_id == parent_run_id,
                 ToolCallModel.tool_name == "subagents",
-                ToolCallModel.status.in_(["paused", "completed", "executing"]),
+                ToolCallModel.status.in_(["pending", "paused", "completed", "executing"]),
             )
             .order_by(ToolCallModel.created_at.desc())
             .first()

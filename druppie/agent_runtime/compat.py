@@ -9,6 +9,7 @@ Provides 4 key components:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import traceback
@@ -352,6 +353,14 @@ class DruppieToolProvider:
             )
             self._execution_repo.db.commit()
             return result
+        except asyncio.CancelledError:
+            self._execution_repo.update_tool_call(
+                tool_call_id=tool_call_id,
+                status="paused",
+                result={"success": True, "_pending": True, "reason": "cancelled"},
+            )
+            self._execution_repo.db.commit()
+            raise
         except Exception as e:
             logger.exception("Subagents execution failed")
             self._execution_repo.update_tool_call(

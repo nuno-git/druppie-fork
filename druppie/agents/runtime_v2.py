@@ -429,7 +429,7 @@ class AgentV2:
         subagents_conn = None
         if getattr(self.definition, "subagents", []):
 
-            def _child_tp_factory(*, child_defn, child_sandbox_conn, parent_tool_provider, spawning_tool_call_id=None, current_depth=0, agent_chain=None, _parent_run_id=None):
+            def _child_tp_factory(*, child_defn, child_sandbox_conn, parent_tool_provider, spawning_tool_call_id=None, current_depth=0, agent_chain=None, child_prompt=None, _parent_run_id=None):
                 from druppie.domain.common import AgentRunStatus
                 from druppie.repositories import ExecutionRepository
                 child_repo = ExecutionRepository(self.db)
@@ -437,7 +437,7 @@ class AgentV2:
                     session_id=session_id,
                     agent_id=child_defn.id,
                     status=AgentRunStatus.RUNNING,
-                    planned_prompt="",
+                    planned_prompt=child_prompt or "",
                     parent_run_id=_parent_run_id or agent_run_id,
                     spawning_tool_call_id=spawning_tool_call_id,
                 )
