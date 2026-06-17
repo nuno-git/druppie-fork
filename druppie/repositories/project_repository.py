@@ -156,6 +156,25 @@ class ProjectRepository(BaseRepository):
         """Delete project."""
         self.db.query(Project).filter_by(id=project_id).delete()
 
+    def delete_many(self, project_ids: list[UUID]) -> int:
+        """Delete projects by IDs. Returns count deleted."""
+        if not project_ids:
+            return 0
+        return self.db.query(Project).filter(Project.id.in_(project_ids)).delete(synchronize_session="fetch")
+
+    def get_many_by_ids(self, project_ids: list[UUID]) -> list[Project]:
+        """Get multiple projects by IDs."""
+        if not project_ids:
+            return []
+        return self.db.query(Project).filter(Project.id.in_(project_ids)).all()
+
+    def get_all_for_user(self, user_id: UUID | None) -> list[Project]:
+        """Get all projects, optionally filtered by user."""
+        query = self.db.query(Project)
+        if user_id is not None:
+            query = query.filter_by(owner_id=user_id)
+        return query.all()
+
     def _to_summary(self, project: Project) -> ProjectSummary:
         """Convert project model to summary domain object."""
         # Look up username from users table

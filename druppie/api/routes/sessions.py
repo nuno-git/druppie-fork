@@ -123,41 +123,38 @@ async def get_session(
     return detail
 
 
-@router.delete("/sessions/{session_id}")
-async def delete_session(
-    session_id: UUID,
+class DeleteSessionsRequest(BaseModel):
+    """Body for session deletion."""
+    session_ids: list[UUID] | None = None
+
+
+@router.delete("/sessions")
+async def delete_sessions(
+    body: DeleteSessionsRequest | None = Body(None),
     service: SessionService = Depends(get_session_service),
     user: dict = Depends(get_current_user),
 ):
-    """Delete a session and all related data.
+    """Delete sessions.
 
-    Only the session owner or an admin can delete a session.
-    This cascades to delete all related data:
-    - Messages
-    - Agent runs
-    - Tool calls
-    - LLM calls
-    - Approvals
-    - HITL questions
+    Unified endpoint for single and batch deletion:
+    - If session_ids is provided, deletes those specific sessions.
+    - If session_ids is omitted/null, deletes all sessions for the user (admins: all sessions).
 
     Returns:
-        Success confirmation
-
-    Raises:
-        NotFoundError: Session not found
-        AuthorizationError: User cannot delete this session
+        Success confirmation with count of deleted sessions
     """
     user_id = UUID(user["sub"])
     user_roles = get_user_roles(user)
 
-    service.delete(
-        session_id=session_id,
-        user_id=user_id,
-        user_roles=user_roles,
-    )
+    if body and body.session_ids is not None:
+        count = service.delete_many(body.session_ids, user_id, user_roles)
+    else:
+        if "admin" in user_roles:
+            user_id = None
+        count = service.delete_all_for_user(user_id)
 
-    logger.info("session_deleted", session_id=str(session_id), user_id=str(user_id))
-    return {"success": True, "message": "Session deleted"}
+    logger.info("sessions_deleted", user_id=str(user["sub"]), count=count)
+    return {"success": True, "deleted_count": count}
 
 
 # =============================================================================
