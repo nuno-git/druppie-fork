@@ -796,22 +796,7 @@ const MessageItem = ({ message, agentRun, sessionId }) => {
     : []
 
   if (isUser) {
-    if (isResumeContext) {
-      return (
-        <div className="group flex justify-end gap-2">
-          <span className="text-xs text-gray-300 self-end pb-1">
-            {message.created_at && new Date(message.created_at).toLocaleTimeString()}
-          </span>
-          <div className="max-w-[85%] rounded-2xl px-4 py-2.5 text-sm bg-green-50 border border-green-200 text-gray-900 overflow-hidden">
-            <div className="flex items-center gap-1 mb-1">
-              <PlayCircle className="w-3 h-3 text-green-600" />
-              <span className="text-[10px] font-medium text-green-700 uppercase tracking-wide">Resume context</span>
-            </div>
-            <div className="whitespace-pre-wrap break-words">{message.content}</div>
-          </div>
-        </div>
-      )
-    }
+    if (isResumeContext) return null
     const atts = message.attachments || []
     const attNames = atts.map((a) => a.original_filename).join(', ')
     const isAttachmentOnly = atts.length > 0 && (message.content === 'See attached' || message.content === attNames)
