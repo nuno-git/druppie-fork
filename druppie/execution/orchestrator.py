@@ -163,26 +163,6 @@ class Orchestrator:
         # This ensures follow-up messages don't collide with existing runs
         next_seq = self.execution_repo.get_next_sequence_number(current_session_id)
 
-        # Step 3b: Save user message to the timeline
-        message_id = self.execution_repo.create_message(
-            session_id=current_session_id,
-            role="user",
-            content=message,
-            sequence_number=next_seq,
-        )
-        next_seq += 1
-
-        # Step 3c: Link uploaded attachments to the user message
-        attachment_context = ""
-        if attachment_ids and self.attachment_repo:
-            self.attachment_repo.link_to_message(
-                attachment_ids, message_id, current_session_id,
-            )
-            attachments = self.attachment_repo.get_by_ids(attachment_ids)
-            attachment_context = self._build_attachment_context(attachments)
-
-        self.execution_repo.commit()
-
         # Step 3.5: Detect and update language (only if detection succeeds)
         human_input = HumanInput(message, self.language_detector)
         self._last_language_info = human_input.language_info()
@@ -221,7 +201,7 @@ class Orchestrator:
                 )
 
         # Step 3b: Save user message to the timeline (after translation so we can store both versions)
-        self.execution_repo.create_message(
+        message_id = self.execution_repo.create_message(
             session_id=current_session_id,
             role="user",
             content=message,
@@ -229,6 +209,16 @@ class Orchestrator:
             sequence_number=next_seq,
         )
         next_seq += 1
+
+        # Step 3c: Link uploaded attachments to the user message
+        attachment_context = ""
+        if attachment_ids and self.attachment_repo:
+            self.attachment_repo.link_to_message(
+                attachment_ids, message_id, current_session_id,
+            )
+            attachments = self.attachment_repo.get_by_ids(attachment_ids)
+            attachment_context = self._build_attachment_context(attachments)
+
         self.execution_repo.commit()
 
         # Step 4: Get user's projects for router injection
