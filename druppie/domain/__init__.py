@@ -35,6 +35,7 @@ from .agent_run import (
     LLMCallDetail,
     LLMRetryDetail,
     NormalizationDetail,
+    ResumeContext,
     ToolCallDetail,
 )
 
@@ -127,6 +128,7 @@ __all__ = [
     "LLMCallDetail",
     "LLMRetryDetail",
     "NormalizationDetail",
+    "ResumeContext",
     "ToolCallDetail",
     # Approval
     "ApprovalSummary",

@@ -1167,17 +1167,17 @@ class Orchestrator:
         )
 
         if len(paused_leaves) == 1:
-            await self._resume_single_paused_leaf(session_id, paused_leaves[0])
+            await self._resume_single_paused_leaf(session_id, paused_leaves[0], user_context=context)
         else:
             import asyncio as _asyncio
             await _asyncio.gather(*[
-                self._resume_leaf_with_own_db(session_id, leaf)
+                self._resume_leaf_with_own_db(session_id, leaf, user_context=context)
                 for leaf in paused_leaves
             ])
 
         return session_id
 
-    async def _resume_leaf_with_own_db(self, session_id: UUID, leaf) -> None:
+    async def _resume_leaf_with_own_db(self, session_id: UUID, leaf, user_context: str | None = None) -> None:
         from druppie.db.database import SessionLocal
         from druppie.repositories import ExecutionRepository, SessionRepository
 
@@ -1189,7 +1189,7 @@ class Orchestrator:
                 project_repo=self.project_repo,
                 question_repo=self.question_repo,
             )
-            await leaf_orchestrator._resume_single_paused_leaf(session_id, leaf)
+            await leaf_orchestrator._resume_single_paused_leaf(session_id, leaf, user_context=user_context)
         finally:
             db.close()
 
@@ -1212,6 +1212,24 @@ class Orchestrator:
         context = self.build_project_context(session_id)
         if user_context and context is not None:
             context["user_context"] = user_context
+            from druppie.db.models.llm_call import LlmCall
+            from druppie.db.models.resume_context_event import ResumeContextEvent
+            llm_call_count = db.query(LlmCall).filter_by(agent_run_id=paused_run.id).count()
+            next_seq = self.execution_repo.get_next_sequence_number(session_id)
+            self.execution_repo.create_message(
+                session_id=session_id,
+                role="user",
+                content=user_context,
+                agent_run_id=paused_run.id,
+                sequence_number=next_seq,
+            )
+            db.add(ResumeContextEvent(
+                session_id=session_id,
+                agent_run_id=paused_run.id,
+                content=user_context,
+                llm_call_index=llm_call_count,
+            ))
+            self.execution_repo.commit()
         agent = Agent(paused_run.agent_id, db=db, session_id=str(session_id))
         try:
             result = await agent.continue_run(

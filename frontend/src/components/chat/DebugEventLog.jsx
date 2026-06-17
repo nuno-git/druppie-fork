@@ -439,7 +439,7 @@ const AgentDetailPanel = ({ agentRun, sessionId, sessionStatus }) => {
         </div>
       )}
 
-      {/* LLM calls with compaction banners interleaved chronologically */}
+      {/* LLM calls with compaction banners and resume context interleaved chronologically */}
       {(() => {
         const compactionByLlmCall = {}
         const orphanCompactions = []
@@ -451,19 +451,32 @@ const AgentDetailPanel = ({ agentRun, sessionId, sessionStatus }) => {
             orphanCompactions.push(ce)
           }
         }
+        const resumeContexts = agentRun.resume_contexts || []
+        let rcIdx = 0
         const sections = []
         for (let i = 0; i < llmCalls.length; i++) {
+          while (rcIdx < resumeContexts.length && i === resumeContexts[rcIdx].llm_call_index) {
+            sections.push({ type: 'resumeContext', ctx: resumeContexts[rcIdx] })
+            rcIdx++
+          }
           sections.push({ type: 'llm', llm: llmCalls[i], index: i })
           const compactions = compactionByLlmCall[llmCalls[i].id]
           if (compactions) {
             for (const ce of compactions) sections.push({ type: 'compaction', ce })
           }
         }
+        while (rcIdx < resumeContexts.length) {
+          sections.push({ type: 'resumeContext', ctx: resumeContexts[rcIdx] })
+          rcIdx++
+        }
         for (const ce of orphanCompactions) sections.push({ type: 'compaction', ce })
         if (sections.length === 0) return null
         return sections.map((s, si) => {
           if (s.type === 'llm') {
             return <LlmCallSection key={s.llm.id || `llm${si}`} llm={s.llm} index={s.index} isOnly={llmCalls.length === 1} />
+          }
+          if (s.type === 'resumeContext') {
+            return <ResumeContextBanner key={`rc${si}`} ctx={s.ctx} />
           }
           return <InlineCompactionBanner key={`ce${si}`} ce={s.ce} />
         })
@@ -501,6 +514,21 @@ const InlineCompactionBanner = ({ ce }) => {
           </pre>
         </details>
       )}
+    </div>
+  )
+}
+
+const ResumeContextBanner = ({ ctx }) => {
+  return (
+    <div className="border-t border-green-200 pt-3">
+      <div className="flex items-center gap-2 text-xs text-green-700 bg-green-50 rounded px-2.5 py-1.5">
+        <MessageSquare className="w-3.5 h-3.5 text-green-600 flex-shrink-0" />
+        <span className="font-medium">Resume Context</span>
+        <span className="text-[10px] text-green-500">user-injected on resume</span>
+      </div>
+      <pre className="mt-1 bg-green-50/40 border border-green-100 p-2.5 rounded overflow-auto max-h-40 whitespace-pre-wrap text-xs text-gray-700 leading-relaxed">
+        {ctx.content}
+      </pre>
     </div>
   )
 }

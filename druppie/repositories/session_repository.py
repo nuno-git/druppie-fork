@@ -31,6 +31,7 @@ from ..domain import (
     Message,
     NormalizationDetail,
     ProjectSummary,
+    ResumeContext,
     SessionDetail,
     SessionStatus,
     SessionSummary,
@@ -289,6 +290,7 @@ class SessionRepository(BaseRepository):
                     role=msg.role,
                     content=msg.content or "",
                     agent_id=msg.agent_id,
+                    agent_run_id=msg.agent_run_id,
                     sequence_number=msg.sequence_number,
                     created_at=msg.created_at,
                 ),
@@ -350,6 +352,7 @@ class SessionRepository(BaseRepository):
         """Build full agent run detail with LLM calls, tool executions, and nested subagent runs."""
         llm_calls = self._build_llm_calls(run.id)
         compaction_events = self._build_compaction_events(run.id)
+        resume_contexts = self._build_resume_contexts(run.id)
 
         subagent_runs: list[AgentRunDetail] = []
         if _depth < 10:
@@ -383,6 +386,7 @@ class SessionRepository(BaseRepository):
             llm_calls=llm_calls,
             subagent_runs=subagent_runs,
             compaction_events=compaction_events,
+            resume_contexts=resume_contexts,
         )
 
     def _build_compaction_events(self, agent_run_id: UUID) -> list[CompactionEventDetail]:
@@ -406,6 +410,25 @@ class SessionRepository(BaseRepository):
                 created_at=ce.created_at,
             )
             for ce in events_db
+        ]
+
+    def _build_resume_contexts(self, agent_run_id: UUID) -> list[ResumeContext]:
+        """Build resume context entries for an agent run from the events table."""
+        from ..db.models.resume_context_event import ResumeContextEvent
+
+        events_db = (
+            self.db.query(ResumeContextEvent)
+            .filter_by(agent_run_id=agent_run_id)
+            .order_by(ResumeContextEvent.created_at)
+            .all()
+        )
+        return [
+            ResumeContext(
+                content=e.content,
+                created_at=e.created_at,
+                llm_call_index=e.llm_call_index,
+            )
+            for e in events_db
         ]
 
     def _build_llm_calls(self, agent_run_id: UUID) -> list[LLMCallDetail]:

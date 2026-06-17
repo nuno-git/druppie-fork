@@ -37,6 +37,8 @@ from .agent_run import AgentRun, Message
 # Compaction event model
 from .compaction_event import CompactionEvent
 
+from .resume_context_event import ResumeContextEvent
+
 # Approval model
 from .approval import Approval
 from .base import Base, new_uuid, utcnow
@@ -94,6 +96,7 @@ __all__ = [
     "AgentRun",
     "Message",
     "CompactionEvent",
+    "ResumeContextEvent",
     "ToolCall",
     "LlmCall",
     "LlmRetry",

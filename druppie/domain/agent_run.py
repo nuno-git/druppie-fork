@@ -130,6 +130,14 @@ class AgentRunSummary(BaseModel):
     completed_at: datetime | None = None
 
 
+class ResumeContext(BaseModel):
+    """Context message injected by user when resuming a paused agent run."""
+
+    content: str
+    created_at: datetime
+    llm_call_index: int
+
+
 class AgentRunDetail(AgentRunSummary):
     """Full agent run - sequence of LLM calls. Inherits from AgentRunSummary."""
 
@@ -137,4 +145,5 @@ class AgentRunDetail(AgentRunSummary):
     llm_calls: list[LLMCallDetail] = []
     subagent_runs: list[AgentRunDetail] = []
     compaction_events: list[CompactionEventDetail] = []
+    resume_contexts: list[ResumeContext] = []
 

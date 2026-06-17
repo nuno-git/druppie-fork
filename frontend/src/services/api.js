@@ -95,8 +95,18 @@ export const getSessions = (page = 1, limit = 20) =>
 // Get complete session with ALL data (messages, llm_calls, events, approvals, etc.)
 export const getSession = (sessionId) => request(`/api/sessions/${sessionId}`)
 
-export const resumeSession = (sessionId) =>
-  request(`/api/sessions/${sessionId}/resume`, { method: 'POST' })
+export const resumeSession = (sessionId, context = null, targetAgentRunId = null) => {
+  const body = {}
+  if (context) body.context = context
+  if (targetAgentRunId) body.target_agent_run_id = targetAgentRunId
+  return request(`/api/sessions/${sessionId}/resume`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+}
+
+export const getResumableRuns = (sessionId) =>
+  request(`/api/sessions/${sessionId}/resumable`)
 
 export const deleteSession = (sessionId) =>
   request(`/api/sessions/${sessionId}`, { method: 'DELETE' })

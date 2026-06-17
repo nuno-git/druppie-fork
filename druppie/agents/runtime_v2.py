@@ -195,6 +195,12 @@ class AgentV2:
                 {"role": "system", "content": self.prompt_builder.build_system_prompt(language, language_info)},
                 {"role": "user", "content": self.prompt_builder.build_user_prompt(prompt, context)},
             ]
+            user_ctx = context.get("user_context") if context else None
+            if user_ctx:
+                messages.append({
+                    "role": "user",
+                    "content": f"[Additional context from user on resume]\n{user_ctx}",
+                })
             return await self._run_with_new_loop(
                 messages=messages,
                 prompt=prompt,
@@ -246,6 +252,14 @@ class AgentV2:
                 old_language=old_language,
                 new_language=language,
             )
+
+        user_ctx = context.get("user_context") if context else None
+        if user_ctx:
+            messages.append({
+                "role": "user",
+                "content": f"[Additional context from user on resume]\n{user_ctx}",
+            })
+            logger.info("user_context_injected", agent_run_id=str(agent_run_id))
 
         logger.info(
             "agent_continue_run_v2",

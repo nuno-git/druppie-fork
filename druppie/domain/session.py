@@ -34,6 +34,7 @@ class Message(BaseModel):
     role: str  # user, assistant, system
     content: str
     agent_id: str | None = None
+    agent_run_id: UUID | None = None
     sequence_number: int = 0
     created_at: datetime
 

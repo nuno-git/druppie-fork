@@ -8,7 +8,7 @@ import { Send, CheckCircle, XCircle, Shield, ShieldOff, Loader2, ExternalLink, M
 import { Link } from 'react-router-dom'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { getSession, sendChat, cancelChat, resumeSession, approveApproval, rejectApproval, answerQuestion, getToolCallLiveOutput } from '../../services/api'
+import { getSession, sendChat, cancelChat, approveApproval, rejectApproval, answerQuestion, getToolCallLiveOutput } from '../../services/api'
 import { getUserInfo } from '../../services/keycloak'
 import { useAuth } from '../../App'
 import { getAgentConfig, getAgentMessageColors, formatToolName } from '../../utils/agentConfig'
@@ -18,6 +18,7 @@ import { downloadAsMarkdown, downloadContentAsPdf, buildChatTranscript } from '.
 import HITLQuestionMessage from './HITLQuestionMessage'
 import WorkflowPipeline from './WorkflowPipeline'
 import DebugEventLog from './DebugEventLog'
+import ContinueDialog from './ContinueDialog'
 import AnnotationBar from './AnnotationBar'
 import {
   chatMarkdownComponents,
@@ -718,12 +719,29 @@ const AgentRunItem = ({ run, timelineIndex, sessionId, hasFollowingMessage, sess
 
 const MessageItem = ({ message, agentRun, sessionId }) => {
   const isUser = message.role === 'user'
+  const isResumeContext = isUser && message.agent_run_id
   const hasAgent = message.agent_id && !isUser
   const surfacedApprovals = agentRun
     ? extractSurfacedApprovals(agentRun.llm_calls).filter((item) => item.tc.approval.status !== 'pending')
     : []
 
   if (isUser) {
+    if (isResumeContext) {
+      return (
+        <div className="group flex justify-end gap-2">
+          <span className="text-xs text-gray-300 self-end pb-1">
+            {message.created_at && new Date(message.created_at).toLocaleTimeString()}
+          </span>
+          <div className="max-w-[85%] rounded-2xl px-4 py-2.5 text-sm bg-green-50 border border-green-200 text-gray-900 overflow-hidden">
+            <div className="flex items-center gap-1 mb-1">
+              <PlayCircle className="w-3 h-3 text-green-600" />
+              <span className="text-[10px] font-medium text-green-700 uppercase tracking-wide">Resume context</span>
+            </div>
+            <div className="whitespace-pre-wrap break-words">{message.content}</div>
+          </div>
+        </div>
+      )
+    }
     return (
       <div className="group flex justify-end gap-2">
         <span className="text-xs text-gray-300 self-end pb-1">
@@ -803,6 +821,7 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
   const prevLengthRef = useRef(0)
   const inputRef = useRef(null)
   const [continueInput, setContinueInput] = useState('')
+  const [showContinueDialog, setShowContinueDialog] = useState(false)
   const [transcriptPdfLoading, setTranscriptPdfLoading] = useState(false)
   const savedInspectScroll = useRef(0)
   const [viewMode, _setViewMode] = useState(() => {
@@ -865,17 +884,6 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
     },
     onError: (err) => {
       console.error('Cancel failed:', err)
-    },
-  })
-
-  const resumeMutation = useMutation({
-    mutationFn: () => resumeSession(sessionId),
-    onSuccess: () => {
-      queryClient.refetchQueries({ queryKey: ['session', sessionId] })
-      queryClient.invalidateQueries({ queryKey: ['sessions'] })
-    },
-    onError: (err) => {
-      console.error('Resume failed:', err)
     },
   })
 
@@ -1101,15 +1109,10 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
             {/* Continue button — when fully stopped, crashed, or failed */}
             {canControlSession && ['paused', 'paused_hitl', 'paused_crashed', 'failed'].includes(data.status) && !isStopping && (
               <button
-                onClick={() => resumeMutation.mutate()}
-                disabled={resumeMutation.isPending}
-                className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium text-green-600 bg-green-50 border border-green-200 rounded-lg hover:bg-green-100 disabled:opacity-50 transition-colors"
+                onClick={() => setShowContinueDialog(true)}
+                className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium text-green-600 bg-green-50 border border-green-200 rounded-lg hover:bg-green-100 transition-colors"
               >
-                {resumeMutation.isPending ? (
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                ) : (
-                  <PlayCircle className="w-3.5 h-3.5" />
-                )}
+                <PlayCircle className="w-3.5 h-3.5" />
                 Continue
               </button>
             )}
@@ -1132,9 +1135,9 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
                 Read-only · expert view
               </span>
             )}
-            {(cancelMutation.isError || resumeMutation.isError) && (
+            {cancelMutation.isError && (
               <span className="text-xs text-red-600">
-                {cancelMutation.error?.message || resumeMutation.error?.message || 'Action failed'}
+                {cancelMutation.error?.message || 'Action failed'}
               </span>
             )}
             {canDebug && (
@@ -1465,16 +1468,11 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
                 </button>
               ) : ['paused', 'paused_hitl', 'paused_crashed', 'failed'].includes(data.status) ? (
                 <button
-                  onClick={() => resumeMutation.mutate()}
-                  disabled={resumeMutation.isPending}
-                  className="flex-shrink-0 p-2 rounded-xl bg-green-600 text-white hover:bg-green-700 disabled:opacity-50 transition-colors"
+                  onClick={() => setShowContinueDialog(true)}
+                  className="flex-shrink-0 p-2 rounded-xl bg-green-600 text-white hover:bg-green-700 transition-colors"
                   aria-label="Continue agent"
                 >
-                  {resumeMutation.isPending ? (
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                  ) : (
-                    <PlayCircle className="w-4 h-4" />
-                  )}
+                  <PlayCircle className="w-4 h-4" />
                 </button>
               ) : (
                 <button
@@ -1500,6 +1498,12 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
         </div>
       )}
     </div>
+    {showContinueDialog && (
+      <ContinueDialog
+        sessionId={sessionId}
+        onClose={() => setShowContinueDialog(false)}
+      />
+    )}
     </ProjectRepoContext.Provider>
   )
 }
