@@ -463,16 +463,25 @@ async def redirect_run(
     }
 
 
-# =============================================================================
-# RESUME PAUSED SESSION
-# =============================================================================
+class ResumeRequest(BaseModel):
+    """Optional body for resume endpoint."""
+    context: str | None = None
+    target_agent_run_id: UUID | None = None
 
 
-async def _run_resume_background(session_id: UUID) -> None:
+async def _run_resume_background(
+    session_id: UUID,
+    context: str | None = None,
+    target_agent_run_id: UUID | None = None,
+) -> None:
     """Resume a paused session in background."""
 
     async def task(ctx):
-        await ctx.orchestrator.resume_paused_session(session_id)
+        await ctx.orchestrator.resume_paused_session(
+            session_id,
+            context=context,
+            target_agent_run_id=target_agent_run_id,
+        )
 
     await run_session_task(session_id, task, "resume_background")
 
@@ -480,6 +489,7 @@ async def _run_resume_background(session_id: UUID) -> None:
 @router.post("/sessions/{session_id}/resume")
 async def resume_session(
     session_id: UUID,
+    body: ResumeRequest | None = Body(None),
     service: SessionService = Depends(get_session_service),
     user: dict = Depends(get_current_user),
 ):
@@ -512,7 +522,11 @@ async def resume_session(
 
     try:
         create_tracked_task(
-            _run_resume_background(session_id=session_id),
+            _run_resume_background(
+                session_id=session_id,
+                context=body.context if body else None,
+                target_agent_run_id=body.target_agent_run_id if body else None,
+            ),
             name=f"resume-{session_id}",
         )
     except Exception:

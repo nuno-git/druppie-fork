@@ -1042,21 +1042,46 @@ class Orchestrator:
 
         return True
 
-    async def resume_paused_session(self, session_id: UUID) -> UUID:
+    async def resume_paused_session(
+        self,
+        session_id: UUID,
+        context: str | None = None,
+        target_agent_run_id: UUID | None = None,
+    ) -> UUID:
         """Resume a paused or failed session.
 
         Priority order:
-        1. PAUSED_USER agent run → continue via continue_run()
-        2. PAUSED_TOOL/HITL agent run → restore waiting status
-        3. Orphaned RUNNING agent run → continue via continue_run()
+        1. If target_agent_run_id provided → resume that specific run
+        2. PAUSED_USER agent run → continue via continue_run()
+        3. PAUSED_TOOL/HITL agent run → restore waiting status
+        4. Orphaned RUNNING agent run → continue via continue_run()
            (handles infrastructure crashes where the run stayed 'running')
-        4. No paused/running run → execute pending runs directly
+        5. No paused/running run → execute pending runs directly
+
+        Args:
+            session_id: Session to resume
+            context: Optional user context string injected into resumed agent
+            target_agent_run_id: Optional specific run to resume (overrides leaf detection)
         """
         from druppie.agents.runtime_v2 import AgentV2 as Agent
 
-        logger.info("resume_paused_session", session_id=str(session_id))
+        logger.info(
+            "resume_paused_session",
+            session_id=str(session_id),
+            has_context=bool(context),
+            target_run=str(target_agent_run_id) if target_agent_run_id else None,
+        )
 
         # Session is already set to ACTIVE by the endpoint's lock_for_resume()
+
+        if target_agent_run_id:
+            target_run = self.execution_repo.get_by_id(target_agent_run_id)
+            if target_run and target_run.status == AgentRunStatus.PAUSED_USER.value:
+                await self._resume_single_paused_leaf(
+                    session_id, target_run, user_context=context,
+                )
+                return session_id
+
         paused_leaves = self.execution_repo.get_user_paused_leaves(session_id)
 
         if not paused_leaves:
@@ -1169,7 +1194,7 @@ class Orchestrator:
             db.close()
 
     async def _resume_single_paused_leaf(
-        self, session_id: UUID, paused_run,
+        self, session_id: UUID, paused_run, user_context: str | None = None,
     ) -> None:
         from druppie.agents.runtime_v2 import AgentV2 as Agent
 
@@ -1177,6 +1202,7 @@ class Orchestrator:
             "resuming_user_paused_agent",
             agent_run_id=str(paused_run.id),
             agent_id=paused_run.agent_id,
+            has_user_context=bool(user_context),
         )
 
         self.execution_repo.update_status(paused_run.id, AgentRunStatus.RUNNING)
@@ -1184,6 +1210,8 @@ class Orchestrator:
 
         db = self.execution_repo.db
         context = self.build_project_context(session_id)
+        if user_context and context is not None:
+            context["user_context"] = user_context
         agent = Agent(paused_run.agent_id, db=db, session_id=str(session_id))
         try:
             result = await agent.continue_run(
