@@ -5,6 +5,7 @@ from uuid import UUID
 from ..db.models import (
     AgentRun,
     Approval,
+    CompactionEvent,
     LlmCall,
     Project,
     Question,
@@ -23,6 +24,7 @@ from ..domain import (
     AgentRunSummary,
     ApprovalStatus,
     ApprovalSummary,
+    CompactionEventDetail,
     LLMCallDetail,
     LLMMessage,
     LLMRetryDetail,
@@ -347,6 +349,7 @@ class SessionRepository(BaseRepository):
     def _build_agent_run_detail(self, run: AgentRun, _depth: int = 0) -> AgentRunDetail:
         """Build full agent run detail with LLM calls, tool executions, and nested subagent runs."""
         llm_calls = self._build_llm_calls(run.id)
+        compaction_events = self._build_compaction_events(run.id)
 
         subagent_runs: list[AgentRunDetail] = []
         if _depth < 10:
@@ -379,7 +382,31 @@ class SessionRepository(BaseRepository):
             completed_at=run.completed_at,
             llm_calls=llm_calls,
             subagent_runs=subagent_runs,
+            compaction_events=compaction_events,
         )
+
+    def _build_compaction_events(self, agent_run_id: UUID) -> list[CompactionEventDetail]:
+        """Build compaction event details for an agent run."""
+        events_db = (
+            self.db.query(CompactionEvent)
+            .filter_by(agent_run_id=agent_run_id)
+            .order_by(CompactionEvent.created_at)
+            .all()
+        )
+        return [
+            CompactionEventDetail(
+                id=ce.id,
+                agent_run_id=ce.agent_run_id,
+                llm_call_id=ce.llm_call_id,
+                phase=ce.phase,
+                tokens_before=ce.tokens_before or 0,
+                tokens_after=ce.tokens_after or 0,
+                turns_compressed=ce.turns_compressed or 0,
+                summary_text=ce.summary_text,
+                created_at=ce.created_at,
+            )
+            for ce in events_db
+        ]
 
     def _build_llm_calls(self, agent_run_id: UUID) -> list[LLMCallDetail]:
         """Build LLM calls with their tool executions for an agent run."""

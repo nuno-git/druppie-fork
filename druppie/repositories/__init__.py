@@ -2,6 +2,7 @@
 
 from .base import BaseRepository
 from .session_repository import SessionRepository
+from .compaction_event_repository import CompactionEventRepository
 from .approval_repository import ApprovalRepository
 from .question_repository import QuestionRepository
 from .project_repository import ProjectRepository
@@ -16,6 +17,7 @@ from .job_repository import JobRepository
 __all__ = [
     "BaseRepository",
     "SessionRepository",
+    "CompactionEventRepository",
     "ApprovalRepository",
     "QuestionRepository",
     "ProjectRepository",
