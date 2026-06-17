@@ -92,3 +92,40 @@ class ProjectService:
         self.project_repo.commit()
 
         logger.info("project_deleted", project_id=str(project_id), by_user=str(user_id))
+
+    async def delete_many(
+        self,
+        project_ids: list[UUID] | None,
+        user_id: UUID,
+        user_roles: list[str],
+    ) -> int:
+        """Delete multiple projects (or all for user). Cleans up Gitea repos."""
+        is_admin = "admin" in user_roles
+
+        if project_ids is not None:
+            projects = self.project_repo.get_many_by_ids(project_ids)
+            if not is_admin:
+                projects = [p for p in projects if p.owner_id == user_id]
+        else:
+            projects = self.project_repo.get_all_for_user(None if is_admin else user_id)
+
+        if not projects:
+            return 0
+
+        gitea = get_gitea_client()
+        for project in projects:
+            if project.repo_name:
+                result = await gitea.delete_repo(project.repo_name, owner=project.repo_owner)
+                if not result.get("success"):
+                    logger.warning(
+                        "gitea_repo_delete_failed",
+                        project_id=str(project.id),
+                        repo_name=project.repo_name,
+                        error=result.get("error"),
+                    )
+
+        ids = [p.id for p in projects]
+        count = self.project_repo.delete_many(ids)
+        self.project_repo.commit()
+        logger.info("projects_batch_deleted", count=count, by_user=str(user_id))
+        return count

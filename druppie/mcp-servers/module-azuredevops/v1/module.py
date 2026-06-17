@@ -10,6 +10,8 @@ import logging
 import os
 from datetime import datetime, timezone
 
+import httpx
+
 from .client import AzureDevOpsClient
 
 logger = logging.getLogger("azuredevops-mcp")
@@ -391,6 +393,49 @@ class AzureDevOpsModule:
             logger.warning("search_work_items failed: %s", exc)
             return {"success": False, "error": str(exc)}
 
+    async def get_work_item_comments(self, item_id: int, top: int = 50) -> dict:
+        """Return comments for a work item, newest first."""
+        try:
+            result = await self._client.get_work_item_comments(item_id, top=top, order="desc")
+            comments = []
+            for c in result.get("comments", []):
+                comments.append({
+                    "id": c.get("id"),
+                    "text": c.get("text"),
+                    "created_by": _display_name(c.get("createdBy")),
+                    "created_date": c.get("createdDate"),
+                    "modified_date": c.get("modifiedDate"),
+                })
+            return {
+                "success": True,
+                "project": self._project,
+                "work_item_id": item_id,
+                "comments": comments,
+                "total_count": result.get("totalCount", len(comments)),
+            }
+        except Exception as exc:
+            logger.warning("get_work_item_comments(%s) failed: %s", item_id, exc)
+            return {"success": False, "error": str(exc)}
+
+    async def add_work_item_comment(self, item_id: int, text: str) -> dict:
+        """Add a comment to a work item."""
+        try:
+            result = await self._client.add_work_item_comment(item_id, text)
+            return {
+                "success": True,
+                "project": self._project,
+                "comment": {
+                    "id": result.get("id"),
+                    "work_item_id": result.get("workItemId"),
+                    "text": result.get("text"),
+                    "created_by": _display_name(result.get("createdBy")),
+                    "created_date": result.get("createdDate"),
+                },
+            }
+        except Exception as exc:
+            logger.warning("add_work_item_comment(%s) failed: %s", item_id, exc)
+            return {"success": False, "error": str(exc)}
+
     @staticmethod
     def _build_patch_operations(fields: dict) -> list[dict]:
         ops = []
@@ -452,20 +497,53 @@ class AzureDevOpsModule:
 
         try:
             result = await self._client.create_work_item(work_item_type, operations)
-            return {
-                "success": True,
-                "project": self._project,
-                "item": {
-                    "id": result.get("id"),
-                    "title": result.get("fields", {}).get("System.Title"),
-                    "type": result.get("fields", {}).get("System.WorkItemType"),
-                    "state": result.get("fields", {}).get("System.State"),
-                    "url": result.get("_links", {}).get("html", {}).get("href"),
-                },
-            }
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 403 and "permissions to create tags" in str(exc) and tags:
+                logger.warning("create_work_item: tag permission denied, retrying without tags")
+                operations = [op for op in operations if op.get("path") != "/fields/System.Tags"]
+                try:
+                    result = await self._client.create_work_item(work_item_type, operations)
+                except Exception as retry_exc:
+                    logger.warning("create_work_item retry failed: %s", retry_exc)
+                    return {"success": False, "error": str(retry_exc)}
+            else:
+                logger.warning("create_work_item failed: %s", exc)
+                return {"success": False, "error": str(exc)}
         except Exception as exc:
             logger.warning("create_work_item failed: %s", exc)
             return {"success": False, "error": str(exc)}
+
+        warning = None
+        if tags and not result.get("fields", {}).get("System.Tags"):
+            warning = "Tags were dropped — the service principal lacks tag-creation permissions."
+
+        resp = {
+            "success": True,
+            "project": self._project,
+            "item": {
+                "id": result.get("id"),
+                "title": result.get("fields", {}).get("System.Title"),
+                "type": result.get("fields", {}).get("System.WorkItemType"),
+                "state": result.get("fields", {}).get("System.State"),
+                "url": result.get("_links", {}).get("html", {}).get("href"),
+            },
+        }
+        if warning:
+            resp["warning"] = warning
+        return resp
+
+    async def _discover_kanban_column_field(self, item_id: int) -> str | None:
+        """Find the WEF Kanban.Column field reference name from a work item.
+
+        Azure DevOps stores board column state in a team-specific field
+        like ``WEF_<hex>_Kanban.Column``.  ``System.BoardColumn`` is
+        read-only — this writable WEF field is what we need to PATCH.
+        """
+        item = await self._client.get_work_item(item_id)
+        for field_name in item.get("fields", {}):
+            if field_name.endswith("_Kanban.Column"):
+                return field_name
+        return None
 
     async def update_work_item(
         self,
@@ -473,6 +551,7 @@ class AzureDevOpsModule:
         title: str | None = None,
         description: str | None = None,
         state: str | None = None,
+        board_column: str | None = None,
         assigned_to: str | None = None,
         iteration: str | None = None,
         area_path: str | None = None,
@@ -481,6 +560,13 @@ class AzureDevOpsModule:
         parent_id: int | None = None,
     ) -> dict:
         """Update an existing work item in the configured project."""
+        if state and board_column:
+            return {
+                "success": False,
+                "error": "Cannot set both state and board_column — "
+                         "board_column automatically updates the state.",
+            }
+
         fields = {
             "title": title,
             "description": description,
@@ -492,6 +578,21 @@ class AzureDevOpsModule:
             "tags": tags,
         }
         operations = self._build_patch_operations(fields)
+
+        if board_column:
+            kanban_field = await self._discover_kanban_column_field(item_id)
+            if kanban_field:
+                operations.append({
+                    "op": "add",
+                    "path": f"/fields/{kanban_field}",
+                    "value": board_column,
+                })
+            else:
+                return {
+                    "success": False,
+                    "error": "Could not discover the Kanban column field for this work item. "
+                             "The board may not be configured for this item type.",
+                }
 
         if parent_id is not None:
             operations.append({
@@ -508,17 +609,39 @@ class AzureDevOpsModule:
 
         try:
             result = await self._client.update_work_item(item_id, operations)
-            return {
-                "success": True,
-                "project": self._project,
-                "item": {
-                    "id": result.get("id"),
-                    "title": result.get("fields", {}).get("System.Title"),
-                    "type": result.get("fields", {}).get("System.WorkItemType"),
-                    "state": result.get("fields", {}).get("System.State"),
-                    "url": result.get("_links", {}).get("html", {}).get("href"),
-                },
-            }
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 403 and "permissions to create tags" in str(exc) and tags:
+                logger.warning("update_work_item: tag permission denied, retrying without tags")
+                operations = [op for op in operations if op.get("path") != "/fields/System.Tags"]
+                if not operations:
+                    return {"success": False, "error": "No fields to update (tags were the only change and the service principal lacks tag-creation permissions)."}
+                try:
+                    result = await self._client.update_work_item(item_id, operations)
+                except Exception as retry_exc:
+                    logger.warning("update_work_item retry failed: %s", retry_exc)
+                    return {"success": False, "error": str(retry_exc)}
+            else:
+                logger.warning("update_work_item(%s) failed: %s", item_id, exc)
+                return {"success": False, "error": str(exc)}
         except Exception as exc:
             logger.warning("update_work_item(%s) failed: %s", item_id, exc)
             return {"success": False, "error": str(exc)}
+
+        warning = None
+        if tags and not result.get("fields", {}).get("System.Tags"):
+            warning = "Tags were dropped — the service principal lacks tag-creation permissions."
+
+        resp = {
+            "success": True,
+            "project": self._project,
+            "item": {
+                "id": result.get("id"),
+                "title": result.get("fields", {}).get("System.Title"),
+                "type": result.get("fields", {}).get("System.WorkItemType"),
+                "state": result.get("fields", {}).get("System.State"),
+                "url": result.get("_links", {}).get("html", {}).get("href"),
+            },
+        }
+        if warning:
+            resp["warning"] = warning
+        return resp

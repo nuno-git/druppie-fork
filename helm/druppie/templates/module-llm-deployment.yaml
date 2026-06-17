@@ -7,7 +7,7 @@ metadata:
     {{- include "druppie.labels" . | nindent 4 }}
     app.kubernetes.io/component: module-llm
 spec:
-  replicas: 1
+  replicas: {{ .Values.modules.llm.replicaCount }}
   selector:
     matchLabels:
       {{- include "druppie.selectorLabels" . | nindent 6 }}
@@ -64,10 +64,5 @@ spec:
             timeoutSeconds: 5
             failureThreshold: 5
           resources:
-            requests:
-              memory: "128Mi"
-              cpu: "100m"
-            limits:
-              memory: "256Mi"
-              cpu: "500m"
+            {{- toYaml .Values.modules.llm.resources | nindent 12 }}
 {{- end }}

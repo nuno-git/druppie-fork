@@ -17,6 +17,7 @@ from druppie.core.auth import get_auth_service
 from druppie.core.config import get_settings
 from druppie.agents import Agent
 from druppie.core.background_tasks import create_tracked_task, shutdown_background_tasks
+from druppie.core.leader_election import try_acquire_leader_lock
 
 logger = structlog.get_logger()
 
@@ -169,9 +170,14 @@ async def lifespan(app: FastAPI):
             name="mcp-registry-retry",
         )
 
-    # Start sandbox watchdog (detects stuck WAITING_SANDBOX tool calls)
-    from druppie.api.routes.sandbox import sandbox_watchdog_loop
-    create_tracked_task(sandbox_watchdog_loop(), name="sandbox-watchdog")
+    # Start sandbox watchdog (detects stuck WAITING_SANDBOX tool calls).
+    # Leader election: only one replica runs the watchdog to avoid duplicate
+    # timeout actions. Uses PostgreSQL advisory lock — no extra infra needed.
+    if try_acquire_leader_lock("sandbox-watchdog"):
+        from druppie.api.routes.sandbox import sandbox_watchdog_loop
+        create_tracked_task(sandbox_watchdog_loop(), name="sandbox-watchdog")
+    else:
+        logger.info("sandbox_watchdog_skipped", hint="another_replica_is_leader")
 
     from druppie.db.database import SessionLocal
     from druppie.repositories import JobRepository, SessionRepository, ExecutionRepository
@@ -196,12 +202,19 @@ async def lifespan(app: FastAPI):
     finally:
         job_db.close()
 
-    app.state.job_scheduler = JobScheduler(_get_job_service)
-    app.state.job_scheduler.start()
+    # JobScheduler: leader election ensures only one replica runs the cron loop.
+    # The scheduler itself already uses claim_job_trigger() for DB-level
+    # deduplication, but leader election avoids N replicas polling every 60s.
+    if try_acquire_leader_lock("job-scheduler"):
+        app.state.job_scheduler = JobScheduler(_get_job_service)
+        app.state.job_scheduler.start()
+    else:
+        logger.info("job_scheduler_skipped", hint="another_replica_is_leader")
+        app.state.job_scheduler = None
 
     yield
 
-    if hasattr(app.state, "job_scheduler"):
+    if hasattr(app.state, "job_scheduler") and app.state.job_scheduler is not None:
         app.state.job_scheduler.stop()
 
     # Shutdown — wait for background tasks before exiting

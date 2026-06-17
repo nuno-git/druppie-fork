@@ -26,6 +26,7 @@ import Analytics from './pages/Analytics'
 import BatchDetail from './pages/BatchDetail'
 import CachedDependencies from './pages/CachedDependencies'
 import Documentation from './pages/Documentation'
+import Deployments from './pages/Deployments'
 
 // Auth context
 const AuthContext = React.createContext(null)
@@ -235,6 +236,14 @@ function App() {
                             element={
                               <ProtectedRoute>
                                 <ProjectDetail />
+                              </ProtectedRoute>
+                            }
+                          />
+                          <Route
+                            path="/deployments"
+                            element={
+                              <ProtectedRoute>
+                                <Deployments />
                               </ProtectedRoute>
                             }
                           />

@@ -2,8 +2,8 @@
 
 | Veld | Waarde |
 |------|--------|
-| **Status** | Geaccepteerd |
-| **Datum** | 2026-06-09 |
+| **Status** | Geaccepteerd (geïmplementeerd — zie implementatie status hieronder) |
+| **Datum** | 2026-06-09 (besluit), 2026-06-15 (implementatie status update) |
 | **Auteur** | Druppie Team |
 | **Deciders** | Druppie architectuurteam |
 | **Referentie** | [KUBERNETES-STRATEGY.md](./KUBERNETES-STRATEGY.md) |
@@ -14,7 +14,7 @@
 
 | # | Beslissing | Keuze | Reden |
 |---|-----------|-------|-------|
-| 4.1 | Hosting | **Hetzner VMs + Ubuntu** | Commodity cloud, geen vendor lock-in, ~€86/mo basis (3 servers + infra + app pool) |
+| 4.1 | Hosting | **Hetzner VMs + Ubuntu** | Commodity cloud, geen vendor lock-in, ~€80/mo basis (3 servers + infra + app pool) |
 | 4.2 | Platform | **K3s (3 servers + 2 agent pools)** | CNCF certified, 3 servers voor etcd quorum, vaste infra pool + autoscaled app pool |
 | 4.3 | Database | **CloudNativePG** | CNCF Sandbox, auto-failover <30s, ingebouwde PgBouncer, 1 operator voor 3 instances |
 | 4.4 | Autoscaling | **HPA + KEDA** | HPA voor frontend (CPU), KEDA voor backend (LLM I/O-bound, CPU alleen is te traag) |
@@ -113,7 +113,13 @@ Ubuntu is de meest geteste OS voor K3s, heeft brede documentatie, en langdurige 
 
 ### 4.3 Database: CloudNativePG
 
-**Gekozen:** CloudNativePG operator (v1.29.1+) met 3 database clusters: `druppie-db`, `keycloak-db`, `gitea-db`. Elke cluster draait 3 instances (1 primary + 2 read replicas).
+**Gekozen:** CloudNativePG operator (v1.29.1+) met 3 database clusters: `druppie-db`, `keycloak-db`, `gitea-db`.
+
+> **Implementatie status (juni 2026):** ✅ Voltooid met afwijkingen:
+> - **instances=1** per cluster (ADR stelt 3 voor). Reden: kostenbesparing op CPX32 nodes. Upgrade naar `instances: 3` is een one-line values change wanneer een tweede infra node beschikbaar is.
+> - **PgBouncer Pooler** (2 instances, transaction-mode) toegevoegd voor druppie-db. Dit was niet in het oorspronkelijke plan maar essentieel gebleken: lost connection pool exhaustion op bij hoge load (125+ rps).
+> - Data succesvol gemigreerd van oude StatefulSet PVCs.
+> - **Nog ontbreken:** HA replicas (instances=3), backups naar S3/MinIO, geautomatiseerde password sync.
 
 **Waarom:** CloudNativePG is de enige PostgreSQL operator met CNCF Sandbox status. Het beheert de volledige lifecycle: provisioning, streaming replicatie, automatische failover (<30s), continuous backup naar S3/MinIO, point-in-time recovery, zero-downtime rolling updates, en ingebouwde PgBouncer connection pooling.
 
@@ -159,7 +165,14 @@ spec:
 
 ### 4.4 Autoscaling: HPA + KEDA
 
-**Gekozen:** HPA (CPU-based) voor frontend en backend, plus KEDA (Prometheus metric) voor de backend.
+**Gekozen:** HPA (CPU-based) voor frontend, KEDA (dual-trigger) voor backend.
+
+> **Implementatie status (juni 2026):** ✅ Voltooid met belangrijke afwijking:
+> - **Dual triggers** in plaats van Prometheus-only: PostgreSQL query (`agent_runs WHERE status='running'`) **+** CPU utilization 55%. Beide nodig: PG trigger vangt LLM I/O-bound werk op, CPU trigger vangt read-heavy GET load op.
+> - **minReplicas: 3** (proactieve baseline, niet 2 zoals ADR).
+> - **Aggressive scale-up:** +4 pods/30s, `stabilizationWindowSeconds: 0`.
+> - `metricType` op trigger niveau (KEDA v2.20 API — NIET in metadata).
+> - **Load test bewezen:** 125 rps → p95=508ms, 1→6 pods, 100% success rate.
 
 **Waarom HPA voor beide services:** Frontend is pure static file serving, CPU is een betrouwbare metric. Backend krijgt HPA als basislaag.
 
@@ -245,38 +258,31 @@ De `behavior` sectie voorkomt oscillatie: bij AI workloads ontstaan korte spikes
 
 ### 4.5 Networking: Traefik + cert-manager
 
-**Gekozen:** Traefik (K3s standaard ingress controller) + cert-manager voor TLS.
+**Gekozen:** Traefik (K3s standaard ingress controller) + cert-manager voor TLS. DNS wijst direct naar het IP van de infra node.
 
 **Waarom:** K3s installeert Traefik automatisch. Geen extra configuratie nodig. Traefik biedt Middleware CRDs voor rate limiting en headers (schoner dan NGINX annotations), een dashboard voor real-time traffic monitoring, en IngressRoute CRDs voor complexe routing.
+
+De infra node is een vaste node die altijd beschikbaar is. DNS records (druppie.rijnland.dev, auth.druppie.rijnland.dev, git.druppie.rijnland.dev) wijzen naar het publieke IP van de infra node. Traefik draait op de infra node en routeert verkeer naar de juiste pods via Kubernetes Ingress resources. Dit bespaart de kosten van een aparte load balancer (~€6/mo).
+
+**Let op:** Als de infra node onverhoopt uitvalt, is de site onbereikbaar. Dit is acceptabel voor Phase 1 — de infra node draait stabiele workloads met voorspelbare belasting. Voor Phase 2 kan een failover IP of tweede infra node worden toegevoegd.
 
 cert-manager + Let's Encrypt verzorgt automatische TLS certificaten. Geen handmatig certificaatbeheer.
 
 **Afgewezen:**
+- Hetzner Load Balancer: extra €6/mo, niet nodig bij 1 vaste infra node die alle ingress verkeer afhandelt
 - NGINX Ingress: geen toegevoegde waarde boven Traefik, annotations worden rommelig bij complexe configuratie
 - Cilium Ingress: te zwaar voor huidige behoeften, hogere leercurve
 - HAProxy: overkill voor deze schaal
 
-### 4.6 Secrets: Sealed Secrets
+### 4.6 Secrets: Gitignored Values Overlay (beslissing overschreven)
 
-**Gekozen:** Sealed Secrets (Bitnami, v0.27+) voor alle gevoelige configuratie (API keys, DB wachtwoorden, HMAC secrets).
+**Gekozen:** Gitignored `values-hetzner.secrets.yaml` overlay. **Oorspronkelijke keuze was Sealed Secrets — overschreven tijdens implementatie.**
 
-**Waarom:** Sealed Secrets versleutelt Kubernetes Secrets asymmetrisch. De versleutelde `SealedSecret` resources gaan veilig in git. De controller in het cluster ontsleutelt ze naar gewone Kubernetes Secrets. Lage complexiteit, geen extra infrastructuur (alleen de controller in het cluster).
+> **Implementatie status (juni 2026):** ✅ De gitignored overlay wordt geaccepteerd als definitieve oplossing. Sealed Secrets is uitgesteld naar Phase 2 (indien ooit nodig).
 
-**Kritiek:** Backup van de Sealed Secrets controller private key is verplicht. Zonder deze key zijn alle sealed secrets ontoegankelijk na een cluster rebuild.
+**Waarom afgeweken van Sealed Secrets:** Bij implementatie bleek dat de gitignored overlay simpeler, veiliger (secrets staan letterlijk niet in de repo), en voldoende is voor een klein team. Sealed Secrets voegt een operator, key backup procedures, en encrypted secrets in git toe — complexiteit zonder duidelijke meerwaarde voor deze use case.
 
-```bash
-# Secret versleutelen
-kubectl create secret generic druppie-secrets \
-  --from-literal=zai-api-key=sk-xxx \
-  --from-literal=db-password=xxx \
-  --dry-run=client -o yaml | kubeseal > sealed-secrets.yaml
-```
-
-**Afgewezen:**
-- External Secrets Operator: vereist externe secret store, meer complexiteit
-- HashiCorp Vault: BSL 1.1 licentie (niet open source), zware infrastructuur (3+ nodes)
-- SOPS + age: geen automatische sync, handmatige deploy cyclus
-- Plaintext Helm values: niet veilig voor productie
+**Huidige aanpak:** Secrets in `values-hetzner.secrets.yaml` (gitignored), toegepast via `helm upgrade -f values-hetzner.secrets.yaml`. Backup offline in password manager.
 
 ### 4.7 Monitoring: kube-prometheus-stack
 
@@ -396,7 +402,9 @@ affinity:
 
 **Graceful shutdown:** Backend pods moeten lopende LLM calls afronden voor ze stoppen. `terminationGracePeriodSeconds: 60` met SIGTERM handling in FastAPI die nieuwe requests weigert maar actieve afrondt.
 
-**Backend multi-replica:** De huidige `reconstruct_from_db()` functie rebuildt al agent state vanuit de database. Bij multi-replica werkt de webhook handler als volgt: update het ToolCall record in de DB, waarna elke backend replica de agent kan oppakken en doorgaan. Database-driven resume, geen nieuwe infrastructuur nodig.
+**Backend multi-replica:** De backend is stateless. Session task concurrency wordt bewaakt via `SELECT ... FOR UPDATE` op de session row in PostgreSQL (vervangt de vroegere in-memory dict). De `reconstruct_from_db()` functie rebuildt agent state vanuit de database. Bij multi-replica werkt de webhook handler als volgt: update het ToolCall record in de DB, waarna elke backend replica de agent kan oppakken en doorgaan. Database-driven resume, geen nieuwe infrastructuur nodig.
+
+Singleton achtergrondtaken (JobScheduler, sandbox watchdog) gebruiken PostgreSQL advisory locks (`pg_try_advisory_lock`) voor leader election. Alleen de replica die de lock verwerpt start de taak; andere replica's slaan hem over. De lock is verbindingsscoped — als de leader pod sterft, wordt de verbinding verbroken en komt de lock vrij, zodat een andere replica deze bij de volgende herstart kan opeisen. Geen extra infrastructuur nodig.
 
 ### 4.12 Cluster Provisioning: hetzner-k3s
 
@@ -518,8 +526,6 @@ flowchart TB
             HK3S["hetzner-k3s CLI<br/>1 YAML config"]
         end
 
-        LB["Load Balancer<br/>€6/mo"]
-
         subgraph K3sCluster["K3s Cluster"]
             direction TB
 
@@ -532,6 +538,11 @@ flowchart TB
 
             subgraph InfraPool["📦 Infra Pool — K3s Agents (1-2 vast)"]
                 direction TB
+
+                subgraph IngressLayer["Ingress"]
+                    TRAEFIK["Traefik<br/>(ingress controller)"]
+                    CM["cert-manager"]
+                end
 
                 subgraph InfraServices["Services"]
                     direction LR
@@ -606,17 +617,11 @@ flowchart TB
             end
 
             NODESCALE["⬆ NODE SCALING (Tier 2)<br/>Cluster Autoscaler → Hetzner API: nieuwe VM → cloud-init join<br/>~60 seconden"]
-
-            subgraph IngressLayer["Ingress"]
-                TRAEFIK["Traefik"]
-                CM["cert-manager"]
-            end
         end
     end
 
-    %% User flow
-    USER -->|"HTTPS"| LB
-    LB -->|"traffic"| TRAEFIK
+    %% User flow — DNS points directly to infra node
+    USER -->|"HTTPS via DNS"| TRAEFIK
     TRAEFIK -->|"/"| A1FE
     TRAEFIK -->|"/"| A2FE
     TRAEFIK -->|"/api"| A1BE
@@ -718,8 +723,8 @@ flowchart TB
 
 | Risico | Impact | Kans | Mitigatie |
 |--------|--------|------|-----------|
-| Backend multi-replica race conditions bij webhooks | Data inconsistentie | Medium | Database-driven resume patroon (bestaande `reconstruct_from_db()`). Testen met 3+ replicas op staging. |
-| CloudNativePG operationele kennis ontbreekt | DB issues in productie | Medium | Failover scenario's testen op staging vóór productie. Runbooks schrijven. CNPG documentatie bestuderen. |
+| Backend multi-replica race conditions bij webhooks | Data inconsistentie | ~~Medium~~ Laag | Opgelost: session task concurrency via `SELECT FOR UPDATE` op DB. Singleton taken via PostgreSQL advisory lock leader election. Testen met 3+ replicas op staging. |
+| CloudNativePG operationele kennis ontbreekt | DB issues in productie | ~~Medium~~ Laag | ✅ Geïmplementeerd: CNPG draait, PgBouncer actief, data gemigreerd. HA (instances=3) is volgende stap bij tweede infra node. |
 | KEDA scaling te agressief of te traag | Oscillatie of vertraging | Laag | Stabilization windows configureren (300s scale-down, 60s scale-up). Tunen op basis van load tests. |
 | Sealed Secrets key verloren | Alle secrets ontoegankelijk | Medium | Private key backup procedure documenteren én testen. Key opslaan in offline vault. |
 | 3 nodes onvoldoende voor piekbelasting | Performance degradatie | Laag | K3s agent join is triviaal. Nieuwe VM toevoegen bij noodzaak. CPX31 → CPX41 upgrade is 1 klik in Hetzner console. |
@@ -733,15 +738,14 @@ flowchart TB
 Gebaseerd op Hetzner publieke prijzen (juni 2026).
 
 | Component | Specificatie | Kosten/maand |
-|-----------|-------------|-------------|
+|-----------|-------------|--------------|
 | K3s servers (3x) | CPX31 (4 vCPU, 8GB RAM, 160GB NVMe) | 3 × €13 = ~€39 |
 | Infra agents (1-2x, vast) | CPX31 — Keycloak, Gitea, MCP, CNPG, monitoring | 1-2 × €13 = ~€13-26 |
 | App agents (1-10x, autoscaling) | CPX31 — Backend, Frontend | 1 × €13 = ~€13 (idle), schaalt mee met load |
 | Extra storage | 200GB block storage (DB data, backups) | ~€10 |
-| Load balancer | Hetzner Load Balancer | ~€6 |
 | Backup storage | 100GB (DB backups, MinIO/S3) | ~€5 |
-| **Totaal Phase 1 (basis)** | 3 servers + 1 infra + 1 app | **~€86/maand** |
-| **Totaal bij belasting** | 3 servers + 2 infra + 3-5 app | **~€125-165/maand** |
+| **Totaal Phase 1 (basis)** | 3 servers + 1 infra + 1 app | **~€80/maand** |
+| **Totaal bij belasting** | 3 servers + 2 infra + 3-5 app | **~€119-159/maand** |
 
 Bij schaalvergroting (meer nodes of grotere VMs): CPX41 (8 vCPU, 16GB RAM) is ~€24/mo per node. Dedicated servers (AX42: 8 vCPU, 64GB RAM) zijn ~€49/mo per node.
 
@@ -766,9 +770,11 @@ Bij schaalvergroting (meer nodes of grotere VMs): CPX41 (8 vCPU, 16GB RAM) is ~�
 - Sandbox blijft op Docker Compose. De Docker socket dependency is niet opgelost in Phase 1. Sandbox migratie volgt in Phase 2, afhankelijk van Agent Sandbox operator volwassenheid.
 - MCP modules schalen niet onafhankelijk. Dit is bewust: modules worden herbouwd als built-in backend tools, waarna de shared PVC vervalt.
 - Geen drift detection. Push-based CI/CD betekent dat handmatige cluster wijzigingen onopgemerkt blijven. ArgoCD (Phase 2) lost dit op.
-- Backend sessie tracking blijft in-memory in Phase 1. Multi-replica webhooks worden afgehandeld via database-driven resume. Een message queue (Redis Streams/NATS) volgt in Phase 2 als de belasting het rechtvaardigt.
+- Backend is stateless. Session task concurrency via database-level `SELECT FOR UPDATE`. Singleton achtergrondtaken (JobScheduler, sandbox watchdog) via PostgreSQL advisory lock leader election. Een message queue (Redis Streams/NATS) volgt in Phase 2 voor event-driven architectuur als de belasting het rechtvaardigt.
 - Geen sandbox runtime isolatie (gVisor/Kata). Pas relevant als sandboxes naar K8s migreren.
+- **CNPG draait met instances=1** (geen HA). Single-instance per database op de infra node. Auto-failover (<30s) is beschikbaar via `instances: 3` maar vereist een tweede infra node. PgBouncer (2 instances) geeft connection-level beschikbaarheid.
+- **DB pool sizing is kritiek.** Load testing bewees: `pool_size=20` per worker × 4 workers × 5 pods = 1000 connections vs PostgreSQL max 100 = crash. Oplossing: `pool_size=5` + PgBouncer transaction-mode multiplexing. 2 workers per pod is optimaal (niet 10).
 
 ### Migratiepad
 
-Druppie blijft draaien op Docker Compose tijdens de migratie. De K3s cluster wordt parallel opgebouwd. Switchover gebeurt in één stap: DNS pointing van de Docker Compose host naar de Hetzner Load Balancer. Terugdraaien is een DNS revert.
+Druppie blijft draaien op Docker Compose tijdens de migratie. De K3s cluster wordt parallel opgebouwd. Switchover gebeurt in één stap: DNS pointing van de Docker Compose host naar het publieke IP van de infra node. Terugdraaien is een DNS revert.

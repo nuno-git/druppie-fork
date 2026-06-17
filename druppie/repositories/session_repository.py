@@ -2,10 +2,13 @@
 
 from uuid import UUID
 
+from collections import defaultdict
+
 from ..db.models import (
     AgentRun,
     Approval,
     LlmCall,
+    MessageAttachment,
     Project,
     Question,
     ToolCall,
@@ -23,6 +26,7 @@ from ..domain import (
     AgentRunSummary,
     ApprovalStatus,
     ApprovalSummary,
+    Attachment,
     LLMCallDetail,
     LLMMessage,
     LLMRetryDetail,
@@ -215,6 +219,24 @@ class SessionRepository(BaseRepository):
         """Delete session (cascades to related data)."""
         self.db.query(SessionModel).filter_by(id=session_id).delete()
 
+    def delete_many(self, session_ids: list[UUID]) -> int:
+        """Delete sessions by IDs. Returns count deleted."""
+        if not session_ids:
+            return 0
+        count = self.db.query(SessionModel).filter(SessionModel.id.in_(session_ids)).delete(synchronize_session="fetch")
+        return count
+
+    def delete_all_for_user(self, user_id: UUID | None) -> list[UUID]:
+        """Delete all sessions for a user (None = all sessions). Returns deleted session IDs."""
+        query = self.db.query(SessionModel.id)
+        if user_id is not None:
+            query = query.filter_by(user_id=user_id)
+        sessions = query.all()
+        ids = [s.id for s in sessions]
+        if ids:
+            self.db.query(SessionModel).filter(SessionModel.id.in_(ids)).delete(synchronize_session="fetch")
+        return ids
+
     def _to_summary(self, session: SessionModel) -> SessionSummary:
         """Convert session model to summary domain object."""
         # Look up username from users table
@@ -259,6 +281,25 @@ class SessionRepository(BaseRepository):
             .all()
         )
 
+        # Batch-load attachments for all messages
+        message_ids = [msg.id for msg in messages]
+        all_attachments = (
+            self.db.query(MessageAttachment)
+            .filter(MessageAttachment.message_id.in_(message_ids))
+            .all()
+        ) if message_ids else []
+        attachments_by_msg = defaultdict(list)
+        for att in all_attachments:
+            attachments_by_msg[att.message_id].append(
+                Attachment(
+                    id=att.id,
+                    original_filename=att.original_filename,
+                    content_type=att.content_type,
+                    file_size=att.file_size,
+                    created_at=att.created_at,
+                )
+            )
+
         for msg in messages:
             entries.append(TimelineEntry(
                 type=TimelineEntryType.MESSAGE,
@@ -270,6 +311,7 @@ class SessionRepository(BaseRepository):
                     agent_id=msg.agent_id,
                     sequence_number=msg.sequence_number,
                     created_at=msg.created_at,
+                    attachments=attachments_by_msg.get(msg.id, []),
                 ),
             ))
 
@@ -480,12 +522,32 @@ class SessionRepository(BaseRepository):
 
         approval_summary = None
         if approval:
+            approval_attachments = []
+            if approval.status == "rejected":
+                att_rows = (
+                    self.db.query(MessageAttachment)
+                    .filter_by(approval_id=approval.id)
+                    .order_by(MessageAttachment.created_at)
+                    .all()
+                )
+                approval_attachments = [
+                    Attachment(
+                        id=a.id,
+                        original_filename=a.original_filename,
+                        content_type=a.content_type,
+                        file_size=a.file_size,
+                        created_at=a.created_at,
+                    )
+                    for a in att_rows
+                ]
             approval_summary = ApprovalSummary(
                 id=approval.id,
                 status=ApprovalStatus(approval.status),
                 required_role=approval.required_role or "admin",
                 resolved_by=approval.resolved_by,
                 resolved_at=approval.resolved_at,
+                rejection_reason=approval.rejection_reason,
+                attachments=approval_attachments,
             )
 
         # Arguments are stored as JSONB directly in tool_calls.arguments
@@ -504,9 +566,10 @@ class SessionRepository(BaseRepository):
             if child_run_db:
                 child_run = self._build_agent_run_detail(child_run_db)
 
-        # For HITL tools, use the Question record's translated text instead of
-        # the raw tool call arguments (which may contain untranslated English)
+        # For HITL tools, get question_id, attachments, and use the Question
+        # record's translated text instead of the raw tool call arguments
         question_id = None
+        question_attachments = []
         if tc.tool_name in ("hitl_ask_question", "hitl_ask_multiple_choice_question"):
             question = (
                 self.db.query(Question)
@@ -515,6 +578,22 @@ class SessionRepository(BaseRepository):
             )
             if question:
                 question_id = question.id
+                att_rows = (
+                    self.db.query(MessageAttachment)
+                    .filter_by(question_id=question.id)
+                    .order_by(MessageAttachment.created_at)
+                    .all()
+                )
+                question_attachments = [
+                    Attachment(
+                        id=a.id,
+                        original_filename=a.original_filename,
+                        content_type=a.content_type,
+                        file_size=a.file_size,
+                        created_at=a.created_at,
+                    )
+                    for a in att_rows
+                ]
                 arguments = dict(arguments)
                 if question.question:
                     arguments["question"] = question.question
@@ -553,6 +632,7 @@ class SessionRepository(BaseRepository):
             ],
             approval=approval_summary,
             question_id=question_id,
+            attachments=question_attachments,
             child_run=child_run,
         )
 

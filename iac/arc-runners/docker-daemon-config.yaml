@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: docker-daemon-config
+  namespace: arc-system
+data:
+  daemon.json: |
+    {
+      "insecure-registries": ["10.43.60.14:5000"]
+    }

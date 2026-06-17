@@ -5,9 +5,11 @@ from uuid import UUID
 import structlog
 
 from ..api.errors import AuthorizationError, NotFoundError
+from ..db.models import MessageAttachment, Session as SessionModel
 from ..domain import SessionDetail, SessionSummary
 from ..domain.common import SessionStatus
 from ..repositories import SessionRepository
+from ..services import attachment_service
 
 logger = structlog.get_logger()
 
@@ -72,9 +74,73 @@ class SessionService:
         if not is_owner and not is_admin:
             raise AuthorizationError("Only owner or admin can delete")
 
+        attachments = (
+            self.session_repo.db.query(MessageAttachment)
+            .filter(MessageAttachment.session_id == session_id)
+            .all()
+        )
+        for att in attachments:
+            attachment_service.delete_file(att.storage_path)
+
         self.session_repo.delete(session_id)
         self.session_repo.commit()
         logger.info("session_deleted", session_id=str(session_id), by_user=str(user_id))
+
+    def delete_many(
+        self,
+        session_ids: list[UUID],
+        user_id: UUID,
+        user_roles: list[str],
+    ) -> int:
+        """Delete specific sessions by IDs (owner or admin only)."""
+        is_admin = "admin" in user_roles
+
+        if not is_admin:
+            sessions = (
+                self.session_repo.db.query(SessionModel)
+                .filter(SessionModel.id.in_(session_ids), SessionModel.user_id == user_id)
+                .all()
+            )
+            allowed_ids = [s.id for s in sessions]
+        else:
+            allowed_ids = session_ids
+
+        if not allowed_ids:
+            return 0
+
+        attachments = (
+            self.session_repo.db.query(MessageAttachment)
+            .filter(MessageAttachment.session_id.in_(allowed_ids))
+            .all()
+        )
+        for att in attachments:
+            attachment_service.delete_file(att.storage_path)
+
+        count = self.session_repo.delete_many(allowed_ids)
+        self.session_repo.commit()
+        logger.info("sessions_batch_deleted", count=count, by_user=str(user_id))
+        return count
+
+    def delete_all_for_user(self, user_id: UUID | None) -> int:
+        """Delete all sessions for a user (None = all sessions), including attachment files."""
+        sessions, _ = self.session_repo.list_for_user(user_id, limit=10000, offset=0)
+        if not sessions:
+            return 0
+
+        session_ids = [s.id for s in sessions]
+
+        attachments = (
+            self.session_repo.db.query(MessageAttachment)
+            .filter(MessageAttachment.session_id.in_(session_ids))
+            .all()
+        )
+        for att in attachments:
+            attachment_service.delete_file(att.storage_path)
+
+        self.session_repo.delete_all_for_user(user_id)
+        self.session_repo.commit()
+        logger.info("all_sessions_deleted", user_id=str(user_id), count=len(session_ids))
+        return len(session_ids)
 
     def lock_for_retry(self, session_id: UUID) -> None:
         """Atomically lock and transition session to ACTIVE for retry.

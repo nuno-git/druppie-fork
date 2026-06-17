@@ -6,6 +6,8 @@ import { useState, useRef, useEffect } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { Send, Shield } from 'lucide-react'
 import { sendChat } from '../../services/api'
+import FileUploadButton from './FileUploadButton'
+import AttachmentChips from './AttachmentChips'
 
 const NEW_SESSION_SUGGESTIONS = [
   'Set up a new project',
@@ -16,13 +18,16 @@ const NEW_SESSION_SUGGESTIONS = [
 
 const NewSessionPanel = ({ onSessionCreated }) => {
   const [input, setInput] = useState('')
+  const [attachments, setAttachments] = useState([])
+  const [uploadError, setUploadError] = useState(null)
   const inputRef = useRef(null)
   const queryClient = useQueryClient()
 
   const mutation = useMutation({
-    mutationFn: (message) => sendChat(message),
+    mutationFn: ({ message, attachmentIds }) => sendChat(message, null, null, attachmentIds),
     onSuccess: (data) => {
       setInput('')
+      setAttachments([])
       queryClient.invalidateQueries({ queryKey: ['sessions'] })
       if (data.session_id) {
         onSessionCreated(data.session_id)
@@ -40,8 +45,13 @@ const NewSessionPanel = ({ onSessionCreated }) => {
 
   const handleSend = (text) => {
     const trimmed = (text || input).trim()
-    if (!trimmed) return
-    mutation.mutate(trimmed)
+    if (!trimmed && !attachments.length) return
+    setUploadError(null)
+    const fallback = attachments.length
+      ? attachments.map((a) => a.original_filename).join(', ')
+      : 'See attached'
+    const message = trimmed || fallback
+    mutation.mutate({ message, attachmentIds: attachments.map((a) => a.id) })
   }
 
   return (
@@ -74,37 +84,48 @@ const NewSessionPanel = ({ onSessionCreated }) => {
       {/* Floating input bar */}
       <div className="px-4 pb-4 pt-2 flex-shrink-0">
         <div className="max-w-3xl mx-auto">
-          <div className="flex items-end gap-2 border border-gray-200 rounded-2xl shadow-lg px-4 py-3 bg-white focus-within:border-gray-300 focus-within:shadow-xl transition-shadow">
-            <textarea
-              ref={inputRef}
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.shiftKey && !mutation.isPending) {
-                  e.preventDefault()
-                  handleSend()
-                }
-              }}
-              placeholder="Describe what you'd like to build..."
-              rows={1}
-              className="flex-1 resize-none bg-transparent outline-none text-sm leading-6 py-1 max-h-40"
-              disabled={mutation.isPending}
+          <div className="border border-gray-200 rounded-2xl shadow-lg px-4 py-3 bg-white focus-within:border-gray-300 focus-within:shadow-xl transition-shadow">
+            <AttachmentChips
+              attachments={attachments}
+              onRemove={(id) => setAttachments((prev) => prev.filter((a) => a.id !== id))}
             />
-            <button
-              onClick={() => handleSend()}
-              disabled={!input.trim() || mutation.isPending}
-              className="flex-shrink-0 p-2 rounded-xl bg-gray-900 text-white hover:bg-gray-700 disabled:opacity-30 disabled:hover:bg-gray-900 transition-colors"
-            >
-              {mutation.isPending ? (
-                <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-              ) : (
-                <Send className="w-4 h-4" />
-              )}
-            </button>
+            <div className="flex items-end gap-2">
+              <FileUploadButton
+                onUpload={(att) => { setUploadError(null); setAttachments((prev) => [...prev, att]) }}
+                onError={setUploadError}
+                disabled={mutation.isPending}
+              />
+              <textarea
+                ref={inputRef}
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey && !mutation.isPending) {
+                    e.preventDefault()
+                    handleSend()
+                  }
+                }}
+                placeholder="Describe what you'd like to build..."
+                rows={1}
+                className="flex-1 resize-none bg-transparent outline-none text-sm leading-6 py-1 max-h-40"
+                disabled={mutation.isPending}
+              />
+              <button
+                onClick={() => handleSend()}
+                disabled={(!input.trim() && !attachments.length) || mutation.isPending}
+                className="flex-shrink-0 p-2 rounded-xl bg-gray-900 text-white hover:bg-gray-700 disabled:opacity-30 disabled:hover:bg-gray-900 transition-colors"
+              >
+                {mutation.isPending ? (
+                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                ) : (
+                  <Send className="w-4 h-4" />
+                )}
+              </button>
+            </div>
           </div>
-          {mutation.isError && (
+          {(mutation.isError || uploadError) && (
             <p className="mt-2 text-xs text-red-600 text-center">
-              {mutation.error.message}
+              {mutation.error?.message || uploadError}
             </p>
           )}
         </div>

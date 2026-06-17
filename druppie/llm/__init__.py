@@ -27,6 +27,7 @@ from .base import (
 )
 from .fallback import FallbackLLM
 from .litellm_provider import ChatLiteLLM, LITELLM_AVAILABLE
+from .mock_provider import MockLLM
 from .resolver import ResolvedModel, resolve_model
 from .service import LLMConfigurationError, LLMService, get_llm_service
 
@@ -37,6 +38,8 @@ __all__ = [
     # Provider (LiteLLM-based)
     "ChatLiteLLM",
     "LITELLM_AVAILABLE",
+    # Mock provider
+    "MockLLM",
     # Fallback
     "FallbackLLM",
     # Resolver

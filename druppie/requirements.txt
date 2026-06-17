@@ -36,6 +36,9 @@ pycountry>=24.6.1
 # Cron job scheduling
 croniter>=2.0.0
 
+# PDF text extraction
+pypdf>=4.0.0
+
 # Logging
 structlog>=24.1.0
 

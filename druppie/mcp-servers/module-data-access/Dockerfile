@@ -6,7 +6,7 @@ WORKDIR /app
 # python:3.11-slim is Debian 12 (bookworm), so use the bookworm prod repo.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         unixodbc-dev gcc curl gnupg ca-certificates \
-    && curl -fsSL https://packages.microsoft.com/keys/microsoft.asc \
+    && curl --retry 5 --retry-delay 3 --retry-connrefused -fsSL https://packages.microsoft.com/keys/microsoft.asc \
         | gpg --dearmor -o /usr/share/keyrings/microsoft-prod.gpg \
     && echo "deb [signed-by=/usr/share/keyrings/microsoft-prod.gpg] https://packages.microsoft.com/debian/12/prod bookworm main" \
         > /etc/apt/sources.list.d/mssql-release.list \

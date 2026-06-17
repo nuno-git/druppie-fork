@@ -132,9 +132,23 @@ helm/druppie/
 | Tool | Purpose | Install |
 |------|---------|---------|
 | Docker | Runs containers and the kind cluster | [docker.com](https://docker.com) (50GB+ free disk recommended) |
+| Docker Buildx | BuildKit backend for fast cached builds | See below |
 | kind | Kubernetes cluster inside Docker | `go install sigs.k8s.io/kind@latest` or download from [GitHub releases](https://github.com/kubernetes-sigs/kind/releases) |
 | helm | Kubernetes package manager | `snap install helm --classic` or download from [GitHub releases](https://github.com/helm/helm/releases) |
 | kubectl | Kubernetes command line | `snap install kubectl --classic` |
+
+#### Docker Buildx (required)
+
+The backend Dockerfile uses `--mount=type=cache` for pip, which requires BuildKit via buildx.
+
+```bash
+mkdir -p ~/.docker/cli-plugins
+BUILDX_VERSION=$(curl -sL https://api.github.com/repos/docker/buildx/releases/latest | jq -r '.tag_name')
+curl -L -o ~/.docker/cli-plugins/docker-buildx \
+  "https://github.com/docker/buildx/releases/download/${BUILDX_VERSION}/buildx-${BUILDX_VERSION}.linux-amd64"
+chmod +x ~/.docker/cli-plugins/docker-buildx
+docker buildx version  # verify
+```
 
 ### Step 1: Clone the repo
 
@@ -147,10 +161,10 @@ cd druppie-k8s
 
 ```bash
 # Backend
-docker build -t druppie-backend:latest .
+docker buildx build --load -t druppie-backend:latest .
 
 # Frontend (VITE vars are baked at build time)
-docker build \
+docker buildx build --load \
   --build-arg VITE_API_URL=http://localhost:9080 \
   --build-arg VITE_KEYCLOAK_URL=http://localhost:9080 \
   --build-arg VITE_KEYCLOAK_REALM=druppie \
@@ -159,11 +173,11 @@ docker build \
   -t druppie-frontend:latest ./frontend/
 
 # Init
-docker build -t druppie-init:latest -f Dockerfile.init .
+docker buildx build --load -t druppie-init:latest -f Dockerfile.init .
 
 # MCP Modules (build context must be druppie/mcp-servers/)
 for mod in coding docker filesearch llm registry vision web archimate; do
-  docker build -t druppie-module-$mod:latest \
+  docker buildx build --load -t druppie-module-$mod:latest \
     -f druppie/mcp-servers/module-$mod/Dockerfile \
     druppie/mcp-servers/
 done

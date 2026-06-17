@@ -6,7 +6,7 @@ metadata:
     {{- include "druppie.labels" . | nindent 4 }}
     app.kubernetes.io/component: gitea
 spec:
-  replicas: 1
+  replicas: {{ .Values.gitea.replicaCount }}
   strategy:
     type: Recreate
   selector:
@@ -26,7 +26,11 @@ spec:
             - sh
             - -c
             - |
+              {{- if .Values.cnpg.enabled }}
+              until pg_isready -h {{ include "druppie.fullname" . }}-gitea-db-rw -p 5432 -U {{ .Values.postgresql.gitea.username }}; do
+              {{- else }}
               until pg_isready -h {{ include "druppie.fullname" . }}-gitea-db -p 5432 -U {{ .Values.postgresql.gitea.username }}; do
+              {{- end }}
                 echo "Waiting for gitea-db..."
                 sleep 2
               done
@@ -49,7 +53,11 @@ spec:
             - name: GITEA__database__DB_TYPE
               value: "postgres"
             - name: GITEA__database__HOST
+              {{- if .Values.cnpg.enabled }}
+              value: "{{ include "druppie.fullname" . }}-gitea-db-rw:5432"
+              {{- else }}
               value: "{{ include "druppie.fullname" . }}-gitea-db:5432"
+              {{- end }}
             - name: GITEA__database__NAME
               value: {{ .Values.postgresql.gitea.database | quote }}
             - name: GITEA__database__USER
@@ -60,11 +68,16 @@ spec:
                   name: {{ include "druppie.fullname" . }}-secrets
                   key: GITEA_DB_PASSWORD
             - name: GITEA__server__ROOT_URL
-              value: "{{ include "druppie.externalBaseUrl" . }}/git/"
+              value: "{{ include "druppie.giteaExternalUrl" . }}/"
             - name: GITEA__server__HTTP_PORT
               value: {{ .Values.gitea.httpPort | quote }}
+            {{- if .Values.global.subdomains.gitea }}
+            - name: GITEA__server__DOMAIN
+              value: {{ .Values.global.subdomains.gitea | quote }}
+            {{- else }}
             - name: GITEA__server__DOMAIN
               value: {{ .Values.global.domain | quote }}
+            {{- end }}
             - name: GITEA__security__INSTALL_LOCK
               value: "true"
             - name: GITEA__service__DISABLE_REGISTRATION
@@ -102,12 +115,7 @@ spec:
             timeoutSeconds: 5
             failureThreshold: 10
           resources:
-            requests:
-              memory: "256Mi"
-              cpu: "250m"
-            limits:
-              memory: "512Mi"
-              cpu: "1000m"
+            {{- toYaml .Values.gitea.resources | nindent 12 }}
       volumes:
         - name: gitea-data
           persistentVolumeClaim:

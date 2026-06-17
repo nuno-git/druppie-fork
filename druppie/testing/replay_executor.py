@@ -340,7 +340,19 @@ class ReplayExecutor:
             # reconstruct_from_db() rebuilds the full conversation history.
             for tc_idx, tc in enumerate(agent_fix.tool_calls):
                 tool_call_id = f"replay_{seq}_{tc_idx}"
-                func_name = tc.tool.replace(":", "_") if ":" in tc.tool else tc.tool
+                # Match REAL tool naming so reconstruct_from_db() rebuilds a
+                # history whose tool calls correspond to the tools the resumed
+                # agent actually has. MCP tools are "<server>_<tool>" (e.g.
+                # registry_list_modules); BUILTIN tools are bare (e.g.
+                # invoke_skill, hitl_ask_question, done) -- NOT "builtin_...".
+                # Naming builtin calls "builtin_invoke_skill" made the resumed
+                # agent see calls to non-existent tools and re-do mandatory
+                # steps (e.g. re-invoke the mermaid skill) after a reject.
+                if ":" in tc.tool:
+                    _server, _tool = tc.tool.split(":", 1)
+                    func_name = _tool if _server == "builtin" else f"{_server}_{_tool}"
+                else:
+                    func_name = tc.tool
 
                 llm_call = LlmCall(
                     id=fixture_uuid(meta.id, "run", seq, "llm", tc_idx),
