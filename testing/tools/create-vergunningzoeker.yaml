@@ -1,21 +1,21 @@
 ## End-to-end: create vergunningzoeker app with REAL deploy
 ## Extends setup-vergunningzoeker-with-fd (BA completed with FD).
-## Adds: architect (TD + BUILD_PATH=PROJECT) -> builder_planner -> test_builder
-##   -> builder (real code with druppie SDK for OCR + LLM) -> test_executor
-##   -> deployer (REAL) -> summarizer
+## Adds: architect (TD + BUILD_PATH=PROJECT) → builder_planner → test_builder
+##   → builder (real code with druppie SDK for OCR + LLM) → test_executor
+##   → deployer (REAL) → summarizer
 ##
 ## Tests that the full pipeline produces a working app that uses
 ## druppie.call("vision", "ocr", ...) and druppie.call("llm", "chat", ...)
 
 tool-test:
   name: create-vergunningzoeker
-  description: "Full vergunningzoeker pipeline with real deploy -- tests SDK module integration"
+  description: "Full vergunningzoeker pipeline with real deploy — tests SDK module integration"
   tags: [e2e, create-project, sdk, real-deploy, vergunningzoeker]
   extends: setup-vergunningzoeker-with-fd
 
   chain:
     # =========================================================================
-    # Planner -> Architect
+    # Planner → Architect
     # =========================================================================
     - agent: planner
       tool: builtin:make_plan
@@ -32,8 +32,12 @@ tool-test:
         summary: "Agent planner: BA approved, planned architect"
 
     # =========================================================================
-    # Architect -- writes TD with OCR + LLM modules + approval flow + audit
+    # Architect — writes simple TD with OCR + LLM modules
     # =========================================================================
+    - agent: architect
+      tool: coding:run_git
+      arguments:
+        command: "pull"
 
     - agent: architect
       tool: coding:read_file
@@ -48,121 +52,173 @@ tool-test:
       arguments:
         path: docs/technical-design.md
         content: |
-          # Technical Design -- Vergunningzoeker
+          # Technical Design
 
-          > Platform standards: conforms to [docs/platform-technical-standards.md](./platform-technical-standards.md) rev 2026-04-20.
+          > Platform standards: conforms to [docs/platform-technical-standards.md](./platform-technical-standards.md) rev 2026-06-01.
+
+          > **Disclaimer:** Dit document is gegenereerd met behulp van AI. Controleer de inhoud zorgvuldig voor gebruik. / This document was generated with the help of AI. Please review the content carefully before use.
 
           ## Introduction
 
           ### Subject
 
-          De vergunningzoeker is een webtoepassing voor waterschap-medewerkers die vergunningen uit historische bronnen (PDF's, gescande documenten, andere bestanden) verzamelt via upload, automatisch verwerkt met OCR en LLM-extractie, doorzoekbaar maakt, en na menselijke validatie opslaat. Migratie naar het zaaksysteem is **out of scope** voor nu en wordt in een latere fase opgepakt wanneer netwerktoegang tot het zaaksysteem beschikbaar is.
+          Permit Metadata Search (vergunningzoeker) — a unified search interface for historical and current water authority permits, enabling metadata search across multiple legacy databases, document access, archive status tracking, and migration to a case management system.
 
           ### Problem Summary
 
-          Vergunningdata bestaat uit verspreide PDF's, gescande documenten en andere bestanden met verschillende nummeringssystemen. Medewerkers kunnen oude vergunningen niet uniform doorzoeken en archiefstatussen zijn onbekend. Het systeem automatiseert metadata-extractie, biedt uitgebreid zoeken en filteren over alle documenten, en combineert menselijke goedkeuring in een flow.
+          The water authority currently has fragmented permit data stored in multiple legacy databases with different numbering systems and search interfaces. Historical permits (pre-2018) can only be searched by K/L-number, while newer permits support location-based search. Knowledge about where and how to search is dependent on experienced staff, creating a single point of failure. The organization lacks a complete overview of all permits and their archive status, risking non-compliance with the Archives Act.
 
           ### Functional Question (from FD by Business Analyst)
 
-          Hoe kunnen we alle vergunningbestanden centraal verzamelen, automatisch verwerken tot doorzoekbare metadata, met archiefstatus-inzicht en een goedkeuringsflow, toegankelijk voor geautoriseerde medewerkers van specifieke afdelingen?
+          How can we provide a single, intuitive search interface that enables all authorized staff to find permits across all historical periods and source systems, view their archive status, and migrate them to the case management system?
 
           ### Research
 
-          Gebaseerd op [docs/technical-research.md](./technical-research.md). Gekozen benadering: **B -- Automatische extractie met PostgreSQL full-text search + uitgebreide filtering**. Zie het onderzoeksdocument voor de vergelijking van alternatieven en de externe-koppelingen analyse.
+          Based on [docs/technical-research.md](./technical-research.md). Chosen approach: **Approach C — Hybrid Index with Incremental Updates**. See the research document for the comparison of alternatives and the external connections analysis.
 
           ## Solution
 
           ### Applied Principles (per NORA layer)
 
-          * **Foundations:** De Archiefwet verplicht waterschappen om retentieperiodes en archiefnominaties correct toe te passen. De selectielijst voor waterschappen (2012) is de leidende referentie. Principe 21 (duurzame toegankelijkheid) eist dat informatieobjecten traceerbaar en vindbaar zijn.
-          * **Organization:** Het waterschap is eigenaar van de vergunningdata (Principe 3). De toepassing ondersteunt het vergunningverleningsproces.
-          * **Information:** Bronbestanden worden geupload, via OCR en LLM verwerkt tot gestructureerde metadata, en opgeslagen in PostgreSQL. Persoonsgegevens (namen, adressen) zijn aanwezig en vereisen Privacy by Design (Principe 22). De selectielijst wordt als context aan de LLM meegegeven.
-          * **Application:** De toepassing volgt het Druppie-template (React frontend, FastAPI backend, PostgreSQL). Nieuwe componenten: upload-service, documentverwerking-service (OCR + LLM), zoekservice, goedkeuringsservice. Alle data wordt in de applicatie zelf opgeslagen.
-          * **Security & Privacy:** PII wordt beschermd door toegangsbeperking tot geautoriseerde afdelingen via Keycloak-headers, geen opslag van documentbinaries in de database (alleen paden), en auditlogging van alle acties.
+          * **Foundations:** Archives Act (Archiefwet) requires complete overview of permit locations and retention periods. Waterschappen Selectielijst 2012 provides the framework for archive nominations and retention.
+          * **Organization:** Water authority context with multiple departments (vergunningen, planning, archief) requiring controlled access. Principle 3 (Every primary data element has an owner) applies — source system owners remain responsible for data quality.
+          * **Information:** Principle 13 (A data element has one source) — permit data remains in source systems; the search index is a derived view for performance. Data flows from source databases → index → search results, and from index → zaaksysteem for migration.
+          * **Application:** Principle 11 (Standard before custom, joint before individual) — new Druppie modules are proposed for reusable integration with legacy systems. Principle 12 (One application per type of functionality) — Vergunningzoeker is the single search interface for permits.
+          * **Security & Privacy:** Principle 20 (Information security and business continuity) — access restricted to authorized departments. Principle 22 (Privacy by Design and Default) — personal data (names, addresses) is protected through department-based access control and audit logging.
 
           ### Requirements
 
           | ID | Source | Requirement | Verification Method |
           |----|--------|-------------|---------------------|
-          | FR-01 | BA | Het systeem stelt gebruikers in staat om via een enkel zoekvak te zoeken over alle metadata-velden tegelijk. | Functional test |
-          | FR-02 | BA | Het systeem biedt een geavanceerde zoekoptie met filters voor specifieke metadata-velden. | Functional test |
-          | FR-03 | BA | Het systeem indexeert en doorzoekt metadata van: aanvrager naam, vergunninghouder naam, uitgever naam, locatie, datums, vergunningnummer (K, L, enz.), toepasselijke wet, type werk, type oppervlaktewater, type waterkering. | Functional test |
-          | FR-04 | BA | Het systeem toont bij zoekresultaten alle beschikbare metadata-velden voor elke vergunning. | Functional test |
-          | FR-05 | BA | Het systeem stelt gebruikers in staat om gedetailleerde vergunninginformatie te bekijken. | Functional test |
-          | FR-06 | BA | Het systeem toont uit welk bronsysteem elke vergunning afkomstig is. | Functional test |
-          | FR-07 | BA | Het systeem stelt gebruikers in staat om originele vergunningdocumenten (PDF's, scans) te openen of te downloaden. | Functional test |
-          | FR-08 | BA | Het systeem voorziet in toegangsbeperking zodat alleen gebruikers van specifieke afdelingen toegang hebben. | Security test |
-          | FR-09 | BA | Het systeem toont de archiefnominatie (bewaren of vernietigen) voor elke vergunning. | Functional test |
-          | FR-10 | BA | Het systeem toont de retentieperiode voor elke vergunning indien de archiefnominatie is "vernietigen". | Functional test |
-          | FR-11 | BA | Het systeem toont de huidige archiefstatus van elke vergunning. | Functional test |
+          | FR-01 | BA | The system provides a single search box that searches across all metadata fields simultaneously. | Functional test |
+          | FR-02 | BA | The system provides an advanced search option with filters for specific metadata fields. | Functional test |
+          | FR-03 | BA | The system indexes and searches metadata of: applicant name, permit holder name, issuer name, location, dates, permit number (K, L, etc.), applicable law, work type, surface water type, dike type. | Functional test |
+          | FR-04 | BA | The system displays all available metadata fields for each permit in search results. | Functional test |
+          | FR-05 | BA | The system allows users to view detailed permit information. | Functional test |
+          | FR-06 | BA | The system displays which source system each permit originates from. | Functional test |
+          | FR-07 | BA | The system allows users to open or download original permit documents (PDFs, scans). | Functional test |
+          | FR-08 | BA | The system provides access restriction so only users from specific departments (e.g., permits, planning) have access. | Functional test |
+          | FR-09 | BA | The system displays the archive nomination (preserve or destroy) for each permit based on document type per the Waterschappen Selectielijst 2012. | Functional test |
+          | FR-10 | BA | The system displays the retention period for each permit if the archive nomination is "destroy" (per Waterschappen Selectielijst 2012). | Functional test |
+          | FR-11 | BA | The system displays the current archive status of each permit (to preserve indefinitely, or retention period expired/not expired). | Functional test |
+          | FR-12 | BA | The system allows users to migrate permit documents and their metadata to the case management system. | Functional test |
+          | NFR-01 | BA | The system must return search results within 5 seconds. | Performance test |
+          | NFR-02 | BA | The system must be accessible to 20+ concurrent users. | Load test |
+          | NFR-03 | BA | The system must be available during regular office hours. | Monitoring |
+          | NFR-04 | BA | The user interface must be intuitive and require no training for new employees. | Usability test |
+          | NFR-05 | BA | The system must protect personal data (names, addresses, contact details) from unauthorized access. | Security test |
+          | NFR-06 | BA | The system must maintain audit logs of who performs which searches and migrations. | Test |
+          | NFR-07 | BA | Migrations must guarantee data integrity: metadata and documents must be transferred completely and correctly. | Test |
+          | TR-01 | AR | The search index must support full-text search across all metadata fields. | Code inspection |
+          | TR-02 | AR | Incremental sync must identify and update only changed records since last sync. | Code inspection |
+          | TR-03 | AR | Manual refresh must complete within 2 minutes for typical dataset sizes. | Performance test |
+          | TR-04 | AR | Document proxy must cache frequently accessed documents to reduce file share load. | Code inspection |
+          | TR-05 | AR | Archive status must be calculated automatically based on document type and issue date. | Code inspection |
+          | TR-06 | AR | Access control must restrict search and document access to authorized departments. | Security test |
+
+          Source: BA = from Business Analyst (FR/NFR) | AR = from Architect (TR)
 
           ### Architectural Solution
 
           #### 1. Component Structure (Logical)
 
-          **Nieuwe componenten:**
+          **New Components:**
+          - **Search Index Service** — Manages the centralized permit metadata index in Postgres, handles full-text search queries, and returns ranked results.
+          - **Index Sync Service** — Background service that performs incremental updates from source databases using `module-permit-sources`, tracks last-sync timestamps, and supports manual refresh triggers.
+          - **Document Proxy Service** — Proxies document access to file shares via `module-fileshare`, implements caching for frequently accessed documents, and generates time-limited access URLs.
+          - **Migration Service** — Coordinates permit migration to the zaaksysteem via `module-zaaksysteem`, validates data integrity before and after transfer, and logs migration status.
+          - **Archive Status Calculator** — Calculates archive nomination and retention status based on document type (from embedded Selectielijst 2012 reference data) and issue date.
+          - **Access Control Middleware** — Enforces department-based access control using Druppie-provided user attributes, logs all access attempts, and blocks unauthorized requests.
 
-          | Component | Verantwoordelijkheid |
-          |-----------|---------------------|
-          | **Uploadservice** | Ontvangt individuele bestanden en ZIP-archieven, pakt ZIP's uit, slaat bestanden op in lokale opslag, start asynchrone verwerking. |
-          | **Documentverwerkingsservice** | Asynchrone pipeline: (1) OCR via `module-vision.ocr`, (2) metadata-extractie via `module-llm.chat` met selectielijst-context. Slaat voorgestelde metadata op met status `pending_review`. |
-          | **Zoekservice** | Uitgebreid zoeken en filteren over alle vergunningen. Full-text zoek (tsvector) en filtering op metadata-velden en status. Markeert niet-goedgekeurde resultaten. |
-          | **Goedkeuringsservice** | Medewerker bewerkt/controleert voorgestelde metadata en keurt goed. Status wordt `approved`. Bij goedkeuring wordt een `ready_for_migration`-vlag gezet ter voorbereiding op toekomstige zaaksysteem-integratie. |
-          | **Autorisatieservice** | Controleert afdelingslidmaatschap uit Keycloak-headers. |
-          | **Auditlogservice** | Registreert alle acties met gebruiker, timestamp en details. |
+          **Reuse:**
+          - Platform template (FastAPI + React + Postgres)
+          - Druppie authentication (Keycloak-based, department attributes in headers)
+          - `module-permit-sources` (NEW) — for legacy database access
+          - `module-fileshare` (NEW) — for document storage access
+          - `module-zaaksysteem` (NEW) — for case management system integration
 
-          **Hergebruik:**
-          - Druppie project-template (frontend + backend scaffold, PostgreSQL, Docker Compose)
-          - `module-vision` (OCR -- bestaand)
-          - `module-llm` (metadata-extractie -- bestaand)
-          - Platform-authenticatie (Keycloak via headers)
+          **Responsibilities:**
+          - Search Index Service: Query optimization, relevance ranking, result pagination
+          - Index Sync Service: Change detection, conflict resolution, error handling
+          - Document Proxy Service: Access control, cache management, URL generation
+          - Migration Service: Data validation, transaction management, status tracking
+          - Archive Status Calculator: Rule evaluation, status computation, expiry detection
+          - Access Control Middleware: Authorization enforcement, audit logging
+
+          **Impact Analysis:**
+          - No impact on existing code — this is a new project
+          - New modules (`module-permit-sources`, `module-fileshare`, `module-zaaksysteem`) will be created as part of CORE_UPDATE
+          - Application follows platform template conventions
+
+          **NFRs:**
+          - Search latency < 5 seconds achieved through local index and optimized queries
+          - 20+ concurrent users supported by connection pooling and async processing
+          - Department-based access control enforced at middleware level
+          - Audit logging captures all search and migration actions
 
           #### 2. Data Architecture & Integration
 
           **Data Model:**
 
-          - **permit** -- Kernentiteit. Kolommen: id, permit_number, applicant_name, permit_holder_name, issuer_name, location, issue_date, validity_date, applicable_law, work_type, surface_water_type, water_barrier_type, source_system, document_path, search_vector (tsvector, GIN-index), archive_nomination, retention_period_years, status (pending_review / approved), ready_for_migration (boolean, default false), ocr_text, created_at, updated_at, reviewed_at, reviewed_by. Bevat PII.
-          - **audit_log** -- id, user_id, action_type (upload / search / approve), action_details, timestamp.
-          - **upload_batch** -- id, user_id, file_count, status (processing / completed / failed), created_at.
+          The application maintains the following core entities in Postgres:
+
+          - **Permit** — Central indexed permit record with all searchable metadata fields
+          - **PermitSource** — Reference to the source system and original record identifier
+          - **DocumentReference** — Link to original document in file share storage
+          - **ArchiveStatus** — Calculated archive nomination, retention period, and current status
+          - **SyncLog** — Track index synchronization history and last-sync timestamps
+          - **MigrationLog** — Track migration history to zaaksysteem
+
+          ```mermaid
+          erDiagram
+              PERMIT ||--o{ PERMITSOURCE : has
+              PERMIT ||--o{ DOCUMENTREFERENCE : has
+              PERMIT ||--|| ARCHIVESTATUS : has
+              PERMIT ||--o{ MIGRATIONLOG : has
+              PERMITSOURCE ||--o{ SYNCLOG : tracks
+          ```
+
+          **Data Flows:**
+
+          1. **Indexing Flow:** Source databases → `module-permit-sources` → Index Sync Service → Search Index (Postgres)
+          2. **Search Flow:** User query → Search Index Service → Search Index → Ranked results → Frontend
+          3. **Document Access Flow:** User request → Document Proxy Service → `module-fileshare` → File Share → Cached response
+          4. **Migration Flow:** User selection → Migration Service → `module-zaaksysteem` → Case Management System
+          5. **Archive Status Flow:** Permit data → Archive Status Calculator → Selectielijst rules → Archive Status
 
           **Integration Points:**
 
-          | Extern systeem | Categorie | Beslissing | Module | Toelichting |
+          | External system | Category | Decision | Module | Explanation |
           |----------------|-----------|------------|--------|-------------|
-          | OCR-service | other | REUSE | `module-vision` | Bestaande OCR-tool |
-          | LLM-service | other | REUSE | `module-llm` | Bestaande chat-tool met selectielijst-context |
-          | Authenticatie | organizational | REUSE | Platform-standaard | Keycloak via Druppie |
-          | Zaaksysteem | organizational | **Out of scope** | N.v.t. (fase 2) | Wordt gerealiseerd als `module-zaaksysteem` wanneer netwerktoegang beschikbaar is |
+          | Legacy permit databases (vergunningen, planning, archief) | organizational | NEW | module-permit-sources | Reusable access to legacy permit databases across water authority projects |
+          | File shares (document storage) | organizational | NEW | module-fileshare | Reusable access to organizational file shares with centralized security |
+          | Custom zaaksysteem (case management system) | organizational | NEW | module-zaaksysteem | Reusable integration with custom zaaksysteem for case creation and migration |
+          | Waterschappen Selectielijst 2012 (reference data) | organizational | PROJECT-SPECIFIC | n/a | Static reference data embedded as application configuration |
+          | Druppie authentication (Keycloak) | organizational | REUSE | n/a | Platform standard — auth handled centrally |
 
-          #### 3. Flows
+          **Direct integration rationale for Selectielijst 2012:**
+          (a) The Selectielijst 2012 is a static, published standard that does not change frequently. Embedding it as configuration is sufficient.
+          (b) A module would add overhead (module infrastructure, MCP calls) for data that is essentially a lookup table.
+          (c) Future reuse risk is low: the reference data is stable and well-documented; other projects can embed the same data if needed.
 
-          **Documentverwerking Pipeline:**
+          #### 3. RAG choices
 
-          1. Bestand wordt geupload via Uploadservice
-          2. Opgeslagen in lokale bestandsopslag
-          3. OCR via `module-vision.ocr`: tekst extractie
-          4. LLM via `module-llm.chat`: metadata + archiefinfo + selectielijst
-          5. Metadata opgeslagen met status `pending_review`
-          6. tsvector geupdatet
-          7. Direct doorzoekbaar als `pending_review`
-
-          **Goedkeuringsflow:**
-
-          1. Medewerker opent `pending_review` vergunning
-          2. Medewerker controleert en bewerkt metadata
-          3. Medewerker klikt Goedkeuren
-          4. Goedgekeurde metadata opgeslagen, status = `approved`
-          5. `ready_for_migration = true`
-          6. Auditlog geschreven
+          This design does not include a RAG component. The search functionality is based on structured metadata indexing and full-text search in Postgres, not on semantic search over unstructured documents. Document content (PDFs, scans) is served as-is without vectorization or semantic retrieval.
 
           ### Security & Compliance (project-specific only)
 
           | Aspect | Project-specific measure | Explanation |
           |--------|--------------------------|-------------|
-          | PII handling | Metadata bevat namen en adressen. Toegang beperkt tot geautoriseerde afdelingen. | Principe 22: alleen metadata en bestandspaden in DB. |
-          | Toegangsbeperking | Afdelingscheck op elk endpoint: alleen "vergunningen" en "planning". | FR-08, NFR-05. |
-          | Auditlogging | Alle acties gelogd: upload, zoek, goedkeuring. | NFR-06. |
-          | GDPR grondslag | Wettelijke plicht (Archiefwet, vergunningverleningstaak). | Vernietiging na retentieperiode is rechtmatig. |
+          | Data Protection | Department-based access control | Only users from authorized departments (vergunningen, planning, archief) can search and view permits. Access enforced at middleware level using Druppie-provided department attributes. |
+          | PII handling | Audit logging and access restriction | Personal data (names, addresses) is logged in audit trails. All access attempts are recorded with user identity, timestamp, and accessed record IDs. |
+          | Data integrity | Migration validation | Before and after migration to zaaksysteem, metadata and document hashes are compared to ensure complete and correct transfer. |
+          | Document security | Time-limited URLs | Document access URLs generated by Document Proxy Service are time-limited and include user-specific tokens to prevent unauthorized sharing. |
+
+          **Compliance:**
+          - **GDPR legal basis:** Public task (wettelijke taak) — the water authority has a statutory duty to manage permits under the Water Act.
+          - **Retention:** Archive status and retention periods are calculated based on the Waterschappen Selectielijst 2012. The system does not automatically delete data; destruction is a separate administrative process.
+          - **DPIA:** Not required — the system processes existing permit data for internal administrative purposes with no novel processing activities.
+          - **BIO:** The system complies with the Baseline Informatiebeveiliging Overheid through department-based access control, audit logging, and secure document proxying.
 
           ### Platform standard deviations
 
@@ -170,17 +226,202 @@ tool-test:
           |---------|-----------|-----------|
           | (none) | | |
 
+          ### Visualization
+
+          **Application Architecture:**
+
+          ```archimate
+          view-id: id-9574ef33afe4438a97eb66e6eeec4057
+          file: docs/architecture.archimate
+          ```
+
+          **Data Flow:**
+
+          ```mermaid
+          flowchart TD
+              subgraph "Source Systems"
+                  DB1[(Permit DB 1)]
+                  DB2[(Permit DB 2)]
+                  DB3[(Permit DB 3)]
+                  FS[(File Share)]
+              end
+
+              subgraph "Druppie Modules"
+                  MPS[module-permit-sources]
+                  MFS[module-fileshare]
+                  MZS[module-zaaksysteem]
+              end
+
+              subgraph "Vergunningzoeker Application"
+                  ISS[Index Sync Service]
+                  SIS[Search Index Service]
+                  DPS[Document Proxy Service]
+                  MS[Migration Service]
+                  ASC[Archive Status Calculator]
+                  ACM[Access Control Middleware]
+                  IDX[(Search Index)]
+              end
+
+              subgraph "External Systems"
+                  ZS[(Zaaksysteem)]
+              end
+
+              subgraph "User Interface"
+                  UI[React Frontend]
+              end
+
+              DB1 --> MPS
+              DB2 --> MPS
+              DB3 --> MPS
+              MPS --> ISS
+              ISS --> IDX
+              SIS --> IDX
+              UI --> ACM
+              ACM --> SIS
+              SIS --> UI
+              UI --> DPS
+              DPS --> MFS
+              MFS --> FS
+              FS --> MFS
+              MFS --> DPS
+              DPS --> UI
+              UI --> MS
+              MS --> MZS
+              MZS --> ZS
+              ZS --> MZS
+              MZS --> MS
+              MS --> UI
+              IDX --> ASC
+              ASC --> SIS
+          ```
+
+          **Index Sync Process:**
+
+          ```mermaid
+          sequenceDiagram
+              participant Admin as Administrator
+              participant ISS as Index Sync Service
+              participant MPS as module-permit-sources
+              participant DB as Source Database
+              participant IDX as Search Index
+
+              Admin->>ISS: Trigger manual refresh
+              ISS->>ISS: Get last-sync timestamp
+              ISS->>MPS: extract_permit_metadata(since_timestamp)
+              MPS->>DB: Query changed records
+              DB-->>MPS: Changed records
+              MPS-->>ISS: Permit metadata
+              ISS->>ISS: Transform and normalize
+              ISS->>IDX: Upsert records
+              ISS->>ISS: Update sync log
+              ISS-->>Admin: Sync complete
+          ```
+
+          **Migration Process:**
+
+          ```mermaid
+          sequenceDiagram
+              participant User as User
+              participant UI as Frontend
+              participant MS as Migration Service
+              participant IDX as Search Index
+              participant MZS as module-zaaksysteem
+              participant ZS as Zaaksysteem
+              participant DPS as Document Proxy Service
+              participant MFS as module-fileshare
+              participant FS as File Share
+
+              User->>UI: Select permit for migration
+              UI->>MS: Initiate migration
+              MS->>IDX: Get permit metadata
+              IDX-->>MS: Permit metadata
+              MS->>MS: Validate metadata
+              MS->>MZS: create_case(metadata)
+              MZS->>ZS: Create case
+              ZS-->>MZS: Case ID
+              MZS-->>MS: Case ID
+              MS->>DPS: Get document
+              DPS->>MFS: get_document(path)
+              MFS->>FS: Retrieve file
+              FS-->>MFS: File bytes
+              MFS-->>DPS: File bytes
+              DPS-->>MS: File bytes
+              MS->>MZS: attach_document(case_id, file)
+              MZS->>ZS: Upload document
+              ZS-->>MZS: Success
+              MZS-->>MS: Success
+              MS->>MS: Log migration
+              MS-->>UI: Migration complete
+              UI-->>User: Success confirmation
+          ```
+
+          ### Module Summary (only when introducing a new module)
+
+          This project introduces three new Druppie MCP modules as part of CORE_UPDATE:
+
+          #### Module: module-permit-sources
+
+          - **Module ID:** module-permit-sources
+          - **Type:** module
+          - **Stateful/Stateless:** stateless
+          - **Description:** Provides reusable access to legacy permit databases across water authority projects, enabling metadata extraction and schema discovery.
+          - **Tools:**
+            | Tool name | Description |
+            |-----------|-------------|
+            | list_permit_sources | Lists all configured permit databases with connection details |
+            | get_permit_schema | Returns schema/metadata for a specific source database |
+            | extract_permit_metadata | Extracts permit metadata records changed since a given timestamp |
+            | test_connection | Verifies connectivity to a source database |
+
+          #### Module: module-fileshare
+
+          - **Module ID:** module-fileshare
+          - **Type:** module
+          - **Stateful/Stateless:** stateless
+          - **Description:** Provides reusable access to organizational file shares with centralized security and access logging.
+          - **Tools:**
+            | Tool name | Description |
+            |-----------|-------------|
+            | list_documents | Lists documents in a file share path matching a pattern |
+            | get_document | Retrieves document bytes from a file share |
+            | get_document_url | Generates a time-limited, proxied URL for document access |
+
+          #### Module: module-zaaksysteem
+
+          - **Module ID:** module-zaaksysteem
+          - **Type:** module
+          - **Stateful/Stateless:** stateless
+          - **Description:** Provides reusable integration with the custom zaaksysteem for case creation and document migration.
+          - **Tools:**
+            | Tool name | Description |
+            |-----------|-------------|
+            | create_case | Creates a new case in the zaaksysteem with provided metadata |
+            | attach_document | Attaches a document to an existing case |
+            | get_case_status | Retrieves the current status of a case |
+
     - agent: architect
-      tool: coding:push_changes
+      tool: coding:run_git
+      arguments:
+        command: "add docs/technical-design.md"
+
+    - agent: architect
+      tool: coding:run_git
+      arguments:
+        command: "commit -m 'Technisch ontwerp vergunningzoeker met Druppie SDK'"
+
+    - agent: architect
+      tool: coding:run_git
+      arguments:
+        command: "push"
 
     - agent: architect
       tool: builtin:done
       arguments:
-        summary: "Agent architect: DESIGN_APPROVED. BUILD_PATH=PROJECT. Wrote technical_design.md with Flask + React stack, Druppie SDK for vision/ocr and llm/chat, PostgreSQL for permit storage with tsvector, approval flow (pending_review -> approved), audit logging, authorization, and archive status via selectielijst. Uses existing modules -- no core changes needed."
+        summary: "Agent architect: DESIGN_APPROVED. BUILD_PATH=PROJECT. Wrote technical_design.md with Flask + React stack, Druppie SDK for vision/ocr and llm/chat, PostgreSQL for permit storage. Uses existing modules — no core changes needed."
         next_agent: builder_planner
 
     # =========================================================================
-    # Planner -> Builder Planner
+    # Planner → Builder Planner
     # =========================================================================
     - agent: planner
       tool: builtin:make_plan
@@ -222,91 +463,34 @@ tool-test:
           # Builder Plan: Vergunningzoeker
 
           ## Solution Strategy
-          Flask backend met React frontend op het Druppie template. OCR via module-vision, metadata-extractie via module-llm met selectielijst-context. Goedkeuringsflow met pending_review -> approved. Full-text search via PostgreSQL tsvector.
+          Flask backend met React frontend. OCR en classificatie via Druppie SDK.
 
           ## Module Integration
-          - **SDK**: `druppie_sdk` (pre-installed pip package)
+          - **SDK**: `druppie_sdk` is pre-installed (pip package)
           - **Usage**: `from druppie_sdk import DruppieClient; druppie = DruppieClient()`
           - **Modules Used**:
-            - `vision/ocr` -- OCR tekst extractie uit gescande vergunningdocumenten (PDF/afbeelding)
-            - `llm/chat` -- Metadata-extractie (alle velden) + selectielijst-classificatie
-          - **Key Patterns**:
+            - `vision/ocr` — tekst extraheren uit gescande vergunningdocumenten
+            - `llm/chat` — classificatie van vergunningtype op basis van geëxtraheerde tekst
+          - **Example Calls**:
             ```python
-            # OCR
-            ocr_result = druppie.call("vision", "ocr", {"image_source": data_uri, "prompt": "Extraheer alle tekst uit dit vergunningdocument."})
-            extracted_text = ocr_result.get("text", "")
-
-            # Metadata extraction with selectielijst context
-            meta_result = druppie.call("llm", "chat", {
-                "prompt": METADATA_EXTRACTION_PROMPT + extracted_text,
-                "system": "Metadata-extractie specialist voor Nederlandse watervergunningen. Antwoord ALLEEN met valid JSON."
-            })
+            ocr_result = druppie.call("vision", "ocr", {"image_source": url})
+            classify_result = druppie.call("llm", "chat", {"prompt": text, "system": "Classificeer dit document"})
             ```
           - **No API Keys**: app gebruikt GEEN hardcoded API keys
           - **No openai package**: gebruik druppie.call() via SDK
 
-          ## Data Model
+          ## Code Standards
+          - Python 3.11, Flask
+          - ESM imports, React functional components
+          - SQLAlchemy voor database
 
-          ### permit
-          - id: Integer (PK, autoincrement)
-          - permit_number: String -- vergunningnummer (K-xxxx, L-xxxx, etc.)
-          - applicant_name: String -- aanvrager
-          - permit_holder_name: String -- vergunninghouder
-          - issuer_name: String -- uitgever/verlener
-          - location: String -- locatie/adres
-          - issue_date: Date -- uitgiftedatum
-          - validity_date: Date -- geldigheidsdatum
-          - applicable_law: String -- toepasselijke wet
-          - work_type: String -- type werk/activiteit
-          - surface_water_type: String -- type oppervlaktewater
-          - water_barrier_type: String -- type waterkering
-          - source_file: String -- bestandsnaam
-          - source_system: String -- bronsysteem
-          - document_path: String -- pad naar lokaal bestand
-          - ocr_text: Text -- OCR output
-          - search_vector: tsvector -- full-text search index (GIN)
-          - archive_nomination: String -- bewaren/vernietigen
-          - retention_period_years: Integer -- retentieperiode
-          - archive_status: String -- huidige archiefstatus
-          - status: String -- pending_review / approved
-          - ready_for_migration: Boolean (default false) -- vlag voor zaaksysteem
-          - permit_type: String -- geclassificeerd type
-          - error_message: Text -- foutmelding indien verwerking mislukt
-          - upload_date: DateTime
-          - created_at: DateTime
-          - updated_at: DateTime
-          - reviewed_at: DateTime
-          - reviewed_by: String
+          ## Test Framework
+          pytest voor backend
 
-          ### audit_log
-          - id: Integer (PK)
-          - user_id: String
-          - action_type: String -- upload / search / approve
-          - action_details: Text
-          - timestamp: DateTime
-
-          ### upload_batch
-          - id: Integer (PK)
-          - user_id: String
-          - file_count: Integer
-          - status: String -- processing / completed / failed
-          - created_at: DateTime
-
-          ## API Endpoints
-          - POST /api/permits/upload -- upload document(en) (incl. ZIP), start asynchrone OCR+LLM verwerking
-          - GET /api/permits -- lijst van vergunningen met summary metadata
-          - GET /api/permits/search?q=term -- full-text search over alle metadata-velden
-          - GET /api/permits/:id -- detail van een vergunning incl. OCR tekst
-          - POST /api/permits/:id/approve -- metadata goedkeuren + status -> approved
-          - GET /api/permits/:id/document -- origineel document downloaden
-          - GET /api/permits/stats -- statistieken
-          - DELETE /api/permits/:id -- verwijderen
-          - POST /api/permits/:id/retry -- opnieuw verwerken
-
-          ## Frontend
-          - Zoektab: zoekresultaten met pending_review marker (amber), archive status, ready_for_migration
-          - Uploadtab: drag/drop met ZIP ondersteuning, compatibele bestandsformaten vermelding
-          - Detailmodal: alle metadata velden, OCR tekst weergave, goedkeur knop (alleen pending_review), download knop voor origineel document
+          ## Files to Create/Modify
+          - app/models.py — SQLAlchemy Permit model
+          - app/routes.py — API endpoints met druppie SDK calls
+          - frontend/src/App.tsx — upload + zoek UI
 
     - agent: builder_planner
       tool: coding:run_git
@@ -316,7 +500,7 @@ tool-test:
     - agent: builder_planner
       tool: coding:run_git
       arguments:
-        command: "commit -m 'Add builder plan for vergunningzoeker with approval flow'"
+        command: "commit -m 'Add builder plan for vergunningzoeker'"
 
     - agent: builder_planner
       tool: coding:run_git
@@ -326,10 +510,10 @@ tool-test:
     - agent: builder_planner
       tool: builtin:done
       arguments:
-        summary: "Agent builder_planner: Created builder-plan.md with module integration for vision/ocr and llm/chat, approval flow, tsvector search, audit logging."
+        summary: "Agent builder_planner: Created builder-plan.md with module integration for vision/ocr and llm/chat."
 
     # =========================================================================
-    # Planner -> Test Builder
+    # Planner → Test Builder
     # =========================================================================
     - agent: planner
       tool: builtin:make_plan
@@ -364,166 +548,37 @@ tool-test:
         path: tests/test_routes.py
         content: |
           import io
-          import json
           import pytest
           from unittest.mock import patch
 
-
-          OCR_MOCK = {
-              "text": "Vergunning K-2019-0042. Aanvrager: J. de Vries. Lozing oppervlaktewater. Locatie: Amsterdam. Uitgegeven: 2019-03-15. Wet: Waterwet. Type: lozing."
-          }
-
-          LLM_MOCK = {
-              "answer": json.dumps({
-                  "permit_number": "K-2019-0042",
-                  "applicant_name": "J. de Vries",
-                  "permit_holder_name": "J. de Vries",
-                  "issuer_name": "Waterschap",
-                  "location": "Amsterdam",
-                  "issue_date": "2019-03-15",
-                  "validity_date": "2029-03-15",
-                  "applicable_law": "Waterwet",
-                  "work_type": "lozing",
-                  "surface_water_type": "oppervlaktewater",
-                  "water_barrier_type": "",
-                  "permit_type": "watervergunning",
-                  "permit_subtype": "watervergunning_lozing",
-                  "source_system": "upload"
-              })
-          }
-
-
-          def test_upload_permit(client, auth_headers):
-              """File upload should trigger OCR + metadata extraction via SDK."""
+          def test_upload_permit(client):
+              """File upload should trigger OCR + classification via SDK."""
               with patch("app.routes.druppie") as mock_druppie:
-                  mock_druppie.call.side_effect = [OCR_MOCK, LLM_MOCK]
+                  mock_druppie.call.side_effect = [
+                      {"text": "Vergunning K-2019-0042. Aanvrager: J. de Vries. Lozing oppervlaktewater."},
+                      {"answer": "watervergunning_lozing"},
+                  ]
                   data = {
                       "file": (io.BytesIO(b"fake image data"), "scan.jpg"),
+                      "permit_number": "K-2019-0042",
+                      "applicant_name": "J. de Vries",
                   }
-                  resp = client.post(
-                      "/api/permits/upload",
-                      data=data,
-                      content_type="multipart/form-data",
-                      headers=auth_headers,
-                  )
+                  resp = client.post("/api/permits/upload",
+                      data=data, content_type="multipart/form-data")
                   assert resp.status_code == 200
                   result = resp.get_json()
-                  assert "id" in result
-                  assert result["status"] == "processing"
+                  assert "extracted_text" in result
                   assert mock_druppie.call.call_count == 2
 
-
-          def test_upload_without_auth(client):
-              """Upload should fail without authorization headers."""
-              data = {"file": (io.BytesIO(b"test"), "test.jpg")}
-              resp = client.post(
-                  "/api/permits/upload",
-                  data=data,
-                  content_type="multipart/form-data",
-              )
-              assert resp.status_code == 403
-
-
-          def test_search_permits(client, auth_headers):
+          def test_search_permits(client):
               """Search should return matching permits."""
-              with patch("app.routes.druppie") as mock_druppie:
-                  mock_druppie.call.side_effect = [OCR_MOCK, LLM_MOCK]
-                  data = {"file": (io.BytesIO(b"test"), "test.jpg")}
-                  client.post(
-                      "/api/permits/upload",
-                      data=data,
-                      content_type="multipart/form-data",
-                      headers=auth_headers,
-                  )
-              resp = client.get("/api/permits?q=test", headers=auth_headers)
+              resp = client.get("/api/permits/search?q=test")
               assert resp.status_code == 200
 
-
-          def test_list_permits(client, auth_headers):
+          def test_list_permits(client):
               """List should return all permits."""
-              resp = client.get("/api/permits", headers=auth_headers)
+              resp = client.get("/api/permits")
               assert resp.status_code == 200
-              data = resp.get_json()
-              assert isinstance(data, list)
-
-
-          def test_get_permit_detail(client, auth_headers):
-              """Detail endpoint should return full permit data."""
-              with patch("app.routes.druppie") as mock_druppie:
-                  mock_druppie.call.side_effect = [OCR_MOCK, LLM_MOCK]
-                  data = {"file": (io.BytesIO(b"test"), "test.jpg")}
-                  r = client.post(
-                      "/api/permits/upload",
-                      data=data,
-                      content_type="multipart/form-data",
-                      headers=auth_headers,
-                  )
-                  permit_id = r.get_json()["id"]
-              resp = client.get(f"/api/permits/{permit_id}", headers=auth_headers)
-              assert resp.status_code == 200
-              detail = resp.get_json()
-              assert detail["status"] in ("processing", "processed", "pending_review")
-              assert "permit_number" in detail
-
-
-          def test_approve_permit(client, auth_headers):
-              """Approve should change status to approved and set ready_for_migration."""
-              from app.database import SessionLocal
-              from app.models import Permit
-              from datetime import date
-
-              with patch("app.routes.druppie") as mock_druppie:
-                  mock_druppie.call.side_effect = [OCR_MOCK, LLM_MOCK]
-                  data = {"file": (io.BytesIO(b"test"), "test.jpg")}
-                  r = client.post(
-                      "/api/permits/upload",
-                      data=data,
-                      content_type="multipart/form-data",
-                      headers=auth_headers,
-                  )
-                  permit_id = r.get_json()["id"]
-
-              # Manually set status to pending_review for testing
-              db = SessionLocal()
-              try:
-                  permit = db.query(Permit).filter(Permit.id == permit_id).first()
-                  permit.status = "pending_review"
-                  permit.issue_date = date(2019, 3, 15)
-                  db.commit()
-              finally:
-                  db.close()
-
-              resp = client.post(
-                  f"/api/permits/{permit_id}/approve",
-                  json={"applicant_name": "Goedgekeurd: J. de Vries"},
-                  headers=auth_headers,
-              )
-              assert resp.status_code == 200
-              result = resp.get_json()
-              assert result["status"] == "approved"
-              assert result["ready_for_migration"] is True
-              assert result["applicant_name"] == "Goedgekeurd: J. de Vries"
-
-
-          def test_approve_permit_access_denied(client, auth_headers):
-              """Only authorized departments can approve."""
-              wrong_headers = {
-                  "X-User-Id": "test-user",
-                  "X-User-Afdeling": "financien",
-                  "X-User-Name": "Test Gebruiker",
-              }
-              resp = client.post("/api/permits/1/approve", json={}, headers=wrong_headers)
-              assert resp.status_code == 403
-
-
-          def test_stats(client, auth_headers):
-              """Stats endpoint should return aggregated data."""
-              resp = client.get("/api/permits/stats", headers=auth_headers)
-              assert resp.status_code == 200
-              data = resp.get_json()
-              assert "total" in data
-              assert "by_type" in data
-              assert "by_archive" in data
 
     - agent: test_builder
       tool: coding:write_file
@@ -541,19 +596,10 @@ tool-test:
           def client():
               app = create_app()
               app.config["TESTING"] = True
-              import app.models  # noqa: F401
               Base.metadata.create_all(bind=engine)
               with app.test_client() as client:
                   yield client
               Base.metadata.drop_all(bind=engine)
-
-          @pytest.fixture
-          def auth_headers():
-              return {
-                  "X-User-Id": "test-user",
-                  "X-User-Afdeling": "vergunningen",
-                  "X-User-Name": "Test Gebruiker",
-              }
 
     - agent: test_builder
       tool: coding:run_git
@@ -563,7 +609,7 @@ tool-test:
     - agent: test_builder
       tool: coding:run_git
       arguments:
-        command: "commit -m 'Add vergunningzoeker tests (Red phase) with approval flow'"
+        command: "commit -m 'Add vergunningzoeker tests (Red phase)'"
 
     - agent: test_builder
       tool: coding:run_git
@@ -573,10 +619,10 @@ tool-test:
     - agent: test_builder
       tool: builtin:done
       arguments:
-        summary: "Agent test_builder: Wrote 8 tests in tests/test_routes.py (pytest) covering upload with auth, upload without auth, search, list, detail, approve, approve denied, stats."
+        summary: "Agent test_builder: Wrote 3 tests in tests/test_routes.py (pytest)."
 
     # =========================================================================
-    # Planner -> Builder
+    # Planner → Builder
     # =========================================================================
     - agent: planner
       tool: builtin:make_plan
@@ -593,7 +639,7 @@ tool-test:
         summary: "Agent planner: Planned builder"
 
     # =========================================================================
-    # Builder -- real code using druppie SDK for OCR + LLM classification
+    # Builder — real code using druppie SDK for OCR + LLM classification
     # =========================================================================
     - agent: builder
       tool: coding:execute_coding_task
@@ -607,9 +653,7 @@ tool-test:
             content: |
               from datetime import datetime, date, timezone
 
-              from sqlalchemy import Column, Date, DateTime, Integer, String, Text, Boolean, ForeignKey
-              from sqlalchemy.dialects.postgresql import TSVECTOR
-              from sqlalchemy.orm import relationship
+              from sqlalchemy import Column, Date, DateTime, Integer, String, Text
 
               from app.database import Base
 
@@ -629,93 +673,48 @@ tool-test:
                   issuer_name = Column(String(200), nullable=True)
                   location = Column(String(300), nullable=True, index=True)
                   issue_date = Column(Date, nullable=True)
-                  validity_date = Column(Date, nullable=True)
+                  expiry_date = Column(Date, nullable=True)
                   applicable_law = Column(String(200), nullable=True)
                   work_type = Column(String(200), nullable=True)
-                  surface_water_type = Column(String(200), nullable=True)
-                  water_barrier_type = Column(String(200), nullable=True)
+                  water_type = Column(String(200), nullable=True)
+                  embankment_type = Column(String(200), nullable=True)
 
                   # AI classification
                   permit_type = Column(String(100), nullable=True, index=True)
 
-                  # Archive compliance (FR-09/10/11)
+                  # Archive compliance (FR-09/10/11, BR-01 to BR-06)
                   archive_nomination = Column(String(50), nullable=True)  # bewaren / vernietigen
-                  retention_period_years = Column(Integer, nullable=True)
+                  retention_years = Column(Integer, nullable=True)
                   archive_status = Column(String(100), nullable=True)
 
                   # Full text
-                  ocr_text = Column(Text, nullable=True)
-
-                  # Full-text search vector
-                  search_vector = Column(TSVECTOR, nullable=True)
-
-                  # Document path (local storage, not in DB)
-                  document_path = Column(String(500), nullable=True)
+                  extracted_text = Column(Text, nullable=True)
 
                   # Processing
                   status = Column(String(50), default="processing")
                   error_message = Column(Text, nullable=True)
-                  ready_for_migration = Column(Boolean, default=False, nullable=False)
                   upload_date = Column(DateTime, default=lambda: datetime.now(timezone.utc))
-                  created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
-                  updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
-                  reviewed_at = Column(DateTime, nullable=True)
-                  reviewed_by = Column(String(200), nullable=True)
-
-                  # Relationships
-                  audit_logs = relationship("AuditLog", back_populates="permit", cascade="all, delete-orphan")
-
-
-              class AuditLog(Base):
-                  __tablename__ = "audit_logs"
-
-                  id = Column(Integer, primary_key=True, autoincrement=True)
-                  user_id = Column(String(200), nullable=True)
-                  action_type = Column(String(50), nullable=False)  # upload / search / approve / download
-                  action_details = Column(Text, nullable=True)
-                  permit_id = Column(Integer, ForeignKey("permits.id", ondelete="CASCADE"), nullable=True, index=True)
-                  created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
-
-                  permit = relationship("Permit", back_populates="audit_logs")
-
-
-              class UploadBatch(Base):
-                  __tablename__ = "upload_batches"
-
-                  id = Column(Integer, primary_key=True, autoincrement=True)
-                  user_id = Column(String(200), nullable=True)
-                  file_count = Column(Integer, default=0)
-                  status = Column(String(50), default="processing")  # processing / completed / failed
                   created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
           - path: app/routes.py
             content: |
               import base64
-              import io
               import json
               import logging
-              import os
-              import threading
-              import uuid
-              import zipfile
-              from datetime import date, datetime, timezone, timedelta
-              from pathlib import Path
-
-              from flask import Blueprint, jsonify, request, send_file
+              from datetime import date
+              from flask import Blueprint, jsonify, request
               from druppie_sdk import DruppieClient
-              from sqlalchemy import text
-
-              from app.database import SessionLocal, get_db
-              from app.models import Permit, AuditLog, UploadBatch
+              from app.database import get_db
+              from app.models import Permit
 
               logger = logging.getLogger(__name__)
               api = Blueprint("api", __name__)
+              druppie = DruppieClient()
 
               ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "gif", "bmp", "tiff", "webp", "pdf"}
-              MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
-              UPLOAD_DIR = Path("uploads")
-              UPLOAD_DIR.mkdir(exist_ok=True)
+              MAX_FILE_SIZE = 25 * 1024 * 1024
 
+              # Selectielijst waterschappen 2012 — simplified lookup
               SELECTIELIJST = {
                   "watervergunning_lozing": {"nominatie": "vernietigen", "jaren": 20},
                   "watervergunning_onttrekking": {"nominatie": "vernietigen", "jaren": 20},
@@ -738,13 +737,12 @@ tool-test:
                 "issuer_name": "naam uitgever/verlener",
                 "location": "locatie/adres",
                 "issue_date": "uitgiftedatum (YYYY-MM-DD)",
-                "validity_date": "geldigheidsdatum (YYYY-MM-DD)",
+                "expiry_date": "geldigheidsdatum (YYYY-MM-DD)",
                 "applicable_law": "toepasselijke wet of regeling",
                 "work_type": "type werk/activiteit",
-                "surface_water_type": "type oppervlaktewater",
-                "water_barrier_type": "type waterkering",
-                "permit_type": "type vergunning (watervergunning, keurvergunning, omgevingsvergunning, etc.)",
-                "permit_subtype": "specifiek type uit de selectielijst (watervergunning_lozing, watervergunning_onttrekking, keurvergunning, omgevingsvergunning, lozingsvergunning, onttrekkingsvergunning, projectplan, peilbesluit, leggerwijziging). Bepaal uit de documenttekst welke subtype het beste past.",
+                "water_type": "type oppervlaktewater",
+                "embankment_type": "type waterkering",
+                "permit_type": "type vergunning (watervergunning_lozing, keurvergunning, etc.)",
                 "source_system": "bronsysteem indien herkenbaar"
               }
 
@@ -752,73 +750,13 @@ tool-test:
               """
 
 
-              def _check_authorization():
-                  """Check afdeling header for authorization."""
-                  user_id = request.headers.get("X-User-Id", "").strip()
-                  afdeling = request.headers.get("X-User-Afdeling", "").strip().lower()
-                  if not user_id and not afdeling:
-                      return jsonify(error="Geen autorisatie headers. Voeg X-User-Id en X-User-Afdeling headers toe."), 401
-                  if not afdeling:
-                      return jsonify(error="Geen afdeling opgegeven. Voeg X-User-Afdeling header toe."), 401
-                  allowed = {"vergunningen", "planning"}
-                  if afdeling not in allowed:
-                      return jsonify(error=f"Afdeling '{afdeling}' niet geautoriseerd. Toegestaan: {', '.join(allowed)}"), 403
-                  return None
-
-
               def _allowed_file(fn):
                   return "." in fn and fn.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
 
 
-              def _save_file(file_bytes, filename):
-                  """Save file to local storage and return the relative path."""
-                  ext = filename.rsplit(".", 1)[1].lower() if "." in filename else "bin"
-                  safe_name = f"{uuid.uuid4().hex}.{ext}"
-                  file_path = UPLOAD_DIR / safe_name
-                  file_path.write_bytes(file_bytes)
-                  return str(file_path)
-
-
-              def _resolve_selectielijst_key(permit_type, permit_subtype, ocr_text=None):
-                  """Resolve permit type/subtype to a SELECTIELIJST key, with retry."""
-                  subtype = (permit_subtype or "").strip().lower().replace(" ", "_")
-                  if subtype in SELECTIELIJST:
-                      return subtype
-                  ptype = (permit_type or "").strip().lower().replace(" ", "_")
-                  if ptype in SELECTIELIJST:
-                      return ptype
-                  for key in SELECTIELIJST:
-                      if key.startswith(ptype) or ptype.startswith(key):
-                          return key
-                  if ocr_text:
-                      try:
-                          druppie = DruppieClient()
-                          keys_str = ", ".join(sorted(SELECTIELIJST.keys()))
-                          prompt_body = (
-                              'Het document is geclassificeerd als "' + str(permit_type)
-                              + '", maar deze term staat niet in de selectielijst. '
-                              + "Analyseer de tekst hieronder en bepaal de specifieke subtype uit deze lijst: "
-                              + keys_str + ". Antwoord ALLEEN met de subtype key, niets anders.\n\n"
-                              + str(ocr_text[:3000])
-                          )
-                          retry_result = druppie.call("llm", "chat", {
-                              "prompt": prompt_body,
-                              "system": "Je bepaalt de specifieke vergunning-subtype aan de hand van de documenttekst. Antwoord alleen met de key uit de lijst.",
-                          })
-                          retry_subtype = (retry_result.get("answer", "") or "").strip().lower().replace(" ", "_")
-                          if retry_subtype in SELECTIELIJST:
-                              logger.info("Retry resolved '%s' -> '%s'", permit_type, retry_subtype)
-                              return retry_subtype
-                      except Exception as e:
-                          logger.warning("Retry resolution failed for '%s': %s", permit_type, e)
-                  return None
-
-
-              def _compute_archive_status(selectielijst_key, issue_date_str):
-                  """Compute archive status from a SELECTIELIJST key and issue date."""
-                  if selectielijst_key is None:
-                      return "onbekend", None, "onbekend"
-                  key = (selectielijst_key or "").strip().lower().replace(" ", "_")
+              def _compute_archive_status(permit_type, issue_date_str):
+                  """Compute archive nomination, retention, and status per selectielijst."""
+                  key = (permit_type or "").strip().lower().replace(" ", "_")
                   info = SELECTIELIJST.get(key, {"nominatie": "onbekend", "jaren": None})
                   nominatie = info["nominatie"]
                   jaren = info["jaren"]
@@ -842,549 +780,229 @@ tool-test:
                   return nominatie, jaren, status
 
 
-              def _log_audit(db, user_id, action_type, details=None):
-                  """Create an audit log entry."""
-                  log = AuditLog(
-                      user_id=user_id,
-                      action_type=action_type,
-                      action_details=details,
-                  )
-                  db.add(log)
-
-
               @api.route("/info")
               def info():
                   from app.config import settings
                   return jsonify(app_name=settings.app_name)
 
 
-              def _recover_stuck_permits():
-                  """Find stuck permits older than cutoff and reset them."""
-                  cutoff = datetime.now(timezone.utc) - timedelta(minutes=10)
-                  db = SessionLocal()
-                  try:
-                      stuck = db.query(Permit).filter(
-                          Permit.status == "processing",
-                          Permit.upload_date < cutoff,
-                      ).all()
-                      for p in stuck:
-                          logger.warning("Recovering stuck permit %s", p.id)
-                          p.status = "pending_review"
-                      if stuck:
-                          db.commit()
-                      return len(stuck)
-                  except Exception as e:
-                      logger.error("Recovery failed: %s", e)
-                      db.rollback()
-                      return 0
-                  finally:
-                      db.close()
-
-
-              def _update_search_vector(db, permit_id):
-                  """Update the tsvector column for full-text search."""
-                  stmt = text("""
-                      UPDATE permits SET search_vector = to_tsvector('dutch', coalesce(permit_number,'') || ' ' ||
-                          coalesce(applicant_name,'') || ' ' || coalesce(permit_holder_name,'') || ' ' ||
-                          coalesce(issuer_name,'') || ' ' || coalesce(location,'') || ' ' ||
-                          coalesce(applicable_law,'') || ' ' || coalesce(work_type,'') || ' ' ||
-                          coalesce(surface_water_type,'') || ' ' || coalesce(water_barrier_type,'') || ' ' ||
-                          coalesce(ocr_text,''))
-                      WHERE id = :id
-                  """)
-                  db.execute(stmt, {"id": permit_id})
-                  db.commit()
-
-
-              def _process_document(permit_id, file_path):
-                  """Background OCR + LLM processing for a single document."""
-                  druppie = DruppieClient()
-                  db = SessionLocal()
-                  try:
-                      permit = db.query(Permit).filter(Permit.id == permit_id).first()
-                      if not permit:
-                          return
-                      try:
-                          # OCR
-                          ocr_result = druppie.call("vision", "ocr", {
-                              "image_source": str(file_path),
-                          })
-                          extracted_text = ocr_result.get("text", "")
-                          permit.ocr_text = extracted_text
-
-                          # LLM metadata extractie met selectielijst context
-                          keys_str = ", ".join(sorted(SELECTIELIJST.keys()))
-                          prompt = (
-                              f"Analyseer het volgende vergunningdocument en extraheer metadata. "
-                              f"Extraheer: permit_number, applicant_name, permit_holder_name, issuer_name, location, "
-                              f"issue_date (YYYY-MM-DD), validity_date (YYYY-MM-DD), applicable_law, work_type, "
-                              f"surface_water_type, water_barrier_type, permit_type, permit_subtype. "
-                              f"Kies voor permit_subtype een van: {keys_str} als het past. "
-                              f"Antwoord ALLEEN met een JSON object.\n\n"
-                              f"{extracted_text[:3000]}"
-                          )
-                          llm_result = druppie.call("llm", "chat", {
-                              "prompt": prompt,
-                              "system": "Je bent een metadata-extractie specialist. Antwoord uitsluitend met geldige JSON.",
-                          })
-                          answer = llm_result.get("answer", "{}")
-                          # Parse JSON antwoord, eventueel met code blok
-                          if "```json" in answer:
-                              answer = answer.split("```json")[1].split("```")[0]
-                          elif "```" in answer:
-                              answer = answer.split("```")[1].split("```")[0]
-                          meta = json.loads(answer)
-
-                          # Velden overnemen
-                          permit.permit_number = meta.get("permit_number") or permit.permit_number
-                          permit.applicant_name = meta.get("applicant_name") or None
-                          permit.permit_holder_name = meta.get("permit_holder_name") or None
-                          permit.issuer_name = meta.get("issuer_name") or None
-                          permit.location = meta.get("location") or None
-                          if meta.get("issue_date"):
-                              try:
-                                  permit.issue_date = date.fromisoformat(meta["issue_date"])
-                              except ValueError:
-                                  pass
-                          if meta.get("validity_date"):
-                              try:
-                                  permit.validity_date = date.fromisoformat(meta["validity_date"])
-                              except ValueError:
-                                  pass
-                          permit.applicable_law = meta.get("applicable_law") or None
-                          permit.work_type = meta.get("work_type") or None
-                          permit.surface_water_type = meta.get("surface_water_type") or None
-                          permit.water_barrier_type = meta.get("water_barrier_type") or None
-
-                          permit_type = meta.get("permit_type") or "onbekend"
-                          permit_subtype = meta.get("permit_subtype") or None
-                          key = _resolve_selectielijst_key(permit_type, permit_subtype, extracted_text)
-                          if key:
-                              nominatie, jaren, status_text = _compute_archive_status(
-                                  key, permit.issue_date.isoformat() if permit.issue_date else None
-                              )
-                              permit.archive_nomination = nominatie
-                              permit.retention_period_years = jaren
-                          permit.status = "pending_review"
-                      except Exception as e:
-                          logger.exception("Processing failed for permit %s", permit_id)
-                          permit.status = "pending_review"
-                      finally:
-                          db.commit()
-                          _update_search_vector(db, permit_id)
-                  finally:
-                      db.close()
-
-
-              def _permit_summary(p):
-                  """Return a summary dict for a permit."""
-                  key = _resolve_selectielijst_key(
-                      p.permit_type, getattr(p, "permit_subtype", None)
-                  ) if p.permit_type else None
-                  _, _, status_text = _compute_archive_status(
-                      key, p.issue_date.isoformat() if p.issue_date else None
-                  )
-                  return {
-                      "id": p.id,
-                      "permit_number": p.permit_number,
-                      "applicant_name": p.applicant_name,
-                      "permit_type": p.permit_type,
-                      "location": p.location,
-                      "source_system": p.source_system,
-                      "status": p.status,
-                      "ready_for_migration": p.ready_for_migration,
-                      "archive_statustext": status_text,
-                      "issue_date": p.issue_date.isoformat() if p.issue_date else None,
-                      "validity_date": p.validity_date.isoformat() if p.validity_date else None,
-                      "created_at": p.created_at.isoformat() if p.created_at else None,
-                  }
-
-
-              def _permit_detail(p):
-                  """Return a detail dict for a permit."""
-                  d = _permit_summary(p)
-                  d.update({
-                      "permit_holder_name": p.permit_holder_name,
-                      "issuer_name": p.issuer_name,
-                      "applicable_law": p.applicable_law,
-                      "work_type": p.work_type,
-                      "surface_water_type": p.surface_water_type,
-                      "water_barrier_type": p.water_barrier_type,
-                      "archive_nomination": p.archive_nomination,
-                      "retention_period_years": p.retention_period_years,
-                      "ocr_text": p.ocr_text,
-                      "document_path": p.document_path,
-                      "reviewed_at": p.reviewed_at.isoformat() if p.reviewed_at else None,
-                      "reviewed_by": p.reviewed_by,
-                  })
-                  return d
-
-
               @api.route("/permits/upload", methods=["POST"])
               def upload_permit():
-                  auth_err = _check_authorization()
-                  if auth_err:
-                      return auth_err
-                  user_id = request.headers.get("X-User-Id", "anonymous")
-
+                  """Upload permit document — OCR + metadata extraction + archive classification."""
                   if "file" not in request.files:
-                      return jsonify(error="Geen bestand geupload."), 400
+                      return jsonify(error="Geen bestand geüpload."), 400
                   file = request.files["file"]
-                  if not file.filename:
-                      return jsonify(error="Geen bestand geupload."), 400
+                  if not file.filename or not _allowed_file(file.filename):
+                      return jsonify(error="Ongeldig bestandstype. Upload JPG, PNG of PDF."), 400
+                  file_bytes = file.read()
+                  if len(file_bytes) > MAX_FILE_SIZE:
+                      return jsonify(error="Bestand te groot (max 25 MB)."), 400
+                  if not file_bytes:
+                      return jsonify(error="Leeg bestand."), 400
 
-                  ext = file.filename.rsplit(".", 1)[-1].lower() if "." in file.filename else ""
-                  db = SessionLocal()
+                  db = next(get_db())
+                  permit = Permit(
+                      permit_number=request.form.get("permit_number", "").strip() or None,
+                      applicant_name=request.form.get("applicant_name", "").strip() or None,
+                      source_file=file.filename,
+                      source_system=request.form.get("source_system", "upload").strip(),
+                      status="processing",
+                  )
+                  db.add(permit)
+                  db.commit()
+                  db.refresh(permit)
+
+                  ext = file.filename.rsplit(".", 1)[1].lower()
+                  mime_map = {"jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png",
+                              "pdf": "application/pdf", "tiff": "image/tiff", "webp": "image/webp"}
+                  mime = mime_map.get(ext, "application/octet-stream")
+                  data_uri = f"data:{mime};base64,{base64.b64encode(file_bytes).decode()}"
+
                   try:
-                      if ext == "zip":
-                          # ZIP upload: uitpakken en elk bestand verwerken
-                          contents = file.read()
-                          zip_buffer = io.BytesIO(contents)
-                          processed = 0
-                          batch = UploadBatch(user_id=user_id, file_count=0, status="processing")
-                          db.add(batch)
-                          db.commit()
-                          db.refresh(batch)
-                          with zipfile.ZipFile(zip_buffer, "r") as zf:
-                              for name in zf.namelist():
-                                  inner_ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
-                                  if inner_ext not in ALLOWED_EXTENSIONS:
-                                      continue
-                                  inner_data = zf.read(name)
-                                  safe_name = f"{batch.id}_{name.replace('/', '_')}"
-                                  file_path = UPLOAD_DIR / safe_name
-                                  file_path.write_bytes(inner_data)
-                                  permit = Permit(source_system="upload", document_path=str(file_path), status="processing")
-                                  db.add(permit)
-                                  db.commit()
-                                  db.refresh(permit)
-                                  threading.Thread(target=_process_document, args=(permit.id, file_path), daemon=True).start()
-                                  processed += 1
-                          batch.file_count = processed
-                          batch.status = "completed" if processed > 0 else "failed"
-                          db.commit()
-                          _log_audit(db, user_id, "upload", f"ZIP batch {batch.id} met {processed} bestanden")
-                          return jsonify(batch_id=batch.id, file_count=processed, status=batch.status)
+                      # Step 1: OCR — extract text from document
+                      ocr_result = druppie.call("vision", "ocr", {
+                          "image_source": data_uri,
+                          "prompt": "Extraheer alle tekst uit dit vergunningdocument. Bewaar de structuur.",
+                      })
+                      extracted_text = ocr_result.get("text", "")
+                      permit.extracted_text = extracted_text
 
-                      # Enkel bestand
-                      if ext not in ALLOWED_EXTENSIONS:
-                          return jsonify(error=f"Ongeldig bestandstype: {ext}. Toegestaan: {', '.join(ALLOWED_EXTENSIONS)}"), 400
-                      contents = file.read()
-                      if not contents:
-                          return jsonify(error="Leeg bestand."), 400
+                      # Step 2: LLM — extract structured metadata from text
+                      meta_result = druppie.call("llm", "chat", {
+                          "prompt": METADATA_EXTRACTION_PROMPT + extracted_text[:4000],
+                          "system": "Je bent een metadata-extractie specialist voor Nederlandse watervergunningen. Antwoord ALLEEN met valid JSON.",
+                      })
+                      raw_answer = meta_result.get("answer", "{}")
 
-                      saved_path = _save_file(contents, file.filename)
-                      permit = Permit(source_system="upload", document_path=saved_path, status="processing")
-                      db.add(permit)
-                      db.commit()
-                      db.refresh(permit)
+                      # Parse JSON from LLM response (handle markdown code blocks)
+                      json_str = raw_answer
+                      if "```" in json_str:
+                          json_str = json_str.split("```")[1]
+                          if json_str.startswith("json"):
+                              json_str = json_str[4:]
+                          json_str = json_str.strip()
 
-                      threading.Thread(target=_process_document, args=(permit.id, Path(saved_path)), daemon=True).start()
-                      _log_audit(db, user_id, "upload", f"Enkel bestand {file.filename}, permit {permit.id}")
-                      return jsonify(id=permit.id, status="processing", filename=file.filename)
-                  finally:
-                      db.close()
+                      try:
+                          meta = json.loads(json_str)
+                      except json.JSONDecodeError:
+                          meta = {}
+                          logger.warning("Failed to parse metadata JSON: %s", raw_answer[:200])
+
+                      # Apply extracted metadata (LLM fills gaps, user input takes priority)
+                      permit.permit_number = permit.permit_number or meta.get("permit_number") or None
+                      permit.applicant_name = permit.applicant_name or meta.get("applicant_name") or None
+                      permit.permit_holder_name = meta.get("permit_holder_name") or None
+                      permit.issuer_name = meta.get("issuer_name") or None
+                      permit.location = meta.get("location") or None
+                      permit.applicable_law = meta.get("applicable_law") or None
+                      permit.work_type = meta.get("work_type") or None
+                      permit.water_type = meta.get("water_type") or None
+                      permit.embankment_type = meta.get("embankment_type") or None
+                      permit.permit_type = meta.get("permit_type", "onbekend") or "onbekend"
+                      permit.source_system = permit.source_system or meta.get("source_system") or "upload"
+
+                      # Parse dates
+                      for field, key in [("issue_date", "issue_date"), ("expiry_date", "expiry_date")]:
+                          val = meta.get(key)
+                          if val:
+                              try:
+                                  setattr(permit, field, date.fromisoformat(val))
+                              except (ValueError, TypeError):
+                                  pass
+
+                      # Step 3: Compute archive status (BR-01 to BR-06)
+                      nominatie, jaren, arch_status = _compute_archive_status(
+                          permit.permit_type,
+                          permit.issue_date.isoformat() if permit.issue_date else None,
+                      )
+                      permit.archive_nomination = nominatie
+                      permit.retention_years = jaren
+                      permit.archive_status = arch_status
+                      permit.status = "processed"
+
+                  except Exception as e:
+                      logger.error("Processing failed for permit %s: %s", permit.id, e)
+                      permit.status = "error"
+                      permit.error_message = str(e)[:500]
+
+                  db.commit()
+                  db.refresh(permit)
+                  return jsonify(_permit_to_dict(permit))
 
 
               @api.route("/permits")
               def list_permits():
-                  auth_err = _check_authorization()
-                  if auth_err:
-                      return auth_err
-                  db = SessionLocal()
-                  try:
-                      permits = db.query(Permit).order_by(Permit.created_at.desc()).all()
-                      return jsonify([_permit_summary(p) for p in permits])
-                  finally:
-                      db.close()
-
-
-              @api.route("/permits/search")
-              def search_permits():
-                  auth_err = _check_authorization()
-                  if auth_err:
-                      return auth_err
-                  user_id = request.headers.get("X-User-Id", "anonymous")
-                  db = SessionLocal()
-                  try:
-                      query = db.query(Permit)
-                      # Full-text search via tsvector
-                      q = request.args.get("q")
-                      if q:
-                          query = query.filter(Permit.search_vector.match(q, postgresql_regconfig="dutch"))
-                      # Specifieke filters
-                      applicant_name = request.args.get("applicant_name")
-                      if applicant_name:
-                          query = query.filter(Permit.applicant_name.ilike(f"%{applicant_name}%"))
-                      permit_number = request.args.get("permit_number")
-                      if permit_number:
-                          query = query.filter(Permit.permit_number.ilike(f"%{permit_number}%"))
-                      location = request.args.get("location")
-                      if location:
-                          query = query.filter(Permit.location.ilike(f"%{location}%"))
-                      status = request.args.get("status")
-                      if status:
-                          query = query.filter(Permit.status == status)
-                      permit_type = request.args.get("permit_type")
-                      if permit_type:
-                          query = query.filter(Permit.permit_type.ilike(f"%{permit_type}%"))
-                      results = query.order_by(Permit.created_at.desc()).limit(200).all()
-                      _log_audit(db, user_id, "search", f"q={q}, filters: applicant={applicant_name}, status={status}")
-                      return jsonify([_permit_summary(p) for p in results])
-                  finally:
-                      db.close()
+                  db = next(get_db())
+                  permits = db.query(Permit).order_by(Permit.created_at.desc()).all()
+                  return jsonify([_permit_summary(p) for p in permits])
 
 
               @api.route("/permits/<int:permit_id>")
               def get_permit(permit_id):
-                  auth_err = _check_authorization()
-                  if auth_err:
-                      return auth_err
-                  db = SessionLocal()
-                  try:
-                      permit = db.query(Permit).filter(Permit.id == permit_id).first()
-                      if not permit:
-                          return jsonify(error="Vergunning niet gevonden"), 404
-                      return jsonify(_permit_detail(permit))
-                  finally:
-                      db.close()
+                  db = next(get_db())
+                  permit = db.query(Permit).filter(Permit.id == permit_id).first()
+                  if not permit:
+                      return jsonify(error="Niet gevonden"), 404
+                  return jsonify(_permit_to_dict(permit))
 
 
-              @api.route("/permits/<int:permit_id>/approve", methods=["POST"])
-              def approve_permit(permit_id):
-                  auth_err = _check_authorization()
-                  if auth_err:
-                      return auth_err
-                  user_id = request.headers.get("X-User-Id", "anonymous")
-                  db = SessionLocal()
-                  try:
-                      permit = db.query(Permit).filter(Permit.id == permit_id).first()
-                      if not permit:
-                          return jsonify(error="Vergunning niet gevonden"), 404
-                      body = request.get_json(silent=True) or {}
-                      # Update velden uit de body (indien meegegeven)
-                      for field in [
-                          "permit_number", "applicant_name", "permit_holder_name", "issuer_name",
-                          "location", "applicable_law", "work_type", "surface_water_type", "water_barrier_type",
-                      ]:
-                          if field in body:
-                              setattr(permit, field, body[field])
-                      if "issue_date" in body:
-                          try:
-                              permit.issue_date = date.fromisoformat(body["issue_date"])
-                          except ValueError:
-                              pass
-                      if "validity_date" in body:
-                          try:
-                              permit.validity_date = date.fromisoformat(body["validity_date"])
-                          except ValueError:
-                              pass
-                      # Bereken archiefinfo opnieuw
-                      key = _resolve_selectielijst_key(
-                          permit_type=getattr(permit, "permit_type", None),
-                          permit_subtype=body.get("permit_subtype"),
-                      )
-                      if key:
-                          nominatie, jaren, _ = _compute_archive_status(
-                              key, permit.issue_date.isoformat() if permit.issue_date else None
-                          )
-                          permit.archive_nomination = nominatie
-                          permit.retention_period_years = jaren
-                      permit.status = "approved"
-                      permit.ready_for_migration = True
-                      permit.reviewed_at = datetime.now(timezone.utc)
-                      permit.reviewed_by = user_id
-                      db.commit()
-                      _update_search_vector(db, permit.id)
-                      _log_audit(db, user_id, "approve", f"Permit {permit_id} goedgekeurd")
-                      return jsonify(_permit_detail(permit))
-                  finally:
-                      db.close()
+              @api.route("/permits/<int:permit_id>", methods=["DELETE"])
+              def delete_permit(permit_id):
+                  db = next(get_db())
+                  permit = db.query(Permit).filter(Permit.id == permit_id).first()
+                  if not permit:
+                      return jsonify(error="Niet gevonden"), 404
+                  db.delete(permit)
+                  db.commit()
+                  return jsonify(ok=True)
 
 
-              @api.route("/permits/<int:permit_id>/document")
-              def download_document(permit_id):
-                  auth_err = _check_authorization()
-                  if auth_err:
-                      return auth_err
-                  db = SessionLocal()
-                  try:
-                      permit = db.query(Permit).filter(Permit.id == permit_id).first()
-                      if not permit or not permit.document_path:
-                          return jsonify(error="Document niet beschikbaar"), 404
-                      path = Path(permit.document_path)
-                      if not path.exists():
-                          return jsonify(error="Bestand niet gevonden op server"), 404
-                      return send_file(str(path), as_attachment=True, download_name=path.name)
-                  finally:
-                      db.close()
+              @api.route("/permits/search")
+              def search_permits():
+                  """Search across all metadata fields (FR-01)."""
+                  q = request.args.get("q", "").strip()
+                  db = next(get_db())
+                  if not q:
+                      return jsonify([_permit_summary(p) for p in db.query(Permit).order_by(Permit.created_at.desc()).all()])
+                  like = f"%{q}%"
+                  results = db.query(Permit).filter(
+                      Permit.permit_number.ilike(like)
+                      | Permit.applicant_name.ilike(like)
+                      | Permit.permit_holder_name.ilike(like)
+                      | Permit.location.ilike(like)
+                      | Permit.permit_type.ilike(like)
+                      | Permit.applicable_law.ilike(like)
+                      | Permit.work_type.ilike(like)
+                      | Permit.water_type.ilike(like)
+                      | Permit.extracted_text.ilike(like)
+                  ).order_by(Permit.created_at.desc()).all()
+                  return jsonify([_permit_summary(p) for p in results])
 
-          - path: app/agent.py
+
+              @api.route("/permits/stats")
+              def permit_stats():
+                  """Dashboard stats."""
+                  db = next(get_db())
+                  total = db.query(Permit).count()
+                  by_type = {}
+                  for p in db.query(Permit).all():
+                      t = (p.permit_type or "onbekend").lower()
+                      by_type[t] = by_type.get(t, 0) + 1
+                  by_archive = {}
+                  for p in db.query(Permit).all():
+                      s = p.archive_status or "onbekend"
+                      by_archive[s] = by_archive.get(s, 0) + 1
+                  return jsonify(total=total, by_type=by_type, by_archive=by_archive)
+
+
+              def _permit_summary(p):
+                  return {
+                      "id": p.id, "permit_number": p.permit_number,
+                      "applicant_name": p.applicant_name, "permit_type": p.permit_type,
+                      "location": p.location, "source_file": p.source_file,
+                      "source_system": p.source_system, "status": p.status,
+                      "archive_status": p.archive_status,
+                      "issue_date": p.issue_date.isoformat() if p.issue_date else None,
+                      "upload_date": p.upload_date.isoformat() if p.upload_date else None,
+                  }
+
+
+              def _permit_to_dict(p):
+                  return {
+                      **_permit_summary(p),
+                      "permit_holder_name": p.permit_holder_name,
+                      "issuer_name": p.issuer_name,
+                      "expiry_date": p.expiry_date.isoformat() if p.expiry_date else None,
+                      "applicable_law": p.applicable_law,
+                      "work_type": p.work_type, "water_type": p.water_type,
+                      "embankment_type": p.embankment_type,
+                      "archive_nomination": p.archive_nomination,
+                      "retention_years": p.retention_years,
+                      "extracted_text": p.extracted_text, "error_message": p.error_message,
+                  }
+
+          - path: app/archive_rules.py
             content: |
-              """Vergunningzoeker agent -- agentic search over permits."""
-              import json
-              from druppie_sdk import DruppieClient
-              from app.models import Permit
+              """Selectielijst waterschappen 2012 — archive rules.
 
-              druppie = DruppieClient()
-
-              def run_agent(question: str, history: list[dict], db) -> dict:
-                  steps = []
-                  context_str = ""
-                  if history:
-                      recent = history[-4:]
-                      context_str = "\n".join(
-                          f"{'Gebruiker' if m['role']=='user' else 'Assistent'}: {m['content'][:200]}"
-                          for m in recent
-                      )
-                  full_prompt = question
-                  if context_str:
-                      full_prompt = f"Gesprekscontext:\n{context_str}\n\nNieuwe vraag: {question}"
-                  # Zoektermen genereren
-                  query_result = druppie.call("llm", "chat", {
-                      "prompt": (
-                          "De gebruiker stelt een vraag over vergunningen. Genereer 1-3 zoektermen "
-                          "(komma-gescheiden). Antwoord ALLEEN met de zoektermen.\n\nVraag: " + full_prompt
-                      ),
-                      "system": "Je genereert zoektermen. Antwoord met komma-gescheiden termen.",
-                  })
-                  terms = [t.strip() for t in query_result.get("answer", question).split(",") if t.strip()]
-                  steps.append({"type": "search", "label": f"Zoektermen: {', '.join(terms)}", "detail": terms})
-
-                  # Zoeken in DB
-                  found = {}
-                  for term in terms[:3]:
-                      like = f"%{term}%"
-                      results = db.query(Permit).filter(
-                          Permit.permit_number.ilike(like) |
-                          Permit.applicant_name.ilike(like) |
-                          Permit.permit_holder_name.ilike(like) |
-                          Permit.location.ilike(like) |
-                          Permit.permit_type.ilike(like) |
-                          Permit.applicable_law.ilike(like) |
-                          Permit.work_type.ilike(like) |
-                          Permit.ocr_text.ilike(like)
-                      ).limit(10).all()
-                      for p in results:
-                          found[p.id] = p
-                  steps.append({"type": "query", "label": f"{len(found)} vergunningen gevonden", "detail": None})
-
-                  # Synthesize antwoord
-                  if found:
-                      parts = []
-                      for p in found.values():
-                          parts.append(f"Vergunning {p.id}: {p.permit_number or 'onbekend'}, aanvrager: {p.applicant_name}, type: {p.permit_type}")
-                      context = "\n".join(parts)
-                  else:
-                      context = "Geen vergunningen gevonden."
-                  answer_result = druppie.call("llm", "chat", {
-                      "prompt": f"Beantwoord de vraag op basis van de data.\n\nVraag: {full_prompt}\n\nData:\n{context}",
-                      "system": "Je bent een behulpzame assistent voor waterschapmedewerkers.",
-                  })
-                  return {"answer": answer_result.get("answer", "Geen antwoord."), "steps": steps}
-
-          - path: app/config.py
-            content: |
-              import os
-
-
-              class Settings:
-                  app_name = "Vergunningzoeker"
-                  database_url = os.environ.get(
-                      "DATABASE_URL",
-                      "postgresql://postgres:postgres@db:5432/vergunningen",
-                  )
-                  upload_dir = os.environ.get("UPLOAD_DIR", "/data/uploads")
-                  secret_key = os.environ.get("SECRET_KEY", "dev-secret-key")
-
-
-              settings = Settings()
-
-          - path: app/__init__.py
-            content: |
-              import logging
-              import os
-
-              from flask import Flask, send_from_directory
-              from app.routes import api
-
-              logger = logging.getLogger(__name__)
-
-              def create_app():
-                  app = Flask(__name__, static_folder=None)
-                  app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "dev-secret-key")
-                  app.register_blueprint(api, url_prefix="/api")
-
-                  @app.route("/health")
-                  def health():
-                      return {"status": "ok"}
-
-                  @app.before_first_request
-                  def startup():
-                      try:
-                          from app.database import init_db
-                          init_db()
-                      except Exception as e:
-                          logger.error("Database initialization failed: %s", e)
-
-                  # Serve static frontend files
-                  static_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "static")
-
-                  @app.route("/", defaults={"path": ""})
-                  @app.route("/<path:path>")
-                  def serve_spa(path):
-                      if path and os.path.isfile(os.path.join(static_dir, path)):
-                          return send_from_directory(static_dir, path)
-                      return send_from_directory(static_dir, "index.html")
-
-                  return app
-
-              app = create_app()
-
-          - path: app/database.py
-            content: |
-              import logging
-              from sqlalchemy import create_engine, text
-              from sqlalchemy.orm import sessionmaker, DeclarativeBase
-              from app.config import settings
-
-              logger = logging.getLogger(__name__)
-              engine = create_engine(settings.database_url)
-              SessionLocal = sessionmaker(bind=engine)
-
-
-              class Base(DeclarativeBase):
-                  pass
-
-
-              def get_db():
-                  db = SessionLocal()
-                  try:
-                      yield db
-                  finally:
-                      db.close()
-
-
-              def init_db():
-                  import app.models  # noqa: F401
-                  with engine.connect() as conn:
-                      try:
-                          conn.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
-                          conn.execute(text("CREATE EXTENSION IF NOT EXISTS unaccent"))
-                      except Exception:
-                          pass
-                      Base.metadata.create_all(bind=engine)
-                      try:
-                          conn.execute(text("""
-                              CREATE INDEX IF NOT EXISTS idx_permits_search_vector
-                              ON permits USING GIN (search_vector)
-                          """))
-                          conn.commit()
-                      except Exception as e:
-                          logger.warning("Could not create GIN index: %s", e)
+              Used by the frontend to show archive status without needing
+              a backend call for each permit.
+              """
+              SELECTIELIJST = {
+                  "watervergunning_lozing": {"nominatie": "vernietigen", "jaren": 20},
+                  "watervergunning_onttrekking": {"nominatie": "vernietigen", "jaren": 20},
+                  "keurvergunning": {"nominatie": "vernietigen", "jaren": 10},
+                  "omgevingsvergunning": {"nominatie": "bewaren", "jaren": None},
+                  "lozingsvergunning": {"nominatie": "vernietigen", "jaren": 20},
+                  "onttrekkingsvergunning": {"nominatie": "vernietigen", "jaren": 15},
+                  "projectplan": {"nominatie": "bewaren", "jaren": None},
+                  "peilbesluit": {"nominatie": "bewaren", "jaren": None},
+                  "leggerwijziging": {"nominatie": "bewaren", "jaren": None},
+              }
 
           - path: Dockerfile
             content: |
+              # Stage 1: Build frontend
               FROM node:20-alpine AS frontend
               WORKDIR /build
               COPY frontend/package*.json ./
@@ -1392,6 +1010,7 @@ tool-test:
               COPY frontend/ .
               RUN npm run build
 
+              # Stage 2: Python backend
               FROM python:3.11-slim
               RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
               WORKDIR /app
@@ -1402,15 +1021,158 @@ tool-test:
               COPY app/ ./app/
               COPY --from=frontend /build/dist ./static/
               EXPOSE 8000
-              CMD ["gunicorn", "--bind", "0.0.0.0:8000", "--workers", "2", "--threads", "4", "app:app"]
+              CMD ["gunicorn", "--bind", "0.0.0.0:8000", "--workers", "2", "--timeout", "300", "app:create_app()"]
 
-          - path: requirements.txt
+          - path: app/database.py
             content: |
-              flask==3.1.0
-              sqlalchemy==2.0.36
-              psycopg2-binary==2.9.10
-              gunicorn==23.0.0
-              python-multipart==0.0.18
+              import logging
+              from sqlalchemy import create_engine
+              from sqlalchemy.orm import DeclarativeBase, sessionmaker
+              from app.config import settings
+
+              logger = logging.getLogger(__name__)
+              engine = create_engine(
+                  settings.database_url,
+                  pool_pre_ping=True,
+                  pool_size=5,
+                  max_overflow=10,
+                  pool_recycle=1800,
+              )
+              SessionLocal = sessionmaker(bind=engine)
+
+              class Base(DeclarativeBase):
+                  pass
+
+              def get_db():
+                  db = SessionLocal()
+                  try:
+                      yield db
+                  finally:
+                      db.close()
+
+              def init_db():
+                  import app.models  # noqa: F401
+                  try:
+                      import app.chat  # noqa: F401
+                  except ImportError:
+                      pass
+                  Base.metadata.create_all(bind=engine)
+
+          - path: app/agent.py
+            content: |
+              """Vergunningzoeker agent — agentic search over permits.
+
+              Receives questions, generates search queries, searches the permit
+              database, and synthesizes answers. Each step is logged for transparency.
+              """
+
+              import json
+              from druppie_sdk import DruppieClient
+              from app.models import Permit
+
+              druppie = DruppieClient()
+
+
+              def run_agent(question: str, history: list[dict], db) -> dict:
+                  steps = []
+
+                  # Build conversation context
+                  context_str = ""
+                  if history:
+                      recent = history[-4:]
+                      context_str = "\n".join(
+                          f"{'Gebruiker' if m['role'] == 'user' else 'Assistent'}: {m['content'][:200]}"
+                          for m in recent
+                      )
+
+                  # Step 1: Generate search queries
+                  full_prompt = question
+                  if context_str:
+                      full_prompt = f"Gesprekscontext:\n{context_str}\n\nNieuwe vraag: {question}"
+
+                  query_result = druppie.call("llm", "chat", {
+                      "prompt": (
+                          "De gebruiker stelt een vraag over vergunningen in een database. "
+                          "Genereer 1-3 zoektermen (komma-gescheiden) waarmee relevante "
+                          "vergunningen gevonden kunnen worden. Antwoord ALLEEN met de zoektermen.\n\n"
+                          f"Vraag: {full_prompt}"
+                      ),
+                      "system": "Je genereert zoektermen voor een vergunningendatabase. Antwoord alleen met komma-gescheiden zoektermen.",
+                  })
+                  search_terms = [t.strip() for t in query_result.get("answer", question).split(",") if t.strip()]
+
+                  steps.append({
+                      "type": "search",
+                      "label": f"Zoektermen: {', '.join(search_terms)}",
+                      "detail": search_terms,
+                  })
+
+                  # Step 2: Search database with each term
+                  found = {}
+                  search_details = []
+                  for term in search_terms[:3]:
+                      like = f"%{term}%"
+                      results = db.query(Permit).filter(
+                          Permit.permit_number.ilike(like)
+                          | Permit.applicant_name.ilike(like)
+                          | Permit.permit_holder_name.ilike(like)
+                          | Permit.location.ilike(like)
+                          | Permit.permit_type.ilike(like)
+                          | Permit.applicable_law.ilike(like)
+                          | Permit.work_type.ilike(like)
+                          | Permit.extracted_text.ilike(like)
+                      ).limit(10).all()
+                      new_ids = [p.id for p in results if p.id not in found]
+                      for p in results:
+                          found[p.id] = p
+                      search_details.append(f'"{term}" → {len(results)} resultaten ({len(new_ids)} nieuw)')
+
+                  steps.append({
+                      "type": "query",
+                      "label": f"{len(found)} vergunningen gevonden",
+                      "detail": search_details,
+                  })
+
+                  # Step 3: Build context from found permits
+                  if found:
+                      context_parts = []
+                      for p in found.values():
+                          parts = [f"Vergunning #{p.id}: {p.permit_number or 'geen nummer'}"]
+                          if p.applicant_name: parts.append(f"  Aanvrager: {p.applicant_name}")
+                          if p.permit_holder_name: parts.append(f"  Houder: {p.permit_holder_name}")
+                          if p.permit_type: parts.append(f"  Type: {p.permit_type}")
+                          if p.location: parts.append(f"  Locatie: {p.location}")
+                          if p.issue_date: parts.append(f"  Datum: {p.issue_date}")
+                          if p.archive_status: parts.append(f"  Archiefstatus: {p.archive_status}")
+                          if p.applicable_law: parts.append(f"  Wet: {p.applicable_law}")
+                          if p.work_type: parts.append(f"  Type werk: {p.work_type}")
+                          if p.extracted_text:
+                              parts.append(f"  Tekst (fragment): {p.extracted_text[:400]}")
+                          context_parts.append("\n".join(parts))
+                      context = "\n\n".join(context_parts)
+                  else:
+                      context = "Geen vergunningen gevonden in de database."
+
+                  # Step 4: LLM synthesizes answer
+                  steps.append({"type": "reasoning", "label": "Antwoord genereren", "detail": None})
+
+                  answer_result = druppie.call("llm", "chat", {
+                      "prompt": (
+                          f"Beantwoord de volgende vraag op basis van de vergunningendata.\n\n"
+                          f"Vraag: {full_prompt}\n\n"
+                          f"Gevonden vergunningen ({len(found)} resultaten):\n\n{context}"
+                      ),
+                      "system": (
+                          "Je bent een assistent voor waterschap-medewerkers. Beantwoord vragen "
+                          "over vergunningen op basis van de aangeleverde data. Wees specifiek "
+                          "en verwijs naar vergunningnummers. Als de data onvoldoende is, zeg dat eerlijk."
+                      ),
+                  })
+
+                  return {
+                      "answer": answer_result.get("answer", "Geen antwoord ontvangen."),
+                      "steps": steps,
+                  }
 
           - path: frontend/src/App.tsx
             content: |
@@ -1422,91 +1184,99 @@ tool-test:
 
               interface PermitSummary {
                 id: number; permit_number: string; applicant_name: string
-                permit_type: string; location: string; source_system: string
-                status: string; ready_for_migration: boolean
-                archive_statustext: string; issue_date: string; validity_date: string; created_at: string
+                permit_type: string; location: string; source_file: string
+                source_system: string; status: string; archive_status: string
+                issue_date: string; upload_date: string
               }
 
               interface PermitDetail extends PermitSummary {
                 permit_holder_name: string; issuer_name: string
-                applicable_law: string; work_type: string
-                surface_water_type: string; water_barrier_type: string
-                archive_nomination: string; retention_period_years: number | null
-                ocr_text: string | null; document_path: string
-                reviewed_at: string | null; reviewed_by: string | null
+                expiry_date: string; applicable_law: string
+                work_type: string; water_type: string; embankment_type: string
+                archive_nomination: string; retention_years: number | null
+                extracted_text: string | null; error_message: string | null
+              }
+
+              // Chat is handled by the template's ChatPanel component
+
+              const STATUS = {
+                processing: { label: "Verwerken...", cls: "text-blue-600 bg-blue-50 border-blue-200" },
+                processed: { label: "Verwerkt", cls: "text-green-700 bg-green-50 border-green-200" },
+                error: { label: "Fout", cls: "text-red-700 bg-red-50 border-red-200" },
+              } as Record<string, { label: string; cls: string }>
+
+              const ARCHIVE_CLS: Record<string, string> = {
+                "te vernietigen": "text-red-700 bg-red-50",
+                "te bewaren (oneindig)": "text-green-700 bg-green-50",
               }
 
               function App() {
                 const [tab, setTab] = useState<"search" | "upload" | "chat">("search")
                 const [permits, setPermits] = useState<PermitSummary[]>([])
                 const [query, setQuery] = useState("")
-                const [filters, setFilters] = useState<Record<string,string>>({})
                 const [detail, setDetail] = useState<PermitDetail | null>(null)
                 const [loading, setLoading] = useState(true)
                 // Upload
                 const [file, setFile] = useState<File | null>(null)
+                const [permitNum, setPermitNum] = useState("")
+                const [applicant, setApplicant] = useState("")
                 const [uploading, setUploading] = useState(false)
                 const [uploadErr, setUploadErr] = useState<string | null>(null)
+                const [dragOver, setDragOver] = useState(false)
                 const fileRef = useRef<HTMLInputElement>(null)
-                // Chat handled by ChatPanel
+                // Chat
+                // Chat state managed by ChatPanel component
 
-                const load = useCallback(async () => {
-                  const params = new URLSearchParams()
-                  if (query) params.set("q", query)
-                  Object.entries(filters).forEach(([k,v]) => { if(v) params.set(k, v) })
-                  const url = params.toString() ? `/api/permits/search?${params}` : "/api/permits"
+                const load = useCallback(async (q = "") => {
                   try {
-                    const r = await fetch(url, { headers: { "X-Forwarded-Groups": "vergunningen" } })
-                    if (r.ok) setPermits(await r.json())
+                    const url = q ? `/api/permits/search?q=${encodeURIComponent(q)}` : "/api/permits"
+                    const r = await fetch(url); if (r.ok) setPermits(await r.json())
                   } finally { setLoading(false) }
-                }, [query, filters])
+                }, [])
 
                 useEffect(() => { load() }, [load])
                 useEffect(() => {
-                  if (!permits.some(p => p.status === "processing" || p.status === "pending_review")) return
-                  const id = setInterval(() => load(), 5000)
-                  return () => clearInterval(id)
-                }, [permits, load])
+                  if (!permits.some(p => p.status === "processing")) return
+                  const id = setInterval(() => load(query), 3000); return () => clearInterval(id)
+                }, [permits, query, load])
+                // Chat scroll handled by ChatPanel
 
-                const uploadFile = async () => {
-                  if (!file) return
-                  setUploading(true); setUploadErr(null)
-                  const fd = new FormData()
-                  fd.append("file", file)
+                const upload = async () => {
+                  if (!file) return; setUploading(true); setUploadErr(null)
                   try {
-                    const r = await fetch("/api/permits/upload", {
-                      method: "POST", body: fd,
-                      headers: { "X-Forwarded-Groups": "vergunningen" },
-                    })
+                    const fd = new FormData(); fd.append("file", file)
+                    if (permitNum) fd.append("permit_number", permitNum)
+                    if (applicant) fd.append("applicant_name", applicant)
+                    const r = await fetch("/api/permits/upload", { method: "POST", body: fd })
                     const d = await r.json()
-                    if (!r.ok) { setUploadErr(d.detail || d.error); return }
-                    setFile(null)
+                    if (!r.ok) { setUploadErr(d.error); return }
+                    setFile(null); setPermitNum(""); setApplicant("")
                     if (fileRef.current) fileRef.current.value = ""
-                    load()
-                    setTab("search")
+                    load(query); setTab("search")
                   } catch { setUploadErr("Verbindingsfout") } finally { setUploading(false) }
                 }
 
+                // Chat send handled by ChatPanel → app/agent.py
+
                 const openDetail = async (id: number) => {
-                  const r = await fetch(`/api/permits/${id}`, { headers: { "X-Forwarded-Groups": "vergunningen" } })
-                  if (r.ok) setDetail(await r.json())
+                  const r = await fetch(`/api/permits/${id}`); if (r.ok) setDetail(await r.json())
+                }
+                const del = async (id: number) => {
+                  if (!confirm("Verwijderen?")) return
+                  await fetch(`/api/permits/${id}`, { method: "DELETE" })
+                  setDetail(null); load(query)
+                }
+                const fmt = (iso: string | null) => {
+                  if (!iso) return "—"
+                  try { return new Date(iso).toLocaleDateString("nl-NL", { dateStyle: "long" }) } catch { return iso }
+                }
+                const fmtFull = (iso: string | null) => {
+                  if (!iso) return "—"
+                  try { return new Date(iso).toLocaleString("nl-NL", { dateStyle: "long", timeStyle: "short" }) } catch { return iso }
                 }
 
-                const approvePermit = async (id: number, updates: Record<string, string>) => {
-                  const r = await fetch(`/api/permits/${id}/approve`, {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json", "X-Forwarded-Groups": "vergunningen" },
-                    body: JSON.stringify(updates),
-                  })
-                  if (r.ok) {
-                    setDetail(await r.json())
-                    load()
-                  }
-                }
-
-                const downloadDocument = (id: number) => {
-                  window.open(`/api/permits/${id}/document`, "_blank")
-                }
+                const MetaRow = ({ label, value }: { label: string; value: string | null | undefined }) =>
+                  value ? <div><p className="text-xs text-muted-foreground uppercase font-medium">{label}</p><p className="text-sm">{value}</p></div> : null
 
                 return (
                   <div className="min-h-screen bg-background">
@@ -1522,114 +1292,131 @@ tool-test:
                         </div>
                       </div>
                     </header>
+
                     <main className="container mx-auto px-4 py-6 max-w-4xl space-y-4">
+
+                      {/* ---- SEARCH TAB ---- */}
                       {tab === "search" && <>
                         <Card>
-                          <CardContent className="pt-5 space-y-2">
+                          <CardContent className="pt-5">
                             <div className="flex gap-2">
-                              <Input value={query} onChange={e => setQuery(e.target.value)} placeholder="Volledige tekst zoeken..." />
-                              <Button onClick={load}>Zoek</Button>
-                            </div>
-                            <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-                              <Input placeholder="Aanvrager" value={filters.applicant_name || ""}
-                                onChange={e => setFilters(f => ({...f, applicant_name: e.target.value}))} />
-                              <Input placeholder="Vergunningnummer" value={filters.permit_number || ""}
-                                onChange={e => setFilters(f => ({...f, permit_number: e.target.value}))} />
-                              <Input placeholder="Locatie" value={filters.location || ""}
-                                onChange={e => setFilters(f => ({...f, location: e.target.value}))} />
-                              <Input placeholder="Status (pending_review/approved)" value={filters.status || ""}
-                                onChange={e => setFilters(f => ({...f, status: e.target.value}))} />
+                              <Input value={query} onChange={e => setQuery(e.target.value)}
+                                onKeyDown={e => e.key === "Enter" && load(query)}
+                                placeholder="Zoek op nummer, aanvrager, locatie, type, wet..." />
+                              <Button onClick={() => load(query)}>Zoek</Button>
+                              {query && <Button variant="outline" onClick={() => { setQuery(""); load() }}>Wis</Button>}
                             </div>
                           </CardContent>
                         </Card>
                         <Card>
                           <CardContent className="pt-5">
-                            {loading ? <p className="text-center py-4">Laden...</p>
-                            : permits.length === 0 ? <p className="text-center py-4">Geen resultaten.</p>
-                            : <div className="divide-y">{permits.map(p => (
-                              <div key={p.id} className="flex items-center gap-3 py-3 cursor-pointer hover:bg-muted/50 rounded px-2"
-                                   onClick={() => openDetail(p.id)}>
-                                <div className="flex-1 min-w-0">
-                                  <div className="flex items-center gap-2 flex-wrap">
-                                    <span className="font-medium">{p.permit_number || "onbekend"}</span>
-                                    <span className={`text-xs px-1.5 py-0.5 rounded ${
-                                      p.status === "approved" ? "bg-green-100 text-green-800" :
-                                      "bg-yellow-100 text-yellow-800"}`}>
-                                      {p.status === "approved" ? "Goedgekeurd" : "Nog niet gecontroleerd"}
-                                    </span>
-                                    {p.ready_for_migration && <span className="text-xs bg-blue-100 text-blue-800 px-1.5 py-0.5 rounded">Klaar voor migratie</span>}
-                                    <span className="text-xs bg-gray-100 text-gray-800 px-1.5 py-0.5 rounded">{p.archive_statustext}</span>
+                            {loading ? <p className="text-center text-muted-foreground py-4">Laden...</p>
+                            : permits.length === 0 ? <p className="text-center text-muted-foreground py-4">{query ? "Geen resultaten." : "Nog geen vergunningen."}</p>
+                            : <div className="divide-y">{permits.map(p => {
+                              const s = STATUS[p.status] || STATUS.processed
+                              const a = p.archive_status ? (ARCHIVE_CLS[p.archive_status] || "text-amber-700 bg-amber-50") : ""
+                              return (
+                                <div key={p.id} className="flex items-center gap-3 py-3 cursor-pointer hover:bg-muted/50 -mx-2 px-2 rounded" onClick={() => openDetail(p.id)}>
+                                  <div className="flex-1 min-w-0">
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                      <span className="font-medium">{p.permit_number || p.source_file}</span>
+                                      <span className={`text-[10px] px-1.5 py-0.5 rounded border ${s.cls}`}>{s.label}</span>
+                                      {p.archive_status && <span className={`text-[10px] px-1.5 py-0.5 rounded ${a}`}>{p.archive_status}</span>}
+                                    </div>
+                                    <div className="text-xs text-muted-foreground flex gap-2 mt-0.5 flex-wrap">
+                                      {p.applicant_name && <span>{p.applicant_name}</span>}
+                                      {p.location && <span>{p.location}</span>}
+                                      {p.permit_type && p.permit_type !== "onbekend" && <span className="text-primary">{p.permit_type.replace(/_/g, " ")}</span>}
+                                    </div>
                                   </div>
-                                  <div className="text-xs text-muted-foreground mt-0.5">
-                                    {p.applicant_name && <span>{p.applicant_name} · </span>}
-                                    {p.location && <span>{p.location} · </span>}
-                                    {p.permit_type && <span>{p.permit_type}</span>}
+                                  <div className="text-xs text-muted-foreground shrink-0 text-right">
+                                    {p.issue_date && <div>{fmt(p.issue_date)}</div>}
+                                    <div>{p.source_system}</div>
                                   </div>
                                 </div>
-                              </div>
-                            ))}</div>}
+                              )
+                            })}</div>}
                           </CardContent>
                         </Card>
                       </>}
+
+                      {/* ---- UPLOAD TAB ---- */}
                       {tab === "upload" && <Card>
-                        <CardHeader><CardTitle>Document(en) uploaden</CardTitle>
-                        <CardDescription>Upload een bestand (PDF, JPG, PNG, TIFF) of een ZIP-bestand met meerdere documenten.</CardDescription></CardHeader>
+                        <CardHeader>
+                          <CardTitle>Document uploaden</CardTitle>
+                          <CardDescription>Upload een scan, foto of PDF. Het systeem extraheert automatisch metadata (OCR), classificeert het type en berekent de archiefstatus.</CardDescription>
+                        </CardHeader>
                         <CardContent className="space-y-3">
-                          <div className="border-2 border-dashed rounded-lg p-6 text-center cursor-pointer"
-                               onClick={() => fileRef.current?.click()}>
-                            <input ref={fileRef} type="file" accept=".pdf,.jpg,.jpeg,.png,.tiff,.bmp,.webp,.zip" className="hidden"
-                                   onChange={e => e.target.files?.[0] && setFile(e.target.files[0])} />
+                          <div className={`border-2 border-dashed rounded-lg p-6 text-center cursor-pointer transition-all ${dragOver ? "border-primary bg-primary/5" : file ? "border-primary/50 bg-primary/5" : "border-muted-foreground/25 hover:border-primary/50"}`}
+                            onDragOver={e => { e.preventDefault(); setDragOver(true) }} onDragLeave={() => setDragOver(false)}
+                            onDrop={e => { e.preventDefault(); setDragOver(false); e.dataTransfer.files?.[0] && setFile(e.dataTransfer.files[0]) }}
+                            onClick={() => !uploading && fileRef.current?.click()}>
+                            <input ref={fileRef} type="file" accept="image/*,.pdf" className="hidden" onChange={e => e.target.files?.[0] && setFile(e.target.files[0])} />
                             {file ? <div><p className="font-medium">{file.name}</p><p className="text-sm text-muted-foreground">{(file.size/1024).toFixed(0)} KB</p></div>
-                            : <p className="text-muted-foreground">Sleep een bestand of klik om te selecteren</p>}
+                            : <div><p className="text-muted-foreground">Sleep een bestand hierheen of klik</p><p className="text-xs text-muted-foreground mt-1">JPG, PNG of PDF — max 25 MB</p></div>}
                           </div>
-                          <Button onClick={uploadFile} disabled={uploading || !file} className="w-full">
-                            {uploading ? "Bezig met uploaden en analyseren..." : "Upload & Verwerken"}
+                          <div className="grid grid-cols-2 gap-2">
+                            <Input value={permitNum} onChange={e => setPermitNum(e.target.value)} placeholder="Vergunningnummer (optioneel)" disabled={uploading} />
+                            <Input value={applicant} onChange={e => setApplicant(e.target.value)} placeholder="Aanvrager (optioneel)" disabled={uploading} />
+                          </div>
+                          <Button onClick={upload} disabled={uploading || !file} className="w-full">
+                            {uploading ? "Bezig met OCR, metadata-extractie en classificatie..." : "Upload & Analyseer"}
                           </Button>
-                          {uploadErr && <div className="text-sm text-red-600 bg-red-50 p-3 rounded">{uploadErr}</div>}
+                          {uploadErr && <div className="text-sm text-destructive bg-destructive/10 border border-destructive/20 rounded-md p-3">{uploadErr}</div>}
                         </CardContent>
                       </Card>}
-                      {tab === "chat" && <div className="h-[calc(100vh-8rem)]"><ChatPanel /></div>}
+
+                      {/* ---- CHAT TAB — uses template ChatPanel ---- */}
+                      {tab === "chat" && (
+                        <div className="h-[calc(100vh-8rem)]">
+                          <ChatPanel />
+                        </div>
+                      )}
+
+                      {/* ---- DETAIL MODAL ---- */}
                       {detail && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setDetail(null)}>
                         <Card className="w-full max-w-3xl max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
                           <CardHeader>
                             <div className="flex items-center justify-between">
-                              <CardTitle>{detail.permit_number || detail.id}</CardTitle>
+                              <CardTitle>{detail.permit_number || detail.source_file}</CardTitle>
                               <div className="flex gap-2">
-                                {detail.status !== "approved" && <Button size="sm" onClick={() => {
-                                  const update = {
-                                    permit_number: detail.permit_number || "",
-                                    applicant_name: detail.applicant_name || "",
-                                    location: detail.location || "",
-                                    issue_date: detail.issue_date || "",
-                                    validity_date: detail.validity_date || "",
-                                  }
-                                  approvePermit(detail.id, update)
-                                }}>Goedkeuren</Button>}
-                                {detail.document_path && <Button variant="outline" size="sm" onClick={() => downloadDocument(detail.id)}>Document downloaden</Button>}
-                                <Button variant="ghost" size="sm" onClick={() => setDetail(null)}>Sluiten</Button>
+                                <Button variant="destructive" size="sm" onClick={() => del(detail.id)}>Verwijderen</Button>
+                                <Button variant="outline" size="sm" onClick={() => setDetail(null)}>Sluiten</Button>
                               </div>
                             </div>
                           </CardHeader>
                           <CardContent className="space-y-4">
+                            {/* Archive status banner */}
+                            {detail.archive_status && <div className={`rounded-lg p-3 border text-sm ${ARCHIVE_CLS[detail.archive_status] || "bg-amber-50 text-amber-800 border-amber-200"}`}>
+                              <span className="font-medium">Archiefstatus:</span> {detail.archive_status}
+                              {detail.archive_nomination && <> — Nominatie: {detail.archive_nomination}</>}
+                              {detail.retention_years && <> ({detail.retention_years} jaar)</>}
+                            </div>}
+
+                            {/* Metadata grid */}
                             <div className="grid grid-cols-2 gap-3">
-                              {detail.permit_number && <MetaRow label="Vergunningnummer" value={detail.permit_number} />}
-                              {detail.applicant_name && <MetaRow label="Aanvrager" value={detail.applicant_name} />}
-                              {detail.permit_holder_name && <MetaRow label="Houder" value={detail.permit_holder_name} />}
-                              {detail.issuer_name && <MetaRow label="Uitgever" value={detail.issuer_name} />}
-                              {detail.location && <MetaRow label="Locatie" value={detail.location} />}
-                              {detail.applicable_law && <MetaRow label="Toepasselijke wet" value={detail.applicable_law} />}
-                              {detail.work_type && <MetaRow label="Type werk" value={detail.work_type} />}
-                              {detail.surface_water_type && <MetaRow label="Type oppervlaktewater" value={detail.surface_water_type} />}
-                              {detail.water_barrier_type && <MetaRow label="Type waterkering" value={detail.water_barrier_type} />}
-                              <MetaRow label="Archiefnominatie" value={detail.archive_nomination} />
-                              <MetaRow label="Retentie (jaren)" value={detail.retention_period_years?.toString() || ""} />
-                              <MetaRow label="Archiefstatus" value={detail.archive_statustext} />
-                              <MetaRow label="Status" value={detail.status} />
-                              <MetaRow label="Klaar voor migratie" value={detail.ready_for_migration ? "Ja" : "Nee"} />
+                              <MetaRow label="Vergunningnummer" value={detail.permit_number} />
+                              <MetaRow label="Type (AI)" value={detail.permit_type?.replace(/_/g, " ")} />
+                              <MetaRow label="Aanvrager" value={detail.applicant_name} />
+                              <MetaRow label="Vergunninghouder" value={detail.permit_holder_name} />
+                              <MetaRow label="Uitgever" value={detail.issuer_name} />
+                              <MetaRow label="Locatie" value={detail.location} />
+                              <MetaRow label="Uitgiftedatum" value={fmt(detail.issue_date)} />
+                              <MetaRow label="Geldigheidsdatum" value={fmt(detail.expiry_date)} />
+                              <MetaRow label="Toepasselijke wet" value={detail.applicable_law} />
+                              <MetaRow label="Type werk" value={detail.work_type} />
+                              <MetaRow label="Type oppervlaktewater" value={detail.water_type} />
+                              <MetaRow label="Type waterkering" value={detail.embankment_type} />
+                              <MetaRow label="Bronsysteem" value={detail.source_system} />
+                              <MetaRow label="Bronbestand" value={detail.source_file} />
+                              <MetaRow label="Upload datum" value={fmtFull(detail.upload_date)} />
                             </div>
-                            {detail.ocr_text && <div>
-                              <p className="text-xs font-medium uppercase">Geextraheerde tekst</p>
-                              <pre className="p-3 bg-muted rounded text-xs whitespace-pre-wrap max-h-48 overflow-y-auto">{detail.ocr_text}</pre>
+
+                            {detail.error_message && <div className="text-sm text-destructive bg-destructive/10 border border-destructive/20 rounded-md p-3">{detail.error_message}</div>}
+
+                            {detail.extracted_text && !detail.extracted_text.startsWith("Error:") && <div>
+                              <p className="text-xs text-muted-foreground uppercase font-medium mb-2">Geëxtraheerde tekst</p>
+                              <pre className="p-3 bg-muted rounded-lg text-xs whitespace-pre-wrap max-h-72 overflow-y-auto">{detail.extracted_text}</pre>
                             </div>}
                           </CardContent>
                         </Card>
@@ -1639,19 +1426,15 @@ tool-test:
                 )
               }
 
-              function MetaRow({ label, value }: { label: string; value: string }) {
-                return value ? <div><p className="text-xs uppercase text-muted-foreground">{label}</p><p className="text-sm">{value}</p></div> : null
-              }
-
               export default App
 
     - agent: builder
       tool: builtin:done
       arguments:
-        summary: "Agent builder: BUILD_COMPLETE. Implemented complete vergunningzoeker with OCR, LLM, approval, full-text search, ZIP handling, audit logging."
+        summary: "Agent builder: BUILD_COMPLETE. Implemented vergunningzoeker with Druppie SDK — vision/ocr for document scanning, llm/chat for permit classification, PostgreSQL for storage."
 
     # =========================================================================
-    # Planner -> Test Executor
+    # Planner → Test Executor
     # =========================================================================
     - agent: planner
       tool: builtin:make_plan
@@ -1668,36 +1451,36 @@ tool-test:
         summary: "Agent planner: Planned test_executor"
 
     # =========================================================================
-    # Test Executor (mocked -- tests pass)
+    # Test Executor (mocked — tests pass)
     # =========================================================================
     - agent: test_executor
       tool: coding:run_tests
       mock: true
-      mock_result: '{"success": true, "output": "8 passed, 0 failed", "exit_code": 0}'
+      mock_result: '{"success": true, "output": "3 passed, 0 failed", "exit_code": 0}'
 
     - agent: test_executor
       tool: coding:get_coverage_report
       mock: true
-      mock_result: '{"coverage": 82, "lines_covered": 140, "lines_total": 171}'
+      mock_result: '{"coverage": 78, "lines_covered": 62, "lines_total": 80}'
 
     - agent: test_executor
       tool: builtin:test_report
       mock: true
       mock_result: '{"status": "ok"}'
       arguments:
-        total: 8
-        passed: 8
+        total: 3
+        passed: 3
         failed: 0
-        coverage: 82
-        summary: "All 8 tests passed with 82% coverage."
+        coverage: 78
+        summary: "All 3 tests passed with 78% coverage"
 
     - agent: test_executor
       tool: builtin:done
       arguments:
-        summary: "Agent test_executor: TEST RESULT: PASS -- 8/8 tests passed, 82% coverage."
+        summary: "Agent test_executor: TEST RESULT: PASS — 3/3 tests passed, 78% coverage."
 
     # =========================================================================
-    # Planner -> Deployer
+    # Planner → Deployer
     # =========================================================================
     - agent: planner
       tool: builtin:make_plan
@@ -1714,7 +1497,7 @@ tool-test:
         summary: "Agent planner: Tests passed, planned deployer"
 
     # =========================================================================
-    # Deployer (REAL -- actually deploys the app)
+    # Deployer (REAL — actually deploys the app)
     # =========================================================================
     - agent: deployer
       tool: docker:list_containers
@@ -1730,7 +1513,8 @@ tool-test:
       assert:
         result:
           - not_empty
-          - { contains: "success" }
+          - { contains: "health_check" }
+          - { contains: '"success": true' }
 
     - agent: deployer
       tool: builtin:done
@@ -1738,7 +1522,7 @@ tool-test:
         summary: "Agent deployer: Deployed vergunningzoeker from main."
 
     # =========================================================================
-    # Planner -> Summarizer
+    # Planner → Summarizer
     # =========================================================================
     - agent: planner
       tool: builtin:make_plan
@@ -1759,21 +1543,17 @@ tool-test:
       tool: builtin:create_message
       arguments:
         content: |
-          De **vergunningzoeker** is succesvol gebouwd en gedeployed!
+          De vergunningzoeker is gebouwd en gedeployed!
 
-          **Nieuwe functionaliteiten t.o.v. vorige versie:**
-          - **ZIP upload** -- meerdere documenten tegelijk verwerken
-          - **Full-text search** (tsvector) en uitgebreide filters
-          - **Goedkeuringsworkflow** -- metadata bewerken en goedkeuren (status `approved`, ready_for_migration = true)
-          - **Document download** -- originele bestanden direct openen
-          - **Audit logging** -- alle acties worden gelogd
-          - **Afdeling-autorisatie** -- toegang beperkt tot vergunningen/planning via headers
-          - **Archiefstatus** automatisch berekend o.b.v. selectielijst waterschappen
-          - **NORA-compliance** (Privacy by Design, duurzame toegankelijkheid)
+          **Functies:**
+          - Upload vergunningdocumenten (scan/foto) — OCR via Druppie module-vision
+          - Automatische classificatie van vergunningtype via Druppie module-llm
+          - Zoeken op vergunningnummer, aanvrager, type
+          - Detail weergave met geëxtraheerde tekst
 
-          **Technische basis:** React + Flask, PostgreSQL met GIN index, OCR/LLM via Druppie SDK, Docker.
+          **Techniek:** Flask + React, AI via Druppie SDK (geen hardcoded API keys)
 
-          De app is actief -- controleer de deployer tool call voor de URL.
+          De app is nu actief. Controleer de deployer tool call voor de URL.
 
     - agent: summarizer
       tool: builtin:done
@@ -1791,15 +1571,17 @@ tool-test:
     - file_not_empty: docs/functional-design.md
     - file_not_empty: docs/technical-design.md
     - file_not_empty: docs/builder-plan.md
+    # Verify TD mentions Druppie modules
     - file_contains:
         path: docs/technical-design.md
         content: "druppie_sdk"
     - file_contains:
         path: docs/technical-design.md
-        content: "tsvector"
+        content: "vision"
+    # Verify builder plan includes module integration
     - file_contains:
         path: docs/builder-plan.md
-        content: "ZIP"
+        content: "Module Integration"
     - file_contains:
         path: docs/builder-plan.md
-        content: "pending_review"
+        content: "vision/ocr"
