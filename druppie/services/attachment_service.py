@@ -16,8 +16,9 @@ MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
 MAX_EXTRACTED_TEXT = 50_000  # characters
 
 DEEPINFRA_BASE_URL = "https://api.deepinfra.com/v1/openai"
-DEEPINFRA_OCR_MODEL = "allenai/olmOCR-2-7B-1025"
-OCR_TIMEOUT = 60
+DEEPINFRA_OCR_MODEL = "google/gemma-4-31B-it"
+OCR_PAGE_TIMEOUT = 120
+OCR_MAX_PAGES = 50
 
 _DEFAULT_ALLOWED_CONTENT_TYPES = {
     "text/plain",
@@ -147,79 +148,111 @@ def _extract_pdf_text_native(file_path: Path) -> str | None:
         return None
 
 
+def _render_pdf_page_to_png(file_path: Path, page_index: int) -> bytes | None:
+    """Render a single PDF page to PNG bytes using pymupdf."""
+    try:
+        import pymupdf
+
+        doc = pymupdf.open(str(file_path))
+        if page_index >= len(doc):
+            doc.close()
+            return None
+        page = doc[page_index]
+        # 150 DPI for good OCR quality without excessive size
+        pix = page.get_pixmap(dpi=150)
+        png_bytes = pix.tobytes("png")
+        doc.close()
+        return png_bytes
+    except Exception:
+        logger.warning("pdf_page_render_failed", path=str(file_path), page=page_index, exc_info=True)
+        return None
+
+
+def _get_pdf_page_count(file_path: Path) -> int:
+    """Get the number of pages in a PDF."""
+    try:
+        import pymupdf
+
+        doc = pymupdf.open(str(file_path))
+        count = len(doc)
+        doc.close()
+        return count
+    except Exception:
+        return 0
+
+
 async def _extract_pdf_text_ocr(file_path: Path) -> str | None:
-    """OCR fallback via DeepInfra vision API (replaces local tesseract)."""
+    """OCR fallback: render PDF pages to PNG, send to vision model."""
     api_key = os.getenv("DEEPINFRA_API_KEY", "")
     if not api_key:
         logger.info("deepinfra_ocr_skipped", reason="DEEPINFRA_API_KEY not set")
         return None
 
+    page_count = _get_pdf_page_count(file_path)
+    if page_count == 0:
+        logger.warning("pdf_ocr_no_pages", path=str(file_path))
+        return None
+
+    pages_to_process = min(page_count, OCR_MAX_PAGES)
+    if page_count > OCR_MAX_PAGES:
+        logger.info("pdf_ocr_page_limit", path=str(file_path), total=page_count, processing=pages_to_process)
+
+    text_parts = []
     try:
-        from pypdf import PdfReader
-
-        reader = PdfReader(str(file_path))
-        if not reader.pages:
-            return None
-
-        text_parts = []
-        async with httpx.AsyncClient(timeout=OCR_TIMEOUT) as client:
-            for i, page in enumerate(reader.pages):
-                if i >= 50:
-                    logger.info("pdf_ocr_page_limit", path=str(file_path), pages_processed=i)
-                    break
-
-                page_writer = _single_page_pdf(reader, i)
-                if page_writer is None:
+        async with httpx.AsyncClient() as client:
+            for i in range(pages_to_process):
+                png_bytes = _render_pdf_page_to_png(file_path, i)
+                if png_bytes is None:
                     continue
 
-                b64 = base64.b64encode(page_writer).decode()
+                b64 = base64.b64encode(png_bytes).decode()
                 image_content = {
                     "type": "image_url",
-                    "image_url": {"url": f"data:application/pdf;base64,{b64}"},
+                    "image_url": {"url": f"data:image/png;base64,{b64}"},
                 }
 
-                resp = await client.post(
-                    f"{DEEPINFRA_BASE_URL}/chat/completions",
-                    headers={"Authorization": f"Bearer {api_key}"},
-                    json={
-                        "model": DEEPINFRA_OCR_MODEL,
-                        "max_tokens": 8192,
-                        "temperature": 0.0,
-                        "messages": [{"role": "user", "content": [image_content]}],
-                    },
-                )
-                resp.raise_for_status()
-                data = resp.json()
-                page_text = data["choices"][0]["message"]["content"]
-                if page_text and page_text.strip():
-                    text_parts.append(page_text.strip())
+                try:
+                    resp = await client.post(
+                        f"{DEEPINFRA_BASE_URL}/chat/completions",
+                        headers={"Authorization": f"Bearer {api_key}"},
+                        timeout=OCR_PAGE_TIMEOUT,
+                        json={
+                            "model": DEEPINFRA_OCR_MODEL,
+                            "max_tokens": 8192,
+                            "temperature": 0.0,
+                            "messages": [
+                                {
+                                    "role": "user",
+                                    "content": [
+                                        image_content,
+                                        {"type": "text", "text": "Extract all text from this document page. Return only the extracted text, preserving the original structure and formatting. Do not add commentary."},
+                                    ],
+                                }
+                            ],
+                        },
+                    )
+                    resp.raise_for_status()
+                    data = resp.json()
+                    page_text = data["choices"][0]["message"]["content"]
+                    if page_text and page_text.strip():
+                        text_parts.append(page_text.strip())
+                except (httpx.TimeoutException, httpx.HTTPStatusError) as e:
+                    logger.warning("pdf_ocr_page_failed", path=str(file_path), page=i, error=str(e)[:200])
+                    continue
 
         full_text = "\n".join(text_parts)
         if full_text.strip():
-            logger.info("pdf_ocr_success", path=str(file_path), chars=len(full_text))
+            logger.info("pdf_ocr_success", path=str(file_path), chars=len(full_text), pages=len(text_parts))
             return full_text[:MAX_EXTRACTED_TEXT]
+
+        logger.warning("pdf_ocr_empty", path=str(file_path), pages_processed=pages_to_process)
         return None
 
     except ImportError:
-        logger.info("pypdf_not_available_for_ocr")
+        logger.warning("pymupdf_not_available", hint="Install pymupdf for PDF OCR support")
         return None
     except Exception:
         logger.warning("pdf_ocr_failed", path=str(file_path), exc_info=True)
-        return None
-
-
-def _single_page_pdf(reader, page_index: int) -> bytes | None:
-    """Extract a single page from a PdfReader as PDF bytes."""
-    try:
-        from pypdf import PdfWriter
-
-        writer = PdfWriter()
-        writer.add_page(reader.pages[page_index])
-        import io
-        buf = io.BytesIO()
-        writer.write(buf)
-        return buf.getvalue()
-    except Exception:
         return None
 
 
