@@ -10,6 +10,8 @@ import logging
 import os
 from datetime import datetime, timezone
 
+import httpx
+
 from .client import AzureDevOpsClient
 
 logger = logging.getLogger("azuredevops-mcp")
@@ -495,20 +497,40 @@ class AzureDevOpsModule:
 
         try:
             result = await self._client.create_work_item(work_item_type, operations)
-            return {
-                "success": True,
-                "project": self._project,
-                "item": {
-                    "id": result.get("id"),
-                    "title": result.get("fields", {}).get("System.Title"),
-                    "type": result.get("fields", {}).get("System.WorkItemType"),
-                    "state": result.get("fields", {}).get("System.State"),
-                    "url": result.get("_links", {}).get("html", {}).get("href"),
-                },
-            }
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 403 and "permissions to create tags" in str(exc) and tags:
+                logger.warning("create_work_item: tag permission denied, retrying without tags")
+                operations = [op for op in operations if op.get("path") != "/fields/System.Tags"]
+                try:
+                    result = await self._client.create_work_item(work_item_type, operations)
+                except Exception as retry_exc:
+                    logger.warning("create_work_item retry failed: %s", retry_exc)
+                    return {"success": False, "error": str(retry_exc)}
+            else:
+                logger.warning("create_work_item failed: %s", exc)
+                return {"success": False, "error": str(exc)}
         except Exception as exc:
             logger.warning("create_work_item failed: %s", exc)
             return {"success": False, "error": str(exc)}
+
+        warning = None
+        if tags and not result.get("fields", {}).get("System.Tags"):
+            warning = "Tags were dropped — the service principal lacks tag-creation permissions."
+
+        resp = {
+            "success": True,
+            "project": self._project,
+            "item": {
+                "id": result.get("id"),
+                "title": result.get("fields", {}).get("System.Title"),
+                "type": result.get("fields", {}).get("System.WorkItemType"),
+                "state": result.get("fields", {}).get("System.State"),
+                "url": result.get("_links", {}).get("html", {}).get("href"),
+            },
+        }
+        if warning:
+            resp["warning"] = warning
+        return resp
 
     async def _discover_kanban_column_field(self, item_id: int) -> str | None:
         """Find the WEF Kanban.Column field reference name from a work item.
@@ -587,17 +609,39 @@ class AzureDevOpsModule:
 
         try:
             result = await self._client.update_work_item(item_id, operations)
-            return {
-                "success": True,
-                "project": self._project,
-                "item": {
-                    "id": result.get("id"),
-                    "title": result.get("fields", {}).get("System.Title"),
-                    "type": result.get("fields", {}).get("System.WorkItemType"),
-                    "state": result.get("fields", {}).get("System.State"),
-                    "url": result.get("_links", {}).get("html", {}).get("href"),
-                },
-            }
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 403 and "permissions to create tags" in str(exc) and tags:
+                logger.warning("update_work_item: tag permission denied, retrying without tags")
+                operations = [op for op in operations if op.get("path") != "/fields/System.Tags"]
+                if not operations:
+                    return {"success": False, "error": "No fields to update (tags were the only change and the service principal lacks tag-creation permissions)."}
+                try:
+                    result = await self._client.update_work_item(item_id, operations)
+                except Exception as retry_exc:
+                    logger.warning("update_work_item retry failed: %s", retry_exc)
+                    return {"success": False, "error": str(retry_exc)}
+            else:
+                logger.warning("update_work_item(%s) failed: %s", item_id, exc)
+                return {"success": False, "error": str(exc)}
         except Exception as exc:
             logger.warning("update_work_item(%s) failed: %s", item_id, exc)
             return {"success": False, "error": str(exc)}
+
+        warning = None
+        if tags and not result.get("fields", {}).get("System.Tags"):
+            warning = "Tags were dropped — the service principal lacks tag-creation permissions."
+
+        resp = {
+            "success": True,
+            "project": self._project,
+            "item": {
+                "id": result.get("id"),
+                "title": result.get("fields", {}).get("System.Title"),
+                "type": result.get("fields", {}).get("System.WorkItemType"),
+                "state": result.get("fields", {}).get("System.State"),
+                "url": result.get("_links", {}).get("html", {}).get("href"),
+            },
+        }
+        if warning:
+            resp["warning"] = warning
+        return resp
