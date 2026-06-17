@@ -212,7 +212,14 @@ async def lifespan(app: FastAPI):
         logger.info("job_scheduler_skipped", hint="another_replica_is_leader")
         app.state.job_scheduler = None
 
+    # Start Postgres LISTEN/NOTIFY listener for cross-replica session cancellation
+    from druppie.db.listen_notify import start_cancel_listener
+    start_cancel_listener()
+
     yield
+
+    from druppie.db.listen_notify import stop_cancel_listener
+    stop_cancel_listener()
 
     if hasattr(app.state, "job_scheduler") and app.state.job_scheduler is not None:
         app.state.job_scheduler.stop()

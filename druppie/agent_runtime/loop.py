@@ -332,27 +332,45 @@ class AgentLoop:
 
             pending_found = False
 
-            if len(tool_calls) > 1:
-                tasks = []
-                for tc in tool_calls:
-                    tasks.append(self._execute_tool_call(
+            try:
+                if len(tool_calls) > 1:
+                    tasks = []
+                    for tc in tool_calls:
+                        tasks.append(self._execute_tool_call(
+                            tc, agent, tool_provider, done_tool,
+                            tool_call_history, emitter, messages, expanded_tools,
+                        ))
+                    results = await asyncio.gather(*tasks)
+                    for tc, result, is_pending in results:
+                        if is_pending:
+                            pending_found = True
+                        messages.append(result)
+                else:
+                    tc = tool_calls[0]
+                    _, result, is_pending = await self._execute_tool_call(
                         tc, agent, tool_provider, done_tool,
                         tool_call_history, emitter, messages, expanded_tools,
-                    ))
-                results = await asyncio.gather(*tasks)
-                for tc, result, is_pending in results:
+                    )
                     if is_pending:
                         pending_found = True
                     messages.append(result)
-            else:
-                tc = tool_calls[0]
-                _, result, is_pending = await self._execute_tool_call(
-                    tc, agent, tool_provider, done_tool,
-                    tool_call_history, emitter, messages, expanded_tools,
-                )
-                if is_pending:
-                    pending_found = True
-                messages.append(result)
+            except asyncio.CancelledError:
+                completed_ids = {
+                    m.get("tool_call_id")
+                    for m in messages
+                    if m.get("role") == "tool"
+                }
+                for tc in tool_calls:
+                    call_id = tc.get("id", "")
+                    if call_id and call_id not in completed_ids:
+                        messages.append({
+                            "role": "tool",
+                            "tool_call_id": call_id,
+                            "content": json.dumps({
+                                "error": "Tool execution interrupted by user cancellation",
+                            }),
+                        })
+                raise
 
             # Check if cancelled after tool execution
             if cancellation_token and cancellation_token.is_cancelled:

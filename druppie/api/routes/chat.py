@@ -322,6 +322,9 @@ async def stop_session(
 
     SessionPauseToken.cancel_session(session_id)
 
+    from druppie.db.listen_notify import notify_session_cancel
+    notify_session_cancel(session_id)
+
     try:
         import os
         coding_url = os.getenv("MCP_CODING_URL", "http://module-coding:9001")

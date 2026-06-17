@@ -100,19 +100,21 @@ class SessionPauseToken(CancellationToken):
 
     _active_tokens: dict[str, "SessionPauseToken"] = {}
 
-    def __init__(self, db_session_factory, session_id, poll_interval: float = 0.5):
+    def __init__(self, db_session_factory, session_id, poll_interval: float = 5.0):
         super().__init__()
         self._db_factory = db_session_factory
         self._session_id = session_id
         self._poll_interval = poll_interval
         self._poll_task: asyncio.Task | None = None
+        self._agent_task: asyncio.Task | None = None
 
     @classmethod
     def cancel_session(cls, session_id) -> bool:
         """Directly cancel the token for a running session (if active).
 
         Returns True if a token was found and cancelled, False otherwise.
-        Called by the cancel endpoint for zero-latency pause signalling.
+        Called by the cancel endpoint / LISTEN handler for zero-latency
+        pause signalling.
         """
         token = cls._active_tokens.get(str(session_id))
         if token and not token.is_cancelled:
@@ -120,9 +122,21 @@ class SessionPauseToken(CancellationToken):
             return True
         return False
 
+    def cancel(self) -> None:
+        """Mark as cancelled AND interrupt the in-flight await (LLM call).
+
+        task.cancel() schedules CancelledError on the event loop, which
+        propagates up from whatever await point the agent is blocked on.
+        Safe to call from any thread (sets _must_cancel flag only).
+        """
+        super().cancel()
+        if self._agent_task and not self._agent_task.done():
+            self._agent_task.cancel()
+
     def start_polling(self):
         if self._poll_task is None:
             self._active_tokens[str(self._session_id)] = self
+            self._agent_task = asyncio.current_task()
             self._poll_task = asyncio.create_task(self._poll_loop())
 
     async def _poll_loop(self):

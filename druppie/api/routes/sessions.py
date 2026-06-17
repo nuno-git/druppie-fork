@@ -228,7 +228,7 @@ async def _run_retry_background(
             )
 
             agent_run = ctx.execution_repo.get_by_id_for_session(agent_run_id, session_id)
-            target_prompt = planned_prompt or agent_run.planned_prompt or ""
+            target_prompt = planned_prompt if planned_prompt is not None else (agent_run.planned_prompt or "")
 
             async def _run_in_own_db(run_id, agent_id, prompt, is_continue):
                 from druppie.db.database import SessionLocal

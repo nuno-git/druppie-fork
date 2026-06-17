@@ -38,6 +38,7 @@ Architecture:
                  └─► Architect → Developer → Deployer
 """
 
+import asyncio
 import os
 from typing import TYPE_CHECKING
 from uuid import UUID
@@ -400,14 +401,22 @@ class Orchestrator:
             self.execution_repo.update_status(next_run.id, AgentRunStatus.RUNNING)
             self.execution_repo.commit()
 
-            # Run the agent with project context
-            status = await self.run_agent(
-                session_id=session_id,
-                agent_run_id=next_run.id,
-                agent_id=next_run.agent_id,
-                prompt=prompt,
-                context=context,
-            )
+            try:
+                status = await self.run_agent(
+                    session_id=session_id,
+                    agent_run_id=next_run.id,
+                    agent_id=next_run.agent_id,
+                    prompt=prompt,
+                    context=context,
+                )
+            except asyncio.CancelledError:
+                self.execution_repo.db.rollback()
+                self.execution_repo.update_status(next_run.id, AgentRunStatus.PAUSED_USER)
+                self.execution_repo.commit()
+                self.session_repo.update_status(session_id, SessionStatus.PAUSED)
+                self.session_repo.commit()
+                logger.info("execute_pending_runs_cancelled", session_id=str(session_id), agent_run_id=str(next_run.id))
+                raise
 
             # If paused, update session status and stop execution
             if status == "paused":
@@ -583,6 +592,12 @@ class Orchestrator:
                 agent_run_id=agent_run_id,
                 context=context,
             )
+        except asyncio.CancelledError:
+            self.execution_repo.db.rollback()
+            self.execution_repo.update_status(agent_run_id, AgentRunStatus.PAUSED_USER)
+            self.execution_repo.commit()
+            logger.info("agent_run_cancelled", session_id=str(session_id), agent_run_id=str(agent_run_id), agent_id=agent_id)
+            raise
         except Exception as e:
             # Store error on agent_run before re-raising.
             # Rollback first — if the failure was a DB error, the transaction
@@ -699,7 +714,7 @@ class Orchestrator:
             .filter(
                 ToolCallModel.agent_run_id == parent_run_id,
                 ToolCallModel.tool_name == "subagents",
-                ToolCallModel.status.in_(["paused", "completed"]),
+                ToolCallModel.status.in_(["paused", "completed", "executing"]),
             )
             .order_by(ToolCallModel.created_at.desc())
             .first()
