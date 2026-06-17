@@ -707,7 +707,8 @@ async def _cleanup_orphan_containers() -> int:
     Called once at server startup.
     """
     rc, stdout, _ = await _docker_run(
-        ["docker", "ps", "-a", "--filter", "name=druppie-", "--format", "{{.Names}}"],
+        ["docker", "ps", "-a", "--filter", "name=druppie-",
+         "--format", "{{.Names}}\t{{.Label \"com.docker.compose.project\"}}"],
         timeout=30,
     )
     if rc != 0:
@@ -715,10 +716,18 @@ async def _cleanup_orphan_containers() -> int:
         return 0
 
     tracked_names = {entry["container_name"] for entry in sandbox_containers.values()}
-    orphan_names = [
-        name.strip() for name in stdout.strip().split("\n")
-        if name.strip() and name.strip() not in tracked_names
-    ]
+    orphan_names = []
+    for line in stdout.strip().split("\n"):
+        if not line.strip():
+            continue
+        parts = line.strip().split("\t")
+        name = parts[0]
+        compose_project = parts[1] if len(parts) > 1 else ""
+        if compose_project:
+            continue
+        if name in tracked_names:
+            continue
+        orphan_names.append(name)
 
     cleaned = 0
     for name in orphan_names:
