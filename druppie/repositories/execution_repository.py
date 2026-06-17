@@ -13,6 +13,7 @@ from druppie.db.models import (
     LlmRetry,
     Message,
     Question,
+    ResumeContextEvent,
     ToolCall,
     ToolCallNormalization,
 )
@@ -882,6 +883,11 @@ class ExecutionRepository(BaseRepository):
         # 7. Message — only messages linked to these runs
         self.db.query(Message).filter(
             Message.agent_run_id.in_(agent_run_ids)
+        ).delete(synchronize_session="fetch")
+
+        # 8. ResumeContextEvent (FK -> agent_runs)
+        self.db.query(ResumeContextEvent).filter(
+            ResumeContextEvent.agent_run_id.in_(agent_run_ids)
         ).delete(synchronize_session="fetch")
 
         self.db.flush()
