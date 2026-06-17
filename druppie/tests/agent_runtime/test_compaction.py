@@ -296,3 +296,53 @@ class TestTruncateToolResult:
         content = "x" * 60000
         result = MessageCompactor.truncate_tool_result(content)
         assert len(result) < 10000
+
+
+class TestMaxCompactions:
+    def test_counter_starts_at_zero(self):
+        compactor = MessageCompactor(CompactionConfig(max_compactions=3))
+        assert compactor.state.compactions_performed == 0
+        assert not compactor.limit_reached
+
+    def test_counter_increments_on_summary(self):
+        config = CompactionConfig(
+            max_context_tokens=100,
+            summarization_threshold=0.5,
+            max_compactions=3,
+        )
+        compactor = MessageCompactor(config=config, summary_llm=_mock_llm())
+        msgs = _build_conversation(10, tool_result_size=200)
+        import asyncio
+        asyncio.run(compactor.compress(msgs, None, _make_agent(), None))
+        assert compactor.state.compactions_performed == 1
+        assert not compactor.limit_reached
+
+    def test_limit_reached_after_max(self):
+        config = CompactionConfig(
+            max_context_tokens=100,
+            summarization_threshold=0.5,
+            max_compactions=2,
+        )
+        compactor = MessageCompactor(config=config, summary_llm=_mock_llm())
+        msgs = _build_conversation(10, tool_result_size=200)
+        import asyncio
+        asyncio.run(compactor.compress(msgs, None, _make_agent(), None))
+        asyncio.run(compactor.compress(msgs, None, _make_agent(), None))
+        assert compactor.state.compactions_performed == 2
+        assert compactor.limit_reached
+
+    def test_counter_not_incremented_under_threshold(self):
+        config = CompactionConfig(
+            max_context_tokens=100_000,
+            summarization_threshold=0.7,
+            max_compactions=3,
+        )
+        compactor = MessageCompactor(config=config, summary_llm=_mock_llm())
+        msgs = _build_conversation(2, tool_result_size=100)
+        import asyncio
+        asyncio.run(compactor.compress(msgs, None, _make_agent(), None))
+        assert compactor.state.compactions_performed == 0
+        assert not compactor.limit_reached
+
+    def test_default_max_is_ten(self):
+        assert CompactionConfig().max_compactions == 10

@@ -586,6 +586,8 @@ class AgentV2:
         if compression and isinstance(compression, dict):
             if "summarization_threshold" in compression:
                 cc.summarization_threshold = compression["summarization_threshold"]
+            if "max_compactions" in compression:
+                cc.max_compactions = compression["max_compactions"]
         return cc
 
     # ------------------------------------------------------------------

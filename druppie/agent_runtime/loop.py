@@ -60,6 +60,11 @@ _CONTEXT_LIMIT_MSG = (
     "You have reached the context limit. Call done() NOW with a summary."
 )
 
+_COMPACTION_LIMIT_MSG = (
+    "You have reached the maximum number of context compactions. "
+    "Call done() NOW with a summary of your progress so far."
+)
+
 _TRUNCATION_NUDGE_MSG = (
     "Your previous response was truncated because it hit the maximum output token limit. "
     "Be more concise and call your tools instead of writing long text responses. "
@@ -129,10 +134,18 @@ class AgentLoop:
                 messages, llm, agent, emitter,
             )
 
+            compaction_limit_hit = compactor.limit_reached
             context_overflow = compactor.estimate_tokens(messages) > config.max_context_tokens
             tools_for_call = all_tools
 
-            if context_overflow:
+            if compaction_limit_hit:
+                messages.append({"role": "system", "content": _COMPACTION_LIMIT_MSG})
+                done_schema = self._to_openai_tool(done_tool.build_schema(agent))
+                tools_for_call = [done_schema]
+                emitter.emit(AgentEvent.now("enforcement_retry", {
+                    "reason": "max_compactions_exceeded",
+                }))
+            elif context_overflow:
                 messages.append({"role": "system", "content": _CONTEXT_LIMIT_MSG})
                 done_schema = self._to_openai_tool(done_tool.build_schema(agent))
                 tools_for_call = [done_schema]
@@ -236,6 +249,27 @@ class AgentLoop:
                         "tokens_used": usage,
                     }))
                     continue
+
+                if compaction_limit_hit:
+                    original_content = message.get("content", "") or ""
+                    summary = f"[AUTO-DONE: Max compactions reached ({compactor.state.compactions_performed})] {original_content}" if original_content else f"[AUTO-DONE: Max compactions reached ({compactor.state.compactions_performed})]"
+                    done_result = {
+                        "summary": summary,
+                        "variables": {},
+                        "completion_meta": {
+                            "reason": "max_compactions_exceeded",
+                            "turn": turn,
+                            "enforcement_retries": enforcement_retries,
+                            "truncation_retries": truncation_retries,
+                            "compactions_performed": compactor.state.compactions_performed,
+                        },
+                    }
+                    emitter.emit(AgentEvent.now("done", done_result))
+                    return AgentResult(
+                        status="completed",
+                        done_result=done_result,
+                        events=emitter.get_events(),
+                    )
 
                 if context_overflow:
                     original_content = message.get("content", "") or ""

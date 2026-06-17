@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 class CompactionConfig:
     max_context_tokens: int = 150_000
     summarization_threshold: float = 0.70
+    max_compactions: int = 10
     max_input_chars: int = 30_000
     max_output_tokens: int = 1024
     tool_result_max_chars: int = 15_000
@@ -32,6 +33,7 @@ class CompactionConfig:
 class CompactionState:
     calibration_ratio: float = 4.0
     calibration_samples: int = 0
+    compactions_performed: int = 0
 
 
 class MessageCompactor:
@@ -64,6 +66,10 @@ class MessageCompactor:
             total += int(chars / ratio) + 4
 
         return total
+
+    @property
+    def limit_reached(self) -> bool:
+        return self.state.compactions_performed >= self.config.max_compactions
 
     def calibrate(self, actual_prompt_tokens: int, messages: list[dict]) -> None:
         if actual_prompt_tokens < 100:
@@ -132,6 +138,7 @@ class MessageCompactor:
                             "turns_compressed": len(body),
                             "summary_text": llm_summary,
                         }))
+                    self.state.compactions_performed += 1
                     return result
             except Exception as exc:
                 logger.warning(
@@ -152,6 +159,7 @@ class MessageCompactor:
                 "tokens_after": tokens_after,
                 "turns_compressed": len(body),
             }))
+        self.state.compactions_performed += 1
         return result
 
     @staticmethod
