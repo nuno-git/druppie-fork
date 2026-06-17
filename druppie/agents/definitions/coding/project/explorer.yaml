@@ -3,6 +3,7 @@ name: Explorer
 description: Reads design docs and explores existing codebase for context
 category: quality
 role: subagent
+subagents: [explorer]
 
 system_prompt: |
   You are a codebase exploration agent. Your job is to thoroughly investigate the codebase and return a comprehensive, actionable summary.
