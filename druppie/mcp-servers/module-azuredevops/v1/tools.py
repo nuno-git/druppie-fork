@@ -28,7 +28,7 @@ mcp = FastMCP(
         "Access to the backlog and work items of a single, pre-configured "
         "Azure DevOps project. You cannot choose or list other projects — "
         "every tool operates on the one configured project. Write operations "
-        "(create, update) require human approval before execution."
+        "(create, update, add comment) require human approval before execution."
     ),
 )
 
@@ -134,6 +134,39 @@ async def search_work_items(text: str, limit: int = 50) -> dict:
 
 
 @mcp.tool()
+async def get_work_item_comments(item_id: int, top: int = 50) -> dict:
+    """Get comments on a work item, newest first.
+
+    Args:
+        item_id: The work item id.
+        top: Maximum number of comments to return (default 50).
+
+    Returns:
+        Dict with comments (id, text, created_by, created_date, modified_date)
+        and total_count.
+    """
+    return await module.get_work_item_comments(item_id, top)
+
+
+@mcp.tool()
+async def add_work_item_comment(item_id: int, text: str) -> dict:
+    """Add a comment to a work item.
+
+    This tool requires human approval before execution. The approver will
+    see the comment text you provide.
+
+    Args:
+        item_id: The work item id to comment on.
+        text: The comment text (plain text or HTML).
+
+    Returns:
+        Dict with success status and created comment (id, work_item_id, text,
+        created_by, created_date).
+    """
+    return await module.add_work_item_comment(item_id, text)
+
+
+@mcp.tool()
 async def create_work_item(
     work_item_type: str,
     title: str,
@@ -192,6 +225,7 @@ async def update_work_item(
     title: str | None = None,
     description: str | None = None,
     state: str | None = None,
+    board_column: str | None = None,
     assigned_to: str | None = None,
     iteration: str | None = None,
     area_path: str | None = None,
@@ -208,12 +242,21 @@ async def update_work_item(
     Use get_work_item(item_id) first to see the current values before
     making changes.
 
+    Prefer board_column over state when moving items on the board — Azure
+    DevOps will automatically set the matching state. Setting state alone
+    may not move the item to the expected board column when multiple columns
+    share the same state.
+
     Args:
         item_id: The id of the work item to update.
         title: New title (omit to keep current).
         description: New HTML description (omit to keep current).
         state: New state, e.g. "New", "Approved", "Committed", "Done"
-            (omit to keep current).
+            (omit to keep current). Prefer board_column instead.
+        board_column: New board column, e.g. "New", "Ready", "In Progress",
+            "In Review", "Done" (omit to keep current). Azure DevOps
+            automatically updates the state to match. This is the
+            recommended way to move items on the board.
         assigned_to: New assignee display name (omit to keep current).
         iteration: New iteration/sprint path (omit to keep current).
         area_path: New area path (omit to keep current).
@@ -231,6 +274,7 @@ async def update_work_item(
         title=title,
         description=description,
         state=state,
+        board_column=board_column,
         assigned_to=assigned_to,
         iteration=iteration,
         area_path=area_path,

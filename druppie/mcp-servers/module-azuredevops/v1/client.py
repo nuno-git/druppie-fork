@@ -57,28 +57,39 @@ class AzureDevOpsClient:
         token = await self._credential.get_token(AZURE_DEVOPS_SCOPE)
         return {"Authorization": f"Bearer {token.token}"}
 
-    async def _post(self, path: str, json_body: dict) -> dict:
+    @staticmethod
+    def _raise_for_status(resp: httpx.Response) -> None:
+        if resp.is_success:
+            return
+        body = resp.text[:2000]
+        raise httpx.HTTPStatusError(
+            f"{resp.status_code} {resp.reason_phrase} for url '{resp.url}'\n{body}",
+            request=resp.request,
+            response=resp,
+        )
+
+    async def _post(self, path: str, json_body: dict, *, api_version: str = API_VERSION) -> dict:
         headers = await self._auth_header()
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.post(
                 f"{self._org_url}/{path}",
-                params={"api-version": API_VERSION},
+                params={"api-version": api_version},
                 json=json_body,
                 headers=headers,
             )
-            resp.raise_for_status()
+            self._raise_for_status(resp)
             return resp.json()
 
-    async def _get(self, path: str, params: dict | None = None) -> dict:
+    async def _get(self, path: str, params: dict | None = None, *, api_version: str = API_VERSION) -> dict:
         headers = await self._auth_header()
-        query = {"api-version": API_VERSION, **(params or {})}
+        query = {"api-version": api_version, **(params or {})}
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.get(
                 f"{self._org_url}/{path}",
                 params=query,
                 headers=headers,
             )
-            resp.raise_for_status()
+            self._raise_for_status(resp)
             return resp.json()
 
     async def _patch(self, path: str, operations: list[dict]) -> dict:
@@ -93,7 +104,7 @@ class AzureDevOpsClient:
                 content=_json.dumps(operations),
                 headers=headers,
             )
-            resp.raise_for_status()
+            self._raise_for_status(resp)
             return resp.json()
 
     async def _post_patch(self, path: str, operations: list[dict]) -> dict:
@@ -108,7 +119,7 @@ class AzureDevOpsClient:
                 content=_json.dumps(operations),
                 headers=headers,
             )
-            resp.raise_for_status()
+            self._raise_for_status(resp)
             return resp.json()
 
     async def query_wiql(self, wiql: str, top: int) -> list[int]:
@@ -168,6 +179,27 @@ class AzureDevOpsClient:
         return await self._patch(
             f"{self._project}/_apis/wit/workitems/{item_id}",
             operations,
+        )
+
+    async def get_work_item_comments(
+        self, item_id: int, top: int | None = None, order: str = "desc"
+    ) -> dict:
+        """Fetch comments for a work item, scoped to the configured project."""
+        params: dict[str, str] = {"order": order}
+        if top is not None:
+            params["$top"] = str(top)
+        return await self._get(
+            f"{self._project}/_apis/wit/workItems/{item_id}/comments",
+            params,
+            api_version="7.0-preview.3",
+        )
+
+    async def add_work_item_comment(self, item_id: int, text: str) -> dict:
+        """Add a comment to a work item, scoped to the configured project."""
+        return await self._post(
+            f"{self._project}/_apis/wit/workItems/{item_id}/comments",
+            {"text": text},
+            api_version="7.0-preview.3",
         )
 
     async def close(self) -> None:

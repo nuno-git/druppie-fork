@@ -814,7 +814,7 @@ async def create_message(
                     target_language=session.language,
                 )
     except TranslationNotAvailableError:
-        raise
+        logger.warning("translation_skipped_no_api_key", session_id=str(session_id))
     except Exception as e:
         logger.warning("create_message_translation_failed", error=str(e))
 

@@ -64,6 +64,8 @@ def test_tools_expose_exactly_the_expected_tools():
         "search_work_items",
         "create_work_item",
         "update_work_item",
+        "get_work_item_comments",
+        "add_work_item_comment",
     }
 
 
@@ -189,7 +191,10 @@ class _RecordingClient:
 
     async def get_work_item(self, item_id):
         self.gets.append((f"{self._real.project}/_apis/wit/workitems/{item_id}", None))
-        return {"id": item_id, "fields": {"System.Title": "WI"}}
+        return {"id": item_id, "fields": {
+            "System.Title": "WI",
+            "WEF_ABC123_Kanban.Column": "New",
+        }}
 
     async def create_work_item(self, work_item_type, operations):
         path = f"{self._real.project}/_apis/wit/workitems/${work_item_type}"
@@ -213,6 +218,35 @@ class _RecordingClient:
                 "System.WorkItemType": "Bug",
                 "System.State": "New",
             },
+        }
+
+    async def get_work_item_comments(self, item_id, top=None, order="desc"):
+        path = f"{self._real.project}/_apis/wit/workItems/{item_id}/comments"
+        self.gets.append((path, {"top": top, "order": order}))
+        return {
+            "totalCount": 1,
+            "count": 1,
+            "comments": [
+                {
+                    "id": 1,
+                    "workItemId": item_id,
+                    "text": "Test comment",
+                    "createdBy": {"displayName": "Test User"},
+                    "createdDate": "2026-01-01T00:00:00Z",
+                    "modifiedDate": "2026-01-01T00:00:00Z",
+                }
+            ],
+        }
+
+    async def add_work_item_comment(self, item_id, text):
+        path = f"{self._real.project}/_apis/wit/workItems/{item_id}/comments"
+        self.posts.append((path, {"text": text}))
+        return {
+            "id": 42,
+            "workItemId": item_id,
+            "text": text,
+            "createdBy": {"displayName": "Test User"},
+            "createdDate": "2026-01-01T00:00:00Z",
         }
 
 
@@ -305,3 +339,68 @@ async def test_update_work_item_rejects_empty_update(monkeypatch):
     result = await mod.update_work_item(item_id=123)
     assert result["success"] is False
     assert "No fields" in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_get_comments_is_project_scoped(monkeypatch):
+    module_mod = _load_module_under_test(monkeypatch)
+    mod = module_mod.AzureDevOpsModule()
+    rec = _RecordingClient(mod._client)
+    mod._client = rec
+
+    result = await mod.get_work_item_comments(item_id=100, top=10)
+    assert result["success"] is True
+    assert result["work_item_id"] == 100
+    assert len(result["comments"]) == 1
+
+    prefix = f"{_PROJECT}/_apis/"
+    for path, _ in rec.gets:
+        assert path.startswith(prefix), f"GET escaped project scope: {path}"
+
+
+@pytest.mark.asyncio
+async def test_add_comment_is_project_scoped(monkeypatch):
+    module_mod = _load_module_under_test(monkeypatch)
+    mod = module_mod.AzureDevOpsModule()
+    rec = _RecordingClient(mod._client)
+    mod._client = rec
+
+    result = await mod.add_work_item_comment(item_id=100, text="Hello")
+    assert result["success"] is True
+    assert result["comment"]["text"] == "Hello"
+
+    prefix = f"{_PROJECT}/_apis/"
+    for path, _ in rec.posts:
+        assert path.startswith(prefix), f"POST escaped project scope: {path}"
+
+
+@pytest.mark.asyncio
+async def test_update_board_column_discovers_kanban_field(monkeypatch):
+    module_mod = _load_module_under_test(monkeypatch)
+    mod = module_mod.AzureDevOpsModule()
+    rec = _RecordingClient(mod._client)
+    mod._client = rec
+
+    result = await mod.update_work_item(item_id=123, board_column="In Review")
+    assert result["success"] is True
+
+    assert rec.patches, "expected a PATCH call"
+    operations = rec.patches[0][1]
+    kanban_ops = [
+        op for op in operations
+        if op["path"].endswith("_Kanban.Column")
+    ]
+    assert len(kanban_ops) == 1
+    assert kanban_ops[0]["value"] == "In Review"
+
+
+@pytest.mark.asyncio
+async def test_update_rejects_state_and_board_column_together(monkeypatch):
+    module_mod = _load_module_under_test(monkeypatch)
+    mod = module_mod.AzureDevOpsModule()
+
+    result = await mod.update_work_item(
+        item_id=123, state="Active", board_column="In Progress",
+    )
+    assert result["success"] is False
+    assert "Cannot set both" in result["error"]
