@@ -99,11 +99,13 @@ const renderXY = (spec) => {
     : { fontSize: 12 }
   const tooltipFmt = fmt ? { formatter: (v) => fmt(v) } : {}
 
+  const xInterval = data.length > 20 ? Math.ceil(data.length / 15) - 1 : 0
+
   if (type === 'bar') {
     return (
       <BarChart data={data} margin={margin}>
         <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-        <XAxis dataKey="x" tick={xTickProps} label={xLabelProp(x_label)} />
+        <XAxis dataKey="x" tick={xTickProps} interval={xInterval} label={xLabelProp(x_label)} />
         <YAxis tick={{ fontSize: 12 }} tickFormatter={fmt} label={yLabelProp(y_label)} />
         <Tooltip {...tooltipFmt} />
         <Bar dataKey="y" fill={PALETTE[0]} />
@@ -127,7 +129,7 @@ const renderXY = (spec) => {
     return (
       <LineChart data={data} margin={margin}>
         <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-        <XAxis dataKey="x" tick={xTickProps} label={xLabelProp(x_label)} />
+        <XAxis dataKey="x" tick={xTickProps} interval={xInterval} label={xLabelProp(x_label)} />
         <YAxis tick={{ fontSize: 12 }} tickFormatter={fmt} label={yLabelProp(y_label)} />
         <Tooltip {...tooltipFmt} />
         <Line type="monotone" dataKey="y" stroke={PALETTE[0]} strokeWidth={2} dot={false} />
@@ -138,7 +140,7 @@ const renderXY = (spec) => {
     return (
       <AreaChart data={data} margin={margin}>
         <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-        <XAxis dataKey="x" tick={xTickProps} label={xLabelProp(x_label)} />
+        <XAxis dataKey="x" tick={xTickProps} interval={xInterval} label={xLabelProp(x_label)} />
         <YAxis tick={{ fontSize: 12 }} tickFormatter={fmt} label={yLabelProp(y_label)} />
         <Tooltip {...tooltipFmt} />
         <Area type="monotone" dataKey="y" stroke={PALETTE[0]} fill={PALETTE[0]} fillOpacity={0.3} />
@@ -157,18 +159,25 @@ const renderXY = (spec) => {
   )
 }
 
-const TreemapContent = ({ x, y, width, height, name, value }) => {
-  if (width < 40 || height < 24) return null
-  const fmt = typeof value === 'number' ? formatCompact(value) : value
+const TreemapContent = ({ x, y, width, height, name, value, fill, index }) => {
+  const bg = fill || seriesColor(index || 0)
+  if (width < 4 || height < 4) return null
+  const fmtVal = typeof value === 'number' ? formatCompact(value) : value
+  const showLabel = width >= 40 && height >= 24
+  const maxChars = Math.floor(width / 7)
   return (
     <g>
-      <rect x={x} y={y} width={width} height={height} fill="none" />
-      <text x={x + width / 2} y={y + height / 2 - 7} textAnchor="middle" fill="#fff" fontSize={12} fontWeight={500}>
-        {String(name).length > width / 7 ? String(name).slice(0, Math.floor(width / 7)) + '…' : name}
-      </text>
-      <text x={x + width / 2} y={y + height / 2 + 9} textAnchor="middle" fill="#ffffffcc" fontSize={11}>
-        {fmt}
-      </text>
+      <rect x={x} y={y} width={width} height={height} fill={bg} stroke="#fff" strokeWidth={2} rx={2} />
+      {showLabel && (
+        <>
+          <text x={x + width / 2} y={y + height / 2 - 7} textAnchor="middle" fill="#fff" fontSize={12} fontWeight={500}>
+            {String(name).length > maxChars ? String(name).slice(0, maxChars - 1) + '…' : name}
+          </text>
+          <text x={x + width / 2} y={y + height / 2 + 9} textAnchor="middle" fill="#ffffffcc" fontSize={11}>
+            {fmtVal}
+          </text>
+        </>
+      )}
     </g>
   )
 }
@@ -178,24 +187,33 @@ const renderNameValue = (spec) => {
   const fmt = getFormatter(spec)
   if (type === 'pie' || type === 'donut') {
     const innerRadius = type === 'donut' ? 60 : 0
+    const hasMany = data.length > 6
+    const labelFn = hasMany
+      ? ({ percent }) => percent >= 0.05 ? `${(percent * 100).toFixed(0)}%` : ''
+      : ({ name, percent }) => {
+          if (percent < 0.05) return ''
+          const short = name.length > 18 ? name.slice(0, 16) + '…' : name
+          return `${short} ${(percent * 100).toFixed(0)}%`
+        }
     return (
-      <PieChart>
+      <PieChart margin={{ top: 20, right: 20, bottom: 20, left: 20 }}>
         <Pie
           data={data}
           dataKey="value"
           nameKey="name"
           cx="50%"
           cy="50%"
-          outerRadius={100}
+          outerRadius={hasMany ? 80 : 90}
           innerRadius={innerRadius}
-          label={({ name, percent }) => percent >= 0.05 ? `${name} ${(percent * 100).toFixed(0)}%` : ''}
+          label={labelFn}
+          labelLine={!hasMany}
         >
           {data.map((_, idx) => (
             <Cell key={idx} fill={seriesColor(idx)} />
           ))}
         </Pie>
         <Tooltip formatter={fmt} />
-        <Legend />
+        <Legend wrapperStyle={{ fontSize: 12 }} />
       </PieChart>
     )
   }
@@ -243,12 +261,14 @@ const renderMultiSeries = (spec) => {
     : { fontSize: 12 }
   const tooltipFmt = fmt ? { formatter: (v) => fmt(v) } : {}
 
+  const xInterval = data.length > 20 ? Math.ceil(data.length / 15) - 1 : 0
+
   if (type === 'stacked_bar' || type === 'grouped_bar') {
     const stackProps = type === 'stacked_bar' ? { stackId: 'a' } : {}
     return (
       <BarChart data={data} margin={margin}>
         <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-        <XAxis dataKey="x" tick={xTickProps} label={xLabelProp(x_label)} />
+        <XAxis dataKey="x" tick={xTickProps} interval={xInterval} label={xLabelProp(x_label)} />
         <YAxis tick={{ fontSize: 12 }} tickFormatter={fmt} label={yLabelProp(y_label)} />
         <Tooltip {...tooltipFmt} />
         <Legend />
@@ -262,7 +282,7 @@ const renderMultiSeries = (spec) => {
     return (
       <AreaChart data={data} margin={margin}>
         <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-        <XAxis dataKey="x" tick={xTickProps} label={xLabelProp(x_label)} />
+        <XAxis dataKey="x" tick={xTickProps} interval={xInterval} label={xLabelProp(x_label)} />
         <YAxis tick={{ fontSize: 12 }} tickFormatter={fmt} label={yLabelProp(y_label)} />
         <Tooltip {...tooltipFmt} />
         <Legend />
@@ -285,7 +305,7 @@ const renderMultiSeries = (spec) => {
   return (
     <LineChart data={data} margin={margin}>
       <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-      <XAxis dataKey="x" tick={xTickProps} label={xLabelProp(x_label)} />
+      <XAxis dataKey="x" tick={xTickProps} interval={xInterval} label={xLabelProp(x_label)} />
       <YAxis tick={{ fontSize: 12 }} tickFormatter={fmt} label={yLabelProp(y_label)} />
       <Tooltip {...tooltipFmt} />
       <Legend />
@@ -312,7 +332,9 @@ const renderChart = (spec) => {
 
 const frameHeight = (type, dataLen) => {
   if (type === 'horizontal_bar') return Math.min(700, Math.max(220, 28 * dataLen + 60))
-  if (type === 'treemap' || type === 'funnel') return 360
+  if (type === 'pie' || type === 'donut') return dataLen > 6 ? 420 : 380
+  if (type === 'treemap') return Math.min(500, Math.max(360, 20 * dataLen))
+  if (type === 'funnel') return 360
   if (dataLen > 15) return 400
   return 320
 }
