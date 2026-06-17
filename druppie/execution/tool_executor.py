@@ -27,7 +27,7 @@ from uuid import UUID
 import structlog
 
 from druppie.core.mcp_config import MCPConfig
-from druppie.core.translation import TranslationNotAvailableError
+from druppie.core.translation import TranslationError, TranslationNotAvailableError
 from druppie.execution.mcp_http import MCPHttp, MCPHttpError
 
 if TYPE_CHECKING:
@@ -734,11 +734,13 @@ class ToolExecutor:
     }
 
     async def _translate_design_content(self, tool_call) -> None:
-        """Translate design content to Dutch before the approval gate.
+        """Translate design content to the session language before the approval gate.
 
-        For make_design calls in Dutch sessions, translates the English content
+        For make_design calls in non-English sessions, translates the English content
         and adds translated_content/translated_path to tool_call.arguments.
-        The approval card shows the Dutch version; the MCP tool writes both files.
+        The approval card shows the translated version; the MCP tool writes both files.
+
+        On translation failure, switches the session to English and notifies the user.
         """
         if tool_call.tool_name != "make_design":
             return
@@ -747,7 +749,7 @@ class ToolExecutor:
         session_repo = SessionRepository(self.db)
         session = session_repo.get_by_id(tool_call.session_id)
 
-        if not session or not session.language or session.language != "nl":
+        if not session or not session.language or session.language == "en":
             return
 
         args = tool_call.arguments or {}
@@ -764,7 +766,7 @@ class ToolExecutor:
             from druppie.core.translation import get_translation_service
             translator = get_translation_service()
             translated_content = await self._translate_long_content(
-                translator, content, "nl"
+                translator, content, session.language
             )
             if translated_content and translated_content != content:
                 enriched_args = dict(args)
@@ -782,7 +784,10 @@ class ToolExecutor:
                     translated_path=translated_path,
                 )
         except TranslationNotAvailableError:
-            logger.warning("translation_skipped_no_api_key", tool_call_id=str(tool_call.id))
+            self._notify_translation_unavailable(
+                tool_call.session_id, session_repo,
+                reason="De vertalingsservice is niet geconfigureerd (DEEPINFRA_API_KEY ontbreekt).",
+            )
         except Exception as e:
             logger.warning(
                 "design_translation_failed",
@@ -790,11 +795,40 @@ class ToolExecutor:
                 path=path,
                 error=str(e),
             )
+            self._notify_translation_unavailable(
+                tool_call.session_id, session_repo,
+                reason=f"Er is een fout opgetreden bij het vertalen: {str(e)[:150]}",
+            )
+
+    def _notify_translation_unavailable(
+        self, session_id, session_repo, *, reason: str
+    ) -> None:
+        """Switch session to English and inject a user-facing message."""
+        session_repo.update_language(session_id, "en")
+
+        message = (
+            f"⚠️ **Vertaling niet beschikbaar** — {reason}\n\n"
+            "De sessie gaat verder in het Engels. Alle documenten worden in het Engels opgesteld.\n\n"
+            "---\n\n"
+            f"⚠️ **Translation unavailable** — The translation service encountered an error. "
+            "This session will continue in English."
+        )
+
+        seq = self.execution_repo.get_next_sequence_number(session_id)
+        self.execution_repo.create_message(
+            session_id=session_id,
+            role="system",
+            content=message,
+            sequence_number=seq,
+        )
+        self.db.flush()
+        logger.info("translation_fallback_to_english", session_id=str(session_id))
 
     async def _translate_long_content(
         self, translator, content: str, target_language: str
     ) -> str:
         """Translate long markdown by splitting on heading boundaries."""
+        import asyncio
         import re
 
         if len(content) < 3000:
@@ -814,15 +848,43 @@ class ToolExecutor:
         if current:
             chunks.append(current)
 
-        import asyncio
+        untranslated_count = 0
 
         async def _translate_chunk(chunk):
-            if chunk.strip():
-                return await translator.translate_from_english(chunk, target_language)
-            return chunk
+            nonlocal untranslated_count
+            if not chunk.strip():
+                return chunk
+
+            heading_prefix = ""
+            heading_match = re.match(r"^(#{1,3}\s+)", chunk)
+            if heading_match:
+                heading_prefix = heading_match.group(1)
+
+            try:
+                result = await translator.translate_from_english(chunk, target_language)
+                if heading_prefix and not re.match(r"^#{1,3}\s+", result):
+                    result = heading_prefix + result
+                return result
+            except TranslationError as e:
+                untranslated_count += 1
+                logger.warning(
+                    "translation_chunk_failed",
+                    error=str(e)[:200],
+                    chunk_length=len(chunk),
+                )
+                return f"\n\n> **[NIET VERTAALD / NOT TRANSLATED]**\n\n{chunk}"
 
         translated = await asyncio.gather(*[_translate_chunk(c) for c in chunks])
-        return "".join(translated)
+        result = "".join(translated)
+
+        if untranslated_count:
+            logger.warning(
+                "translation_partially_failed",
+                untranslated_chunks=untranslated_count,
+                total_chunks=len(chunks),
+            )
+
+        return result
 
     async def _create_approval_and_wait(self, tool_call, required_role: str | None) -> str:
         """Create an Approval record and set tool call to waiting.
@@ -927,9 +989,17 @@ class ToolExecutor:
                     target_language=session.language,
                 )
         except TranslationNotAvailableError:
-            logger.warning("translation_skipped_no_api_key", tool_call_id=str(tool_call.id))
+            self._notify_translation_unavailable(
+                tool_call.session_id, session_repo,
+                reason="De vertalingsservice is niet geconfigureerd (DEEPINFRA_API_KEY ontbreekt).",
+            )
         except Exception as e:
             logger.warning("hitl_question_translation_failed", error=str(e))
+            if session and session.language and session.language != "en":
+                self._notify_translation_unavailable(
+                    tool_call.session_id, session_repo,
+                    reason=f"Er is een fout opgetreden bij het vertalen: {str(e)[:150]}",
+                )
 
         choices = [{"text": c} for c in raw_choices] if raw_choices else None
 
