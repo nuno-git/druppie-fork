@@ -1887,6 +1887,207 @@ async def push_changes(
         return {"success": False, "error": str(e)}
 
 
+async def _copy_to_container(
+    container_id: str, src_path: str, dst_path: str
+) -> None:
+    """Copy a file from the host into a container (reverse of _copy_from_container)."""
+    with open(src_path, "rb") as f:
+        data = f.read()
+    proc = await asyncio.create_subprocess_exec(
+        "docker", "exec", "-i", container_id, "sh", "-c", f"cat > {dst_path}",
+        stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    _, stderr = await asyncio.wait_for(proc.communicate(data), timeout=120)
+    if proc.returncode != 0:
+        raise RuntimeError(f"docker exec cat > failed: {stderr.decode().strip()}")
+
+
+@mcp.tool(meta={"module_id": MODULE_ID, "version": MODULE_VERSION})
+async def git_fetch(
+    session_id: str | None = None,
+    workspace_id: str | None = None,
+    project_id: str | None = None,
+    user_id: str | None = None,
+    repo_name: str | None = None,
+    repo_owner: str | None = None,
+    git_scope: str | None = None,
+    sandbox_networks: list[str] | None = None,
+) -> dict:
+    """Fetch all branches from Gitea into the sandbox via git bundle.
+
+    The sandbox has no git credentials. This tool fetches on the host
+    (with credentials), creates a bundle, and imports it into the sandbox.
+    After fetching, use bash(git checkout <branch>) to switch branches.
+    """
+    try:
+        session_id = _sanitize_param(session_id)
+        repo_name = _sanitize_param(repo_name)
+        repo_owner = _sanitize_param(repo_owner)
+        git_scope = _sanitize_param(git_scope)
+
+        if not session_id:
+            return {"success": False, "error": "session_id is required"}
+
+        scope = git_scope or "current_project"
+        key = f"{session_id}::{scope}"
+
+        if key not in sandbox_containers:
+            return {"success": False, "error": "No sandbox container found for this session"}
+
+        entry = sandbox_containers[key]
+        container = entry["container_name"]
+        resolved_repo_name = entry.get("repo_name") or repo_name
+        resolved_repo_owner = entry.get("repo_owner") or repo_owner or GITEA_ORG
+
+        if not resolved_repo_name:
+            return {"success": False, "error": "repo_name is required for git_fetch"}
+
+        fetch_url = _inject_gitea_token(resolved_repo_owner, resolved_repo_name)
+
+        tmpdir = tempfile.mkdtemp(prefix="druppie-git-fetch-")
+        try:
+            bare_repo = os.path.join(tmpdir, "bare")
+            rc, _, stderr = await _docker_run(
+                ["git", "init", "--bare", bare_repo], timeout=30,
+            )
+            if rc != 0:
+                return {"success": False, "error": f"git init --bare failed: {stderr}"}
+
+            rc, _, stderr = await _docker_run(
+                ["git", "-C", bare_repo, "fetch", fetch_url, "+refs/heads/*:refs/heads/*"],
+                timeout=120,
+            )
+            if rc != 0:
+                return {"success": False, "error": f"git fetch from Gitea failed: {stderr}"}
+
+            bundle_name = f"fetch-{uuid.uuid4().hex[:8]}.bundle"
+            bundle_host_path = os.path.join(tmpdir, bundle_name)
+            bundle_container_path = f"/tmp/{bundle_name}"
+
+            rc, _, stderr = await _docker_run(
+                ["git", "-C", bare_repo, "bundle", "create", bundle_host_path, "--all"],
+                timeout=60,
+            )
+            if rc != 0:
+                return {"success": False, "error": f"git bundle create failed: {stderr}"}
+
+            await _copy_to_container(container, bundle_host_path, bundle_container_path)
+
+            rc, _, stderr = await _exec_in_container(
+                container,
+                ["git", "fetch", bundle_container_path, "+refs/heads/*:refs/remotes/origin/*"],
+                timeout=60,
+            )
+            if rc != 0:
+                return {"success": False, "error": f"git fetch from bundle in sandbox failed: {stderr}"}
+
+            rc, branches_out, _ = await _exec_in_container(
+                container, ["git", "branch", "-r"], timeout=10,
+            )
+
+            await _exec_in_container(
+                container, ["rm", "-f", bundle_container_path], timeout=10,
+            )
+
+            logger.info("git_fetch success for %s/%s", resolved_repo_owner, resolved_repo_name)
+            return {
+                "success": True,
+                "message": "All branches fetched. Use bash(git checkout <branch>) to switch.",
+                "branches": branches_out.strip(),
+            }
+
+        finally:
+            shutil.rmtree(tmpdir, ignore_errors=True)
+
+    except Exception as e:
+        logger.error("Error in git_fetch: %s", e)
+        return {"success": False, "error": str(e)}
+
+
+@mcp.tool(meta={"module_id": MODULE_ID, "version": MODULE_VERSION})
+async def git_pull(
+    session_id: str | None = None,
+    workspace_id: str | None = None,
+    project_id: str | None = None,
+    user_id: str | None = None,
+    repo_name: str | None = None,
+    repo_owner: str | None = None,
+    git_scope: str | None = None,
+    sandbox_networks: list[str] | None = None,
+) -> dict:
+    """Pull (fetch + merge) from Gitea into the sandbox current branch.
+
+    Fetches all branches via git bundle, then merges the remote version
+    of the current branch into the working tree. Use this when push_changes
+    fails with 'non-fast-forward' or 'rejected'.
+    """
+    try:
+        session_id = _sanitize_param(session_id)
+        repo_name = _sanitize_param(repo_name)
+        repo_owner = _sanitize_param(repo_owner)
+        git_scope = _sanitize_param(git_scope)
+
+        if not session_id:
+            return {"success": False, "error": "session_id is required"}
+
+        scope = git_scope or "current_project"
+        key = f"{session_id}::{scope}"
+
+        if key not in sandbox_containers:
+            return {"success": False, "error": "No sandbox container found for this session"}
+
+        entry = sandbox_containers[key]
+        container = entry["container_name"]
+        resolved_repo_name = entry.get("repo_name") or repo_name
+        resolved_repo_owner = entry.get("repo_owner") or repo_owner or GITEA_ORG
+
+        if not resolved_repo_name:
+            return {"success": False, "error": "repo_name is required for git_pull"}
+
+        rc, branch_out, _ = await _exec_in_container(
+            container, ["git", "branch", "--show-current"], timeout=10,
+        )
+        current_branch = branch_out.strip() if rc == 0 else "main"
+
+        fetch_result = await git_fetch(
+            session_id=session_id,
+            workspace_id=workspace_id,
+            project_id=project_id,
+            user_id=user_id,
+            repo_name=repo_name,
+            repo_owner=repo_owner,
+            git_scope=git_scope,
+            sandbox_networks=sandbox_networks,
+        )
+        if not fetch_result.get("success"):
+            return fetch_result
+
+        rc, merge_out, merge_err = await _exec_in_container(
+            container, ["git", "merge", f"origin/{current_branch}", "--no-edit"], timeout=60,
+        )
+        if rc != 0:
+            return {
+                "success": False,
+                "error": f"git merge failed: {merge_err}",
+                "hint": "Fetch succeeded but merge had conflicts. Use bash to resolve conflicts, then commit.",
+                "branch": current_branch,
+            }
+
+        logger.info("git_pull success, merged origin/%s", current_branch)
+        return {
+            "success": True,
+            "message": f"Pulled and merged origin/{current_branch}",
+            "branch": current_branch,
+            "merge_output": merge_out.strip(),
+        }
+
+    except Exception as e:
+        logger.error("Error in git_pull: %s", e)
+        return {"success": False, "error": str(e)}
+
+
 @mcp.tool(meta={"module_id": MODULE_ID, "version": MODULE_VERSION})
 async def create_pr(
     pr_title: str,

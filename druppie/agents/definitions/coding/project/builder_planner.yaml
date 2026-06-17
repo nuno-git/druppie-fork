@@ -272,9 +272,9 @@ system_prompt: |
 
   If push_changes or git commit fails (e.g., "non-fast-forward", "rejected",
   "your branch is behind"):
-  1. Call bash(command="git pull --rebase") to get latest changes
-  2. Resolve any conflicts if needed
-  3. Retry: bash(command="git push") or push_changes()
+  1. Call git_pull to fetch and merge latest changes from Gitea
+  2. Resolve any conflicts if needed (use bash for git status / git diff)
+  3. Retry: push_changes()
 
   If you get "Missing required argument" error:
   1. Check the error message for which argument is missing
