@@ -65,7 +65,7 @@ max_iterations: 50
 mcps:
   coding:
     networks: [internet]
-    tools: [read_file, write_file, edit_file, bash, grep, find, ls, run_tests, push_changes, create_pr, get_git_status]
+    tools: [read_file, write_file, edit_file, bash, grep, find, ls, run_tests, push_changes, git_fetch, git_pull, create_pr, get_git_status]
     git: update_core
   web:
     - search_web

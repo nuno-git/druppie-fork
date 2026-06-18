@@ -141,7 +141,7 @@ system_prompts:
 mcps:
   coding:
     networks: [internet]
-    tools: [read_file, write_file, edit_file, bash, grep, find, ls, list_dir, delete_file, batch_write_files, get_partial_output, run_tests, get_test_framework, get_coverage_report, install_test_dependencies, get_git_status, push_changes, create_pr]
+    tools: [read_file, write_file, edit_file, bash, grep, find, ls, list_dir, delete_file, batch_write_files, get_partial_output, run_tests, get_test_framework, get_coverage_report, install_test_dependencies, get_git_status, push_changes, git_fetch, git_pull, create_pr]
     git: current_project
   web:
     - search_web

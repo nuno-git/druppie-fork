@@ -1030,7 +1030,7 @@ system_prompts:
 
 mcps:
   coding:
-    tools: [read_file, make_design, bash, push_changes]
+    tools: [read_file, make_design, bash, push_changes, git_fetch, git_pull]
     git: current_project
   registry:
     - list_modules

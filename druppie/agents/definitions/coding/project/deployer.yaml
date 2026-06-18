@@ -242,7 +242,7 @@ mcps:
     - logs
     - inspect
   coding:
-    tools: [read_file, bash, get_git_status, push_changes, create_pr]
+    tools: [read_file, bash, get_git_status, push_changes, git_fetch, git_pull, create_pr]
     git: current_project
 
 # Deployment requires explicit developer approval via the tool approval mechanism.

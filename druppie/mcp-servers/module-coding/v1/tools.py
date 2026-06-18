@@ -2022,6 +2022,11 @@ async def git_pull(
     Fetches all branches via git bundle, then merges the remote version
     of the current branch into the working tree. Use this when push_changes
     fails with 'non-fast-forward' or 'rejected'.
+
+    IMPORTANT: If you have uncommitted changes, use bash to stash them first:
+      bash(command="git stash")
+    Then call git_pull, then restore your changes:
+      bash(command="git stash pop")
     """
     try:
         session_id = _sanitize_param(session_id)

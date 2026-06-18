@@ -995,7 +995,7 @@ system_prompts:
 
 mcps:
   coding:
-    tools: [read_file, write_file, edit_file, bash, grep, find, ls, make_design, push_changes]
+    tools: [read_file, write_file, edit_file, bash, grep, find, ls, make_design, push_changes, git_fetch, git_pull]
     git: current_project
   registry:
     - list_modules
