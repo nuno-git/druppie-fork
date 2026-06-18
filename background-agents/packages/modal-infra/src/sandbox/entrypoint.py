@@ -529,6 +529,20 @@ exit 1
                     "options": {
                         "baseURL": f"{llm_proxy}/sandbox",
                         "apiKey": "proxy-managed",
+                        # Disable OpenCode's absolute per-request timeout
+                        # (default 5 min). The LLM proxy runs its own
+                        # 24h wall-clock retry budget with SSE keepalives
+                        # every 15s, so a slow upstream should never cause
+                        # OpenCode to abort the request from the client side.
+                        # See opencode.ai/docs/config#models.
+                        "timeout": False,
+                        # Between-chunk timeout: abort if NO bytes arrive
+                        # for this long. The proxy emits SSE keepalive
+                        # comments every 15s during retry back-offs, so
+                        # anything >15s works. 5 min is generous slack for
+                        # a momentarily stalled proxy (GC pause, I/O hitch)
+                        # while still eventually catching a fully dead one.
+                        "chunkTimeout": 300_000,
                     },
                     "models": models_dict,
                 }
