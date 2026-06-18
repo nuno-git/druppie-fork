@@ -625,7 +625,6 @@ class Orchestrator:
                 agent_id=agent_id,
                 error=error_msg[:500],
             )
-            await _cleanup_sandbox(str(session_id))
             raise
 
         # Check if paused

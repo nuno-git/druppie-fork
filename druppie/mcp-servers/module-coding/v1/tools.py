@@ -646,9 +646,31 @@ async def _resolve_container(
             )
             del sandbox_containers[key]
 
-        return await _create_sandbox_container(
-            session_id, scope, repo_name, repo_owner, agent_networks=agent_networks
-        )
+        for attempt in range(2):
+            try:
+                return await _create_sandbox_container(
+                    session_id, scope, repo_name, repo_owner, agent_networks=agent_networks
+                )
+            except Exception as e:
+                if attempt == 0:
+                    logger.warning("Sandbox creation failed (attempt 1), retrying: %s", e)
+                    await asyncio.sleep(2)
+                else:
+                    raise
+
+
+async def _resolve_sandbox_or_fail(
+    session_id: str, git_scope: str | None, repo_name: str | None,
+    repo_owner: str | None, sandbox_networks: list[str] | None = None,
+) -> dict:
+    """Resolve or recreate sandbox. Returns entry dict with container metadata."""
+    container = await _resolve_container(
+        session_id, git_scope, repo_name, repo_owner, agent_networks=sandbox_networks,
+    )
+    key = f"{session_id}::{git_scope or 'current_project'}"
+    entry = sandbox_containers.get(key, {})
+    entry["container_name"] = container
+    return entry
 
 
 @asynccontextmanager
@@ -1692,16 +1714,9 @@ async def push_changes(
         if not session_id:
             return {"success": False, "error": "session_id is required"}
 
-        scope = git_scope or "current_project"
-        key = f"{session_id}::{scope}"
-
-        if key not in sandbox_containers:
-            return {
-                "success": False,
-                "error": "No sandbox container found for this session",
-            }
-
-        entry = sandbox_containers[key]
+        entry = await _resolve_sandbox_or_fail(
+            session_id, git_scope, repo_name, repo_owner, sandbox_networks,
+        )
         container = entry["container_name"]
         branch = entry.get("branch", "main")
         resolved_repo_name = entry.get("repo_name") or repo_name
@@ -1932,13 +1947,9 @@ async def git_fetch(
         if not session_id:
             return {"success": False, "error": "session_id is required"}
 
-        scope = git_scope or "current_project"
-        key = f"{session_id}::{scope}"
-
-        if key not in sandbox_containers:
-            return {"success": False, "error": "No sandbox container found for this session"}
-
-        entry = sandbox_containers[key]
+        entry = await _resolve_sandbox_or_fail(
+            session_id, git_scope, repo_name, repo_owner, sandbox_networks,
+        )
         container = entry["container_name"]
         resolved_repo_name = entry.get("repo_name") or repo_name
         resolved_repo_owner = entry.get("repo_owner") or repo_owner or GITEA_ORG
@@ -2039,13 +2050,9 @@ async def git_pull(
         if not session_id:
             return {"success": False, "error": "session_id is required"}
 
-        scope = git_scope or "current_project"
-        key = f"{session_id}::{scope}"
-
-        if key not in sandbox_containers:
-            return {"success": False, "error": "No sandbox container found for this session"}
-
-        entry = sandbox_containers[key]
+        entry = await _resolve_sandbox_or_fail(
+            session_id, git_scope, repo_name, repo_owner, sandbox_networks,
+        )
         container = entry["container_name"]
         resolved_repo_name = entry.get("repo_name") or repo_name
         resolved_repo_owner = entry.get("repo_owner") or repo_owner or GITEA_ORG
@@ -2136,16 +2143,9 @@ async def create_pr(
         if not session_id:
             return {"success": False, "error": "session_id is required"}
 
-        scope = git_scope or "current_project"
-        key = f"{session_id}::{scope}"
-
-        if key not in sandbox_containers:
-            return {
-                "success": False,
-                "error": "No sandbox container found for this session",
-            }
-
-        entry = sandbox_containers[key]
+        entry = await _resolve_sandbox_or_fail(
+            session_id, git_scope, repo_name, repo_owner, sandbox_networks,
+        )
         container = entry["container_name"]
         branch = entry.get("branch", "main")
         resolved_repo_name = entry.get("repo_name") or repo_name
@@ -3143,13 +3143,9 @@ async def _internal_revert_to_commit(
                 "Expected a hex SHA (7-40 chars), optionally with ~N suffix.",
             }
 
-        scope = git_scope or "current_project"
-        key = f"{session_id}::{scope}"
-
-        if key not in sandbox_containers:
-            return {"success": False, "error": "No sandbox container found"}
-
-        entry = sandbox_containers[key]
+        entry = await _resolve_sandbox_or_fail(
+            session_id, git_scope, None, None, None,
+        )
         container = entry["container_name"]
         branch = entry.get("branch", "main")
 
