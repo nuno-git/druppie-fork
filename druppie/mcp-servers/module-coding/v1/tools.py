@@ -447,7 +447,6 @@ async def _create_sandbox_container(
             "--tmpfs", "/tmp:size=4g",
             "-w", "/workspace",
             "--runtime", SANDBOX_RUNTIME,
-            "--storage-opt", "size=20G",
             "-v", f"{SANDBOX_CACHE_VOLUME}:/cache",
             "-e", "UV_CACHE_DIR=/cache/uv",
             "-e", "PIP_CACHE_DIR=/cache/pip",
@@ -813,6 +812,8 @@ async def _cleanup_orphan_containers() -> int:
             continue
         parts = line.strip().split("\t")
         name = parts[0]
+        if name.startswith("k8s_"):
+            continue
         compose_project = parts[1] if len(parts) > 1 else ""
         if compose_project:
             continue
