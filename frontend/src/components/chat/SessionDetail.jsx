@@ -937,13 +937,10 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
       if (status === 'completed' || status === 'failed') return false
       // Fast poll briefly after submitting an answer/approval (translation in progress)
       if (isResuming()) return 500
-      if (status === 'paused_crashed') return 2000
-      if (status === 'paused_sandbox') return 2000
+      if (status === 'paused_crashed') return 1000
+      if (status === 'paused_sandbox') return 1000
       if (status === 'paused' || status === 'paused_approval' || status === 'paused_hitl') {
-        const hasRunning = query.state.data?.timeline?.some(
-          e => e.type === 'agent_run' && e.agent_run?.status === 'running'
-        )
-        return hasRunning ? 500 : 2000
+        return 500
       }
       return 500
     },
