@@ -67,7 +67,16 @@ class TranslationService:
 
         lang_name = _language_name(source_language)
         try:
-            return await self._translate(text, lang_name, "English")
+            result = await self._translate(text, lang_name, "English")
+            if len(result) > len(text) * 3 + 50:
+                logger.warning(
+                    "translation_hallucination_detected",
+                    input_len=len(text),
+                    output_len=len(result),
+                    input_preview=text[:60],
+                )
+                return text
+            return result
         except TranslationError:
             logger.warning("translate_to_english_fallback", source_language=source_language)
             return text
