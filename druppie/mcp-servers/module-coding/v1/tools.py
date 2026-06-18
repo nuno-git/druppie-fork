@@ -1806,6 +1806,7 @@ async def push_changes(
         branch = entry.get("branch", "main")
         resolved_repo_name = entry.get("repo_name") or repo_name
         resolved_repo_owner = entry.get("repo_owner") or repo_owner or GITEA_ORG
+        scope = git_scope or "current_project"
 
         if not resolved_repo_name:
             return {"success": False, "error": "repo_name is required for push_changes"}
