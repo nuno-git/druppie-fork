@@ -377,11 +377,11 @@ const TimelineQuestion = ({ tc, agentId, sessionId, attachments = [], onAttachme
       {isAnswered && displayAnswer && (
         <div className="flex justify-end">
           <div className="max-w-[85%] rounded-2xl px-4 py-2.5 text-sm bg-gray-100 text-gray-900">
-            {!(tc.attachments?.length > 0 && displayAnswer.startsWith('See uploaded files:')) && (
+            {!(tc.attachments?.length > 0 && (displayAnswer.startsWith('See uploaded files:') || displayAnswer.startsWith('Zie geüploade bestanden:'))) && (
               <div className="whitespace-pre-wrap">{displayAnswer}</div>
             )}
             {tc.attachments?.length > 0 && (
-              <div className={`flex flex-wrap gap-1.5${displayAnswer && !displayAnswer.startsWith('See uploaded files:') ? ' mt-2' : ''}`}>
+              <div className={`flex flex-wrap gap-1.5${displayAnswer && !displayAnswer.startsWith('See uploaded files:') && !displayAnswer.startsWith('Zie geüploade bestanden:') ? ' mt-2' : ''}`}>
                 {tc.attachments.map((att) => {
                   const Icon = att.content_type === 'application/pdf' ? FileType : FileText
                   return (
@@ -485,7 +485,7 @@ const MessageItem = ({ message, agentRun, sessionId }) => {
   if (isUser) {
     const atts = message.attachments || []
     const attNames = atts.map((a) => a.original_filename).join(', ')
-    const isAttachmentOnly = atts.length > 0 && (message.content === 'See attached' || message.content === attNames)
+    const isAttachmentOnly = atts.length > 0 && (message.content === 'See attached' || message.content === 'Zie bijlage' || message.content === attNames)
     return (
       <div className="group flex justify-end gap-2">
         <span className="text-xs text-gray-300 self-end pb-1">
@@ -988,7 +988,7 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
     if (pendingQuestion) {
       const fileNames = attachments.map((a) => a.original_filename).join(', ')
       const answer = trimmed
-        || (attachments.length ? `See uploaded files: ${fileNames}` : '')
+        || (attachments.length ? `Zie geüploade bestanden: ${fileNames}` : '')
       if (!answer) return
       setPendingMessage(trimmed || true)
       setIsAnswering(true)
@@ -1012,7 +1012,7 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
     setUploadError(null)
     const fallback = attachments.length
       ? attachments.map((a) => a.original_filename).join(', ')
-      : 'See attached'
+      : 'Zie bijlage'
     const message = trimmed || fallback
     setPendingMessage(trimmed || true)
     pendingSetAtLength.current = data?.timeline?.length || 0

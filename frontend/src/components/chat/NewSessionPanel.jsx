@@ -55,7 +55,7 @@ const NewSessionPanel = ({ onSessionCreated }) => {
     setUploadError(null)
     const fallback = attachments.length
       ? attachments.map((a) => a.original_filename).join(', ')
-      : 'See attached'
+      : 'Zie bijlage'
     const message = trimmed || fallback
     pendingMessageRef.current = message
     pendingAttachmentsRef.current = attachments.map((a) => ({ id: a.id, original_filename: a.original_filename, content_type: a.content_type }))
@@ -64,7 +64,7 @@ const NewSessionPanel = ({ onSessionCreated }) => {
 
   if (mutation.isPending) {
     const atts = pendingAttachmentsRef.current
-    const isAttachmentOnly = atts.length > 0 && (pendingMessageRef.current === atts.map((a) => a.original_filename).join(', ') || pendingMessageRef.current === 'See attached')
+    const isAttachmentOnly = atts.length > 0 && (pendingMessageRef.current === atts.map((a) => a.original_filename).join(', ') || pendingMessageRef.current === 'Zie bijlage')
     return (
       <div className="flex flex-col h-full">
         <div className="flex-1 overflow-y-auto">
