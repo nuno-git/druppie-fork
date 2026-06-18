@@ -479,6 +479,11 @@ class AgentLoop:
         emitter: EventEmitter,
         config: LoopConfig,
     ) -> dict:
+        # Defense-in-depth: never send reasoning/thinking to the LLM (observability-only)
+        for _m in messages:
+            _m.pop("reasoning_content", None)
+            _m.pop("thinking", None)
+
         last_error: Exception | None = None
         for attempt in range(config.max_retries + 1):
             try:
