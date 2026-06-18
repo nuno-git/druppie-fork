@@ -260,7 +260,7 @@ skills:
 llm_profile: standard
 temperature: 0.1
 max_tokens: 16384
-max_iterations: 100
+max_iterations: 10000
 
 compression:
   summarization_threshold: 0.65

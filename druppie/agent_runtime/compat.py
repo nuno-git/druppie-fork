@@ -716,6 +716,7 @@ class SubagentsMCPConnection:
                             "status": result.status,
                             "summary": (result.done_result or {}).get("summary", ""),
                             "variables": (result.done_result or {}).get("variables", {}),
+                            "completion_meta": (result.done_result or {}).get("completion_meta", {}),
                         }
                     else:
                         entry["result"] = str(result)

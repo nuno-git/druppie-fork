@@ -395,9 +395,8 @@ class AgentLoop:
                 return done_info
 
         auto_summary = self._last_assistant_content(messages) or ""
-        summary = f"[AUTO-DONE: Max turns reached ({turn})] {auto_summary}" if auto_summary else f"[AUTO-DONE: Max turns reached ({turn})]"
         done_result = {
-            "summary": auto_summary,
+            "summary": f"[MAX TURNS REACHED ({turn})] {auto_summary}" if auto_summary else f"[MAX TURNS REACHED ({turn})]",
             "variables": {},
             "completion_meta": {
                 "reason": "max_turns_reached",

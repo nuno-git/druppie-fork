@@ -60,7 +60,7 @@ system_prompts:
   - bash_timeout
 
 max_tokens: 8192
-max_iterations: 50
+max_iterations: 10000
 
 mcps:
   coding:
