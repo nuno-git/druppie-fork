@@ -957,6 +957,8 @@ class ToolExecutor:
         is_translated = False
 
         # Translate question and choices to the user's language
+        session_repo = None
+        session = None
         try:
             from druppie.repositories import SessionRepository
             from druppie.core.translation import get_translation_service
@@ -989,13 +991,14 @@ class ToolExecutor:
                     target_language=session.language,
                 )
         except TranslationNotAvailableError:
-            self._notify_translation_unavailable(
-                tool_call.session_id, session_repo,
-                reason="De vertalingsservice is niet geconfigureerd (DEEPINFRA_API_KEY ontbreekt).",
-            )
+            if session_repo:
+                self._notify_translation_unavailable(
+                    tool_call.session_id, session_repo,
+                    reason="De vertalingsservice is niet geconfigureerd (DEEPINFRA_API_KEY ontbreekt).",
+                )
         except Exception as e:
             logger.warning("hitl_question_translation_failed", error=str(e))
-            if session and session.language and session.language != "en":
+            if session and session_repo and session.language and session.language != "en":
                 self._notify_translation_unavailable(
                     tool_call.session_id, session_repo,
                     reason=f"Er is een fout opgetreden bij het vertalen: {str(e)[:150]}",
