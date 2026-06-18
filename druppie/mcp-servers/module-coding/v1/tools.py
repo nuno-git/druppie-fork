@@ -590,9 +590,13 @@ async def _create_sandbox_container(
                 raise RuntimeError(f"Tar pipe into sandbox failed: {err}")
             await _docker_run(["rm", "-rf", tmp_dir], timeout=5)
         else:
-            logger.warning("Core proxy clone failed (%s), initializing empty repo", err[:200])
-            await _docker_run(["rm", "-rf", tmp_dir], timeout=5)
-            await _exec_in_container(container_id, ["git", "init", "/workspace"])
+            logger.error("update_core clone failed: %s", err[:500])
+            raise RuntimeError(
+                f"Failed to clone Druppie core repo ({core_url}). "
+                f"If the repo is private, configure GITHUB_APP_ID, "
+                f"GITHUB_APP_PRIVATE_KEY_PATH, and GITHUB_APP_INSTALLATION_ID in .env. "
+                f"Clone error: {err[:200]}"
+            )
         branch = DRUPPIE_CORE_REPO_BRANCH
 
     else:
