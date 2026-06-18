@@ -66,6 +66,7 @@ DRUPPIE_CORE_REPO_BRANCH = os.getenv("DRUPPIE_CORE_REPO_BRANCH", "colab-dev")
 GITHUB_APP_ID = os.environ.get("GITHUB_APP_ID", "")
 GITHUB_APP_PRIVATE_KEY_PATH = os.environ.get("GITHUB_APP_PRIVATE_KEY_PATH", "")
 GITHUB_APP_INSTALLATION_ID = os.environ.get("GITHUB_APP_INSTALLATION_ID", "")
+GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "")
 GITHUB_REPO_OWNER = os.getenv("GITHUB_REPO_OWNER", "")
 GITHUB_REPO_NAME = os.getenv("GITHUB_REPO_NAME", "")
 
@@ -566,7 +567,7 @@ async def _create_sandbox_container(
             )
 
     elif scope == "update_core":
-        core_url = DRUPPIE_CORE_REPO_URL or "https://github.com/nuno120/druppie.git"
+        core_url = DRUPPIE_CORE_REPO_URL or "https://github.com/nuno-git/druppie-fork.git"
         token = _get_github_token()
         if token and core_url.startswith("https://github.com"):
             auth_url = core_url.replace("https://", f"https://x-access-token:{token}@")
