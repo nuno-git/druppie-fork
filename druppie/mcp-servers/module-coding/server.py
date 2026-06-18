@@ -137,12 +137,17 @@ _base_lifespan = app.router.lifespan_context
 
 @asynccontextmanager
 async def _extended_lifespan(app_ref):
-    from v1.tools import _cleanup_orphan_containers
+    from v1.tools import _cleanup_orphan_containers, _check_github_app_config
     try:
         cleaned = await _cleanup_orphan_containers()
         _logger.info("Startup: cleaned %d orphan sandbox containers", cleaned)
     except Exception as exc:
         _logger.warning("Startup orphan cleanup failed: %s", exc)
+
+    try:
+        _check_github_app_config()
+    except Exception as exc:
+        _logger.warning("GitHub App config check failed: %s", exc)
 
     watchdog_task = asyncio.create_task(_sandbox_watchdog())
     _logger.info("Sandbox watchdog started (interval=%ds, max_idle=%ds)", WATCHDOG_INTERVAL, CONTAINER_MAX_IDLE)

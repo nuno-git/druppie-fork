@@ -85,30 +85,73 @@ def _generate_github_app_jwt() -> str:
     return jwt.encode(payload, private_key, algorithm="RS256")
 
 
+def _check_github_app_config() -> None:
+    """Log clear warnings about GitHub App configuration at startup."""
+    missing = []
+    if not GITHUB_APP_ID:
+        missing.append("GITHUB_APP_ID")
+    if not GITHUB_APP_PRIVATE_KEY_PATH:
+        missing.append("GITHUB_APP_PRIVATE_KEY_PATH")
+    if not GITHUB_APP_INSTALLATION_ID:
+        missing.append("GITHUB_APP_INSTALLATION_ID")
+
+    if missing:
+        logger.warning(
+            "GitHub App not configured (missing: %s). "
+            "update_core clone will use unauthenticated public URL. "
+            "push_changes, create_pr, git_fetch, and git_pull will NOT work "
+            "for update_core scope until these are set in .env",
+            ", ".join(missing),
+        )
+        return
+
+    if not os.path.isfile(GITHUB_APP_PRIVATE_KEY_PATH):
+        logger.error(
+            "GitHub App private key not found at %s. "
+            "update_core push/pull will fail. "
+            "Check GITHUB_APP_PRIVATE_KEY_PATH in .env",
+            GITHUB_APP_PRIVATE_KEY_PATH,
+        )
+        return
+
+    logger.info(
+        "GitHub App configured: app_id=%s, installation=%s, key=%s",
+        GITHUB_APP_ID, GITHUB_APP_INSTALLATION_ID, GITHUB_APP_PRIVATE_KEY_PATH,
+    )
+
+
 def _get_github_token() -> str | None:
     global _github_installation_token, _github_token_expires_at
     if not GITHUB_APP_ID or not GITHUB_APP_PRIVATE_KEY_PATH or not GITHUB_APP_INSTALLATION_ID:
+        logger.warning("GitHub App credentials not configured — update_core git operations unavailable")
         return None
     if _github_installation_token and time.time() < _github_token_expires_at - 60:
         return _github_installation_token
     import httpx
     from datetime import datetime
-    app_jwt = _generate_github_app_jwt()
-    resp = httpx.post(
-        f"https://api.github.com/app/installations/{GITHUB_APP_INSTALLATION_ID}/access_tokens",
-        headers={
-            "Authorization": f"Bearer {app_jwt}",
-            "Accept": "application/vnd.github+json",
-            "X-GitHub-Api-Version": "2022-11-28",
-        },
-    )
-    resp.raise_for_status()
-    data = resp.json()
-    _github_installation_token = data["token"]
-    _github_token_expires_at = datetime.fromisoformat(
-        data["expires_at"].replace("Z", "+00:00")
-    ).timestamp()
-    return _github_installation_token
+    try:
+        app_jwt = _generate_github_app_jwt()
+        resp = httpx.post(
+            f"https://api.github.com/app/installations/{GITHUB_APP_INSTALLATION_ID}/access_tokens",
+            headers={
+                "Authorization": f"Bearer {app_jwt}",
+                "Accept": "application/vnd.github+json",
+                "X-GitHub-Api-Version": "2022-11-28",
+            },
+            timeout=15,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        _github_installation_token = data["token"]
+        _github_token_expires_at = datetime.fromisoformat(
+            data["expires_at"].replace("Z", "+00:00")
+        ).timestamp()
+        return _github_installation_token
+    except FileNotFoundError:
+        logger.error("GitHub App private key not found at %s", GITHUB_APP_PRIVATE_KEY_PATH)
+    except Exception as e:
+        logger.error("GitHub App token request failed (invalid key, expired, or wrong installation ID?): %s", e)
+    return None
 
 
 def _get_github_push_url() -> str:
@@ -239,10 +282,21 @@ async def _exec_bash_in_container(
 ) -> tuple[int, str, str]:
     if output_file:
         wrapped = f"set -o pipefail; ({command}) 2>&1 | tee {shlex.quote(output_file)}"
-        full_cmd = ["docker", "exec", container_id, "bash", "-c", wrapped]
     else:
-        full_cmd = ["docker", "exec", container_id, "bash", "-c", command]
-    return await _docker_run(full_cmd, timeout=timeout)
+        wrapped = command
+
+    for attempt in range(3):
+        full_cmd = ["docker", "exec", container_id, "bash", "-c", wrapped]
+        rc, stdout, stderr = await _docker_run(full_cmd, timeout=timeout)
+        if rc != 128 or "setns" not in (stderr or ""):
+            return rc, stdout, stderr
+        logger.warning(
+            "docker exec setns failure (attempt %d/3), retrying in 2s: %s",
+            attempt + 1, (stderr or "")[:200],
+        )
+        await asyncio.sleep(2)
+
+    return rc, stdout, stderr
 
 
 async def _write_to_container(
@@ -643,13 +697,20 @@ async def _resolve_container(
             entry = sandbox_containers[key]
             container_id = entry.get("container_id", entry["container_name"])
             if await _is_container_running(container_id):
-                return entry["container_name"]
-            reason = await _get_container_death_reason(container_id)
-            logger.warning(
-                "Container %s not running (%s), recreating",
-                entry["container_name"],
-                reason or "unknown reason",
-            )
+                rc, _, _ = await _exec_in_container(container_id, ["echo", "ok"], timeout=5)
+                if rc == 0:
+                    return entry["container_name"]
+                logger.warning(
+                    "Container %s running but exec failed (setns?), recreating",
+                    entry["container_name"],
+                )
+            else:
+                reason = await _get_container_death_reason(container_id)
+                logger.warning(
+                    "Container %s not running (%s), recreating",
+                    entry["container_name"],
+                    reason or "unknown reason",
+                )
             del sandbox_containers[key]
 
         for attempt in range(2):
