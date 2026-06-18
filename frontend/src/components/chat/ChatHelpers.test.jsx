@@ -146,21 +146,17 @@ describe('buildApprovalFileList', () => {
     ])
   })
 
-  it('returns translated file first when translation exists', () => {
+  it('returns only translated file when translation exists', () => {
     const files = buildApprovalFileList({
       path: 'docs/functional-design.md',
       content: '# Functional Design',
       translated_path: 'docs/functioneel-ontwerp.md',
       translated_content: '# Functioneel Ontwerp',
     })
-    expect(files).toHaveLength(2)
+    expect(files).toHaveLength(1)
     expect(files[0]).toEqual({
       path: 'docs/functioneel-ontwerp.md',
       content: '# Functioneel Ontwerp',
-    })
-    expect(files[1]).toEqual({
-      path: 'docs/functional-design.md (English)',
-      content: '# Functional Design',
     })
   })
 
