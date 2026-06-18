@@ -16,7 +16,7 @@ from typing import Literal
 from fastmcp import FastMCP
 from .charts import (
     MULTI_SERIES_TYPES,
-    _quote_ident,
+    quote_ident,
     aggregate_multi_series,
     aggregate_rows,
     build_chart_spec,
@@ -350,7 +350,7 @@ async def create_chart_from_source(
     if series_column is not None and series_column.strip().lower() in ("", "null", "none"):
         series_column = None
 
-    is_multi = chart_type in MULTI_SERIES_TYPES
+    is_multi = chart_type in MULTI_SERIES_TYPES or (chart_type == "auto" and bool(series_column))
     if is_multi and not series_column:
         return {
             "success": False,
@@ -384,12 +384,12 @@ async def create_chart_from_source(
     if sort_by == "natural":
         if is_sql:
             try:
-                sample_q = f"SELECT TOP 10 {_quote_ident(x_column)} FROM "
+                sample_q = f"SELECT TOP 10 {quote_ident(x_column)} FROM "
                 if "." in data_id:
                     schema, table = data_id.split(".", 1)
-                    sample_q += f"{_quote_ident(schema)}.{_quote_ident(table)}"
+                    sample_q += f"{quote_ident(schema)}.{quote_ident(table)}"
                 else:
-                    sample_q += _quote_ident(data_id)
+                    sample_q += quote_ident(data_id)
                 sample_result = await module.execute_query(source_id, sample_q, limit=10)
                 if sample_result.get("success"):
                     sample_vals = [r.get(x_column) or r.get("x") for r in sample_result.get("data", [])]
@@ -492,6 +492,7 @@ async def create_chart_from_source(
             series_column=series_column,
             aggregation=aggregation,
         )
+        is_multi = resolved_chart_type in MULTI_SERIES_TYPES
 
     # --- Infer number format ---
     value_key = agg_y_col if not is_multi else (series_keys[0] if series_keys else None)

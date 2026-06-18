@@ -293,7 +293,7 @@ def spec_to_markdown(spec: dict) -> str:
     return "```chart\n" + json.dumps(spec, ensure_ascii=False) + "\n```"
 
 
-def _quote_ident(ident: str) -> str:
+def quote_ident(ident: str) -> str:
     """Quote a T-SQL identifier with brackets, escaping embedded ]."""
     return "[" + str(ident).replace("]", "]]") + "]"
 
@@ -329,33 +329,33 @@ def build_sql_aggregation_query(
 
     if "." in data_id:
         schema, table = data_id.split(".", 1)
-        table_ref = f"{_quote_ident(schema)}.{_quote_ident(table)}"
+        table_ref = f"{quote_ident(schema)}.{quote_ident(table)}"
     else:
-        table_ref = _quote_ident(data_id)
+        table_ref = quote_ident(data_id)
 
     if aggregation == "count":
         agg_expr = "COUNT(*)"
     else:
         fn = {"sum": "SUM", "avg": "AVG", "min": "MIN", "max": "MAX"}[aggregation]
-        agg_expr = f"{fn}({_quote_ident(y_column)})"
+        agg_expr = f"{fn}({quote_ident(y_column)})"
 
     where = f" WHERE {filter_expr}" if filter_expr else ""
 
     if series_column:
         # Multi-series: group by both dimensions; caller pivots + trims.
         return (
-            f"SELECT {_quote_ident(x_column)} AS x, "
-            f"{_quote_ident(series_column)} AS s, {agg_expr} AS y "
+            f"SELECT {quote_ident(x_column)} AS x, "
+            f"{quote_ident(series_column)} AS s, {agg_expr} AS y "
             f"FROM {table_ref}{where} "
-            f"GROUP BY {_quote_ident(x_column)}, {_quote_ident(series_column)}"
+            f"GROUP BY {quote_ident(x_column)}, {quote_ident(series_column)}"
         )
 
     top = f"TOP {int(top_n)} " if top_n else ""
-    order = f"{_quote_ident(x_column)} ASC" if sort_by == "label" else f"{agg_expr} DESC"
+    order = f"{quote_ident(x_column)} ASC" if sort_by == "label" else f"{agg_expr} DESC"
     return (
-        f"SELECT {top}{_quote_ident(x_column)} AS x, {agg_expr} AS y "
+        f"SELECT {top}{quote_ident(x_column)} AS x, {agg_expr} AS y "
         f"FROM {table_ref}{where} "
-        f"GROUP BY {_quote_ident(x_column)} "
+        f"GROUP BY {quote_ident(x_column)} "
         f"ORDER BY {order}"
     )
 

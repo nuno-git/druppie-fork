@@ -735,14 +735,14 @@ def test_aggregate_rows_sort_by_label():
 
 def test_aggregate_rows_sort_by_value():
     data = [
-        {"year": "2022", "v": 10},
-        {"year": "2020", "v": 30},
+        {"year": "2020", "v": 10},
+        {"year": "2022", "v": 30},
         {"year": "2021", "v": 20},
     ]
     result, _ = charts.aggregate_rows(
         data, x_column="year", y_column="v", aggregation="sum", sort_by="value"
     )
-    assert [r["year"] for r in result] == ["2020", "2021", "2022"]
+    assert [r["year"] for r in result] == ["2022", "2021", "2020"]
 
 
 def test_aggregate_multi_series_sort_by_label():
