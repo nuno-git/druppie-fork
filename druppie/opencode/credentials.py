@@ -15,6 +15,7 @@ PROVIDER_BASE_URLS: dict[str, str] = {
     "deepseek": "https://api.deepseek.com",
     # NOTE: /v1 not /v1/openai — the sandbox LLM proxy appends its own path segments
     "deepinfra": "https://api.deepinfra.com/v1",
+    "openrouter": "https://openrouter.ai/api/v1",
     "openai": "https://api.openai.com",
     "anthropic": "https://api.anthropic.com",
 }

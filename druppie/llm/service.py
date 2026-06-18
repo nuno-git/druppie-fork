@@ -4,7 +4,7 @@ Supports per-agent LLM profiles with ordered provider chains.
 Profiles are defined in agents/definitions/llm_profiles.yaml.
 
 Environment variables:
-    LLM_PROVIDER: Global default provider (zai, deepinfra, azure_foundry, ollama)
+    LLM_PROVIDER: Global default provider (zai, deepinfra, azure_foundry, openrouter, ollama)
     LLM_FORCE_PROVIDER: Force all agents to use this provider (overrides profiles)
     LLM_FORCE_MODEL: Force all agents to use this model (requires LLM_FORCE_PROVIDER)
 """
@@ -43,6 +43,8 @@ class LLMService:
         "zai": "ZAI_API_KEY",
         "deepinfra": "DEEPINFRA_API_KEY",
         "azure_foundry": "FOUNDRY_API_KEY",
+        "openrouter": "OPENROUTER_API_KEY",
+        "openrouter_balanced": "OPENROUTER_API_KEY",
         "ollama": None,
         "mock": None,
     }

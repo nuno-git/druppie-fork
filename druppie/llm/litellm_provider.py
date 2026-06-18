@@ -4,7 +4,7 @@ Uses LiteLLM for standardized tool calling across all providers.
 This is the only LLM implementation - all providers go through LiteLLM.
 
 Environment variables:
-    LLM_PROVIDER: zai, deepinfra, deepseek, azure_foundry, ollama
+    LLM_PROVIDER: zai, deepinfra, deepseek, azure_foundry, openrouter, ollama
 
     For ZAI:
         ZAI_API_KEY, ZAI_MODEL, ZAI_BASE_URL
@@ -17,6 +17,9 @@ Environment variables:
 
     For Azure Foundry:
         FOUNDRY_API_KEY, FOUNDRY_MODEL, FOUNDRY_API_URL
+
+    For OpenRouter:
+        OPENROUTER_API_KEY, OPENROUTER_MODEL, OPENROUTER_PROVIDER_ORDER
 
     For Ollama:
         OLLAMA_MODEL, OLLAMA_BASE_URL (API key optional)
@@ -223,6 +226,32 @@ PROVIDER_CONFIGS = {
         "default_base_url": "https://ollama.waterschap.org/v1",
         "ssl_verify": False,  # Self-signed certificate
     },
+    "openrouter": {
+        "prefix": "openrouter",  # LiteLLM native OpenRouter support
+        "default_model": "z-ai/glm-4.7",
+        "api_key_env": "OPENROUTER_API_KEY",
+        "model_env": "OPENROUTER_MODEL",
+        "base_url_env": "OPENROUTER_BASE_URL",
+        "default_base_url": "https://openrouter.ai/api/v1",
+        # Pin every request to a single upstream provider (no load balancing /
+        # fallbacks). Controlled by OPENROUTER_PROVIDER_ORDER (comma-separated),
+        # e.g. "Cerebras" to only use Cerebras. Falls back to default routing
+        # when unset.
+        "provider_order_env": "OPENROUTER_PROVIDER_ORDER",
+    },
+    "openrouter_balanced": {
+        # Same OpenRouter endpoint/key as "openrouter", but WITHOUT provider
+        # pinning — OpenRouter chooses the upstream itself via its default
+        # price-weighted load balancing. Used as a fallback beneath the
+        # Cerebras-pinned entry in llm_profiles.yaml: if Cerebras is down,
+        # OpenRouter routes to any other provider serving the model.
+        "prefix": "openrouter",  # LiteLLM native OpenRouter support
+        "default_model": "z-ai/glm-4.7",
+        "api_key_env": "OPENROUTER_API_KEY",
+        "model_env": "OPENROUTER_MODEL",
+        "base_url_env": "OPENROUTER_BASE_URL",
+        "default_base_url": "https://openrouter.ai/api/v1",
+    },
 }
 
 
@@ -298,6 +327,16 @@ class ChatLiteLLM(BaseLLM):
         self._extra_headers: dict[str, str] = {}
         if self._auth_type == "bearer" and self.api_key:
             self._extra_headers["Authorization"] = f"Bearer {self.api_key}"
+
+        # OpenRouter provider pinning — when OPENROUTER_PROVIDER_ORDER is set,
+        # force every request to the listed upstream provider(s) with no
+        # fallbacks. Passed to the API via extra_body (merged by LiteLLM).
+        self._extra_body: dict[str, Any] = {}
+        provider_order_env = config.get("provider_order_env")
+        if provider_order_env:
+            order = [p.strip() for p in os.getenv(provider_order_env, "").split(",") if p.strip()]
+            if order:
+                self._extra_body["provider"] = {"order": order, "allow_fallbacks": False}
 
         # Azure API version (required for azure/ prefix)
         self._api_version = config.get("api_version")
@@ -402,6 +441,9 @@ class ChatLiteLLM(BaseLLM):
 
         if self._extra_headers:
             kwargs["extra_headers"] = self._extra_headers
+
+        if self._extra_body:
+            kwargs["extra_body"] = self._extra_body
 
         if effective_tools:
             kwargs["tools"] = effective_tools
