@@ -735,6 +735,25 @@ class Orchestrator:
             entry = {"agent": child.agent_id, "status": "success" if child.status == AgentRunStatus.COMPLETED.value else "error"}
             if child.error_message:
                 entry["error"] = child.error_message
+
+            done_tc = (
+                db.query(ToolCallModel)
+                .filter(
+                    ToolCallModel.agent_run_id == child.id,
+                    ToolCallModel.tool_name == "done",
+                )
+                .order_by(ToolCallModel.created_at.desc())
+                .first()
+            )
+            if done_tc and done_tc.result:
+                try:
+                    done_result = _json.loads(done_tc.result)
+                    summary = done_result.get("summary", "")
+                    if summary:
+                        entry["summary"] = summary
+                except (_json.JSONDecodeError, TypeError):
+                    pass
+
             subagent_results.append(entry)
 
         new_result = {"success": True, "data": subagent_results}
