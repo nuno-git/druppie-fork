@@ -403,6 +403,22 @@ mcps:
       - name: create_chart_from_source
         requires_approval: false
 
+  # Kubernetes cluster status — read-only introspection.
+  # No write/delete/scale/exec operations. Uses a ServiceAccount with
+  # get+list+watch-only ClusterRole when running in-cluster.
+  kubernetes:
+    url: ${MCP_KUBERNETES_URL:-http://module-kubernetes:9013}
+    type: module
+    tools:
+      - name: list_pods
+        requires_approval: false
+      - name: list_nodes
+        requires_approval: false
+      - name: list_services
+        requires_approval: false
+      - name: get_cluster_health
+        requires_approval: false
+
   # Azure DevOps backlog for ONE configured project (AZURE_DEVOPS_PROJECT).
   # No cross-project access — the project is fixed server-side.
   # Write tools require session_owner approval (the user who started the chat).

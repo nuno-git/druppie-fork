@@ -18,7 +18,7 @@ Because all actions are tool calls, every action can be logged, inspected, and g
 
 ## Agent Pipeline
 
-Fourteen agents are defined. Thirteen are functional; one is a stub.
+Fifteen agents are defined. Fourteen are functional; one is a stub.
 
 ### Functional Agents
 
@@ -37,6 +37,7 @@ Fourteen agents are defined. Thirteen are functional; one is a stub.
 | **Developer** | Writes and modifies code | Implements features in git-managed workspaces. Handles branch creation, file writes, commits, pull requests, and merges. Can delegate to sandbox agents via `execute_coding_task`. For `create_project`, works on main; for `update_project`, works on feature branches. Max 100 iterations. |
 | **Deployer** | Builds and deploys via Docker | Clones from git, builds Docker images, runs containers with auto-assigned ports (9100-9199). Verifies health via container logs. For preview deploys, asks the user for feedback before finalizing. Max 100 iterations. |
 | **Product Owner** | Answers backlog questions | Reads the backlog / work items (user stories, bugs, tasks, epics) of the configured Azure DevOps project via the read-only `azuredevops` MCP and answers the user in chat. Read-only, single project — cannot create/edit work items or see any other project. General chat only. Max 50 iterations. |
+| **Kubernetes Admin** | Monitors cluster status | Reports Kubernetes cluster health via the read-only `kubernetes` MCP server. Lists pods (status, restarts, age), nodes (health, capacity), and services (type, endpoints). Provides an overall cluster health summary. Read-only — cannot modify the cluster. General chat only. Max 10 iterations. |
 | **Reviewer** | Code review | Reviews code for quality, security, and best practices. |
 | **Tester** | Testing | Writes and runs tests to validate implementations. |
 | **Summarizer** | Creates completion messages | Reads all previous agent summaries and produces a concise, user-friendly message. Always the final step. Max 5 iterations. |

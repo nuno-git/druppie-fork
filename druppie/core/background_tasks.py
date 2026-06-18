@@ -78,10 +78,11 @@ def create_tracked_task(
     return task
 
 
-# States that indicate a background task is currently running for this session.
-# ACTIVE = task just spawned (session created or lock_for_retry/resume set it).
-# RUNNING = orchestrator is actively processing.
-_TASK_ACTIVE_STATES = frozenset({"active", "running"})
+# Status that indicates a background task is currently in flight for this
+# session. The guard claims this status under the row lock before spawning, so
+# a concurrent request observes it and is rejected. Paused states are NOT here:
+# resuming a paused session is exactly what most callers do.
+_TASK_ACTIVE_STATES = frozenset({"active"})
 
 
 def create_session_task(
@@ -94,8 +95,11 @@ def create_session_task(
     """Create a tracked task for a session with a DB-level concurrency guard.
 
     Opens a short-lived DB session, locks the session row with SELECT FOR UPDATE,
-    and verifies no other task is active. If the session is in a state that
-    indicates a running task (ACTIVE or RUNNING), raises SessionTaskConflict.
+    verifies no other task is active, and atomically claims the session by
+    setting its status to ACTIVE before releasing the lock. If the session is
+    already ACTIVE, raises SessionTaskConflict. Claiming the status under the
+    lock (rather than letting the spawned task set it later) closes the window
+    where two requests could both pass the guard and spawn duplicate tasks.
 
     Args:
         session_id: Session to guard.
@@ -111,6 +115,7 @@ def create_session_task(
     if not skip_lock:
         from druppie.db.database import SessionLocal
         from druppie.db.models import Session as SessionModel
+        from druppie.domain.common import SessionStatus
 
         db = SessionLocal()
         try:
@@ -131,9 +136,13 @@ def create_session_task(
                     f"A background task is already running for session {session_id} "
                     f"(status={session.status})"
                 )
-            # No active task — it's safe to spawn. The background task itself
-            # will transition the session status (ACTIVE → RUNNING → COMPLETED/PAUSED).
-            db.commit()  # Release the row lock.
+            # No active task — claim the session by marking it ACTIVE within the
+            # same locked transaction, then release the lock. This is what the
+            # spawned orchestrator would set anyway, done atomically here so a
+            # concurrent request sees ACTIVE and is rejected (no double-spawn).
+            if session is not None:
+                session.status = SessionStatus.ACTIVE.value
+            db.commit()  # Persist the ACTIVE claim and release the row lock.
         except SessionTaskConflict:
             db.rollback()
             raise

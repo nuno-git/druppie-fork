@@ -36,7 +36,7 @@ create_cluster() {
     log "Creating kind cluster '$CLUSTER_NAME'..."
     kind create cluster \
         --config "$PROJECT_DIR/kind/cluster.yaml" \
-        --image kindest/node:v1.29.2
+        --image kindest/node:v1.32.2
 
     log "Waiting for nodes to be ready..."
     kubectl wait --for=condition=ready nodes --all --timeout=120s
@@ -66,7 +66,7 @@ build_and_load_images() {
     _build_one "druppie-init"     "$PROJECT_DIR/Dockerfile.init"      "$PROJECT_DIR"
 
     local MCP_DIR="$PROJECT_DIR/druppie/mcp-servers"
-    for module in coding docker filesearch web archimate registry llm vision; do
+    for module in coding docker filesearch web archimate registry llm vision kubernetes; do
         if [ -f "$MCP_DIR/module-$module/Dockerfile" ]; then
             _build_one "druppie-module-$module" "$MCP_DIR/module-$module/Dockerfile" "$MCP_DIR"
         fi

@@ -372,6 +372,11 @@ Tot die tijd voldoet een simpele shared PVC. De modules hebben lage en voorspelb
 
 **Gekozen:** PodDisruptionBudgets, pod anti-affinity, en graceful shutdown voor backend en frontend (app pool). Keycloak, Gitea, MCP modules en CNPG draaien op de vaste infra pool en hoeven geen eigen PDB — de infra nodes worden niet geëvinceerd.
 
+> **Implementatie status (juni 2026):** ✅ Voltooid met afwijking per omgeving:
+> - **`values-prod.yaml` (multi-node):** PDB + anti-affinity **ingeschakeld** (`highAvailability.pdb.enabled: true`, `highAvailability.antiAffinity.enabled: true`). Dit is de configuratie die deze beslissing implementeert.
+> - **`values-hetzner.yaml` (huidige single-node deployment):** PDB + anti-affinity **uitgeschakeld**. Reden: bij één schedulbare node kan anti-affinity replicas niet over nodes spreiden en zou een PDB met `minAvailable: 1` node drains blokkeren. Dezelfde kostenafweging als CNPG `instances: 1` (§4.3). Wordt automatisch effectief zodra een tweede app-pool node beschikbaar is — een one-line values change.
+> - Graceful shutdown (`terminationGracePeriodSeconds`) en de advisory-lock leader election werken in beide omgevingen.
+
 **PDB** garandeert dat Kubernetes nooit alle pods tegelijk weghaalt tijdens onderhoud:
 
 ```yaml

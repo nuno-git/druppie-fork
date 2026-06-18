@@ -12,19 +12,12 @@ RUN npm install
 # Copy source
 COPY . .
 
-# Build arguments
-ARG VITE_API_URL=http://localhost:8000
-ARG VITE_KEYCLOAK_URL=http://localhost:8080
-ARG VITE_KEYCLOAK_REALM=druppie
-ARG VITE_KEYCLOAK_CLIENT_ID=druppie-frontend
-ARG VITE_GITEA_URL=http://localhost:3000
-
-# Set environment variables for build
-ENV VITE_API_URL=$VITE_API_URL
-ENV VITE_KEYCLOAK_URL=$VITE_KEYCLOAK_URL
-ENV VITE_KEYCLOAK_REALM=$VITE_KEYCLOAK_REALM
-ENV VITE_KEYCLOAK_CLIENT_ID=$VITE_KEYCLOAK_CLIENT_ID
-ENV VITE_GITEA_URL=$VITE_GITEA_URL
+# Build with placeholders that get replaced at container startup
+ENV VITE_API_URL=__VITE_API_URL__
+ENV VITE_KEYCLOAK_URL=__VITE_KEYCLOAK_URL__
+ENV VITE_KEYCLOAK_REALM=__VITE_KEYCLOAK_REALM__
+ENV VITE_KEYCLOAK_CLIENT_ID=__VITE_KEYCLOAK_CLIENT_ID__
+ENV VITE_GITEA_URL=__VITE_GITEA_URL__
 
 # Build
 RUN npm run build
@@ -44,8 +37,12 @@ COPY --from=builder /app/public ./public
 # Copy silent-check-sso.html for Keycloak
 COPY public/silent-check-sso.html ./dist/
 
+# Copy entrypoint that replaces placeholders with runtime env vars
+COPY docker-entrypoint.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
 # Expose port
 EXPOSE 5173
 
-# Run
+ENTRYPOINT ["docker-entrypoint.sh"]
 CMD ["serve", "-s", "dist", "-l", "5173"]

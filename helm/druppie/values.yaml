@@ -266,6 +266,12 @@ modules:
       limits:
         memory: "512Mi"
         cpu: "1000m"
+  kubernetes:
+    enabled: true
+    image:
+      repository: druppie-module-kubernetes
+      tag: latest
+    port: 9013
   vision:
     enabled: true
     replicaCount: 1
