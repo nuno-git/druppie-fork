@@ -31,4 +31,10 @@ done
 
 [ "$found" = 1 ] || echo "docker-entrypoint: warning: no JS assets matched /app/dist/assets/*.js" >&2
 
+# Catch the silent-failure case where a placeholder was missed and a literal
+# __VITE_* string would otherwise ship into prod.
+if grep -q "__VITE_" /app/dist/assets/*.js 2>/dev/null; then
+  echo "docker-entrypoint: warning: unsubstituted placeholders remain in JS bundle" >&2
+fi
+
 exec "$@"
