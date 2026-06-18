@@ -9,7 +9,7 @@ import logging
 
 from fastmcp import FastMCP
 
-from .module import KubernetesModule
+from .module import DEFAULT_LIST_LIMIT, KubernetesModule
 
 logger = logging.getLogger("kubernetes-mcp")
 
@@ -30,57 +30,68 @@ module = KubernetesModule()
 
 
 @mcp.tool()
-async def list_pods(namespace: str | None = None) -> dict:
+async def list_pods(
+    namespace: str | None = None, limit: int = DEFAULT_LIST_LIMIT
+) -> dict:
     """List pods with their status, restart count, and age.
 
-    Returns all pods across the cluster by default, or scoped to a single
+    Returns pods across the cluster by default, or scoped to a single
     namespace. Use this to check which workloads are running, identify
     crashlooping pods, or spot pods stuck in Pending/Unknown state.
 
     Args:
         namespace: Optional namespace filter. When omitted, returns pods
             from all namespaces.
+        limit: Maximum number of pods to return (default 100). Raise this to
+            inspect more pods at the cost of a larger response.
 
     Returns:
-        Dict with pod_count and a list of pods, each containing name,
-        namespace, status, restarts, age, node, and container details.
+        Dict with pod_count, a list of pods (each containing name,
+        namespace, status, restarts, age, node, and container details),
+        the applied limit, and a truncated flag indicating whether more
+        pods exist beyond the limit.
     """
-    return await module.list_pods(namespace)
+    return await module.list_pods(namespace, limit)
 
 
 @mcp.tool()
-async def list_nodes() -> dict:
+async def list_nodes(limit: int = DEFAULT_LIST_LIMIT) -> dict:
     """List cluster nodes with their status and resource capacity.
 
-    Returns every node in the cluster with its Ready/NotReady status,
-    conditions, CPU/memory capacity and allocatable resources, and
-    kubelet version.
+    Returns cluster nodes with their Ready/NotReady status, conditions,
+    CPU/memory capacity and allocatable resources, and kubelet version.
+
+    Args:
+        limit: Maximum number of nodes to return (default 100).
 
     Returns:
-        Dict with node_count and a list of nodes, each containing name,
+        Dict with node_count, a list of nodes (each containing name,
         status, age, conditions, capacity, allocatable resources, and
-        kubelet version.
+        kubelet version), the applied limit, and a truncated flag.
     """
-    return await module.list_nodes()
+    return await module.list_nodes(limit)
 
 
 @mcp.tool()
-async def list_services(namespace: str | None = None) -> dict:
+async def list_services(
+    namespace: str | None = None, limit: int = DEFAULT_LIST_LIMIT
+) -> dict:
     """List services with their type, cluster IP, and ports.
 
-    Returns all services across the cluster by default, or scoped to a
-    single namespace. Use this to check service endpoints and port
-    mappings.
+    Returns services across the cluster by default, or scoped to a single
+    namespace. Use this to check service endpoints and port mappings.
 
     Args:
         namespace: Optional namespace filter. When omitted, returns
             services from all namespaces.
+        limit: Maximum number of services to return (default 100).
 
     Returns:
-        Dict with service_count and a list of services, each containing
-        name, namespace, type, cluster_ip, ports, and age.
+        Dict with service_count, a list of services (each containing
+        name, namespace, type, cluster_ip, ports, and age), the applied
+        limit, and a truncated flag.
     """
-    return await module.list_services(namespace)
+    return await module.list_services(namespace, limit)
 
 
 @mcp.tool()

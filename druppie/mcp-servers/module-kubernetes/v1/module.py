@@ -5,6 +5,7 @@ running as a pod (ServiceAccount token), falls back to default kubeconfig
 for local development.
 """
 
+import asyncio
 import logging
 from datetime import datetime, timezone
 
@@ -12,6 +13,16 @@ from kubernetes import client, config
 from kubernetes.config.config_exception import ConfigException
 
 logger = logging.getLogger("kubernetes-mcp")
+
+# Default cap on the number of items a single list call returns. Without this,
+# a production cluster with hundreds of pods/services would emit a huge JSON
+# payload straight into the LLM's context window. Callers can override.
+DEFAULT_LIST_LIMIT = 100
+
+# Cluster health aggregates into counts and filtered subsets rather than dumping
+# raw items, so it uses a larger budget to avoid basing its verdict on a
+# partial view of the cluster.
+HEALTH_LIST_LIMIT = 500
 
 
 class KubernetesModule:
@@ -55,12 +66,20 @@ class KubernetesModule:
             return f"{hours}h{minutes}m"
         return f"{minutes}m"
 
-    async def list_pods(self, namespace: str | None = None) -> dict:
+    async def list_pods(
+        self, namespace: str | None = None, limit: int = DEFAULT_LIST_LIMIT
+    ) -> dict:
         api = self._api()
+        # The kubernetes client calls are synchronous network I/O; run them in a
+        # thread so they don't block the FastMCP event loop.
         if namespace:
-            pod_list = api.list_namespaced_pod(namespace)
+            pod_list = await asyncio.to_thread(
+                api.list_namespaced_pod, namespace, limit=limit
+            )
         else:
-            pod_list = api.list_pod_for_all_namespaces()
+            pod_list = await asyncio.to_thread(
+                api.list_pod_for_all_namespaces, limit=limit
+            )
 
         pods = []
         for pod in pod_list.items:
@@ -88,11 +107,13 @@ class KubernetesModule:
         return {
             "pod_count": len(pods),
             "pods": pods,
+            "truncated": bool(pod_list.metadata._continue),
+            "limit": limit,
         }
 
-    async def list_nodes(self) -> dict:
+    async def list_nodes(self, limit: int = DEFAULT_LIST_LIMIT) -> dict:
         api = self._api()
-        node_list = api.list_node()
+        node_list = await asyncio.to_thread(api.list_node, limit=limit)
 
         nodes = []
         for node in node_list.items:
@@ -124,14 +145,22 @@ class KubernetesModule:
         return {
             "node_count": len(nodes),
             "nodes": nodes,
+            "truncated": bool(node_list.metadata._continue),
+            "limit": limit,
         }
 
-    async def list_services(self, namespace: str | None = None) -> dict:
+    async def list_services(
+        self, namespace: str | None = None, limit: int = DEFAULT_LIST_LIMIT
+    ) -> dict:
         api = self._api()
         if namespace:
-            svc_list = api.list_namespaced_service(namespace)
+            svc_list = await asyncio.to_thread(
+                api.list_namespaced_service, namespace, limit=limit
+            )
         else:
-            svc_list = api.list_service_for_all_namespaces()
+            svc_list = await asyncio.to_thread(
+                api.list_service_for_all_namespaces, limit=limit
+            )
 
         services = []
         for svc in svc_list.items:
@@ -156,11 +185,13 @@ class KubernetesModule:
         return {
             "service_count": len(services),
             "services": services,
+            "truncated": bool(svc_list.metadata._continue),
+            "limit": limit,
         }
 
     async def get_cluster_health(self) -> dict:
-        nodes_result = await self.list_nodes()
-        pods_result = await self.list_pods()
+        nodes_result = await self.list_nodes(limit=HEALTH_LIST_LIMIT)
+        pods_result = await self.list_pods(limit=HEALTH_LIST_LIMIT)
 
         unhealthy_nodes = [
             n for n in nodes_result["nodes"]
@@ -176,8 +207,14 @@ class KubernetesModule:
         ]
 
         healthy = len(unhealthy_nodes) == 0 and len(problem_pods) == 0
+        truncated = nodes_result["truncated"] or pods_result["truncated"]
 
         summary_parts = []
+        if truncated:
+            summary_parts.append(
+                "Note: cluster too large to inspect fully — verdict is based on "
+                f"the first {HEALTH_LIST_LIMIT} pods/nodes."
+            )
         if healthy and not high_restart_pods:
             summary_parts.append(
                 f"Cluster is healthy. {nodes_result['node_count']} node(s) ready, "
@@ -202,6 +239,7 @@ class KubernetesModule:
 
         return {
             "healthy": healthy,
+            "truncated": truncated,
             "summary": " | ".join(summary_parts),
             "node_count": nodes_result["node_count"],
             "unhealthy_nodes": unhealthy_nodes,

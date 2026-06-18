@@ -162,6 +162,7 @@ async def test_list_pods_returns_structured_data():
 
     mock_api = MagicMock()
     mock_api.list_pod_for_all_namespaces.return_value.items = [mock_pod]
+    mock_api.list_pod_for_all_namespaces.return_value.metadata._continue = None
     module._core = mock_api
 
     result = await module.list_pods()
@@ -169,6 +170,7 @@ async def test_list_pods_returns_structured_data():
     assert result["pods"][0]["name"] == "backend-abc123"
     assert result["pods"][0]["namespace"] == "druppie"
     assert result["pods"][0]["status"] == "Running"
+    assert result["truncated"] is False
 
 
 @pytest.mark.asyncio
@@ -190,6 +192,7 @@ async def test_list_nodes_returns_structured_data():
 
     mock_api = MagicMock()
     mock_api.list_node.return_value.items = [mock_node]
+    mock_api.list_node.return_value.metadata._continue = None
     module._core = mock_api
 
     result = await module.list_nodes()
@@ -225,11 +228,14 @@ async def test_get_cluster_health_healthy():
 
     mock_api = MagicMock()
     mock_api.list_node.return_value.items = [mock_node]
+    mock_api.list_node.return_value.metadata._continue = None
     mock_api.list_pod_for_all_namespaces.return_value.items = [mock_pod]
+    mock_api.list_pod_for_all_namespaces.return_value.metadata._continue = None
     module._core = mock_api
 
     result = await module.get_cluster_health()
     assert result["healthy"] is True
+    assert result["truncated"] is False
     assert "healthy" in result["summary"].lower()
 
 
@@ -252,9 +258,69 @@ async def test_get_cluster_health_unhealthy_node():
 
     mock_api = MagicMock()
     mock_api.list_node.return_value.items = [mock_node]
+    mock_api.list_node.return_value.metadata._continue = None
     mock_api.list_pod_for_all_namespaces.return_value.items = []
+    mock_api.list_pod_for_all_namespaces.return_value.metadata._continue = None
     module._core = mock_api
 
     result = await module.get_cluster_health()
     assert result["healthy"] is False
     assert "bad-node" in result["summary"]
+
+
+@pytest.mark.asyncio
+async def test_list_pods_passes_limit_and_flags_truncation():
+    """list_pods forwards the limit to the API and reports truncation."""
+    mod = _load_module_py()
+    module = mod.KubernetesModule()
+
+    mock_pod = MagicMock()
+    mock_pod.metadata.name = "backend-abc123"
+    mock_pod.metadata.namespace = "druppie"
+    mock_pod.metadata.creation_timestamp = None
+    mock_pod.status.phase = "Running"
+    mock_pod.status.container_statuses = []
+    mock_pod.spec.node_name = "node-1"
+
+    mock_api = MagicMock()
+    mock_api.list_pod_for_all_namespaces.return_value.items = [mock_pod]
+    # A non-empty continue token means the cluster has more pods than the limit.
+    mock_api.list_pod_for_all_namespaces.return_value.metadata._continue = "next-token"
+    module._core = mock_api
+
+    result = await module.list_pods(limit=50)
+
+    mock_api.list_pod_for_all_namespaces.assert_called_once_with(limit=50)
+    assert result["limit"] == 50
+    assert result["truncated"] is True
+
+
+@pytest.mark.asyncio
+async def test_list_calls_run_in_thread_not_blocking_event_loop():
+    """The synchronous kubernetes client calls must be offloaded to a thread.
+
+    We assert the API method runs on a worker thread (not the event loop
+    thread), which is what asyncio.to_thread guarantees.
+    """
+    import threading
+
+    mod = _load_module_py()
+    module = mod.KubernetesModule()
+
+    loop_thread = threading.get_ident()
+    call_threads = []
+
+    def fake_list_node(**kwargs):
+        call_threads.append(threading.get_ident())
+        result = MagicMock()
+        result.items = []
+        result.metadata._continue = None
+        return result
+
+    mock_api = MagicMock()
+    mock_api.list_node.side_effect = fake_list_node
+    module._core = mock_api
+
+    await module.list_nodes()
+
+    assert call_threads and call_threads[0] != loop_thread
