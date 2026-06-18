@@ -265,17 +265,21 @@ class Orchestrator:
 
     @staticmethod
     def _build_attachment_context(attachments) -> str:
-        """Build a file listing for LLM prompts (agents use read_attachment tool for content)."""
+        """Build attachment context with inline extracted text so agents see content directly."""
         if not attachments:
             return ""
-        lines = ["\n\nUPLOADED FILES (use the read_attachment tool to read file contents):"]
+        parts = ["\n\nUPLOADED FILES:"]
         for att in attachments:
             size_kb = att.file_size / 1024
-            lines.append(
-                f"- {att.original_filename} (id: {att.id}, type: {att.content_type}, "
-                f"size: {size_kb:.1f} KB)"
+            parts.append(
+                f"\n--- {att.original_filename} (id: {att.id}, type: {att.content_type}, "
+                f"size: {size_kb:.1f} KB) ---"
             )
-        return "\n".join(lines)
+            if att.extracted_text:
+                parts.append(att.extracted_text)
+            else:
+                parts.append("(no text extracted — use read_attachment tool to access)")
+        return "\n".join(parts)
 
     def _format_projects_for_router(self, projects: list) -> str:
         """Format user's projects for injection into router prompt."""
