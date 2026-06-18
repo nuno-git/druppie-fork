@@ -254,34 +254,60 @@ class RevertService:
             parent_run_id=str(target.parent_run_id),
         )
 
-        # Step 1: Find all later children of the same parent (created after target)
-        later_siblings = self.execution_repo.get_children_after(
-            parent_run_id=target.parent_run_id,
-            after_child_id=agent_run_id,
+        # Step 1: Find siblings from LATER spawning tool calls on the same parent.
+        # Uses spawning_tool_call_id (real tree link) instead of created_at (fragile).
+        # Siblings from the SAME tool call are parallel — keep them.
+        # Siblings from LATER tool calls are sequential — delete them.
+        from druppie.db.models.agent_run import AgentRun as AgentRunModel
+        from druppie.db.models.tool_call import ToolCall as ToolCallModel
+
+        db = self.execution_repo.db
+        target_tc_id = target.spawning_tool_call_id
+
+        if target_tc_id:
+            target_tc = db.query(ToolCallModel).filter(ToolCallModel.id == target_tc_id).first()
+            target_tc_created = target_tc.created_at if target_tc else None
+        else:
+            target_tc_created = None
+
+        all_children = (
+            db.query(AgentRunModel)
+            .filter(AgentRunModel.parent_run_id == target.parent_run_id)
+            .all()
         )
 
-        pending_siblings = [s for s in later_siblings if s.status == AgentRunStatus.PENDING.value]
-        paused_siblings = [s for s in later_siblings if s.status != AgentRunStatus.PENDING.value]
+        later_siblings = []
+        for child in all_children:
+            if child.id == agent_run_id:
+                continue
+            if not child.spawning_tool_call_id:
+                continue
+            if child.spawning_tool_call_id == target_tc_id:
+                continue
+            if target_tc_created is None:
+                continue
+            child_tc = db.query(ToolCallModel).filter(ToolCallModel.id == child.spawning_tool_call_id).first()
+            if child_tc and child_tc.created_at > target_tc_created:
+                later_siblings.append(self.execution_repo._to_summary(child))
 
         logger.info(
             "retry_nested_later_siblings",
             session_id=str(session_id),
             target_id=str(agent_run_id),
-            pending_deleted=[(s.agent_id, str(s.id)) for s in pending_siblings],
-            paused_kept=[(s.agent_id, str(s.id)) for s in paused_siblings],
+            deleting=[(s.agent_id, str(s.id), s.status) for s in later_siblings],
         )
 
         target_descendants = self._collect_descendants(agent_run_id)
         sibling_descendants: list[UUID] = []
-        for sibling in pending_siblings:
+        for sibling in later_siblings:
             sibling_descendants.extend(self._collect_descendants(sibling.id))
 
         if target_descendants:
             self.execution_repo.delete_runs_fully(target_descendants)
         if sibling_descendants:
             self.execution_repo.delete_runs_fully(sibling_descendants)
-        if pending_siblings:
-            self.execution_repo.delete_runs_fully([s.id for s in pending_siblings])
+        if later_siblings:
+            self.execution_repo.delete_runs_fully([s.id for s in later_siblings])
 
         self.execution_repo.clear_execution_artifacts([agent_run_id])
         self.execution_repo.reset_runs_to_pending([agent_run_id])
@@ -303,8 +329,7 @@ class RevertService:
             "retry_nested_subagent_complete",
             session_id=str(session_id),
             target_id=str(agent_run_id),
-            pending_siblings_deleted=len(pending_siblings),
-            paused_siblings_kept=len(paused_siblings),
+            siblings_deleted=len(later_siblings),
             descendants_deleted=len(target_descendants) + len(sibling_descendants),
             parent_run_id=str(target.parent_run_id),
         )
@@ -314,8 +339,7 @@ class RevertService:
             "agent_run_id": str(agent_run_id),
             "parent_run_id": str(target.parent_run_id),
             "spawning_tool_call_id": str(target.spawning_tool_call_id) if target.spawning_tool_call_id else None,
-            "deleted_sibling_ids": [str(s.id) for s in pending_siblings],
-            "paused_sibling_ids": [str(s.id) for s in paused_siblings],
+            "deleted_sibling_ids": [str(s.id) for s in later_siblings],
         }
 
     def _collect_descendants(self, run_id: UUID) -> list[UUID]:
