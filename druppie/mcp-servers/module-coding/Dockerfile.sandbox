@@ -17,6 +17,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     iptables \
     xz-utils \
+    gcc \
+    g++ \
+    make \
+    libpq-dev \
+    libffi-dev \
     && update-alternatives --set iptables /usr/sbin/iptables-legacy \
     && update-alternatives --set ip6tables /usr/sbin/ip6tables-legacy \
     && rm -rf /var/lib/apt/lists/*
@@ -43,6 +48,32 @@ RUN apt-get update && apt-get install -y --no-install-recommends unzip && rm -rf
 
 RUN pip install playwright && \
     playwright install --with-deps chromium
+
+RUN pip install --no-cache-dir \
+    flask==3.1.0 \
+    gunicorn==23.0.0 \
+    sqlalchemy==2.0.36 \
+    psycopg2-binary==2.9.10 \
+    pgvector==0.3.6 \
+    numpy>=1.24.0 \
+    python-dotenv==1.0.1 \
+    pytest \
+    httpx \
+    redis
+
+RUN mkdir -p /opt/node-template && cd /opt/node-template && \
+    npm init -y && \
+    npm install \
+        react@^19.0.0 react-dom@^19.0.0 react-router-dom@^7.1.0 \
+        @radix-ui/react-slot@^1.1.1 class-variance-authority@^0.7.1 \
+        clsx@^2.1.1 tailwind-merge@^3.0.0 lucide-react@^0.469.0 && \
+    npm install -D \
+        @types/node@^22.0.0 @types/react@^19.0.0 @types/react-dom@^19.0.0 \
+        @vitejs/plugin-react@^4.3.4 typescript@~5.7.0 vite@^6.0.0 \
+        autoprefixer@^10.4.20 postcss@^8.4.49 tailwindcss@^3.4.17 && \
+    npm cache clean --force
+
+ENV NODE_PATH=/opt/node-template/node_modules
 
 RUN groupadd -g 1000 druppie \
     && useradd -m -u 1000 -g druppie -s /bin/bash druppie \

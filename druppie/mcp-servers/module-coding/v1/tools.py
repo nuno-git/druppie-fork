@@ -115,8 +115,8 @@ def _get_github_push_url() -> str:
 
 
 SANDBOX_IMAGE = os.getenv("DRUPPIE_SANDBOX_IMAGE", "druppie-sandbox:latest")
-SANDBOX_MEMORY = os.getenv("DRUPPIE_DOCKER_MEMORY_LIMIT", "12g")
-SANDBOX_CPU = os.getenv("DRUPPIE_DOCKER_CPU_LIMIT", "4")
+SANDBOX_MEMORY = os.getenv("DRUPPIE_DOCKER_MEMORY_LIMIT", "16g")
+SANDBOX_CPU = os.getenv("DRUPPIE_DOCKER_CPU_LIMIT", "6")
 SANDBOX_PIDS_LIMIT = int(os.getenv("DRUPPIE_DOCKER_PIDS_LIMIT", "32768"))
 SANDBOX_NETWORK = os.getenv("DRUPPIE_SANDBOX_NETWORK", "bridge")
 SANDBOX_INET_NETWORK = os.getenv("DRUPPIE_SANDBOX_INET_NETWORK", "")
@@ -387,6 +387,7 @@ async def _create_sandbox_container(
             "--memory", SANDBOX_MEMORY,
             "--pids-limit", str(SANDBOX_PIDS_LIMIT),
             "--cpus", SANDBOX_CPU,
+            "--shm-size", "2g",
             "--tmpfs", "/tmp:size=512m",
             "-w", "/workspace",
             "--runtime", SANDBOX_RUNTIME,
@@ -412,6 +413,7 @@ async def _create_sandbox_container(
                 "--memory", SANDBOX_MEMORY,
                 "--pids-limit", str(SANDBOX_PIDS_LIMIT),
                 "--cpus", SANDBOX_CPU,
+                "--shm-size", "2g",
                 "--tmpfs", "/tmp:size=512m",
                 "-w", "/workspace",
                 "--runtime", SANDBOX_RUNTIME,
