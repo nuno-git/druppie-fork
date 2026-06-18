@@ -19,6 +19,7 @@ import HITLQuestionMessage from './HITLQuestionMessage'
 import WorkflowPipeline from './WorkflowPipeline'
 import DebugEventLog from './DebugEventLog'
 import AnnotationBar from './AnnotationBar'
+import { consumePending } from '../../services/pendingChat'
 import {
   chatMarkdownComponents,
   CopyJsonButton,
@@ -315,14 +316,16 @@ const InlineApproval = ({ tc, sessionId, sessionUserId }) => {
 
 // --- Timeline HITL Question ---
 
-const TimelineQuestion = ({ tc, agentId, sessionId, attachments = [], onAttachmentsConsumed }) => {
+const TimelineQuestion = ({ tc, agentId, sessionId, attachments = [], onAttachmentsConsumed, onAnswerSubmitted }) => {
   const queryClient = useQueryClient()
 
   const answerMut = useMutation({
-    mutationFn: ({ questionId, answer, selectedChoices = null, attachmentIds = [] }) => answerQuestion(questionId, answer, selectedChoices, attachmentIds),
+    mutationFn: ({ questionId, answer, selectedChoices = null, attachmentIds = [] }) =>
+      answerQuestion(questionId, answer, selectedChoices, attachmentIds),
     onSuccess: () => {
       onAttachmentsConsumed?.()
       markResuming()
+      onAnswerSubmitted?.()
       queryClient.invalidateQueries({ queryKey: ['session', sessionId] })
     },
   })
@@ -371,11 +374,11 @@ const TimelineQuestion = ({ tc, agentId, sessionId, attachments = [], onAttachme
       {isAnswered && displayAnswer && (
         <div className="flex justify-end">
           <div className="max-w-[85%] rounded-2xl px-4 py-2.5 text-sm bg-gray-100 text-gray-900">
-            {!(tc.attachments?.length > 0 && displayAnswer.startsWith('See uploaded files:')) && (
+            {!(tc.attachments?.length > 0 && (displayAnswer.startsWith('See uploaded files:') || displayAnswer.startsWith('Zie geüploade bestanden:'))) && (
               <div className="whitespace-pre-wrap">{displayAnswer}</div>
             )}
             {tc.attachments?.length > 0 && (
-              <div className={`flex flex-wrap gap-1.5${displayAnswer && !displayAnswer.startsWith('See uploaded files:') ? ' mt-2' : ''}`}>
+              <div className={`flex flex-wrap gap-1.5${displayAnswer && !displayAnswer.startsWith('See uploaded files:') && !displayAnswer.startsWith('Zie geüploade bestanden:') ? ' mt-2' : ''}`}>
                 {tc.attachments.map((att) => {
                   const Icon = att.content_type === 'application/pdf' ? FileType : FileText
                   return (
@@ -405,7 +408,7 @@ const TimelineQuestion = ({ tc, agentId, sessionId, attachments = [], onAttachme
 
 // --- Agent Run ---
 
-const AgentRunItem = ({ run, timelineIndex, sessionId, hasFollowingMessage, sessionUserId, surfacedFiles, attachments, onAttachmentsConsumed }) => {
+const AgentRunItem = ({ run, timelineIndex, sessionId, hasFollowingMessage, sessionUserId, surfacedFiles, attachments, onAttachmentsConsumed, onAnswerSubmitted }) => {
   const orderedItems = extractOrderedItems(run, hasFollowingMessage)
 
   // Show agent trace for completed runs that have no following message
@@ -440,7 +443,7 @@ const AgentRunItem = ({ run, timelineIndex, sessionId, hasFollowingMessage, sess
         if (item.type === 'question') {
           return (
             <div key={i} className="mt-3">
-              <TimelineQuestion tc={item.tc} agentId={item.agentId} sessionId={sessionId} attachments={attachments} onAttachmentsConsumed={onAttachmentsConsumed} />
+              <TimelineQuestion tc={item.tc} agentId={item.agentId} sessionId={sessionId} attachments={attachments} onAttachmentsConsumed={onAttachmentsConsumed} onAnswerSubmitted={onAnswerSubmitted} />
             </div>
           )
         }
@@ -479,7 +482,7 @@ const MessageItem = ({ message, agentRun, sessionId }) => {
   if (isUser) {
     const atts = message.attachments || []
     const attNames = atts.map((a) => a.original_filename).join(', ')
-    const isAttachmentOnly = atts.length > 0 && (message.content === 'See attached' || message.content === attNames)
+    const isAttachmentOnly = atts.length > 0 && (message.content === 'See attached' || message.content === 'Zie bijlage' || message.content === attNames)
     return (
       <div className="group flex justify-end gap-2">
         <span className="text-xs text-gray-300 self-end pb-1">
@@ -737,6 +740,12 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
   const [attachments, setAttachments] = useState([])
   const [uploadError, setUploadError] = useState(null)
   const [transcriptPdfLoading, setTranscriptPdfLoading] = useState(false)
+  const [pendingMessage, setPendingMessage] = useState(() => {
+    const cached = consumePending(sessionId)
+    return cached?.message || null
+  })
+  const [isAnswering, setIsAnswering] = useState(false)
+  const pendingSetAtLength = useRef(pendingMessage ? 0 : null)
   const savedInspectScroll = useRef(0)
   const [viewMode, _setViewMode] = useState(() => {
     if (initialViewMode && VALID_VIEW_MODES.has(initialViewMode)) return initialViewMode
@@ -788,6 +797,9 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
       setUploadError(null)
       queryClient.invalidateQueries({ queryKey: ['session', sessionId] })
       queryClient.invalidateQueries({ queryKey: ['sessions'] })
+    },
+    onError: () => {
+      setPendingMessage(null)
     },
   })
 
@@ -867,6 +879,38 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
     }
   }, [continueInput])
 
+  const isBusy = continueMutation.isPending || isAnswering
+
+  // Clear optimistic message once server data catches up (new timeline entries)
+  useEffect(() => {
+    if (pendingMessage === null) return
+    const len = data?.timeline?.length || 0
+    if (pendingSetAtLength.current !== null && len > pendingSetAtLength.current) {
+      setPendingMessage(null)
+      setIsAnswering(false)
+    }
+  }, [data?.timeline?.length, pendingMessage])
+
+  // Safety: clear pending message after 30s in case data never arrives
+  useEffect(() => {
+    if (!pendingMessage) return
+    const timer = setTimeout(() => {
+      setPendingMessage(null)
+      setIsAnswering(false)
+    }, 30000)
+    return () => clearTimeout(timer)
+  }, [pendingMessage])
+
+  // Scroll to bottom when optimistic message appears
+  useEffect(() => {
+    if (pendingMessage) {
+      requestAnimationFrame(() => {
+        const el = timelineRef.current
+        if (el) el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
+      })
+    }
+  }, [pendingMessage])
+
   if (isLoading) {
     return (
       <div className="flex flex-col h-full min-w-0">
@@ -941,25 +985,34 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
     if (pendingQuestion) {
       const fileNames = attachments.map((a) => a.original_filename).join(', ')
       const answer = trimmed
-        || (attachments.length ? `See uploaded files: ${fileNames}` : '')
+        || (attachments.length ? `Zie geüploade bestanden: ${fileNames}` : '')
       if (!answer) return
+      setPendingMessage(trimmed || true)
+      setIsAnswering(true)
+      pendingSetAtLength.current = data?.timeline?.length || 0
+      setContinueInput('')
+      setAttachments([])
       const attIds = attachments.map((a) => a.id)
       answerQuestion(pendingQuestion.tc.question_id, answer, null, attIds)
         .then(() => {
-          setContinueInput('')
-          setAttachments([])
+          setIsAnswering(false)
+          markResuming()
           queryClient.invalidateQueries({ queryKey: ['session', sessionId] })
         })
         .catch((err) => {
           console.error('Failed to answer question:', err.message || err)
+          setPendingMessage(null)
+          setIsAnswering(false)
         })
       return
     }
     setUploadError(null)
     const fallback = attachments.length
       ? attachments.map((a) => a.original_filename).join(', ')
-      : 'See attached'
+      : 'Zie bijlage'
     const message = trimmed || fallback
+    setPendingMessage(trimmed || true)
+    pendingSetAtLength.current = data?.timeline?.length || 0
     continueMutation.mutate({ message, attachmentIds: attachments.map((a) => a.id) })
   }
 
@@ -1129,11 +1182,17 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
       ) : (
         <div ref={timelineRef} className="flex-1 overflow-y-auto overflow-x-hidden">
           <div className="max-w-3xl mx-auto px-4 py-6 space-y-6">
-          {(!data.timeline || data.timeline.length === 0) && (
-            <div className="text-center py-12 flex flex-col items-center gap-2">
-              <MessageSquare className="w-8 h-8 text-gray-300" />
-              <p className="text-gray-400 text-sm">No timeline entries yet</p>
-            </div>
+          {(!data.timeline || data.timeline.length === 0) && !pendingMessage && (
+            data.status === 'active' || data.status === 'running' ? (
+              <div className="flex items-center justify-center py-12">
+                <Loader2 className="w-5 h-5 text-gray-400 animate-spin" />
+              </div>
+            ) : (
+              <div className="text-center py-12 flex flex-col items-center gap-2">
+                <MessageSquare className="w-8 h-8 text-gray-300" />
+                <p className="text-gray-400 text-sm">No timeline entries yet</p>
+              </div>
+            )
           )}
           {(() => {
             // messageRunMap: pairs each agent's last non-user message with its run
@@ -1235,6 +1294,10 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
                       surfacedFiles={surfacedFiles}
                       attachments={attachments}
                       onAttachmentsConsumed={() => { setAttachments([]); setUploadError(null) }}
+                      onAnswerSubmitted={() => {
+                        setPendingMessage(true)
+                        pendingSetAtLength.current = data?.timeline?.length || 0
+                      }}
                     />
                     {renderAnnotation(i)}
                   </div>
@@ -1244,6 +1307,21 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
               return null
             })
           })()}
+          {/* Optimistic user message + processing indicator */}
+          {pendingMessage && (
+            <>
+              {typeof pendingMessage === 'string' && (
+                <div className="flex justify-end gap-2">
+                  <div className="max-w-[85%] rounded-2xl px-4 py-2.5 text-sm bg-gray-100 text-gray-900 overflow-hidden">
+                    <div className="whitespace-pre-wrap break-words">{pendingMessage}</div>
+                  </div>
+                </div>
+              )}
+              <div className="flex items-center py-1">
+                <Loader2 className="w-3.5 h-3.5 text-gray-400 animate-spin" />
+              </div>
+            </>
+          )}
           {/* Trailing thinking / sandbox-waiting indicator */}
           {(() => {
             // Don't show thinking indicator if session itself has ended
@@ -1347,14 +1425,14 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
                 onUpload={(att) => { setUploadError(null); setAttachments((prev) => [...prev, att]) }}
                 onError={setUploadError}
                 sessionId={sessionId}
-                disabled={continueMutation.isPending}
+                disabled={isBusy}
               />
               <textarea
                 ref={inputRef}
                 value={continueInput}
                 onChange={(e) => setContinueInput(e.target.value)}
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !e.shiftKey && !continueMutation.isPending) {
+                  if (e.key === 'Enter' && !e.shiftKey && !isBusy) {
                     e.preventDefault()
                     handleContinueSend()
                   }
@@ -1369,7 +1447,7 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
                 rows={1}
                 className="flex-1 resize-none bg-transparent outline-none text-sm leading-6 py-1 max-h-40"
                 aria-label="Chat message input"
-                disabled={continueMutation.isPending}
+                disabled={isBusy}
               />
               {isStopping ? (
                 <button
@@ -1408,11 +1486,11 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
               ) : (
                 <button
                   onClick={handleContinueSend}
-                  disabled={(!continueInput.trim() && !attachments.length) || continueMutation.isPending}
+                  disabled={(!continueInput.trim() && !attachments.length) || isBusy}
                   className="flex-shrink-0 p-2 rounded-xl bg-gray-900 text-white hover:bg-gray-700 disabled:opacity-30 disabled:hover:bg-gray-900 transition-colors"
                   aria-label="Send message"
                 >
-                  {continueMutation.isPending ? (
+                  {isBusy ? (
                     <Loader2 className="w-4 h-4 animate-spin" />
                   ) : (
                     <ArrowUp className="w-4 h-4" />

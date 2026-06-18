@@ -710,6 +710,24 @@ class ToolExecutor:
         if selected_choices is not None and choices:
             result["selected_choices"] = [choices[i] for i in selected_choices if i < len(choices)]
 
+        # Include uploaded file contents so the agent sees them immediately
+        # (weaker models won't call read_attachment on their own)
+        from druppie.db.models import MessageAttachment
+        question_attachments = (
+            self.db.query(MessageAttachment)
+            .filter(MessageAttachment.question_id == question_id)
+            .all()
+        )
+        if question_attachments:
+            file_contents = []
+            for att in question_attachments:
+                if att.extracted_text:
+                    file_contents.append(
+                        f"--- {att.original_filename} ---\n{att.extracted_text}"
+                    )
+            if file_contents:
+                result["uploaded_file_contents"] = "\n\n".join(file_contents)
+
         # Update tool call with result
         self.execution_repo.update_tool_call(
             tool_call_id,
@@ -973,7 +991,7 @@ class ToolExecutor:
                     translated_choices = []
                     for c in raw_choices:
                         translated_choices.append(
-                            await translator.translate_from_english(c, session.language)
+                            await translator.translate_label(c, session.language)
                         )
                     raw_choices = translated_choices
                 context_text = args.get("context", "")
