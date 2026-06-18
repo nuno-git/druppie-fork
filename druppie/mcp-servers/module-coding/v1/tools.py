@@ -21,6 +21,7 @@ import asyncio
 import json
 import logging
 import os
+import posixpath
 import re
 import shlex
 import shutil
@@ -412,10 +413,21 @@ def _get_public_clone_url(repo_name: str, repo_owner: str | None = None) -> str:
 
 
 def _container_path(path: str) -> str:
-    """Convert a relative path to an absolute container path under /workspace."""
-    if path.startswith("/"):
-        return path
-    return f"/workspace/{path}"
+    """Normalize a path and enforce containment under /workspace.
+
+    Resolves ``..`` segments lexically (no filesystem access, so paths to
+    files that do not yet exist are safe) and rejects anything that escapes
+    /workspace after normalization.
+
+    Raises ValueError if the normalized path is not /workspace itself or a
+    descendant of it (e.g. ``../../etc/passwd`` or an absolute path like
+    ``/etc/cron.d/x``).
+    """
+    stripped = path.lstrip("/")
+    candidate = posixpath.normpath(f"/workspace/{stripped}")
+    if candidate != "/workspace" and not candidate.startswith("/workspace/"):
+        raise ValueError(f"path escapes /workspace: {path!r}")
+    return candidate
 
 
 async def _create_sandbox_container(

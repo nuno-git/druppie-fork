@@ -247,7 +247,7 @@ async def reject(
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid attachment ID format")
         try:
-            attachment_repo.validate_ownership(attachment_uuids, approval.session_id)
+            attachment_repo.validate_ownership(attachment_uuids, approval.session_id, owner_user_id=user_id)
         except ValueError as e:
             raise HTTPException(status_code=403, detail=str(e))
         attachment_repo.link_to_approval(

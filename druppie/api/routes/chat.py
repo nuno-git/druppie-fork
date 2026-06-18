@@ -211,7 +211,7 @@ async def chat(
             raise HTTPException(status_code=400, detail="Invalid attachment ID format")
         if attachment_uuids:
             try:
-                attachment_repo.validate_ownership(attachment_uuids, current_session_id)
+                attachment_repo.validate_ownership(attachment_uuids, current_session_id, owner_user_id=user_id)
             except ValueError as e:
                 raise HTTPException(status_code=403, detail=str(e))
 
@@ -377,19 +377,20 @@ async def upload_attachment(
 
     # Verify session ownership when session_id is provided
     sid = UUID(session_id) if session_id else None
+    owner_user_id = UUID(user["sub"])
     if sid:
         session = session_repo.get_by_id(sid)
         if not session:
             raise NotFoundError("session", str(sid))
-        user_id = UUID(user["sub"])
         user_roles = get_user_roles(user)
-        if session.user_id != user_id and "admin" not in user_roles:
+        if session.user_id != owner_user_id and "admin" not in user_roles:
             raise AuthorizationError("Cannot upload to this session")
     attachment = attachment_repo.create(
         original_filename=filename,
         content_type=content_type,
         file_size=file_size,
         storage_path="pending",
+        owner_user_id=owner_user_id,
         session_id=sid,
     )
     attachment_repo.db.flush()
@@ -440,16 +441,14 @@ async def get_attachment(
     if not attachment:
         raise NotFoundError("attachment", str(attachment_id))
 
-    # Check access: user must own the session or be admin
-    if attachment.session_id:
-        session = session_repo.get_by_id(attachment.session_id)
-        if session:
-            user_id = UUID(user["sub"])
-            user_roles = get_user_roles(user)
-            is_owner = session.user_id == user_id
-            is_admin = "admin" in user_roles
-            if not is_owner and not is_admin:
-                raise AuthorizationError("Cannot access this attachment")
+    # Check access: user must own the attachment or be admin.
+    # Unconditional — uploads to new chats have session_id=None, so the
+    # owner check cannot rely on session linkage.
+    user_id = UUID(user["sub"])
+    user_roles = get_user_roles(user)
+    is_admin = "admin" in user_roles
+    if attachment.owner_user_id != user_id and not is_admin:
+        raise AuthorizationError("Cannot access this attachment")
 
     file_path = attachment_service.get_file_path(attachment.storage_path)
     if not file_path.exists():
