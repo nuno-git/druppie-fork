@@ -85,8 +85,10 @@ def _generate_github_app_jwt() -> str:
     return jwt.encode(payload, private_key, algorithm="RS256")
 
 
-def _get_github_token() -> str:
+def _get_github_token() -> str | None:
     global _github_installation_token, _github_token_expires_at
+    if not GITHUB_APP_ID or not GITHUB_APP_PRIVATE_KEY_PATH or not GITHUB_APP_INSTALLATION_ID:
+        return None
     if _github_installation_token and time.time() < _github_token_expires_at - 60:
         return _github_installation_token
     import httpx

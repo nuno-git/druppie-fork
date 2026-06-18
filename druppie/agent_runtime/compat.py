@@ -43,8 +43,6 @@ async def adapt_llm(old_llm) -> Callable:
         response = await old_llm.achat(messages, tools, max_tokens=max_tokens)
 
         message: dict[str, Any] = {"role": "assistant", "content": response.content}
-        if response.thinking_content:
-            message["reasoning_content"] = response.thinking_content
         if response.tool_calls:
             # Convert internal tool_calls format to OpenAI wire format.
             # Internal: {"id": ..., "name": ..., "args": dict}
@@ -72,6 +70,8 @@ async def adapt_llm(old_llm) -> Callable:
             },
             "model": response.model or "",
         }
+        if response.thinking_content:
+            result["thinking_content"] = response.thinking_content
         if response.raw_request:
             result["raw_request"] = response.raw_request
         if response.raw_response:
@@ -479,7 +479,7 @@ def create_event_persister(
                 response_content = msg.get("content") or ""
                 finish_reason = choice.get("finish_reason", "")
 
-                thinking_content = msg.get("reasoning_content") or msg.get("thinking") or None
+                thinking_content = resp.get("thinking_content") or None
 
                 raw_response_json = json.dumps({
                     "content": response_content,
