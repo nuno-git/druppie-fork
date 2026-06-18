@@ -321,7 +321,7 @@ class RevertService:
             if original_prompt:
                 self.execution_repo.update_planned_prompt(agent_run_id, original_prompt)
 
-        self._reset_parent_chain_for_retry(target.parent_run_id)
+        self._reset_parent_chain_for_retry(target.parent_run_id, target.spawning_tool_call_id)
 
         self.execution_repo.commit()
 
@@ -361,16 +361,17 @@ class RevertService:
             result.extend(self._collect_descendants(child.id))
         return result
 
-    def _reset_parent_chain_for_retry(self, parent_run_id: UUID | None) -> None:
+    def _reset_parent_chain_for_retry(
+        self, parent_run_id: UUID | None, spawning_tool_call_id: UUID | None = None,
+    ) -> None:
         """Walk up the parent chain, resetting each ancestor for retry.
 
         For each ancestor:
         1. Delete its done() ToolCall
-        2. Clear its subagents() ToolCall result (set to None, status='executing')
-        3. Set AgentRun status to RUNNING, clear completed_at
-
-        Continues up through grandparent, great-grandparent, etc. to support
-        arbitrarily deep subagent nesting.
+        2. Find the subagents() TC that spawned the target (by spawning_tool_call_id),
+           clear its result, set to 'executing'
+        3. Delete ALL tool calls and LLM calls after that TC on the parent
+        4. Set AgentRun status to RUNNING, clear completed_at
         """
         if parent_run_id is None:
             return
@@ -379,6 +380,7 @@ class RevertService:
         from druppie.db.models.tool_call import ToolCall as ToolCallModel
 
         current_id = parent_run_id
+        current_tc_id = spawning_tool_call_id
         while current_id:
             parent = (
                 self.execution_repo.db.query(AgentRun)
@@ -393,15 +395,22 @@ class RevertService:
                 ToolCallModel.tool_name == "done",
             ).delete(synchronize_session="fetch")
 
-            subagents_tc = (
-                self.execution_repo.db.query(ToolCallModel)
-                .filter(
-                    ToolCallModel.agent_run_id == current_id,
-                    ToolCallModel.tool_name == "subagents",
+            if current_tc_id:
+                subagents_tc = (
+                    self.execution_repo.db.query(ToolCallModel)
+                    .filter(ToolCallModel.id == current_tc_id)
+                    .first()
                 )
-                .order_by(ToolCallModel.created_at.desc())
-                .first()
-            )
+            else:
+                subagents_tc = (
+                    self.execution_repo.db.query(ToolCallModel)
+                    .filter(
+                        ToolCallModel.agent_run_id == current_id,
+                        ToolCallModel.tool_name == "subagents",
+                    )
+                    .order_by(ToolCallModel.created_at.desc())
+                    .first()
+                )
             if subagents_tc:
                 subagents_tc.result = None
                 subagents_tc.status = "executing"
@@ -456,6 +465,7 @@ class RevertService:
             )
 
             current_id = parent.parent_run_id
+            current_tc_id = parent.spawning_tool_call_id
 
     def _analyze_git_side_effects(
         self,
