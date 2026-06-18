@@ -318,17 +318,14 @@ const InlineApproval = ({ tc, sessionId, sessionUserId }) => {
 
 const TimelineQuestion = ({ tc, agentId, sessionId, attachments = [], onAttachmentsConsumed, onAnswerSubmitted }) => {
   const queryClient = useQueryClient()
-  const lastAnswerRef = useRef(null)
 
   const answerMut = useMutation({
-    mutationFn: ({ questionId, answer, selectedChoices = null, attachmentIds = [] }) => {
-      lastAnswerRef.current = answer
-      return answerQuestion(questionId, answer, selectedChoices, attachmentIds)
-    },
+    mutationFn: ({ questionId, answer, selectedChoices = null, attachmentIds = [] }) =>
+      answerQuestion(questionId, answer, selectedChoices, attachmentIds),
     onSuccess: () => {
       onAttachmentsConsumed?.()
       markResuming()
-      onAnswerSubmitted?.(lastAnswerRef.current)
+      onAnswerSubmitted?.()
       queryClient.invalidateQueries({ queryKey: ['session', sessionId] })
     },
   })
