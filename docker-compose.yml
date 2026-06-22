@@ -105,6 +105,9 @@ services:
       KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN:-admin}
       KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
       KC_HOSTNAME: ${EXTERNAL_HOST:-localhost}
+      # Port for frontend URL building. Required for direct dev access on :8180;
+      # in prod behind a reverse proxy, X-Forwarded-Port takes precedence over this.
+      KC_HOSTNAME_PORT: ${KEYCLOAK_PORT:-8180}
       KC_HOSTNAME_STRICT: "false"
       KC_HOSTNAME_STRICT_HTTPS: ${KC_HOSTNAME_STRICT_HTTPS:-false}
       KC_HTTP_ENABLED: "true"
