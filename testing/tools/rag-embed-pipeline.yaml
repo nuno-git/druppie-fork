@@ -1,0 +1,80 @@
+## Tool Test: RAG embedding pipeline — validate module-llm embed works
+##
+## Tests the platform-provided embedding service that all app-local RAG
+## depends on.  Apps use `rag.py` which calls `druppie.call("llm", "embed", ...)`
+## under the hood — this test validates that pipeline end-to-end.
+##
+## What this proves:
+##   - module-llm:embed accepts text and returns embeddings
+##   - Embedding dimensions are consistent across calls
+##   - The configured embedding provider (Azure/DeepInfra/etc.) is reachable
+##   - Multiple texts can be embedded in one call (batch)
+##
+## Prerequisites:
+##   - module-llm running with a working embedding provider
+##     (EMBEDDING_API_KEY configured in .env)
+
+tool-test:
+  name: rag-embed-pipeline
+  description: "RAG embedding pipeline: validate module-llm embed returns vectors for Dutch policy text"
+  tags: [rag, llm, embed, mcp, e2e]
+
+  chain:
+    # =========================================================================
+    # Step 0: Create a project (required for tool call context)
+    # =========================================================================
+    - agent: router
+      tool: builtin:set_intent
+      arguments:
+        intent: create_project
+        project_name: rag-embed-test
+        description: "Test project for validating the RAG embedding pipeline"
+      assert:
+        result:
+          - not_empty
+
+    - agent: router
+      tool: builtin:done
+      arguments:
+        summary: "Agent router: Created project rag-embed-test"
+
+    # =========================================================================
+    # Step 1: Single text embedding — Dutch policy content
+    #
+    # This is what rag.py calls internally when indexing or searching:
+    #   druppie.call("llm", "embed", {"texts": [...]})
+    # =========================================================================
+    - agent: planner
+      tool: llm:embed
+      arguments:
+        texts:
+          - "Het waterschap hanteert het uitgangspunt dat in landelijk gebied geen gescheiden rioolstelsel wordt aangelegd tenzij de afstand tot het dichtstbijzijnde rioolgemaal minder dan 500 meter bedraagt."
+      assert:
+        result:
+          - not_empty
+          - no_error
+          - { contains: "embeddings" }
+          - { contains: "dimensions" }
+
+    # =========================================================================
+    # Step 2: Batch embedding — multiple texts in one call
+    #
+    # Tests that rag.py's batch embedding works (index_documents sends
+    # multiple chunk texts per call for efficiency).
+    # =========================================================================
+    - agent: planner
+      tool: llm:embed
+      arguments:
+        texts:
+          - "De Kaderrichtlijn Water verplicht het waterschap om uiterlijk in 2027 een goede ecologische toestand te bereiken."
+          - "Het waterschap beheert 245 kilometer primaire waterkering en 180 kilometer regionale waterkering."
+          - "Bij vervanging van bestaande riolering wordt standaard overgegaan op een verbeterd gescheiden stelsel."
+      assert:
+        result:
+          - not_empty
+          - no_error
+          - { contains: "embeddings" }
+          - { contains: "\"count\": 3" }
+
+  verify:
+    - gitea_repo_exists: true

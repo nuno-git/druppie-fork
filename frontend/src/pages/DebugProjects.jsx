@@ -129,7 +129,10 @@ const ProjectsSection = () => {
 
     setDeleteLoading(true)
     setDeleteResult(null)
-    const response = await apiFetch(`/api/projects/${deleteId}`, { method: 'DELETE' })
+    const response = await apiFetch('/api/projects', {
+      method: 'DELETE',
+      body: JSON.stringify({ project_ids: [deleteId] }),
+    })
     setDeleteResult(response)
     setDeleteLoading(false)
   }

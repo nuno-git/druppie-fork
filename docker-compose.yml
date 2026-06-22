@@ -267,15 +267,40 @@ services:
     profiles: [infra, dev, prod]
     environment:
       MODELS_DIR: /models
+      WORKSPACE_ROOT: /workspaces
       MCP_PORT: "9006"
+      LAYOUT_SERVICE_URL: ${LAYOUT_SERVICE_URL:-http://layout-service:8090}
     volumes:
       - ./druppie/mcp-servers/module-archimate/models:/models:ro
+      - workspace:/workspaces
     ports:
       - "${MCP_ARCHIMATE_PORT:-9006}:9006"
     networks:
       - main
+    depends_on:
+      layout-service:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9006/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  layout-service:
+    build:
+      context: ./druppie/mcp-servers/layout-service
+      dockerfile: Dockerfile
+    container_name: druppie-layout-service
+    profiles: [infra, dev, prod]
+    environment:
+      PORT: "8090"
+    ports:
+      - "${LAYOUT_SERVICE_PORT:-8090}:8090"
+    networks:
+      - main
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8090/health"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -338,6 +363,11 @@ services:
       ZAI_BASE_URL: ${ZAI_BASE_URL:-}
       ZAI_MODEL: ${ZAI_MODEL:-}
       DEEPINFRA_API_KEY: ${DEEPINFRA_API_KEY:-}
+      EMBEDDING_API_KEY: ${EMBEDDING_API_KEY:-}
+      EMBEDDING_BASE_URL: ${EMBEDDING_BASE_URL:-}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-}
+      EMBEDDING_DIMENSIONS: ${EMBEDDING_DIMENSIONS:-}
+      EMBEDDING_API_VERSION: ${EMBEDDING_API_VERSION:-}
     ports:
       - "${MCP_LLM_PORT:-9008}:9008"
     networks:
@@ -391,6 +421,62 @@ services:
       - main
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9010/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  module-azuredevops:
+    build:
+      context: ./druppie/mcp-servers
+      dockerfile: module-azuredevops/Dockerfile
+    container_name: druppie-module-azuredevops
+    profiles: [infra, dev, prod]
+    environment:
+      MCP_PORT: "9012"
+      # Read-only access is hard-scoped to this single project (see module).
+      AZURE_DEVOPS_ORG_URL: ${AZURE_DEVOPS_ORG_URL:-}
+      AZURE_DEVOPS_PROJECT: ${AZURE_DEVOPS_PROJECT:-}
+      AZURE_DEVOPS_TENANT_ID: ${AZURE_DEVOPS_TENANT_ID:-}
+      AZURE_DEVOPS_CLIENT_ID: ${AZURE_DEVOPS_CLIENT_ID:-}
+      AZURE_DEVOPS_CLIENT_SECRET: ${AZURE_DEVOPS_CLIENT_SECRET:-}
+    ports:
+      - "${MCP_AZUREDEVOPS_PORT:-9012}:9012"
+    networks:
+      - main
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9012/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  module-kubernetes:
+    build:
+      context: ./druppie/mcp-servers
+      dockerfile: module-kubernetes/Dockerfile
+    container_name: druppie-module-kubernetes
+    # Opt-in profile: this module needs a reachable cluster and the external
+    # `kind` network, so it is NOT part of the default dev/infra/prod stack.
+    # Start it alongside the app, e.g.:
+    #   docker compose --profile dev --profile kubernetes up -d
+    profiles: [kubernetes]
+    environment:
+      MCP_PORT: "9013"
+    volumes:
+      # Read-only kubeconfig for local dev (Helm uses in-cluster config instead).
+      # kind's standard kubeconfig points the API server at 127.0.0.1, which is
+      # the container's own loopback. Use the --internal kubeconfig instead — it
+      # targets the control-plane container over the `kind` network below:
+      #   kind get kubeconfig --name druppie --internal > ~/.kube/druppie-mcp.yaml
+      - ${HOME}/.kube/druppie-mcp.yaml:/root/.kube/config:ro
+    ports:
+      - "${MCP_KUBERNETES_PORT:-9013}:9013"
+    networks:
+      - main
+      - kind
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9013/health"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -648,6 +734,7 @@ services:
       MCP_WEB_URL: ${MCP_WEB_URL:-http://module-web:9005}
       MCP_ARCHIMATE_URL: ${MCP_ARCHIMATE_URL:-http://module-archimate:9006}
       MCP_REGISTRY_URL: ${MCP_REGISTRY_URL:-http://module-registry:9007}
+      MCP_KUBERNETES_URL: ${MCP_KUBERNETES_URL:-http://module-kubernetes:9013}
       SANDBOX_CONTROL_PLANE_URL: http://sandbox-control-plane:8787
       SANDBOX_MANAGER_URL: http://sandbox-manager:8000
       SANDBOX_API_SECRET: ${SANDBOX_API_SECRET:-sandbox-dev-secret}
@@ -734,6 +821,7 @@ services:
       MCP_WEB_URL: ${MCP_WEB_URL:-http://module-web:9005}
       MCP_ARCHIMATE_URL: ${MCP_ARCHIMATE_URL:-http://module-archimate:9006}
       MCP_REGISTRY_URL: ${MCP_REGISTRY_URL:-http://module-registry:9007}
+      MCP_KUBERNETES_URL: ${MCP_KUBERNETES_URL:-http://module-kubernetes:9013}
       SANDBOX_CONTROL_PLANE_URL: http://sandbox-control-plane:8787
       SANDBOX_API_SECRET: ${SANDBOX_API_SECRET:-sandbox-dev-secret}
       SANDBOX_MODEL: ${SANDBOX_MODEL:-}
@@ -863,6 +951,8 @@ services:
           DROP TABLE IF EXISTS tool_calls CASCADE;
           DROP TABLE IF EXISTS messages CASCADE;
           DROP TABLE IF EXISTS agent_runs CASCADE;
+          DROP TABLE IF EXISTS job_runs CASCADE;
+          DROP TABLE IF EXISTS job_definitions CASCADE;
           DROP TABLE IF EXISTS sessions CASCADE;
           DROP TABLE IF EXISTS projects CASCADE;
         "
@@ -1038,3 +1128,8 @@ networks:
     driver: bridge
     # Isolated network for sandbox containers — only the control plane bridges both networks.
     # Prevents compromised sandboxes from reaching the database, Keycloak, Gitea, or backend directly.
+  # Created by `kind`; the kubernetes module joins it to reach the cluster's
+  # control-plane container. Only required by the opt-in `kubernetes` profile.
+  kind:
+    name: kind
+    external: true

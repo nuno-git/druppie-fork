@@ -1,8 +1,10 @@
 """LLM v1 — MCP Tool Definitions.
 
-Provides chat completion backed by Z.AI GLM or DeepInfra.
+Provides chat completion and embeddings backed by Z.AI GLM or DeepInfra.
 """
 
+import asyncio
+import time
 from fastmcp import FastMCP
 from .module import LLMModule
 
@@ -12,7 +14,7 @@ MODULE_VERSION = "1.0.0"
 mcp = FastMCP(
     "LLM v1",
     version=MODULE_VERSION,
-    instructions="LLM chat completion. Use for text generation, summarization, and question answering.",
+    instructions="LLM chat completion and embeddings. Use for text generation, summarization, question answering, and generating text embeddings for semantic search.",
 )
 
 module = LLMModule()
@@ -37,3 +39,36 @@ async def chat(
     """
     answer = module.chat(prompt=prompt, system=system, model=model)
     return {"answer": answer}
+
+
+@mcp.tool(
+    name="embed",
+    description="Generate text embeddings for semantic search and similarity. Returns a list of embedding vectors.",
+    meta={
+        "module_id": MODULE_ID,
+        "version": MODULE_VERSION,
+        "resource_metrics": {
+            "processing_ms": {"type": "integer", "unit": "milliseconds"},
+        },
+    },
+)
+async def embed(
+    texts: list[str],
+    model: str | None = None,
+) -> dict:
+    start = time.time()
+    embeddings = await asyncio.to_thread(module.embed, texts=texts, model=model)
+    elapsed_ms = int((time.time() - start) * 1000)
+    return {
+        "embeddings": embeddings,
+        "dimensions": len(embeddings[0]) if embeddings else 0,
+        "count": len(embeddings),
+        "_meta": {
+            "module_id": MODULE_ID,
+            "module_version": MODULE_VERSION,
+            "usage": {
+                "cost_cents": 0.0,
+                "resources": {"processing_ms": elapsed_ms},
+            },
+        },
+    }

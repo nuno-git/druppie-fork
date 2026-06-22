@@ -19,6 +19,10 @@ Usage:
         run_session_task(session_id, my_work, "resume"),
         name=f"resume-{session_id}",
     )
+
+Concurrency is guarded at the database level via SELECT ... FOR UPDATE.
+create_session_task() acquires a row lock on the session and checks that
+no other task is active before spawning. This works across replicas.
 """
 
 import asyncio
@@ -33,10 +37,10 @@ logger = structlog.get_logger()
 # Module-level set: prevents GC of running tasks and enables shutdown enumeration.
 _background_tasks: set[asyncio.Task] = set()
 
-# Per-session guard: maps session_id → running Task.
-# Prevents concurrent background tasks for the same session (e.g. rapid
-# stop → resume → stop → resume spawning two tasks that both run agents).
-_active_session_tasks: dict[UUID, asyncio.Task] = {}
+
+class SessionTaskConflict(Exception):
+    """Raised when a background task is already running for a session."""
+    pass
 
 
 def _on_task_done(task: asyncio.Task) -> None:
@@ -74,15 +78,11 @@ def create_tracked_task(
     return task
 
 
-class SessionTaskConflict(Exception):
-    """Raised when a background task is already running for a session."""
-    pass
-
-
-def is_session_task_running(session_id: UUID) -> bool:
-    """Check if a background task is already running for a session."""
-    task = _active_session_tasks.get(session_id)
-    return task is not None and not task.done()
+# Status that indicates a background task is currently in flight for this
+# session. The guard claims this status under the row lock before spawning, so
+# a concurrent request observes it and is rejected. Paused states are NOT here:
+# resuming a paused session is exactly what most callers do.
+_TASK_ACTIVE_STATES = frozenset({"active"})
 
 
 def create_session_task(
@@ -90,36 +90,77 @@ def create_session_task(
     coro: Coroutine[Any, Any, Any],
     *,
     name: str | None = None,
+    skip_lock: bool = False,
 ) -> asyncio.Task:
-    """Create a tracked task for a session, ensuring only one runs at a time.
+    """Create a tracked task for a session with a DB-level concurrency guard.
 
-    This MUST be called synchronously from the endpoint handler (no await
-    between the call site and this function) so the check+add is atomic
-    in the single-threaded event loop.
+    Opens a short-lived DB session, locks the session row with SELECT FOR UPDATE,
+    verifies no other task is active, and atomically claims the session by
+    setting its status to ACTIVE before releasing the lock. If the session is
+    already ACTIVE, raises SessionTaskConflict. Claiming the status under the
+    lock (rather than letting the spawned task set it later) closes the window
+    where two requests could both pass the guard and spawn duplicate tasks.
+
+    Args:
+        session_id: Session to guard.
+        coro: Coroutine to run as a background task.
+        name: Task name for logging.
+        skip_lock: Skip the DB guard. Use ONLY when the caller already holds
+            a DB lock (e.g. lock_for_retry / lock_for_resume) or for brand-new
+            sessions that no other request can reference yet.
 
     Raises:
         SessionTaskConflict: If a task is already running for this session.
     """
-    existing = _active_session_tasks.get(session_id)
-    if existing is not None and not existing.done():
-        logger.warning(
-            "session_task_conflict",
-            session_id=str(session_id),
-            existing_task=existing.get_name(),
-            requested_task=name,
-        )
-        raise SessionTaskConflict(
-            f"A background task is already running for session {session_id}"
-        )
+    if not skip_lock:
+        from druppie.db.database import SessionLocal
+        from druppie.db.models import Session as SessionModel
+        from druppie.domain.common import SessionStatus
 
-    task = create_tracked_task(coro, name=name)
-    _active_session_tasks[session_id] = task
+        db = SessionLocal()
+        try:
+            session = (
+                db.query(SessionModel)
+                .filter_by(id=session_id)
+                .with_for_update()
+                .first()
+            )
+            if session is not None and session.status in _TASK_ACTIVE_STATES:
+                logger.warning(
+                    "session_task_conflict",
+                    session_id=str(session_id),
+                    session_status=session.status,
+                    requested_task=name,
+                )
+                raise SessionTaskConflict(
+                    f"A background task is already running for session {session_id} "
+                    f"(status={session.status})"
+                )
+            # No active task — claim the session by marking it ACTIVE within the
+            # same locked transaction, then release the lock. This is what the
+            # spawned orchestrator would set anyway, done atomically here so a
+            # concurrent request sees ACTIVE and is rejected (no double-spawn).
+            if session is not None:
+                session.status = SessionStatus.ACTIVE.value
+            db.commit()  # Persist the ACTIVE claim and release the row lock.
+        except SessionTaskConflict:
+            db.rollback()
+            raise
+        except Exception:
+            db.rollback()
+            logger.warning(
+                "session_task_guard_failed",
+                session_id=str(session_id),
+                requested_task=name,
+            )
+            # If the guard itself fails (e.g. DB connection issue), still
+            # allow the task to proceed — the guard is a safety net, not a
+            # gate. Worst case: a duplicate task runs, which the orchestrator
+            # handles gracefully via session status checks.
+        finally:
+            db.close()
 
-    def _cleanup(_t: asyncio.Task) -> None:
-        _active_session_tasks.pop(session_id, None)
-
-    task.add_done_callback(_cleanup)
-    return task
+    return create_tracked_task(coro, name=name)
 
 
 async def shutdown_background_tasks(timeout: float = 30.0) -> None:
@@ -175,14 +216,16 @@ class SessionTaskContext:
     so task functions don't need to create their own.
     """
 
-    __slots__ = ("db", "session_repo", "execution_repo", "project_repo", "question_repo", "orchestrator")
+    __slots__ = ("db", "session_repo", "execution_repo", "project_repo", "question_repo", "job_repo", "attachment_repo", "orchestrator")
 
-    def __init__(self, db, session_repo, execution_repo, project_repo, question_repo, orchestrator):
+    def __init__(self, db, session_repo, execution_repo, project_repo, question_repo, job_repo, attachment_repo, orchestrator):
         self.db = db
         self.session_repo = session_repo
         self.execution_repo = execution_repo
         self.project_repo = project_repo
         self.question_repo = question_repo
+        self.job_repo = job_repo
+        self.attachment_repo = attachment_repo
         self.orchestrator = orchestrator
 
 
@@ -215,6 +258,7 @@ async def run_session_task(
         ExecutionRepository,
         ProjectRepository,
         QuestionRepository,
+        AttachmentRepository,
     )
     from druppie.execution import Orchestrator
 
@@ -224,12 +268,17 @@ async def run_session_task(
         execution_repo = ExecutionRepository(db)
         project_repo = ProjectRepository(db)
         question_repo = QuestionRepository(db)
+        from druppie.repositories import JobRepository
+        job_repo = JobRepository(db)
+        attachment_repo = AttachmentRepository(db)
 
         orchestrator = Orchestrator(
             session_repo=session_repo,
             execution_repo=execution_repo,
             project_repo=project_repo,
             question_repo=question_repo,
+            job_repo=job_repo,
+            attachment_repo=attachment_repo,
         )
 
         ctx = SessionTaskContext(
@@ -238,6 +287,8 @@ async def run_session_task(
             execution_repo=execution_repo,
             project_repo=project_repo,
             question_repo=question_repo,
+            job_repo=job_repo,
+            attachment_repo=attachment_repo,
             orchestrator=orchestrator,
         )
 

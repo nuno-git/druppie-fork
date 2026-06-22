@@ -8,6 +8,7 @@ from sqlalchemy.orm import joinedload, subqueryload
 
 from ..db.models import BenchmarkRun, EvaluationResult, TestBatchRun, TestRun, TestRunTag
 from ..db.models.test_assertion_result import TestAssertionResult
+from ..db.models.test_running_status import TestRunningStatus
 from .base import BaseRepository
 
 
@@ -370,6 +371,58 @@ class EvaluationRepository(BaseRepository):
 
             self.db.delete(user)
 
+        return count
+
+    def delete_test_batch(self, batch_id: str) -> int:
+        """Delete a test result batch and all of its test runs.
+
+        Handles both real batches (TestRun.batch_id == batch_id) and the
+        single unbatched runs that list_test_batches surfaces using the run's
+        own id as the batch_id. Child tags/assertion results cascade via ORM.
+
+        Returns:
+            Number of test runs deleted (0 if nothing matched).
+        """
+        runs = self.db.query(TestRun).filter(TestRun.batch_id == batch_id).all()
+        if not runs:
+            # Unbatched run surfaced with its own id as the batch_id
+            try:
+                run_uuid = UUID(str(batch_id))
+            except (ValueError, TypeError):
+                run_uuid = None
+            if run_uuid is not None:
+                run = self.db.query(TestRun).filter(TestRun.id == run_uuid).first()
+                if run:
+                    runs = [run]
+
+        for run in runs:
+            self.db.delete(run)
+        self.db.flush()
+
+        # Remove running-status rows (FK to test_batch_runs) then the batch
+        self.db.query(TestRunningStatus).filter(TestRunningStatus.run_id == batch_id).delete()
+        self.db.query(TestBatchRun).filter(TestBatchRun.id == batch_id).delete()
+        self.db.flush()
+        return len(runs)
+
+    def delete_test_run(self, test_run_id: UUID) -> bool:
+        """Delete a single test run by ID. Child tags/assertions cascade via ORM."""
+        run = self.db.query(TestRun).filter(TestRun.id == test_run_id).first()
+        if not run:
+            return False
+        self.db.delete(run)
+        self.db.flush()
+        return True
+
+    def delete_all_test_batches(self) -> int:
+        """Delete all test runs, batch metadata, and running status rows."""
+        count = self.db.query(TestRun).count()
+        self.db.query(TestAssertionResult).delete()
+        self.db.query(TestRunTag).delete()
+        self.db.query(TestRun).delete()
+        self.db.query(TestRunningStatus).delete()
+        self.db.query(TestBatchRun).delete()
+        self.db.flush()
         return count
 
     # =========================================================================

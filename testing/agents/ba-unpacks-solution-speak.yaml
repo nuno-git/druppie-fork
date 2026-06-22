@@ -17,7 +17,7 @@ agent-test:
     - check: ba-solution-unpacking
     - check: ba-no-solution-bias
     - check: ba-mandatory-elicitation
-    - check: ba-fd-in-dutch
+    - check: ba-fd-in-english
     - check: ba-git-commit
 
   judge:

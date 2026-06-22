@@ -9,12 +9,15 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 # Install dependencies
-COPY module-docker/requirements.txt .
+COPY mcp-servers/module-docker/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy shared router factory and module code
-COPY module_router.py .
-COPY module-docker/ .
+COPY mcp-servers/module_router.py .
+COPY mcp-servers/module-docker/ .
+
+# Copy Druppie SDK for injection into compose_up build contexts
+COPY sdk/ /druppie-sdk/
 
 # Environment variables
 ENV MCP_PORT=9002

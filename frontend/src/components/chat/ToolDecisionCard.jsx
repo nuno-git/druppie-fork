@@ -423,13 +423,23 @@ const ToolDecisionCard = ({
               </div>
             ) : (
               <div className="space-y-2">
-                <input
-                  type="text"
+                <textarea
                   value={rejectReason}
                   onChange={(e) => setRejectReason(e.target.value)}
                   placeholder="Rejection reason (optional)"
-                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-red-500 focus:border-transparent"
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm resize-y focus:ring-2 focus:ring-red-500 focus:border-transparent"
+                  rows={3}
+                  maxLength={10000}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !isProcessing) {
+                      e.preventDefault()
+                      handleReject()
+                    }
+                  }}
                 />
+                <div className="text-xs text-gray-400 text-right">
+                  {rejectReason.length} / 10,000
+                </div>
                 <div className="flex items-center gap-2">
                   <button
                     onClick={handleReject}

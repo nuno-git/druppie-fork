@@ -1,0 +1,113 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "druppie.fullname" . }}-frontend
+  labels:
+    {{- include "druppie.labels" . | nindent 4 }}
+    app.kubernetes.io/component: frontend
+spec:
+  replicas: {{ .Values.frontend.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "druppie.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: frontend
+  template:
+    metadata:
+      labels:
+        {{- include "druppie.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: frontend
+      annotations:
+        cluster-autoscaler.kubernetes.io/safe-to-evict: "true"
+    spec:
+      {{- if .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml .Values.global.imagePullSecrets | nindent 8 }}
+      {{- end }}
+      {{- if .Values.highAvailability.antiAffinity.enabled }}
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    {{- include "druppie.selectorLabels" . | nindent 20 }}
+                    app.kubernetes.io/component: frontend
+                topologyKey: kubernetes.io/hostname
+      {{- end }}
+      initContainers:
+        - name: wait-for-backend
+          image: curlimages/curl:latest
+          command:
+            - sh
+            - -c
+            - |
+              until curl -sf http://{{ include "druppie.fullname" . }}-backend:{{ .Values.backend.port }}/health; do
+                echo "Waiting for backend..."
+                sleep 5
+              done
+          resources:
+            requests:
+              memory: "32Mi"
+              cpu: "50m"
+            limits:
+              memory: "64Mi"
+              cpu: "100m"
+      
+      containers:
+        - name: frontend
+          image: {{ include "druppie.image" (dict "Values" .Values "image" .Values.frontend.image) }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          {{- if .Values.global.ingress.enabled }}
+          command:
+            - sh
+            - -c
+            - |
+              echo "Replacing build-time URLs with runtime config..."
+              cd /app/dist/assets
+              for f in *.js; do
+                sed -i 's|http://localhost:30002|{{ include "druppie.keycloakExternalUrl" . }}|g' "$f"
+                sed -i 's|http://localhost:30000|{{ include "druppie.backendExternalUrl" . }}|g' "$f"
+                sed -i 's|http://localhost:30003|{{ include "druppie.giteaExternalUrl" . }}|g' "$f"
+                sed -i 's|http://localhost:30001|{{ include "druppie.frontendExternalUrl" . }}|g' "$f"
+                sed -i 's|http://localhost:8180|{{ include "druppie.keycloakExternalUrl" . }}|g' "$f"
+                sed -i 's|http://localhost:3100|{{ include "druppie.giteaExternalUrl" . }}|g' "$f"
+                sed -i 's|http://localhost:8100|{{ include "druppie.backendExternalUrl" . }}|g' "$f"
+                sed -i 's|http://localhost:5273|{{ include "druppie.frontendExternalUrl" . }}|g' "$f"
+              done
+              echo "Starting frontend server..."
+              exec npx serve -s /app/dist -l {{ .Values.frontend.port }}
+          {{- end }}
+          env:
+            - name: VITE_API_URL
+              value: "{{ include "druppie.backendExternalUrl" . }}"
+            - name: VITE_KEYCLOAK_URL
+              value: "{{ include "druppie.keycloakExternalUrl" . }}"
+            - name: VITE_KEYCLOAK_REALM
+              value: {{ .Values.frontend.vite.keycloakRealm | quote }}
+            - name: VITE_KEYCLOAK_CLIENT_ID
+              value: {{ .Values.frontend.vite.keycloakClientId | quote }}
+            - name: VITE_GITEA_URL
+              value: "{{ include "druppie.giteaExternalUrl" . }}"
+          ports:
+            - name: http
+              containerPort: {{ .Values.frontend.port }}
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /
+              port: {{ .Values.frontend.port }}
+            initialDelaySeconds: 15
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 6
+          readinessProbe:
+            httpGet:
+              path: /
+              port: {{ .Values.frontend.port }}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          resources:
+            {{- toYaml .Values.frontend.resources | nindent 12 }}

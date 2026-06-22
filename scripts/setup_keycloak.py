@@ -331,6 +331,10 @@ def main():
         f"http://{external_host}:{gitea_port}",
     )
 
+    ingress_enabled = os.getenv("INGRESS_ENABLED", "").lower() in ("true", "1", "yes")
+    frontend_url = os.getenv("FRONTEND_URL", "")
+    gitea_external_url = os.getenv("GITEA_EXTERNAL_URL", "")
+
     # Environment variable substitutions for dynamic port configuration
     env_substitutions = {
         "${FRONTEND_PUBLIC_URL}": frontend_public_url,
@@ -351,13 +355,29 @@ def main():
         return value
 
     for client in clients:
-        # Replace environment variables in URIs
-        if "redirectUris" in client:
-            client["redirectUris"] = [substitute_env(uri) for uri in client["redirectUris"]]
-        if "webOrigins" in client:
-            client["webOrigins"] = [substitute_env(uri) for uri in client["webOrigins"]]
-        if "rootUrl" in client:
-            client["rootUrl"] = substitute_env(client["rootUrl"])
+        if ingress_enabled:
+            # When ingress is enabled, replace redirect URIs with proper HTTPS subdomain URLs
+            client_id = client.get("clientId", "")
+            if client_id == "druppie-frontend" and frontend_url:
+                client["rootUrl"] = frontend_url
+                client["redirectUris"] = [
+                    f"{frontend_url}/*",
+                    frontend_url,
+                ]
+                client["webOrigins"] = [frontend_url]
+            elif client_id == "gitea" and gitea_external_url:
+                client["rootUrl"] = gitea_external_url
+                client["redirectUris"] = [
+                    f"{gitea_external_url}/*",
+                ]
+                client["webOrigins"] = [gitea_external_url]
+        else:
+            if "redirectUris" in client:
+                client["redirectUris"] = [substitute_env(uri) for uri in client["redirectUris"]]
+            if "webOrigins" in client:
+                client["webOrigins"] = [substitute_env(uri) for uri in client["webOrigins"]]
+            if "rootUrl" in client:
+                client["rootUrl"] = substitute_env(client["rootUrl"])
 
         kc.create_client(REALM_NAME, client)
 

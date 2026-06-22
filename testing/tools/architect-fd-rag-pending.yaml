@@ -1,0 +1,297 @@
+## Seeded session: BA wrote a doc-heavy FD, FD-approval gate PENDING.
+##
+## Starting point for manually testing the architect's RAG detection flow.
+## The FD describes a policy-document assistant that obviously needs RAG
+## (knowledge base over 50+ page documents, citation-backed answers,
+## multi-document corpus). All FD sections are complete so the architect
+## won't bounce it back to the BA.
+##
+## To test:
+##   1. Run this test from the evaluations page → green.
+##   2. Log in (or switch) to a user with the `analyst` role
+##      (e.g. username `analyst`, password `Analyst123!`).
+##   3. Go to /tasks — pending FD-approval for docs/functional-design.md
+##      on a session named "beleidsdocument-assistent".
+##   4. Open and review the FD — it describes a doc-heavy use case
+##      (knowledge-base search + citation-backed Q&A over 50+ page
+##      policy documents).
+##   5. Approve the FD.
+##   6. Resume the session. The planner schedules the architect.
+##   7. Watch the architect's actions in the session detail page.
+##      EXPECTED: in Step 1 (Intake) the architect calls
+##      invoke_skill(skill_name="rag-patterns") before designing.
+##   8. After research + design complete, open the produced
+##      docs/technical-design.md and confirm it contains the
+##      "RAG choices" subsection per the rag-patterns skill —
+##      chunking, retrieval, embedding, vector store, rerank,
+##      query transformation, advanced patterns, citation strategy —
+##      and TR-RAG-XX rows in the Requirements table.
+##
+## This is a self-contained tool test (does not extend other setups).
+
+tool-test:
+  name: architect-fd-rag-pending
+  description: "Doc-heavy FD for a policy-document assistant — paused on analyst-role FD approval gate, ready to validate architect RAG detection"
+  tags: [seed, paused, rag, fd-approval-gate, ba]
+  session_status: paused
+
+  chain:
+    # =========================================================================
+    # Router
+    # =========================================================================
+    - agent: router
+      tool: builtin:set_intent
+      arguments:
+        intent: create_project
+        project_name: beleidsdocument-assistent
+        description: "An AI assistant that answers policy questions by retrieving and citing passages from a corpus of waterschap policy documents (50+ pages each, multi-document corpus)."
+      assert:
+        result:
+          - not_empty
+
+    - agent: router
+      tool: builtin:done
+      arguments:
+        summary: "Agent router: Classified as create_project for beleidsdocument-assistent"
+
+    # =========================================================================
+    # Planner — plans the BA
+    # =========================================================================
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: business_analyst
+            prompt: "Gather requirements and create the functional design"
+          - agent_id: planner
+            prompt: "Re-evaluate after business analyst completes"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: Planned business_analyst to gather requirements and write the functional design"
+
+    # =========================================================================
+    # Business Analyst — writes the full FD, leaves FD-approval gate PENDING
+    # =========================================================================
+    - agent: business_analyst
+      tool: coding:make_design
+      arguments:
+        path: docs/functional-design.md
+        content: |
+          # Functioneel Ontwerp: Beleidsdocument-assistent
+
+          > Platform standards applied: [docs/platform-functional-standards.md](./platform-functional-standards.md) rev `2026-04-20`.
+
+          ## 1. Huidige vs Gewenste Situatie
+
+          | Aspect | Huidige Situatie | Gewenste Situatie |
+          |--------|------------------|-------------------|
+          | Informatie zoeken | Ambtenaren doorzoeken handmatig tientallen beleidsnotas, jaarverslagen en watergebiedsplannen (typisch 50+ pagina's per document) | AI-assistent retrieved relevante passages uit het hele corpus binnen seconden |
+          | Bronverwijzing | Antwoorden komen uit het hoofd of via copy-paste, vaak zonder pagina-referentie | Elk antwoord bevat verifieerbare citaties met document, sectie en paginanummer |
+          | Corpus-breedte | Eén ambtenaar kent 5-10 documenten goed; samenhang over de hele corpus mist | Vraag werkt over alle ingelezen beleidsdocumenten tegelijk |
+          | Inwerktijd nieuwe medewerker | 3-6 maanden om zelfstandig beleidsvragen te kunnen beantwoorden | Direct bruikbaar — assistent geeft onderbouwde antwoorden met bron |
+          | Actualiteit | Wijzigingen in een vastgestelde nota worden mondeling doorgegeven; oude versies blijven circuleren | Bijgewerkte documenten zichtbaar in de index binnen 24 uur na vaststelling |
+
+          ## 2. Problem Summary
+
+          **Wie is getroffen:**
+          - Beleidsmedewerkers (zoeken in hun eigen dossier én aanpalende dossiers)
+          - Bestuurders (vragen bondige onderbouwing voor commissievergaderingen)
+          - Nieuwe medewerkers (kunnen het corpus niet overzien)
+          - Juridische zaken (moet uitspraken kunnen verifiëren tegen exacte bron)
+
+          **Welk probleem ervaren ze:**
+          - Antwoorden duren uren tot dagen omdat het juiste document gevonden moet worden in een corpus van honderden lange beleidsdocumenten
+          - Antwoorden zonder paginareferentie zijn juridisch en bestuurlijk waardeloos
+          - Kennis is verspreid over individuele medewerkers; zonder de juiste collega vind je het juiste document niet
+          - Inhoudelijke samenhang tussen meerdere beleidsdocumenten wordt gemist
+
+          **Waarom dit belangrijk is (bedrijfsimpact):**
+          - Vertraging in beleidsadvies en bestuurlijke besluitvorming
+          - Reputatie- en juridisch risico bij niet-verifieerbare claims in formele stukken
+          - Hoge afhankelijkheid van individuele kennis — kwetsbaarheid bij uitstroom
+          - Inefficiëntie bij elke aanpassing van een vastgesteld beleidsdocument
+
+          **Wat succes betekent:**
+          - Antwoord op een beleidsvraag binnen 10 seconden, mét directe bronverwijzing
+          - Citaties zijn altijd herleidbaar naar exacte pagina + sectie
+          - Werkt over het hele corpus, niet één document per keer
+          - Nieuwe documenten zijn dezelfde dag doorzoekbaar
+
+          ## 3. Functionele Vereisten
+
+          | ID | Bron | Eis | Verificatiemethode |
+          |----|------|-----|-------------------|
+          | FR-01 | BA | De assistent beantwoordt vrije-tekst vragen over alle geïndexeerde beleidsdocumenten in natuurlijke taal. | Functionele test: vraag stellen, antwoord ontvangen |
+          | FR-02 | BA | Elk antwoord bevat één of meer expliciete citaties met document-titel, sectie/paragraaf en paginanummer. | Functionele test: controleer aanwezigheid van bronverwijzing in elk antwoord |
+          | FR-03 | BA | Gebruiker kan klikken op een citatie en springt naar de exacte passage in het bron-PDF. | Functionele test: klik op citatie, verifieer source-preview met juiste pagina |
+          | FR-04 | BA | De assistent doorzoekt het hele corpus (50+ pagina documenten, tientallen tot honderden documenten) in één query. | Functionele test: stel vraag waarvan het antwoord verspreid over 3 documenten staat |
+          | FR-05 | BA | De assistent ondersteunt vragen die jargon of artikel-/paragraafreferenties bevatten (bv. "artikel 5 lid 2 Waterwet"). | Functionele test: vraag met exacte juridische verwijzing geeft correct chunk terug |
+          | FR-06 | BA | De assistent ondersteunt vragen in alledaagse taal (zonder beleidsjargon). | Functionele test: informele vraag levert het zelfde correcte chunk |
+          | FR-07 | BA | Beheerder kan nieuwe beleidsdocumenten uploaden; het document is binnen 24 uur doorzoekbaar inclusief metadata (doctype, datum, status, vaststellings-orgaan). | Functionele test: upload nieuw document, wacht ≤24u, verifieer doorzoekbaarheid |
+          | FR-08 | BA | Beheerder kan documenten verwijderen of als vervallen markeren; vervallen documenten verschijnen niet meer als bron in antwoorden. | Functionele test: markeer document als vervallen, herhaal eerdere vraag, verifieer dat het niet meer voorkomt in citaties |
+          | FR-09 | BA | Gebruiker kan zijn zoekopdracht beperken via filters op doctype, jaar van vaststelling, of vaststellings-orgaan. | Functionele test: stel zelfde vraag met en zonder filter, verifieer verschillende resultaten |
+          | FR-10 | BA | Antwoorden zijn opgemaakt in Nederlandse zakelijke schrijfstijl met voetnoot-citaties, geschikt om door te exporteren naar Word/PDF. | Functionele test: exporteer antwoord naar PDF, verifieer voetnoten en doorklikbare bronnen |
+          | FR-11 | BA | Indien de assistent geen relevante passage vindt, geeft hij dat expliciet aan en verzint geen antwoord. | Functionele test: stel buiten-corpus vraag, verifieer "geen bron gevonden" zonder hallucinatie |
+          | FR-12 | BA | Het systeem registreert per vraag-antwoord welke documenten/chunks zijn geciteerd voor audit-doeleinden. | Functionele test: stel vraag, controleer audit-log voor chunk-IDs |
+
+          ## 4. Business Rules & Logic
+
+          | Regel ID | Beschrijving | Conditie | Uitkomst |
+          |----------|--------------|----------|----------|
+          | BR-01 | Een document is alleen doorzoekbaar als status = "vastgesteld" | Document geüpload | Index alleen als status=vastgesteld |
+          | BR-02 | Een vervallen document verdwijnt uit antwoorden | Document gemarkeerd vervallen | Filter het uit zoekresultaten |
+          | BR-03 | Antwoorden zonder citaten zijn niet acceptabel | Assistent kan geen passage verifiëren | Toon "geen verifieerbare bron — geen antwoord" |
+          | BR-04 | Citaties moeten herleidbaar zijn naar exacte pagina | Bij elk antwoord | Voeg document-titel, sectie, paginanummer toe |
+          | BR-05 | PII in documenten wordt gemarkeerd vóór indexering | Document bevat persoonsgegevens | Markeer als PII, gebruik toegangsfilter |
+
+          ## 5. Information Requirements
+
+          | Informatie | Beschrijving | Bron | Gebruikt door |
+          |------------|--------------|------|----------------|
+          | Documenttitel | Officiële naam van het beleidsdocument | Upload metadata | Citaties, zoekresultaten |
+          | Documenttype | Bv. nota, jaarverslag, watergebiedsplan, beheerplan | Upload metadata | Filters, zoekresultaten |
+          | Vaststellings-orgaan | Welk bestuursorgaan heeft het document vastgesteld | Upload metadata | Filters, citaties |
+          | Vaststellingsdatum | Wanneer is het document vastgesteld | Upload metadata | Filters, sortering |
+          | Status | vastgesteld / vervallen / concept | Upload metadata + lifecycle | Indexering, retrieval-filter |
+          | Volledige tekst | Pre-extraheerde tekst per document (PDF → tekst is upstream) | Document-extractie pipeline | Indexering |
+          | Pagina-mapping | Welke text-offset hoort bij welke pagina | Document-extractie pipeline | Citaties |
+          | Sectie-titels | Genummerde secties (§3.2 Riolering) | Document-extractie pipeline | Citaties (parent-section) |
+          | Audit-log | Per query: gebruiker, vraag, geciteerde chunk-IDs, tijdstip | Systeem | Compliance / audit |
+
+          ## 6. User Journeys
+
+          ### Journey 1: Beleidsmedewerker zoekt onderbouwing
+
+          **Actor:** Beleidsmedewerker
+
+          **Doel:** Snel een onderbouwd antwoord vinden uit het corpus
+
+          **Stappen:**
+          1. Medewerker opent de assistent
+          2. Stelt vraag in alledaagse taal ("wat is ons standpunt over riolering in landelijk gebied?")
+          3. Assistent toont antwoord in natuurlijke taal
+          4. Onder het antwoord staan 2-4 voetnoten met document + paginanummer
+          5. Medewerker klikt op een voetnoot
+          6. Bron-preview opent op de juiste pagina van het beleidsdocument
+          7. Medewerker kopieert het antwoord met voetnoten naar een nota voor de wethouder
+
+          ### Journey 2: Bestuurder vraagt onderbouwing voor commissievergadering
+
+          **Actor:** Lid van het dagelijks bestuur
+
+          **Doel:** Onderbouwing op één A4 voor een commissievergadering
+
+          **Stappen:**
+          1. Bestuurder stelt een specifieke vraag ("welke besluiten heeft het AB genomen over X in 2024-2025?")
+          2. Assistent retrieved relevante passages uit meerdere documenten
+          3. Assistent geeft een bondig antwoord met voetnoot-citaties per claim
+          4. Bestuurder exporteert het antwoord als PDF voor de vergaderstukken
+          5. Voetnoten in de PDF zijn doorklikbaar naar de oorspronkelijke bron
+
+          ### Journey 3: Beheerder voegt nieuw vastgesteld document toe
+
+          **Actor:** Beheerder (informatievoorziening)
+
+          **Doel:** Nieuw vastgesteld beleidsdocument doorzoekbaar maken
+
+          **Stappen:**
+          1. Beheerder opent het beheerscherm
+          2. Upload het PDF + vult metadata in (titel, type, vaststellings-orgaan, datum, status=vastgesteld)
+          3. Systeem toont status "wordt geïndexeerd"
+          4. Binnen 24 uur status wijzigt naar "doorzoekbaar"
+          5. Beheerder controleert door een testvraag te stellen die het nieuwe document zou moeten raken
+
+          ## 7. Integration Points
+
+          | Systeem | Type | Reden |
+          |---------|------|-------|
+          | Documenten-bronlocatie (DMS of file-share) | Read | Periodieke sync om nieuwe documenten op te halen voor indexering |
+          | Keycloak (Druppie-platform) | Auth | Gebruikersidentiteit + rolfiltering (vergelijk met Druppie-standaard) |
+
+          Er zijn geen verdere externe integraties — geen koppeling met zaaksysteem of bestuurlijk besluitvormingssysteem in v1.
+
+          ## 8. Niet-Functionele Vereisten
+
+          | ID | Bron | Eis | Doel |
+          |----|------|-----|------|
+          | NFR-01 | BA | Antwoord verschijnt binnen 10 seconden (P95) na het stellen van de vraag | Bruikbaarheid in dagelijks werk |
+          | NFR-02 | BA | Antwoord met voetnoot komt overeen met inhoud van de bron in ≥90% van de gevallen op een gold-set van 100 vragen | Bestuurlijke betrouwbaarheid |
+          | NFR-03 | BA | Hallucinatiepercentage (claims die niet in een bron staan) ≤3% op gold-set | Reputatie- en juridisch risico |
+          | NFR-04 | BA | Nieuwe documenten zijn binnen 24 uur na upload doorzoekbaar | Actualiteit |
+          | NFR-05 | BA | Beschikbaarheid 99,5% kantoortijd, 99,9% rondom commissievergaderingen | Bestuurlijke continuïteit |
+          | NFR-06 | BA | Alleen geautoriseerde gebruikers van het waterschap krijgen toegang | Beveiliging |
+          | NFR-07 | BA | Het systeem werkt op Nederlandstalig en Engelstalig materiaal (corpus is primair NL, gemengd verwacht in toekomst) | Toekomstvastheid |
+
+          ## 9. Security & Compliance Requirements
+
+          | Aspect | Eis |
+          |--------|-----|
+          | Auth | Standaard Druppie-platform-auth (Keycloak). Gebruikers van het waterschap. |
+          | Rolfiltering | Documenten met PII zijn beperkt tot rol "juridisch"; standaard gebruiker ziet ze niet |
+          | Audit | Per vraag-antwoord registratie van gebruiker, vraag, geciteerde chunk-IDs, tijdstip — minimaal 5 jaar bewaartermijn voor bestuurlijke verantwoording |
+          | PII | Documenten met persoonsgegevens worden gemarkeerd vóór indexering; geen PII in citaties wanneer rol dat niet toelaat |
+          | Data-soevereiniteit | Documenten en index blijven binnen NL/EU; geen API-only embedding/rerank diensten zonder EU-hosting |
+
+          ## 10. Aannames & Open Vragen
+
+          **Aannames:**
+          - PDF-extractie (PDF → tekst met paginabehoud) gebeurt upstream; de assistent ontvangt al pre-extraheerde tekst + page-mapping
+          - Documenten zijn in het Nederlands; toekomstige uitbreiding naar Engels is gewenst maar niet v1-eis
+          - Het corpus past binnen een paar miljoen tekst-chunks (geen tienduizenden documenten in v1)
+
+          **Open vragen:**
+          - OQ-01: Moet de assistent ook vragen kunnen beantwoorden over concepten die over meerdere documenten verspreid staan (synthesis-vragen), of alleen single-source factual lookups in v1?
+          - OQ-02: Welke afdelingen krijgen welke rolfilter — moet de Architect uitwerken met juridisch
+          - OQ-03: Naast voetnoot-citaties — willen we ook een interactieve hover/preview in de UI voor citaties?
+
+          ## 11. Out of Scope
+
+          - Documenten genereren of bewerken (assistent geeft alleen antwoord met bron, schrijft geen nota's)
+          - Workflow- of besluitvormingsondersteuning
+          - Vergelijking tussen versies van hetzelfde document (versie-diff)
+          - Vertaling tussen NL en EN
+          - Mobile-app (web-only in v1)
+
+          ## 12. Process Flow Diagram
+
+          ```mermaid
+          flowchart TD
+            U["Beleidsmedewerker / Bestuurder"] --> Q["Stelt vraag in natuurlijke taal"]
+            Q --> A["Assistent zoekt in corpus"]
+            A --> R["Relevante passages + scores"]
+            R --> G["Genereert antwoord met voetnoot-citaties"]
+            G --> O["Antwoord + klikbare bronverwijzingen"]
+            O --> U
+            BH["Beheerder"] --> UP["Upload beleidsdocument + metadata"]
+            UP --> IDX["Indexering pipeline"]
+            IDX --> A
+          ```
+
+          ## 13. Possible Solution Direction
+
+          De oplossing vraagt om retrieval over een groot corpus van lange documenten, met bronverwijzing als harde eis. De Architect bepaalt welke modules en patronen passen; in elk geval is een retrieval-laag met citatie-tracking nodig. De keuze tussen platform-defaults en eventuele afwijkingen is aan de Architect-fase.
+
+          ## 14. Platform Standard Deviations
+
+          | Standard | Deviation | Rationale |
+          |----------|-----------|-----------|
+          | (none)   |           |           |
+      assert:
+        result:
+          - { contains: "functional-design.md" }
+
+    # The chain ends here.
+    # - The BA does NOT call run_git / done because the FD make_design
+    #   approval gate is open. Resolving the gate is the user's job in
+    #   the UI; resuming will let the BA finish and the planner schedule
+    #   the architect.
+
+  verify:
+    # The Gitea repo for the project exists.
+    - gitea_repo_exists: true
+    # The FD has NOT been written to Gitea yet because the make_design
+    # approval gate is still pending. If the verifier gains a
+    # file_not_exists check later, we can be more explicit. For now we
+    # rely on the positive check and the manual UI verification above.
