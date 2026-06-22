@@ -1,7 +1,9 @@
 """Language detection service for Druppie.
 
-Detects user language to enable agents to respond in the same language.
-Supports Dutch (nl) and English (en) with Dutch as the fallback default.
+Detects user language to enable automatic translation.
+Supports Dutch (nl) and English (en) as conversational languages.
+Other detected languages are mapped to English for the session
+(input is still translated to English for agents).
 
 Uses a hybrid approach:
 1. Word-based heuristics for reliable detection of common words
@@ -29,8 +31,14 @@ class LanguageDetector:
     # Minimum text length for reliable detection
     MIN_TEXT_LENGTH = 5
 
-    # Supported languages (ISO 639-1 codes)
-    SUPPORTED_LANGUAGES = ["nl", "en"]
+    # Conversational languages — these are used for agent output translation.
+    # Other detected languages are mapped to "en" for the session but still
+    # trigger input translation.
+    CONVERSATIONAL_LANGUAGES = ["nl", "en"]
+
+    # Languages that langdetect commonly confuses with Dutch.
+    # In our context (Dutch-speaking users), these are almost certainly Dutch.
+    DUTCH_ALIASES = {"af", "fy", "de"}
 
     # Default fallback language
     DEFAULT_LANGUAGE = "nl"
@@ -192,18 +200,35 @@ class LanguageDetector:
                 threshold=self.confidence_threshold,
             )
 
-            # Check if detected language is supported AND confidence is high enough
-            if detected in self.SUPPORTED_LANGUAGES and probability >= self.confidence_threshold:
+            if probability < self.confidence_threshold:
+                logger.debug(
+                    "langdetect_rejected",
+                    detected=detected,
+                    probability=probability,
+                    reason="low_confidence",
+                )
+                return None
+
+            # Related Germanic languages are almost certainly Dutch in our context
+            if detected in self.DUTCH_ALIASES:
+                logger.debug(
+                    "dutch_alias_detected",
+                    original=detected,
+                    mapped_to="nl",
+                )
+                detected = "nl"
+
+            # Dutch and English are used directly as session language
+            if detected in self.CONVERSATIONAL_LANGUAGES:
                 return detected
 
-            # Low confidence or unsupported language
-            logger.debug(
-                "langdetect_rejected",
+            # Other languages: return the actual code so translation kicks in
+            logger.info(
+                "unsupported_language_detected",
                 detected=detected,
                 probability=probability,
-                reason="low_confidence_or_unsupported",
             )
-            return None
+            return detected
 
         except ImportError:
             logger.warning("langdetect_not_installed")

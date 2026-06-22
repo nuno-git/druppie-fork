@@ -47,10 +47,13 @@ class PromptBuilder:
         clarifications = context.get("clarifications", [])
         language = context.get("conversational_language", DEFAULT_LANGUAGE)
 
-        # Build context string WITHOUT clarifications, conversational_language, and language_info
+        # Extract attachment context for separate section
+        attachment_context = context.get("attachment_context", "")
+
+        # Build context string WITHOUT special keys
         context_items = {
             k: v for k, v in context.items()
-            if k not in ("clarifications", "conversational_language", "language_info")
+            if k not in ("clarifications", "conversational_language", "language_info", "attachment_context")
         }
         context_str = "\n".join(
             f"- {key}: {value}" for key, value in context_items.items()
@@ -69,17 +72,11 @@ You previously asked: {question[:200]}{'...' if len(question) > 200 else ''}
 User's answer: {answer}
 """
 
-        # Add language reminder when there's a user response to reinforce the instruction
-        language_reminder = ""
-        if clarifications:
-            lang_name = LANGUAGE_NAMES.get(language, language.upper())
-            language_reminder = f"\n\nREMINDER: Respond in {lang_name}."
-
         return f"""CONTEXT:
 {context_str}
-
+{attachment_context}
 TASK:
-{prompt}{user_response_str}{language_reminder}"""
+{prompt}{user_response_str}"""
 
     # ------------------------------------------------------------------
     # Language block — the ONE place language is specified
@@ -89,37 +86,21 @@ TASK:
     def _build_language_block(language: str, language_info: dict = None) -> str:
         """Build the leading language instruction block.
 
-        Placed at the TOP of the system prompt. Made assertive so the model
-        follows it even when other languages appear in the task prompt,
-        conversation history, or tool results.
+        Agents always work in English for best performance. Non-English user
+        input is auto-translated to English before reaching the agent, and
+        agent output is auto-translated back to the user's language.
         """
-        lang_name = LANGUAGE_NAMES.get(language, language.upper())
-
-        if language_info and language_info.get("detection_status") == "detected":
-            preview = language_info.get("detected_from", "")
-            detected = language_info.get("detected_language", language)
-            detected_name = LANGUAGE_NAMES.get(detected, detected.upper())
-            detection_line = f"Auto-detected from user input: \"{preview}\" → {detected} ({detected_name})"
-        elif language_info and language_info.get("detection_status") == "failed":
-            preview = language_info.get("detected_from", "")
-            detection_line = f"User input \"{preview}\" too short to detect. Using default: {language} ({lang_name})"
-        else:
-            detection_line = f"Language: {language} ({lang_name})"
-
-        return f"""===================================================================
-LEADING LANGUAGE INSTRUCTION — THIS OVERRIDES ALL OTHER LANGUAGES
+        return """===================================================================
+LANGUAGE INSTRUCTION
 ===================================================================
-{detection_line}
+You MUST work entirely in ENGLISH — all responses, reasoning,
+questions, tool arguments, and tool calls must be in English.
 
-You MUST respond in {lang_name}.
-Other languages may appear in the conversation history — ignore those.
+User input has been automatically translated to English for you.
+Your English output will be automatically translated back to the
+user's language before display.
 
-EXAMPLE of correct behavior:
-[Previous messages were in Dutch]
-User answers: "I want a simple version"
-You respond in English: "What features do you need?"
-
-All your responses, questions, and tool arguments must be in {lang_name}.
+Do NOT respond in any language other than English.
 ===================================================================
 
 """

@@ -1,0 +1,149 @@
+{{- if .Values.init.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "druppie.fullname" . }}-init
+  labels:
+    {{- include "druppie.labels" . | nindent 4 }}
+    app.kubernetes.io/component: init
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "0"
+    helm.sh/hook-delete-policy: hook-succeeded,before-hook-creation
+spec:
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 300
+  template:
+    metadata:
+      labels:
+        {{- include "druppie.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: init
+    spec:
+      restartPolicy: Never
+      initContainers:
+        - name: wait-for-keycloak
+          image: curlimages/curl:latest
+          command:
+            - sh
+            - -c
+            - |
+              until curl -sf http://{{ include "druppie.fullname" . }}-keycloak:8080/health/ready; do
+                echo "Waiting for keycloak..."
+                sleep 5
+              done
+              echo "Keycloak is ready"
+          resources:
+            requests:
+              memory: "32Mi"
+              cpu: "50m"
+            limits:
+              memory: "64Mi"
+              cpu: "100m"
+        - name: wait-for-gitea
+          image: curlimages/curl:latest
+          command:
+            - sh
+            - -c
+            - |
+              until curl -sf http://{{ include "druppie.fullname" . }}-gitea:3000/api/healthz; do
+                echo "Waiting for gitea..."
+                sleep 5
+              done
+              echo "Gitea is ready"
+          resources:
+            requests:
+              memory: "32Mi"
+              cpu: "50m"
+            limits:
+              memory: "64Mi"
+              cpu: "100m"
+      containers:
+        - name: init
+          image: {{ include "druppie.image" (dict "Values" .Values "image" .Values.init.image) }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          env:
+            - name: KEYCLOAK_URL
+              value: "http://{{ include "druppie.fullname" . }}-keycloak:8080"
+            - name: KEYCLOAK_ADMIN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "druppie.fullname" . }}-secrets
+                  key: KEYCLOAK_ADMIN
+            - name: KEYCLOAK_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "druppie.fullname" . }}-secrets
+                  key: KEYCLOAK_ADMIN_PASSWORD
+            - name: DOMAIN
+              value: {{ .Values.global.domain | quote }}
+            - name: FRONTEND_PORT
+              {{- if .Values.global.ingress.enabled }}
+              value: {{ .Values.global.ingress.port | quote }}
+              {{- else }}
+              value: {{ .Values.frontend.nodePort | quote }}
+              {{- end }}
+            - name: KEYCLOAK_PORT
+              {{- if .Values.global.ingress.enabled }}
+              value: {{ .Values.global.ingress.port | quote }}
+              {{- else }}
+              value: {{ .Values.keycloak.nodePort | quote }}
+              {{- end }}
+            - name: GITEA_PORT
+              {{- if .Values.global.ingress.enabled }}
+              value: {{ .Values.global.ingress.port | quote }}
+              {{- else }}
+              value: {{ .Values.gitea.nodePort | quote }}
+              {{- end }}
+            - name: BACKEND_PORT
+              {{- if .Values.global.ingress.enabled }}
+              value: {{ .Values.global.ingress.port | quote }}
+              {{- else }}
+              value: {{ .Values.backend.nodePort | quote }}
+              {{- end }}
+            - name: GITEA_URL
+              value: "http://{{ include "druppie.fullname" . }}-gitea:3000"
+            - name: GITEA_ADMIN_USER
+              value: {{ .Values.gitea.adminUser | quote }}
+            - name: GITEA_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "druppie.fullname" . }}-secrets
+                  key: GITEA_ADMIN_PASSWORD
+            - name: GITEA_ADMIN_EMAIL
+              value: {{ .Values.gitea.adminEmail | quote }}
+            - name: KEYCLOAK_INTERNAL_URL
+              value: "http://{{ include "druppie.fullname" . }}-keycloak:8080"
+            - name: KEYCLOAK_REALM
+              value: "druppie"
+            - name: EXTERNAL_HOST
+              value: {{ .Values.global.domain | quote }}
+            - name: INGRESS_PORT
+              {{- if .Values.global.ingress.enabled }}
+              value: {{ .Values.global.ingress.port | quote }}
+              {{- else }}
+              value: ""
+              {{- end }}
+            {{- if .Values.global.ingress.enabled }}
+            - name: INGRESS_ENABLED
+              value: "true"
+            - name: FRONTEND_URL
+              value: "{{ include "druppie.frontendExternalUrl" . }}"
+            - name: KEYCLOAK_EXTERNAL_URL
+              value: "{{ include "druppie.keycloakExternalUrl" . }}"
+            - name: GITEA_EXTERNAL_URL
+              value: "{{ include "druppie.giteaExternalUrl" . }}"
+            {{- end }}
+          volumeMounts:
+            - name: init-marker
+              mountPath: /init-marker
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "256Mi"
+              cpu: "500m"
+      volumes:
+        - name: init-marker
+          emptyDir: {}
+{{- end }}

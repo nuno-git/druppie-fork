@@ -1,0 +1,101 @@
+## Seeded session: BA wrote a Functional Design with Dutch translation,
+## approval gate PENDING.
+##
+## Tests the single-file approval card for translated sessions (PR #272).
+## The make_design call includes both the English original (path/content)
+## and the Dutch translation (translated_path/translated_content), exactly
+## as production does for non-English sessions.
+##
+## To test:
+##   1. Run this test from the evaluations page → green.
+##   2. Log in as the session owner (admin by default).
+##   3. Go to /tasks — you should see a pending approval for a session
+##      named "vertaal-test-app".
+##   4. Click "View file" — the button should say
+##      "View docs/functioneel-ontwerp.md" (NOT "View 2 files").
+##   5. The file preview modal should show ONLY the Dutch translation,
+##      not the English original alongside it.
+##   6. Approve or reject to verify the flow still works end-to-end.
+##
+## Chain: router → planner → BA calls coding:make_design → PENDING.
+## Deterministic (no LLM).
+
+tool-test:
+  name: ba-fd-translated-approval-pending
+  description: "BA wrote FD with Dutch translation — approval card should show single translated file"
+  tags: [seed, paused, business_analyst, approval-gate, translation]
+  session_status: paused_approval
+
+  chain:
+    # --- Router ---
+    - agent: router
+      tool: builtin:set_intent
+      arguments:
+        intent: create_project
+        project_name: vertaal-test-app
+        description: "Test app for verifying single-file translated approval card"
+      assert:
+        result:
+          - not_empty
+
+    - agent: router
+      tool: builtin:done
+      arguments:
+        summary: "Agent router: Classified as create_project for vertaal-test-app"
+      assert:
+        completed: true
+
+    # --- Planner → BA ---
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: business_analyst
+            prompt: "Gather requirements and create functional design"
+          - agent_id: planner
+            prompt: "Re-evaluate after business analyst completes"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: Planned business_analyst to gather requirements and create functional design"
+
+    # --- BA writes the FD with translated fields — approval gate PENDING ---
+    - agent: business_analyst
+      tool: coding:make_design
+      approval:
+        status: pending
+      arguments:
+        path: docs/functional-design.md
+        content: |
+          # Functional Design: Translation Test App
+
+          ## 1. Current vs Desired Situation
+          Users need a way to verify that the approval card shows
+          only the translated file, not both English and Dutch.
+
+          ## 2. Functional Requirements
+          - FR-01: The approval modal shows a single file when a translation exists
+          - FR-02: The displayed file is the Dutch translation, not the English original
+          - FR-03: The "View file" button shows the translated filename
+
+          ## 3. Non-Functional Requirements
+          - NFR-01: No regression in the approval flow for non-translated sessions
+        translated_path: docs/functioneel-ontwerp.md
+        translated_content: |
+          # Functioneel Ontwerp: Vertaaltest App
+
+          ## 1. Huidige vs Gewenste Situatie
+          Gebruikers moeten kunnen verifiëren dat de goedkeuringskaart
+          alleen het vertaalde bestand toont, niet zowel Engels als Nederlands.
+
+          ## 2. Functionele Eisen
+          - FR-01: De goedkeuringsmodal toont één bestand wanneer een vertaling bestaat
+          - FR-02: Het getoonde bestand is de Nederlandse vertaling, niet het Engelse origineel
+          - FR-03: De "Bekijk bestand"-knop toont de vertaalde bestandsnaam
+
+          ## 3. Niet-Functionele Eisen
+          - NFR-01: Geen regressie in de goedkeuringsstroom voor niet-vertaalde sessies
+
+  verify:
+    - gitea_repo_exists: true

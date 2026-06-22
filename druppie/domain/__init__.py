@@ -76,6 +76,7 @@ from .question import PendingQuestionList, QuestionChoice, QuestionDetail
 # Session models
 from .session import (
     # Backward compat aliases
+    Attachment,
     ChatItem,
     ChatItemType,
     Message,
@@ -106,6 +107,7 @@ __all__ = [
     "QuestionStatus",
     "DeploymentStatus",
     # Common
+    "Attachment",
     "TokenUsage",
     "TimestampMixin",
     "LLMMessage",

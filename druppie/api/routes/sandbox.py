@@ -626,22 +626,15 @@ async def sandbox_complete_webhook(
     # Resume the agent via create_session_task for proper lifecycle management:
     # - Tracked by shutdown_background_tasks (survives hot-reload gracefully)
     # - Session-level concurrency guard prevents duplicate resume tasks
-    from druppie.core.background_tasks import create_session_task, run_session_task, SessionTaskConflict
+    from druppie.core.background_tasks import create_session_task, run_session_task
 
     druppie_session_id = tool_call.session_id
     tc_id = tool_call.id
-    try:
-        create_session_task(
-            druppie_session_id,
-            run_session_task(druppie_session_id, _make_sandbox_resume(tc_id), "sandbox-resume"),
-            name=f"sandbox-resume-{druppie_session_id}",
-        )
-    except SessionTaskConflict:
-        logger.warning(
-            "sandbox_resume_task_conflict",
-            sandbox_session_id=sandbox_session_id,
-            session_id=str(druppie_session_id),
-        )
+    create_session_task(
+        druppie_session_id,
+        run_session_task(druppie_session_id, _make_sandbox_resume(tc_id), "sandbox-resume"),
+        name=f"sandbox-resume-{druppie_session_id}",
+    )
 
     return {"status": "ok", "sandbox_session_id": sandbox_session_id}
 

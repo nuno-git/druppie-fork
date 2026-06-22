@@ -15,7 +15,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Literal
 
-from .common import TokenUsage, SessionStatus
+from .common import Attachment, TokenUsage, SessionStatus
 from .agent_run import AgentRunSummary, AgentRunDetail
 from .project import ProjectSummary
 
@@ -37,6 +37,7 @@ class Message(BaseModel):
     agent_id: str | None = None
     sequence_number: int = 0
     created_at: datetime
+    attachments: list[Attachment] = []
 
 
 class TimelineEntry(BaseModel):

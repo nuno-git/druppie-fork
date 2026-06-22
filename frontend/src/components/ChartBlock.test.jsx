@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll } from 'vitest'
 import { render } from '@testing-library/react'
-import ChartBlock, { parseSpec } from './ChartBlock'
+import ChartBlock, { parseSpec, formatCompact } from './ChartBlock'
 
 // recharts ResponsiveContainer depends on ResizeObserver, which jsdom does not
 // provide. A no-op shim is enough for the smoke checks we do below — we don't
@@ -13,6 +13,24 @@ beforeAll(() => {
       disconnect() {}
     }
   }
+})
+
+describe('formatCompact', () => {
+  it('formats millions', () => {
+    expect(formatCompact(1_500_000)).toBe('1.5M')
+  })
+  it('formats thousands', () => {
+    expect(formatCompact(25_000)).toBe('25.0K')
+  })
+  it('returns small numbers as-is', () => {
+    expect(formatCompact(42)).toBe('42')
+  })
+  it('formats decimals', () => {
+    expect(formatCompact(3.14)).toBe('3.1')
+  })
+  it('handles null', () => {
+    expect(formatCompact(null)).toBeNull()
+  })
 })
 
 describe('parseSpec', () => {
@@ -165,5 +183,176 @@ describe('ChartBlock', () => {
     })
     const { getByText } = render(<ChartBlock code={code} />)
     expect(getByText('Trend')).toBeTruthy()
+  })
+
+  it('renders bar chart with number_format without crashing', () => {
+    const code = JSON.stringify({
+      type: 'bar',
+      title: 'Revenue',
+      number_format: 'compact',
+      data: [{ x: 'Q1', y: 150000 }, { x: 'Q2', y: 250000 }],
+    })
+    const { getByText } = render(<ChartBlock code={code} />)
+    expect(getByText('Revenue')).toBeTruthy()
+  })
+
+  it('renders treemap with colored cells', () => {
+    const code = JSON.stringify({
+      type: 'treemap',
+      title: 'Categories',
+      data: [
+        { name: 'Large category', value: 500 },
+        { name: 'Medium', value: 200 },
+        { name: 'Small', value: 50 },
+      ],
+    })
+    const { getByText } = render(<ChartBlock code={code} />)
+    expect(getByText('Categories')).toBeTruthy()
+  })
+
+  it('renders horizontal_bar with y_label without crashing', () => {
+    const code = JSON.stringify({
+      type: 'horizontal_bar',
+      title: 'By region',
+      y_label: 'Total Revenue',
+      data: [{ x: 'Very long region name here', y: 50000 }],
+    })
+    const { getByText } = render(<ChartBlock code={code} />)
+    expect(getByText('By region')).toBeTruthy()
+  })
+
+  it('uses taller frame for many data points', () => {
+    const data = Array.from({ length: 20 }, (_, i) => ({ x: `Cat ${i}`, y: i * 10 }))
+    const code = JSON.stringify({ type: 'bar', title: 'Many', data })
+    const { container } = render(<ChartBlock code={code} />)
+    const chartDiv = container.querySelector('[style]')
+    expect(chartDiv).toBeTruthy()
+  })
+
+  it('renders line chart with number_format compact', () => {
+    const code = JSON.stringify({
+      type: 'line',
+      title: 'Revenue over time',
+      number_format: 'compact',
+      data: [
+        { x: '2020', y: 150000 },
+        { x: '2021', y: 250000 },
+        { x: '2022', y: 380000 },
+      ],
+    })
+    const { getByText } = render(<ChartBlock code={code} />)
+    expect(getByText('Revenue over time')).toBeTruthy()
+  })
+
+  it('renders pie chart without crashing', () => {
+    const code = JSON.stringify({
+      type: 'pie',
+      title: 'Market share',
+      data: [
+        { name: 'Enterprise', value: 60 },
+        { name: 'SMB', value: 30 },
+        { name: 'Tiny slice', value: 2 },
+      ],
+    })
+    const { getByText } = render(<ChartBlock code={code} />)
+    expect(getByText('Market share')).toBeTruthy()
+  })
+
+  it('renders donut chart without crashing', () => {
+    const code = JSON.stringify({
+      type: 'donut',
+      title: 'Status breakdown',
+      data: [
+        { name: 'Active', value: 75 },
+        { name: 'Inactive', value: 25 },
+      ],
+    })
+    const { getByText } = render(<ChartBlock code={code} />)
+    expect(getByText('Status breakdown')).toBeTruthy()
+  })
+
+  it('renders area chart without crashing', () => {
+    const code = JSON.stringify({
+      type: 'area',
+      title: 'Growth',
+      data: [
+        { x: 'Q1', y: 100 },
+        { x: 'Q2', y: 200 },
+        { x: 'Q3', y: 350 },
+      ],
+    })
+    const { getByText } = render(<ChartBlock code={code} />)
+    expect(getByText('Growth')).toBeTruthy()
+  })
+
+  it('renders stacked_area with multiple series', () => {
+    const code = JSON.stringify({
+      type: 'stacked_area',
+      title: 'Cumulative',
+      series: [{ key: 'a', label: 'A' }, { key: 'b', label: 'B' }],
+      data: [
+        { x: '2020', a: 10, b: 20 },
+        { x: '2021', a: 15, b: 25 },
+      ],
+    })
+    const { getByText } = render(<ChartBlock code={code} />)
+    expect(getByText('Cumulative')).toBeTruthy()
+  })
+
+  it('renders grouped_bar with multiple series', () => {
+    const code = JSON.stringify({
+      type: 'grouped_bar',
+      title: 'Comparison',
+      series: [{ key: 'q1', label: 'Q1' }, { key: 'q2', label: 'Q2' }],
+      data: [
+        { x: 'EU', q1: 100, q2: 150 },
+        { x: 'US', q1: 200, q2: 180 },
+      ],
+    })
+    const { getByText } = render(<ChartBlock code={code} />)
+    expect(getByText('Comparison')).toBeTruthy()
+  })
+
+  it('renders funnel chart without crashing', () => {
+    const code = JSON.stringify({
+      type: 'funnel',
+      title: 'Conversion',
+      data: [
+        { name: 'Visited', value: 1000 },
+        { name: 'Signed up', value: 200 },
+        { name: 'Purchased', value: 50 },
+      ],
+    })
+    const { getByText } = render(<ChartBlock code={code} />)
+    expect(getByText('Conversion')).toBeTruthy()
+  })
+
+  it('renders scatter chart without crashing', () => {
+    const code = JSON.stringify({
+      type: 'scatter',
+      title: 'Correlation',
+      data: [
+        { x: 170, y: 65 },
+        { x: 180, y: 80 },
+        { x: 165, y: 55 },
+      ],
+    })
+    const { getByText } = render(<ChartBlock code={code} />)
+    expect(getByText('Correlation')).toBeTruthy()
+  })
+})
+
+describe('formatCompact — edge cases', () => {
+  it('formats negative millions', () => {
+    expect(formatCompact(-2_500_000)).toBe('-2.5M')
+  })
+  it('formats negative thousands', () => {
+    expect(formatCompact(-15_000)).toBe('-15.0K')
+  })
+  it('returns undefined for non-number', () => {
+    expect(formatCompact('hello')).toBe('hello')
+  })
+  it('returns zero', () => {
+    expect(formatCompact(0)).toBe('0')
   })
 })

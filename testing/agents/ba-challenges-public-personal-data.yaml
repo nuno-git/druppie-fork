@@ -16,7 +16,7 @@ agent-test:
   assert:
     - check: ba-challenges-security
     - check: ba-mandatory-elicitation
-    - check: ba-fd-in-dutch
+    - check: ba-fd-in-english
     - check: ba-git-commit
 
   judge:

@@ -212,7 +212,31 @@ mcps:
   archimate:
     url: ${MCP_ARCHIMATE_URL:-http://module-archimate:9006}
     type: core
+    # Write-tools operate on per-project archimate files in the session workspace.
+    # Inject session_id so the MCP can resolve the workspace path.
+    inject:
+      session_id:
+        from: session.id
+        hidden: true
+        tools:
+          - create_element
+          - update_element
+          - delete_element
+          - create_relationship
+          - update_relationship
+          - delete_relationship
+          - add_to_view
+          - add_connection_to_view
+          - remove_from_view
+          - get_or_create_wilma_reference
+          - save_model
+          - request_full_relayout
+          - assess_layout
+          - validate_view
+          - add_layered_view
+          - add_cooperation_view
     tools:
+      # --- Read-only WILMA reference tools ---
       - name: list_models
         requires_approval: false
 
@@ -235,6 +259,68 @@ mcps:
         requires_approval: false
 
       - name: get_impact
+        requires_approval: false
+
+      # --- Read-only introspection on project model ---
+      - name: assess_layout
+        requires_approval: false
+
+      - name: validate_view
+        requires_approval: false
+
+      # --- Composite viewpoint builders ---
+      # One call builds a whole view (elements + relationships + add_to_view +
+      # add_connection_to_view). Ungated like the underlying primitives —
+      # the architect's review point is the TD itself.
+      - name: add_layered_view
+        requires_approval: false
+
+      - name: add_cooperation_view
+        requires_approval: false
+
+      # --- WRITE tools on per-project architecture.archimate ---
+      # Intentionally UNGATED. The architect builds up the plate freely
+      # (create_*, add_*, save_model). The single human review point is
+      # the coding:make_design gate on docs/technical-design.md — at
+      # that moment the reviewer sees the markdown + the embedded
+      # ```archimate block that renders the just-saved view. Approving
+      # one MCP call at a time is meaningless because the reviewer
+      # cannot visualise the cumulative result; approving the TD shows
+      # the plate inline.
+      - name: create_element
+        requires_approval: false
+
+      - name: update_element
+        requires_approval: false
+
+      - name: delete_element
+        requires_approval: false
+
+      - name: create_relationship
+        requires_approval: false
+
+      - name: update_relationship
+        requires_approval: false
+
+      - name: delete_relationship
+        requires_approval: false
+
+      - name: add_to_view
+        requires_approval: false
+
+      - name: add_connection_to_view
+        requires_approval: false
+
+      - name: remove_from_view
+        requires_approval: false
+
+      - name: get_or_create_wilma_reference
+        requires_approval: false
+
+      - name: save_model
+        requires_approval: false
+
+      - name: request_full_relayout
         requires_approval: false
 
   llm:
@@ -316,3 +402,43 @@ mcps:
 
       - name: create_chart_from_source
         requires_approval: false
+
+  # Kubernetes cluster status — read-only introspection.
+  # No write/delete/scale/exec operations. Uses a ServiceAccount with
+  # get+list+watch-only ClusterRole when running in-cluster.
+  kubernetes:
+    url: ${MCP_KUBERNETES_URL:-http://module-kubernetes:9013}
+    type: module
+    tools:
+      - name: list_pods
+        requires_approval: false
+      - name: list_nodes
+        requires_approval: false
+      - name: list_services
+        requires_approval: false
+      - name: get_cluster_health
+        requires_approval: false
+
+  # Azure DevOps backlog for ONE configured project (AZURE_DEVOPS_PROJECT).
+  # No cross-project access — the project is fixed server-side.
+  # Write tools require session_owner approval (the user who started the chat).
+  azuredevops:
+    url: ${MCP_AZUREDEVOPS_URL:-http://module-azuredevops:9012}
+    type: module
+    tools:
+      - name: list_backlog_items
+        requires_approval: false
+      - name: get_work_item
+        requires_approval: false
+      - name: search_work_items
+        requires_approval: false
+      - name: get_current_sprint
+        requires_approval: false
+      - name: get_sprint_summary
+        requires_approval: false
+      - name: create_work_item
+        requires_approval: true
+        required_role: session_owner
+      - name: update_work_item
+        requires_approval: true
+        required_role: session_owner

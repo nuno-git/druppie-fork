@@ -1,0 +1,14 @@
+{{- if and .Values.keda.enabled .Values.autoscaling.backend.enabled }}
+apiVersion: keda.sh/v1alpha1
+kind: TriggerAuthentication
+metadata:
+  name: {{ include "druppie.fullname" . }}-keda-db-auth
+  labels:
+    {{- include "druppie.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backend
+spec:
+  secretTargetRef:
+    - parameter: password
+      name: {{ include "druppie.fullname" . }}-secrets
+      key: DRUPPIE_DB_PASSWORD
+{{- end }}

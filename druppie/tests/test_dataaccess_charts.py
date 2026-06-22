@@ -605,3 +605,388 @@ def test_sql_query_requires_y_for_non_count():
         charts.build_sql_aggregation_query(
             data_id="dbo.t", x_column="a", y_column=None, aggregation="avg"
         )
+
+
+# ---------------------------------------------------------------------------
+# is_temporal
+# ---------------------------------------------------------------------------
+
+
+def test_is_temporal_detects_years():
+    assert charts.is_temporal([2019, 2020, 2021, 2022]) is True
+
+
+def test_is_temporal_detects_year_strings():
+    assert charts.is_temporal(["2019", "2020", "2021"]) is True
+
+
+def test_is_temporal_detects_date_strings():
+    assert charts.is_temporal(["2024-01-15", "2024-02-20", "2024-03-10"]) is True
+
+
+def test_is_temporal_detects_quarter_strings():
+    assert charts.is_temporal(["2024-Q1", "2024-Q2", "2024-Q3"]) is True
+
+
+def test_is_temporal_rejects_categories():
+    assert charts.is_temporal(["Noord", "Zuid", "Oost", "West"]) is False
+
+
+def test_is_temporal_rejects_numbers_outside_year_range():
+    assert charts.is_temporal([50000, 60000, 70000]) is False
+
+
+def test_is_temporal_handles_empty():
+    assert charts.is_temporal([]) is False
+
+
+# ---------------------------------------------------------------------------
+# humanize_label
+# ---------------------------------------------------------------------------
+
+
+def test_humanize_label_snake_case():
+    assert charts.humanize_label("total_revenue") == "Total Revenue"
+
+
+def test_humanize_label_abbreviations():
+    assert charts.humanize_label("avg") == "Average"
+    assert charts.humanize_label("cnt") == "Count"
+
+
+def test_humanize_label_empty():
+    assert charts.humanize_label(None) == ""
+    assert charts.humanize_label("") == ""
+
+
+# ---------------------------------------------------------------------------
+# infer_number_format
+# ---------------------------------------------------------------------------
+
+
+def test_infer_number_format_compact_for_large():
+    data = [{"v": 50_000}, {"v": 120_000}]
+    assert charts.infer_number_format(data, "v") == "compact"
+
+
+def test_infer_number_format_none_for_small():
+    data = [{"v": 50}, {"v": 120}]
+    assert charts.infer_number_format(data, "v") is None
+
+
+def test_infer_number_format_empty():
+    assert charts.infer_number_format([], "v") is None
+
+
+# ---------------------------------------------------------------------------
+# recommend_chart_type
+# ---------------------------------------------------------------------------
+
+
+def test_recommend_temporal_data():
+    data = [{"year": 2020, "v": 10}, {"year": 2021, "v": 20}, {"year": 2022, "v": 30}]
+    assert charts.recommend_chart_type(data, "year", "v", None, "sum") == "line"
+
+
+def test_recommend_few_categories():
+    data = [{"s": "A", "v": 1}, {"s": "B", "v": 2}, {"s": "C", "v": 3}]
+    assert charts.recommend_chart_type(data, "s", "v", None, "count") == "pie"
+
+
+def test_recommend_long_labels():
+    data = [
+        {"cat": "Informatievoorziening en automatisering", "v": 10},
+        {"cat": "Short", "v": 20},
+    ]
+    assert charts.recommend_chart_type(data, "cat", "v", None, "sum") == "horizontal_bar"
+
+
+def test_recommend_many_categories():
+    data = [{"cat": f"cat_{i}", "v": i} for i in range(20)]
+    assert charts.recommend_chart_type(data, "cat", "v", None, "sum") == "treemap"
+
+
+def test_recommend_with_series():
+    data = [{"region": "EU", "product": "X", "v": 10}]
+    assert charts.recommend_chart_type(data, "region", "v", "product", "sum") == "stacked_bar"
+
+
+def test_recommend_temporal_with_series():
+    data = [{"year": 2020, "product": "X", "v": 10}]
+    assert charts.recommend_chart_type(data, "year", "v", "product", "sum") == "multi_line"
+
+
+# ---------------------------------------------------------------------------
+# sort_by in aggregation
+# ---------------------------------------------------------------------------
+
+
+def test_aggregate_rows_sort_by_label():
+    data = [
+        {"year": "2022", "v": 10},
+        {"year": "2020", "v": 30},
+        {"year": "2021", "v": 20},
+    ]
+    result, _ = charts.aggregate_rows(
+        data, x_column="year", y_column="v", aggregation="sum", sort_by="label"
+    )
+    assert [r["year"] for r in result] == ["2020", "2021", "2022"]
+
+
+def test_aggregate_rows_sort_by_value():
+    data = [
+        {"year": "2020", "v": 10},
+        {"year": "2022", "v": 30},
+        {"year": "2021", "v": 20},
+    ]
+    result, _ = charts.aggregate_rows(
+        data, x_column="year", y_column="v", aggregation="sum", sort_by="value"
+    )
+    assert [r["year"] for r in result] == ["2022", "2021", "2020"]
+
+
+def test_aggregate_multi_series_sort_by_label():
+    data = [
+        {"year": "2022", "s": "A", "v": 10},
+        {"year": "2020", "s": "A", "v": 30},
+        {"year": "2021", "s": "A", "v": 20},
+    ]
+    rows, _ = charts.aggregate_multi_series(
+        data, x_column="year", series_column="s",
+        y_column="v", aggregation="sum", sort_by="label",
+    )
+    assert [r["year"] for r in rows] == ["2020", "2021", "2022"]
+
+
+# ---------------------------------------------------------------------------
+# number_format in spec
+# ---------------------------------------------------------------------------
+
+
+def test_build_chart_spec_includes_number_format():
+    data = [{"x": "A", "y": 50_000}]
+    spec = charts.build_chart_spec(
+        data=data, chart_type="bar", x_column="x", y_column="y",
+        number_format="compact",
+    )
+    assert spec["number_format"] == "compact"
+
+
+def test_build_chart_spec_omits_number_format_when_none():
+    data = [{"x": "A", "y": 50}]
+    spec = charts.build_chart_spec(
+        data=data, chart_type="bar", x_column="x", y_column="y",
+    )
+    assert "number_format" not in spec
+
+
+def test_build_multi_series_spec_includes_number_format():
+    data = [{"cat": "A", "Q1": 50_000, "Q2": 60_000}]
+    spec = charts.build_multi_series_chart_spec(
+        data=data, chart_type="stacked_bar", x_column="cat",
+        series=["Q1", "Q2"], number_format="compact",
+    )
+    assert spec["number_format"] == "compact"
+
+
+# ---------------------------------------------------------------------------
+# SQL sort_by
+# ---------------------------------------------------------------------------
+
+
+def test_sql_query_sort_by_label():
+    q = charts.build_sql_aggregation_query(
+        data_id="dbo.sales",
+        x_column="year",
+        y_column="revenue",
+        aggregation="sum",
+        sort_by="label",
+    )
+    assert "ORDER BY [year] ASC" in q
+
+
+def test_sql_query_sort_by_value_default():
+    q = charts.build_sql_aggregation_query(
+        data_id="dbo.sales",
+        x_column="region",
+        y_column="revenue",
+        aggregation="sum",
+    )
+    assert "ORDER BY SUM([revenue]) DESC" in q
+
+
+# ---------------------------------------------------------------------------
+# is_temporal — edge cases
+# ---------------------------------------------------------------------------
+
+
+def test_is_temporal_mixed_with_nones():
+    """None values are skipped; majority of non-None decides."""
+    assert charts.is_temporal([2020, None, 2021, None, 2022]) is True
+
+
+def test_is_temporal_below_threshold():
+    """Less than 60% temporal → False."""
+    assert charts.is_temporal([2020, "cat_a", "cat_b", "cat_c", "cat_d"]) is False
+
+
+def test_is_temporal_exactly_at_threshold():
+    """Exactly 60% temporal → True."""
+    values = [2020, 2021, 2022, "cat_a", "cat_b"]
+    assert charts.is_temporal(values) is True
+
+
+def test_is_temporal_date_formats():
+    """Various date formats: DD/MM/YYYY and Q notation."""
+    assert charts.is_temporal(["15/01/2024", "20/02/2024"]) is True
+    assert charts.is_temporal(["Q1 2024", "Q2 2024", "Q3 2024"]) is True
+
+
+def test_is_temporal_all_none():
+    assert charts.is_temporal([None, None, None]) is False
+
+
+# ---------------------------------------------------------------------------
+# humanize_label — additional cases
+# ---------------------------------------------------------------------------
+
+
+def test_humanize_label_compound_abbreviations():
+    assert charts.humanize_label("avg_amt") == "Average Amount"
+
+
+def test_humanize_label_single_word():
+    assert charts.humanize_label("revenue") == "Revenue"
+
+
+def test_humanize_label_already_readable():
+    assert charts.humanize_label("Total Revenue") == "Total Revenue"
+
+
+# ---------------------------------------------------------------------------
+# recommend_chart_type — default bar fallback
+# ---------------------------------------------------------------------------
+
+
+def test_recommend_default_bar():
+    """Non-temporal, 7-15 categories with sum → bar."""
+    data = [{"cat": f"cat_{i}", "v": i} for i in range(10)]
+    assert charts.recommend_chart_type(data, "cat", "v", None, "sum") == "bar"
+
+
+def test_recommend_pie_only_for_count_or_sum():
+    """Few categories with avg aggregation → bar (not pie)."""
+    data = [{"s": "A", "v": 1}, {"s": "B", "v": 2}, {"s": "C", "v": 3}]
+    assert charts.recommend_chart_type(data, "s", "v", None, "avg") == "bar"
+
+
+# ---------------------------------------------------------------------------
+# aggregate_rows — sort_by actually differentiates
+# ---------------------------------------------------------------------------
+
+
+def test_aggregate_rows_sort_by_value_descending():
+    """Verify value sort is descending (not coincidentally matching label order)."""
+    data = [
+        {"cat": "Alpha", "v": 5},
+        {"cat": "Beta", "v": 30},
+        {"cat": "Gamma", "v": 15},
+    ]
+    result, _ = charts.aggregate_rows(
+        data, x_column="cat", y_column="v", aggregation="sum", sort_by="value"
+    )
+    assert [r["cat"] for r in result] == ["Beta", "Gamma", "Alpha"]
+
+
+def test_aggregate_rows_sort_by_label_ascending():
+    """Verify label sort is ascending alphabetical."""
+    data = [
+        {"cat": "Zebra", "v": 30},
+        {"cat": "Apple", "v": 5},
+        {"cat": "Mango", "v": 15},
+    ]
+    result, _ = charts.aggregate_rows(
+        data, x_column="cat", y_column="v", aggregation="sum", sort_by="label"
+    )
+    assert [r["cat"] for r in result] == ["Apple", "Mango", "Zebra"]
+
+
+# ---------------------------------------------------------------------------
+# infer_number_format — edge cases
+# ---------------------------------------------------------------------------
+
+
+def test_infer_number_format_negative_large():
+    data = [{"v": -50_000}, {"v": 120_000}]
+    assert charts.infer_number_format(data, "v") == "compact"
+
+
+def test_infer_number_format_mixed_types():
+    """Non-numeric values are skipped."""
+    data = [{"v": "not a number"}, {"v": 50_000}]
+    assert charts.infer_number_format(data, "v") == "compact"
+
+
+def test_infer_number_format_missing_key():
+    """Rows without the value key are skipped."""
+    data = [{"other": 50_000}]
+    assert charts.infer_number_format(data, "v") is None
+
+
+# ---------------------------------------------------------------------------
+# build_sql_aggregation_query — sort_by integration
+# ---------------------------------------------------------------------------
+
+
+def test_sql_query_sort_by_label_with_count():
+    q = charts.build_sql_aggregation_query(
+        data_id="dbo.events",
+        x_column="year",
+        y_column=None,
+        aggregation="count",
+        sort_by="label",
+    )
+    assert "ORDER BY [year] ASC" in q
+
+
+def test_sql_query_sort_by_value_with_count():
+    q = charts.build_sql_aggregation_query(
+        data_id="dbo.events",
+        x_column="year",
+        y_column=None,
+        aggregation="count",
+        sort_by="value",
+    )
+    assert "ORDER BY COUNT(*) DESC" in q
+
+
+# ---------------------------------------------------------------------------
+# number_format propagation in multi-series
+# ---------------------------------------------------------------------------
+
+
+def test_build_multi_series_spec_omits_number_format_when_none():
+    data = [{"cat": "A", "Q1": 50, "Q2": 60}]
+    spec = charts.build_multi_series_chart_spec(
+        data=data, chart_type="stacked_bar", x_column="cat",
+        series=["Q1", "Q2"],
+    )
+    assert "number_format" not in spec
+
+
+# ---------------------------------------------------------------------------
+# aggregate_multi_series — sort_by value
+# ---------------------------------------------------------------------------
+
+
+def test_aggregate_multi_series_sort_by_value():
+    data = [
+        {"cat": "Alpha", "s": "A", "v": 5},
+        {"cat": "Gamma", "s": "A", "v": 30},
+        {"cat": "Beta", "s": "A", "v": 15},
+    ]
+    rows, _ = charts.aggregate_multi_series(
+        data, x_column="cat", series_column="s",
+        y_column="v", aggregation="sum", sort_by="value",
+    )
+    assert [r["cat"] for r in rows] == ["Gamma", "Beta", "Alpha"]

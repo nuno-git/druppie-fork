@@ -11,6 +11,7 @@ import {
   GitBranch,
   CheckCircle,
   Bot,
+  Server,
 } from 'lucide-react'
 
 // Agent name formatting and icons
@@ -32,6 +33,7 @@ export const AGENT_CONFIG = {
   test_executor: { name: 'Test Executor', icon: CheckCircle, color: 'cyan', description: 'Running & fixing tests', thinkingLabel: 'Running tests...' },
   builder_planner: { name: 'Builder Planner', icon: ClipboardList, color: 'indigo', description: 'Implementation planning', thinkingLabel: 'Creating implementation plan...', surfaceFileWrites: true },
   data_analyst: { name: 'Data Analyst', icon: ClipboardList, color: 'teal', description: 'Data analysis', thinkingLabel: 'Analyzing data...' },
+  kubernetes_admin: { name: 'Kubernetes Admin', icon: Server, color: 'blue', description: 'Cluster monitoring', thinkingLabel: 'Checking cluster...' },
 }
 
 export const getAgentConfig = (agentId) => {

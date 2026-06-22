@@ -1,0 +1,21 @@
+{{- if .Values.cnpg.enabled }}
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Pooler
+metadata:
+  name: {{ include "druppie.fullname" . }}-druppie-db-pooler-rw
+  labels:
+    {{- include "druppie.labels" . | nindent 4 }}
+spec:
+  cluster:
+    name: {{ include "druppie.fullname" . }}-druppie-db
+  instances: 2
+  type: rw
+  pgbouncer:
+    poolMode: transaction
+    parameters:
+      max_client_conn: "200"
+      default_pool_size: "10"
+      reserve_pool_size: "5"
+      reserve_pool_timeout: "3"
+{{- end }}

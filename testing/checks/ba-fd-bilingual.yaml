@@ -1,0 +1,14 @@
+check:
+  name: ba-fd-bilingual
+  description: "For Dutch sessions: FD is written in English, with Dutch translation added by the platform"
+  tags: [business_analyst, language, translation, bilingual]
+  assert:
+    - agent: business_analyst
+      tool: coding:make_design
+      arguments:
+        path: docs/functional-design.md
+  judge:
+    context: business_analyst
+    checks:
+      - "The content argument of the coding:make_design call for docs/functional-design.md must be in English. All headings, requirement descriptions, and body text must be English. This is the canonical design — the agent writes in English, the platform translates."
+      - "The coding:make_design tool call arguments must include a 'translated_content' field containing a Dutch translation AND a 'translated_path' field set to 'docs/functioneel-ontwerp.md'. If these fields are missing, the bilingual translation pipeline did not run. Note: these fields are injected by the platform, not the agent — check the stored tool call arguments."

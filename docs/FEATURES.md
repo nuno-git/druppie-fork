@@ -18,7 +18,7 @@ Because all actions are tool calls, every action can be logged, inspected, and g
 
 ## Agent Pipeline
 
-Thirteen agents are defined. Twelve are functional; one is a stub.
+Fifteen agents are defined. Fourteen are functional; one is a stub.
 
 ### Functional Agents
 
@@ -36,6 +36,8 @@ Thirteen agents are defined. Twelve are functional; one is a stub.
 | **Update Core Builder** | Implements Druppie core changes | Delegates coding to a dual-repo sandbox via `execute_coding_task` with the `druppie-core-builder` sandbox agent. The sandbox clones Druppie's GitHub repo into `/workspace/druppie-core/` and the project repo (with FD/TD) into `/workspace/project-<name>/`. Creates a PR targeting `colab-dev` on GitHub. The `done()` tool requires approval from a user with the `developer` role — the reviewer merges the PR on GitHub before approving. Max 100 iterations. |
 | **Developer** | Writes and modifies code | Implements features in git-managed workspaces. Handles branch creation, file writes, commits, pull requests, and merges. Can delegate to sandbox agents via `execute_coding_task`. For `create_project`, works on main; for `update_project`, works on feature branches. Max 100 iterations. |
 | **Deployer** | Builds and deploys via Docker | Clones from git, builds Docker images, runs containers with auto-assigned ports (9100-9199). Verifies health via container logs. For preview deploys, asks the user for feedback before finalizing. Max 100 iterations. |
+| **Product Owner** | Answers backlog questions | Reads the backlog / work items (user stories, bugs, tasks, epics) of the configured Azure DevOps project via the read-only `azuredevops` MCP and answers the user in chat. Read-only, single project — cannot create/edit work items or see any other project. General chat only. Max 50 iterations. |
+| **Kubernetes Admin** | Monitors cluster status | Reports Kubernetes cluster health via the read-only `kubernetes` MCP server. Lists pods (status, restarts, age), nodes (health, capacity), and services (type, endpoints). Provides an overall cluster health summary. Read-only — cannot modify the cluster. General chat only. Max 10 iterations. |
 | **Reviewer** | Code review | Reviews code for quality, security, and best practices. |
 | **Tester** | Testing | Writes and runs tests to validate implementations. |
 | **Summarizer** | Creates completion messages | Reads all previous agent summaries and produces a concise, user-friendly message. Always the final step. Max 5 iterations. |
@@ -239,7 +241,10 @@ The primary interface is a chat page where users submit natural language request
 The Data Analyst agent can render charts **inline in the chat** from data in the configured sources (Azure SQL, Azure Data Lake), via the Data Access MCP.
 
 - **Ask in natural language**: "Show me a chart of assets per category", "visualize subscriptions by type as a donut", "break it down by year". The agent picks an appropriate chart type, aggregates the data, and shows the result inline.
-- **13 chart types**: bar, line, area, horizontal bar, scatter, pie, donut, treemap, funnel, and multi-series stacked bar / grouped bar / stacked area / multi-line.
+- **13 chart types + auto**: bar, line, area, horizontal bar, scatter, pie, donut, treemap, funnel, and multi-series stacked bar / grouped bar / stacked area / multi-line. `chart_type="auto"` lets the server pick the best fit based on data shape and cardinality.
+- **Sample-first intelligence**: the agent samples actual data values (not just schema types) before charting — detecting years, dates, long labels, and category counts to pick the right chart type and axis order.
+- **Smart sorting**: `sort_by="natural"` (the default) auto-detects whether x-values are temporal (years, dates) and sorts chronologically, or sorts by value for rankings. Can also be set explicitly to `"label"` or `"value"`.
+- **Readable defaults**: column names are humanized for titles and axis labels (`total_revenue` → `Total Revenue`), large numbers use compact formatting (1K, 1M) on Y-axes and tooltips, long X-axis labels auto-rotate, and treemap cells show both name and value.
 - **Deliberate type selection**: the agent follows a decision matrix — counts per category → bar, long category names → horizontal bar, long-tail distributions → treemap, proportions → pie/donut, breakdowns by a second dimension → stacked/grouped, trends → line/area, correlation → scatter.
 - **Whole-dataset accuracy**: aggregation runs over the **entire** dataset (the database does it for SQL; the whole file is read server-side for Data Lake), so counts and sums are exact rather than sampled. The agent flags when a result is ever a sample.
 - **Data stays private**: raw rows never enter the LLM context and nothing is written to the workspace — only a compact chart spec is produced, stored in the chat transcript so charts survive a reload.
@@ -793,6 +798,53 @@ The dashboards goal is to provide an overview of platform activity. This page is
 
 ---
 
+## Deployments Dashboard
+
+The **Deployments page** (`/deployments`) provides visibility into deployed applications managed by the platform. It is available to all authenticated users.
+
+- **User-scoped**: Non-admin users see only their own deployments. Admins see all.
+- **Stats row**: Total containers, running, stopped, unhealthy counts at a glance.
+- **Search**: Filter deployments by container name, image, or project.
+- **Actions**: Start, stop, restart containers directly from the dashboard.
+- **Logs viewer**: Side-drawer with terminal-style log output (last 300 lines) per container.
+- **App links**: Running containers with an `app_url` show a direct link to the deployed application.
+- **Polling**: Refreshes every 5 seconds to reflect container state changes.
+
+The backend API (`/api/deployments`) proxies to the Docker MCP server via MCPHttp bridge and enforces ownership checks on all mutating operations.
+
+For admin-level operations (wipe projects, view all containers regardless of ownership), use the **Platform page** (`/admin/platform`).
+
+---
+
+## Kubernetes Deployment (Helm Chart)
+
+Druppie can be deployed to Kubernetes using the included Helm chart (`helm/druppie/`). The chart packages all platform components — backend, frontend, Keycloak, Gitea, 8 MCP modules, and 3 PostgreSQL databases — into ~43 Kubernetes resources managed as a single release.
+
+### What the Chart Deploys
+
+- **12 Deployments**: backend, frontend, Keycloak, Gitea, and 8 MCP modules (coding, docker, filesearch, web, archimate, registry, llm, vision)
+- **3 StatefulSets**: PostgreSQL instances for Druppie, Keycloak, and Gitea
+- **Path-based ingress**: nginx routes `/api` to backend, `/realms` to Keycloak, `/git` to Gitea, `/` to frontend — all on a single domain
+- **5 NetworkPolicies**: internal app communication, sandbox isolation, controlled egress for LLM API calls
+- **4 PVCs**: workspace (10Gi), dataset (5Gi), sandbox-bundles (5Gi), gitea-data (5Gi)
+- **Post-install init Job**: automatically sets up Keycloak realm, clients, roles, and test users
+
+### Local Development with Kind
+
+A Kind cluster configuration is included (`kind/cluster-dev.yaml`) for local testing. Helper scripts in `scripts/` automate cluster creation (`setup-kind.sh`), image building and loading (`build-and-load.sh`), and port forwarding (`port-forward.sh`).
+
+### Key Configuration
+
+All configuration is centralized in `values.yaml`:
+- `global.domain` — platform domain (default: `localhost`)
+- `global.ingress.port` — external port (default: `9080`)
+- `secrets.zaiApiKey` — LLM provider API key
+- Each MCP module can be individually enabled/disabled
+
+See `docs/kubernetes.md` for the full setup guide and troubleshooting.
+
+---
+
 ## Settings Page
 
 The Settings page displays system configuration and status (read-only). This page too is a prototype and might not work correctly.
@@ -802,3 +854,58 @@ The Settings page displays system configuration and status (read-only). This pag
 - Environment, version, and LLM provider/model info
 - Configured MCP servers with their available tools
 - Configured agents with model parameters (model, temperature, max tokens) and MCP access
+
+---
+
+## Automated Translation (Bilingual Support)
+
+The platform detects the user's language and automatically translates between the user's language and English. Agents always work in English internally; the platform handles all translation transparently.
+
+### How It Works
+
+1. **Language detection** -- The user's first message is analyzed using keyword heuristics (Dutch/English word lists) and the `langdetect` library. The detected language is stored on the session and locked for its lifetime (HITL answers do not flip the session language).
+2. **User → Agent translation** -- Non-English user messages are translated to English before being passed to the router, planner, and downstream agents.
+3. **Agent → User translation** -- Agent output is translated back to the user's language at each output point:
+   - **HITL questions and choices** are translated before being shown to the user.
+   - **Design documents** (`functional-design.md`, `technical-design.md`, etc.) are translated and saved as parallel Dutch files (`functioneel-ontwerp.md`, `technisch-ontwerp.md`, etc.) alongside the English originals.
+   - **Summarizer messages** are translated before being posted to the chat timeline.
+4. **Agent prompts** -- Every agent receives a fixed English-only instruction block at the top of its system prompt, ensuring agents always produce English output regardless of session language.
+
+### Supported Languages
+
+- **Dutch (nl)** -- Full support: detection, input/output translation, bilingual design documents.
+- **English (en)** -- Native. No translation needed.
+- **Other languages** -- Detected and translated to English for the agent, but the session language defaults to English (no output translation).
+
+### Configuration
+
+Requires `DEEPINFRA_API_KEY` in `.env`. The translation service uses Qwen/Qwen3-32B on DeepInfra, independent of the main `LLM_PROVIDER`. If the key is missing, the backend logs a warning at startup and non-English sessions will fail with a clear error.
+
+### Design Documents
+
+When a Dutch user's session produces a design document, the platform:
+1. Agents write the English original (e.g., `docs/functional-design.md`).
+2. The platform translates the content and writes a Dutch copy (e.g., `docs/functioneel-ontwerp.md`).
+3. The approval card shows the Dutch version to Dutch users.
+
+Both files are committed to the project repository.
+
+See [docs/TRANSLATION.md](TRANSLATION.md) for detailed architecture and data flow.
+
+## ArchiMate Diagrams in Technical Designs
+
+The Architect agent produces structural enterprise-architecture views as ArchiMate plates, embedded in `docs/technical-design.md` and persisted as Open Exchange XML in `docs/architecture.archimate` (one file per project, committed to Gitea). Mermaid stays in use for behavioral diagrams (sequence, state, flowchart, ER, Gantt, class) that ArchiMate cannot express — the two notations coexist and the agent picks per diagram-type.
+
+What the architect can do:
+
+- **Consult WILMA selectively.** The `archimate` MCP loads the waterschappen WILMA model read-only. The architect always searches WILMA to inform the design, but only reuses elements (via `get_or_create_wilma_reference`, which preserves the original identifier) when the project sits in the waterschap context and the WILMA element fits — otherwise the TD names the considered WILMA concepts and proceeds with project-specific modeling.
+- **Author project-specific views.** The composite builders `add_layered_view` / `add_cooperation_view` create a whole plate (view + elements + relationships) in one call; the primitives `create_element`, `create_relationship`, `add_to_view`, and `add_connection_to_view` apply incremental edits on revision — these tools are ungated; the single human review point is the `coding:make_design` gate on the technical design (so the reviewer sees the markdown and the rendered plate as one artifact and approves the TD as a whole).
+- **Incremental revision.** On feedback rounds the agent reads the existing view, applies only the requested delta, and saves; element positions stay put so the reviewer sees a recognisable diff rather than a re-shuffled layout.
+
+What the reviewer sees:
+
+- **Interactive ArchiMate views** rendered inline in the TD viewer (pan/zoom, layer colors, relationship markers per ArchiMate spec). Auto-layout via ELK runs in the browser for views that lack geometry.
+- **Delta highlighting.** Elements added in the most recent commit on `architecture.archimate` are accented in blue, and the block header shows an "N new" badge — making it immediately obvious where the latest feedback was acted on.
+- **Per-view SVG exports** are written to `docs/diagrams/<view-name>.svg` on every save, so the plates are also visible directly in Gitea's file preview without opening Druppie.
+
+The choice between ArchiMate and Mermaid, plus the full element/relationship vocabulary, lives in the `making-archimate-diagrams` skill at `druppie/skills/making-archimate-diagrams/SKILL.md`.

@@ -1,0 +1,52 @@
+{{- if .Values.nfs.enabled }}
+---
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: {{ .Values.nfs.storageClassName }}
+provisioner: nfs
+reclaimPolicy: Retain
+volumeBindingMode: Immediate
+mountOptions:
+  - hard
+  - noatime
+  - vers=4
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: {{ include "druppie.fullname" . }}-nfs-workspace
+spec:
+  capacity:
+    storage: {{ .Values.persistence.workspace.size }}
+  accessModes:
+    - ReadWriteMany
+  storageClassName: {{ .Values.nfs.storageClassName }}
+  persistentVolumeReclaimPolicy: Retain
+  nfs:
+    server: nfs-server.{{ .Release.Namespace }}.svc.cluster.local
+    path: /
+  mountOptions:
+    - hard
+    - noatime
+    - vers=4
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: {{ include "druppie.fullname" . }}-nfs-sandbox-bundles
+spec:
+  capacity:
+    storage: {{ .Values.persistence.sandboxBundles.size }}
+  accessModes:
+    - ReadWriteMany
+  storageClassName: {{ .Values.nfs.storageClassName }}
+  persistentVolumeReclaimPolicy: Retain
+  nfs:
+    server: nfs-server.{{ .Release.Namespace }}.svc.cluster.local
+    path: /
+  mountOptions:
+    - hard
+    - noatime
+    - vers=4
+{{- end }}

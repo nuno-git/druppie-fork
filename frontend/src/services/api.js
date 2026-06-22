@@ -12,8 +12,9 @@ const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 const request = async (endpoint, options = {}) => {
   const token = getToken()
 
+  const isFormData = options.body instanceof FormData
   const headers = {
-    'Content-Type': 'application/json',
+    ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
     ...options.headers,
   }
 
@@ -22,7 +23,7 @@ const request = async (endpoint, options = {}) => {
   }
 
   const method = options.method || 'GET'
-  const requestBody = options.body ? JSON.parse(options.body) : null
+  const requestBody = options.body && !isFormData ? JSON.parse(options.body) : null
 
   // console.group(`🌐 API ${method} ${endpoint}`)
   // console.log('Request:', { method, endpoint, body: requestBody })
@@ -71,7 +72,7 @@ const request = async (endpoint, options = {}) => {
 export const getUser = () => request('/api/user')
 
 // ============ Chat (Main Entry Point) ============
-export const sendChat = async (message, sessionId = null, conversationHistory = null) => {
+export const sendChat = async (message, sessionId = null, conversationHistory = null, attachmentIds = []) => {
   // Note: getMCPServers() was previously called here but the result was unused.
   // The backend handles MCP server selection internally.
   return request('/api/chat', {
@@ -80,8 +81,25 @@ export const sendChat = async (message, sessionId = null, conversationHistory = 
       message,
       session_id: sessionId || undefined,
       conversation_history: conversationHistory || [],
+      attachment_ids: attachmentIds.length > 0 ? attachmentIds : undefined,
     }),
   })
+}
+
+export const uploadAttachment = async (file, sessionId = null) => {
+  const formData = new FormData()
+  formData.append('file', file)
+  const params = sessionId ? `?session_id=${sessionId}` : ''
+  return request(`/api/chat/upload${params}`, {
+    method: 'POST',
+    body: formData,
+  })
+}
+
+export const getAttachmentUrl = (attachmentId) => {
+  const token = getToken()
+  const params = token ? `?token=${encodeURIComponent(token)}` : ''
+  return `${API_URL}/api/attachments/${attachmentId}${params}`
 }
 
 export const cancelChat = (sessionId) =>
@@ -98,8 +116,11 @@ export const getSession = (sessionId) => request(`/api/sessions/${sessionId}`)
 export const resumeSession = (sessionId) =>
   request(`/api/sessions/${sessionId}/resume`, { method: 'POST' })
 
-export const deleteSession = (sessionId) =>
-  request(`/api/sessions/${sessionId}`, { method: 'DELETE' })
+export const deleteSessions = (sessionIds) =>
+  request('/api/sessions', {
+    method: 'DELETE',
+    body: sessionIds ? JSON.stringify({ session_ids: sessionIds }) : undefined,
+  })
 
 export const retryFromRun = (sessionId, agentRunId, plannedPrompt = null) =>
   request(`/api/sessions/${sessionId}/retry-from/${agentRunId}`, {
@@ -119,10 +140,13 @@ export const approveApproval = (approvalId) =>
   request(`/api/approvals/${approvalId}/approve`, {
     method: 'POST',
   })
-export const rejectApproval = (approvalId, reason = '') =>
+export const rejectApproval = (approvalId, reason = '', attachmentIds = []) =>
   request(`/api/approvals/${approvalId}/reject`, {
     method: 'POST',
-    body: JSON.stringify({ reason }),
+    body: JSON.stringify({
+      reason,
+      ...(attachmentIds.length > 0 && { attachment_ids: attachmentIds }),
+    }),
   })
 
 // Legacy task endpoints (mapped to approvals for backwards compatibility)
@@ -134,10 +158,13 @@ export const approveTask = (taskId) =>
   request(`/api/approvals/${taskId}/approve`, {
     method: 'POST',
   })
-export const rejectTask = (taskId, reason = '') =>
+export const rejectTask = (taskId, reason = '', attachmentIds = []) =>
   request(`/api/approvals/${taskId}/reject`, {
     method: 'POST',
-    body: JSON.stringify({ reason }),
+    body: JSON.stringify({
+      reason,
+      ...(attachmentIds.length > 0 && { attachment_ids: attachmentIds }),
+    }),
   })
 export const getUsersByRole = (role) =>
   request(`/api/approvals/users-by-role/${role}`)
@@ -164,12 +191,13 @@ export const checkMCPPermission = (tool) =>
 export const getQuestions = (sessionId = null) =>
   request(`/api/questions${sessionId ? `?session_id=${sessionId}` : ''}`)
 export const getQuestion = (questionId) => request(`/api/questions/${questionId}`)
-export const answerQuestion = (questionId, answer, selectedChoices = null) =>
+export const answerQuestion = (questionId, answer, selectedChoices = null, attachmentIds = []) =>
   request(`/api/questions/${questionId}/answer`, {
     method: 'POST',
     body: JSON.stringify({
       answer,
       ...(selectedChoices != null && { selected_choices: selectedChoices }),
+      ...(attachmentIds.length > 0 && { attachment_ids: attachmentIds }),
     }),
   })
 export const cancelQuestion = (questionId) =>
@@ -209,8 +237,11 @@ export const runProject = (projectId) =>
   request(`/api/projects/${projectId}/run`, { method: 'POST' })
 export const stopProject = (projectId) =>
   request(`/api/projects/${projectId}/stop`, { method: 'POST' })
-export const deleteProject = (projectId) =>
-  request(`/api/projects/${projectId}`, { method: 'DELETE' })
+export const deleteProjects = (projectIds) =>
+  request('/api/projects', {
+    method: 'DELETE',
+    body: projectIds ? JSON.stringify({ project_ids: projectIds }) : undefined,
+  })
 export const getProjectStatus = (projectId) =>
   request(`/api/projects/${projectId}/status`)
 export const updateProject = (projectId, data) =>
@@ -227,6 +258,10 @@ export const getProjectFiles = (projectId, path = '', branch = 'main') =>
   request(`/api/projects/${projectId}/files?path=${encodeURIComponent(path)}&branch=${branch}`)
 export const getProjectFile = (projectId, path, branch = 'main') =>
   request(`/api/projects/${projectId}/file?path=${encodeURIComponent(path)}&branch=${branch}`)
+export const getProjectFileFromWorkspace = (projectId, sessionId, path) =>
+  request(`/api/projects/${projectId}/file/workspace?session_id=${sessionId}&path=${encodeURIComponent(path)}`)
+export const getProjectFileChanges = (projectId, path, branch = 'main') =>
+  request(`/api/projects/${projectId}/file/changes?path=${encodeURIComponent(path)}&branch=${branch}`)
 
 // ============ Deployments ============
 export const getDeployments = (projectId = null, allContainers = false) => {
@@ -326,15 +361,6 @@ export const runUnitTests = () =>
 export const getAvailableTests = () =>
   request('/api/evaluations/available-tests')
 
-export const getAvailableSetups = () =>
-  request('/api/evaluations/available-setups')
-
-export const seedSessions = (sessionNames, user = 'admin') =>
-  request('/api/evaluations/seed', {
-    method: 'POST',
-    body: JSON.stringify({ session_names: sessionNames, user }),
-  })
-
 export const getTestRuns = (page = 1, limit = 20, tag = null) => {
   const params = new URLSearchParams({ page, limit })
   if (tag) params.append('tag', tag)
@@ -350,6 +376,15 @@ export const getTags = () =>
 export const deleteTestUsers = () =>
   request('/api/evaluations/test-users', { method: 'DELETE' })
 
+export const deleteTestBatch = (batchId) =>
+  request(`/api/evaluations/test-batches/${encodeURIComponent(batchId)}`, { method: 'DELETE' })
+
+export const deleteAllTestBatches = () =>
+  request('/api/evaluations/test-batches', { method: 'DELETE' })
+
+export const deleteTestRun = (testRunId) =>
+  request(`/api/evaluations/test-runs/${encodeURIComponent(testRunId)}`, { method: 'DELETE' })
+
 export const runTests = (options = {}) =>
   request('/api/evaluations/run-tests', {
     method: 'POST',
@@ -358,6 +393,9 @@ export const runTests = (options = {}) =>
 
 export const getRunStatus = (runId) =>
   request(`/api/evaluations/run-status/${runId}`)
+
+export const cancelTestRun = (runId) =>
+  request(`/api/evaluations/cancel-run/${runId}`, { method: 'POST' })
 
 export const getTestBatches = (page = 1, limit = 10, tag = null) => {
   const params = new URLSearchParams({ page, limit })

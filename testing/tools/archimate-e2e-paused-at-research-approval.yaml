@@ -1,0 +1,507 @@
+## Setup: project with FD already approved + committed, and the
+## architect's technical-research.md ready for review. The chain stops
+## at the technical-research.md approval gate (status: pending).
+##
+## What happens when you approve the research in the UI:
+##   1. The approval-resume executes the make_design tool (writes
+##      docs/technical-research.md to the session workspace).
+##   2. The architect's loop resumes from there and proceeds with the
+##      part we want to test: git-add/commit/push the research, then
+##      build the ArchiMate plate using the new composite tools
+##      (add_layered_view / add_cooperation_view), run validate_view,
+##      write docs/technical-design.md, and commit.
+##   3. The TD make_design fires a second architect-role approval gate
+##      that you also approve in the UI.
+##
+## Saves ~10 min vs archimate-e2e-paused-at-fd-approval because the
+## BA phase + research-write phase are pre-played from disk instead of
+## running through real LLM calls. The plate-build phase is the only
+## thing that runs live.
+
+tool-test:
+  name: archimate-e2e-paused-at-research-approval
+  description: "Architect mid-run — research ready, paused at research-doc approval; approve to trigger plate-build with composite tools + validator"
+  tags: [archimate, e2e, paused, manual-followup]
+  session_status: paused
+
+  chain:
+    # --- Router ---
+    - agent: router
+      tool: builtin:set_intent
+      arguments:
+        intent: create_project
+        project_name: overlast-meldportaal
+        description: "Burger-portaal voor het melden van overlast (stank, water, vis, vervuiling) aan het waterschap. Meldingen worden vastgelegd in het zaaksysteem en de juiste behandelteams genotificeerd."
+      assert:
+        result:
+          - not_empty
+
+    - agent: router
+      tool: builtin:done
+      arguments:
+        summary: "Agent router: Classified as create_project for overlast-meldportaal"
+
+    # --- Planner: BA first ---
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: business_analyst
+            prompt: "Gather requirements and create functional design for the overlast-meldportaal"
+          - agent_id: planner
+            prompt: "Re-evaluate after business analyst completes"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: Planned business_analyst to gather requirements and create the functional design"
+
+    # --- Business Analyst writes the FD (pre-approved + committed) ---
+    - agent: business_analyst
+      tool: coding:make_design
+      approval:
+        status: approved
+      arguments:
+        path: docs/functional-design.md
+        content: |
+          # Functioneel Ontwerp — Burger Overlast-meldportaal
+
+          > Platform standards applied: [docs/platform-functional-standards.md](./platform-functional-standards.md) rev `2026-04-20`.
+
+          ## 1. Current vs Desired Situation
+
+          | Aspect | Current Situation | Desired Situation |
+          |--------|-------------------|-------------------|
+          | Meldkanaal | Telefoon, e-mail, social media verspreid over afdelingen | Eén digitaal portaal voor alle overlast-meldingen |
+          | Registratie | Handmatig per afdeling, geen centraal overzicht | Automatisch in zaaksysteem (DSP) bij indienen |
+          | Notificatie | Hangt af van wie de melding ontvangt | Automatisch naar het juiste behandelteam binnen seconden |
+          | Status voor burger | Geen terugkoppeling tenzij burger zelf belt | Burger volgt status via meldingsnummer + e-maillink |
+          | Trendrapportage | Niet mogelijk — meldingen niet gestructureerd | Dashboard per type, locatie, doorlooptijd |
+          | Bereikbaarheid | Alleen kantooruren effectief | 24/7 indienen, behandeling kantooruren |
+
+          ## 2. Problem Summary
+
+          - **Who is affected:** Burgers in het beheergebied van het waterschap (overlastmelders) en de behandelteams die meldingen oppakken.
+          - **Problem:** Meldingen komen via verspreide kanalen binnen, raken zoek of komen vertraagd bij het juiste team. Burgers krijgen geen statusterugkoppeling.
+          - **Why it matters:** Vertraagde behandeling leidt tot escalaties, herhaalmeldingen en imagoschade. Het waterschap kan niet rapporteren op trends en kan dus niet proactief beleid maken.
+          - **What success looks like:** Elke melding belandt binnen 1 minuut bij het juiste team, burger kan status volgen zonder te bellen, zaakcoördinator heeft realtime overzicht.
+
+          ## 3. Functional Requirements
+
+          | ID | Source | Requirement | Verification Method |
+          |----|--------|-------------|---------------------|
+          | FR-01 | BA | The system shall enable a citizen to submit an overlast report with location (map pin), overlast type, description and optional photo so that registration is complete in a single form. | Functional test — submit a report with all fields, confirm it lands in the zaaksysteem |
+          | FR-02 | BA | The system shall return a meldingsnummer to the citizen upon submission so that the citizen can track the status without an account. | Functional test — submit form, confirm meldingsnummer in confirmation screen |
+          | FR-03 | BA | The system shall send an e-maillink to the citizen (if e-mail provided) so that the citizen can return to the status page later. | Integration test — submit with e-mail, confirm e-mail received with working link |
+          | FR-04 | BA | The system shall automatically register every submitted report as a zaak in the DSP with the matching zaaktype so that no manual zaakregistratie is needed. | Integration test — submit report, query DSP for new zaak, confirm zaaktype mapping |
+          | FR-05 | BA | The system shall notify the behandelteam responsible for the zaaktype within 60 seconds of submission so that handling can start immediately. | Integration test — submit report, observe notification delivery within 60s |
+          | FR-06 | BA | The system shall mirror status updates from the zaaksysteem to the citizen-facing status page within 60 seconds so that the citizen sees current state. | Integration test — change zaak status in DSP, confirm status page updates within 60s |
+          | FR-07 | BA | The system shall expose a coordinator dashboard with meldingen filtered by type, location and doorlooptijd so that the zaakcoördinator can monitor and report on trends. | Functional test — open dashboard as coordinator, filter by type, confirm correct subset |
+
+          ## 4. Business Rules & Logic
+
+          | Rule ID | Description | Condition | Outcome |
+          |---------|-------------|-----------|---------|
+          | BR-01 | Mapping melding-type → zaaktype | Submitted overlast type matches a DSP zaaktype in the configuration | Auto-register with matched zaaktype |
+          | BR-02 | Onbekend melding-type | No DSP zaaktype matches | Register with default "overlast-overig" zaaktype |
+          | BR-03 | Pseudonimiseer e-mail bij sluiten | Zaak status becomes "afgesloten" | Replace e-mail address with hash in melding-record after 7 days |
+          | BR-04 | Duplicaat-detectie | New melding within 500m + 4h + same type | Link to existing zaak instead of creating new one |
+          | BR-05 | Notificatie-routing | Zaaktype assigned to a behandelteam in configuration | Notify that team; fall back to algemene meldkamer if no mapping |
+
+          ## 5. Information Requirements
+
+          | Information | Description | Source | Used By |
+          |-------------|-------------|--------|---------|
+          | Melding | Locatie, type, beschrijving, optionele foto, optionele e-mail, meldingsnummer | Burger via portaal | Zaaksysteem, behandelteam, dashboard |
+          | Zaaktype-mapping | Welke melding-type hoort bij welke DSP zaaktype | Beheer-config | Auto-registratie |
+          | Behandelteam-routing | Welk team voor welk zaaktype | Beheer-config | Notificatieservice |
+          | Zaakstatus | Open/in behandeling/afgesloten + laatste opmerking | Zaaksysteem (DSP) | Status-pagina burger, dashboard |
+          | Adresgegevens | Resolved address bij gegeven coördinaten | PDOK BAG/BGT | Indien-formulier, dashboard-filters |
+
+          ## 6. User Journeys
+
+          **Journey A — Burger dient melding in**
+          1. Burger opent portaal-URL in browser
+          2. Systeem toont kaart van beheergebied
+          3. Burger zet pin op overlast-locatie
+          4. Systeem resolved adres via PDOK en toont in formulier
+          5. Burger kiest type overlast uit lijst, schrijft beschrijving, voegt foto toe, vult optioneel e-mail in
+          6. Burger drukt op "Verstuur"
+          7. Systeem registreert zaak in DSP, krijgt zaaknummer terug
+          8. Systeem toont meldingsnummer + link naar status-pagina
+          9. Systeem stuurt (indien e-mail) bevestigingsmail met link
+
+          **Journey B — Behandelteam handelt af**
+          1. Team ontvangt notificatie met zaaknummer + samenvatting
+          2. Teamlid opent zaaksysteem en behandelt zaak
+          3. Teamlid werkt status bij in zaaksysteem
+          4. Status verschijnt binnen 60s op burger's status-pagina
+
+          **Journey C — Burger volgt status**
+          1. Burger opent status-pagina met meldingsnummer (of via e-maillink)
+          2. Systeem toont actuele status + laatste opmerking
+          3. Burger ziet historie van statuswijzigingen
+
+          **Journey D — Coördinator rapporteert**
+          1. Coördinator logt in op dashboard (via waterschap-SSO)
+          2. Filtert meldingen per type, locatie, periode, doorlooptijd
+          3. Exporteert CSV voor bestuursrapportage
+
+          ## 7. Integration Points
+
+          | System/Service | Interaction Type | Purpose |
+          |----------------|------------------|---------|
+          | Zaaksysteem (DSP) | REST (ZGW-API) | Zaakregistratie, statusupdates ophalen, zaaktype-lookup |
+          | Notificatieservice | REST | E-mail + push naar behandelteams |
+          | PDOK BAG/BGT | REST | Adres-resolutie bij coördinaten |
+          | Object-opslag (S3-compatibel) | S3 API | Foto's bij meldingen |
+          | Waterschap-SSO (Keycloak) | OIDC | Authenticatie van behandelteam + coördinator (niet de burger) |
+
+          ## 8. Non-Functional Requirements
+
+          | ID | Source | Requirement | Verification Method |
+          |----|--------|-------------|---------------------|
+          | NFR-01 | BA | 95% van indien-acties wordt binnen 2 seconden verwerkt (form-submit tot bevestigingsscherm) | Performance test met 50 concurrent users |
+          | NFR-02 | BA | Beschikbaarheid 99.5% tijdens kantooruren (08:00-18:00), 99% buiten kantooruren | SLA-monitoring over 30 dagen |
+          | NFR-03 | BA | Status-page latency: actuele zaakstatus binnen 60s na update in DSP | Integration test polling + timestamping |
+          | NFR-04 | BA | Notificatie-latency: behandelteam ontvangt notificatie binnen 60s van indien-actie | Integration test stopwatch |
+          | NFR-05 | BA | Foto-upload max 10 MB, JPEG/PNG/HEIC, automatisch herschalen naar max 1920px | Functional test met grenswaarde-bestanden |
+          | NFR-06 | BA | Mobiel-responsive (≥360px breed); Lighthouse Performance score ≥80 op 4G | Lighthouse audit in CI |
+
+          ## 9. Security & Compliance Requirements (from user input)
+
+          - **Personal Data Involved:** Ja — e-mailadres (optioneel) van de melder + locatie van de melding. Beide zijn herleidbaar tot de persoon.
+          - **Confidential Data Involved:** Nee — meldingen zijn niet vertrouwelijk; foto's mogen geen herkenbare personen tonen (UX-prompt waarschuwt).
+          - **Authentication Required:** Burger: nee (alleen meldingsnummer + e-maillink). Behandelteam en coördinator: ja, via waterschap-Keycloak (OIDC).
+          - **Access Restrictions:** Behandelteam ziet alleen zaken van eigen zaaktype-set. Coördinator ziet alles binnen het waterschap.
+          - **Failure Preference:** Stop completely — bij falen van DSP-koppeling wordt de melding NIET geregistreerd, burger krijgt foutmelding met meldingsnummer voor retry. Geen "best effort".
+          - **Data Retention:** Meldingen blijven gekoppeld aan de zaak in DSP (wettelijke termijn waterschap). E-mailadres wordt 7 dagen na sluiten van de zaak gepseudonimiseerd in melding-record. Foto's: zelfde retentie als de zaak.
+
+          ## 10. Assumptions & Open Questions
+
+          | ID | Type | Description | Default/Fallback |
+          |----|------|-------------|------------------|
+          | A-01 | Assumption | De zaaktype-mapping wordt beheerd in een configuratie-bestand dat operationeel beheer kan aanpassen zonder code-release. | Single source of truth in DSP-koppeling-config |
+          | A-02 | Assumption | Burger heeft geen account-historie nodig over meerdere meldingen — elke melding staat los. | Geen "mijn meldingen"-overzicht in v1 |
+          | A-03 | Assumption | Behandelteams werken hoofdzakelijk in het zaaksysteem zelf, niet in dit portaal. | Portaal is alleen ingang + status-uitgang |
+          | A-04 | Assumption | Het waterschap heeft één DSP-instance; multi-tenant is niet nodig. | Single-tenant deployment |
+
+          ## 11. Out of Scope
+
+          - Mobiele app (alleen responsive web).
+          - Geavanceerde analytics / BI-dashboard (alleen basis-filtering + CSV-export).
+          - Inkomende koppelingen vanuit andere meldsystemen (alleen burger-portaal).
+          - Beheer-UI voor zaaktype-mapping (config-bestand volstaat in v1).
+          - Push-notificaties naar de burger (alleen e-mail + status-pagina).
+          - Anonieme upload van foto's zonder melding (foto altijd bij melding).
+
+          ## 12. Process Flow Diagram
+
+          ```mermaid
+          flowchart TD
+              start(["Burger opent portaal"]) --> form["Locatie + type + beschrijving + foto"]
+              form --> submit{"Submit"}
+              submit --> resolve["PDOK adres-resolutie"]
+              resolve --> dup{"Duplicaat binnen 500m + 4h?"}
+              dup -->|"Ja"| link["Koppel aan bestaande zaak"]
+              dup -->|"Nee"| zaak["Registreer zaak in DSP"]
+              link --> num["Toon meldingsnummer"]
+              zaak --> num
+              num --> notify["Notificeer behandelteam"]
+              notify --> finish(["Bevestiging + e-maillink"])
+          ```
+
+          ## 13. Possible Solution Direction
+
+          No existing modules or projects were identified as relevant; context-gathering surfaced only generic platform capabilities (auth, storage) which are already platform standards.
+
+          ## 14. Platform standard deviations
+
+          | Standard | Deviation | Rationale |
+          |----------|-----------|-----------|
+          | (none)   |           |           |
+
+    - agent: business_analyst
+      tool: coding:run_git
+      arguments:
+        command: "add docs/functional-design.md"
+
+    - agent: business_analyst
+      tool: coding:run_git
+      arguments:
+        command: "commit -m 'Functioneel ontwerp overlast-meldportaal'"
+
+    - agent: business_analyst
+      tool: coding:run_git
+      arguments:
+        command: "push"
+
+    - agent: business_analyst
+      tool: builtin:done
+      arguments:
+        summary: "Agent business_analyst: DESIGN_APPROVED for overlast-meldportaal — 7 FRs, 6 NFRs, 5 BRs, AVG-pseudonimisatie, integration met DSP/PDOK/notificatie/S3. Committed to main."
+
+    # --- Planner re-evaluates after BA → plans architect ---
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: architect
+            prompt: "Review the functional design and create the technical research + design with ArchiMate plate"
+          - agent_id: planner
+            prompt: "Re-evaluate after architect completes"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: BA approved design, planned architect to review FD and create technical research + design with ArchiMate plate"
+
+    # --- Architect prep work (all mocked — fast replay) ---
+    - agent: architect
+      tool: coding:read_file
+      mock: true
+      mock_result: "[FD loaded — see docs/functional-design.md in workspace]"
+      arguments:
+        path: docs/functional-design.md
+
+    - agent: architect
+      tool: coding:read_file
+      mock: true
+      mock_result: "[platform technical standards loaded]"
+      arguments:
+        path: docs/platform-technical-standards.md
+
+    - agent: architect
+      tool: registry:list_modules
+      mock: true
+      mock_result: '{"success": true, "modules": ["archimate", "coding", "registry", "web", "filesearch", "vision", "llm", "docker", "dataaccess"]}'
+      arguments: {}
+
+    - agent: architect
+      tool: registry:search_modules
+      mock: true
+      mock_result: '{"success": true, "results": []}'
+      arguments:
+        query: "zaaksysteem DSP ZGW"
+
+    - agent: architect
+      tool: registry:search_modules
+      mock: true
+      mock_result: '{"success": true, "results": []}'
+      arguments:
+        query: "email notification"
+
+    - agent: architect
+      tool: registry:search_modules
+      mock: true
+      mock_result: '{"success": true, "results": []}'
+      arguments:
+        query: "PDOK BAG adres geocoding"
+
+    - agent: architect
+      tool: registry:search_modules
+      mock: true
+      mock_result: '{"success": true, "results": []}'
+      arguments:
+        query: "S3 object storage file upload"
+
+    - agent: architect
+      tool: builtin:invoke_skill
+      mock: true
+      mock_result: "[architecture-principles skill loaded — 22 NORA/WILMA principles available]"
+      arguments:
+        skill_name: architecture-principles
+
+    - agent: architect
+      tool: builtin:invoke_skill
+      mock: true
+      mock_result: "[technical-research-format skill loaded]"
+      arguments:
+        skill_name: technical-research-format
+
+    # --- Architect writes the research doc ---
+    # APPROVAL LEFT PENDING — this is where the chain stops. Approve in
+    # the UI to trigger: write research.md → git add/commit/push → plate
+    # build via composite tools + validate_view → make TD → push.
+    - agent: architect
+      tool: coding:make_design
+      approval:
+        status: pending
+      arguments:
+        path: docs/technical-research.md
+        content: |
+          # Technisch Onderzoek
+
+          ## Inleiding
+
+          ### Onderwerp
+          Het Burger Overlast-meldportaal stelt burgers in staat om via een digitaal portaal overlast-meldingen in te dienen (met locatie, type, beschrijving en optionele foto). Het systeem registreert automatisch een zaak in het zaaksysteem (DSP), notificeert het juiste behandelteam, en stelt de burger in staat de zaakstatus te volgen via een meldingsnummer en e-maillink. Een coördinator-dashboard geeft real-time overzicht en trendinformatie.
+
+          ### Onderzoeksvraag
+          Welke architecturale benadering levert een overlast-meldportaal dat (1) meldingen binnen 60 seconden bij het juiste behandelteam krijgt, (2) burger-statusinformatie binnen 60 seconden update, (3) de DSP-integratie via ZGW-API's correct realiseert, en (4) herbruikbaar is als Druppie-modules voor toekomstige waterschapsprojecten?
+
+          ### Uitgangspunten
+          - **Platform-standaarden:** conform `docs/platform-technical-standards.md` rev 2026-04-20 (React+FastAPI+Postgres stack, Docker Compose, Druppie SDK).
+          - **NORA/WILMA:** het ontwerp valt binnen het waterschapsdomein; WILMA-referentiecomponenten (Zaakbeheercomponent, Notificatierouteringcomponent, Zaaktypecataloguscomponent) zijn geïdentificeerd.
+          - **PII:** e-mailadres en locatie van de melder zijn persoonsgegevens (art. 4 AVG). Pseudonimisatie binnen 7 dagen na zaaksluiting (BR-03) is een keiharde eis.
+          - **Burger is anoniem:** geen account, geen login; alleen meldingsnummer + e-maillink voor status-toegang.
+          - **DSP is single-tenant:** één DSP-instance, geen multi-tenant (A-04).
+          - **Stop-completely bij falen:** als DSP-koppeling faalt, wordt de melding NIET geregistreerd — geen best-effort (FD §9).
+
+          ## Overwogen Benaderingen
+
+          ### Benadering A — Synchrone monolithische applicatie
+
+          * **Beschrijving:** Het portaal is een enkele FastAPI-applicatie met een Postgres-database. Bij indienen van een melding roept de backend synchroon achtereenvolgens PDOK (adres-resolutie), DSP (zaak aanmaken), object-opslag (foto opslaan) en de notificatieservice (e-mail + team-notificatie) aan. Status-updates voor de burger worden opgehaald via polling van de DSP bij elk verzoek van de status-pagina. Het coördinator-dashboard leest direct uit de eigen Postgres-database.
+          * **Hergebruik:** Druppie project-template (FastAPI + React + Postgres). Geen bestaande Druppie-modules die de integraties dekken.
+          * **Voor- en nadelen:**
+
+              | Aspect | Score | Toelichting |
+              |--------|-------|-------------|
+              | Complexiteit | + | Eén applicatie, eenvoudig te bouwen en te testen |
+              | Herbruikbaarheid | – | Externe integraties (DSP, PDOK, notificaties) zitten in projectcode; niet herbruikbaar voor andere waterschapsprojecten |
+              | Operationele kosten | + | Minimale infrastructuur (één container, één DB) |
+              | Risico | – | Eén failing upstream service blokkeert de hele flow; geen retry-mechanisme; polling belast DSP onnodig |
+              | Fit met principes | – | Schendt principe 11 (standaard voor maatwerk), principe 16 (services-ondersteuning), en principe 18 (gestandaardiseerde interfaces) doordat integraties niet als herbruikbare modules zijn gerealiseerd |
+
+          * **Wanneer geschikt:** Kleine pilots of proof-of-concepts waar hergebruik nog geen vereiste is en de belasting laag blijft.
+
+          ### Benadering B — Modulair met MCP-modules voor integraties + polling voor status
+
+          * **Beschrijving:** De kern-applicatie (FastAPI + React + Postgres) is het portaal. Alle externe systeemkoppelingen worden gerealiseerd als Druppie MCP-modules: (1) `module-dsp-zgw` voor DSP-integratie via ZGW-API's, (2) `module-notificatie` voor e-mail en push-notificaties, (3) `module-pdok-geocode` voor PDOK BAG/BGT adres-resolutie, (4) `module-objectstore` voor S3-compatibele object-opslag. Bij indienen roept de backend via de Druppie SDK deze modules synchroon aan. Status-updates voor de burger worden opgehaald via polling: de status-pagina haalt elke 60 seconden de actuele zaakstatus op bij DSP via `module-dsp-zgw`. Het coördinator-dashboard leest uit de eigen Postgres-database.
+          * **Hergebruik:** Nieuwe Druppie MCP-modules: `module-dsp-zgw`, `module-notificatie`, `module-pdok-geocode`, `module-objectstore`. De modules zijn ontworpen voor hergebruik over waterschapsprojecten.
+          * **Voor- en nadelen:**
+
+              | Aspect | Score | Toelichting |
+              |--------|-------|-------------|
+              | Complexiteit | ± | Meer componenten dan A, maar elk met een duidelijke verantwoordelijkheid |
+              | Herbruikbaarheid | + | MCP-modules zijn herbruikbaar voor elk waterschapsproject dat DSP, PDOK, notificaties of object-opslag nodig heeft |
+              | Operationele kosten | ± | Extra containers voor modules, maar standaard Druppie-patroon |
+              | Risico | ± | Polling voor status-updates introductieert latente belasting op DSP; bij hoge meldvolumes kan dit schalen |
+              | Fit met principes | + | Volgt principe 11 (standaard voor maatwerk), principe 16 (services-ondersteuning), principe 18 (gestandaardiseerde interfaces) |
+
+          * **Wanneer geschikt:** Productie-implementatie waar hergebruik belangrijk is en meldvolume matig (tot enkele honderden per dag).
+
+          ### Benadering C — Modulair met MCP-modules + webhooks voor status-updates
+
+          * **Beschrijving:** Gelijk aan Benadering B qua module-structuur. Het verschil zit in de status-update flow: in plaats van polling registreert het portaal zich als webhook-consumer bij DSP (of via de Notificatierouteringcomponent uit WILMA). Bij een statuswijziging in DSP pusht DSP (of de notificatie-routering) een event naar het portaal, dat de eigen Postgres-database bijwerkt. De burger status-pagina leest dan altijd uit de lokale cache (sub-seconde latentie). Het coördinator-dashboard leest uit dezelfde Postgres-database.
+          * **Hergebruik:** Zelfde MCP-modules als Benadering B.
+          * **Voor- en nadelen:**
+
+              | Aspect | Score | Toelichting |
+              |--------|-------|-------------|
+              | Complexiteit | – | Vereist een inkomend endpoint voor webhooks, event-verwerking, en retry-logica bij tijdelijke storingen |
+              | Herbruikbaarheid | + | Zelfde modules als B; extra waarde: event-gedreven patroon is herbruikbaar |
+              | Operationele kosten | + | Geen polling-overhead op DSP; efficiënter bij hogere volumes |
+              | Risico | ± | Afhankelijk van webhook-ondersteuning in DSP; niet alle DSP-versies ondersteunen dit. Extra complexiteit in foutafhandeling (gemiste events, volgorde) |
+              | Fit met principes | + | Volgt dezelfde principes als B; event-driven approach sluit beter aan bij principe 16 en WILMA's Notificatierouteringcomponent |
+
+          * **Wanneer geschikt:** Productie met hoog meldvolume, of wanneer de DSP webhook/notify-on-status-change ondersteunt.
+
+          ## Externe Systeemkoppelingen (VERPLICHT)
+
+          ### Inventarisatie koppelingen
+
+          | # | Extern systeem | Categorie | Richting | Protocol / auth | Sync/Async | Data (kort) |
+          |---|----------------|-----------|----------|------------------|-----------|-------------|
+          | 1 | Zaaksysteem (DSP) via ZGW API's | organizational | beide | REST (ZGW), API-key / mTLS | Sync (create), Async/Polling (status) | Zaak, zaaktype, status, opmerkingen |
+          | 2 | Notificatieservice (e-mail) | organizational | uit | REST, API-key | Async | E-mail met meldingsnummer + status-link |
+          | 3 | PDOK BAG/BGT | organizational | uit | REST (publiek) | Sync | Coördinaat → adres-resolutie |
+          | 4 | Object-opslag (S3-compatibel) | organizational | uit | S3 API, access-key | Sync | Foto's bij meldingen (JPEG/PNG/HEIC) |
+          | 5 | Waterschap-SSO (Keycloak) | organizational | in | OIDC | Sync | Authenticatie behandelteam + coördinator |
+
+          ### Per koppeling: hergebruik-analyse
+
+          #### Koppeling 1 — Zaaksysteem (DSP) via ZGW API's
+
+          * **Categorie:** organizational
+          * **Bestaande module gecheckt:** `registry_search_modules("zaaksysteem DSP ZGW")` → 0 resultaten. Geen bestaande module.
+          * **Beslissing:**
+              - [ ] REUSE — niet mogelijk (geen bestaande module)
+              - [ ] EXTEND — niet mogelijk (geen bestaande module)
+              - [x] NEW MODULE — nieuwe module `module-dsp-zgw` met tools:
+                    - `create_zaak` — Maak een nieuwe zaak aan in DSP met zaaktype, beschrijving, locatie en metadata
+                    - `get_zaak_status` — Haal de actuele status en laatste opmerking op van een zaak
+                    - `get_zaaktypen` — Haal beschikbare zaaktypen op uit DSP voor mapping-configuratie
+                    - `link_document_to_zaak` — Koppel een document (foto) aan een bestaande zaak
+          * **Onderbouwing:** DSP-integratie via ZGW-API's is een kernkoppeling voor elk waterschap dat zaakgericht werkt (principe 8). Het is herbruikbaar voor vergunningverlening, handhaving, en andere zaak-gerelateerde workflows. Principe 11 (standaard voor maatwerk) en principe 16 (processen ondersteund door services) vereisen een herbruikbare module.
+          * **Impact op TD:** De module abstraheert ZGW-API-details; de project-backend roept via Druppie SDK `create_zaak`, `get_zaak_status`, etc. aan. Zaaktype-mapping (BR-01/BR-02) wordt geconfigureerd via de module-config.
+
+          #### Koppeling 2 — Notificatieservice (e-mail)
+
+          * **Categorie:** organizational
+          * **Bestaande module gecheckt:** `registry_search_modules("email notification")` → 0 resultaten.
+          * **Beslissing:**
+              - [x] NEW MODULE — nieuwe module `module-notificatie` met tools:
+                    - `send_email` — Verstuur een e-mail naar een of meer ontvangers met onderwerp, body en optionele bijlagen
+                    - `send_push` — Stuur een push-notificatie naar een behandelteam-kanaal (toekomstige uitbreiding)
+          * **Onderbouwing:** Notificaties zijn een generieke waterschapsbehoefte (bevestigingsmails, herinneringen, team-notificaties). Principe 16 (services-ondersteuning) en principe 4 (digitaal eerst) vereisen een gestandaardiseerde notificatie-service.
+          * **Impact op TD:** De module abstraheert de notificatie-aflevering; de project-backend roept `send_email` aan met sjabloon-parameters.
+
+          #### Koppeling 3 — PDOK BAG/BGT
+
+          * **Categorie:** organizational
+          * **Bestaande module gecheckt:** `registry_search_modules("PDOK BAG adres geocoding")` → 0 resultaten.
+          * **Beslissing:**
+              - [x] NEW MODULE — nieuwe module `module-pdok-geocode` met tools:
+                    - `reverse_geocode` — Resolve coördinaten (lat/lon) naar een BAG-adres
+                    - `search_address` — Zoek adressen op tekst (type-ahead voor adresveld, toekomstige uitbreiding)
+          * **Onderbouwing:** PDOK-adres-resolutie is een generieke waterschapsbehoefte (meldingen, vergunningen, inspecties). Principe 13 (één bron per data-element) en principe 17 (data slechts éénmaal vragen) vereisen dat BAG-gegevens uit de authentieke bron (PDOK) komen via een gestandaardiseerde service.
+          * **Impact op TD:** De module wordt aangeroepen bij het indienen van een melding en bij het weergeven van adresgegevens in het dashboard.
+
+          #### Koppeling 4 — Object-opslag (S3-compatibel)
+
+          * **Categorie:** organizational
+          * **Bestaande module gecheckt:** `registry_search_modules("S3 object storage file upload")` → 0 resultaten.
+          * **Beslissing:**
+              - [x] NEW MODULE — nieuwe module `module-objectstore` met tools:
+                    - `upload_object` — Upload een bestand (bytes) naar een S3-bucket en retourneer de object-key
+                    - `get_object_url` — Genereer een tijdelijke (presigned) URL voor download
+                    - `delete_object` — Verwijder een object uit de bucket (voor retentie-beheer)
+          * **Onderbouwing:** Object-opslag is een generieke behoefte voor waterschapsprojecten (foto's bij meldingen, documenten bij vergunningen, rapportages). Principe 11 en 16 rechtvaardigen een herbruikbare module boven project-specifieke S3-aanroepen.
+          * **Impact op TD:** De module abstraheert S3-configuratie; de project-backend uploadt foto's en ontvangt een object-key die wordt gekoppeld aan de zaak.
+
+          #### Koppeling 5 — Waterschap-SSO (Keycloak)
+
+          * **Categorie:** organizational
+          * **Bestaande module gecheckt:** `registry_search_modules("SSO Keycloak authentication")` → 0 resultaten. Echter, volgens `docs/platform-technical-standards.md` §8 is auth een platform-aangelegenheid: "Auth is handled by Druppie. Every app is deployed behind the Druppie platform, which already does Keycloak-based auth."
+          * **Beslissing:**
+              - [x] REUSE — bestaande platform-auth (Druppie ingress + Keycloak) dekt de behoefte. Geen aparte module nodig.
+          * **Onderbouwing:** De platform-standaard bepaalt dat auth door Druppie wordt afgehandeld. De project-app leest de geauthenticeerde gebruiker uit request-headers. Dit is voldoende voor behandelteam- en coördinator-authenticatie. Burgers hebben geen account (FD §9).
+          * **Impact op TD:** Geen module nodig; de app volgt het platform-standaard patroon (trust headers). Wel moet de app rollen (behandelteam vs. coördinator) uit de JWT/headers extraheren voor autorisatie.
+
+          ### Samenvatting nieuwe/uitgebreide modules
+
+          | Module | Type | Tools | Reden |
+          |--------|------|-------|-------|
+          | `module-dsp-zgw` | new | `create_zaak`, `get_zaak_status`, `get_zaaktypen`, `link_document_to_zaak` | Zaakregistratie via ZGW-API — kernintegratie waterschapsbreed herbruikbaar |
+          | `module-notificatie` | new | `send_email`, `send_push` | E-mail/push notificaties — generieke waterschapsbehoefte |
+          | `module-pdok-geocode` | new | `reverse_geocode`, `search_address` | PDOK BAG/BGT adres-resolutie — herbruikbaar voor alle locatie-gerelateerde workflows |
+          | `module-objectstore` | new | `upload_object`, `get_object_url`, `delete_object` | S3-compatibele object-opslag — herbruikbaar voor alle document/foto-workflows |
+
+          Rijen in deze tabel betekenen BUILD_PATH=CORE_UPDATE (zie Stap 2b).
+
+          ## Aanbeveling
+
+          * **Gekozen benadering:** B — Modulair met MCP-modules voor integraties + polling voor status
+          * **Rationale:** Benadering B biedt de beste balans tussen herbruikbaarheid, complexiteit en risico. De MCP-modules (DSP, notificatie, PDOK, object-opslag) maken de integraties herbruikbaar voor toekomstige waterschapsprojecten, wat aansluit bij principe 11 (standaard voor maatwerk) en principe 16 (services-ondersteuning). Benadering C (webhooks) is superieur voor status-updates bij hoog volume, maar introduceert aanzienlijke complexiteit (retry-logica, event-volgorde, inkomend endpoint) waarvan de meerwaarde bij het verwachte volume (enkele honderden meldingen per dag) beperkt is. Bovendien is niet zeker of de DSP-instance webhooks ondersteunt. De polling-aanpak (elke 60 seconden bij status-pagina-verzoek) is eenvoudiger en voldoet aan NFR-03 (status binnen 60 seconden). Als het volume stijgt of DSP webhooks ondersteunt, kan in een volgende iteratie naar Benadering C worden gemigreerd.
+          * **Afgeleide beslissingen voor TD:**
+            - Vier nieuwe MCP-modules worden gecreëerd (BUILD_PATH=CORE_UPDATE)
+            - Polling-interval voor status-updates: maximaal 60 seconden (TR-xx)
+            - Zaaktype-mapping is een configuratie-item, geen hard-coded mapping
+            - Duplicaatdetectie (BR-04) wordt geïmplementeerd in de project-backend met Postgres-query (500m + 4h +zelfde type)
+            - Pseudonimisatie (BR-03) wordt uitgevoerd door een achtergrondtaak in de project-backend
+          * **Afgeleide Technical Requirements:**
+            - TR-01: Polling-interval status-updates ≤ 60 seconden (cache TTL in backend)
+            - TR-02: Foto-resize naar max 1920px voordat upload naar object-opslag
+            - TR-03: Duplicaatdetectie-query: zoek bestaande melding binnen 500m radius + 4 uur + zelfde type
+            - TR-04: Pseudonimisatie-taak: hash e-mailadres 7 dagen na zaaksluiting
+            - TR-05: Alle module-aanroepen via Druppie SDK (niet direct HTTP)
+            - TR-06: Zaaktype-mapping configuratie in YAML/env, niet in code
+            - TR-07: Form-submit verwerking binnen 2 seconden (P95) bij normaal meldvolume
+          * **Openstaande aannames/risico's:**
+            - DSP ondersteunt ZGW-API's (Zaken API 1.0+). Te valideren bij eerste integratie-test.
+            - PDOK BAG/BGT reverse-geocoding levert betrouwbaar adressen binnen het beheergebied. Edge-case: watergebieden zonder BAG-adres → fallback naar coördinatenweergave.
+            - Notificatieservice-endpoint voor e-mail is beschikbaar binnen de waterschapsinfrastructuur. Alternatief: directe SMTP via de module.
+            - Object-opslag (S3-compatibel) is beschikbaar als service binnen het waterschap. Drempelwaarde: foto-upload max 10 MB per bestand.
+            - Polling bij hoog volume: als het aantal actieve status-pagina-verzoeken stijgt, kan caching in Postgres de DSP-belasting beperken. Migratie naar webhooks (Benadering C) is het escalatiepad.

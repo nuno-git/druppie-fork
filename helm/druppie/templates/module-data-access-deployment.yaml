@@ -1,0 +1,82 @@
+{{- if .Values.modules.data_access.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "druppie.fullname" . }}-module-data-access
+  labels:
+    {{- include "druppie.labels" . | nindent 4 }}
+    app.kubernetes.io/component: module-data-access
+spec:
+  replicas: {{ .Values.modules.data_access.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "druppie.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: module-data-access
+  template:
+    metadata:
+      labels:
+        {{- include "druppie.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: module-data-access
+    spec:
+      containers:
+        - name: module-data-access
+          image: {{ include "druppie.image" (dict "Values" .Values "image" .Values.modules.data_access.image) }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          env:
+            - name: MCP_PORT
+              value: {{ .Values.modules.data_access.port | quote }}
+            - name: WORKSPACE_ROOT
+              value: "/workspaces"
+          envFrom:
+            - configMapRef:
+                name: {{ include "druppie.fullname" . }}-config
+            - secretRef:
+                name: {{ include "druppie.fullname" . }}-secrets
+          ports:
+            - name: http
+              containerPort: {{ .Values.modules.data_access.port }}
+              protocol: TCP
+          volumeMounts:
+            - name: workspace
+              mountPath: /workspaces
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.modules.data_access.port }}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 5
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.modules.data_access.port }}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 5
+          resources:
+            {{- toYaml .Values.modules.data_access.resources | nindent 12 }}
+      volumes:
+        - name: workspace
+          persistentVolumeClaim:
+            claimName: {{ include "druppie.fullname" . }}-workspace
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "druppie.fullname" . }}-module-data-access
+  labels:
+    {{- include "druppie.labels" . | nindent 4 }}
+    app.kubernetes.io/component: module-data-access
+spec:
+  type: ClusterIP
+  ports:
+    - port: {{ .Values.modules.data_access.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "druppie.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: module-data-access
+{{- end }}

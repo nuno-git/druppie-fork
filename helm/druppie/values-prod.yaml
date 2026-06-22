@@ -1,0 +1,125 @@
+# Production values for Druppie Helm chart
+# Use: helm upgrade druppie helm/druppie/ -f helm/druppie/values-prod.yaml
+
+global:
+  domain: druppie.example.com
+  ingress:
+    className: traefik
+    tls:
+      enabled: true
+      secretName: druppie-tls
+
+backend:
+  replicaCount: 2
+  resources:
+    requests:
+      memory: "512Mi"
+      cpu: "500m"
+    limits:
+      memory: "1Gi"
+      cpu: "2000m"
+
+frontend:
+  replicaCount: 2
+  resources:
+    requests:
+      memory: "128Mi"
+      cpu: "100m"
+    limits:
+      memory: "256Mi"
+      cpu: "500m"
+
+keycloak:
+  replicaCount: 1
+  resources:
+    requests:
+      memory: "384Mi"
+      cpu: "250m"
+    limits:
+      memory: "768Mi"
+      cpu: "1000m"
+
+gitea:
+  replicaCount: 1
+
+modules:
+  coding:
+    replicaCount: 1
+    resources:
+      requests:
+        memory: "256Mi"
+        cpu: "200m"
+      limits:
+        memory: "512Mi"
+        cpu: "1000m"
+  docker:
+    replicaCount: 1
+    resources:
+      requests:
+        memory: "256Mi"
+        cpu: "200m"
+      limits:
+        memory: "512Mi"
+        cpu: "1000m"
+
+autoscaling:
+  backend:
+    enabled: true
+    minReplicas: 1
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+  frontend:
+    enabled: true
+    minReplicas: 1
+    maxReplicas: 8
+    targetCPUUtilizationPercentage: 70
+
+# KEDA session-based autoscaling for the backend (ADR §4.4).
+# When enabled, the backend CPU HPA is automatically disabled (see hpa-backend.yaml)
+# and KEDA drives scaling via dual triggers: PostgreSQL queue depth + CPU.
+keda:
+  enabled: true
+  pollingInterval: 5
+  cooldownPeriod: 120
+  sslmode: disable
+  backend:
+    query: "SELECT COUNT(*) FROM agent_runs WHERE status = 'running'"
+    targetQueryValue: "10"
+    activationTargetQueryValue: "3"
+    targetCPUUtilization: "55"
+
+# CloudNativePG — HA PostgreSQL clusters (3 instances with auto-failover, ADR §4.3)
+cnpg:
+  enabled: true
+  monitoring:
+    enabled: true
+  druppie:
+    instances: 3
+  keycloak:
+    instances: 3
+  gitea:
+    instances: 3
+
+persistence:
+  storageClass: "hcloud-volumes"
+
+nfs:
+  enabled: true
+  storageClassName: nfs-workspace
+  storageClass: "hcloud-volumes"
+  storageSize: 30Gi
+  nodeSelector:
+    pool: infra
+
+# Multi-node HA (ADR §4.11): spread replicas across nodes and guarantee
+# availability during maintenance. Safe here because prod runs >1 schedulable node.
+highAvailability:
+  pdb:
+    enabled: true
+    minAvailable: 1
+  antiAffinity:
+    enabled: true
+
+certManager:
+  enabled: true
+  email: ""
