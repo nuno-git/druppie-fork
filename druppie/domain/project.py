@@ -39,18 +39,15 @@ class ProjectSummary(BaseModel):
     id: UUID
     name: str
     description: str | None
+    repo_url: str | None = None
     repo_name: str | None = None
     repo_owner: str | None = None
-    repo_url: str | None
-    repo_name: str | None
-    repo_owner: str | None
     created_at: datetime
 
 
 class ProjectDetail(ProjectSummary):
     """Full project with stats. Inherits from ProjectSummary."""
     owner_id: UUID
-    repo_name: str | None
     token_usage: TokenUsage
     session_count: int
     deployment: DeploymentInfo | None

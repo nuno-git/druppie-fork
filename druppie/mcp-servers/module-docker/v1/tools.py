@@ -59,7 +59,10 @@ def _validate_name(name: str, label: str) -> str | None:
 
 
 # Configuration
-DOCKER_NETWORK = os.getenv("DOCKER_NETWORK", "")
+# Falls back to the canonical compose network name (`<COMPOSE_PROJECT_NAME>_main`,
+# default `druppie_main`) so standalone runs without DOCKER_NETWORK set still
+# target a sensible network instead of failing with `docker --network ""`.
+DOCKER_NETWORK = os.getenv("DOCKER_NETWORK") or f"{os.getenv('COMPOSE_PROJECT_NAME', 'druppie')}_main"
 PORT_RANGE_START = int(os.getenv("PORT_RANGE_START", "9100"))
 PORT_RANGE_END = int(os.getenv("PORT_RANGE_END", "9199"))
 BUILD_DIR = Path(os.getenv("BUILD_DIR", "/tmp/docker-builds"))

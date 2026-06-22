@@ -322,7 +322,7 @@ curl -k https://druppie.example.com/realms/druppie/.well-known/openid-configurat
 1. Navigate to `https://druppie.example.com`
 2. You'll be redirected to the oauth2-proxy gate login
    - Username: `druppie_team`
-   - Password: `Druppie2026!SecureGate`
+   - Password: the value you set in `GATE_PASSWORD` (see `.env`)
 3. After gate authentication, you'll see the Druppie app login
 4. Use Keycloak credentials:
 

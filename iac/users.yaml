@@ -6,6 +6,14 @@
 # - architect: Approves architecture/design decisions
 # - developer: Approves builds and deployments
 # - admin: Full access (reserved for future)
+#
+# NOTE ON ${*_PUBLIC_URL} PLACEHOLDERS (see "clients" section below):
+# The ${FRONTEND_PUBLIC_URL} and ${GITEA_PUBLIC_URL} placeholders are NOT shell
+# env vars - they are substituted at runtime by scripts/setup_keycloak.py.
+# When the corresponding env var is unset, it falls back to a dev default of
+# http://${EXTERNAL_HOST}:${PORT} (e.g. http://localhost:5273 for the frontend,
+# http://localhost:3100 for Gitea). Set FRONTEND_PUBLIC_URL / GITEA_PUBLIC_URL
+# in .env to override for reverse-proxy / HTTPS deployments.
 
 # =============================================================================
 # REALM ROLES (Simplified Governance Roles)

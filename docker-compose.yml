@@ -216,7 +216,7 @@ services:
     environment:
       MCP_PORT: "9002"
       WORKSPACE_ROOT: /workspaces
-      DOCKER_NETWORK: main
+      DOCKER_NETWORK: ${COMPOSE_PROJECT_NAME:-druppie}_main
       DRUPPIE_URL: ${DRUPPIE_URL:-http://backend:8000}
       DRUPPIE_MODULE_API_TOKEN: ${DRUPPIE_MODULE_API_TOKEN:-}
       DEEPINFRA_API_KEY: ${DEEPINFRA_API_KEY:-}
@@ -384,11 +384,11 @@ services:
       DATA_SOURCE_2: ${DATA_SOURCE_2:-}
       DATA_SOURCE_3: ${DATA_SOURCE_3:-}
     volumes:
-      - druppie_new_workspace:/workspaces
+      - workspace:/workspaces
     ports:
       - "${MCP_DATA_ACCESS_PORT:-9010}:9010"
     networks:
-      - druppie-new-network
+      - main
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9010/health"]
       interval: 10s
@@ -501,25 +501,27 @@ services:
 
   oauth2-proxy:
     image: quay.io/oauth2-proxy/oauth2-proxy:v7.8.1
-    profiles: [infra, dev, prod]
+    # Production auth gate (sits behind nginx). Not used in dev/infra, where the backend
+    # is reached directly — including it there only restart-loops on missing secrets.
+    profiles: [prod]
     environment:
       DRUPPIE_DOMAIN: ${DRUPPIE_DOMAIN:-localhost}
     command:
       - --provider=keycloak-oidc
       - --skip-oidc-discovery=true
-      - --login-url=https://${DRUPPIE_DOMAIN:-localhost}/realms/druppie-gate/protocol/openid-connect/auth
+      - --login-url=${PUBLIC_SCHEME:-https}://${DRUPPIE_DOMAIN:-localhost}/realms/druppie-gate/protocol/openid-connect/auth
       - --redeem-url=http://keycloak:8080/realms/druppie-gate/protocol/openid-connect/token
       - --oidc-jwks-url=http://keycloak:8080/realms/druppie-gate/protocol/openid-connect/certs
       - --profile-url=
-      - --oidc-issuer-url=https://${DRUPPIE_DOMAIN:-localhost}/realms/druppie-gate
+      - --oidc-issuer-url=${PUBLIC_SCHEME:-https}://${DRUPPIE_DOMAIN:-localhost}/realms/druppie-gate
       - --insecure-oidc-skip-issuer-verification=true
       - --client-id=druppie-proxy
       - --client-secret=${OAUTH2_PROXY_CLIENT_SECRET}
       - --cookie-secret=${OAUTH2_PROXY_COOKIE_SECRET}
       - --cookie-domain=.${DRUPPIE_DOMAIN:-localhost}
-      - --cookie-secure=true
+      - --cookie-secure=${OAUTH2_PROXY_COOKIE_SECURE:-true}
       - --cookie-samesite=lax
-      - --redirect-url=https://${DRUPPIE_DOMAIN:-localhost}/oauth2/callback
+      - --redirect-url=${PUBLIC_SCHEME:-https}://${DRUPPIE_DOMAIN:-localhost}/oauth2/callback
       - --email-domain=*
       - --insecure-oidc-allow-unverified-email=true
       - --skip-provider-button=true
@@ -542,6 +544,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 30s
     restart: unless-stopped
 
   # ===========================================================================
@@ -840,7 +843,9 @@ services:
       - |
         # Docker Compose auto-names containers as <COMPOSE_PROJECT_NAME>-<service>-<ordinal>
         DB_CONTAINER="${COMPOSE_PROJECT_NAME}-druppie-db-1"
-        BACKEND_CONTAINER="${COMPOSE_PROJECT_NAME}-backend-1"
+        # Backend service differs between prod (druppie-backend) and dev (druppie-backend-dev) profiles.
+        BACKEND_CONTAINER="${COMPOSE_PROJECT_NAME}-druppie-backend-1"
+        BACKEND_CONTAINER_DEV="${COMPOSE_PROJECT_NAME}-druppie-backend-dev-1"
         echo "=== Resetting Druppie Application Database ==="
         echo "Preserving user tables (users, user_roles, user_tokens)"
         echo "DB container: $DB_CONTAINER"
@@ -863,7 +868,9 @@ services:
         "
         echo ""
         echo "Restarting backend to recreate tables..."
-        docker restart "$BACKEND_CONTAINER" 2>/dev/null || echo "Backend not running"
+        docker restart "$BACKEND_CONTAINER" 2>/dev/null \
+          || docker restart "$BACKEND_CONTAINER_DEV" 2>/dev/null \
+          || echo "Backend not running"
         echo ""
         echo "=== Database reset complete ==="
         echo "Application tables dropped. User accounts preserved."
@@ -880,7 +887,7 @@ services:
     profiles: [reset-hard]
     network_mode: host
     environment:
-      COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME:-cleaner-druppie-docker-compose}
+      COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME:-druppie}
       # Host project directory for Docker volume mount resolution (required for rootless Docker)
       HOST_PROJECT_DIR: ${PWD}
       # Init container env vars for re-initialization (use localhost since we're on host network)
@@ -918,7 +925,7 @@ services:
     profiles: [nuke]
     network_mode: host
     environment:
-      COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME:-cleaner-druppie-docker-compose}
+      COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME:-druppie}
       START_AFTER: ${START_AFTER:-true}
       FRONTEND_PORT: ${FRONTEND_PORT:-5273}
       BACKEND_PORT: ${BACKEND_PORT:-8100}

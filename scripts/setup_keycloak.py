@@ -331,16 +331,6 @@ def main():
         f"http://{external_host}:{gitea_port}",
     )
 
-    replacements = {
-        "${FRONTEND_PUBLIC_URL}": frontend_public_url,
-        "${BACKEND_PUBLIC_URL}": backend_public_url,
-        "${KEYCLOAK_PUBLIC_URL}": keycloak_public_url,
-        "${GITEA_PUBLIC_URL}": gitea_public_url,
-        "${EXTERNAL_HOST}": external_host,
-        "${FRONTEND_PORT}": frontend_port,
-        "${GITEA_PORT}": gitea_port,
-    }
-
     # Environment variable substitutions for dynamic port configuration
     env_substitutions = {
         "${FRONTEND_PUBLIC_URL}": frontend_public_url,
@@ -348,9 +338,9 @@ def main():
         "${KEYCLOAK_PUBLIC_URL}": keycloak_public_url,
         "${GITEA_PUBLIC_URL}": gitea_public_url,
         "${EXTERNAL_HOST}": external_host,
-        "${FRONTEND_PORT}": os.getenv("FRONTEND_PORT", "5273"),
+        "${FRONTEND_PORT}": frontend_port,
         "${KEYCLOAK_PORT}": os.getenv("KEYCLOAK_PORT", "8180"),
-        "${GITEA_PORT}": os.getenv("GITEA_PORT", "3100"),
+        "${GITEA_PORT}": gitea_port,
         "${GITEA_SSH_PORT}": os.getenv("GITEA_SSH_PORT", "2223"),
         "${BACKEND_PORT}": os.getenv("BACKEND_PORT", "8100"),
     }

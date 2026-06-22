@@ -5,6 +5,11 @@
 
 set -e
 
+# Docker Compose project name, used as the prefix for volume and container names
+# (Compose names resources as <project>_<volume> and <project>-<service>-<ordinal>).
+# Sourced from the COMPOSE_PROJECT_NAME env var set by the reset-hard service.
+P="${COMPOSE_PROJECT_NAME:-druppie}"
+
 echo "=============================================="
 echo "  Druppie Platform - HARD RESET"
 echo "=============================================="
@@ -28,6 +33,10 @@ if [ -n "$HOST_PROJECT_DIR" ] && [ "$HOST_PROJECT_DIR" != "/project" ]; then
     cd "$HOST_PROJECT_DIR"
 fi
 COMPOSE="docker compose"
+
+# Compose project name — prefixes volume names (<P>_postgres) and container names
+# (<P>-<service>-1). Must match the project the stack was actually started with.
+P="${COMPOSE_PROJECT_NAME:-druppie}"
 
 # Step 1: Stop all services and remove volumes
 echo "--- Step 1: Stopping all services and removing volumes ---"

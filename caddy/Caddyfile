@@ -11,6 +11,11 @@
 	# HTTP Basic Auth — protects everything behind one password
 	# To add users: docker exec caddy caddy hash-password --plaintext 'newpassword'
 	# Then add to the basicauth block below
+	#
+	# The hash below is a SHARED DEFAULT — operators MUST replace it before
+	# deploying. The plaintext password is not documented on purpose; regenerate
+	# your own hash with:
+	#   caddy hash-password --plaintext '<your-password>'
 	basic_auth * {
 		druppie_team $2a$14$CXTWAw7kciICes6zH1YY.ubE0sU3gB8ulbWKFNv/URcAMOJbE9rSm
 	}
@@ -56,6 +61,8 @@
 {$GITEA_DOMAIN:gitea.druppie.localhost} {
 	tls /secrets/cert.pem /secrets/key.pem
 
+	# Same shared default hash as above — replace before deploying.
+	# Regenerate with: caddy hash-password --plaintext '<your-password>'
 	basic_auth * {
 		druppie_team $2a$14$CXTWAw7kciICes6zH1YY.ubE0sU3gB8ulbWKFNv/URcAMOJbE9rSm
 	}

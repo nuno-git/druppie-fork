@@ -144,7 +144,6 @@ def ensure_user(kc: KeycloakAdmin, realm: str, username: str, password: str, rol
             user_uuid = r.headers.get("Location", "").split("/")[-1]
         else:
             print(f"  [ERROR] {r.status_code} {r.text}"); sys.exit(1)
-            return
 
     # Assign platform-access role
     role_data = kc.get(f"/realms/{realm}/roles/{role}")
@@ -166,13 +165,17 @@ def ensure_user(kc: KeycloakAdmin, realm: str, username: str, password: str, rol
 def main():
     keycloak_url = os.getenv("KEYCLOAK_URL", "http://localhost:10080")
     admin_user = os.getenv("KEYCLOAK_ADMIN", "admin")
-    admin_password = os.getenv("KEYCLOAK_ADMIN_PASSWORD", "kc-admin-N8rF2pL5xQ9w")
-    client_secret = os.getenv("OAUTH2_PROXY_CLIENT_SECRET", "tqHSSTX1ECvxkd5VRkeLbgtJa807RVHD")
+    admin_password = os.getenv("KEYCLOAK_ADMIN_PASSWORD", "admin")
+    client_secret = os.getenv("OAUTH2_PROXY_CLIENT_SECRET")
+    if not client_secret:
+        print("  [ERROR] OAUTH2_PROXY_CLIENT_SECRET is not set"); sys.exit(1)
     domain = os.getenv("GATE_DOMAIN", "localhost")
     gate_realm = "druppie-gate"
     gate_client = "druppie-proxy"
     gate_user = "druppie_team"
-    gate_password = "Druppie2026!SecureGate"
+    gate_password = os.getenv("GATE_PASSWORD")
+    if not gate_password:
+        print("  [ERROR] GATE_PASSWORD is not set"); sys.exit(1)
 
     print("=" * 50)
     print("  Druppie Security Gate Setup")
