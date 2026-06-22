@@ -86,6 +86,15 @@ For this guide, we'll use:
 
 Replace `example.com` with your actual domain throughout.
 
+> **Sibling subdomains and the gate cookie:** the oauth2-proxy session cookie
+> defaults to `.${DRUPPIE_DOMAIN}` (e.g. `.druppie.example.com`), which does
+> **not** cover a sibling subdomain like `git.example.com`. If Druppie and Gitea
+> share a base domain but sit on sibling subdomains, set both
+> `OAUTH2_PROXY_COOKIE_DOMAIN` and `OAUTH2_PROXY_WHITELIST_DOMAIN` to the shared
+> base (`.example.com`) in `.env` — otherwise the Gitea gate login loops. If
+> Gitea is a sub-subdomain of `DRUPPIE_DOMAIN` (e.g. `git.druppie.example.com`),
+> the default already covers it.
+
 ### Step 2: Configure DNS
 
 Create DNS records pointing to your server IP:

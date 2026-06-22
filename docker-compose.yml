@@ -210,8 +210,9 @@ services:
 
   module-docker:
     build:
-      context: ./druppie/mcp-servers
-      dockerfile: module-docker/Dockerfile
+      # Context is ./druppie (not mcp-servers) because the Dockerfile COPYs sdk/.
+      context: ./druppie
+      dockerfile: mcp-servers/module-docker/Dockerfile
     profiles: [infra, dev, prod]
     environment:
       MCP_PORT: "9002"
@@ -262,8 +263,10 @@ services:
 
   module-archimate:
     build:
-      context: ./druppie/mcp-servers
-      dockerfile: module-archimate/Dockerfile
+      # Context is ./druppie (not mcp-servers) because the Dockerfile COPYs
+      # mcp-servers/-prefixed paths including the models/ directory.
+      context: ./druppie
+      dockerfile: mcp-servers/module-archimate/Dockerfile
     profiles: [infra, dev, prod]
     environment:
       MODELS_DIR: /models
@@ -329,8 +332,10 @@ services:
 
   module-registry:
     build:
-      context: ./druppie/mcp-servers
-      dockerfile: module-registry/Dockerfile
+      # Context is ./druppie (not mcp-servers) because the Dockerfile COPYs
+      # agents/, core/, and skills/ which live outside mcp-servers/.
+      context: ./druppie
+      dockerfile: mcp-servers/module-registry/Dockerfile
     profiles: [infra, dev, prod]
     environment:
       DATA_DIR: /data
@@ -604,7 +609,10 @@ services:
       - --client-id=druppie-proxy
       - --client-secret=${OAUTH2_PROXY_CLIENT_SECRET}
       - --cookie-secret=${OAUTH2_PROXY_COOKIE_SECRET}
-      - --cookie-domain=.${DRUPPIE_DOMAIN:-localhost}
+      # Defaults to .${DRUPPIE_DOMAIN}, but when Gitea lives on a sibling subdomain
+      # (e.g. druppie.example.com + git.example.com) set OAUTH2_PROXY_COOKIE_DOMAIN
+      # to the shared base (.example.com) so the gate cookie covers both.
+      - --cookie-domain=${OAUTH2_PROXY_COOKIE_DOMAIN:-.${DRUPPIE_DOMAIN:-localhost}}
       - --cookie-secure=${OAUTH2_PROXY_COOKIE_SECURE:-true}
       - --cookie-samesite=lax
       - --redirect-url=${PUBLIC_SCHEME:-https}://${DRUPPIE_DOMAIN:-localhost}/oauth2/callback
@@ -614,7 +622,7 @@ services:
       - --upstream=static://200
       - --http-address=0.0.0.0:4180
       - --reverse-proxy=true
-      - --whitelist-domain=.${DRUPPIE_DOMAIN:-localhost}
+      - --whitelist-domain=${OAUTH2_PROXY_WHITELIST_DOMAIN:-.${DRUPPIE_DOMAIN:-localhost}}
       - --allowed-role=platform-access
       - --oidc-groups-claim=realm_access.roles
       - --session-cookie-minimal=true
