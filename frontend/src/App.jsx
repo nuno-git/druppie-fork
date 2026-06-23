@@ -14,6 +14,7 @@ import NavRail from './components/NavRail'
 // Pages
 import Dashboard from './pages/Dashboard'
 import Tasks from './pages/Tasks'
+import Questions from './pages/Questions'
 import Chat from './pages/Chat'
 import DebugMCP from './pages/DebugMCP'
 import DebugProjects from './pages/DebugProjects'
@@ -24,6 +25,7 @@ import Platform from './pages/Platform'
 import Evaluations from './pages/Evaluations'
 import Analytics from './pages/Analytics'
 import BatchDetail from './pages/BatchDetail'
+import DeveloperPage from './pages/DeveloperPage'
 import CachedDependencies from './pages/CachedDependencies'
 import Documentation from './pages/Documentation'
 import Deployments from './pages/Deployments'
@@ -224,6 +226,14 @@ function App() {
                             }
                           />
                           <Route
+                            path="/questions"
+                            element={
+                              <ProtectedRoute>
+                                <Questions />
+                              </ProtectedRoute>
+                            }
+                          />
+                          <Route
                             path="/projects"
                             element={
                               <ProtectedRoute>
@@ -289,6 +299,14 @@ function App() {
                             element={
                               <ProtectedRoute requiredRole="admin">
                                 <BatchDetail />
+                              </ProtectedRoute>
+                            }
+                          />
+                          <Route
+                            path="/tools/developer"
+                            element={
+                              <ProtectedRoute>
+                                <DeveloperPage />
                               </ProtectedRoute>
                             }
                           />

@@ -13,7 +13,6 @@ from pydantic import BaseModel
 from uuid import UUID
 from datetime import datetime
 from enum import Enum
-from typing import Literal
 
 from .common import Attachment, TokenUsage, SessionStatus
 from .agent_run import AgentRunSummary, AgentRunDetail
@@ -35,6 +34,7 @@ class Message(BaseModel):
     role: str  # user, assistant, system
     content: str
     agent_id: str | None = None
+    agent_run_id: UUID | None = None
     sequence_number: int = 0
     created_at: datetime
     attachments: list[Attachment] = []
@@ -66,6 +66,10 @@ class SessionSummary(BaseModel):
     status: SessionStatus
     error_message: str | None = None
     project_id: UUID | None
+    # Username of the session owner. Sidebar uses this to flag sessions
+    # that belong to someone else (e.g. an architect viewing a session
+    # they were pulled into as an expert).
+    username: str | None = None
     token_usage: TokenUsage
     created_at: datetime
     updated_at: datetime | None
@@ -80,6 +84,7 @@ class SessionDetail(SessionSummary):
     user_id: UUID | None
     project: ProjectSummary | None
     timeline: list[TimelineEntry]
+
 
 
 # Backward compatibility aliases

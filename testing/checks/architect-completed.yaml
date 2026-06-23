@@ -1,0 +1,7 @@
+check:
+  name: architect-completed
+  description: "Architect agent should have completed successfully"
+  tags: [architect, assertion]
+  assert:
+    - agent: architect
+      completed: true

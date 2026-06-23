@@ -156,9 +156,17 @@ class FallbackLLM(BaseLLM):
                 error=str(e)[:200],
             )
             self._enter_degraded()
-            response = self._fallback.chat(messages, tools)
-            self._active = self._fallback
-            return response
+            try:
+                response = self._fallback.chat(messages, tools)
+                self._active = self._fallback
+                return response
+            except LLMError as fallback_error:
+                logger.error(
+                    "llm_fallback_also_failed",
+                    primary_error=f"{type(e).__name__}: {str(e)[:200]}",
+                    fallback_error=f"{type(fallback_error).__name__}: {str(fallback_error)[:200]}",
+                )
+                raise e from fallback_error
 
     async def achat(
         self,
@@ -204,9 +212,17 @@ class FallbackLLM(BaseLLM):
                 error=str(e)[:200],
             )
             self._enter_degraded()
-            response = await self._fallback.achat(messages, tools, max_tokens)
-            self._active = self._fallback
-            return response
+            try:
+                response = await self._fallback.achat(messages, tools, max_tokens)
+                self._active = self._fallback
+                return response
+            except LLMError as fallback_error:
+                logger.error(
+                    "llm_fallback_also_failed",
+                    primary_error=f"{type(e).__name__}: {str(e)[:200]}",
+                    fallback_error=f"{type(fallback_error).__name__}: {str(fallback_error)[:200]}",
+                )
+                raise e from fallback_error
 
     # ------------------------------------------------------------------
     # History — concatenate both

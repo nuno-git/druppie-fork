@@ -43,12 +43,12 @@ class GiteaClient:
         self.admin_password = admin_password or GITEA_ADMIN_PASSWORD
         self.org = org or GITEA_ORG
 
-    def _new_client(self) -> httpx.AsyncClient:
-        """Create a fresh async HTTP client.
 
-        Each call creates a new client so the instance is safe to use
-        across threads and event loops without shared mutable state.
-        """
+    async def close(self):
+        """Close the HTTP client. No-op with per-request clients."""
+        pass
+
+    def _new_client(self) -> httpx.AsyncClient:
         return httpx.AsyncClient(
             base_url=f"{self.base_url}/api/v1",
             auth=(self.admin_user, self.admin_password),

@@ -12,7 +12,7 @@ from uuid import UUID
 import structlog
 
 from druppie.db.models.project import Project as ProjectModel
-from druppie.domain.common import SessionStatus
+from druppie.domain.common import AgentRunStatus, SessionStatus
 from druppie.repositories.execution_repository import ExecutionRepository
 from druppie.repositories.session_repository import SessionRepository
 
@@ -217,6 +217,256 @@ class RevertService:
             "warnings": git_analysis.get("warnings", []),
         }
 
+    async def retry_nested_subagent_run(
+        self, session_id: UUID, agent_run_id: UUID, planned_prompt: str | None = None
+    ) -> dict:
+        """Retry a nested subagent run.
+
+        Resets the target subagent and deletes its descendants.  Later
+        siblings that are still PENDING (never started) are deleted along
+        with their descendants.  Later siblings that have already started
+        (PAUSED_USER, COMPLETED, etc.) are left untouched so the caller
+        can continue them from where they left off.
+
+        Then walks the entire parent chain resetting each ancestor (delete
+        done(), clear subagents() ToolCall result, set to RUNNING).
+
+        The caller is responsible for:
+        1. Re-running the target subagent via orchestrator.run_agent()
+        2. Continuing any paused siblings via orchestrator._resume_single_paused_leaf()
+        3. Patching the subagents ToolCall result via _patch_paused_subagents_tool_call()
+        4. Continuing the parent via agent.continue_run()
+
+        Returns:
+            Dict with reset details including parent_run_id,
+            deleted_sibling_ids (PENDING, removed) and
+            paused_sibling_ids (already started, kept for continuation).
+        """
+        # Validate target exists
+        target = self.execution_repo.get_by_id_for_session(agent_run_id, session_id)
+        if not target:
+            raise ValueError(f"Agent run {agent_run_id} not found in session {session_id}")
+
+        logger.info(
+            "retry_nested_subagent_start",
+            session_id=str(session_id),
+            agent_run_id=str(agent_run_id),
+            parent_run_id=str(target.parent_run_id),
+        )
+
+        # Step 1: Find siblings from LATER spawning tool calls on the same parent.
+        # Uses spawning_tool_call_id (real tree link) instead of created_at (fragile).
+        # Siblings from the SAME tool call are parallel — keep them.
+        # Siblings from LATER tool calls are sequential — delete them.
+        from druppie.db.models.agent_run import AgentRun as AgentRunModel
+        from druppie.db.models.tool_call import ToolCall as ToolCallModel
+
+        db = self.execution_repo.db
+        target_tc_id = target.spawning_tool_call_id
+
+        if target_tc_id:
+            target_tc = db.query(ToolCallModel).filter(ToolCallModel.id == target_tc_id).first()
+            target_tc_created = target_tc.created_at if target_tc else None
+        else:
+            target_tc_created = None
+
+        all_children = (
+            db.query(AgentRunModel)
+            .filter(AgentRunModel.parent_run_id == target.parent_run_id)
+            .all()
+        )
+
+        later_siblings = []
+        for child in all_children:
+            if child.id == agent_run_id:
+                continue
+            if not child.spawning_tool_call_id:
+                continue
+            if child.spawning_tool_call_id == target_tc_id:
+                continue
+            if target_tc_created is None:
+                continue
+            child_tc = db.query(ToolCallModel).filter(ToolCallModel.id == child.spawning_tool_call_id).first()
+            if child_tc and child_tc.created_at > target_tc_created:
+                later_siblings.append(self.execution_repo._to_summary(child))
+
+        logger.info(
+            "retry_nested_later_siblings",
+            session_id=str(session_id),
+            target_id=str(agent_run_id),
+            deleting=[(s.agent_id, str(s.id), s.status) for s in later_siblings],
+        )
+
+        target_descendants = self._collect_descendants(agent_run_id)
+        sibling_descendants: list[UUID] = []
+        for sibling in later_siblings:
+            sibling_descendants.extend(self._collect_descendants(sibling.id))
+
+        if target_descendants:
+            self.execution_repo.delete_runs_fully(target_descendants)
+        if sibling_descendants:
+            self.execution_repo.delete_runs_fully(sibling_descendants)
+        if later_siblings:
+            self.execution_repo.delete_runs_fully([s.id for s in later_siblings])
+
+        self.execution_repo.clear_execution_artifacts([agent_run_id])
+        self.execution_repo.reset_runs_to_pending([agent_run_id])
+
+        if planned_prompt is not None:
+            self.execution_repo.update_planned_prompt(agent_run_id, planned_prompt)
+        elif not target.planned_prompt:
+            original_prompt = self._extract_subagent_prompt(
+                target.id, target.spawning_tool_call_id
+            )
+            if original_prompt:
+                self.execution_repo.update_planned_prompt(agent_run_id, original_prompt)
+
+        self._reset_parent_chain_for_retry(target.parent_run_id, target.spawning_tool_call_id)
+
+        self.execution_repo.commit()
+
+        logger.info(
+            "retry_nested_subagent_complete",
+            session_id=str(session_id),
+            target_id=str(agent_run_id),
+            siblings_deleted=len(later_siblings),
+            descendants_deleted=len(target_descendants) + len(sibling_descendants),
+            parent_run_id=str(target.parent_run_id),
+        )
+
+        return {
+            "status": "reset",
+            "agent_run_id": str(agent_run_id),
+            "parent_run_id": str(target.parent_run_id),
+            "spawning_tool_call_id": str(target.spawning_tool_call_id) if target.spawning_tool_call_id else None,
+            "deleted_sibling_ids": [str(s.id) for s in later_siblings],
+        }
+
+    def _collect_descendants(self, run_id: UUID) -> list[UUID]:
+        """Recursively collect all descendant run IDs of a given run.
+
+        Traverses the parent_run_id tree downward, collecting every child,
+        grandchild, etc.
+        """
+        from druppie.db.models.agent_run import AgentRun
+
+        children = (
+            self.execution_repo.db.query(AgentRun)
+            .filter(AgentRun.parent_run_id == run_id)
+            .all()
+        )
+        result: list[UUID] = []
+        for child in children:
+            result.append(child.id)
+            result.extend(self._collect_descendants(child.id))
+        return result
+
+    def _reset_parent_chain_for_retry(
+        self, parent_run_id: UUID | None, spawning_tool_call_id: UUID | None = None,
+    ) -> None:
+        """Walk up the parent chain, resetting each ancestor for retry.
+
+        For each ancestor:
+        1. Delete its done() ToolCall
+        2. Find the subagents() TC that spawned the target (by spawning_tool_call_id),
+           clear its result, set to 'executing'
+        3. Delete ALL tool calls and LLM calls after that TC on the parent
+        4. Set AgentRun status to RUNNING, clear completed_at
+        """
+        if parent_run_id is None:
+            return
+
+        from druppie.db.models.agent_run import AgentRun
+        from druppie.db.models.tool_call import ToolCall as ToolCallModel
+
+        current_id = parent_run_id
+        current_tc_id = spawning_tool_call_id
+        while current_id:
+            parent = (
+                self.execution_repo.db.query(AgentRun)
+                .filter(AgentRun.id == current_id)
+                .first()
+            )
+            if not parent:
+                break
+
+            self.execution_repo.db.query(ToolCallModel).filter(
+                ToolCallModel.agent_run_id == current_id,
+                ToolCallModel.tool_name == "done",
+            ).delete(synchronize_session="fetch")
+
+            if current_tc_id:
+                subagents_tc = (
+                    self.execution_repo.db.query(ToolCallModel)
+                    .filter(ToolCallModel.id == current_tc_id)
+                    .first()
+                )
+            else:
+                subagents_tc = (
+                    self.execution_repo.db.query(ToolCallModel)
+                    .filter(
+                        ToolCallModel.agent_run_id == current_id,
+                        ToolCallModel.tool_name == "subagents",
+                    )
+                    .order_by(ToolCallModel.created_at.desc())
+                    .first()
+                )
+            if subagents_tc:
+                subagents_tc.result = None
+                subagents_tc.status = "executing"
+
+                from druppie.db.models.llm_call import LlmCall
+                from druppie.db.models.llm_retry import LlmRetry
+                from druppie.db.models.tool_call_normalization import ToolCallNormalization
+
+                cutoff = subagents_tc.created_at
+
+                later_tc_ids = [
+                    tc.id for tc in
+                    self.execution_repo.db.query(ToolCallModel)
+                    .filter(
+                        ToolCallModel.agent_run_id == current_id,
+                        ToolCallModel.created_at > cutoff,
+                    )
+                    .all()
+                ]
+                if later_tc_ids:
+                    self.execution_repo.db.query(ToolCallNormalization).filter(
+                        ToolCallNormalization.tool_call_id.in_(later_tc_ids)
+                    ).delete(synchronize_session="fetch")
+                    self.execution_repo.db.query(ToolCallModel).filter(
+                        ToolCallModel.id.in_(later_tc_ids)
+                    ).delete(synchronize_session="fetch")
+
+                later_llm_ids = [
+                    lc.id for lc in
+                    self.execution_repo.db.query(LlmCall)
+                    .filter(
+                        LlmCall.agent_run_id == current_id,
+                        LlmCall.created_at > cutoff,
+                    )
+                    .all()
+                ]
+                if later_llm_ids:
+                    self.execution_repo.db.query(LlmRetry).filter(
+                        LlmRetry.llm_call_id.in_(later_llm_ids)
+                    ).delete(synchronize_session="fetch")
+                    self.execution_repo.db.query(LlmCall).filter(
+                        LlmCall.id.in_(later_llm_ids)
+                    ).delete(synchronize_session="fetch")
+
+            parent.status = AgentRunStatus.RUNNING.value
+            parent.completed_at = None
+
+            logger.info(
+                "retry_parent_chain_reset",
+                agent_run_id=str(current_id),
+                agent_id=parent.agent_id,
+            )
+
+            current_id = parent.parent_run_id
+            current_tc_id = parent.spawning_tool_call_id
+
     def _analyze_git_side_effects(
         self,
         session_id: UUID,
@@ -231,21 +481,23 @@ class RevertService:
         tool_calls = self.execution_repo.get_tool_calls_for_runs(agent_run_ids)
 
         for tc in tool_calls:
-            if tc.tool_name == "run_git" and tc.result:
+            if tc.tool_name == "bash" and tc.result:
                 result = self._parse_tool_result(tc.result)
                 if result and result.get("commit_sha"):
                     commit_shas.append(result["commit_sha"])
 
-            elif tc.tool_name == "create_pull_request" and tc.result:
+            elif tc.tool_name == "create_pr" and tc.result:
                 result = self._parse_tool_result(tc.result)
                 if result and result.get("pr_number"):
                     pr_numbers.append(result["pr_number"])
 
-            elif tc.tool_name == "merge_pull_request" and tc.status == "completed":
-                warnings.append(
-                    f"Agent run contains a merged PR — cannot safely revert merge. "
-                    f"Tool call: {tc.id}"
-                )
+            elif tc.tool_name == "create_pr" and tc.status == "completed" and tc.result:
+                result = self._parse_tool_result(tc.result)
+                if result and result.get("merged"):
+                    warnings.append(
+                        f"Agent run contains a merged PR — cannot safely revert merge. "
+                        f"Tool call: {tc.id}"
+                    )
 
         # Find pre-run commit SHA from the last commit before the target sequence
         pre_run_commit_sha = None
@@ -357,6 +609,46 @@ class RevertService:
 
         except Exception as e:
             logger.warning("close_pr_error", pr_number=pr_number, error=str(e))
+
+    def _extract_subagent_prompt(
+        self, child_run_id: UUID, spawning_tool_call_id: UUID | None
+    ) -> str | None:
+        """Extract the original prompt from the subagents() ToolCall arguments.
+
+        Subagents created by SubagentsMCP have planned_prompt="" in the DB.
+        The real prompt lives in the spawning tool call's arguments JSON:
+          {"agents": [{"agent": "explorer", "prompt": "the real prompt"}]}
+        Matched by child_run_id to find the right agent entry.
+        """
+        if not spawning_tool_call_id:
+            return None
+
+        from druppie.db.models.tool_call import ToolCall as ToolCallModel
+        import json
+
+        tc = (
+            self.execution_repo.db.query(ToolCallModel)
+            .filter(ToolCallModel.id == spawning_tool_call_id)
+            .first()
+        )
+        if not tc or not tc.arguments:
+            return None
+
+        try:
+            args = json.loads(tc.arguments) if isinstance(tc.arguments, str) else tc.arguments
+        except (json.JSONDecodeError, TypeError):
+            return None
+
+        agents = args.get("agents", [])
+        child_run = self.execution_repo.get_by_id(child_run_id)
+        if not child_run:
+            return None
+
+        for entry in agents:
+            if entry.get("agent") == child_run.agent_id:
+                return entry.get("prompt")
+
+        return None
 
     @staticmethod
     def _strip_accumulated_context(prompt: str) -> str:

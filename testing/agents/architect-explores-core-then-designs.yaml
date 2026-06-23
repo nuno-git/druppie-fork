@@ -1,0 +1,52 @@
+## Agent test: architect spawns core_explorer for Level 3 codebase exploration
+##
+## Setup: tool test creates a project with FD already written
+##   (router -> planner -> BA -> FD written and pushed to Gitea)
+##
+## continue_session: true — architect runs in the SAME session as setup.
+##   The message explicitly tells the architect this is a CORE_UPDATE,
+##   forcing it to use Level 3 context gathering via core_explorer.
+##
+## This test validates the architect's subagent orchestration:
+## - Spawns core_explorer subagent before designing
+## - core_explorer reads Druppie source files (read-only exploration)
+## - Architect incorporates codebase findings into technical research
+## - Produces technical-research.md and technical-design.md
+## - Calls done() with DESIGN_APPROVED and BUILD_PATH=CORE_UPDATE
+##
+## Judge: evaluates the full subagent lifecycle — spawn, explore, design,
+##   and that the research references actual codebase findings.
+
+agent-test:
+  name: architect-explores-core-then-designs
+  description: "Architect uses core_explorer subagent for Level 3 Druppie codebase exploration before creating technical design"
+  tags: [architect, subagent, core-explorer, e2e, agent-runtime]
+
+  setup:
+    - setup-project-with-fd
+  continue_session: true
+
+  message: |
+    Review the functional design and create the technical design.
+    IMPORTANT: This is a CORE_UPDATE — the changes affect Druppie's own codebase.
+    You MUST use Level 3 context gathering by spawning the core_explorer subagent
+    to explore the relevant parts of the Druppie codebase before designing.
+    Do NOT skip the core_explorer step.
+
+  agents: [architect]
+
+  judge:
+    context: all
+    checks:
+      - "The architect must have called builtin:subagents to spawn core_explorer. Check that a subagents tool call exists with an agent argument containing 'core_explorer'."
+      - "A core_explorer agent run must appear in the session trace. Verify that an agent with ID 'core_explorer' has tool calls in the trace."
+      - "The core_explorer must have used read-only tools (read_file, grep, find, or ls) to explore the Druppie codebase. Check its tool calls."
+      - "After core_explorer completed, the architect must have created docs/technical-research.md and docs/technical-design.md. The research should reference findings from the codebase exploration — it should mention specific files, functions, or patterns discovered by the explorer."
+      - "The architect's done() summary must contain DESIGN_APPROVED and BUILD_PATH=CORE_UPDATE."
+
+  verify:
+    - gitea_repo_exists: true
+    - file_exists: docs/technical-research.md
+    - file_exists: docs/technical-design.md
+    - file_not_empty: docs/technical-research.md
+    - file_not_empty: docs/technical-design.md

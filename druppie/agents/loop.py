@@ -202,18 +202,24 @@ class AgentLoop:
         # Add invoke_skill tool if agent has skills defined
         if self.definition.skills:
             builtin_tool_names = builtin_tool_names + ["invoke_skill"]
+        # Auto-enable ask_expert tools only when `experts:` is declared in
+        # the agent YAML. No experts → tools are not offered to the LLM.
+        if self.definition.experts:
+            for name in ("ask_expert_question", "ask_expert_multiple_choice_question"):
+                if name not in builtin_tool_names:
+                    builtin_tool_names.append(name)
         tools = registry.get_tools_for_agent(
             agent_mcps=self.definition.mcps,
             builtin_tool_names=builtin_tool_names,
         )
         openai_tools = registry.to_openai_format(tools)
 
+        from druppie.core.mcp_config import strip_hidden_params_from_openai_tools
+        strip_hidden_params_from_openai_tools(openai_tools)
+
         # Enrich invoke_skill with dynamic enum + descriptions from agent's skills
         if self.definition.skills:
             self._enrich_invoke_skill(openai_tools)
-
-        # Enrich execute_coding_task with available sandbox agents
-        self._enrich_execute_coding_task(openai_tools)
 
         return openai_tools, registry
 
@@ -249,113 +255,6 @@ class AgentLoop:
                     "description": "Skill to invoke",
                 }
                 break
-
-    def _enrich_execute_coding_task(self, openai_tools: list[dict]) -> None:
-        """Dynamically enrich execute_coding_task with available sandbox agents.
-
-        Reads agent markdown files from druppie/opencode/agents/ and
-        injects their names as an enum + descriptions into the tool schema,
-        following the same pattern as _enrich_invoke_skill.
-        """
-        from pathlib import Path
-
-        # Only enrich if the tool is present in this agent's tools
-        target = None
-        for tool in openai_tools:
-            if tool.get("function", {}).get("name") == "execute_coding_task":
-                target = tool
-                break
-        if target is None:
-            return
-
-        # Discover agents from opencode/agents/*.md
-        agents_dir = Path(__file__).resolve().parent.parent / "opencode" / "config" / "agents"
-        if not agents_dir.is_dir():
-            return
-
-        agents = []
-        for agent_file in sorted(agents_dir.glob("*.md")):
-            try:
-                content = agent_file.read_text()
-                if content.startswith("---"):
-                    parts = content.split("---", 2)
-                    if len(parts) >= 3:
-                        import yaml
-                        frontmatter = yaml.safe_load(parts[1])
-                        if frontmatter and isinstance(frontmatter, dict):
-                            agents.append({
-                                "name": agent_file.stem,
-                                "description": frontmatter.get("description", ""),
-                            })
-            except Exception:
-                logger.warning("sandbox_agent_load_failed", file=str(agent_file))
-
-        if not agents:
-            return
-
-        # Narrow discovered agents to what this caller is allowed to invoke.
-        # Without this, every agent (even architect, with allowed_agents=[explore])
-        # sees every sandbox agent in the enum and routinely picks a forbidden one.
-        constraints = self.definition.sandbox_constraints
-        allowed_agents = constraints.allowed_agents if constraints else None
-        allowed_repo_targets = constraints.allowed_repo_targets if constraints else None
-
-        if allowed_agents is not None:
-            agents = [a for a in agents if a["name"] in allowed_agents]
-            if not agents:
-                return
-
-        # Build enum + enriched description
-        agent_names = [a["name"] for a in agents]
-        agent_list = ", ".join(
-            f"{a['name']} ({a['description']})" for a in agents
-        )
-
-        # Read default agent from opencode-config.json, but if the caller is
-        # constrained, prefer a default that's actually in the allowed list.
-        from druppie.core.config import DEFAULT_SANDBOX_AGENT
-        config_file = agents_dir.parent / "opencode-config.json"
-        default_agent = DEFAULT_SANDBOX_AGENT
-        if config_file.is_file():
-            try:
-                import json as _json
-                config = _json.loads(config_file.read_text())
-                default_agent = config.get("default_agent", default_agent)
-            except Exception:
-                pass
-        if default_agent not in agent_names:
-            default_agent = agent_names[0]
-
-        base_desc = target["function"]["description"]
-        constraint_note = ""
-        if allowed_agents is not None or allowed_repo_targets is not None:
-            parts = []
-            if allowed_agents is not None:
-                parts.append(f"agent must be one of {allowed_agents}")
-            if allowed_repo_targets is not None:
-                parts.append(f"repo_target must be one of {allowed_repo_targets}")
-            constraint_note = f" CONSTRAINT for this caller: {'; '.join(parts)}."
-        target["function"]["description"] = (
-            f"{base_desc} Available agents: {agent_list}. "
-            f"Default: {default_agent}.{constraint_note}"
-        )
-
-        # Replace the agent property with an enum-constrained version
-        props = target["function"]["parameters"]["properties"]
-        props["agent"] = {
-            "description": f"Sandbox agent to use. Available: {agent_list}",
-            "default": default_agent,
-            "enum": agent_names,
-            "type": "string",
-        }
-
-        # Narrow repo_target too when caller has a constraint, and move the
-        # default so the LLM doesn't fall through to a forbidden value.
-        if allowed_repo_targets is not None and "repo_target" in props:
-            rt = dict(props["repo_target"])
-            rt["enum"] = list(allowed_repo_targets)
-            rt["default"] = allowed_repo_targets[0]
-            props["repo_target"] = rt
 
     # ------------------------------------------------------------------
     # LLM call with DB record keeping
@@ -480,6 +379,9 @@ class AgentLoop:
             duration_ms=duration_ms,
             actual_provider=response.provider,
             actual_model=response.model,
+            thinking_content=response.thinking_content,
+            raw_request=response.raw_request,
+            raw_response=response.raw_response,
         )
         self.db.commit()
 

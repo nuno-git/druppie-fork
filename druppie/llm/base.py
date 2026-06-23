@@ -67,6 +67,9 @@ class LLMResponse(BaseModel):
     total_tokens: int = 0
     model: str = ""
     provider: str = ""
+    thinking_content: str | None = None
+    raw_request: dict | None = None
+    raw_response: dict | None = None
 
 
 class BaseLLM(ABC):

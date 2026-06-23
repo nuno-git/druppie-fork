@@ -1,0 +1,241 @@
+## Test: sandbox dynamic network switching between agents
+##
+## Verifies that _sync_networks dynamically adjusts container networks
+## when different agents share the same sandbox container (same session + git scope).
+##
+## Scenario: A single sandbox container is shared across the session. Different agents
+## with different network profiles execute commands in sequence:
+##   1. developer (networks: [internet]) — can reach internet, cannot reach modules
+##   2. test_executor (networks: [modules]) — can reach modules, cannot reach internet
+##   3. developer (networks: [internet]) — internet is re-connected after modules phase
+##   4. test_executor (networks: [modules]) — modules is re-connected, internet cut again
+##
+## This proves _sync_networks correctly connects/disconnects networks per agent,
+## not just at container creation time.
+##
+## Run: POST /api/evaluations/run-tests {"test_name": "test-sandbox-modules-network"}
+
+tool-test:
+  name: test-sandbox-modules-network
+  description: |
+    E2E test: Verifies dynamic network switching (_sync_networks) when multiple agents
+    with different network profiles share the same sandbox container.
+
+    Tests the full chain:
+      Agent YAML networks → context injection → _sync_networks → network connect/disconnect → reachability
+
+    Phase 1: developer [internet] — internet reachable, modules blocked
+    Phase 2: test_executor [modules] — modules reachable, internet blocked (network switched)
+    Phase 3: developer [internet] — internet re-connected, modules disconnected
+    Phase 4: test_executor [modules] — modules re-connected, internet blocked again
+  tags: [sandbox, network, modules, internet, dynamic-switching, e2e]
+
+  chain:
+    # =========================================================================
+    # Router — create project for sandbox context
+    # =========================================================================
+    - agent: router
+      tool: builtin:set_intent
+      arguments:
+        intent: create_project
+        project_name: sandbox-network-switch-test
+        description: "Test project for dynamic network switching between agents"
+      assert:
+        result:
+          - not_empty
+
+    - agent: router
+      tool: builtin:done
+      arguments:
+        summary: "Agent router: Classified as create_project for sandbox-network-switch-test"
+
+    # =========================================================================
+    # Planner — plan two agents with different networks
+    # =========================================================================
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: developer
+            prompt: "Phase 1: Test internet connectivity (should work). Then Phase 3: verify internet reconnects after modules phase."
+          - agent_id: test_executor
+            prompt: "Phase 2: Test modules network connectivity (should work). Then Phase 4: verify modules reconnects after internet phase."
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: Planned developer and test_executor for dynamic network switching test"
+
+    # =========================================================================
+    # PHASE 1: developer [internet] — verify internet access
+    # =========================================================================
+
+    # Verify curl is available
+    - agent: developer
+      tool: coding:bash
+      arguments:
+        command: "which curl && curl --version | head -1"
+        timeout: 10
+
+      assert:
+        result:
+          - { contains: "curl" }
+
+    # Write a marker file so we can verify container reuse later
+    - agent: developer
+      tool: coding:bash
+      arguments:
+        command: "echo 'created-by-developer-phase1' > /workspace/network-test-marker.txt"
+        timeout: 5
+
+
+    # Test internet access (should succeed — developer has networks: [internet])
+    - agent: developer
+      tool: coding:bash
+      arguments:
+        command: "curl -s -o /dev/null -w '%{http_code}' https://httpbin.org/get --max-time 10"
+        timeout: 20
+
+      assert:
+        result:
+          - { contains: "200" }
+
+    # Verify modules are NOT reachable (developer only has internet, not modules)
+    - agent: developer
+      tool: coding:bash
+      arguments:
+        command: "curl -s -o /dev/null -w '%{http_code}' http://module-filesearch:9004/health --max-time 3 || echo 'no-modules'"
+        timeout: 10
+
+      assert:
+        result:
+          - { contains: "no-modules" }
+
+    # =========================================================================
+    # PHASE 2: test_executor [modules] — verify modules access, internet blocked
+    # _sync_networks should DISCONNECT internet, CONNECT modules
+    # =========================================================================
+
+    # Verify container is REUSED (marker file from phase 1 exists)
+    - agent: test_executor
+      tool: coding:bash
+      arguments:
+        command: "cat /workspace/network-test-marker.txt"
+        timeout: 5
+
+      assert:
+        result:
+          - { contains: "created-by-developer-phase1" }
+
+    # Write phase 2 marker
+    - agent: test_executor
+      tool: coding:bash
+      arguments:
+        command: "echo 'visited-by-test-executor-phase2' >> /workspace/network-test-marker.txt"
+        timeout: 5
+
+
+    # Test modules network (should succeed — test_executor has networks: [modules])
+    - agent: test_executor
+      tool: coding:bash
+      arguments:
+        command: "curl -s -o /dev/null -w '%{http_code}' http://module-filesearch:9004/health --max-time 5"
+        timeout: 15
+
+      assert:
+        result:
+          - { contains: "200" }
+
+    # Verify internet is BLOCKED (modules only, no internet)
+    - agent: test_executor
+      tool: coding:bash
+      arguments:
+        command: "curl -s -o /dev/null -w '%{http_code}' https://www.google.com --max-time 3 || echo 'no-internet'"
+        timeout: 10
+
+      assert:
+        result:
+          - { contains: "no-internet" }
+
+    # =========================================================================
+    # PHASE 3: developer [internet] — verify internet is re-connected
+    # _sync_networks should DISCONNECT modules, RE-CONNECT internet
+    # =========================================================================
+
+    # Verify container is still reused (both markers exist)
+    - agent: developer
+      tool: coding:bash
+      arguments:
+        command: "cat /workspace/network-test-marker.txt"
+        timeout: 5
+
+      assert:
+        result:
+          - { contains: "created-by-developer-phase1" }
+          - { contains: "visited-by-test-executor-phase2" }
+
+    # Test internet access AGAIN (should work — internet re-connected)
+    - agent: developer
+      tool: coding:bash
+      arguments:
+        command: "curl -s -o /dev/null -w '%{http_code}' https://httpbin.org/get --max-time 10"
+        timeout: 20
+
+      assert:
+        result:
+          - { contains: "200" }
+
+    # Verify modules are now BLOCKED again (internet only)
+    - agent: developer
+      tool: coding:bash
+      arguments:
+        command: "curl -s -o /dev/null -w '%{http_code}' http://module-filesearch:9004/health --max-time 3 || echo 'no-modules'"
+        timeout: 10
+
+      assert:
+        result:
+          - { contains: "no-modules" }
+
+    # =========================================================================
+    # PHASE 4: test_executor [modules] — verify modules reconnects
+    # _sync_networks should DISCONNECT internet, RE-CONNECT modules
+    # =========================================================================
+
+    # Test modules network AGAIN (should work — modules re-connected)
+    - agent: test_executor
+      tool: coding:bash
+      arguments:
+        command: "curl -s -o /dev/null -w '%{http_code}' http://module-filesearch:9004/health --max-time 5"
+        timeout: 15
+
+      assert:
+        result:
+          - { contains: "200" }
+
+    # Reach module-registry as well (additional modules service check)
+    - agent: test_executor
+      tool: coding:bash
+      arguments:
+        command: "curl -s -o /dev/null -w '%{http_code}' http://module-registry:9007/health --max-time 5"
+        timeout: 15
+
+      assert:
+        result:
+          - { contains: "200" }
+
+    # Final verify: internet is blocked again
+    - agent: test_executor
+      tool: coding:bash
+      arguments:
+        command: "curl -s -o /dev/null -w '%{http_code}' https://www.google.com --max-time 3 || echo 'no-internet'"
+        timeout: 10
+
+      assert:
+        result:
+          - { contains: "no-internet" }
+
+    # Done
+    - agent: test_executor
+      tool: builtin:done
+      arguments:
+        summary: "Agent test_executor: Dynamic network switching test PASSED. All 4 phases completed: internet→modules→internet→modules switching works correctly via _sync_networks."

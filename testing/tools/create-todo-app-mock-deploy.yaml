@@ -163,14 +163,9 @@ tool-test:
       tool: builtin:create_message
       arguments:
         content: |
-          Your todo app has been built and deployed!
+          De **vergunningzoeker** is succesvol gebouwd!
 
-          **What was created:**
-          - React app with add, complete, delete, and filter functionality
-          - localStorage persistence
-          - 4 tests, all passing (87% coverage)
-
-          **Deployed at:** http://localhost:9101
+          Je vind de applicatie op: http://localhost:9101
 
     - agent: summarizer
       tool: builtin:done

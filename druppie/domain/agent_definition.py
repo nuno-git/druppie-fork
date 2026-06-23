@@ -1,7 +1,5 @@
 """Agent definition models for loading from YAML."""
 
-from typing import Any
-
 from pydantic import BaseModel, Field
 
 
@@ -50,14 +48,16 @@ class ApprovalOverride(BaseModel):
 
 
 class SandboxConstraints(BaseModel):
-    """Constraints on which sandbox agents and repo targets an agent may use.
-
-    When set, execute_coding_task calls are validated against these lists.
-    When not set (None), all agents and repo targets are allowed.
-    """
+    """Constraints on which sandbox agents and repo targets an agent may use."""
 
     allowed_agents: list[str] | None = None
     allowed_repo_targets: list[str] | None = None
+    allowed_paths: list[str] | None = None
+    forbidden_paths: list[str] | None = None
+
+
+class SandboxConfig(BaseModel):
+    networks: list[str] = Field(default_factory=list)
 
 
 class AgentDefinition(BaseModel):
@@ -77,6 +77,8 @@ class AgentDefinition(BaseModel):
 
     # Extra builtin tools beyond the defaults (done + hitl_ask_question + hitl_ask_multiple_choice_question)
     # These are ADDED to the defaults, e.g. ["make_plan"] gives this agent make_plan on top of defaults
+    role: str = "primary"  # primary, subagent, or both
+    subagents: list[str] = Field(default_factory=list)  # Agent IDs this agent can spawn
     extra_builtin_tools: list[str] = Field(default_factory=list)
 
     # Default builtin tools to SUBTRACT from the default set for this agent.
@@ -86,14 +88,18 @@ class AgentDefinition(BaseModel):
     # way to call it. "done" cannot be excluded.
     excluded_builtin_tools: list[str] = Field(default_factory=list)
 
-    # Constraints on execute_coding_task parameters.
+    # Constraints on sandbox parameters.
     # When set, limits which sandbox agents and repo targets this agent can use.
     sandbox_constraints: SandboxConstraints | None = None
 
+    sandbox: SandboxConfig = Field(default_factory=SandboxConfig)
+
     # MCP servers this agent can use
-    # Can be a simple list of MCP names: ["coding"]
-    # Or a dict mapping MCP names to allowed tools: {"coding": ["read_file"]}
-    mcps: list[str] | dict[str, list[str]] = Field(default_factory=list)
+    # Formats:
+    #   list: ["coding", "docker"]
+    #   dict (tool list): {"coding": ["read_file"]}
+    #   dict (nested): {"coding": {"tools": ["read_file"], "git": "current_project"}}
+    mcps: list[str] | dict[str, list[str] | dict] = Field(default_factory=list)
 
     # Approval overrides for specific tools
     # Key format: "mcp:tool_name" (e.g., "coding:write_file")
@@ -110,6 +116,24 @@ class AgentDefinition(BaseModel):
     # Empty list means no direct routing allowed (default — planner decides)
     allowed_next_agents: list[str] = Field(default_factory=list)
 
+    # Keycloak roles this agent may target with the ask_expert tool family.
+    #
+    # YAML:
+    #     experts:
+    #       - architect
+    #
+    # When `experts` is present and non-empty:
+    #   - ask_expert_question and ask_expert_multiple_choice_question are
+    #     automatically added to the agent's tool list (no need to list
+    #     them in extra_builtin_tools).
+    #   - Only the listed Keycloak roles are valid expert_role values.
+    #
+    # When `experts` is missing or empty:
+    #   - The ask_expert tools are NOT exposed to the LLM at all.
+    #   - Any ask_expert call that somehow arrives is rejected with a
+    #     clear error — there is no implicit "allow all roles" fallback.
+    experts: list[str] = Field(default_factory=list)
+
     # Completion preconditions: rules that must be satisfied before done() succeeds
     # If done()'s summary matches a rule's summary_contains, the required tools
     # must have been called (with status=completed) during this agent run.
@@ -123,7 +147,12 @@ class AgentDefinition(BaseModel):
     llm_profile: str = "standard"
     temperature: float = 0.1
     max_tokens: int = 4096
-    max_iterations: int = 10
+    max_iterations: int = 1000
+    thinking: str | None = None
+    reasoning_effort: str | None = None
+
+    # Context compression overrides (optional, per-agent)
+    compression: dict | None = None
 
     def get_mcp_names(self) -> list[str]:
         """Get list of MCP server names this agent can use."""
@@ -134,7 +163,10 @@ class AgentDefinition(BaseModel):
     def get_allowed_tools(self, mcp_name: str) -> list[str] | None:
         """Get list of allowed tools for an MCP, or None if all tools allowed."""
         if isinstance(self.mcps, dict):
-            return self.mcps.get(mcp_name)
+            config = self.mcps.get(mcp_name)
+            if isinstance(config, dict):
+                return config.get("tools")
+            return config
         return None
 
     def get_approval_override(self, server: str, tool: str) -> ApprovalOverride | None:

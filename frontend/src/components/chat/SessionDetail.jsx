@@ -8,7 +8,7 @@ import { Send, CheckCircle, XCircle, Shield, ShieldOff, Loader2, ExternalLink, M
 import { Link } from 'react-router-dom'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { getSession, sendChat, cancelChat, resumeSession, approveApproval, rejectApproval, answerQuestion, getSandboxEvents, getAttachmentUrl } from '../../services/api'
+import { getSession, sendChat, cancelChat, resumeSession, getResumableRuns, approveApproval, rejectApproval, answerQuestion, getToolCallLiveOutput, getSandboxEvents, getAttachmentUrl } from '../../services/api'
 import { getUserInfo } from '../../services/keycloak'
 import { useAuth } from '../../App'
 import { getAgentConfig, getAgentMessageColors, formatToolName } from '../../utils/agentConfig'
@@ -18,6 +18,7 @@ import { downloadAsMarkdown, downloadContentAsPdf, buildChatTranscript } from '.
 import HITLQuestionMessage from './HITLQuestionMessage'
 import WorkflowPipeline from './WorkflowPipeline'
 import DebugEventLog from './DebugEventLog'
+import ContinueDialog from './ContinueDialog'
 import AnnotationBar from './AnnotationBar'
 import { consumePending } from '../../services/pendingChat'
 import {
@@ -36,16 +37,6 @@ import FileUploadButton from './FileUploadButton'
 import AttachmentChips from './AttachmentChips'
 import SurfacedFileCard from './SurfacedFileCard'
 import TestResultCard from './TestResultCard'
-import SandboxEventCard, {
-  processEvents,
-  groupBySubagent,
-  SubagentGroup,
-  EventItem,
-  AgentTextBlock,
-  ConversationTimeline,
-  toolCategoryConfig,
-  getToolCategory,
-} from './SandboxEventCard'
 
 // Fast-poll window after user actions (answer/approve/continue) so the
 // loading indicator appears promptly instead of waiting for the 2s paused poll.
@@ -316,7 +307,7 @@ const InlineApproval = ({ tc, sessionId, sessionUserId }) => {
 
 // --- Timeline HITL Question ---
 
-const TimelineQuestion = ({ tc, agentId, sessionId, attachments = [], onAttachmentsConsumed, onAnswerSubmitted }) => {
+const TimelineQuestion = ({ tc, agentId, sessionId, isOwner, isAdmin, userRoles, attachments = [], onAttachmentsConsumed, onAnswerSubmitted }) => {
   const queryClient = useQueryClient()
 
   const answerMut = useMutation({
@@ -331,6 +322,18 @@ const TimelineQuestion = ({ tc, agentId, sessionId, attachments = [], onAttachme
   })
 
   const isAnswered = tc.status === 'completed'
+  const isExpertTool = tc.tool_name === 'ask_expert_question' || tc.tool_name === 'ask_expert_multiple_choice_question'
+  const expertRole = isExpertTool ? tc.arguments?.expert_role : null
+
+  // Who is allowed to answer this question right here in the session view:
+  // - regular HITL: session owner or admin
+  // - ask_expert: any user with the expert_role, or admin
+  // The session owner does NOT get to answer expert questions (unless they
+  // hold the role themselves) — they have to wait for the expert.
+  const canAnswer = isAdmin
+    || (isExpertTool
+      ? !!expertRole && Array.isArray(userRoles) && userRoles.includes(expertRole)
+      : !!isOwner)
 
   const rawChoices = tc.arguments?.choices || tc.arguments?.options || []
   const choices = rawChoices
@@ -351,6 +354,7 @@ const TimelineQuestion = ({ tc, agentId, sessionId, attachments = [], onAttachme
   }
 
   const allowOther = tc.tool_name === 'hitl_ask_multiple_choice_question'
+    || tc.tool_name === 'ask_expert_multiple_choice_question'
 
   // If the LLM put the question text in context instead of question, promote it
   const hasQuestion = !!tc.arguments?.question
@@ -363,14 +367,32 @@ const TimelineQuestion = ({ tc, agentId, sessionId, attachments = [], onAttachme
     allowOther,
   }
 
+  // For non-answerers we render a stripped-down read-only view. We can't
+  // just pass `answered={true}` to HITLQuestionMessage because the
+  // question is in fact still pending — we just want the UI to not
+  // expose answer controls.
+  const showAsReadOnly = !canAnswer && !isAnswered
+
   return (
     <>
+      {isExpertTool && !isAnswered && (
+        <div className="ml-8 mb-1 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-purple-50 border border-purple-200 text-[11px] font-medium text-purple-700">
+          Expert question · {expertRole || 'unknown role'}
+        </div>
+      )}
       <HITLQuestionMessage
         question={questionData}
         onSubmitAnswer={({ indices, answerText }) => answerMut.mutate({ questionId: tc.question_id, answer: answerText, selectedChoices: indices, attachmentIds: attachments.map((a) => a.id) })}
         isAnswering={answerMut.isPending}
-        answered={isAnswered}
+        answered={isAnswered || showAsReadOnly}
       />
+      {showAsReadOnly && (
+        <div className="ml-8 mt-1 text-xs text-gray-500 italic">
+          {isExpertTool
+            ? `Waiting for a user with the "${expertRole}" role to answer.`
+            : 'Only the session owner can answer this question.'}
+        </div>
+      )}
       {isAnswered && displayAnswer && (
         <div className="flex justify-end">
           <div className="max-w-[85%] rounded-2xl px-4 py-2.5 text-sm bg-gray-100 text-gray-900">
@@ -406,12 +428,306 @@ const TimelineQuestion = ({ tc, agentId, sessionId, attachments = [], onAttachme
   )
 }
 
+// --- Subagent Run Card ---
+
+const STATUS_COLORS = {
+  completed: { bg: 'bg-emerald-50', text: 'text-emerald-700', border: 'border-emerald-200' },
+  failed: { bg: 'bg-red-50', text: 'text-red-700', border: 'border-red-200' },
+  running: { bg: 'bg-blue-50', text: 'text-blue-700', border: 'border-blue-200' },
+  pending: { bg: 'bg-gray-50', text: 'text-gray-500', border: 'border-gray-200' },
+  paused_hitl: { bg: 'bg-amber-50', text: 'text-amber-700', border: 'border-amber-200' },
+  paused_tool: { bg: 'bg-amber-50', text: 'text-amber-700', border: 'border-amber-200' },
+  paused_sandbox: { bg: 'bg-amber-50', text: 'text-amber-700', border: 'border-amber-200' },
+  paused_crashed: { bg: 'bg-red-50', text: 'text-red-700', border: 'border-red-200' },
+}
+
+const StatusBadge = ({ status }) => {
+  const colors = STATUS_COLORS[status] || STATUS_COLORS.pending
+  const label = status?.replace(/_/g, ' ') || 'unknown'
+  return (
+    <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium uppercase tracking-wider ${colors.bg} ${colors.text} ${colors.border} border`}>
+      {label}
+    </span>
+  )
+}
+
+// --- Bash Live Output ---
+
+const BashLiveOutput = ({ tc }) => {
+  const { data } = useQuery({
+    queryKey: ['bash-live-output', tc.id],
+    queryFn: () => getToolCallLiveOutput(tc.id),
+    refetchInterval: (query) => {
+      if (!query.state.data || query.state.data.status !== 'executing') return false
+      return 2000
+    },
+    enabled: tc.status === 'executing',
+    retry: false,
+  })
+
+  if (!data?.output) return null
+
+  return (
+    <div className="ml-4.5 mt-0.5 p-2 rounded bg-gray-900 border border-gray-700 text-xs text-green-400 whitespace-pre-wrap break-all max-h-40 overflow-auto font-mono">
+      {data.output.length > 5000 ? data.output.slice(-5000) : data.output}
+    </div>
+  )
+}
+
+const SubagentToolCall = ({ tc, sessionId, sessionUserId }) => {
+  const [expanded, setExpanded] = useState(false)
+  const queryClient = useQueryClient()
+  const [rejectMode, setRejectMode] = useState(false)
+  const [rejectReason, setRejectReason] = useState('')
+
+  const hasResult = tc.result && tc.status === 'completed'
+  const parsedResult = (() => {
+    if (!hasResult) return null
+    try {
+      return typeof tc.result === 'string' ? JSON.parse(tc.result) : tc.result
+    } catch {
+      return tc.result
+    }
+  })()
+  const resultStr = parsedResult && typeof parsedResult === 'string'
+    ? parsedResult
+    : parsedResult ? JSON.stringify(parsedResult, null, 2) : null
+
+  const tcStatusColors = tc.status === 'completed'
+    ? 'text-emerald-600'
+    : tc.status === 'failed'
+      ? 'text-red-600'
+      : 'text-gray-400'
+
+  const hasApproval = !!tc.approval
+  const isPending = hasApproval && tc.approval.status === 'pending'
+  const isApproved = hasApproval && tc.approval.status === 'approved'
+  const isRejected = hasApproval && tc.approval.status === 'rejected'
+
+  const invalidate = () => {
+    queryClient.invalidateQueries({ queryKey: ['session', sessionId] })
+    queryClient.invalidateQueries({ queryKey: ['tasks'] })
+    queryClient.invalidateQueries({ queryKey: ['approvalHistory'] })
+    queryClient.invalidateQueries({ queryKey: ['pending-approvals-count'] })
+  }
+
+  const approveMut = useMutation({
+    mutationFn: (approvalId) => approveApproval(approvalId, ''),
+    onSuccess: invalidate,
+  })
+
+  const rejectMut = useMutation({
+    mutationFn: ({ approvalId, reason }) => rejectApproval(approvalId, reason || ''),
+    onSuccess: () => {
+      invalidate()
+      setRejectMode(false)
+      setRejectReason('')
+    },
+  })
+
+  const isProcessing = approveMut.isPending || rejectMut.isPending
+
+  const user = getUserInfo()
+  const userRoles = user?.roles || []
+  const requiredRoles = tc.approval?.required_role ? [tc.approval.required_role] : ['admin']
+  const isSessionOwnerApproval = requiredRoles.includes('session_owner')
+  const userCanApprove = isSessionOwnerApproval
+    ? (user?.id === sessionUserId || userRoles.includes('admin'))
+    : (userRoles.includes('admin') || requiredRoles.some((r) => userRoles.includes(r)))
+
+  return (
+    <div className="flex flex-col">
+      <div className="flex items-center gap-1.5">
+        <button
+          onClick={() => hasResult && setExpanded(!expanded)}
+          className={`flex items-center gap-1.5 text-xs py-0.5 ${hasResult ? 'cursor-pointer hover:text-gray-900' : 'cursor-default'}`}
+        >
+          {hasResult ? (
+            expanded ? <ChevronDown className="w-3 h-3 flex-shrink-0" /> : <ChevronRight className="w-3 h-3 flex-shrink-0" />
+          ) : (
+            <span className="w-3" />
+          )}
+          <span className={`font-mono ${tcStatusColors}`}>{getToolLabel(tc.tool_name)}</span>
+          {!hasResult && tc.status && (
+            <span className="text-[10px] text-gray-400">{tc.status}</span>
+          )}
+        </button>
+        {/* Approval status badge */}
+        {hasApproval && (
+          <span className={`text-[10px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded ${
+            isApproved ? 'text-green-700 bg-green-50'
+              : isRejected ? 'text-red-700 bg-red-50'
+              : 'text-amber-700 bg-amber-50'
+          }`}>
+            {isApproved ? 'Approved' : isRejected ? 'Rejected' : 'Approval Required'}
+          </span>
+        )}
+      </div>
+      {expanded && resultStr && (
+        <div className="ml-4.5 mt-0.5 p-2 rounded bg-gray-50 border border-gray-100 text-xs text-gray-700 whitespace-pre-wrap break-all max-h-40 overflow-auto font-mono">
+          {resultStr.length > 2000 ? resultStr.slice(0, 2000) + '…' : resultStr}
+        </div>
+      )}
+      {tc.status === 'executing' && tc.tool_name === 'bash' && (
+        <BashLiveOutput tc={tc} />
+      )}
+      {/* Approve/reject buttons for pending approvals */}
+      {isPending && (
+        <div className="ml-4.5 mt-1">
+          {userCanApprove ? (
+            !rejectMode ? (
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => approveMut.mutate(tc.approval.id)}
+                  disabled={isProcessing}
+                  className="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50 transition-colors"
+                >
+                  {isProcessing ? <Loader2 className="w-3 h-3 animate-spin" /> : <CheckCircle className="w-3 h-3" />}
+                  Approve
+                </button>
+                <button
+                  onClick={() => setRejectMode(true)}
+                  disabled={isProcessing}
+                  className="px-2 py-0.5 text-xs text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-md transition-colors"
+                >
+                  Reject
+                </button>
+              </div>
+            ) : (
+              <div className="flex items-center gap-1.5">
+                <input
+                  type="text"
+                  value={rejectReason}
+                  onChange={(e) => setRejectReason(e.target.value)}
+                  placeholder="Reason..."
+                  aria-label="Rejection reason"
+                  className="flex-1 min-w-0 px-2 py-0.5 text-xs border border-gray-200 rounded-md focus:outline-none focus:ring-1 focus:ring-red-400"
+                  autoFocus
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && rejectReason.trim()) {
+                      rejectMut.mutate({ approvalId: tc.approval.id, reason: rejectReason })
+                    }
+                    if (e.key === 'Escape') {
+                      setRejectMode(false)
+                      setRejectReason('')
+                    }
+                  }}
+                />
+                <button
+                  onClick={() => rejectMut.mutate({ approvalId: tc.approval.id, reason: rejectReason })}
+                  disabled={isProcessing || !rejectReason.trim()}
+                  className="px-2 py-0.5 text-xs bg-red-600 text-white rounded-md hover:bg-red-700 disabled:opacity-50 transition-colors"
+                >
+                  Reject
+                </button>
+                <button
+                  onClick={() => { setRejectMode(false); setRejectReason('') }}
+                  className="px-2 py-0.5 text-xs text-gray-400 hover:text-gray-600 transition-colors"
+                >
+                  Cancel
+                </button>
+              </div>
+            )
+          ) : (
+            <span className="text-[10px] text-amber-600">
+              {isSessionOwnerApproval
+                ? 'Waiting for your approval'
+                : `Waiting for ${requiredRoles.join(' or ')} approval`}
+            </span>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+const DEPTH_STYLES = [
+  { border: 'border-blue-200', bg: 'bg-blue-50/40' },
+  { border: 'border-purple-200', bg: 'bg-purple-50/40' },
+  { border: 'border-amber-200', bg: 'bg-amber-50/40' },
+  { border: 'border-gray-300', bg: 'bg-gray-50/40' },
+]
+
+const SubagentRunCard = ({ subagentRun, depth = 0, sessionId, sessionUserId, isOwner, isAdmin, userRoles }) => {
+  const [expanded, setExpanded] = useState(depth < 1)
+  const queryClient = useQueryClient()
+  const config = getAgentConfig(subagentRun.agent_id)
+  const AgentIcon = config.icon
+
+  const allToolCalls = []
+  subagentRun.llm_calls?.forEach((llm) => {
+    llm.tool_calls?.forEach((tc) => {
+      allToolCalls.push(tc)
+    })
+  })
+
+  const hasContent = allToolCalls.length > 0 || (subagentRun.subagent_runs?.length > 0)
+  const depthStyle = DEPTH_STYLES[Math.min(depth, DEPTH_STYLES.length - 1)]
+
+  return (
+    <div
+      className={`mt-1.5 rounded-lg border ${depthStyle.border} ${depthStyle.bg}`}
+      style={{ marginLeft: depth * 16 }}
+    >
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="w-full flex items-center gap-2 px-2.5 py-1.5 text-left hover:bg-gray-50/50 rounded-lg transition-colors"
+      >
+        {expanded ? (
+          <ChevronDown className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
+        ) : (
+          <ChevronRight className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
+        )}
+        <div className="w-4 h-4 rounded-full bg-gray-100 border border-gray-200 flex items-center justify-center flex-shrink-0">
+          <AgentIcon className="w-2.5 h-2.5 text-gray-500" />
+        </div>
+        <span className="text-xs font-medium text-gray-700">{config.name}</span>
+        <StatusBadge status={subagentRun.status} />
+        {allToolCalls.length > 0 && (
+          <span className="text-[10px] text-gray-400 ml-auto">
+            {allToolCalls.length} tool{allToolCalls.length !== 1 ? 's' : ''}
+          </span>
+        )}
+      </button>
+
+      {expanded && hasContent && (
+        <div className="px-3 pb-2 pt-0.5 space-y-0.5">
+          {(() => {
+            const toolSubagentMap = {}
+            for (const tc of allToolCalls) {
+              if (tc.tool_name === 'subagents' && subagentRun.subagent_runs?.length > 0) {
+                const linked = subagentRun.subagent_runs.filter(
+                  sa => sa.spawning_tool_call_id === tc.id
+                )
+                if (linked.length > 0) {
+                  toolSubagentMap[tc.id] = linked
+                }
+              }
+            }
+            return allToolCalls.map((tc, i) => (
+              <div key={tc.id || i}>
+                {tc.question_id ? (
+                  <TimelineQuestion tc={tc} agentId={subagentRun.agent_id} sessionId={sessionId} isOwner={isOwner} isAdmin={isAdmin} userRoles={userRoles} />
+                ) : (
+                  <SubagentToolCall tc={tc} sessionId={sessionId} sessionUserId={sessionUserId} />
+                )}
+                {toolSubagentMap[tc.id]?.map((sa, si) => (
+                  <SubagentRunCard key={sa.id || si} subagentRun={sa} depth={depth + 1} sessionId={sessionId} sessionUserId={sessionUserId} isOwner={isOwner} isAdmin={isAdmin} userRoles={userRoles} />
+                ))}
+              </div>
+            ))
+          })()}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // --- Agent Run ---
 
-const AgentRunItem = ({ run, timelineIndex, sessionId, hasFollowingMessage, sessionUserId, surfacedFiles, attachments, onAttachmentsConsumed, onAnswerSubmitted }) => {
+const AgentRunItem = ({ run, timelineIndex, sessionId, hasFollowingMessage, sessionUserId, isOwner, isAdmin, userRoles, surfacedFiles, attachments, onAttachmentsConsumed, onAnswerSubmitted }) => {
   const orderedItems = extractOrderedItems(run, hasFollowingMessage)
 
-  // Show agent trace for completed runs that have no following message
   const showAgentTrace = !hasFollowingMessage && run.status !== 'running'
 
   if (!showAgentTrace && orderedItems.length === 0 && (!surfacedFiles || surfacedFiles.length === 0)) return null
@@ -443,7 +759,8 @@ const AgentRunItem = ({ run, timelineIndex, sessionId, hasFollowingMessage, sess
         if (item.type === 'question') {
           return (
             <div key={i} className="mt-3">
-              <TimelineQuestion tc={item.tc} agentId={item.agentId} sessionId={sessionId} attachments={attachments} onAttachmentsConsumed={onAttachmentsConsumed} onAnswerSubmitted={onAnswerSubmitted} />
+              <TimelineQuestion tc={item.tc} agentId={item.agentId} sessionId={sessionId} isOwner={isOwner} isAdmin={isAdmin} userRoles={userRoles} attachments={attachments} onAttachmentsConsumed={onAttachmentsConsumed} onAnswerSubmitted={onAnswerSubmitted} />
+
             </div>
           )
         }
@@ -454,14 +771,16 @@ const AgentRunItem = ({ run, timelineIndex, sessionId, hasFollowingMessage, sess
             </div>
           )
         }
-        if (item.type === 'sandbox') {
+        if (item.type === 'subagents') {
           return (
-            <div key={i} className="mt-2">
-              <SandboxEventCard sandboxResult={item.data} />
+            <div key={i} className="mt-2 border-l-2 border-blue-200 pl-2">
+              {item.subagentRuns.map((sa, si) => (
+                <SubagentRunCard key={sa.id || si} subagentRun={sa} depth={0} sessionId={sessionId} sessionUserId={sessionUserId} isOwner={isOwner} isAdmin={isAdmin} userRoles={userRoles} />
+              ))}
             </div>
           )
         }
-        return null
+      return null
       })}
       {surfacedFiles.length > 0 && (
         <SurfacedFileCard files={surfacedFiles} />
@@ -474,12 +793,14 @@ const AgentRunItem = ({ run, timelineIndex, sessionId, hasFollowingMessage, sess
 
 const MessageItem = ({ message, agentRun, sessionId }) => {
   const isUser = message.role === 'user'
+  const isResumeContext = isUser && message.agent_run_id
   const hasAgent = message.agent_id && !isUser
   const surfacedApprovals = agentRun
     ? extractSurfacedApprovals(agentRun.llm_calls).filter((item) => item.tc.approval.status !== 'pending')
     : []
 
   if (isUser) {
+    if (isResumeContext) return null
     const atts = message.attachments || []
     const attNames = atts.map((a) => a.original_filename).join(', ')
     const isAttachmentOnly = atts.length > 0 && (message.content === 'See attached' || message.content === 'Zie bijlage' || message.content === attNames)
@@ -573,157 +894,6 @@ const MessageItem = ({ message, agentRun, sessionId }) => {
 
 // --- Sandbox Live Progress ---
 
-/** Extract sandbox_session_id from a waiting_sandbox tool call in the timeline */
-const findWaitingSandboxId = (timeline) => {
-  if (!timeline) return null
-  for (let i = timeline.length - 1; i >= 0; i--) {
-    const entry = timeline[i]
-    if (entry.type !== 'agent_run' || !entry.agent_run) continue
-    for (const llm of (entry.agent_run.llm_calls || [])) {
-      for (const tc of (llm.tool_calls || [])) {
-        if (tc.tool_name === 'execute_coding_task' && tc.status === 'waiting_sandbox') {
-          let result = tc.result
-          if (typeof result === 'string') {
-            try { result = JSON.parse(result) } catch { continue }
-          }
-          if (result?.sandbox_session_id) return result.sandbox_session_id
-        }
-      }
-    }
-  }
-  return null
-}
-
-const SandboxLiveProgress = ({ sandboxSessionId }) => {
-  const [expanded, setExpanded] = useState(true)
-  const [filterTool, setFilterTool] = useState(null)
-
-  const { data: eventsData } = useQuery({
-    queryKey: ['sandbox-events-live', sandboxSessionId],
-    queryFn: () => getSandboxEvents(sandboxSessionId),
-    refetchInterval: 3000,
-    enabled: !!sandboxSessionId,
-  })
-
-  const rawEvents = eventsData?.events || (Array.isArray(eventsData) ? eventsData : [])
-  // API returns newest-first; reverse for chronological display, then process
-  const events = processEvents([...rawEvents].reverse())
-
-  // Compute tool stats for filter buttons
-  const toolCounts = events.reduce((acc, e) => {
-    if (e.type === 'tool_call') {
-      const tool = (e.data?.tool || 'unknown').toLowerCase()
-      acc[tool] = (acc[tool] || 0) + 1
-    }
-    return acc
-  }, {})
-
-  const filteredEvents = filterTool
-    ? events.filter((e) => e.type === 'tool_call' && (e.data?.tool || '').toLowerCase() === filterTool)
-    : events
-
-  // Group events by subagent when not filtering
-  const grouped = !filterTool ? groupBySubagent(events) : null
-  const hasSubagents = grouped?.some((g) => g.type === 'subagent')
-
-  // Latest event for header summary
-  const lastToolEvent = [...events].reverse().find(e => e.type === 'tool_call')
-  const latestLabel = lastToolEvent?.data?.tool
-
-  if (!sandboxSessionId) return null
-
-  const renderGroupedEvents = () => {
-    let idx = 0
-    return grouped.map((g, i) => {
-      if (g.type === 'subagent') {
-        const startIdx = idx
-        idx += g.events.length
-        return <SubagentGroup key={g.taskId || `sg-${i}`} group={g} startIndex={startIdx} />
-      }
-      if (g.event.type === 'token') {
-        return <AgentTextBlock key={g.event.id || `t-${i}`} event={g.event} />
-      }
-      return <EventItem key={g.event.id || `e-${i}`} event={g.event} index={idx++} />
-    })
-  }
-
-  return (
-    <div className="pl-8 mt-1">
-      <div className="border border-blue-200 rounded-lg bg-blue-50/50 overflow-hidden">
-        {/* Header */}
-        <button
-          onClick={() => setExpanded(!expanded)}
-          className="w-full flex items-center gap-2 px-3 py-2 text-xs hover:bg-blue-100/50 transition-colors"
-        >
-          <Terminal className="w-3.5 h-3.5 text-blue-500 flex-shrink-0" />
-          <Loader2 className="w-3 h-3 text-blue-400 animate-spin flex-shrink-0" />
-          <span className="text-blue-600 font-medium">Sandbox Agent</span>
-          {latestLabel && (
-            <span className="text-blue-400 truncate">— {latestLabel}</span>
-          )}
-          <span className="ml-auto text-blue-300 flex-shrink-0">
-            {events.length > 0 && <span className="mr-1">{events.length} events</span>}
-            {expanded ? <ChevronDown className="w-3 h-3 inline" /> : <ChevronRight className="w-3 h-3 inline" />}
-          </span>
-        </button>
-
-        {/* Expanded: full event timeline (same as completed view) */}
-        {expanded && (
-          <div className="border-t border-blue-200 px-3 py-1.5">
-            {events.length === 0 ? (
-              <span className="text-xs text-blue-400 italic">Starting up…</span>
-            ) : (
-              <>
-                {/* Conversation timeline */}
-                <ConversationTimeline events={events} />
-
-                {/* Tool filter bar */}
-                {Object.keys(toolCounts).length > 1 && (
-                  <div className="mt-1 mb-1 flex flex-wrap gap-1 items-center">
-                    <button
-                      onClick={() => setFilterTool(null)}
-                      className={`text-[10px] px-1.5 py-0.5 rounded transition-colors ${!filterTool ? 'bg-gray-700 text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}
-                    >
-                      all ({events.length})
-                    </button>
-                    {Object.entries(toolCounts).sort((a, b) => b[1] - a[1]).map(([tool, count]) => {
-                      const cat = getToolCategory(tool)
-                      const { colors } = toolCategoryConfig[cat]
-                      const isActive = filterTool === tool
-                      return (
-                        <button
-                          key={tool}
-                          onClick={() => setFilterTool(isActive ? null : tool)}
-                          className={`text-[10px] px-1.5 py-0.5 rounded transition-colors ${isActive ? 'bg-gray-700 text-white' : colors + ' hover:opacity-80'}`}
-                        >
-                          {tool} ({count})
-                        </button>
-                      )
-                    })}
-                  </div>
-                )}
-
-                {/* Events timeline */}
-                <div className="max-h-[500px] overflow-y-auto">
-                  {hasSubagents && !filterTool ? (
-                    renderGroupedEvents()
-                  ) : (
-                    filteredEvents.map((event, i) => (
-                      event.type === 'token'
-                        ? <AgentTextBlock key={event.id || `t-${i}`} event={event} />
-                        : <EventItem key={event.id || i} event={event} index={i} />
-                    ))
-                  )}
-                </div>
-              </>
-            )}
-          </div>
-        )}
-      </div>
-    </div>
-  )
-}
-
 // --- Main SessionDetail ---
 
 const VALID_VIEW_MODES = new Set(['chat', 'annotated', 'inspect'])
@@ -737,6 +907,7 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
   const prevLengthRef = useRef(0)
   const inputRef = useRef(null)
   const [continueInput, setContinueInput] = useState('')
+  const [showContinueDialog, setShowContinueDialog] = useState(false)
   const [attachments, setAttachments] = useState([])
   const [uploadError, setUploadError] = useState(null)
   const [transcriptPdfLoading, setTranscriptPdfLoading] = useState(false)
@@ -761,6 +932,7 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
   const queryClient = useQueryClient()
   const { user } = useAuth()
   const canDebug = user?.roles?.some(r => r === 'developer' || r === 'admin')
+  const isAdmin = !!user?.roles?.includes('admin')
 
   const { data, isLoading, error } = useQuery({
     queryKey: ['session', sessionId],
@@ -775,13 +947,10 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
       if (status === 'completed' || status === 'failed') return false
       // Fast poll briefly after submitting an answer/approval (translation in progress)
       if (isResuming()) return 500
-      if (status === 'paused_crashed') return 2000
-      if (status === 'paused_sandbox') return 2000
+      if (status === 'paused_crashed') return 1000
+      if (status === 'paused_sandbox') return 1000
       if (status === 'paused' || status === 'paused_approval' || status === 'paused_hitl') {
-        const hasRunning = query.state.data?.timeline?.some(
-          e => e.type === 'agent_run' && e.agent_run?.status === 'running'
-        )
-        return hasRunning ? 500 : 2000
+        return 500
       }
       return 500
     },
@@ -814,22 +983,21 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
     },
   })
 
-  const resumeMutation = useMutation({
-    mutationFn: () => resumeSession(sessionId),
-    onSuccess: () => {
-      queryClient.refetchQueries({ queryKey: ['session', sessionId] })
-      queryClient.invalidateQueries({ queryKey: ['sessions'] })
-    },
-    onError: (err) => {
-      console.error('Resume failed:', err)
-    },
-  })
-
   // Derive "stopping" state: session is paused but agent is still finishing current operation
   const hasRunningAgentRun = data?.timeline?.some(
     e => e.type === 'agent_run' && e.agent_run?.status === 'running'
   )
-  const isStopping = data?.status === 'paused' && hasRunningAgentRun
+
+  // If all tool calls are failed, don't show "Stopping..." even if agent_run is "running"
+  const hasActuallyRunningToolCall = data?.timeline?.some(
+    e => e.type === 'agent_run' && (e.agent_run?.llm_calls || []).some(
+      llm => (llm.tool_calls || []).some(
+        tc => tc.status === 'executing' || tc.status === 'waiting_approval' || tc.status === 'waiting_sandbox'
+      )
+    )
+  )
+
+  const isStopping = data?.status === 'paused' && hasRunningAgentRun && hasActuallyRunningToolCall
 
   // When session has pending approvals, keep the tasks/badge cache fresh
   useEffect(() => {
@@ -977,6 +1145,15 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
 
   if (!data) return null
 
+  // Ownership / control gating.
+  // - Owner: can answer their own HITL questions, send messages, stop, resume
+  // - Expert (non-owner with the right role): read-only here; they answer
+  //   expert questions on the /questions page (or inline when allowed).
+  //   They cannot send messages or stop/resume the session.
+  // - Admin: same as owner.
+  const isOwner = !!data?.user_id && data.user_id === user?.id
+  const canControlSession = isOwner || isAdmin
+
   const pendingQuestion = findPendingQuestion(data.timeline)
 
   const handleContinueSend = () => {
@@ -1078,21 +1255,16 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
               </span>
             )}
             {/* Continue button — when fully stopped, crashed, or failed */}
-            {['paused', 'paused_crashed', 'failed'].includes(data.status) && !isStopping && (
+            {canControlSession && ['paused', 'paused_hitl', 'paused_crashed', 'failed'].includes(data.status) && !isStopping && (
               <button
-                onClick={() => resumeMutation.mutate()}
-                disabled={resumeMutation.isPending}
-                className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium text-green-600 bg-green-50 border border-green-200 rounded-lg hover:bg-green-100 disabled:opacity-50 transition-colors"
+                onClick={() => setShowContinueDialog(true)}
+                className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium text-green-600 bg-green-50 border border-green-200 rounded-lg hover:bg-green-100 transition-colors"
               >
-                {resumeMutation.isPending ? (
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                ) : (
-                  <PlayCircle className="w-3.5 h-3.5" />
-                )}
+                <PlayCircle className="w-3.5 h-3.5" />
                 Continue
               </button>
             )}
-            {data.status === 'active' && (
+            {canControlSession && data.status === 'active' && (
               <button
                 onClick={() => cancelMutation.mutate()}
                 disabled={cancelMutation.isPending}
@@ -1106,9 +1278,14 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
                 Stop
               </button>
             )}
-            {(cancelMutation.isError || resumeMutation.isError) && (
+            {!canControlSession && (
+              <span className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium text-purple-700 bg-purple-50 border border-purple-200 rounded-lg">
+                Read-only · expert view
+              </span>
+            )}
+            {cancelMutation.isError && (
               <span className="text-xs text-red-600">
-                {cancelMutation.error?.message || resumeMutation.error?.message || 'Action failed'}
+                {cancelMutation.error?.message || 'Action failed'}
               </span>
             )}
             {canDebug && (
@@ -1291,6 +1468,9 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
                       sessionId={sessionId}
                       hasFollowingMessage={hasFollowingMessage}
                       sessionUserId={data?.user_id}
+                      isOwner={isOwner}
+                      isAdmin={isAdmin}
+                      userRoles={user?.roles || []}
                       surfacedFiles={surfacedFiles}
                       attachments={attachments}
                       onAttachmentsConsumed={() => { setAttachments([]); setUploadError(null) }}
@@ -1343,30 +1523,30 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
                   </div>
                   <span className={`text-sm font-medium ${colors.accent}`}>{config.name}</span>
                 </div>
-                {isSandboxWaiting ? (
-                  <SandboxLiveProgress sandboxSessionId={findWaitingSandboxId(data.timeline)} />
-                ) : (
                   <div className="pl-8 flex items-center gap-1.5 py-1">
                     <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce [animation-delay:0ms]" />
                     <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce [animation-delay:150ms]" />
                     <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce [animation-delay:300ms]" />
                   </div>
-                )}
               </div>
             )
           })()}
           {/* Pending approvals */}
           {(() => {
             const pending = []
-            data.timeline?.forEach((entry) => {
-              if (entry.type !== 'agent_run' || !entry.agent_run) return
-              entry.agent_run.llm_calls?.forEach((llm) => {
+            const scanRun = (run) => {
+              run?.llm_calls?.forEach((llm) => {
                 llm.tool_calls?.forEach((tc) => {
                   if (tc.approval?.status === 'pending') {
                     pending.push(tc)
                   }
                 })
               })
+              run?.subagent_runs?.forEach(scanRun)
+            }
+            data.timeline?.forEach((entry) => {
+              if (entry.type !== 'agent_run' || !entry.agent_run) return
+              scanRun(entry.agent_run)
             })
             if (pending.length === 0) return null
             return (
@@ -1411,8 +1591,10 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
         </div>
       )}
 
-      {/* Floating input bar — hidden in inspect mode and during sandbox */}
-      {data.status !== 'failed' && data.status !== 'paused_sandbox' && viewMode !== 'inspect' && (
+      {/* Floating input bar — hidden in inspect mode, during sandbox, and
+          for non-owner experts (they can only view the session here; they
+          answer their expert questions on the /questions page). */}
+      {canControlSession && data.status !== 'failed' && data.status !== 'paused_sandbox' && viewMode !== 'inspect' && (
         <div className="px-4 pb-4 pt-2 flex-shrink-0">
           <div className="max-w-3xl mx-auto">
             <div className="border border-gray-200 rounded-2xl shadow-lg px-4 py-3 bg-white focus-within:border-gray-300 focus-within:shadow-xl transition-shadow">
@@ -1470,18 +1652,13 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
                     <StopCircle className="w-4 h-4" />
                   )}
                 </button>
-              ) : ['paused', 'paused_crashed', 'failed'].includes(data.status) ? (
+              ) : ['paused', 'paused_hitl', 'paused_crashed', 'failed'].includes(data.status) ? (
                 <button
-                  onClick={() => resumeMutation.mutate()}
-                  disabled={resumeMutation.isPending}
-                  className="flex-shrink-0 p-2 rounded-xl bg-green-600 text-white hover:bg-green-700 disabled:opacity-50 transition-colors"
+                  onClick={() => setShowContinueDialog(true)}
+                  className="flex-shrink-0 p-2 rounded-xl bg-green-600 text-white hover:bg-green-700 transition-colors"
                   aria-label="Continue agent"
                 >
-                  {resumeMutation.isPending ? (
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                  ) : (
-                    <PlayCircle className="w-4 h-4" />
-                  )}
+                  <PlayCircle className="w-4 h-4" />
                 </button>
               ) : (
                 <button
@@ -1508,6 +1685,12 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
         </div>
       )}
     </div>
+    {showContinueDialog && (
+      <ContinueDialog
+        sessionId={sessionId}
+        onClose={() => setShowContinueDialog(false)}
+      />
+    )}
     </ProjectRepoContext.Provider>
   )
 }

@@ -93,15 +93,46 @@ class TestingModule:
             },
         }
 
+    def _detect_package_manager_local(self, workspace_path: Path) -> str:
+        """Detect package manager from lock files in the workspace."""
+        lock_file_map = [
+            ("pnpm-lock.yaml", "pnpm"),
+            ("yarn.lock", "yarn"),
+            ("bun.lockb", "bun"),
+            ("package-lock.json", "npm"),
+            ("uv.lock", "uv"),
+            ("poetry.lock", "poetry"),
+            ("Pipfile.lock", "pipenv"),
+        ]
+        for lock_file, pm in lock_file_map:
+            if (workspace_path / lock_file).exists():
+                return pm
+        if (workspace_path / "requirements.txt").exists():
+            return "pip"
+        if (workspace_path / "package.json").exists():
+            return "npm"
+        return "unknown"
+
+    def _js_test_command(self, pm: str) -> str:
+        """Return the test command for a given JS package manager."""
+        return {"pnpm": "pnpm test", "yarn": "yarn test", "bun": "bun test"}.get(pm, "npm test")
+
+    def _js_run_command(self, pm: str, script: str) -> str:
+        """Return the run command for a given JS package manager."""
+        return {"pnpm": f"pnpm run {script}", "yarn": f"yarn run {script}", "bun": f"bun run {script}"}.get(pm, f"npm run {script}")
+
     def _detect_test_framework(self, workspace_path: Path) -> Tuple[str, str, Dict[str, Any]]:
         """Detect test framework and return (framework, command, config_info).
-        
+
         Enhanced version with detailed configuration information.
-        
+
         Returns:
             Tuple of (framework, test_command, config_info) or ("unknown", "", {})
         """
         config_info = {}
+        js_pm = self._detect_package_manager_local(workspace_path)
+        if js_pm not in ("npm", "pnpm", "yarn", "bun"):
+            js_pm = "npm"
         
         # Check for Vitest (works with or without vite.config)
         vite_config = workspace_path / "vite.config.js"
@@ -126,7 +157,7 @@ class TestingModule:
                         "coverage_file": "coverage/coverage-final.json",
                         "doc_url": self.FRAMEWORK_CONFIG["vitest"]["doc_url"],
                     }
-                    return "vitest", "npm run test", config_info
+                    return "vitest", self._js_run_command(js_pm, "test"), config_info
             except json.JSONDecodeError:
                 pass
         
@@ -172,8 +203,8 @@ class TestingModule:
                 "coverage_file": "coverage/coverage-final.json",
                 "doc_url": self.FRAMEWORK_CONFIG["jest"]["doc_url"],
             }
-            return "jest", "npm test", config_info
-        
+            return "jest", self._js_test_command(js_pm), config_info
+
         if package_json.exists():
             try:
                 data = json.loads(package_json.read_text())
@@ -184,7 +215,7 @@ class TestingModule:
                         "coverage_file": "coverage/coverage-final.json",
                         "doc_url": self.FRAMEWORK_CONFIG["jest"]["doc_url"],
                     }
-                    return "jest", "npm test", config_info
+                    return "jest", self._js_test_command(js_pm), config_info
             except json.JSONDecodeError:
                 pass
         
@@ -230,6 +261,11 @@ class TestingModule:
 
     def _detect_test_framework_basic(self, workspace_path: Path) -> Tuple[Optional[str], Optional[str]]:
         """Basic test framework detection (copied from coding MCP)."""
+        js_pm = self._detect_package_manager_local(workspace_path)
+        if js_pm not in ("npm", "pnpm", "yarn", "bun"):
+            js_pm = "npm"
+        test_cmd = self._js_test_command(js_pm)
+
         package_json = workspace_path / "package.json"
         if package_json.exists():
             try:
@@ -238,15 +274,15 @@ class TestingModule:
                 if "test" in scripts:
                     test_script = scripts["test"]
                     if "jest" in test_script:
-                        return ("jest", "npm test")
+                        return ("jest", test_cmd)
                     elif "mocha" in test_script:
-                        return ("mocha", "npm test")
+                        return ("mocha", test_cmd)
                     elif "vitest" in test_script:
-                        return ("vitest", "npm test")
+                        return ("vitest", test_cmd)
                     elif "ava" in test_script:
-                        return ("ava", "npm test")
+                        return ("ava", test_cmd)
                     else:
-                        return ("npm", "npm test")
+                        return ("npm", test_cmd)
             except (json.JSONDecodeError, KeyError):
                 pass
         
