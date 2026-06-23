@@ -439,7 +439,11 @@ services:
       context: ./druppie/mcp-servers
       dockerfile: module-azuredevops/Dockerfile
     container_name: druppie-module-azuredevops
-    profiles: [infra, dev, prod]
+    # Opt-in profile: this module needs Azure DevOps credentials and crashes at
+    # startup when they are unset, so it is NOT part of the default dev/infra/prod
+    # stack. Start it alongside the app once AZURE_DEVOPS_* are set in .env, e.g.:
+    #   docker compose --profile dev --profile azuredevops up -d
+    profiles: [azuredevops]
     environment:
       MCP_PORT: "9012"
       # Read-only access is hard-scoped to this single project (see module).
@@ -941,18 +945,20 @@ services:
     command:
       - |
         # Docker Compose auto-names containers as <COMPOSE_PROJECT_NAME>-<service>-<ordinal>
-        DB_CONTAINER="${COMPOSE_PROJECT_NAME}-druppie-db-1"
+        # NOTE: $$ escapes the dollar so Compose passes a literal $ to the shell;
+        # a single $ would be interpolated (to empty) by Compose before the shell runs.
+        DB_CONTAINER="$${COMPOSE_PROJECT_NAME}-druppie-db-1"
         # Backend service differs between prod (druppie-backend) and dev (druppie-backend-dev) profiles.
-        BACKEND_CONTAINER="${COMPOSE_PROJECT_NAME}-druppie-backend-1"
-        BACKEND_CONTAINER_DEV="${COMPOSE_PROJECT_NAME}-druppie-backend-dev-1"
+        BACKEND_CONTAINER="$${COMPOSE_PROJECT_NAME}-druppie-backend-1"
+        BACKEND_CONTAINER_DEV="$${COMPOSE_PROJECT_NAME}-druppie-backend-dev-1"
         echo "=== Resetting Druppie Application Database ==="
         echo "Preserving user tables (users, user_roles, user_tokens)"
-        echo "DB container: $DB_CONTAINER"
+        echo "DB container: $$DB_CONTAINER"
         echo ""
         echo "Waiting for database..."
-        until docker exec "$DB_CONTAINER" pg_isready -U druppie; do sleep 1; done
+        until docker exec "$$DB_CONTAINER" pg_isready -U druppie; do sleep 1; done
         echo "Dropping application tables..."
-        docker exec "$DB_CONTAINER" psql -U druppie -d druppie -c "
+        docker exec "$$DB_CONTAINER" psql -U druppie -d druppie -c "
           DROP TABLE IF EXISTS sandbox_sessions CASCADE;
           DROP TABLE IF EXISTS tool_call_normalizations CASCADE;
           DROP TABLE IF EXISTS llm_retries CASCADE;
@@ -969,8 +975,8 @@ services:
         "
         echo ""
         echo "Restarting backend to recreate tables..."
-        docker restart "$BACKEND_CONTAINER" 2>/dev/null \
-          || docker restart "$BACKEND_CONTAINER_DEV" 2>/dev/null \
+        docker restart "$$BACKEND_CONTAINER" 2>/dev/null \
+          || docker restart "$$BACKEND_CONTAINER_DEV" 2>/dev/null \
           || echo "Backend not running"
         echo ""
         echo "=== Database reset complete ==="
@@ -1052,31 +1058,34 @@ services:
     entrypoint: ["sh", "-c"]
     command:
       - |
-        CACHE_VOLUME="${COMPOSE_PROJECT_NAME}_sandbox_dep_cache"
+        # NOTE: $$ escapes the dollar so Compose passes a literal $ to the shell.
+        # ${PURGE_REASON:-manual} is intentionally left single-$ so Compose
+        # interpolates it from the host env (see usage note above).
+        CACHE_VOLUME="$${COMPOSE_PROJECT_NAME}_sandbox_dep_cache"
         echo "=== Emergency Cache Purge ==="
-        echo "Timestamp: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        echo "Timestamp: $$(date -u +%Y-%m-%dT%H:%M:%SZ)"
         echo "Reason: ${PURGE_REASON:-manual}"
-        echo "Cache volume: $CACHE_VOLUME"
+        echo "Cache volume: $$CACHE_VOLUME"
         echo ""
         echo "Step 1: Stopping running sandbox containers..."
-        sandbox_ids=$(docker ps --filter "network=${COMPOSE_PROJECT_NAME}_sandbox" -q)
-        if [ -n "$sandbox_ids" ]; then
+        sandbox_ids=$$(docker ps --filter "network=$${COMPOSE_PROJECT_NAME}_sandbox" -q)
+        if [ -n "$$sandbox_ids" ]; then
           echo "  Stopping sandbox(es)..."
-          if ! docker stop -t 5 $sandbox_ids 2>/dev/null; then
+          if ! docker stop -t 5 $$sandbox_ids 2>/dev/null; then
             echo "  WARNING: Graceful stop failed, forcing..."
-            docker kill $sandbox_ids 2>/dev/null || true
+            docker kill $$sandbox_ids 2>/dev/null || true
           fi
-          docker rm -f $sandbox_ids 2>/dev/null || true
+          docker rm -f $$sandbox_ids 2>/dev/null || true
           echo "  Stopped."
         else
           echo "  None running."
         fi
         echo ""
         echo "Step 2: Removing cache volume..."
-        if docker volume inspect "$CACHE_VOLUME" >/dev/null 2>&1; then
-          if ! docker volume rm "$CACHE_VOLUME"; then
+        if docker volume inspect "$$CACHE_VOLUME" >/dev/null 2>&1; then
+          if ! docker volume rm "$$CACHE_VOLUME"; then
             echo "  ERROR: Failed to remove volume. Is it still in use?"
-            echo "  Check: docker ps --filter volume=$CACHE_VOLUME"
+            echo "  Check: docker ps --filter volume=$$CACHE_VOLUME"
             exit 1
           fi
           echo "  Removed."
@@ -1085,8 +1094,8 @@ services:
         fi
         echo ""
         echo "Step 3: Recreating empty volume..."
-        docker volume create "$CACHE_VOLUME"
-        if ! docker volume inspect "$CACHE_VOLUME" >/dev/null 2>&1; then
+        docker volume create "$$CACHE_VOLUME"
+        if ! docker volume inspect "$$CACHE_VOLUME" >/dev/null 2>&1; then
           echo "  ERROR: Volume creation failed."
           exit 1
         fi
