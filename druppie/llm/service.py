@@ -133,25 +133,24 @@ class LLMService:
 
         resolved = resolve_model(agent_def)
 
-        if resolved.override_unavailable:
-            fallback_hint = ""
-            if resolved.fallback_provider:
-                fb_model = resolved.fallback_model or "default"
-                fallback_hint = f" Suggested fallback: {resolved.fallback_provider}/{fb_model}."
+        # For providers with missing API keys but a known fallback,
+        # still create the primary (it will fail at call time) and wrap
+        # in FallbackLLM so the user gets asked to confirm the switch.
+        if resolved.override_unavailable and not resolved.fallback_provider:
             raise LLMConfigurationError(
                 f"Admin override for agent '{agent_def.id}' uses provider "
-                f"'{resolved.provider}' but its API key is not configured."
-                f"{fallback_hint} Update the override in Model Management "
-                f"or configure the API key."
+                f"'{resolved.provider}' but its API key is not configured "
+                f"and no fallback provider is available."
             )
 
-        # Validate API key for the resolved provider
-        api_key_env = self.PROVIDERS.get(resolved.provider)
-        if api_key_env and not os.getenv(api_key_env):
-            raise LLMConfigurationError(
-                f"{api_key_env} environment variable is required for "
-                f"provider={resolved.provider} (source={resolved.source})"
-            )
+        # Validate API key unless we know it's unavailable (will fail at call time)
+        if not resolved.override_unavailable:
+            api_key_env = self.PROVIDERS.get(resolved.provider)
+            if api_key_env and not os.getenv(api_key_env):
+                raise LLMConfigurationError(
+                    f"{api_key_env} environment variable is required for "
+                    f"provider={resolved.provider} (source={resolved.source})"
+                )
 
         primary = ChatLiteLLM(
             provider=resolved.provider,
@@ -170,7 +169,7 @@ class LLMService:
                     model=resolved.fallback_model,
                     temperature=agent_def.temperature,
                 )
-                result = FallbackLLM(primary, fallback, session_id=session_id)
+                result = FallbackLLM(primary, fallback, session_id=session_id, agent_id=agent_def.id)
                 has_fallback = True
 
         logger.info(

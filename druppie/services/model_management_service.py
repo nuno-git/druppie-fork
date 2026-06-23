@@ -17,6 +17,7 @@ from druppie.domain.model_override import (
     ProviderStatus,
     TranslationModelInfo,
 )
+from druppie.llm.base import clean_llm_error
 from druppie.llm.litellm_provider import PROVIDER_CONFIGS
 from druppie.llm.resolver import resolve_model, set_db_overrides
 from druppie.repositories.model_override_repository import ModelOverrideRepository
@@ -34,6 +35,9 @@ def _to_summary(row) -> ModelOverrideSummary:
         enabled=row.enabled,
         updated_at=row.updated_at,
     )
+
+
+_clean_llm_error = clean_llm_error
 
 
 def _has_api_key(provider: str) -> bool:
@@ -84,7 +88,7 @@ class ModelManagementService:
 
             resolved = resolve_model(agent_def)
             suggested_fallback = None
-            if resolved.override_unavailable and resolved.fallback_provider:
+            if resolved.fallback_provider:
                 fb_model = resolved.fallback_model or "default"
                 suggested_fallback = f"{resolved.fallback_provider}/{fb_model}"
 
@@ -258,10 +262,9 @@ class ModelManagementService:
         except Exception as e:
             latency = int((time.monotonic() - start) * 1000)
             err = str(e)
-            # max_tokens limit means the API connected and authenticated successfully
             if "max_tokens" in err.lower() or "model output limit" in err.lower():
                 return {"provider": provider, "model": getattr(llm, '_model', model), "valid": True, "error": None, "latency_ms": latency}
-            return {"provider": provider, "model": model, "valid": False, "error": err[:200], "latency_ms": latency}
+            return {"provider": provider, "model": model, "valid": False, "error": _clean_llm_error(err), "latency_ms": latency}
 
     def _compute_translation_fallback(self) -> str | None:
         """What provider/model translation would use if the override were removed."""

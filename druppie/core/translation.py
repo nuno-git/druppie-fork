@@ -53,10 +53,24 @@ def _has_api_key_for_provider(provider: str) -> bool:
 class TranslationService:
     """Translates text between languages using a configurable LLM provider."""
 
+    _notified_sessions: set[str] = set()
+
     def __init__(self):
         self._llm = None
         self._configured_provider: str | None = None
         self._configured_model: str | None = None
+
+    @classmethod
+    def mark_notified(cls, session_id: str) -> bool:
+        """Mark a session as notified about translation failure.
+
+        Returns True if this is the first notification (caller should post
+        the message). Returns False if already notified (skip).
+        """
+        if session_id in cls._notified_sessions:
+            return False
+        cls._notified_sessions.add(session_id)
+        return True
 
     def configure(self, provider: str | None, model: str | None):
         """Set the translation provider/model at runtime.
@@ -147,20 +161,16 @@ class TranslationService:
             return text
 
         lang_name = _language_name(source_language)
-        try:
-            result = await self._translate(text, lang_name, "English")
-            if len(result) > len(text) * 3 + 50:
-                logger.warning(
-                    "translation_hallucination_detected",
-                    input_len=len(text),
-                    output_len=len(result),
-                    input_preview=text[:60],
-                )
-                return text
-            return result
-        except TranslationError:
-            logger.warning("translate_to_english_fallback", source_language=source_language)
+        result = await self._translate(text, lang_name, "English")
+        if len(result) > len(text) * 3 + 50:
+            logger.warning(
+                "translation_hallucination_detected",
+                input_len=len(text),
+                output_len=len(result),
+                input_preview=text[:60],
+            )
             return text
+        return result
 
     async def translate_from_english(self, text: str, target_language: str) -> str:
         if not target_language or target_language == "en":

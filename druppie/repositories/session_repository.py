@@ -137,6 +137,7 @@ class SessionRepository(BaseRepository):
             # SessionDetail specific
             user_id=session.user_id,
             project=project,
+            language=session.language,
             timeline=timeline,
         )
 

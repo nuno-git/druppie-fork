@@ -54,6 +54,53 @@ class ServerError(LLMError):
         super().__init__(message, provider, retryable=True)
 
 
+class FallbackAvailableError(LLMError):
+    """Primary provider failed but a fallback is available.
+
+    Raised by FallbackLLM instead of auto-switching. The agent loop
+    catches this to ask the user whether to switch providers.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        primary_provider: str,
+        primary_model: str,
+        fallback_provider: str,
+        fallback_model: str,
+        error_type: str,
+    ):
+        super().__init__(message, provider=primary_provider, retryable=False)
+        self.primary_provider = primary_provider
+        self.primary_model = primary_model
+        self.fallback_provider = fallback_provider
+        self.fallback_model = fallback_model
+        self.error_type = error_type
+        self.llm_call_id = None
+
+
+def clean_llm_error(raw: str) -> str:
+    """Extract a short, user-facing message from verbose litellm errors."""
+    if "DeploymentNotFound" in raw or "does not exist" in raw:
+        return "Model deployment not found"
+    if "Authentication Failed" in raw or "AuthenticationError" in raw:
+        return "Authentication failed — check the API key"
+    if "NotFoundError" in raw:
+        return "Model not found"
+    if "RateLimitError" in raw or "rate_limit" in raw:
+        return "Rate limited — try again later"
+    if "timeout" in raw.lower() or "Timeout" in raw:
+        return "Request timed out"
+    if "Connection" in raw and ("refused" in raw.lower() or "error" in raw.lower()):
+        return "Connection failed — check the provider URL"
+    if "LLMConfigurationError" in raw:
+        return raw.split("LLMConfigurationError: ", 1)[-1][:120]
+    for prefix in ["LLM error: ", "litellm.", "AnthropicException - ", "OpenAIException - "]:
+        if prefix in raw:
+            raw = raw.split(prefix)[-1]
+    return raw[:120] + "…" if len(raw) > 120 else raw
+
+
 class LLMResponse(BaseModel):
     """Response from an LLM call."""
 

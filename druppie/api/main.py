@@ -129,6 +129,30 @@ def _recover_orphaned_batch_runs() -> None:
         db.close()
 
 
+def _load_model_override_cache():
+    """Populate the resolver's DB override cache from the model_overrides table."""
+    from druppie.db.database import SessionLocal
+    from druppie.repositories.model_override_repository import ModelOverrideRepository
+    from druppie.llm.resolver import set_db_overrides
+
+    db = SessionLocal()
+    try:
+        repo = ModelOverrideRepository(db)
+        overrides = repo.get_agent_overrides()
+        override_map = {
+            o.target_id: (o.provider, o.model)
+            for o in overrides
+            if o.target_type == "agent" and o.enabled
+        }
+        set_db_overrides(override_map)
+        if override_map:
+            logger.info("model_override_cache_loaded", count=len(override_map))
+    except Exception as e:
+        logger.warning("model_override_cache_load_failed", error=str(e))
+    finally:
+        db.close()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan handler."""
@@ -147,6 +171,11 @@ async def lifespan(app: FastAPI):
     _recover_orphaned_batch_runs()
 
     _recover_stuck_job_runs()
+
+    # Load DB model overrides into the resolver cache so agents use
+    # admin-configured models immediately, not just after the first
+    # Model Management page load.
+    _load_model_override_cache()
 
     # Clean up orphaned sandbox Gitea users from previous runs
     from druppie.opencode.gitea_cleanup import cleanup_orphaned_sandbox_users

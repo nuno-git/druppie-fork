@@ -341,18 +341,18 @@ class ChatLiteLLM(BaseLLM):
         # Azure API version (required for azure/ prefix)
         self._api_version = config.get("api_version")
 
-        # Azure Foundry: Claude models use Anthropic Messages API, not OpenAI
+        # Azure Foundry: Claude models route through azure_ai provider
         is_claude = self._model.lower().startswith("claude")
         if provider == "azure_foundry" and is_claude:
-            prefix = "anthropic"
+            prefix = "azure_ai"
             anthropic_url = (
                 os.getenv(config.get("anthropic_base_url_env", ""), "")
                 or config.get("anthropic_default_base_url", "")
             )
             if anthropic_url:
                 self.api_base = anthropic_url.rstrip("/")
-                if not self.api_base.endswith("/anthropic"):
-                    self.api_base += "/anthropic"
+                if self.api_base.endswith("/anthropic"):
+                    self.api_base = self.api_base[: -len("/anthropic")]
             self._api_version = None
             self._use_max_completion_tokens = False
         else:

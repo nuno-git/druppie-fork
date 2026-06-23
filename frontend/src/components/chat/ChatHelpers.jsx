@@ -260,8 +260,23 @@ export const findPendingQuestion = (timeline) => {
     if (entry.type !== 'agent_run' || !entry.agent_run) continue
     for (const llm of entry.agent_run.llm_calls || []) {
       for (const tc of llm.tool_calls || []) {
-        if (tc.tool_name?.includes('hitl_ask') && tc.status === 'waiting_answer') {
+        if (tc.tool_name?.includes('hitl_ask') && tc.status === 'waiting_answer' && tc.arguments?._type !== 'provider_fallback') {
           return { tc, agentId: entry.agent_run.agent_id }
+        }
+      }
+    }
+  }
+  return null
+}
+
+export const findFallbackQuestion = (timeline) => {
+  if (!timeline) return null
+  for (const entry of timeline) {
+    if (entry.type !== 'agent_run' || !entry.agent_run) continue
+    for (const llm of entry.agent_run.llm_calls || []) {
+      for (const tc of llm.tool_calls || []) {
+        if (tc.arguments?._type === 'provider_fallback' && tc.status === 'waiting_answer') {
+          return tc
         }
       }
     }
@@ -471,7 +486,8 @@ export const extractOrderedItems = (agentRun, hasFollowingMessage) => {
         items.push({ type: 'approval', tc })
       }
       // HITL questions — skip pending (translation in progress, args still English)
-      if (tc.tool_name?.includes('hitl_ask') && tc.status !== 'pending') {
+      // Also skip provider_fallback questions — they render as a modal, not inline
+      if (tc.tool_name?.includes('hitl_ask') && tc.status !== 'pending' && tc.arguments?._type !== 'provider_fallback') {
         items.push({ type: 'question', tc, agentId: agentRun.agent_id })
       }
       // Test results

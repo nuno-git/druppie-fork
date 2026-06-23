@@ -42,6 +42,7 @@ class QuestionRepository(BaseRepository):
         agent_id: str | None = None,
         question_english: str | None = None,
         choices_english: list | None = None,
+        agent_state: dict | None = None,
     ) -> Question:
         """Create a new question.
 
@@ -71,6 +72,7 @@ class QuestionRepository(BaseRepository):
             choices=choices,
             choices_english=choices_english,
             status=QuestionStatus.PENDING.value,
+            agent_state=agent_state,
         )
         self.db.add(question_model)
         self.db.flush()

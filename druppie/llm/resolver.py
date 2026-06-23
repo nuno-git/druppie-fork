@@ -130,27 +130,28 @@ def _resolve(agent_def: AgentDefinition) -> ResolvedModel:
     # --- 2. DB override (admin UI) -----------------------------------------
     if agent_def.id in _db_overrides:
         provider, model = _db_overrides[agent_def.id]
-        if _has_api_key(provider):
-            return ResolvedModel(
-                provider=provider,
-                model=model,
-                source="db_override",
-            )
-        else:
+        key_available = _has_api_key(provider)
+
+        if not key_available:
             logger.warning(
                 "db_override_api_key_missing",
                 agent_id=agent_def.id,
                 provider=provider,
             )
-            fallback = _resolve_profile_or_default(agent_def)
-            return ResolvedModel(
-                provider=provider,
-                model=model,
-                source="db_override",
-                override_unavailable=True,
-                fallback_provider=fallback.provider,
-                fallback_model=fallback.model,
-            )
+
+        # Always derive a fallback from the profile chain — even when the
+        # API key is present it may be invalid or the provider may be down.
+        # Must be a *different* provider (same provider would fail the same way).
+        fb_provider, fb_model = _find_alternative_provider(agent_def, exclude_provider=provider)
+
+        return ResolvedModel(
+            provider=provider,
+            model=model,
+            source="db_override",
+            override_unavailable=not key_available,
+            fallback_provider=fb_provider,
+            fallback_model=fb_model,
+        )
 
     # --- 3. Profile (was step 2) --------------------------------------------
     profiles = _load_profiles()
@@ -194,27 +195,24 @@ def _resolve(agent_def: AgentDefinition) -> ResolvedModel:
     )
 
 
-def _resolve_profile_or_default(agent_def: AgentDefinition) -> ResolvedModel:
-    """Compute what an agent would get from the profile/global chain (steps 3-4)."""
+def _find_alternative_provider(
+    agent_def: AgentDefinition,
+    exclude_provider: str,
+) -> tuple[str | None, str | None]:
+    """Find the first available provider/model from the profile chain that
+    differs from *exclude_provider*.  Returns (None, None) if none found."""
     profiles = _load_profiles()
-    chain = profiles.get(agent_def.llm_profile)
+    chain = profiles.get(agent_def.llm_profile) or []
 
-    if chain:
-        available = [e for e in chain if _has_api_key(e["provider"])]
-        global_provider = os.getenv("LLM_PROVIDER", "zai").lower()
-        if not any(e["provider"] == global_provider for e in chain) and _has_api_key(global_provider):
-            default_model = PROVIDER_CONFIGS.get(global_provider, {}).get("default_model")
-            available.append({"provider": global_provider, "model": default_model})
+    available = [e for e in chain if _has_api_key(e["provider"])]
 
-        if available:
-            return ResolvedModel(
-                provider=available[0]["provider"],
-                model=available[0].get("model"),
-                source="profile",
-            )
+    global_provider = os.getenv("LLM_PROVIDER", "zai").lower()
+    if not any(e["provider"] == global_provider for e in chain) and _has_api_key(global_provider):
+        default_model = PROVIDER_CONFIGS.get(global_provider, {}).get("default_model")
+        available.append({"provider": global_provider, "model": default_model})
 
-    return ResolvedModel(
-        provider=os.getenv("LLM_PROVIDER", "zai").lower(),
-        model=None,
-        source="global_default",
-    )
+    for entry in available:
+        if entry["provider"] != exclude_provider:
+            return entry["provider"], entry.get("model")
+
+    return None, None

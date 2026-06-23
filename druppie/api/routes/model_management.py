@@ -19,6 +19,8 @@ logger = structlog.get_logger()
 router = APIRouter()
 
 
+
+
 class SetModelOverrideRequest(BaseModel):
     provider: str
     model: str
@@ -69,6 +71,14 @@ async def set_translation_model_override(
 ):
     service = get_model_management_service()
     admin_id = UUID(user["sub"]) if user.get("sub") else None
+
+    validation = await service.validate_api_key(body.provider, body.model)
+    if not validation["valid"]:
+        raise HTTPException(
+            status_code=400,
+            detail=validation["error"],
+        )
+
     try:
         return service.set_translation_override(body.provider, body.model, admin_id)
     except ValueError as e:

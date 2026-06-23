@@ -1,52 +1,62 @@
-"""FallbackLLM — thin wrapper that retries on a fallback LLM when the primary fails.
+"""FallbackLLM — wrapper that asks the user before switching to a fallback LLM.
 
-ANY LLMError from the primary triggers fallback, including AuthenticationError.
-This is correct for cross-provider fallback: if provider A's auth fails,
-provider B (a completely different service) may work fine.
-
-Sticky degraded mode: after the first fallback in a session, subsequent calls
-try the primary once (no litellm retries) and fall back instantly on any error.
-Within the same agent run, the primary is skipped entirely after a failure.
-On a new agent run (same session), the primary gets one more chance.
-
-Interaction with existing retry layers:
-    AgentLoop._call_llm() retry loop (3 attempts, exponential backoff)
-      -> FallbackLLM.achat()
-           -> primary ChatLiteLLM.achat() (litellm internal retries: num_retries=3)
-           -> (any LLMError after all litellm retries)
-           -> fallback ChatLiteLLM.achat() (litellm internal retries: num_retries=3)
+When the primary provider fails, raises FallbackAvailableError so the agent
+loop can pause and ask the user whether to switch. If the user approves
+(tracked per-session via approve_fallback()), subsequent calls go straight
+to the fallback without asking again.
 """
 
 from typing import Any
 
 import structlog
 
-from .base import BaseLLM, LLMError, LLMResponse
+from .base import BaseLLM, FallbackAvailableError, LLMError
 
 logger = structlog.get_logger()
 
 
 class FallbackLLM(BaseLLM):
-    """LLM wrapper that falls back to a secondary LLM on any error.
+    """LLM wrapper that offers a fallback when the primary fails.
 
-    Tracks degraded state per session so that once a fallback occurs,
-    subsequent calls avoid slow retries on the broken primary.
+    Instead of silently switching, raises FallbackAvailableError so the
+    caller can ask the user. Call approve_fallback(session_id) after
+    the user confirms; subsequent calls then use the fallback directly.
+
+    Two approval levels:
+    - Per-agent: approve_fallback_for_agent(session_id, agent_id) — only
+      this agent type auto-switches in this session
+    - Session-wide: approve_fallback(session_id) — all agents auto-switch
     """
 
-    _degraded_sessions: set[str] = set()
+    _approved_sessions: set[str] = set()
+    _approved_agents: set[tuple[str, str]] = set()
 
-    def __init__(self, primary: BaseLLM, fallback: BaseLLM, session_id: str | None = None):
+    def __init__(
+        self, primary: BaseLLM, fallback: BaseLLM,
+        session_id: str | None = None, agent_id: str | None = None,
+    ):
         self._primary = primary
         self._fallback = fallback
-        self._active: BaseLLM = primary
         self._session_id = session_id
-        self._degraded = session_id in self._degraded_sessions if session_id else False
-        self._primary_failed_this_run = False
+        self._agent_id = agent_id
+
+    @classmethod
+    def approve_fallback(cls, session_id: str) -> None:
+        """Mark a session as approved for fallback (all agents)."""
+        cls._approved_sessions.add(session_id)
+
+    @classmethod
+    def approve_fallback_for_agent(cls, session_id: str, agent_id: str) -> None:
+        """Mark a specific agent as approved for fallback in this session."""
+        cls._approved_agents.add((session_id, agent_id))
 
     @classmethod
     def clear_session(cls, session_id: str) -> None:
-        """Remove degraded state for a session (e.g. when session ends)."""
-        cls._degraded_sessions.discard(session_id)
+        """Remove all approval state for a session."""
+        cls._approved_sessions.discard(session_id)
+        cls._approved_agents = {
+            (sid, aid) for sid, aid in cls._approved_agents if sid != session_id
+        }
 
     # ------------------------------------------------------------------
     # Properties — delegate to primary
@@ -69,144 +79,76 @@ class FallbackLLM(BaseLLM):
         return self._primary.supports_native_tools
 
     @property
-    def active_llm(self) -> BaseLLM:
-        """Return whichever LLM last served a request."""
-        return self._active
+    def fallback_provider(self) -> str:
+        return self._fallback.provider_name
 
     @property
-    def degraded(self) -> bool:
-        return self._degraded
+    def fallback_model(self) -> str:
+        return self._fallback.model
 
     # ------------------------------------------------------------------
-    # Internal helpers
+    # Chat methods
     # ------------------------------------------------------------------
 
-    def _enter_degraded(self) -> None:
-        self._degraded = True
-        self._primary_failed_this_run = True
-        if self._session_id:
-            self._degraded_sessions.add(self._session_id)
+    def _is_approved(self) -> bool:
+        if not self._session_id:
+            return False
+        if self._session_id in self._approved_sessions:
+            return True
+        if self._agent_id and (self._session_id, self._agent_id) in self._approved_agents:
+            return True
+        return False
 
-    def _try_primary_no_retries(self, call, *args):
-        """Call primary with litellm retries disabled. Returns response or raises."""
-        saved = getattr(self._primary, "max_retries", None)
-        if saved is not None:
-            self._primary.max_retries = 0
-        try:
-            return call(*args)
-        finally:
-            if saved is not None:
-                self._primary.max_retries = saved
-
-    async def _atry_primary_no_retries(self, call, *args):
-        """Async version of _try_primary_no_retries."""
-        saved = getattr(self._primary, "max_retries", None)
-        if saved is not None:
-            self._primary.max_retries = 0
-        try:
-            return await call(*args)
-        finally:
-            if saved is not None:
-                self._primary.max_retries = saved
-
-    # ------------------------------------------------------------------
-    # Chat methods — primary with fallback
-    # ------------------------------------------------------------------
+    def _raise_fallback_available(self, error: Exception) -> None:
+        raise FallbackAvailableError(
+            message=f"Primary provider {self._primary.provider_name} failed: {error}",
+            primary_provider=self._primary.provider_name,
+            primary_model=self._primary.model,
+            fallback_provider=self._fallback.provider_name,
+            fallback_model=self._fallback.model,
+            error_type=type(error).__name__,
+        )
 
     def chat(
         self,
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None = None,
-    ) -> LLMResponse:
-        if self._primary_failed_this_run:
-            response = self._fallback.chat(messages, tools)
-            self._active = self._fallback
-            return response
-
-        if self._degraded:
-            try:
-                response = self._try_primary_no_retries(
-                    self._primary.chat, messages, tools,
-                )
-                self._active = self._primary
-                return response
-            except LLMError as e:
-                logger.warning(
-                    "llm_degraded_fallback",
-                    primary_provider=self._primary.provider_name,
-                    fallback_provider=self._fallback.provider_name,
-                    error_type=type(e).__name__,
-                    error=str(e)[:200],
-                )
-                self._primary_failed_this_run = True
-                response = self._fallback.chat(messages, tools)
-                self._active = self._fallback
-                return response
+    ):
+        if self._is_approved():
+            return self._fallback.chat(messages, tools)
 
         try:
-            response = self._primary.chat(messages, tools)
-            self._active = self._primary
-            return response
+            return self._primary.chat(messages, tools)
         except LLMError as e:
             logger.warning(
-                "llm_fallback_activated",
+                "llm_primary_failed_fallback_available",
                 primary_provider=self._primary.provider_name,
                 fallback_provider=self._fallback.provider_name,
                 error_type=type(e).__name__,
                 error=str(e)[:200],
             )
-            self._enter_degraded()
-            response = self._fallback.chat(messages, tools)
-            self._active = self._fallback
-            return response
+            self._raise_fallback_available(e)
 
     async def achat(
         self,
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None = None,
         max_tokens: int | None = None,
-    ) -> LLMResponse:
-        if self._primary_failed_this_run:
-            response = await self._fallback.achat(messages, tools, max_tokens)
-            self._active = self._fallback
-            return response
-
-        if self._degraded:
-            try:
-                response = await self._atry_primary_no_retries(
-                    self._primary.achat, messages, tools, max_tokens,
-                )
-                self._active = self._primary
-                return response
-            except LLMError as e:
-                logger.warning(
-                    "llm_degraded_fallback",
-                    primary_provider=self._primary.provider_name,
-                    fallback_provider=self._fallback.provider_name,
-                    error_type=type(e).__name__,
-                    error=str(e)[:200],
-                )
-                self._primary_failed_this_run = True
-                response = await self._fallback.achat(messages, tools, max_tokens)
-                self._active = self._fallback
-                return response
+    ):
+        if self._is_approved():
+            return await self._fallback.achat(messages, tools, max_tokens)
 
         try:
-            response = await self._primary.achat(messages, tools, max_tokens)
-            self._active = self._primary
-            return response
+            return await self._primary.achat(messages, tools, max_tokens)
         except LLMError as e:
             logger.warning(
-                "llm_fallback_activated",
+                "llm_primary_failed_fallback_available",
                 primary_provider=self._primary.provider_name,
                 fallback_provider=self._fallback.provider_name,
                 error_type=type(e).__name__,
                 error=str(e)[:200],
             )
-            self._enter_degraded()
-            response = await self._fallback.achat(messages, tools, max_tokens)
-            self._active = self._fallback
-            return response
+            self._raise_fallback_available(e)
 
     # ------------------------------------------------------------------
     # History — concatenate both

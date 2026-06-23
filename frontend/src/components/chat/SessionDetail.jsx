@@ -16,6 +16,7 @@ import { FilePreviewModal } from './ApprovalCard'
 import DownloadMenu from './DownloadMenu'
 import { downloadAsMarkdown, downloadContentAsPdf, buildChatTranscript } from '../../utils/downloadDesign'
 import HITLQuestionMessage from './HITLQuestionMessage'
+import FallbackModal from './FallbackModal'
 import WorkflowPipeline from './WorkflowPipeline'
 import DebugEventLog from './DebugEventLog'
 import AnnotationBar from './AnnotationBar'
@@ -28,6 +29,7 @@ import {
   extractOrderedItems,
   extractSurfacedFileWrites,
   buildApprovalFileList,
+  findFallbackQuestion,
   extractDependencyInstalls,
   findPendingQuestion,
   ProjectRepoContext,
@@ -408,13 +410,16 @@ const TimelineQuestion = ({ tc, agentId, sessionId, attachments = [], onAttachme
 
 // --- Agent Run ---
 
-const AgentRunItem = ({ run, timelineIndex, sessionId, hasFollowingMessage, sessionUserId, surfacedFiles, attachments, onAttachmentsConsumed, onAnswerSubmitted }) => {
+const AgentRunItem = ({ run, timelineIndex, sessionId, hasFollowingMessage, sessionUserId, surfacedFiles, attachments, onAttachmentsConsumed, onAnswerSubmitted, language }) => {
   const orderedItems = extractOrderedItems(run, hasFollowingMessage)
 
   // Show agent trace for completed runs that have no following message
   const showAgentTrace = !hasFollowingMessage && run.status !== 'running'
 
-  if (!showAgentTrace && orderedItems.length === 0 && (!surfacedFiles || surfacedFiles.length === 0)) return null
+  const fallbackCall = !run._hideFallback && run.llm_calls?.find(llm => llm.fallback_used)
+  const hasFailed = run.status === 'failed' && run.error_message
+
+  if (!showAgentTrace && orderedItems.length === 0 && (!surfacedFiles || surfacedFiles.length === 0) && !fallbackCall && !hasFailed) return null
 
   const config = getAgentConfig(run.agent_id)
   const AgentIcon = config.icon
@@ -422,6 +427,28 @@ const AgentRunItem = ({ run, timelineIndex, sessionId, hasFollowingMessage, sess
 
   return (
     <div data-type="agent-run" data-timeline-idx={timelineIndex}>
+      {fallbackCall && (
+        <div className="flex items-center gap-2 px-3 py-1.5 mb-2 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-700">
+          <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
+          <span>
+            {language === 'nl'
+              ? <>Model gewisseld: geconfigureerd <code className="font-semibold">{fallbackCall.intended_provider}/{fallbackCall.intended_model?.split('/').pop()}</code> niet beschikbaar, gebruikt <code className="font-semibold">{fallbackCall.model}</code></>
+              : <>Model switched: configured <code className="font-semibold">{fallbackCall.intended_provider}/{fallbackCall.intended_model?.split('/').pop()}</code> unavailable, using <code className="font-semibold">{fallbackCall.model}</code></>
+            }
+          </span>
+        </div>
+      )}
+      {hasFailed && (
+        <div className="flex items-center gap-2 px-3 py-1.5 mb-2 rounded-lg bg-red-50 border border-red-200 text-xs text-red-700">
+          <XCircle className="w-3.5 h-3.5 flex-shrink-0" />
+          <span>
+            {language === 'nl'
+              ? <>{config.name} mislukt: {run.error_message}</>
+              : <>{config.name} failed: {run.error_message}</>
+            }
+          </span>
+        </div>
+      )}
       {showAgentTrace && (
         <div className="group">
           <div className="flex items-center gap-2">
@@ -978,6 +1005,7 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
   if (!data) return null
 
   const pendingQuestion = findPendingQuestion(data.timeline)
+  const fallbackQuestion = findFallbackQuestion(data.timeline)
 
   const handleContinueSend = () => {
     const trimmed = continueInput.trim()
@@ -1049,6 +1077,7 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
   return (
     <ProjectRepoContext.Provider value={projectRepo}>
     <div className="flex flex-col h-full min-w-0">
+      {fallbackQuestion && <FallbackModal tc={fallbackQuestion} sessionId={sessionId} language={data.language} />}
       {/* Header */}
       <div className="px-4 py-2.5 border-b flex-shrink-0">
         <div className="flex items-center gap-2.5 min-w-0">
@@ -1255,6 +1284,7 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
               )
             }
 
+            const fallbackSeen = new Set()
             return data.timeline?.map((entry, i) => {
               // Messages always render
               if (entry.type === 'message' && entry.message) {
@@ -1280,13 +1310,19 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
                 const surfacedFiles = extractSurfacedFileWrites(entry.agent_run)
                 // Show completed runs without a following message (e.g. architect)
                 const isCompletedWithoutMessage = !hasFollowingMessage && entry.agent_run.status !== 'running'
-                if (orderedItems.length === 0 && surfacedFiles.length === 0 && !isCompletedWithoutMessage) {
+
+                const fallbackCall = entry.agent_run.llm_calls?.find(llm => llm.fallback_used)
+                const fallbackKey = fallbackCall ? `${fallbackCall.intended_provider}/${fallbackCall.intended_model}→${fallbackCall.model}` : null
+                const showFallback = fallbackKey && !fallbackSeen.has(fallbackKey)
+                if (showFallback) fallbackSeen.add(fallbackKey)
+
+                if (orderedItems.length === 0 && surfacedFiles.length === 0 && !isCompletedWithoutMessage && !showFallback) {
                   return null
                 }
                 return (
                   <div key={i}>
                     <AgentRunItem
-                      run={entry.agent_run}
+                      run={showFallback ? entry.agent_run : { ...entry.agent_run, _hideFallback: true }}
                       timelineIndex={i}
                       sessionId={sessionId}
                       hasFollowingMessage={hasFollowingMessage}
@@ -1298,6 +1334,7 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
                         setPendingMessage(true)
                         pendingSetAtLength.current = data?.timeline?.length || 0
                       }}
+                      language={data?.language}
                     />
                     {renderAnnotation(i)}
                   </div>
@@ -1389,7 +1426,7 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
             <div className="flex items-start gap-2.5 border border-red-200 rounded-2xl shadow-sm px-4 py-3.5 bg-red-50">
               <XCircle className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
               <div className="min-w-0">
-                <p className="text-sm font-medium text-red-800">Session failed</p>
+                <p className="text-sm font-medium text-red-800">{data.language === 'nl' ? 'Sessie mislukt' : 'Session failed'}</p>
                 {data.error_message && (
                   <p className="text-sm text-red-600 mt-0.5 break-words">{data.error_message}</p>
                 )}

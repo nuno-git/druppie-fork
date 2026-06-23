@@ -188,6 +188,11 @@ const AgentRow = ({ agent, providers, onOverride, onReset, saving }) => {
               </span>
             </div>
           )}
+          {!agent.override_unavailable && agent.suggested_fallback && agent.override && (
+            <div className="mt-0.5 text-xs text-gray-400">
+              Fallback: <code>{agent.suggested_fallback}</code>
+            </div>
+          )}
         </div>
         <div className="flex items-center gap-1">
           {agent.override && (
@@ -245,9 +250,14 @@ const ModelManagement = () => {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['model-management'] }),
   })
 
+  const [translationError, setTranslationError] = useState(null)
   const translationOverrideMutation = useMutation({
     mutationFn: ({ provider, model }) => setTranslationModelOverride(provider, model),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['model-management'] }),
+    onSuccess: () => {
+      setTranslationError(null)
+      queryClient.invalidateQueries({ queryKey: ['model-management'] })
+    },
+    onError: (err) => setTranslationError(err.message),
   })
 
   const translationResetMutation = useMutation({
@@ -376,16 +386,24 @@ const ModelManagement = () => {
                   </button>
                 )}
               </div>
+              {translationError && (
+                <div className="mt-2 px-2 py-1.5 rounded bg-red-50 border border-red-200 text-xs text-red-700 flex items-center gap-1.5">
+                  <XCircle className="w-3.5 h-3.5 flex-shrink-0" />
+                  <span>{translationError}</span>
+                </div>
+              )}
               {editingTranslation && (
                 <OverrideForm
                   providers={providers}
                   currentProvider={translation.override?.provider || translation.provider}
                   currentModel={translation.override?.model || translation.model}
                   onSave={(provider, model) => {
-                    translationOverrideMutation.mutate({ provider, model })
-                    setEditingTranslation(false)
+                    setTranslationError(null)
+                    translationOverrideMutation.mutate({ provider, model }, {
+                      onSuccess: () => setEditingTranslation(false),
+                    })
                   }}
-                  onCancel={() => setEditingTranslation(false)}
+                  onCancel={() => { setEditingTranslation(false); setTranslationError(null) }}
                   saving={isSaving}
                 />
               )}
