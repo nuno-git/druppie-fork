@@ -1294,12 +1294,13 @@ The package is organized in strict dependency layers. Higher layers import from 
 Layer 0: types.py          Core types (dataclasses)
 Layer 1: definition.py     YAML parsing + schema generation
 Layer 2: events.py         EventEmitter (callback-based)
-Layer 3: tools/mcp.py      MCPConnection type
-Layer 4: tools/done.py     DoneTool with dynamic schema + validation
-Layer 5: tools/provider.py ToolProvider protocol + MCPToolProvider
-Layer 6: loop.py           AgentLoop main execution loop
-Layer 7: subagents.py      Parallel subagent spawning
-Layer 8: sandbox.py        Sandbox warm pool + resolver factory
+Layer 3: compaction.py     Context estimation + LLM-summarized compaction
+Layer 4: tools/mcp.py      MCPConnection type
+Layer 5: tools/done.py     DoneTool with dynamic schema + validation
+Layer 6: tools/provider.py ToolProvider protocol + MCPToolProvider
+Layer 7: loop.py           AgentLoop main execution loop
+Layer 8: subagents.py      Parallel subagent spawning
+Layer 9: compat.py         Bridge from old Druppie backend to the runtime
 ```
 
 #### Layer 0: `types.py` — Core Types
@@ -1335,13 +1336,18 @@ Callback-based event system. Consumers register handlers for named events. The l
 | `tool_result` | A tool invocation completes |
 | `subagent_start` | A subagent is spawned |
 | `subagent_end` | A subagent completes |
+| `context_compressed` | Conversation body summarized to relieve context pressure |
 | `context_overflow` | Context window exceeds limits |
 
-#### Layer 3: `tools/mcp.py` — MCP Connection
+#### Layer 3: `compaction.py` — Message Compaction
+
+Manages context pressure with a calibrated token estimator and an LLM-based summarizer. `MessageCompactor.estimate_tokens()` approximates token usage from message chars (calibrated against real `prompt_tokens` from each LLM response). When usage crosses `CompactionConfig.summarization_threshold`, `compress()` summarizes the conversation body via the LLM and replaces it with a single summary message, keeping the system + user header intact (falling back to a static notice if summarization fails). `truncate_tool_result()` caps oversized tool outputs.
+
+#### Layer 4: `tools/mcp.py` — MCP Connection
 
 Defines the `MCPConnection` type representing a connection to a single MCP server (URL, headers, metadata). Used by `MCPToolProvider` to route tool calls.
 
-#### Layer 4: `tools/done.py` — Done Tool
+#### Layer 5: `tools/done.py` — Done Tool
 
 Implements the `DoneTool` with a **dynamically generated schema** derived from the agent definition. Validation follows a three-stage pipeline:
 
@@ -1351,7 +1357,7 @@ Implements the `DoneTool` with a **dynamically generated schema** derived from t
 
 Agents cannot finish until all preconditions are met and a valid summary is provided.
 
-#### Layer 5: `tools/provider.py` — Tool Provider
+#### Layer 6: `tools/provider.py` — Tool Provider
 
 Defines the `ToolProvider` protocol (abstract interface) and `MCPToolProvider` implementation:
 
@@ -1368,7 +1374,7 @@ MCPToolProvider (implementation)
 
 The protocol allows alternative tool backends (e.g., builtins, mocks) without modifying the loop.
 
-#### Layer 6: `loop.py` — AgentLoop
+#### Layer 7: `loop.py` — AgentLoop
 
 The main execution loop. Orchestrates the full agent lifecycle:
 
@@ -1394,7 +1400,7 @@ Key responsibilities:
 - **Done enforcement**: The `done` tool is always available. Agents must call it to finish.
 - **Pause detection**: Checks the cancellation token between iterations for cooperative stopping.
 
-#### Layer 7: `subagents.py` — Subagent Management
+#### Layer 8: `subagents.py` — Subagent Management
 
 `SubagentsMCP` provides parallel subagent spawning with safety guardrails:
 
@@ -1405,9 +1411,9 @@ Key responsibilities:
 | Circular detection | Tracks active agent IDs to prevent re-entrant cycles |
 | Sandbox sharing | Subagents inherit the parent's sandbox context |
 
-#### Layer 8: `sandbox.py` — Sandbox Pool
+#### Layer 9: `compat.py` — Backend Compatibility Bridge
 
-`SandboxWarmPool` maintains a pool of pre-warmed sandbox containers for reduced latency. `make_sandbox_resolver()` is a factory that creates sandbox lookup functions bound to a specific pool configuration.
+Bridges the storage-agnostic runtime to the existing Druppie backend without modifying either. Provides `adapt_llm()` (wraps the old `BaseLLM` as the runtime's async LLM callable), `DruppieToolProvider` (implements the `ToolProvider` protocol over the old `ToolExecutor`/builtin tools, persisting every call to the DB via short-lived sessions), `create_event_persister()` (an event callback that maps runtime `AgentEvent`s to DB writes for runs, LLM calls, tool calls, and compaction events), `SubagentsMCPConnection` (in-process MCP wrapper around `SubagentsMCP`), and `old_definition_to_new()` (converts the old Pydantic `AgentDefinition` to the new dataclass).
 
 ### 11.4 Data Flow
 

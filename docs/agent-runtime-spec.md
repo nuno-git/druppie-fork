@@ -1,5 +1,7 @@
 # Agent Runtime Specification
 
+> **Status: Historical planning doc (technical spec).** As-built reference: `docs/TECHNICAL.md` §11. Retained for the detailed design.
+
 > This document contains the final architecture decisions for the Druppie agent runtime library.
 > For research context, alternatives considered, and rationale, see `docs/research-agent-runtime.md`.
 

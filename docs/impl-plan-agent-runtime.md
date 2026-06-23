@@ -1,5 +1,7 @@
 # Implementation Plan: Agent Runtime Library
 
+> **Status: Historical planning doc (implementation plan).** As-built reference: `docs/TECHNICAL.md` §11.
+
 > Implements [agent-runtime-spec.md](./agent-runtime-spec.md).
 > The new library lives in `druppie/agent_runtime/`, is storage-agnostic, and coexists with the old code without modifying it.
 

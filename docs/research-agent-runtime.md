@@ -1,5 +1,7 @@
 # Agent Runtime Research — Architecture Decisions
 
+> **Status: Historical planning doc (research / decision log).** The as-built agent runtime is documented in `docs/TECHNICAL.md` §11 (Agent Runtime Library). This doc is retained for the design rationale and decision history (D2–D46).
+
 > **Status**: Research (pending decisions)
 > **Goal**: Replace `druppie/agents/loop.py` and the old sandbox-based execution prototype with a unified Python agent runtime library
 > **Key property**: `done()` enforcement at the loop level — agents CANNOT exit without calling done()
