@@ -101,11 +101,16 @@ class ModelManagementService:
                 suggested_fallback=suggested_fallback,
             ))
 
-        # Build translation info
+        # Build translation info — sync DB state to the singleton first
         translation_override_row = self.override_repo.get_translation_override()
         translation_override = _to_summary(translation_override_row) if translation_override_row else None
 
         ts = get_translation_service()
+        if translation_override_row and translation_override_row.enabled:
+            ts.configure(translation_override_row.provider, translation_override_row.model)
+        elif not translation_override_row:
+            ts.configure(None, None)
+
         t_override_unavailable = False
         t_suggested_fallback = None
         try:
