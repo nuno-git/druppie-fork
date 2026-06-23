@@ -105,9 +105,11 @@ services:
       KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN:-admin}
       KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
       KC_HOSTNAME: ${EXTERNAL_HOST:-localhost}
-      KC_HOSTNAME_PORT: ${KEYCLOAK_PORT:-8080}
+      # Port for frontend URL building. Required for direct dev access on :8180;
+      # in prod behind a reverse proxy, X-Forwarded-Port takes precedence over this.
+      KC_HOSTNAME_PORT: ${KEYCLOAK_PORT:-8180}
       KC_HOSTNAME_STRICT: "false"
-      KC_HOSTNAME_STRICT_HTTPS: "false"
+      KC_HOSTNAME_STRICT_HTTPS: ${KC_HOSTNAME_STRICT_HTTPS:-false}
       KC_HTTP_ENABLED: "true"
       KC_PROXY: edge
       KC_HEALTH_ENABLED: "true"
@@ -146,7 +148,7 @@ services:
       GITEA__database__NAME: gitea
       GITEA__database__USER: gitea
       GITEA__database__PASSWD: ${GITEA_DB_PASSWORD:-gitea_secret}
-      GITEA__server__ROOT_URL: http://${EXTERNAL_HOST:-localhost}:${GITEA_PORT:-3000}/
+      GITEA__server__ROOT_URL: ${GITEA_PUBLIC_URL:-http://${EXTERNAL_HOST:-localhost}:${GITEA_PORT:-3100}}
       GITEA__server__HTTP_PORT: 3000
       GITEA__server__DOMAIN: ${EXTERNAL_HOST:-localhost}
       GITEA__security__INSTALL_LOCK: "true"
@@ -300,6 +302,8 @@ services:
 
   module-archimate:
     build:
+      # Context is ./druppie (not mcp-servers) because the Dockerfile COPYs
+      # mcp-servers/-prefixed paths including the models/ directory.
       context: ./druppie
       dockerfile: mcp-servers/module-archimate/Dockerfile
     profiles: [infra, dev, prod]
@@ -369,6 +373,8 @@ services:
 
   module-registry:
     build:
+      # Context is ./druppie (not mcp-servers) because the Dockerfile COPYs
+      # agents/, core/, and skills/ which live outside mcp-servers/.
       context: ./druppie
       dockerfile: mcp-servers/module-registry/Dockerfile
     profiles: [infra, dev, prod]
@@ -474,7 +480,11 @@ services:
       context: ./druppie/mcp-servers
       dockerfile: module-azuredevops/Dockerfile
     container_name: druppie-module-azuredevops
-    profiles: [infra, dev, prod]
+    # Opt-in profile: this module needs Azure DevOps credentials and crashes at
+    # startup when they are unset, so it is NOT part of the default dev/infra/prod
+    # stack. Start it alongside the app once AZURE_DEVOPS_* are set in .env, e.g.:
+    #   docker compose --profile dev --profile azuredevops up -d
+    profiles: [azuredevops]
     environment:
       MCP_PORT: "9012"
       # Read-only access is hard-scoped to this single project (see module).
@@ -543,6 +553,64 @@ services:
       - app-net
 
   # ===========================================================================
+  # OAUTH2 PROXY (authentication gatekeeper)
+  # ===========================================================================
+  # Sits in front of the app via nginx auth_request.
+  # Redirects unauthenticated users to Keycloak login.
+  # Works in all browsers (no Basic Auth popup dependency).
+
+  oauth2-proxy:
+    image: quay.io/oauth2-proxy/oauth2-proxy:v7.8.1
+    # Production auth gate (sits behind nginx). Not used in dev/infra, where the backend
+    # is reached directly — including it there only restart-loops on missing secrets.
+    profiles: [prod]
+    environment:
+      DRUPPIE_DOMAIN: ${DRUPPIE_DOMAIN:-localhost}
+    command:
+      - --provider=keycloak-oidc
+      - --skip-oidc-discovery=true
+      - --login-url=${PUBLIC_SCHEME:-https}://${DRUPPIE_DOMAIN:-localhost}/realms/druppie-gate/protocol/openid-connect/auth
+      - --redeem-url=http://keycloak:8080/realms/druppie-gate/protocol/openid-connect/token
+      - --oidc-jwks-url=http://keycloak:8080/realms/druppie-gate/protocol/openid-connect/certs
+      - --profile-url=
+      - --oidc-issuer-url=${PUBLIC_SCHEME:-https}://${DRUPPIE_DOMAIN:-localhost}/realms/druppie-gate
+      - --insecure-oidc-skip-issuer-verification=true
+      - --client-id=druppie-proxy
+      - --client-secret=${OAUTH2_PROXY_CLIENT_SECRET}
+      - --cookie-secret=${OAUTH2_PROXY_COOKIE_SECRET}
+      # Defaults to .${DRUPPIE_DOMAIN}, but when Gitea lives on a sibling subdomain
+      # (e.g. druppie.example.com + git.example.com) set OAUTH2_PROXY_COOKIE_DOMAIN
+      # to the shared base (.example.com) so the gate cookie covers both.
+      - --cookie-domain=${OAUTH2_PROXY_COOKIE_DOMAIN:-.${DRUPPIE_DOMAIN:-localhost}}
+      - --cookie-secure=${OAUTH2_PROXY_COOKIE_SECURE:-true}
+      - --cookie-samesite=lax
+      - --redirect-url=${PUBLIC_SCHEME:-https}://${DRUPPIE_DOMAIN:-localhost}/oauth2/callback
+      - --email-domain=*
+      - --insecure-oidc-allow-unverified-email=true
+      - --skip-provider-button=true
+      - --upstream=static://200
+      - --http-address=0.0.0.0:4180
+      - --reverse-proxy=true
+      - --whitelist-domain=${OAUTH2_PROXY_WHITELIST_DOMAIN:-.${DRUPPIE_DOMAIN:-localhost}}
+      - --allowed-role=platform-access
+      - --oidc-groups-claim=realm_access.roles
+      - --session-cookie-minimal=true
+    ports:
+      - "127.0.0.1:4180:4180"
+    depends_on:
+      keycloak:
+        condition: service_healthy
+    networks:
+      - app-net
+    healthcheck:
+      test: ["CMD", "wget", "-qO", "/dev/null", "http://localhost:4180/ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+  # ===========================================================================
   # INITIALIZATION CONTAINER (one-time setup)
   # ===========================================================================
   # Runs setup_keycloak.py and setup_gitea.py on first launch.
@@ -572,6 +640,9 @@ services:
       GITEA_ADMIN_EMAIL: ${GITEA_ADMIN_EMAIL:-admin@druppie.local}
       KEYCLOAK_INTERNAL_URL: http://keycloak:8080
       KEYCLOAK_REALM: druppie
+      KEYCLOAK_PUBLIC_URL: ${KEYCLOAK_PUBLIC_URL:-}
+      # Container name derived from COMPOSE_PROJECT_NAME (Docker Compose naming: <project>-<service>-1)
+      GITEA_CONTAINER: ${COMPOSE_PROJECT_NAME:-druppie}-gitea-1
       # Override .env path for setup_gitea.py token writing
       ENV_FILE: /project/.env
     volumes:
@@ -701,7 +772,7 @@ services:
       DATABASE_URL: postgresql://druppie:${DRUPPIE_DB_PASSWORD:-druppie_secret}@druppie-db:5432/druppie
       KEYCLOAK_URL: http://${EXTERNAL_HOST:-localhost}:${KEYCLOAK_PORT:-8080}
       KEYCLOAK_SERVER_URL: http://keycloak:8080
-      KEYCLOAK_ISSUER_URL: http://${EXTERNAL_HOST:-localhost}:${KEYCLOAK_PORT:-8080}
+      KEYCLOAK_ISSUER_URL: ${KEYCLOAK_PUBLIC_URL:-http://${EXTERNAL_HOST:-localhost}:${KEYCLOAK_PORT:-8180}}
       KEYCLOAK_REALM: druppie
       KEYCLOAK_CLIENT_ID: druppie-backend
       LLM_PROVIDER: ${LLM_PROVIDER:-zai}
@@ -716,8 +787,11 @@ services:
       DEEPINFRA_API_KEY: ${DEEPINFRA_API_KEY:-}
       DEEPINFRA_MODEL: ${DEEPINFRA_MODEL:-Qwen/Qwen3-32B}
       DEEPINFRA_BASE_URL: ${DEEPINFRA_BASE_URL:-https://api.deepinfra.com/v1}
-      CORS_ORIGINS: http://${EXTERNAL_HOST:-localhost}:${FRONTEND_PORT:-5173}
-      GITEA_URL: http://${EXTERNAL_HOST:-localhost}:${GITEA_PORT:-3000}
+      FOUNDRY_API_KEY: ${FOUNDRY_API_KEY:-}
+      FOUNDRY_MODEL: ${FOUNDRY_MODEL:-GPT-5-MINI}
+      FOUNDRY_API_URL: ${FOUNDRY_API_URL:-}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://${EXTERNAL_HOST:-localhost}:${FRONTEND_PORT:-5273},http://localhost:5173}
+      GITEA_URL: ${GITEA_PUBLIC_URL:-http://${EXTERNAL_HOST:-localhost}:${GITEA_PORT:-3100}}
       GITEA_INTERNAL_URL: http://gitea:3000
       GITEA_ADMIN_USER: ${GITEA_ADMIN_USER:-gitea_admin}
       GITEA_ADMIN_PASSWORD: ${GITEA_ADMIN_PASSWORD:-GiteaAdmin123}
@@ -811,11 +885,11 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
       args:
-        VITE_API_URL: http://${EXTERNAL_HOST:-localhost}:${BACKEND_PORT:-8000}
-        VITE_KEYCLOAK_URL: http://${EXTERNAL_HOST:-localhost}:${KEYCLOAK_PORT:-8080}
+        VITE_API_URL: ${BACKEND_PUBLIC_URL:-http://${EXTERNAL_HOST:-localhost}:${BACKEND_PORT:-8100}}
+        VITE_KEYCLOAK_URL: ${KEYCLOAK_PUBLIC_URL:-http://${EXTERNAL_HOST:-localhost}:${KEYCLOAK_PORT:-8180}}
         VITE_KEYCLOAK_REALM: druppie
         VITE_KEYCLOAK_CLIENT_ID: druppie-frontend
-        VITE_GITEA_URL: http://${EXTERNAL_HOST:-localhost}:${GITEA_PORT:-3000}
+        VITE_GITEA_URL: ${GITEA_PUBLIC_URL:-http://${EXTERNAL_HOST:-localhost}:${GITEA_PORT:-3100}}
     profiles: [prod]
     ports:
       - "${FRONTEND_PORT:-5173}:5173"
@@ -837,6 +911,7 @@ services:
     profiles: [reset-db]
     environment:
       PGPASSWORD: ${DRUPPIE_DB_PASSWORD:-druppie_secret}
+      COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME:-druppie}
     volumes:
       - type: bind
         source: ${DOCKER_SOCK:-/var/run/docker.sock}
@@ -846,13 +921,21 @@ services:
     entrypoint: ["sh", "-c"]
     command:
       - |
+        # Docker Compose auto-names containers as <COMPOSE_PROJECT_NAME>-<service>-<ordinal>
+        # NOTE: $$ escapes the dollar so Compose passes a literal $ to the shell;
+        # a single $ would be interpolated (to empty) by Compose before the shell runs.
+        DB_CONTAINER="$${COMPOSE_PROJECT_NAME}-druppie-db-1"
+        # Backend service differs between prod (druppie-backend) and dev (druppie-backend-dev) profiles.
+        BACKEND_CONTAINER="$${COMPOSE_PROJECT_NAME}-druppie-backend-1"
+        BACKEND_CONTAINER_DEV="$${COMPOSE_PROJECT_NAME}-druppie-backend-dev-1"
         echo "=== Resetting Druppie Application Database ==="
         echo "Preserving user tables (users, user_roles, user_tokens)"
+        echo "DB container: $$DB_CONTAINER"
         echo ""
         echo "Waiting for database..."
-        until docker compose exec druppie-db pg_isready -U druppie; do sleep 1; done
+        until docker exec "$$DB_CONTAINER" pg_isready -U druppie; do sleep 1; done
         echo "Dropping application tables..."
-        docker compose exec druppie-db psql -U druppie -d druppie -c "
+        docker exec "$$DB_CONTAINER" psql -U druppie -d druppie -c "
           DROP TABLE IF EXISTS sandbox_sessions CASCADE;
           DROP TABLE IF EXISTS tool_call_normalizations CASCADE;
           DROP TABLE IF EXISTS llm_retries CASCADE;
@@ -869,7 +952,9 @@ services:
         "
         echo ""
         echo "Restarting backend to recreate tables..."
-        docker compose restart druppie-backend-dev 2>/dev/null || echo "Backend not running"
+        docker restart "$$BACKEND_CONTAINER" 2>/dev/null \
+          || docker restart "$$BACKEND_CONTAINER_DEV" 2>/dev/null \
+          || echo "Backend not running"
         echo ""
         echo "=== Database reset complete ==="
         echo "Application tables dropped. User accounts preserved."
@@ -950,29 +1035,34 @@ services:
     entrypoint: ["sh", "-c"]
     command:
       - |
+        # NOTE: $$ escapes the dollar so Compose passes a literal $ to the shell.
+        # ${PURGE_REASON:-manual} is intentionally left single-$ so Compose
+        # interpolates it from the host env (see usage note above).
+        CACHE_VOLUME="$${DRUPPIE_INSTANCE}_sandbox_dep_cache"
         echo "=== Emergency Cache Purge ==="
-        echo "Timestamp: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        echo "Timestamp: $$(date -u +%Y-%m-%dT%H:%M:%SZ)"
         echo "Reason: ${PURGE_REASON:-manual}"
+        echo "Cache volume: $$CACHE_VOLUME"
         echo ""
         echo "Step 1: Stopping running sandbox containers..."
-        sandbox_ids=$(docker ps --filter "network=${DRUPPIE_INSTANCE:-druppie}-sandbox-net" -q)
-        if [ -n "$sandbox_ids" ]; then
+        sandbox_ids=$$(docker ps --filter "network=$${DRUPPIE_INSTANCE}-sandbox-net" -q)
+        if [ -n "$$sandbox_ids" ]; then
           echo "  Stopping sandbox(es)..."
-          if ! docker stop -t 5 $sandbox_ids 2>/dev/null; then
+          if ! docker stop -t 5 $$sandbox_ids 2>/dev/null; then
             echo "  WARNING: Graceful stop failed, forcing..."
-            docker kill $sandbox_ids 2>/dev/null || true
+            docker kill $$sandbox_ids 2>/dev/null || true
           fi
-          docker rm -f $sandbox_ids 2>/dev/null || true
+          docker rm -f $$sandbox_ids 2>/dev/null || true
           echo "  Stopped."
         else
           echo "  None running."
         fi
         echo ""
         echo "Step 2: Removing cache volume..."
-        if docker volume inspect ${DRUPPIE_INSTANCE:-druppie}_sandbox_dep_cache >/dev/null 2>&1; then
-          if ! docker volume rm ${DRUPPIE_INSTANCE:-druppie}_sandbox_dep_cache; then
+        if docker volume inspect "$$CACHE_VOLUME" >/dev/null 2>&1; then
+          if ! docker volume rm "$$CACHE_VOLUME"; then
             echo "  ERROR: Failed to remove volume. Is it still in use?"
-            echo "  Check: docker ps --filter volume=${DRUPPIE_INSTANCE:-druppie}_sandbox_dep_cache"
+            echo "  Check: docker ps --filter volume=$$CACHE_VOLUME"
             exit 1
           fi
           echo "  Removed."
@@ -981,8 +1071,8 @@ services:
         fi
         echo ""
         echo "Step 3: Recreating empty volume..."
-        docker volume create ${DRUPPIE_INSTANCE:-druppie}_sandbox_dep_cache
-        if ! docker volume inspect ${DRUPPIE_INSTANCE:-druppie}_sandbox_dep_cache >/dev/null 2>&1; then
+        docker volume create "$$CACHE_VOLUME"
+        if ! docker volume inspect "$$CACHE_VOLUME" >/dev/null 2>&1; then
           echo "  ERROR: Volume creation failed."
           exit 1
         fi
@@ -1046,4 +1136,3 @@ networks:
     name: ${DRUPPIE_INSTANCE:-druppie}-sandbox-modules
     driver: bridge
     internal: true
-

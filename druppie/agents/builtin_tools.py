@@ -467,17 +467,14 @@ async def set_intent(
 
                     if repo_result.get("success"):
                         repo_owner = repo_result.get("owner", gitea_username)
-                        repo_url = repo_result.get("repo_url")
 
                         project_repo.update_repo(
                             project_id=new_project.id,
                             repo_name=repo_name,
-                            repo_url=repo_url,
                             repo_owner=repo_owner,
                         )
 
                         result["repo_name"] = repo_name
-                        result["repo_url"] = repo_url
                         result["repo_owner"] = repo_owner
 
                         logger.info(

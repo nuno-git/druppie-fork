@@ -18,7 +18,8 @@ COPY module-docker/ .
 
 # Environment variables
 ENV MCP_PORT=9002
-ENV DOCKER_NETWORK=druppie-new-network
+ENV DOCKER_NETWORK=
+# Overridden at runtime by docker-compose.yml: DOCKER_NETWORK=${COMPOSE_PROJECT_NAME}_sandbox
 
 EXPOSE 9002
 

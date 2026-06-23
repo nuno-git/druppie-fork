@@ -752,19 +752,30 @@ class SessionRepository(BaseRepository):
         project = self.db.query(Project).filter_by(id=project_id).first()
         if not project:
             return None
+
         # Look up username from users table
         username = None
         if project.owner_id:
             user = self.db.query(UserModel).filter_by(id=project.owner_id).first()
             if user:
                 username = user.username
+
+        # Resolve repo_url dynamically from repo_name + repo_owner
+        repo_url = None
+        if project.repo_name:
+            from druppie.core.gitea import get_gitea_client
+            try:
+                repo_url = get_gitea_client().get_public_url(project.repo_name, project.repo_owner)
+            except Exception:
+                repo_url = project.repo_url  # Fallback to stored value
+
         return ProjectSummary(
             id=project.id,
             name=project.name,
             description=project.description,
-            repo_url=project.repo_url,
             repo_name=project.repo_name,
             repo_owner=project.repo_owner,
+            repo_url=repo_url,
             username=username,
             created_at=project.created_at,
         )

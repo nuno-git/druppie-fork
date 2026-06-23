@@ -5,6 +5,11 @@
 
 set -e
 
+# Docker Compose project name, used as the prefix for volume and container names
+# (Compose names resources as <project>_<volume> and <project>-<service>-<ordinal>).
+# Sourced from the COMPOSE_PROJECT_NAME env var set by the reset-hard service.
+P="${COMPOSE_PROJECT_NAME:-druppie}"
+
 echo "=============================================="
 echo "  Druppie Platform - HARD RESET"
 echo "=============================================="
@@ -29,19 +34,21 @@ if [ -n "$HOST_PROJECT_DIR" ] && [ "$HOST_PROJECT_DIR" != "/project" ]; then
 fi
 COMPOSE="docker compose"
 
+# Compose project name — prefixes volume names (<P>_postgres) and container names
+# (<P>-<service>-1). Must match the project the stack was actually started with.
+P="${COMPOSE_PROJECT_NAME:-druppie}"
+
 # Step 1: Stop all services and remove volumes
 echo "--- Step 1: Stopping all services and removing volumes ---"
 $COMPOSE --profile dev --profile prod --profile infra down -v 2>/dev/null || true
 echo "  Done"
 echo ""
 
-# Step 2: Remove instance volumes (using compose project name)
+# Step 2: Remove any remaining instance volumes (in case they were external)
 echo "--- Step 2: Cleaning up instance volumes ---"
-PROJECT="${COMPOSE_PROJECT_NAME:-druppie}"
-for vol in ${PROJECT}_postgres ${PROJECT}_keycloak_postgres ${PROJECT}_gitea_postgres \
-           ${PROJECT}_gitea_data ${PROJECT}_workspace ${PROJECT}_dataset \
-           ${PROJECT}_init_marker ${PROJECT}_sandbox_dep_cache ${PROJECT}_sandbox_data \
-           ${PROJECT}_sandbox_snapshots; do
+for vol in ${P}_postgres ${P}_keycloak_postgres ${P}_gitea_postgres \
+           ${P}_gitea_data ${P}_workspace ${P}_dataset \
+           ${P}_init_marker ${P}_sandbox_dep_cache ${P}_sandbox_bundles; do
     if docker volume inspect "$vol" >/dev/null 2>&1; then
         echo "  Removing volume: $vol"
         docker volume rm "$vol" 2>/dev/null || echo "  Warning: Could not remove $vol"

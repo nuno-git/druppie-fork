@@ -1199,7 +1199,7 @@ const DebugEventLog = ({ data, sessionId, sessionStatus }) => {
       </div>
 
       {showJson && <JsonViewerModal data={data} title={data.title || 'Session'} onClose={() => setShowJson(false)} />}
-      {showLogs && <ContainerLogsModal containerName="druppie-new-backend" onClose={() => setShowLogs(false)} />}
+      {showLogs && <ContainerLogsModal containerName={import.meta.env.VITE_BACKEND_CONTAINER || "druppie-backend"} onClose={() => setShowLogs(false)} />}
     </div>
   )
 }

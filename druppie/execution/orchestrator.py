@@ -47,6 +47,7 @@ import httpx
 import structlog
 
 from druppie.agents.prompt_builder import DEFAULT_LANGUAGE
+from druppie.core.gitea import get_gitea_client
 from druppie.core.language_detection import LanguageDetector
 from druppie.domain.common import AgentRunStatus, SessionStatus, ApprovalStatus
 from druppie.execution.human_input import HumanInput
@@ -523,10 +524,14 @@ class Orchestrator:
                 # Add git repo info if available
                 if project.repo_name:
                     context["repo_name"] = project.repo_name
-                if project.repo_url:
-                    context["repo_url"] = project.repo_url
                 if hasattr(project, 'repo_owner') and project.repo_owner:
                     context["repo_owner"] = project.repo_owner
+
+                # Resolve repo_url dynamically from repo_name + repo_owner
+                try:
+                    context["repo_url"] = get_gitea_client().get_public_url(project.repo_name, project.repo_owner)
+                except Exception:
+                    context["repo_url"] = project.repo_url  # Fallback to stored value
 
                 logger.debug(
                     "project_context_built",
