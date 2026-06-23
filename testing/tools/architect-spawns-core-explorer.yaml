@@ -1,0 +1,188 @@
+## Test: architect spawns core_explorer subagent for Level 3 codebase exploration
+##
+## Verifies that the architect can use the subagents() tool to spawn
+## core_explorer for deep Druppie codebase analysis during design.
+## The core_explorer runs, explores, and completes. The architect
+## resumes with the explorer's findings and completes its own design.
+
+tool-test:
+  name: architect-spawns-core-explorer
+  description: |
+    Architect spawns core_explorer subagent for Level 3 Druppie codebase
+    exploration during the design phase. Verifies subagent spawning,
+    exploration, and parent resume.
+  tags: [subagent, architect, core-explorer, e2e, agent-runtime]
+
+  chain:
+    # --- Router ---
+    - agent: router
+      tool: builtin:set_intent
+      arguments:
+        intent: create_project
+        project_name: architect-explorer-test
+        description: "Test project to verify architect can spawn core_explorer subagent"
+
+    - agent: router
+      tool: builtin:done
+      arguments:
+        summary: "Agent router: Classified as create_project"
+
+    # --- Planner → BA ---
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: business_analyst
+            prompt: "Create functional design for a Druppie module extension"
+          - agent_id: planner
+            prompt: "Re-evaluate after business_analyst completes"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: Planned business_analyst"
+
+    # --- Business Analyst (creates FD) ---
+    - agent: business_analyst
+      tool: coding:make_design
+      approval:
+        status: approved
+      arguments:
+        path: docs/functional-design.md
+        content: |
+          # Functional Design: Module Extension Test
+
+          ## Requirements
+          - FR-01: Extend the coding MCP module with a new tool
+          - FR-02: The new tool should list sandbox containers
+          - FR-03: Integrate with existing sandbox infrastructure
+
+          ## Context
+          This requires understanding how the existing coding MCP server
+          and sandbox system work internally.
+
+    - agent: business_analyst
+      tool: coding:push_changes
+
+    - agent: business_analyst
+      tool: builtin:done
+      arguments:
+        summary: "Agent business_analyst: DESIGN_APPROVED - Functional design created and approved"
+
+    # --- Planner → Architect ---
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: architect
+            prompt: "Review FD and create technical design. This is a CORE_UPDATE — use Level 3 context gathering to explore the Druppie codebase before designing."
+          - agent_id: planner
+            prompt: "Re-evaluate after architect completes"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: BA approved, planned architect"
+
+    # --- Architect: Level 1 + Level 2 context gathering ---
+    - agent: architect
+      tool: coding:read_file
+      arguments:
+        path: docs/functional-design.md
+
+    # --- Architect: Level 3 — spawns core_explorer subagent ---
+    - agent: architect
+      tool: builtin:subagents
+      mock: true
+      mock_result: '{"status": "success", "agents": ["core_explorer"]}'
+      arguments:
+        agents:
+          - agent: core_explorer
+            prompt: "Explore the coding MCP server in druppie/mcp-servers/module-coding/. Focus on how sandbox containers are created and managed in tools.py. Report the key functions, the SANDBOX_RUNTIME config, and how bash commands are executed."
+
+    # --- core_explorer runs (as child of architect) ---
+    - agent: core_explorer
+      parent_agent: architect
+      tool: coding:read_file
+      mock: true
+      mock_result: |
+        SANDBOX_RUNTIME = os.getenv("DRUPPIE_SANDBOX_RUNTIME", "sysbox-runc")
+        SANDBOX_IMAGE = os.getenv("DRUPPIE_SANDBOX_IMAGE", "druppie-sandbox:latest")
+
+        async def _run_in_sandbox(command, timeout, session_id, ...):
+            # Spawns a docker container with SANDBOX_RUNTIME
+            # Mounts workspace and cache volumes
+            # Returns stdout, stderr, return_code
+
+        async def bash(command, timeout, git_scope, ...):
+            # Main entry point for bash tool
+            # Calls _run_in_sandbox with injected params
+      arguments:
+        path: druppie/mcp-servers/module-coding/v1/tools.py
+
+    - agent: core_explorer
+      parent_agent: architect
+      tool: builtin:done
+      arguments:
+        summary: "Agent core_explorer: Explored druppie/mcp-servers/module-coding/v1/tools.py. Found sandbox management: SANDBOX_RUNTIME config (default sysbox-runc), _run_in_sandbox() spawns Docker containers with workspace/cache mounts, bash() is the main entry point. Sandbox containers use DRUPPIE_SANDBOX_IMAGE."
+
+    # --- Architect resumes after core_explorer completes ---
+    - agent: architect
+      tool: coding:make_design
+      approval:
+        status: approved
+        by: architect
+      arguments:
+        path: docs/technical-research.md
+        content: |
+          # Technisch Onderzoek: Module Uitbreiding
+
+          ## Benaderingen
+          1. Uitbreiding van bestaande tools.py met een list_sandboxes functie
+          2. Aparte sandbox-management module
+
+          ## Externe Systemen
+          - Docker daemon (REUSE bestaande sandbox infra)
+
+          ## Aanbeveling
+          Benadering 1: uitbreiding van tools.py. De sandbox logica zit al
+          in module-coding, een aparte module voegt onnodig complexiteit toe.
+
+    - agent: architect
+      tool: coding:make_design
+      approval:
+        status: approved
+        by: architect
+      arguments:
+        path: docs/technical-design.md
+        content: |
+          # Technisch Ontwerp: Module Uitbreiding
+
+          ## Scope
+          Uitbreiding van module-coding met list_sandboxes tool.
+
+          ## Ontwerp
+          Nieuwe tool list_sandboxes in tools.py die actieve sandbox
+          containers opvraagt via Docker API.
+
+          ## Vereisten
+          - TR-01: Gebruik bestaande Docker client configuratie
+          - TR-02: Filter op DRUPPIE_SANDBOX_IMAGE label
+          - TR-03: Retourneer container ID, status, en session_id
+
+    - agent: architect
+      tool: coding:push_changes
+
+    - agent: architect
+      tool: builtin:done
+      arguments:
+        summary: "Agent architect: DESIGN_APPROVED. BUILD_PATH=CORE_UPDATE. Reviewed docs/functional-design.md — passes all architecture checks. Used core_explorer subagent for Level 3 codebase exploration of module-coding sandbox infrastructure. Wrote docs/technical-research.md comparing 2 approaches. Wrote docs/technical-design.md grounded in the chosen approach."
+
+  assert:
+    - check: architect-explorer-completed
+
+  verify:
+    - gitea_repo_exists: true
+    - file_exists: docs/functional-design.md
+    - file_exists: docs/technical-research.md
+    - file_exists: docs/technical-design.md

@@ -1,0 +1,37 @@
+Druppie Governance Platform has been installed!
+
+== Port-Forward Commands (for kind / local development) ==
+
+  # Backend API
+  kubectl port-forward svc/{{ include "druppie.fullname" . }}-backend 8000:8000 -n {{ .Release.Namespace }}
+
+  # Frontend
+  kubectl port-forward svc/{{ include "druppie.fullname" . }}-frontend 5173:5173 -n {{ .Release.Namespace }}
+
+  # Keycloak
+  kubectl port-forward svc/{{ include "druppie.fullname" . }}-keycloak 8080:8080 -n {{ .Release.Namespace }}
+
+  # Gitea HTTP
+  kubectl port-forward svc/{{ include "druppie.fullname" . }}-gitea 3000:3000 -n {{ .Release.Namespace }}
+
+  # Gitea SSH
+  kubectl port-forward svc/{{ include "druppie.fullname" . }}-gitea 2222:2222 -n {{ .Release.Namespace }}
+
+{{- if .Values.global.ingress.enabled }}
+
+== Ingress ==
+
+  Path-based routing on http://localhost:9080 (no /etc/hosts needed)
+
+  Frontend:     http://localhost:9080/
+  Backend API:  http://localhost:9080/api/
+  Keycloak:     http://localhost:9080/admin/ (or /realms/, /resources/, /js/, /welcome/)
+  Gitea:        http://localhost:9080/git/
+  Health:       http://localhost:9080/health
+  API Docs:     http://localhost:9080/docs
+{{- end }}
+
+== Checking Status ==
+
+  kubectl get pods -n {{ .Release.Namespace }}
+  kubectl get svc -n {{ .Release.Namespace }}

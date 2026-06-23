@@ -1,0 +1,88 @@
+{{- if .Values.nfs.enabled }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: nfs-share
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: nfs-server
+spec:
+  accessModes:
+    - ReadWriteOnce
+  {{- if .Values.nfs.storageClass }}
+  storageClassName: {{ .Values.nfs.storageClass | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.nfs.storageSize }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nfs-server
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: nfs-server
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: nfs-server
+  template:
+    metadata:
+      labels:
+        app: nfs-server
+    spec:
+      {{- if .Values.nfs.nodeSelector }}
+      nodeSelector:
+        {{- toYaml .Values.nfs.nodeSelector | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: nfs-server
+          image: erichough/nfs-server:2.2.1
+          ports:
+            - name: nfs
+              containerPort: 2049
+              protocol: TCP
+          env:
+            - name: NFS_EXPORT_0
+              value: "/data *(rw,async,no_subtree_check,no_root_squash,fsid=0)"
+            - name: NFS_VERSION
+              value: "4"
+          securityContext:
+            privileged: true
+          volumeMounts:
+            - name: nfs-storage
+              mountPath: /data
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "256Mi"
+      volumes:
+        - name: nfs-storage
+          persistentVolumeClaim:
+            claimName: nfs-share
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nfs-server
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: nfs-server
+spec:
+  type: ClusterIP
+  ports:
+    - name: nfs
+      port: 2049
+      protocol: TCP
+      targetPort: 2049
+  selector:
+    app: nfs-server
+{{- end }}

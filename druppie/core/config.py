@@ -144,6 +144,11 @@ class LLMSettings(BaseSettings):
         alias="FOUNDRY_API_URL",
         description="Azure Foundry API URL",
     )
+    deepinfra_api_key: str = Field(
+        default="",
+        alias="DEEPINFRA_API_KEY",
+        description="DeepInfra API key (required for translation service)",
+    )
 
 
 class GitHubAppSettings(BaseSettings):
@@ -245,11 +250,6 @@ class APISettings(BaseSettings):
         alias="CORS_ORIGINS",
         description="Comma-separated list of allowed CORS origins",
     )
-    dev_mode: bool = Field(
-        default=False,
-        alias="DEV_MODE",
-        description="Enable development mode (bypasses auth)",
-    )
 
     @property
     def cors_origins_list(self) -> list[str]:
@@ -287,7 +287,6 @@ class Settings(BaseSettings):
             gitea_configured=self.gitea.is_configured,
             llm_provider=self.llm.provider,
             llm_model=self.llm.zai_model,
-            dev_mode=self.api.dev_mode,
             workspace_root=str(self.workspace.root),
         )
 
@@ -349,6 +348,21 @@ class Settings(BaseSettings):
                     "GITHUB_APP_* variables to disable the feature."
                 )
 
+        # Translation: warn when DEEPINFRA_API_KEY is not set. The translation
+        # service uses DeepInfra regardless of LLM_PROVIDER, so a missing key
+        # silently disables all translation — Dutch users see English text with
+        # no error. We warn (not crash) because English-only deployments work
+        # fine without it.
+        if not self.llm.deepinfra_api_key:
+            logger.warning(
+                "deepinfra_api_key_not_configured",
+                message=(
+                    "DEEPINFRA_API_KEY is not set — the translation service will "
+                    "not work. Non-English users will see an error when starting "
+                    "a session. Set DEEPINFRA_API_KEY in .env to enable translation."
+                ),
+            )
+
 
 @lru_cache()
 def get_settings() -> Settings:
@@ -371,11 +385,6 @@ def get_settings() -> Settings:
 def get_database_url() -> str:
     """Get database URL."""
     return get_settings().database.url
-
-
-def is_dev_mode() -> bool:
-    """Check if running in development mode."""
-    return get_settings().api.dev_mode
 
 
 def get_workspace_root() -> Path:

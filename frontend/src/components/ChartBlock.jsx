@@ -22,6 +22,19 @@ const PALETTE = [
 ]
 const seriesColor = (i) => PALETTE[i % PALETTE.length]
 
+const formatCompact = (value) => {
+  if (value == null || typeof value !== 'number') return value
+  const abs = Math.abs(value)
+  if (abs >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`
+  if (abs >= 1_000) return `${(value / 1_000).toFixed(1)}K`
+  return Number.isInteger(value) ? value.toString() : value.toFixed(1)
+}
+
+const getFormatter = (spec) =>
+  spec?.number_format === 'compact' ? formatCompact : undefined
+
+export { formatCompact }
+
 export const parseSpec = (code) => {
   let parsed
   try {
@@ -76,28 +89,38 @@ const yLabelProp = (label) =>
 
 const renderXY = (spec) => {
   const { type, data, x_label, y_label } = spec
-  const margin = { top: 10, right: 20, left: 10, bottom: x_label ? 20 : 5 }
+  const fmt = getFormatter(spec)
+  const longestXLabel = data.reduce((m, d) => Math.max(m, String(d.x ?? '').length), 0)
+  const needsRotation = type !== 'horizontal_bar' && type !== 'scatter' && longestXLabel > 10
+  const bottomMargin = needsRotation ? 60 : (x_label ? 20 : 5)
+  const margin = { top: 10, right: 20, left: 10, bottom: bottomMargin }
+  const xTickProps = needsRotation
+    ? { fontSize: 11, angle: -45, textAnchor: 'end' }
+    : { fontSize: 12 }
+  const tooltipFmt = fmt ? { formatter: (v) => fmt(v) } : {}
+
+  const xInterval = data.length > 20 ? Math.ceil(data.length / 15) - 1 : 0
+
   if (type === 'bar') {
     return (
       <BarChart data={data} margin={margin}>
         <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-        <XAxis dataKey="x" tick={{ fontSize: 12 }} label={xLabelProp(x_label)} />
-        <YAxis tick={{ fontSize: 12 }} label={yLabelProp(y_label)} />
-        <Tooltip />
+        <XAxis dataKey="x" tick={xTickProps} interval={xInterval} label={xLabelProp(x_label)} />
+        <YAxis tick={{ fontSize: 12 }} tickFormatter={fmt} label={yLabelProp(y_label)} />
+        <Tooltip {...tooltipFmt} />
         <Bar dataKey="y" fill={PALETTE[0]} />
       </BarChart>
     )
   }
   if (type === 'horizontal_bar') {
-    // Vertical layout: x_label/y_label swap semantically — recharts XAxis is numeric, YAxis is categorical.
-    const longestLabel = data.reduce((m, d) => Math.max(m, String(d.x).length), 0)
-    const yWidth = Math.min(220, 8 + longestLabel * 6.5)
+    const maxLabelLen = data.reduce((m, d) => Math.max(m, String(d.x).length), 0)
+    const yWidth = Math.min(220, 8 + maxLabelLen * 6.5)
     return (
       <BarChart data={data} layout="vertical" margin={{ top: 10, right: 20, left: 10, bottom: 5 }}>
         <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-        <XAxis type="number" tick={{ fontSize: 12 }} label={yLabelProp(y_label) && undefined} />
+        <XAxis type="number" tick={{ fontSize: 12 }} tickFormatter={fmt} label={xLabelProp(y_label)} />
         <YAxis type="category" dataKey="x" tick={{ fontSize: 12 }} width={yWidth} />
-        <Tooltip />
+        <Tooltip {...tooltipFmt} />
         <Bar dataKey="y" fill={PALETTE[0]} />
       </BarChart>
     )
@@ -106,9 +129,9 @@ const renderXY = (spec) => {
     return (
       <LineChart data={data} margin={margin}>
         <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-        <XAxis dataKey="x" tick={{ fontSize: 12 }} label={xLabelProp(x_label)} />
-        <YAxis tick={{ fontSize: 12 }} label={yLabelProp(y_label)} />
-        <Tooltip />
+        <XAxis dataKey="x" tick={xTickProps} interval={xInterval} label={xLabelProp(x_label)} />
+        <YAxis tick={{ fontSize: 12 }} tickFormatter={fmt} label={yLabelProp(y_label)} />
+        <Tooltip {...tooltipFmt} />
         <Line type="monotone" dataKey="y" stroke={PALETTE[0]} strokeWidth={2} dot={false} />
       </LineChart>
     )
@@ -117,9 +140,9 @@ const renderXY = (spec) => {
     return (
       <AreaChart data={data} margin={margin}>
         <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-        <XAxis dataKey="x" tick={{ fontSize: 12 }} label={xLabelProp(x_label)} />
-        <YAxis tick={{ fontSize: 12 }} label={yLabelProp(y_label)} />
-        <Tooltip />
+        <XAxis dataKey="x" tick={xTickProps} interval={xInterval} label={xLabelProp(x_label)} />
+        <YAxis tick={{ fontSize: 12 }} tickFormatter={fmt} label={yLabelProp(y_label)} />
+        <Tooltip {...tooltipFmt} />
         <Area type="monotone" dataKey="y" stroke={PALETTE[0]} fill={PALETTE[0]} fillOpacity={0.3} />
       </AreaChart>
     )
@@ -128,36 +151,69 @@ const renderXY = (spec) => {
   return (
     <ScatterChart margin={margin}>
       <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-      <XAxis dataKey="x" type="number" tick={{ fontSize: 12 }} label={xLabelProp(x_label)} />
-      <YAxis dataKey="y" type="number" tick={{ fontSize: 12 }} label={yLabelProp(y_label)} />
-      <Tooltip cursor={{ strokeDasharray: '3 3' }} />
+      <XAxis dataKey="x" type="number" tick={{ fontSize: 12 }} tickFormatter={fmt} label={xLabelProp(x_label)} />
+      <YAxis dataKey="y" type="number" tick={{ fontSize: 12 }} tickFormatter={fmt} label={yLabelProp(y_label)} />
+      <Tooltip cursor={{ strokeDasharray: '3 3' }} {...tooltipFmt} />
       <Scatter data={data} fill={PALETTE[0]} />
     </ScatterChart>
   )
 }
 
+const TreemapContent = ({ x, y, width, height, name, value, fill, index }) => {
+  const bg = fill || seriesColor(index || 0)
+  if (width < 4 || height < 4) return null
+  const fmtVal = typeof value === 'number' ? formatCompact(value) : value
+  const showLabel = width >= 40 && height >= 24
+  const maxChars = Math.floor(width / 7)
+  return (
+    <g>
+      <rect x={x} y={y} width={width} height={height} fill={bg} stroke="#fff" strokeWidth={2} rx={2} />
+      {showLabel && (
+        <>
+          <text x={x + width / 2} y={y + height / 2 - 7} textAnchor="middle" fill="#fff" fontSize={12} fontWeight={500}>
+            {String(name).length > maxChars ? String(name).slice(0, maxChars - 1) + '…' : name}
+          </text>
+          <text x={x + width / 2} y={y + height / 2 + 9} textAnchor="middle" fill="#ffffffcc" fontSize={11}>
+            {fmtVal}
+          </text>
+        </>
+      )}
+    </g>
+  )
+}
+
 const renderNameValue = (spec) => {
   const { type, data } = spec
+  const fmt = getFormatter(spec)
   if (type === 'pie' || type === 'donut') {
     const innerRadius = type === 'donut' ? 60 : 0
+    const hasMany = data.length > 6
+    const labelFn = hasMany
+      ? ({ percent }) => percent >= 0.05 ? `${(percent * 100).toFixed(0)}%` : ''
+      : ({ name, percent }) => {
+          if (percent < 0.05) return ''
+          const short = name.length > 18 ? name.slice(0, 16) + '…' : name
+          return `${short} ${(percent * 100).toFixed(0)}%`
+        }
     return (
-      <PieChart>
+      <PieChart margin={{ top: 20, right: 20, bottom: 20, left: 20 }}>
         <Pie
           data={data}
           dataKey="value"
           nameKey="name"
           cx="50%"
           cy="50%"
-          outerRadius={100}
+          outerRadius={hasMany ? 80 : 90}
           innerRadius={innerRadius}
-          label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
+          label={labelFn}
+          labelLine={!hasMany}
         >
           {data.map((_, idx) => (
             <Cell key={idx} fill={seriesColor(idx)} />
           ))}
         </Pie>
-        <Tooltip />
-        <Legend />
+        <Tooltip formatter={fmt} />
+        <Legend wrapperStyle={{ fontSize: 12 }} />
       </PieChart>
     )
   }
@@ -169,7 +225,12 @@ const renderNameValue = (spec) => {
         nameKey="name"
         stroke="#fff"
         fill={PALETTE[0]}
-      />
+        content={<TreemapContent />}
+      >
+        {data.map((_, idx) => (
+          <Cell key={idx} fill={seriesColor(idx)} />
+        ))}
+      </Treemap>
     )
   }
   // funnel
@@ -188,18 +249,28 @@ const renderNameValue = (spec) => {
 
 const renderMultiSeries = (spec) => {
   const { type, data, series, x_label, y_label } = spec
+  const fmt = getFormatter(spec)
   const seriesKeys = series.map((s) => (typeof s === 'string' ? s : s.key))
   const seriesLabel = (s, i) => (typeof series[i] === 'string' ? s : series[i].label || s)
-  const margin = { top: 10, right: 20, left: 10, bottom: x_label ? 20 : 5 }
+  const longestXLabel = data.reduce((m, d) => Math.max(m, String(d.x ?? '').length), 0)
+  const needsRotation = longestXLabel > 10
+  const bottomMargin = needsRotation ? 60 : (x_label ? 20 : 5)
+  const margin = { top: 10, right: 20, left: 10, bottom: bottomMargin }
+  const xTickProps = needsRotation
+    ? { fontSize: 11, angle: -45, textAnchor: 'end' }
+    : { fontSize: 12 }
+  const tooltipFmt = fmt ? { formatter: (v) => fmt(v) } : {}
+
+  const xInterval = data.length > 20 ? Math.ceil(data.length / 15) - 1 : 0
 
   if (type === 'stacked_bar' || type === 'grouped_bar') {
     const stackProps = type === 'stacked_bar' ? { stackId: 'a' } : {}
     return (
       <BarChart data={data} margin={margin}>
         <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-        <XAxis dataKey="x" tick={{ fontSize: 12 }} label={xLabelProp(x_label)} />
-        <YAxis tick={{ fontSize: 12 }} label={yLabelProp(y_label)} />
-        <Tooltip />
+        <XAxis dataKey="x" tick={xTickProps} interval={xInterval} label={xLabelProp(x_label)} />
+        <YAxis tick={{ fontSize: 12 }} tickFormatter={fmt} label={yLabelProp(y_label)} />
+        <Tooltip {...tooltipFmt} />
         <Legend />
         {seriesKeys.map((key, i) => (
           <Bar key={key} dataKey={key} name={seriesLabel(key, i)} fill={seriesColor(i)} {...stackProps} />
@@ -211,9 +282,9 @@ const renderMultiSeries = (spec) => {
     return (
       <AreaChart data={data} margin={margin}>
         <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-        <XAxis dataKey="x" tick={{ fontSize: 12 }} label={xLabelProp(x_label)} />
-        <YAxis tick={{ fontSize: 12 }} label={yLabelProp(y_label)} />
-        <Tooltip />
+        <XAxis dataKey="x" tick={xTickProps} interval={xInterval} label={xLabelProp(x_label)} />
+        <YAxis tick={{ fontSize: 12 }} tickFormatter={fmt} label={yLabelProp(y_label)} />
+        <Tooltip {...tooltipFmt} />
         <Legend />
         {seriesKeys.map((key, i) => (
           <Area
@@ -234,9 +305,9 @@ const renderMultiSeries = (spec) => {
   return (
     <LineChart data={data} margin={margin}>
       <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-      <XAxis dataKey="x" tick={{ fontSize: 12 }} label={xLabelProp(x_label)} />
-      <YAxis tick={{ fontSize: 12 }} label={yLabelProp(y_label)} />
-      <Tooltip />
+      <XAxis dataKey="x" tick={xTickProps} interval={xInterval} label={xLabelProp(x_label)} />
+      <YAxis tick={{ fontSize: 12 }} tickFormatter={fmt} label={yLabelProp(y_label)} />
+      <Tooltip {...tooltipFmt} />
       <Legend />
       {seriesKeys.map((key, i) => (
         <Line
@@ -261,7 +332,10 @@ const renderChart = (spec) => {
 
 const frameHeight = (type, dataLen) => {
   if (type === 'horizontal_bar') return Math.min(700, Math.max(220, 28 * dataLen + 60))
-  if (type === 'treemap' || type === 'funnel') return 360
+  if (type === 'pie' || type === 'donut') return dataLen > 6 ? 420 : 380
+  if (type === 'treemap') return Math.min(500, Math.max(360, 20 * dataLen))
+  if (type === 'funnel') return 360
+  if (dataLen > 15) return 400
   return 320
 }
 

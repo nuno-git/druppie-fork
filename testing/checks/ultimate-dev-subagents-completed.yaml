@@ -1,0 +1,11 @@
+check:
+  name: ultimate-dev-subagents-completed
+  description: "ultimate_dev_core, core_explorer, and core_builder_subagent should all have completed successfully"
+  tags: [assertion]
+  assert:
+    - agent: ultimate_dev_core
+      completed: true
+    - agent: core_explorer
+      completed: true
+    - agent: core_builder_subagent
+      completed: true

@@ -21,13 +21,22 @@ Flow:
 All database operations go through repositories (no raw db session usage).
 """
 
+from contextlib import contextmanager
 from typing import TYPE_CHECKING
 from uuid import UUID
 
 import structlog
 
 from druppie.core.mcp_config import MCPConfig
+from druppie.core.translation import TranslationError, TranslationNotAvailableError
 from druppie.execution.mcp_http import MCPHttp, MCPHttpError
+from druppie.execution.path_validation import (
+    FILE_WRITE_TOOLS,
+    extract_file_paths,
+    normalize_path,
+    path_matches_pattern,
+    validate_file_path_access,
+)
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session as DBSession
@@ -53,16 +62,32 @@ BUILTIN_TOOLS = {
     "set_intent",
     "hitl_ask_question",
     "hitl_ask_multiple_choice_question",
+    "ask_expert_question",
+    "ask_expert_multiple_choice_question",
     "create_message",
     "invoke_skill",
-    "execute_coding_task",
     "test_report",
+    "read_attachment",
 }
 
-# HITL tools require user answer (create Question record)
+# HITL tools require user answer (create Question record).
+# ask_expert tools share the same pause/resume plumbing — the only
+# difference is who is allowed to answer (an expert role instead of the
+# session owner). They are stored in the same `questions` table.
 HITL_TOOLS = {
     "hitl_ask_question",
     "hitl_ask_multiple_choice_question",
+    "ask_expert_question",
+    "ask_expert_multiple_choice_question",
+}
+
+ASK_EXPERT_TOOLS = {
+    "ask_expert_question",
+    "ask_expert_multiple_choice_question",
+}
+
+ASK_EXPERT_CHOICE_TOOLS = {
+    "ask_expert_multiple_choice_question",
 }
 
 # Tools that can take significantly longer than the default 60s timeout.
@@ -75,6 +100,14 @@ LONG_RUNNING_TOOLS = {
     "compose_up",
 }
 LONG_RUNNING_TIMEOUT = 1200.0  # 20 minutes
+
+# Tools where the LLM controls the timeout via an argument.
+# The agent specifies how long it expects the command to take,
+# clamped to a maximum to prevent abuse.
+CUSTOM_TIMEOUT_TOOLS = {"bash"}
+CUSTOM_TIMEOUT_ARG = "timeout"
+CUSTOM_TIMEOUT_DEFAULT = 120.0   # 2 min if LLM doesn't specify
+CUSTOM_TIMEOUT_MAX = 3600.0      # 60 min hard cap
 
 
 class ToolExecutor:
@@ -89,22 +122,44 @@ class ToolExecutor:
 
     def __init__(
         self,
-        db: "DBSession",
+        db: "DBSession | None",
         mcp_http: MCPHttp,
         mcp_config: MCPConfig,
+        session_factory=None,
     ):
         """Initialize with db session and MCP components.
 
         Args:
-            db: Database session (passed to repositories)
+            db: Database session (passed to repositories). May be None when a
+                session_factory is supplied (the agent_runtime child path).
             mcp_http: HTTP client for MCP servers
             mcp_config: MCP configuration (approval rules, server URLs)
+            session_factory: Optional SessionLocal factory. When supplied, every
+                public entry method (execute / execute_after_approval /
+                complete_after_answer) runs against a SHORT-LIVED session opened
+                at the start of the call and closed when it returns, so a DB
+                connection is held only for the duration of that one tool call
+                (never idle across the agent loop's LLM awaits or while awaiting
+                grandchildren). The orchestrator path passes a live `db` and no
+                factory, preserving the original single-session behaviour.
         """
         self.db = db
         self.mcp_http = mcp_http
         self.mcp_config = mcp_config
+        self._session_factory = session_factory
 
         # Lazy load repositories
+        self._execution_repo = None
+        self._approval_repo = None
+        self._question_repo = None
+
+    def _bind_session(self, db: "DBSession") -> None:
+        """Rebind this executor (and its repos) to a fresh session.
+
+        Used by the short-lived session wrapper in factory mode so each tool
+        execution gets its own connection.
+        """
+        self.db = db
         self._execution_repo = None
         self._approval_repo = None
         self._question_repo = None
@@ -139,6 +194,7 @@ class ToolExecutor:
         tool_name: str,
         args: dict,
         session_id: UUID | None,
+        agent_run_id: UUID | None = None,
     ) -> dict:
         """Apply declarative injection rules from mcp_config.yaml.
 
@@ -181,7 +237,7 @@ class ToolExecutor:
         )
 
         # Create context for resolving paths
-        context = ToolContext(self.db, session_id)
+        context = ToolContext(self.db, session_id, agent_run_id=agent_run_id)
 
         # Apply each rule
         injected_args = dict(args)
@@ -261,6 +317,26 @@ class ToolExecutor:
                 error=str(e),
             )
             return None
+
+    # Delegates to druppie.execution.path_validation (shared with agent_runtime)
+    FILE_PATH_TOOLS = FILE_WRITE_TOOLS
+
+    _extract_file_paths = staticmethod(extract_file_paths)
+    _normalize_path = staticmethod(normalize_path)
+    _path_matches_pattern = staticmethod(path_matches_pattern)
+
+    def _validate_file_path_access(self, tool_call, agent_definition) -> str | None:
+        """Validate file paths against agent sandbox constraints (write-only)."""
+        if not agent_definition or not agent_definition.sandbox_constraints:
+            return None
+        constraints = agent_definition.sandbox_constraints
+        return validate_file_path_access(
+            tool_name=tool_call.tool_name,
+            arguments=tool_call.arguments or {},
+            agent_id=agent_definition.id,
+            allowed_paths=constraints.allowed_paths,
+            forbidden_paths=constraints.forbidden_paths,
+        )
 
     def _validate_tool_arguments(self, tool_call) -> str | None:
         """Validate tool arguments against the tool's schema.
@@ -402,7 +478,55 @@ class ToolExecutor:
 
         return False
 
+    @contextmanager
+    def _scoped_session(self):
+        """Yield a short-lived session for one tool execution (factory mode).
+
+        Opens a fresh session from the configured factory, rebinds this
+        executor's repos to it, and closes it on exit so the connection is
+        returned to the pool the moment the tool call finishes. In non-factory
+        (orchestrator) mode this is a no-op that leaves the injected session in
+        place.
+        """
+        if self._session_factory is None:
+            yield
+            return
+        db = self._session_factory()
+        previous_db = self.db
+        try:
+            self._bind_session(db)
+            yield
+        finally:
+            try:
+                db.close()
+            finally:
+                # Restore prior binding (None in factory mode) so a stale,
+                # now-closed session is never reused on the next call.
+                self.db = previous_db
+                self._execution_repo = None
+                self._approval_repo = None
+                self._question_repo = None
+
     async def execute(self, tool_call_id: UUID) -> str:
+        """Execute a tool call (public entry — opens a short-lived session in factory mode)."""
+        with self._scoped_session():
+            return await self._execute_impl(tool_call_id)
+
+    async def execute_after_approval(self, approval_id: UUID) -> str:
+        """Execute a tool after approval (public entry — short-lived session in factory mode)."""
+        with self._scoped_session():
+            return await self._execute_after_approval_impl(approval_id)
+
+    async def complete_after_answer(
+        self, question_id: UUID, answer_english: str, user_answer: str | None = None, selected_choices: list[int] | None = None
+    ) -> str:
+        """Complete a HITL tool after answer (public entry — short-lived session in factory mode)."""
+        with self._scoped_session():
+            return await self._complete_after_answer_impl(
+                question_id, answer_english, user_answer, selected_choices
+            )
+
+    async def _execute_impl(self, tool_call_id: UUID) -> str:
         """Execute a tool call.
 
         This is the main entry point. It:
@@ -560,13 +684,26 @@ class ToolExecutor:
                     self.db.commit()
                     return ToolCallStatus.FAILED
 
+            # Validate file-path access for specialist agents
+            path_error = self._validate_file_path_access(tool_call, agent_definition)
+            if path_error:
+                logger.warning("file_path_access_denied", error=path_error)
+                self.execution_repo.update_tool_call(
+                    tool_call.id,
+                    status=ToolCallStatus.FAILED,
+                    error=path_error,
+                )
+                self.db.commit()
+                return ToolCallStatus.FAILED
+
             needs_approval, required_role = self.mcp_config.needs_approval(
                 tool_call.mcp_server,
                 tool_call.tool_name,
                 agent_definition=agent_definition,
             )
             if needs_approval:
-                # Create Approval record and pause execution
+                # Translate design content before showing the approval card
+                await self._translate_design_content(tool_call)
                 return await self._create_approval_and_wait(tool_call, required_role)
 
         # Step 3.5: Check approval for builtin tools (via agent approval_overrides)
@@ -594,7 +731,7 @@ class ToolExecutor:
             # MCP tools execute via HTTP
             return await self._execute_mcp_tool(tool_call)
 
-    async def execute_after_approval(self, approval_id: UUID) -> str:
+    async def _execute_after_approval_impl(self, approval_id: UUID) -> str:
         """Execute a tool after it has been approved.
 
         Called when user approves a tool execution in the UI.
@@ -656,14 +793,19 @@ class ToolExecutor:
             return await self._execute_builtin_tool(tool_call)
         return await self._execute_mcp_tool(tool_call)
 
-    async def complete_after_answer(self, question_id: UUID, answer: str) -> str:
+    async def _complete_after_answer_impl(
+        self, question_id: UUID, answer_english: str, user_answer: str | None = None, selected_choices: list[int] | None = None
+    ) -> str:
         """Complete a HITL tool after the user answers.
 
         Called when user submits an answer to a question in the UI.
 
         Args:
             question_id: ID of the answered Question record
-            answer: User's answer
+            answer_english: User's answer translated to English (for the agent)
+            user_answer: Original answer in user's language (what the user typed).
+                         If None, uses answer_english for both.
+            selected_choices: Indices of selected multiple-choice options
 
         Returns:
             Final status: completed
@@ -674,8 +816,8 @@ class ToolExecutor:
             logger.error("question_not_found", question_id=str(question_id))
             return ToolCallStatus.FAILED
 
-        # Update question with answer
-        self.question_repo.update_answer(question_id, answer)
+        # Update question with the user's original answer (their language)
+        self.question_repo.update_answer(question_id, user_answer or answer_english, selected_choices)
 
         # Get associated tool call
         tool_call_id = question.tool_call_id
@@ -683,13 +825,42 @@ class ToolExecutor:
             logger.error("question_missing_tool_call_id", question_id=str(question_id))
             return ToolCallStatus.FAILED
 
-        # Build result that will be passed back to agent
+        # Build result — contains both English (for agent) and user's original (for frontend).
+        # message_history.py strips user_answer when reconstructing for agents.
+        choices = None
+        if question.choices:
+            try:
+                choices = [c["text"] if isinstance(c, dict) else c for c in question.choices]
+            except (TypeError, KeyError):
+                choices = question.choices
+
         result = {
             "status": "answered",
-            "answer": answer,
-            "question": question.question,
+            "answer_english": answer_english,
+            "user_answer": user_answer or answer_english,
+            "question": question.question_english or question.question,
             "question_type": question.question_type,
         }
+        if selected_choices is not None and choices:
+            result["selected_choices"] = [choices[i] for i in selected_choices if i < len(choices)]
+
+        # Include uploaded file contents so the agent sees them immediately
+        # (weaker models won't call read_attachment on their own)
+        from druppie.db.models import MessageAttachment
+        question_attachments = (
+            self.db.query(MessageAttachment)
+            .filter(MessageAttachment.question_id == question_id)
+            .all()
+        )
+        if question_attachments:
+            file_contents = []
+            for att in question_attachments:
+                if att.extracted_text:
+                    file_contents.append(
+                        f"--- {att.original_filename} ---\n{att.extracted_text}"
+                    )
+            if file_contents:
+                result["uploaded_file_contents"] = "\n\n".join(file_contents)
 
         # Update tool call with result
         self.execution_repo.update_tool_call(
@@ -706,6 +877,166 @@ class ToolExecutor:
         )
 
         return ToolCallStatus.COMPLETED
+
+    # Dutch file path mapping for design documents
+    DESIGN_TRANSLATION_PATHS = {
+        "docs/functional-design.md": "docs/functioneel-ontwerp.md",
+        "docs/technical-design.md": "docs/technisch-ontwerp.md",
+        "docs/technical-research.md": "docs/technisch-onderzoek.md",
+    }
+
+    async def _translate_design_content(self, tool_call) -> None:
+        """Translate design content to the session language before the approval gate.
+
+        For make_design calls in non-English sessions, translates the English content
+        and adds translated_content/translated_path to tool_call.arguments.
+        The approval card shows the translated version; the MCP tool writes both files.
+
+        On translation failure, switches the session to English and notifies the user.
+        """
+        if tool_call.tool_name != "make_design":
+            return
+
+        from druppie.repositories import SessionRepository
+        session_repo = SessionRepository(self.db)
+        session = session_repo.get_by_id(tool_call.session_id)
+
+        if not session or not session.language or session.language == "en":
+            return
+
+        args = tool_call.arguments or {}
+        content = args.get("content")
+        path = args.get("path")
+        if not content or not path:
+            return
+
+        translated_path = self.DESIGN_TRANSLATION_PATHS.get(path)
+        if not translated_path:
+            return
+
+        try:
+            from druppie.core.translation import get_translation_service
+            translator = get_translation_service()
+            translated_content = await self._translate_long_content(
+                translator, content, session.language
+            )
+            if translated_content and translated_content != content:
+                enriched_args = dict(args)
+                enriched_args["translated_content"] = translated_content
+                enriched_args["translated_path"] = translated_path
+                tool_call.arguments = enriched_args
+                self.execution_repo.update_tool_call_arguments(
+                    tool_call.id, enriched_args
+                )
+                self.db.flush()
+                logger.info(
+                    "design_content_translated",
+                    tool_call_id=str(tool_call.id),
+                    path=path,
+                    translated_path=translated_path,
+                )
+        except TranslationNotAvailableError:
+            self._notify_translation_unavailable(
+                tool_call.session_id, session_repo,
+                reason="De vertalingsservice is niet geconfigureerd (DEEPINFRA_API_KEY ontbreekt).",
+            )
+        except Exception as e:
+            logger.warning(
+                "design_translation_failed",
+                tool_call_id=str(tool_call.id),
+                path=path,
+                error=str(e),
+            )
+            self._notify_translation_unavailable(
+                tool_call.session_id, session_repo,
+                reason=f"Er is een fout opgetreden bij het vertalen: {str(e)[:150]}",
+            )
+
+    def _notify_translation_unavailable(
+        self, session_id, session_repo, *, reason: str
+    ) -> None:
+        """Switch session to English and inject a user-facing message."""
+        session_repo.update_language(session_id, "en")
+
+        message = (
+            f"⚠️ **Vertaling niet beschikbaar** — {reason}\n\n"
+            "De sessie gaat verder in het Engels. Alle documenten worden in het Engels opgesteld.\n\n"
+            "---\n\n"
+            f"⚠️ **Translation unavailable** — The translation service encountered an error. "
+            "This session will continue in English."
+        )
+
+        seq = self.execution_repo.get_next_sequence_number(session_id)
+        self.execution_repo.create_message(
+            session_id=session_id,
+            role="system",
+            content=message,
+            sequence_number=seq,
+        )
+        self.db.flush()
+        logger.info("translation_fallback_to_english", session_id=str(session_id))
+
+    async def _translate_long_content(
+        self, translator, content: str, target_language: str
+    ) -> str:
+        """Translate long markdown by splitting on heading boundaries."""
+        import asyncio
+        import re
+
+        if len(content) < 3000:
+            return await translator.translate_from_english(content, target_language)
+
+        sections = re.split(r"(^#{1,3}\s+.+$)", content, flags=re.MULTILINE)
+
+        chunks = []
+        current = ""
+        for part in sections:
+            if re.match(r"^#{1,3}\s+", part):
+                if current:
+                    chunks.append(current)
+                current = part
+            else:
+                current += part
+        if current:
+            chunks.append(current)
+
+        untranslated_count = 0
+
+        async def _translate_chunk(chunk):
+            nonlocal untranslated_count
+            if not chunk.strip():
+                return chunk
+
+            heading_prefix = ""
+            heading_match = re.match(r"^(#{1,3}\s+)", chunk)
+            if heading_match:
+                heading_prefix = heading_match.group(1)
+
+            try:
+                result = await translator.translate_from_english(chunk, target_language)
+                if heading_prefix and not re.match(r"^#{1,3}\s+", result):
+                    result = heading_prefix + result
+                return result
+            except TranslationError as e:
+                untranslated_count += 1
+                logger.warning(
+                    "translation_chunk_failed",
+                    error=str(e)[:200],
+                    chunk_length=len(chunk),
+                )
+                return f"\n\n> **[NIET VERTAALD / NOT TRANSLATED]**\n\n{chunk}"
+
+        translated = await asyncio.gather(*[_translate_chunk(c) for c in chunks])
+        result = "".join(translated)
+
+        if untranslated_count:
+            logger.warning(
+                "translation_partially_failed",
+                untranslated_chunks=untranslated_count,
+                total_chunks=len(chunks),
+            )
+
+        return result
 
     async def _create_approval_and_wait(self, tool_call, required_role: str | None) -> str:
         """Create an Approval record and set tool call to waiting.
@@ -748,35 +1079,153 @@ class ToolExecutor:
         return ToolCallStatus.WAITING_APPROVAL
 
     async def _execute_hitl_tool(self, tool_call) -> str:
-        """Execute a HITL tool by creating a Question record.
+        """Execute a HITL or ask_expert tool by creating a Question record.
 
-        HITL (Human-in-the-Loop) tools pause execution to ask the user a question.
-        Creates a Question record via QuestionRepository.
+        Both tool families pause execution and create a Question record.
+        The difference is who can answer:
+        - HITL: session owner only (expert_role is NULL)
+        - ask_expert: any user with the agent-allowed expert_role
+        Translates English agent output to the user's language before storing.
 
         Args:
             tool_call: The ToolCall model
 
         Returns:
-            ToolCallStatus.WAITING_ANSWER
+            ToolCallStatus.WAITING_ANSWER, or FAILED if expert_role is invalid
         """
         args = tool_call.arguments or {}
+        is_expert_tool = tool_call.tool_name in ASK_EXPERT_TOOLS
 
-        # Determine question type from tool name
-        if tool_call.tool_name == "hitl_ask_multiple_choice_question":
+        question_text = args.get("question", "")
+
+        # Choices: both *_multiple_choice_* variants use the same shape
+        if tool_call.tool_name in (
+            "hitl_ask_multiple_choice_question",
+            "ask_expert_multiple_choice_question",
+        ):
             question_type = "choice"
-            choices = [{"text": c} for c in args.get("choices", [])]
+            raw_choices = args.get("choices", [])
         else:
             question_type = "text"
-            choices = None
+            raw_choices = []
+
+        # Save English originals before translation
+        english_question = question_text
+        english_choices = list(raw_choices) if raw_choices else None
+        is_translated = False
+
+        # Translate question and choices to the user's language
+        session_repo = None
+        session = None
+        try:
+            from druppie.repositories import SessionRepository
+            from druppie.core.translation import get_translation_service
+            session_repo = SessionRepository(self.db)
+            session = session_repo.get_by_id(tool_call.session_id)
+            if session and session.language and session.language != "en":
+                translator = get_translation_service()
+                question_text = await translator.translate_from_english(
+                    question_text, session.language
+                )
+                if raw_choices:
+                    translated_choices = []
+                    for c in raw_choices:
+                        translated_choices.append(
+                            await translator.translate_label(c, session.language)
+                        )
+                    raw_choices = translated_choices
+                context_text = args.get("context", "")
+                if context_text:
+                    translated_context = await translator.translate_from_english(
+                        context_text, session.language
+                    )
+                    updated_args = dict(args)
+                    updated_args["context"] = translated_context
+                    self.execution_repo.update_tool_call_arguments(tool_call.id, updated_args)
+                is_translated = True
+                logger.info(
+                    "hitl_question_translated",
+                    tool_call_id=str(tool_call.id),
+                    target_language=session.language,
+                )
+        except TranslationNotAvailableError:
+            if session_repo:
+                self._notify_translation_unavailable(
+                    tool_call.session_id, session_repo,
+                    reason="De vertalingsservice is niet geconfigureerd (DEEPINFRA_API_KEY ontbreekt).",
+                )
+        except Exception as e:
+            logger.warning("hitl_question_translation_failed", error=str(e))
+            if session and session_repo and session.language and session.language != "en":
+                self._notify_translation_unavailable(
+                    tool_call.session_id, session_repo,
+                    reason=f"Er is een fout opgetreden bij het vertalen: {str(e)[:150]}",
+                )
+
+        choices = [{"text": c} for c in raw_choices] if raw_choices else None
+
+        # For ask_expert, validate that the requested expert_role is allowed
+        # by the agent's YAML. Without this gate, an LLM could route any
+        # question to any role. An agent with no `experts:` declared cannot
+        # use these tools at all — we fail loudly rather than silently
+        # allowing every role.
+        expert_role = None
+        if is_expert_tool:
+            expert_role = (args.get("expert_role") or "").strip()
+            if not expert_role:
+                error = (
+                    "ask_expert tools require an 'expert_role' argument naming "
+                    "the role of the expert pool to ask."
+                )
+                self.execution_repo.update_tool_call(
+                    tool_call.id,
+                    status=ToolCallStatus.FAILED,
+                    error=error,
+                )
+                self.db.commit()
+                return ToolCallStatus.FAILED
+
+            agent_definition = self._get_agent_definition(tool_call.agent_run_id)
+            allowed = agent_definition.experts if agent_definition else []
+            if not allowed:
+                error = (
+                    f"Agent '{agent_definition.id if agent_definition else '?'}' "
+                    f"has no 'experts:' declared in its YAML, so ask_expert "
+                    f"tools are disabled for this agent. Add an `experts:` "
+                    f"list to the agent definition to enable them."
+                )
+                self.execution_repo.update_tool_call(
+                    tool_call.id,
+                    status=ToolCallStatus.FAILED,
+                    error=error,
+                )
+                self.db.commit()
+                return ToolCallStatus.FAILED
+            if expert_role not in allowed:
+                error = (
+                    f"Agent '{agent_definition.id if agent_definition else '?'}' is "
+                    f"not allowed to ask experts with role '{expert_role}'. "
+                    f"Allowed experts: {allowed}."
+                )
+                self.execution_repo.update_tool_call(
+                    tool_call.id,
+                    status=ToolCallStatus.FAILED,
+                    error=error,
+                )
+                self.db.commit()
+                return ToolCallStatus.FAILED
 
         # Create question record via repository
         question = self.question_repo.create(
             session_id=tool_call.session_id,
             agent_run_id=tool_call.agent_run_id,
             tool_call_id=tool_call.id,
-            question=args.get("question", ""),
+            question=question_text,
             question_type=question_type,
             choices=choices,
+            expert_role=expert_role,
+            question_english=english_question if is_translated else None,
+            choices_english=[{"text": c} for c in english_choices] if english_choices and is_translated else None,
         )
 
         # Update tool call status to waiting
@@ -791,6 +1240,7 @@ class ToolExecutor:
             question_id=str(question.id),
             tool_call_id=str(tool_call.id),
             question_type=question_type,
+            expert_role=expert_role,
         )
 
         return ToolCallStatus.WAITING_ANSWER
@@ -824,6 +1274,7 @@ class ToolExecutor:
                 session_id=tool_call.session_id,
                 agent_run_id=tool_call.agent_run_id,
                 execution_repo=self.execution_repo,
+                tool_call_id=tool_call.id,
             )
 
             # Handle sandbox delegation — tool is waiting for external callback
@@ -832,21 +1283,13 @@ class ToolExecutor:
                 self.execution_repo.update_tool_call(
                     tool_call.id,
                     status=ToolCallStatus.WAITING_SANDBOX,
-                    result=result,  # Store sandbox_session_id for resume
-                    sandbox_waiting_at=datetime.now(timezone.utc),  # For accurate watchdog timeout
+                    result=result,
+                    sandbox_waiting_at=datetime.now(timezone.utc),
                 )
-                # Link the SandboxSession record to this tool call for direct lookup
-                # (avoids full table scan + JSON parsing in the webhook handler)
-                sandbox_session_id = result.get("sandbox_session_id")
-                if sandbox_session_id:
-                    from druppie.repositories import SandboxSessionRepository
-                    sandbox_repo = SandboxSessionRepository(self.db)
-                    sandbox_repo.update_tool_call_id(sandbox_session_id, tool_call.id)
                 self.db.commit()
                 logger.info(
                     "builtin_tool_waiting_sandbox",
                     tool_call_id=str(tool_call.id),
-                    sandbox_session_id=sandbox_session_id,
                 )
                 return ToolCallStatus.WAITING_SANDBOX
 
@@ -854,11 +1297,14 @@ class ToolExecutor:
             is_success = result.get("success", True) if isinstance(result, dict) else True
             status = ToolCallStatus.COMPLETED if is_success else ToolCallStatus.FAILED
 
+            # Keep the full result even on failure — builtin tools may
+            # return diagnostic context that the LLM needs to decide
+            # whether to retry, switch approach, or give up.
             self.execution_repo.update_tool_call(
                 tool_call.id,
                 status=status,
-                result=result if is_success else None,
-                error=result.get("error") if not is_success else None,
+                result=result,
+                error=result.get("error") if (not is_success and isinstance(result, dict)) else None,
             )
             self.db.commit()
 
@@ -901,7 +1347,12 @@ class ToolExecutor:
         Returns:
             ToolCallStatus.COMPLETED or ToolCallStatus.FAILED
         """
-        args = tool_call.arguments or {}
+        # Copy to avoid mutating the ORM model's JSON dict in-place
+        args = dict(tool_call.arguments or {})
+
+        # Extract platform-injected translation fields before sending to MCP
+        translated_content = args.pop("translated_content", None)
+        translated_path = args.pop("translated_path", None)
 
         logger.info(
             "mcp_tool_pre_injection",
@@ -919,6 +1370,7 @@ class ToolExecutor:
             tool_name=tool_call.tool_name,
             args=args,
             session_id=tool_call.session_id,
+            agent_run_id=tool_call.agent_run_id,
         )
 
         logger.info(
@@ -938,11 +1390,23 @@ class ToolExecutor:
             )
             self.db.commit()
 
+            if tool_call.tool_name == "bash":
+                args["tool_call_id"] = str(tool_call.id)
+
             # Long-running tools (run_tests, install_test_dependencies) get a
             # generous 20-min client timeout. Server-side subprocess timeouts
             # (300s/180s) should fire first, but this prevents infinite hangs
             # if the MCP server crashes or the network drops.
-            timeout = LONG_RUNNING_TIMEOUT if tool_call.tool_name in LONG_RUNNING_TOOLS else 60.0
+            if tool_call.tool_name in CUSTOM_TIMEOUT_TOOLS:
+                try:
+                    requested = float(args.get(CUSTOM_TIMEOUT_ARG, CUSTOM_TIMEOUT_DEFAULT))
+                except (TypeError, ValueError):
+                    requested = CUSTOM_TIMEOUT_DEFAULT
+                timeout = min(requested, CUSTOM_TIMEOUT_MAX)
+            elif tool_call.tool_name in LONG_RUNNING_TOOLS:
+                timeout = LONG_RUNNING_TIMEOUT
+            else:
+                timeout = 60.0
 
             result = await self.mcp_http.call(
                 tool_call.mcp_server,
@@ -954,14 +1418,33 @@ class ToolExecutor:
             # Check if result indicates failure
             is_success = result.get("success", True)
 
-            # Update tool call with result. Preserve the full result body on
-            # failure too so test assertions and downstream callers can inspect
-            # the structured error payload, not just the error message string.
+            # Write translated design file after English original succeeds
+            if is_success and translated_content and translated_path:
+                try:
+                    await self.mcp_http.call(
+                        tool_call.mcp_server,
+                        "write_file",
+                        {**args, "path": translated_path, "content": translated_content},
+                        timeout_seconds=60.0,
+                    )
+                    logger.info(
+                        "translated_design_written",
+                        tool_call_id=str(tool_call.id),
+                        translated_path=translated_path,
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "translated_design_write_failed",
+                        tool_call_id=str(tool_call.id),
+                        translated_path=translated_path,
+                        error=str(e),
+                    )
+
             self.execution_repo.update_tool_call(
                 tool_call.id,
                 status=ToolCallStatus.COMPLETED if is_success else ToolCallStatus.FAILED,
                 result=result,
-                error=result.get("error") if not is_success else None,
+                error=result.get("error") or result.get("stderr") if not is_success else None,
             )
             self.db.commit()
 

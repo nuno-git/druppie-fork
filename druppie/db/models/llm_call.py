@@ -27,8 +27,11 @@ class LlmCall(Base):
     # Full request/response data for debugging
     request_messages = Column(JSON)  # Array of messages sent to LLM
     response_content = Column(Text)  # LLM response text
+    thinking_content = Column(Text, nullable=True)
     response_tool_calls = Column(JSON)  # Tool calls returned by LLM
     tools_provided = Column(JSON)  # Tools available to the LLM
+    raw_request = Column(JSON, nullable=True)
+    raw_response = Column(JSON, nullable=True)
     created_at = Column(DateTime(timezone=True), default=utcnow)
 
     # Relationships
@@ -48,7 +51,10 @@ class LlmCall(Base):
             "duration_ms": self.duration_ms,
             "request_messages": self.request_messages,
             "response_content": self.response_content,
+            "thinking_content": self.thinking_content,
             "response_tool_calls": self.response_tool_calls,
             "tools_provided": self.tools_provided,
+            "raw_request": self.raw_request,
+            "raw_response": self.raw_response,
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }

@@ -24,7 +24,7 @@ from uuid import UUID
 import structlog
 
 from ..repositories import QuestionRepository, SessionRepository
-from ..domain import QuestionDetail, QuestionStatus
+from ..domain import QuestionDetail, QuestionStatus, PendingQuestionList
 from ..api.errors import NotFoundError, AuthorizationError, ConflictError
 
 logger = structlog.get_logger()
@@ -47,6 +47,25 @@ class QuestionService:
         self.question_repo = question_repo
         self.session_repo = session_repo
 
+    def get_pending_for_user(
+        self,
+        user_id: UUID,
+        user_roles: list[str],
+        is_admin: bool = False,
+    ) -> PendingQuestionList:
+        """List pending questions the user can answer.
+
+        Combines:
+            - Regular HITL questions for sessions the user owns.
+            - Expert questions targeted at any of the user's roles.
+            - Admin: every pending question.
+        """
+        return self.question_repo.get_pending_for_user_or_expert(
+            user_id=user_id,
+            user_roles=user_roles,
+            is_admin=is_admin,
+        )
+
     def answer(
         self,
         question_id: UUID,
@@ -54,6 +73,7 @@ class QuestionService:
         answer: str,
         selected_choices: list[int] | None = None,
         is_admin: bool = False,
+        user_roles: list[str] | None = None,
     ) -> QuestionDetail:
         """Record an answer to a question.
 
@@ -89,12 +109,26 @@ class QuestionService:
         if not question:
             raise NotFoundError("question", str(question_id))
 
-        # Check ownership via session (admins can answer any question)
         session = self.session_repo.get_by_id(question.session_id)
         if not session:
             raise NotFoundError("session", str(question.session_id))
-        if session.user_id != user_id and not is_admin:
-            raise AuthorizationError("Can only answer questions in your own sessions")
+
+        # Authorization rules
+        # - Admin can always answer
+        # - Expert question (expert_role set): only users with that role
+        # - Regular HITL: only the session owner
+        if not is_admin:
+            if question.expert_role:
+                if not user_roles or question.expert_role not in user_roles:
+                    raise AuthorizationError(
+                        f"Only users with the '{question.expert_role}' role can answer this question",
+                        required_roles=[question.expert_role],
+                    )
+            else:
+                if session.user_id != user_id:
+                    raise AuthorizationError(
+                        "Only the session owner can answer this question",
+                    )
 
         # Check not already answered
         if question.status != QuestionStatus.PENDING.value:
@@ -105,6 +139,7 @@ class QuestionService:
             question_id=question_id,
             answer=answer,
             selected_choices=selected_choices,
+            answered_by=user_id,
         )
         self.question_repo.commit()
 

@@ -9,11 +9,12 @@ import remarkGfm from 'remark-gfm'
 import CodeBlock from '../CodeBlock'
 import ChartBlock from '../ChartBlock'
 import MermaidBlock from '../MermaidBlock'
+import ArchimateBlock from '../ArchimateBlock'
 import { getAgentConfig } from '../../utils/agentConfig'
 
 // --- Contexts for rewriting relative links in rendered markdown ---
 //
-// ProjectRepoContext  — set by SessionDetail to {repo_url, default_branch}
+// ProjectRepoContext  — set by SessionDetail to {id, repo_url, default_branch}
 // SourceFileContext   — set per file preview (e.g. `docs/functional-design.md`)
 //                       so `./foo.md` in that file resolves relative to the
 //                       file's directory, like Gitea/GitHub do.
@@ -96,6 +97,9 @@ export const chatMarkdownComponents = {
     const codeString = String(children).replace(/\n$/, '')
     if (match?.[1] === 'mermaid') {
       return <MermaidBlock code={codeString} />
+    }
+    if (match?.[1] === 'archimate') {
+      return <ArchimateBlock code={codeString} />
     }
     if (match?.[1] === 'chart') {
       return <ChartBlock code={codeString} />
@@ -234,17 +238,38 @@ export const extractSurfacedApprovals = (llmCalls) => {
   return items
 }
 
-// --- Extract HITL questions from an agent run's LLM calls ---
+// --- Recursive helper: scan a run (and its subagent_runs) for a pending question ---
+
+const _scanRunForPendingQuestion = (run) => {
+  for (const llm of run.llm_calls || []) {
+    for (const tc of llm.tool_calls || []) {
+      if (tc.question_id && tc.status === 'waiting_answer') {
+        return { tc, agentId: run.agent_id }
+      }
+    }
+  }
+  for (const sub of run.subagent_runs || []) {
+    const found = _scanRunForPendingQuestion(sub)
+    if (found) return found
+  }
+  return null
+}
+
+// --- Extract questions from an agent run (including subagent_runs) ---
 
 export const extractQuestions = (agentRun) => {
   const questions = []
-  agentRun.llm_calls?.forEach((llm) => {
-    llm.tool_calls?.forEach((tc) => {
-      if (tc.tool_name?.includes('hitl_ask')) {
-        questions.push({ tc, agentId: agentRun.agent_id })
-      }
+  const scanRun = (run) => {
+    run.llm_calls?.forEach((llm) => {
+      llm.tool_calls?.forEach((tc) => {
+        if (tc.question_id) {
+          questions.push({ tc, agentId: run.agent_id })
+        }
+      })
     })
-  })
+    run.subagent_runs?.forEach(scanRun)
+  }
+  scanRun(agentRun)
   return questions
 }
 
@@ -254,13 +279,8 @@ export const findPendingQuestion = (timeline) => {
   if (!timeline) return null
   for (const entry of timeline) {
     if (entry.type !== 'agent_run' || !entry.agent_run) continue
-    for (const llm of entry.agent_run.llm_calls || []) {
-      for (const tc of llm.tool_calls || []) {
-        if (tc.tool_name?.includes('hitl_ask') && tc.status === 'waiting_answer') {
-          return { tc, agentId: entry.agent_run.agent_id }
-        }
-      }
-    }
+    const found = _scanRunForPendingQuestion(entry.agent_run)
+    if (found) return found
   }
   return null
 }
@@ -422,7 +442,7 @@ export const extractSurfacedFileWrites = (agentRun) => {
       const toolName = tc.tool_name || ''
       const args = tc.arguments || {}
 
-      if (toolName.includes('write_file') && !toolName.includes('batch')) {
+      if ((toolName.includes('write_file') || toolName === 'make_design' || toolName.endsWith(':make_design')) && !toolName.includes('batch')) {
         if (args.path && args.content) {
           files.push({ path: args.path, content: args.content })
         }
@@ -460,14 +480,15 @@ export const extractDependencyInstalls = (agentRun) => {
 
 export const extractOrderedItems = (agentRun, hasFollowingMessage) => {
   const items = []
+  const subagentRuns = agentRun?.subagent_runs || []
+
   agentRun?.llm_calls?.forEach((llm) => {
     llm.tool_calls?.forEach((tc) => {
       // Approvals (only when no following message)
       if (!hasFollowingMessage && tc.approval && tc.approval.status !== 'pending') {
         items.push({ type: 'approval', tc })
       }
-      // HITL questions
-      if (tc.tool_name?.includes('hitl_ask')) {
+      if (tc.question_id && tc.status !== 'pending') {
         items.push({ type: 'question', tc, agentId: agentRun.agent_id })
       }
       // Test results
@@ -484,9 +505,42 @@ export const extractOrderedItems = (agentRun, hasFollowingMessage) => {
           if (raw?.sandbox_session_id) items.push({ type: 'sandbox', data: raw })
         } catch { /* skip */ }
       }
+      if (tc.tool_name === 'subagents') {
+        const linkedRuns = subagentRuns.filter(sub => sub.spawning_tool_call_id === tc.id)
+        if (linkedRuns.length > 0) {
+          items.push({ type: 'subagents', subagentRuns: linkedRuns })
+        }
+      }
     })
   })
+
+  const hasSubagentsToolCall = agentRun?.llm_calls?.some(llm =>
+    llm.tool_calls?.some(tc => tc.tool_name === 'subagents')
+  ) ?? false
+  if (!hasSubagentsToolCall && subagentRuns.length > 0) {
+    items.push({ type: 'subagents', subagentRuns })
+  }
+
   return items
+}
+
+// --- Build file list for approval preview (handles bilingual design documents) ---
+
+export const buildApprovalFileList = (args) => {
+  const filePath = args.path || args.file_path
+  const content = args.content
+  const batchFiles = args.files
+  const isBatchWrite = !!batchFiles && typeof batchFiles === 'object' && Object.keys(batchFiles).length > 0
+  const hasFile = !!(content || isBatchWrite)
+  if (!hasFile) return null
+  const hasTranslation = !!args.translated_content && !!args.translated_path
+  if (isBatchWrite) {
+    return Object.entries(batchFiles).map(([p, c]) => ({ path: p, content: c }))
+  }
+  if (hasTranslation) {
+    return [{ path: args.translated_path, content: args.translated_content }]
+  }
+  return [{ path: filePath || 'file', content }]
 }
 
 // Statuses that indicate a session is actively doing work or waiting for external input

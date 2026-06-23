@@ -8,7 +8,7 @@ from uuid import UUID
 from pydantic import BaseModel
 
 from .approval import ApprovalSummary
-from .common import AgentRunStatus, LLMMessage, TokenUsage, ToolCallStatus
+from .common import AgentRunStatus, Attachment, LLMMessage, TokenUsage, ToolCallStatus
 from .tool import ToolType
 
 
@@ -19,6 +19,20 @@ class LLMRetryDetail(BaseModel):
     error_type: str
     error_message: str | None = None
     delay_seconds: int | None = None
+
+
+class CompactionEventDetail(BaseModel):
+    """A single context compaction event during an agent run."""
+
+    id: UUID
+    agent_run_id: UUID
+    llm_call_id: UUID | None = None
+    phase: str
+    tokens_before: int = 0
+    tokens_after: int = 0
+    turns_compressed: int = 0
+    summary_text: str | None = None
+    created_at: datetime
 
 
 class NormalizationDetail(BaseModel):
@@ -60,6 +74,8 @@ class ToolCallDetail(BaseModel):
 
     # For HITL tools - the question that was created (for answering)
     question_id: UUID | None = None
+    # Attachments uploaded with a HITL answer
+    attachments: list[Attachment] = []
 
     # Normalization audit trail
     normalizations: list[NormalizationDetail] = []
@@ -84,7 +100,10 @@ class LLMCallDetail(BaseModel):
 
     # What the LLM returned (text + raw tool call requests)
     response_content: str | None = None
+    thinking_content: str | None = None
     response_tool_calls: list[dict] | None = None
+    raw_request: dict | None = None
+    raw_response: dict | None = None
 
     # Retry audit trail
     retries: list[LLMRetryDetail] = []
@@ -97,6 +116,7 @@ class AgentRunSummary(BaseModel):
     """Lightweight agent run for chat timeline."""
     id: UUID
     session_id: UUID
+    parent_run_id: UUID | None = None
     agent_id: str
     status: AgentRunStatus
     error_message: str | None = None
@@ -104,6 +124,9 @@ class AgentRunSummary(BaseModel):
     # For pending runs (created by planner)
     planned_prompt: str | None = None
     sequence_number: int | None = None
+    spawning_tool_call_id: UUID | None = None
+
+    pending_user_context: str | None = None
 
     # For completed runs
     token_usage: TokenUsage
@@ -111,8 +134,20 @@ class AgentRunSummary(BaseModel):
     completed_at: datetime | None = None
 
 
+class ResumeContext(BaseModel):
+    """Context message injected by user when resuming a paused agent run."""
+
+    content: str
+    created_at: datetime
+    llm_call_index: int
+
+
 class AgentRunDetail(AgentRunSummary):
     """Full agent run - sequence of LLM calls. Inherits from AgentRunSummary."""
 
     # The execution trace - each LLM call includes its tool executions
     llm_calls: list[LLMCallDetail] = []
+    subagent_runs: list[AgentRunDetail] = []
+    compaction_events: list[CompactionEventDetail] = []
+    resume_contexts: list[ResumeContext] = []
+

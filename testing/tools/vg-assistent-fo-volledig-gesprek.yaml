@@ -1,0 +1,436 @@
+## Seeded session: full create_project CONVERSATION for the "Veilig &
+## Gezond Werken Assistent" (VG Assistent), paused on the session-owner
+## approval gate for the Functioneel Ontwerp (FO / docs/functional-design.md).
+##
+## This is the EXTENSIVE variant: instead of only seeding the make_design
+## call, it reproduces the whole BA create_project run as a real session
+## would have it -- context gathering (registry/coding/dataaccess), a full
+## hitl ELICITATION with the user's answers, the mandatory mermaid skill,
+## and then make_design on the PENDING gate. Every pre-gate step is
+## mock: true, so seeding is 100% deterministic (no LLM).
+##
+## Why the full conversation: when the reviewer REJECTS the FO and the run
+## resumes, the agent reconstructs this whole history from the DB. A rich,
+## coherent "requirements are settled, FO is written" history is what makes
+## the resumed BA simply revise the FO per the feedback -- like production --
+## instead of re-running discovery.
+##
+## To test:
+##   1. Run this test from the evaluations page -> green.
+##   2. Log in as the session owner (admin by default).
+##   3. Go to /tasks -> pending approval for docs/functional-design.md on a
+##      session named "vg-assistent". Click "View file" to read the full FO.
+##   4. Reject with page feedback (or approve), then resume the session.
+##      On reject the SAME BA run resumes and revises the FO; on approve it
+##      commits + done().
+##
+## Chain: router -> planner -> BA (context + elicitation + skill + make_design
+## PENDING). Deterministic seeding (no LLM); only the post-gate resume is live.
+
+tool-test:
+  name: vg-assistent-fo-volledig-gesprek
+  description: "Volledig geseed create_project-gesprek voor het VG Assistent FO -- context + elicitatie + make_design, gepauzeerd op de session-owner approval gate, klaar voor handmatige feedback"
+  tags: [seed, paused, business_analyst, approval-gate, fd, elicitation, full-conversation]
+  # Land in the REAL approval-gate state (session=paused_approval,
+  # BA run=paused_tool, make_design tool=waiting_approval). The UI then shows
+  # ONLY the approve/reject gate on the FO -- no separate "Continue" button.
+  session_status: paused_approval
+
+  chain:
+    # ====================== ROUTER ======================
+    - agent: router
+      tool: builtin:set_intent
+      arguments:
+        intent: create_project
+        project_name: vg-assistent
+        description: "Een Veilig & Gezond Werken Assistent voor medewerkers van een waterschap die veiligheidsvragen in gewone taal stellen en persoonsgericht, bronverwijzend advies krijgen"
+      assert:
+        result:
+          - not_empty
+
+    - agent: router
+      tool: builtin:done
+      arguments:
+        summary: "Agent router: Classified as create_project for vg-assistent"
+      assert:
+        completed: true
+
+    # ====================== PLANNER -> BA ======================
+    # This step prompt becomes the BA run's planned_prompt -- the normal
+    # create_project task, exactly as a real planner would phrase it. The
+    # revise-on-reject behaviour comes from the BA's own system prompt
+    # (Phase 10) plus the rich seeded history below, not from a special hack.
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: business_analyst
+            prompt: |
+              Een medewerker van een waterschap wil een "Veilig & Gezond
+              Werken Assistent". Medewerkers moeten in gewone taal vragen
+              kunnen stellen over veilig en gezond werken en persoonsgericht,
+              bronverwijzend antwoord krijgen. Haal de requirements op door de
+              gebruiker uit te vragen en schrijf het functioneel ontwerp naar
+              docs/functional-design.md.
+          - agent_id: planner
+            prompt: "Re-evaluate after business analyst completes"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: Planned business_analyst to gather requirements and create the functional design"
+
+    # ====================== BA: CONTEXT GATHERING (mocked) ======================
+    # Mandatory similarity check + platform standards + data sources, exactly
+    # as a real create_project run does in Phase 1. Mocked -> deterministic.
+    - agent: business_analyst
+      tool: registry:list_modules
+      mock: true
+      mock_result: |
+        {"success": true, "count": 9, "modules": [{"id": "archimate", "type": "core"}, {"id": "coding", "type": "core"}, {"id": "dataaccess", "type": "module"}, {"id": "docker", "type": "core"}, {"id": "filesearch", "type": "core"}, {"id": "llm", "type": "both"}, {"id": "registry", "type": "core"}, {"id": "vision", "type": "module"}, {"id": "web", "type": "both"}]}
+
+    - agent: business_analyst
+      tool: registry:search_modules
+      arguments:
+        query: "veiligheid veilig gezond werken assistent kennisbron"
+      mock: true
+      mock_result: |
+        {"success": true, "query": "veiligheid veilig gezond werken assistent kennisbron", "count": 0, "results": []}
+
+    - agent: business_analyst
+      tool: registry:list_components
+      mock: true
+      mock_result: |
+        {"success": true, "categories": {"agents": {"count": 15}, "skills": {"count": 13}, "builtin_tools": {"count": 9}}, "total": 37}
+
+    - agent: business_analyst
+      tool: coding:list_projects
+      mock: true
+      mock_result: |
+        {"success": true, "count": 1, "projects": [{"name": "sample-project", "description": "Voorbeeldproject"}]}
+
+    - agent: business_analyst
+      tool: registry:get_module
+      arguments:
+        module_id: coding
+      mock: true
+      mock_result: |
+        {"success": true, "module": {"id": "coding", "type": "core", "tools": [{"name": "make_design"}, {"name": "read_file"}, {"name": "write_file"}, {"name": "run_git"}, {"name": "list_projects"}, {"name": "list_dir"}]}}
+
+    - agent: business_analyst
+      tool: coding:read_file
+      arguments:
+        path: docs/platform-functional-standards.md
+      mock: true
+      mock_result: |
+        {"success": true, "path": "docs/platform-functional-standards.md", "content": "# Platform Functionele Standaarden (rev 1)\n\nPlatformdefaults voor authenticatie (Keycloak), autorisatie, logging, dataretentie en privacy gelden automatisch. Schrijf alleen FR/NFR voor projectspecifieke afwijkingen (sectie 14)."}
+
+    - agent: business_analyst
+      tool: dataaccess:list_sources
+      mock: true
+      mock_result: |
+        {"success": true, "sources": [], "count": 0}
+
+    # ====================== BA: ELICITATION (mocked hitl Q&A) ======================
+    # The full requirements interview. Each question is a completed hitl call
+    # with the user's mocked answer; the answers match the seeded FO so the
+    # reconstructed history reads like a genuine, finished elicitation.
+    - agent: business_analyst
+      tool: builtin:hitl_ask_question
+      arguments:
+        question: "Platformdefaults (authenticatie, autorisatie, logging, dataretentie, privacy) gelden automatisch -- zie docs/platform-functional-standards.md. Kun je me eerst meer vertellen over je werk en de situatie waaruit deze vraag voortkomt?"
+        context: "Intake: brede context vragen voordat we inzoomen."
+      mock: true
+      mock_result: |
+        Wij zijn een waterschap met 500 tot 1000 medewerkers, van kantoor tot vakkrachten op de werkvloer. Veiligheidsinformatie staat verspreid over Corsa, Chemrade, Aquademie, Ultimo, Bowtie XP, Teams V&G, Safeguard en intranet. Medewerkers vinden informatie niet snel en onze veiligheidscultuur zit op trede 2 van de cultuurladder.
+
+    - agent: business_analyst
+      tool: builtin:hitl_ask_question
+      arguments:
+        question: "Hoe handelen medewerkers dit vandaag de dag af, en wat gaat er dan mis?"
+        context: "Huidige situatie en pijnpunt scherp krijgen."
+      mock: true
+      mock_result: |
+        Ze zoeken het zelf uit in de losse systemen, die slecht werken op telefoon of tablet. Vaak weten ze niet eens welke bronnen er zijn, en als ze geen antwoord vinden gaan ze toch maar aan het werk -- ook als ze niet zeker weten of het veilig is.
+
+    - agent: business_analyst
+      tool: builtin:hitl_ask_question
+      arguments:
+        question: "Welke kennisbronnen moet de assistent raadplegen?"
+        context: "Informatiebehoeften en integratiepunten in kaart brengen."
+      mock: true
+      mock_result: |
+        Nederlandse en Europese wet- en regelgeving en de ARBO-catalogi van het A&O-fonds waterschappen, plus de interne systemen: Corsa en Chemrade voor veiligheidsinstructies en gevaarlijke stoffen, Aquademie voor diploma's en certificaten, Bowtie XP voor risicoanalyses, Safeguard voor BHV-beschikbaarheid en Ultimo voor asset- en werkorderinformatie. Elk antwoord moet de bron(nen) tonen.
+
+    - agent: business_analyst
+      tool: builtin:hitl_ask_multiple_choice_question
+      arguments:
+        question: "Wie moet de assistent kunnen gebruiken, en zijn er rollen met extra rechten?"
+        choices: ["Alleen reguliere medewerkers", "Medewerkers plus V&G-medewerkers met reviewrecht"]
+        context: "Toegang en rollen bepalen."
+      mock: true
+      mock_result: |
+        Medewerkers plus V&G-medewerkers met reviewrecht. V&G mag alle gesprekken inzien inclusief de identiteit van de vrager, en een correctie sturen naar de medewerker als een eerder advies onjuist was.
+
+    - agent: business_analyst
+      tool: builtin:hitl_ask_multiple_choice_question
+      arguments:
+        question: "Gaat dit over persoonlijke of vertrouwelijke informatie?"
+        choices: ["Nee, geen persoonsgegevens", "Ja, persoonsgegevens en vertrouwelijke gegevens"]
+        context: "Gegevensgevoeligheid bepalen."
+      mock: true
+      mock_result: |
+        Ja: functie, diploma's en certificaten worden gebruikt voor persoonsgericht advies. Medische gegevens en vertrouwelijke incidentrapporten moeten afgeschermd blijven voor wie daar geen toegang toe heeft.
+
+    - agent: business_analyst
+      tool: builtin:hitl_ask_multiple_choice_question
+      arguments:
+        question: "Wat moet er gebeuren als de assistent een vraag niet met zekerheid kan beantwoorden?"
+        choices: ["Toch een antwoord proberen", "Stoppen en eerlijk doorverwijzen"]
+        context: "Gewenst gedrag bij onzekerheid bepalen."
+      mock: true
+      mock_result: |
+        Stoppen en eerlijk aangeven dat het het antwoord niet weet, en doorverwijzen naar de preventieafdeling. Liever geen antwoord dan een fout antwoord.
+
+    - agent: business_analyst
+      tool: builtin:hitl_ask_multiple_choice_question
+      arguments:
+        question: "Op welke apparaten en hoe snel moet de assistent bruikbaar zijn?"
+        choices: ["Vooral desktop", "Telefoon en browser, ook op de werkvloer"]
+        context: "Niet-functionele eisen (toegankelijkheid, snelheid)."
+      mock: true
+      mock_result: |
+        Telefoon en browser, ook op de werkvloer: touch-friendly en zonder horizontaal scrollen, werkbaar vanaf 320px breed. Een antwoord mag maximaal zo'n 5 seconden duren.
+
+    - agent: business_analyst
+      tool: builtin:hitl_ask_question
+      arguments:
+        question: "Hoe lang moeten gesprekken bewaard blijven en wanneer mogen ze weg?"
+        context: "Bewaartermijn bepalen."
+      mock: true
+      mock_result: |
+        Zolang als nodig is voor kwaliteitscontrole door V&G, daarna verwijderen.
+
+    - agent: business_analyst
+      tool: builtin:hitl_ask_question
+      arguments:
+        question: "Wat valt buiten scope, en wanneer is dit voor jou geslaagd?"
+        context: "Scope-afbakening en succescriterium."
+      mock: true
+      mock_result: |
+        Buiten scope: het melden van onveilige situaties (loopt via Ultimo) en het beheren/bijwerken van de bronsystemen zelf. Geslaagd is het als medewerkers vaker vragen stellen over veilig en gezond werken; we meten succes aan het aantal gestelde vragen en de interactie met de assistent.
+
+    # ====================== BA: MERMAID SKILL (mocked, mandatory) ======================
+    - agent: business_analyst
+      tool: builtin:invoke_skill
+      arguments:
+        skill_name: making-mermaid-diagrams
+      mock: true
+      mock_result: |
+        {"success": true, "skill_name": "making-mermaid-diagrams", "instructions": "VOLLEDIGE mermaid-syntaxregels zijn geladen. Diagramtype: flowchart TD voor processen met beslissingen. Node-shapes -- gebruik exact EEN delimiter per node: rechthoek = vierkante haken met quotes voor processtappen; ruit = accolades met quotes voor beslissingen; stadium = haken-rond-haken voor start en eind; cilinder = ronde-binnen-haken voor database/opslag. Edges: gebruik twee streepjes als pijl; edge-labels staan tussen pipes met quotes. Regels: quote ALLE labels met gewone dubbele quotes; gebruik nooit een backslash voor een quote; gebruik nooit het woord end als node-id; node-ids zijn alleen alfanumeriek; verifieer elke node voordat je het diagram uitvoert. Dit is de volledige instructie -- er is geen verdere skill-aanroep nodig voordat je coding_make_design aanroept."}
+
+    # ====================== BA: WRITE FO -- approval gate PENDING ======================
+    # The session_owner approval must be resolved manually through the UI.
+    # Reject with feedback (or approve) and then resume the session.
+    - agent: business_analyst
+      tool: coding:make_design
+      approval:
+        status: pending
+      arguments:
+        path: docs/functional-design.md
+        content: |
+          # Functioneel Ontwerp: Veilig & Gezond Werken Assistent
+
+          ## 1. Huidige vs Gewenste Situatie
+
+          | Aspect | Huidige Situatie | Gewenste Situatie |
+          |--------|------------------|-------------------|
+          | Vindbaarheid van veiligheidsinformatie | Informatie is verspreid over Corsa, Chemrade, Aquademie, Ultimo, Bowtie XP, Teams V&G, Safeguard en intranet. Medewerkers weten niet welke bronnen bestaan en kunnen informatie niet snel vinden. | Medewerkers stellen één vraag en krijgen direct een antwoord op basis van alle relevante bronnen. |
+          | Toegankelijkheid vanaf de werkvloer | Corsa en intranet zijn moeilijk te gebruiken op telefoon of tablet. | De assistent is goed bruikbaar via de telefoon en browser, ook op de werkvloer. |
+          | Persoonsgericht advies | Medewerkers moeten zelf uitzoeken welke regels, diploma's en PBM's voor hun specifieke situatie gelden. | De assistent kent de medewerker en geeft advies dat past bij de functie, diploma's en certificaten. |
+          | Kwaliteitscontrole | Er is geen zicht op welke vragen medewerkers hebben en of het gegeven advies klopt. | V&G-medewerkers kunnen gesprekken reviewen en correcties sturen als advies onjuist was. |
+          | Veiligheidscultuur | De organisatie zit op trede 2 van de veiligheidscultuurladder. Medewerkers gaan aan het werk zonder zeker te weten of het veilig is. | Medewerkers stellen actief vragen over veiligheid, wat bijdraagt aan een hogere trede op de veiligheidscultuurladder. |
+
+          ## 2. Probleemsamenvatting
+
+          - **Wie is betrokkene:** Alle medewerkers (500–1000) van een waterschap, variërend van kantoormedewerkers tot vakkrachten op de werkvloer.
+          - **Welk probleem:** Medewerkers kunnen veiligheidsinformatie niet snel en toegankelijk vinden. Informatie is verspreid over zeven-plus bronsystemen die niet goed werken op mobiel. Medewerkers weten vaak niet eens welke bronnen er zijn. Als ze geen antwoord vinden, gaan ze maar gewoon aan het werk — ook als ze niet zeker weten of het veilig is.
+          - **Waarom het ertoe doet:** De veiligheidscultuur bevindt zich op trede 2. Medewerkers nemen onvoldoende initiatief rondom veilig en gezond werken. Dit leidt tot preventieve maatregelen die niet worden nageleefd en een verhoogd risico op incidenten.
+          - **Waar ziet succes eruit:** Medewerkers stellen vaker vragen over veiligheid en gezondheid. Meer gebruik van de assistent betekent een actievere veiligheidscultuur. Succes wordt gemeten aan het aantal gestelde vragen en de interactie met de assistent.
+
+          ## 3. Functionele Eisen
+
+          | ID | Bron | Eis | Verificatiemethode |
+          |----|------|-----|--------------------|
+          | FR-01 | BA | Het systeem stelt medewerkers in staat om in gewone taal een vraag te stellen over veilig en gezond werken, zodat zij direct begrijpelijk antwoord krijgen. | Demonstratie: stel een vraag en ontvang een antwoord. |
+          | FR-02 | BA | Het systeem herkent de ingelogde medewerker en gebruikt diens functieprofiel, diploma's en certificaten om persoonsgericht advies te geven, zodat het antwoord aansluit bij de individuele situatie. | Log in als verschillende medewerkers en verifieer dat het advies verschilt op basis van profiel. |
+          | FR-03 | BA | Het systeem toont bij elk antwoord de bron(nen) waarop het advies is gebaseerd, zodat medewerkers de herkomst kunnen verifiëren. | Controleer dat elk antwoord bronverwijzingen bevat. |
+          | FR-04 | BA | Het systeem raadpleegt relevante kennisbronnen waaronder Nederlandse en Europese wetgeving, ARBO-catalogi van het A&O-fonds waterschappen, en vastgestelde veiligheidsinstructies, zodat antwoorden feitelijk juist en traceerbaar zijn. | Verifieer dat antwoorden verwijzen naar de juiste bronsystemen (Corsa, Chemrade, Aquademie, Ultimo, Bowtie XP, Teams V&G, Safeguard). |
+          | FR-05 | BA | Het systeem is toegankelijk via een webinterface op telefoon en browser, zodat medewerkers ook op de werkvloer direct gebruik kunnen maken van de assistent. | Open de assistent op een smartphone en een desktopbrowser en verifieer de bruikbaarheid. |
+          | FR-06 | BA | Het systeem geeft eerlijk aan wanneer het een vraag niet kan beantwoorden, en verwijst de medewerker door naar de preventieafdeling, zodat medewerkers nooit met onjuiste informatie aan het werk gaan. | Stel een vraag buiten het kennisdomein en verifieer dat het systeem de beperking aangeeft en doorverwijst. |
+          | FR-07 | BA | Het systeem schermt medische gegevens en vertrouwelijke rapporten (zoals incidentonderzoeken) af, zodat gevoelige informatie niet onbedoeld beschikbaar wordt voor medewerkers die daar geen toegang toe mogen hebben. | Verifieer dat vertrouwelijke informatie niet in antwoorden verschijnt voor reguliere medewerkers. |
+          | FR-08 | BA | Het systeem stelt V&G-medewerkers in staat om gesprekken tussen medewerkers en de assistent te reviewen — inclusief de identiteit van de vrager — zodat zij de kwaliteit van het advies kunnen beoordelen. | Log in als V&G-medewerker en verifieer inzage in gesprekken met vrager-identificatie. |
+          | FR-09 | BA | Het systeem stelt V&G-medewerkers in staat om een correctie te sturen naar een medewerker als een eerder gegeven advies onjuist was, zodat de medewerker het juiste advies ontvangt. | Simuleer een onjuist advies en verifieer dat V&G een correctie kan sturen. |
+          | FR-10 | BA | Het systeem beantwoordt vragen over benodigde opleidingen, certificaten, PBM's, vergunningen, bevoegdheden en ARBO-regels (zoals tillen, lawaai, werken op hoogte), zodat medewerkers weten wat nodig is voor hun specifieke taak. | Stel vragen over elk van deze onderwerpen en verifieer dat het systeem adequaat antwoordt. |
+
+          ## 4. Bedrijfsregels & Logica
+
+          | Regel-ID | Beschrijving | Voorwaarde | Uitkomst |
+          |----------|--------------|------------|----------|
+          | BR-01 | Bronverplichting | De assistent geeft een antwoord op een veiligheidsvraag | Elk antwoord bevat minimaal één bronverwijzing. |
+          | BR-02 | Onbekend = eerlijk | De assistent kan met voldoende zekerheid geen antwoord formuleren op basis van de beschikbare bronnen | De assistent geeft aan het antwoord niet te weten en verwijst naar de preventieafdeling. |
+          | BR-03 | Geen medische data | Een antwoord zou medische gegevens van medewerkers kunnen bevatten | De assistent toont geen medische persoonsgegevens. |
+          | BR-04 | Geen vertrouwelijke rapporten | Een antwoord zou inzage in vertrouwelijke rapporten (bijv. incidentonderzoeken) kunnen geven | Deze rapporten worden afgeschermd en niet getoond aan reguliere medewerkers. |
+          | BR-05 | Persoonsgebaseerd advies | De medewerker is ingelogd en het profiel bevat functie, diploma's en certificaten | De assistent baseert het advies op het profiel van de medewerker. |
+          | BR-06 | V&G-reviewrecht | Een V&G-medewerker is ingelogd met de juiste bevoegdheid | De V&G-medewerker kan alle gesprekken inzien, inclusief de identiteit van de vrager. |
+          | BR-07 | Correctiecyclus | V&G beoordeelt een antwoord als onjuist | V&G kan een correctie sturen naar de betreffende medewerker. |
+
+          ## 5. Informatiebehoeften
+
+          | Informatie | Beschrijving | Bron | Gebruikt door |
+          |------------|--------------|------|---------------|
+          | Wet- en regelgeving | Nederlandse en Europese veiligheids- en gezondheidswetgeving | Overheidspublicaties, A&O-fonds | Assistent (antwoordgeneratie) |
+          | ARBO-catalogi | Sectorale ARBO-catalogi van het A&O-fonds waterschappen | A&O-fonds waterschappen | Assistent (antwoordgeneratie) |
+          | Veiligheidsinstructies | Vastgestelde interne veiligheidsinstructies | Corsa, Chemrade | Assistent (antwoordgeneratie) |
+          | Diploma's en certificaten | Persoonsgebonden opleidings- en certificaatgegevens | Aquademie, Corsa | Assistent (persoonsgericht advies) |
+          | Risicoanalyses | Bowties en risicobeheersmaatregelen | Bowtie XP | Assistent (antwoordgeneratie) |
+          | BHV-beschikbaarheid | Overzicht van BHV'ers en beschikbaarheid | Safeguard | Assistent (antwoordgeneratie) |
+          | Medewerkerprofiel | Functie, rol, bevoegdheden van de ingelogde medewerker | HR-systeem / personeelsregister | Assistent (persoonsgericht advies) |
+          | Gespreksgeschiedenis | Alle gestelde vragen en gegeven antwoorden | Assistent zelf | V&G (kwaliteitsreview) |
+
+          ## 6. Gebruikersreizen
+
+          ### Reis 1: Medewerker stelt een vraag over veilig werken
+          - **Acteur:** Medewerker (uitvoerend, op de werkvloer)
+          - **Doel:** Weten welke PBM's nodig zijn voor een specifieke taak
+          1. Medewerker opent de assistent op zijn/haar telefoon.
+          2. Het systeem herkent de medewerker en toont een welkomstscherm.
+          3. Medewerker typt of spreekt in: "Welke PBM's heb ik nodig voor het werken aan de pomp in de zuivering?"
+          4. De assistent zoekt in de relevante kennisbronnen op basis van de vraag en het profiel van de medewerker.
+          5. De assistent toont het advies inclusief de bronverwijzingen (bijv. "Volgens de veiligheidsinstructie in Corsa voor zuiveringswerkzaamheden heb je nodig: ... Bron: Corsa - VI-0123").
+          6. Medewerker leest het advies en past de PBM's toe.
+
+          ### Reis 2: Medewerker vraagt naar bevoegdheid
+          - **Acteur:** Medewerker
+          - **Doel:** Weten of hij/zij bevoegd is voor een bepaalde taak
+          1. Medewerker opent de assistent en stelt de vraag: "Mag ik dit werk uitvoeren met mijn huidige certificaten?"
+          2. De assistent koppelt de vraag aan het profiel van de medewerker (functie, diploma's, certificaten).
+          3. De assistent geeft antwoord op basis van de relevante bronnen (bijv. "Voor deze taak is certificaat X vereist. Jij bezit dit certificaat sinds [datum]. Je bent bevoegd. Bron: Aquademie").
+          4. Of: "Voor deze taak is certificaat Y vereist. Dit certificaat staat niet op jouw profiel. Overleg met je leidinggevende. Bron: ARBO-catalogus waterschappen, hoofdstuk X."
+
+          ### Reis 3: Assistent kan vraag niet beantwoorden
+          - **Acteur:** Medewerker
+          - **Doel:** Antwoord krijgen op een veiligheidsvraag buiten het kennisdomein
+          1. Medewerker stelt een vraag die buiten de beschikbare kennis valt.
+          2. De assistent geeft aan: "Ik kan deze vraag niet met zekerheid beantwoorden op basis van de beschikbare informatie."
+          3. De assistent verwijst door: "Neem contact op met de preventieafdeling via [contactgegevens]."
+
+          ### Reis 4: V&G reviewt gesprekken
+          - **Acteur:** V&G-medewerker
+          - **Doel:** De kwaliteit van de assistent beoordelen
+          1. V&G-medewerker logt in en opent het review-overzicht.
+          2. Het systeem toont een overzicht van recente gesprekken, inclusief de naam van de medewerker die de vraag stelde.
+          3. V&G-medewerker selecteert een gesprek en beoordeelt het antwoord.
+          4. Als het antwoord onjuist is, stuurt V&G een correctie naar de medewerker.
+          5. De medewerker ontvangt een notificatie met het gecorrigeerde advies.
+
+          ## 7. Integratiepunten
+
+          | Systeem/Dienst | Interactietype | Doel |
+          |----------------|----------------|------|
+          | Corsa | Lezen | Ophalen van veiligheidsinstructies en procedures |
+          | Chemrade | Lezen | Ophalen van informatie over gevaarlijke stoffen en blootstelling |
+          | Aquademie | Lezen | Ophalen van diploma's, certificaten en opleidingsgegevens |
+          | Ultimo | Lezen | Ophalen van asset- en werkorderinformatie voor context |
+          | Bowtie XP | Lezen | Ophalen van risicoanalyses en bowtie-diagrammen |
+          | Teams V&G | Lezen | Ophalen van uitgevoerde incidentonderzoeken |
+          | Safeguard | Lezen | Raadplegen van BHV-beschikbaarheid |
+          | HR-/Personeelsregister | Lezen | Ophalen van medewerkerprofiel (functie, bevoegdheden) |
+          | Authenticatieplatform (Keycloak) | Authenticatie | Identificeren van de medewerker bij inloggen |
+
+          ## 8. Niet-Functionele Eisen
+
+          | ID | Bron | Eis | Verificatiemethode |
+          |----|------|-----|--------------------|
+          | NFR-01 | BA | De assistent is goed bruikbaar op mobiele telefoons (touch-friendly, geen horizontaal scrollen), zodat medewerkers op de werkvloer de assistent comfortabel kunnen gebruiken. | Test op een smartphone met een schermbreedte van 320px of meer. |
+          | NFR-02 | BA | Antwoorden worden binnen 5 seconden getoond na het stellen van een vraag, zodat medewerkers niet lang hoeven te wachten op de werkvloer. | Meet de responstijd bij een representatieve set vragen. |
+
+          ## 9. Beveiliging & Compliance
+
+          - **Persoonsgegevens:** Ja — de assistent verwerkt persoonsgegevens (naam, functie, diploma's, certificaten) om persoonsgericht advies te geven.
+          - **Vertrouwelijke data:** Ja — de assistent raadpleegt vertrouwelijke bronnen. Medische gegevens en vertrouwelijke rapporten (zoals incidentonderzoeken) moeten afgeschermd blijven voor medewerkers die daar geen toegang toe hebben.
+          - **Authenticatie vereist:** Ja — de assistent moet weten wie de medewerker is voor persoonsgericht advies. Authenticatie verloopt via het platform (Keycloak).
+          - **Toegangsbeperkingen:**
+            - Reguliere medewerkers: kunnen vragen stellen en eigen gespreksgeschiedenis inzien.
+            - V&G-medewerkers: kunnen alle gesprekken inzien (inclusief identiteit van de vrager) en correcties sturen.
+            - Medische gegevens en vertrouwelijke rapporten zijn niet toegankelijk via de assistent.
+          - **Foutvoorkeur:** Stoppen — bij onzekerheid geeft de assistent eerlijk aan het antwoord niet te weten en verwijst door naar de preventieafdeling. Liever geen antwoord dan een fout antwoord.
+          - **Databewaring:** Gesprekken worden bewaard zolang als nodig voor kwaliteitscontrole door V&G. Daarna worden ze verwijderd.
+
+          ## 10. Aannames & Open Vragen
+
+          | ID | Type | Beschrijving | Default/Fallback |
+          |----|------|--------------|------------------|
+          | AAN-01 | Aanname | De medewerkerprofielen (functie, diploma's, certificaten) zijn beschikbaar en actueel in de aangesloten bronsystemen. | Indien niet beschikbaar: de assistent geeft algemeen advies zonder persoonsgerichte elementen. |
+          | AAN-02 | Aanname | De bronsystemen (Corsa, Chemrade, Aquademie, Ultimo, Bowtie XP, Teams V&G, Safeguard) zijn toegankelijk via een API of data-export. | De architect onderzoekt de technische haalbaarheid van integratie. |
+          | AAN-03 | Aanname | De Nederlandse en Europese wet- en regelgeving en de ARBO-catalogi zijn beschikbaar in een doorzoekbare vorm. | De architect onderzoekt de beschikbaarheid en toegankelijkheid. |
+          | AAN-04 | Aanname | Het HR-/personeelsregister kan gekoppeld worden om medewerkerprofielen (functie, diploma's) beschikbaar te stellen. | De architect onderzoekt de koppelingsmogelijkheden. |
+          | AAN-05 | Open vraag | Wat is het exacte bewaartermijn-beleid voor gesprekken? De gebruiker gaf aan "zolang als nodig voor kwaliteitscontrole, daarna verwijderen" — dit nader concretiseren. | 90 dagen bewaren, daarna automatisch verwijderen. |
+          | AAN-06 | Open vraag | Hoe worden V&G-medewerkers geïdentificeerd in het systeem? Is er een specifieke rol in Keycloak of het HR-systeem? | De architect definieert de rol-indeling in het technisch ontwerp. |
+          | AAN-07 | Open vraag | Hoe wordt een correctie door V&G aan de medewerker gepresenteerd? Via een notificatie in de assistent, via e-mail, of via een ander kanaal? | Notificatie binnen de assistent bij volgende gebruik. |
+
+          ## 11. Buiten Scope
+
+          - **Melden van onveilige situaties:** Dit verloopt via het bestaande systeem Ultimo. De assistent doet hieraan niet mee.
+          - **Beheer van veiligheidsinformatie:** Het bijwerken en beheren van bronnen in Corsa, Chemrade, Aquademie en andere systemen is een verantwoordelijkheid van de betreffende afdelingen.
+          - **Vervanging van bestaande systemen:** De assistent is een aanvullend hulpmiddel, geen vervanging van Corsa, Chemrade, Aquademie, Ultimo of andere bronsystemen.
+          - **Gebruikersbeheer / rolbeheer:** Dit wordt op platformniveau afgehandeld (Keycloak).
+          - **Facturatie / kosteninzicht:** Dit is een platformfunctie.
+
+          ## 12. Procesflowdiagram
+
+          ```mermaid
+          flowchart TD
+              A[Medewerker opent assistent] --> B[Assistent herkent medewerker]
+              B --> C[Medewerker stelt vraag in gewone taal]
+              C --> D[Assistent zoekt in kennisbronnen]
+              D --> E{Voldoende info gevonden?}
+              E -->|Nee| F[Geef aan: kan niet antwoorden]
+              F --> G[Verwijs naar preventieafdeling]
+              G --> Z1[Einde]
+              E -->|Ja| H[Formuleer advies met bronnen]
+              H --> I{Bevat gevoelige data?}
+              I -->|Ja| J[Scherm gevoelige info af]
+              I -->|Nee| K[Toon volledig advies]
+              J --> K
+              K --> L[Sla gesprek op]
+              L --> M[Gesprek in V&G-reviewqueue]
+              M --> N[V&G beoordeelt gesprek]
+              N --> O{Advies juist?}
+              O -->|Ja| Z2[Einde]
+              O -->|Nee| P[V&G stuurt correctie naar medewerker]
+              P --> Z3[Einde]
+          ```
+
+          ## 13. Mogelijke Oplossingsrichting
+
+          | Bestaande Module/Project | Wat het doet | Relevantie voor dit ontwerp |
+          |--------------------------|--------------|-----------------------------|
+          | web-module (v1.0.0) | Biedt web-scraping en interactiemogelijkheden | Potentieel relevant voor het ontsluiten van webgebaseerde bronsystemen. |
+          | llm-module (v1.0.0) | Biedt LLM-mogelijkheden | Essentieel voor het verwerken van vragen in gewone taal en het genereren van antwoorden. |
+          | dataaccess-module (v1.0.0) | Biedt toegang tot Azure Data Lake en Azure SQL | Potentieel relevant als bronsystemen via een data lake ontsloten worden. |
+
+          Er is geen bestaand project binnen de Gitea-omgeving dat vergelijkbaar is met deze assistent. Het enige bestaande project is `sample-project` (een voorbeeldproject).
+
+          ## 14. Platformstandaardafwijkingen
+
+          | Standaard | Afwijking | Onderbouwing |
+          |-----------|-----------|--------------|
+          | (geen)    | —         | —            |
+
+    # No more steps -- the chain ends with the BA paused on the pending
+    # approval. After a human resolves it through the UI and resumes the
+    # session, the BA revises (on reject) or commits + done() (on approve).
+
+  verify:
+    - gitea_repo_exists: true

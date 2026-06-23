@@ -142,21 +142,8 @@ tool-test:
           - TR-03: API rate limiting (100 req/min)
 
     - agent: architect
-      tool: coding:run_git
-      arguments:
-        command: "add docs/technical-research.md"
+      tool: coding:push_changes
 
-    - agent: architect
-      tool: coding:run_git
-      arguments:
-        command: "commit -m 'Technisch onderzoek recipe sharing app'"
-
-    - agent: architect
-      tool: coding:run_git
-      arguments:
-        command: "push"
-
-    # Architect writes the technical design (with HITL approval)
     - agent: architect
       tool: coding:make_design
       approval:

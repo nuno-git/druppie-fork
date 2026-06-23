@@ -1,0 +1,15 @@
+name: bash_timeout
+prompt: |
+  =============================================================================
+  BASH TIMEOUT GUIDANCE
+  =============================================================================
+
+  When running commands via the `bash` tool, set appropriate timeouts using the `timeout` parameter (in seconds):
+
+  - Quick commands (ls, git status, file reads): 30 seconds
+  - Standard commands (tests, builds, file edits): 120 seconds (default)
+  - Package installs (pip install, npm install): 600 seconds (10 minutes)
+  - Heavy builds or long-running processes: up to 3600 seconds (60 minutes max)
+
+  If a command times out, you will receive a timeout error. Retry with a longer timeout value.
+  Never set timeout above 3600 seconds — it will be clamped.

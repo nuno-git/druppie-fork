@@ -60,6 +60,23 @@ def _validate_name(name: str, label: str) -> str | None:
 
 # Configuration
 DOCKER_NETWORK = os.getenv("DOCKER_NETWORK", "druppie-new-network")
+
+# Ensure the Docker network exists (needed on fresh K8s nodes)
+if DOCKER_NETWORK:
+    try:
+        result = subprocess.run(
+            ["docker", "network", "inspect", DOCKER_NETWORK],
+            capture_output=True, text=True, timeout=10,
+        )
+        if result.returncode != 0:
+            subprocess.run(
+                ["docker", "network", "create", DOCKER_NETWORK],
+                capture_output=True, text=True, timeout=30,
+            )
+            logger.info("Created Docker network: %s", DOCKER_NETWORK)
+    except Exception as e:
+        logger.warning("Could not ensure Docker network %s: %s", DOCKER_NETWORK, e)
+
 PORT_RANGE_START = int(os.getenv("PORT_RANGE_START", "9100"))
 PORT_RANGE_END = int(os.getenv("PORT_RANGE_END", "9199"))
 BUILD_DIR = Path(os.getenv("BUILD_DIR", "/tmp/docker-builds"))
@@ -680,7 +697,7 @@ async def compose_up(
         sdk_source = Path("/druppie-sdk")
         if sdk_source.is_dir():
             sdk_dest = clone_path / "druppie-sdk"
-            shutil.copytree(sdk_source, sdk_dest)
+            shutil.copytree(sdk_source, sdk_dest, dirs_exist_ok=True)
             logger.info("compose_up: injected druppie-sdk into build context")
 
         # All remaining steps wrapped in try/finally to guarantee clone_path cleanup
@@ -772,6 +789,18 @@ async def compose_up(
                 # the Druppie SDK. Empty string = dev mode / no auth.
                 "DRUPPIE_MODULE_API_TOKEN": os.environ.get("DRUPPIE_MODULE_API_TOKEN", ""),
             }
+            # Drain any leftover containers from a prior run with the same project name.
+            # Without this, stale containers (e.g. db in "Created" state from an aborted
+            # test) cause subsequent compose up attempts to fail.
+            await asyncio.to_thread(
+                subprocess.run,
+                ["docker", "compose", "-p", project_name, "down", "--remove-orphans"],
+                capture_output=True,
+                text=True,
+                timeout=60,
+                cwd=str(clone_path),
+            )
+
             compose_result = await asyncio.to_thread(
                 subprocess.run,
                 ["docker", "compose", "-p", project_name, "up", "-d", "--build"],
@@ -794,29 +823,40 @@ async def compose_up(
             # Step 7: Track port mapping
             compose_port_registry[project_name] = host_port
 
-            # Step 8: Health check via Docker network (not localhost)
-            # Discover the container port from the compose file instead of hardcoding
-            container_port = _discover_container_port(compose_file)
+            # Step 8: Health check — inspect the container's built-in health status
+            # instead of making HTTP requests across Docker networks.
+            # Docker compose service health checks are defined in docker-compose.yaml
+            # and are checked by the Docker daemon itself — we just need to poll
+            # `docker inspect` for the health status. This works regardless of
+            # what Docker network the compose project is on.
             app_container = f"{project_name}-app-1"
-            health_url = f"http://{app_container}:{container_port}{health_path}"
             health_passed = False
 
             for elapsed in range(health_timeout):
                 try:
-                    req = urllib.request.Request(health_url)
-                    resp = await asyncio.to_thread(
-                        urllib.request.urlopen, req, timeout=2
+                    inspect_result = await asyncio.to_thread(
+                        subprocess.run,
+                        ["docker", "inspect", "--format", "{{.State.Health.Status}}", app_container],
+                        capture_output=True,
+                        text=True,
+                        timeout=5,
                     )
-                    if resp.status == 200:
+                    status = inspect_result.stdout.strip()
+                    if status == "healthy":
                         health_passed = True
-                        resp.close()
                         break
-                    resp.close()
+                    elif status == "unhealthy":
+                        logger.warning(
+                            "compose_up: container %s is unhealthy, will timeout",
+                            app_container,
+                        )
+                        break
                 except Exception:
                     pass
                 if elapsed % 30 == 29:
                     logger.info(
-                        "compose_up: health check pending (%ds/%ds)", elapsed + 1, health_timeout
+                        "compose_up: health check pending (%ds/%ds)",
+                        elapsed + 1, health_timeout,
                     )
                 await asyncio.sleep(1)
 

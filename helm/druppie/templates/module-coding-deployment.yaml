@@ -1,0 +1,98 @@
+{{- if .Values.modules.coding.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "druppie.fullname" . }}-module-coding
+  labels:
+    {{- include "druppie.labels" . | nindent 4 }}
+    app.kubernetes.io/component: module-coding
+spec:
+  replicas: {{ .Values.modules.coding.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "druppie.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: module-coding
+  template:
+    metadata:
+      labels:
+        {{- include "druppie.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: module-coding
+      annotations:
+        cluster-autoscaler.kubernetes.io/safe-to-evict: "true"
+    spec:
+      initContainers:
+        - name: wait-for-gitea
+          image: curlimages/curl:latest
+          command:
+            - sh
+            - -c
+            - |
+              until curl -sf http://{{ include "druppie.fullname" . }}-gitea:3000/api/healthz; do
+                echo "Waiting for gitea..."
+                sleep 5
+              done
+          resources:
+            requests:
+              memory: "32Mi"
+              cpu: "50m"
+            limits:
+              memory: "64Mi"
+              cpu: "100m"
+      containers:
+        - name: module-coding
+          image: {{ include "druppie.image" (dict "Values" .Values "image" .Values.modules.coding.image) }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          env:
+            - name: MCP_PORT
+              value: {{ .Values.modules.coding.port | quote }}
+            {{- if .Values.backend.dockerSocket.enabled }}
+            - name: DOCKER_HOST
+              value: "unix:///var/run/docker.sock"
+            {{- end }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "druppie.fullname" . }}-config
+            - secretRef:
+                name: {{ include "druppie.fullname" . }}-secrets
+          ports:
+            - name: http
+              containerPort: {{ .Values.modules.coding.port }}
+              protocol: TCP
+          volumeMounts:
+            - name: workspace
+              mountPath: /workspaces
+            {{- if .Values.backend.dockerSocket.enabled }}
+            - name: docker-sock
+              mountPath: /var/run/docker.sock
+            {{- end }}
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.modules.coding.port }}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 5
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.modules.coding.port }}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 5
+          resources:
+            {{- toYaml .Values.modules.coding.resources | nindent 12 }}
+      nodeSelector:
+        pool: infra
+      volumes:
+        - name: workspace
+          persistentVolumeClaim:
+            claimName: {{ include "druppie.fullname" . }}-workspace
+        {{- if .Values.backend.dockerSocket.enabled }}
+        - name: docker-sock
+          hostPath:
+            path: /var/run/docker.sock
+            type: Socket
+        {{- end }}
+{{- end }}

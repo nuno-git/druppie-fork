@@ -13,19 +13,17 @@ from sqlalchemy.orm import Session, sessionmaker
 # Database URL from environment
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./druppie.db")
 
-# Create engine with explicit pool settings to prevent connection exhaustion
-# from concurrent background tasks (orchestrator, sandbox resume, watchdog).
-# pool_size=20 + max_overflow=30 = 50 max connections. Each session uses
-# ~2 connections (orchestrator + webhook/resume), plus watchdog + API handlers.
-# PostgreSQL default max_connections=100, so 50 leaves headroom.
+# pool_size=5 + max_overflow=5 = 10 max connections per worker process.
+# With 2 workers/pod × 3 pods = 6 processes × 10 = 60 connections.
+# PostgreSQL default max_connections=100, so 60 leaves headroom.
 _is_sqlite = "sqlite" in DATABASE_URL
 engine = create_engine(
     DATABASE_URL,
     connect_args={"check_same_thread": False} if _is_sqlite else {},
-    pool_pre_ping=True,  # Enable connection health checks
+    pool_pre_ping=True,
     **({} if _is_sqlite else {
-        "pool_size": 20,
-        "max_overflow": 30,
+        "pool_size": 5,
+        "max_overflow": 5,
     }),
 )
 

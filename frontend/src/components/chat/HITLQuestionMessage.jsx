@@ -6,18 +6,18 @@
  * When answered, shows the question with a green check.
  *
  * When `question.allowOther` is truthy and the question has choices,
- * an extra "Other" button is rendered below the choices. Clicking it
- * replaces the buttons with a textarea for a free-text answer.
+ * a free-text textarea is shown below the choices. The user can select
+ * choices AND type a custom answer — both are submitted together.
  */
 
 import { useState, useRef, useEffect } from 'react'
-import { Loader2, Send, X } from 'lucide-react'
+import { Loader2, Send, ChevronDown, ChevronUp } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { getAgentConfig, getAgentMessageColors } from '../../utils/agentConfig'
 import { chatMarkdownComponents } from './ChatHelpers'
 
-const HITLQuestionMessage = ({ question, onChoiceSelect, onSubmitChoices, isAnswering, answered = false }) => {
+const HITLQuestionMessage = ({ question, onSubmitAnswer, isAnswering, answered = false }) => {
   const agentId = question.agent_id || 'unknown'
   const agentConfig = getAgentConfig(agentId)
   const AgentIcon = agentConfig.icon
@@ -26,15 +26,27 @@ const HITLQuestionMessage = ({ question, onChoiceSelect, onSubmitChoices, isAnsw
   const hasOptions = question.choices && question.choices.length > 0
 
   const [selectedIndices, setSelectedIndices] = useState(new Set())
-  const [showFreeText, setShowFreeText] = useState(false)
   const [freeText, setFreeText] = useState('')
+  const [showFreeText, setShowFreeText] = useState(false)
   const freeTextRef = useRef(null)
+  const plainTextRef = useRef(null)
+
+  const autoResize = (ref) => {
+    const el = ref?.current
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = Math.min(el.scrollHeight, 200) + 'px'
+  }
 
   useEffect(() => {
     if (showFreeText && freeTextRef.current) {
       freeTextRef.current.focus()
     }
   }, [showFreeText])
+
+  useEffect(() => {
+    autoResize(hasOptions ? freeTextRef : plainTextRef)
+  }, [freeText, hasOptions])
 
   const handleToggleChoice = (index) => {
     setSelectedIndices((prev) => {
@@ -48,17 +60,29 @@ const HITLQuestionMessage = ({ question, onChoiceSelect, onSubmitChoices, isAnsw
     })
   }
 
-  const handleSubmitChoices = () => {
-    if (selectedIndices.size === 0) return
+  const canSubmit = selectedIndices.size > 0 || freeText.trim().length > 0
+
+  const handleSubmit = () => {
+    if (!canSubmit) return
     const indices = [...selectedIndices].sort((a, b) => a - b)
-    const answerText = indices.map((i) => question.choices[i]).join(', ')
-    onSubmitChoices?.({ indices, answerText })
+    const choiceTexts = indices.map((i) => question.choices[i])
+    const custom = freeText.trim()
+
+    const parts = [...choiceTexts]
+    if (custom) parts.push(custom)
+    const answerText = parts.join(', ')
+
+    onSubmitAnswer?.({
+      indices: indices.length > 0 ? indices : null,
+      answerText,
+      customText: custom || null,
+    })
   }
 
-  const handleFreeTextSubmit = () => {
-    const trimmed = freeText.trim()
-    if (!trimmed) return
-    onChoiceSelect?.(trimmed)
+  const submitLabel = () => {
+    const count = selectedIndices.size + (freeText.trim() ? 1 : 0)
+    if (count === 0) return 'Submit'
+    return `Submit (${count})`
   }
 
   return (
@@ -80,7 +104,7 @@ const HITLQuestionMessage = ({ question, onChoiceSelect, onSubmitChoices, isAnsw
           </div>
         )}
 
-        {hasOptions && !answered && !showFreeText && (
+        {hasOptions && !answered && (
           <div className="mt-2 space-y-1.5">
             {question.choices.map((option, index) => {
               const isSelected = selectedIndices.has(index)
@@ -99,18 +123,51 @@ const HITLQuestionMessage = ({ question, onChoiceSelect, onSubmitChoices, isAnsw
                 </button>
               )
             })}
-            {question.allowOther && (
+
+            {question.allowOther && !showFreeText && (
               <button
                 onClick={() => setShowFreeText(true)}
                 disabled={isAnswering}
-                className="w-full text-left px-3 py-2 rounded-lg border border-dashed border-gray-300 bg-gray-50 text-sm text-gray-500 hover:border-gray-400 hover:bg-gray-100 hover:text-gray-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                className="w-full text-left px-3 py-2 rounded-lg border border-dashed border-gray-300 bg-gray-50 text-sm text-gray-500 hover:border-gray-400 hover:bg-gray-100 hover:text-gray-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-1.5"
               >
-                Other (type your answer)
+                <ChevronDown className="w-3.5 h-3.5" />
+                Add a custom answer
               </button>
             )}
+
+            {question.allowOther && showFreeText && (
+              <div className="space-y-1.5">
+                <button
+                  onClick={() => { setShowFreeText(false); setFreeText('') }}
+                  disabled={isAnswering}
+                  className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-600 transition-colors"
+                >
+                  <ChevronUp className="w-3 h-3" />
+                  Hide custom answer
+                </button>
+                <div className="flex items-end gap-2 border border-gray-200 rounded-lg px-3 py-2 bg-white focus-within:border-gray-300 transition-colors">
+                  <textarea
+                    ref={freeTextRef}
+                    value={freeText}
+                    onChange={(e) => setFreeText(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && !e.shiftKey && !isAnswering) {
+                        e.preventDefault()
+                        handleSubmit()
+                      }
+                    }}
+                    placeholder="Type your answer..."
+                    rows={2}
+                    disabled={isAnswering}
+                    className="flex-1 resize-y bg-transparent outline-none text-sm leading-6 min-w-0 max-h-[200px]"
+                  />
+                </div>
+              </div>
+            )}
+
             <button
-              onClick={handleSubmitChoices}
-              disabled={selectedIndices.size === 0 || isAnswering}
+              onClick={handleSubmit}
+              disabled={!canSubmit || isAnswering}
               className="w-full px-3 py-2 rounded-lg bg-gray-900 text-white text-sm font-medium hover:bg-gray-700 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
             >
               {isAnswering ? (
@@ -119,32 +176,33 @@ const HITLQuestionMessage = ({ question, onChoiceSelect, onSubmitChoices, isAnsw
                   Submitting…
                 </span>
               ) : (
-                `Submit${selectedIndices.size > 0 ? ` (${selectedIndices.size})` : ''}`
+                submitLabel()
               )}
             </button>
           </div>
         )}
 
-        {showFreeText && !answered && (
-          <div className="mt-2 space-y-2">
+        {/* Questions without choices — free-text only */}
+        {!hasOptions && !answered && (
+          <div className="mt-2">
             <div className="flex items-end gap-2 border border-gray-200 rounded-lg px-3 py-2 bg-white focus-within:border-gray-300 transition-colors">
               <textarea
-                ref={freeTextRef}
+                ref={plainTextRef}
                 value={freeText}
                 onChange={(e) => setFreeText(e.target.value)}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' && !e.shiftKey && !isAnswering) {
                     e.preventDefault()
-                    handleFreeTextSubmit()
+                    handleSubmit()
                   }
                 }}
                 placeholder="Type your answer..."
                 rows={2}
                 disabled={isAnswering}
-                className="flex-1 resize-none bg-transparent outline-none text-sm leading-6 min-w-0"
+                className="flex-1 resize-y bg-transparent outline-none text-sm leading-6 min-w-0 max-h-[200px]"
               />
               <button
-                onClick={handleFreeTextSubmit}
+                onClick={handleSubmit}
                 disabled={!freeText.trim() || isAnswering}
                 className="flex-shrink-0 p-1.5 rounded-lg bg-gray-900 text-white hover:bg-gray-700 disabled:opacity-30 transition-colors"
               >
@@ -155,14 +213,16 @@ const HITLQuestionMessage = ({ question, onChoiceSelect, onSubmitChoices, isAnsw
                 )}
               </button>
             </div>
-            <button
-              onClick={() => { setShowFreeText(false); setFreeText('') }}
-              disabled={isAnswering}
-              className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-600 transition-colors"
-            >
-              <X className="w-3 h-3" />
-              Back to options
-            </button>
+            {hasOptions && (
+              <button
+                onClick={() => { setShowFreeText(false); setFreeText('') }}
+                disabled={isAnswering}
+                className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-600 transition-colors"
+              >
+                <X className="w-3 h-3" />
+                Back to options
+              </button>
+            )}
           </div>
         )}
       </div>

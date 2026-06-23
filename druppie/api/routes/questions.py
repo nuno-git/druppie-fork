@@ -28,10 +28,11 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 import structlog
 
-from druppie.api.deps import get_current_user, get_question_service, get_user_roles
+from druppie.api.deps import get_attachment_repository, get_current_user, get_question_service, get_user_roles
+from druppie.repositories import AttachmentRepository
 from druppie.services import QuestionService
-from druppie.domain import QuestionDetail
-from druppie.core.background_tasks import create_session_task, run_session_task, SessionTaskConflict
+from druppie.domain import QuestionDetail, PendingQuestionList
+from druppie.core.background_tasks import create_tracked_task, run_session_task
 
 logger = structlog.get_logger()
 
@@ -56,6 +57,10 @@ class AnswerRequest(BaseModel):
         default=None,
         description="For choice questions, indices of selected options",
     )
+    attachment_ids: list[str] = Field(
+        default=[],
+        description="Attachment IDs to link to this answer",
+    )
 
 
 class AnswerResponse(BaseModel):
@@ -74,6 +79,7 @@ async def _resume_workflow_after_answer(
     session_id: UUID,
     question_id: UUID,
     answer: str,
+    selected_choices: list[int] | None = None,
 ) -> None:
     """Resume workflow in background using run_session_task for DB lifecycle."""
 
@@ -82,6 +88,7 @@ async def _resume_workflow_after_answer(
             session_id=session_id,
             question_id=question_id,
             answer=answer,
+            selected_choices=selected_choices,
         )
 
     await run_session_task(session_id, task, "resume_after_answer")
@@ -92,11 +99,33 @@ async def _resume_workflow_after_answer(
 # =============================================================================
 
 
+@router.get("/pending")
+async def list_pending_questions(
+    question_service: QuestionService = Depends(get_question_service),
+    user: dict = Depends(get_current_user),
+) -> PendingQuestionList:
+    """List pending questions the user can answer.
+
+    Includes:
+    - Regular HITL questions for sessions the current user owns.
+    - `ask_expert` questions whose `expert_role` is one of the user's roles.
+    - Admins see every pending question.
+    """
+    user_id = UUID(user["sub"])
+    user_roles = get_user_roles(user)
+    return question_service.get_pending_for_user(
+        user_id=user_id,
+        user_roles=user_roles,
+        is_admin="admin" in user_roles,
+    )
+
+
 @router.post("/{question_id}/answer")
 async def answer_question(
     question_id: UUID,
     request: AnswerRequest,
     question_service: QuestionService = Depends(get_question_service),
+    attachment_repo: AttachmentRepository = Depends(get_attachment_repository),
     user: dict = Depends(get_current_user),
 ) -> AnswerResponse:
     """Answer a pending HITL question and resume the workflow.
@@ -136,23 +165,39 @@ async def answer_question(
         answer=request.answer,
         selected_choices=request.selected_choices,
         is_admin="admin" in roles,
+        user_roles=roles,
     )
+
+    # Step 1b: Link attachments to question
+    if request.attachment_ids:
+        try:
+            attachment_uuids = [UUID(aid) for aid in request.attachment_ids]
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid attachment ID format")
+        try:
+            attachment_repo.validate_ownership(attachment_uuids, question.session_id, owner_user_id=user_id)
+        except ValueError as e:
+            raise HTTPException(status_code=403, detail=str(e))
+        attachment_repo.link_to_question(
+            attachment_uuids, question_id, question.session_id,
+        )
+        attachment_repo.db.commit()
 
     # Step 2: Spawn background task to resume workflow
     try:
-        create_session_task(
-            question.session_id,
+        create_tracked_task(
             _resume_workflow_after_answer(
                 session_id=question.session_id,
                 question_id=question_id,
                 answer=request.answer,
+                selected_choices=request.selected_choices,
             ),
             name=f"resume-answer-{question_id}",
         )
-    except SessionTaskConflict:
+    except Exception:
         raise HTTPException(
-            status_code=409,
-            detail="A task is already running for this session",
+            status_code=500,
+            detail="Failed to start background task",
         )
 
     logger.info(

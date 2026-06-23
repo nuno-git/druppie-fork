@@ -1,0 +1,23 @@
+## Agent test: summarizer produces bilingual message for Dutch session
+##
+## Exercises the full general_chat flow through to the summarizer.
+## The summarizer calls create_message which should store both the
+## Dutch display content and the English original (content_english).
+##
+## Uses general_chat because it's the shortest path to a summarizer
+## message (no FD, no architect, no builder).
+
+agent-test:
+  name: summarizer-bilingual-message
+  description: "Summarizer stores both Dutch and English message for Dutch session"
+  tags: [summarizer, translation, bilingual, language]
+
+  message: "Hoe kan ik het beste omgaan met stakeholders die tegenstrijdige eisen hebben?"
+  agents: [router, planner, business_analyst, planner, summarizer]
+  hitl: non-technical-pm
+
+  judge:
+    context: [summarizer]
+    checks:
+      - "The summarizer must have called builtin:create_message exactly once. This is the completion message shown to the user in the chat timeline."
+      - "The summarizer's create_message call must have English content in its arguments (the summarizer always writes in English per the language block). The platform translates this to Dutch before storage — that translation is NOT visible in the tool call arguments. Verify the create_message arguments contain an English summary of the conversation."

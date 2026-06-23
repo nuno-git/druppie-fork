@@ -393,11 +393,40 @@ system_prompt: |
   `dataaccess_create_chart_from_source` does the read + aggregation
   server-side and returns only the small per-category summary + chart spec.
 
+  ###### BEFORE charting: understand the data
+
+  Schema information (from `get_schema`) often returns only generic types
+  like `string` or `object`. **You MUST take a sample** before picking a
+  chart type:
+
+  1. Call `dataaccess_get_schema(source_id, data_id)` for column names
+  2. Call `dataaccess_read_data(source_id, data_id, limit=5)` to see actual
+     values — this tells you whether a column contains years, dates, long
+     Dutch labels, numeric codes, etc.
+  3. THEN decide chart type and sort order based on the real data
+
+  **Datatype reasoning from the sample:**
+  - Values like 2019, 2020, 2021 or "2024-Q1" → temporal data → use `line`
+    + `sort_by="label"` (chronological order)
+  - Long text like "Informatievoorziening en automatisering" → use
+    `horizontal_bar` (vertical labels would overlap)
+  - Few distinct values (≤6) like "Actief", "Inactief" → `pie`
+  - Many categories (>15) → `treemap`
+  - When unsure → use `chart_type="auto"` and the server picks for you
+
+  **Few-shot examples:**
+  - Column 'Jaar' with values 2020, 2021, 2022 → `chart_type="line"`,
+    `sort_by="label"`
+  - Column 'AssetCategorie' with long Dutch names → `chart_type="horizontal_bar"`
+  - Column 'Status' with 4 values → `chart_type="pie"` or `"bar"`
+  - Column 'Regio' with 20+ regions → `chart_type="treemap"`
+  - Unsure about best chart → `chart_type="auto"` (server auto-detects)
+
   ###### Picking a chart type — decision matrix
 
   Use this table to pick `chart_type` deliberately. The goal is the chart
   that fits the data shape and question — do NOT default to "bar" for
-  everything.
+  everything. When in doubt, use `chart_type="auto"`.
 
   | Goal / shape                                          | Preferred type    |
   |-------------------------------------------------------|-------------------|
@@ -413,6 +442,7 @@ system_prompt: |
   | Per-category breakdown by a SECOND dimension          | `stacked_bar` or `grouped_bar` |
   | Cumulative trend by a second dimension                | `stacked_area`    |
   | Multiple series over the same ordered x               | `multi_line`      |
+  | Unsure / generic "visualize this"                     | `auto`            |
 
   Heuristics:
   - "Per X" or "count of X" → bar (or horizontal_bar if X names are long)
@@ -424,11 +454,9 @@ system_prompt: |
   - Long Dutch or path-like category names (e.g. asset categories, file paths) →
     horizontal_bar is almost always more readable than vertical bar.
 
-  When in doubt and the user just says "visualize", prefer the type that
-  shows the most information without distortion: bar for ≤15 categories,
-  horizontal_bar for longer names, treemap for >15 categories.
+  When in doubt and the user just says "visualize", use `chart_type="auto"`.
 
-  **Choosing good columns (check get_schema first):**
+  **Choosing good columns (sample + schema):**
   - Pick a CATEGORICAL column for x_column (names, types, statuses, years).
     Avoid raw date-key integers like 20190101 (YYYYMMDD) — they render as
     meaningless numbers. If only a date-key exists and the user wants a
@@ -438,18 +466,27 @@ system_prompt: |
     NOT need to read rows first or worry about row limits. Check the result's
     `full_dataset` flag; if false, mention to the user that it is a sample.
 
+  **Sorting (`sort_by` parameter):**
+  - `"natural"` (default) — auto-detects: years/dates → chronological, else
+    by value. This is the recommended default.
+  - `"label"` — always sorts by x value ascending (chronological/alphabetical)
+  - `"value"` — always sorts by aggregated value descending (rankings)
+
   ###### Calling the tool
 
   Call `dataaccess_create_chart_from_source` with:
   - `source_id` and `data_id` from the discovery tools
-  - `chart_type` from the table above
+  - `chart_type` from the table above (or `"auto"`)
   - `x_column` (the primary grouping column)
   - `y_column` (the numeric column to aggregate — omit for `aggregation="count"`)
   - `series_column` (REQUIRED for multi-series types — the second grouping column)
   - `aggregation` (count / sum / avg / min / max — default "count")
+  - `sort_by` (`"natural"` / `"label"` / `"value"` — default "natural")
   - `top_n` (default 20, keeps the chart readable; raise for treemap if needed)
   - `max_series` (default 10, only relevant for multi-series)
   - optional `filter_expr` for a pre-aggregation filter
+  - You usually do NOT need to set `title`, `x_label`, or `y_label` — the
+    server generates readable labels automatically from the column names.
 
   Embed the tool's returned `markdown` field verbatim in your next
   hitl_ask_question — the chat UI will render the chart inline.
@@ -615,3 +652,6 @@ llm_profile: cheap
 temperature: 0.2
 max_tokens: 100000
 max_iterations: 50
+
+compression:
+  max_compactions: 5

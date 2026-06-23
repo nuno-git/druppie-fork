@@ -1,0 +1,74 @@
+{{- if .Values.persistence.enabled }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "druppie.fullname" . }}-workspace
+  labels:
+    {{- include "druppie.labels" . | nindent 4 }}
+    app.kubernetes.io/component: workspace
+spec:
+  accessModes:
+    {{- if .Values.nfs.enabled }}
+    - ReadWriteMany
+    {{- else }}
+    - ReadWriteOnce
+    {{- end }}
+  storageClassName: {{ include "druppie.persistence.storageClass" . | quote }}
+  resources:
+    requests:
+      storage: {{ .Values.persistence.workspace.size }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "druppie.fullname" . }}-dataset
+  labels:
+    {{- include "druppie.labels" . | nindent 4 }}
+    app.kubernetes.io/component: dataset
+spec:
+  accessModes:
+    - ReadWriteOnce
+  {{- if .Values.persistence.storageClass }}
+  storageClassName: {{ .Values.persistence.storageClass | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.persistence.dataset.size }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "druppie.fullname" . }}-sandbox-bundles
+  labels:
+    {{- include "druppie.labels" . | nindent 4 }}
+    app.kubernetes.io/component: sandbox-bundles
+spec:
+  accessModes:
+    {{- if .Values.nfs.enabled }}
+    - ReadWriteMany
+    {{- else }}
+    - ReadWriteOnce
+    {{- end }}
+  storageClassName: {{ include "druppie.persistence.storageClass" . | quote }}
+  resources:
+    requests:
+      storage: {{ .Values.persistence.sandboxBundles.size }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "druppie.fullname" . }}-gitea-data
+  labels:
+    {{- include "druppie.labels" . | nindent 4 }}
+    app.kubernetes.io/component: gitea
+spec:
+  accessModes:
+    - ReadWriteOnce
+  {{- if .Values.persistence.storageClass }}
+  storageClassName: {{ .Values.persistence.storageClass | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.gitea.storage }}
+{{- end }}

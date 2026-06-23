@@ -11,20 +11,17 @@ Tool definitions are in BUILTIN_TOOL_DEFS (dict keyed by name).
 Use get_builtin_tools(names) to get OpenAI-format definitions for an agent.
 """
 
-import os
 from typing import TYPE_CHECKING
 from uuid import UUID
 
 import structlog
 
+from druppie.core.translation import TranslationNotAvailableError
+
 if TYPE_CHECKING:
     from druppie.repositories import ExecutionRepository
 
 logger = structlog.get_logger()
-
-from druppie.opencode.model_resolver import get_agent_chain, resolve_sandbox_models
-
-VALID_REPO_TARGETS = ("project", "druppie_core")
 
 
 # =============================================================================
@@ -32,7 +29,7 @@ VALID_REPO_TARGETS = ("project", "druppie_core")
 # =============================================================================
 
 # Default builtin tools every agent gets (unless overridden in YAML)
-DEFAULT_BUILTIN_TOOLS = ["done", "hitl_ask_question", "hitl_ask_multiple_choice_question"]
+DEFAULT_BUILTIN_TOOLS = ["done", "hitl_ask_question", "hitl_ask_multiple_choice_question", "read_attachment"]
 
 # All builtin tool definitions, keyed by tool name
 BUILTIN_TOOL_DEFS: dict[str, dict] = {
@@ -80,6 +77,72 @@ BUILTIN_TOOL_DEFS: dict[str, dict] = {
                     },
                 },
                 "required": ["question", "choices"],
+            },
+        },
+    },
+    "ask_expert_question": {
+        "type": "function",
+        "function": {
+            "name": "ask_expert_question",
+            "description": (
+                "Ask a free-form question to an expert (a user with a specific Keycloak role) "
+                "instead of the session owner. Use this when you need domain expertise the "
+                "current user does not have. The workflow pauses until any user holding the "
+                "given role answers. The session owner CANNOT answer expert questions unless "
+                "they themselves hold the role. Available expert_role values are restricted "
+                "by the agent's allowed_expert_roles."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "expert_role": {
+                        "type": "string",
+                        "description": "Keycloak role of the expert pool to ask (must be in this agent's allowed_expert_roles).",
+                    },
+                    "question": {
+                        "type": "string",
+                        "description": "The question to ask the expert.",
+                    },
+                    "context": {
+                        "type": "string",
+                        "description": "Optional context explaining why this question is being asked.",
+                    },
+                },
+                "required": ["expert_role", "question"],
+            },
+        },
+    },
+    "ask_expert_multiple_choice_question": {
+        "type": "function",
+        "function": {
+            "name": "ask_expert_multiple_choice_question",
+            "description": (
+                "Ask an expert (a user with a specific Keycloak role) a multiple choice question. "
+                "Same routing rules as ask_expert_question. An 'Other' option is added "
+                "automatically — do NOT include it in your choices."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "expert_role": {
+                        "type": "string",
+                        "description": "Keycloak role of the expert pool to ask (must be in this agent's allowed_expert_roles).",
+                    },
+                    "question": {
+                        "type": "string",
+                        "description": "The question to ask the expert.",
+                    },
+                    "choices": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "List of choices for the expert to select from. Do NOT include an 'Other' option — one is added automatically.",
+                    },
+                    "context": {
+                        "type": "string",
+                        "description": "Optional context explaining why this question is being asked.",
+                    },
+                },
+                "required": ["expert_role", "question", "choices"],
             },
         },
     },
@@ -136,11 +199,11 @@ BUILTIN_TOOL_DEFS: dict[str, dict] = {
                     },
                     "project_id": {
                         "type": "string",
-                        "description": "For update_project: the ID of the project to update",
+                        "description": "The ID of the project to work with. Required for update_project. Optional for general_chat when the user asks about a specific project by name. ONLY include this if the user mentions a specific project - otherwise OMIT this parameter entirely.",
                     },
                     "project_name": {
                         "type": "string",
-                        "description": "For create_project: the name for the new project",
+                        "description": "For create_project: the name for the new project. ONLY include this when intent is 'create_project' - otherwise OMIT this parameter entirely.",
                     },
                 },
                 "required": ["intent"],
@@ -195,49 +258,6 @@ BUILTIN_TOOL_DEFS: dict[str, dict] = {
             },
         },
     },
-    "execute_coding_task": {
-        "type": "function",
-        "function": {
-            "name": "execute_coding_task",
-            "description": (
-                "Execute a coding task in an isolated sandbox. "
-                "IMPORTANT: Each call spawns a FRESH container that clones the project repo from git. "
-                "The sandbox is DESTROYED after the task completes. "
-                "Any work NOT committed and pushed within the sandbox is LOST. "
-                "There is NO persistent workspace between calls — each call starts from the latest git state. "
-                "The sandbox agent will automatically commit and push its work. "
-                "To build on previous work, simply call again — the new sandbox clones the repo with all previous pushes."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "task": {
-                        "type": "string",
-                        "description": (
-                            "The complete task prompt for the sandbox coding agent. "
-                            "This is the ONLY instruction it receives, so be self-contained: "
-                            "describe what to implement, reference files to read for context "
-                            "(e.g. SPEC.md, test files), and include any patterns to follow."
-                        ),
-                    },
-                    "agent": {
-                        "type": "string",
-                        "description": "Which sandbox agent to use",
-                    },
-                    "repo_target": {
-                        "type": "string",
-                        "enum": ["project", "druppie_core"],
-                        "description": (
-                            "Which repo the sandbox works on. "
-                            "'project' (default) = session's Gitea project repo. "
-                            "'druppie_core' = Druppie's own GitHub repo (dual-repo: core + project context)."
-                        ),
-                    },
-                },
-                "required": ["task"],
-            },
-        },
-    },
     "test_report": {
         "type": "function",
         "function": {
@@ -276,6 +296,23 @@ BUILTIN_TOOL_DEFS: dict[str, dict] = {
                     },
                 },
                 "required": ["iteration", "tests_passed", "summary"],
+            },
+        },
+    },
+    "read_attachment": {
+        "type": "function",
+        "function": {
+            "name": "read_attachment",
+            "description": "Read the content of a file uploaded by the user. Use this when you need to see the contents of an attached file listed in the session context.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "attachment_id": {
+                        "type": "string",
+                        "description": "The UUID of the attachment to read",
+                    },
+                },
+                "required": ["attachment_id"],
             },
         },
     },
@@ -349,6 +386,11 @@ async def set_intent(
         project_id=project_id,
         project_name=project_name,
     )
+
+    if project_id and isinstance(project_id, str):
+        normalized = project_id.lower().strip()
+        if normalized in ("null", "none") or normalized == "":
+            project_id = None
 
     valid_intents = ("create_project", "update_project", "general_chat")
     if intent not in valid_intents:
@@ -510,10 +552,27 @@ async def set_intent(
             }
 
     else:  # general_chat
-        result["message"] = "Intent set to general_chat"
+        if project_id:
+            try:
+                session_repo.update_project(session_id, UUID(project_id))
+                final_project_id = UUID(project_id)
+                result["project_id"] = project_id
+                result["message"] = f"Intent set to general_chat with project context: {project_id}"
+            except ValueError:
+                return {
+                    "success": False,
+                    "error": f"Invalid project_id format: {project_id}",
+                }
+        else:
+            result["message"] = "Intent set to general_chat"
 
-    # Update the pending planner's prompt with intent context
-    _update_planner_prompt(execution_repo, session_id, intent, final_project_id)
+    _update_planner_prompt(
+        execution_repo,
+        session_id,
+        intent,
+        final_project_id,
+        project_name if intent == "create_project" else None,
+    )
 
     db.flush()
 
@@ -532,6 +591,7 @@ def _update_planner_prompt(
     session_id: UUID,
     intent: str,
     project_id: UUID | None,
+    project_name: str | None = None,
 ) -> None:
     """Update the pending planner's prompt with intent context.
 
@@ -543,7 +603,10 @@ def _update_planner_prompt(
         session_id: Session UUID
         intent: Intent type
         project_id: Project UUID (or None)
+        project_name: Project name (optional, for create_project)
     """
+    from druppie.repositories import ProjectRepository
+
     planner_run = execution_repo.get_pending_by_agent_id(session_id, "planner")
 
     if not planner_run:
@@ -553,11 +616,34 @@ def _update_planner_prompt(
         )
         return
 
+    owner = None
+    if project_id:
+        try:
+            project_repo = ProjectRepository(execution_repo.db)
+            project = project_repo.get_by_id(project_id)
+            if project:
+                if not project_name:
+                    project_name = project.name
+                owner = project.repo_owner
+            else:
+                logger.warning(
+                    "_update_planner_prompt_project_not_found",
+                    project_id=str(project_id),
+                    session_id=str(session_id),
+                )
+        except Exception as e:
+            logger.error(
+                "_update_planner_prompt_project_lookup_failed",
+                project_id=str(project_id),
+                session_id=str(session_id),
+                error=str(e),
+            )
+
     # Prepend intent context to the existing prompt
     if project_id:
-        intent_context = f"INTENT: {intent}\nPROJECT_ID: {str(project_id)}\n\n"
+        intent_context = f"INTENT: {intent}\nPROJECT_ID: {str(project_id)}\nPROJECT_NAME: {project_name or 'unknown'}\nOWNER: {owner or 'unknown'}\n\n"
     else:
-        intent_context = f"INTENT: {intent}\nPROJECT_ID: new\n\n"
+        intent_context = f"INTENT: {intent}\nPROJECT_ID: new\nPROJECT_NAME: {project_name or 'unknown'}\nOWNER: unknown\n\n"
     new_prompt = intent_context + (planner_run.planned_prompt or "")
     execution_repo.update_planned_prompt(planner_run.id, new_prompt)
 
@@ -717,6 +803,7 @@ async def create_message(
     """Create a visible message in the chat timeline.
 
     Called by the summarizer agent to post a user-friendly completion message.
+    Translates English agent output to the user's language before storing.
 
     Args:
         content: Message content to display
@@ -727,13 +814,36 @@ async def create_message(
     Returns:
         Success status
     """
+    display_content = content
+    try:
+        from druppie.repositories import SessionRepository
+        from druppie.core.translation import get_translation_service
+        session_repo = SessionRepository(execution_repo.db)
+        session = session_repo.get_by_id(session_id)
+        if session and session.language and session.language != "en":
+            translator = get_translation_service()
+            display_content = await translator.translate_from_english(
+                content, session.language
+            )
+            if display_content != content:
+                logger.info(
+                    "create_message_translated",
+                    session_id=str(session_id),
+                    target_language=session.language,
+                )
+    except TranslationNotAvailableError:
+        logger.warning("translation_skipped_no_api_key", session_id=str(session_id))
+    except Exception as e:
+        logger.warning("create_message_translation_failed", error=str(e))
+
     # Get next unique sequence number so message never collides with agent_run
     seq = execution_repo.get_next_sequence_number(session_id)
 
     execution_repo.create_message(
         session_id=session_id,
         role="assistant",
-        content=content,
+        content=display_content,
+        content_english=content if display_content != content else None,
         agent_run_id=agent_run_id,
         agent_id="summarizer",
         sequence_number=seq,
@@ -744,7 +854,7 @@ async def create_message(
         "create_message",
         session_id=str(session_id),
         agent_run_id=str(agent_run_id),
-        content_preview=content[:100] if content else "",
+        content_preview=display_content[:100] if display_content else "",
     )
 
     return {"status": "created", "message": "Message added to timeline"}
@@ -833,9 +943,8 @@ async def done(
     """Signal that the agent has completed its task.
 
     This does NOT pause execution - it signals completion immediately.
-    Auto-collects previous agent summaries and prepends them to create
-    an accumulated summary. Relays the full accumulated summary to the
-    next pending agent by prepending it to that agent's planned_prompt.
+    Stores the agent's summary for later retrieval. The orchestrator
+    handles building the accumulated summary when starting planner runs.
 
     When next_agent is specified, creates a direct pending run for that agent
     (plus a follow-up planner run), bypassing the normal Planner routing.
@@ -848,7 +957,7 @@ async def done(
         next_agent: Optional agent ID to route to directly
 
     Returns:
-        Completion status with accumulated summary
+        Completion status with the agent's own summary
     """
     # Check completion preconditions before proceeding
     precondition_error = _check_completion_preconditions(
@@ -870,47 +979,6 @@ async def done(
         session_id=str(session_id),
         agent_run_id=str(agent_run_id),
         summary=summary[:200] if summary else "",
-    )
-
-    # Auto-collect previous agent summaries from completed runs
-    previous_summaries = []
-    completed_runs = execution_repo.get_completed_runs(session_id)
-    for run in completed_runs:
-        # Skip the current run (it's not completed yet at this point)
-        if run.id == agent_run_id:
-            continue
-        run_summary = execution_repo.get_done_summary_for_run(run.id)
-        if run_summary:
-            # Extract only the agent's own line(s) to avoid duplication.
-            # If the summary already contains accumulated lines from earlier agents,
-            # we only want the last line (this agent's own contribution).
-            # Look for "Agent <role>:" pattern to find individual lines.
-            lines = run_summary.strip().split("\n")
-            for line in lines:
-                stripped = line.strip()
-                if stripped and stripped.startswith("Agent ") and stripped not in previous_summaries:
-                    previous_summaries.append(stripped)
-
-    # Build the accumulated summary: previous summaries + current agent's summary
-    # If the current summary already contains "Agent " lines from previous agents
-    # (because the agent copied them), strip those out to avoid duplication
-    current_lines = summary.strip().split("\n")
-    own_lines = []
-    for line in current_lines:
-        stripped = line.strip()
-        if stripped and stripped not in previous_summaries:
-            own_lines.append(stripped)
-
-    # Combine: previous summaries first, then this agent's own lines
-    all_lines = previous_summaries + own_lines
-    accumulated_summary = "\n".join(all_lines) if all_lines else summary
-
-    logger.info(
-        "agent_done_accumulated",
-        session_id=str(session_id),
-        agent_run_id=str(agent_run_id),
-        previous_count=len(previous_summaries),
-        accumulated_preview=accumulated_summary[:200],
     )
 
     # Direct routing: if next_agent is specified, validate it against the
@@ -965,7 +1033,7 @@ async def done(
                 session_id=session_id,
                 agent_id=next_agent,
                 status=AgentRunStatus.PENDING,
-                planned_prompt="",  # Will be filled by relay below
+                planned_prompt="",
                 sequence_number=start_seq,
             )
             execution_repo.flush()
@@ -979,28 +1047,9 @@ async def done(
         else:
             next_agent = None  # Ignored — planner will decide as usual
 
-    # Relay accumulated summary to the next pending planner only.
-    # Non-planner agents are self-contained — they read files from the
-    # workspace, not summary chains from previous agents.
-    next_run = execution_repo.get_next_pending(session_id)
-    if next_run and next_run.agent_id == "planner":
-        existing_prompt = next_run.planned_prompt or ""
-        new_prompt = (
-            f"PREVIOUS AGENT SUMMARY:\n{accumulated_summary}\n\n---\n\n"
-            + existing_prompt
-        )
-        execution_repo.update_planned_prompt(next_run.id, new_prompt)
-        execution_repo.flush()
-        logger.info(
-            "summary_relayed_to_planner",
-            session_id=str(session_id),
-            from_agent_run=str(agent_run_id),
-            to_agent_run=str(next_run.id),
-        )
-
     result = {
         "status": "completed",
-        "summary": accumulated_summary,
+        "summary": summary,
     }
     if next_agent:
         result["next_agent"] = next_agent
@@ -1082,176 +1131,6 @@ async def invoke_skill(
 
 
 # =============================================================================
-# SANDBOX CODING TASK IMPLEMENTATION
-# =============================================================================
-
-async def execute_sandbox_coding_task(
-    args: dict,
-    session_id: UUID,
-    agent_run_id: UUID,
-    execution_repo: "ExecutionRepository",
-) -> dict:
-    """Create a sandbox session, send the prompt, register ownership, return immediately.
-
-    Does NOT poll for completion. The control plane will send a webhook
-    to /api/sandbox-sessions/{sandbox_session_id}/complete when done.
-
-    Returns:
-        Dict with status="waiting_sandbox" and sandbox_session_id on success.
-        The caller (tool_executor) should set ToolCallStatus.WAITING_SANDBOX.
-    """
-    import json as _json
-    from druppie.opencode import create_and_start_sandbox, SandboxCreateError
-
-    task = args.get("task", "")
-    from druppie.core.config import DEFAULT_SANDBOX_AGENT
-    raw_agent = args.get("agent")
-    raw_repo_target = args.get("repo_target")
-
-    if not task:
-        return {"success": False, "error": "task is required"}
-
-    # Load caller's sandbox_constraints (if any) so defaults can prefer an
-    # allowed value rather than falling through to "project" / DEFAULT_SANDBOX_AGENT
-    # and hitting the validation below.
-    from druppie.agents.runtime import Agent as AgentLoader
-    definition = None
-    constraints = None
-    try:
-        agent_run = execution_repo.get_by_id(agent_run_id)
-        if agent_run and agent_run.agent_id:
-            definition = AgentLoader._load_definition(agent_run.agent_id)
-            if definition and definition.sandbox_constraints:
-                constraints = definition.sandbox_constraints
-    except Exception:
-        pass
-
-    if raw_agent is not None:
-        agent = raw_agent
-    elif constraints and constraints.allowed_agents and DEFAULT_SANDBOX_AGENT not in constraints.allowed_agents:
-        agent = constraints.allowed_agents[0]
-    else:
-        agent = DEFAULT_SANDBOX_AGENT
-
-    if raw_repo_target is not None:
-        repo_target = raw_repo_target
-    elif constraints and constraints.allowed_repo_targets and "project" not in constraints.allowed_repo_targets:
-        repo_target = constraints.allowed_repo_targets[0]
-    else:
-        repo_target = "project"
-
-    # Enforce per-agent sandbox constraints (e.g. architect can only use explore/druppie_core)
-    if constraints:
-        if constraints.allowed_agents is not None and agent not in constraints.allowed_agents:
-            return {
-                "success": False,
-                "error": (
-                    f"Agent '{definition.id}' is only allowed to use sandbox agents: "
-                    f"{constraints.allowed_agents}. Got: '{agent}'"
-                ),
-            }
-        if constraints.allowed_repo_targets is not None and repo_target not in constraints.allowed_repo_targets:
-            return {
-                "success": False,
-                "error": (
-                    f"Agent '{definition.id}' is only allowed to use repo targets: "
-                    f"{constraints.allowed_repo_targets}. Got: '{repo_target}'"
-                ),
-            }
-
-    model_config = resolve_sandbox_models(agent)
-    model = model_config.primary_model
-
-    # Get project context from the session via repositories
-    from druppie.repositories import SessionRepository, ProjectRepository
-    db = execution_repo.db
-    session_repo = SessionRepository(db)
-    session = session_repo.get_by_id(session_id)
-    if not session:
-        return {"success": False, "error": f"Session {session_id} not found"}
-
-    if not session.user_id:
-        return {"success": False, "error": "Cannot create sandbox: session has no user_id"}
-
-    # Validate repo_target value
-    if repo_target not in VALID_REPO_TARGETS:
-        return {"success": False, "error": f"Invalid repo_target '{repo_target}'. Must be one of: {VALID_REPO_TARGETS}."}
-
-    from druppie.opencode.repo_context import resolve_repo_context
-    try:
-        repo_ctx = resolve_repo_context(repo_target, session_id, db)
-    except ValueError as e:
-        return {"success": False, "error": str(e)}
-
-    repo_owner = repo_ctx.repo_owner
-    repo_name = repo_ctx.repo_name
-    git_provider = repo_ctx.git_provider
-    context_repo_owner = repo_ctx.context_repo_owner
-    context_repo_name = repo_ctx.context_repo_name
-    context_git_provider = repo_ctx.context_git_provider
-
-    # Append mandatory push instruction to the task prompt.
-    # The sandbox agent (OpenCode) must push after committing — the deployer
-    # pulls from the remote and unpushed commits are invisible.
-    task += (
-        "\n\n## MANDATORY: Git push after commit"
-        "\nAfter committing your changes, you MUST push to the remote."
-        "\n"
-        "\nFirst, configure git credentials (the git proxy handles auth server-side,"
-        "\nso these are just placeholders to prevent interactive prompts):"
-        "\n```bash"
-        "\ngit config --global credential.helper '!f() { echo username=x; echo password=x; }; f'"
-        "\n```"
-        "\n"
-        "\nThen push:"
-        "\n```bash"
-        "\ngit push origin HEAD"
-        "\n```"
-        "\nVerify the push succeeded by running: git log --oneline origin/HEAD..HEAD"
-        "\n(should show nothing). Do NOT complete the task until push succeeds."
-    )
-
-    try:
-        result = await create_and_start_sandbox(
-            task_prompt=task,
-            model=model,
-            agent_name=agent,
-            repo_owner=repo_owner,
-            repo_name=repo_name,
-            user_id=session.user_id,
-            session_id=session_id,
-            model_chain=_json.dumps(get_agent_chain(agent)),
-            model_chain_index=0,
-            title=f"Druppie sandbox: {task[:80]}",
-            source="api",
-            author_id="druppie-agent",
-            db=db,
-            git_provider=git_provider,
-            context_repo_owner=context_repo_owner,
-            context_repo_name=context_repo_name,
-            context_git_provider=context_git_provider,
-            repo_target=repo_target,
-        )
-
-        logger.info(
-            "execute_coding_task: prompt sent, pausing for webhook",
-            sandbox_session_id=result["sandbox_session_id"],
-            message_id=result["message_id"],
-        )
-
-        return {
-            "success": True,
-            "status": "waiting_sandbox",
-            "sandbox_session_id": result["sandbox_session_id"],
-            "message_id": result["message_id"],
-        }
-
-    except SandboxCreateError as e:
-        logger.error("execute_coding_task: failed", error=str(e))
-        return {"success": False, "error": str(e)}
-
-
-# =============================================================================
 # TEST REPORT TOOL IMPLEMENTATION
 # =============================================================================
 
@@ -1312,6 +1191,45 @@ async def test_report(
     }
 
 
+async def read_attachment(
+    attachment_id: str,
+    session_id: UUID,
+    execution_repo: "ExecutionRepository",
+) -> dict:
+    """Read the content of an uploaded attachment."""
+    from druppie.db.models import MessageAttachment
+
+    try:
+        att_uuid = UUID(attachment_id)
+    except (ValueError, AttributeError):
+        return {"success": False, "error": f"Invalid attachment ID: {attachment_id}"}
+
+    attachment = (
+        execution_repo.db.query(MessageAttachment)
+        .filter(
+            MessageAttachment.id == att_uuid,
+            MessageAttachment.session_id == session_id,
+        )
+        .first()
+    )
+    if not attachment:
+        return {"success": False, "error": f"Attachment not found: {attachment_id}"}
+
+    if attachment.extracted_text:
+        return {
+            "success": True,
+            "filename": attachment.original_filename,
+            "content_type": attachment.content_type,
+            "content": attachment.extracted_text,
+        }
+
+    return {
+        "success": False,
+        "filename": attachment.original_filename,
+        "error": "No extracted text available for this file",
+    }
+
+
 # =============================================================================
 # TOOL EXECUTION (called by ToolExecutor)
 # =============================================================================
@@ -1322,6 +1240,7 @@ async def execute_builtin(
     session_id: UUID,
     agent_run_id: UUID,
     execution_repo: "ExecutionRepository",
+    tool_call_id: UUID | None = None,
 ) -> dict:
     """Execute a non-HITL built-in tool.
 
@@ -1377,13 +1296,6 @@ async def execute_builtin(
             agent_run_id=agent_run_id,
             execution_repo=execution_repo,
         )
-    elif tool_name == "execute_coding_task":
-        return await execute_sandbox_coding_task(
-            args=args,
-            session_id=session_id,
-            agent_run_id=agent_run_id,
-            execution_repo=execution_repo,
-        )
     elif tool_name == "test_report":
         return await test_report(
             iteration=args.get("iteration", 0),
@@ -1399,6 +1311,12 @@ async def execute_builtin(
             error_classification=args.get("error_classification"),
             strategy=args.get("strategy"),
         )
+    elif tool_name == "read_attachment":
+        return await read_attachment(
+            attachment_id=args.get("attachment_id", ""),
+            session_id=session_id,
+            execution_repo=execution_repo,
+        )
     else:
         return {
             "success": False,
@@ -1411,19 +1329,36 @@ def is_builtin_tool(tool_name: str) -> bool:
     return tool_name in (
         "hitl_ask_question",
         "hitl_ask_multiple_choice_question",
+        "ask_expert_question",
+        "ask_expert_multiple_choice_question",
         "done",
         "make_plan",
         "set_intent",
         "create_message",
         "invoke_skill",
-        "execute_coding_task",
         "test_report",
+        "read_attachment",
     )
 
 
 def is_hitl_tool(tool_name: str) -> bool:
-    """Check if a tool name is a HITL tool (requires user answer)."""
+    """Check if a tool name pauses the agent for a human answer.
+
+    Includes both classic HITL tools (session owner answers) and ask_expert
+    tools (a user holding a given role answers). Both share the Question
+    record and pause/resume plumbing.
+    """
     return tool_name in (
         "hitl_ask_question",
         "hitl_ask_multiple_choice_question",
+        "ask_expert_question",
+        "ask_expert_multiple_choice_question",
+    )
+
+
+def is_ask_expert_tool(tool_name: str) -> bool:
+    """Check if a tool name is one of the ask_expert variants."""
+    return tool_name in (
+        "ask_expert_question",
+        "ask_expert_multiple_choice_question",
     )

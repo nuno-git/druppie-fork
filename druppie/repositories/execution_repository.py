@@ -13,6 +13,7 @@ from druppie.db.models import (
     LlmRetry,
     Message,
     Question,
+    ResumeContextEvent,
     ToolCall,
     ToolCallNormalization,
 )
@@ -56,6 +57,7 @@ class ExecutionRepository(BaseRepository):
         planned_prompt: str | None = None,
         sequence_number: int | None = None,
         parent_run_id: UUID | None = None,
+        spawning_tool_call_id: UUID | None = None,
     ) -> AgentRunSummary:
         """Create an agent run record."""
         agent_run = AgentRun(
@@ -65,6 +67,7 @@ class ExecutionRepository(BaseRepository):
             planned_prompt=planned_prompt,
             sequence_number=sequence_number,
             parent_run_id=parent_run_id,
+            spawning_tool_call_id=spawning_tool_call_id,
         )
         self.db.add(agent_run)
         self.db.flush()
@@ -148,17 +151,51 @@ class ExecutionRepository(BaseRepository):
         )
         return self._to_summary(agent_run) if agent_run else None
 
-    def get_user_paused_run(self, session_id: UUID) -> AgentRunSummary | None:
-        """Get the user-paused agent run for a session."""
-        agent_run = (
+    def get_user_paused_leaves(self, session_id: UUID) -> list[AgentRunSummary]:
+        """Get the leaf-most user-paused agent runs in the chain.
+
+        Returns all PAUSED_USER runs that have no PAUSED_USER children.
+        For a tree: A→[B,C]→[D,E,F,G], if all are paused, returns [D,E,F,G].
+        For a chain: A→B→C, returns [C].
+        For a single: A, returns [A].
+        """
+        paused_runs = (
             self.db.query(AgentRun)
             .filter(
                 AgentRun.session_id == session_id,
                 AgentRun.status == AgentRunStatus.PAUSED_USER.value,
             )
-            .first()
+            .all()
         )
-        return self._to_summary(agent_run) if agent_run else None
+        if not paused_runs:
+            return []
+
+        paused_ids = {r.id for r in paused_runs}
+        leaves = []
+        for run in paused_runs:
+            has_paused_child = any(
+                r.parent_run_id == run.id and r.id in paused_ids
+                for r in paused_runs
+            )
+            if not has_paused_child:
+                leaves.append(self._to_summary(run))
+        return leaves if leaves else [self._to_summary(paused_runs[-1])]
+
+    def get_user_paused_run(self, session_id: UUID) -> AgentRunSummary | None:
+        leaves = self.get_user_paused_leaves(session_id)
+        return leaves[0] if leaves else None
+
+    def get_all_paused_user_runs(self, session_id: UUID) -> list[AgentRunSummary]:
+        """Get ALL PAUSED_USER runs for a session (parents + leaves)."""
+        paused = (
+            self.db.query(AgentRun)
+            .filter(
+                AgentRun.session_id == session_id,
+                AgentRun.status == AgentRunStatus.PAUSED_USER.value,
+            )
+            .all()
+        )
+        return [self._to_summary(r) for r in paused]
 
     def get_running_run(self, session_id: UUID) -> AgentRunSummary | None:
         """Get a running agent run for a session.
@@ -213,6 +250,16 @@ class ExecutionRepository(BaseRepository):
         agent_run = self.db.query(AgentRun).filter(AgentRun.id == agent_run_id).first()
         if agent_run:
             agent_run.planned_prompt = planned_prompt
+
+    def set_pending_user_context(self, agent_run_id: UUID, context: str) -> None:
+        agent_run = self.db.query(AgentRun).filter(AgentRun.id == agent_run_id).first()
+        if agent_run:
+            agent_run.pending_user_context = context
+
+    def clear_pending_user_context(self, agent_run_id: UUID) -> None:
+        agent_run = self.db.query(AgentRun).filter(AgentRun.id == agent_run_id).first()
+        if agent_run:
+            agent_run.pending_user_context = None
 
     def get_pending_by_agent_id(self, session_id: UUID, agent_id: str) -> AgentRunSummary | None:
         """Get a pending agent run by session and agent ID."""
@@ -278,6 +325,9 @@ class ExecutionRepository(BaseRepository):
             error_message=agent_run.error_message,
             planned_prompt=agent_run.planned_prompt,
             sequence_number=agent_run.sequence_number,
+            spawning_tool_call_id=agent_run.spawning_tool_call_id,
+            parent_run_id=agent_run.parent_run_id,
+            pending_user_context=agent_run.pending_user_context,
             token_usage=TokenUsage(
                 prompt_tokens=agent_run.prompt_tokens or 0,
                 completion_tokens=agent_run.completion_tokens or 0,
@@ -331,6 +381,12 @@ class ExecutionRepository(BaseRepository):
             .filter(ToolCall.id == tool_call_id)
             .with_for_update()
             .first()
+        )
+
+    def update_tool_call_arguments(self, tool_call_id: UUID, arguments: dict) -> None:
+        """Update tool call arguments (e.g. to add translated design content)."""
+        self.db.query(ToolCall).filter(ToolCall.id == tool_call_id).update(
+            {"arguments": arguments}
         )
 
     def get_tool_calls_for_run(self, agent_run_id: UUID) -> list[ToolCall]:
@@ -500,11 +556,15 @@ class ExecutionRepository(BaseRepository):
         duration_ms: int,
         actual_provider: str | None = None,
         actual_model: str | None = None,
+        thinking_content: str | None = None,
+        raw_request: dict | None = None,
+        raw_response: dict | None = None,
     ) -> None:
         """Update LLM call response."""
         llm_call = self.db.query(LlmCall).filter(LlmCall.id == llm_call_id).first()
         if llm_call:
             llm_call.response_content = response_content
+            llm_call.thinking_content = thinking_content
             llm_call.response_tool_calls = response_tool_calls
             llm_call.prompt_tokens = prompt_tokens
             llm_call.completion_tokens = completion_tokens
@@ -514,6 +574,9 @@ class ExecutionRepository(BaseRepository):
                 llm_call.provider = actual_provider
             if actual_model:
                 llm_call.model = actual_model
+            llm_call.raw_request = raw_request
+            llm_call.raw_response = raw_response
+            self.db.flush()
 
     def update_llm_error(
         self,
@@ -528,6 +591,7 @@ class ExecutionRepository(BaseRepository):
         if llm_call:
             llm_call.response_content = json.dumps({"error": error_message})
             llm_call.duration_ms = duration_ms
+            self.db.flush()
 
     # =========================================================================
     # LLM RETRY METHODS
@@ -563,6 +627,7 @@ class ExecutionRepository(BaseRepository):
         session_id: UUID,
         role: str,
         content: str,
+        content_english: str | None = None,
         agent_run_id: UUID | None = None,
         agent_id: str | None = None,
         sequence_number: int = 0,
@@ -572,7 +637,8 @@ class ExecutionRepository(BaseRepository):
         Args:
             session_id: Session ID
             role: Message role (user, assistant, system)
-            content: Message content
+            content: Message content (display language)
+            content_english: English version for agent consumption (NULL if already English)
             agent_run_id: Optional agent run ID (for agent messages)
             agent_id: Optional agent ID (for assistant messages)
             sequence_number: Sequence number within session
@@ -585,6 +651,7 @@ class ExecutionRepository(BaseRepository):
             agent_run_id=agent_run_id,
             role=role,
             content=content,
+            content_english=content_english,
             agent_id=agent_id,
             sequence_number=sequence_number,
         )
@@ -650,14 +717,14 @@ class ExecutionRepository(BaseRepository):
     def get_last_commit_before_sequence(
         self, session_id: UUID, before_sequence: int
     ) -> ToolCallRecord | None:
-        """Get the last completed run_git tool call before a sequence number."""
+        """Get the last completed bash tool call with git commit before a sequence number."""
         tc = (
             self.db.query(ToolCall)
             .join(AgentRun, ToolCall.agent_run_id == AgentRun.id)
             .filter(
                 AgentRun.session_id == session_id,
                 AgentRun.sequence_number < before_sequence,
-                ToolCall.tool_name == "run_git",
+                ToolCall.tool_name == "bash",
                 ToolCall.status == "completed",
             )
             .order_by(ToolCall.created_at.desc())
@@ -668,13 +735,13 @@ class ExecutionRepository(BaseRepository):
         return ToolCallRecord(id=tc.id, tool_name=tc.tool_name, status=tc.status, result=tc.result)
 
     def get_first_commit_in_session(self, session_id: UUID) -> ToolCallRecord | None:
-        """Get the first completed run_git tool call with commit_sha in a session."""
+        """Get the first completed bash tool call with commit_sha in a session."""
         tc = (
             self.db.query(ToolCall)
             .join(AgentRun, ToolCall.agent_run_id == AgentRun.id)
             .filter(
                 AgentRun.session_id == session_id,
-                ToolCall.tool_name == "run_git",
+                ToolCall.tool_name == "bash",
                 ToolCall.status == "completed",
             )
             .order_by(ToolCall.created_at)
@@ -684,15 +751,101 @@ class ExecutionRepository(BaseRepository):
             return None
         return ToolCallRecord(id=tc.id, tool_name=tc.tool_name, status=tc.status, result=tc.result)
 
+    def get_children_after(
+        self,
+        parent_run_id: UUID,
+        after_child_id: UUID,
+    ) -> list[AgentRunSummary]:
+        """Get child agent runs created after a specific child.
+
+        Finds all agent runs with the same parent_run_id that were created
+        after the target child. Used by retry to find later children to reset.
+
+        Note: Subagents may each have a unique spawning_tool_call_id (when
+        the parent spawns them one at a time), so we cannot rely on shared
+        spawning_tool_call_id. Instead we order by created_at.
+
+        Args:
+            parent_run_id: Parent agent run ID
+            after_child_id: The child run ID — return children created after this one.
+
+        Returns:
+            List of child AgentRunSummary objects ordered by created_at.
+        """
+        target = (
+            self.db.query(AgentRun)
+            .filter(AgentRun.id == after_child_id)
+            .first()
+        )
+        if not target:
+            return []
+
+        runs = (
+            self.db.query(AgentRun)
+            .filter(
+                AgentRun.parent_run_id == parent_run_id,
+                AgentRun.id != after_child_id,
+                AgentRun.created_at > target.created_at,
+            )
+            .order_by(AgentRun.created_at)
+            .all()
+        )
+        return [self._to_summary(r) for r in runs]
+
     # =========================================================================
     # BULK DELETE METHODS (used by RevertService)
     # =========================================================================
 
+    def _collect_and_delete_spawned_runs(self, tc_ids: list[UUID]) -> None:
+        """Recursively find and delete agent_runs spawned by tool_calls in tc_ids.
+
+        A subagent tool_call spawns child agent_runs via spawning_tool_call_id.
+        Those children may themselves have tool_calls that spawn grandchildren,
+        so we recurse until no more spawned runs are found.
+
+        Deletes in FK-safe order: grandchild artifacts first, then grandchild
+        runs, then child artifacts, then child runs.
+        """
+        if not tc_ids:
+            return
+
+        spawned_run_ids = [
+            r.id
+            for r in self.db.query(AgentRun.id)
+            .filter(AgentRun.spawning_tool_call_id.in_(tc_ids))
+            .all()
+        ]
+
+        if not spawned_run_ids:
+            return
+
+        spawned_tc_ids = [
+            tc.id
+            for tc in self.db.query(ToolCall.id)
+            .filter(ToolCall.agent_run_id.in_(spawned_run_ids))
+            .all()
+        ]
+        self._collect_and_delete_spawned_runs(spawned_tc_ids)
+
+        # Now safe to delete artifacts of spawned runs
+        self.clear_execution_artifacts(spawned_run_ids)
+
+        self.db.query(AgentRun).filter(
+            AgentRun.id.in_(spawned_run_ids)
+        ).delete(synchronize_session="fetch")
+
+        logger.info(
+            "spawned_runs_deleted",
+            count=len(spawned_run_ids),
+            spawned_by_tool_calls=len(tc_ids),
+        )
+
     def clear_execution_artifacts(self, agent_run_ids: list[UUID]) -> dict:
         """Delete execution artifacts for agent runs, keeping the runs themselves.
 
-        Deletes in FK-safe order: normalizations -> approvals -> questions ->
-        tool_calls -> llm_retries -> llm_calls -> messages
+        Deletes in FK-safe order: spawned child runs -> normalizations ->
+        approvals -> questions -> tool_calls -> llm_retries -> llm_calls ->
+        messages
 
         Returns counts for logging.
         """
@@ -721,6 +874,11 @@ class ExecutionRepository(BaseRepository):
             Question.agent_run_id.in_(agent_run_ids)
         ).delete(synchronize_session="fetch")
 
+        # 3b. Cascade-delete any agent_runs spawned by our tool_calls.
+        # Must happen BEFORE deleting the tool_calls themselves to avoid
+        # FK violation on agent_runs.spawning_tool_call_id.
+        self._collect_and_delete_spawned_runs(tc_ids)
+
         # 4. ToolCall (FK -> agent_runs, llm_calls)
         if tc_ids:
             self.db.query(ToolCall).filter(ToolCall.id.in_(tc_ids)).delete(
@@ -748,6 +906,11 @@ class ExecutionRepository(BaseRepository):
         # 7. Message — only messages linked to these runs
         self.db.query(Message).filter(
             Message.agent_run_id.in_(agent_run_ids)
+        ).delete(synchronize_session="fetch")
+
+        # 8. ResumeContextEvent (FK -> agent_runs)
+        self.db.query(ResumeContextEvent).filter(
+            ResumeContextEvent.agent_run_id.in_(agent_run_ids)
         ).delete(synchronize_session="fetch")
 
         self.db.flush()
@@ -818,6 +981,23 @@ class ExecutionRepository(BaseRepository):
             run.prompt_tokens = 0
             run.completion_tokens = 0
             run.total_tokens = 0
+
+    def redirect_run(self, agent_run_id: UUID, new_agent_id: str, new_prompt: str | None = None) -> None:
+        """Redirect a run to a different agent, resetting it to PENDING."""
+        run = self.db.query(AgentRun).filter(AgentRun.id == agent_run_id).first()
+        if not run:
+            raise ValueError(f"Agent run {agent_run_id} not found")
+        run.agent_id = new_agent_id
+        run.status = AgentRunStatus.PENDING.value
+        run.started_at = None
+        run.completed_at = None
+        run.error_message = None
+        run.iteration_count = 0
+        run.prompt_tokens = 0
+        run.completion_tokens = 0
+        run.total_tokens = 0
+        if new_prompt is not None:
+            run.planned_prompt = new_prompt
 
     def update_planned_prompt_batch(self, updates: dict[UUID, str]) -> None:
         """Batch update planned_prompt for multiple runs.

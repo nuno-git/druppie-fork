@@ -1,0 +1,12 @@
+{{- if and .Values.global.ingress.enabled (eq .Values.global.ingress.className "traefik") (not .Values.global.subdomains.gitea) }}
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: {{ include "druppie.fullname" . }}-git-stripprefix
+  labels:
+    {{- include "druppie.labels" . | nindent 4 }}
+spec:
+  stripPrefix:
+    prefixes:
+      - /git
+{{- end }}

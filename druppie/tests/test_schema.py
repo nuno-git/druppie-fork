@@ -117,8 +117,8 @@ def test_tool_test_with_setup_and_extends():
 
 def test_tool_test_with_mock():
     step = ChainStep(
-        agent="architect", tool="coding:execute_coding_task",
-        arguments={"task": "create file"},
+        agent="architect", tool="coding:read_file",
+        arguments={"path": "README.md"},
         mock=True, mock_result='{"status": "ok"}',
     )
     assert step.mock is True

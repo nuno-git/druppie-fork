@@ -23,11 +23,14 @@ import {
   Package,
   BookOpen,
   Boxes,
+  Rocket,
+  Terminal,
+  HelpCircle,
 } from 'lucide-react'
 
 import { useAuth } from '../App'
 import { login, logout } from '../services/keycloak'
-import { getTasks } from '../services/api'
+import { getTasks, getPendingQuestions } from '../services/api'
 
 // --- NavRail Item with tooltip ---
 
@@ -175,7 +178,15 @@ const NavRail = () => {
     refetchInterval: 30000,
   })
 
+  const { data: questionsData } = useQuery({
+    queryKey: ['pending-questions-count'],
+    queryFn: getPendingQuestions,
+    enabled: authenticated,
+    refetchInterval: 30000,
+  })
+
   const pendingApprovalsCount = tasksData?.items?.length || 0
+  const pendingQuestionsCount = questionsData?.items?.length || 0
 
   const isActive = (path) => {
     if (path === '/') return location.pathname === '/'
@@ -200,12 +211,21 @@ const NavRail = () => {
         active={isActive('/tasks')}
       />
       <NavRailItem to="/projects" icon={FolderOpen} label="Projects" active={isActive('/projects')} />
+      <NavRailItem
+        to="/questions"
+        icon={HelpCircle}
+        label="Questions"
+        badge={pendingQuestionsCount}
+        active={isActive('/questions')}
+      />
 
       {/* Tools */}
       <div className="mt-1 pt-1 border-t border-gray-800 w-8" />
+      <NavRailItem to="/tools/developer" icon={Terminal} label="Agent Test" active={isActive('/tools/developer')} />
       <NavRailItem to="/tools/mcp" icon={Wrench} label="MCP Tools" active={isActive('/tools/mcp')} />
       <NavRailItem to="/tools/infrastructure" icon={Server} label="Infrastructure" active={isActive('/tools/infrastructure')} />
       <NavRailItem to="/tools/cache" icon={Package} label="Dep Cache" active={isActive('/tools/cache')} />
+      <NavRailItem to="/deployments" icon={Rocket} label="Deployments" active={isActive('/deployments')} />
 
       {/* Doc Portal */}
       <div className='mt-1 pt-1 border-t border-gray-800 w-8'></div>

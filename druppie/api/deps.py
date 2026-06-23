@@ -24,7 +24,7 @@ import os
 from functools import wraps
 from typing import Callable, Generator
 
-from fastapi import Depends, HTTPException, Header
+from fastapi import Depends, HTTPException, Header, Request
 from sqlalchemy.orm import Session
 import structlog
 
@@ -42,6 +42,7 @@ from druppie.repositories import (
     ProjectRepository,
     EvaluationRepository,
     DocumentationCacheRepository,
+    JobRepository,
 )
 from druppie.services import (
     SessionService,
@@ -51,6 +52,7 @@ from druppie.services import (
     WorkflowService,
     EvaluationService,
     DocumentationService,
+    JobService,
 )
 
 # Initialize database tables on import
@@ -93,17 +95,34 @@ def get_doc_cache_repository(db: Session = Depends(get_db)) -> DocumentationCach
     return DocumentationCacheRepository(db)
 
 
+def get_job_repository(db: Session = Depends(get_db)) -> JobRepository:
+    """Get JobRepository with DB session injected."""
+    return JobRepository(db)
+
+
+def get_attachment_repository(db: Session = Depends(get_db)) -> "AttachmentRepository":
+    """Get AttachmentRepository with DB session injected."""
+    from druppie.repositories import AttachmentRepository
+    return AttachmentRepository(db)
+
+
 # =============================================================================
 # SERVICE DEPENDENCIES
 # =============================================================================
-# Services handle business logic. Each service gets its required repositories.
+# Services handle business logic. Each service gets their required repositories.
 
 
 def get_session_service(
     session_repo: SessionRepository = Depends(get_session_repository),
+    question_repo: QuestionRepository = Depends(get_question_repository),
 ) -> SessionService:
-    """Get SessionService with repositories injected."""
-    return SessionService(session_repo)
+    """Get SessionService with repositories injected.
+
+    QuestionRepository is needed so the service can grant read-only access
+    (and sidebar visibility) to non-owner users who were pulled into a
+    session as an expert via the ask_expert tool family.
+    """
+    return SessionService(session_repo, question_repo=question_repo)
 
 
 def get_approval_service(
@@ -148,11 +167,21 @@ def get_execution_repository(db: Session = Depends(get_db)) -> "ExecutionReposit
     return ExecutionRepository(db)
 
 
+def get_job_service(
+    job_repo: JobRepository = Depends(get_job_repository),
+    session_repo: SessionRepository = Depends(get_session_repository),
+    execution_repo: "ExecutionRepository" = Depends(get_execution_repository),
+) -> JobService:
+    """Get JobService with repositories injected."""
+    return JobService(job_repo, session_repo, execution_repo)
+
+
 def get_orchestrator(
     session_repo: SessionRepository = Depends(get_session_repository),
     execution_repo: "ExecutionRepository" = Depends(get_execution_repository),
     project_repo: ProjectRepository = Depends(get_project_repository),
     question_repo: QuestionRepository = Depends(get_question_repository),
+    job_repo: JobRepository = Depends(get_job_repository),
 ):
     """Get the orchestrator for message processing.
 
@@ -164,7 +193,7 @@ def get_orchestrator(
     5. Execute pending runs
     """
     from druppie.execution import Orchestrator
-    return Orchestrator(session_repo, execution_repo, project_repo, question_repo)
+    return Orchestrator(session_repo, execution_repo, project_repo, question_repo, job_repo)
 
 
 def get_documentation_service(
@@ -192,6 +221,7 @@ def get_auth() -> AuthService:
 
 
 async def get_current_user(
+    request: Request,
     authorization: str | None = Header(None),
     auth: AuthService = Depends(get_auth),
 ) -> dict:

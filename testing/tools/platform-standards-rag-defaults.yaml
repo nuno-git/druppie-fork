@@ -1,0 +1,48 @@
+## Tool Test: Platform standards contain correct RAG defaults
+##
+## Validates that when a project is created, the seeded
+## platform-technical-standards.md contains the correct RAG §5 section
+## with app-local pgvector references (not module-vectorstore).
+##
+## This ensures the architect reads the right defaults when designing
+## RAG-heavy applications.
+
+tool-test:
+  name: platform-standards-rag-defaults
+  description: "Platform standards seed contains §5 RAG defaults with app-local pgvector and rag.py references"
+  tags: [platform-standards, rag, setup]
+
+  chain:
+    - agent: router
+      tool: builtin:set_intent
+      arguments:
+        intent: create_project
+        project_name: rag-standards-check
+        description: "Project to verify RAG defaults in platform technical standards"
+      assert:
+        result:
+          - not_empty
+
+    - agent: router
+      tool: builtin:done
+      arguments:
+        summary: "Agent router: Created project rag-standards-check"
+
+  verify:
+    - gitea_repo_exists: true
+    - file_exists: docs/platform-technical-standards.md
+    - file_contains:
+        path: docs/platform-technical-standards.md
+        content: "## 5. RAG defaults"
+    - file_contains:
+        path: docs/platform-technical-standards.md
+        content: "rag.py"
+    - file_contains:
+        path: docs/platform-technical-standards.md
+        content: "pgvector"
+    - file_contains:
+        path: docs/platform-technical-standards.md
+        content: "module-llm"
+    - file_contains:
+        path: docs/platform-technical-standards.md
+        content: "Data isolation"

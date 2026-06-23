@@ -44,6 +44,7 @@ class LLMService:
         "deepinfra": "DEEPINFRA_API_KEY",
         "azure_foundry": "FOUNDRY_API_KEY",
         "ollama": None,
+        "mock": None,
     }
 
     def __init__(self):
@@ -88,6 +89,13 @@ class LLMService:
 
         provider = self.get_provider()
 
+        if provider == "mock":
+            from .mock_provider import MockLLM
+
+            self._llm = MockLLM()
+            logger.info("llm_initialized", provider="mock", model="mock/model")
+            return self._llm
+
         # All providers use LiteLLM
         self._llm = ChatLiteLLM(provider=provider)
 
@@ -104,7 +112,7 @@ class LLMService:
         """Get all loaded profiles (for status endpoint)."""
         return get_profiles()
 
-    def create_llm_for_agent(self, agent_def: "AgentDefinition") -> BaseLLM:
+    def create_llm_for_agent(self, agent_def: "AgentDefinition", session_id: str | None = None) -> BaseLLM:
         """Create an LLM instance using the model resolution chain.
 
         Resolution order: override → profile → global default.
@@ -115,7 +123,18 @@ class LLMService:
                 "litellm is not installed. Install it with: pip install litellm"
             )
 
+        provider = os.getenv("LLM_PROVIDER", "zai").lower()
+        if provider == "mock":
+            from .mock_provider import MockLLM
+
+            logger.info("llm_created_for_agent", agent_id=agent_def.id, provider="mock")
+            return MockLLM(model=f"mock/{agent_def.id}")
+
         resolved = resolve_model(agent_def)
+
+        # Merge agent-level > profile-level thinking config
+        effective_thinking = agent_def.thinking or resolved.thinking
+        effective_effort = agent_def.reasoning_effort or resolved.reasoning_effort
 
         # Validate API key for the resolved provider
         api_key_env = self.PROVIDERS.get(resolved.provider)
@@ -129,6 +148,8 @@ class LLMService:
             provider=resolved.provider,
             model=resolved.model,
             temperature=agent_def.temperature,
+            thinking=effective_thinking,
+            reasoning_effort=effective_effort,
         )
 
         has_fallback = False
@@ -141,8 +162,10 @@ class LLMService:
                     provider=resolved.fallback_provider,
                     model=resolved.fallback_model,
                     temperature=agent_def.temperature,
+                    thinking=effective_thinking,
+                    reasoning_effort=effective_effort,
                 )
-                result = FallbackLLM(primary, fallback)
+                result = FallbackLLM(primary, fallback, session_id=session_id)
                 has_fallback = True
 
         logger.info(

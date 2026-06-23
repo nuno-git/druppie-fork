@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -364,6 +365,7 @@ class TestRunner:
         current_agent: str | None = None
         current_tools: list[ToolCallFixture] = []
         current_planned_prompt: str | None = None
+        current_parent_agent: str | None = None
 
         for step in test.chain:
             # Convert ChainStepApproval to dict for replay
@@ -386,7 +388,13 @@ class TestRunner:
                 approval_action=approval_action,
             )
 
-            if step.agent != current_agent:
+            # Split into a new agent run when agent changes OR parent_agent
+            # changes (supports same-agent recursive nesting where the same
+            # agent appears at different depths of the subagent tree).
+            agent_changed = step.agent != current_agent
+            parent_changed = step.parent_agent != current_parent_agent
+
+            if agent_changed or parent_changed:
                 # Flush previous agent run
                 if current_agent is not None and current_tools:
                     # Agent status: completed only if last tool is done
@@ -395,12 +403,16 @@ class TestRunner:
                     agent_runs.append(AgentRunFixture(
                         id=current_agent, status=status, tool_calls=current_tools,
                         planned_prompt=current_planned_prompt,
+                        parent_agent=current_parent_agent,
                     ))
                 current_agent = step.agent
                 current_tools = []
                 current_planned_prompt = step.planned_prompt
+                current_parent_agent = step.parent_agent
             elif step.planned_prompt and not current_planned_prompt:
                 current_planned_prompt = step.planned_prompt
+            elif step.parent_agent and not current_parent_agent:
+                current_parent_agent = step.parent_agent
 
             current_tools.append(tc_fixture)
 
@@ -411,6 +423,7 @@ class TestRunner:
             agent_runs.append(AgentRunFixture(
                 id=current_agent, status=status, tool_calls=current_tools,
                 planned_prompt=current_planned_prompt,
+                parent_agent=current_parent_agent,
             ))
 
         # If session_status is "paused", mark the last non-completed
@@ -473,7 +486,7 @@ class TestRunner:
 
                 tc_records = (
                     self._db.query(ToolCall)
-                    .join(AgentRun)
+                    .join(AgentRun, ToolCall.agent_run_id == AgentRun.id)
                     .filter(
                         AgentRun.session_id == session_id,
                         AgentRun.agent_id == step.agent,
@@ -565,6 +578,15 @@ class TestRunner:
         self._db.flush()
 
         if execute and test.message:
+            # Pre-flight: warn if DEEPINFRA_API_KEY is missing (translation
+            # will fail for non-English sessions, producing confusing errors)
+            if not os.getenv("DEEPINFRA_API_KEY"):
+                logger.warning(
+                    "DEEPINFRA_API_KEY is not set — test '%s' may fail if the "
+                    "message is non-English. Set DEEPINFRA_API_KEY in .env to "
+                    "enable translation.", test.name,
+                )
+
             # Phase 2: Execute real agents
             hitl_profile: HITLProfile | None = None
             if hitl_name == "inline" and isinstance(test.hitl, HITLProfile):
@@ -588,7 +610,14 @@ class TestRunner:
                     session_id=continue_session_id,
                 )
             except Exception as e:
-                execution_error = f"{type(e).__name__}: {e}"
+                from druppie.core.translation import TranslationNotAvailableError
+                if isinstance(e, TranslationNotAvailableError):
+                    execution_error = (
+                        f"Translation failed: DEEPINFRA_API_KEY is not configured. "
+                        f"Set it in .env to run tests with non-English messages."
+                    )
+                else:
+                    execution_error = f"{type(e).__name__}: {e}"
                 logger.error("Agent execution failed: test=%s error=%s",
                              test.name, execution_error, exc_info=True)
 

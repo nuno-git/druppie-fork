@@ -11,9 +11,12 @@ from uuid import UUID, uuid4
 from datetime import datetime, timezone
 from typing import Any
 
+from sqlalchemy import or_, and_
+
 from .base import BaseRepository
 from ..domain import QuestionDetail, QuestionChoice, PendingQuestionList, QuestionStatus
 from ..db.models import Question, Session as SessionModel
+from ..db.models.user import User as UserModel
 
 
 class QuestionRepository(BaseRepository):
@@ -40,6 +43,9 @@ class QuestionRepository(BaseRepository):
         question_type: str = "text",
         choices: list[dict[str, str]] | None = None,
         agent_id: str | None = None,
+        expert_role: str | None = None,
+        question_english: str | None = None,
+        choices_english: list | None = None,
     ) -> Question:
         """Create a new question.
 
@@ -47,10 +53,15 @@ class QuestionRepository(BaseRepository):
             session_id: Session this question belongs to
             agent_run_id: Agent run that asked the question
             tool_call_id: ToolCall this question is for
-            question: The question text
+            question: The question text (display language)
             question_type: "text" or "choice"
-            choices: List of choice dicts [{"text": "Option A"}, ...]
+            choices: List of choice dicts [{"text": "Option A"}, ...] (display language)
             agent_id: ID of the agent asking (optional)
+            expert_role: When set, route the question to users with this
+                Keycloak role instead of the session owner. Used by the
+                ask_expert tool family.
+            question_english: English original from agent (NULL if already English)
+            choices_english: English original choices (NULL if already English)
 
         Returns:
             Created Question model
@@ -62,9 +73,12 @@ class QuestionRepository(BaseRepository):
             tool_call_id=tool_call_id,
             agent_id=agent_id,
             question=question,
+            question_english=question_english,
             question_type=question_type,
             choices=choices,
+            choices_english=choices_english,
             status=QuestionStatus.PENDING.value,
+            expert_role=expert_role,
         )
         self.db.add(question_model)
         self.db.flush()
@@ -81,6 +95,7 @@ class QuestionRepository(BaseRepository):
             .join(SessionModel, Question.session_id == SessionModel.id)
             .filter(SessionModel.user_id == user_id)
             .filter(Question.status == QuestionStatus.PENDING.value)
+            .filter(Question.expert_role.is_(None))
             .order_by(Question.created_at)
             .all()
         )
@@ -89,11 +104,67 @@ class QuestionRepository(BaseRepository):
             total=len(questions),
         )
 
+    def get_pending_for_user_or_expert(
+        self,
+        user_id: UUID,
+        user_roles: list[str],
+        is_admin: bool = False,
+    ) -> PendingQuestionList:
+        """Get pending questions the user can answer.
+
+        Returns:
+            - Regular HITL questions (expert_role is NULL) from sessions the
+              user owns.
+            - Expert questions whose expert_role matches one of the user's
+              Keycloak roles.
+            - Admin: every pending question, regardless of role/ownership.
+        """
+        query = (
+            self.db.query(Question)
+            .filter(Question.status == QuestionStatus.PENDING.value)
+        )
+
+        if not is_admin:
+            owner_filter = and_(
+                Question.expert_role.is_(None),
+                Question.session_id.in_(
+                    self.db.query(SessionModel.id).filter(SessionModel.user_id == user_id)
+                ),
+            )
+            conditions = [owner_filter]
+            if user_roles:
+                conditions.append(Question.expert_role.in_(list(user_roles)))
+            query = query.filter(or_(*conditions))
+
+        questions = query.order_by(Question.created_at).all()
+        return PendingQuestionList(
+            items=[self._to_detail(q) for q in questions],
+            total=len(questions),
+        )
+
+    def list_session_ids_with_expert_role(
+        self,
+        user_roles: list[str],
+    ) -> list[UUID]:
+        """Return session IDs that ever had an expert question for one of
+        the given roles. Used to grant read-only session access to experts.
+        """
+        if not user_roles:
+            return []
+        rows = (
+            self.db.query(Question.session_id)
+            .filter(Question.expert_role.in_(list(user_roles)))
+            .distinct()
+            .all()
+        )
+        return [r[0] for r in rows if r[0] is not None]
+
     def update_answer(
         self,
         question_id: UUID,
         answer: str,
         selected_choices: list[int] | None = None,
+        answered_by: UUID | None = None,
     ) -> None:
         """Update question with answer.
 
@@ -105,6 +176,8 @@ class QuestionRepository(BaseRepository):
             "status": QuestionStatus.ANSWERED.value,
             "answered_at": datetime.now(timezone.utc),
         }
+        if answered_by is not None:
+            updates["answered_by"] = answered_by
         # Store selected indices as JSONB array
         # The model's to_dict() reconstructs is_selected for each choice
         if selected_choices is not None:
@@ -145,6 +218,34 @@ class QuestionRepository(BaseRepository):
                     is_selected=idx in selected,
                 ))
 
+        # Hydrate session metadata so the Questions page can render context
+        # without a follow-up call. One join is cheap; the alternative is N+1.
+        session_title = None
+        session_owner_username = None
+        if question.session_id:
+            row = (
+                self.db.query(SessionModel.title, UserModel.username)
+                .outerjoin(UserModel, SessionModel.user_id == UserModel.id)
+                .filter(SessionModel.id == question.session_id)
+                .first()
+            )
+            if row:
+                session_title = row[0]
+                session_owner_username = row[1]
+
+        # Build English choices (same structure as display choices)
+        choices_english = None
+        if question.choices_english:
+            for idx, choice_data in enumerate(question.choices_english):
+                if choices_english is None:
+                    choices_english = []
+                selected = question.selected_indices or []
+                choices_english.append(QuestionChoice(
+                    index=idx,
+                    text=choice_data.get("text", ""),
+                    is_selected=idx in selected,
+                ))
+
         return QuestionDetail(
             id=question.id,
             session_id=question.session_id,
@@ -153,8 +254,14 @@ class QuestionRepository(BaseRepository):
             question=question.question,
             question_type=question.question_type or "text",
             choices=choices,
+            question_english=question.question_english,
+            choices_english=choices_english,
             status=QuestionStatus(question.status),
             answer=question.answer,
             answered_at=question.answered_at,
+            answered_by=question.answered_by,
+            expert_role=question.expert_role,
+            session_title=session_title,
+            session_owner_username=session_owner_username,
             created_at=question.created_at,
         )

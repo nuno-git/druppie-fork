@@ -93,17 +93,35 @@ class ReplayExecutor:
         self._db.add(tc_record)
         self._db.flush()
 
+        # Save ID before execute — the commit inside execute() expires
+        # tc_record, and in some flows (e.g. subagent done) the ToolCall
+        # may be removed from the session identity map entirely.
+        tc_id = tc_record.id
+
         executor = self._get_executor()
-        result_status = await executor.execute(tc_record.id)
+        result_status = await executor.execute(tc_id)
+
+        # Re-query: executor.execute() commits the session internally,
+        # which detaches tc_record. Use the saved ID, not tc_record.id,
+        # because tc_record may be expired or gone from the identity map.
+        tc_record = self._db.get(ToolCall, tc_id)
 
         # Handle approval gate
-        if result_status == "waiting_approval":
+        if result_status == "waiting_approval" and tc_record is not None:
             result_status = await self._handle_approval(
                 tc_record, approval_action,
             )
 
-        # Refresh to get updated fields
-        self._db.refresh(tc_record)
+        # Re-query to get updated fields
+        tc_record = self._db.get(ToolCall, tc_id)
+        if tc_record is None:
+            logger.warning(
+                "tool_call_not_found_after_execute: tc_id=%s tool_name=%s result_status=%s",
+                tc_id,
+                tool_call.tool_name,
+                result_status,
+            )
+            return "", result_status
         return tc_record.result or "", result_status
 
     async def _handle_approval(
@@ -312,23 +330,71 @@ class ReplayExecutor:
         self._db.flush()
 
         # Execute each agent's tool calls in order
+        agent_run_ids: dict[str, UUID] = {}  # agent_id -> latest run_id
+
         for seq, agent_fix in enumerate(agents_with_tools):
-            # Find the pending run for this agent (created above or by make_plan)
-            pending = execution_repo.get_next_pending(session_id)
-            if not pending:
-                logger.warning(
-                    "replay_no_pending_run: session=%s expected=%s seq=%d",
-                    session_id, agent_fix.id, seq,
-                )
-                break
+            if agent_fix.parent_agent:
+                parent_run_id = agent_run_ids.get(agent_fix.parent_agent)
+                if not parent_run_id:
+                    logger.warning(
+                        "replay_no_parent: session=%s child=%s parent=%s seq=%d",
+                        session_id, agent_fix.id, agent_fix.parent_agent, seq,
+                    )
+                    break
 
-            if pending.agent_id != agent_fix.id:
-                logger.warning(
-                    "replay_agent_mismatch: session=%s expected=%s found=%s seq=%d",
-                    session_id, agent_fix.id, pending.agent_id, seq,
+                subagents_tc = (
+                    self._db.query(ToolCall)
+                    .filter(
+                        ToolCall.agent_run_id == parent_run_id,
+                        ToolCall.mcp_server == "builtin",
+                        ToolCall.tool_name == "subagents",
+                    )
+                    .order_by(ToolCall.created_at.desc())
+                    .first()
                 )
+                if not subagents_tc:
+                    logger.warning(
+                        "replay_no_subagents_tc: session=%s parent_run=%s seq=%d",
+                        session_id, parent_run_id, seq,
+                    )
+                    break
 
-            agent_run_id = pending.id
+                child_run = execution_repo.create_agent_run(
+                    session_id=session_id,
+                    agent_id=agent_fix.id,
+                    status=AgentRunStatus.PENDING,
+                    planned_prompt=agent_fix.planned_prompt,
+                    parent_run_id=parent_run_id,
+                    spawning_tool_call_id=subagents_tc.id,
+                    sequence_number=execution_repo.get_next_sequence_number(session_id),
+                )
+                agent_run_id = child_run.id
+            elif agent_fix.id in agent_run_ids:
+                # Same agent appearing again (e.g. parent agent continuing
+                # after subagents finish) — reuse the existing run.
+                agent_run_id = agent_run_ids[agent_fix.id]
+                logger.info(
+                    "replay_reusing_run: session=%s agent=%s run=%s seq=%d",
+                    session_id, agent_fix.id, agent_run_id, seq,
+                )
+            else:
+                pending = execution_repo.get_next_pending(session_id)
+                if not pending:
+                    logger.warning(
+                        "replay_no_pending_run: session=%s expected=%s seq=%d",
+                        session_id, agent_fix.id, seq,
+                    )
+                    break
+
+                if pending.agent_id != agent_fix.id:
+                    logger.warning(
+                        "replay_agent_mismatch: session=%s expected=%s found=%s seq=%d",
+                        session_id, agent_fix.id, pending.agent_id, seq,
+                    )
+
+                agent_run_id = pending.id
+
+            agent_run_ids[agent_fix.id] = agent_run_id
 
             # Mark as running (like execute_pending_runs does)
             execution_repo.update_status(agent_run_id, AgentRunStatus.RUNNING)
@@ -340,7 +406,19 @@ class ReplayExecutor:
             # reconstruct_from_db() rebuilds the full conversation history.
             for tc_idx, tc in enumerate(agent_fix.tool_calls):
                 tool_call_id = f"replay_{seq}_{tc_idx}"
-                func_name = tc.tool.replace(":", "_") if ":" in tc.tool else tc.tool
+                # Match REAL tool naming so reconstruct_from_db() rebuilds a
+                # history whose tool calls correspond to the tools the resumed
+                # agent actually has. MCP tools are "<server>_<tool>" (e.g.
+                # registry_list_modules); BUILTIN tools are bare (e.g.
+                # invoke_skill, hitl_ask_question, done) -- NOT "builtin_...".
+                # Naming builtin calls "builtin_invoke_skill" made the resumed
+                # agent see calls to non-existent tools and re-do mandatory
+                # steps (e.g. re-invoke the mermaid skill) after a reject.
+                if ":" in tc.tool:
+                    _server, _tool = tc.tool.split(":", 1)
+                    func_name = _tool if _server == "builtin" else f"{_server}_{_tool}"
+                else:
+                    func_name = tc.tool
 
                 llm_call = LlmCall(
                     id=fixture_uuid(meta.id, "run", seq, "llm", tc_idx),
@@ -387,7 +465,7 @@ class ReplayExecutor:
                 # boundary so the entire replay can be rolled back on failure
                 self._db.flush()
 
-                # Handle outcome blocks (file creation in Gitea for execute_coding_task)
+                # Handle outcome blocks (file creation in Gitea for sandbox outcomes)
                 if tc.outcome and gitea_url:
                     try:
                         self._create_outcome_files(tc.outcome, gitea_url, session_id)
@@ -441,7 +519,7 @@ class ReplayExecutor:
         gitea_url: str,
         session_id: UUID,
     ) -> None:
-        """Create files in Gitea for execute_coding_task outcomes.
+        """Create files in Gitea for sandbox outcomes.
 
         The outcome dict has: files (list of {path, content}),
         optional commit_message, optional branch.

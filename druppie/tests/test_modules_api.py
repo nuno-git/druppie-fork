@@ -275,11 +275,8 @@ class TestCallModuleToolAuth:
     """Tests for require_module_api_token dependency on the proxy endpoint."""
 
     def test_skipped_when_env_unset(self, client, monkeypatch):
-        """When DRUPPIE_MODULE_API_TOKEN is unset, call is allowed (dev mode)."""
+        """When DRUPPIE_MODULE_API_TOKEN is unset, call is allowed."""
         monkeypatch.delenv("DRUPPIE_MODULE_API_TOKEN", raising=False)
-        # Reset one-time warning flag so the test is deterministic
-        import druppie.api.routes.modules as mod
-        mod._dev_mode_warning_logged = False
 
         mock_mcp_instance = MagicMock()
         mock_mcp_instance.call = AsyncMock(return_value={"ok": True})

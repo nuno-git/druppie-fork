@@ -19,6 +19,8 @@ Naming convention:
 - Question → QuestionDetail
 - Project → ProjectSummary, ProjectDetail
 - User → UserInfo
+- JobDefinition → JobDefinitionSummary, JobDefinitionDetail
+- JobRun → JobRunSummary, JobRunDetail
 """
 
 # Enums
@@ -29,9 +31,11 @@ from .agent_definition import AgentDefinition, ApprovalOverride, SandboxConstrai
 from .agent_run import (
     AgentRunDetail,
     AgentRunSummary,
+    CompactionEventDetail,
     LLMCallDetail,
     LLMRetryDetail,
     NormalizationDetail,
+    ResumeContext,
     ToolCallDetail,
 )
 
@@ -74,6 +78,7 @@ from .question import PendingQuestionList, QuestionChoice, QuestionDetail
 # Session models
 from .session import (
     # Backward compat aliases
+    Attachment,
     ChatItem,
     ChatItemType,
     Message,
@@ -83,6 +88,8 @@ from .session import (
     TimelineEntry,
     TimelineEntryType,
 )
+
+from .job import JobDefinitionDetail, JobDefinitionList, JobDefinitionSummary, JobRunDetail, JobRunList, JobRunSummary
 
 # Skill models
 from .skill import SkillDetail, SkillSummary
@@ -102,6 +109,7 @@ __all__ = [
     "QuestionStatus",
     "DeploymentStatus",
     # Common
+    "Attachment",
     "TokenUsage",
     "TimestampMixin",
     "LLMMessage",
@@ -118,9 +126,11 @@ __all__ = [
     # Agent run
     "AgentRunSummary",
     "AgentRunDetail",
+    "CompactionEventDetail",
     "LLMCallDetail",
     "LLMRetryDetail",
     "NormalizationDetail",
+    "ResumeContext",
     "ToolCallDetail",
     # Approval
     "ApprovalSummary",
@@ -160,6 +170,12 @@ __all__ = [
     "TestRunSummary",
     "TestRunDetail",
     "TestAssertionResultSummary",
+    "JobDefinitionSummary",
+    "JobDefinitionDetail",
+    "JobDefinitionList",
+    "JobRunSummary",
+    "JobRunDetail",
+    "JobRunList",
 ]
 
 # Rebuild models to resolve forward references (circular imports between session/project)

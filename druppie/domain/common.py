@@ -1,6 +1,7 @@
 """Common domain models shared across entities."""
 
 from enum import Enum
+from uuid import UUID
 from pydantic import BaseModel
 from datetime import datetime
 from typing import Any
@@ -44,6 +45,7 @@ class ToolCallStatus(str, Enum):
     EXECUTING = "executing"  # Currently running
     COMPLETED = "completed"
     FAILED = "failed"
+    PAUSED = "paused"  # Subagent paused (waiting for child to resume)
 
 
 class ApprovalStatus(str, Enum):
@@ -67,9 +69,29 @@ class DeploymentStatus(str, Enum):
     FAILED = "failed"
 
 
+class JobRunStatus(str, Enum):
+    """Scheduled job run execution status."""
+    PENDING = "pending"
+    RUNNING = "running"
+    WAITING_APPROVAL = "waiting_approval"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+    REJECTED = "rejected"
+
+
 # =============================================================================
 # COMMON MODELS
 # =============================================================================
+
+class Attachment(BaseModel):
+    """A file attached to a message or HITL answer."""
+    id: UUID
+    original_filename: str
+    content_type: str
+    file_size: int
+    created_at: datetime
+
 
 class TokenUsage(BaseModel):
     """Token usage tracking."""
