@@ -8,7 +8,7 @@
 | **Referentie** | [KUBERNETES-STRATEGY.md](./KUBERNETES-STRATEGY.md), [kubernetes.md](./kubernetes.md) |
 | **Delivery** | 1 PR naar `colab-dev` |
 
-> **Status: Historisch — Phase 1 delivery record.** Huidige as-built staat: `docs/AS-BUILT-ARCHITECTURE.md`. Volgende stappen: `docs/STORIES-KUBERNETES-VOLGENDE.md`.
+> **Status: Historisch — Phase 1 delivery record.** Huidige as-built staat: `docs/AS-BUILT-ARCHITECTURE.md`.
 
 ---
 
