@@ -3,7 +3,7 @@
 **Status:** draft
 **Author:** nuno
 **Date:** 2026-05-27
-**Supersedes:** `docs/specs/sandbox-network-isolation.md` (v1)
+**Supersedes:** sandbox-network-isolation.md (v1, removed — see git history)
 
 ---
 
