@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import httpx
 import structlog
 
-from druppie.api.routes import agents, approvals, cache, chat, deployments, documentation, evaluations, jobs, mcp_bridge, mcps, modules, projects, questions, sandbox, sessions, workspace
+from druppie.api.routes import agents, approvals, cache, chat, deployments, documentation, evaluations, jobs, mcp_bridge, mcps, model_management, modules, projects, questions, sandbox, sessions, workspace
 from druppie.api.errors import register_exception_handlers
 from druppie.core.auth import get_auth_service
 from druppie.core.config import get_settings
@@ -267,6 +267,45 @@ def create_app() -> FastAPI:
     app.include_router(modules.router, prefix="/api", tags=["Modules"])
     app.include_router(documentation.router, prefix="/api", tags=["Documentation"])
     app.include_router(jobs.router, prefix="/api/jobs", tags=["Jobs"])
+    app.include_router(model_management.router, prefix="/api", tags=["Model Management"])
+
+    @app.on_event("startup")
+    async def _load_model_overrides():
+        """Load model overrides from DB into resolver cache on startup."""
+        try:
+            from druppie.db.database import SessionLocal
+            from druppie.repositories.model_override_repository import ModelOverrideRepository
+            from druppie.llm.resolver import set_db_overrides
+            from druppie.core.translation import get_translation_service
+
+            db = SessionLocal()
+            try:
+                repo = ModelOverrideRepository(db)
+
+                agent_overrides = repo.get_agent_overrides()
+                override_map = {
+                    o.target_id: (o.provider, o.model)
+                    for o in agent_overrides
+                    if o.enabled
+                }
+                set_db_overrides(override_map)
+
+                translation_override = repo.get_translation_override()
+                if translation_override and translation_override.enabled:
+                    get_translation_service().configure(
+                        translation_override.provider,
+                        translation_override.model,
+                    )
+
+                logger.info(
+                    "model_overrides_loaded",
+                    agent_overrides=len(override_map),
+                    translation_override=translation_override is not None,
+                )
+            finally:
+                db.close()
+        except Exception as e:
+            logger.warning("model_overrides_load_failed", error=str(e))
 
     @app.get("/health")
     async def health_check():

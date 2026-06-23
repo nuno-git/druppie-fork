@@ -42,6 +42,7 @@ class LLMService:
     PROVIDERS = {
         "zai": "ZAI_API_KEY",
         "deepinfra": "DEEPINFRA_API_KEY",
+        "openrouter": "OPENROUTER_API_KEY",
         "azure_foundry": "FOUNDRY_API_KEY",
         "ollama": None,
         "mock": None,

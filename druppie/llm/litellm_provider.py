@@ -4,7 +4,7 @@ Uses LiteLLM for standardized tool calling across all providers.
 This is the only LLM implementation - all providers go through LiteLLM.
 
 Environment variables:
-    LLM_PROVIDER: zai, deepinfra, deepseek, azure_foundry, ollama
+    LLM_PROVIDER: zai, deepinfra, azure_foundry, ollama, openrouter
 
     For ZAI:
         ZAI_API_KEY, ZAI_MODEL, ZAI_BASE_URL
@@ -182,6 +182,7 @@ PROVIDER_CONFIGS = {
         "model_env": "ZAI_MODEL",
         "base_url_env": "ZAI_BASE_URL",
         "default_base_url": "https://api.z.ai/api/coding/paas/v4",
+        "known_models": ["glm-5", "glm-4.7", "glm-4.5"],
     },
     "deepinfra": {
         "prefix": "openai",  # OpenAI-compatible API (same as zai)
@@ -190,14 +191,16 @@ PROVIDER_CONFIGS = {
         "model_env": "DEEPINFRA_MODEL",
         "base_url_env": "DEEPINFRA_BASE_URL",
         "default_base_url": "https://api.deepinfra.com/v1/openai",
-    },
-    "deepseek": {
-        "prefix": "deepseek",  # LiteLLM native DeepSeek support
-        "default_model": "deepseek-chat",
-        "api_key_env": "DEEPSEEK_API_KEY",
-        "model_env": "DEEPSEEK_MODEL",
-        "base_url_env": "DEEPSEEK_BASE_URL",
-        "default_base_url": "https://api.deepseek.com/v1",
+        "known_models": [
+            "Qwen/Qwen3-32B",
+            "Qwen/Qwen3-235B-A22B",
+            "moonshotai/Kimi-K2.5-Turbo",
+            "google/gemma-3-27b-it",
+            "meta-llama/Llama-4-Maverick-17B-128E-Instruct",
+            "meta-llama/Llama-4-Scout-17B-16E-Instruct",
+            "mistralai/Mistral-Small-24B-Instruct-2501",
+            "deepseek-ai/DeepSeek-V3-0324",
+        ],
     },
     "azure_foundry": {
         "prefix": "azure",  # Overridden at runtime for Claude models → "anthropic"
@@ -212,6 +215,35 @@ PROVIDER_CONFIGS = {
         "api_version": "2024-12-01-preview",
         "anthropic_base_url_env": "FOUNDRY_ANTHROPIC_URL",
         "anthropic_default_base_url": "https://druppie-resource.services.ai.azure.com/anthropic",
+        "known_models": [
+            "GPT-5-MINI",
+            "gpt-4.1-mini",
+            "gpt-4.1-nano",
+            "claude-sonnet-4-6",
+            "claude-haiku-4-5-20251001",
+        ],
+    },
+    "openrouter": {
+        "prefix": "openrouter",
+        "default_model": "google/gemma-3-27b-it",
+        "api_key_env": "OPENROUTER_API_KEY",
+        "model_env": "OPENROUTER_MODEL",
+        "base_url_env": "OPENROUTER_BASE_URL",
+        "default_base_url": "https://openrouter.ai/api/v1",
+        "known_models": [
+            "google/gemma-3-27b-it",
+            "google/gemini-2.5-flash",
+            "google/gemini-2.5-pro",
+            "anthropic/claude-sonnet-4-6",
+            "anthropic/claude-haiku-4-5-20251001",
+            "meta-llama/llama-4-maverick",
+            "meta-llama/llama-4-scout",
+            "qwen/qwen3-235b-a22b",
+            "qwen/qwen3-32b",
+            "deepseek/deepseek-chat-v3-0324",
+            "deepseek/deepseek-r1",
+            "mistralai/mistral-small-3.2-24b-instruct",
+        ],
     },
     "ollama": {
         "prefix": "openai",  # Ollama is OpenAI-compatible
@@ -222,6 +254,13 @@ PROVIDER_CONFIGS = {
         "base_url_env": "OLLAMA_BASE_URL",
         "default_base_url": "https://ollama.waterschap.org/v1",
         "ssl_verify": False,  # Self-signed certificate
+        "known_models": [
+            "gpt-oss:120b",
+            "gpt-oss:20b",
+            "qwen3-coder:30b",
+            "deepseek-r1:32b",
+            "gemma3:27b",
+        ],
     },
 }
 

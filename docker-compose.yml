@@ -217,8 +217,8 @@ services:
 
   module-docker:
     build:
-      context: ./druppie/mcp-servers
-      dockerfile: module-docker/Dockerfile
+      context: ./druppie
+      dockerfile: mcp-servers/module-docker/Dockerfile
     container_name: druppie-module-docker
     profiles: [infra, dev, prod]
     environment:
@@ -271,8 +271,8 @@ services:
 
   module-archimate:
     build:
-      context: ./druppie/mcp-servers
-      dockerfile: module-archimate/Dockerfile
+      context: ./druppie
+      dockerfile: mcp-servers/module-archimate/Dockerfile
     container_name: druppie-module-archimate
     profiles: [infra, dev, prod]
     environment:
@@ -340,8 +340,8 @@ services:
 
   module-registry:
     build:
-      context: ./druppie/mcp-servers
-      dockerfile: module-registry/Dockerfile
+      context: ./druppie
+      dockerfile: mcp-servers/module-registry/Dockerfile
     container_name: druppie-module-registry
     profiles: [infra, dev, prod]
     environment:
@@ -669,15 +669,17 @@ services:
       ZAI_API_KEY: ${ZAI_API_KEY:-}
       ZAI_MODEL: ${ZAI_MODEL:-glm-4.7}
       ZAI_BASE_URL: ${ZAI_BASE_URL:-https://api.z.ai/api/coding/paas/v4}
-      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
-      DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-chat}
-      DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-https://api.deepseek.com/v1}
       DEEPINFRA_API_KEY: ${DEEPINFRA_API_KEY:-}
       DEEPINFRA_MODEL: ${DEEPINFRA_MODEL:-Qwen/Qwen3-32B}
       DEEPINFRA_BASE_URL: ${DEEPINFRA_BASE_URL:-https://api.deepinfra.com/v1}
       FOUNDRY_API_KEY: ${FOUNDRY_API_KEY:-}
       FOUNDRY_MODEL: ${FOUNDRY_MODEL:-GPT-5-MINI}
       FOUNDRY_API_URL: ${FOUNDRY_API_URL:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENROUTER_MODEL: ${OPENROUTER_MODEL:-google/gemma-3-27b-it}
+      OPENROUTER_BASE_URL: ${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}
+      TRANSLATION_PROVIDER: ${TRANSLATION_PROVIDER:-}
+      TRANSLATION_MODEL: ${TRANSLATION_MODEL:-}
       CORS_ORIGINS: http://${EXTERNAL_HOST:-localhost}:${FRONTEND_PORT:-5273},http://localhost:5173
       GITEA_URL: http://${EXTERNAL_HOST:-localhost}:${GITEA_PORT:-3100}
       GITEA_INTERNAL_URL: http://gitea:3000
@@ -766,6 +768,11 @@ services:
       FOUNDRY_API_KEY: ${FOUNDRY_API_KEY:-}
       FOUNDRY_MODEL: ${FOUNDRY_MODEL:-GPT-5-MINI}
       FOUNDRY_API_URL: ${FOUNDRY_API_URL:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENROUTER_MODEL: ${OPENROUTER_MODEL:-google/gemma-3-27b-it}
+      OPENROUTER_BASE_URL: ${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}
+      TRANSLATION_PROVIDER: ${TRANSLATION_PROVIDER:-}
+      TRANSLATION_MODEL: ${TRANSLATION_MODEL:-}
       CORS_ORIGINS: http://${EXTERNAL_HOST:-localhost}:${FRONTEND_PORT:-5273},http://localhost:5173
       GITEA_URL: http://${EXTERNAL_HOST:-localhost}:${GITEA_PORT:-3100}
       GITEA_INTERNAL_URL: http://gitea:3000

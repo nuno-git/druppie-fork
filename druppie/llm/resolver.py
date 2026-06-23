@@ -2,8 +2,9 @@
 
 Resolution chain (first match wins):
 1. Override: LLM_FORCE_PROVIDER env var → use for ALL agents
-2. Profile: First entry in agent's llm_profile whose API key is set
-3. Global default: LLM_PROVIDER env var as last-resort
+2. DB override: per-agent override set by admin via the UI
+3. Profile: First entry in agent's llm_profile whose API key is set
+4. Global default: LLM_PROVIDER env var as last-resort
 
 Profiles are loaded from agents/definitions/llm_profiles.yaml.
 """
@@ -46,6 +47,21 @@ def _has_api_key(provider: str) -> bool:
 # Module-level profile cache
 _profiles_cache: dict[str, list[dict[str, str]]] | None = None
 
+# Module-level DB override cache: agent_id -> (provider, model)
+# Populated by ModelManagementService on startup and after admin changes.
+_db_overrides: dict[str, tuple[str, str]] = {}
+
+
+def set_db_overrides(overrides: dict[str, tuple[str, str]]) -> None:
+    """Replace the DB override cache. Called by the model management service."""
+    global _db_overrides
+    _db_overrides = overrides
+
+
+def get_db_overrides() -> dict[str, tuple[str, str]]:
+    """Return the current DB override cache (for status/debug)."""
+    return _db_overrides
+
 
 def _load_profiles() -> dict[str, list[dict[str, str]]]:
     """Load LLM profiles from YAML (cached at module level)."""
@@ -76,10 +92,11 @@ def resolve_model(agent_def: AgentDefinition) -> ResolvedModel:
     """Resolve which provider/model an agent should use.
 
     Resolution order:
-    1. Override  — LLM_FORCE_PROVIDER env var (ignores profile entirely)
-    2. Profile   — first entry with a valid API key becomes primary;
-                   second entry (if any) becomes fallback
-    3. Global    — LLM_PROVIDER env var as last-resort
+    1. Override   — LLM_FORCE_PROVIDER env var (ignores profile entirely)
+    2. DB override — per-agent admin override from model_overrides table
+    3. Profile    — first entry with a valid API key becomes primary;
+                    second entry (if any) becomes fallback
+    4. Global     — LLM_PROVIDER env var as last-resort
     """
     resolved = _resolve(agent_def)
 
@@ -109,7 +126,23 @@ def _resolve(agent_def: AgentDefinition) -> ResolvedModel:
             source="override",
         )
 
-    # --- 2. Profile ---------------------------------------------------------
+    # --- 2. DB override (admin UI) -----------------------------------------
+    if agent_def.id in _db_overrides:
+        provider, model = _db_overrides[agent_def.id]
+        if _has_api_key(provider):
+            return ResolvedModel(
+                provider=provider,
+                model=model,
+                source="db_override",
+            )
+        else:
+            logger.warning(
+                "db_override_api_key_missing",
+                agent_id=agent_def.id,
+                provider=provider,
+            )
+
+    # --- 3. Profile (was step 2) --------------------------------------------
     profiles = _load_profiles()
     profile_name = agent_def.llm_profile
     chain = profiles.get(profile_name)
@@ -143,7 +176,7 @@ def _resolve(agent_def: AgentDefinition) -> ResolvedModel:
     else:
         logger.warning("llm_profile_not_found", profile=profile_name, agent=agent_def.id)
 
-    # --- 3. Global default --------------------------------------------------
+    # --- 4. Global default --------------------------------------------------
     return ResolvedModel(
         provider=os.getenv("LLM_PROVIDER", "zai").lower(),
         model=None,

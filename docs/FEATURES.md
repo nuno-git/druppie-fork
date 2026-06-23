@@ -857,6 +857,31 @@ The Settings page displays system configuration and status (read-only). This pag
 
 ---
 
+## Model Management (Admin)
+
+The Model Management page (`/admin/models`) allows admins to configure which LLM provider and model each agent uses at runtime, without editing YAML files or restarting the server.
+
+### Features
+
+- **Provider status overview** -- Shows all configured providers (ZAI, DeepInfra, OpenRouter, Azure Foundry, Ollama, DeepSeek) with API key status (configured/missing) and a "Test" button that validates the key with a live LLM call.
+- **Per-agent model override** -- Each agent shows its currently resolved provider/model and how it was resolved (profile, override, or global default). Admins can set a specific provider+model override per agent; the override takes priority over the YAML profile chain. Overrides can be removed to revert to defaults.
+- **Translation model override** -- The translation service provider/model can be overridden separately. Defaults cascade: admin override → `TRANSLATION_PROVIDER`/`TRANSLATION_MODEL` env vars → DeepInfra legacy → any available provider.
+- **Runtime persistence** -- Overrides are stored in the `model_overrides` database table and loaded into an in-memory cache on startup. Changes take effect immediately (no restart needed).
+- **Graceful degradation** -- If an override's API key becomes invalid, the resolver logs a warning and falls back to the next available provider in the profile chain.
+
+### Supported Providers
+
+| Provider | API Key Env | Notes |
+|----------|-------------|-------|
+| ZAI | `ZAI_API_KEY` | Default agent provider |
+| DeepInfra | `DEEPINFRA_API_KEY` | Legacy translation default |
+| OpenRouter | `OPENROUTER_API_KEY` | Multi-model router |
+| Azure Foundry | `FOUNDRY_API_KEY` | Supports GPT and Claude models |
+| DeepSeek | `DEEPSEEK_API_KEY` | |
+| Ollama | (optional) | Local models, no API key required |
+
+---
+
 ## Automated Translation (Bilingual Support)
 
 The platform detects the user's language and automatically translates between the user's language and English. Agents always work in English internally; the platform handles all translation transparently.
@@ -879,7 +904,14 @@ The platform detects the user's language and automatically translates between th
 
 ### Configuration
 
-Requires `DEEPINFRA_API_KEY` in `.env`. The translation service uses Qwen/Qwen3-32B on DeepInfra, independent of the main `LLM_PROVIDER`. If the key is missing, the backend logs a warning at startup and non-English sessions will fail with a clear error.
+The translation service supports **any configured LLM provider** (not just DeepInfra). The provider/model is resolved in this order:
+
+1. **Admin override** -- Set via the Model Management admin page (`/admin/models`), stored in the `model_overrides` DB table.
+2. **Environment variables** -- `TRANSLATION_PROVIDER` and `TRANSLATION_MODEL` in `.env`.
+3. **Legacy default** -- `DEEPINFRA_API_KEY` with Gemma 3 27B (backward compatible).
+4. **Any available provider** -- Falls back to whichever provider has a valid API key.
+
+If no provider is available, the backend logs a warning at startup and non-English sessions will fail with a clear error.
 
 ### Design Documents
 

@@ -1,0 +1,255 @@
+"""Service for managing runtime LLM model overrides."""
+
+import os
+import time
+from pathlib import Path
+from uuid import UUID
+
+import structlog
+import yaml
+
+from druppie.agents.definition_loader import AgentDefinitionLoader
+from druppie.core.translation import get_translation_service
+from druppie.domain.model_override import (
+    AgentModelInfo,
+    ModelManagementView,
+    ModelOverrideSummary,
+    ProviderStatus,
+    TranslationModelInfo,
+)
+from druppie.llm.litellm_provider import PROVIDER_CONFIGS
+from druppie.llm.resolver import resolve_model, set_db_overrides
+from druppie.repositories.model_override_repository import ModelOverrideRepository
+
+logger = structlog.get_logger()
+
+
+def _to_summary(row) -> ModelOverrideSummary:
+    return ModelOverrideSummary(
+        id=row.id,
+        target_type=row.target_type,
+        target_id=row.target_id,
+        provider=row.provider,
+        model=row.model,
+        enabled=row.enabled,
+        updated_at=row.updated_at,
+    )
+
+
+def _has_api_key(provider: str) -> bool:
+    config = PROVIDER_CONFIGS.get(provider)
+    if not config:
+        return False
+    if config.get("api_key_optional"):
+        return True
+    return bool(os.getenv(config["api_key_env"]))
+
+
+class ModelManagementService:
+
+    def __init__(self, override_repo: ModelOverrideRepository):
+        self.override_repo = override_repo
+
+    def get_management_view(self) -> ModelManagementView:
+        overrides = self.override_repo.get_all()
+        override_map = {
+            o.target_id: _to_summary(o)
+            for o in overrides
+            if o.target_type == "agent" and o.enabled
+        }
+
+        # Refresh resolver cache while we have DB data
+        self._refresh_resolver_cache(overrides)
+
+        # Build agent list — read category from raw YAML since AgentDefinition
+        # does not include it as a field.
+        defs_dir = Path(__file__).parent.parent / "agents" / "definitions"
+        agents: list[AgentModelInfo] = []
+        for agent_id in sorted(AgentDefinitionLoader.list_agents()):
+            try:
+                agent_def = AgentDefinitionLoader.load(agent_id)
+            except Exception:
+                logger.warning("agent_load_failed", agent_id=agent_id)
+                continue
+
+            category = "execution"
+            yaml_path = defs_dir / f"{agent_id}.yaml"
+            if yaml_path.exists():
+                try:
+                    with open(yaml_path) as f:
+                        raw = yaml.safe_load(f)
+                    category = raw.get("category", "execution")
+                except Exception:
+                    pass
+
+            resolved = resolve_model(agent_def)
+            agents.append(AgentModelInfo(
+                agent_id=agent_def.id,
+                agent_name=agent_def.name,
+                category=category,
+                profile=agent_def.llm_profile,
+                resolved_provider=resolved.provider,
+                resolved_model=resolved.model,
+                source=resolved.source,
+                override=override_map.get(agent_def.id),
+            ))
+
+        # Build translation info
+        translation_override_row = self.override_repo.get_translation_override()
+        translation_override = _to_summary(translation_override_row) if translation_override_row else None
+
+        ts = get_translation_service()
+        try:
+            t_provider, t_model, t_source = ts.get_current_config()
+        except Exception:
+            t_provider, t_model, t_source = "none", "none", "unavailable"
+
+        translation = TranslationModelInfo(
+            provider=t_provider,
+            model=t_model,
+            source=t_source,
+            override=translation_override,
+        )
+
+        providers = self.get_provider_statuses()
+        override_summaries = [_to_summary(o) for o in overrides]
+
+        return ModelManagementView(
+            agents=agents,
+            translation=translation,
+            providers=providers,
+            overrides=override_summaries,
+        )
+
+    def set_agent_override(
+        self, agent_id: str, provider: str, model: str, admin_user_id: UUID | None = None
+    ) -> ModelOverrideSummary:
+        # Validate agent exists
+        available = AgentDefinitionLoader.list_agents()
+        if agent_id not in available:
+            raise ValueError(f"Unknown agent: {agent_id}")
+
+        if provider not in PROVIDER_CONFIGS:
+            raise ValueError(f"Unknown provider: {provider}")
+
+        row = self.override_repo.upsert("agent", agent_id, provider, model, admin_user_id)
+        self.override_repo.commit()
+        self._refresh_resolver_cache()
+        return _to_summary(row)
+
+    def remove_agent_override(self, agent_id: str) -> bool:
+        deleted = self.override_repo.delete_by_target("agent", agent_id)
+        self.override_repo.commit()
+        self._refresh_resolver_cache()
+        return deleted
+
+    def set_translation_override(
+        self, provider: str, model: str, admin_user_id: UUID | None = None
+    ) -> ModelOverrideSummary:
+        if provider not in PROVIDER_CONFIGS:
+            raise ValueError(f"Unknown provider: {provider}")
+
+        row = self.override_repo.upsert("translation", "translation", provider, model, admin_user_id)
+        self.override_repo.commit()
+
+        ts = get_translation_service()
+        ts.configure(provider, model)
+
+        return _to_summary(row)
+
+    def remove_translation_override(self) -> bool:
+        deleted = self.override_repo.delete_by_target("translation", "translation")
+        self.override_repo.commit()
+
+        ts = get_translation_service()
+        ts.configure(None, None)
+
+        return deleted
+
+    def get_provider_statuses(self) -> list[ProviderStatus]:
+        from druppie.llm.resolver import get_profiles
+
+        profiles = get_profiles()
+
+        # Collect all models used per provider across profiles + env overrides
+        models_by_provider: dict[str, set[str]] = {name: set() for name in PROVIDER_CONFIGS}
+        for chain in profiles.values():
+            for entry in chain:
+                prov = entry.get("provider")
+                model = entry.get("model")
+                if prov in models_by_provider and model:
+                    models_by_provider[prov].add(model)
+
+        # Add known models, env-configured models, and defaults
+        for name, config in PROVIDER_CONFIGS.items():
+            for m in config.get("known_models", []):
+                models_by_provider[name].add(m)
+            default = config.get("default_model", "")
+            if default:
+                models_by_provider[name].add(default)
+            env_model = os.getenv(config.get("model_env", ""), "")
+            if env_model:
+                models_by_provider[name].add(env_model)
+
+        statuses = []
+        for name, config in PROVIDER_CONFIGS.items():
+            statuses.append(ProviderStatus(
+                provider=name,
+                api_key_env=config.get("api_key_env", ""),
+                api_key_configured=_has_api_key(name),
+                default_model=config.get("default_model", ""),
+                base_url=os.getenv(
+                    config.get("base_url_env", ""), ""
+                ) or config.get("default_base_url", ""),
+                available_models=sorted(models_by_provider.get(name, set())),
+            ))
+        return statuses
+
+    async def validate_api_key(self, provider: str, model: str | None = None) -> dict:
+        """Test whether a provider's API key is valid by making a minimal LLM call."""
+        if provider not in PROVIDER_CONFIGS:
+            return {"provider": provider, "model": model, "valid": False, "error": "Unknown provider", "latency_ms": 0}
+
+        if not _has_api_key(provider):
+            config = PROVIDER_CONFIGS[provider]
+            env_var = config.get("api_key_env", "")
+            return {
+                "provider": provider,
+                "model": model,
+                "valid": False,
+                "error": f"{env_var} is not set",
+                "latency_ms": 0,
+            }
+
+        from druppie.llm.litellm_provider import ChatLiteLLM
+
+        start = time.monotonic()
+        try:
+            llm = ChatLiteLLM(provider=provider, model=model, max_tokens=1, timeout=15.0, max_retries=0)
+            await llm.achat(
+                messages=[{"role": "user", "content": "hi"}],
+                max_tokens=1,
+            )
+            latency = int((time.monotonic() - start) * 1000)
+            return {"provider": provider, "model": llm._model, "valid": True, "error": None, "latency_ms": latency}
+        except Exception as e:
+            latency = int((time.monotonic() - start) * 1000)
+            err = str(e)
+            # max_tokens limit means the API connected and authenticated successfully
+            if "max_tokens" in err.lower() or "model output limit" in err.lower():
+                return {"provider": provider, "model": getattr(llm, '_model', model), "valid": True, "error": None, "latency_ms": latency}
+            return {"provider": provider, "model": model, "valid": False, "error": err[:200], "latency_ms": latency}
+
+    def _refresh_resolver_cache(self, overrides=None):
+        """Update the resolver's in-memory cache from DB."""
+        if overrides is None:
+            overrides = self.override_repo.get_agent_overrides()
+
+        override_map = {
+            o.target_id: (o.provider, o.model)
+            for o in overrides
+            if o.target_type == "agent" and o.enabled
+        }
+        set_db_overrides(override_map)
+
+        logger.info("resolver_cache_refreshed", override_count=len(override_map))
