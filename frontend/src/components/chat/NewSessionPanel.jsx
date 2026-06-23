@@ -4,16 +4,17 @@
 
 import { useState, useRef, useEffect } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { Send, Shield } from 'lucide-react'
+import { Send, Shield, Loader2, FileType, FileText } from 'lucide-react'
 import { sendChat } from '../../services/api'
+import { setPending } from '../../services/pendingChat'
 import FileUploadButton from './FileUploadButton'
 import AttachmentChips from './AttachmentChips'
 
 const NEW_SESSION_SUGGESTIONS = [
-  'Set up a new project',
-  'Review my code architecture',
-  'Help me deploy an app',
-  'Write a feature specification',
+  'Start een nieuw project',
+  'Beoordeel mijn code-architectuur',
+  'Help me een app te deployen',
+  'Schrijf een feature-specificatie',
 ]
 
 const NewSessionPanel = ({ onSessionCreated }) => {
@@ -21,15 +22,20 @@ const NewSessionPanel = ({ onSessionCreated }) => {
   const [attachments, setAttachments] = useState([])
   const [uploadError, setUploadError] = useState(null)
   const inputRef = useRef(null)
+  const pendingMessageRef = useRef(null)
+  const pendingAttachmentsRef = useRef([])
   const queryClient = useQueryClient()
 
   const mutation = useMutation({
     mutationFn: ({ message, attachmentIds }) => sendChat(message, null, null, attachmentIds),
     onSuccess: (data) => {
+      const msg = pendingMessageRef.current
+      pendingMessageRef.current = null
       setInput('')
       setAttachments([])
       queryClient.invalidateQueries({ queryKey: ['sessions'] })
       if (data.session_id) {
+        setPending(data.session_id, msg, pendingAttachmentsRef.current)
         onSessionCreated(data.session_id)
       }
     },
@@ -49,9 +55,47 @@ const NewSessionPanel = ({ onSessionCreated }) => {
     setUploadError(null)
     const fallback = attachments.length
       ? attachments.map((a) => a.original_filename).join(', ')
-      : 'See attached'
+      : 'Zie bijlage'
     const message = trimmed || fallback
+    pendingMessageRef.current = message
+    pendingAttachmentsRef.current = attachments.map((a) => ({ id: a.id, original_filename: a.original_filename, content_type: a.content_type }))
     mutation.mutate({ message, attachmentIds: attachments.map((a) => a.id) })
+  }
+
+  if (mutation.isPending) {
+    const atts = pendingAttachmentsRef.current
+    const isAttachmentOnly = atts.length > 0 && (pendingMessageRef.current === atts.map((a) => a.original_filename).join(', ') || pendingMessageRef.current === 'Zie bijlage')
+    return (
+      <div className="flex flex-col h-full">
+        <div className="flex-1 overflow-y-auto">
+          <div className="max-w-3xl mx-auto px-4 py-6 space-y-6">
+            <div className="flex justify-end gap-2">
+              <div className="max-w-[85%] rounded-2xl px-4 py-2.5 text-sm bg-gray-100 text-gray-900 overflow-hidden">
+                {!isAttachmentOnly && (
+                  <div className="whitespace-pre-wrap break-words">{pendingMessageRef.current}</div>
+                )}
+                {atts.length > 0 && (
+                  <div className={`flex flex-wrap gap-1.5${isAttachmentOnly ? '' : ' mt-2'}`}>
+                    {atts.map((att) => {
+                      const Icon = att.content_type === 'application/pdf' ? FileType : FileText
+                      return (
+                        <span key={att.id} className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-white/60 rounded-lg text-xs text-gray-600">
+                          <Icon className="w-3.5 h-3.5 text-gray-400" />
+                          <span className="truncate max-w-[120px]">{att.original_filename}</span>
+                        </span>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+            <div className="flex items-center py-1">
+              <Loader2 className="w-3.5 h-3.5 text-gray-400 animate-spin" />
+            </div>
+          </div>
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -62,18 +106,17 @@ const NewSessionPanel = ({ onSessionCreated }) => {
           <Shield className="w-7 h-7 text-white" />
         </div>
         <h1 className="text-2xl font-semibold text-gray-900 mb-2">
-          What would you like to build?
+          Wat wil je bouwen?
         </h1>
         <p className="text-gray-400 text-sm mb-8">
-          Start a new governance session with Druppie
+          Start een nieuwe governance-sessie
         </p>
         <div className="flex flex-wrap justify-center gap-2 max-w-lg">
           {NEW_SESSION_SUGGESTIONS.map((s) => (
             <button
               key={s}
               onClick={() => handleSend(s)}
-              disabled={mutation.isPending}
-              className="px-4 py-2 text-sm border border-gray-200 rounded-full text-gray-600 hover:bg-gray-50 hover:border-gray-300 transition-colors disabled:opacity-50"
+              className="px-4 py-2 text-sm border border-gray-200 rounded-full text-gray-600 hover:bg-gray-50 hover:border-gray-300 transition-colors"
             >
               {s}
             </button>
@@ -93,33 +136,27 @@ const NewSessionPanel = ({ onSessionCreated }) => {
               <FileUploadButton
                 onUpload={(att) => { setUploadError(null); setAttachments((prev) => [...prev, att]) }}
                 onError={setUploadError}
-                disabled={mutation.isPending}
               />
               <textarea
                 ref={inputRef}
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !e.shiftKey && !mutation.isPending) {
+                  if (e.key === 'Enter' && !e.shiftKey) {
                     e.preventDefault()
                     handleSend()
                   }
                 }}
-                placeholder="Describe what you'd like to build..."
+                placeholder="Beschrijf wat je wilt bouwen..."
                 rows={1}
                 className="flex-1 resize-none bg-transparent outline-none text-sm leading-6 py-1 max-h-40"
-                disabled={mutation.isPending}
               />
               <button
                 onClick={() => handleSend()}
-                disabled={(!input.trim() && !attachments.length) || mutation.isPending}
+                disabled={!input.trim() && !attachments.length}
                 className="flex-shrink-0 p-2 rounded-xl bg-gray-900 text-white hover:bg-gray-700 disabled:opacity-30 disabled:hover:bg-gray-900 transition-colors"
               >
-                {mutation.isPending ? (
-                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                ) : (
-                  <Send className="w-4 h-4" />
-                )}
+                <Send className="w-4 h-4" />
               </button>
             </div>
           </div>

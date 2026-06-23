@@ -538,10 +538,7 @@ export const buildApprovalFileList = (args) => {
     return Object.entries(batchFiles).map(([p, c]) => ({ path: p, content: c }))
   }
   if (hasTranslation) {
-    return [
-      { path: args.translated_path, content: args.translated_content },
-      { path: filePath + ' (English)', content },
-    ]
+    return [{ path: args.translated_path, content: args.translated_content }]
   }
   return [{ path: filePath || 'file', content }]
 }

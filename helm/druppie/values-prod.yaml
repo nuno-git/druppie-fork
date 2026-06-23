@@ -74,11 +74,31 @@ autoscaling:
     maxReplicas: 8
     targetCPUUtilizationPercentage: 70
 
-# CloudNativePG — HA PostgreSQL clusters
+# KEDA session-based autoscaling for the backend (ADR §4.4).
+# When enabled, the backend CPU HPA is automatically disabled (see hpa-backend.yaml)
+# and KEDA drives scaling via dual triggers: PostgreSQL queue depth + CPU.
+keda:
+  enabled: true
+  pollingInterval: 5
+  cooldownPeriod: 120
+  sslmode: disable
+  backend:
+    query: "SELECT COUNT(*) FROM agent_runs WHERE status = 'running'"
+    targetQueryValue: "10"
+    activationTargetQueryValue: "3"
+    targetCPUUtilization: "55"
+
+# CloudNativePG — HA PostgreSQL clusters (3 instances with auto-failover, ADR §4.3)
 cnpg:
   enabled: true
   monitoring:
     enabled: true
+  druppie:
+    instances: 3
+  keycloak:
+    instances: 3
+  gitea:
+    instances: 3
 
 persistence:
   storageClass: "hcloud-volumes"
@@ -91,11 +111,14 @@ nfs:
   nodeSelector:
     pool: infra
 
+# Multi-node HA (ADR §4.11): spread replicas across nodes and guarantee
+# availability during maintenance. Safe here because prod runs >1 schedulable node.
 highAvailability:
   pdb:
-    enabled: false
+    enabled: true
+    minAvailable: 1
   antiAffinity:
-    enabled: false
+    enabled: true
 
 certManager:
   enabled: true
