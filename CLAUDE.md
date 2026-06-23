@@ -136,18 +136,29 @@ Do NOT rebuild or test yourself — delegate everything to save context. Do NOT 
 
 ## E2E Testing Reference (subagents read this)
 
-### Service Ports (from .env)
+### Service Ports (instance-specific — from `.env`)
 
-| Service | Port |
-|---------|------|
-| Keycloak | 10302 |
-| Backend API | 10222 |
-| Frontend | 5273 |
+Host ports are set per-instance in `.env`. Read your own values; the numbers below
+are the `.env.example` defaults, not guaranteed for your instance.
+
+| Service | `.env` variable | Default |
+|---------|-----------------|---------|
+| Keycloak | `KEYCLOAK_PORT` | 8180 |
+| Backend API | `BACKEND_PORT` | 8100 |
+| Frontend | `FRONTEND_PORT` | 5273 |
+
+Export them before running the curl blocks below:
+```bash
+# Load ports from your .env (falls back to .env.example defaults)
+KEYCLOAK_PORT=${KEYCLOAK_PORT:-8180}
+BACKEND_PORT=${BACKEND_PORT:-8100}
+FRONTEND_PORT=${FRONTEND_PORT:-5273}
+```
 
 ### Auth
 
 ```bash
-TOKEN=$(curl -s -X POST "http://localhost:10302/realms/druppie/protocol/openid-connect/token" \
+TOKEN=$(curl -s -X POST "http://localhost:${KEYCLOAK_PORT}/realms/druppie/protocol/openid-connect/token" \
   -H "Content-Type: application/x-www-form-urlencoded" \
   -d "grant_type=password&client_id=druppie-frontend&username=admin&password=Admin123!" \
   | python3 -c "import sys,json; print(json.load(sys.stdin)['access_token'])")
@@ -169,23 +180,23 @@ The fast pattern: run a setup test that creates a session ending at a pending de
 
 ```bash
 # 1. Run setup test
-curl -s -X POST "http://localhost:10222/api/evaluations/run-tests" \
+curl -s -X POST "http://localhost:${BACKEND_PORT}/api/evaluations/run-tests" \
   -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
   -d '{"test_name": "setup-yaml-flow-hello-world"}'
 # → {"run_id": "...", "status": "running"}
 
 # 2. Poll until complete (usually <30s)
-curl -s "http://localhost:10222/api/evaluations/run-status/$TEST_RUN_ID" -H "Authorization: Bearer $TOKEN"
+curl -s "http://localhost:${BACKEND_PORT}/api/evaluations/run-status/$TEST_RUN_ID" -H "Authorization: Bearer $TOKEN"
 # → {"status": "completed", "message": "1/1 passed"}
 
 # 3. Find session (test results don't include session_id)
-SESSION_ID=$(curl -s "http://localhost:10222/api/sessions" -H "Authorization: Bearer $TOKEN" | python3 -c "
+SESSION_ID=$(curl -s "http://localhost:${BACKEND_PORT}/api/sessions" -H "Authorization: Bearer $TOKEN" | python3 -c "
 import sys,json
 for s in json.load(sys.stdin):
   if 'setup-yaml-flow-hello-world' in s.get('title',''): print(s['id']); break")
 
 # 4. Find pending developer agent run (field is agent_id, not agent_name)
-curl -s "http://localhost:10222/api/sessions/$SESSION_ID" -H "Authorization: Bearer $TOKEN" | python3 -c "
+curl -s "http://localhost:${BACKEND_PORT}/api/sessions/$SESSION_ID" -H "Authorization: Bearer $TOKEN" | python3 -c "
 import sys,json
 for item in json.load(sys.stdin).get('timeline',[]):
   ar = item.get('agent_run')
@@ -193,16 +204,16 @@ for item in json.load(sys.stdin).get('timeline',[]):
     print(ar['id']); break"
 
 # 5. Retry from developer
-curl -s -X POST "http://localhost:10222/api/sessions/$SESSION_ID/retry-from/$AGENT_RUN_ID" \
+curl -s -X POST "http://localhost:${BACKEND_PORT}/api/sessions/$SESSION_ID/retry-from/$AGENT_RUN_ID" \
   -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
   -d '{"planned_prompt": "Use the planner flow to create a hello world page"}'
 
 # 6. Monitor (poll every 10s, max 4min)
-curl -s "http://localhost:10222/api/sessions/$SESSION_ID" -H "Authorization: Bearer $TOKEN"
+curl -s "http://localhost:${BACKEND_PORT}/api/sessions/$SESSION_ID" -H "Authorization: Bearer $TOKEN"
 docker compose logs --tail=30 druppie-backend-dev 2>&1 | grep -i error
 
 # 7. Stop if failing
-curl -s -X POST "http://localhost:10222/api/chat/$SESSION_ID/cancel" -H "Authorization: Bearer $TOKEN"
+curl -s -X POST "http://localhost:${BACKEND_PORT}/api/chat/$SESSION_ID/cancel" -H "Authorization: Bearer $TOKEN"
 ```
 
 **Available setup tests** (in `testing/tools/`):
@@ -218,7 +229,7 @@ curl -s -X POST "http://localhost:10222/api/chat/$SESSION_ID/cancel" -H "Authori
 
 Best for: frontend changes, full UI flows, visual verification. Use the `/playwright` skill.
 
-Login: http://localhost:5273 with `admin` / `Admin123!`
+Login: `http://localhost:${FRONTEND_PORT}` (default 5273) with `admin` / `Admin123!`
 
 Same pattern — setup test via API first, then retry via UI:
 
