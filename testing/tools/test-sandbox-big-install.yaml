@@ -1,0 +1,92 @@
+## Test: install a LARGE Python package in the coding sandbox
+##
+## Purpose: stress-test sandbox package installation with a genuinely large package.
+## Installs: tensorflow (~500MB download, ~1GB installed, many transitive deps).
+## Why: verifies that network access, disk space, dependency resolution, and
+##   long-running install timeouts all work correctly inside the sandbox.
+##
+## Verifies the coding sandbox provides:
+## - PyPI network access via sandbox_networks: ["internet"]
+## - Sufficient disk space for a ~1GB install
+## - pip dependency resolution for a complex dependency tree
+## - Long-running command support via an elevated timeout (900s)
+## - Correct importability of the installed package afterward
+##
+## Run: POST /api/evaluations/run-tests {"test_name": "test-sandbox-big-install"}
+
+tool-test:
+  name: test-sandbox-big-install
+  description: |
+    Install tensorflow (~500MB) in sandbox to stress-test large package installation.
+    Verifies network access, disk space, dependency resolution, and long-running install
+    timeouts via the router→planner→developer pipeline.
+  tags: [sandbox, bash, install, pip, big-package, tensorflow, e2e, agent-runtime]
+
+  chain:
+    # =========================================================================
+    # Router — create project for sandbox context
+    # =========================================================================
+    - agent: router
+      tool: builtin:set_intent
+      arguments:
+        intent: create_project
+        project_name: sandbox-big-install-test
+        description: "Test project for sandbox large package install verification"
+      assert:
+        result:
+          - not_empty
+
+    - agent: router
+      tool: builtin:done
+      arguments:
+        summary: "Agent router: Classified as create_project for sandbox-big-install-test"
+
+    # =========================================================================
+    # Planner → Developer
+    # =========================================================================
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: developer
+            prompt: "Install a large Python package (tensorflow) in the sandbox and verify it imports"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: Planned developer for sandbox big install test"
+
+    # =========================================================================
+    # Developer — install tensorflow (~500MB download, ~1GB installed)
+    # =========================================================================
+    - agent: developer
+      tool: coding:bash
+      arguments:
+        command: "pip install tensorflow"
+        timeout: 900
+        git_scope: "current_project"
+        sandbox_networks: ["internet"]
+      assert:
+        result:
+          - { contains: "Successfully installed" }
+
+    # =========================================================================
+    # Developer — verify the import works and prints the version
+    # =========================================================================
+    - agent: developer
+      tool: coding:bash
+      arguments:
+        command: "python -c \"import tensorflow as tf; print('tensorflow', tf.__version__)\""
+        timeout: 120
+        git_scope: "current_project"
+      assert:
+        result:
+          - { contains: "tensorflow" }
+
+    # Done
+    - agent: developer
+      tool: builtin:done
+      arguments:
+        summary: "Sandbox successfully installed tensorflow (~500MB) and imported it."
+      assert:
+        completed: true

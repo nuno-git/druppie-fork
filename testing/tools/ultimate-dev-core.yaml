@@ -1,0 +1,172 @@
+## Tool test: ultimate_dev_core spawns 2 subagents
+## Tests the subagent replay flow where ultimate_dev_core calls the subagents tool
+## to spawn core_explorer and core_builder_subagent, both of which complete their work.
+
+tool-test:
+  name: ultimate-dev-core
+  description: "Ultimate dev core spawns 2 subagents (core_explorer + core_builder_subagent) to modify Druppie's core"
+  tags: [subagent, core]
+
+  chain:
+    # --- Router ---
+    - agent: router
+      tool: builtin:set_intent
+      arguments:
+        intent: create_project
+        project_name: core-update-test
+        description: "A test project for verifying ultimate_dev_core subagent spawning"
+
+    - agent: router
+      tool: builtin:done
+      arguments:
+        summary: "Agent router: Classified as create_project"
+
+    # --- Planner → BA ---
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: business_analyst
+            prompt: "Gather requirements and create functional design for core update test"
+          - agent_id: planner
+            prompt: "Re-evaluate after business_analyst completes"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: Planned business_analyst"
+
+    # --- Business Analyst (creates FD) ---
+    - agent: business_analyst
+      tool: coding:make_design
+      approval:
+        status: approved
+      arguments:
+        path: docs/functional-design.md
+        content: |
+          # Functional Design: Core Update Test
+
+          ## Requirements
+          - FR-01: Add a health check endpoint to the Druppie API
+          - FR-02: The endpoint should return service status and uptime
+          - FR-03: This is a core platform change, not a standalone app
+
+    - agent: business_analyst
+      tool: coding:push_changes
+
+    - agent: business_analyst
+      tool: builtin:done
+      arguments:
+        summary: "Agent business_analyst: DESIGN_APPROVED - Functional design created and approved"
+
+    # --- Planner → Architect ---
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: architect
+            prompt: "Create technical design for core update test"
+          - agent_id: planner
+            prompt: "Re-evaluate after architect completes"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: BA approved, planned architect"
+
+    # --- Architect (creates TD) ---
+    - agent: architect
+      tool: coding:read_file
+      mock: true
+      mock_result: "# Functional Design: Core Update Test\n## Requirements\n- FR-01: Health check endpoint\n- FR-02: Service status and uptime\n- FR-03: Core platform change"
+      arguments:
+        path: docs/functional-design.md
+
+    - agent: architect
+      tool: coding:make_design
+      approval:
+        status: approved
+        by: architect
+      arguments:
+        path: docs/technical-design.md
+        content: |
+          # Technical Design: Core Update Test
+
+          ## Scope
+          This is a modification to the Druppie core codebase.
+          A new health check endpoint must be added to the API layer.
+
+          ## Implementation Plan
+          1. Add /health endpoint in druppie/api/
+          2. Return JSON with service status and uptime
+          3. Add tests for the new endpoint
+
+    - agent: architect
+      tool: coding:push_changes
+
+    - agent: architect
+      tool: builtin:done
+      arguments:
+        summary: "Agent architect: TECHNICAL_DESIGN_APPROVED - Technical design created and approved"
+
+    # --- Planner → ultimate_dev_core ---
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: ultimate_dev_core
+            prompt: "Implement the health check endpoint. Use core_explorer to explore the codebase, then core_builder_subagent to implement."
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: Planned ultimate_dev_core"
+
+    # --- Ultimate Dev Core (calls subagents tool — mocked) ---
+    - agent: ultimate_dev_core
+      tool: builtin:subagents
+      mock: true
+      mock_result: '{"status": "success", "agents": ["core_explorer", "core_builder_subagent"]}'
+      arguments:
+        agents:
+          - agent: core_explorer
+            prompt: "Read docs/functional-design.md and docs/technical-design.md. Explore druppie/api/ directory structure and report what needs to be changed."
+          - agent: core_builder_subagent
+            prompt: "Implement the health check endpoint described in the design docs in the Druppie core."
+
+    # --- Core Explorer subagent (mocked read, then done) ---
+    - agent: core_explorer
+      parent_agent: ultimate_dev_core
+      tool: coding:read_file
+      mock: true
+      mock_result: "# Functional Design: Core Update Test\n## Requirements\n- FR-01: Health check endpoint\n- FR-02: Service status and uptime\n- FR-03: Core platform change"
+      arguments:
+        path: docs/functional-design.md
+
+    - agent: core_explorer
+      tool: builtin:done
+      arguments:
+        summary: "Agent core_explorer: Read functional design and technical design. Found health check endpoint requirements for Druppie core API."
+
+    # --- Core Builder subagent (mocked read, then done) ---
+    - agent: core_builder_subagent
+      parent_agent: ultimate_dev_core
+      tool: coding:read_file
+      mock: true
+      mock_result: "# Technical Design: Core Update Test\n## Scope\nCore codebase modification\n## Implementation Plan\n1. Add /health endpoint\n2. Return JSON with status and uptime"
+      arguments:
+        path: docs/technical-design.md
+
+    - agent: core_builder_subagent
+      tool: builtin:done
+      arguments:
+        summary: "Agent core_builder_subagent: Implemented /health endpoint in druppie/api/. All files committed and PR created."
+
+    # --- Ultimate Dev Core (done after subagents) ---
+    - agent: ultimate_dev_core
+      tool: builtin:done
+      arguments:
+        summary: "Agent ultimate_dev_core: Explored core codebase via core_explorer, implemented health check endpoint via core_builder_subagent. Core change ready."
+
+  assert:
+    - check: all-agents-completed

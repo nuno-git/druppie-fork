@@ -1,0 +1,34 @@
+## Agent test: dev_orchestrator implements the todo app
+##
+## Setup: tool test creates a project with FD + TD
+##   (ready for dev_orchestrator to implement)
+##
+## continue_session: true — dev_orchestrator runs in the SAME session as setup.
+##   dev_orchestrator reads FD and TD, then implements the todo app.
+##
+## This test validates the full dev_orchestrator agent works:
+## - Reads functional-design.md and technical-design.md
+## - Uses SubagentsMCP tools (explorer, builder_subagent)
+## - Implements the React todo app
+## - Commits and pushes to git
+## - Calls done() successfully
+
+agent-test:
+  name: todo-app-ultimate-dev
+  description: "dev_orchestrator agent builds the todo app from FD+TD"
+  tags: [ultimate-dev, todo-app, e2e]
+
+  setup:
+    - setup-todo-app-dev-only
+
+  continue_session: true
+
+  message: |
+    Implement the todo app as described in docs/functional-design.md and docs/technical-design.md.
+    Read both documents first, then implement all components.
+    Commit and push when done.
+
+  agents: [dev_orchestrator]
+
+  assert:
+    - check: all-agents-completed

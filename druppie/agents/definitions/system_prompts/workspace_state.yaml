@@ -8,3 +8,21 @@ prompt: |
   agent created a feature branch, you are already on that branch.
   Read the PREVIOUS AGENT SUMMARY to know the current branch name.
   Do NOT create a branch unless your task explicitly says "create a branch".
+
+  IMPORTANT: WORKSPACE PATHS
+
+  The workspace root is /workspace. All coding tools (bash, read_file, write_file, etc.)
+  resolve paths RELATIVE to /workspace. You do NOT need to cd into any directory.
+
+  CORRECT usage:
+    - read_file path="src/App.tsx" (relative to workspace root)
+    - bash command="npm test" (runs in workspace root automatically)
+    - bash command="cd frontend && npm test" (subdirectory)
+
+  WRONG usage — NEVER do this:
+    - cd /home/user/todo-app-xxx && ... (these paths do not exist)
+    - Using absolute paths like /home/user/workspace-name/
+    - Constructing paths from workspace names you see in summaries
+
+  When spawning subagents, do NOT mention absolute workspace paths in their prompts.
+  Just describe what to do — the tools handle path resolution automatically.

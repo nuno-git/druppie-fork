@@ -1,0 +1,151 @@
+## Setup: todo-app pipeline up to dev_orchestrator (skips builder_planner/test_builder)
+## Router → Planner → BA → Architect → Planner → dev_orchestrator (pending)
+## Use this to test the dev_orchestrator agent directly without re-running BA/architect.
+
+tool-test:
+  name: setup-todo-app-dev-only
+  description: "Setup todo-app project with FD + TD, ready for dev_orchestrator"
+  tags: [setup, create-project, ultimate-dev, agent-runtime]
+
+  chain:
+    # --- Router ---
+    - agent: router
+      tool: builtin:set_intent
+      arguments:
+        intent: create_project
+        project_name: todo-app
+        description: "A simple to-do list application"
+
+    - agent: router
+      tool: builtin:done
+      arguments:
+        summary: "Agent router: Classified as create_project for todo-app"
+
+    # --- Planner (initial) ---
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: business_analyst
+            prompt: "Gather requirements for the to-do app and create functional design"
+          - agent_id: planner
+            prompt: "Re-evaluate after business_analyst completes"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: Planned business_analyst as next step"
+
+    # --- Business Analyst (creates FD) ---
+    - agent: business_analyst
+      tool: coding:make_design
+      approval:
+        status: approved
+      arguments:
+        path: docs/functional-design.md
+        content: |
+          # Functioneel Ontwerp: Todo App
+
+          ## Vereisten
+          - FR-01: Gebruiker kan taken toevoegen met een titel
+          - FR-02: Gebruiker kan taken als voltooid markeren (doorgestreept)
+          - FR-03: Gebruiker kan taken verwijderen (met bevestiging)
+          - FR-04: Takenlijst wordt persistent opgeslagen (localStorage)
+          - FR-05: Alle taken in een platte lijst
+
+          ## Gebruikersinterface
+          - Invoerveld bovenaan voor nieuwe taken
+          - Lijst met taken, elk met checkbox en verwijderknop
+          - Voltooide taken worden doorgestreept weergegeven
+
+    - agent: business_analyst
+      tool: coding:push_changes
+
+    - agent: business_analyst
+      tool: builtin:done
+      arguments:
+        summary: "Agent business_analyst: DESIGN_APPROVED"
+
+    # --- Planner (after BA) ---
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: architect
+            prompt: "Review functional design and create technical design for the todo app"
+          - agent_id: planner
+            prompt: "Re-evaluate after architect completes"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: BA approved, planned architect as next step"
+
+    # --- Architect (creates TD) ---
+
+    - agent: architect
+      tool: coding:read_file
+      arguments:
+        path: docs/functional-design.md
+
+    - agent: architect
+      tool: coding:make_design
+      approval:
+        status: approved
+        by: architect
+      arguments:
+        path: docs/technical-design.md
+        content: |
+          # Technisch Ontwerp: Todo App
+
+          ## Stack
+          - Frontend: React met Vite
+          - State: localStorage voor persistentie
+          - Styling: CSS modules
+
+          ## Componenten
+          - App: hoofdcomponent, beheert state
+          - TodoInput: invoerveld voor nieuwe taken
+          - TodoList: lijst van TodoItem componenten
+          - TodoItem: enkele taak met checkbox en verwijderknop
+
+          ## Datamodel
+          ```
+          interface Todo {
+            id: string
+            title: string
+            completed: boolean
+            createdAt: string
+          }
+          ```
+
+          ## Implementatie
+          - Gebruik React useState voor state management
+          - localStorage.getItem/setItem voor persistentie
+          - CSS voor styling (keep it simple, geen UI library)
+
+    - agent: architect
+      tool: coding:push_changes
+
+    - agent: architect
+      tool: builtin:done
+      arguments:
+        summary: "Agent architect: DESIGN_APPROVED"
+
+    # --- Planner (after architect → dev_orchestrator) ---
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: dev_orchestrator
+            prompt: "Implement the todo app as described in docs/functional-design.md and docs/technical-design.md. Read both documents first, then implement all components. Commit and push when done."
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: Architect approved, planned dev_orchestrator for implementation"
+
+  verify:
+    - gitea_repo_exists: true
+    - file_exists: docs/functional-design.md
+    - file_exists: docs/technical-design.md

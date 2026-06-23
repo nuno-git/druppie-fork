@@ -59,19 +59,7 @@ tool-test:
           - Tabel met resultaten
 
     - agent: business_analyst
-      tool: coding:run_git
-      arguments:
-        command: "add docs/functional-design.md"
-
-    - agent: business_analyst
-      tool: coding:run_git
-      arguments:
-        command: "commit -m 'Functioneel ontwerp toegevoegd'"
-
-    - agent: business_analyst
-      tool: coding:run_git
-      arguments:
-        command: "push"
+      tool: coding:push_changes
 
     - agent: business_analyst
       tool: builtin:done
@@ -94,10 +82,6 @@ tool-test:
         summary: "Agent planner: BA approved, planned architect"
 
     # --- Architect ---
-    - agent: architect
-      tool: coding:run_git
-      arguments:
-        command: "pull"
 
     - agent: architect
       tool: coding:read_file
@@ -125,19 +109,7 @@ tool-test:
           - Chart: visualisatie
 
     - agent: architect
-      tool: coding:run_git
-      arguments:
-        command: "add docs/technical-design.md"
-
-    - agent: architect
-      tool: coding:run_git
-      arguments:
-        command: "commit -m 'Technisch ontwerp toegevoegd'"
-
-    - agent: architect
-      tool: coding:run_git
-      arguments:
-        command: "push"
+      tool: coding:push_changes
 
     - agent: architect
       tool: builtin:done

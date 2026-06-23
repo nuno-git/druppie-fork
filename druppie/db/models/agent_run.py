@@ -28,6 +28,7 @@ class AgentRun(Base):
     session_id = Column(UUID(as_uuid=True), ForeignKey("sessions.id", ondelete="CASCADE"), index=True)
     agent_id = Column(String(100), nullable=False)
     parent_run_id = Column(UUID(as_uuid=True), ForeignKey("agent_runs.id"))
+    spawning_tool_call_id = Column(UUID(as_uuid=True), ForeignKey("tool_calls.id"), nullable=True)
 
     # pending = created by planner, not started yet
     status = Column(String(20), default="running", index=True)  # pending, running, paused_tool, paused_hitl, paused_user, cancelled, completed, failed
@@ -37,6 +38,7 @@ class AgentRun(Base):
     # For pending runs created by planner
     planned_prompt = Column(Text)  # Task description for the agent
     sequence_number = Column(Integer)  # Execution order (0, 1, 2...)
+    pending_user_context = Column(Text)  # User context to inject when this parent resumes after children
 
     prompt_tokens = Column(Integer, default=0)
     completion_tokens = Column(Integer, default=0)
@@ -48,7 +50,8 @@ class AgentRun(Base):
 
     # Relationships
     messages = relationship("Message", back_populates="agent_run")
-    tool_calls = relationship("ToolCall", back_populates="agent_run")
+    tool_calls = relationship("ToolCall", back_populates="agent_run", foreign_keys="[ToolCall.agent_run_id]")
+    spawning_tool_call = relationship("ToolCall", foreign_keys=[spawning_tool_call_id])
 
     def to_dict(self) -> dict[str, Any]:
         return {

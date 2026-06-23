@@ -85,19 +85,7 @@ tool-test:
           standalone applicatie.
 
     - agent: business_analyst
-      tool: coding:run_git
-      arguments:
-        command: "add docs/functional-design.md"
-
-    - agent: business_analyst
-      tool: coding:run_git
-      arguments:
-        command: "commit -m 'FD: core-sync-test'"
-
-    - agent: business_analyst
-      tool: coding:run_git
-      arguments:
-        command: "push"
+      tool: coding:push_changes
 
     - agent: business_analyst
       tool: builtin:done
@@ -124,10 +112,6 @@ tool-test:
     # =========================================================================
     # Architect — writes TD signalling CORE_UPDATE
     # =========================================================================
-    - agent: architect
-      tool: coding:run_git
-      arguments:
-        command: "pull"
 
     - agent: architect
       tool: coding:read_file
@@ -159,19 +143,7 @@ tool-test:
           Volgt het standaard module patroon (MODULE.yaml, server.py, v1/).
 
     - agent: architect
-      tool: coding:run_git
-      arguments:
-        command: "add docs/technical-design.md"
-
-    - agent: architect
-      tool: coding:run_git
-      arguments:
-        command: "commit -m 'TD: core-sync-test — core update'"
-
-    - agent: architect
-      tool: coding:run_git
-      arguments:
-        command: "push"
+      tool: coding:push_changes
 
     - agent: architect
       tool: builtin:done

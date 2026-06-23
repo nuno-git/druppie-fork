@@ -480,21 +480,8 @@ tool-test:
 
     # --- Git add/commit/push ---
     - agent: business_analyst
-      tool: coding:run_git
-      arguments:
-        command: "add docs/functional-design.md"
+      tool: coding:push_changes
 
-    - agent: business_analyst
-      tool: coding:run_git
-      arguments:
-        command: "commit -m 'Functioneel ontwerp vergunningzoeker'"
-
-    - agent: business_analyst
-      tool: coding:run_git
-      arguments:
-        command: "push"
-
-    # --- done() with DESIGN_APPROVED ---
     - agent: business_analyst
       tool: builtin:done
       arguments:

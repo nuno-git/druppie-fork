@@ -7,6 +7,8 @@
 > **Story:** Story 2 — Spike: schaalbare Kubernetes strategie (3 SP)  
 > **Principe:** Alles open source, geen vendor lock-in
 
+> **Status: Historische spike (2026-06-02).** Vervangen door `docs/ADR-KUBERNETES.md` (beslissingen) en `docs/AS-BUILT-ARCHITECTURE.md` (huidige staat). De Hetzner-specifieke provisioning/kosten secties zijn behouden ter referentie maar reflecteren niet langer het geplande lokale-Rancher doel.
+
 ---
 
 ## Strategieoverzicht

@@ -7,6 +7,8 @@ Endpoints:
 """
 
 import os
+import hashlib
+import hmac
 
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
@@ -14,7 +16,6 @@ import httpx
 import structlog
 
 from druppie.api.deps import get_current_user
-from druppie.core.sandbox_auth import generate_control_plane_token
 from druppie.db.database import get_db
 
 logger = structlog.get_logger()
@@ -22,12 +23,17 @@ logger = structlog.get_logger()
 router = APIRouter()
 
 SANDBOX_MANAGER_URL = os.getenv("SANDBOX_MANAGER_URL", "http://sandbox-manager:8000")
+SANDBOX_API_SECRET = os.getenv("SANDBOX_API_SECRET", "dev-secret")
+
+
+def _generate_token() -> str:
+    return hmac.new(SANDBOX_API_SECRET.encode(), b"cache-api", hashlib.sha256).hexdigest()
 
 
 @router.get("/cache/packages")
 async def get_cached_packages(user: dict = Depends(get_current_user)):
     """List all cached dependency packages from the shared sandbox cache."""
-    token = generate_control_plane_token()
+    token = _generate_token()
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.get(

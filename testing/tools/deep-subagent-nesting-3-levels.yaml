@@ -1,0 +1,382 @@
+## Tool test: 3 levels of recursive core_explorer subagent nesting
+## Tests deep subagent nesting: ultimate_dev_core -> core_explorer ->
+## core_explorer (recursive) -> core_explorer (recursive level 2).
+## Each core_explorer level explores a different part of the codebase
+## before spawning the next level. The innermost level completes first,
+## then each parent resumes and completes in reverse order.
+
+tool-test:
+  name: deep-subagent-nesting-3-levels
+  description: "3 levels of recursive core_explorer nesting under ultimate_dev_core for deep codebase exploration of a Druppie plugin system"
+  tags: [subagent, recursive, deep-nesting, agent-runtime]
+
+  chain:
+    # --- Router ---
+    - agent: router
+      tool: builtin:set_intent
+      arguments:
+        intent: create_project
+        project_name: deep-nesting-test
+        description: "A test project for verifying 3 levels of recursive core_explorer subagent nesting"
+
+    - agent: router
+      tool: builtin:done
+      arguments:
+        summary: "Agent router: Classified as create_project"
+
+    # --- Planner -> BA ---
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: business_analyst
+            prompt: "Gather requirements and create functional design for a Druppie plugin system"
+          - agent_id: planner
+            prompt: "Re-evaluate after business_analyst completes"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: Planned business_analyst"
+
+    # --- Business Analyst (creates FD) ---
+    - agent: business_analyst
+      tool: coding:make_design
+      approval:
+        status: approved
+      arguments:
+        path: docs/functional-design.md
+        content: |
+          # Functional Design: Druppie Plugin System
+
+          ## Requirements
+          - FR-01: Support dynamically loading plugins at startup
+          - FR-02: Plugins register as MCP tool providers
+          - FR-03: Plugin lifecycle management (init, start, stop, destroy)
+          - FR-04: Plugin dependency resolution and ordering
+          - FR-05: Plugin configuration via YAML files in plugins/ directory
+
+          ## Functionality
+          - Plugin loader scans plugins/ directory for plugin manifests
+          - Each plugin declares its MCP tools and dependencies
+          - The system resolves load order based on dependency graph
+          - Plugins hook into the existing MCP client infrastructure
+          - Hot-reload support for development mode
+
+    - agent: business_analyst
+      tool: coding:push_changes
+
+    - agent: business_analyst
+      tool: builtin:done
+      arguments:
+        summary: "Agent business_analyst: DESIGN_APPROVED - Functional design for plugin system created and approved"
+
+    # --- Planner -> Architect ---
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: architect
+            prompt: "Review FD and create technical design for the Druppie plugin system. This is a CORE_UPDATE requiring deep codebase exploration."
+          - agent_id: planner
+            prompt: "Re-evaluate after architect completes"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: BA approved, planned architect"
+
+    # --- Architect (reads FD, creates research + TD) ---
+    - agent: architect
+      tool: coding:read_file
+      mock: true
+      mock_result: "# Functional Design: Druppie Plugin System\n## Requirements\n- FR-01: Dynamic plugin loading\n- FR-02: MCP tool provider registration\n- FR-03: Plugin lifecycle management\n- FR-04: Dependency resolution\n- FR-05: YAML plugin configuration"
+      arguments:
+        path: docs/functional-design.md
+
+    - agent: architect
+      tool: coding:make_design
+      approval:
+        status: approved
+        by: architect
+      arguments:
+        path: docs/technical-research.md
+        content: |
+          # Technical Research: Druppie Plugin System
+
+          ## Approaches
+          1. Extend druppie/core/config.py with plugin manifest loading
+          2. New druppie/plugins/ module with dedicated loader
+
+          ## External Systems
+          - MCP client (REUSE existing druppie/core/mcp_client.py)
+          - Tool registry (REUSE existing druppie/agents/builtin_tools.py)
+
+          ## Recommendation
+          Approach 1: extend config.py. Plugin loading is a configuration
+          concern and belongs with the existing config infrastructure.
+          MCP client and tool registry are reused as-is.
+
+    - agent: architect
+      tool: coding:make_design
+      approval:
+        status: approved
+        by: architect
+      arguments:
+        path: docs/technical-design.md
+        content: |
+          # Technical Design: Druppie Plugin System
+
+          ## Scope
+          Core platform modification to add plugin loading and registration.
+
+          ## Design
+          - Extend config.py with plugin manifest scanning
+          - Plugins register tools via builtin_tools.py registry
+          - MCP client manages plugin tool connections
+
+          ## Requirements
+          - TR-01: Plugin manifests in YAML (plugins/*.yaml)
+          - TR-02: Dependency graph resolution before loading
+          - TR-03: Each plugin registers MCP tools via existing registry
+          - TR-04: Lifecycle hooks: init, start, stop, destroy
+
+    - agent: architect
+      tool: coding:push_changes
+
+    - agent: architect
+      tool: builtin:done
+      arguments:
+        summary: "Agent architect: DESIGN_APPROVED BUILD_PATH=CORE_UPDATE. Reviewed FD, wrote technical-research.md and technical-design.md for plugin system. Requires deep exploration of config, MCP client, and tool registration modules."
+
+    # --- Planner -> ultimate_dev_core ---
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: ultimate_dev_core
+            prompt: "Implement the Druppie plugin system. Use core_explorer recursively to deeply explore config loading, MCP client, and tool registration before implementing."
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: Planned ultimate_dev_core"
+
+    # --- Ultimate Dev Core (spawns core_explorer level 1) ---
+    - agent: ultimate_dev_core
+      tool: builtin:subagents
+      mock: true
+      mock_result: '{"status": "success", "agents": ["core_explorer"]}'
+      arguments:
+        agents:
+          - agent: core_explorer
+            prompt: "Explore druppie/core/config.py to understand plugin loading patterns. Then recursively explore MCP client and tool registration using subagents."
+
+    # --- Core Explorer Level 1 (parent: ultimate_dev_core) ---
+    # Explores config.py, then spawns level 2
+    - agent: core_explorer
+      parent_agent: ultimate_dev_core
+      tool: coding:read_file
+      mock: true
+      mock_result: |
+        import yaml
+        from pathlib import Path
+
+        class DruppieConfig:
+            def __init__(self, config_path: str = "config.yaml"):
+                self.config_path = config_path
+                self._raw = {}
+                self._agents = {}
+                self._mcp_servers = {}
+
+            def load(self):
+                with open(self.config_path) as f:
+                    self._raw = yaml.safe_load(f)
+                self._agents = self._raw.get("agents", {})
+                self._mcp_servers = self._raw.get("mcp_servers", {})
+
+            def get_agent_config(self, agent_id: str) -> dict:
+                return self._agents.get(agent_id, {})
+
+            def get_mcp_server_config(self, server_name: str) -> dict:
+                return self._mcp_servers.get(server_name, {})
+
+            # Plugin loading would hook in here
+            # self._plugins = self._raw.get("plugins", {})
+      arguments:
+        path: druppie/core/config.py
+
+    - agent: core_explorer
+      parent_agent: ultimate_dev_core
+      tool: builtin:subagents
+      mock: true
+      mock_result: '{"status": "success", "agents": ["core_explorer"]}'
+      arguments:
+        agents:
+          - agent: core_explorer
+            prompt: "Explore druppie/core/mcp_client.py to understand MCP connection handling. Then explore tool registration using a subagent."
+
+    # --- Core Explorer Level 2 (parent: core_explorer) ---
+    # Explores mcp_client.py, then spawns level 3
+    - agent: core_explorer
+      parent_agent: core_explorer
+      tool: coding:read_file
+      mock: true
+      mock_result: |
+        from mcp import ClientSession, StdioServerParameters
+        from mcp.client.stdio import stdio_client
+
+        class MCPClient:
+            def __init__(self):
+                self._sessions: dict[str, ClientSession] = {}
+                self._server_params: dict[str, StdioServerParameters] = {}
+
+            async def connect(self, server_name: str, params: StdioServerParameters):
+                session = await stdio_client(params)
+                self._sessions[server_name] = session
+                return session
+
+            async def call_tool(self, server_name: str, tool_name: str, arguments: dict):
+                session = self._sessions[server_name]
+                return await session.call_tool(tool_name, arguments)
+
+            async def list_tools(self, server_name: str) -> list:
+                session = self._sessions[server_name]
+                return await session.list_tools()
+
+            async def disconnect_all(self):
+                for session in self._sessions.values():
+                    await session.close()
+                self._sessions.clear()
+
+            # Plugin tools would register additional server connections here
+      arguments:
+        path: druppie/core/mcp_client.py
+
+    - agent: core_explorer
+      parent_agent: core_explorer
+      tool: builtin:subagents
+      mock: true
+      mock_result: '{"status": "success", "agents": ["core_explorer"]}'
+      arguments:
+        agents:
+          - agent: core_explorer
+            prompt: "Explore druppie/agents/builtin_tools.py to understand tool registration patterns for the plugin system."
+
+    # --- Core Explorer Level 3 (parent: core_explorer) ---
+    # Explores builtin_tools.py, then completes
+    - agent: core_explorer
+      parent_agent: core_explorer
+      tool: coding:read_file
+      mock: true
+      mock_result: |
+        from typing import Callable, Any
+
+        _tool_registry: dict[str, Callable] = {}
+
+        def register_tool(name: str, handler: Callable, description: str = ""):
+            """Register a builtin tool handler."""
+            _tool_registry[name] = {
+                "handler": handler,
+                "description": description,
+            }
+
+        def get_tool(name: str) -> dict[str, Any] | None:
+            return _tool_registry.get(name)
+
+        def list_registered_tools() -> list[str]:
+            return list(_tool_registry.keys())
+
+        # Default builtin tools
+        register_tool("done", _handle_done, "Mark agent as completed")
+        register_tool("make_plan", _handle_make_plan, "Create execution plan")
+        register_tool("subagents", _handle_subagents, "Spawn subagents")
+        register_tool("set_intent", _handle_set_intent, "Set session intent")
+
+        # Plugin tools would call register_tool() to add their handlers
+      arguments:
+        path: druppie/agents/builtin_tools.py
+
+    - agent: core_explorer
+      parent_agent: core_explorer
+      tool: builtin:done
+      arguments:
+        summary: "Agent core_explorer: Explored druppie/agents/builtin_tools.py. Found tool registry with register_tool(), get_tool(), list_registered_tools(). Default tools: done, make_plan, subagents, set_intent. Plugins would call register_tool() to add custom handlers."
+
+    # --- Core Explorer Level 2 resumes (parent: core_explorer) ---
+    - agent: core_explorer
+      parent_agent: core_explorer
+      tool: builtin:done
+      arguments:
+        summary: "Agent core_explorer: Explored druppie/core/mcp_client.py. Found MCPClient with connect(), call_tool(), list_tools(), disconnect_all(). Plugin tools register additional server connections. Subagent explored builtin_tools.py and found the tool registry pattern with register_tool()."
+
+    # --- Core Explorer Level 1 resumes (parent: ultimate_dev_core) ---
+    - agent: core_explorer
+      parent_agent: ultimate_dev_core
+      tool: builtin:done
+      arguments:
+        summary: "Agent core_explorer: Explored druppie/core/config.py. Found DruppieConfig with YAML loading, agent configs, and MCP server configs. Plugin loading hooks into config.load(). Recursive subagents explored mcp_client.py (MCP connection handling) and builtin_tools.py (tool registration via register_tool()). Full picture: plugins load via config -> register tools via builtin_tools -> connect via mcp_client."
+
+    # --- Ultimate Dev Core resumes (writes implementation, completes) ---
+    - agent: ultimate_dev_core
+      tool: coding:write_file
+      mock: true
+      mock_result: "File written: druppie/core/plugin_loader.py"
+      arguments:
+        path: druppie/core/plugin_loader.py
+        content: |
+          """Plugin loader for Druppie - loads plugin manifests and registers tools."""
+          import yaml
+          from pathlib import Path
+          from druppie.core.config import DruppieConfig
+          from druppie.core.mcp_client import MCPClient
+          from druppie.agents.builtin_tools import register_tool
+
+          class PluginLoader:
+              def __init__(self, config: DruppieConfig, mcp_client: MCPClient):
+                  self.config = config
+                  self.mcp_client = mcp_client
+                  self._plugins = {}
+
+              def scan_plugins(self, plugins_dir: str = "plugins/"):
+                  for manifest in Path(plugins_dir).glob("*.yaml"):
+                      with open(manifest) as f:
+                          plugin = yaml.safe_load(f)
+                      self._plugins[plugin["name"]] = plugin
+
+              def load_all(self):
+                  ordered = self._resolve_dependencies()
+                  for plugin_name in ordered:
+                      self._load_plugin(plugin_name)
+
+              def _load_plugin(self, name: str):
+                  plugin = self._plugins[name]
+                  for tool in plugin.get("tools", []):
+                      register_tool(tool["name"], tool["handler"], tool.get("description", ""))
+
+              def _resolve_dependencies(self) -> list:
+                  # Topological sort based on plugin dependencies
+                  visited = set()
+                  order = []
+                  for name in self._plugins:
+                      self._visit(name, visited, order)
+                  return order
+
+              def _visit(self, name, visited, order):
+                  if name in visited:
+                      return
+                  visited.add(name)
+                  for dep in self._plugins[name].get("dependencies", []):
+                      self._visit(dep, visited, order)
+                  order.append(name)
+
+    - agent: ultimate_dev_core
+      tool: coding:push_changes
+
+    - agent: ultimate_dev_core
+      tool: builtin:done
+      arguments:
+        summary: "Agent ultimate_dev_core: Implemented druppie/core/plugin_loader.py using findings from 3 levels of recursive core_explorer exploration. Plugin loader scans YAML manifests, resolves dependency order, and registers tools via builtin_tools registry with MCP client connections."
+
+  assert:
+    - check: deep-nesting-completed

@@ -10,26 +10,28 @@ profiles:
   standard:
     - provider: zai
       model: glm-5
-    - provider: deepinfra
-      model: moonshotai/Kimi-K2.5-Turbo
     - provider: zai
       model: glm-4.7
+    - provider: deepinfra
+      model: deepseek-ai/DeepSeek-V4-Flash
     - provider: ollama
       model: gpt-oss:120b
     - provider: azure_foundry
       model: GPT-5-MINI
+      reasoning_effort: low
 
   cheap:
     - provider: zai
       model: glm-5
-    - provider: deepinfra
-      model: moonshotai/Kimi-K2.5-Turbo
     - provider: zai
       model: glm-4.7
+    - provider: deepinfra
+      model: deepseek-ai/DeepSeek-V4-Flash
     - provider: ollama
       model: gpt-oss:20b
     - provider: azure_foundry
       model: GPT-5-MINI
+      reasoning_effort: low
 
 
   ollama:

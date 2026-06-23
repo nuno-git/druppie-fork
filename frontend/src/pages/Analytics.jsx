@@ -184,7 +184,7 @@ const TestRunDrillDown = ({ run }) => {
         </div>
         <div className="flex items-center gap-3">
           <span className="text-xs text-gray-400">{fmt(run.duration_ms)}</span>
-          {run.session_id && <Link to={`/session/${run.session_id}`} className="text-xs text-indigo-600 hover:underline flex items-center gap-1"><Eye className="w-3 h-3" />Session</Link>}
+          {run.session_id && <Link to={`/chat?session=${run.session_id}&mode=inspect`} className="text-xs text-indigo-600 hover:underline flex items-center gap-1"><Eye className="w-3 h-3" />Session</Link>}
         </div>
       </div>
       {sections.map(({ items, label, color, prefix }) => (
@@ -400,7 +400,7 @@ export default function Analytics() {
                     {judge.length > 0 && <Badge p={judge.filter(a => a.passed).length} t={judge.length} color="text-yellow-600" />}
                     {eval_.length > 0 && <Badge p={eval_.filter(a => a.passed).length} t={eval_.length} color="text-orange-600" />}
                     <span className="text-xs text-gray-400 w-14 text-right">{fmt(run.duration_ms)}</span>
-                    {run.session_id && <Link to={`/session/${run.session_id}`} onClick={e => e.stopPropagation()} className="text-xs text-indigo-500 hover:underline">Session</Link>}
+                    {run.session_id && <Link to={`/chat?session=${run.session_id}&mode=inspect`} onClick={e => e.stopPropagation()} className="text-xs text-indigo-500 hover:underline">Session</Link>}
                     {isExpanded ? <ChevronUp className="w-4 h-4 text-gray-400" /> : <ChevronDown className="w-4 h-4 text-gray-400" />}
                   </div>
                   {isExpanded && <TestRunDrillDown run={run} />}

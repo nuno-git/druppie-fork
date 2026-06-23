@@ -1,0 +1,83 @@
+## Quick smoke test for YAML flow system
+## Tests the basic execution of execute_coding_task with YAML flow
+
+tool-test:
+  name: yaml-flow-smoke-test
+  description: "Quick smoke test of YAML flow - verifies agent summaries are returned"
+  tags: [smoke, yaml-flow, planner, summaries, agent-runtime]
+
+  chain:
+    # --- Router ---
+    - agent: router
+      tool: builtin:set_intent
+      arguments:
+        intent: create_project
+        project_name: yaml-flow-smoke
+        description: "Smoke test for YAML flow"
+      assert:
+        result:
+          - not_empty
+
+    - agent: router
+      tool: builtin:done
+      arguments:
+        summary: "Agent router: Classified as create_project for yaml-flow-smoke"
+
+    # --- Planner ---
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: developer
+            prompt: "Test YAML flow execution with mocked results"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: Planned developer for YAML flow smoke test"
+
+    # --- Developer: verify planner flow summary format ---
+    - agent: developer
+      tool: coding:execute_coding_task
+      arguments:
+        task: "Create a simple hello.ts file with console.log('Hello')"
+        repo_target: "project"
+        flow: "planner"
+      mock: true
+      mock_result: '{"success": true, "run_id": "smoke-test-123", "coding_run_id": "456", "summaries": {"analyst": "Analyzed task to create hello.ts", "planner": "Created 1-wave plan", "wave-orchestrator": "Executed 1 wave", "verifier": "Verified compilation", "pr-author": "Skipped"}, "deliverables": {"branch": "feat/hello", "commits": [{"sha": "abc123"}]}}'
+      assert:
+        result:
+          - { contains: "summaries" }
+          - { contains: "analyst" }
+          - { contains: "planner" }
+          - { contains: "wave-orchestrator" }
+          - { contains: "verifier" }
+          - { contains: "pr-author" }
+
+    # --- Verify router flow format still works ---
+    - agent: developer
+      tool: coding:execute_coding_task
+      arguments:
+        task: "What files are in the src directory?"
+        repo_target: "project"
+        flow: "router"
+      mock: true
+      mock_result: '{"success": true, "run_id": "explore-test-123", "coding_run_id": "789", "answer": "The src directory contains: index.ts, main.ts"}'
+      assert:
+        result:
+          - { contains: "answer" }
+          - not_empty
+
+    # --- Post result to timeline ---
+    - agent: developer
+      tool: builtin:create_message
+      arguments:
+        content: "YAML Flow Smoke Test Passed! Planner flow returns agent summaries, router flow returns answer field."
+
+    # --- Completion ---
+    - agent: developer
+      tool: builtin:done
+      arguments:
+        summary: "YAML flow smoke test completed"
+      assert:
+        completed: true

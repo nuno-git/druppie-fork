@@ -294,6 +294,28 @@ async def run_session_task(
 
         await task_fn(ctx)
 
+    except asyncio.CancelledError:
+        try:
+            db.rollback()
+            from druppie.db.database import SessionLocal as _SL
+            from druppie.domain.common import AgentRunStatus
+            from druppie.repositories import SessionRepository as _SR
+            from druppie.repositories import ExecutionRepository as _ER
+            from druppie.db.models.agent_run import AgentRun as _AR
+            _db = _SL()
+            try:
+                _db.query(_AR).filter(
+                    _AR.session_id == session_id,
+                    _AR.status == AgentRunStatus.RUNNING.value,
+                ).update({"status": AgentRunStatus.PAUSED_USER.value}, synchronize_session=False)
+                _SR(_db).update_status(session_id, SessionStatus.PAUSED)
+                _db.commit()
+            finally:
+                _db.close()
+            logger.info("session_cancelled_clean", session_id=str(session_id))
+        except Exception as cleanup_err:
+            logger.error("session_cancel_cleanup_failed", session_id=str(session_id), error=str(cleanup_err))
+
     except Exception as e:
         error_msg = f"{type(e).__name__}: {e}"
         logger.error(

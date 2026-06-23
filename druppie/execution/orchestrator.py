@@ -38,21 +38,36 @@ Architecture:
                  └─► Architect → Developer → Deployer
 """
 
+import asyncio
 import os
 from typing import TYPE_CHECKING
 from uuid import UUID
 
+import httpx
 import structlog
 
 from druppie.agents.prompt_builder import DEFAULT_LANGUAGE
-from druppie.domain.common import AgentRunStatus, SessionStatus, ApprovalStatus
 from druppie.core.language_detection import LanguageDetector
+from druppie.domain.common import AgentRunStatus, SessionStatus, ApprovalStatus
 from druppie.execution.human_input import HumanInput
 
 if TYPE_CHECKING:
     from druppie.repositories import SessionRepository, ExecutionRepository, ProjectRepository, QuestionRepository, JobRepository, AttachmentRepository
 
 logger = structlog.get_logger()
+
+_CODING_MCP_URL = os.getenv("MCP_CODING_URL", "http://module-coding:9001")
+
+
+async def _cleanup_sandbox(session_id: str) -> None:
+    try:
+        async with httpx.AsyncClient() as client:
+            await client.post(
+                f"{_CODING_MCP_URL}/management/sandbox/cleanup/{session_id}",
+                timeout=10,
+            )
+    except Exception as e:
+        logger.warning("sandbox_cleanup_failed", session_id=session_id, error=str(e))
 
 
 class Orchestrator:
@@ -365,6 +380,7 @@ class Orchestrator:
                 logger.info("execute_pending_runs_complete", session_id=str(session_id))
                 self.session_repo.update_status(session_id, SessionStatus.COMPLETED)
                 self.session_repo.commit()
+                await _cleanup_sandbox(str(session_id))
                 return
 
             # Rebuild context before each agent so it reflects changes
@@ -389,14 +405,22 @@ class Orchestrator:
             self.execution_repo.update_status(next_run.id, AgentRunStatus.RUNNING)
             self.execution_repo.commit()
 
-            # Run the agent with project context
-            status = await self.run_agent(
-                session_id=session_id,
-                agent_run_id=next_run.id,
-                agent_id=next_run.agent_id,
-                prompt=prompt,
-                context=context,
-            )
+            try:
+                status = await self.run_agent(
+                    session_id=session_id,
+                    agent_run_id=next_run.id,
+                    agent_id=next_run.agent_id,
+                    prompt=prompt,
+                    context=context,
+                )
+            except asyncio.CancelledError:
+                self.execution_repo.db.rollback()
+                self.execution_repo.update_status(next_run.id, AgentRunStatus.PAUSED_USER)
+                self.execution_repo.commit()
+                self.session_repo.update_status(session_id, SessionStatus.PAUSED)
+                self.session_repo.commit()
+                logger.info("execute_pending_runs_cancelled", session_id=str(session_id), agent_run_id=str(next_run.id))
+                raise
 
             # If paused, update session status and stop execution
             if status == "paused":
@@ -467,7 +491,8 @@ class Orchestrator:
             Context dict with project info and always conversational_language,
             or None if session not found
         """
-        from druppie.db.models import Session as DBSession, Project
+        from druppie.db.models import Project
+        from druppie.db.models import Session as DBSession
 
         # Expire cached objects to ensure we read fresh data from DB.
         # Previous agents (e.g., router's set_intent) may have modified
@@ -549,7 +574,7 @@ class Orchestrator:
         Raises:
             Exception: Re-raises after storing error on agent_run record
         """
-        from druppie.agents.runtime import Agent
+        from druppie.agents.runtime_v2 import AgentV2 as Agent
 
         logger.info(
             "agent_run_start",
@@ -558,6 +583,9 @@ class Orchestrator:
             agent_id=agent_id,
             has_context=bool(context),
         )
+
+        self.execution_repo.update_status(agent_run_id, AgentRunStatus.RUNNING)
+        self.execution_repo.commit()
 
         # Create and run agent
         agent = Agent(agent_id, db=self.execution_repo.db, session_id=str(session_id))
@@ -568,6 +596,12 @@ class Orchestrator:
                 agent_run_id=agent_run_id,
                 context=context,
             )
+        except asyncio.CancelledError:
+            self.execution_repo.db.rollback()
+            self.execution_repo.update_status(agent_run_id, AgentRunStatus.PAUSED_USER)
+            self.execution_repo.commit()
+            logger.info("agent_run_cancelled", session_id=str(session_id), agent_run_id=str(agent_run_id), agent_id=agent_id)
+            raise
         except Exception as e:
             # Store error on agent_run before re-raising.
             # Rollback first — if the failure was a DB error, the transaction
@@ -626,6 +660,111 @@ class Orchestrator:
 
         return "completed"
 
+    def _all_siblings_completed(self, parent_run_id: UUID, spawning_tool_call_id: UUID) -> bool:
+        """Check if ALL sibling subagents from the same tool call have finished.
+
+        Returns True only if every sibling has a terminal status
+        (completed, failed, or cancelled). Returns False if any sibling
+        is still in a non-terminal state (running, paused_hitl, etc.).
+        """
+        from druppie.db.models.agent_run import AgentRun
+
+        db = self.execution_repo.db
+        terminal_statuses = {
+            AgentRunStatus.COMPLETED.value,
+            AgentRunStatus.FAILED.value,
+            AgentRunStatus.CANCELLED.value,
+        }
+
+        siblings = (
+            db.query(AgentRun)
+            .filter(
+                AgentRun.parent_run_id == parent_run_id,
+                AgentRun.spawning_tool_call_id == spawning_tool_call_id,
+            )
+            .all()
+        )
+
+        for sibling in siblings:
+            if sibling.status not in terminal_statuses:
+                logger.info(
+                    "sibling_not_yet_completed",
+                    sibling_id=str(sibling.id),
+                    sibling_agent_id=sibling.agent_id,
+                    sibling_status=sibling.status,
+                    parent_run_id=str(parent_run_id),
+                    spawning_tool_call_id=str(spawning_tool_call_id),
+                )
+                return False
+
+        logger.info(
+            "all_siblings_completed",
+            parent_run_id=str(parent_run_id),
+            spawning_tool_call_id=str(spawning_tool_call_id),
+            sibling_count=len(siblings),
+        )
+        return True
+
+    def _patch_paused_subagents_tool_call(self, parent_run_id: UUID, session_id: UUID) -> None:
+        import json as _json
+
+        from druppie.db.models.agent_run import AgentRun
+        from druppie.db.models.tool_call import ToolCall as ToolCallModel
+
+        db = self.execution_repo.db
+        paused_tc = (
+            db.query(ToolCallModel)
+            .filter(
+                ToolCallModel.agent_run_id == parent_run_id,
+                ToolCallModel.tool_name == "subagents",
+                ToolCallModel.status.in_(["pending", "paused", "completed", "executing"]),
+            )
+            .order_by(ToolCallModel.created_at.desc())
+            .first()
+        )
+        if not paused_tc:
+            return
+
+        children = (
+            db.query(AgentRun)
+            .filter(
+                AgentRun.parent_run_id == parent_run_id,
+                AgentRun.spawning_tool_call_id == paused_tc.id,
+            )
+            .all()
+        )
+
+        subagent_results = []
+        for child in children:
+            entry = {"agent": child.agent_id, "status": "success" if child.status == AgentRunStatus.COMPLETED.value else "error"}
+            if child.error_message:
+                entry["error"] = child.error_message
+
+            done_tc = (
+                db.query(ToolCallModel)
+                .filter(
+                    ToolCallModel.agent_run_id == child.id,
+                    ToolCallModel.tool_name == "done",
+                )
+                .order_by(ToolCallModel.created_at.desc())
+                .first()
+            )
+            if done_tc and done_tc.result:
+                try:
+                    done_result = _json.loads(done_tc.result)
+                    summary = done_result.get("summary", "")
+                    if summary:
+                        entry["summary"] = summary
+                except (_json.JSONDecodeError, TypeError):
+                    pass
+
+            subagent_results.append(entry)
+
+        new_result = {"success": True, "data": subagent_results}
+        paused_tc.result = _json.dumps(new_result)
+        paused_tc.status = "completed"
+        db.commit()
+
     def _on_agent_completed(
         self,
         session_id: UUID,
@@ -640,8 +779,8 @@ class Orchestrator:
             if not config.should_evaluate(agent_id):
                 return
 
-            from druppie.testing.eval_live import run_live_evaluation
             from druppie.core.background_tasks import create_tracked_task
+            from druppie.testing.eval_live import run_live_evaluation
 
             create_tracked_task(
                 run_live_evaluation(session_id, agent_run_id, agent_id),
@@ -705,10 +844,10 @@ class Orchestrator:
         The agent's continue_run() method loads all LLM calls and tool results
         from the database, so the tool result is automatically included.
         """
-        from druppie.execution.tool_executor import ToolExecutor, ToolCallStatus
-        from druppie.execution.mcp_http import MCPHttp
+        from druppie.agents.runtime_v2 import AgentV2 as Agent
         from druppie.core.mcp_config import MCPConfig
-        from druppie.agents.runtime import Agent
+        from druppie.execution.mcp_http import MCPHttp
+        from druppie.execution.tool_executor import ToolCallStatus, ToolExecutor
         from druppie.repositories import ApprovalRepository
 
         logger.info(
@@ -778,7 +917,11 @@ class Orchestrator:
                 agent_run_id=str(agent_run.id),
                 agent_id=agent_run.agent_id,
             )
-            await self.execute_pending_runs(session_id)
+            parent_chain_completed = await self._walk_parent_chain(
+                session_id, agent_run, db,
+            )
+            if parent_chain_completed:
+                await self.execute_pending_runs(session_id)
 
         return session_id
 
@@ -799,10 +942,10 @@ class Orchestrator:
         The agent's continue_run() method loads all LLM calls and tool results
         from the database, so the answer is automatically included.
         """
-        from druppie.execution.tool_executor import ToolExecutor, ToolCallStatus
-        from druppie.execution.mcp_http import MCPHttp
+        from druppie.agents.runtime_v2 import AgentV2 as Agent
         from druppie.core.mcp_config import MCPConfig
-        from druppie.agents.runtime import Agent
+        from druppie.execution.mcp_http import MCPHttp
+        from druppie.execution.tool_executor import ToolCallStatus, ToolExecutor
 
         logger.info(
             "resume_after_answer",
@@ -858,6 +1001,30 @@ class Orchestrator:
             logger.error("complete_after_answer_failed", status=status)
             return session_id
 
+        # Check if ALL questions for this agent run have been answered.
+        # If some are still pending, don't resume the agent yet.
+        from druppie.db.models.question import Question as QuestionModel
+        from druppie.domain.common import QuestionStatus
+
+        pending_siblings = (
+            db.query(QuestionModel)
+            .filter(
+                QuestionModel.agent_run_id == question.agent_run_id,
+                QuestionModel.status == QuestionStatus.PENDING.value,
+                QuestionModel.id != question_id,
+            )
+            .count()
+        )
+        if pending_siblings > 0:
+            logger.info(
+                "waiting_for_sibling_answers",
+                agent_run_id=str(question.agent_run_id),
+                answered_question_id=str(question_id),
+                pending_count=pending_siblings,
+                session_id=str(session_id),
+            )
+            return session_id
+
         # Step 3: Get the paused agent run
         agent_run = self.execution_repo.get_by_id(question.agent_run_id)
         if not agent_run:
@@ -895,11 +1062,104 @@ class Orchestrator:
                 agent_run_id=str(agent_run.id),
                 agent_id=agent_run.agent_id,
             )
-            await self.execute_pending_runs(session_id)
+            parent_chain_completed = await self._walk_parent_chain(
+                session_id, agent_run, db,
+            )
+            if parent_chain_completed:
+                logger.info(
+                    "parent_chain_completed_running_pending",
+                    session_id=str(session_id),
+                )
+                await self.execute_pending_runs(session_id)
+            else:
+                logger.info(
+                    "parent_chain_incomplete_waiting_for_siblings",
+                    session_id=str(session_id),
+                )
 
         return session_id
 
-    async def resume_paused_session(self, session_id: UUID) -> UUID:
+    async def _walk_parent_chain(
+        self,
+        session_id: UUID,
+        completed_run,
+        db,
+    ) -> bool:
+        """Walk up the parent chain from a completed agent run.
+
+        For each paused parent, checks if ALL sibling subagents have completed.
+        If so, patches the subagents tool call with results and resumes the parent.
+        Returns True if the entire chain completed (caller should run pending runs),
+        False if the chain stopped early (siblings not done or parent re-paused).
+        """
+        from druppie.agents.runtime_v2 import AgentV2 as Agent
+
+        paused_statuses = {
+            AgentRunStatus.PAUSED_HITL,
+            AgentRunStatus.PAUSED_TOOL,
+            AgentRunStatus.PAUSED_SANDBOX,
+            AgentRunStatus.PAUSED_USER,
+        }
+        current_run = completed_run
+        while current_run.parent_run_id:
+            self.execution_repo.db.expire_all()
+            parent_run = self.execution_repo.get_by_id(current_run.parent_run_id)
+            if not parent_run or AgentRunStatus(parent_run.status) not in paused_statuses:
+                logger.info(
+                    "parent_chain_break_not_paused",
+                    parent_run_id=str(parent_run.id) if parent_run else None,
+                    parent_status=parent_run.status if parent_run else "not_found",
+                    current_run_id=str(current_run.id),
+                )
+                break
+
+            logger.info(
+                "resuming_paused_parent",
+                parent_run_id=str(parent_run.id),
+                parent_agent_id=parent_run.agent_id,
+                previous_status=parent_run.status,
+            )
+
+            if not self._all_siblings_completed(current_run.parent_run_id, current_run.spawning_tool_call_id):
+                logger.info(
+                    "skipping_parent_resume_siblings_not_done",
+                    parent_run_id=str(parent_run.id),
+                    child_run_id=str(current_run.id),
+                    spawning_tool_call_id=str(current_run.spawning_tool_call_id),
+                )
+                # Parent chain is NOT completed — siblings still running.
+                # Do NOT call execute_pending_runs() or the session will be
+                # prematurely marked COMPLETED.
+                return False
+
+            self._patch_paused_subagents_tool_call(parent_run.id, session_id)
+
+            self.execution_repo.update_status(parent_run.id, AgentRunStatus.RUNNING)
+            self.session_repo.update_status(session_id, SessionStatus.ACTIVE)
+            self.execution_repo.commit()
+
+            parent_context = self.build_project_context(session_id)
+
+            parent_agent = Agent(parent_run.agent_id, db=db)
+            parent_result = await parent_agent.continue_run(
+                session_id=session_id,
+                agent_run_id=parent_run.id,
+                context=parent_context,
+            )
+            parent_status = self._handle_agent_resume_result(
+                session_id, parent_run.id, parent_result, agent_id=parent_run.agent_id,
+            )
+            if parent_status != "completed":
+                return False
+            current_run = parent_run
+
+        return True
+
+    async def resume_paused_session(
+        self,
+        session_id: UUID,
+        contexts: dict[str, str] | None = None,
+    ) -> UUID:
         """Resume a paused or failed session.
 
         Priority order:
@@ -908,16 +1168,24 @@ class Orchestrator:
         3. Orphaned RUNNING agent run → continue via continue_run()
            (handles infrastructure crashes where the run stayed 'running')
         4. No paused/running run → execute pending runs directly
-        """
-        from druppie.agents.runtime import Agent
 
-        logger.info("resume_paused_session", session_id=str(session_id))
+        Args:
+            session_id: Session to resume
+            contexts: Optional dict of agent_run_id -> context string for each leaf
+        """
+        from druppie.agents.runtime_v2 import AgentV2 as Agent
+
+        logger.info(
+            "resume_paused_session",
+            session_id=str(session_id),
+            has_context=bool(contexts),
+        )
 
         # Session is already set to ACTIVE by the endpoint's lock_for_resume()
-        # Find the paused agent run
-        paused_run = self.execution_repo.get_user_paused_run(session_id)
 
-        if not paused_run:
+        paused_leaves = self.execution_repo.get_user_paused_leaves(session_id)
+
+        if not paused_leaves:
             # Check if there's a run waiting for approval/answer — if so,
             # restore the session to its waiting status and let the
             # approval/answer flow handle it naturally
@@ -977,7 +1245,11 @@ class Orchestrator:
                         agent_run_id=str(orphan_run.id),
                         agent_id=orphan_run.agent_id,
                     )
-                    await self.execute_pending_runs(session_id)
+                    parent_chain_completed = await self._walk_parent_chain(
+                        session_id, orphan_run, db,
+                    )
+                    if parent_chain_completed:
+                        await self.execute_pending_runs(session_id)
 
                 return session_id
 
@@ -990,18 +1262,109 @@ class Orchestrator:
             return session_id
 
         logger.info(
+            "resuming_user_paused_leaves",
+            count=len(paused_leaves),
+            agents=[l.agent_id for l in paused_leaves],
+        )
+
+        if contexts:
+            from druppie.db.models.resume_context_event import ResumeContextEvent
+            from druppie.db.models.llm_call import LlmCall
+
+            leaf_ids = {str(l.id) for l in paused_leaves}
+            all_paused = self.execution_repo.get_all_paused_user_runs(session_id)
+            db = self.execution_repo.db
+            for run in all_paused:
+                run_id_str = str(run.id)
+                if run_id_str not in leaf_ids and run_id_str in contexts:
+                    ctx = contexts[run_id_str]
+                    self.execution_repo.set_pending_user_context(run.id, ctx)
+                    llm_call_count = db.query(LlmCall).filter_by(agent_run_id=run.id).count()
+                    next_seq = self.execution_repo.get_next_sequence_number(session_id)
+                    self.execution_repo.create_message(
+                        session_id=session_id,
+                        role="user",
+                        content=ctx,
+                        agent_run_id=run.id,
+                        sequence_number=next_seq,
+                    )
+                    db.add(ResumeContextEvent(
+                        session_id=session_id,
+                        agent_run_id=run.id,
+                        content=ctx,
+                        llm_call_index=llm_call_count,
+                    ))
+            self.execution_repo.commit()
+
+        if len(paused_leaves) == 1:
+            leaf = paused_leaves[0]
+            ctx = contexts.get(str(leaf.id)) if contexts else None
+            await self._resume_single_paused_leaf(session_id, leaf, user_context=ctx)
+        else:
+            import asyncio as _asyncio
+            await _asyncio.gather(*[
+                self._resume_leaf_with_own_db(
+                    session_id, leaf,
+                    user_context=contexts.get(str(leaf.id)) if contexts else None,
+                )
+                for leaf in paused_leaves
+            ])
+
+        return session_id
+
+    async def _resume_leaf_with_own_db(self, session_id: UUID, leaf, user_context: str | None = None) -> None:
+        from druppie.db.database import SessionLocal
+        from druppie.repositories import ExecutionRepository, SessionRepository
+
+        db = SessionLocal()
+        try:
+            leaf_orchestrator = Orchestrator(
+                session_repo=SessionRepository(db),
+                execution_repo=ExecutionRepository(db),
+                project_repo=self.project_repo,
+                question_repo=self.question_repo,
+            )
+            await leaf_orchestrator._resume_single_paused_leaf(session_id, leaf, user_context=user_context)
+        finally:
+            db.close()
+
+    async def _resume_single_paused_leaf(
+        self, session_id: UUID, paused_run, user_context: str | None = None,
+    ) -> None:
+        from druppie.agents.runtime_v2 import AgentV2 as Agent
+
+        logger.info(
             "resuming_user_paused_agent",
             agent_run_id=str(paused_run.id),
             agent_id=paused_run.agent_id,
+            has_user_context=bool(user_context),
         )
 
-        # Mark agent run as running
         self.execution_repo.update_status(paused_run.id, AgentRunStatus.RUNNING)
         self.execution_repo.commit()
 
-        # Build fresh context and continue the agent
         db = self.execution_repo.db
         context = self.build_project_context(session_id)
+        if user_context and context is not None:
+            context["user_context"] = user_context
+            from druppie.db.models.llm_call import LlmCall
+            from druppie.db.models.resume_context_event import ResumeContextEvent
+            llm_call_count = db.query(LlmCall).filter_by(agent_run_id=paused_run.id).count()
+            next_seq = self.execution_repo.get_next_sequence_number(session_id)
+            self.execution_repo.create_message(
+                session_id=session_id,
+                role="user",
+                content=user_context,
+                agent_run_id=paused_run.id,
+                sequence_number=next_seq,
+            )
+            db.add(ResumeContextEvent(
+                session_id=session_id,
+                agent_run_id=paused_run.id,
+                content=user_context,
+                llm_call_index=llm_call_count,
+            ))
+            self.execution_repo.commit()
         agent = Agent(paused_run.agent_id, db=db, session_id=str(session_id))
         try:
             result = await agent.continue_run(
@@ -1019,7 +1382,6 @@ class Orchestrator:
             self.execution_repo.commit()
             raise
 
-        # Handle result (correctly handles user_paused, cancelled, etc.)
         status = self._handle_agent_resume_result(session_id, paused_run.id, result, agent_id=paused_run.agent_id)
 
         if status == "completed":
@@ -1028,7 +1390,11 @@ class Orchestrator:
                 agent_run_id=str(paused_run.id),
                 agent_id=paused_run.agent_id,
             )
-            await self.execute_pending_runs(session_id)
+            parent_chain_completed = await self._walk_parent_chain(
+                session_id, paused_run, db,
+            )
+            if parent_chain_completed:
+                await self.execute_pending_runs(session_id)
 
         return session_id
 
@@ -1043,6 +1409,7 @@ class Orchestrator:
         """
         import subprocess
         from pathlib import Path
+
         from druppie.db.models import Session as DBSession
 
         db = self.execution_repo.db
@@ -1086,7 +1453,7 @@ class Orchestrator:
         3. Continues the agent (it reconstructs state from DB)
         4. Executes any remaining pending runs
         """
-        from druppie.agents.runtime import Agent
+        from druppie.agents.runtime_v2 import AgentV2 as Agent
 
         # Find the tool call and its agent run
         tool_call = self.execution_repo.get_tool_call(tool_call_id)
@@ -1147,6 +1514,15 @@ class Orchestrator:
                 agent_run_id=str(agent_run.id),
                 agent_id=agent_run.agent_id,
             )
-            await self.execute_pending_runs(session_id)
+            parent_chain_completed = await self._walk_parent_chain(
+                session_id, agent_run, db,
+            )
+            if parent_chain_completed:
+                await self.execute_pending_runs(session_id)
+            else:
+                logger.info(
+                    "parent_chain_incomplete_waiting_for_siblings",
+                    session_id=str(session_id),
+                )
 
         return session_id

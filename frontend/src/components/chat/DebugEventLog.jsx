@@ -21,11 +21,12 @@ import {
   Zap,
   Hash,
   RotateCcw,
+  Layers,
 } from 'lucide-react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { getAgentConfig, getAgentMessageColors, formatToolName } from '../../utils/agentConfig'
 import { formatDuration, formatTokens } from '../../utils/tokenUtils'
-import { retryFromRun, getSandboxEvents } from '../../services/api'
+import { retryRun } from '../../services/api'
 import CopyButton from '../shared/CopyButton'
 import ContainerLogsModal from '../shared/ContainerLogsModal'
 
@@ -107,14 +108,50 @@ const StatusBadge = ({ status }) => {
 
 const copyBtnClass = 'inline-flex items-center gap-1 px-2 py-0.5 text-xs rounded hover:bg-gray-100 transition-colors text-gray-500'
 
+const COMPACTION_PHASE_LABELS = {
+  summarized: 'LLM Summarized',
+  summarized_fallback: 'Fallback',
+  skip: 'Skipped',
+  overflow: 'Overflow',
+}
+
+// ─── Outline timeline builder ────────────────────────────────────────────────
+
+const buildOutlineItems = (run) => {
+  const compactionByLlmCall = {}
+  const orphanCompactions = []
+  for (const ce of run.compaction_events || []) {
+    if (ce.llm_call_id) {
+      if (!compactionByLlmCall[ce.llm_call_id]) compactionByLlmCall[ce.llm_call_id] = []
+      compactionByLlmCall[ce.llm_call_id].push(ce)
+    } else {
+      orphanCompactions.push(ce)
+    }
+  }
+  const items = []
+  for (const llm of run.llm_calls || []) {
+    for (const tc of llm.tool_calls || []) {
+      items.push({ type: 'tool', tc })
+    }
+    const compactions = compactionByLlmCall[llm.id]
+    if (compactions) {
+      for (const ce of compactions) items.push({ type: 'compaction', ce })
+    }
+  }
+  for (const ce of orphanCompactions) items.push({ type: 'compaction', ce })
+  return items
+}
+
 // ─── Inspect Summary ─────────────────────────────────────────────────────────
 
 const InspectSummary = ({ agentRuns, data }) => {
   const stats = useMemo(() => {
     let llmCallCount = 0
     let toolCallCount = 0
+    let subagentCount = 0
     const agentTokens = {}
-    agentRuns.forEach((run) => {
+    let compressedCalls = 0
+    const countRun = (run) => {
       const config = getAgentConfig(run.agent_id)
       const tokens = run.token_usage?.total_tokens || 0
       if (tokens > 0) agentTokens[config.name] = (agentTokens[config.name] || 0) + tokens
@@ -122,16 +159,31 @@ const InspectSummary = ({ agentRuns, data }) => {
         llmCallCount++
         toolCallCount += llm.tool_calls?.length || 0
       })
+      if (run.compaction_events?.length) compressedCalls += run.compaction_events.length
+    }
+    agentRuns.forEach((run) => {
+      countRun(run)
+      run.subagent_runs?.forEach((sub) => {
+        subagentCount++
+        countRun(sub)
+      })
     })
-    return { agentCount: agentRuns.length, llmCallCount, toolCallCount, totalTokens: data.token_usage?.total_tokens || 0, agentTokens }
+    return { agentCount: agentRuns.length, subagentCount, llmCallCount, toolCallCount, totalTokens: data.token_usage?.total_tokens || 0, agentTokens, compressedCalls }
   }, [agentRuns, data])
 
   return (
     <div className="border-b bg-gray-50 flex-shrink-0 px-3 py-1.5 flex flex-wrap items-center gap-3 text-xs text-gray-500">
       <span className="flex items-center gap-1"><Hash className="w-3 h-3" />{stats.agentCount} agents</span>
+      {stats.subagentCount > 0 && <span className="flex items-center gap-1"><Hash className="w-3 h-3" />{stats.subagentCount} subagents</span>}
       <span className="flex items-center gap-1"><Bot className="w-3 h-3" />{stats.llmCallCount} LLM calls</span>
       <span className="flex items-center gap-1"><Zap className="w-3 h-3" />{stats.toolCallCount} tools</span>
       {stats.totalTokens > 0 && <span>{formatTokens(stats.totalTokens)} tokens</span>}
+      {stats.compressedCalls > 0 && (
+        <span className="flex items-center gap-1 text-purple-600">
+          <span className="w-2 h-2 bg-purple-400 rounded-full" />
+          {stats.compressedCalls} compacted
+        </span>
+      )}
       {Object.keys(stats.agentTokens).length > 0 && (
         <>
           <span className="text-gray-300">|</span>
@@ -172,7 +224,7 @@ const OutlineAgentHeader = ({ agentRun, selected, onClick }) => {
       }`}
     >
       <AgentIcon className={`w-3.5 h-3.5 flex-shrink-0 ${colors.accent}`} />
-      <span className={`text-xs font-semibold truncate ${selected ? colors.accent : 'text-gray-700'}`}>
+      <span className={`text-xs font-semibold whitespace-nowrap ${selected ? colors.accent : 'text-gray-700'}`}>
         {config.name}
       </span>
       <span className="ml-auto flex items-center gap-1.5 flex-shrink-0">
@@ -210,9 +262,33 @@ const OutlineToolLine = ({ tc, selected, onClick }) => {
   )
 }
 
+const OutlineCompactionLine = ({ ce, selected, onClick }) => {
+  const phaseLabel = COMPACTION_PHASE_LABELS[ce.phase] || ce.phase
+  const delta = ce.tokens_before - ce.tokens_after
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={onClick}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick() } }}
+      className={`w-full text-left pl-9 pr-3 py-1 flex items-center gap-1.5 text-[11px] transition-colors cursor-pointer select-text ${
+        selected ? 'bg-purple-50 text-purple-700' : 'hover:bg-purple-50/50 text-purple-500'
+      }`}
+    >
+      <Layers className={`w-3 h-3 flex-shrink-0 ${selected ? 'text-purple-600' : 'text-purple-400'}`} />
+      <span className={`font-medium truncate ${selected ? 'text-purple-700' : 'text-purple-500'}`}>
+        {phaseLabel}
+      </span>
+      <span className="text-purple-300 font-mono truncate ml-auto text-[10px]">
+        {formatTokens(ce.tokens_before)}→{formatTokens(ce.tokens_after)}
+      </span>
+    </div>
+  )
+}
+
 // ─── Retry Confirmation Dialog ──────────────────────────────────────────────
 
-const RetryConfirmDialog = ({ agentName, plannedPrompt, onConfirm, onCancel, isPending, error }) => {
+const RetryConfirmDialog = ({ agentName, plannedPrompt, onConfirm, onCancel, isPending, error, isSubagent }) => {
   const [editedPrompt, setEditedPrompt] = useState(plannedPrompt || '')
 
   return (
@@ -221,11 +297,20 @@ const RetryConfirmDialog = ({ agentName, plannedPrompt, onConfirm, onCancel, isP
       <div className={`fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-40 bg-white rounded-lg shadow-2xl border border-gray-200 p-5 ${plannedPrompt ? 'w-[32rem]' : 'w-96'}`}>
         <div className="flex items-center gap-2 mb-3">
           <RotateCcw className="w-5 h-5 text-amber-600" />
-          <h3 className="text-sm font-semibold text-gray-900">Retry from here</h3>
+          <h3 className="text-sm font-semibold text-gray-900">{isSubagent ? 'Retry subagent' : 'Retry from here'}</h3>
         </div>
         <div className="text-sm text-gray-600 space-y-2 mb-4">
-          <p>This will revert <strong>{agentName}</strong> and all subsequent agents.</p>
-          <p>Git commits will be reset and force-pushed.</p>
+          {isSubagent ? (
+            <>
+              <p>This will re-run <strong>{agentName}</strong> independently.</p>
+              <p className="text-xs text-blue-600 bg-blue-50 border border-blue-200 rounded px-2 py-1">Subagent will re-run independently. Parent results will not be updated.</p>
+            </>
+          ) : (
+            <>
+              <p>This will revert <strong>{agentName}</strong> and all subsequent agents.</p>
+              <p>Git commits will be reset and force-pushed.</p>
+            </>
+          )}
         </div>
         {plannedPrompt && (
           <div className="mb-4">
@@ -262,7 +347,7 @@ const RetryConfirmDialog = ({ agentName, plannedPrompt, onConfirm, onCancel, isP
             ) : (
               <RotateCcw className="w-3.5 h-3.5" />
             )}
-            Retry from here
+            {isSubagent ? 'Retry subagent' : 'Retry from here'}
           </button>
         </div>
       </div>
@@ -282,7 +367,9 @@ const AgentDetailPanel = ({ agentRun, sessionId, sessionStatus }) => {
   const queryClient = useQueryClient()
 
   const retryMutation = useMutation({
-    mutationFn: (editedPrompt) => retryFromRun(sessionId, agentRun.id, editedPrompt),
+    mutationFn: (editedPrompt) => {
+      return retryRun(sessionId, agentRun.id, editedPrompt)
+    },
     onSuccess: () => {
       setShowRetryConfirm(false)
       queryClient.invalidateQueries({ queryKey: ['session', sessionId] })
@@ -335,6 +422,7 @@ const AgentDetailPanel = ({ agentRun, sessionId, sessionStatus }) => {
           onCancel={() => setShowRetryConfirm(false)}
           isPending={retryMutation.isPending}
           error={retryMutation.isError ? retryMutation.error.message : null}
+          isSubagent={!!agentRun.parent_run_id}
         />
       )}
 
@@ -351,10 +439,48 @@ const AgentDetailPanel = ({ agentRun, sessionId, sessionStatus }) => {
         </div>
       )}
 
-      {/* LLM calls with responses + tool details inline */}
-      {llmCalls.map((llm, i) => (
-        <LlmCallSection key={llm.id || i} llm={llm} index={i} isOnly={llmCalls.length === 1} />
-      ))}
+      {/* LLM calls with compaction banners and resume context interleaved chronologically */}
+      {(() => {
+        const compactionByLlmCall = {}
+        const orphanCompactions = []
+        for (const ce of agentRun.compaction_events || []) {
+          if (ce.llm_call_id) {
+            if (!compactionByLlmCall[ce.llm_call_id]) compactionByLlmCall[ce.llm_call_id] = []
+            compactionByLlmCall[ce.llm_call_id].push(ce)
+          } else {
+            orphanCompactions.push(ce)
+          }
+        }
+        const resumeContexts = agentRun.resume_contexts || []
+        let rcIdx = 0
+        const sections = []
+        for (let i = 0; i < llmCalls.length; i++) {
+          while (rcIdx < resumeContexts.length && i === resumeContexts[rcIdx].llm_call_index) {
+            sections.push({ type: 'resumeContext', ctx: resumeContexts[rcIdx] })
+            rcIdx++
+          }
+          sections.push({ type: 'llm', llm: llmCalls[i], index: i })
+          const compactions = compactionByLlmCall[llmCalls[i].id]
+          if (compactions) {
+            for (const ce of compactions) sections.push({ type: 'compaction', ce })
+          }
+        }
+        while (rcIdx < resumeContexts.length) {
+          sections.push({ type: 'resumeContext', ctx: resumeContexts[rcIdx] })
+          rcIdx++
+        }
+        for (const ce of orphanCompactions) sections.push({ type: 'compaction', ce })
+        if (sections.length === 0) return null
+        return sections.map((s, si) => {
+          if (s.type === 'llm') {
+            return <LlmCallSection key={s.llm.id || `llm${si}`} llm={s.llm} index={s.index} isOnly={llmCalls.length === 1} />
+          }
+          if (s.type === 'resumeContext') {
+            return <ResumeContextBanner key={`rc${si}`} ctx={s.ctx} />
+          }
+          return <InlineCompactionBanner key={`ce${si}`} ce={s.ce} />
+        })
+      })()}
 
       {llmCalls.length === 0 && agentRun.status !== 'pending' && (
         <p className="text-xs text-gray-400 italic">No LLM calls</p>
@@ -363,10 +489,73 @@ const AgentDetailPanel = ({ agentRun, sessionId, sessionStatus }) => {
   )
 }
 
+const InlineCompactionBanner = ({ ce }) => {
+  const delta = ce.tokens_before - ce.tokens_after
+  const phaseLabel = COMPACTION_PHASE_LABELS[ce.phase] || ce.phase
+  return (
+    <div className="border-t border-purple-200 pt-3">
+      <div className="flex items-center gap-2 text-xs text-purple-600 bg-purple-50/60 rounded px-2.5 py-1.5">
+        <Layers className="w-3.5 h-3.5 text-purple-500 flex-shrink-0" />
+        <span className="font-medium">Context Compacted</span>
+        <span className="bg-purple-100 text-purple-700 text-[10px] font-medium px-1.5 py-0.5 rounded border border-purple-200">{phaseLabel}</span>
+        <span className="font-mono text-purple-400 ml-auto">
+          {formatTokens(ce.tokens_before)}→{formatTokens(ce.tokens_after)}
+          <span className="text-green-500 ml-1">(-{formatTokens(delta)})</span>
+        </span>
+        <span className="text-purple-300 hidden sm:inline">&middot; {ce.turns_compressed} turns</span>
+      </div>
+      {ce.summary_text && (
+        <details className="mt-1">
+          <summary className="cursor-pointer text-[11px] text-purple-400 hover:text-purple-600 px-2.5 select-none">
+            Show summary
+          </summary>
+          <pre className="bg-purple-50/40 border border-purple-100 p-2.5 rounded mt-1 overflow-auto max-h-64 whitespace-pre-wrap text-xs text-gray-700 leading-relaxed">
+            {ce.summary_text}
+          </pre>
+        </details>
+      )}
+    </div>
+  )
+}
+
+const ResumeContextBanner = ({ ctx }) => {
+  return (
+    <div className="border-t border-green-200 pt-3">
+      <div className="flex items-center gap-2 text-xs text-green-700 bg-green-50 rounded px-2.5 py-1.5">
+        <MessageSquare className="w-3.5 h-3.5 text-green-600 flex-shrink-0" />
+        <span className="font-medium">Resume Context</span>
+        <span className="text-[10px] text-green-500">user-injected on resume</span>
+      </div>
+      <pre className="mt-1 bg-green-50/40 border border-green-100 p-2.5 rounded overflow-auto max-h-40 whitespace-pre-wrap text-xs text-gray-700 leading-relaxed">
+        {ctx.content}
+      </pre>
+    </div>
+  )
+}
+
 const LlmCallSection = ({ llm, index, isOnly }) => {
   const tokens = llm.token_usage?.total_tokens || 0
   const dur = formatDuration(llm.duration_ms)
   const toolCount = llm.tool_calls?.length || 0
+  const [responseMode, setResponseMode] = useState('parsed')
+  const [requestMode, setRequestMode] = useState('parsed')
+
+  const Toggle = ({ value, onChange }) => (
+    <span className="inline-flex rounded overflow-hidden border border-gray-200">
+      <button
+        onClick={() => onChange('parsed')}
+        className={`px-1.5 py-0.5 text-[10px] font-medium transition-colors ${
+          value === 'parsed' ? 'bg-gray-700 text-white' : 'bg-white text-gray-500 hover:bg-gray-50'
+        }`}
+      >Parsed</button>
+      <button
+        onClick={() => onChange('raw')}
+        className={`px-1.5 py-0.5 text-[10px] font-medium transition-colors ${
+          value === 'raw' ? 'bg-gray-700 text-white' : 'bg-white text-gray-500 hover:bg-gray-50'
+        }`}
+      >Raw</button>
+    </span>
+  )
 
   return (
     <div className={!isOnly ? 'border-t border-gray-100 pt-3' : undefined}>
@@ -380,16 +569,44 @@ const LlmCallSection = ({ llm, index, isOnly }) => {
         </div>
       )}
 
-      {/* Response — always visible */}
-      {llm.response_content && (
+      {/* Thinking — collapsible, only if present */}
+      {llm.thinking_content && (
+        <div className="mb-3">
+          <details open>
+            <summary className="cursor-pointer flex items-center gap-1.5 mb-1 select-none">
+              <span className="text-xs font-medium text-amber-600 dark:text-amber-400">💭 Thinking</span>
+              <CopyButton text={llm.thinking_content} label="Copy" className={copyBtnClass} />
+            </summary>
+            <pre className="bg-amber-50/50 border border-amber-100 p-2.5 rounded overflow-auto max-h-64 whitespace-pre-wrap text-xs text-gray-700 leading-relaxed">
+              {llm.thinking_content}
+            </pre>
+          </details>
+        </div>
+      )}
+
+      {/* Response — always visible, with Raw/Parsed toggle */}
+      {(llm.response_content || llm.raw_response) && (
         <div className="mb-3">
           <div className="flex items-center gap-2 mb-1">
             <span className="text-xs font-medium text-gray-500">Response</span>
-            <CopyButton text={llm.response_content} label="Copy" className={copyBtnClass} />
+            {llm.raw_response && <Toggle value={responseMode} onChange={setResponseMode} />}
+            <CopyButton
+              text={responseMode === 'raw' ? JSON.stringify(llm.raw_response, null, 2) : llm.response_content}
+              label="Copy"
+              className={copyBtnClass}
+            />
           </div>
-          <pre className="bg-blue-50/40 border border-blue-100 p-2.5 rounded overflow-auto max-h-64 whitespace-pre-wrap text-xs text-gray-700 leading-relaxed">
-            {llm.response_content}
-          </pre>
+          {responseMode === 'raw' && llm.raw_response ? (
+            <pre className="bg-gray-50 border border-gray-200 p-2.5 rounded overflow-auto max-h-64 whitespace-pre-wrap text-xs text-gray-700 leading-relaxed">
+              {JSON.stringify(llm.raw_response, null, 2)}
+            </pre>
+          ) : (
+            llm.response_content && (
+              <pre className="bg-blue-50/40 border border-blue-100 p-2.5 rounded overflow-auto max-h-64 whitespace-pre-wrap text-xs text-gray-700 leading-relaxed">
+                {llm.response_content}
+              </pre>
+            )
+          )}
         </div>
       )}
 
@@ -411,19 +628,26 @@ const LlmCallSection = ({ llm, index, isOnly }) => {
         <div className="mt-3 flex flex-wrap gap-1.5 text-xs">
           {llm.messages?.length > 0 && (
             <details>
-              <summary className="cursor-pointer text-gray-400 hover:text-gray-600 px-1.5 py-0.5 rounded hover:bg-gray-100 transition-colors select-none">
-                Messages ({llm.messages.length})
+              <summary className="cursor-pointer text-gray-400 hover:text-gray-600 px-1.5 py-0.5 rounded hover:bg-gray-100 transition-colors select-none flex items-center gap-2">
+                <span>Messages ({llm.messages.length})</span>
+                {llm.raw_request && <Toggle value={requestMode} onChange={setRequestMode} />}
               </summary>
-              <div className="mt-1 space-y-2 ml-1">
-                {llm.messages.map((msg, idx) => (
-                  <div key={idx} className="border-l-2 border-gray-300 pl-2">
-                    <span className="font-medium text-gray-500">{msg.role}</span>
-                    <pre className="bg-gray-50 border border-gray-200 p-2 mt-0.5 rounded overflow-auto max-h-32 whitespace-pre-wrap text-gray-700">
-                      {typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content, null, 2)}
-                    </pre>
-                  </div>
-                ))}
-              </div>
+              {requestMode === 'raw' && llm.raw_request ? (
+                <pre className="mt-1 bg-gray-50 border border-gray-200 p-2 rounded overflow-auto max-h-64 whitespace-pre-wrap text-gray-700">
+                  {JSON.stringify(llm.raw_request, null, 2)}
+                </pre>
+              ) : (
+                <div className="mt-1 space-y-2 ml-1">
+                  {llm.messages.map((msg, idx) => (
+                    <div key={idx} className="border-l-2 border-gray-300 pl-2">
+                      <span className="font-medium text-gray-500">{msg.role}</span>
+                      <pre className="bg-gray-50 border border-gray-200 p-2 mt-0.5 rounded overflow-auto max-h-32 whitespace-pre-wrap text-gray-700">
+                        {typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content, null, 2)}
+                      </pre>
+                    </div>
+                  ))}
+                </div>
+              )}
             </details>
           )}
           {llm.tools_provided?.length > 0 && (
@@ -457,58 +681,11 @@ const LlmCallSection = ({ llm, index, isOnly }) => {
   )
 }
 
-// ─── Sandbox Events Copy Button ─────────────────────────────────────────────
-
-const CopySandboxEventsButton = ({ sandboxSessionId }) => {
-  const [status, setStatus] = useState('idle') // idle | loading | copied | error
-
-  const handleCopy = async () => {
-    setStatus('loading')
-    try {
-      const data = await getSandboxEvents(sandboxSessionId)
-      await navigator.clipboard.writeText(JSON.stringify(data, null, 2))
-      setStatus('copied')
-      setTimeout(() => setStatus('idle'), 2000)
-    } catch (e) {
-      setStatus('error')
-      setTimeout(() => setStatus('idle'), 2000)
-    }
-  }
-
-  return (
-    <button
-      onClick={handleCopy}
-      disabled={status === 'loading'}
-      className={`flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded transition-colors ${
-        status === 'copied' ? 'bg-green-100 text-green-700' :
-        status === 'error' ? 'bg-red-100 text-red-700' :
-        'bg-blue-50 text-blue-600 hover:bg-blue-100'
-      }`}
-    >
-      {status === 'loading' ? <Clock className="w-3 h-3 animate-spin" /> :
-       status === 'copied' ? <Check className="w-3 h-3" /> :
-       <Copy className="w-3 h-3" />}
-      {status === 'copied' ? 'Copied!' : status === 'error' ? 'Failed' : 'Copy Sandbox Events'}
-    </button>
-  )
-}
-
-/** Extract sandbox_session_id from a tool call result */
-const getSandboxSessionId = (tc) => {
-  if (tc.tool_name !== 'execute_coding_task') return null
-  let result = tc.result
-  if (typeof result === 'string') {
-    try { result = JSON.parse(result) } catch { return null }
-  }
-  return result?.sandbox_session_id || null
-}
-
 // ─── RIGHT PANEL: Tool Detail ───────────────────────────────────────────────
 
 const ToolCallDetail = ({ tc }) => {
   const statusColor = tc.status === 'completed' ? 'text-green-600' : tc.status === 'failed' ? 'text-red-600' : 'text-amber-600'
   const StatusIcon = tc.status === 'completed' ? Check : tc.status === 'failed' ? X : Clock
-  const sandboxId = getSandboxSessionId(tc)
 
   return (
     <div className="border border-gray-200 rounded-lg overflow-hidden">
@@ -517,8 +694,6 @@ const ToolCallDetail = ({ tc }) => {
         <StatusIcon className={`w-3.5 h-3.5 ${statusColor}`} />
         <span className="font-medium text-gray-700">{formatToolName(tc.tool_name)}</span>
         <StatusBadge status={tc.status} />
-        {tc.question_id && <span className="bg-amber-50 text-amber-700 text-[10px] font-medium px-1.5 py-0.5 rounded">HITL</span>}
-        {sandboxId && <CopySandboxEventsButton sandboxSessionId={sandboxId} />}
         <CopyButton text={tc} label="Copy" className={`ml-auto ${copyBtnClass}`} />
       </div>
 
@@ -609,7 +784,6 @@ const ToolCallDetail = ({ tc }) => {
 
 const ToolDetailPanel = ({ tc, agentRun }) => {
   const config = getAgentConfig(agentRun.agent_id)
-  const sandboxId = getSandboxSessionId(tc)
 
   return (
     <div className="space-y-3">
@@ -619,7 +793,6 @@ const ToolDetailPanel = ({ tc, agentRun }) => {
         <span className="font-medium text-gray-700">{formatToolName(tc.tool_name)}</span>
         <StatusBadge status={tc.status} />
         {tc.question_id && <span className="bg-amber-50 text-amber-700 text-[10px] font-medium px-1.5 py-0.5 rounded">HITL</span>}
-        {sandboxId && <CopySandboxEventsButton sandboxSessionId={sandboxId} />}
         <CopyButton text={tc} label="Copy JSON" showLabel className={`ml-auto ${copyBtnClass}`} />
       </div>
 
@@ -734,6 +907,62 @@ const JsonViewerModal = ({ data, title, onClose }) => {
   )
 }
 
+// ─── RIGHT PANEL: Compaction Detail ──────────────────────────────────────────
+
+const CompactionDetailPanel = ({ ce }) => {
+  const phaseLabel = COMPACTION_PHASE_LABELS[ce.phase] || ce.phase
+  const delta = ce.tokens_before - ce.tokens_after
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-2.5 px-4 py-2.5 -mx-4 -mt-3 bg-purple-50 border-b border-purple-200">
+        <Layers className="w-4 h-4 text-purple-600" />
+        <span className="text-sm font-semibold text-purple-700">Context Compaction</span>
+        <span className="bg-purple-100 text-purple-700 text-[10px] font-medium px-1.5 py-0.5 rounded border border-purple-200">
+          {phaseLabel}
+        </span>
+      </div>
+
+      <div className="grid grid-cols-3 gap-3">
+        <div className="bg-gray-50 border border-gray-200 rounded p-2.5 text-center">
+          <div className="text-[10px] text-gray-400 mb-0.5">Before</div>
+          <div className="text-sm font-mono text-gray-700">{formatTokens(ce.tokens_before)}</div>
+        </div>
+        <div className="bg-gray-50 border border-gray-200 rounded p-2.5 text-center">
+          <div className="text-[10px] text-gray-400 mb-0.5">After</div>
+          <div className="text-sm font-mono text-gray-700">{formatTokens(ce.tokens_after)}</div>
+        </div>
+        <div className="bg-green-50 border border-green-200 rounded p-2.5 text-center">
+          <div className="text-[10px] text-green-500 mb-0.5">Saved</div>
+          <div className="text-sm font-mono text-green-700">-{formatTokens(delta)}</div>
+        </div>
+      </div>
+
+      <div className="flex items-center gap-4 text-xs text-gray-500">
+        <span><span className="font-medium text-gray-600">{ce.turns_compressed}</span> turns compressed</span>
+        {ce.llm_call_id && <span className="text-gray-400">LLM call: <code className="text-[10px]">{ce.llm_call_id.slice(0, 8)}</code></span>}
+      </div>
+
+      {ce.summary_text && (
+        <div>
+          <div className="flex items-center gap-2 mb-1">
+            <span className="text-xs font-medium text-gray-500">Summary</span>
+            <CopyButton text={ce.summary_text} label="Copy" className={copyBtnClass} />
+          </div>
+          <details>
+            <summary className="cursor-pointer text-xs text-purple-500 hover:text-purple-700 mb-1 select-none">
+              Show full summary
+            </summary>
+            <pre className="bg-purple-50/40 border border-purple-100 p-2.5 rounded overflow-auto max-h-96 whitespace-pre-wrap text-xs text-gray-700 leading-relaxed">
+              {ce.summary_text}
+            </pre>
+          </details>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── Main component ──────────────────────────────────────────────────────────
 
 const DebugEventLog = ({ data, sessionId, sessionStatus }) => {
@@ -813,6 +1042,7 @@ const DebugEventLog = ({ data, sessionId, sessionStatus }) => {
 
   const selectAgent = useCallback((run) => setSelection({ type: 'agent', agentRun: run }), [])
   const selectTool = useCallback((tc, run) => setSelection({ type: 'tool', agentRun: run, toolCall: tc }), [])
+  const selectCompaction = useCallback((ce, run) => setSelection({ type: 'compaction', agentRun: run, compactionEvent: ce }), [])
 
   const isAgentSelected = (run) => selection?.agentRun === run
   const isToolSelected = (tc) => selection?.type === 'tool' && selection?.toolCall === tc
@@ -838,7 +1068,7 @@ const DebugEventLog = ({ data, sessionId, sessionStatus }) => {
       {/* Split layout */}
       <div className="flex-1 flex min-h-0">
         {/* Left: outline */}
-        <div style={{ width: leftWidth }} className="flex-shrink-0 overflow-y-auto border-r border-gray-200 bg-white">
+        <div style={{ width: leftWidth }} className="flex-shrink-0 overflow-y-auto overflow-x-auto border-r border-gray-200 bg-white">
           {agentRuns.length === 0 && (
             <div className="flex flex-col items-center justify-center py-12 text-gray-400 gap-2">
               <MessageSquare className="w-8 h-8 opacity-30" />
@@ -852,6 +1082,65 @@ const DebugEventLog = ({ data, sessionId, sessionStatus }) => {
                 allTools.push(tc)
               }
             }
+            const DEPTH_COLORS = [
+              'border-blue-300',
+              'border-purple-300',
+              'border-amber-300',
+              'border-gray-300',
+            ]
+            const linkSubagents = (tools, subagentRuns) => {
+              const toolMap = {}
+              for (const tc of tools) {
+                if (tc.tool_name === 'subagents' && subagentRuns?.length > 0) {
+                  const linked = subagentRuns.filter(
+                    sub => sub.spawning_tool_call_id === tc.id
+                  )
+                  if (linked.length > 0) {
+                    toolMap[tc.id] = linked
+                  }
+                }
+              }
+              return toolMap
+            }
+            const subagentToolMap = linkSubagents(allTools, run.subagent_runs)
+            const renderSubBlock = (subRun, depth = 0) => {
+              const subItems = buildOutlineItems(subRun)
+              const subToolMap = linkSubagents(subItems.filter(i => i.type === 'tool').map(i => i.tc), subRun.subagent_runs)
+              const borderColor = DEPTH_COLORS[Math.min(depth, DEPTH_COLORS.length - 1)]
+              return (
+                <div key={subRun.id} className={`border-l-2 ${borderColor}`} style={{ marginLeft: 12 + depth * 16, minWidth: 'fit-content' }}>
+                  <OutlineAgentHeader
+                    agentRun={subRun}
+                    selected={isAgentSelected(subRun) && selection?.type === 'agent'}
+                    onClick={() => selectAgent(subRun)}
+                  />
+                  {subItems.map((item, ii) => {
+                    if (item.type === 'tool') {
+                      const stc = item.tc
+                      return (
+                        <div key={stc.id || `st${ii}`}>
+                          <OutlineToolLine
+                            tc={stc}
+                            selected={isToolSelected(stc)}
+                            onClick={() => selectTool(stc, subRun)}
+                          />
+                          {subToolMap[stc.id]?.map(sa => renderSubBlock(sa, depth + 1))}
+                        </div>
+                      )
+                    }
+                    return (
+                      <OutlineCompactionLine
+                        key={item.ce.id || `sc${ii}`}
+                        ce={item.ce}
+                        selected={selection?.type === 'compaction' && selection?.compactionEvent === item.ce}
+                        onClick={() => selectCompaction(item.ce, subRun)}
+                      />
+                    )
+                  })}
+                </div>
+              )
+            }
+            const outlineItems = buildOutlineItems(run)
             return (
               <div key={run.id}>
                 <OutlineAgentHeader
@@ -859,14 +1148,29 @@ const DebugEventLog = ({ data, sessionId, sessionStatus }) => {
                   selected={isAgentSelected(run) && selection?.type === 'agent'}
                   onClick={() => selectAgent(run)}
                 />
-                {allTools.map((tc, ti) => (
-                  <OutlineToolLine
-                    key={tc.id || ti}
-                    tc={tc}
-                    selected={isToolSelected(tc)}
-                    onClick={() => selectTool(tc, run)}
-                  />
-                ))}
+                {outlineItems.map((item, oi) => {
+                  if (item.type === 'tool') {
+                    const tc = item.tc
+                    return (
+                      <div key={tc.id || `t${oi}`}>
+                        <OutlineToolLine
+                          tc={tc}
+                          selected={isToolSelected(tc)}
+                          onClick={() => selectTool(tc, run)}
+                        />
+                        {subagentToolMap[tc.id]?.map(sa => renderSubBlock(sa, 0))}
+                      </div>
+                    )
+                  }
+                  return (
+                    <OutlineCompactionLine
+                      key={item.ce.id || `c${oi}`}
+                      ce={item.ce}
+                      selected={selection?.type === 'compaction' && selection?.compactionEvent === item.ce}
+                      onClick={() => selectCompaction(item.ce, run)}
+                    />
+                  )
+                })}
               </div>
             )
           })}
@@ -884,6 +1188,7 @@ const DebugEventLog = ({ data, sessionId, sessionStatus }) => {
             <div className="p-4">
               {selection.type === 'agent' && <AgentDetailPanel agentRun={selection.agentRun} sessionId={sessionId} sessionStatus={sessionStatus} />}
               {selection.type === 'tool' && <ToolDetailPanel tc={selection.toolCall} agentRun={selection.agentRun} />}
+              {selection.type === 'compaction' && <CompactionDetailPanel ce={selection.compactionEvent} />}
             </div>
           ) : (
             <div className="flex items-center justify-center h-full text-gray-400 text-sm">
