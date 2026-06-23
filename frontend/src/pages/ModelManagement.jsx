@@ -170,7 +170,24 @@ const AgentRow = ({ agent, providers, onOverride, onReset, saving }) => {
               {agent.resolved_provider}/{agent.resolved_model || 'default'}
             </code>
             <SourceBadge source={agent.source} />
+            {agent.override_unavailable && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-700">
+                <AlertTriangle className="w-3 h-3" /> Unavailable
+              </span>
+            )}
           </div>
+          {agent.override_unavailable && (
+            <div className="mt-1 px-2 py-1.5 rounded bg-amber-50 border border-amber-200 text-xs text-amber-800 flex items-center gap-1.5">
+              <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
+              <span>
+                Provider <strong>{agent.resolved_provider}</strong> API key is not configured.
+                {agent.suggested_fallback
+                  ? <> Suggested fallback: <code className="font-semibold">{agent.suggested_fallback}</code>. Remove the override or configure the API key.</>
+                  : <> Remove the override or configure the API key.</>
+                }
+              </span>
+            </div>
+          )}
         </div>
         <div className="flex items-center gap-1">
           {agent.override && (
@@ -321,8 +338,25 @@ const ModelManagement = () => {
               <div className="flex items-center gap-2 mb-1">
                 <code className="text-sm text-gray-700">{translation.provider}/{translation.model}</code>
                 <SourceBadge source={translation.source} />
+                {translation.override_unavailable && (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-700">
+                    <AlertTriangle className="w-3 h-3" /> Unavailable
+                  </span>
+                )}
               </div>
-              {translation.source === 'unavailable' && (
+              {translation.override_unavailable && (
+                <div className="mt-1 mb-2 px-2 py-1.5 rounded bg-amber-50 border border-amber-200 text-xs text-amber-800 flex items-center gap-1.5">
+                  <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
+                  <span>
+                    Provider <strong>{translation.provider}</strong> API key is not configured.
+                    {translation.suggested_fallback
+                      ? <> Suggested fallback: <code className="font-semibold">{translation.suggested_fallback}</code>. Remove the override or configure the API key.</>
+                      : <> Remove the override or configure the API key.</>
+                    }
+                  </span>
+                </div>
+              )}
+              {!translation.override_unavailable && translation.source === 'unavailable' && (
                 <p className="text-xs text-red-500 mt-1">No provider available for translation. Configure an API key.</p>
               )}
               <div className="flex items-center gap-2 mt-3">

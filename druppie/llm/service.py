@@ -133,6 +133,18 @@ class LLMService:
 
         resolved = resolve_model(agent_def)
 
+        if resolved.override_unavailable:
+            fallback_hint = ""
+            if resolved.fallback_provider:
+                fb_model = resolved.fallback_model or "default"
+                fallback_hint = f" Suggested fallback: {resolved.fallback_provider}/{fb_model}."
+            raise LLMConfigurationError(
+                f"Admin override for agent '{agent_def.id}' uses provider "
+                f"'{resolved.provider}' but its API key is not configured."
+                f"{fallback_hint} Update the override in Model Management "
+                f"or configure the API key."
+            )
+
         # Validate API key for the resolved provider
         api_key_env = self.PROVIDERS.get(resolved.provider)
         if api_key_env and not os.getenv(api_key_env):

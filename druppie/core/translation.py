@@ -108,6 +108,11 @@ class TranslationService:
                 "translation_override_api_key_missing",
                 provider=self._configured_provider,
             )
+            raise TranslationNotAvailableError(
+                f"Translation override uses provider '{self._configured_provider}' "
+                f"but its API key is not configured. "
+                f"Update the override in Model Management or configure the API key."
+            )
 
         # 2. Environment variables
         env_provider = os.getenv("TRANSLATION_PROVIDER")

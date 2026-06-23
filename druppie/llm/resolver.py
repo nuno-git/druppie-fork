@@ -29,9 +29,10 @@ class ResolvedModel:
 
     provider: str
     model: str | None
-    source: str  # "override" | "profile" | "global_default"
+    source: str  # "override" | "db_override" | "profile" | "global_default"
     fallback_provider: str | None = None
     fallback_model: str | None = None
+    override_unavailable: bool = False
 
 
 def _has_api_key(provider: str) -> bool:
@@ -141,6 +142,15 @@ def _resolve(agent_def: AgentDefinition) -> ResolvedModel:
                 agent_id=agent_def.id,
                 provider=provider,
             )
+            fallback = _resolve_profile_or_default(agent_def)
+            return ResolvedModel(
+                provider=provider,
+                model=model,
+                source="db_override",
+                override_unavailable=True,
+                fallback_provider=fallback.provider,
+                fallback_model=fallback.model,
+            )
 
     # --- 3. Profile (was step 2) --------------------------------------------
     profiles = _load_profiles()
@@ -177,6 +187,32 @@ def _resolve(agent_def: AgentDefinition) -> ResolvedModel:
         logger.warning("llm_profile_not_found", profile=profile_name, agent=agent_def.id)
 
     # --- 4. Global default --------------------------------------------------
+    return ResolvedModel(
+        provider=os.getenv("LLM_PROVIDER", "zai").lower(),
+        model=None,
+        source="global_default",
+    )
+
+
+def _resolve_profile_or_default(agent_def: AgentDefinition) -> ResolvedModel:
+    """Compute what an agent would get from the profile/global chain (steps 3-4)."""
+    profiles = _load_profiles()
+    chain = profiles.get(agent_def.llm_profile)
+
+    if chain:
+        available = [e for e in chain if _has_api_key(e["provider"])]
+        global_provider = os.getenv("LLM_PROVIDER", "zai").lower()
+        if not any(e["provider"] == global_provider for e in chain) and _has_api_key(global_provider):
+            default_model = PROVIDER_CONFIGS.get(global_provider, {}).get("default_model")
+            available.append({"provider": global_provider, "model": default_model})
+
+        if available:
+            return ResolvedModel(
+                provider=available[0]["provider"],
+                model=available[0].get("model"),
+                source="profile",
+            )
+
     return ResolvedModel(
         provider=os.getenv("LLM_PROVIDER", "zai").lower(),
         model=None,

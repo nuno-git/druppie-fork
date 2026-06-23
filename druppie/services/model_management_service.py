@@ -83,6 +83,11 @@ class ModelManagementService:
                     pass
 
             resolved = resolve_model(agent_def)
+            suggested_fallback = None
+            if resolved.override_unavailable and resolved.fallback_provider:
+                fb_model = resolved.fallback_model or "default"
+                suggested_fallback = f"{resolved.fallback_provider}/{fb_model}"
+
             agents.append(AgentModelInfo(
                 agent_id=agent_def.id,
                 agent_name=agent_def.name,
@@ -92,6 +97,8 @@ class ModelManagementService:
                 resolved_model=resolved.model,
                 source=resolved.source,
                 override=override_map.get(agent_def.id),
+                override_unavailable=resolved.override_unavailable,
+                suggested_fallback=suggested_fallback,
             ))
 
         # Build translation info
@@ -99,16 +106,27 @@ class ModelManagementService:
         translation_override = _to_summary(translation_override_row) if translation_override_row else None
 
         ts = get_translation_service()
+        t_override_unavailable = False
+        t_suggested_fallback = None
         try:
             t_provider, t_model, t_source = ts.get_current_config()
         except Exception:
-            t_provider, t_model, t_source = "none", "none", "unavailable"
+            if translation_override_row and not _has_api_key(translation_override_row.provider):
+                t_provider = translation_override_row.provider
+                t_model = translation_override_row.model
+                t_source = "db_override"
+                t_override_unavailable = True
+                t_suggested_fallback = self._compute_translation_fallback()
+            else:
+                t_provider, t_model, t_source = "none", "none", "unavailable"
 
         translation = TranslationModelInfo(
             provider=t_provider,
             model=t_model,
             source=t_source,
             override=translation_override,
+            override_unavailable=t_override_unavailable,
+            suggested_fallback=t_suggested_fallback,
         )
 
         providers = self.get_provider_statuses()
@@ -239,6 +257,22 @@ class ModelManagementService:
             if "max_tokens" in err.lower() or "model output limit" in err.lower():
                 return {"provider": provider, "model": getattr(llm, '_model', model), "valid": True, "error": None, "latency_ms": latency}
             return {"provider": provider, "model": model, "valid": False, "error": err[:200], "latency_ms": latency}
+
+    def _compute_translation_fallback(self) -> str | None:
+        """What provider/model translation would use if the override were removed."""
+        env_provider = os.getenv("TRANSLATION_PROVIDER")
+        env_model = os.getenv("TRANSLATION_MODEL")
+        if env_provider and env_model and _has_api_key(env_provider):
+            return f"{env_provider}/{env_model}"
+
+        if os.getenv("DEEPINFRA_API_KEY"):
+            return "deepinfra/google/gemma-3-27b-it"
+
+        for name, config in PROVIDER_CONFIGS.items():
+            if _has_api_key(name):
+                return f"{name}/{config['default_model']}"
+
+        return None
 
     def _refresh_resolver_cache(self, overrides=None):
         """Update the resolver's in-memory cache from DB."""

@@ -39,6 +39,8 @@ class AgentModelInfo(BaseModel):
     resolved_model: str | None
     source: str  # "db_override" | "override" | "profile" | "global_default"
     override: ModelOverrideSummary | None = None
+    override_unavailable: bool = False
+    suggested_fallback: str | None = None
 
 
 class TranslationModelInfo(BaseModel):
@@ -46,6 +48,8 @@ class TranslationModelInfo(BaseModel):
     model: str
     source: str  # "db_override" | "env" | "legacy" | "fallback"
     override: ModelOverrideSummary | None = None
+    override_unavailable: bool = False
+    suggested_fallback: str | None = None
 
 
 class ModelManagementView(BaseModel):
