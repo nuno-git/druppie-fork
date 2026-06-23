@@ -105,10 +105,16 @@ class AgentV2:
     @property
     def tool_executor(self):
         if self._tool_executor is None:
+            from druppie.db.database import SessionLocal
             from druppie.execution.mcp_http import MCPHttp
             from druppie.execution.tool_executor import ToolExecutor
             mcp_http = MCPHttp(self.mcp_config)
-            self._tool_executor = ToolExecutor(self.db, mcp_http, self.mcp_config)
+            # Factory mode: each execute() opens its own short-lived session, so
+            # no DB connection is held across the loop's LLM awaits or while
+            # awaiting subagents — the same invariant the child path satisfies.
+            self._tool_executor = ToolExecutor(
+                None, mcp_http, self.mcp_config, session_factory=SessionLocal
+            )
         return self._tool_executor
 
     @property
@@ -387,9 +393,14 @@ class AgentV2:
         - On success: {"success": True, "result": summary_string}
         - On pause: {"status": "paused", "reason": "...", "tool_call_id": "...", "agent_state": {...}}
         """
-        from druppie.repositories import ExecutionRepository
+        from druppie.db.database import SessionLocal
 
-        repo = ExecutionRepository(self.db)
+        # session_factory (SessionLocal) is threaded into the tool provider and
+        # event persister so every discrete DB op opens its OWN short-lived
+        # session — no connection held across an LLM/MCP await. This is the hard
+        # invariant that keeps the connection pool deadlock-free at any subagent
+        # fan-out width/depth.
+        session_factory = SessionLocal
 
         loop_config = LoopConfig(
             max_turns=self.definition.max_iterations or 20,
@@ -413,7 +424,7 @@ class AgentV2:
         provider_name = getattr(self.llm, 'provider_name', 'unknown')
 
         tool_provider = DruppieToolProvider(
-            execution_repo=repo,
+            session_factory=session_factory,
             tool_executor=self.tool_executor,
             session_id=session_id,
             agent_run_id=agent_run_id,
@@ -422,7 +433,7 @@ class AgentV2:
         )
 
         event_persister = create_event_persister(
-            repo, session_id, agent_run_id, tool_provider,
+            session_factory, session_id, agent_run_id, tool_provider,
             provider_name=provider_name,
         )
 
@@ -431,28 +442,44 @@ class AgentV2:
 
             def _child_tp_factory(*, child_defn, child_sandbox_conn, parent_tool_provider, spawning_tool_call_id=None, current_depth=0, agent_chain=None, child_prompt=None, _parent_run_id=None):
                 from druppie.domain.common import AgentRunStatus
+                from druppie.execution.mcp_http import MCPHttp
+                from druppie.execution.tool_executor import ToolExecutor
                 from druppie.repositories import ExecutionRepository
-                child_repo = ExecutionRepository(self.db)
-                child_agent_run = child_repo.create_agent_run(
-                    session_id=session_id,
-                    agent_id=child_defn.id,
-                    status=AgentRunStatus.RUNNING,
-                    planned_prompt=child_prompt or "",
-                    parent_run_id=_parent_run_id or agent_run_id,
-                    spawning_tool_call_id=spawning_tool_call_id,
+
+                # No long-lived child session. The child's initial create_agent_run
+                # is its OWN short-lived session+commit; every later DB op (tool
+                # provider, event persister, ToolExecutor) opens its own short
+                # session via session_factory. A connection is therefore only
+                # checked out during brief DB I/O, never across the child's LLM
+                # awaits or while it awaits its own grandchildren. This is the
+                # deadlock-free invariant at any fan-out.
+                with session_factory() as db:
+                    child_agent_run = ExecutionRepository(db).create_agent_run(
+                        session_id=session_id,
+                        agent_id=child_defn.id,
+                        status=AgentRunStatus.RUNNING,
+                        planned_prompt=child_prompt or "",
+                        parent_run_id=_parent_run_id or agent_run_id,
+                        spawning_tool_call_id=spawning_tool_call_id,
+                    )
+                    db.commit()
+                    # AgentRunSummary is a plain Pydantic model (detached-safe).
+                    child_run_id = child_agent_run.id
+
+                child_tool_executor = ToolExecutor(
+                    None, MCPHttp(self.mcp_config), self.mcp_config,
+                    session_factory=session_factory,
                 )
-                self.db.flush()
-                self.db.commit()
                 child_tp = DruppieToolProvider(
-                    execution_repo=child_repo,
-                    tool_executor=self.tool_executor,
+                    session_factory=session_factory,
+                    tool_executor=child_tool_executor,
                     session_id=session_id,
-                    agent_run_id=child_agent_run.id,
+                    agent_run_id=child_run_id,
                     old_agent_definition=self._load_definition(child_defn.id),
                     tool_registry=self.tool_registry,
                 )
                 child_tp.event_callback = create_event_persister(
-                    child_repo, session_id, child_agent_run.id, child_tp,
+                    session_factory, session_id, child_run_id, child_tp,
                     provider_name=provider_name,
                 )
                 # If the child agent itself has subagents (self-referencing
@@ -469,12 +496,12 @@ class AgentV2:
                         llm=adapted_llm,
                         config=loop_config,
                         event_callback=create_event_persister(
-                            child_repo, session_id, child_agent_run.id, child_tp,
+                            session_factory, session_id, child_run_id, child_tp,
                             provider_name=provider_name,
                         ),
                         parent_tool_provider=child_tp,
                         parent_agent_def=old_definition_to_new(child_defn),
-                        child_tool_provider_factory=lambda **kw: _child_tp_factory(**{**kw, '_parent_run_id': child_agent_run.id}),
+                        child_tool_provider_factory=lambda **kw: _child_tp_factory(**{**kw, '_parent_run_id': child_run_id}),
                         current_depth=current_depth,
                         agent_chain=agent_chain,
                         cancellation_token=cancellation_token,

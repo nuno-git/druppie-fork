@@ -21,6 +21,7 @@ Flow:
 All database operations go through repositories (no raw db session usage).
 """
 
+from contextlib import contextmanager
 from typing import TYPE_CHECKING
 from uuid import UUID
 
@@ -121,22 +122,44 @@ class ToolExecutor:
 
     def __init__(
         self,
-        db: "DBSession",
+        db: "DBSession | None",
         mcp_http: MCPHttp,
         mcp_config: MCPConfig,
+        session_factory=None,
     ):
         """Initialize with db session and MCP components.
 
         Args:
-            db: Database session (passed to repositories)
+            db: Database session (passed to repositories). May be None when a
+                session_factory is supplied (the agent_runtime child path).
             mcp_http: HTTP client for MCP servers
             mcp_config: MCP configuration (approval rules, server URLs)
+            session_factory: Optional SessionLocal factory. When supplied, every
+                public entry method (execute / execute_after_approval /
+                complete_after_answer) runs against a SHORT-LIVED session opened
+                at the start of the call and closed when it returns, so a DB
+                connection is held only for the duration of that one tool call
+                (never idle across the agent loop's LLM awaits or while awaiting
+                grandchildren). The orchestrator path passes a live `db` and no
+                factory, preserving the original single-session behaviour.
         """
         self.db = db
         self.mcp_http = mcp_http
         self.mcp_config = mcp_config
+        self._session_factory = session_factory
 
         # Lazy load repositories
+        self._execution_repo = None
+        self._approval_repo = None
+        self._question_repo = None
+
+    def _bind_session(self, db: "DBSession") -> None:
+        """Rebind this executor (and its repos) to a fresh session.
+
+        Used by the short-lived session wrapper in factory mode so each tool
+        execution gets its own connection.
+        """
+        self.db = db
         self._execution_repo = None
         self._approval_repo = None
         self._question_repo = None
@@ -455,7 +478,55 @@ class ToolExecutor:
 
         return False
 
+    @contextmanager
+    def _scoped_session(self):
+        """Yield a short-lived session for one tool execution (factory mode).
+
+        Opens a fresh session from the configured factory, rebinds this
+        executor's repos to it, and closes it on exit so the connection is
+        returned to the pool the moment the tool call finishes. In non-factory
+        (orchestrator) mode this is a no-op that leaves the injected session in
+        place.
+        """
+        if self._session_factory is None:
+            yield
+            return
+        db = self._session_factory()
+        previous_db = self.db
+        try:
+            self._bind_session(db)
+            yield
+        finally:
+            try:
+                db.close()
+            finally:
+                # Restore prior binding (None in factory mode) so a stale,
+                # now-closed session is never reused on the next call.
+                self.db = previous_db
+                self._execution_repo = None
+                self._approval_repo = None
+                self._question_repo = None
+
     async def execute(self, tool_call_id: UUID) -> str:
+        """Execute a tool call (public entry — opens a short-lived session in factory mode)."""
+        with self._scoped_session():
+            return await self._execute_impl(tool_call_id)
+
+    async def execute_after_approval(self, approval_id: UUID) -> str:
+        """Execute a tool after approval (public entry — short-lived session in factory mode)."""
+        with self._scoped_session():
+            return await self._execute_after_approval_impl(approval_id)
+
+    async def complete_after_answer(
+        self, question_id: UUID, answer_english: str, user_answer: str | None = None, selected_choices: list[int] | None = None
+    ) -> str:
+        """Complete a HITL tool after answer (public entry — short-lived session in factory mode)."""
+        with self._scoped_session():
+            return await self._complete_after_answer_impl(
+                question_id, answer_english, user_answer, selected_choices
+            )
+
+    async def _execute_impl(self, tool_call_id: UUID) -> str:
         """Execute a tool call.
 
         This is the main entry point. It:
@@ -660,7 +731,7 @@ class ToolExecutor:
             # MCP tools execute via HTTP
             return await self._execute_mcp_tool(tool_call)
 
-    async def execute_after_approval(self, approval_id: UUID) -> str:
+    async def _execute_after_approval_impl(self, approval_id: UUID) -> str:
         """Execute a tool after it has been approved.
 
         Called when user approves a tool execution in the UI.
@@ -722,7 +793,7 @@ class ToolExecutor:
             return await self._execute_builtin_tool(tool_call)
         return await self._execute_mcp_tool(tool_call)
 
-    async def complete_after_answer(
+    async def _complete_after_answer_impl(
         self, question_id: UUID, answer_english: str, user_answer: str | None = None, selected_choices: list[int] | None = None
     ) -> str:
         """Complete a HITL tool after the user answers.

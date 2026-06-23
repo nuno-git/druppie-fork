@@ -748,14 +748,17 @@ class TestCancellation:
         token = CancellationToken()
         token.cancel()
 
-        mock_repo = MagicMock()
         mock_run_id = "test-run-id"
+        created_tps = []
 
         def factory(*, child_defn, child_sandbox_conn, parent_tool_provider,
                      spawning_tool_call_id=None, current_depth=0, agent_chain=None):
             tp = MCPToolProvider({})
-            tp._execution_repo = mock_repo
+            # New contract: spawn_one records terminal status via the provider's
+            # update_run_status() (each call opens its own short-lived session).
+            tp.update_run_status = MagicMock()
             tp._agent_run_id = mock_run_id
+            created_tps.append(tp)
             return tp
 
         mcp = SubagentsMCP(
@@ -775,8 +778,9 @@ class TestCancellation:
             cancellation_token=token,
         )
 
-        mock_repo.update_status.assert_called_once_with(
-            mock_run_id, AgentRunStatus.PAUSED_USER,
+        assert len(created_tps) == 1
+        created_tps[0].update_run_status.assert_called_once_with(
+            AgentRunStatus.PAUSED_USER,
         )
 
     @pytest.mark.asyncio

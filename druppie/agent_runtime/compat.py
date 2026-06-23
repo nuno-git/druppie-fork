@@ -3,7 +3,7 @@
 Provides 4 key components:
 1. adapt_llm(old_llm) — wraps old BaseLLM to new async callable
 2. DruppieToolProvider — implements ToolProvider protocol
-3. create_event_persister(repo, session_id, agent_run_id) — event callback → DB writes
+3. create_event_persister(session_factory, session_id, agent_run_id) — event callback → DB writes
 4. old_definition_to_new(old_def) — converts old Pydantic AgentDefinition to new dataclass
 """
 
@@ -95,7 +95,7 @@ class DruppieToolProvider:
 
     def __init__(
         self,
-        execution_repo,
+        session_factory,
         tool_executor,
         session_id: UUID,
         agent_run_id: UUID,
@@ -104,7 +104,12 @@ class DruppieToolProvider:
         builtin_tool_defs: dict | None = None,
         subagents_connection: SubagentsMCPConnection | None = None,
     ) -> None:
-        self._execution_repo = execution_repo
+        # session_factory is a SessionLocal (sessionmaker). Each discrete DB
+        # operation opens its OWN short-lived session via `with session_factory()
+        # as db:` so a connection is never held across an LLM/MCP await. This
+        # keeps peak concurrent connections ≈ children writing at the same
+        # instant, independent of subagent fan-out width/depth (deadlock-free).
+        self._session_factory = session_factory
         self._tool_executor = tool_executor
         self._session_id = session_id
         self._agent_run_id = agent_run_id
@@ -205,130 +210,175 @@ class DruppieToolProvider:
         arguments: dict,
         execute_builtin_fn: Callable,
     ) -> dict:
-        """Execute a builtin tool via old execute_builtin."""
-        tool_call_id = self._execution_repo.create_tool_call(
-            session_id=self._session_id,
-            agent_run_id=self._agent_run_id,
-            mcp_server="builtin",
-            tool_name=tool_name,
-            arguments=arguments,
-            llm_call_id=self._llm_call_id,
-            tool_call_index=0,
-        )
-        self._execution_repo.db.commit()
+        """Execute a builtin tool via old execute_builtin.
 
-        try:
-            result = await execute_builtin_fn(
-                tool_name=tool_name,
-                args=arguments,
+        Builtin tools are in-process (no network/MCP await), so the whole
+        operation runs inside a single short-lived session that commits and
+        closes when it returns.
+        """
+        from druppie.repositories import ExecutionRepository
+
+        with self._session_factory() as db:
+            execution_repo = ExecutionRepository(db)
+            tool_call_id = execution_repo.create_tool_call(
                 session_id=self._session_id,
                 agent_run_id=self._agent_run_id,
-                execution_repo=self._execution_repo,
+                mcp_server="builtin",
+                tool_name=tool_name,
+                arguments=arguments,
+                llm_call_id=self._llm_call_id,
+                tool_call_index=0,
             )
-            if isinstance(result, dict):
-                success = result.get("success", True)
-                status = "completed" if success else "failed"
-                error_msg = None if success else result.get("error", "Builtin tool failed")
-                self._execution_repo.update_tool_call(
-                    tool_call_id=tool_call_id,
-                    status=status,
-                    result=result if isinstance(result, dict) else {"result": result},
-                    error=error_msg,
+            db.commit()
+
+            try:
+                result = await execute_builtin_fn(
+                    tool_name=tool_name,
+                    args=arguments,
+                    session_id=self._session_id,
+                    agent_run_id=self._agent_run_id,
+                    execution_repo=execution_repo,
                 )
-                self._execution_repo.db.commit()
-                if success:
-                    return {"success": True, "result": result}
-                return {"success": False, "error": error_msg}
-            self._execution_repo.update_tool_call(
-                tool_call_id=tool_call_id,
-                status="completed",
-                result={"result": result},
-            )
-            self._execution_repo.db.commit()
-            return {"success": True, "result": result}
-        except Exception as e:
-            logger.exception("Builtin tool %s failed", tool_name)
-            self._execution_repo.update_tool_call(
-                tool_call_id=tool_call_id,
-                status="failed",
-                error=str(e),
-            )
-            self._execution_repo.db.commit()
-            return {"success": False, "error": str(e)}
+                if isinstance(result, dict):
+                    success = result.get("success", True)
+                    status = "completed" if success else "failed"
+                    error_msg = None if success else result.get("error", "Builtin tool failed")
+                    execution_repo.update_tool_call(
+                        tool_call_id=tool_call_id,
+                        status=status,
+                        result=result if isinstance(result, dict) else {"result": result},
+                        error=error_msg,
+                    )
+                    db.commit()
+                    if success:
+                        return {"success": True, "result": result}
+                    return {"success": False, "error": error_msg}
+                execution_repo.update_tool_call(
+                    tool_call_id=tool_call_id,
+                    status="completed",
+                    result={"result": result},
+                )
+                db.commit()
+                return {"success": True, "result": result}
+            except Exception as e:
+                logger.exception("Builtin tool %s failed", tool_name)
+                db.rollback()
+                execution_repo.update_tool_call(
+                    tool_call_id=tool_call_id,
+                    status="failed",
+                    error=str(e),
+                )
+                db.commit()
+                return {"success": False, "error": str(e)}
 
     async def _execute_hitl(self, tool_name: str, arguments: dict) -> dict:
         """Execute a HITL tool via old ToolExecutor (creates Question, pauses)."""
-        tool_call_id = self._execution_repo.create_tool_call(
-            session_id=self._session_id,
-            agent_run_id=self._agent_run_id,
-            mcp_server="builtin",
-            tool_name=tool_name,
-            arguments=arguments,
-            llm_call_id=self._llm_call_id,
-            tool_call_index=0,
-        )
-        self._execution_repo.db.commit()
+        from druppie.repositories import ExecutionRepository
 
+        # Write 1: create the tool_call in its own short-lived session.
+        with self._session_factory() as db:
+            tool_call_id = ExecutionRepository(db).create_tool_call(
+                session_id=self._session_id,
+                agent_run_id=self._agent_run_id,
+                mcp_server="builtin",
+                tool_name=tool_name,
+                arguments=arguments,
+                llm_call_id=self._llm_call_id,
+                tool_call_index=0,
+            )
+            db.commit()
+
+        # The executor opens/closes its OWN short-lived session internally.
         status = await self._tool_executor.execute(tool_call_id)
 
         if status == "waiting_answer":
             return {"success": True, "_pending": True, "reason": "waiting_answer"}
-        elif status == "completed":
-            updated = self._execution_repo.get_tool_call(tool_call_id)
-            return {"success": True, "result": updated.result}
-        else:
-            updated = self._execution_repo.get_tool_call(tool_call_id)
-            error_msg = updated.error_message if updated else None
-            return {"success": False, "error": error_msg or "HITL tool execution failed"}
+
+        # Read-back in a fresh short-lived session; extract plain data only.
+        with self._session_factory() as db:
+            updated = ExecutionRepository(db).get_tool_call(tool_call_id)
+            result_value = updated.result if updated else None
+            error_value = updated.error_message if updated else None
+
+        if status == "completed":
+            return {"success": True, "result": result_value}
+        return {"success": False, "error": error_value or "HITL tool execution failed"}
 
     async def _execute_mcp(self, tool_name: str, arguments: dict) -> dict:
         """Execute an MCP tool via old ToolExecutor."""
+        from druppie.repositories import ExecutionRepository
+
         parts = tool_name.split("_", 1)
         if len(parts) != 2:
             return {"success": False, "error": f"Invalid MCP tool name: {tool_name}"}
         server, tool = parts
 
-        tool_call_id = self._execution_repo.create_tool_call(
-            session_id=self._session_id,
-            agent_run_id=self._agent_run_id,
-            mcp_server=server,
-            tool_name=tool,
-            arguments=arguments,
-            llm_call_id=self._llm_call_id,
-            tool_call_index=0,
-        )
+        # Write 1: create + COMMIT in its own short-lived session so the
+        # executor's separate session sees the row (no shared session anymore).
+        with self._session_factory() as db:
+            tool_call_id = ExecutionRepository(db).create_tool_call(
+                session_id=self._session_id,
+                agent_run_id=self._agent_run_id,
+                mcp_server=server,
+                tool_name=tool,
+                arguments=arguments,
+                llm_call_id=self._llm_call_id,
+                tool_call_index=0,
+            )
+            db.commit()
 
+        # The executor opens/closes its OWN short-lived session internally,
+        # so no connection is held by this provider across the MCP await.
         status = await self._tool_executor.execute(tool_call_id)
 
-        if status == "completed":
-            updated = self._execution_repo.get_tool_call(tool_call_id)
-            return {"success": True, "result": updated.result}
-        elif status in ("waiting_approval", "waiting_answer", "waiting_sandbox"):
+        if status in ("waiting_approval", "waiting_answer", "waiting_sandbox"):
             return {"success": True, "_pending": True, "reason": status.lower()}
-        else:
-            updated = self._execution_repo.get_tool_call(tool_call_id)
-            error_msg = updated.error_message if updated else None
-            return {"success": False, "error": error_msg or "Tool execution failed"}
+
+        # Read-back in a fresh short-lived session; extract plain data only.
+        with self._session_factory() as db:
+            updated = ExecutionRepository(db).get_tool_call(tool_call_id)
+            result_value = updated.result if updated else None
+            error_value = updated.error_message if updated else None
+
+        if status == "completed":
+            return {"success": True, "result": result_value}
+        return {"success": False, "error": error_value or "Tool execution failed"}
 
     async def _execute_subagents(self, arguments: dict) -> dict:
         if self._subagents_connection is None:
             return {"success": False, "error": "subagents not configured for this provider"}
 
+        from druppie.repositories import ExecutionRepository
+
         agents = arguments.get("agents", [])
         if not agents:
             return {"success": False, "error": "subagents requires 'agents' list"}
 
-        # Create tool_call record (same pattern as _execute_builtin)
-        tool_call_id = self._execution_repo.create_tool_call(
-            session_id=self._session_id,
-            agent_run_id=self._agent_run_id,
-            mcp_server="builtin",
-            tool_name="subagents",
-            arguments=arguments,
-            llm_call_id=self._llm_call_id,
-            tool_call_index=0,
-        )
-        self._execution_repo.db.commit()
+        # Write 1: create + COMMIT the parent's subagents tool_call in its own
+        # short-lived session. No connection is held while awaiting the
+        # grandchildren below — that await is where a held connection would
+        # deadlock the pool under fan-out.
+        with self._session_factory() as db:
+            tool_call_id = ExecutionRepository(db).create_tool_call(
+                session_id=self._session_id,
+                agent_run_id=self._agent_run_id,
+                mcp_server="builtin",
+                tool_name="subagents",
+                arguments=arguments,
+                llm_call_id=self._llm_call_id,
+                tool_call_index=0,
+            )
+            db.commit()
+
+        def _persist(*, status, result=None, error=None):
+            with self._session_factory() as db:
+                ExecutionRepository(db).update_tool_call(
+                    tool_call_id=tool_call_id,
+                    status=status,
+                    result=result,
+                    error=error,
+                )
+                db.commit()
 
         try:
             result = await self._subagents_connection.call_tool("subagents", arguments, spawning_tool_call_id=tool_call_id)
@@ -338,38 +388,35 @@ class DruppieToolProvider:
                 is_paused = result.get("_pending", False)
                 status = "completed" if success and not is_paused else ("paused" if is_paused else "failed")
                 error_msg = None if success else result.get("error", "Subagent execution failed")
-                self._execution_repo.update_tool_call(
-                    tool_call_id=tool_call_id,
-                    status=status,
-                    result=result,
-                    error=error_msg,
-                )
-                self._execution_repo.db.commit()
+                _persist(status=status, result=result, error=error_msg)
                 return result
-            self._execution_repo.update_tool_call(
-                tool_call_id=tool_call_id,
-                status="completed",
-                result={"result": result},
-            )
-            self._execution_repo.db.commit()
+            _persist(status="completed", result={"result": result})
             return result
         except asyncio.CancelledError:
-            self._execution_repo.update_tool_call(
-                tool_call_id=tool_call_id,
+            _persist(
                 status="paused",
                 result={"success": True, "_pending": True, "reason": "cancelled"},
             )
-            self._execution_repo.db.commit()
             raise
         except Exception as e:
             logger.exception("Subagents execution failed")
-            self._execution_repo.update_tool_call(
-                tool_call_id=tool_call_id,
-                status="failed",
-                error=str(e),
-            )
-            self._execution_repo.db.commit()
+            _persist(status="failed", error=str(e))
             return {"success": False, "error": str(e)}
+
+    def update_run_status(self, status, error_message: str | None = None) -> None:
+        """Update this provider's agent_run status in a short-lived session.
+
+        Used by spawn_one() to record the child's terminal status (completed,
+        paused, failed, cancelled). Opens its own session+commit so no
+        connection is held across the spawn lifecycle — matching the invariant.
+        """
+        from druppie.repositories import ExecutionRepository
+
+        with self._session_factory() as db:
+            ExecutionRepository(db).update_status(
+                self._agent_run_id, status, error_message=error_message
+            )
+            db.commit()
 
     async def close(self) -> None:
         """Clean up — no-op for DruppieToolProvider."""
@@ -377,7 +424,7 @@ class DruppieToolProvider:
 
 
 def create_event_persister(
-    execution_repo,
+    session_factory,
     session_id: UUID,
     agent_run_id: UUID,
     tool_provider: DruppieToolProvider | None = None,
@@ -393,8 +440,13 @@ def create_event_persister(
     - turn_end → update token aggregation (fallback)
     - context_overflow → log warning (no DB action)
 
+    Each branch opens its OWN short-lived session from `session_factory`
+    (SessionLocal) and commits+closes it before returning. The callback is
+    invoked synchronously by the loop BETWEEN network awaits, so a connection
+    is never held across an LLM/MCP await — independent of subagent fan-out.
+
     Args:
-        execution_repo: ExecutionRepository instance
+        session_factory: SessionLocal factory (sessionmaker)
         session_id: Session UUID
         agent_run_id: Agent run UUID
         tool_provider: Optional DruppieToolProvider to receive llm_call_id
@@ -403,15 +455,23 @@ def create_event_persister(
     Returns:
         Callable that accepts AgentEvent instances
     """
+    from druppie.repositories import ExecutionRepository
+
     def persist_event(event: AgentEvent) -> None:
         try:
             if event.type == "agent_start":
-                execution_repo.update_status(agent_run_id, "RUNNING")
+                with session_factory() as db:
+                    ExecutionRepository(db).update_status(agent_run_id, "RUNNING")
+                    db.commit()
             elif event.type == "agent_end":
-                execution_repo.update_status(agent_run_id, "COMPLETED")
+                with session_factory() as db:
+                    ExecutionRepository(db).update_status(agent_run_id, "COMPLETED")
+                    db.commit()
             elif event.type == "error":
                 error_msg = str(event.data.get("error", ""))
-                execution_repo.update_status(agent_run_id, "FAILED", error_message=error_msg)
+                with session_factory() as db:
+                    ExecutionRepository(db).update_status(agent_run_id, "FAILED", error_message=error_msg)
+                    db.commit()
             elif event.type == "llm_response":
                 data = event.data
                 resp = data.get("response", {})
@@ -441,122 +501,130 @@ def create_event_persister(
                     duration_ms,
                 )
 
-                llm_call_id = execution_repo.create_llm_call(
-                    session_id=session_id,
-                    agent_run_id=agent_run_id,
-                    provider=provider,
-                    model=model,
-                    messages=messages,
-                    tools=tools,
-                )
-                execution_repo.db.commit()
-                logger.warning(
-                    "LLM_RESPONSE create_llm_call OK [agent_run=%s]: llm_call_id=%s, messages_stored=%s",
-                    agent_run_id, llm_call_id, len(messages),
-                )
+                # One short-lived session for the whole llm_response persist
+                # (create_llm_call → update_llm_response → update_tokens). All
+                # DB-only, no await between them, so holding one connection for
+                # this branch is brief and bounded.
+                with session_factory() as db:
+                    execution_repo = ExecutionRepository(db)
+                    llm_call_id = execution_repo.create_llm_call(
+                        session_id=session_id,
+                        agent_run_id=agent_run_id,
+                        provider=provider,
+                        model=model,
+                        messages=messages,
+                        tools=tools,
+                    )
+                    db.commit()
+                    logger.warning(
+                        "LLM_RESPONSE create_llm_call OK [agent_run=%s]: llm_call_id=%s, messages_stored=%s",
+                        agent_run_id, llm_call_id, len(messages),
+                    )
 
-                if tool_provider:
-                    tool_provider.set_llm_call_id(llm_call_id)
+                    if tool_provider:
+                        tool_provider.set_llm_call_id(llm_call_id)
 
-                response_tool_calls = []
-                for tc in (msg.get("tool_calls") or []):
-                    func = tc.get("function", {})
-                    args_str = func.get("arguments", "{}")
-                    try:
-                        args = json.loads(args_str) if isinstance(args_str, str) else args_str
-                    except (json.JSONDecodeError, TypeError):
-                        args = {}
-                    response_tool_calls.append({
-                        "id": tc.get("id", ""),
-                        "name": func.get("name", ""),
-                        "args": args,
+                    response_tool_calls = []
+                    for tc in (msg.get("tool_calls") or []):
+                        func = tc.get("function", {})
+                        args_str = func.get("arguments", "{}")
+                        try:
+                            args = json.loads(args_str) if isinstance(args_str, str) else args_str
+                        except (json.JSONDecodeError, TypeError):
+                            args = {}
+                        response_tool_calls.append({
+                            "id": tc.get("id", ""),
+                            "name": func.get("name", ""),
+                            "args": args,
+                        })
+
+                    prompt_tokens = usage.get("prompt_tokens") or 0
+                    completion_tokens = usage.get("completion_tokens") or 0
+                    total_tokens = usage.get("total_tokens") or 0
+
+                    response_content = msg.get("content") or ""
+                    finish_reason = choice.get("finish_reason", "")
+
+                    thinking_content = resp.get("thinking_content") or None
+
+                    raw_response_json = json.dumps({
+                        "content": response_content,
+                        "tool_calls": [
+                            {
+                                "id": tc.get("id", ""),
+                                "name": tc.get("function", {}).get("name", ""),
+                                "args": tc.get("function", {}).get("arguments", ""),
+                            }
+                            for tc in (msg.get("tool_calls") or [])
+                        ],
+                        "finish_reason": finish_reason,
+                        "prompt_tokens": prompt_tokens,
+                        "completion_tokens": completion_tokens,
+                        "total_tokens": total_tokens,
                     })
 
-                prompt_tokens = usage.get("prompt_tokens") or 0
-                completion_tokens = usage.get("completion_tokens") or 0
-                total_tokens = usage.get("total_tokens") or 0
+                    logger.warning(
+                        "LLM_RESPONSE pre-update [llm_call=%s]: prompt_tokens=%s, completion_tokens=%s, "
+                        "response_content=%r, tool_calls_count=%s, duration_ms=%s, actual_model=%s",
+                        llm_call_id,
+                        prompt_tokens,
+                        completion_tokens,
+                        (response_content[:100] + "...") if len(response_content) > 100 else response_content,
+                        len(response_tool_calls),
+                        duration_ms,
+                        model,
+                    )
 
-                response_content = msg.get("content") or ""
-                finish_reason = choice.get("finish_reason", "")
+                    execution_repo.update_llm_response(
+                        llm_call_id=llm_call_id,
+                        response_content=raw_response_json[:10000],
+                        response_tool_calls=response_tool_calls,
+                        prompt_tokens=prompt_tokens,
+                        completion_tokens=completion_tokens,
+                        duration_ms=duration_ms,
+                        actual_model=model,
+                        thinking_content=thinking_content,
+                        raw_request=data.get("raw_request"),
+                        raw_response=data.get("raw_response"),
+                    )
+                    db.commit()
+                    logger.warning("LLM_RESPONSE update_llm_response OK [llm_call=%s]", llm_call_id)
 
-                thinking_content = resp.get("thinking_content") or None
-
-                raw_response_json = json.dumps({
-                    "content": response_content,
-                    "tool_calls": [
-                        {
-                            "id": tc.get("id", ""),
-                            "name": tc.get("function", {}).get("name", ""),
-                            "args": tc.get("function", {}).get("arguments", ""),
-                        }
-                        for tc in (msg.get("tool_calls") or [])
-                    ],
-                    "finish_reason": finish_reason,
-                    "prompt_tokens": prompt_tokens,
-                    "completion_tokens": completion_tokens,
-                    "total_tokens": total_tokens,
-                })
-
-                logger.warning(
-                    "LLM_RESPONSE pre-update [llm_call=%s]: prompt_tokens=%s, completion_tokens=%s, "
-                    "response_content=%r, tool_calls_count=%s, duration_ms=%s, actual_model=%s",
-                    llm_call_id,
-                    prompt_tokens,
-                    completion_tokens,
-                    (response_content[:100] + "...") if len(response_content) > 100 else response_content,
-                    len(response_tool_calls),
-                    duration_ms,
-                    model,
-                )
-
-                execution_repo.update_llm_response(
-                    llm_call_id=llm_call_id,
-                    response_content=raw_response_json[:10000],
-                    response_tool_calls=response_tool_calls,
-                    prompt_tokens=prompt_tokens,
-                    completion_tokens=completion_tokens,
-                    duration_ms=duration_ms,
-                    actual_model=model,
-                    thinking_content=thinking_content,
-                    raw_request=data.get("raw_request"),
-                    raw_response=data.get("raw_response"),
-                )
-                execution_repo.db.commit()
-                logger.warning("LLM_RESPONSE update_llm_response OK [llm_call=%s]", llm_call_id)
-
-                if prompt_tokens or completion_tokens:
-                    execution_repo.update_tokens(agent_run_id, prompt_tokens=prompt_tokens, completion_tokens=completion_tokens)
-                    execution_repo.db.commit()
+                    if prompt_tokens or completion_tokens:
+                        execution_repo.update_tokens(agent_run_id, prompt_tokens=prompt_tokens, completion_tokens=completion_tokens)
+                        db.commit()
 
             elif event.type == "tool_call":
                 tool_name = event.data.get("tool_name", "unknown")
                 if tool_name == "done":
                     arguments = event.data.get("arguments", {})
                     current_llm_call_id = getattr(tool_provider, "_llm_call_id", None)
-                    tc_id = execution_repo.create_tool_call(
-                        session_id=session_id,
-                        agent_run_id=agent_run_id,
-                        mcp_server="builtin",
-                        tool_name=tool_name,
-                        arguments=arguments,
-                        llm_call_id=current_llm_call_id,
-                        tool_call_index=0,
-                    )
-                    execution_repo.db.commit()
-                    tool_provider._last_tool_call_id = tc_id
-                    tool_provider._last_tool_call_name = tool_name
-                    if current_llm_call_id:
-                        from druppie.db.models import LlmCall as _LlmCall
-                        llm_call = execution_repo.db.query(_LlmCall).filter(_LlmCall.id == current_llm_call_id).first()
-                        if llm_call:
-                            existing = llm_call.response_tool_calls or []
-                            existing.append({
-                                "id": str(tc_id),
-                                "name": tool_name,
-                                "args": arguments,
-                            })
-                            llm_call.response_tool_calls = existing
-                            execution_repo.db.commit()
+                    with session_factory() as db:
+                        execution_repo = ExecutionRepository(db)
+                        tc_id = execution_repo.create_tool_call(
+                            session_id=session_id,
+                            agent_run_id=agent_run_id,
+                            mcp_server="builtin",
+                            tool_name=tool_name,
+                            arguments=arguments,
+                            llm_call_id=current_llm_call_id,
+                            tool_call_index=0,
+                        )
+                        db.commit()
+                        tool_provider._last_tool_call_id = tc_id
+                        tool_provider._last_tool_call_name = tool_name
+                        if current_llm_call_id:
+                            from druppie.db.models import LlmCall as _LlmCall
+                            llm_call = db.query(_LlmCall).filter(_LlmCall.id == current_llm_call_id).first()
+                            if llm_call:
+                                existing = llm_call.response_tool_calls or []
+                                existing.append({
+                                    "id": str(tc_id),
+                                    "name": tool_name,
+                                    "args": arguments,
+                                })
+                                llm_call.response_tool_calls = existing
+                                db.commit()
 
             elif event.type == "tool_result":
                 result_data = event.data.get("result", {})
@@ -573,13 +641,14 @@ def create_event_persister(
                         success = parsed.get("success", True) if isinstance(parsed, dict) else True
                         status = "completed" if success else "failed"
                         error_msg = None if success else (parsed.get("error", "") if isinstance(parsed, dict) else "")
-                        execution_repo.update_tool_call(
-                            tool_call_id=tc_id,
-                            status=status,
-                            result=parsed if isinstance(parsed, dict) else {"result": parsed},
-                            error=error_msg,
-                        )
-                        execution_repo.db.commit()
+                        with session_factory() as db:
+                            ExecutionRepository(db).update_tool_call(
+                                tool_call_id=tc_id,
+                                status=status,
+                                result=parsed if isinstance(parsed, dict) else {"result": parsed},
+                                error=error_msg,
+                            )
+                            db.commit()
                         tool_provider._last_tool_call_id = None
                         tool_provider._last_tool_call_name = None
 
@@ -588,8 +657,9 @@ def create_event_persister(
                 pt = tokens_used.get("prompt_tokens", 0) or 0
                 ct = tokens_used.get("completion_tokens", 0) or 0
                 if pt or ct:
-                    execution_repo.update_tokens(agent_run_id, prompt_tokens=pt, completion_tokens=ct)
-                    execution_repo.db.commit()
+                    with session_factory() as db:
+                        ExecutionRepository(db).update_tokens(agent_run_id, prompt_tokens=pt, completion_tokens=ct)
+                        db.commit()
 
             elif event.type == "context_compressed":
                 phase = event.data.get("phase", "?")
@@ -609,18 +679,19 @@ def create_event_persister(
                 )
 
                 from druppie.repositories import CompactionEventRepository
-                compaction_repo = CompactionEventRepository(execution_repo.db)
-                compaction_repo.create(
-                    session_id=session_id,
-                    agent_run_id=agent_run_id,
-                    llm_call_id=current_llm_call_id,
-                    phase=phase,
-                    tokens_before=tokens_before,
-                    tokens_after=tokens_after,
-                    turns_compressed=turns_compressed,
-                    summary_text=summary_text,
-                )
-                execution_repo.db.commit()
+                with session_factory() as db:
+                    compaction_repo = CompactionEventRepository(db)
+                    compaction_repo.create(
+                        session_id=session_id,
+                        agent_run_id=agent_run_id,
+                        llm_call_id=current_llm_call_id,
+                        phase=phase,
+                        tokens_before=tokens_before,
+                        tokens_after=tokens_after,
+                        turns_compressed=turns_compressed,
+                        summary_text=summary_text,
+                    )
+                    db.commit()
 
             elif event.type == "context_overflow":
                 logger.warning("Context overflow for agent_run %s", agent_run_id)

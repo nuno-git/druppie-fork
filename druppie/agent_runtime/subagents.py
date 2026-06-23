@@ -199,6 +199,15 @@ class SubagentsMCP:
             else:
                 child_tool_provider = MCPToolProvider({})
 
+            # The child tool provider records its own terminal status via
+            # update_run_status(), which opens a SHORT-LIVED session per call.
+            # No long-lived child session is held across the child's LLM/MCP
+            # awaits or while it awaits its own grandchildren — the pool stays
+            # deadlock-free at any fan-out. Status updates below therefore go
+            # through update_run_status() (a no-op if the provider doesn't
+            # expose it, e.g. the MCPToolProvider fallback).
+            update_status = getattr(child_tool_provider, "update_run_status", None)
+
             if event_callback:
                 event_callback(AgentEvent.now("subagent_start", {
                     "agent": agent_id,
@@ -241,12 +250,9 @@ class SubagentsMCP:
                     cancellation_token=cancellation_token,
                 )
 
-                child_repo = getattr(child_tool_provider, '_execution_repo', None)
-                child_run_id = getattr(child_tool_provider, '_agent_run_id', None)
-
                 if cancellation_token and cancellation_token.is_cancelled:
-                    if child_repo is not None and child_run_id is not None:
-                        child_repo.update_status(child_run_id, AgentRunStatus.PAUSED_USER)
+                    if update_status is not None:
+                        update_status(AgentRunStatus.PAUSED_USER)
                     return {
                         "agent": agent_id,
                         "status": "cancelled",
@@ -255,9 +261,8 @@ class SubagentsMCP:
                     }
 
                 if child_result.status == "paused":
-                    if child_repo is not None and child_run_id is not None:
-                        pause_status = _resolve_pause_status(child_result)
-                        child_repo.update_status(child_run_id, pause_status)
+                    if update_status is not None:
+                        update_status(_resolve_pause_status(child_result))
 
                     if event_callback:
                         event_callback(AgentEvent.now("subagent_end", {
@@ -275,8 +280,8 @@ class SubagentsMCP:
                         "error": None,
                     }
 
-                if child_repo is not None and child_run_id is not None:
-                    child_repo.update_status(child_run_id, AgentRunStatus.COMPLETED)
+                if update_status is not None:
+                    update_status(AgentRunStatus.COMPLETED)
 
                 if event_callback:
                     event_callback(AgentEvent.now("subagent_end", {
@@ -297,21 +302,17 @@ class SubagentsMCP:
                 # CancelledError is BaseException (Python 3.8+), so the
                 # except Exception below does NOT catch it.  Without this
                 # handler the child agent_run stays RUNNING forever and
-                # /resumable never lists it as a leaf.
-                child_repo = getattr(child_tool_provider, '_execution_repo', None)
-                child_run_id = getattr(child_tool_provider, '_agent_run_id', None)
-                if child_repo is not None and child_run_id is not None:
-                    child_repo.update_status(child_run_id, AgentRunStatus.PAUSED_USER)
-                    child_repo.commit()
+                # /resumable never lists it as a leaf. update_run_status opens
+                # its own short-lived session, so it is safe here.
+                if update_status is not None:
+                    update_status(AgentRunStatus.PAUSED_USER)
                 raise
             except Exception as e:
-                # Mark child agent_run as failed
-                child_repo = getattr(child_tool_provider, '_execution_repo', None)
-                child_run_id = getattr(child_tool_provider, '_agent_run_id', None)
-                if child_repo is not None and child_run_id is not None:
-                    child_repo.update_status(
-                        child_run_id, AgentRunStatus.FAILED, error_message=str(e)
-                    )
+                # Mark child agent_run as failed. update_run_status uses a fresh
+                # short-lived session, so there is no poisoned transaction to
+                # roll back first (unlike the old shared-session design).
+                if update_status is not None:
+                    update_status(AgentRunStatus.FAILED, error_message=str(e))
 
                 if event_callback:
                     event_callback(AgentEvent.now("subagent_end", {
