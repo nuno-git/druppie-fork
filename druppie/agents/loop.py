@@ -464,6 +464,24 @@ class AgentLoop:
             "completion_tokens": response.completion_tokens or 0,
             "total_tokens": response.total_tokens or 0,
         })
+        intended_provider = self.llm.provider_name if hasattr(self.llm, 'provider_name') else None
+        intended_model = self.llm.model if hasattr(self.llm, 'model') else None
+        fallback_used = (
+            response.provider is not None
+            and intended_provider is not None
+            and response.provider != intended_provider
+        )
+
+        if fallback_used:
+            logger.warning(
+                "llm_fallback_used_in_session",
+                agent_id=self.agent_id,
+                intended_provider=intended_provider,
+                intended_model=intended_model,
+                actual_provider=response.provider,
+                actual_model=response.model,
+            )
+
         execution_repo.update_llm_response(
             llm_call_id=llm_call_id,
             response_content=raw_response_json[:10000],
@@ -480,6 +498,9 @@ class AgentLoop:
             duration_ms=duration_ms,
             actual_provider=response.provider,
             actual_model=response.model,
+            fallback_used=fallback_used,
+            intended_provider=intended_provider,
+            intended_model=intended_model,
         )
         self.db.commit()
 

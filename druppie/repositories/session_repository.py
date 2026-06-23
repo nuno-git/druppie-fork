@@ -434,6 +434,9 @@ class SessionRepository(BaseRepository):
                 tools_provided=llm.tools_provided,
                 response_content=response_content,
                 response_tool_calls=response_tool_calls,
+                fallback_used=getattr(llm, 'fallback_used', False) or False,
+                intended_provider=getattr(llm, 'intended_provider', None),
+                intended_model=getattr(llm, 'intended_model', None),
                 retries=[
                     LLMRetryDetail(
                         attempt=r.attempt,

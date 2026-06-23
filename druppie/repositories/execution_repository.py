@@ -506,6 +506,9 @@ class ExecutionRepository(BaseRepository):
         duration_ms: int,
         actual_provider: str | None = None,
         actual_model: str | None = None,
+        fallback_used: bool = False,
+        intended_provider: str | None = None,
+        intended_model: str | None = None,
     ) -> None:
         """Update LLM call response."""
         llm_call = self.db.query(LlmCall).filter(LlmCall.id == llm_call_id).first()
@@ -520,6 +523,9 @@ class ExecutionRepository(BaseRepository):
                 llm_call.provider = actual_provider
             if actual_model:
                 llm_call.model = actual_model
+            llm_call.fallback_used = fallback_used
+            llm_call.intended_provider = intended_provider
+            llm_call.intended_model = intended_model
 
     def update_llm_error(
         self,
