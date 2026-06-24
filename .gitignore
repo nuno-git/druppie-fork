@@ -87,3 +87,4 @@ testing/autoscaling/results/*.jpg
 testing/autoscaling/results/*.jpeg
 .omo/
 .claude/
+cicd/act-runner/data/

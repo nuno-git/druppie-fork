@@ -1,0 +1,17 @@
+log:
+  level: info
+
+runner:
+  capacity: 1
+  timeout: 30m
+  insecure: false
+  fetch_timeout: 5s
+  fetch_interval: 2s
+
+cache:
+  enabled: false
+
+container:
+  network: "host"
+  privileged: true
+  options: "-v /var/run/docker.sock:/var/run/docker.sock -v /home/rdpuser/.kube/config:/root/.kube/config:ro"
