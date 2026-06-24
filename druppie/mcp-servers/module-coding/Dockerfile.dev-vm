@@ -93,7 +93,7 @@ RUN curl -fsSL https://code-server.dev/install.sh | sh \
 # ===========================================================================
 # Python tooling + common libraries (system-wide; per-branch venvs at runtime)
 RUN python3 -m pip install --no-cache-dir --upgrade pip setuptools wheel uv \
-    && python3 -m pip install --no-cache-dir \
+    && python3 -m pip install --no-cache-dir --ignore-installed \
         flask==3.1.0 gunicorn==23.0.0 sqlalchemy==2.0.36 \
         psycopg2-binary==2.9.10 pgvector==0.3.6 "numpy>=1.24.0" \
         python-dotenv==1.0.1 pytest httpx redis playwright
@@ -177,7 +177,7 @@ RUN mkdir -p /etc/docker \
 # ===========================================================================
 # Layer 5 — Entrypoint
 # ===========================================================================
-COPY dev-vm-entrypoint.sh /usr/local/bin/dev-vm-entrypoint.sh
+COPY module-coding/dev-vm-entrypoint.sh /usr/local/bin/dev-vm-entrypoint.sh
 RUN chmod +x /usr/local/bin/dev-vm-entrypoint.sh
 
 # Per-user cache directories (shared /cache volume; created by entrypoint).
