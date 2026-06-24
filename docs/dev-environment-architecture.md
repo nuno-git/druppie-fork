@@ -357,6 +357,70 @@ flowchart TB
 
 ---
 
+## Dev VM Base Image — shared across all branches
+
+Alle dev VMs (en agent sandboxes) gebruiken **één shared base image** in Harbor, gebouwd vanuit de `colab-dev` branch. Dit maakt startup snel: containerd cached de image layers op de node, dus alleen de eerste dev VM per node is traag.
+
+### Image layers
+
+```
+dev-vm-base:latest (in Harbor, ~4-5GB)
+  ├── Layer 1: Ubuntu 22.04 + Python 3.12 + Node 20 + Git + Docker
+  ├── Layer 2: code-server + SSH + xrdp + lokale Gitea
+  ├── Layer 3: Druppie repo cloned at colab-dev HEAD
+  ├── Layer 4: node_modules (frontend)
+  └── Layer 5: venv (backend)
+```
+
+Gebouwd door Gitea Actions CI op push naar `colab-dev` (samen met de 13 prod images).
+
+### Startup flow (per feature branch)
+
+```mermaid
+flowchart TB
+    START["Dev VM pod start<br/>(runtimeClassName: kata)"] --> PULL{"Base image<br/>op node?"}
+    PULL -->|"Nee (eerste op node)"| DOWNLOAD["docker pull dev-vm-base<br/>~2-3 min"]
+    PULL -->|"Ja (cached)"| CACHED["Layer cache hit<br/><10s"]
+    DOWNLOAD --> SEED
+    CACHED --> SEED
+
+    SEED["Seed PVC van image<br/>(alleen als PVC leeg — eerste keer)"] --> CHECKOUT
+
+    CHECKOUT["git fetch + checkout feature-xyz<br/>Alleen file diffs — snel"] --> DEPS
+
+    DEPS{"package.json of<br/>requirements.txt<br/>veranderd?"}
+    DEPS -->|"Nee (meestal)"| SKIP["Skip install<br/>Deps al in image"]
+    DEPS -->|"Ja"| INSTALL["npm install / pip install<br/>Alleen diff (snel)"]
+    SKIP --> STARTUP
+    INSTALL --> STARTUP
+
+    STARTUP["docker-compose up<br/>code-server + SSH + RDP starten"] --> READY["✅ Ready"]
+
+    style START fill:#fdcb6e,color:#1a1a2e
+    style PULL fill:#0984e3,color:#ffffff
+    style DOWNLOAD fill:#d63031,color:#ffffff
+    style CACHED fill:#00b894,color:#1a1a2e
+    style SEED fill:#6c5ce7,color:#ffffff
+    style CHECKOUT fill:#6c5ce7,color:#ffffff
+    style DEPS fill:#fdcb6e,color:#1a1a2e
+    style SKIP fill:#00b894,color:#1a1a2e
+    style READY fill:#00b894,color:#1a1a2e
+```
+
+### Waarom dit snel is
+
+| Scenario | Zonder base image | Met shared base image |
+|----------|------------------|----------------------|
+| Eerste dev VM op node | 2-5 min (clone + install) | 2-3 min (image pull) |
+| 2e-10e dev VM op node | 2-5 min (opnieuw install) | **<30s** (image cached) |
+| Restart (PVC exists) | <30s | <30s |
+| Reset (PVC weg) | 2-5 min | **<30s** (image cached) |
+| Nieuwe branch, zelfde node | 2-5 min | **<30s** (image cached, alleen git checkout) |
+
+De key insight: feature branches veranderen zelden `package.json` of `requirements.txt`. Dus `git checkout feature-xyz` (alleen code diffs) + skip dep install = bijna instant.
+
+---
+
 ## Remote Access Gateway (Guacamole + optioneel RDPGW)
 
 Extern is alleen poort 443 (HTTPS) beschikbaar op `*.rijnland.dev`. RDP (3389) en SSH (22) zijn niet rechtstreeks bereikbaar. Oplossing: een remote access gateway die deze protocollen tunnelt over HTTPS.
@@ -470,10 +534,12 @@ sequenceDiagram
     K8s->>Pod: 4. Pod start
 
     Pod->>Pod: Startup script:
-    Pod->>Git: git clone feature-xyz
-    Pod->>Pod: npm install, pip install
-    Pod->>Pod: docker-compose up (hot reload!)
-    Pod->>Pod: Start code-server, SSH, RDP
+    Pod->>Pod: 1. Seed PVC van base image (colab-dev HEAD + deps)
+    Pod->>Git: 2. git fetch + checkout feature-xyz (alleen file diffs)
+    Pod->>Pod: 3. Deps check → package.json/requirements.txt veranderd?
+    Pod->>Pod:    Nee → skip. Ja → npm install / pip install (alleen diff)
+    Pod->>Pod: 4. docker-compose up (hot reload!)
+    Pod->>Pod: 5. Start code-server, SSH, RDP
 
     Pod-->>BE: Ready
     BE->>K8s: 5. Maak Traefik IngressRoute
@@ -714,6 +780,7 @@ flowchart TB
 | **Lokale Gitea** (in dev VM) | Docker-in-Docker, localhost:3000 | Pod startup script | Bootstrap random wachtwoord |
 | **Echte Gitea** (extern) | Git repos + Gitea Actions CI | Extern (infra beheert) | Developer SSH key uit Vault |
 | **Harbor** (in cluster) | Container registry + scanning | Zelf geïnstalleerd | Basic auth via Vault/ESO |
+| **dev-vm-base** (in Harbor) | Shared base image voor alle dev VMs + agents | CI bouwt op colab-dev push | Deps in image, git checkout per branch |
 | **FluxCD** (extern) | GitOps → cluster sync | Extern (infra beheert) | kubeconfig naar cluster |
 | **Vault** (extern) | Secrets management | Extern (infra beheert) | ESO sync naar K8s secrets |
 
@@ -756,3 +823,4 @@ flowchart TB
 | 19 | Remote access | Apache Guacamole (RDP + SSH via 443 HTTPS, browser-based). RDPGW later indien native client gewenst |
 | 20 | Container registry | Harbor (in cluster, zelf geïnstalleerd) — scanning, signing, UI |
 | 21 | Gitea/Vault/FluxCD | Extern (infra beheert). Cluster = pure compute |
+| 22 | Dev VM base image | Shared base vanuit colab-dev (in Harbor). Startup: image pull + git checkout feature branch. Eerste dev VM op node ~2-3 min, daarna <30s door containerd layer cache |

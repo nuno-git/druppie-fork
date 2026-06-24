@@ -544,9 +544,68 @@ Druppie UI
 ```
 
 **PVC management:**
-- Eerste deploy: maak PVC, git clone, npm install, pip install (2-5 min)
-- Volgende deploy (zelfde branch): PVC bestaat al, alleen git pull (< 30s)
-- Developer kan "Reset" kiezen: delete PVC + recreate = schone start
+- Eerste deploy: maak PVC, seed van base image, git checkout branch (< 30s)
+- Volgende deploy (zelfde branch): PVC bestaat al, alleen git pull (< 10s)
+- Developer kan "Reset" kiezen: delete PVC + recreate = schone start (< 30s)
+
+### Dev VM base image — shared across all branches
+
+De dev VM base image wordt **één keer** gebouwd (vanuit colab-dev branch) en gedeeld door alle feature branches. Dit maakt startup snel omdat containerd de layers op de node cached.
+
+**Wat er in de base image zit:**
+```
+dev-vm-base:latest (in Harbor)
+  ├── Layer 1: Ubuntu 22.04 + Python 3.12 + Node 20 + Git + Docker
+  ├── Layer 2: code-server + SSH + xrdp
+  ├── Layer 3: Druppie repo cloned at colab-dev HEAD
+  ├── Layer 4: node_modules (frontend, van package.json)
+  └── Layer 5: venv (backend, van requirements.txt)
+```
+
+**Startup flow (per feature branch):**
+```bash
+# 1. Pod start met dev-vm-base image (containerd cached op node na eerste pull)
+
+# 2. Seed PVC van image (alleen eerste keer — PVC leeg)
+cp -r /app/repo /home/dev/repo
+
+# 3. Checkout de feature branch (git diff — snel)
+cd /home/dev/repo
+git fetch origin
+git checkout feature-xyz
+
+# 4. Reinstalleer deps alleen als ze veranderd zijn
+diff <(checksum package.json) <(cached checksum) || npm install
+diff <(checksum requirements.txt) <(cached checksum) || pip install
+
+# 5. Start services
+docker-compose up
+```
+
+**Waarom dit snel is:**
+- Alle branches delen dezelfde base image → containerd downloadt 1x per node
+- `git checkout feature-xyz` is snel (alleen file diffs, geen full clone)
+- Meeste feature branches veranderen `package.json` / `requirements.txt` niet → deps overgeslagen
+- Alleen de eerste dev VM op een node downloadt de volledige image (~2-3 min)
+- Dev VMs 2-10 op dezelfde node: image al gecached → <30s startup
+
+**Speed per scenario:**
+
+| Scenario | Zonder base image (install at startup) | Met shared base image |
+|----------|---------------------------------------|----------------------|
+| Eerste dev VM op node | 2-5 min (clone + install) | 2-3 min (image pull) |
+| 2e-10e dev VM op node | 2-5 min (opnieuw install) | **<30s** (image cached) |
+| Restart (PVC exists) | <30s | <30s |
+| Reset (PVC weg) | 2-5 min | **<30s** (image cached) |
+| Nieuwe branch, zelfde node | 2-5 min | **<30s** (image cached, git checkout) |
+
+**CI pipeline voor base image:**
+```
+Gitea Actions, op push naar colab-dev:
+  ├── 13 prod images → Harbor
+  └── 1 dev-vm-base image → Harbor
+      (rebuild als package.json of requirements.txt verandert op colab-dev)
+```
 
 ---
 
