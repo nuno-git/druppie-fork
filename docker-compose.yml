@@ -2,15 +2,18 @@
 # =========================================
 #
 # Profiles:
-#   infra   - Infrastructure only (databases, Keycloak, Gitea, MCP servers)
-#   dev     - Development mode with hot reload (backend + frontend with volume mounts)
-#   prod    - Production mode (backend + frontend without hot reload)
-#   init    - Initialization container (Keycloak + Gitea setup)
+#   infra         - Infrastructure only (databases, Keycloak, Gitea, MCP servers)
+#   dev           - Development mode with hot reload (backend + frontend with volume mounts)
+#   prod          - Production mode (backend + frontend without hot reload)
+#   init          - Initialization container (Keycloak + Gitea setup)
+#   remote-access - Optional Apache Guacamole (web RDP/SSH gateway) + dev-vm image builder
 #
 # Usage:
 #   docker compose --profile infra --profile init up -d      # Infrastructure + init
 #   docker compose --profile dev --profile init up -d        # Full dev environment
 #   docker compose --profile prod --profile init up -d       # Full production
+#   docker compose --profile dev --profile remote-access up -d  # Dev + Guacamole
+#   docker compose --profile remote-access build dev-vm-image-builder  # Build dev-vm-base image
 #   docker compose --profile reset-db run --rm reset-db      # Reset app database
 #   docker compose --profile reset-hard run --rm reset-hard  # Full reset + re-init
 #   docker compose --profile nuke run --rm nuke              # Full nuke & rebuild from scratch
@@ -31,6 +34,7 @@
 #   MCP LLM:        9009
 #   MCP Data Access:9010
 #   Adminer:        8081
+#   Guacamole:      8484
 
 services:
   # ===========================================================================
@@ -1088,6 +1092,99 @@ services:
 
   # cache-scanner: removed with background-agents (TODO: rebuild inside druppie/sandbox)
 
+  # ===========================================================================
+  # REMOTE ACCESS (Apache Guacamole - web RDP/SSH gateway)
+  # ===========================================================================
+  # Opt-in profile: start alongside the app, e.g.:
+  #   docker compose --profile dev --profile remote-access up -d
+  # Authenticates against the existing Keycloak `druppie` realm via OpenID Connect.
+
+  guacd:
+    profiles: [remote-access]
+    image: guacamole/guacd:1.5.5
+    container_name: ${COMPOSE_PROJECT_NAME:-druppie}-guacd
+    restart: unless-stopped
+    networks:
+      - app-net
+
+  guac-postgres:
+    profiles: [remote-access]
+    image: postgres:16-alpine
+    container_name: ${COMPOSE_PROJECT_NAME:-druppie}-guac-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: guacamole_db
+      POSTGRES_USER: guacamole_user
+      POSTGRES_PASSWORD: ${GUAC_DB_PASSWORD:-guac_pass}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - guac_postgres:/var/lib/postgresql/data
+      - guac_initdb:/docker-entrypoint-initdb.d:ro
+    networks:
+      - app-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U guacamole_user -d guacamole_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  guacamole:
+    profiles: [remote-access]
+    image: guacamole/guacamole:1.5.5
+    container_name: ${COMPOSE_PROJECT_NAME:-druppie}-guacamole
+    restart: unless-stopped
+    depends_on:
+      guacd:
+        condition: service_started
+      guac-postgres:
+        condition: service_healthy
+      # keycloak lives in the infra/dev/prod profiles, so this dependency is
+      # optional: honored when keycloak is running alongside (--profile dev
+      # --profile remote-access), skipped when only --profile remote-access is
+      # active. `required: false` also lets `docker compose config` validate.
+      keycloak:
+        condition: service_healthy
+        required: false
+    ports:
+      - "${GUACAMOLE_PORT:-8484}:8080"
+    environment:
+      GUACD_HOSTNAME: guacd
+      GUACD_PORT: "4822"
+      POSTGRESQL_ENABLED: "true"
+      POSTGRESQL_HOSTNAME: guac-postgres
+      POSTGRESQL_PORT: "5432"
+      POSTGRESQL_DATABASE: guacamole_db
+      POSTGRESQL_USERNAME: guacamole_user
+      POSTGRESQL_PASSWORD: ${GUAC_DB_PASSWORD:-guac_pass}
+      POSTGRESQL_AUTO_CREATE_ACCOUNTS: "true"
+      OPENID_ENABLED: "true"
+      OPENID_AUTHORIZATION_ENDPOINT: "http://keycloak:8080/realms/druppie/protocol/openid-connect/auth"
+      OPENID_JWKS_ENDPOINT: "http://keycloak:8080/realms/druppie/protocol/openid-connect/certs"
+      OPENID_ISSUER: "http://keycloak:8080/realms/druppie"
+      OPENID_CLIENT_ID: "guacamole"
+      OPENID_REDIRECT_URI: "http://localhost:${GUACAMOLE_PORT:-8484}/guacamole/"
+      OPENID_USERNAME_CLAIM_TYPE: "preferred_username"
+      OPENID_SCOPE: "openid email profile"
+    volumes:
+      - guac_initdb:/opt/guacamole/extensions/guacamole-auth-jdbc-postgresql/schema:ro
+    networks:
+      - app-net
+
+  # One-shot image builder for the dev-vm base image (mirrors sandbox-image-builder).
+  # The image is built + tagged via:
+  #   docker compose --profile remote-access build dev-vm-image-builder
+  # The service command only validates the build succeeded.
+  dev-vm-image-builder:
+    profiles: [remote-access]
+    build:
+      context: ./druppie/mcp-servers
+      dockerfile: module-coding/Dockerfile.dev-vm
+    image: dev-vm-base:latest
+    container_name: ${COMPOSE_PROJECT_NAME:-druppie}-dev-vm-image-builder
+    command: ["echo", "dev-vm-base image built and tagged"]
+    networks:
+      - app-net
+
 # =============================================================================
 # VOLUMES
 # =============================================================================
@@ -1111,6 +1208,10 @@ volumes:
     name: ${DRUPPIE_INSTANCE:-druppie}_sandbox_dep_cache
   sandbox_bundles:
     name: ${DRUPPIE_INSTANCE:-druppie}_sandbox_bundles
+  guac_postgres:
+    name: ${DRUPPIE_INSTANCE:-druppie}_guac_postgres
+  guac_initdb:
+    name: ${DRUPPIE_INSTANCE:-druppie}_guac_initdb
 
 # =============================================================================
 # NETWORKS

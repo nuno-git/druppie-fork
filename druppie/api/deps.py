@@ -43,6 +43,7 @@ from druppie.repositories import (
     EvaluationRepository,
     DocumentationCacheRepository,
     JobRepository,
+    DevVMRepository,
 )
 from druppie.services import (
     SessionService,
@@ -53,6 +54,8 @@ from druppie.services import (
     EvaluationService,
     DocumentationService,
     JobService,
+    DevEnvService,
+    DeployService,
 )
 
 # Initialize database tables on import
@@ -83,6 +86,11 @@ def get_question_repository(db: Session = Depends(get_db)) -> QuestionRepository
 def get_project_repository(db: Session = Depends(get_db)) -> ProjectRepository:
     """Get ProjectRepository with DB session injected."""
     return ProjectRepository(db)
+
+
+def get_dev_vm_repository(db: Session = Depends(get_db)) -> DevVMRepository:
+    """Get DevVMRepository with DB session injected."""
+    return DevVMRepository(db)
 
 
 def get_evaluation_repository(db: Session = Depends(get_db)) -> EvaluationRepository:
@@ -150,6 +158,18 @@ def get_project_service(
 ) -> ProjectService:
     """Get ProjectService with repositories injected."""
     return ProjectService(project_repo)
+
+
+def get_dev_env_service(
+    dev_vm_repo: DevVMRepository = Depends(get_dev_vm_repository),
+) -> DevEnvService:
+    """Get DevEnvService with DevVMRepository injected."""
+    return DevEnvService(dev_vm_repo)
+
+
+def get_deploy_service() -> DeployService:
+    """Get DeployService (stateless, no DB dependency)."""
+    return DeployService()
 
 
 def get_evaluation_service(

@@ -26,6 +26,7 @@ import {
   Rocket,
   Terminal,
   HelpCircle,
+  MonitorDot,
 } from 'lucide-react'
 
 import { useAuth } from '../App'
@@ -226,6 +227,7 @@ const NavRail = () => {
       <NavRailItem to="/tools/infrastructure" icon={Server} label="Infrastructure" active={isActive('/tools/infrastructure')} />
       <NavRailItem to="/tools/cache" icon={Package} label="Dep Cache" active={isActive('/tools/cache')} />
       <NavRailItem to="/deployments" icon={Rocket} label="Deployments" active={isActive('/deployments')} />
+      <NavRailItem to="/dev-environments" icon={MonitorDot} label="Dev Environments" active={isActive('/dev-environments')} />
 
       {/* Doc Portal */}
       <div className='mt-1 pt-1 border-t border-gray-800 w-8'></div>

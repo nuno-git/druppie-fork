@@ -381,6 +381,29 @@ def main():
 
         kc.create_client(REALM_NAME, client)
 
+    # Guacamole OIDC client (remote-access profile).
+    # Guacamole uses the implicit OpenID Connect flow, so it is registered as a
+    # public client (no client secret) with standard flow enabled.
+    print("\n[STEP 4b] Creating Guacamole OIDC client...")
+    guacamole_port = os.getenv("GUACAMOLE_PORT", "8484")
+    guac_client = {
+        "clientId": "guacamole",
+        "enabled": True,
+        "protocol": "openid-connect",
+        "publicClient": True,
+        "standardFlowEnabled": True,
+        "directAccessGrantsEnabled": False,
+        "redirectUris": [
+            f"http://localhost:{guacamole_port}/guacamole/",
+            "http://localhost:8484/guacamole/",
+        ],
+        "webOrigins": [
+            f"http://localhost:{guacamole_port}",
+            "http://localhost:8484",
+        ],
+    }
+    kc.create_client(REALM_NAME, guac_client)
+
     # Set realm frontendUrl so tokens always have the correct HTTPS issuer
     print("\n[STEP 5] Setting realm frontend URL...")
     kc.set_realm_frontend_url(REALM_NAME, keycloak_public_url)

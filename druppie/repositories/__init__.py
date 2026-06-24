@@ -6,6 +6,7 @@ from .compaction_event_repository import CompactionEventRepository
 from .approval_repository import ApprovalRepository
 from .question_repository import QuestionRepository
 from .project_repository import ProjectRepository
+from .dev_vm_repository import DevVMRepository
 from .execution_repository import ExecutionRepository
 from .user_repository import UserRepository
 from .evaluation_repository import EvaluationRepository
@@ -24,6 +25,7 @@ __all__ = [
     "AttachmentRepository",
     "QuestionRepository",
     "ProjectRepository",
+    "DevVMRepository",
     "ExecutionRepository",
     "UserRepository",
     "EvaluationRepository",

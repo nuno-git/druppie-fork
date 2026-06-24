@@ -1,0 +1,74 @@
+# Harbor Helm values — local k3s dev registry
+# Install: helm upgrade --install harbor harbor/harbor -n harbor --create-namespace -f helm/harbor/values.yaml
+#
+# This is the single source of truth for the Harbor deployment.
+# Do NOT use ad-hoc --set flags; edit this file and re-run helm upgrade.
+
+expose:
+  type: nodePort
+  tls:
+    enabled: false
+  nodePort:
+    name: harbor
+    ports:
+      http:
+        port: 80
+        nodePort: 30010
+      # https disabled for local dev (no TLS cert)
+
+externalURL: http://localhost:30010
+
+harborAdminPassword: "Harbor12345"
+
+# Persistence via k3s default local-path provisioner
+persistence:
+  persistentVolumeClaim:
+    registry:
+      size: 50Gi
+      storageClass: ""
+    database:
+      size: 10Gi
+      storageClass: ""
+    redis:
+      size: 5Gi
+      storageClass: ""
+
+# Disabled for minimal local dev
+trivy:
+  enabled: false
+notary:
+  enabled: false
+chartmuseum:
+  enabled: false
+
+# Lower resource requests for single-node dev
+core:
+  resources:
+    requests:
+      memory: 256Mi
+      cpu: 100m
+jobservice:
+  resources:
+    requests:
+      memory: 128Mi
+      cpu: 50m
+registry:
+  resources:
+    requests:
+      memory: 256Mi
+      cpu: 100m
+portal:
+  resources:
+    requests:
+      memory: 64Mi
+      cpu: 25m
+database:
+  resources:
+    requests:
+      memory: 256Mi
+      cpu: 100m
+redis:
+  resources:
+    requests:
+      memory: 128Mi
+      cpu: 50m

@@ -29,6 +29,7 @@ import DeveloperPage from './pages/DeveloperPage'
 import CachedDependencies from './pages/CachedDependencies'
 import Documentation from './pages/Documentation'
 import Deployments from './pages/Deployments'
+import DevEnvironments from './pages/DevEnvironments'
 
 // Auth context
 const AuthContext = React.createContext(null)
@@ -254,6 +255,14 @@ function App() {
                             element={
                               <ProtectedRoute>
                                 <Deployments />
+                              </ProtectedRoute>
+                            }
+                          />
+                          <Route
+                            path="/dev-environments"
+                            element={
+                              <ProtectedRoute>
+                                <DevEnvironments />
                               </ProtectedRoute>
                             }
                           />

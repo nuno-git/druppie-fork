@@ -72,6 +72,9 @@ from .common import (
 # Project models
 from .project import DeploymentInfo, DeploymentSummary, ProjectDetail, ProjectSummary
 
+# Dev VM models
+from .dev_vm import DevVMCreate, DevVMDetail, DevVMListResponse, DevVMSummary
+
 # Question models
 from .question import PendingQuestionList, QuestionChoice, QuestionDetail
 
@@ -146,6 +149,11 @@ __all__ = [
     "ProjectDetail",
     "DeploymentInfo",
     "DeploymentSummary",
+    # Dev VM
+    "DevVMSummary",
+    "DevVMDetail",
+    "DevVMCreate",
+    "DevVMListResponse",
     # User
     "UserInfo",
     # Documentation

@@ -62,6 +62,9 @@ from .llm_retry import LlmRetry
 from .project import Project
 from .project_dependency import ProjectDependency
 
+# Dev VM model
+from .dev_vm import DevVM
+
 # Documentation cache
 from .documentation_cache import DocumentationCache
 
@@ -93,6 +96,8 @@ __all__ = [
     # Project
     "Project",
     "ProjectDependency",
+    # Dev VM
+    "DevVM",
     # Documentation cache
     "DocumentationCache",
     # Session
