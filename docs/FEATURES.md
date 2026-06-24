@@ -909,3 +909,46 @@ What the reviewer sees:
 - **Per-view SVG exports** are written to `docs/diagrams/<view-name>.svg` on every save, so the plates are also visible directly in Gitea's file preview without opening Druppie.
 
 The choice between ArchiMate and Mermaid, plus the full element/relationship vocabulary, lives in the `making-archimate-diagrams` skill at `druppie/skills/making-archimate-diagrams/SKILL.md`.
+
+---
+
+## Document Formatter (PDF Generation)
+
+Druppie can convert agent-created Markdown documents into professionally formatted PDFs that follow the Rijnland corporate identity (Huisstijlhandboek).
+
+### Supported Document Types
+
+| Type | Description | Use Case |
+|------|-------------|----------|
+| `functional_design` | Functioneel Ontwerp (FO) | User requirements, functional specifications |
+| `technical_design` | Technisch Ontwerp (TO) | Architecture, data models, NFRs |
+| `technical_research` | Technisch Onderzoek | Proof-of-concepts, technology evaluations |
+| `core_documentation` | Platform documentation | Internal system docs, API guides |
+
+### How It Works
+
+1. The agent writes Markdown content (`content.md`) and a metadata JSON file (`metadata.json`).
+2. `DocumentFormatterService.generate_pdf()` compiles a Typst template (`base.typ`) via the Typst CLI subprocess, producing PDF bytes.
+3. The resulting PDF can be returned to the agent, shown to the user inline, or attached to an approval.
+
+### Corporate Identity Applied
+
+- **Primary color:** `#0065BD` (Rijnland blue, PMS 300)
+- **Typography:** Lato (free substitute for the licensed Neusa Next Std). Body text is light-weight; headings are bold.
+- **Logo:** `Logo-hoogheemraadschap-rijnland.png`, bottom-right on content pages, centered on the title page.
+- **Pay-off:** "droge voeten, schoon water" rendered on the title page.
+- **Layout:** Grid-based margins (25mm sides, 35mm bottom), subtle blue header line on page 2+.
+- **Watermark:** Semi-transparent "DRAFT" or "Niet-definitief — ter goedkeuring" when `status` is not `FINAL`.
+
+### Template Features
+
+- **Table of contents:** Optional, auto-generated from Markdown headings (`include_toc: true`).
+- **Tables:** Blue header row with white text, subtle striped rows, rounded corners.
+- **Code blocks:** Light blue background (`#E9EFFA`), rounded corners, monospace font.
+- **Blockquotes:** Light sand background with a Rijnland-blue left border.
+- **Page numbering:** "Pagina X van Y" centered in the footer.
+- **Section breaks:** Optional page break before every H1 (`section_breaks: true`).
+
+### Current Phase
+
+Phase 1 (complete): The formatting layer exists and is fully tested (8 pytest tests, all passing). It is **not yet wired into agent pipelines** — there is no database persistence, no API route, and no agent tool that calls it. Phase 2 will expose it as an MCP tool or builtin tool so agents can generate PDFs on demand.

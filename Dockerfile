@@ -9,11 +9,26 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y \
     git \
     curl \
+    ca-certificates \
+    fontconfig \
     docker.io \
     nodejs \
     npm \
     chromium \
     && rm -rf /var/lib/apt/lists/*
+
+# Install mermaid-cli globally for PDF Mermaid diagram rendering
+RUN npm install -g @mermaid-js/mermaid-cli \
+    && mmdc --version
+
+# Install Typst (static Rust binary) for document formatting
+RUN curl -L -o /tmp/typst.tar.xz \
+    "https://github.com/typst/typst/releases/latest/download/typst-x86_64-unknown-linux-musl.tar.xz" \
+    && tar -xJf /tmp/typst.tar.xz -C /tmp \
+    && mv /tmp/typst-x86_64-unknown-linux-musl/typst /usr/local/bin/typst \
+    && chmod +x /usr/local/bin/typst \
+    && rm -rf /tmp/typst.tar.xz /tmp/typst-x86_64-unknown-linux-musl \
+    && typst --version
 
 # Configure Puppeteer to use system Chromium (skip bundled download)
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
@@ -36,6 +51,7 @@ COPY testing/ /app/testing/
 # Set environment variables
 ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
+ENV TYPST_FONT_PATHS=/app/druppie/templates/documents/assets/fonts
 
 # Create workspace directory
 RUN mkdir -p /app/workspace

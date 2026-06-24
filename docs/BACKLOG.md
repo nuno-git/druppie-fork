@@ -52,6 +52,10 @@ Last updated: 2026-06-11
 - Dependency Cache — Automated Periodic Vulnerability Scanning
 - Dependency Cache — Read-Only Cache Mount with Separate Write Service
 - Sandbox — Investigate Rootless Docker (dockerd-rootless) for E2E Testing
+- Document Formatter — Agent Pipeline Integration (Phase 2)
+- Document Formatter — Mermaid/ArchiMate Rendering Inside PDFs
+- Document Formatter — Database Persistence & Download API
+- Document Formatter — Replace Lato with Neusa Next Std (if licensed)
 
 ---
 
@@ -539,3 +543,28 @@ Deze items zijn out-of-scope voor de eerste Kubernetes migratie (Story 3) en wor
 | gVisor runtime | Runtime isolatie voor sandbox workloads | Laag |
 | Longhorn RWX | Alleen nodig als MCP modules onafhankelijk moeten schalen (wordt herbouwd als built-in tools) | Laag |
 | Harbor registry | Vulnerability scanning en image signing (Gitea registry volstaat voor Phase 1) | Laag |
+
+---
+
+### Document Formatter Phase 2
+
+Phase 1 (currently complete) delivers the formatting layer: Typst template with Rijnland identity, compiled via subprocess, tested end-to-end. Phase 2 wires it into the platform.
+
+**Location:** `druppie/services/document_formatter_service.py`, `druppie/templates/documents/`, `druppie/tests/test_document_formatter.py`
+
+**Current state (Phase 1):**
+- `DocumentFormatterService.generate_pdf()` compiles Markdown + metadata via Typst CLI subprocess into PDF bytes.
+- Template applies Rijnland colors, typography (Lato as Neusa substitute), logo placement, pay-off, draft watermark, TOC, tables, code blocks, and blockquotes.
+- 8 pytest tests cover FO/TO rendering, watermark presence/absence, invalid template handling, and parameterized document types.
+- No database persistence, no API route, no agent tool integration.
+
+**Desired improvements:**
+
+- **Agent pipeline integration:** Expose PDF generation as a builtin tool (e.g., `make_pdf_document`) or MCP tool so agents can compile designs on demand. The agent passes Markdown + metadata; the tool returns a download URL or attaches the PDF to the `done()` summary.
+- **Database persistence:** Store generated documents in PostgreSQL (binary blob or file-system reference). Add domain models `DocumentSummary` / `DocumentDetail` with fields: `content_markdown`, `metadata_json`, `pdf_path`, `created_at`, `project_id`, `session_id`.
+- **API route & user download:** Add REST endpoints (`GET /api/projects/{id}/documents`, `POST /api/projects/{id}/documents/generate`, `GET /api/documents/{id}/download`). Frontend shows a "Download PDF" button in the chat timeline or project page.
+- **Mermaid/ArchiMate rendering inside PDFs:** The template currently skips diagram rendering because diagrams are pre-rendered data. Phase 2 could embed agent-rendered SVGs or PNGs (exported by Mermaid/ArchiMate tools before PDF compilation) via image references in the Markdown.
+- **Neusa Next Std font:** Replace Lato with the licensed Neusa Next Std brand font if the organization provides `.ttf`/`.otf` files. Place files in `assets/fonts/` and remove the Lato fallback chain — Typst will auto-resolve via `font:` parameter.
+- **"Dijk en sloot" decorative element:** Add the actual Rijnland wave/landscape illustration to the title page if the asset becomes available. Currently replaced by a blue accent bar abstraction.
+
+**Priority:** Medium — improves deliverable quality for FO/TD documents but does not block agent execution.

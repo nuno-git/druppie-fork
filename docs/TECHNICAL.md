@@ -114,6 +114,7 @@ druppie/
     workflow_service.py
     deployment_service.py
     revert_service.py
+    document_formatter_service.py
   repositories/
     session_repository.py
     approval_repository.py
@@ -227,6 +228,29 @@ Project isolation is enforced in two independent layers:
 Tools: `list_backlog_items`, `get_work_item`, `search_work_items` (all
 `requires_approval: false`). Consumed by the **Product Owner** agent. Isolation is pinned
 by `druppie/tests/test_azuredevops_isolation.py`.
+
+### 2.6 Document Formatter Service
+
+PDF generation from agent-written Markdown, using the **Typst** typesetting engine. This is a formatting-only layer (test-only Phase 1) — it does not persist documents to the database or integrate into agent pipelines yet.
+
+**Flow:** Agent sends Markdown body + metadata JSON → `DocumentFormatterService.generate_pdf()` → `.typ` template compiled via Typst CLI subprocess → PDF bytes.
+
+**Template:** `druppie/templates/documents/base.typ` — a single master template with conditional document-type styling (FO, TO, technical_research, core_documentation). It applies the Rijnland corporate identity:
+
+- Primary color `#0065BD` (PMS 300)
+- Secondary palette: sand/zand, dark-blue, mint, brick
+- Typography: Neusa Next Std (brand headings, if licensed) → **Lato** (free substitute). Body uses `weight: "light"`; headings use `weight: "bold"`.
+- Logo: `Logo-hoogheemraadschap-rijnland.png` placed bottom-right on content pages, centered on title page
+- Pay-off: "droge voeten, schoon water" on title page
+- Grid-based margins: 25mm sides, 35mm bottom
+- Draft watermark: semi-transparent rotated text when `status != "FINAL"`
+- Table of contents: optional via `include_toc`
+- Tables: Rijnland blue header row, striped rows, rounded corners
+- Code blocks: light blue background (`#E9EFFA`), rounded corners
+
+**Font path resolution:** The Dockerfile installs Typst CLI and sets `TYPST_FONT_PATHS` to `assets/fonts/`. Custom TTF files are referenced by their internal family name (verify with `typst fonts --font-path <dir>`). The Google Fonts Lato files register as family **"Lato"** — weight is controlled via Typst's `weight` parameter, not by separate family names.
+
+**Test fixtures:** `druppie/templates/documents/test-inputs/` contains FO and TO markdown + metadata for pytest.
 
 ---
 
