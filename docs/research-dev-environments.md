@@ -14,13 +14,13 @@
 | 1 | Cluster | **Rancher RKE2 met containerd** (8 nodes: 3 master + 1 GPU + 4 worker, ~480GB worker RAM) | Rancher-managed, CIS hardened, al aanwezig |
 | 2 | Container runtime (dev + sandbox) | **Kata Containers** | Native containerd RuntimeClass, Docker-in-Docker, SSH, systemd, VM-level isolatie |
 | 3 | Dev pod model | **Model A: alles in 1 pod** | Simpel, hot reload, geen K8s-networking, developer-centrisch |
-| 4 | GitOps voor prod/dev namespaces | **Fleet** (al in cluster) | Vervangt ArgoCD — Rancher-native, al draaiend |
+| 4 | GitOps voor prod/dev namespaces | **FluxCD** (door infra buiten cluster gezet) | CNCF Graduated, git → cluster sync, drift detection |
 | 5 | Preview/Dev VMs — provisioning | **Druppie backend + UI** | Handmatig, één knop, developer selecteert branch |
 | 6 | Preview/Dev VMs — lifecycle | **Handmatig**, niet auto per PR | Developer bepaalt wanneer deploy, review, stop |
 | 7 | Secrets | **3-laags: bootstrap (per-VM) + Vault/ESO (per-user) + cluster (static)** | Lokale Gitea voorkomt prod vervuiling, Vault beheert developer credentials |
 | 8 | Storage | **Longhorn** (al in cluster) | PVCs voor dev VMs, snapshots, backups |
 | 9 | Ingress + TLS | **Traefik + cert-manager** (al in cluster) | Wildcard DNS, Let's Encrypt, werkt al |
-| 10 | Container registry | **Gitea Container Registry** (al in cluster) | OCI-compatible, nul extra infra |
+| 10 | Container registry | **Harbor** (in cluster, zelf geïnstalleerd) | Scanning, signing, UI, replication. CNCF Graduated |
 | 11 | Monitoring | **Prometheus** (al in cluster) | Metrics, alerting, Grafana |
 | 12 | GPU node | **Exclusief voor prod LLM pod** (2× RTX 6000 Pro, 96GB VRAM) | NoSchedule taint, 2× nvidia.com/gpu exclusive |
 | 13 | LLM toegang dev/colab-dev | **Via prod LLM URL** (OpenAI-compatible endpoint via K8s service DNS) | Geen GPU node nodig in dev,zelfde modellen als prod |
@@ -37,12 +37,21 @@
 
 ## 1. Infrastructuur — wat er al is
 
-Dit is wat infra-team al in het cluster heeft draaien via **Fleet (GitOps)**:
+Sommige services draaien **buiten het cluster** (beheerd door infra-team), andere **in het cluster** (via GitOps).
+
+### Buiten het cluster (infra beheert)
 
 | Component | Functie | Impact voor ons |
 |-----------|---------|-----------------|
 | **Hashicorp Vault** | Secrets management (SSO) | Alle tokens, API keys, SSH keys komen uit Vault |
-| **External Secrets Operator** | Synct Vault → K8s secrets | Dev VM secrets automatisch via ESO |
+| **External Secrets Operator** | Synct Vault → K8s secrets | Draait in cluster, praat met externe Vault |
+| **Gitea (SSO)** | Git repos + Gitea Actions CI | Code repo, CI builds. Container Registry NIET enabled |
+| **FluxCD** | GitOps deployment | Watcht git repo → sync naar cluster. Vervangt Fleet |
+
+### In het cluster (via FluxCD GitOps)
+
+| Component | Functie | Impact voor ons |
+|-----------|---------|-----------------|
 | **Traefik** | Ingress controller | Dev VM URLs via Traefik IngressRoute |
 | **cert-manager** | Let's Encrypt TLS | Automatische certificaten voor dev VM URLs |
 | **Longhorn** | Distributed block storage | PVCs voor dev VM home directories |
@@ -50,12 +59,16 @@ Dit is wat infra-team al in het cluster heeft draaien via **Fleet (GitOps)**:
 | **Kube VIP** | Virtual IP / load balancing | — |
 | **Prometheus** | Monitoring + Grafana | Metrics van dev VMs |
 | **System Upgrade Controller** | RKE2 upgrades | — |
-| **Fleet** | GitOps deployment | Prod + colab-dev auto-deploy via Fleet |
-| **Gitea (SSO)** | Git + Container Registry (prod) | Echte Gitea voor developer git push/pull; dev VMs draaien eigen lokale Gitea in Docker-in-Docker |
-| **Rancher Management** | Cluster beheer (KinD) | — |
-| **Portainer** | Container management UI | Optioneel voor devs |
 
-**Conclusie:** De hele infrastructuurlaag is al geregeld. We hoeven alleen nog Kata Containers toe te voegen (1 RuntimeClass) en de Druppie-side provisioning te bouwen.
+### Zelf te installeren in cluster
+
+| Component | Waarom |
+|-----------|--------|
+| **Harbor** | Container registry — Gitea registry staat niet aan, Harbor geeft scanning + signing + UI |
+| **Kata Containers** | Runtime voor dev VMs en agent sandboxes |
+| **Apache Guacamole** | Remote access gateway (RDP + SSH via 443) |
+
+**Conclusie:** De hele infrastructuurlaag is geregeld. Gitea, Vault en FluxCD staan buiten het cluster (schone scheiding: state buiten, compute binnen). We installeren Harbor, Kata en Guacamole zelf.
 
 ---
 
@@ -123,7 +136,7 @@ EOF
 │  Secrets (via Vault → ESO → mounted env vars):                    │
 │  ┌──────────────────────────────────────────────────────────────┐│
 │  │ GITEA_TOKEN  → git clone/push naar Gitea                    ││
-│  │ DOCKER_CONFIG → docker push naar Gitea Registry              ││
+│  │ DOCKER_CONFIG → docker push naar Harbor Registry             ││
 │  │ SSH_PRIVATE_KEY → git via SSH + custom SSH access            ││
 │  │ ZAI_API_KEY → LLM calls voor agent testing                   ││
 │  └──────────────────────────────────────────────────────────────┘│
@@ -431,29 +444,62 @@ Alle prod/dev/agent deployments krijgen `nodeSelector: { node-type: worker }`. A
 
 ---
 
-## 6. Prod en Colab-dev — auto-deploy via Fleet (GitOps)
+## 6. Prod en Colab-dev — auto-deploy via FluxCD (GitOps)
 
-Fleet is Rancher's GitOps tool en **draait al in het cluster**. Gebruiken we voor productie namespaces.
+FluxCD is een CNCF Graduated GitOps tool die door infra-team **buiten het cluster** is gezet. FluxCD watcht de Gitea repo en synct wijzigingen automatisch naar het cluster.
+
+### Externe services vs cluster
 
 ```
-Fleet (GitOps)
+Buiten cluster (infra beheert):
+  Gitea          → Git repos + Gitea Actions CI
+  Hashicorp Vault → Secrets
+  FluxCD         → GitOps → cluster sync
+
+In cluster (Druppie beheert):
+  Harbor         → Container registry (zelf geïnstalleerd)
+  Traefik        → Ingress
+  Longhorn       → Storage
+  Prometheus     → Monitoring
+  Alle workloads → prod, colab-dev, dev VMs, agents
+```
+
+### CI/CD flow
+
+```
+Developer push code → Gitea (extern)
+  │
+  ├── Gitea Actions (CI):
+  │     1. docker build (13 images)
+  │     2. docker push → Harbor (in cluster, via Traefik 443)
+  │     3. Update Helm values met nieuwe image tag
+  │     4. git commit + push (Helm values wijziging)
+  │
+  └── FluxCD (CD, extern):
+        5. Ziet Helm values wijziging in Gitea
+        6. helm upgrade op cluster (via kubeconfig)
+        7. Cluster pullt image van Harbor (intern, snel)
+```
+
+```
+FluxCD (GitOps, extern)
   │
   ├── GitRepo: druppie-fork (branch: main → druppie-prod)
   │     │
   │     ├── helm/druppie/values-prod.yaml
-  │     └── Auto-deploy: PR merge → main → Fleet sync
+  │     └── Auto-deploy: PR merge → main → FluxCD sync
   │
-  └── GitRepo: druppie-fork (branch: colab-dev → druppie-dev)
+  └── GitRepo: druppie-fork (branch: colab-dev → druppie-colab-dev)
         │
         ├── helm/druppie/values-dev.yaml
-        └── Auto-deploy: PR merge → colab-dev → Fleet sync
+        └── Auto-deploy: PR merge → colab-dev → FluxCD sync
 ```
 
 | | druppie-prod | druppie-colab-dev |
 |---|---|---|
 | **Type** | Namespace | Namespace |
 | **Deploy trigger** | PR merge → main | PR merge → colab-dev |
-| **Deploy tool** | Fleet (GitOps) | Fleet (GitOps) |
+| **Deploy tool** | FluxCD (GitOps, extern) | FluxCD (GitOps, extern) |
 | **Stack** | Volledig | **Volledig (identiek aan prod)** |
 | **Auth** | Keycloak | Keycloak |
 | **Database** | CNPG (3 instances, HA) | CNPG (1 instance, geen HA) |
@@ -507,10 +553,11 @@ Druppie UI
 ## 8. Faseringsplan
 
 ### Fase 1 (Week 1-2): Fundering
-- [x] Infrastructuur is al klaar (Traefik, cert-manager, Longhorn, Vault, ESO, Fleet, Gitea, Prometheus, GPU operator)
+- [x] Infrastructuur is al klaar (Traefik, cert-manager, Longhorn, Vault+ESO, FluxCD, Prometheus, GPU operator — Gitea/Vault/FluxCD extern)
 - [ ] Kata Containers operator installeren + RuntimeClass aanmaken
-- [ ] Namespace structuur: `druppie-prod`, `druppie-dev` (colab-dev)
-- [ ] Fleet GitRepo configuratie voor prod + dev auto-deploy
+- [ ] Harbor installeren in cluster (container registry met scanning + signing)
+- [ ] Namespace structuur: `druppie-prod`, `druppie-colab-dev`
+- [ ] FluxCD GitRepository configuratie voor prod + dev auto-deploy
 - [ ] ResourceQuota + PriorityClass + NetworkPolicy
 
 ### Fase 2 (Week 3-4): Dev VMs + Remote Access
@@ -531,7 +578,7 @@ Druppie UI
 - [ ] Auto-cleanup: TTL of pool manager
 
 ### Fase 4 (Week 7-8): CI/CD + Polish
-- [ ] Full pipeline: Gitea Actions → build → push → Fleet sync (prod + dev)
+- [ ] Full pipeline: Gitea Actions → build → push Harbor → FluxCD sync (prod + dev)
 - [ ] Druppie agent voor dev VM management (monitoring, auto-repair)
 - [ ] Developer onboarding: 1 commando om Vault secrets aan te maken
 - [ ] GPU sharing voor dev VMs: NVIDIA MIG/time-slicing via GPU Operator
@@ -554,7 +601,8 @@ Druppie UI
 - [**Aanbevolen Architectuur**](./dev-environment-architecture.md) — Definitieve architectuur met Mermaid diagrammen
 - [Kata Containers](https://katacontainers.io/) — CNCF Sandbox, native containerd RuntimeClass
 - [K3s + Sysbox blog](https://docs.k3s.io/blog/2025/09/27/k3s-sysbox) — Sysbox containerd fix status (sept 2025)
-- [Rancher Fleet](https://fleet.rancher.io/) — GitOps in Rancher
+- [FluxCD](https://fluxcd.io/) — CNCF Graduated GitOps
+- [Harbor](https://goharbor.io/) — CNCF Graduated container registry
 - [External Secrets Operator](https://external-secrets.io/) — Vault → K8s sync
 - [Druppie ADR-KUBERNETES.md](./ADR-KUBERNETES.md) — Bestaande K8s architectuur
 - [Druppie AS-BUILT-ARCHITECTURE.md](./AS-BUILT-ARCHITECTURE.md) — Huidige Hetzner deployment

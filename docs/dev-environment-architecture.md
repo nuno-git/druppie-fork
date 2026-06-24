@@ -20,19 +20,21 @@ flowchart TB
     subgraph Rancher["Rancher RKE2 Cluster (1TB RAM, Xeon, 4× RTX 6000 Pro)"]
         direction TB
 
-        %% ── Infrastructure Layer (already present via Fleet) ──
-        subgraph Infra["Infrastructure (Fleet GitOps)"]
+    %% ── Infrastructure Layer ──
+    subgraph Infra["Infrastructure"]
             direction LR
             TRAEFIK["Traefik Ingress + TLS"]
             CM["cert-manager · Let's Encrypt"]
             LONGHORN["Longhorn Storage"]
-            VAULT["Hashicorp Vault + ESO"]
-            GITEA["Gitea + Container Registry"]
+            VAULT["Vault (extern) + ESO (in cluster)"]
+            GITEA["Gitea (extern) + Actions CI"]
+            FLUXCD["FluxCD (extern)"]
+            HARBOR["Harbor Registry (in cluster)"]
             PROM["Prometheus + Grafana"]
             GPU_OP["NVIDIA GPU Operator"]
         end
 
-        %% ── Prod + Dev Namespaces (Fleet auto-deploy) ──
+        %% ── Prod + Dev Namespaces (FluxCD auto-deploy) ──
         subgraph ProdNS["Namespace: druppie-prod"]
             PROD_KC["Keycloak"]
             PROD_BE["Backend 3-8× (KEDA)"]
@@ -52,7 +54,7 @@ flowchart TB
             DEV_GITEA["Gitea"]
         end
 
-        %% ── Kata Pods (managed by Druppie, not Fleet) ──
+        %% ── Kata Pods (managed by Druppie, not FluxCD) ──
         subgraph KataPods["Kata Container Pods"]
             direction TB
 
@@ -81,8 +83,8 @@ flowchart TB
             end
         end
 
-        %% ── Fleet GitOps ──
-        subgraph FleetLayer["Fleet (GitOps)"]
+        %% ── FluxCD GitOps ──
+        subgraph FluxLayer["FluxCD (GitOps, extern)"]
             FL_MAIN["main → druppie-prod<br/>Auto-deploy"]
             FL_COLAB["colab-dev → druppie-colab-dev<br/>Auto-deploy"]
         end
@@ -111,7 +113,8 @@ flowchart TB
     VAULT -->|"Laag 2: ESO sync"| DevVM2
 
     GITEA -->|"git clone/push<br/>(developer's persoonlijke repo)"| KataPods
-    GITEA -->|"container images"| ProdNS
+    GITEA -->|"Gitea Actions: build images"| HARBOR
+    HARBOR -->|"container images"| ProdNS
 
     FL_MAIN -->|"Helm deploy"| ProdNS
     FL_COLAB -->|"Helm deploy"| DevNS
@@ -122,7 +125,9 @@ flowchart TB
     style ProdNS fill:#0984e3,color:#ffffff,stroke:#74b9ff
     style DevNS fill:#00b894,color:#1a1a2e,stroke:#55efc4
     style KataPods fill:#e17055,color:#ffffff,stroke:#fab1a0
-    style FleetLayer fill:#6c5ce7,color:#ffffff,stroke:#a29bfe
+    style FluxLayer fill:#6c5ce7,color:#ffffff,stroke:#a29bfe
+    style Infra fill:#2d3436,color:#e0e0e0,stroke:#636e72
+    style HARBOR fill:#d63031,color:#ffffff
     style DruppieController fill:#fdcb6e,color:#1a1a2e,stroke:#ffeaa7
 ```
 
@@ -612,8 +617,8 @@ flowchart TB
         direction LR
 
         subgraph Auto["Automatisch (Git PR merge)"]
-            PR1["PR merge → main"] --> F1["Fleet sync → druppie-prod"]
-            PR2["PR merge → colab-dev"] --> F2["Fleet sync → druppie-colab-dev"]
+            PR1["PR merge → main"] --> F1["FluxCD sync → druppie-prod"]
+            PR2["PR merge → colab-dev"] --> F2["FluxCD sync → druppie-colab-dev"]
         end
 
         subgraph Manual["Handmatig (Druppie UI)"]
@@ -696,12 +701,15 @@ flowchart TB
 
 | Component | Technologie | Provisioning | Secrets |
 |-----------|------------|-------------|---------|
-| **druppie-prod** (namespace) | Volledige Druppie stack | Fleet GitOps, auto op PR→main | Vault + Helm values |
-| **druppie-colab-dev** (namespace) | Volledige Druppie stack | Fleet GitOps, auto op PR→colab-dev | Vault + Helm values |
+| **druppie-prod** (namespace) | Volledige Druppie stack | FluxCD GitOps, auto op PR→main | Vault + Helm values |
+| **druppie-colab-dev** (namespace) | Volledige Druppie stack | FluxCD GitOps, auto op PR→colab-dev | Vault + Helm values |
 | **Dev VM** (Kata pod) | Alles in 1 pod, hot reload | Druppie UI, handmatig | 3-laags: bootstrap + Vault + cluster |
 | **Agent Sandbox** (Kata pod) | Headless, ephemeral | Druppie agent runtime (k8s_manager.py) | Bootstrap only, geen user secrets |
 | **Lokale Gitea** (in dev VM) | Docker-in-Docker, localhost:3000 | Pod startup script | Bootstrap random wachtwoord |
-| **Echte Gitea** (cluster) | Prod Gitea + Registry | Fleet GitOps | Developer SSH key uit Vault |
+| **Echte Gitea** (extern) | Git repos + Gitea Actions CI | Extern (infra beheert) | Developer SSH key uit Vault |
+| **Harbor** (in cluster) | Container registry + scanning | Zelf geïnstalleerd | Basic auth via Vault/ESO |
+| **FluxCD** (extern) | GitOps → cluster sync | Extern (infra beheert) | kubeconfig naar cluster |
+| **Vault** (extern) | Secrets management | Extern (infra beheert) | ESO sync naar K8s secrets |
 
 ---
 
@@ -709,7 +717,7 @@ flowchart TB
 
 | Fase | Week | Wat | Deliverable |
 |------|------|-----|-------------|
-| **1** | 1-2 | Fundering: node labels/taints, Kata operator, LLM pod op GPU node, namespaces, Fleet config, quotas | Cluster klaar voor workloads |
+| **1** | 1-2 | Fundering: node labels/taints, Kata operator, Harbor registry, LLM pod op GPU node, namespaces, FluxCD config, quotas | Cluster klaar voor workloads |
 | **2** | 3-4 | Dev VMs: base image, Vault secrets structuur, Druppie provisioning API + UI, LLM config via prod URL, **Guacamole installeren** (remote access gateway) | Devs kunnen VM deployen + RDP/SSH via browser |
 | **3** | 5-6 | Agent sandboxes: k8s_manager.py, zelfde image, git interface | Agents werken op K8s |
 | **4** | 7-8 | CI/CD: Gitea Actions pipeline, monitoring, developer docs | Productie-klaar, gedocumenteerd |
@@ -724,7 +732,7 @@ flowchart TB
 | 1 | Cluster | Rancher RKE2 (containerd), 8 nodes (3 master + 1 GPU + 4 worker × 96GB), ~480GB worker RAM |
 | 2 | Runtime dev pods + agent sandboxes | Kata Containers |
 | 3 | Dev model | Model A: alles in 1 pod, hot reload lokaal |
-| 4 | GitOps prod/dev namespaces | Fleet (al aanwezig) |
+| 4 | GitOps prod/dev namespaces | FluxCD (extern, door infra) |
 | 5 | Dev VM provisioning | Druppie backend + UI, handmatig |
 | 6 | Secrets injectie | 3-laags: bootstrap (per-VM) + Vault/ESO (per-user) + cluster (static) |
 | 7 | Storage | Longhorn (al aanwezig) |
@@ -732,7 +740,7 @@ flowchart TB
 | 9 | Auth dev VMs | Mock auth (geen Keycloak) |
 | 10 | Agent ↔ Dev interface | Git (geen shared filesystem) |
 | 11 | Code lifecycle | Developer pull/push via git |
-| 12 | Preview auto-deploy | Alleen prod + colab-dev via Fleet |
+| 12 | Preview auto-deploy | Alleen prod + colab-dev via FluxCD |
 | 13 | GPU node | Exclusief voor prod LLM pod (2× RTX 6000 Pro, 96GB VRAM, NoSchedule taint) |
 | 14 | LLM toegang dev/colab-dev | Via prod LLM URL (OpenAI-compatible endpoint) |
 | 15 | Node placement | Workers voor alles, GPU node alleen LLM |
@@ -740,3 +748,5 @@ flowchart TB
 | 17 | Prod/dev isolatie | PriorityClasses (prod=10000, colab-dev=8000, CI=3000, dev VM=1000, agent=500) |
 | 18 | Colab-dev | Zelfde stack als prod, alleen minder replicas en geen HA |
 | 19 | Remote access | Apache Guacamole (RDP + SSH via 443 HTTPS, browser-based). RDPGW later indien native client gewenst |
+| 20 | Container registry | Harbor (in cluster, zelf geïnstalleerd) — scanning, signing, UI |
+| 21 | Gitea/Vault/FluxCD | Extern (infra beheert). Cluster = pure compute |
