@@ -15,3 +15,6 @@ container:
   network: "host"
   privileged: true
   options: "-v /var/run/docker.sock:/var/run/docker.sock -v /home/rdpuser/.kube/config:/root/.kube/config:ro"
+  valid_volumes:
+    - /var/run/docker.sock
+    - /home/rdpuser/.kube/config
