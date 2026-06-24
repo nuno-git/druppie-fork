@@ -114,7 +114,9 @@ flowchart TB
 
     GITEA -->|"git clone/push<br/>(developer's persoonlijke repo)"| KataPods
     GITEA -->|"Gitea Actions: build images"| HARBOR
-    HARBOR -->|"container images"| ProdNS
+    HARBOR -->|"13 Druppie images"| ProdNS
+    HARBOR -->|"13 Druppie images"| DevNS
+    HARBOR -->|"Kata base image<br/>(dev VM + agent sandbox)"| KataPods
 
     FL_MAIN -->|"Helm deploy"| ProdNS
     FL_COLAB -->|"Helm deploy"| DevNS
@@ -326,6 +328,10 @@ flowchart TB
             CACHE["/var/lib/docker<br/>Docker image cache<br/>+ lokale Gitea data"]
         end
     end
+
+    HARBOR_EXT["Harbor (in cluster)<br/>→ levert Kata base image<br/>→ dev VMs bouwen Druppie lokaal"]
+
+    HARBOR_EXT -.->|"base image pull"| DevVM
 
     SEC_BOOT --> Stack
     SEC_USER --> SSH
