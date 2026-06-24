@@ -1,0 +1,42 @@
+# k3s dev overlay — use with: helm upgrade --install druppie ./helm/druppie -n druppie -f helm/druppie/values.yaml -f helm/druppie/values-k3s-dev.yaml
+
+global:
+  domain: localhost
+  ingress:
+    enabled: false
+
+backend:
+  nodePort: 30000
+  port: 8000
+
+frontend:
+  nodePort: 30001
+  port: 5173
+
+keycloak:
+  nodePort: 30002
+  port: 8080
+
+gitea:
+  nodePort: 30003
+  httpPort: 3000
+
+persistence:
+  storageClass: local-path
+  workspace:
+    size: 5Gi
+  dataset:
+    size: 2Gi
+  sandboxBundles:
+    size: 2Gi
+  giteaData:
+    size: 2Gi
+
+druppieDb:
+  storageSize: 2Gi
+
+giteaDb:
+  storageSize: 2Gi
+
+keycloakDb:
+  storageSize: 2Gi

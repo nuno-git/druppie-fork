@@ -449,14 +449,28 @@ class GuacamoleClient:
         """Shared helper for granting/removing a connection READ permission.
 
         Builds the single-element JSON Patch array and PATCHes the user
-        resource. Mirrors the public grant/revoke contract.
+        resource. Creates the user first if they don't exist (OIDC users
+        are auto-created on login but may not exist yet at VM creation time).
         """
         user_id = await self.get_user_id(username)
         if not user_id:
-            return {
-                "success": False,
-                "error": f"Guacamole user not found: {username}",
-            }
+            create_result = await self._request(
+                "POST",
+                f"/guacamole/api/session/data/{self._datasource}/users",
+                json_data={"username": username, "attributes": {}},
+            )
+            if not create_result.get("success"):
+                return {
+                    "success": False,
+                    "error": f"Failed to create Guacamole user '{username}': {create_result.get('error')}",
+                }
+            user_id = create_result.get("data", {}).get("identifier")
+            if not user_id:
+                return {
+                    "success": False,
+                    "error": f"Guacamole user creation returned no identifier for '{username}'",
+                }
+            logger.info("guacamole_user_created", username=username, user_id=user_id)
 
         patch: list[dict[str, Any]] = [
             {"op": op, "path": f"/connectionPermissions/{connection_name}"}

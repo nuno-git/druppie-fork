@@ -51,7 +51,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 ENV LANG=en_US.UTF-8 \
     LC_ALL=en_US.UTF-8 \
-    LANGUAGE=en_US:en
+    LANGUAGE=en_US:en \
+    XDG_CONFIG_DIRS=/etc/xdg \
+    XDG_DATA_DIRS=/usr/share/xfce4:/usr/share/gnome:/usr/local/share:/usr/share
 
 # Python 3.12 via deadsnakes PPA (get-pip avoids relying on system pip)
 RUN add-apt-repository ppa:deadsnakes/ppa -y \
@@ -152,12 +154,24 @@ RUN ssh-keygen -A \
     && chown developer:developer /home/developer/.ssh/authorized_keys \
     && chmod 600 /home/developer/.ssh/authorized_keys
 
-# xrdp: launch an xfce4 session
-RUN printf 'startxfce4\n' > /home/developer/.xsession \
-    && chmod +x /home/developer/.xsession \
-    && chown developer:developer /home/developer/.xsession \
+# xrdp: proper startwm.sh with dbus + XDG env vars, max_bpp for Guacamole
+RUN printf '#!/bin/bash\n\
+if test -r /etc/profile; then\n\
+    . /etc/profile\n\
+fi\n\
+export XDG_CONFIG_DIRS=/etc/xdg\n\
+export XDG_DATA_DIRS=/usr/share/xfce4:/usr/share/gnome:/usr/local/share:/usr/share\n\
+export XDG_RUNTIME_DIR=/run/user/$(id -u)\n\
+mkdir -p "$XDG_RUNTIME_DIR"\n\
+chmod 700 "$XDG_RUNTIME_DIR"\n\
+eval $(dbus-launch --sh-syntax) 2>/dev/null\n\
+export DBUS_SESSION_BUS_ADDRESS DBUS_SESSION_BUS_PID\n\
+exec dbus-launch --exit-with-session xfce4-session\n' \
+    > /etc/xrdp/startwm.sh \
+    && chmod +x /etc/xrdp/startwm.sh \
     && sed -i 's/^max_bpp=.*/max_bpp=24/' /etc/xrdp/xrdp.ini \
-    && mkdir -p /run/xrdp
+    && mkdir -p /run/xrdp /run/user/1000 \
+    && chown developer:developer /run/user/1000
 
 # code-server default config: bind 0.0.0.0:8080, no auth (behind Guacamole)
 RUN install -d -m 755 -o developer -g developer /home/developer/.config/code-server \

@@ -12,6 +12,7 @@ Guacamole is called through the core client ``druppie.core.guacamole``.
 """
 
 import asyncio
+import base64
 import os
 import secrets as pysecrets
 from uuid import UUID
@@ -33,7 +34,7 @@ DEV_VM_MEMORY = os.getenv("DEV_VM_MEMORY", "12g")
 DEV_VM_CPUS = os.getenv("DEV_VM_CPUS", "4")
 
 # Guacamole deep-link base (host-facing URL users open in the browser).
-GUACAMOLE_PUBLIC_URL = os.getenv("GUACAMOLE_URL", "http://localhost:8484")
+GUACAMOLE_PUBLIC_URL = os.getenv("GUACAMOLE_PUBLIC_URL", "http://localhost:30020")
 
 # RDP credentials baked into the dev-vm-base image.
 DEV_VM_RDP_USERNAME = os.getenv("DEV_VM_RDP_USERNAME", "developer")
@@ -205,8 +206,12 @@ class DevEnvService:
         """List dev VMs. Admin sees all, others see only their own."""
         offset = (page - 1) * limit
         if "admin" in user_roles:
-            return self.dev_vm_repo.list_all(limit, offset)
-        return self.dev_vm_repo.list_for_user(owner_id, limit, offset)
+            items, total = self.dev_vm_repo.list_all(limit, offset)
+        else:
+            items, total = self.dev_vm_repo.list_for_user(owner_id, limit, offset)
+        for item in items:
+            item.guacamole_url = self._build_guacamole_url(item.guacamole_connection_id)
+        return items, total
 
     def get_dev_vm(
         self,
@@ -351,8 +356,7 @@ class DevEnvService:
         if not connection_id:
             return None
         base = GUACAMOLE_PUBLIC_URL.rstrip("/")
-        # Guacamole client URL: <base>/guacamole/#/client/<identifier>
-        # A connection identifier is typically a numeric string; encode it with
-        # the protocol prefix Guacamole expects.
-        encoded = f"RDP{connection_id}"
-        return f"{base}/guacamole/#/client/{encoded}"
+        blob = "\0".join([connection_id, "c", "postgresql"])
+        raw_b64 = base64.b64encode(blob.encode("utf-8")).decode("ascii")
+        urlsafe = raw_b64.replace("+", "-").replace("/", "_").rstrip("=")
+        return f"{base}/guacamole/#/client/{urlsafe}"

@@ -94,6 +94,20 @@ spec:
       labels:
         app: guacamole
     spec:
+      initContainers:
+      - name: install-oidc
+        image: guacamole/guacamole:1.5.5
+        command:
+        - sh
+        - -c
+        - |
+          mkdir -p /guac-extensions/openid
+          curl -sL "https://downloads.apache.org/guacamole/1.5.5/binary/guacamole-auth-sso-1.5.5.tar.gz" -o /tmp/sso.tar.gz
+          tar xzf /tmp/sso.tar.gz -C /tmp/
+          cp /tmp/guacamole-auth-sso-1.5.5/openid/guacamole-auth-sso-openid-1.5.5.jar /guac-extensions/openid/
+        volumeMounts:
+        - name: guac-extensions
+          mountPath: /guac-extensions
       containers:
       - name: guacamole
         image: guacamole/guacamole:1.5.5
@@ -108,10 +122,30 @@ spec:
           value: guacamole_user
         - name: POSTGRESQL_PASSWORD
           value: guac_pass
+        - name: POSTGRESQL_AUTO_CREATE_ACCOUNTS
+          value: "true"
         - name: GUACD_HOSTNAME
           value: guacd
         - name: GUACD_PORT
           value: "4822"
+        - name: OPENID_AUTHORIZATION_ENDPOINT
+          value: http://localhost:30002/realms/druppie/protocol/openid-connect/auth
+        - name: OPENID_JWKS_ENDPOINT
+          value: http://druppie-keycloak.druppie.svc.cluster.local:8080/realms/druppie/protocol/openid-connect/certs
+        - name: OPENID_ISSUER
+          value: http://localhost:30002/realms/druppie
+        - name: OPENID_CLIENT_ID
+          value: guacamole
+        - name: OPENID_REDIRECT_URI
+          value: http://localhost:30020/guacamole/
+        - name: OPENID_USERNAME_CLAIM_TYPE
+          value: preferred_username
+        - name: OPENID_GROUPS_CLAIM_TYPE
+          value: roles
+        volumeMounts:
+        - name: guac-extensions
+          mountPath: /opt/guacamole/openid
+          subPath: openid
         ports:
         - containerPort: 8080
         readinessProbe:
@@ -120,6 +154,9 @@ spec:
             port: 8080
           initialDelaySeconds: 15
           periodSeconds: 5
+      volumes:
+      - name: guac-extensions
+        emptyDir: {}
 ---
 apiVersion: v1
 kind: Service

@@ -95,6 +95,7 @@ class DevVMRepository(BaseRepository):
             branch=vm.branch,
             status=vm.status,
             created_at=vm.created_at,
+            guacamole_connection_id=vm.guacamole_connection_id,
         )
 
     def _to_detail(self, vm: DevVM) -> DevVMDetail:

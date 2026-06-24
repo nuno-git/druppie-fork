@@ -3,81 +3,81 @@
 # dev-vm-entrypoint.sh — boot a Druppie developer workspace VM.
 #
 # Brings up all services a single dev-VM needs, WITHOUT systemd and WITHOUT
-# --privileged. Designed to run as PID 1 inside a sysbox-runc container:
+# --privileged. Designed to run as PID 1 inside a sysbox-runc container.
 #
-#     docker run -d --runtime sysbox-runc --network <sandbox-net> \
-#         --memory 12g --cpus 4 --shm-size 2g --tmpfs /tmp:size=4g \
-#         --storage-opt size=20G dev-vm-base:latest
-#
-# Services started (all bound to 0.0.0.0 so Guacamole/docker-network can reach them):
-#   * dockerd         nested Docker (sysbox virtualizes the capabilities)
-#   * local Gitea     gitea/gitea:1.21, DinD on :3000 (web) + :2222 (git SSH)
-#   * sshd            :22  (password: developer/developer, keyless dev box)
-#   * xrdp            :3389 (Guacamole RDP -> xfce4 session)
-#   * code-server     :8080 (browser-based VS Code, no auth — behind Guacamole)
+# Critical services (xrdp, sshd) start FIRST so the VM is reachable within
+# seconds. Non-critical services (local Gitea) start in the background.
 #
 set -Eeuo pipefail
 
 log() { printf '[dev-vm-entrypoint] %s\n' "$*"; }
 
 # ---------------------------------------------------------------------------
-# 0. Prepare filesystem + Docker daemon config
+# 0. Prepare filesystem
 # ---------------------------------------------------------------------------
 mkdir -p \
-    /workspace /cache /run/sshd /run/xrdp /var/log /etc/docker
+    /workspace /cache /run/sshd /run/xrdp /run/user/1000 /var/log /etc/docker
 mkdir -p \
     /cache/tmp /cache/pip /cache/npm /cache/uv /cache/pnpm /cache/yarn /cache/bun
 chmod 1777 /cache/tmp
+chown developer:developer /workspace /cache /run/user/1000 2>/dev/null || true
 
-# Ensure the developer user owns the shared roots (non-recursive; fresh VM).
-chown developer:developer /workspace /cache 2>/dev/null || true
-
-if [ -n "$DEV_VM_RDP_USERNAME" ] && [ -n "$DEV_VM_RDP_PASSWORD" ]; then
+# Apply per-VM password if provided
+if [ -n "${DEV_VM_RDP_USERNAME:-}" ] && [ -n "${DEV_VM_RDP_PASSWORD:-}" ]; then
     echo "${DEV_VM_RDP_USERNAME}:${DEV_VM_RDP_PASSWORD}" | chpasswd
 fi
 
-# Default dockerd config: Harbor insecure registry. Idempotent — recreated only
-# if missing/empty so a runtime-mounted config is respected.
-if [ ! -s /etc/docker/daemon.json ]; then
-    cat > /etc/docker/daemon.json <<'JSON'
-{
-  "insecure-registries": ["harbor.local:8181", "localhost:8181", "harbor.local:5000", "localhost:5000"]
-}
-JSON
+# ---------------------------------------------------------------------------
+# 1. Start dbus + SSH + xrdp (CRITICAL — must be fast)
+# ---------------------------------------------------------------------------
+log "Starting dbus..."
+dbus-daemon --system --fork 2>/dev/null || log "WARNING: dbus failed to start."
+
+log "Starting sshd..."
+/usr/sbin/sshd 2>/dev/null || log "WARNING: sshd failed to start."
+
+log "Starting xrdp..."
+xrdp-sesman 2>/dev/null || log "WARNING: xrdp-sesman failed to start."
+xrdp 2>/dev/null || log "WARNING: xrdp failed to start."
+
+# ---------------------------------------------------------------------------
+# 2. Start code-server (non-blocking)
+# ---------------------------------------------------------------------------
+log "Starting code-server..."
+sudo -u developer -H code-server \
+    --bind-addr 0.0.0.0:8080 --auth none /workspace \
+    > /var/log/code-server.log 2>&1 &
+
+log "Dev VM ready (critical services up)."
+log "  sshd(:22)  xrdp(:3389)  code-server(:8080)"
+if [ -n "${DEV_VM_RDP_PASSWORD:-}" ]; then
+    log "  Developer login: developer / (per-VM password)"
+else
+    log "  Developer login: developer / developer"
 fi
 
 # ---------------------------------------------------------------------------
-# 1. Start Docker daemon (sysbox provides nested Docker; no --privileged)
-# ---------------------------------------------------------------------------
-log "Starting dockerd..."
-dockerd > /var/log/dockerd.log 2>&1 &
-DOCKERD_PID=$!
-for i in $(seq 1 60); do
-    if docker info >/dev/null 2>&1; then
-        log "dockerd ready (pid ${DOCKERD_PID})."
-        break
-    fi
-    if [ "$i" -eq 60 ]; then
-        log "WARNING: dockerd did not become ready in 60s. Nested Docker unavailable. See /var/log/dockerd.log"
-    fi
-    sleep 1
-done
-
-# ---------------------------------------------------------------------------
-# 2. Start local Gitea (non-fatal — a missing Gitea must NOT take down RDP/SSH)
+# 3. Start Docker daemon + local Gitea (BACKGROUND — non-critical)
 # ---------------------------------------------------------------------------
 (
-    set -e
-    if docker ps --format '{{.Names}}' | grep -q '^local-gitea$'; then
-        log "Local Gitea already running."
-        exit 0
+    log "Starting dockerd (background)..."
+    if [ ! -s /etc/docker/daemon.json ]; then
+        printf '{\n  "insecure-registries": ["harbor.local:8181", "localhost:8181", "harbor.local:5000", "localhost:5000"]\n}\n' \
+            > /etc/docker/daemon.json
     fi
 
-    log "Starting local Gitea (gitea/gitea:1.21)..."
-    # Clear any half-stopped container from a previous boot.
-    docker rm -f local-gitea >/dev/null 2>&1 || true
+    dockerd > /var/log/dockerd.log 2>&1 &
+    for i in $(seq 1 30); do
+        if docker info >/dev/null 2>&1; then
+            log "dockerd ready."
+            break
+        fi
+        [ "$i" -eq 30 ] && log "WARNING: dockerd not ready in 30s."
+        sleep 1
+    done
 
-    # Hex avoids the pipefail/SIGPIPE footgun of "openssl rand | tr | head".
+    log "Starting local Gitea (background)..."
+    docker rm -f local-gitea >/dev/null 2>&1 || true
     GITEA_PASS="$(openssl rand -hex 10)"
 
     docker run -d --name local-gitea \
@@ -88,62 +88,36 @@ done
         -e GITEA__server__SSH_PORT=2222 \
         -e GITEA__server__SSH_LISTEN_PORT=22 \
         -v local-gitea-data:/data \
-        gitea/gitea:1.21
+        gitea/gitea:1.21 2>/dev/null || {
+        log "WARNING: local Gitea failed to start (nested Docker unavailable)."
+        exit 0
+    }
 
     printf 'Local Gitea\n  URL:      http://localhost:3000\n  SSH:      ssh://git@localhost:2222\n  Admin:    gitea_admin\n  Password: %s\n' \
         "$GITEA_PASS" > /workspace/.gitea-credentials
     chmod 600 /workspace/.gitea-credentials
     chown developer:developer /workspace/.gitea-credentials 2>/dev/null || true
 
-    log "Waiting for Gitea to become healthy..."
-    for i in $(seq 1 60); do
+    for i in $(seq 1 30); do
         if curl -sf http://localhost:3000/api/v1/version >/dev/null 2>&1; then
             log "Gitea healthy."
-            break
-        fi
-        if [ "$i" -eq 60 ]; then
-            log "WARNING: Gitea did not become healthy in 120s. See: docker logs local-gitea"
+            docker exec local-gitea gitea admin user create \
+                --admin --username gitea_admin --password "$GITEA_PASS" \
+                --email admin@local.gitea --must-change-password=false \
+                >/dev/null 2>&1 \
+                || log "NOTE: gitea admin bootstrap skipped."
+            log "Local Gitea ready (:3000, :2222)."
+            exit 0
         fi
         sleep 2
     done
-
-    # Bootstrap the admin account via the in-container CLI (best-effort).
-    docker exec local-gitea gitea admin user create \
-        --admin --username gitea_admin --password "$GITEA_PASS" \
-        --email admin@local.gitea --must-change-password=false \
-        >/dev/null 2>&1 \
-        || log "NOTE: gitea admin bootstrap skipped (already exists or DB still migrating)."
-
-    log "Local Gitea ready. Credentials in /workspace/.gitea-credentials."
+    log "WARNING: Gitea did not become healthy in 60s."
 ) || log "WARNING: local Gitea bootstrap failed; continuing without it."
 
 # ---------------------------------------------------------------------------
-# 3. Start SSH daemon
+# 4. Reap zombie children (PID 1 responsibility) and keep container alive
 # ---------------------------------------------------------------------------
-log "Starting sshd..."
-mkdir -p /run/sshd
-/usr/sbin/sshd || log "WARNING: sshd failed to start."
-
-# ---------------------------------------------------------------------------
-# 4. Start xrdp (Guacamole connects here on :3389 -> xfce4)
-# ---------------------------------------------------------------------------
-log "Starting xrdp..."
-xrdp-sesman || log "WARNING: xrdp-sesman failed to start."
-xrdp || log "WARNING: xrdp failed to start."
-
-# ---------------------------------------------------------------------------
-# 5. Start code-server as the non-root developer user
-# ---------------------------------------------------------------------------
-log "Starting code-server..."
-sudo -u developer -H code-server \
-    --bind-addr 0.0.0.0:8080 --auth none /workspace \
-    > /var/log/code-server.log 2>&1 &
-
-# ---------------------------------------------------------------------------
-# 6. Keep the container alive
-# ---------------------------------------------------------------------------
-log "Dev VM ready."
-log "  sshd(:22)  gitea(:3000)  xrdp(:3389)  code-server(:8080)  gitea-ssh(:2222)"
-log "  Developer login: developer / developer (sudo NOPASSWD)"
-
-exec sleep infinity
+while true; do
+    wait -n 2>/dev/null || sleep 300 &
+    wait $! 2>/dev/null
+done

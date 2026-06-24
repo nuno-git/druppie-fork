@@ -23,6 +23,8 @@ class DevVMSummary(BaseModel):
     branch: str
     status: str
     created_at: datetime
+    guacamole_connection_id: str | None = None
+    guacamole_url: str | None = None
 
 
 class DevVMDetail(DevVMSummary):
