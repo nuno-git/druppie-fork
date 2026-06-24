@@ -13,22 +13,25 @@ architecture described in the rest of this document.
 
 | Component | Target (RKE2) | Current (k3s dev) | Status |
 |-----------|--------------|-------------------|--------|
-| Cluster | RKE2 8 nodes | k3s single node | ✅ Working |
+| Cluster | RKE2 8 nodes | k3s single node (24GB RAM, 40 pods) | ✅ Working |
 | Container runtime | Kata Containers | Docker (sysbox optional) | ⚠️ No Kata |
-| Harbor | In cluster | In cluster (k3s) | ✅ |
-| Keycloak | In namespace | In namespace | ✅ |
-| Frontend | Helm deployed | Helm deployed, image from Harbor | ✅ |
-| Backend | Helm deployed | Helm deployed, Docker socket mounted | ✅ |
-| Guacamole | In cluster | In cluster (standalone manifest) | ✅ |
-| Dev VM creation | Kata pods | Docker containers (sysbox) | ✅ Working |
-| PriorityClasses | 5 classes | 5 classes applied | ✅ |
-| Secrets (3-layer) | Vault + ESO | Static (Layer 1 only) | ❌ Not implemented |
+| Harbor | In cluster | In cluster (k3s), 3 images (backend, frontend, dev-vm-base) | ✅ |
+| Keycloak | In namespace | In namespace, realm configured with k3s NodePorts | ✅ |
+| Frontend | Helm deployed | Helm deployed, DevEnvironments page, image from Harbor | ✅ |
+| Backend | Helm deployed | Helm deployed, Docker socket mounted, 97 routes | ✅ |
+| Guacamole | In cluster | In cluster, guacd hostNetwork for RDP reach, 3 pods | ✅ |
+| Dev VM creation | Kata pods | Docker containers, per-VM RDP password, Guacamole connection | ✅ Working |
+| RDP via Guacamole | Browser-based | RDP port open, xrdp running, guacd can reach VMs | ✅ Verified |
+| PriorityClasses | 5 classes | 5 classes + sysbox RuntimeClass applied | ✅ |
+| Vault | External | Installed (dev mode), KV v2 seeded | ✅ Running |
+| ESO | In cluster | Installed, ClusterSecretStore Valid, 4 ExternalSecrets synced | ✅ Working |
+| Per-VM secrets | 3-layer model | Layer 1 (random RDP pw per VM) + Layer 2/3 via Vault/ESO manifests | ⚠️ Layer 1 done, L2/L3 wired but empty values |
+| CI/CD | Gitea Actions | Act-runner registered, valid_volumes fixed, workflow exists | ⚠️ Docker socket works but checkout fails (k3s NodePort unreachable from Docker bridge) |
 | FluxCD | GitOps auto-deploy | Not installed | ❌ |
-| Vault | External | Not installed | ❌ |
 | Traefik Ingress | Per-dev-VM routing | Not configured | ❌ |
-| CI/CD | Gitea Actions | Workflow + act-runner (manual test passed) | ⚠️ Partial |
 | Blue-green deploy | Zero-downtime | Default RollingUpdate (1 replica) | ❌ No zero-downtime |
 | Monitoring | Prometheus + Grafana | Running | ✅ |
+| Prod namespace | druppie-prod | Manifests written (k8s/namespaces.yaml), not deployed (RAM) | 📝 Ready for real cluster |
 
 For the step-by-step setup of the current k3s dev cluster, see
 [K3S-DEV-SETUP.md](./K3S-DEV-SETUP.md).
