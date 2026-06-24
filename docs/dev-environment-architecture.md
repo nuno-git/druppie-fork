@@ -470,6 +470,80 @@ flowchart LR
 # Totaal: ~1GB RAM
 ```
 
+### Hoe Guacamole werkt
+
+Guacamole is géén per-host proxy. Er is **één deployment achter één URL** (`remote.druppie.rijnland.dev`). Een developer authenticeert één keer en ziet een lijst met verbindingen waarvoor hij geautoriseerd is. Dit lost het "lijstje met machines en wachtwoorden bijhouden"-probleem op dat Guacamole oorspronkelijk voor ontworpen is.
+
+**Drie componenten:**
+
+| Component | Rol |
+|-----------|-----|
+| **Web applicatie** (Java server + JavaScript client in de browser) | Authenticatie afhandelen, verbindingsdefinities opslaan, de HTML5 client UI serveren. Implementeert zelf géén remote-desktop protocol. |
+| **guacd** | Native C proxy daemon. Ontvangt het Guacamole protocol van de web app, laadt een protocol plugin (`libguac-client-rdp`, `-vnc` of `-ssh`) en maakt de daadwerkelijke verbinding met de remote VM. Luistert standaard op TCP 4822. |
+| **libguac** | Gedeelde C library waarop guacd en de protocol plugins leunen. |
+
+**Verbindingsmodel.** Elke dev VM (`dev-jan-vm`, enz.) wordt geregistreerd als één *connection* in Guacamole's database: een benoemde configuratie met protocol, hostname, poort, credentials en weergaveparameters. Op de VM zelf draait niets Guacamole-specifieks, alleen een normale RDP of SSH service.
+
+**Waarom één URL, niet per-VM subdomeinen.** Een per-VM subdomein patroon (`dev-jan-vm.rijnland.dev`) vereist óf een aparte Guacamole deployment per VM (verspillend: aparte guacd, DB, certificaat en user store), óf een reverse-proxy die elk subdomein terugrouteert naar dezelfde Guacamole. Dat laatste koopt niets dat het home-scherm niet al biedt, en het herintroduceert precies het probleem dat Guacamole moest oplossen: onthouden welke machine en welke credentials je ook alweer nodig had.
+
+**Per-VM isolatie via RBAC.** Elke connection heeft object-level permissies: `READ` (vereist om te verbinden), `UPDATE`, `DELETE` en `ADMINISTER`. Permissies worden per-user of per-user-group verleend. Voorbeeld: maak connection `dev-jan-vm`, verleen `READ` aan user `jan`. Als Jan inlogt ziet haar home-scherm exact `dev-jan-vm`; Mary ziet alleen `dev-mary-vm`; admins zien alles. Groeps-overerving is recursief, dus een `developers` groep kan baseline toegang verlenen aan alle leden.
+
+**Deep-links (optioneel, voor portal integratie).** Directe links naar een specifieke connection hebben de vorm `/guacamole/#/client/<encoded-id>`, waarbij `<encoded-id>` de base64url is van de null-joined tuple `[connection_id, type, dataSource]`. De gebruiker moet nog steeds authenticeren; een deep-link slaat alleen de home-screen klik over. Handig voor een "Open mijn VM" knop in de Druppie frontend, maar geen manier om login te omzeilen.
+
+```mermaid
+flowchart LR
+    BROWSER["Developer browser"] -->|"HTTPS :443"| WEB["Guacamole Web App<br/>remote.druppie.rijnland.dev<br/>Auth + connections DB + Web UI"]
+    WEB -->|"Guacamole protocol<br/>TCP :4822"| GUACD["guacd daemon<br/>laadt RDP / SSH / VNC plugin"]
+    GUACD -->|"RDP :3389 (intern)"| VMRDP["Dev VM<br/>bijv. dev-jan-vm"]
+    GUACD -->|"SSH :22 (intern)"| VMSSH["Dev VM<br/>bijv. dev-jan-vm"]
+
+    style BROWSER fill:#fdcb6e,color:#1a1a2e
+    style WEB fill:#0984e3,color:#ffffff
+    style GUACD fill:#6c5ce7,color:#ffffff
+    style VMRDP fill:#e17055,color:#ffffff
+    style VMSSH fill:#e17055,color:#ffffff
+```
+
+### Login & Authenticatie (Keycloak OIDC SSO)
+
+Guacamole heeft een officiële OpenID Connect extensie. Daarmee hergebruiken we de bestaande Keycloak installatie (realm `druppie`, dezelfde users als de Druppie frontend: `admin`, `architect`, `developer`, `analyst`, `normal_user`). Een developer logt één keer in bij Keycloak en is daarna zowel in de Druppie frontend als in Guacamole ingelogd.
+
+**SSO flow:**
+
+1. Developer navigeert naar `remote.druppie.rijnland.dev`.
+2. Guacamole (met de OpenID Connect extensie aan) redirect naar het Keycloak authorization endpoint voor realm `druppie`.
+3. Developer authenticeert bij Keycloak, met dezelfde credentials als de Druppie frontend (`admin` / `Admin123!`, enz.).
+4. Keycloak redirect terug naar Guacamole met een authorization code / id_token.
+5. Guacamole valideert het token, mapt de OIDC subject naar een lokale Guacamole user (bij eerste login auto-aangemaakt indien zo geconfigureerd), en toont het home-scherm gefilterd op de connections van die user.
+
+**Auto-provisioning.** Guacamole kan zo geconfigureerd worden dat de lokale user-record bij eerste OIDC login automatisch wordt aangemaakt. Er hoeft dus geen handmatige user-duplicatie tussen Keycloak en Guacamole.
+
+**Authorisatie is los van authenticatie.** Keycloak beantwoordt "wie ben je?"; Guacamole's eigen RBAC beantwoordt "welke VMs mag je zien?". De provisioning API (zie de Deploy flow hieronder) verleent `READ` op de juiste connection aan de juiste user, nadat de VM is aangemaakt.
+
+**Single logout (optioneel).** Keycloak SSO logout propageert naar alle geïntegreerde apps, dus uitloggen bij Keycloak logt ook uit Guacamole.
+
+```mermaid
+sequenceDiagram
+    participant Dev as Developer
+    participant Browser as Browser
+    participant Guac as Guacamole (OIDC ext.)
+    participant KC as Keycloak (realm druppie)
+
+    Dev->>Browser: Navigeert naar remote.druppie.rijnland.dev
+    Browser->>Guac: GET / (geen sessie)
+    Guac-->>Browser: 302 redirect naar Keycloak
+    Browser->>KC: Authorization request (realm druppie)
+    KC-->>Browser: Login pagina
+    Dev->>KC: Login (admin / Admin123!)
+    KC-->>Browser: 302 redirect + authorization code / id_token
+    Browser->>Guac: Callback met token
+    Guac->>KC: Valideer token
+    KC-->>Guac: Geldig (subject = user)
+    Guac->>Guac: Map OIDC subject naar lokale user<br/>(auto-aanmaken bij eerste login)
+    Guac-->>Browser: Home-scherm (connections gefilterd op RBAC)
+    Browser-->>Dev: Lijst met geautoriseerde VMs
+```
+
 ### RDPGW — later (fase 2)
 
 Voor ontwikkelaars die de native Windows RDP client (mstsc) willen gebruiken i.p.v. browser. [bolkedebruin/rdpgw](https://github.com/bolkedebruin/rdpgw) is een Go-based RD Gateway voor K8s. **Niet in de eerste fase** — Guacamole dekt RDP en SSH. RDPGW toevoegen als er behoefte is aan native mstsc.
@@ -512,6 +586,7 @@ sequenceDiagram
     participant K8s as Kubernetes API
     participant Pod as Dev VM (Kata Pod)
     participant Git as Gitea
+    participant Guac as Guacamole
 
     Note over Dev,Git: Start — developer wil feature branch deployen
 
@@ -543,8 +618,12 @@ sequenceDiagram
 
     Pod-->>BE: Ready
     BE->>K8s: 5. Maak Traefik IngressRoute
+    BE->>Guac: 6. Maak Guacamole connection<br/>POST /api/session/data/postgresql/connections<br/>(protocol=rdp, hostname=pod IP, port=3389, creds uit secret)
+    Guac-->>BE: connection-id
+    BE->>Guac: 7. Verleen READ permissie op connection aan developer
     BE-->>UI: Status: ✅ Ready (2m 34s)
-    UI-->>Dev: URL: https://dev-feature-xyz.druppie.rijnland.dev
+    UI-->>Dev: code-server: https://dev-feature-xyz.druppie.rijnland.dev
+    UI-->>Dev: Open VM: https://remote.druppie.rijnland.dev/#/client/&lt;encoded-id&gt;
 
     Note over Dev,Git: Developer werkt in de pod
 
@@ -562,6 +641,7 @@ sequenceDiagram
 
     Dev->>UI: Klikt "Stop"
     UI->>BE: POST /dev-vms/feature-xyz/stop
+    BE->>Guac: Verwijder Guacamole connection<br/>(of trek READ permissie in)
     BE->>K8s: Delete pod (PVC blijft)
     BE-->>UI: Status: Stopped (PVC behouden)
 
