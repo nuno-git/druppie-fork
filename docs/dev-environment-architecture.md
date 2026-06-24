@@ -3,7 +3,6 @@
 > **Status:** Definitief architectuurvoorstel  
 > **Datum:** 2026-06-23  
 > **Gebaseerd op:** [research-dev-environments.md](./research-dev-environments.md)  
-> **Hardware:** 1TB RAM · Xeon CPUs · 4× RTX 6000 Pro  
 
 ---
 

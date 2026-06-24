@@ -2,7 +2,7 @@
 
 > **Status:** Research — alle beslissingen genomen  
 > **Datum:** 2026-06-23  
-> **Cluster:** Rancher RKE2 (containerd) · 1TB RAM · Xeon CPUs · 4× RTX 6000 Pro  
+> **Cluster:** Rancher RKE2 (containerd) 
 > **Stories:** [1/3 K8s] Migratie · [2/3 K8s] CI/CD · [3/3 K8s] Preview/Dev omgevingen  
 
 ---
