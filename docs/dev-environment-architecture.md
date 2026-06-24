@@ -1,0 +1,742 @@
+# Aanbevolen Architectuur: Dev, Preview & Prod op Local Rancher RKE2
+
+> **Status:** Definitief architectuurvoorstel  
+> **Datum:** 2026-06-23  
+> **Gebaseerd op:** [research-dev-environments.md](./research-dev-environments.md)  
+> **Hardware:** 1TB RAM · Xeon CPUs · 4× RTX 6000 Pro  
+
+---
+
+## Top-Level Architectuur
+
+```mermaid
+flowchart TB
+    subgraph Internet["Internet / DNS"]
+        USER["Gebruiker · druppie.rijnland.dev"]
+        DEV_USER["Developer · dev-branch.druppie.rijnland.dev"]
+        REVIEWER["Reviewer · PR preview URL"]
+    end
+
+    subgraph Rancher["Rancher RKE2 Cluster (1TB RAM, Xeon, 4× RTX 6000 Pro)"]
+        direction TB
+
+        %% ── Infrastructure Layer (already present via Fleet) ──
+        subgraph Infra["Infrastructure (Fleet GitOps)"]
+            direction LR
+            TRAEFIK["Traefik Ingress + TLS"]
+            CM["cert-manager · Let's Encrypt"]
+            LONGHORN["Longhorn Storage"]
+            VAULT["Hashicorp Vault + ESO"]
+            GITEA["Gitea + Container Registry"]
+            PROM["Prometheus + Grafana"]
+            GPU_OP["NVIDIA GPU Operator"]
+        end
+
+        %% ── Prod + Dev Namespaces (Fleet auto-deploy) ──
+        subgraph ProdNS["Namespace: druppie-prod"]
+            PROD_KC["Keycloak"]
+            PROD_BE["Backend 3-8× (KEDA)"]
+            PROD_FE["Frontend 1-8× (HPA)"]
+            PROD_MCP["9× MCP Modules"]
+            PROD_CNPG["CNPG PostgreSQL (HA, 3 instances)"]
+            PROD_GITEA["Gitea"]
+            PROD_NFS["NFS RWX Workspace"]
+        end
+
+        subgraph DevNS["Namespace: druppie-colab-dev"]
+            DEV_KC["Keycloak"]
+            DEV_BE["Backend 2×"]
+            DEV_FE["Frontend 2×"]
+            DEV_MCP["9× MCP Modules"]
+            DEV_CNPG["CNPG PostgreSQL"]
+            DEV_GITEA["Gitea"]
+        end
+
+        %% ── Kata Pods (managed by Druppie, not Fleet) ──
+        subgraph KataPods["Kata Container Pods"]
+            direction TB
+
+            subgraph DevVM1["Dev VM: dev-feature-xyz"]
+                D1_CODE["code-server :8080"]
+                D1_SSH["SSH :22"]
+                D1_RDP["RDP :3389"]
+                D1_STACK["Druppie Stack · Hot Reload<br/>backend :8000 · frontend :5273<br/>9× modules · PG :5432<br/>Lokale Gitea :3000 (DinD)<br/>Mock Auth · Docker-in-Docker"]
+                D1_HOME["50Gi Longhorn PVC"]
+            end
+
+            subgraph DevVM2["Dev VM: dev-feature-abc"]
+                D2_IDE["code-server · SSH · RDP"]
+                D2_STACK["Druppie Stack · Hot Reload"]
+                D2_HOME["50Gi Longhorn PVC"]
+            end
+
+            subgraph AgentVM1["Agent Sandbox"]
+                A1_STACK["Druppie Stack · Headless<br/>git clone · agent code run"]
+                A1_EPHEMERAL["Ephemeral · TTL: 5 min"]
+            end
+
+            subgraph AgentVM2["Agent Sandbox"]
+                A2_STACK["Druppie Stack · Headless"]
+                A2_EPHEMERAL["Ephemeral"]
+            end
+        end
+
+        %% ── Fleet GitOps ──
+        subgraph FleetLayer["Fleet (GitOps)"]
+            FL_MAIN["main → druppie-prod<br/>Auto-deploy"]
+            FL_COLAB["colab-dev → druppie-colab-dev<br/>Auto-deploy"]
+        end
+
+        %% ── Druppie Backend (Provisioning Controller) ──
+        subgraph DruppieController["Druppie Backend (Provisioning)"]
+            DC_API["Dev VM API<br/>create / stop / delete / status"]
+            DC_AGENT["k8s_manager.py<br/>Agent sandbox provisioning"]
+        end
+    end
+
+    %% ── Connections ──
+    USER -->|"druppie.rijnland.dev"| TRAEFIK
+    DEV_USER -->|"dev-*.druppie.rijnland.dev"| TRAEFIK
+    REVIEWER -->|"PR preview URL"| TRAEFIK
+
+    TRAEFIK -->|"/api /"| ProdNS
+    TRAEFIK -->|"dev.colab.*"| DevNS
+    TRAEFIK -->|"dev-feature-*"| DevVM1
+    TRAEFIK -->|"dev-feature-*"| DevVM2
+
+    DC_API -->|"create/stop pod"| KataPods
+    DC_AGENT -->|"spawn agent sandbox"| AgentVM1
+
+    VAULT -->|"Laag 2: ESO sync<br/>user creds (SSH, LLM)"| DevVM1
+    VAULT -->|"Laag 2: ESO sync"| DevVM2
+
+    GITEA -->|"git clone/push<br/>(developer's persoonlijke repo)"| KataPods
+    GITEA -->|"container images"| ProdNS
+
+    FL_MAIN -->|"Helm deploy"| ProdNS
+    FL_COLAB -->|"Helm deploy"| DevNS
+
+    %% ── Styling ──
+    style Rancher fill:#1a1a2e,color:#e0e0e0,stroke:#0f3460,stroke-width:3px
+    style Infra fill:#2d3436,color:#e0e0e0,stroke:#636e72
+    style ProdNS fill:#0984e3,color:#ffffff,stroke:#74b9ff
+    style DevNS fill:#00b894,color:#1a1a2e,stroke:#55efc4
+    style KataPods fill:#e17055,color:#ffffff,stroke:#fab1a0
+    style FleetLayer fill:#6c5ce7,color:#ffffff,stroke:#a29bfe
+    style DruppieController fill:#fdcb6e,color:#1a1a2e,stroke:#ffeaa7
+```
+
+---
+
+## Node Topology & Workload Placement
+
+Het cluster heeft **8 fysieke nodes** (na provisioning). Namespaces zijn logische isolatie — pods uit verschillende namespaces draaien op dezelfde node. Fysieke scheiding tussen prod en dev is **niet nodig** — we gebruiken PriorityClasses (prod wordt bij pressure beschermd, dev VMs geëvinceerd).
+
+```mermaid
+flowchart TB
+    subgraph Cluster["RKE2 Cluster — 8 nodes, ~480GB worker RAM"]
+        direction TB
+
+        subgraph Masters["3× Master Nodes (control plane + etcd)"]
+            M1["master1<br/>16-32GB RAM<br/>NoSchedule taint"]
+            M2["master2<br/>16-32GB RAM"]
+            M3["master3<br/>16-32GB RAM"]
+            M_NOTE["Geen workloads<br/>Alleen control plane"]
+        end
+
+        subgraph GPUNode["1× GPU Node (128GB+ RAM)"]
+            GPU1["RTX 6000 Pro #1 (~48GB VRAM)"]
+            GPU2["RTX 6000 Pro #2 (~48GB VRAM)"]
+            GPU_TAINT["Taint: gpu=true:NoSchedule"]
+            LLM_POD["Prod LLM Pod (vLLM)<br/>2× nvidia.com/gpu (exclusive)<br/>96GB VRAM totaal<br/>OpenAI-compatible API op :8000"]
+        end
+
+        subgraph Workers["4× Worker Nodes (96GB RAM elk = 384GB totaal)"]
+            direction LR
+            W1["worker1<br/>96GB RAM · 16+ vCPU<br/>label: node-type=worker"]
+            W2["worker2<br/>96GB RAM · 16+ vCPU"]
+            W3["worker3<br/>96GB RAM · 16+ vCPU"]
+            W4["worker4<br/>96GB RAM · 16+ vCPU"]
+        end
+    end
+
+    subgraph Workloads["Workload Placement (gemengd op worker nodes)"]
+        direction TB
+
+        subgraph OnWorkers["Op worker nodes (PriorityClass bepaalt prioriteit)"]
+            WS_PROD["druppie-prod<br/>~35GB RAM · priority 10000"]
+            WS_DEVNS["druppie-colab-dev<br/>~30GB RAM · priority 8000<br/>(zelfde stack als prod)"]
+            WS_DEVVM["10× Dev VMs (Kata pods)<br/>16GB per VM = 160GB · priority 1000"]
+            WS_AGENT["Agent Sandboxes (max 5)<br/>~40GB · priority 500"]
+            WS_CI["CI/CD runners<br/>~10GB · priority 3000"]
+        end
+
+        subgraph OnGPU["Op GPU node (toleration: gpu=true)"]
+            WS_LLM["Prod LLM Pod<br/>64GB RAM, 96GB VRAM"]
+        end
+    end
+
+    LLM_POD -->|"llm-prod.druppie-prod.svc.cluster.local:8000/v1<br/>(OpenAI-compatible)"| OnWorkers
+
+    WS_DEVNS -.->|"LLM calls via prod URL"| LLM_POD
+    WS_DEVVM -.->|"LLM calls via prod URL"| LLM_POD
+    WS_AGENT -.->|"LLM calls via prod URL"| LLM_POD
+
+    style Cluster fill:#1a1a2e,color:#e0e0e0,stroke:#0f3460,stroke-width:3px
+    style Masters fill:#2d3436,color:#e0e0e0
+    style GPUNode fill:#d63031,color:#ffffff
+    style Workers fill:#0984e3,color:#ffffff
+    style Workloads fill:#2d3436,color:#e0e0e0
+    style OnWorkers fill:#00b894,color:#1a1a2e
+    style OnGPU fill:#e17055,color:#ffffff
+```
+
+### GPU Strategie — prod only, gedeeld via URL
+
+De GPU node (2× RTX 6000 Pro, 96GB VRAM totaal) is **exclusief voor de prod LLM pod**. Dev VMs, colab-dev, en agent sandboxes gebruiken géén lokale GPU — zij benaderen de prod LLM via een interne service URL.
+
+```
+GPU Node (128GB+ RAM, exclusief)
+└── Prod LLM Pod (vLLM of Ollama)
+    ├── 2× nvidia.com/gpu (exclusive limit, 96GB VRAM)
+    ├── Taint toleration: gpu=true:NoSchedule
+    └── Exposeert OpenAI-compatible endpoint:
+        http://llm-prod.druppie-prod.svc.cluster.local:8000/v1
+
+Dev VMs + Colab-dev + Agent Sandboxes
+└── LLM_PROVIDER=internal
+    LLM_BASE_URL=http://llm-prod.druppie-prod.svc.cluster.local:8000/v1
+    → Alle LLM calls gaan naar prod LLM pod
+    → Geen GPU node nodig in dev/colab-dev
+```
+
+**Waarom niet MIG of time-slicing:** Met 1 GPU node geeft partitionering prod inferentie minder VRAM. Exclusief voor prod is simpeler en geeft beste prod performance. Devs testen tegen dezelfde modellen via de URL.
+
+### Node labels en taints (door Druppie team te zetten)
+
+```bash
+# GPU node — exclusief voor LLM workload
+kubectl label node <gpu-node> node-type=gpu gpu=true
+kubectl taint node <gpu-node> gpu=true:NoSchedule
+
+# Worker nodes — alle andere workloads
+kubectl label node <worker-1> node-type=worker
+kubectl label node <worker-2> node-type=worker
+kubectl label node <worker-3> node-type=worker
+# (Master nodes hebben al NoSchedule taint van RKE2)
+```
+
+### Namespace isolatie — wat het wél en niet doet
+
+| Wat namespaces isoleren | Wat ze NIET isoleren |
+|------------------------|---------------------|
+| ✅ ResourceQuota (RAM/CPU per namespace) | ❌ Fysieke node (pods delen nodes) |
+| ✅ NetworkPolicy (netwerkverkeer blokkeren) | ❌ Kernel (vandaar Kata voor dev VMs) |
+| ✅ RBAC (wie mag wat) | ❌ CPU/RAM (tenzij nodeSelector) |
+| ✅ DNS (prod services niet zomaar bereikbaar) | |
+
+### Prod/dev isolatie — PriorityClasses (géén aparte nodes)
+
+Prod, colab-dev, dev VMs en agents draaien op **dezelfde worker nodes**. Geen verspilling van nodes aan dedicated prod. Isolatie komt van PriorityClasses: bij node pressure evicteert K8s eerst dev VMs, dan agents — prod blijft altijd draaien.
+
+```yaml
+# PriorityClasses
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata: { name: druppie-prod }
+value: 10000          # Altijd gescheduled, nooit geëvinceerd
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata: { name: druppie-colab-dev }
+value: 8000           # Hoog, maar onder prod
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata: { name: druppie-ci }
+value: 3000           # CI runners
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata: { name: druppie-dev-vm }
+value: 1000           # Lage prioriteit — geëvinceerd bij pressure
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata: { name: druppie-agent }
+value: 500            # Laagste — agents zijn ephemeral
+```
+
+**Gedrag bij node memory pressure:**
+
+```
+Node krijgt memory pressure (bijv. dev VM draait zware build)
+  │
+  └→ K8s kubelet: "Ik moet pods evicten"
+       │
+       └→ Eviction order (laagste priority eerst):
+            agent sandbox (500)     → EVICTED ✗
+            dev VM (1000)           → EVICTED ✗ (PVC blijft, dev kan herstarten)
+            CI runner (3000)        → EVICTED ✗
+            colab-dev (8000)        → STAYS ✓
+            prod (10000)            → STAYS ✓
+```
+
+Prod overleeft altijd. Dev VMs worden geëvinceerd — PVC blijft behouden, developer klikt "Restart" in Druppie UI.
+
+---
+
+## Dev VM — Close-up
+
+```mermaid
+flowchart TB
+    subgraph DevVM["Dev VM: dev-feature-xyz (Kata Container)"]
+        direction TB
+
+        subgraph Access["Toegang (alles via 443 HTTPS)"]
+            CS["code-server :8080<br/>VS Code in browser<br/>» dev-feature-xyz.druppie.rijnland.dev"]
+            GUAC["Guacamole (extern, via 443)<br/>RDP + SSH in browser<br/>» remote.druppie.rijnland.dev → pod:3389/22"]
+            RDPGW_OPT["~~RDPGW~~ (later, fase 2)<br/>Native RDP via mstsc<br/>Alleen als team er om vraagt"]
+        end
+
+        subgraph Secrets["Secrets — 3 lagen"]
+            SEC_BOOT["Laag 1: Bootstrap (per-VM gegenereerd)<br/>LOCAL_GITEA_TOKEN · LOCAL_PG_PASSWORD<br/>INTERNAL_API_KEY · MODULE_API_TOKEN<br/>→ Lokale Druppie stack config"]
+            SEC_USER["Laag 2: User (Vault → ESO)<br/>SSH_PRIVATE_KEY · ZAI_API_KEY<br/>GIT_REMOTE_URL<br/>→ Developer's persoonlijke credentials"]
+            SEC_CLUST["Laag 3: Cluster (static)<br/>REGISTRY_URL · VAULT_ADDR<br/>LLM_BASE_URL → prod LLM pod<br/>→ Infrastructuur config"]
+        end
+
+        subgraph Stack["Druppie Stack (hot reload, localhost)"]
+            BE["Backend :8000<br/>uvicorn --reload"]
+            FE["Frontend :5273<br/>npm run dev (Vite HMR)"]
+            MODULES["9× MCP Modules :9001-9011"]
+            LAYOUT["Layout Service :8090"]
+            PG["PostgreSQL :5432<br/>standalone container"]
+            LOCAL_GITEA["Lokale Gitea :3000<br/>in Docker-in-Docker<br/>Init scripts gebruiken deze<br/>(niet prod Gitea)"]
+            AUTH["Mock Auth<br/>geen Keycloak"]
+            DIND["Docker Daemon<br/>docker-compose up · docker build"]
+        end
+
+        subgraph Persistence["Storage"]
+            HOME["/home/dev<br/>50Gi Longhorn PVC<br/>git repo · venv · node_modules"]
+            CACHE["/var/lib/docker<br/>Docker image cache<br/>+ lokale Gitea data"]
+        end
+    end
+
+    SEC_BOOT --> Stack
+    SEC_USER --> SSH
+    SEC_CLUST --> Stack
+
+    BE --> FE
+    BE --> MODULES
+    BE --> PG
+    BE --> LOCAL_GITEA
+    FE --> AUTH
+    DIND --> Stack
+
+    HOME --> BE
+    HOME --> FE
+    HOME --> MODULES
+
+    style DevVM fill:#e17055,color:#ffffff,stroke:#fab1a0,stroke-width:2px
+    style Access fill:#2d3436,color:#e0e0e0
+    style Secrets fill:#6c5ce7,color:#ffffff
+    style Stack fill:#1a1a2e,color:#e0e0e0
+    style Persistence fill:#00b894,color:#1a1a2e
+```
+
+---
+
+## Remote Access Gateway (Guacamole + optioneel RDPGW)
+
+Extern is alleen poort 443 (HTTPS) beschikbaar op `*.rijnland.dev`. RDP (3389) en SSH (22) zijn niet rechtstreeks bereikbaar. Oplossing: een remote access gateway die deze protocollen tunnelt over HTTPS.
+
+### Apache Guacamole — primair
+
+Guacamole is een clientless remote desktop gateway. RDP, SSH en VNC sessies lopen in de browser, allemaal over poort 443. Geen client installatie nodig.
+
+```mermaid
+flowchart LR
+    DEV["Developer browser"] -->|"https://remote.druppie.rijnland.dev:443"| TRAEFIK["Traefik Ingress"]
+    TRAEFIK --> GUAC_WEB["Guacamole Web App<br/>Auth + Web UI"]
+    GUAC_WEB --> GUACD["guacd daemon<br/>RDP/SSH/VNC client"]
+    GUACD -->|"RDP :3389 (intern)"| DEVVM1["dev-jan pod"]
+    GUACD -->|"SSH :22 (intern)"| DEVVM2["dev-jan pod"]
+    GUACD -->|"VNC :5900 (intern)"| DEVVM3["dev-maria pod"]
+
+    style DEV fill:#fdcb6e,color:#1a1a2e
+    style TRAEFIK fill:#533483,color:#ffffff
+    style GUAC_WEB fill:#0984e3,color:#ffffff
+    style GUACD fill:#6c5ce7,color:#ffffff
+    style DEVVM1 fill:#e17055,color:#ffffff
+    style DEVVM2 fill:#e17055,color:#ffffff
+    style DEVVM3 fill:#e17055,color:#ffffff
+```
+
+**Wat Guacamole biedt:**
+- RDP desktop in browser (XFCE desktop van dev VM)
+- SSH terminal in browser (voor quick commands)
+- VNC in browser (alternatief voor RDP)
+- File transfer (via RDP drive mapping)
+- Clipboard sharing (copy/paste tussen browser en remote)
+- Audio forwarding
+- Eigen user database of Keycloak OIDC integratie
+
+**Deploy in cluster:**
+```yaml
+# Namespace: remote-access
+# Helm chart: apache-guacamole (beschikbaar via community charts)
+#
+# Componenten:
+#   - guacamole-web    (Web UI + auth, ~512MB)
+#   - guacd            (daemon, RDP/SSH/VNC client, ~256MB)
+#   - postgresql       (session storage, ~256MB)
+#
+# Ingress: remote.druppie.rijnland.dev → guacamole-web:8080
+# Totaal: ~1GB RAM
+```
+
+### RDPGW — later (fase 2)
+
+Voor ontwikkelaars die de native Windows RDP client (mstsc) willen gebruiken i.p.v. browser. [bolkedebruin/rdpgw](https://github.com/bolkedebruin/rdpgw) is een Go-based RD Gateway voor K8s. **Niet in de eerste fase** — Guacamole dekt RDP en SSH. RDPGW toevoegen als er behoefte is aan native mstsc.
+
+```
+Windows mstsc
+  → remote-rdp.druppie.rijnland.dev:443 (Traefik)
+  → RDPGW (Go binary, ~100MB)
+  → dev-jan:3389 (intern)
+```
+
+- Native RDP ervaring (mstsc, Remmina, Microsoft Remote Desktop)
+- Alleen RDP (geen SSH)
+- Lichter dan Guacamole (~100MB vs ~1GB)
+- Go binary, K8s-native, Helm chart beschikbaar
+- **Prioriteit: Laag — alleen als team native RDP vraagt**
+
+### Overzicht toegangsmethoden
+
+| Methode | URL | Poort extern | Wat | Client nodig? |
+|---------|-----|-------------|-----|--------------|
+| **code-server** | `dev-jan.druppie.rijnland.dev` | 443 HTTPS | VS Code in browser + preview | Nee |
+| **Guacamole RDP** | `remote.druppie.rijnland.dev` | 443 HTTPS | RDP desktop in browser | Nee |
+| **Guacamole SSH** | `remote.druppie.rijnland.dev` | 443 HTTPS | SSH terminal in browser | Nee |
+| ~~RDPGW~~ (later) | ~~`remote-rdp.druppie.rijnland.dev`~~ | 443 HTTPS | Native RDP via mstsc | Ja — fase 2 |
+
+Alle externe toegang gaat via poort 443. Geen poort 22 of 3389 naar buiten.
+
+---
+
+## Deploy → Werk → Stop flow
+
+```mermaid
+sequenceDiagram
+    participant Dev as Developer
+    participant UI as Druppie UI
+    participant BE as Druppie Backend
+    participant Vault as Hashicorp Vault
+    participant ESO as ESO
+    participant K8s as Kubernetes API
+    participant Pod as Dev VM (Kata Pod)
+    participant Git as Gitea
+
+    Note over Dev,Git: Start — developer wil feature branch deployen
+
+    Dev->>UI: Opent "Dev Environments" tab
+    UI->>BE: GET /branches (van Gitea)
+    BE->>Git: List branches
+    Git-->>BE: [main, colab-dev, feature-xyz, ...]
+    BE-->>UI: Branches lijst
+
+    Dev->>UI: Selecteert "feature-xyz" → klikt "Deploy"
+    UI->>BE: POST /dev-vms {branch: "feature-xyz"}
+
+    BE->>BE: 1. Check of PVC al bestaat
+    BE->>ESO: 2. Maak ExternalSecret (Vault → K8s)
+    ESO->>Vault: Fetch secret/developers/jan
+    Vault-->>ESO: Tokens, keys
+    ESO->>K8s: Sync K8s Secret
+
+    BE->>K8s: 3. Maak Kata Pod
+    K8s->>Pod: 4. Pod start
+
+    Pod->>Pod: Startup script:
+    Pod->>Git: git clone feature-xyz
+    Pod->>Pod: npm install, pip install
+    Pod->>Pod: docker-compose up (hot reload!)
+    Pod->>Pod: Start code-server, SSH, RDP
+
+    Pod-->>BE: Ready
+    BE->>K8s: 5. Maak Traefik IngressRoute
+    BE-->>UI: Status: ✅ Ready (2m 34s)
+    UI-->>Dev: URL: https://dev-feature-xyz.druppie.rijnland.dev
+
+    Note over Dev,Git: Developer werkt in de pod
+
+    Dev->>UI: Klikt "Connect"
+    UI-->>Dev: Opent https://dev-feature-xyz.druppie.rijnland.dev
+    Dev->>Pod: Edit code in code-server
+    Pod->>Pod: Hot reload: wijziging < 1s zichtbaar
+    Dev->>Pod: Test, debug, herhaal
+
+    Dev->>Pod: git commit -m "feature done"
+    Dev->>Pod: git push origin feature-xyz
+    Pod->>Git: Push commits
+
+    Note over Dev,Git: Klaar — opruimen of laten staan
+
+    Dev->>UI: Klikt "Stop"
+    UI->>BE: POST /dev-vms/feature-xyz/stop
+    BE->>K8s: Delete pod (PVC blijft)
+    BE-->>UI: Status: Stopped (PVC behouden)
+
+    Note over Dev,Git: Later: herstarten met git pull (< 30s)
+```
+
+---
+
+## Agent + Developer samenwerking
+
+```mermaid
+sequenceDiagram
+    participant Dev as Developer (Dev VM)
+    participant UI as Druppie UI
+    participant BE as Druppie Backend
+    participant AgentBE as Agent Runtime (k8s_manager)
+    participant AgentPod as Agent Sandbox (Kata)
+    participant Git as Gitea
+
+    Note over Dev,Git: Developer vraagt agent om code te schrijven
+
+    Dev->>UI: Chat: "Optimaliseer de login flow"
+    UI->>BE: POST /chat/session/start
+    BE->>AgentBE: Start coding agent task
+
+    AgentBE->>AgentPod: 1. Maak Kata sandbox pod
+    AgentPod->>AgentPod: 2. Startup: git clone repo
+    AgentPod->>Git: Clone branch feature-xyz
+
+    loop Agent coding loop
+        AgentPod->>AgentPod: Schrijf code
+        AgentPod->>AgentPod: Test code
+    end
+
+    AgentPod->>Git: git commit + push code changes
+    AgentPod->>AgentPod: Cleanup (ephemeral pod)
+    AgentBE-->>BE: Task complete ✅
+    BE-->>UI: Agent: klaar
+
+    Note over Dev,Git: Developer reviewt agent's werk
+
+    Dev->>Pod: git pull (in dev VM)
+    Dev->>Pod: Review changes in VS Code
+    Dev->>Pod: Accepteer of verwerp
+
+    Note over Dev,Git: Agent en dev VM: zelfde runtime, aparte pods
+    Note over Dev,Git: Interface: git — niet shared filesystem
+```
+
+---
+
+## Secrets Flow — 3-laags model
+
+Dev VMs gebruiken **drie secret bronnen** met verschillende levensduren en doelen. De belangrijkste reden: Druppie init scripts maken repos aan in Gitea. Als elke dev VM prod Gitea gebruikt, vervuilt die. Daarom draait elke dev VM een **lokale Gitea** in Docker-in-Docker.
+
+```mermaid
+flowchart TB
+    subgraph Trigger["Provisioning trigger"]
+        A["Druppie UI: 'Deploy feature-xyz'"]
+    end
+
+    subgraph Layer1["Laag 1: Bootstrap (per-VM, gegenereerd)"]
+        direction TB
+        B1["Druppie Backend genereert random secrets<br/>secrets.token_urlsafe()"]
+        B2["K8s Secret: dev-feature-xyz-bootstrap<br/>LOCAL_GITEA_TOKEN · LOCAL_PG_PASSWORD<br/>INTERNAL_API_KEY · MODULE_API_TOKEN<br/>label: ephemeral=true"]
+    end
+
+    subgraph Vault["Hashicorp Vault"]
+        V1["secret/developers/jan<br/>├── ssh_private_key<br/>├── zai_api_key<br/>└── git_remote_url"]
+    end
+
+    subgraph Layer2["Laag 2: User (Vault → ESO)"]
+        direction TB
+        C1["ExternalSecret CRD<br/>ref: secret/developers/jan"]
+        C2["ESO sync: Vault → K8s Secret<br/>dev-feature-xyz-user"]
+    end
+
+    subgraph Layer3["Laag 3: Cluster (static)"]
+        D1["ConfigMap: cluster-config<br/>REGISTRY_URL · VAULT_ADDR"]
+    end
+
+    subgraph Pod["Kata Dev Pod"]
+        direction TB
+        P1["envFrom: bootstrap + user secrets"]
+        P2["ConfigMap: cluster-config"]
+        P3["Startup script:<br/>1. Start lokale Gitea (Docker-in-Docker)<br/>2. git config (user creds from Vault)<br/>3. Druppie init → lokale Gitea (localhost:3000)<br/>4. Developer git push → echte Gitea (via SSH key)"]
+        P4["Lokale Gitea: prullenbak<br/>Echte Gitea: schoon"]
+    end
+
+    A --> B1
+    B1 --> B2
+    A --> C1
+    C1 --> C2
+    V1 --> C1
+
+    B2 --> P1
+    C2 --> P1
+    D1 --> P2
+    P1 --> P3
+    P2 --> P3
+    P3 --> P4
+
+    style Trigger fill:#fdcb6e,color:#1a1a2e
+    style Layer1 fill:#00b894,color:#1a1a2e
+    style Vault fill:#6c5ce7,color:#ffffff
+    style Layer2 fill:#0984e3,color:#ffffff
+    style Layer3 fill:#2d3436,color:#e0e0e0
+    style Pod fill:#e17055,color:#ffffff
+```
+
+**Twee Gitea's in één pod:**
+
+| Gitea | URL | Gebruikt door | Repos | Levensduur |
+|-------|-----|--------------|-------|------------|
+| **Lokale Gitea** (Docker-in-Docker) | `localhost:3000` | Druppie init scripts | Sample repos, test data | Ephemeral — weg bij pod delete |
+| **Echte Gitea** (cluster) | `gitea.druppie.rijnland.dev` | Developer's git push/pull | Alleen echte Druppie code | Permanent — blijft schoon |
+
+---
+
+## Deploy Triggers — 3 typen
+
+```mermaid
+flowchart TB
+    subgraph Triggers["Hoe deployments worden getriggerd"]
+        direction LR
+
+        subgraph Auto["Automatisch (Git PR merge)"]
+            PR1["PR merge → main"] --> F1["Fleet sync → druppie-prod"]
+            PR2["PR merge → colab-dev"] --> F2["Fleet sync → druppie-colab-dev"]
+        end
+
+        subgraph Manual["Handmatig (Druppie UI)"]
+            D1["Developer selecteert branch"] --> K1["Druppie: maak Kata pod"]
+            D1 --> K2["Druppie: maak IngressRoute"]
+            D1 --> K3["Druppie: maak ExternalSecret"]
+            K1 --> P1["Dev VM actief<br/>» https://dev-branch.druppie.rijnland.dev"]
+        end
+
+        subgraph AgentAuto["Automatisch (Druppie Agent Runtime)"]
+            A1["Agent coding task"] --> A2["k8s_manager: spawn Kata pod"]
+            A2 --> A3["Agent Sandbox actief<br/>» headless, ephemeral"]
+        end
+    end
+
+    style Triggers fill:#1a1a2e,color:#e0e0e0
+    style Auto fill:#00b894,color:#1a1a2e
+    style Manual fill:#e17055,color:#ffffff
+    style AgentAuto fill:#6c5ce7,color:#ffffff
+```
+
+---
+
+## Druppie varianten per omgeving
+
+```mermaid
+flowchart TB
+    subgraph Variants["Druppie varianten — resources"]
+        direction LR
+
+        subgraph Full["Volledig (prod + colab-dev)"]
+            F_KC["Keycloak · 2GB"]
+            F_PG["CNPG PostgreSQL · 1GB"]
+            F_GITEA["Gitea · 1GB"]
+            F_MCP["9× MCP Modules · 4.5GB"]
+            F_BE2["Backend · 2GB"]
+            F_FE2["Frontend · 512MB"]
+            F_TOTAL["Totaal: ~11GB"]
+        end
+
+        subgraph Dev["Dev VM (Kata pod)"]
+            D_AUTH["Mock Auth · 0MB"]
+            D_PG["Standalone PG · 256MB"]
+            D_ALL["Alles in 1 pod"]
+            D_HOT["Hot reload: <1s"]
+            D_TOTAL["~4GB per dev"]
+        end
+
+        subgraph Sandbox["Agent Sandbox (Kata pod)"]
+            A_AUTH["Mock Auth · 0MB"]
+            A_PG["Standalone PG · 256MB"]
+            A_EPHEMERAL["Ephemeral · geen PVC"]
+            A_TOTAL["~3GB per sandbox"]
+        end
+    end
+
+    style Variants fill:#1a1a2e,color:#e0e0e0
+    style Full fill:#0984e3,color:#ffffff
+    style Dev fill:#e17055,color:#ffffff
+    style Sandbox fill:#6c5ce7,color:#ffffff
+```
+
+---
+
+## Resource Budget (1TB RAM totaal)
+
+| Omgeving | Type | RAM | vCPU | Storage | GPU |
+|----------|------|-----|------|---------|-----|
+| `druppie-prod` | Namespace | 32GB | 16 | Longhorn/NFS | — |
+| `druppie-colab-dev` | Namespace | 16GB | 8 | Longhorn/NFS | — |
+| Dev VMs (max 10) | Kata pods | 4GB × 10 = 40GB | 4 × 10 = 40 | 50Gi × 10 = 500Gi | 1× MIG |
+| Agent Sandboxes (max 5) | Kata pods | 3GB × 5 = 15GB | 2 × 5 = 10 | Ephemeral | — |
+| Infrastructuur (Vault, Prometheus, etc.) | System | 32GB | 16 | ~200Gi | — |
+| **Subtotaal** | | **~135GB** | **~90** | **~700Gi** | **1 GPU** |
+| **Vrij** | | **~865GB** | — | — | **3 GPUs** |
+
+---
+
+## Samenvatting
+
+| Component | Technologie | Provisioning | Secrets |
+|-----------|------------|-------------|---------|
+| **druppie-prod** (namespace) | Volledige Druppie stack | Fleet GitOps, auto op PR→main | Vault + Helm values |
+| **druppie-colab-dev** (namespace) | Volledige Druppie stack | Fleet GitOps, auto op PR→colab-dev | Vault + Helm values |
+| **Dev VM** (Kata pod) | Alles in 1 pod, hot reload | Druppie UI, handmatig | 3-laags: bootstrap + Vault + cluster |
+| **Agent Sandbox** (Kata pod) | Headless, ephemeral | Druppie agent runtime (k8s_manager.py) | Bootstrap only, geen user secrets |
+| **Lokale Gitea** (in dev VM) | Docker-in-Docker, localhost:3000 | Pod startup script | Bootstrap random wachtwoord |
+| **Echte Gitea** (cluster) | Prod Gitea + Registry | Fleet GitOps | Developer SSH key uit Vault |
+
+---
+
+## Faseringsplan
+
+| Fase | Week | Wat | Deliverable |
+|------|------|-----|-------------|
+| **1** | 1-2 | Fundering: node labels/taints, Kata operator, LLM pod op GPU node, namespaces, Fleet config, quotas | Cluster klaar voor workloads |
+| **2** | 3-4 | Dev VMs: base image, Vault secrets structuur, Druppie provisioning API + UI, LLM config via prod URL, **Guacamole installeren** (remote access gateway) | Devs kunnen VM deployen + RDP/SSH via browser |
+| **3** | 5-6 | Agent sandboxes: k8s_manager.py, zelfde image, git interface | Agents werken op K8s |
+| **4** | 7-8 | CI/CD: Gitea Actions pipeline, monitoring, developer docs | Productie-klaar, gedocumenteerd |
+| **Later** | — | RDPGW (native RDP client support) — alleen als team er om vraagt | Optioneel |
+
+---
+
+## Genomen beslissingen — definitief
+
+| # | Beslissing | Keuze |
+|---|-----------|-------|
+| 1 | Cluster | Rancher RKE2 (containerd), 8 nodes (3 master + 1 GPU + 4 worker × 96GB), ~480GB worker RAM |
+| 2 | Runtime dev pods + agent sandboxes | Kata Containers |
+| 3 | Dev model | Model A: alles in 1 pod, hot reload lokaal |
+| 4 | GitOps prod/dev namespaces | Fleet (al aanwezig) |
+| 5 | Dev VM provisioning | Druppie backend + UI, handmatig |
+| 6 | Secrets injectie | 3-laags: bootstrap (per-VM) + Vault/ESO (per-user) + cluster (static) |
+| 7 | Storage | Longhorn (al aanwezig) |
+| 8 | Ingress + TLS | Traefik + cert-manager (al aanwezig) |
+| 9 | Auth dev VMs | Mock auth (geen Keycloak) |
+| 10 | Agent ↔ Dev interface | Git (geen shared filesystem) |
+| 11 | Code lifecycle | Developer pull/push via git |
+| 12 | Preview auto-deploy | Alleen prod + colab-dev via Fleet |
+| 13 | GPU node | Exclusief voor prod LLM pod (2× RTX 6000 Pro, 96GB VRAM, NoSchedule taint) |
+| 14 | LLM toegang dev/colab-dev | Via prod LLM URL (OpenAI-compatible endpoint) |
+| 15 | Node placement | Workers voor alles, GPU node alleen LLM |
+| 16 | Cluster toegang | Druppie team heeft cluster-admin |
+| 17 | Prod/dev isolatie | PriorityClasses (prod=10000, colab-dev=8000, CI=3000, dev VM=1000, agent=500) |
+| 18 | Colab-dev | Zelfde stack als prod, alleen minder replicas en geen HA |
+| 19 | Remote access | Apache Guacamole (RDP + SSH via 443 HTTPS, browser-based). RDPGW later indien native client gewenst |
