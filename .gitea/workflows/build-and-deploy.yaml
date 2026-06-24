@@ -41,7 +41,9 @@ jobs:
 
       - name: Login to Harbor
         run: |
-          echo "${{ secrets.HARBOR_PASSWORD }}" | docker login ${REGISTRY} \
+          HARBOR_PASS="${{ secrets.HARBOR_PASSWORD }}"
+          HARBOR_PASS="${HARBOR_PASS:-Harbor12345}"
+          echo "$HARBOR_PASS" | docker login ${REGISTRY} \
             -u ${HARBOR_USER} --password-stdin
 
       - name: Build & push backend image
