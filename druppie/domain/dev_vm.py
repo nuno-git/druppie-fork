@@ -34,6 +34,8 @@ class DevVMDetail(DevVMSummary):
     guacamole_connection_id: str | None = None
     ssh_port: int | None = None
     rdp_port: int | None = None
+    rdp_username: str | None = None
+    rdp_password: str | None = None
     guacamole_url: str | None = None  # deep-link to open the VM in Guacamole
     updated_at: datetime | None = None
 

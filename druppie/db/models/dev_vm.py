@@ -29,6 +29,8 @@ class DevVM(Base):
     status = Column(String(32), default="creating")  # creating, running, stopped, error
     ssh_port = Column(Integer, nullable=True)  # host-side SSH port (optional)
     rdp_port = Column(Integer, nullable=True)  # host-side RDP port (for Guacamole)
+    rdp_username = Column(String(100), nullable=True)  # per-VM RDP username
+    rdp_password = Column(String(255), nullable=True)  # per-VM RDP password
     created_at = Column(DateTime(timezone=True), default=utcnow)
     updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
@@ -44,6 +46,8 @@ class DevVM(Base):
             "status": self.status,
             "ssh_port": self.ssh_port,
             "rdp_port": self.rdp_port,
+            "rdp_username": self.rdp_username,
+            "rdp_password": self.rdp_password,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }

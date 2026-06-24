@@ -1,0 +1,23 @@
+# HashiCorp Vault - Dev Mode (local k3s)
+#
+# Single replica, in-memory storage (data is LOST on pod restart — dev only).
+# Auto-unsealed, root token = "root".
+#
+# Usage:
+#   helm repo add hashicorp https://helm.releases.hashicorp.com
+#   helm upgrade --install vault hashicorp/vault -n vault --create-namespace -f helm/vault/values.yaml
+
+server:
+  dev:
+    enabled: true
+    devRootToken: "root"
+
+  # Dev mode is single-replica, in-memory; keep requests small.
+  resources:
+    requests:
+      memory: 256Mi
+      cpu: 100m
+
+# The Vault Agent Injector is not needed — secrets are synced via ESO instead.
+injector:
+  enabled: false

@@ -416,3 +416,9 @@ highAvailability:
 certManager:
   enabled: false
   email: ""
+
+externalSecrets:
+  enabled: false
+  vaultAddress: "http://vault.vault.svc.cluster.local:8200"
+  vaultRole: "external-secrets"
+  serviceAccount: "external-secrets"

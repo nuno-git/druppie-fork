@@ -1,0 +1,27 @@
+{{- if .Values.externalSecrets.enabled }}
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: cluster-config
+spec:
+  refreshInterval: 5m
+  secretStoreRef:
+    name: vault-backend
+    kind: SecretStore
+  target:
+    name: cluster-config
+    creationPolicy: Owner
+  data:
+    - secretKey: REGISTRY_URL
+      remoteRef:
+        key: cluster/config
+        property: registry_url
+    - secretKey: VAULT_ADDR
+      remoteRef:
+        key: cluster/config
+        property: vault_addr
+    - secretKey: LLM_BASE_URL
+      remoteRef:
+        key: cluster/config
+        property: llm_base_url
+{{- end }}

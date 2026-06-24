@@ -1,0 +1,5 @@
+externalSecrets:
+  enabled: true
+  vaultAddress: "http://vault.vault.svc.cluster.local:8200"
+  vaultRole: "druppie-eso"
+  serviceAccount: "druppie-eso"

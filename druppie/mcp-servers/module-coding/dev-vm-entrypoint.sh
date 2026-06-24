@@ -32,6 +32,10 @@ chmod 1777 /cache/tmp
 # Ensure the developer user owns the shared roots (non-recursive; fresh VM).
 chown developer:developer /workspace /cache 2>/dev/null || true
 
+if [ -n "$DEV_VM_RDP_USERNAME" ] && [ -n "$DEV_VM_RDP_PASSWORD" ]; then
+    echo "${DEV_VM_RDP_USERNAME}:${DEV_VM_RDP_PASSWORD}" | chpasswd
+fi
+
 # Default dockerd config: Harbor insecure registry. Idempotent — recreated only
 # if missing/empty so a runtime-mounted config is respected.
 if [ ! -s /etc/docker/daemon.json ]; then

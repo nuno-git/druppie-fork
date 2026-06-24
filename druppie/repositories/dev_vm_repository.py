@@ -111,6 +111,8 @@ class DevVMRepository(BaseRepository):
             guacamole_connection_id=vm.guacamole_connection_id,
             ssh_port=vm.ssh_port,
             rdp_port=vm.rdp_port,
+            rdp_username=vm.rdp_username,
+            rdp_password=vm.rdp_password,
             guacamole_url=None,  # filled by service from guacamole_connection_id
             updated_at=vm.updated_at,
         )

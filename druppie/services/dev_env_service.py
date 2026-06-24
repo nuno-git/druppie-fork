@@ -13,6 +13,7 @@ Guacamole is called through the core client ``druppie.core.guacamole``.
 
 import asyncio
 import os
+import secrets as pysecrets
 from uuid import UUID
 
 import structlog
@@ -94,15 +95,17 @@ class DevEnvService:
         self.dev_vm_repo.commit()
 
         container_name = f"dev-vm-{name}-{str(vm.id)[:8]}"
+        creds = self._generate_vm_credentials()
 
         try:
-            container_id = await self._launch_container(container_name, branch)
+            container_id = await self._launch_container(container_name, branch, creds)
             container_ip = await self._get_container_ip(container_name)
 
             connection_id = await self._register_guacamole(
                 container_name=container_name,
                 container_ip=container_ip,
                 username=username,
+                creds=creds,
             )
 
             self.dev_vm_repo.update(
@@ -111,6 +114,8 @@ class DevEnvService:
                 container_id=container_id,
                 container_name=container_name,
                 guacamole_connection_id=connection_id,
+                rdp_username=creds["rdp_username"],
+                rdp_password=creds["rdp_password"],
             )
             self.dev_vm_repo.commit()
             logger.info(
@@ -229,7 +234,16 @@ class DevEnvService:
     # Container / Guacamole helpers
     # -------------------------------------------------------------------------
 
-    async def _launch_container(self, container_name: str, branch: str) -> str:
+    def _generate_vm_credentials(self) -> dict:
+        return {
+            "rdp_username": "developer",
+            "rdp_password": pysecrets.token_urlsafe(16),
+            "ssh_username": "developer",
+        }
+
+    async def _launch_container(
+        self, container_name: str, branch: str, creds: dict
+    ) -> str:
         """Launch the sysbox dev VM container. Returns the short container id."""
         # Best-effort cleanup of a stale container with the same name.
         await _run_cmd(["docker", "rm", "-f", container_name], timeout=15)
@@ -245,6 +259,8 @@ class DevEnvService:
             "--tmpfs", "/tmp:size=4g",
             "--storage-opt", "size=20G",
             "-e", f"DRUPPIE_GIT_BRANCH={branch}",
+            "-e", f"DEV_VM_RDP_USERNAME={creds['rdp_username']}",
+            "-e", f"DEV_VM_RDP_PASSWORD={creds['rdp_password']}",
             DEV_VM_IMAGE,
             "bash", "-c",
             "dockerd > /var/log/dockerd.log 2>&1 & sleep infinity",
@@ -290,18 +306,21 @@ class DevEnvService:
         container_name: str,
         container_ip: str,
         username: str | None,
+        creds: dict,
     ) -> str:
         """Register an RDP Guacamole connection and grant the owner READ.
 
         Returns the Guacamole connection identifier.
         """
+        rdp_username = creds.get("rdp_username") or DEV_VM_RDP_USERNAME
+        rdp_password = creds.get("rdp_password") or DEV_VM_RDP_PASSWORD
         result = await self.guac.create_connection(
             name=container_name,
             protocol="rdp",
             hostname=container_ip,
             port="3389",
-            username=DEV_VM_RDP_USERNAME,
-            password=DEV_VM_RDP_PASSWORD,
+            username=rdp_username,
+            password=rdp_password,
             **{"ignore-cert": "true", "resize-method": "display-update"},
         )
         if not result.get("success"):

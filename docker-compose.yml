@@ -1,3 +1,5 @@
+# DEPRECATED: Docker-compose is superseded by k3s. See docs/K3S-DEV-SETUP.md for the current setup.
+# This file is kept for reference only. All services run on k3s.
 # Druppie Platform - Docker Compose Setup
 # =========================================
 #

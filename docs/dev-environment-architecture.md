@@ -6,6 +6,35 @@
 
 ---
 
+## Current Implementation Status (k3s dev)
+
+This table shows how the current k3s development cluster compares to the target RKE2
+architecture described in the rest of this document.
+
+| Component | Target (RKE2) | Current (k3s dev) | Status |
+|-----------|--------------|-------------------|--------|
+| Cluster | RKE2 8 nodes | k3s single node | ✅ Working |
+| Container runtime | Kata Containers | Docker (sysbox optional) | ⚠️ No Kata |
+| Harbor | In cluster | In cluster (k3s) | ✅ |
+| Keycloak | In namespace | In namespace | ✅ |
+| Frontend | Helm deployed | Helm deployed, image from Harbor | ✅ |
+| Backend | Helm deployed | Helm deployed, Docker socket mounted | ✅ |
+| Guacamole | In cluster | In cluster (standalone manifest) | ✅ |
+| Dev VM creation | Kata pods | Docker containers (sysbox) | ✅ Working |
+| PriorityClasses | 5 classes | 5 classes applied | ✅ |
+| Secrets (3-layer) | Vault + ESO | Static (Layer 1 only) | ❌ Not implemented |
+| FluxCD | GitOps auto-deploy | Not installed | ❌ |
+| Vault | External | Not installed | ❌ |
+| Traefik Ingress | Per-dev-VM routing | Not configured | ❌ |
+| CI/CD | Gitea Actions | Workflow + act-runner (manual test passed) | ⚠️ Partial |
+| Blue-green deploy | Zero-downtime | Default RollingUpdate (1 replica) | ❌ No zero-downtime |
+| Monitoring | Prometheus + Grafana | Running | ✅ |
+
+For the step-by-step setup of the current k3s dev cluster, see
+[K3S-DEV-SETUP.md](./K3S-DEV-SETUP.md).
+
+---
+
 ## Top-Level Architectuur
 
 ```mermaid
