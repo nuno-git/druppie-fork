@@ -170,6 +170,9 @@ exec dbus-launch --exit-with-session startxfce4\n' \
     && sed -i 's/^max_bpp=.*/max_bpp=24/' /etc/xrdp/xrdp.ini \
     && sed -i '/^\[Xorg\]/,/^\[/ s/^username=.*/username=developer/' /etc/xrdp/xrdp.ini \
     && sed -i '/^\[Xorg\]/,/^\[/ s/^password=.*/password=developer/' /etc/xrdp/xrdp.ini \
+    && sed -i 's|.*DRMDevice.*|        # DRMDevice disabled (no GPU in containers)|' /etc/X11/xrdp/xorg.conf \
+    && sed -i 's|.*DRI3.*|        Option "DRI3" "0"|' /etc/X11/xrdp/xorg.conf \
+    && sed -i 's|Load "glx"|#Load "glx"|' /etc/X11/xrdp/xorg.conf \
     && mkdir -p /run/xrdp /run/user/1000 \
     && chown developer:developer /run/user/1000
 
