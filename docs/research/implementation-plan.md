@@ -37,7 +37,7 @@ This plan operationalises [`docs/research/documentation-standards.md`](./documen
 | **ADR template** | One YAML-frontmatter MADR-style ADR template vs. multiple (resolves PR #277's template-vs-skill drift) | **Adopt ONE** YAML-frontmatter MADR-style ADR template |
 | **File numbering** | `NNN-kebab-title.md` zero-padded vs. date-prefixed (log4brains style) | **`NNN-kebab-title.md`** |
 | **Status workflow** | Free-form vs. fixed lifecycle | `proposed -> accepted` (**only an architect promotes**) `-> deprecated / superseded` |
-| **Language** | EN everywhere vs. mixed | **English for decision docs** (consistent with code docs); NL allowed where the audience needs it |
+| **Language** | EN everywhere vs. mixed | **English** is the source-of-truth for decision docs; **Dutch is auto-generated** via the existing `translate_from_english()` + `DESIGN_TRANSLATION_PATHS` dual-file pattern (extend it to `docs/decisions/*`); frontmatter/IDs/status are never translated. [recommended] |
 | **When is an ADR required?** | Always vs. impact-based | **Significant / architectural / new-dependency / public-API** changes — NOT bugfix / refactor / chore |
 | **Directory layout** | Flat vs. categorised | `/docs/decisions`, `/docs/process`, `/docs/guides` |
 | **Docs ownership** | Ad hoc vs. owned | Define a **`docs-maintainers`** group for CODEOWNERS review |
@@ -62,6 +62,7 @@ This plan operationalises [`docs/research/documentation-standards.md`](./documen
   - Write **ADR-001** (the standard itself).
   - Migrate **2–3 existing decision docs** into frontmatter ADRs — e.g. `docs/ADR-KUBERNETES.md`, key decisions from `docs/modules-research-and-decisions.md` and `docs/research-agent-runtime.md`.
   - Add a `/docs/decisions/README` describing the flow.
+  - Author all ADRs/PRDs in English (the platform convention).
 - **Proposals:** Pick which legacy docs to migrate first (highest-traffic / most-referenced).
 - **Acceptance:** **≥3 real ADRs** with valid frontmatter + templates in place.
 - **Effort:** M.
@@ -89,6 +90,7 @@ This plan operationalises [`docs/research/documentation-standards.md`](./documen
   - Render an **ADR overview with status badges**.
   - Add a **search / filter box**.
   - Add a **per-feature progress log** and links to user stories / PRs.
+  - Render docs in the session language (or add a NL/EN toggle); show a "machine-translated" banner on Dutch companions; extend `DESIGN_TRANSLATION_PATHS` to `docs/decisions/*`.
   - Note: the portal **live-fetches from the repo with a short cache**, so no build/deploy is needed — changes appear within **~a minute** of a push.
 - **Proposals:** Decide placement within `/documentation` and the cache TTL.
 - **Acceptance:** `/documentation` shows all ADRs with status, is searchable, and reflects a push within **~a minute**.
@@ -160,6 +162,7 @@ This plan operationalises [`docs/research/documentation-standards.md`](./documen
 | Portal DB change needs a reset (no migrations) | Schedule a reset window |
 | Over-scoping #277's Memory pillar | Keep aspirational, out of MVP |
 | Adoption friction | Start enforcement as **warn**, ramp to **required** |
+| Machine-translated decision text can mislead (hallucination) | English stays canonical + a "machine-translated" banner + human check on critical ADRs |
 
 ## 7. Suggested epics & tickets (proposal backlog)
 

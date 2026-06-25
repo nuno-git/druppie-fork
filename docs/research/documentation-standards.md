@@ -20,6 +20,7 @@ This is the Definition-of-Done deliverable for the developer spike **"Vast docum
 - **Directory layout**: `/docs/decisions` (ADRs), `/docs/process`, `/docs/guides`, with spike templates in `/docs/research/templates`.
 - **Continuous docs**: auto-publish on every push to `colab-dev`, and a layered, escape-hatchable PR gate (template → Danger warn → required `paths-filter` check → CODEOWNERS) so code never merges without documentation. See Part F.
 - **Implementation**: a sequenced, proposal-level roadmap (phases 0–7, acceptance criteria, convergence with PR #277) is in [`implementation-plan.md`](implementation-plan.md).
+- **Language**: English is the source-of-truth for decision docs; Dutch is auto-generated via Druppie's existing `translate_from_english` translation step (frontmatter/IDs never translated). See §5.6.
 
 We did not only reason about formats — we **ran a controlled AI-readability experiment** (Part A). Headline result: all four candidate formats are highly AI-readable; the only divergence across 4 formats × 3 tasks × 2 models was the `id` of a classic ADR that encodes its id only in a heading. Explicit named fields (frontmatter/XML/JSON) give deterministic, model-independent extraction of machine keys.
 
@@ -351,6 +352,25 @@ jobs:
 | **Phase 5 (optional)** | Stand up the **external public site** — MkDocs + GitHub Pages auto-publish with a pre-build index/`llms.txt` generation step — for public, strongly-searchable, versioned docs and external AI agents. |
 
 A fuller, sequenced implementation roadmap with per-phase goals, proposals, acceptance criteria, effort sizing, a #277 convergence map, risks, and a suggested ticket backlog is maintained separately in [`implementation-plan.md`](implementation-plan.md).
+
+### 5.6 Language policy — English source-of-truth, Dutch via the existing translation step
+
+Druppie already has the answer to "which language?" built into the platform, so the policy is to **lean on the existing infrastructure rather than invent something new**. The grounded facts:
+
+- `docs/TRANSLATION.md` states the convention plainly: **agents are monolingual English; the platform translates, not the agents.**
+- `druppie/agents/prompt_builder.py` injects a **fixed English-only `LANGUAGE` block** into every agent system prompt, so every agent reasons and writes in English by construction.
+- `druppie/core/translation.py` provides **`translate_from_english()`** (and `translate_to_english()`) as the single, reusable translation seam.
+- A dual-file pattern, **`DESIGN_TRANSLATION_PATHS`**, already emits an **English original + a Dutch companion** for design docs (e.g. `docs/technical-design.md` → `docs/technisch-ontwerp.md`).
+
+Given that, the language policy for decision/standard docs is:
+
+- **Author decision/standard docs (ADRs, PRDs, guides) in English.** It matches the platform convention and the enforced English agent prompts, and **Part A's empirical result** showed English structured content with explicit fields extracts most reliably for agents.
+- **Never translate frontmatter, IDs, status enums or code identifiers** — they are language-neutral machine keys.
+- **Dutch is a generated presentation, not a hand-written second copy.** Reuse the existing `translate_from_english()` and **extend the `DESIGN_TRANSLATION_PATHS` mapping to `docs/decisions/*`** so each ADR gets an auto-generated Dutch companion — one source of truth, no drift.
+- **In-core portal**: it currently has **no language switch** (the one gap — `frontend/src/pages/Documentation.jsx` just renders the markdown it fetched). Since the session language is already detected and locked, **render the doc in the session language** (English canonical, Dutch companion when present) or add a simple NL/EN toggle.
+- **Governance guardrail**: the **English version is authoritative**; the Dutch view is clearly labelled as machine-generated. Machine translation of decision text can introduce errors/hallucinations (cf. the known missing `translate_from_english` guard), so critical ADRs warrant a **"machine-translated" banner** and/or a **human check** of the Dutch view.
+
+This grounds the spike's language choice in infrastructure that already exists, rather than maintaining drifting bilingual hand-copies.
 
 ---
 
