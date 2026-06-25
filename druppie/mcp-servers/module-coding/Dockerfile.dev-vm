@@ -164,9 +164,7 @@ export XDG_DATA_DIRS=/usr/share/xfce4:/usr/share/gnome:/usr/local/share:/usr/sha
 export XDG_RUNTIME_DIR=/run/user/$(id -u)\n\
 mkdir -p "$XDG_RUNTIME_DIR"\n\
 chmod 700 "$XDG_RUNTIME_DIR"\n\
-eval $(dbus-launch --sh-syntax) 2>/dev/null\n\
-export DBUS_SESSION_BUS_ADDRESS DBUS_SESSION_BUS_PID\n\
-exec dbus-launch --exit-with-session xfce4-session\n' \
+exec dbus-launch --exit-with-session startxfce4\n' \
     > /etc/xrdp/startwm.sh \
     && chmod +x /etc/xrdp/startwm.sh \
     && sed -i 's/^max_bpp=.*/max_bpp=24/' /etc/xrdp/xrdp.ini \
