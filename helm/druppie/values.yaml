@@ -120,6 +120,13 @@ backend:
   devMode: false
   dockerSocket:
     enabled: false
+  # Service account for dev VM pod management (RBAC in backend-rbac.yaml)
+  serviceAccount:
+    create: true
+    name: ""  # if empty, uses "{{ druppie.fullname }}-backend"
+  # Guacamole remote-access integration (dev VMs via guacd in remote-access namespace)
+  guacamoleUrl: "http://guacamole.remote-access.svc.cluster.local:8080"
+  guacamolePublicUrl: "http://localhost:30020"
   # LLM configuration
   llm:
     provider: zai

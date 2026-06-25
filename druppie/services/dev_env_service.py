@@ -1,37 +1,34 @@
 """Dev environment service.
 
 Orchestrates the full lifecycle of a developer dev VM:
-  1. Launch a sysbox-runc container (SSH/RDP/code-server ready image)
-  2. Register a Guacamole RDP connection pointing at the container
+  1. Launch a Kubernetes Pod (sysbox RuntimeClass, SSH/RDP/code-server ready
+     image) plus its Service + PVC
+  2. Register a Guacamole RDP connection pointing at the pod's Service
   3. Grant the owning user READ access on that connection
   4. Track state in the database via DevVMRepository
 
-Docker commands run via ``asyncio.create_subprocess_exec`` mirroring the
-sandbox container launch in ``druppie/mcp-servers/module-coding/v1/tools.py``.
-Guacamole is called through the core client ``druppie.core.guacamole``.
+The Pod/Service/PVC lifecycle runs through the async Kubernetes client
+``druppie.core.kubernetes`` which wraps the synchronous official SDK in
+``asyncio.to_thread``. Guacamole is called through the core client
+``druppie.core.guacamole``.
 """
 
-import asyncio
 import base64
 import os
-import secrets as pysecrets
 from uuid import UUID
 
 import structlog
 
 from ..api.errors import AuthorizationError, NotFoundError
 from ..core.guacamole import get_guacamole_client
+from ..core.kubernetes import DEV_VM_NAMESPACE, KubernetesClient
 from ..domain import DevVMDetail, DevVMSummary
 from ..repositories import DevVMRepository
 
 logger = structlog.get_logger()
 
-# Sysbox container launch configuration (env-overridable).
+# Dev VM launch configuration (env-overridable).
 DEV_VM_IMAGE = os.getenv("DEV_VM_IMAGE", "dev-vm-base:latest")
-DEV_VM_NETWORK = os.getenv("SANDBOX_NETWORK", "druppie-sandbox-net")
-DEV_VM_RUNTIME = os.getenv("DEV_VM_RUNTIME", "sysbox-runc")
-DEV_VM_MEMORY = os.getenv("DEV_VM_MEMORY", "12g")
-DEV_VM_CPUS = os.getenv("DEV_VM_CPUS", "4")
 
 # Guacamole deep-link base (host-facing URL users open in the browser).
 GUACAMOLE_PUBLIC_URL = os.getenv("GUACAMOLE_PUBLIC_URL", "http://localhost:30020")
@@ -41,32 +38,13 @@ DEV_VM_RDP_USERNAME = os.getenv("DEV_VM_RDP_USERNAME", "developer")
 DEV_VM_RDP_PASSWORD = os.getenv("DEV_VM_RDP_PASSWORD", "developer")
 
 
-async def _run_cmd(cmd: list[str], timeout: float = 120) -> tuple[int, str, str]:
-    """Run a subprocess, return (returncode, stdout, stderr).
-
-    Mirrors ``_docker_run`` in module-coding/v1/tools.py so docker invocations
-    stay consistent with the sandbox launcher.
-    """
-    logger.debug("dev_vm_run_cmd", cmd=" ".join(cmd))
-    proc = await asyncio.create_subprocess_exec(
-        *cmd,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    try:
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-    except asyncio.TimeoutError:
-        proc.kill()
-        raise RuntimeError(f"Command timed out after {timeout}s: {' '.join(cmd)}")
-    return proc.returncode or 0, stdout.decode(), stderr.decode()
-
-
 class DevEnvService:
     """Business logic for developer dev VMs."""
 
     def __init__(self, dev_vm_repo: DevVMRepository):
         self.dev_vm_repo = dev_vm_repo
         self.guac = get_guacamole_client()
+        self._k8s = KubernetesClient(namespace=DEV_VM_NAMESPACE)
 
     # -------------------------------------------------------------------------
     # Public API
@@ -80,10 +58,10 @@ class DevEnvService:
         username: str | None,
         user_roles: list[str],
     ) -> DevVMDetail:
-        """Launch a sysbox dev VM + register a Guacamole connection.
+        """Launch a dev VM pod + register a Guacamole connection.
 
         Creates the DB record up front (status=creating), then performs the
-        container launch and Guacamole registration inline. On any failure the
+        pod launch and Guacamole registration inline. On any failure the
         record is marked status=error and the error is re-raised so the route
         surfaces it.
         """
@@ -95,16 +73,15 @@ class DevEnvService:
         )
         self.dev_vm_repo.commit()
 
-        container_name = f"dev-vm-{name}-{str(vm.id)[:8]}"
+        pod_name = f"dev-vm-{name}-{str(vm.id)[:8]}"
         creds = self._generate_vm_credentials()
 
         try:
-            container_id = await self._launch_container(container_name, branch, creds)
-            container_ip = await self._get_container_ip(container_name)
+            pod_name, service_dns = await self._launch_pod(pod_name, branch, creds)
 
             connection_id = await self._register_guacamole(
-                container_name=container_name,
-                container_ip=container_ip,
+                container_name=pod_name,
+                container_ip=service_dns,
                 username=username,
                 creds=creds,
             )
@@ -112,8 +89,8 @@ class DevEnvService:
             self.dev_vm_repo.update(
                 vm.id,
                 status="running",
-                container_id=container_id,
-                container_name=container_name,
+                container_id=pod_name,
+                container_name=pod_name,
                 guacamole_connection_id=connection_id,
                 rdp_username=creds["rdp_username"],
                 rdp_password=creds["rdp_password"],
@@ -122,7 +99,7 @@ class DevEnvService:
             logger.info(
                 "dev_vm_created",
                 vm_id=str(vm.id),
-                container_name=container_name,
+                pod_name=pod_name,
                 connection_id=connection_id,
             )
         except Exception as e:
@@ -131,7 +108,7 @@ class DevEnvService:
             logger.error(
                 "dev_vm_create_failed",
                 vm_id=str(vm.id),
-                container_name=container_name,
+                pod_name=pod_name,
                 error=str(e),
                 exc_info=True,
             )
@@ -160,15 +137,20 @@ class DevEnvService:
         if not is_owner and not is_admin:
             raise AuthorizationError("Only owner or admin can stop a dev VM")
 
-        # 1. Remove the docker container (best-effort).
+        # 1. Remove the pod + service + PVC (best-effort).
         if vm.container_name:
+            pod_name = vm.container_name
+            service_name = f"{pod_name}-svc"
+            pvc_name = f"{pod_name}-home"
             try:
-                await _run_cmd(["docker", "rm", "-f", vm.container_name], timeout=30)
+                await self._k8s.delete_service(service_name)
+                await self._k8s.delete_pod(pod_name)
+                await self._k8s.delete_pvc(pvc_name)
             except Exception as e:
                 logger.warning(
-                    "dev_vm_container_remove_failed",
+                    "dev_vm_pod_remove_failed",
                     vm_id=str(vm_id),
-                    container=vm.container_name,
+                    pod=pod_name,
                     error=str(e),
                 )
 
@@ -236,7 +218,7 @@ class DevEnvService:
         return detail
 
     # -------------------------------------------------------------------------
-    # Container / Guacamole helpers
+    # Pod / Guacamole helpers
     # -------------------------------------------------------------------------
 
     def _generate_vm_credentials(self) -> dict:
@@ -246,63 +228,39 @@ class DevEnvService:
             "ssh_username": "developer",
         }
 
-    async def _launch_container(
-        self, container_name: str, branch: str, creds: dict
-    ) -> str:
-        """Launch the sysbox dev VM container. Returns the short container id."""
-        # Best-effort cleanup of a stale container with the same name.
-        await _run_cmd(["docker", "rm", "-f", container_name], timeout=15)
+    async def _launch_pod(
+        self, pod_name: str, branch: str, creds: dict
+    ) -> tuple[str, str]:
+        """Launch the dev VM as a Kubernetes pod.
 
-        cmd = [
-            "docker", "run", "-d",
-            "--name", container_name,
-            "--network", DEV_VM_NETWORK,
-            "--runtime", DEV_VM_RUNTIME,
-            "--memory", DEV_VM_MEMORY,
-            "--cpus", DEV_VM_CPUS,
-            "--shm-size", "2g",
-            "--tmpfs", "/tmp:size=4g",
-            "--storage-opt", "size=20G",
-            "-e", f"DRUPPIE_GIT_BRANCH={branch}",
-            DEV_VM_IMAGE,
-            "bash", "-c",
-            "dockerd > /var/log/dockerd.log 2>&1 & sleep infinity",
-        ]
-        rc, stdout, stderr = await _run_cmd(cmd, timeout=120)
-        if rc != 0:
-            raise RuntimeError(f"docker run failed for {container_name}: {stderr.strip()}")
+        Provisions a fresh PVC + Pod + Service triple, waiting for the pod to
+        become ready. Returns ``(pod_name, service_dns)`` where ``service_dns``
+        is the stable in-cluster DNS name Guacamole should connect to (stable
+        across pod restarts, unlike the pod IP).
+        """
+        pvc_name = f"{pod_name}-home"
+        service_name = f"{pod_name}-svc"
 
-        container_id = stdout.strip()[:12]
+        # Best-effort cleanup of stale resources with the same name.
+        await self._k8s.delete_service(service_name)
+        await self._k8s.delete_pod(pod_name)
+        await self._k8s.delete_pvc(pvc_name)
 
-        # Wait for the in-VM docker daemon (sysbox) to be ready, mirroring the
-        # sandbox readiness check in module-coding/v1/tools.py.
-        for _ in range(20):
-            rc, _, _ = await _run_cmd(
-                ["docker", "exec", container_name, "test", "-S", "/var/run/docker.sock"],
-                timeout=5,
-            )
-            if rc == 0:
-                logger.info("dev_vm_dockerd_ready", container=container_name)
-                break
-            await asyncio.sleep(0.5)
-        else:
-            logger.warning("dev_vm_dockerd_not_ready", container=container_name)
+        # Create fresh resources.
+        await self._k8s.create_pvc(pvc_name)
+        await self._k8s.create_pod(pod_name, DEV_VM_IMAGE, branch, pvc_name=pvc_name)
+        await self._k8s.create_service(service_name, pod_name)
 
-        return container_id
+        # Wait for the pod to be Running with an IP assigned.
+        ready = await self._k8s.wait_pod_ready(pod_name, timeout=120)
+        if not ready:
+            raise RuntimeError(f"Pod {pod_name} did not become ready within 120s")
 
-    async def _get_container_ip(self, container_name: str) -> str:
-        """Resolve the container's IP on its docker network."""
-        fmt = "{{range.NetworkSettings.Networks}}{{.IPAddress}}{{end}}"
-        rc, stdout, stderr = await _run_cmd(
-            ["docker", "inspect", "-f", fmt, container_name],
-            timeout=15,
-        )
-        ip = stdout.strip()
-        if rc != 0 or not ip:
-            raise RuntimeError(
-                f"Could not resolve IP for {container_name}: {stderr.strip()}"
-            )
-        return ip
+        # Stable DNS name for Guacamole (NOT the pod IP, which changes on
+        # restart).
+        service_dns = f"{service_name}.{self._k8s.namespace}.svc.cluster.local"
+        _ = creds  # reserved for future per-VM credential injection
+        return pod_name, service_dns
 
     async def _register_guacamole(
         self,

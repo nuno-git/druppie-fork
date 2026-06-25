@@ -16,6 +16,9 @@ litellm==1.82.6
 # MCP Client
 fastmcp>=2.0.0,<3.0.0
 
+# Kubernetes client (dev VM pod/service/PVC lifecycle)
+kubernetes>=29.0.0
+
 # Database
 sqlalchemy>=2.0.0
 psycopg2-binary>=2.9.0
