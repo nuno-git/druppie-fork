@@ -19,6 +19,7 @@ This is the Definition-of-Done deliverable for the developer spike **"Vast docum
 - **Process**: a **"consult-decisions-before-coding"** workflow, fed to Druppie agents the same lazy, tool-mediated way they already read files (via MCP read tools), eventually rolled up into a generated **"current decisions"** index loaded first.
 - **Directory layout**: `/docs/decisions` (ADRs), `/docs/process`, `/docs/guides`, with spike templates in `/docs/research/templates`.
 - **Continuous docs**: auto-publish on every push to `colab-dev`, and a layered, escape-hatchable PR gate (template → Danger warn → required `paths-filter` check → CODEOWNERS) so code never merges without documentation. See Part F.
+- **Implementation**: a sequenced, proposal-level roadmap (phases 0–7, acceptance criteria, convergence with PR #277) is in [`implementation-plan.md`](implementation-plan.md).
 
 We did not only reason about formats — we **ran a controlled AI-readability experiment** (Part A). Headline result: all four candidate formats are highly AI-readable; the only divergence across 4 formats × 3 tasks × 2 models was the `id` of a classic ADR that encodes its id only in a heading. Explicit named fields (frontmatter/XML/JSON) give deterministic, model-independent extraction of machine keys.
 
@@ -348,6 +349,8 @@ jobs:
 | **Phase 3** | **Extend the in-core Documentation Portal to surface `docs/decisions/*`** (new `source_type` + `<DocSection>` + search box) — the **primary docs page**, auto-updating via live-fetch (no build). Then **promote the docs-required gate to a REQUIRED status check** + add CODEOWNERS on `docs/`. |
 | **Phase 4** | Expose a **"read decisions" MCP tool** so Druppie agents become decision-aware |
 | **Phase 5 (optional)** | Stand up the **external public site** — MkDocs + GitHub Pages auto-publish with a pre-build index/`llms.txt` generation step — for public, strongly-searchable, versioned docs and external AI agents. |
+
+A fuller, sequenced implementation roadmap with per-phase goals, proposals, acceptance criteria, effort sizing, a #277 convergence map, risks, and a suggested ticket backlog is maintained separately in [`implementation-plan.md`](implementation-plan.md).
 
 ---
 
