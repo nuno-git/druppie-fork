@@ -3,6 +3,30 @@ kind: Namespace
 metadata:
   name: remote-access
 ---
+# Guacamole DB password — synced from Vault (secret/remote-access/guac-db,
+# seeded with a generated value by k8s/vault-setup.sh). Requires Vault + ESO to
+# be installed first (run vault-setup.sh before applying this manifest).
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: guac-db
+  namespace: remote-access
+spec:
+  # Short interval so the secret syncs quickly if Vault/ESO came up after this
+  # manifest was applied (avoids a long CreateContainerConfigError window).
+  refreshInterval: 1m
+  secretStoreRef:
+    name: vault-backend
+    kind: ClusterSecretStore
+  target:
+    name: guac-db
+    creationPolicy: Owner
+  data:
+    - secretKey: password
+      remoteRef:
+        key: remote-access/guac-db
+        property: password
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -27,7 +51,10 @@ spec:
         - name: POSTGRES_USER
           value: guacamole_user
         - name: POSTGRES_PASSWORD
-          value: guac_pass
+          valueFrom:
+            secretKeyRef:
+              name: guac-db
+              key: password
         ports:
         - containerPort: 5432
         readinessProbe:
@@ -121,7 +148,10 @@ spec:
         - name: POSTGRESQL_USER
           value: guacamole_user
         - name: POSTGRESQL_PASSWORD
-          value: guac_pass
+          valueFrom:
+            secretKeyRef:
+              name: guac-db
+              key: password
         - name: POSTGRESQL_AUTO_CREATE_ACCOUNTS
           value: "true"
         - name: GUACD_HOSTNAME

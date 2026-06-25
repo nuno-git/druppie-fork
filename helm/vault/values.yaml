@@ -1,16 +1,18 @@
 # HashiCorp Vault - Dev Mode (local k3s)
 #
 # Single replica, in-memory storage (data is LOST on pod restart — dev only).
-# Auto-unsealed, root token = "root".
+# Auto-unsealed. The dev root token is NOT committed here — it is generated at
+# install time and injected by k8s/vault-setup.sh via
+# `--set server.dev.devRootToken=...`. Never hardcode a token in this file.
 #
 # Usage:
 #   helm repo add hashicorp https://helm.releases.hashicorp.com
-#   helm upgrade --install vault hashicorp/vault -n vault --create-namespace -f helm/vault/values.yaml
+#   ./k8s/vault-setup.sh   # installs Vault with a generated dev root token
 
 server:
   dev:
     enabled: true
-    devRootToken: "root"
+    # devRootToken is injected at install time by vault-setup.sh (do not hardcode).
 
   # Dev mode is single-replica, in-memory; keep requests small.
   resources:

@@ -18,7 +18,13 @@ expose:
 
 externalURL: http://localhost:30010
 
-harborAdminPassword: "Harbor12345"
+# Admin password is NOT committed. It is generated at install time, stored in
+# Vault (secret/ci/harbor) by k8s/vault-setup.sh, and synced into the `harbor`
+# namespace as the `harbor-admin` Secret (key HARBOR_ADMIN_PASSWORD) by the
+# ExternalSecret in k8s/vault-secret-store.yaml. Run vault-setup.sh first, then
+# install Harbor so this secret exists.
+existingSecretAdminPassword: harbor-admin
+existingSecretAdminPasswordKey: HARBOR_ADMIN_PASSWORD
 
 # Persistence via k3s default local-path provisioner
 persistence:
