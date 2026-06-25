@@ -6,10 +6,10 @@
 // Corporate identity rules applied:
 //   - Primary color: Rijnland Blauw (#0065BD)
 //   - Typography: Neusa Next Std (headings) / Lato Light (body)
-//   - Logo: bottom-right, 75% for A4
-//   - Pay-off: "droge voeten, schoon water"
-//   - Footer: title (left) | page number (center) | date (right)
-//   - Dijk-en-sloot decorative element above footer
+//   - Logo: centered on title page, 12cm wide (not shown on content pages)
+//   - Pay-off: "droge voeten, schoon water" on title page
+//   - Footer: full-bleed dijk-en-sloot shape above blue bar, text right-aligned
+//     "Hoogheemraadschap van Rijnland | project-name - versie month year | page/total"
 //
 // Expected inputs:
 //   - content.md   : Agent-written markdown body
@@ -61,6 +61,7 @@
   size: 11pt,
   lang: "nl",
   fill: grijs-tekst,
+  hyphenate: true,
 )
 
 #let heading-font = ("Neusa Next Std", "Lato", "Libertinus Serif")
@@ -71,14 +72,15 @@
 )
 
 // ============================================================================
-// DECORATIVE: DIJK EN SLOOT (dike + water motif)
+// DATE HELPERS
 // ============================================================================
-// Horizontal rule: top bar = dijk (sand), lower line = sloot (blue wave).
-#let dijk-en-sloot(size: 100%) = {
-  block(width: size, height: 6pt)[
-    #place(dy: 0pt, line(length: 100%, stroke: 0.8pt + zand))
-    #place(dy: 3pt, line(length: 60%, stroke: 0.6pt + rijnland-blauw))
-  ]
+
+#let dutch-month-name(m) = {
+  let names = (
+    "januari", "februari", "maart", "april", "mei", "juni",
+    "juli", "augustus", "september", "oktober", "november", "december"
+  )
+  names.at(m - 1)
 }
 
 // ============================================================================
@@ -90,7 +92,7 @@
   margin: (
     top:    25mm,
     right:  25mm,
-    bottom: 30mm,
+    bottom: 32mm,  // tight fit for 34pt footer (~12mm) + small gap
     left:   25mm,
   ),
 )
@@ -118,27 +120,51 @@
 // ============================================================================
 // FOOTER (every page)
 // ============================================================================
-// According to Huisstijlhandboek:
-//   Left: document title
-//   Center: page number
-//   Right: date
-//   Above: dijk-en-sloot decorative line
+// Rijnland template styles:
+//   • Blue footer block across full page width (bleeds past margins)
+//   • White dijk-en-sloot shape sits flush on top of blue bar
+//   • White text from center to right
 
 #set page(
   footer: context {
     let total   = counter(page).final().first()
     let page-nr = counter(page).display()
-    let today   = datetime.today().display("[day]-[month]-[year]")
-    // Decorative line
-    dijk-en-sloot(size: 100%)
-    v(4pt)
-    grid(
-      columns: (1fr, 1fr, 1fr),
-      gutter: 0pt,
-      text(8pt, grijs-licht)[#title],
-      align(center, text(8pt, grijs-licht)[Pagina #page-nr van #total]),
-      align(right, text(8pt, grijs-licht)[#today]),
-    )
+    let month   = dutch-month-name(datetime.today().month())
+    let year    = str(datetime.today().year())
+    let page-idx = counter(page).get().first()
+
+    // Skip footer on title page (page 1)
+    if page-idx > 1 {
+      // Full-bleed blue footer bar
+      place(
+        bottom + left,
+        dx: -25mm,
+        block(
+          width: 210mm,
+          inset: (bottom: 6pt),
+          fill: rijnland-blauw,
+        )[
+          // Shape hangs above the bar (overlaps by 2pt to kill seam)
+          #place(top + left, dy: -22pt)[
+            #image("assets/dijkEnSloot.png", width: 210mm, height: 24pt)
+          ]
+          // Text vertically centered, with horizontal padding for margins
+          #align(horizon)[
+            #pad(left: 25mm, right: 25mm)[
+              #align(right)[
+                #box(width: 100%)[
+                  #text(7.5pt, white, weight: "regular")[Hoogheemraadschap van Rijnland]
+                  #h(2em)
+                  #text(7.5pt, white.transparentize(35%), weight: "regular")[#project-name - versie #month #year]
+                  #h(2em)
+                  #text(7.5pt, white, weight: "regular")[#page-nr / #total]
+                ]
+              ]
+            ]
+          ]
+        ]
+      )
+    }
   },
 )
 
@@ -155,27 +181,23 @@
 #let show-watermark = watermark and status != "FINAL"
 
 // ============================================================================
-// BACKGROUND (watermark + logo — every page including title page)
+// BACKGROUND
 // ============================================================================
 
 #set page(
   background: context {
-    // Watermark on every page when draft
+    // Logo removed from background — it should only appear on the title page
+    // (see title-page block below for intentional logo placement)
+  },
+  foreground: context {
     if show-watermark {
       place(
         center + horizon,
-        rotate(-30deg, text(52pt, rijnland-blauw.lighten(75%))[
+        rotate(-30deg, text(52pt, fill: rijnland-blauw.lighten(75%).transparentize(50%))[
           #strong(upper(status))
         ]),
       )
     }
-    // Logo bottom-right
-    place(
-      bottom + right,
-      dx: -20mm,
-      dy: -15mm,
-      image(logo-path, width: 3cm),
-    )
   },
 )
 
@@ -188,7 +210,7 @@
 
   #align(center)[
     // Logo
-    #image(logo-path, width: 5cm)
+    #image(logo-path, width: 12cm)
     #v(1.5cm)
 
     // Document title
@@ -236,13 +258,12 @@
 
   #v(1fr)
 
-  // Author
-  #if author != "" {
-    align(center, text(9pt, grijs-licht)[Auteur: #author])
-  }
+  // Author (shown when provided)
+  #if author != "" [
+    #align(center)[#text(9pt, grijs-licht)[Auteur: #author]]
+  ]
 
-  // Dijk-en-sloot accent at bottom of title page
-  #dijk-en-sloot(size: 60%)
+  #v(0.8cm)
 ]
 
 #pagebreak()

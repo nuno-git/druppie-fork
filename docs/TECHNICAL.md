@@ -240,13 +240,15 @@ PDF generation from agent-written Markdown, using the **Typst** typesetting engi
 - Primary color `#0065BD` (PMS 300)
 - Secondary palette: sand/zand, dark-blue, mint, brick
 - Typography: Neusa Next Std (brand headings, if licensed) → **Lato** (free substitute). Body uses `weight: "light"`; headings use `weight: "bold"`.
-- Logo: `Logo-hoogheemraadschap-rijnland.png` placed bottom-right on content pages, centered on title page
+- Logo: `Logo-hoogheemraadschap-rijnland.png` centered on title page at 12cm wide; not shown on content pages
 - Pay-off: "droge voeten, schoon water" on title page
-- Grid-based margins: 25mm sides, 35mm bottom
-- Draft watermark: semi-transparent rotated text when `status != "FINAL"`
+- Grid-based margins: 25mm sides, 32mm bottom
+- Draft watermark: semi-transparent rotated text in **foreground** layer (`transparentize(50%)`) when `status != "FINAL"` — visible above all content including title page
 - Table of contents: optional via `include_toc`
 - Tables: Rijnland blue header row, striped rows, rounded corners
 - Code blocks: light blue background (`#E9EFFA`), rounded corners
+- Footer: Full-bleed dijk-en-sloot shape (`dijkEnSloot.png`) above a Rijnland-blue bar. Right-aligned text: "Hoogheemraadschap van Rijnland | project-name — versie month year | page / total". Excluded from title page.
+- Diagram rendering: Mermaid diagrams rendered to PNG (`mmdc` via Puppeteer with `--no-sandbox`); ArchiMate diagrams rendered to SVG via Node.js SSR (`/app/scripts/archimate-ssr/render-archimate.mjs` using `@xmldom/xmldom` and `elkjs` for layout). Both embedded as `#image()` references in the compiled Typst template.
 
 **Font path resolution:** The Dockerfile installs Typst CLI and sets `TYPST_FONT_PATHS` to `assets/fonts/`. Custom TTF files are referenced by their internal family name (verify with `typst fonts --font-path <dir>`). The Google Fonts Lato files register as family **"Lato"** — weight is controlled via Typst's `weight` parameter, not by separate family names.
 

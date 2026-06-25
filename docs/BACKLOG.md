@@ -555,7 +555,7 @@ Phase 1 (currently complete) delivers the formatting layer: Typst template with 
 **Current state (Phase 1):**
 - `DocumentFormatterService.generate_pdf()` compiles Markdown + metadata via Typst CLI subprocess into PDF bytes.
 - Template applies Rijnland colors, typography (Lato as Neusa substitute), logo placement, pay-off, draft watermark, TOC, tables, code blocks, and blockquotes.
-- 8 pytest tests cover FO/TO rendering, watermark presence/absence, invalid template handling, and parameterized document types.
+- 9 pytest tests cover FO/TO rendering, watermark presence/absence, invalid template handling, parameterized document types, and manual PDF inspection.
 - No database persistence, no API route, no agent tool integration.
 
 **Desired improvements:**
@@ -563,8 +563,8 @@ Phase 1 (currently complete) delivers the formatting layer: Typst template with 
 - **Agent pipeline integration:** Expose PDF generation as a builtin tool (e.g., `make_pdf_document`) or MCP tool so agents can compile designs on demand. The agent passes Markdown + metadata; the tool returns a download URL or attaches the PDF to the `done()` summary.
 - **Database persistence:** Store generated documents in PostgreSQL (binary blob or file-system reference). Add domain models `DocumentSummary` / `DocumentDetail` with fields: `content_markdown`, `metadata_json`, `pdf_path`, `created_at`, `project_id`, `session_id`.
 - **API route & user download:** Add REST endpoints (`GET /api/projects/{id}/documents`, `POST /api/projects/{id}/documents/generate`, `GET /api/documents/{id}/download`). Frontend shows a "Download PDF" button in the chat timeline or project page.
-- **Mermaid/ArchiMate rendering inside PDFs:** The template currently skips diagram rendering because diagrams are pre-rendered data. Phase 2 could embed agent-rendered SVGs or PNGs (exported by Mermaid/ArchiMate tools before PDF compilation) via image references in the Markdown.
+- **Mermaid/ArchiMate rendering inside PDFs:** ~~Open backlog item~~ — **Done.** Mermaid diagrams render to PNG (`mmdc`); ArchiMate diagrams render to SVG via Node.js SSR (`/app/scripts/archimate-ssr/render-archimate.mjs`). Both are embedded as `#image()` references in the Typst template.
 - **Neusa Next Std font:** Replace Lato with the licensed Neusa Next Std brand font if the organization provides `.ttf`/`.otf` files. Place files in `assets/fonts/` and remove the Lato fallback chain — Typst will auto-resolve via `font:` parameter.
-- **"Dijk en sloot" decorative element:** Add the actual Rijnland wave/landscape illustration to the title page if the asset becomes available. Currently replaced by a blue accent bar abstraction.
+- **"Dijk en sloot" decorative element:** ~~Open backlog item~~ — **Done.** The actual Rijnland wave/landscape PNG (`dijkEnSloot.png`) bleeds full-width above the blue footer bar on every content page.
 
 **Priority:** Medium — improves deliverable quality for FO/TD documents but does not block agent execution.

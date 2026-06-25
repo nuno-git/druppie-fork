@@ -55,71 +55,58 @@ class DocumentFormatterService:
                 "Install it or set TYPST_FONT_PATHS if using a custom location."
             )
 
-    def _render_mermaid_diagrams(
+    def _render_diagrams(
         self, content: str, tmpdir: Path
     ) -> list[tuple[str, str]]:
-        """Split markdown into segments and render mermaid blocks to PNG.
+        """Split markdown into segments and render diagram blocks.
 
-        Returns a list of (segment_type, data) tuples where segment_type is
-        'text' or 'mermaid'. For 'mermaid' segments, data is the PNG filename.
-        For 'text' segments, data is the markdown text.
+        Handles 'mermaid' (→ PNG via mmdc) and 'archimate' (→ SVG via Node.js SSR).
+        Unrenderable blocks fall back to styled text references.
+
+        Returns a list of (segment_type, data) tuples where segment_type
+        is 'text', 'mermaid', or 'svg'.
         """
-        mmdc = shutil.which("mmdc")
-        has_mermaid = "```mermaid" in content
-
-        if mmdc is None or not has_mermaid:
-            return [("text", content)]
-
-        puppeteer_config = tmpdir / "puppeteer.json"
-        puppeteer_config.write_text('{"args": ["--no-sandbox"]}', encoding="utf-8")
-
-        svg_dir = tmpdir / "assets" / "diagrams"
-        svg_dir.mkdir(parents=True, exist_ok=True)
-
-        mermaid_pattern = re.compile(r"```mermaid\s*\n(.*?)\n```", re.DOTALL)
-        segments: list[tuple[str, str]] = []
-        last_end = 0
+        diagrams_dir = tmpdir / "assets" / "diagrams"
+        diagrams_dir.mkdir(parents=True, exist_ok=True)
         diagram_counter = 0
 
-        for match in mermaid_pattern.finditer(content):
-            text_before = content[last_end : match.start()]
+        # --- ArchiMate SSR setup ---
+        archimate_ssr = Path("/app/scripts/archimate-ssr/render-archimate.mjs")
+        has_archimate_ssr = archimate_ssr.exists()
+        node_bin = shutil.which("node")
+
+        DiagramBlock = tuple[int, int, str, str]
+        blocks: list[DiagramBlock] = []
+
+        for m in re.finditer(r"```mermaid\s*\n(.*?)\n```", content, re.DOTALL):
+            blocks.append((m.start(), m.end(), "mermaid", m.group(1).strip()))
+
+        for m in re.finditer(r"```archimate\s*\n(.*?)\n```", content, re.DOTALL):
+            blocks.append((m.start(), m.end(), "archimate", m.group(1).strip()))
+
+        blocks.sort(key=lambda b: b[0])
+
+        if not blocks:
+            return [("text", content)]
+
+        segments: list[tuple[str, str]] = []
+        last_end = 0
+
+        for start, end, dtype, source in blocks:
+            text_before = content[last_end:start]
             if text_before.strip():
                 segments.append(("text", text_before))
 
-            mermaid_source = match.group(1).strip()
-            mmd_path = svg_dir / f"diagram_{diagram_counter}.mmd"
-            png_name = f"diagram_{diagram_counter}.png"
-            png_path = svg_dir / png_name
-            diagram_counter += 1
-
-            mmd_path.write_text(mermaid_source, encoding="utf-8")
-
-            cmd = [
-                mmdc,
-                "-i", str(mmd_path),
-                "-o", str(png_path),
-                "-p", str(puppeteer_config),
-            ]
-            try:
-                subprocess.run(
-                    cmd,
-                    check=True,
-                    capture_output=True,
-                    text=True,
-                    cwd=str(tmpdir),
+            if dtype == "mermaid":
+                self._render_mermaid(source, diagrams_dir, diagram_counter, segments)
+            elif dtype == "archimate":
+                self._render_archimate(
+                    source, diagrams_dir, diagram_counter, segments,
+                    has_archimate_ssr, node_bin, archimate_ssr,
                 )
-            except subprocess.CalledProcessError:
-                # Fallback: render as raw code block
-                segments.append(("text", f"```mermaid\n{mermaid_source}\n```"))
-                last_end = match.end()
-                continue
 
-            if png_path.exists():
-                segments.append(("mermaid", png_name))
-            else:
-                segments.append(("text", f"```mermaid\n{mermaid_source}\n```"))
-
-            last_end = match.end()
+            diagram_counter += 1
+            last_end = end
 
         text_after = content[last_end:]
         if text_after.strip():
@@ -127,11 +114,101 @@ class DocumentFormatterService:
 
         return segments
 
+    def _render_mermaid(
+        self, source: str, out_dir: Path, counter: int,
+        segments: list[tuple[str, str]]
+    ) -> None:
+        mmdc = shutil.which("mmdc")
+        if mmdc is None:
+            segments.append(("text", f"```mermaid\n{source}\n```"))
+            return
+
+        mmd_path = out_dir / f"diagram_{counter}.mmd"
+        png_name = f"diagram_{counter}.png"
+        png_path = out_dir / png_name
+        mmd_path.write_text(source, encoding="utf-8")
+
+        puppeteer_config = out_dir.parent.parent / "puppeteer.json"
+        if not puppeteer_config.exists():
+            puppeteer_config.write_text('{"args": ["--no-sandbox"]}', encoding="utf-8")
+
+        cmd = [
+            mmdc, "-i", str(mmd_path), "-o", str(png_path),
+            "-p", str(puppeteer_config),
+        ]
+        try:
+            subprocess.run(cmd, check=True, capture_output=True, text=True)
+        except subprocess.CalledProcessError:
+            segments.append(("text", f"```mermaid\n{source}\n```"))
+            return
+
+        segments.append(("mermaid", png_name) if png_path.exists()
+                        else ("text", f"```mermaid\n{source}\n```"))
+
+    def _render_archimate(
+        self, source: str, out_dir: Path, counter: int,
+        segments: list[tuple[str, str]],
+        has_ssr: bool, node_bin: str | None, ssr_script: Path
+    ) -> None:
+        # Parse spec (view-id + file)
+        spec: dict[str, str] = {}
+        for line in source.splitlines():
+            m = re.match(r"^\s*([a-zA-Z_-]+)\s*[:=]\s*(.+?)\s*$", line)
+            if m:
+                spec[m[1].lower()] = m[2]
+
+        view_id = spec.get("view-id", "")
+        xml_file = spec.get("file", "docs/architecture.archimate")
+
+        if not has_ssr or not node_bin or not view_id:
+            # Fallback to text reference
+            segments.append(("text",
+                f"**Architecture Reference**\n\n- **View ID:** {view_id}\n"
+                f"- **Source:** {xml_file}\n"))
+            return
+
+        # Look for XML file relative to template dir or absolute
+        xml_candidates = [
+            self.template_dir / xml_file,
+            self.template_dir / "test-inputs" / Path(xml_file).name,
+            Path(xml_file),
+        ]
+        xml_path = next((p for p in xml_candidates if p.exists()), None)
+        if xml_path is None:
+            segments.append(("text",
+                f"**Architecture Reference**\n\n- **View ID:** {view_id}\n"
+                f"- **Source:** {xml_file} *(file not found)*\n"))
+            return
+
+        svg_name = f"diagram_{counter}.svg"
+        svg_path = out_dir / svg_name
+        cmd = [
+            node_bin, str(ssr_script),
+            "--xml", str(xml_path),
+            "--view-id", view_id,
+            "--output", str(svg_path),
+        ]
+        try:
+            subprocess.run(
+                cmd, check=True, capture_output=True, text=True,
+                cwd=str(ssr_script.parent),
+            )
+        except subprocess.CalledProcessError:
+            segments.append(("text",
+                f"**Architecture Reference**\n\n- **View ID:** {view_id}\n"
+                f"- **Source:** {xml_file} *(render failed)*\n"))
+            return
+
+        segments.append(("svg", svg_name) if svg_path.exists()
+                        else ("text",
+                            f"**Architecture Reference**\n\n- **View ID:** {view_id}\n"
+                            f"- **Source:** {xml_file}\n"))
+
     def _write_content_typ(
         self, segments: list[tuple[str, str]], tmpdir: Path
     ) -> None:
         """Generate a content.typ that interleaves text segments (via cmarker)
-        and mermaid PNG images (via #image()).
+        and diagram images (PNG for mermaid, SVG for archimate).
         """
         lines: list[str] = ['#import "@preview/cmarker:0.1.8"']
         text_counter = 0
@@ -143,6 +220,8 @@ class DocumentFormatterService:
                 text_counter += 1
                 lines.append(f'#cmarker.render(read("segment_{text_counter - 1}.md"))')
             elif seg_type == "mermaid":
+                lines.append(f'#image("assets/diagrams/{data}")')
+            elif seg_type == "svg":
                 lines.append(f'#image("assets/diagrams/{data}")')
 
         (tmpdir / "content.typ").write_text(
@@ -180,7 +259,7 @@ class DocumentFormatterService:
             tmp = Path(tmpdir)
 
             # Split markdown and render mermaid diagrams
-            segments = self._render_mermaid_diagrams(content, tmp)
+            segments = self._render_diagrams(content, tmp)
 
             # Generate interleaved content.typ
             self._write_content_typ(segments, tmp)

@@ -935,10 +935,11 @@ Druppie can convert agent-created Markdown documents into professionally formatt
 
 - **Primary color:** `#0065BD` (Rijnland blue, PMS 300)
 - **Typography:** Lato (free substitute for the licensed Neusa Next Std). Body text is light-weight; headings are bold.
-- **Logo:** `Logo-hoogheemraadschap-rijnland.png`, bottom-right on content pages, centered on the title page.
+- **Logo:** `Logo-hoogheemraadschap-rijnland.png`, centered on the title page at 12cm wide (not shown on content pages).
 - **Pay-off:** "droge voeten, schoon water" rendered on the title page.
-- **Layout:** Grid-based margins (25mm sides, 35mm bottom), subtle blue header line on page 2+.
-- **Watermark:** Semi-transparent "DRAFT" or "Niet-definitief — ter goedkeuring" when `status` is not `FINAL`.
+- **Layout:** Grid-based margins (25mm sides, 32mm bottom), subtle blue header line on page 2+.
+- **Watermark:** Semi-transparent "DRAFT" or "Niet-definitief — ter goedkeuring" in the foreground layer (visible above all content, including title page) when `status` is not `FINAL`.
+- **Footer:** Full-bleed dijk-en-sloot shape above a Rijnland-blue bar. Right-aligned text: "Hoogheemraadschap van Rijnland | project-name — versie month year | page/total". Footer appears on all pages except the title page.
 
 ### Template Features
 
@@ -946,9 +947,9 @@ Druppie can convert agent-created Markdown documents into professionally formatt
 - **Tables:** Blue header row with white text, subtle striped rows, rounded corners.
 - **Code blocks:** Light blue background (`#E9EFFA`), rounded corners, monospace font.
 - **Blockquotes:** Light sand background with a Rijnland-blue left border.
-- **Page numbering:** "Pagina X van Y" centered in the footer.
+- **Diagram rendering:** Mermaid diagrams are pre-rendered to PNG (avoiding SVG `foreignObject` text bugs in PDFs); ArchiMate diagrams are rendered to SVG via a Node.js SSR script (`/app/scripts/archimate-ssr/render-archimate.mjs`). Both are embedded as images in the Markdown before PDF compilation.
 - **Section breaks:** Optional page break before every H1 (`section_breaks: true`).
 
 ### Current Phase
 
-Phase 1 (complete): The formatting layer exists and is fully tested (8 pytest tests, all passing). It is **not yet wired into agent pipelines** — there is no database persistence, no API route, and no agent tool that calls it. Phase 2 will expose it as an MCP tool or builtin tool so agents can generate PDFs on demand.
+Phase 1 (complete): The formatting layer exists and is fully tested (9 pytest tests, all passing). It is **not yet wired into agent pipelines** — there is no database persistence, no API route, and no agent tool that calls it. Phase 2 will expose it as an MCP tool or builtin tool so agents can generate PDFs on demand.

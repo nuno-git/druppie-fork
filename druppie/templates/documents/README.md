@@ -25,9 +25,12 @@ The template applies the Rijnland brand identity (from `style-guide.pdf`):
 - **Primary color**: `#0065BD` (PMS 300)
 - **Secondary palette**: sand (`#C4B9A7`), dark-blue (`#002544`), mint (`#91D0D5`), brick (`#EA8A63`)
 - **Typography**: Neusa Next Std (brand headings) → Lato (free substitute). Body uses **Lato Light** via Typst `weight: "light"`; headings use **Lato Bold** via `weight: "bold"`.
-- **Logo placement**: bottom-right on A4 (title page centered at 5cm)
+- **Logo placement**: title page centered at 12cm wide (not shown on content pages)
 - **Pay-off**: "droge voeten, schoon water" on title page
-- **Grid-based margins**: 25mm sides, 35mm bottom
+- **Grid-based margins**: 25mm sides, 32mm bottom
+- **Watermark**: "DRAFT" in foreground layer when `status != "FINAL"`
+- **Footer**: Full-bleed dijk-en-sloot shape above Rijnland-blue bar, right-aligned project/page info (excluded from title page)
+- **Diagram rendering**: Mermaid → PNG via `mmdc`; ArchiMate → SVG via Node.js SSR (`/app/scripts/archimate-ssr/`)
 
 ### Font Setup Note
 
