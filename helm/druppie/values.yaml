@@ -63,6 +63,12 @@ keycloak:
   adminPassword: admin
   hostname: ""
   nodePort: 8080
+  # External service exposure. NodePort by default (single-instance dev/prod).
+  # Set type: ClusterIP for multi-instance clusters (ingress-routed) to avoid
+  # cluster-global NodePort collisions.
+  service:
+    type: NodePort
+    nodePort: 30002
   replicaCount: 1
   resources:
     requests:
@@ -96,6 +102,12 @@ gitea:
   sshPort: 2222
   httpPort: 3000
   nodePort: 3000
+  # External service exposure. NodePort by default (single-instance dev/prod).
+  # Set type: ClusterIP for multi-instance clusters (ingress-routed) to avoid
+  # cluster-global NodePort collisions.
+  service:
+    type: NodePort
+    nodePort: 30003
   storage: 5Gi
   replicaCount: 1
   resources:
@@ -113,6 +125,12 @@ backend:
     tag: latest
   port: 8000
   nodePort: 8000
+  # External service exposure. NodePort by default (single-instance dev/prod).
+  # Set type: ClusterIP for multi-instance clusters (ingress-routed) to avoid
+  # cluster-global NodePort collisions.
+  service:
+    type: NodePort
+    nodePort: 30000
   replicaCount: 1
   # Pin pod to a node (e.g. for RWO shared-volume co-location); empty = no constraint
   nodeSelector: {}
@@ -166,6 +184,12 @@ frontend:
     tag: latest
   port: 5173
   nodePort: 5173
+  # External service exposure. NodePort by default (single-instance dev/prod).
+  # Set type: ClusterIP for multi-instance clusters (ingress-routed) to avoid
+  # cluster-global NodePort collisions.
+  service:
+    type: NodePort
+    nodePort: 30001
   replicaCount: 1
   resources:
     requests:

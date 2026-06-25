@@ -98,14 +98,18 @@ if ! kubectl get namespace "$NS" >/dev/null 2>&1; then
 fi
 
 # 2. Copy the wildcard TLS secret into the target namespace (idempotent).
+# Use real temp files (not process substitution): Windows kubectl.exe cannot
+# read the /proc/<pid>/fd paths that <(...) produces under Git Bash/MSYS.
 if ! is_dry_run; then
   echo "==> Copying TLS secret $TLS_SECRET from $TLS_SRC_NS into $NS"
-  crt="$(kubectl -n "$TLS_SRC_NS" get secret "$TLS_SECRET" -o jsonpath='{.data.tls\.crt}' | base64 -d)"
-  key="$(kubectl -n "$TLS_SRC_NS" get secret "$TLS_SECRET" -o jsonpath='{.data.tls\.key}' | base64 -d)"
-  [[ -n "$crt" && -n "$key" ]] || { echo "TLS secret $TLS_SECRET in $TLS_SRC_NS has no tls.crt/tls.key" >&2; exit 1; }
+  tmpdir="$(mktemp -d)"
+  trap 'rm -rf "$tmpdir"' EXIT
+  kubectl -n "$TLS_SRC_NS" get secret "$TLS_SECRET" -o jsonpath='{.data.tls\.crt}' | base64 -d > "$tmpdir/tls.crt"
+  kubectl -n "$TLS_SRC_NS" get secret "$TLS_SECRET" -o jsonpath='{.data.tls\.key}' | base64 -d > "$tmpdir/tls.key"
+  [[ -s "$tmpdir/tls.crt" && -s "$tmpdir/tls.key" ]] || { echo "TLS secret $TLS_SECRET in $TLS_SRC_NS has no tls.crt/tls.key" >&2; exit 1; }
   kubectl create secret tls "$TLS_SECRET" -n "$NS" \
-    --cert=<(printf '%s' "$crt") \
-    --key=<(printf '%s' "$key") \
+    --cert="$tmpdir/tls.crt" \
+    --key="$tmpdir/tls.key" \
     --dry-run=client -o yaml | kubectl apply -f -
 fi
 
@@ -128,6 +132,12 @@ HELM_ARGS=(
   -f "${CHART_DIR}/values-rijnland.yaml"
   --set "global.instance=${NS}"
   --set "global.domain=${HOST}"
+  # Branch envs are reached via Traefik ingress, not NodePort. Request ClusterIP
+  # so they don't grab cluster-global NodePorts already held by the live instance.
+  --set "backend.service.type=ClusterIP"
+  --set "frontend.service.type=ClusterIP"
+  --set "keycloak.service.type=ClusterIP"
+  --set "gitea.service.type=ClusterIP"
   --set "backend.nodeSelector.kubernetes\.io/hostname=${NODE}"
 )
 for m in "${PINNED_MODULES[@]}"; do

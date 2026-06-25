@@ -19,6 +19,10 @@ spec:
         app.kubernetes.io/component: module-kubernetes
     spec:
       serviceAccountName: {{ include "druppie.fullname" . }}-module-kubernetes
+      {{- if .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml .Values.global.imagePullSecrets | nindent 8 }}
+      {{- end }}
       containers:
         - name: module-kubernetes
           image: {{ include "druppie.image" (dict "Values" .Values "image" .Values.modules.kubernetes.image) }}

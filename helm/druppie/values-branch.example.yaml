@@ -34,6 +34,26 @@ global:
   imagePullSecrets:
     - name: harbor-regcred
 
+# NOTE: Branch envs are reached via Traefik ingress, so the externally-exposed
+# services (backend/frontend/keycloak/gitea) use ClusterIP instead of NodePort to
+# avoid colliding with the live instance over the cluster-global NodePort range.
+# The deploy script sets these automatically via --set:
+#   --set backend.service.type=ClusterIP   --set frontend.service.type=ClusterIP
+#   --set keycloak.service.type=ClusterIP  --set gitea.service.type=ClusterIP
+# Uncomment below only if hand-tuning a branch without the script:
+# backend:
+#   service:
+#     type: ClusterIP
+# frontend:
+#   service:
+#     type: ClusterIP
+# keycloak:
+#   service:
+#     type: ClusterIP
+# gitea:
+#   service:
+#     type: ClusterIP
+
 # Pin this instance to ONE worker node. Shared PVCs are ReadWriteOnce on this
 # cluster (Longhorn RWX unavailable), so the backend + every module that mounts a
 # shared PVC must co-locate. Use a DIFFERENT node than the live `druppie` instance
