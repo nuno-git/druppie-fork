@@ -1,8 +1,8 @@
 """Kubernetes client wrapper for the Druppie dev VM lifecycle.
 
 Provisions and tears down the Pod + Service + PVC triple that backs a single
-developer dev VM. The dev VM image (``dev-vm-base:latest``) runs under the
-``sysbox`` RuntimeClass so it can run inner Docker; a Guacamole RDP connection
+developer dev VM. The dev VM image (``dev-vm-base:latest``) runs as a
+privileged container so it can run inner Docker; a Guacamole RDP connection
 is fronted by a ClusterIP Service that selects the pod.
 
 The official ``kubernetes`` Python client is synchronous, so every method here
@@ -87,11 +87,13 @@ class KubernetesClient:
     ) -> str:
         """Create a dev VM pod. Returns the pod name.
 
-        The pod runs under the ``sysbox`` RuntimeClass with the
-        ``druppie-dev-vm`` PriorityClass. The image ENTRYPOINT
-        (``dev-vm-entrypoint.sh``) starts dbus/sshd/xrdp/Gitea, so no
-        ``command``/``args`` are set here. When ``pvc_name`` is given the home
-        directory is backed by that PVC; otherwise an ``emptyDir`` is used.
+        The container runs privileged so it can run inner Docker (k3s with
+        ``--docker`` does not map RuntimeClass handlers to Docker runtimes, so a
+        privileged security context is used instead of the ``sysbox``
+        RuntimeClass). The image ENTRYPOINT (``dev-vm-entrypoint.sh``) starts
+        dbus/sshd/xrdp/Gitea, so no ``command``/``args`` are set here. When
+        ``pvc_name`` is given the home directory is backed by that PVC;
+        otherwise an ``emptyDir`` is used.
         """
         api = self._api()
 
@@ -121,6 +123,7 @@ class KubernetesClient:
                 client.V1VolumeMount(name="shm", mount_path="/dev/shm"),
                 client.V1VolumeMount(name="tmp", mount_path="/tmp"),
             ],
+            security_context=client.V1SecurityContext(privileged=True),
         )
 
         volumes = [
@@ -161,8 +164,6 @@ class KubernetesClient:
                 name=name, namespace=self._namespace, labels=labels
             ),
             spec=client.V1PodSpec(
-                runtime_class_name="sysbox",
-                priority_class_name="druppie-dev-vm",
                 containers=[container],
                 volumes=volumes,
             ),
