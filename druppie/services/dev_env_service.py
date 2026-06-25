@@ -242,7 +242,7 @@ class DevEnvService:
     def _generate_vm_credentials(self) -> dict:
         return {
             "rdp_username": "developer",
-            "rdp_password": pysecrets.token_urlsafe(16),
+            "rdp_password": "developer",
             "ssh_username": "developer",
         }
 
@@ -264,8 +264,6 @@ class DevEnvService:
             "--tmpfs", "/tmp:size=4g",
             "--storage-opt", "size=20G",
             "-e", f"DRUPPIE_GIT_BRANCH={branch}",
-            "-e", f"DEV_VM_RDP_USERNAME={creds['rdp_username']}",
-            "-e", f"DEV_VM_RDP_PASSWORD={creds['rdp_password']}",
             DEV_VM_IMAGE,
             "bash", "-c",
             "dockerd > /var/log/dockerd.log 2>&1 & sleep infinity",

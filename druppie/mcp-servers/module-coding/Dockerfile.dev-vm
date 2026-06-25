@@ -170,6 +170,8 @@ exec dbus-launch --exit-with-session xfce4-session\n' \
     > /etc/xrdp/startwm.sh \
     && chmod +x /etc/xrdp/startwm.sh \
     && sed -i 's/^max_bpp=.*/max_bpp=24/' /etc/xrdp/xrdp.ini \
+    && sed -i '/^\[Xorg\]/,/^\[/ s/^username=.*/username=developer/' /etc/xrdp/xrdp.ini \
+    && sed -i '/^\[Xorg\]/,/^\[/ s/^password=.*/password=developer/' /etc/xrdp/xrdp.ini \
     && mkdir -p /run/xrdp /run/user/1000 \
     && chown developer:developer /run/user/1000
 

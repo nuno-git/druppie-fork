@@ -25,11 +25,6 @@ chown developer:developer /workspace /cache /run/user/1000 2>/dev/null || true
 # Ensure dbus has what it needs
 dbus-uuidgen --ensure 2>/dev/null || true
 
-# Apply per-VM password if provided
-if [ -n "${DEV_VM_RDP_USERNAME:-}" ] && [ -n "${DEV_VM_RDP_PASSWORD:-}" ]; then
-    echo "${DEV_VM_RDP_USERNAME}:${DEV_VM_RDP_PASSWORD}" | chpasswd
-fi
-
 # ---------------------------------------------------------------------------
 # 1. Start dbus + SSH + xrdp (CRITICAL — must be fast)
 # ---------------------------------------------------------------------------
@@ -54,11 +49,6 @@ sudo -u developer -H code-server \
 
 log "Dev VM ready (critical services up)."
 log "  sshd(:22)  xrdp(:3389)  code-server(:8080)"
-if [ -n "${DEV_VM_RDP_PASSWORD:-}" ]; then
-    log "  Developer login: developer / (per-VM password)"
-else
-    log "  Developer login: developer / developer"
-fi
 
 # ---------------------------------------------------------------------------
 # 3. Start Docker daemon + local Gitea (BACKGROUND — non-critical)
