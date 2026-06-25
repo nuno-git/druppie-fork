@@ -398,51 +398,53 @@ class GuacamoleClient:
     async def grant_read_permission(
         self,
         username: str,
-        connection_name: str,
+        connection_id: str,
     ) -> dict[str, Any]:
         """Grant READ permission on a connection to a Guacamole user.
 
         Applies a JSON Patch (``op=add``) to the user's
-        ``connectionPermissions`` for the given connection name.
+        ``connectionPermissions`` for the given connection.
 
         Args:
             username: Guacamole user to grant access to.
-            connection_name: Name of the connection (the permission key).
+            connection_id: Identifier of the connection (the permission key,
+                as returned by ``create_connection`` — NOT the connection name).
 
         Returns:
             Uniform result dict. Fails with a descriptive ``error`` if the
             user cannot be found.
         """
         return await self._patch_connection_permission(
-            username, connection_name, op="add", value="READ"
+            username, connection_id, op="add", value="READ"
         )
 
     async def revoke_read_permission(
         self,
         username: str,
-        connection_name: str,
+        connection_id: str,
     ) -> dict[str, Any]:
         """Revoke READ permission on a connection from a Guacamole user.
 
         Applies a JSON Patch (``op=remove``) to the user's
-        ``connectionPermissions`` for the given connection name.
+        ``connectionPermissions`` for the given connection.
 
         Args:
             username: Guacamole user to revoke access from.
-            connection_name: Name of the connection (the permission key).
+            connection_id: Identifier of the connection (the permission key,
+                as returned by ``create_connection`` — NOT the connection name).
 
         Returns:
             Uniform result dict. Fails with a descriptive ``error`` if the
             user cannot be found.
         """
         return await self._patch_connection_permission(
-            username, connection_name, op="remove", value=None
+            username, connection_id, op="remove", value=None
         )
 
     async def _patch_connection_permission(
         self,
         username: str,
-        connection_name: str,
+        connection_id: str,
         op: str,
         value: str | None,
     ) -> dict[str, Any]:
@@ -473,7 +475,7 @@ class GuacamoleClient:
             logger.info("guacamole_user_created", username=username, user_id=user_id)
 
         patch: list[dict[str, Any]] = [
-            {"op": op, "path": f"/connectionPermissions/{connection_name}"}
+            {"op": op, "path": f"/connectionPermissions/{connection_id}"}
         ]
         if value is not None:
             patch[0]["value"] = value
@@ -489,7 +491,7 @@ class GuacamoleClient:
                 "guacamole_permission_updated",
                 op=op,
                 username=username,
-                connection=connection_name,
+                connection_id=connection_id,
             )
 
         return result

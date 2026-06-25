@@ -294,13 +294,15 @@ class DevEnvService:
             raise RuntimeError("Guacamole did not return a connection identifier")
 
         # Grant READ to the owning user (best-effort: a missing Guacamole user
-        # should not block VM creation, just log it).
+        # should not block VM creation, just log it). The permission is keyed by
+        # the connection identifier, not its name.
         if username:
-            grant = await self.guac.grant_read_permission(username, container_name)
+            grant = await self.guac.grant_read_permission(username, connection_id)
             if not grant.get("success"):
                 logger.warning(
                     "dev_vm_guac_grant_failed",
                     connection=container_name,
+                    connection_id=connection_id,
                     username=username,
                     error=grant.get("error"),
                 )
