@@ -326,7 +326,7 @@ class DevEnvService:
             port="3389",
             username=rdp_username,
             password=rdp_password,
-            **{"ignore-cert": "true", "resize-method": "display-update"},
+            **{"ignore-cert": "true", "resize-method": "display-update", "security": "any"},
         )
         if not result.get("success"):
             raise RuntimeError(

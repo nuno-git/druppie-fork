@@ -16,11 +16,14 @@ log() { printf '[dev-vm-entrypoint] %s\n' "$*"; }
 # 0. Prepare filesystem
 # ---------------------------------------------------------------------------
 mkdir -p \
-    /workspace /cache /run/sshd /run/xrdp /run/user/1000 /var/log /etc/docker
+    /workspace /cache /run/sshd /run/xrdp /run/user/1000 /run/dbus /var/log /etc/docker
 mkdir -p \
     /cache/tmp /cache/pip /cache/npm /cache/uv /cache/pnpm /cache/yarn /cache/bun
 chmod 1777 /cache/tmp
 chown developer:developer /workspace /cache /run/user/1000 2>/dev/null || true
+
+# Ensure dbus has what it needs
+dbus-uuidgen --ensure 2>/dev/null || true
 
 # Apply per-VM password if provided
 if [ -n "${DEV_VM_RDP_USERNAME:-}" ] && [ -n "${DEV_VM_RDP_PASSWORD:-}" ]; then
@@ -31,7 +34,8 @@ fi
 # 1. Start dbus + SSH + xrdp (CRITICAL — must be fast)
 # ---------------------------------------------------------------------------
 log "Starting dbus..."
-dbus-daemon --system --fork 2>/dev/null || log "WARNING: dbus failed to start."
+mkdir -p /run/dbus
+dbus-daemon --system --fork || log "WARNING: dbus system daemon failed to start."
 
 log "Starting sshd..."
 /usr/sbin/sshd 2>/dev/null || log "WARNING: sshd failed to start."
