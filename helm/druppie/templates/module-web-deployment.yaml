@@ -52,6 +52,10 @@ spec:
             failureThreshold: 5
           resources:
             {{- toYaml .Values.modules.web.resources | nindent 12 }}
+      {{- with .Values.modules.web.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       volumes:
         - name: dataset
           persistentVolumeClaim:

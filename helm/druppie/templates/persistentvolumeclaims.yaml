@@ -9,7 +9,7 @@ metadata:
     app.kubernetes.io/component: workspace
 spec:
   accessModes:
-    {{- if .Values.nfs.enabled }}
+    {{- if or .Values.nfs.enabled .Values.persistence.rwx }}
     - ReadWriteMany
     {{- else }}
     - ReadWriteOnce
@@ -28,7 +28,11 @@ metadata:
     app.kubernetes.io/component: dataset
 spec:
   accessModes:
+    {{- if .Values.persistence.rwx }}
+    - ReadWriteMany
+    {{- else }}
     - ReadWriteOnce
+    {{- end }}
   {{- if .Values.persistence.storageClass }}
   storageClassName: {{ .Values.persistence.storageClass | quote }}
   {{- end }}
@@ -45,7 +49,7 @@ metadata:
     app.kubernetes.io/component: sandbox-bundles
 spec:
   accessModes:
-    {{- if .Values.nfs.enabled }}
+    {{- if or .Values.nfs.enabled .Values.persistence.rwx }}
     - ReadWriteMany
     {{- else }}
     - ReadWriteOnce

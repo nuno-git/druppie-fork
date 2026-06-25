@@ -52,6 +52,10 @@ spec:
             failureThreshold: 5
           resources:
             {{- toYaml .Values.modules.filesearch.resources | nindent 12 }}
+      {{- with .Values.modules.filesearch.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       volumes:
         - name: dataset
           persistentVolumeClaim:

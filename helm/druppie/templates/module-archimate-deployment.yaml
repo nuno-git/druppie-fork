@@ -61,6 +61,10 @@ spec:
             failureThreshold: 5
           resources:
             {{- toYaml .Values.modules.archimate.resources | nindent 12 }}
+      {{- with .Values.modules.archimate.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       volumes:
         - name: workspace
           persistentVolumeClaim:

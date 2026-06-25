@@ -114,6 +114,8 @@ backend:
   port: 8000
   nodePort: 8000
   replicaCount: 1
+  # Pin pod to a node (e.g. for RWO shared-volume co-location); empty = no constraint
+  nodeSelector: {}
   resources:
     requests:
       memory: "512Mi"
@@ -210,6 +212,8 @@ modules:
   filesearch:
     enabled: true
     replicaCount: 1
+    # Pin pod to a node (e.g. for RWO shared-volume co-location); empty = no constraint
+    nodeSelector: {}
     image:
       repository: druppie-module-filesearch
       tag: latest
@@ -224,6 +228,8 @@ modules:
   web:
     enabled: true
     replicaCount: 1
+    # Pin pod to a node (e.g. for RWO shared-volume co-location); empty = no constraint
+    nodeSelector: {}
     image:
       repository: druppie-module-web
       tag: latest
@@ -238,6 +244,8 @@ modules:
   archimate:
     enabled: true
     replicaCount: 1
+    # Pin pod to a node (e.g. for RWO shared-volume co-location); empty = no constraint
+    nodeSelector: {}
     image:
       repository: druppie-module-archimate
       tag: latest
@@ -300,6 +308,8 @@ modules:
   data_access:
     enabled: true
     replicaCount: 1
+    # Pin pod to a node (e.g. for RWO shared-volume co-location); empty = no constraint
+    nodeSelector: {}
     image:
       repository: druppie-module-data-access
       tag: latest
@@ -346,6 +356,10 @@ sandbox:
 persistence:
   enabled: true
   storageClass: ""
+  # Use ReadWriteMany for shared PVCs (workspace/dataset/sandbox-bundles).
+  # Enable on clusters whose storageClass supports RWX (e.g. Longhorn) so module
+  # pods can mount the shared volumes across multiple nodes. Default false (RWO).
+  rwx: false
   workspace:
     size: 10Gi
   dataset:
