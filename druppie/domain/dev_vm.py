@@ -37,7 +37,8 @@ class DevVMDetail(DevVMSummary):
     ssh_port: int | None = None
     rdp_port: int | None = None
     rdp_username: str | None = None
-    rdp_password: str | None = None
+    # rdp_password is deliberately omitted: it is a per-VM secret embedded in
+    # the Guacamole connection and must never be returned to API clients.
     guacamole_url: str | None = None  # deep-link to open the VM in Guacamole
     updated_at: datetime | None = None
 

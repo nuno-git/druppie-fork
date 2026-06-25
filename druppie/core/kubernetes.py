@@ -84,6 +84,7 @@ class KubernetesClient:
         image: str,
         branch: str,
         pvc_name: str | None = None,
+        rdp_password: str | None = None,
     ) -> str:
         """Create a dev VM pod. Returns the pod name.
 
@@ -94,6 +95,10 @@ class KubernetesClient:
         dbus/sshd/xrdp/Gitea, so no ``command``/``args`` are set here. When
         ``pvc_name`` is given the home directory is backed by that PVC;
         otherwise an ``emptyDir`` is used.
+
+        When ``rdp_password`` is given it is injected as ``DEV_VM_RDP_PASSWORD``
+        so the entrypoint sets the developer account's password to a per-VM
+        secret (the same one embedded in the Guacamole connection).
         """
         api = self._api()
 
@@ -113,7 +118,14 @@ class KubernetesClient:
                 client.V1ContainerPort(container_port=8080, name="code-server"),
                 client.V1ContainerPort(container_port=3000, name="gitea"),
             ],
-            env=[client.V1EnvVar(name="DRUPPIE_GIT_BRANCH", value=branch)],
+            env=[
+                client.V1EnvVar(name="DRUPPIE_GIT_BRANCH", value=branch),
+                *(
+                    [client.V1EnvVar(name="DEV_VM_RDP_PASSWORD", value=rdp_password)]
+                    if rdp_password
+                    else []
+                ),
+            ],
             resources=client.V1ResourceRequirements(
                 limits={"memory": "12Gi", "cpu": "4"},
                 requests={"memory": "2Gi", "cpu": "1"},

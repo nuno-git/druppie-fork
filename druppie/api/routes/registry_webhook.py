@@ -2,34 +2,39 @@
 
 Receives Harbor ``PUSH_ARTIFACT`` webhooks and triggers a k8s deployment
 rollout for the affected image. This endpoint does NOT use Keycloak auth
-(Harbor calls it server-to-server); instead it optionally validates a shared
-secret via the ``REGISTRY_WEBHOOK_SECRET`` env var and the
-``X-Registry-Webhook-Secret`` header.
+(Harbor calls it server-to-server); instead it validates a shared secret via
+the ``REGISTRY_WEBHOOK_SECRET`` env var and the ``X-Registry-Webhook-Secret``
+header. The endpoint fails closed: if no secret is configured it rejects every
+request, since it can trigger cluster rollouts from the request payload.
 """
 
 import hmac
 import os
 
-from fastapi import APIRouter, Depends, Header
 import structlog
+from fastapi import APIRouter, Depends, Header
 
 from druppie.api.deps import get_deploy_service
 from druppie.services import DeployService
 
 logger = structlog.get_logger()
 
-# Optional shared secret. When unset, the webhook is accepted without a secret
-# (convenient for local dev). Set it in production to lock the endpoint down.
+# Shared secret. REQUIRED: when unset the webhook rejects every request, because
+# it can trigger cluster rollouts from the (untrusted) request payload.
 REGISTRY_WEBHOOK_SECRET = os.getenv("REGISTRY_WEBHOOK_SECRET", "")
 
 router = APIRouter()
 
 
 def _verify_secret(x_registry_webhook_secret: str | None) -> bool:
-    """Constant-time check of the webhook secret when one is configured."""
+    """Constant-time check of the webhook secret. Fails closed.
+
+    Returns False when no secret is configured (endpoint disabled) or when the
+    supplied header is missing or does not match.
+    """
     if not REGISTRY_WEBHOOK_SECRET:
-        # No secret configured -> open in dev. Logged for visibility.
-        return True
+        logger.warning("registry_webhook_disabled_no_secret")
+        return False
     if not x_registry_webhook_secret:
         return False
     return hmac.compare_digest(x_registry_webhook_secret, REGISTRY_WEBHOOK_SECRET)

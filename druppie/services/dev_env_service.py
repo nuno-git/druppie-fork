@@ -15,6 +15,7 @@ The Pod/Service/PVC lifecycle runs through the async Kubernetes client
 
 import base64
 import os
+import secrets
 from uuid import UUID
 
 import structlog
@@ -222,10 +223,14 @@ class DevEnvService:
     # -------------------------------------------------------------------------
 
     def _generate_vm_credentials(self) -> dict:
+        """Generate per-VM credentials. The RDP password is unique per VM and
+        injected into the pod (so xrdp accepts it) and into the Guacamole
+        connection (so the user never types it). It is never returned to API
+        clients."""
         return {
-            "rdp_username": "developer",
-            "rdp_password": "developer",
-            "ssh_username": "developer",
+            "rdp_username": DEV_VM_RDP_USERNAME,
+            "rdp_password": secrets.token_urlsafe(18),
+            "ssh_username": DEV_VM_RDP_USERNAME,
         }
 
     async def _launch_pod(
@@ -246,9 +251,17 @@ class DevEnvService:
         await self._k8s.delete_pod(pod_name)
         await self._k8s.delete_pvc(pvc_name)
 
-        # Create fresh resources.
+        # Create fresh resources. The per-VM RDP password is injected into the
+        # pod so xrdp authenticates with the same secret embedded in the
+        # Guacamole connection.
         await self._k8s.create_pvc(pvc_name)
-        await self._k8s.create_pod(pod_name, DEV_VM_IMAGE, branch, pvc_name=pvc_name)
+        await self._k8s.create_pod(
+            pod_name,
+            DEV_VM_IMAGE,
+            branch,
+            pvc_name=pvc_name,
+            rdp_password=creds.get("rdp_password"),
+        )
         await self._k8s.create_service(service_name, pod_name)
 
         # Wait for the pod to be Running with an IP assigned.
@@ -259,7 +272,6 @@ class DevEnvService:
         # Stable DNS name for Guacamole (NOT the pod IP, which changes on
         # restart).
         service_dns = f"{service_name}.{self._k8s.namespace}.svc.cluster.local"
-        _ = creds  # reserved for future per-VM credential injection
         return pod_name, service_dns
 
     async def _register_guacamole(

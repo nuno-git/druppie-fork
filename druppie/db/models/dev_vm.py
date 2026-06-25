@@ -47,7 +47,9 @@ class DevVM(Base):
             "ssh_port": self.ssh_port,
             "rdp_port": self.rdp_port,
             "rdp_username": self.rdp_username,
-            "rdp_password": self.rdp_password,
+            # rdp_password is intentionally NOT serialized: it is a per-VM secret
+            # embedded in the Guacamole connection; clients connect via the
+            # Guacamole deep-link and never need the raw password.
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }

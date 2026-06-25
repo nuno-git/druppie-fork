@@ -25,6 +25,14 @@ chown developer:developer /workspace /cache /run/user/1000 2>/dev/null || true
 # Ensure dbus has what it needs
 dbus-uuidgen --ensure 2>/dev/null || true
 
+# Apply the per-VM RDP password if one was injected (DEV_VM_RDP_PASSWORD).
+# Falls back to the image-baked default when unset. Done before xrdp starts so
+# the first login uses the per-VM secret embedded in the Guacamole connection.
+if [ -n "${DEV_VM_RDP_PASSWORD:-}" ]; then
+    echo "developer:${DEV_VM_RDP_PASSWORD}" | chpasswd && log "Applied per-VM RDP password." \
+        || log "WARNING: failed to apply per-VM RDP password; using image default."
+fi
+
 # ---------------------------------------------------------------------------
 # 1. Start dbus + SSH + xrdp (CRITICAL — must be fast)
 # ---------------------------------------------------------------------------

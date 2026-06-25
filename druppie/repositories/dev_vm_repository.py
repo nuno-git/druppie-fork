@@ -7,9 +7,9 @@ the inherited ``self.db`` session.
 
 from uuid import UUID
 
-from .base import BaseRepository
 from ..db.models import DevVM
 from ..domain import DevVMDetail, DevVMSummary
+from .base import BaseRepository
 
 
 class DevVMRepository(BaseRepository):
@@ -113,7 +113,7 @@ class DevVMRepository(BaseRepository):
             ssh_port=vm.ssh_port,
             rdp_port=vm.rdp_port,
             rdp_username=vm.rdp_username,
-            rdp_password=vm.rdp_password,
+            # rdp_password is not surfaced through the domain layer (secret).
             guacamole_url=None,  # filled by service from guacamole_connection_id
             updated_at=vm.updated_at,
         )
