@@ -21,6 +21,7 @@ Flow:
 All database operations go through repositories (no raw db session usage).
 """
 
+import contextvars
 from contextlib import contextmanager
 from typing import TYPE_CHECKING
 from uuid import UUID
@@ -42,6 +43,10 @@ if TYPE_CHECKING:
     from sqlalchemy.orm import Session as DBSession
 
 logger = structlog.get_logger()
+
+_task_db: contextvars.ContextVar["DBSession | None"] = contextvars.ContextVar(
+    "_task_db", default=None
+)
 
 
 class ToolCallStatus:
@@ -165,27 +170,44 @@ class ToolExecutor:
         self._question_repo = None
 
     @property
+    def _active_db(self):
+        """Return the task-local DB session if set, otherwise the instance session."""
+        return _task_db.get(None) or self.db
+
+    @property
     def execution_repo(self):
         """ExecutionRepository for ToolCall operations."""
+        task_db = _task_db.get(None)
+        if task_db is not None:
+            from druppie.repositories import ExecutionRepository
+            return ExecutionRepository(task_db)
         if self._execution_repo is None:
             from druppie.repositories import ExecutionRepository
-            self._execution_repo = ExecutionRepository(self.db)
+            self._execution_repo = ExecutionRepository(self._active_db)
         return self._execution_repo
 
     @property
     def approval_repo(self):
         """ApprovalRepository for Approval operations."""
+        task_db = _task_db.get(None)
+        if task_db is not None:
+            from druppie.repositories import ApprovalRepository
+            return ApprovalRepository(task_db)
         if self._approval_repo is None:
             from druppie.repositories import ApprovalRepository
-            self._approval_repo = ApprovalRepository(self.db)
+            self._approval_repo = ApprovalRepository(self._active_db)
         return self._approval_repo
 
     @property
     def question_repo(self):
         """QuestionRepository for Question operations."""
+        task_db = _task_db.get(None)
+        if task_db is not None:
+            from druppie.repositories import QuestionRepository
+            return QuestionRepository(task_db)
         if self._question_repo is None:
             from druppie.repositories import QuestionRepository
-            self._question_repo = QuestionRepository(self.db)
+            self._question_repo = QuestionRepository(self._active_db)
         return self._question_repo
 
     def _apply_injection_rules(
@@ -237,7 +259,7 @@ class ToolExecutor:
         )
 
         # Create context for resolving paths
-        context = ToolContext(self.db, session_id, agent_run_id=agent_run_id)
+        context = ToolContext(self._active_db, session_id, agent_run_id=agent_run_id)
 
         # Apply each rule
         injected_args = dict(args)
@@ -308,7 +330,7 @@ class ToolExecutor:
         except Exception as e:
             # Rollback in case the exception left the transaction poisoned
             try:
-                self.db.rollback()
+                self._active_db.rollback()
             except Exception:
                 pass
             logger.warning(
@@ -420,7 +442,7 @@ class ToolExecutor:
             # Rollback in case the exception left the transaction poisoned
             # (e.g. failed flush during normalization).
             try:
-                self.db.rollback()
+                self._active_db.rollback()
             except Exception:
                 pass
             logger.warning(
@@ -480,32 +502,24 @@ class ToolExecutor:
 
     @contextmanager
     def _scoped_session(self):
-        """Yield a short-lived session for one tool execution (factory mode).
+        """Yield a short-lived, task-local session for one tool execution.
 
-        Opens a fresh session from the configured factory, rebinds this
-        executor's repos to it, and closes it on exit so the connection is
-        returned to the pool the moment the tool call finishes. In non-factory
-        (orchestrator) mode this is a no-op that leaves the injected session in
-        place.
+        Uses a ContextVar so concurrent async tasks each get their own DB
+        session without mutating shared instance state.  In non-factory
+        (orchestrator) mode this is a no-op.
         """
         if self._session_factory is None:
             yield
             return
         db = self._session_factory()
-        previous_db = self.db
+        token = _task_db.set(db)
         try:
-            self._bind_session(db)
             yield
         finally:
             try:
                 db.close()
             finally:
-                # Restore prior binding (None in factory mode) so a stale,
-                # now-closed session is never reused on the next call.
-                self.db = previous_db
-                self._execution_repo = None
-                self._approval_repo = None
-                self._question_repo = None
+                _task_db.reset(token)
 
     async def execute(self, tool_call_id: UUID) -> str:
         """Execute a tool call (public entry — opens a short-lived session in factory mode)."""
@@ -574,7 +588,7 @@ class ToolExecutor:
                 status=ToolCallStatus.FAILED,
                 error=validation_error,
             )
-            self.db.commit()
+            self._active_db.commit()
             return ToolCallStatus.FAILED
 
         # Step 2.6: Generic pre-validation via meta.pre_validate
@@ -624,7 +638,7 @@ class ToolExecutor:
                         status=ToolCallStatus.FAILED,
                         error=content_error,
                     )
-                    self.db.commit()
+                    self._active_db.commit()
                     return ToolCallStatus.FAILED
             except Exception as e:
                 # Pre-validation infrastructure failure — block execution rather than
@@ -644,7 +658,7 @@ class ToolExecutor:
                     status=ToolCallStatus.FAILED,
                     error=error_msg,
                 )
-                self.db.commit()
+                self._active_db.commit()
                 return ToolCallStatus.FAILED
 
         # Step 3: Check tool access and approval for MCP tools (not builtin)
@@ -681,7 +695,7 @@ class ToolExecutor:
                         status=ToolCallStatus.FAILED,
                         error=error_msg,
                     )
-                    self.db.commit()
+                    self._active_db.commit()
                     return ToolCallStatus.FAILED
 
             # Validate file-path access for specialist agents
@@ -693,7 +707,7 @@ class ToolExecutor:
                     status=ToolCallStatus.FAILED,
                     error=path_error,
                 )
-                self.db.commit()
+                self._active_db.commit()
                 return ToolCallStatus.FAILED
 
             needs_approval, required_role = self.mcp_config.needs_approval(
@@ -758,7 +772,7 @@ class ToolExecutor:
                     status=ToolCallStatus.FAILED,
                     error=f"Tool call was rejected by a human reviewer. Reason: {rejection_reason}",
                 )
-                self.db.commit()
+                self._active_db.commit()
             logger.info(
                 "approval_rejected",
                 approval_id=str(approval_id),
@@ -848,7 +862,7 @@ class ToolExecutor:
         # (weaker models won't call read_attachment on their own)
         from druppie.db.models import MessageAttachment
         question_attachments = (
-            self.db.query(MessageAttachment)
+            self._active_db.query(MessageAttachment)
             .filter(MessageAttachment.question_id == question_id)
             .all()
         )
@@ -868,7 +882,7 @@ class ToolExecutor:
             status=ToolCallStatus.COMPLETED,
             result=result,
         )
-        self.db.commit()
+        self._active_db.commit()
 
         logger.info(
             "hitl_tool_completed",
@@ -898,7 +912,7 @@ class ToolExecutor:
             return
 
         from druppie.repositories import SessionRepository
-        session_repo = SessionRepository(self.db)
+        session_repo = SessionRepository(self._active_db)
         session = session_repo.get_by_id(tool_call.session_id)
 
         if not session or not session.language or session.language == "en":
@@ -928,7 +942,7 @@ class ToolExecutor:
                 self.execution_repo.update_tool_call_arguments(
                     tool_call.id, enriched_args
                 )
-                self.db.flush()
+                self._active_db.flush()
                 logger.info(
                     "design_content_translated",
                     tool_call_id=str(tool_call.id),
@@ -973,7 +987,7 @@ class ToolExecutor:
             content=message,
             sequence_number=seq,
         )
-        self.db.flush()
+        self._active_db.flush()
         logger.info("translation_fallback_to_english", session_id=str(session_id))
 
     async def _translate_long_content(
@@ -1067,7 +1081,7 @@ class ToolExecutor:
             tool_call.id,
             status=ToolCallStatus.WAITING_APPROVAL,
         )
-        self.db.commit()
+        self._active_db.commit()
 
         logger.info(
             "approval_created",
@@ -1120,7 +1134,7 @@ class ToolExecutor:
         try:
             from druppie.repositories import SessionRepository
             from druppie.core.translation import get_translation_service
-            session_repo = SessionRepository(self.db)
+            session_repo = SessionRepository(self._active_db)
             session = session_repo.get_by_id(tool_call.session_id)
             if session and session.language and session.language != "en":
                 translator = get_translation_service()
@@ -1182,7 +1196,7 @@ class ToolExecutor:
                     status=ToolCallStatus.FAILED,
                     error=error,
                 )
-                self.db.commit()
+                self._active_db.commit()
                 return ToolCallStatus.FAILED
 
             agent_definition = self._get_agent_definition(tool_call.agent_run_id)
@@ -1199,7 +1213,7 @@ class ToolExecutor:
                     status=ToolCallStatus.FAILED,
                     error=error,
                 )
-                self.db.commit()
+                self._active_db.commit()
                 return ToolCallStatus.FAILED
             if expert_role not in allowed:
                 error = (
@@ -1212,7 +1226,7 @@ class ToolExecutor:
                     status=ToolCallStatus.FAILED,
                     error=error,
                 )
-                self.db.commit()
+                self._active_db.commit()
                 return ToolCallStatus.FAILED
 
         # Create question record via repository
@@ -1233,7 +1247,7 @@ class ToolExecutor:
             tool_call.id,
             status=ToolCallStatus.WAITING_ANSWER,
         )
-        self.db.commit()
+        self._active_db.commit()
 
         logger.info(
             "question_created",
@@ -1286,7 +1300,7 @@ class ToolExecutor:
                     result=result,
                     sandbox_waiting_at=datetime.now(timezone.utc),
                 )
-                self.db.commit()
+                self._active_db.commit()
                 logger.info(
                     "builtin_tool_waiting_sandbox",
                     tool_call_id=str(tool_call.id),
@@ -1306,7 +1320,7 @@ class ToolExecutor:
                 result=result,
                 error=result.get("error") if (not is_success and isinstance(result, dict)) else None,
             )
-            self.db.commit()
+            self._active_db.commit()
 
             logger.info(
                 "builtin_tool_completed",
@@ -1331,7 +1345,7 @@ class ToolExecutor:
                 status=ToolCallStatus.FAILED,
                 error=str(e),
             )
-            self.db.commit()
+            self._active_db.commit()
             return ToolCallStatus.FAILED
 
     async def _execute_mcp_tool(self, tool_call) -> str:
@@ -1388,7 +1402,7 @@ class ToolExecutor:
                 tool_call.id,
                 status=ToolCallStatus.EXECUTING,
             )
-            self.db.commit()
+            self._active_db.commit()
 
             if tool_call.tool_name == "bash":
                 args["tool_call_id"] = str(tool_call.id)
@@ -1446,7 +1460,7 @@ class ToolExecutor:
                 result=result,
                 error=result.get("error") or result.get("stderr") if not is_success else None,
             )
-            self.db.commit()
+            self._active_db.commit()
 
             logger.info(
                 "mcp_tool_completed",
@@ -1472,7 +1486,7 @@ class ToolExecutor:
                 status=ToolCallStatus.FAILED,
                 error=str(e),
             )
-            self.db.commit()
+            self._active_db.commit()
             return ToolCallStatus.FAILED
 
         except Exception as e:
@@ -1486,5 +1500,5 @@ class ToolExecutor:
                 status=ToolCallStatus.FAILED,
                 error=str(e),
             )
-            self.db.commit()
+            self._active_db.commit()
             return ToolCallStatus.FAILED
