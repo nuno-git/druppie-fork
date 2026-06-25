@@ -14,13 +14,13 @@ architecture described in the rest of this document.
 | Component | Target (RKE2) | Current (k3s dev) | Status |
 |-----------|--------------|-------------------|--------|
 | Cluster | RKE2 8 nodes | k3s single node (24GB RAM, 40 pods) | ✅ Working |
-| Container runtime | Kata Containers | Docker (sysbox optional) | ⚠️ No Kata |
+| Container runtime | Sysbox | Sysbox RuntimeClass (`sysbox-runc`) applied | ✅ Sysbox |
 | Harbor | In cluster | In cluster (k3s), 3 images (backend, frontend, dev-vm-base) | ✅ |
 | Keycloak | In namespace | In namespace, realm configured with k3s NodePorts | ✅ |
 | Frontend | Helm deployed | Helm deployed, DevEnvironments page, image from Harbor | ✅ |
 | Backend | Helm deployed | Helm deployed, Docker socket mounted, 97 routes | ✅ |
 | Guacamole | In cluster | In cluster, guacd hostNetwork for RDP reach, 3 pods | ✅ |
-| Dev VM creation | Kata pods | Docker containers, per-VM RDP password, Guacamole connection | ✅ Working |
+| Dev VM creation | Sysbox pods | Docker containers, per-VM RDP password, Guacamole connection | ✅ Working |
 | RDP via Guacamole | Browser-based | RDP port open, xrdp running, guacd can reach VMs | ✅ Verified |
 | PriorityClasses | 5 classes | 5 classes + sysbox RuntimeClass applied | ✅ |
 | Vault | External | Installed (dev mode), KV v2 seeded | ✅ Running |
@@ -85,8 +85,8 @@ flowchart TB
             DEV_GITEA["Gitea"]
         end
 
-        %% ── Kata Pods (managed by Druppie, not FluxCD) ──
-        subgraph KataPods["Kata Container Pods"]
+        %% ── Sysbox Pods (managed by Druppie, not FluxCD) ──
+        subgraph KataPods["Sysbox Container Pods"]
             direction TB
 
             subgraph DevVM1["Dev VM: dev-feature-xyz"]
@@ -147,7 +147,7 @@ flowchart TB
     GITEA -->|"Gitea Actions: build images"| HARBOR
     HARBOR -->|"13 Druppie images"| ProdNS
     HARBOR -->|"13 Druppie images"| DevNS
-    HARBOR -->|"Kata base image<br/>(dev VM + agent sandbox)"| KataPods
+    HARBOR -->|"Sysbox base image<br/>(dev VM + agent sandbox)"| KataPods
 
     FL_MAIN -->|"Helm deploy"| ProdNS
     FL_COLAB -->|"Helm deploy"| DevNS
@@ -204,7 +204,7 @@ flowchart TB
         subgraph OnWorkers["Op worker nodes (PriorityClass bepaalt prioriteit)"]
             WS_PROD["druppie-prod<br/>~35GB RAM · priority 10000"]
             WS_DEVNS["druppie-colab-dev<br/>~30GB RAM · priority 8000<br/>(zelfde stack als prod)"]
-            WS_DEVVM["10× Dev VMs (Kata pods)<br/>16GB per VM = 160GB · priority 1000"]
+            WS_DEVVM["10× Dev VMs (Sysbox pods)<br/>16GB per VM = 160GB · priority 1000"]
             WS_AGENT["Agent Sandboxes (max 5)<br/>~40GB · priority 500"]
             WS_CI["CI/CD runners<br/>~10GB · priority 3000"]
         end
@@ -269,7 +269,7 @@ kubectl label node <worker-3> node-type=worker
 | Wat namespaces isoleren | Wat ze NIET isoleren |
 |------------------------|---------------------|
 | ✅ ResourceQuota (RAM/CPU per namespace) | ❌ Fysieke node (pods delen nodes) |
-| ✅ NetworkPolicy (netwerkverkeer blokkeren) | ❌ Kernel (vandaar Kata voor dev VMs) |
+| ✅ NetworkPolicy (netwerkverkeer blokkeren) | ❌ Kernel (vandaar Sysbox user-namespaces voor dev VMs) |
 | ✅ RBAC (wie mag wat) | ❌ CPU/RAM (tenzij nodeSelector) |
 | ✅ DNS (prod services niet zomaar bereikbaar) | |
 
@@ -328,7 +328,7 @@ Prod overleeft altijd. Dev VMs worden geëvinceerd — PVC blijft behouden, deve
 
 ```mermaid
 flowchart TB
-    subgraph DevVM["Dev VM: dev-feature-xyz (Kata Container)"]
+    subgraph DevVM["Dev VM: dev-feature-xyz (Sysbox Container)"]
         direction TB
 
         subgraph Access["Toegang (alles via 443 HTTPS)"]
@@ -360,7 +360,7 @@ flowchart TB
         end
     end
 
-    HARBOR_EXT["Harbor (in cluster)<br/>→ levert Kata base image<br/>→ dev VMs bouwen Druppie lokaal"]
+    HARBOR_EXT["Harbor (in cluster)<br/>→ levert Sysbox base image<br/>→ dev VMs bouwen Druppie lokaal"]
 
     HARBOR_EXT -.->|"base image pull"| DevVM
 
@@ -409,7 +409,7 @@ Gebouwd door Gitea Actions CI op push naar `colab-dev` (samen met de 13 prod ima
 
 ```mermaid
 flowchart TB
-    START["Dev VM pod start<br/>(runtimeClassName: kata)"] --> PULL{"Base image<br/>op node?"}
+    START["Dev VM pod start<br/>(runtimeClassName: sysbox)"] --> PULL{"Base image<br/>op node?"}
     PULL -->|"Nee (eerste op node)"| DOWNLOAD["docker pull dev-vm-base<br/>~2-3 min"]
     PULL -->|"Ja (cached)"| CACHED["Layer cache hit<br/><10s"]
     DOWNLOAD --> SEED
@@ -615,7 +615,7 @@ sequenceDiagram
     participant Vault as Hashicorp Vault
     participant ESO as ESO
     participant K8s as Kubernetes API
-    participant Pod as Dev VM (Kata Pod)
+    participant Pod as Dev VM (Sysbox Pod)
     participant Git as Gitea
     participant Guac as Guacamole
 
@@ -636,7 +636,7 @@ sequenceDiagram
     Vault-->>ESO: Tokens, keys
     ESO->>K8s: Sync K8s Secret
 
-    BE->>K8s: 3. Maak Kata Pod
+    BE->>K8s: 3. Maak Sysbox Pod
     K8s->>Pod: 4. Pod start
 
     Pod->>Pod: Startup script:
@@ -689,7 +689,7 @@ sequenceDiagram
     participant UI as Druppie UI
     participant BE as Druppie Backend
     participant AgentBE as Agent Runtime (k8s_manager)
-    participant AgentPod as Agent Sandbox (Kata)
+    participant AgentPod as Agent Sandbox (Sysbox)
     participant Git as Gitea
 
     Note over Dev,Git: Developer vraagt agent om code te schrijven
@@ -698,7 +698,7 @@ sequenceDiagram
     UI->>BE: POST /chat/session/start
     BE->>AgentBE: Start coding agent task
 
-    AgentBE->>AgentPod: 1. Maak Kata sandbox pod
+    AgentBE->>AgentPod: 1. Maak Sysbox sandbox pod
     AgentPod->>AgentPod: 2. Startup: git clone repo
     AgentPod->>Git: Clone branch feature-xyz
 
@@ -754,7 +754,7 @@ flowchart TB
         D1["ConfigMap: cluster-config<br/>REGISTRY_URL · VAULT_ADDR"]
     end
 
-    subgraph Pod["Kata Dev Pod"]
+    subgraph Pod["Sysbox Dev Pod"]
         direction TB
         P1["envFrom: bootstrap + user secrets"]
         P2["ConfigMap: cluster-config"]
@@ -805,14 +805,14 @@ flowchart TB
         end
 
         subgraph Manual["Handmatig (Druppie UI)"]
-            D1["Developer selecteert branch"] --> K1["Druppie: maak Kata pod"]
+            D1["Developer selecteert branch"] --> K1["Druppie: maak Sysbox pod"]
             D1 --> K2["Druppie: maak IngressRoute"]
             D1 --> K3["Druppie: maak ExternalSecret"]
             K1 --> P1["Dev VM actief<br/>» https://dev-branch.druppie.rijnland.dev"]
         end
 
         subgraph AgentAuto["Automatisch (Druppie Agent Runtime)"]
-            A1["Agent coding task"] --> A2["k8s_manager: spawn Kata pod"]
+            A1["Agent coding task"] --> A2["k8s_manager: spawn Sysbox pod"]
             A2 --> A3["Agent Sandbox actief<br/>» headless, ephemeral"]
         end
     end
@@ -842,7 +842,7 @@ flowchart TB
             F_TOTAL["Totaal: ~11GB"]
         end
 
-        subgraph Dev["Dev VM (Kata pod)"]
+        subgraph Dev["Dev VM (Sysbox pod)"]
             D_AUTH["Mock Auth · 0MB"]
             D_PG["Standalone PG · 256MB"]
             D_ALL["Alles in 1 pod"]
@@ -850,7 +850,7 @@ flowchart TB
             D_TOTAL["~4GB per dev"]
         end
 
-        subgraph Sandbox["Agent Sandbox (Kata pod)"]
+        subgraph Sandbox["Agent Sandbox (Sysbox pod)"]
             A_AUTH["Mock Auth · 0MB"]
             A_PG["Standalone PG · 256MB"]
             A_EPHEMERAL["Ephemeral · geen PVC"]
@@ -872,8 +872,8 @@ flowchart TB
 |----------|------|-----|------|---------|-----|
 | `druppie-prod` | Namespace | 32GB | 16 | Longhorn/NFS | — |
 | `druppie-colab-dev` | Namespace | 16GB | 8 | Longhorn/NFS | — |
-| Dev VMs (max 10) | Kata pods | 4GB × 10 = 40GB | 4 × 10 = 40 | 50Gi × 10 = 500Gi | 1× MIG |
-| Agent Sandboxes (max 5) | Kata pods | 3GB × 5 = 15GB | 2 × 5 = 10 | Ephemeral | — |
+| Dev VMs (max 10) | Sysbox pods | 4GB × 10 = 40GB | 4 × 10 = 40 | 50Gi × 10 = 500Gi | 1× MIG |
+| Agent Sandboxes (max 5) | Sysbox pods | 3GB × 5 = 15GB | 2 × 5 = 10 | Ephemeral | — |
 | Infrastructuur (Vault, Prometheus, etc.) | System | 32GB | 16 | ~200Gi | — |
 | **Subtotaal** | | **~135GB** | **~90** | **~700Gi** | **1 GPU** |
 | **Vrij** | | **~865GB** | — | — | **3 GPUs** |
@@ -886,8 +886,8 @@ flowchart TB
 |-----------|------------|-------------|---------|
 | **druppie-prod** (namespace) | Volledige Druppie stack | FluxCD GitOps, auto op PR→main | Vault + Helm values |
 | **druppie-colab-dev** (namespace) | Volledige Druppie stack | FluxCD GitOps, auto op PR→colab-dev | Vault + Helm values |
-| **Dev VM** (Kata pod) | Alles in 1 pod, hot reload | Druppie UI, handmatig | 3-laags: bootstrap + Vault + cluster |
-| **Agent Sandbox** (Kata pod) | Headless, ephemeral | Druppie agent runtime (k8s_manager.py) | Bootstrap only, geen user secrets |
+| **Dev VM** (Sysbox pod) | Alles in 1 pod, hot reload | Druppie UI, handmatig | 3-laags: bootstrap + Vault + cluster |
+| **Agent Sandbox** (Sysbox pod) | Headless, ephemeral | Druppie agent runtime (k8s_manager.py) | Bootstrap only, geen user secrets |
 | **Lokale Gitea** (in dev VM) | Docker-in-Docker, localhost:3000 | Pod startup script | Bootstrap random wachtwoord |
 | **Echte Gitea** (extern) | Git repos + Gitea Actions CI | Extern (infra beheert) | Developer SSH key uit Vault |
 | **Harbor** (in cluster) | Container registry + scanning | Zelf geïnstalleerd | Basic auth via Vault/ESO |
@@ -901,7 +901,7 @@ flowchart TB
 
 | Fase | Week | Wat | Deliverable |
 |------|------|-----|-------------|
-| **1** | 1-2 | Fundering: node labels/taints, Kata operator, Harbor registry, LLM pod op GPU node, namespaces, FluxCD config, quotas | Cluster klaar voor workloads |
+| **1** | 1-2 | Fundering: node labels/taints, Sysbox installeren, Harbor registry, LLM pod op GPU node, namespaces, FluxCD config, quotas | Cluster klaar voor workloads |
 | **2** | 3-4 | Dev VMs: base image, Vault secrets structuur, Druppie provisioning API + UI, LLM config via prod URL, **Guacamole installeren** (remote access gateway) | Devs kunnen VM deployen + RDP/SSH via browser |
 | **3** | 5-6 | Agent sandboxes: k8s_manager.py, zelfde image, git interface | Agents werken op K8s |
 | **4** | 7-8 | CI/CD: Gitea Actions pipeline, monitoring, developer docs | Productie-klaar, gedocumenteerd |
@@ -914,7 +914,7 @@ flowchart TB
 | # | Beslissing | Keuze |
 |---|-----------|-------|
 | 1 | Cluster | Rancher RKE2 (containerd), 8 nodes (3 master + 1 GPU + 4 worker × 96GB), ~480GB worker RAM |
-| 2 | Runtime dev pods + agent sandboxes | Kata Containers |
+| 2 | Runtime dev pods + agent sandboxes | Sysbox (nested virtualization niet toegestaan; Kata vereist KVM — Sysbox geeft user-namespace isolatie + veilige unprivileged DinD) |
 | 3 | Dev model | Model A: alles in 1 pod, hot reload lokaal |
 | 4 | GitOps prod/dev namespaces | FluxCD (extern, door infra) |
 | 5 | Dev VM provisioning | Druppie backend + UI, handmatig |
@@ -935,3 +935,9 @@ flowchart TB
 | 20 | Container registry | Harbor (in cluster, zelf geïnstalleerd) — scanning, signing, UI |
 | 21 | Gitea/Vault/FluxCD | Extern (infra beheert). Cluster = pure compute |
 | 22 | Dev VM base image | Shared base vanuit colab-dev (in Harbor). Startup: image pull + git checkout feature branch. Eerste dev VM op node ~2-3 min, daarna <30s door containerd layer cache |
+
+---
+
+## Onderzoek dev-environment platforms (2026-06-25)
+
+Op 2026-06-25 zijn **Kasm Workspaces** en andere dev-environment platforms onderzocht als alternatief voor de huidige Guacamole + sysbox aanpak. **Kasm valt af**: het is niet Kubernetes-native voor workspaces — zelfs in de 1.19 GA (juni 2026) draait alleen de control plane in het cluster, terwijl de workspace-containers op **aparte Docker-agent VM's buiten RKE2** draaien (RKE2 is containerd-only, de Kasm-agent vereist een echte Docker-daemon). Dat botst met ons principe "state buiten, compute binnen het cluster", en de KubeVirt-autoscaler die agents wél in-cluster zou houden vereist nested virtualization (niet toegestaan). De Community Edition is bovendien beperkt (5 gelijktijdige sessies, niet-commercieel) en het platform is proprietary/source-available. Ook onderzocht: **Coder OSS** (zelfde sysbox-DinD-patroon, gratis OIDC-login, maar geen browser-desktop en group→role-sync is betaald), **Eclipse Che**, **DevPod** en **Webtop/Selkies**; **Gitpod/Ona** valt af (VM/KVM-gebaseerd, geen K8s self-host). **Conclusie: Guacamole + sysbox blijft de gekozen aanpak.** Coder OSS is genoteerd als mogelijke toekomstige orchestration-upgrade en RDPGW als optionele native-client aanvulling (deze stond al in de architectuur).

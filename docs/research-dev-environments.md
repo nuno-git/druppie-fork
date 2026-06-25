@@ -12,7 +12,7 @@
 | # | Beslissing | Keuze | Rationale |
 |---|-----------|-------|-----------|
 | 1 | Cluster | **Rancher RKE2 met containerd** (8 nodes: 3 master + 1 GPU + 4 worker, ~480GB worker RAM) | Rancher-managed, CIS hardened, al aanwezig |
-| 2 | Container runtime (dev + sandbox) | **Kata Containers** | Native containerd RuntimeClass, Docker-in-Docker, SSH, systemd, VM-level isolatie |
+| 2 | Container runtime (dev + sandbox) | **Sysbox** | Nested virtualization niet toegestaan; Kata vereist KVM. Sysbox: user-namespace isolatie, veilige unprivileged Docker-in-Docker, SSH, systemd, geen nested virt |
 | 3 | Dev pod model | **Model A: alles in 1 pod** | Simpel, hot reload, geen K8s-networking, developer-centrisch |
 | 4 | GitOps voor prod/dev namespaces | **FluxCD** (door infra buiten cluster gezet) | CNCF Graduated, git → cluster sync, drift detection |
 | 5 | Preview/Dev VMs — provisioning | **Druppie backend + UI** | Handmatig, één knop, developer selecteert branch |
@@ -65,57 +65,57 @@ Sommige services draaien **buiten het cluster** (beheerd door infra-team), ander
 | Component | Waarom |
 |-----------|--------|
 | **Harbor** | Container registry — Gitea registry staat niet aan, Harbor geeft scanning + signing + UI |
-| **Kata Containers** | Runtime voor dev VMs en agent sandboxes |
+| **Sysbox** | Runtime voor dev VMs en agent sandboxes (user-namespace isolatie, geen nested virt) |
 | **Apache Guacamole** | Remote access gateway (RDP + SSH via 443) |
 
-**Conclusie:** De hele infrastructuurlaag is geregeld. Gitea, Vault en FluxCD staan buiten het cluster (schone scheiding: state buiten, compute binnen). We installeren Harbor, Kata en Guacamole zelf.
+**Conclusie:** De hele infrastructuurlaag is geregeld. Gitea, Vault en FluxCD staan buiten het cluster (schone scheiding: state buiten, compute binnen). We installeren Harbor, Sysbox en Guacamole zelf.
 
 ---
 
-## 2. Waarom Kata Containers (en niet Sysbox of gVisor)?
+## 2. Waarom Sysbox (en niet Kata of gVisor)?
 
-Druppie gebruikt nu `sysbox-runc` voor coding sandboxes op Docker. Op K8s met containerd (RKE2) is dit niet de beste keuze:
+Druppie gebruikt nu `sysbox-runc` voor coding sandboxes op Docker. Op K8s met containerd (RKE2) blijft dit de beste keuze — vooral omdat onze RKE2 nodes zelf VM's zijn en **nested virtualization niet is toegestaan**:
 
 | | Kata Containers 3.x | Sysbox | gVisor |
 |---|---|---|---|
-| **containerd support** | ✅ Native RuntimeClass sinds 1.2 | ⚠️ Fix in sysbox-runc, "still evolving" | ✅ Native RuntimeClass |
-| **Docker-in-Docker** | ✅ Volledige VM-kernel | ✅ User namespaces | ❌ Niet ondersteund |
+| **containerd support** | ✅ Native RuntimeClass sinds 1.2 | ✅ RuntimeClass `sysbox-runc` | ✅ Native RuntimeClass |
+| **Nested virtualization vereist?** | ❌ Vereist KVM / hardware-virt (nested virt) — **niet beschikbaar in onze omgeving** | ✅ Nee — user-namespaces, geen VM | ✅ Nee |
+| **Docker-in-Docker** | ✅ Volledige VM-kernel | ✅ Veilig unprivileged via user namespaces | ❌ Niet ondersteund |
 | **systemd / SSH daemon** | ✅ Ja | ✅ Ja | ❌ Nee |
 | **GPU (NVIDIA)** | ✅ PCI passthrough of vGPU | ✅ Via NVIDIA Container Toolkit | ⚠️ Beperkt |
 | **Isolatie** | VM-level (dedicated kernel) | User namespace (shared kernel) | Syscall filter (user-space) |
 | **Security** | Sterkste | Goed | Goed |
 | **Cold start** | ~150-400ms (Firecracker) | ~1-2s | ~50-100ms |
 | **Memory overhead** | ~60-120MB per pod | ~50MB | ~20-50MB |
-| **Productie-bewezen** | ✅ Ant Group (1M+ containers/mnd) | ⚠️ Beperkt op K8s | ✅ Google GKE Sandbox |
+| **Productie-bewezen** | ✅ Ant Group (1M+ containers/mnd) | ✅ Nestybox/Docker DinD | ✅ Google GKE Sandbox |
 | **CNCF status** | Sandbox (graduating) | Geen | Geen |
 
-**Kata wint voor onze use case:**
-- Docker-in-Docker is **essentieel** voor dev VMs (docker-compose up, docker build). gVisor valt af.
-- Containerd support is **native** — geen hack zoals Sysbox. RKE2 gebruikt containerd.
-- Sterkste isolatie — VM-level, elke pod heeft eigen kernel. Belangrijk voor untrusted agent code.
+**Sysbox wint voor onze use case:**
+- **Nested virtualization is niet toegestaan.** Onze RKE2 nodes zijn zelf VM's, en Kata vereist KVM / hardware-virtualisatie. Daardoor valt Kata af — ondanks zijn sterke VM-level isolatie.
+- Docker-in-Docker is **essentieel** voor dev VMs (docker-compose up, docker build). gVisor ondersteunt dit niet en valt ook af.
+- Sysbox levert **veilige unprivileged Docker-in-Docker** via Linux user-namespaces — geen privileged containers, geen nested virt.
 - 1 runtime voor alles: dev VMs én agent sandboxes. Minder maintenance.
 
-**Nadeel:** ~100ms tragere cold start dan gVisor, ~70MB meer overhead dan Sysbox. Verwaarloosbaar op 1TB RAM.
+**Nadeel:** Tragere cold start (~1-2s) en geen dedicated kernel per pod. Voor onze omgeving (geen nested virt mogelijk) is dit de enige werkbare optie die DinD veilig ondersteunt.
 
 ### Installatie op RKE2
 
 ```bash
-# 1. Installeer Kata operator
-kubectl apply -f https://raw.githubusercontent.com/kata-containers/kata-containers/main/tools/packaging/kata-deploy/kata-rbac.yaml
-kubectl apply -f https://raw.githubusercontent.com/kata-containers/kata-containers/main/tools/packaging/kata-deploy/kata-deploy.yaml
+# 1. Installeer Sysbox via de sysbox-deploy DaemonSet
+kubectl apply -f https://raw.githubusercontent.com/nestybox/sysbox/master/sysbox-k8s-manifests/sysbox-install.yaml
 
 # 2. RuntimeClass
 kubectl apply -f - <<EOF
 apiVersion: node.k8s.io/v1
 kind: RuntimeClass
 metadata:
-  name: kata
-handler: kata
+  name: sysbox
+handler: sysbox-runc
 EOF
 
-# 3. Pod met Kata runtime
+# 3. Pod met Sysbox runtime
 # spec:
-#   runtimeClassName: kata
+#   runtimeClassName: sysbox
 ```
 
 ---
@@ -126,7 +126,7 @@ EOF
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
-│              Dev VM (Kata Container, eigen kernel, 8GB RAM)       │
+│              Dev VM (Sysbox container, user-namespace, 8GB RAM)  │
 │                                                                  │
 │  ┌──────────────┐  ┌─────────────┐  ┌─────────────────────────┐ │
 │  │ code-server  │  │ SSH (:22)   │  │ RDP (:3389)             │ │
@@ -216,7 +216,7 @@ Dev VMs hebben **drie soorten secrets** met verschillende herkomst, levensduur e
 ### Twee Gitea's in één pod
 
 ```
-Dev VM (Kata pod)
+Dev VM (Sysbox pod)
 ├── Docker-in-Docker
 │   └── Lokale Gitea (localhost:3000)
 │       ├── Druppie init scripts gebruiken deze
@@ -331,7 +331,7 @@ Druppie's init scripts gebruiken `GITEA_URL` → wijst naar `localhost:3000` (lo
 │  Workflow: Developer vraagt agent om hulp                         │
 │                                                                  │
 │  ┌──────────────────────────┐        ┌─────────────────────────┐│
-│  │  Dev VM (Kata pod)       │        │  Agent Sandbox (Kata)   ││
+│  │  Dev VM (Sysbox pod)     │        │  Agent Sandbox (Sysbox) ││
 │  │                          │        │                         ││
 │  │  Developer:              │        │  Druppie agent:         ││
 │  │  "pas deze functie aan"  │───────→│  1. git clone repo      ││
@@ -344,7 +344,7 @@ Druppie's init scripts gebruiken `GITEA_URL` → wijst naar `localhost:3000` (lo
 │                                                                  │
 │  Zelfde image: druppie-dev-base                                  │
 │  Zelfde resources: 8GB RAM, 4 vCPU                               │
-│  Zelfde runtime: kata                                             │
+│  Zelfde runtime: sysbox                                           │
 │  Andere lifecycle: dev=persistent, agent=ephemeral               │
 └──────────────────────────────────────────────────────────────────┘
 ```
@@ -407,7 +407,7 @@ Isolatie komt van **PriorityClasses**: bij node memory pressure evicteert K8s ee
 Namespaces zijn **logisch**, niet fysiek. Pods uit `druppie-prod` en `dev-vms` draaien op dezelfde worker node. Fysieke scheiding krijgt via:
 - **nodeSelector** — pod mag alleen op nodes met bepaald label
 - **Taints + Tolerations** — node weigert pods zonder expliciete toleration
-- **Kata Containers** — elke pod krijgt eigen kernel (VM-level isolatie)
+- **Sysbox** — elke pod krijgt eigen user-namespace (geen nested virt nodig)
 
 ### GPU node: exclusief voor prod LLM
 
@@ -526,7 +526,7 @@ Druppie UI
   │     │     ├── Druppie backend:
   │     │     │   1. Maak ExternalSecret CRD (Vault → K8s secret)
   │     │     │   2. Maak Longhorn PVC (als die nog niet bestaat)
-  │     │     │   3. Maak Kata pod met juiste env + volumes
+  │     │     │   3. Maak Sysbox pod met juiste env + volumes
   │     │     │   4. Maak Traefik IngressRoute (wildcard subdomein)
   │     │     │   5. Return: https://dev-{branch}.druppie.rijnland.dev
   │     │     │
@@ -613,7 +613,7 @@ Gitea Actions, op push naar colab-dev:
 
 ### Fase 1 (Week 1-2): Fundering
 - [x] Infrastructuur is al klaar (Traefik, cert-manager, Longhorn, Vault+ESO, FluxCD, Prometheus, GPU operator — Gitea/Vault/FluxCD extern)
-- [ ] Kata Containers operator installeren + RuntimeClass aanmaken
+- [ ] Sysbox installeren (sysbox-deploy DaemonSet) + RuntimeClass aanmaken
 - [ ] Harbor installeren in cluster (container registry met scanning + signing)
 - [ ] Namespace structuur: `druppie-prod`, `druppie-colab-dev`
 - [ ] FluxCD GitRepository configuratie voor prod + dev auto-deploy
@@ -623,7 +623,7 @@ Gitea Actions, op push naar colab-dev:
 - [ ] Dev base image bouwen: Ubuntu + Python 3.12 + Node 20 + Git + Docker + code-server + SSH + xrdp + lokale Gitea
 - [ ] 3-laag secrets provisioning: bootstrap (per-VM gegenereerd) + Vault/ESO (per-user) + cluster (static)
 - [ ] Lokale Gitea in Docker-in-Docker (voorkomt prod vervuiling door init scripts)
-- [ ] Druppie backend: Kata pod provisioning (create/stop/delete)
+- [ ] Druppie backend: Sysbox pod provisioning (create/stop/delete)
 - [ ] Druppie UI: Dev Environments tab met branch selector, deploy button, status
 - [ ] Traefik IngressRoute template per dev VM
 - [ ] Mock auth middleware voor dev modus
@@ -631,7 +631,7 @@ Gitea Actions, op push naar colab-dev:
 - [ ] Testen: code-server, Guacamole RDP, Guacamole SSH
 
 ### Fase 3 (Week 5-6): Agent Sandboxes op K8s
-- [ ] `k8s_manager.py` vervangt `docker_manager.py` — Kata pods i.p.v. Docker containers
+- [ ] `k8s_manager.py` vervangt `docker_manager.py` — Sysbox pods i.p.v. Docker containers
 - [ ] Agent sandbox: zelfde image als dev VM, maar ephemeral, headless
 - [ ] NetworkPolicy: agent pods alleen backend API
 - [ ] Auto-cleanup: TTL of pool manager
@@ -655,10 +655,16 @@ Gitea Actions, op push naar colab-dev:
 
 ---
 
+## 9b. Onderzoek dev-environment platforms (2026-06-25)
+
+Op 2026-06-25 zijn **Kasm Workspaces** en andere dev-environment platforms onderzocht als alternatief voor de huidige Guacamole + sysbox aanpak. **Kasm valt af**: het is niet Kubernetes-native voor workspaces — zelfs in de 1.19 GA (juni 2026) draait alleen de control plane in het cluster, terwijl de workspace-containers op **aparte Docker-agent VM's buiten RKE2** draaien (RKE2 is containerd-only, de Kasm-agent vereist een echte Docker-daemon). Dat botst met ons principe "state buiten, compute binnen het cluster", en de KubeVirt-autoscaler die agents wél in-cluster zou houden vereist nested virtualization (niet toegestaan). Daarnaast is de Community Edition beperkt (5 gelijktijdige sessies, niet-commercieel) en is het platform proprietary/source-available. Ook onderzocht: **Coder OSS** (zelfde sysbox-DinD-patroon, gratis OIDC-login, maar geen browser-desktop en group→role-sync is betaald), **Eclipse Che**, **DevPod** en **Webtop/Selkies**; **Gitpod/Ona** valt af (VM/KVM-gebaseerd, geen K8s self-host). **Conclusie: Guacamole + sysbox blijft de gekozen aanpak.** Coder OSS is genoteerd als mogelijke toekomstige orchestration-upgrade en RDPGW als optionele native-client aanvulling (deze stond al in de architectuur).
+
+---
+
 ## 10. Bronnen en referenties
 
 - [**Aanbevolen Architectuur**](./dev-environment-architecture.md) — Definitieve architectuur met Mermaid diagrammen
-- [Kata Containers](https://katacontainers.io/) — CNCF Sandbox, native containerd RuntimeClass
+- [Sysbox](https://github.com/nestybox/sysbox) — User-namespace runtime, veilige unprivileged Docker-in-Docker, geen nested virt
 - [K3s + Sysbox blog](https://docs.k3s.io/blog/2025/09/27/k3s-sysbox) — Sysbox containerd fix status (sept 2025)
 - [FluxCD](https://fluxcd.io/) — CNCF Graduated GitOps
 - [Harbor](https://goharbor.io/) — CNCF Graduated container registry
