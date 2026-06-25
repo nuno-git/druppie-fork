@@ -23,6 +23,10 @@ global:
     enabled: true
     className: nginx
     port: 9080
+    # Namespace the ingress controller runs in. NetworkPolicy allows ingress
+    # traffic from this namespace. On RKE2, Traefik lives in kube-system; on
+    # nginx/kind setups override to the controller's namespace as needed.
+    controllerNamespace: kube-system
     # TLS config for production
     tls:
       enabled: false

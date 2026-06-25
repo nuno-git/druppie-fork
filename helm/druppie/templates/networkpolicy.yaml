@@ -24,6 +24,12 @@ spec:
               {{- else }}
               app.kubernetes.io/name: ingress-nginx
               {{- end }}
+        # Also allow the namespace the ingress controller runs in. On RKE2 Traefik
+        # lives in kube-system and is not labeled app.kubernetes.io/name=traefik,
+        # so without this rule ingress traffic is dropped (502/504).
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.global.ingress.controllerNamespace }}
         {{- else }}
         # When ingress is disabled (NodePort mode), allow traffic from any source
         - ipBlock:

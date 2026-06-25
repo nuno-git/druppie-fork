@@ -390,3 +390,45 @@ ss -tlnp | grep -E '3000[0-3]|30010|30020|30050'
 
 Kill the conflicting process, or remap the NodePort in `helm/druppie/values.yaml`
 and the matching manifest.
+
+---
+
+## Deploying to the rijnland.dev RKE2 cluster (kubectl/helm)
+
+The remote RKE2 cluster differs from the local k3s flow above: it uses Traefik
+ingress (in `kube-system`), Longhorn storage, a publicly-resolvable in-cluster
+registry, and no Harbor / `docker.sock`. The local-only steps below do **not**
+apply to RKE2: `localhost:30010`, `/etc/rancher/k3s/registries.yaml`, the insecure
+registry config, and the Docker-socket dev-VM steps.
+
+1. **Registry + TLS secrets.** Deploy the in-cluster registry and create the two
+   wildcard-backed TLS secrets in their namespaces (copies of the cluster
+   `*.rijnland.dev` cert):
+
+   ```bash
+   kubectl apply -f k8s/registry.yaml
+   # registry-tls in namespace registry, druppie-tls in namespace druppie
+   kubectl create secret tls registry-tls -n registry --cert=wildcard.crt --key=wildcard.key
+   kubectl create secret tls druppie-tls  -n druppie  --cert=wildcard.crt --key=wildcard.key
+   ```
+
+2. **Build & push images** to `druppie-registry.rijnland.dev/druppie/`:
+
+   ```bash
+   docker build -t druppie-registry.rijnland.dev/druppie/druppie-backend:latest -f Dockerfile .
+   docker push  druppie-registry.rijnland.dev/druppie/druppie-backend:latest
+   docker build -t druppie-registry.rijnland.dev/druppie/druppie-frontend:latest -f frontend/Dockerfile frontend/
+   docker push  druppie-registry.rijnland.dev/druppie/druppie-frontend:latest
+   # ...repeat for each module image
+   ```
+
+3. **Deploy via Helm** with the rijnland override on top of the base values:
+
+   ```bash
+   helm upgrade --install druppie ./helm/druppie -n druppie --create-namespace \
+     -f helm/druppie/values.yaml \
+     -f helm/druppie/values-rijnland.yaml
+   ```
+
+The app is then reachable at https://druppie.rijnland.dev. The domain stays a
+single label so it matches the `*.rijnland.dev` wildcard cert.
