@@ -432,3 +432,33 @@ registry config, and the Docker-socket dev-VM steps.
 
 The app is then reachable at https://druppie.rijnland.dev. The domain stays a
 single label so it matches the `*.rijnland.dev` wildcard cert.
+
+### Per-branch full-stack environments
+
+Stand up a complete, isolated Druppie instance for any branch in its own
+namespace, alongside the live `druppie` deployment:
+
+```bash
+# From the repo root, with kubectl pointed at the rijnland RKE2 cluster:
+./scripts/deploy-branch-env.sh colab-dev
+```
+
+This creates namespace `druppie-colab-dev`, copies the `*.rijnland.dev` wildcard
+TLS secret into it, and runs `helm upgrade --install` layering branch overrides
+(host `druppie-colab-dev.rijnland.dev`, a dedicated worker-node pin) on top of
+`values.yaml` + `values-rijnland.yaml`. Preview the rendered release without
+touching the cluster:
+
+```bash
+./scripts/deploy-branch-env.sh colab-dev --dry-run
+```
+
+Notes:
+- The host stays a single label under `rijnland.dev` to match the wildcard cert.
+- Shared PVCs are ReadWriteOnce here, so the instance is pinned to one worker
+  node (default a different node than the live `druppie` instance — override with
+  `BRANCH_ENV_NODE`). See `helm/druppie/values-branch.example.yaml` for the full
+  set of override knobs (registry, image tag, node).
+- Provide branch-specific images via `BRANCH_ENV_IMAGE_TAG` /
+  `BRANCH_ENV_REGISTRY`, or an extra values file via `-f`.
+- Tear down with `helm uninstall druppie -n druppie-colab-dev && kubectl delete ns druppie-colab-dev`.

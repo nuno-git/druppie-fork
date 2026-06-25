@@ -823,6 +823,12 @@ flowchart TB
     style AgentAuto fill:#6c5ce7,color:#ffffff
 ```
 
+Zolang de FluxCD GitOps-automatisering (`main → druppie-prod`, `colab-dev →
+druppie-colab-dev`) nog niet draait, kan een volledige per-branch omgeving
+imperatief worden opgezet met `scripts/deploy-branch-env.sh <branch>`. Dat script
+deployt de hele stack in een eigen `druppie-<branch>` namespace, met een eigen
+host onder `rijnland.dev` en een vaste worker-node pin (RWO shared PVCs).
+
 ---
 
 ## Druppie varianten per omgeving
