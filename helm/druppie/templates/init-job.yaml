@@ -20,6 +20,7 @@ spec:
         app.kubernetes.io/component: init
     spec:
       restartPolicy: Never
+      serviceAccountName: {{ include "druppie.fullname" . }}-init
       initContainers:
         - name: wait-for-keycloak
           image: curlimages/curl:latest
@@ -62,6 +63,10 @@ spec:
           image: {{ include "druppie.image" (dict "Values" .Values "image" .Values.init.image) }}
           imagePullPolicy: {{ .Values.global.imagePullPolicy }}
           env:
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
             - name: KEYCLOAK_URL
               value: "http://{{ include "druppie.fullname" . }}-keycloak:8080"
             - name: KEYCLOAK_ADMIN

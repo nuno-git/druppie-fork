@@ -31,7 +31,11 @@ echo ""
 
 # Step 3: Configure Security Gate (druppie-gate realm for oauth2-proxy)
 echo "--- Step 3/3: Configuring Security Gate ---"
-python /app/scripts/setup_gate.py
+if [ "$SETUP_GATE_ENABLED" = "true" ]; then
+    python /app/scripts/setup_gate.py
+else
+    echo "Skipping security gate (SETUP_GATE_ENABLED not set)"
+fi
 echo ""
 
 # Mark initialization as complete

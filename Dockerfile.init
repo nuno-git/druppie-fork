@@ -5,11 +5,16 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install system dependencies (docker CLI for Gitea CLI commands)
+# Install system dependencies:
+#   - docker CLI for Gitea CLI commands under docker-compose
+#   - kubectl for Gitea CLI commands when running on Kubernetes
 RUN apt-get update && apt-get install -y \
     curl \
     docker.io \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && curl -L -s -o /usr/local/bin/kubectl \
+       "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl" \
+    && chmod +x /usr/local/bin/kubectl
 
 # Install Python dependencies for setup scripts
 RUN pip install --no-cache-dir requests pyyaml
