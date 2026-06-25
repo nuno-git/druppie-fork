@@ -28,8 +28,11 @@ global:
   # matches the *.rijnland.dev wildcard cert (copied into the namespace by the script).
   domain: druppie-colab-dev.rijnland.dev
 
-  # Uncomment to pull this branch's images from a different registry (e.g. Harbor).
-  # imageRegistry: harbor.rijnland.dev/druppie
+  # Images are pulled from Harbor on this cluster. The deploy script copies the
+  # `harbor-regcred` pull secret into the branch namespace automatically.
+  imageRegistry: harbor.rijnland.dev/druppie
+  imagePullSecrets:
+    - name: harbor-regcred
 
 # Pin this instance to ONE worker node. Shared PVCs are ReadWriteOnce on this
 # cluster (Longhorn RWX unavailable), so the backend + every module that mounts a

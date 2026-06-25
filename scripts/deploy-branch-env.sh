@@ -17,9 +17,11 @@
 # Env overrides:
 #   BRANCH_ENV_NODE        worker node to pin to   (default: ka-k8s-ai-workers-skbh7-d4qwl)
 #   BRANCH_ENV_IMAGE_TAG   image tag for ALL components (default: chart default, i.e. latest)
-#   BRANCH_ENV_REGISTRY    override global.imageRegistry
+#   BRANCH_ENV_REGISTRY    override global.imageRegistry (default: harbor.rijnland.dev/druppie)
 #   BRANCH_ENV_TLS_SRC_NS  namespace to copy the TLS secret from (default: druppie)
 #   BRANCH_ENV_TLS_SECRET  TLS secret name (default: druppie-tls)
+#   BRANCH_ENV_PULL_SECRET        image pull secret name to copy in (default: harbor-regcred; empty to skip)
+#   BRANCH_ENV_PULL_SECRET_SRC_NS namespace to copy the pull secret from (default: druppie)
 #
 # Requires: kubectl (pointed at the target cluster), helm, bash, base64.
 
@@ -30,9 +32,11 @@ CHART_DIR="${REPO_ROOT}/helm/druppie"
 
 NODE="${BRANCH_ENV_NODE:-ka-k8s-ai-workers-skbh7-d4qwl}"
 IMAGE_TAG="${BRANCH_ENV_IMAGE_TAG:-}"
-REGISTRY="${BRANCH_ENV_REGISTRY:-}"
+REGISTRY="${BRANCH_ENV_REGISTRY:-harbor.rijnland.dev/druppie}"
 TLS_SRC_NS="${BRANCH_ENV_TLS_SRC_NS:-druppie}"
 TLS_SECRET="${BRANCH_ENV_TLS_SECRET:-druppie-tls}"
+PULL_SECRET="${BRANCH_ENV_PULL_SECRET:-harbor-regcred}"
+PULL_SECRET_SRC_NS="${BRANCH_ENV_PULL_SECRET_SRC_NS:-druppie}"
 
 # Modules that mount a shared RWO PVC and must co-locate with the backend.
 PINNED_MODULES=(coding docker archimate data_access filesearch web)
@@ -105,6 +109,17 @@ if ! is_dry_run; then
     --dry-run=client -o yaml | kubectl apply -f -
 fi
 
+# 2b. Copy the Harbor image pull secret into the target namespace (idempotent).
+if [[ -n "$PULL_SECRET" ]] && ! is_dry_run; then
+  echo "==> Copying image pull secret $PULL_SECRET from $PULL_SECRET_SRC_NS into $NS"
+  dockercfg="$(kubectl -n "$PULL_SECRET_SRC_NS" get secret "$PULL_SECRET" -o jsonpath='{.data.\.dockerconfigjson}' | base64 -d)"
+  [[ -n "$dockercfg" ]] || { echo "pull secret $PULL_SECRET in $PULL_SECRET_SRC_NS has no .dockerconfigjson" >&2; exit 1; }
+  kubectl create secret generic "$PULL_SECRET" -n "$NS" \
+    --type=kubernetes.io/dockerconfigjson \
+    --from-literal=.dockerconfigjson="$dockercfg" \
+    --dry-run=client -o yaml | kubectl apply -f -
+fi
+
 # 3. Helm install/upgrade
 HELM_ARGS=(
   upgrade --install druppie "$CHART_DIR"
@@ -119,6 +134,7 @@ for m in "${PINNED_MODULES[@]}"; do
   HELM_ARGS+=(--set "modules.${m}.nodeSelector.kubernetes\.io/hostname=${NODE}")
 done
 [[ -n "$REGISTRY" ]] && HELM_ARGS+=(--set "global.imageRegistry=${REGISTRY}")
+[[ -n "$PULL_SECRET" ]] && HELM_ARGS+=(--set "global.imagePullSecrets[0].name=${PULL_SECRET}")
 if [[ -n "$IMAGE_TAG" ]]; then
   HELM_ARGS+=(--set "backend.image.tag=${IMAGE_TAG}" \
               --set "frontend.image.tag=${IMAGE_TAG}" \
