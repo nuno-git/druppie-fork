@@ -1,0 +1,22 @@
+---
+# NetworkPolicy: allow guacd (remote-access namespace) to reach dev VM pods on RDP port 3389
+# Applied standalone: kubectl apply -f k8s/dev-vm-net.yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: dev-vm-allow-guacd
+  namespace: druppie
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: dev-vm
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: remote-access
+      ports:
+        - protocol: TCP
+          port: 3389
