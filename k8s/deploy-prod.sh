@@ -6,6 +6,9 @@ export KUBECONFIG="${KUBECONFIG:-$HOME/.kube/config}"
 echo "Creating namespaces..."
 kubectl apply -f k8s/namespaces.yaml
 
+echo "Applying namespace NetworkPolicy baseline..."
+kubectl apply -f k8s/networkpolicies.yaml
+
 echo "Deploying to druppie-prod..."
 helm upgrade --install druppie-prod ./helm/druppie \
   -n druppie-prod \
