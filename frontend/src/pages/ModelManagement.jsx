@@ -94,62 +94,123 @@ const ProviderCard = ({ provider, onValidate, validating, validationResult }) =>
   )
 }
 
-const OverrideForm = ({ providers, currentProvider, currentModel, onSave, onCancel, saving }) => {
+const OverrideForm = ({ providers, currentProvider, currentModel, currentFallbackProvider, currentFallbackModel, onSave, onCancel, saving }) => {
   const [provider, setProvider] = useState(currentProvider || '')
   const [model, setModel] = useState(currentModel || '')
+  const [customFallback, setCustomFallback] = useState(!!currentFallbackProvider)
+  const [fbProvider, setFbProvider] = useState(currentFallbackProvider || '')
+  const [fbModel, setFbModel] = useState(currentFallbackModel || '')
 
   const selectedProvider = providers.find(p => p.provider === provider)
   const availableModels = selectedProvider?.available_models || []
 
-  // When provider changes, auto-select current model if it's available, otherwise pick the first
+  const fbProviderData = providers.find(p => p.provider === fbProvider)
+  const fbAvailableModels = fbProviderData?.available_models || []
+
   const handleProviderChange = (newProvider) => {
     setProvider(newProvider)
     const newProviderData = providers.find(p => p.provider === newProvider)
     const models = newProviderData?.available_models || []
-    if (models.length > 0 && !models.includes(model)) {
-      setModel(models[0])
+    const newModel = (models.length > 0 && !models.includes(model)) ? models[0] : model
+    if (newModel !== model) setModel(newModel)
+    if (newProvider === fbProvider && newModel === fbModel) setFbModel('')
+  }
+
+  const handleFbProviderChange = (newFbProvider) => {
+    setFbProvider(newFbProvider)
+    const newProviderData = providers.find(p => p.provider === newFbProvider)
+    const models = (newProviderData?.available_models || [])
+      .filter(m => !(newFbProvider === provider && m === model))
+    if (models.length > 0 && !models.includes(fbModel)) {
+      setFbModel(models[0])
+    } else if (models.length === 0) {
+      setFbModel('')
     }
   }
 
   return (
-    <div className="flex items-center gap-2 mt-2">
-      <select
-        value={provider}
-        onChange={e => handleProviderChange(e.target.value)}
-        className="text-xs border rounded px-2 py-1.5 bg-white"
-      >
-        <option value="">Select provider...</option>
-        {providers.filter(p => p.api_key_configured).map(p => (
-          <option key={p.provider} value={p.provider}>{p.provider}</option>
-        ))}
-      </select>
-      <select
-        value={model}
-        onChange={e => setModel(e.target.value)}
-        disabled={!provider}
-        className="text-xs border rounded px-2 py-1.5 bg-white flex-1 min-w-0 disabled:opacity-40"
-      >
-        <option value="">Select model...</option>
-        {availableModels.map(m => (
-          <option key={m} value={m}>{m}</option>
-        ))}
-      </select>
-      <button
-        onClick={() => onSave(provider, model)}
-        disabled={!provider || !model || saving}
-        className="text-xs px-2 py-1.5 rounded bg-purple-600 text-white hover:bg-purple-700 disabled:opacity-40 flex items-center gap-1"
-      >
-        {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
-        Save
-      </button>
-      <button onClick={onCancel} className="text-xs px-2 py-1.5 rounded border hover:bg-gray-50">
-        Cancel
-      </button>
+    <div className="mt-2 space-y-2">
+      <div className="flex items-center gap-2">
+        <select
+          value={provider}
+          onChange={e => handleProviderChange(e.target.value)}
+          className="text-xs border rounded px-2 py-1.5 bg-white"
+        >
+          <option value="">Select provider...</option>
+          {providers.filter(p => p.api_key_configured).map(p => (
+            <option key={p.provider} value={p.provider}>{p.provider}</option>
+          ))}
+        </select>
+        <select
+          value={model}
+          onChange={e => {
+            setModel(e.target.value)
+            if (fbProvider === provider && fbModel === e.target.value) setFbModel('')
+          }}
+          disabled={!provider}
+          className="text-xs border rounded px-2 py-1.5 bg-white flex-1 min-w-0 disabled:opacity-40"
+        >
+          <option value="">Select model...</option>
+          {availableModels.map(m => (
+            <option key={m} value={m}>{m}</option>
+          ))}
+        </select>
+        <button
+          onClick={() => onSave(provider, model, customFallback ? fbProvider : null, customFallback ? fbModel : null)}
+          disabled={!provider || !model || (customFallback && (!fbProvider || !fbModel)) || saving}
+          className="text-xs px-2 py-1.5 rounded bg-purple-600 text-white hover:bg-purple-700 disabled:opacity-40 flex items-center gap-1"
+        >
+          {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
+          Save
+        </button>
+        <button onClick={onCancel} className="text-xs px-2 py-1.5 rounded border hover:bg-gray-50">
+          Cancel
+        </button>
+      </div>
+      <label className="flex items-center gap-1.5 text-xs text-gray-500 cursor-pointer select-none">
+        <input
+          type="checkbox"
+          checked={customFallback}
+          onChange={e => {
+            setCustomFallback(e.target.checked)
+            if (!e.target.checked) { setFbProvider(''); setFbModel('') }
+          }}
+          className="rounded border-gray-300"
+        />
+        Custom fallback model
+      </label>
+      {customFallback && (
+        <div className="flex items-center gap-2 pl-5">
+          <select
+            value={fbProvider}
+            onChange={e => handleFbProviderChange(e.target.value)}
+            className="text-xs border rounded px-2 py-1.5 bg-white"
+          >
+            <option value="">Select fallback provider...</option>
+            {providers.filter(p => p.api_key_configured).map(p => (
+              <option key={p.provider} value={p.provider}>{p.provider}</option>
+            ))}
+          </select>
+          <select
+            value={fbModel}
+            onChange={e => setFbModel(e.target.value)}
+            disabled={!fbProvider}
+            className="text-xs border rounded px-2 py-1.5 bg-white flex-1 min-w-0 disabled:opacity-40"
+          >
+            <option value="">Select model...</option>
+            {fbAvailableModels
+              .filter(m => !(fbProvider === provider && m === model))
+              .map(m => (
+              <option key={m} value={m}>{m}</option>
+            ))}
+          </select>
+        </div>
+      )}
     </div>
   )
 }
 
-const AgentRow = ({ agent, providers, onOverride, onReset, saving }) => {
+const AgentRow = ({ agent, providers, onOverride, onReset, saving, error, onClearError }) => {
   const [editing, setEditing] = useState(false)
   const categoryColors = {
     system: 'text-blue-600', execution: 'text-green-600',
@@ -191,6 +252,15 @@ const AgentRow = ({ agent, providers, onOverride, onReset, saving }) => {
           {!agent.override_unavailable && agent.suggested_fallback && agent.override && (
             <div className="mt-0.5 text-xs text-gray-400">
               Fallback: <code>{agent.suggested_fallback}</code>
+              {agent.fallback_is_custom && !agent.fallback_unavailable && (
+                <span className="ml-1 text-purple-500 font-medium">(custom)</span>
+              )}
+            </div>
+          )}
+          {agent.fallback_unavailable && agent.override && (
+            <div className="mt-1 px-2 py-1 rounded bg-amber-50 border border-amber-200 text-xs text-amber-700 flex items-center gap-1.5">
+              <AlertTriangle className="w-3 h-3 flex-shrink-0" />
+              <span>Custom fallback provider <strong>{agent.override.fallback_provider}</strong> API key is not configured — using auto-detected fallback.</span>
             </div>
           )}
         </div>
@@ -213,16 +283,24 @@ const AgentRow = ({ agent, providers, onOverride, onReset, saving }) => {
           </button>
         </div>
       </div>
+      {error && (
+        <div className="mt-2 mx-3 px-2 py-1.5 rounded bg-red-50 border border-red-200 text-xs text-red-700 flex items-center gap-1.5">
+          <XCircle className="w-3.5 h-3.5 flex-shrink-0" />
+          <span>{error}</span>
+        </div>
+      )}
       {editing && (
         <OverrideForm
           providers={providers}
           currentProvider={agent.override?.provider || agent.resolved_provider}
           currentModel={agent.override?.model || agent.resolved_model || ''}
-          onSave={(provider, model) => {
-            onOverride(agent.agent_id, provider, model)
-            setEditing(false)
+          currentFallbackProvider={agent.override?.fallback_provider || null}
+          currentFallbackModel={agent.override?.fallback_model || null}
+          onSave={(provider, model, fbProvider, fbModel) => {
+            if (onClearError) onClearError()
+            onOverride(agent.agent_id, provider, model, fbProvider, fbModel, () => setEditing(false))
           }}
-          onCancel={() => setEditing(false)}
+          onCancel={() => { setEditing(false); if (onClearError) onClearError() }}
           saving={saving}
         />
       )}
@@ -240,9 +318,12 @@ const ModelManagement = () => {
     queryFn: getModelManagement,
   })
 
+  const [agentError, setAgentError] = useState({})
   const agentOverrideMutation = useMutation({
-    mutationFn: ({ agentId, provider, model }) => setAgentModelOverride(agentId, provider, model),
+    mutationFn: ({ agentId, provider, model, fallbackProvider, fallbackModel }) =>
+      setAgentModelOverride(agentId, provider, model, fallbackProvider, fallbackModel),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['model-management'] }),
+    onError: (err, { agentId }) => setAgentError(prev => ({ ...prev, [agentId]: err.message })),
   })
 
   const agentResetMutation = useMutation({
@@ -252,7 +333,7 @@ const ModelManagement = () => {
 
   const [translationError, setTranslationError] = useState(null)
   const translationOverrideMutation = useMutation({
-    mutationFn: ({ provider, model }) => setTranslationModelOverride(provider, model),
+    mutationFn: ({ provider, model, fallbackProvider, fallbackModel }) => setTranslationModelOverride(provider, model, fallbackProvider, fallbackModel),
     onSuccess: () => {
       setTranslationError(null)
       queryClient.invalidateQueries({ queryKey: ['model-management'] })
@@ -273,7 +354,7 @@ const ModelManagement = () => {
     } catch (e) {
       setValidationResults(prev => ({ ...prev, [provider]: { valid: false, error: e.message, latency_ms: 0 } }))
     } finally {
-      setValidating(prev => ({ ...prev, [provider]: false }))
+      setTimeout(() => setValidating(prev => ({ ...prev, [provider]: false })), 5000)
     }
   }
 
@@ -354,6 +435,19 @@ const ModelManagement = () => {
                   </span>
                 )}
               </div>
+              {translation.fallback_is_custom && translation.override && (
+                <div className="flex items-center gap-1.5 mt-0.5">
+                  <span className="text-xs text-gray-400">
+                    Fallback: <code>{translation.override.fallback_provider}/{translation.override.fallback_model || 'default'}</code>
+                  </span>
+                  <span className="text-xs text-purple-500 font-medium">(custom)</span>
+                  {translation.fallback_unavailable && (
+                    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-700">
+                      <AlertTriangle className="w-3 h-3" /> Key missing
+                    </span>
+                  )}
+                </div>
+              )}
               {translation.override_unavailable && (
                 <div className="mt-1 mb-2 px-2 py-1.5 rounded bg-amber-50 border border-amber-200 text-xs text-amber-800 flex items-center gap-1.5">
                   <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
@@ -397,9 +491,11 @@ const ModelManagement = () => {
                   providers={providers}
                   currentProvider={translation.override?.provider || translation.provider}
                   currentModel={translation.override?.model || translation.model}
-                  onSave={(provider, model) => {
+                  currentFallbackProvider={translation.override?.fallback_provider}
+                  currentFallbackModel={translation.override?.fallback_model}
+                  onSave={(provider, model, fallbackProvider, fallbackModel) => {
                     setTranslationError(null)
-                    translationOverrideMutation.mutate({ provider, model }, {
+                    translationOverrideMutation.mutate({ provider, model, fallbackProvider, fallbackModel }, {
                       onSuccess: () => setEditingTranslation(false),
                     })
                   }}
@@ -422,11 +518,13 @@ const ModelManagement = () => {
                   key={agent.agent_id}
                   agent={agent}
                   providers={providers}
-                  onOverride={(agentId, provider, model) =>
-                    agentOverrideMutation.mutate({ agentId, provider, model })
+                  onOverride={(agentId, provider, model, fallbackProvider, fallbackModel, onSuccess) =>
+                    agentOverrideMutation.mutate({ agentId, provider, model, fallbackProvider, fallbackModel }, { onSuccess })
                   }
                   onReset={(agentId) => agentResetMutation.mutate(agentId)}
                   saving={isSaving}
+                  error={agentError[agent.agent_id]}
+                  onClearError={() => setAgentError(prev => { const next = { ...prev }; delete next[agent.agent_id]; return next })}
                 />
               ))}
             </div>

@@ -495,17 +495,23 @@ export const getProjectDependencies = (projectId) =>
 
 // ============ Model Management (Admin) ============
 export const getModelManagement = () => request('/api/admin/models')
-export const setAgentModelOverride = (agentId, provider, model) =>
+export const setAgentModelOverride = (agentId, provider, model, fallbackProvider = null, fallbackModel = null) =>
   request(`/api/admin/models/agents/${agentId}`, {
     method: 'PUT',
-    body: JSON.stringify({ provider, model }),
+    body: JSON.stringify({
+      provider, model,
+      ...(fallbackProvider && { fallback_provider: fallbackProvider, fallback_model: fallbackModel }),
+    }),
   })
 export const removeAgentModelOverride = (agentId) =>
   request(`/api/admin/models/agents/${agentId}`, { method: 'DELETE' })
-export const setTranslationModelOverride = (provider, model) =>
+export const setTranslationModelOverride = (provider, model, fallbackProvider = null, fallbackModel = null) =>
   request('/api/admin/models/translation', {
     method: 'PUT',
-    body: JSON.stringify({ provider, model }),
+    body: JSON.stringify({
+      provider, model,
+      ...(fallbackProvider && { fallback_provider: fallbackProvider, fallback_model: fallbackModel }),
+    }),
   })
 export const removeTranslationModelOverride = () =>
   request('/api/admin/models/translation', { method: 'DELETE' })

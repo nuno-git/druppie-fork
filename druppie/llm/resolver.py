@@ -18,7 +18,7 @@ import yaml
 
 from druppie.domain.agent_definition import AgentDefinition
 
-from .litellm_provider import PROVIDER_CONFIGS
+from .litellm_provider import PROVIDER_CONFIGS, has_api_key
 
 logger = structlog.get_logger()
 
@@ -35,31 +35,24 @@ class ResolvedModel:
     override_unavailable: bool = False
 
 
-def _has_api_key(provider: str) -> bool:
-    """Check whether the API key env var for a provider is set (or optional)."""
-    config = PROVIDER_CONFIGS.get(provider)
-    if not config:
-        return False
-    if config.get("api_key_optional"):
-        return True
-    return bool(os.getenv(config["api_key_env"]))
-
 
 # Module-level profile cache
 _profiles_cache: dict[str, list[dict[str, str]]] | None = None
 
-# Module-level DB override cache: agent_id -> (provider, model)
+# Module-level DB override cache: agent_id -> (provider, model, fallback_provider, fallback_model)
 # Populated by ModelManagementService on startup and after admin changes.
-_db_overrides: dict[str, tuple[str, str]] = {}
+# Process-local — requires single-worker deployment. Multi-worker requires
+# cross-worker invalidation (e.g. polling a DB timestamp).
+_db_overrides: dict[str, tuple[str, str, str | None, str | None]] = {}
 
 
-def set_db_overrides(overrides: dict[str, tuple[str, str]]) -> None:
+def set_db_overrides(overrides: dict[str, tuple[str, str, str | None, str | None]]) -> None:
     """Replace the DB override cache. Called by the model management service."""
     global _db_overrides
     _db_overrides = overrides
 
 
-def get_db_overrides() -> dict[str, tuple[str, str]]:
+def get_db_overrides() -> dict[str, tuple[str, str, str | None, str | None]]:
     """Return the current DB override cache (for status/debug)."""
     return _db_overrides
 
@@ -129,8 +122,8 @@ def _resolve(agent_def: AgentDefinition) -> ResolvedModel:
 
     # --- 2. DB override (admin UI) -----------------------------------------
     if agent_def.id in _db_overrides:
-        provider, model = _db_overrides[agent_def.id]
-        key_available = _has_api_key(provider)
+        provider, model, admin_fb_provider, admin_fb_model = _db_overrides[agent_def.id]
+        key_available = has_api_key(provider)
 
         if not key_available:
             logger.warning(
@@ -139,10 +132,16 @@ def _resolve(agent_def: AgentDefinition) -> ResolvedModel:
                 provider=provider,
             )
 
-        # Always derive a fallback from the profile chain — even when the
-        # API key is present it may be invalid or the provider may be down.
-        # Must be a *different* provider (same provider would fail the same way).
-        fb_provider, fb_model = _find_alternative_provider(agent_def, exclude_provider=provider)
+        if admin_fb_provider and has_api_key(admin_fb_provider):
+            fb_provider, fb_model = admin_fb_provider, admin_fb_model
+        else:
+            if admin_fb_provider:
+                logger.warning(
+                    "admin_fallback_api_key_missing",
+                    agent_id=agent_def.id,
+                    fallback_provider=admin_fb_provider,
+                )
+            fb_provider, fb_model = _find_alternative_provider(agent_def, exclude_provider=provider)
 
         return ResolvedModel(
             provider=provider,
@@ -160,12 +159,12 @@ def _resolve(agent_def: AgentDefinition) -> ResolvedModel:
 
     if chain:
         # Build list of available entries (API key is set)
-        available = [e for e in chain if _has_api_key(e["provider"])]
+        available = [e for e in chain if has_api_key(e["provider"])]
 
         # Append global LLM_PROVIDER as last-resort if not already in chain
         global_provider = os.getenv("LLM_PROVIDER", "zai").lower()
         already_listed = any(e["provider"] == global_provider for e in chain)
-        if not already_listed and _has_api_key(global_provider):
+        if not already_listed and has_api_key(global_provider):
             default_model = PROVIDER_CONFIGS.get(global_provider, {}).get("default_model")
             available.append({"provider": global_provider, "model": default_model})
 
@@ -204,10 +203,10 @@ def _find_alternative_provider(
     profiles = _load_profiles()
     chain = profiles.get(agent_def.llm_profile) or []
 
-    available = [e for e in chain if _has_api_key(e["provider"])]
+    available = [e for e in chain if has_api_key(e["provider"])]
 
     global_provider = os.getenv("LLM_PROVIDER", "zai").lower()
-    if not any(e["provider"] == global_provider for e in chain) and _has_api_key(global_provider):
+    if not any(e["provider"] == global_provider for e in chain) and has_api_key(global_provider):
         default_model = PROVIDER_CONFIGS.get(global_provider, {}).get("default_model")
         available.append({"provider": global_provider, "model": default_model})
 

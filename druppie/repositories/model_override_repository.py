@@ -35,12 +35,21 @@ class ModelOverrideRepository(BaseRepository):
         )
 
     def upsert(
-        self, target_type: str, target_id: str, provider: str, model: str, updated_by: UUID | None = None
+        self,
+        target_type: str,
+        target_id: str,
+        provider: str,
+        model: str,
+        updated_by: UUID | None = None,
+        fallback_provider: str | None = None,
+        fallback_model: str | None = None,
     ) -> ModelOverride:
         existing = self.get_by_target(target_type, target_id)
         if existing:
             existing.provider = provider
             existing.model = model
+            existing.fallback_provider = fallback_provider
+            existing.fallback_model = fallback_model
             existing.enabled = True
             existing.updated_by = updated_by
             self.db.flush()
@@ -51,6 +60,8 @@ class ModelOverrideRepository(BaseRepository):
             target_id=target_id,
             provider=provider,
             model=model,
+            fallback_provider=fallback_provider,
+            fallback_model=fallback_model,
             enabled=True,
             updated_by=updated_by,
         )

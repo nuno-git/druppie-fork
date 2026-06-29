@@ -182,7 +182,7 @@ PROVIDER_CONFIGS = {
         "model_env": "ZAI_MODEL",
         "base_url_env": "ZAI_BASE_URL",
         "default_base_url": "https://api.z.ai/api/coding/paas/v4",
-        "known_models": ["glm-5", "glm-4.7", "glm-4.5"],
+        "known_models": ["glm-5.2", "glm-5", "glm-4.7", "glm-4.5"],
     },
     "deepinfra": {
         "prefix": "openai",  # OpenAI-compatible API (same as zai)
@@ -235,7 +235,7 @@ PROVIDER_CONFIGS = {
             "google/gemini-2.5-flash",
             "google/gemini-2.5-pro",
             "anthropic/claude-sonnet-4-6",
-            "anthropic/claude-haiku-4-5-20251001",
+            "anthropic/claude-haiku-4.5",
             "meta-llama/llama-4-maverick",
             "meta-llama/llama-4-scout",
             "qwen/qwen3-235b-a22b",
@@ -263,6 +263,16 @@ PROVIDER_CONFIGS = {
         ],
     },
 }
+
+
+def has_api_key(provider: str) -> bool:
+    """Check whether the API key env var for a provider is set (or optional)."""
+    config = PROVIDER_CONFIGS.get(provider)
+    if not config:
+        return False
+    if config.get("api_key_optional"):
+        return True
+    return bool(os.getenv(config["api_key_env"]))
 
 
 class ChatLiteLLM(BaseLLM):

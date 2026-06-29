@@ -49,6 +49,7 @@ const FallbackModal = ({ tc, sessionId, language }) => {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['session', sessionId] })
     },
+    onError: () => {},
   })
 
   const handleAcceptSingle = () => {
@@ -144,6 +145,11 @@ const FallbackModal = ({ tc, sessionId, language }) => {
           >
             {t.cancel}
           </button>
+          {answerMut.isError && (
+            <p className="text-xs text-red-600 text-center mt-1">
+              Something went wrong — please try again
+            </p>
+          )}
         </div>
       </div>
     </div>

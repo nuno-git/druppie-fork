@@ -130,23 +130,38 @@ def _recover_orphaned_batch_runs() -> None:
 
 
 def _load_model_override_cache():
-    """Populate the resolver's DB override cache from the model_overrides table."""
+    """Populate the resolver's DB override cache and translation override on startup."""
     from druppie.db.database import SessionLocal
     from druppie.repositories.model_override_repository import ModelOverrideRepository
     from druppie.llm.resolver import set_db_overrides
+    from druppie.core.translation import get_translation_service
 
     db = SessionLocal()
     try:
         repo = ModelOverrideRepository(db)
-        overrides = repo.get_agent_overrides()
+
+        agent_overrides = repo.get_agent_overrides()
         override_map = {
-            o.target_id: (o.provider, o.model)
-            for o in overrides
+            o.target_id: (o.provider, o.model, o.fallback_provider, o.fallback_model)
+            for o in agent_overrides
             if o.target_type == "agent" and o.enabled
         }
         set_db_overrides(override_map)
-        if override_map:
-            logger.info("model_override_cache_loaded", count=len(override_map))
+
+        translation_override = repo.get_translation_override()
+        if translation_override and translation_override.enabled:
+            get_translation_service().configure(
+                translation_override.provider,
+                translation_override.model,
+                translation_override.fallback_provider,
+                translation_override.fallback_model,
+            )
+
+        logger.info(
+            "model_overrides_loaded",
+            agent_overrides=len(override_map),
+            translation_override=translation_override is not None,
+        )
     except Exception as e:
         logger.warning("model_override_cache_load_failed", error=str(e))
     finally:
@@ -297,44 +312,6 @@ def create_app() -> FastAPI:
     app.include_router(documentation.router, prefix="/api", tags=["Documentation"])
     app.include_router(jobs.router, prefix="/api/jobs", tags=["Jobs"])
     app.include_router(model_management.router, prefix="/api", tags=["Model Management"])
-
-    @app.on_event("startup")
-    async def _load_model_overrides():
-        """Load model overrides from DB into resolver cache on startup."""
-        try:
-            from druppie.db.database import SessionLocal
-            from druppie.repositories.model_override_repository import ModelOverrideRepository
-            from druppie.llm.resolver import set_db_overrides
-            from druppie.core.translation import get_translation_service
-
-            db = SessionLocal()
-            try:
-                repo = ModelOverrideRepository(db)
-
-                agent_overrides = repo.get_agent_overrides()
-                override_map = {
-                    o.target_id: (o.provider, o.model)
-                    for o in agent_overrides
-                    if o.enabled
-                }
-                set_db_overrides(override_map)
-
-                translation_override = repo.get_translation_override()
-                if translation_override and translation_override.enabled:
-                    get_translation_service().configure(
-                        translation_override.provider,
-                        translation_override.model,
-                    )
-
-                logger.info(
-                    "model_overrides_loaded",
-                    agent_overrides=len(override_map),
-                    translation_override=translation_override is not None,
-                )
-            finally:
-                db.close()
-        except Exception as e:
-            logger.warning("model_overrides_load_failed", error=str(e))
 
     @app.get("/health")
     async def health_check():

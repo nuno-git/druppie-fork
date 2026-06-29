@@ -12,6 +12,8 @@ class ModelOverrideSummary(BaseModel):
     target_id: str
     provider: str
     model: str
+    fallback_provider: str | None = None
+    fallback_model: str | None = None
     enabled: bool
     updated_at: datetime | None = None
 
@@ -41,6 +43,8 @@ class AgentModelInfo(BaseModel):
     override: ModelOverrideSummary | None = None
     override_unavailable: bool = False
     suggested_fallback: str | None = None
+    fallback_is_custom: bool = False
+    fallback_unavailable: bool = False
 
 
 class TranslationModelInfo(BaseModel):
@@ -50,6 +54,8 @@ class TranslationModelInfo(BaseModel):
     override: ModelOverrideSummary | None = None
     override_unavailable: bool = False
     suggested_fallback: str | None = None
+    fallback_is_custom: bool = False
+    fallback_unavailable: bool = False
 
 
 class ModelManagementView(BaseModel):

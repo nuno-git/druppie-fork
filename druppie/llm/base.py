@@ -89,9 +89,9 @@ def clean_llm_error(raw: str) -> str:
         return "Model not found"
     if "RateLimitError" in raw or "rate_limit" in raw:
         return "Rate limited — try again later"
-    if "timeout" in raw.lower() or "Timeout" in raw:
+    if "timeout" in raw.lower():
         return "Request timed out"
-    if "Connection" in raw and ("refused" in raw.lower() or "error" in raw.lower()):
+    if "connection" in raw.lower() and ("refused" in raw.lower() or "reset" in raw.lower() or "closed" in raw.lower()):
         return "Connection failed — check the provider URL"
     if "LLMConfigurationError" in raw:
         return raw.split("LLMConfigurationError: ", 1)[-1][:120]

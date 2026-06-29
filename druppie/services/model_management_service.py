@@ -18,7 +18,7 @@ from druppie.domain.model_override import (
     TranslationModelInfo,
 )
 from druppie.llm.base import clean_llm_error
-from druppie.llm.litellm_provider import PROVIDER_CONFIGS
+from druppie.llm.litellm_provider import PROVIDER_CONFIGS, has_api_key
 from druppie.llm.resolver import resolve_model, set_db_overrides
 from druppie.repositories.model_override_repository import ModelOverrideRepository
 
@@ -32,6 +32,8 @@ def _to_summary(row) -> ModelOverrideSummary:
         target_id=row.target_id,
         provider=row.provider,
         model=row.model,
+        fallback_provider=row.fallback_provider,
+        fallback_model=row.fallback_model,
         enabled=row.enabled,
         updated_at=row.updated_at,
     )
@@ -40,13 +42,14 @@ def _to_summary(row) -> ModelOverrideSummary:
 _clean_llm_error = clean_llm_error
 
 
-def _has_api_key(provider: str) -> bool:
-    config = PROVIDER_CONFIGS.get(provider)
-    if not config:
-        return False
-    if config.get("api_key_optional"):
-        return True
-    return bool(os.getenv(config["api_key_env"]))
+def _validate_fallback(provider: str, model: str, fallback_provider: str | None, fallback_model: str | None):
+    if fallback_model and not fallback_provider:
+        raise ValueError("fallback_model requires fallback_provider")
+    if fallback_provider:
+        if fallback_provider not in PROVIDER_CONFIGS:
+            raise ValueError(f"Unknown fallback provider: {fallback_provider}")
+        if fallback_provider == provider and fallback_model == model:
+            raise ValueError("Fallback must differ from the primary provider/model")
 
 
 class ModelManagementService:
@@ -92,6 +95,15 @@ class ModelManagementService:
                 fb_model = resolved.fallback_model or "default"
                 suggested_fallback = f"{resolved.fallback_provider}/{fb_model}"
 
+            override_summary = override_map.get(agent_def.id)
+            fallback_is_custom = bool(
+                override_summary and override_summary.fallback_provider
+            )
+            fallback_unavailable = bool(
+                fallback_is_custom
+                and not has_api_key(override_summary.fallback_provider)
+            )
+
             agents.append(AgentModelInfo(
                 agent_id=agent_def.id,
                 agent_name=agent_def.name,
@@ -100,18 +112,28 @@ class ModelManagementService:
                 resolved_provider=resolved.provider,
                 resolved_model=resolved.model,
                 source=resolved.source,
-                override=override_map.get(agent_def.id),
+                override=override_summary,
                 override_unavailable=resolved.override_unavailable,
                 suggested_fallback=suggested_fallback,
+                fallback_is_custom=fallback_is_custom,
+                fallback_unavailable=fallback_unavailable,
             ))
 
         # Build translation info — sync DB state to the singleton first
-        translation_override_row = self.override_repo.get_translation_override()
+        translation_override_row = next(
+            (o for o in overrides if o.target_type == "translation" and o.enabled),
+            None,
+        )
         translation_override = _to_summary(translation_override_row) if translation_override_row else None
 
         ts = get_translation_service()
         if translation_override_row and translation_override_row.enabled:
-            ts.configure(translation_override_row.provider, translation_override_row.model)
+            ts.configure(
+                translation_override_row.provider,
+                translation_override_row.model,
+                translation_override_row.fallback_provider,
+                translation_override_row.fallback_model,
+            )
         elif not translation_override_row:
             ts.configure(None, None)
 
@@ -120,7 +142,7 @@ class ModelManagementService:
         try:
             t_provider, t_model, t_source = ts.get_current_config()
         except Exception:
-            if translation_override_row and not _has_api_key(translation_override_row.provider):
+            if translation_override_row and not has_api_key(translation_override_row.provider):
                 t_provider = translation_override_row.provider
                 t_model = translation_override_row.model
                 t_source = "db_override"
@@ -129,6 +151,14 @@ class ModelManagementService:
             else:
                 t_provider, t_model, t_source = "none", "none", "unavailable"
 
+        t_fallback_is_custom = bool(
+            translation_override and translation_override.fallback_provider
+        )
+        t_fallback_unavailable = bool(
+            t_fallback_is_custom
+            and not has_api_key(translation_override.fallback_provider)
+        )
+
         translation = TranslationModelInfo(
             provider=t_provider,
             model=t_model,
@@ -136,6 +166,8 @@ class ModelManagementService:
             override=translation_override,
             override_unavailable=t_override_unavailable,
             suggested_fallback=t_suggested_fallback,
+            fallback_is_custom=t_fallback_is_custom,
+            fallback_unavailable=t_fallback_unavailable,
         )
 
         providers = self.get_provider_statuses()
@@ -149,9 +181,14 @@ class ModelManagementService:
         )
 
     def set_agent_override(
-        self, agent_id: str, provider: str, model: str, admin_user_id: UUID | None = None
+        self,
+        agent_id: str,
+        provider: str,
+        model: str,
+        admin_user_id: UUID | None = None,
+        fallback_provider: str | None = None,
+        fallback_model: str | None = None,
     ) -> ModelOverrideSummary:
-        # Validate agent exists
         available = AgentDefinitionLoader.list_agents()
         if agent_id not in available:
             raise ValueError(f"Unknown agent: {agent_id}")
@@ -159,7 +196,13 @@ class ModelManagementService:
         if provider not in PROVIDER_CONFIGS:
             raise ValueError(f"Unknown provider: {provider}")
 
-        row = self.override_repo.upsert("agent", agent_id, provider, model, admin_user_id)
+        _validate_fallback(provider, model, fallback_provider, fallback_model)
+
+        row = self.override_repo.upsert(
+            "agent", agent_id, provider, model, admin_user_id,
+            fallback_provider=fallback_provider,
+            fallback_model=fallback_model,
+        )
         self.override_repo.commit()
         self._refresh_resolver_cache()
         return _to_summary(row)
@@ -171,16 +214,27 @@ class ModelManagementService:
         return deleted
 
     def set_translation_override(
-        self, provider: str, model: str, admin_user_id: UUID | None = None
+        self,
+        provider: str,
+        model: str,
+        admin_user_id: UUID | None = None,
+        fallback_provider: str | None = None,
+        fallback_model: str | None = None,
     ) -> ModelOverrideSummary:
         if provider not in PROVIDER_CONFIGS:
             raise ValueError(f"Unknown provider: {provider}")
 
-        row = self.override_repo.upsert("translation", "translation", provider, model, admin_user_id)
+        _validate_fallback(provider, model, fallback_provider, fallback_model)
+
+        row = self.override_repo.upsert(
+            "translation", "translation", provider, model, admin_user_id,
+            fallback_provider=fallback_provider,
+            fallback_model=fallback_model,
+        )
         self.override_repo.commit()
 
         ts = get_translation_service()
-        ts.configure(provider, model)
+        ts.configure(provider, model, fallback_provider, fallback_model)
 
         return _to_summary(row)
 
@@ -223,7 +277,7 @@ class ModelManagementService:
             statuses.append(ProviderStatus(
                 provider=name,
                 api_key_env=config.get("api_key_env", ""),
-                api_key_configured=_has_api_key(name),
+                api_key_configured=has_api_key(name),
                 default_model=config.get("default_model", ""),
                 base_url=os.getenv(
                     config.get("base_url_env", ""), ""
@@ -237,7 +291,7 @@ class ModelManagementService:
         if provider not in PROVIDER_CONFIGS:
             return {"provider": provider, "model": model, "valid": False, "error": "Unknown provider", "latency_ms": 0}
 
-        if not _has_api_key(provider):
+        if not has_api_key(provider):
             config = PROVIDER_CONFIGS[provider]
             env_var = config.get("api_key_env", "")
             return {
@@ -270,14 +324,14 @@ class ModelManagementService:
         """What provider/model translation would use if the override were removed."""
         env_provider = os.getenv("TRANSLATION_PROVIDER")
         env_model = os.getenv("TRANSLATION_MODEL")
-        if env_provider and env_model and _has_api_key(env_provider):
+        if env_provider and env_model and has_api_key(env_provider):
             return f"{env_provider}/{env_model}"
 
         if os.getenv("DEEPINFRA_API_KEY"):
             return "deepinfra/google/gemma-3-27b-it"
 
         for name, config in PROVIDER_CONFIGS.items():
-            if _has_api_key(name):
+            if has_api_key(name):
                 return f"{name}/{config['default_model']}"
 
         return None
@@ -288,7 +342,7 @@ class ModelManagementService:
             overrides = self.override_repo.get_agent_overrides()
 
         override_map = {
-            o.target_id: (o.provider, o.model)
+            o.target_id: (o.provider, o.model, o.fallback_provider, o.fallback_model)
             for o in overrides
             if o.target_type == "agent" and o.enabled
         }

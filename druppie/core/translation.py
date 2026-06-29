@@ -41,17 +41,16 @@ def _language_name(code: str) -> str:
 
 def _has_api_key_for_provider(provider: str) -> bool:
     """Check whether the API key for a provider is configured."""
-    from druppie.llm.litellm_provider import PROVIDER_CONFIGS
-    config = PROVIDER_CONFIGS.get(provider)
-    if not config:
-        return False
-    if config.get("api_key_optional"):
-        return True
-    return bool(os.getenv(config["api_key_env"]))
+    from druppie.llm.litellm_provider import has_api_key
+    return has_api_key(provider)
 
 
 class TranslationService:
-    """Translates text between languages using a configurable LLM provider."""
+    """Translates text between languages using a configurable LLM provider.
+
+    Process-local state — requires single-worker deployment.
+    Multi-worker requires persisting notification state to DB.
+    """
 
     _notified_sessions: set[str] = set()
 
@@ -59,6 +58,8 @@ class TranslationService:
         self._llm = None
         self._configured_provider: str | None = None
         self._configured_model: str | None = None
+        self._configured_fallback_provider: str | None = None
+        self._configured_fallback_model: str | None = None
 
     @classmethod
     def mark_notified(cls, session_id: str) -> bool:
@@ -72,7 +73,18 @@ class TranslationService:
         cls._notified_sessions.add(session_id)
         return True
 
-    def configure(self, provider: str | None, model: str | None):
+    @classmethod
+    def clear_session(cls, session_id: str) -> None:
+        """Remove notification state for a completed/failed session."""
+        cls._notified_sessions.discard(session_id)
+
+    def configure(
+        self,
+        provider: str | None,
+        model: str | None,
+        fallback_provider: str | None = None,
+        fallback_model: str | None = None,
+    ):
         """Set the translation provider/model at runtime.
 
         Called by ModelManagementService when an admin sets or removes
@@ -80,6 +92,8 @@ class TranslationService:
         """
         self._configured_provider = provider
         self._configured_model = model
+        self._configured_fallback_provider = fallback_provider
+        self._configured_fallback_model = fallback_model
         self._llm = None
 
     def get_current_config(self) -> tuple[str, str, str]:
@@ -122,6 +136,22 @@ class TranslationService:
                 "translation_override_api_key_missing",
                 provider=self._configured_provider,
             )
+            if (
+                self._configured_fallback_provider
+                and _has_api_key_for_provider(self._configured_fallback_provider)
+            ):
+                logger.info(
+                    "translation_using_admin_fallback",
+                    fallback_provider=self._configured_fallback_provider,
+                    fallback_model=self._configured_fallback_model,
+                )
+                return (
+                    self._configured_fallback_provider,
+                    self._configured_fallback_model or PROVIDER_CONFIGS.get(
+                        self._configured_fallback_provider, {}
+                    ).get("default_model", ""),
+                    "db_override",
+                )
             raise TranslationNotAvailableError(
                 f"Translation override uses provider '{self._configured_provider}' "
                 f"but its API key is not configured. "

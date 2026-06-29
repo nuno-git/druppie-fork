@@ -26,6 +26,9 @@ class FallbackLLM(BaseLLM):
     - Per-agent: approve_fallback_for_agent(session_id, agent_id) — only
       this agent type auto-switches in this session
     - Session-wide: approve_fallback(session_id) — all agents auto-switch
+
+    Process-local state — requires single-worker deployment.
+    Multi-worker requires persisting approval state to DB.
     """
 
     _approved_sessions: set[str] = set()
@@ -119,7 +122,7 @@ class FallbackLLM(BaseLLM):
 
         try:
             return self._primary.chat(messages, tools)
-        except LLMError as e:
+        except LLMError as e:  # ChatLiteLLM._convert_exception wraps all exceptions as LLMError subtypes
             logger.warning(
                 "llm_primary_failed_fallback_available",
                 primary_provider=self._primary.provider_name,
@@ -140,7 +143,7 @@ class FallbackLLM(BaseLLM):
 
         try:
             return await self._primary.achat(messages, tools, max_tokens)
-        except LLMError as e:
+        except LLMError as e:  # ChatLiteLLM._convert_exception wraps all exceptions as LLMError subtypes
             logger.warning(
                 "llm_primary_failed_fallback_available",
                 primary_provider=self._primary.provider_name,

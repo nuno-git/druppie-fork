@@ -26,6 +26,8 @@ class ModelOverride(Base):
     target_id = Column(String(100), nullable=False)  # agent_id or "translation"
     provider = Column(String(50), nullable=False)
     model = Column(String(200), nullable=False)
+    fallback_provider = Column(String(50), nullable=True)
+    fallback_model = Column(String(200), nullable=True)
     enabled = Column(Boolean, default=True)
     updated_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
 

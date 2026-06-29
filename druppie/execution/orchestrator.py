@@ -204,7 +204,7 @@ class Orchestrator:
             except TranslationNotAvailableError:
                 logger.warning("translation_skipped_no_api_key", session_id=str(current_session_id))
                 self._notify_translation_failed(current_session_id)
-            except (TranslationError, Exception) as e:
+            except TranslationError as e:
                 logger.warning("translate_to_english_failed", session_id=str(current_session_id), error=str(e)[:200])
                 self._notify_translation_failed(current_session_id)
 
@@ -370,6 +370,7 @@ class Orchestrator:
                 logger.info("execute_pending_runs_complete", session_id=str(session_id))
                 self.session_repo.update_status(session_id, SessionStatus.COMPLETED)
                 self.session_repo.commit()
+                self._cleanup_session_state(session_id)
                 return
 
             # Rebuild context before each agent so it reflects changes
@@ -425,6 +426,25 @@ class Orchestrator:
 
             # Otherwise "completed" — loop continues to next pending run
 
+    _TRANSLATION_FAILED_MESSAGES = {
+        "nl": (
+            "⚠️ **Vertaling niet beschikbaar** — de vertalingsservice werkt niet. "
+            "De sessie gaat verder in het Engels."
+        ),
+        "de": (
+            "⚠️ **Übersetzung nicht verfügbar** — der Übersetzungsdienst funktioniert nicht. "
+            "Die Sitzung wird auf Englisch fortgesetzt."
+        ),
+        "fr": (
+            "⚠️ **Traduction indisponible** — le service de traduction ne fonctionne pas. "
+            "La session continuera en anglais."
+        ),
+        "en": (
+            "⚠️ **Translation unavailable** — the translation service is not working. "
+            "This session will continue in English."
+        ),
+    }
+
     def _notify_translation_failed(self, session_id: UUID) -> None:
         """Switch session to English and inject a one-time warning message."""
         from druppie.core.translation import TranslationService
@@ -432,15 +452,17 @@ class Orchestrator:
         if not TranslationService.mark_notified(str(session_id)):
             return
 
+        session = self.session_repo.get_by_id(session_id)
+        lang = session.language if session else None
+
         self.session_repo.update_language(session_id, "en")
 
-        message = (
-            "⚠️ **Vertaling niet beschikbaar** — de vertalingsservice werkt niet. "
-            "De sessie gaat verder in het Engels.\n\n"
-            "---\n\n"
-            "⚠️ **Translation unavailable** — the translation service is not working. "
-            "This session will continue in English."
-        )
+        en_msg = self._TRANSLATION_FAILED_MESSAGES["en"]
+        local_msg = self._TRANSLATION_FAILED_MESSAGES.get(lang)
+        if local_msg and lang != "en":
+            message = f"{local_msg}\n\n---\n\n{en_msg}"
+        else:
+            message = en_msg
         seq = self.execution_repo.get_next_sequence_number(session_id)
         self.execution_repo.create_message(
             session_id=session_id,
@@ -450,6 +472,15 @@ class Orchestrator:
         )
         self.execution_repo.commit()
         logger.info("translation_fallback_to_english", session_id=str(session_id))
+
+    def _cleanup_session_state(self, session_id: UUID) -> None:
+        """Release process-local state for a completed/failed session."""
+        from druppie.core.translation import TranslationService
+        from druppie.llm.fallback import FallbackLLM
+
+        sid = str(session_id)
+        FallbackLLM.clear_session(sid)
+        TranslationService.clear_session(sid)
 
     def _prepend_agent_summary(self, session_id: UUID, prompt: str) -> str:
         """Build accumulated summary from completed runs and prepend to prompt.
@@ -879,7 +910,7 @@ class Orchestrator:
             except TranslationNotAvailableError:
                 logger.warning("translation_skipped_no_api_key", session_id=str(session_id))
                 self._notify_translation_failed(session_id)
-            except (TranslationError, Exception) as e:
+            except TranslationError as e:
                 logger.warning("translate_to_english_failed", session_id=str(session_id), error=str(e)[:200])
                 self._notify_translation_failed(session_id)
 
@@ -1014,6 +1045,7 @@ class Orchestrator:
                 ),
             )
             self.execution_repo.commit()
+            self._cleanup_session_state(session_id)
 
         return session_id
 

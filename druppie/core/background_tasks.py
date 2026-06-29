@@ -320,4 +320,10 @@ async def run_session_task(
                 error=str(update_error),
             )
     finally:
+        from druppie.core.translation import TranslationService
+        from druppie.llm.fallback import FallbackLLM
+
+        sid = str(session_id)
+        FallbackLLM.clear_session(sid)
+        TranslationService.clear_session(sid)
         db.close()
