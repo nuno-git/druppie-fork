@@ -7,8 +7,6 @@ on:
 
 env:
   REGISTRY: ${{ secrets.HARBOR_REGISTRY }}
-  REGISTRY_USER: ${{ secrets.HARBOR_USERNAME }}
-  REGISTRY_PASS: ${{ secrets.HARBOR_PASSWORD }}
   TAG: ${{ github.sha }}
   DOCKER_BUILDKIT: "1"
 
@@ -27,7 +25,6 @@ jobs:
             -o /usr/local/lib/docker/cli-plugins/docker-buildx
           chmod +x /usr/local/lib/docker/cli-plugins/docker-buildx
           docker version --format '{{.Client.Version}}'
-          docker buildx version
 
       - name: Configure Harbor credentials
         env:
@@ -40,54 +37,56 @@ jobs:
           cat > ~/.docker/config.json <<JSON
           {"auths":{"$HARBOR_REG":{"auth":"$AUTH"}}}
           JSON
-          echo "Configured Docker auth for $HARBOR_REG"
-          cat ~/.docker/config.json | python3 -c "import sys,json; d=json.load(sys.stdin); print('Auth keys:', list(d.get('auths',{}).keys()))"
 
-      - name: Build backend
+      - name: Build and push backend
         run: |
           docker build -t "$REGISTRY/druppie/druppie-backend:$TAG" .
-          docker push "$REGISTRY/druppie/druppie-backend:$TAG"
+          docker tag  "$REGISTRY/druppie/druppie-backend:$TAG" "$REGISTRY/druppie/druppie-backend:latest"
+          docker push --all-tags "$REGISTRY/druppie/druppie-backend"
 
-      - name: Build frontend
+      - name: Build and push frontend
         run: |
           docker build -t "$REGISTRY/druppie/druppie-frontend:$TAG" ./frontend
-          docker push "$REGISTRY/druppie/druppie-frontend:$TAG"
+          docker tag  "$REGISTRY/druppie/druppie-frontend:$TAG" "$REGISTRY/druppie/druppie-frontend:latest"
+          docker push --all-tags "$REGISTRY/druppie/druppie-frontend"
 
-      - name: Build init image
+      - name: Build and push init image
         run: |
-          docker build -t "$REGISTRY/druppie/druppie-init:$TAG" -f Dockerfile.init .
-          docker push "$REGISTRY/druppie/druppie-init:$TAG"
+          if [ -f Dockerfile.init ]; then
+            docker build -t "$REGISTRY/druppie/druppie-init:$TAG" -f Dockerfile.init .
+            docker tag  "$REGISTRY/druppie/druppie-init:$TAG" "$REGISTRY/druppie/druppie-init:latest"
+            docker push --all-tags "$REGISTRY/druppie/druppie-init"
+          fi
 
-      - name: Build layout-service
+      - name: Build and push layout-service
         run: |
           docker build -t "$REGISTRY/druppie/druppie-layout-service:$TAG" ./druppie/mcp-servers/layout-service
-          docker push "$REGISTRY/druppie/druppie-layout-service:$TAG"
+          docker tag  "$REGISTRY/druppie/druppie-layout-service:$TAG" "$REGISTRY/druppie/druppie-layout-service:latest"
+          docker push --all-tags "$REGISTRY/druppie/druppie-layout-service"
 
-      - name: Build MCP modules
+      - name: Build and push MCP modules
         run: |
           for module in module-coding module-docker module-web module-vision \
                         module-archimate module-data-access module-registry \
                         module-filesearch module-kubernetes module-llm; do
-            if [ -d "./druppie/mcp-servers/$module" ]; then
+            if [ -d "./druppie/mcp-servers/$module" ] && [ -f "./druppie/mcp-servers/$module/Dockerfile" ]; then
               echo "Building $module..."
-              docker build -t "$REGISTRY/druppie/druppie-$module:$TAG" "./druppie/mcp-servers/$module" || \
-                echo "  (skipped $module — no Dockerfile)"
-              docker push "$REGISTRY/druppie/druppie-$module:$TAG" || \
-                echo "  (skipped push $module)"
+              docker build -t "$REGISTRY/druppie/druppie-$module:$TAG" "./druppie/mcp-servers/$module"
+              docker tag  "$REGISTRY/druppie/druppie-$module:$TAG" "$REGISTRY/druppie/druppie-$module:latest"
+              docker push --all-tags "$REGISTRY/druppie/druppie-$module"
             fi
           done
 
-      - name: Build sandbox-k8s image
+      - name: Build and push sandbox-k8s image
         run: |
           if [ -f "./druppie/mcp-servers/module-coding/Dockerfile.sandbox.k8s" ]; then
             docker build -t "$REGISTRY/druppie/druppie-sandbox-k8s:$TAG" \
               -f ./druppie/mcp-servers/module-coding/Dockerfile.sandbox.k8s ./druppie/mcp-servers/module-coding
-            docker push "$REGISTRY/druppie/druppie-sandbox-k8s:$TAG"
+            docker tag  "$REGISTRY/druppie/druppie-sandbox-k8s:$TAG" "$REGISTRY/druppie/druppie-sandbox-k8s:latest"
+            docker push --all-tags "$REGISTRY/druppie/druppie-sandbox-k8s"
           fi
 
       - name: Summary
         run: |
           echo "### Build Complete ###"
-          echo "Images pushed to $REGISTRY/druppie/ with tag: $TAG"
-          echo ""
-          echo "To deploy: update global.imageTag in the k8s repo HelmRelease"
+          echo "Images pushed to $REGISTRY/druppie/ with tags: $TAG, latest"
