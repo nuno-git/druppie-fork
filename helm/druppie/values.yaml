@@ -471,3 +471,17 @@ externalSecrets:
   vaultAddress: "http://vault.vault.svc.cluster.local:8200"
   vaultRole: "external-secrets"
   serviceAccount: "external-secrets"
+
+# Agent Sandbox — Kubernetes-native sandboxes via agent-sandbox CRD
+# When enabled, module-coding uses agent-sandbox SDK instead of Docker CLI.
+# Requires the agent-sandbox controller (installed separately in the cluster).
+agentSandbox:
+  enabled: false
+  coding:
+    cpuLimit: "2"
+    memoryLimit: "4Gi"
+    workspaceSize: "10Gi"
+  devEnv:
+    workspaceSize: "20Gi"
+  warmPool:
+    replicas: 5

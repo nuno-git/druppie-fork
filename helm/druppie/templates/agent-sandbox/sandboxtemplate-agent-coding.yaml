@@ -1,0 +1,107 @@
+{{- if .Values.agentSandbox.enabled }}
+# SandboxTemplate: agent-coding — gVisor-isolated sandbox for AI agent code execution.
+# Used by module-coding when agentSandbox.mode = "k8s".
+# The agent gets a full Linux env (Python, Node, git) but CANNOT run Docker.
+# Image building is done via Kaniko; service deployment via K8s API.
+---
+apiVersion: extensions.agents.x-k8s.io/v1beta1
+kind: SandboxTemplate
+metadata:
+  name: agent-coding-template
+  namespace: sandbox-runtime
+spec:
+  podTemplate:
+    spec:
+      runtimeClassName: gvisor
+      priorityClassName: druppie-agent
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: agent-runner
+        image: {{ .Values.global.imageRegistry }}/druppie-sandbox:{{ .Values.global.imageTag }}
+        command: ["/bin/sh", "-c"]
+        args: ["sleep infinity"]
+        workingDir: /workspace
+        env:
+        - name: UV_CACHE_DIR
+          value: /cache/uv
+        - name: PIP_CACHE_DIR
+          value: /cache/pip
+        - name: NPM_CONFIG_CACHE
+          value: /cache/npm
+        - name: TMPDIR
+          value: /cache/tmp
+        resources:
+          requests:
+            cpu: "250m"
+            memory: 512Mi
+            ephemeral-storage: 1Gi
+          limits:
+            cpu: {{ .Values.agentSandbox.coding.cpuLimit | default "2" }}
+            memory: {{ .Values.agentSandbox.coding.memoryLimit | default "4Gi" }}
+        volumeMounts:
+        - name: workspace
+          mountPath: /workspace
+        - name: cache
+          mountPath: /cache
+        readinessProbe:
+          exec:
+            command: ["echo", "ready"]
+          initialDelaySeconds: 2
+          periodSeconds: 10
+      volumes:
+      - name: cache
+        emptyDir:
+          sizeLimit: 5Gi
+  volumeClaimTemplatesPolicy: Overrides
+  volumeClaimTemplates:
+  - metadata:
+      name: workspace
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      storageClassName: {{ .Values.persistence.storageClass | default "longhorn-distributed" }}
+      resources:
+        requests:
+          storage: {{ .Values.agentSandbox.coding.workspaceSize | default "10Gi" }}
+  networkPolicy:
+    egress:
+    # DNS
+    - to:
+      - namespaceSelector: {}
+      ports:
+      - protocol: UDP
+        port: 53
+      - protocol: TCP
+        port: 53
+    # HTTPS to external (npm, pip, git)
+    - to:
+      - ipBlock:
+          cidr: 0.0.0.0/0
+      ports:
+      - protocol: TCP
+        port: 443
+    # Gitea (git clone/push)
+    - to:
+      - namespaceSelector: {}
+      ports:
+      - protocol: TCP
+        port: 3000
+    # Harbor (image pulls)
+    - to:
+      - namespaceSelector:
+          matchLabels:
+            kubernetes.io/metadata.name: harbor
+      ports:
+      - protocol: TCP
+        port: 80
+    # LLM endpoint
+    - to:
+      - namespaceSelector:
+          matchLabels:
+            kubernetes.io/metadata.name: {{ .Release.Namespace }}
+      ports:
+      - protocol: TCP
+        port: 8000
+{{- end }}
