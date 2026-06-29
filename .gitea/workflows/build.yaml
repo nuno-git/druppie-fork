@@ -19,6 +19,9 @@ jobs:
 
       - name: Login to Harbor
         run: |
+          echo "Registry: '$REGISTRY'"
+          echo "User: '$REGISTRY_USER'"
+          echo "Pass set: $([ -n \"$REGISTRY_PASS\" ] && echo yes || echo no)"
           echo "$REGISTRY_PASS" | docker login "$REGISTRY" -u "$REGISTRY_USER" --password-stdin
 
       - name: Build backend
