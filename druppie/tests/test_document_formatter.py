@@ -128,4 +128,3 @@ class TestDocumentFormatterFunctional:
         pdf_bytes = svc.generate_pdf(content=content, metadata=meta)
         assert len(pdf_bytes) > 100
 
-
