@@ -1,8 +1,11 @@
 {{- if .Values.agentSandbox.enabled }}
 # SandboxTemplate: agent-coding — gVisor-isolated sandbox for AI agent code execution.
-# Used by module-coding when agentSandbox.mode = "k8s".
-# The agent gets a full Linux env (Python, Node, git) but CANNOT run Docker.
-# Image building is done via Kaniko; service deployment via K8s API.
+# Uses a custom image built on the agent-sandbox runtime (port 8888 server)
+# with Druppie tools (Python, git, pip packages) added.
+#
+# IMPORTANT: the base image must include the agent-sandbox runtime server.
+# Build with: druppie/mcp-servers/module-coding/Dockerfile.sandbox.k8s
+# Push to: harbor.rijnland.dev/druppie/druppie-sandbox-k8s:latest
 ---
 apiVersion: extensions.agents.x-k8s.io/v1beta1
 kind: SandboxTemplate
@@ -14,25 +17,17 @@ spec:
     spec:
       runtimeClassName: gvisor
       priorityClassName: druppie-agent
-      securityContext:
-        runAsNonRoot: true
-        seccompProfile:
-          type: RuntimeDefault
       containers:
-      - name: agent-runner
-        image: {{ .Values.global.imageRegistry }}/druppie-sandbox:{{ .Values.global.imageTag }}
-        command: ["/bin/sh", "-c"]
-        args: ["sleep infinity"]
-        workingDir: /workspace
-        env:
-        - name: UV_CACHE_DIR
-          value: /cache/uv
-        - name: PIP_CACHE_DIR
-          value: /cache/pip
-        - name: NPM_CONFIG_CACHE
-          value: /cache/npm
-        - name: TMPDIR
-          value: /cache/tmp
+      - name: runner
+        image: {{ .Values.global.imageRegistry }}/druppie-sandbox-k8s:{{ .Values.global.imageTag }}
+        ports:
+        - containerPort: 8888
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 8888
+          initialDelaySeconds: 3
+          periodSeconds: 5
         resources:
           requests:
             cpu: "250m"
@@ -41,20 +36,8 @@ spec:
           limits:
             cpu: {{ .Values.agentSandbox.coding.cpuLimit | default "2" }}
             memory: {{ .Values.agentSandbox.coding.memoryLimit | default "4Gi" }}
-        volumeMounts:
-        - name: workspace
-          mountPath: /workspace
-        - name: cache
-          mountPath: /cache
-        readinessProbe:
-          exec:
-            command: ["echo", "ready"]
-          initialDelaySeconds: 2
-          periodSeconds: 10
-      volumes:
-      - name: cache
-        emptyDir:
-          sizeLimit: 5Gi
+      imagePullSecrets:
+      - name: harbor-regcred
   volumeClaimTemplatesPolicy: Overrides
   volumeClaimTemplates:
   - metadata:

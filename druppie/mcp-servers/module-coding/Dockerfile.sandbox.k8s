@@ -1,0 +1,42 @@
+FROM us-central1-docker.pkg.dev/k8s-staging-images/agent-sandbox/python-runtime-sandbox:latest-main
+# NOTE: Do NOT change WORKDIR — the agent-sandbox runtime expects /app as cwd
+# to find main.py (the FastAPI server on port 8888). /workspace is created
+# below for agent code.
+
+USER root
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    curl \
+    wget \
+    ripgrep \
+    findutils \
+    jq \
+    ca-certificates \
+    xz-utils \
+    gcc \
+    g++ \
+    make \
+    libpq-dev \
+    libffi-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel uv
+
+RUN pip install --no-cache-dir \
+    flask==3.1.0 \
+    gunicorn==23.0.0 \
+    sqlalchemy==2.0.36 \
+    psycopg2-binary==2.9.10 \
+    pgvector==0.3.6 \
+    python-dotenv==1.0.1 \
+    pytest \
+    httpx \
+    redis
+
+RUN mkdir -p /workspace /cache && chmod 1777 /cache
+
+ENV UV_CACHE_DIR=/cache/uv \
+    PIP_CACHE_DIR=/cache/pip \
+    NPM_CONFIG_CACHE=/cache/npm \
+    TMPDIR=/cache/tmp
