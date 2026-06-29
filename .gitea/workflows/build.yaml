@@ -10,6 +10,7 @@ env:
   REGISTRY_USER: ${{ secrets.HARBOR_USERNAME }}
   REGISTRY_PASS: ${{ secrets.HARBOR_PASSWORD }}
   TAG: ${{ github.sha }}
+  DOCKER_BUILDKIT: "1"
 
 jobs:
   build:
