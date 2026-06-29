@@ -1,0 +1,93 @@
+name: Build and Push Images
+
+on:
+  push:
+    branches: [colab-dev, main]
+  workflow_dispatch:
+
+env:
+  REGISTRY: ${{ secrets.HARBOR_REGISTRY }}
+  REGISTRY_USER: ${{ secrets.HARBOR_USERNAME }}
+  REGISTRY_PASS: ${{ secrets.HARBOR_PASSWORD }}
+  TAG: ${{ github.sha }}
+  DOCKER_BUILDKIT: "1"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Docker CLI and Buildx
+        run: |
+          curl -fsSL https://download.docker.com/linux/static/stable/x86_64/docker-27.5.1.tgz | tar xz -C /tmp
+          install -m 755 /tmp/docker/docker /usr/local/bin/docker
+          mkdir -p /usr/local/lib/docker/cli-plugins
+          curl -fsSL https://github.com/docker/buildx/releases/download/v0.20.1/buildx-v0.20.1.linux-amd64 \
+            -o /usr/local/lib/docker/cli-plugins/docker-buildx
+          chmod +x /usr/local/lib/docker/cli-plugins/docker-buildx
+          docker version --format '{{.Client.Version}}'
+          docker buildx version
+
+      - name: Configure Harbor credentials
+        env:
+          HARBOR_USER: ${{ secrets.HARBOR_USERNAME }}
+          HARBOR_PASS: ${{ secrets.HARBOR_PASSWORD }}
+          HARBOR_REG: ${{ secrets.HARBOR_REGISTRY }}
+        run: |
+          mkdir -p ~/.docker
+          AUTH=$(printf '%s' "$HARBOR_USER:$HARBOR_PASS" | base64 -w0)
+          cat > ~/.docker/config.json <<JSON
+          {"auths":{"$HARBOR_REG":{"auth":"$AUTH"}}}
+          JSON
+          echo "Configured Docker auth for $HARBOR_REG"
+          cat ~/.docker/config.json | python3 -c "import sys,json; d=json.load(sys.stdin); print('Auth keys:', list(d.get('auths',{}).keys()))"
+
+      - name: Build backend
+        run: |
+          docker build -t "$REGISTRY/druppie/druppie-backend:$TAG" .
+          docker push "$REGISTRY/druppie/druppie-backend:$TAG"
+
+      - name: Build frontend
+        run: |
+          docker build -t "$REGISTRY/druppie/druppie-frontend:$TAG" ./frontend
+          docker push "$REGISTRY/druppie/druppie-frontend:$TAG"
+
+      - name: Build init image
+        run: |
+          docker build -t "$REGISTRY/druppie/druppie-init:$TAG" -f Dockerfile.init .
+          docker push "$REGISTRY/druppie/druppie-init:$TAG"
+
+      - name: Build layout-service
+        run: |
+          docker build -t "$REGISTRY/druppie/druppie-layout-service:$TAG" ./druppie/mcp-servers/layout-service
+          docker push "$REGISTRY/druppie/druppie-layout-service:$TAG"
+
+      - name: Build MCP modules
+        run: |
+          for module in module-coding module-docker module-web module-vision \
+                        module-archimate module-data-access module-registry \
+                        module-filesearch module-kubernetes module-llm; do
+            if [ -d "./druppie/mcp-servers/$module" ]; then
+              echo "Building $module..."
+              docker build -t "$REGISTRY/druppie/druppie-$module:$TAG" "./druppie/mcp-servers/$module" || \
+                echo "  (skipped $module — no Dockerfile)"
+              docker push "$REGISTRY/druppie/druppie-$module:$TAG" || \
+                echo "  (skipped push $module)"
+            fi
+          done
+
+      - name: Build sandbox-k8s image
+        run: |
+          if [ -f "./druppie/mcp-servers/module-coding/Dockerfile.sandbox.k8s" ]; then
+            docker build -t "$REGISTRY/druppie/druppie-sandbox-k8s:$TAG" \
+              -f ./druppie/mcp-servers/module-coding/Dockerfile.sandbox.k8s ./druppie/mcp-servers/module-coding
+            docker push "$REGISTRY/druppie/druppie-sandbox-k8s:$TAG"
+          fi
+
+      - name: Summary
+        run: |
+          echo "### Build Complete ###"
+          echo "Images pushed to $REGISTRY/druppie/ with tag: $TAG"
+          echo ""
+          echo "To deploy: update global.imageTag in the k8s repo HelmRelease"
