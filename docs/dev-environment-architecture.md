@@ -1,5 +1,60 @@
 # Aanbevolen Architectuur: Dev, Preview & Prod op Local Rancher RKE2
 
+> **Status:** SUPERSEDED by v2 (see "Architecture Revision v2" below)
+> **Datum:** 2026-06-23 (original), 2026-06-29 (v2 revision)
+> **Gebaseerd op:** [research-dev-environments.md](./research-dev-environments.md)
+
+---
+
+## Architecture Revision v2 (2026-06-29)
+
+After testing on the actual ka-k8s-ai RKE2 cluster, several decisions in the
+original document were revised. The full v2 spec lives in the k8s GitOps repo:
+`docs/dev-environment-architecture-v2.md`.
+
+### What changed and why
+
+| Decision | v1 (original) | v2 (revised) | Reason |
+|----------|---------------|--------------|--------|
+| Sandbox runtime | Sysbox (`sysbox-runc`) | **gVisor** (`runsc`) | Sysbox CE has no containerd shim — tested and confirmed non-functional on RKE2. gVisor includes the shim and provides stronger isolation (syscall interception vs user namespaces). |
+| Sandbox management | Docker CLI (subprocess) | **agent-sandbox CRD** (kubernetes-sigs v0.5.0) | At 1500-user scale, Docker CLI subprocess calls don't scale. agent-sandbox provides warm pools, hibernation, and K8s-native lifecycle management. |
+| Docker-in-Docker | Required (docker-compose inside sandbox) | **Eliminated** | DinD doesn't scale to 1500 users (500MB overhead per daemon). Replaced by Kaniko (builds) and K8s API (deployments). |
+| Agent isolation | Sysbox user namespaces | **gVisor syscall interception** | Stronger isolation — sandbox never touches host kernel. |
+| Code changes | None (sysbox drop-in) | **module-coding + module-docker rewrite** | ~800 lines across 2 files. Dual-mode dispatch: Docker for local dev, K8s for production. |
+
+### Infrastructure deployed (ka-k8s-ai cluster)
+
+- ✅ gVisor runtime on all 4 worker nodes (DaemonSet)
+- ✅ RuntimeClass/gvisor registered and tested
+- ✅ agent-sandbox controller v0.5.0 running
+- ✅ 4 CRDs: Sandbox, SandboxTemplate, SandboxClaim, SandboxWarmPool
+- ✅ 5 PriorityClasses (prod=10000 → agent=500)
+- ✅ ResourceQuotas + LimitRanges
+- ✅ Node labels (gpu + 4 workers)
+
+### Code changes on this branch
+
+- `druppie/core/k8s_sandbox.py` — K8sSandboxManager (agent-sandbox SDK wrapper)
+- `druppie/mcp-servers/module-coding/v1/tools.py` — dual-mode dispatch (Docker/K8s)
+- `druppie/mcp-servers/module-docker/v1/k8s_deploy.py` — Kaniko + K8s API replacements
+- `druppie/mcp-servers/module-docker/v1/tools.py` — dual-mode dispatch
+- `helm/druppie/templates/agent-sandbox/` — SandboxTemplates, WarmPool, namespace
+- `druppie/requirements.txt` — k8s-agent-sandbox[async]>=0.5.0
+
+### Configuration
+
+```bash
+# Local dev (unchanged — Docker + docker-compose):
+DRUPPIE_SANDBOX_MODE=docker
+
+# Production (K8s-native — agent-sandbox + gVisor):
+DRUPPIE_SANDBOX_MODE=k8s
+```
+
+---
+
+## Original Document (v1 — historical reference)
+
 > **Status:** Definitief architectuurvoorstel  
 > **Datum:** 2026-06-23  
 > **Gebaseerd op:** [research-dev-environments.md](./research-dev-environments.md)  

@@ -25,6 +25,9 @@ from .module import DockerModule
 MODULE_ID = "docker"
 MODULE_VERSION = "1.0.0"
 
+# Sandbox mode: "docker" (local dev) or "k8s" (production with Kaniko + K8s API)
+DEPLOY_MODE = os.getenv("DRUPPIE_SANDBOX_MODE", "docker")
+
 logger = logging.getLogger("docker-mcp")
 
 mcp = FastMCP(
@@ -432,7 +435,6 @@ async def build(
     build_args: dict[str, str] | None = None,
 ) -> dict:
     """Build Docker image from a git repository.
-
     Args:
         image_name: Name for the built image (e.g., "myapp:latest")
         git_url: Full git URL to clone
@@ -443,7 +445,6 @@ async def build(
         session_id: Session ID for tracking (added to result)
         dockerfile: Dockerfile name (default: "Dockerfile")
         build_args: Optional Docker build arguments
-
     Returns:
         Dict with success, image_name, build_log, project_id, session_id
     """
@@ -455,6 +456,22 @@ async def build(
             }
 
         url = git_url or get_gitea_clone_url(repo_name, repo_owner)
+
+        if DEPLOY_MODE == "k8s":
+            from .k8s_deploy import k8s_build
+            result = await k8s_build(
+                image_name=image_name,
+                git_url=url,
+                branch=branch,
+                dockerfile=dockerfile,
+                build_args=build_args,
+                session_id=session_id,
+            )
+            if result.get("success"):
+                result["project_id"] = project_id
+                result["session_id"] = session_id
+            return result
+
         logger.info(
             "Building Docker image: %s -> %s (branch: %s, project: %s, session: %s)",
             url, image_name, branch, project_id, session_id
@@ -522,6 +539,19 @@ async def run(
         err = _validate_name(container_name, "container_name")
         if err:
             return {"success": False, "error": err}
+
+        if DEPLOY_MODE == "k8s":
+            from .k8s_deploy import k8s_run
+            return await k8s_run(
+                image_name=image_name,
+                container_name=container_name,
+                container_port=container_port,
+                project_id=project_id,
+                session_id=session_id,
+                user_id=user_id,
+                env_vars=env_vars,
+                command=command,
+            )
 
         # Check for and remove existing container with same name
         existing = check_and_remove_existing_container(container_name)
@@ -666,11 +696,46 @@ async def compose_up(
         if not git_url and not repo_name:
             return {"success": False, "error": "Must provide either git_url or repo_name"}
 
-        # Prefer repo_name (uses internal Gitea URL) over git_url (may be external/localhost)
         if repo_name:
             url = get_gitea_clone_url(repo_name, repo_owner)
         else:
             url = git_url
+
+        if DEPLOY_MODE == "k8s":
+            from .k8s_deploy import k8s_compose_up
+            import tempfile
+
+            with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+                clone_path_temp = BUILD_DIR / str(uuid.uuid4())[:8]
+                clone_path_temp.mkdir(parents=True, exist_ok=True)
+                clone_result = await asyncio.to_thread(
+                    subprocess.run,
+                    ["git", "clone", "--branch", branch, "--depth", "1", url, str(clone_path_temp)],
+                    capture_output=True, text=True, timeout=120,
+                )
+                if clone_result.returncode != 0:
+                    shutil.rmtree(clone_path_temp, ignore_errors=True)
+                    return {"success": False, "error": f"Git clone failed: {clone_result.stderr}"}
+
+                compose_file = clone_path_temp / "docker-compose.yaml"
+                if not compose_file.exists():
+                    compose_file = clone_path_temp / "docker-compose.yml"
+                if not compose_file.exists():
+                    shutil.rmtree(clone_path_temp, ignore_errors=True)
+                    return {"success": False, "error": "No docker-compose.yaml found"}
+
+                compose_yaml = compose_file.read_text()
+                shutil.rmtree(clone_path_temp, ignore_errors=True)
+
+            project_name_final = compose_project_name or project_id or f"{repo_name or 'app'}-{str(uuid.uuid4())[:8]}"
+            return await k8s_compose_up(
+                compose_yaml=compose_yaml,
+                project_name=project_name_final,
+                session_id=session_id,
+                project_id=project_id,
+                health_path=health_path,
+                health_timeout=health_timeout,
+            )
 
         # Step 1: Clone repository
         build_id = str(uuid.uuid4())[:8]
@@ -951,12 +1016,15 @@ async def compose_down(
         Dict with success, stopped project name
     """
     try:
-        # Sanitize project name the same way compose_up does
         compose_project_name = re.sub(
             r'[^a-z0-9-]', '', compose_project_name.lower().replace("_", "-")
         )
         if not compose_project_name:
             return {"success": False, "error": "Invalid compose_project_name: empty after sanitization"}
+
+        if DEPLOY_MODE == "k8s":
+            from .k8s_deploy import k8s_compose_down
+            return await k8s_compose_down(compose_project_name)
 
         # Look up port from in-memory registry (may be empty after MCP server restart)
         port = compose_port_registry.get(compose_project_name)
@@ -1038,6 +1106,12 @@ async def stop(container_name: str, remove: bool = True) -> dict:
         if err:
             return {"success": False, "error": err}
 
+        if DEPLOY_MODE == "k8s":
+            from .k8s_deploy import k8s_stop, k8s_remove
+            if remove:
+                return await k8s_remove(container_name)
+            return await k8s_stop(container_name)
+
         result = subprocess.run(
             ["docker", "stop", container_name],
             capture_output=True,
@@ -1089,6 +1163,10 @@ async def logs(
         if err:
             return {"success": False, "error": err}
 
+        if DEPLOY_MODE == "k8s":
+            from .k8s_deploy import k8s_logs
+            return await k8s_logs(container_name, tail=tail)
+
         cmd = ["docker", "logs", "--tail", str(tail), container_name]
 
         result = subprocess.run(
@@ -1133,6 +1211,10 @@ async def remove(container_name: str, force: bool = False) -> dict:
         err = _validate_name(container_name, "container_name")
         if err:
             return {"success": False, "error": err}
+
+        if DEPLOY_MODE == "k8s":
+            from .k8s_deploy import k8s_remove
+            return await k8s_remove(container_name)
 
         cmd = ["docker", "rm"]
         if force:
@@ -1181,6 +1263,11 @@ async def list_containers(
         Dict with containers list (including labels)
     """
     try:
+        if DEPLOY_MODE == "k8s":
+            from .k8s_deploy import k8s_list_containers
+            containers = await k8s_list_containers(session_id=session_id, project_id=project_id)
+            return {"success": True, "containers": containers}
+
         cmd = ["docker", "ps", "--format", "{{.ID}}\t{{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}\t{{.Labels}}"]
         if all:
             cmd.append("-a")
