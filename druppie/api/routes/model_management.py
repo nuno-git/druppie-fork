@@ -62,7 +62,7 @@ async def set_agent_model_override(
             detail=validation["error"],
         )
 
-    if body.fallback_provider and body.fallback_model:
+    if body.fallback_provider:
         fb_validation = await service.validate_api_key(body.fallback_provider, body.fallback_model)
         if not fb_validation["valid"]:
             raise HTTPException(
@@ -105,7 +105,7 @@ async def set_translation_model_override(
             detail=validation["error"],
         )
 
-    if body.fallback_provider and body.fallback_model:
+    if body.fallback_provider:
         fb_validation = await service.validate_api_key(body.fallback_provider, body.fallback_model)
         if not fb_validation["valid"]:
             raise HTTPException(

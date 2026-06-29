@@ -12,9 +12,6 @@ Environment variables:
     For DeepInfra:
         DEEPINFRA_API_KEY, DEEPINFRA_MODEL, DEEPINFRA_BASE_URL
 
-    For DeepSeek:
-        DEEPSEEK_API_KEY, DEEPSEEK_MODEL, DEEPSEEK_BASE_URL
-
     For Azure Foundry:
         FOUNDRY_API_KEY, FOUNDRY_MODEL, FOUNDRY_API_URL
 
@@ -464,9 +461,8 @@ class ChatLiteLLM(BaseLLM):
         tools: list[dict[str, Any]] | None = None,
     ) -> LLMResponse:
         """Send synchronous chat completion request."""
-        kwargs = self._build_kwargs(messages, tools)
-
         try:
+            kwargs = self._build_kwargs(messages, tools)
             response = completion(**kwargs)
             return self._parse_response(response)
         except Exception as e:
@@ -479,9 +475,8 @@ class ChatLiteLLM(BaseLLM):
         max_tokens: int | None = None,
     ) -> LLMResponse:
         """Send asynchronous chat completion request."""
-        kwargs = self._build_kwargs(messages, tools, max_tokens_override=max_tokens or self.max_tokens)
-
         try:
+            kwargs = self._build_kwargs(messages, tools, max_tokens_override=max_tokens or self.max_tokens)
             response = await acompletion(**kwargs)
             return self._parse_response(response)
         except Exception as e:

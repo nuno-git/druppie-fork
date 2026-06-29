@@ -6,6 +6,7 @@
  * the answer goes through the same question-answer API as regular HITL questions.
  */
 
+import { useEffect, useRef } from 'react'
 import { AlertTriangle, ArrowRight, Loader2 } from 'lucide-react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { answerQuestion } from '../../services/api'
@@ -20,6 +21,7 @@ const translations = {
     switchAll: 'Switch all agents',
     cancel: 'Cancel request',
     switching: 'Switching...',
+    error: 'Something went wrong — please try again',
   },
   nl: {
     title: 'Provider niet beschikbaar',
@@ -30,6 +32,7 @@ const translations = {
     switchAll: 'Alle agents omzetten',
     cancel: 'Verzoek annuleren',
     switching: 'Omzetten...',
+    error: 'Er is iets misgegaan — probeer het opnieuw',
   },
 }
 
@@ -73,20 +76,53 @@ const FallbackModal = ({ tc, sessionId, language }) => {
     })
   }
 
+  const modalRef = useRef(null)
+
+  useEffect(() => {
+    const btn = modalRef.current?.querySelector('button')
+    if (btn) btn.focus()
+  }, [])
+
   if (answerMut.isSuccess) return null
 
   const busy = answerMut.isPending
 
+  const handleKeyDown = (e) => {
+    if (e.key === 'Escape' && !busy) {
+      handleDecline()
+      return
+    }
+    if (e.key === 'Tab') {
+      const focusable = modalRef.current?.querySelectorAll('button:not([disabled])')
+      if (!focusable?.length) return
+      const first = focusable[0]
+      const last = focusable[focusable.length - 1]
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault()
+        last.focus()
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault()
+        first.focus()
+      }
+    }
+  }
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
-      <div className="bg-white rounded-2xl shadow-xl w-full max-w-md mx-4 overflow-hidden">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="fallback-modal-title"
+      onKeyDown={handleKeyDown}
+    >
+      <div ref={modalRef} className="bg-white rounded-2xl shadow-xl w-full max-w-md mx-4 overflow-hidden">
         {/* Header */}
         <div className="flex items-center gap-3 px-5 pt-5 pb-3">
           <div className="w-10 h-10 rounded-full bg-amber-100 flex items-center justify-center flex-shrink-0">
             <AlertTriangle className="w-5 h-5 text-amber-600" />
           </div>
           <div className="flex-1 min-w-0">
-            <h3 className="text-base font-semibold text-gray-900">{t.title}</h3>
+            <h3 id="fallback-modal-title" className="text-base font-semibold text-gray-900">{t.title}</h3>
             <p className="text-sm text-gray-500 mt-0.5">{t.subtitle}</p>
           </div>
         </div>
@@ -147,7 +183,7 @@ const FallbackModal = ({ tc, sessionId, language }) => {
           </button>
           {answerMut.isError && (
             <p className="text-xs text-red-600 text-center mt-1">
-              Something went wrong — please try again
+              {t.error}
             </p>
           )}
         </div>

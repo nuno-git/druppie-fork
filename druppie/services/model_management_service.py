@@ -48,8 +48,11 @@ def _validate_fallback(provider: str, model: str, fallback_provider: str | None,
     if fallback_provider:
         if fallback_provider not in PROVIDER_CONFIGS:
             raise ValueError(f"Unknown fallback provider: {fallback_provider}")
-        if fallback_provider == provider and fallback_model == model:
-            raise ValueError("Fallback must differ from the primary provider/model")
+        if fallback_provider == provider:
+            raise ValueError(
+                f"Fallback provider must differ from primary ('{provider}') "
+                f"— same provider fails the same way when it's down"
+            )
 
 
 class ModelManagementService:
@@ -341,11 +344,19 @@ class ModelManagementService:
         if overrides is None:
             overrides = self.override_repo.get_agent_overrides()
 
-        override_map = {
-            o.target_id: (o.provider, o.model, o.fallback_provider, o.fallback_model)
-            for o in overrides
-            if o.target_type == "agent" and o.enabled
-        }
+        override_map = {}
+        for o in overrides:
+            if o.target_type != "agent" or not o.enabled:
+                continue
+            if o.provider not in PROVIDER_CONFIGS:
+                logger.warning(
+                    "db_override_unknown_provider",
+                    target_id=o.target_id,
+                    provider=o.provider,
+                    hint="Provider was removed from PROVIDER_CONFIGS; override is ignored.",
+                )
+                continue
+            override_map[o.target_id] = (o.provider, o.model, o.fallback_provider, o.fallback_model)
         set_db_overrides(override_map)
 
         logger.info("resolver_cache_refreshed", override_count=len(override_map))

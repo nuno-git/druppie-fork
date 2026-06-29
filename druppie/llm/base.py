@@ -3,6 +3,7 @@
 All LLM implementations must inherit from BaseLLM.
 """
 
+import re
 from abc import ABC, abstractmethod
 from typing import Any
 
@@ -79,8 +80,17 @@ class FallbackAvailableError(LLMError):
         self.llm_call_id = None
 
 
+_REDACT_PATTERNS = [
+    (re.compile(r"sk-[A-Za-z0-9_-]{10,}"), "[REDACTED]"),
+    (re.compile(r"Bearer\s+[A-Za-z0-9._-]{10,}"), "Bearer [REDACTED]"),
+    (re.compile(r"api[_-]?key\s*[=:]\s*[\"']?[A-Za-z0-9_.-]{10,}[\"']?"), "api_key=[REDACTED]"),
+]
+
+
 def clean_llm_error(raw: str) -> str:
     """Extract a short, user-facing message from verbose litellm errors."""
+    for pattern, replacement in _REDACT_PATTERNS:
+        raw = pattern.sub(replacement, raw)
     if "DeploymentNotFound" in raw or "does not exist" in raw:
         return "Model deployment not found"
     if "Authentication Failed" in raw or "AuthenticationError" in raw:
@@ -91,7 +101,7 @@ def clean_llm_error(raw: str) -> str:
         return "Rate limited — try again later"
     if "timeout" in raw.lower():
         return "Request timed out"
-    if "connection" in raw.lower() and ("refused" in raw.lower() or "reset" in raw.lower() or "closed" in raw.lower()):
+    if "connection" in raw.lower() and ("refused" in raw.lower() or "reset" in raw.lower() or "closed" in raw.lower() or "error" in raw.lower()):
         return "Connection failed — check the provider URL"
     if "LLMConfigurationError" in raw:
         return raw.split("LLMConfigurationError: ", 1)[-1][:120]

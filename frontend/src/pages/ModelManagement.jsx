@@ -48,7 +48,7 @@ const SourceBadge = ({ source }) => {
   )
 }
 
-const ProviderCard = ({ provider, onValidate, validating, validationResult }) => {
+const ProviderCard = ({ provider, onValidate, validating, cooldown, validationResult }) => {
   const isConfigured = provider.api_key_configured
   const models = provider.available_models || []
   const [selectedModel, setSelectedModel] = useState(provider.default_model || '')
@@ -75,7 +75,7 @@ const ProviderCard = ({ provider, onValidate, validating, validationResult }) =>
         </select>
         <button
           onClick={() => onValidate(provider.provider, selectedModel)}
-          disabled={!isConfigured || validating}
+          disabled={!isConfigured || validating || cooldown}
           className="text-xs px-2.5 py-1.5 rounded bg-white border border-gray-200 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1"
         >
           {validating ? <Loader2 className="w-3 h-3 animate-spin" /> : <Zap className="w-3 h-3" />}
@@ -113,7 +113,7 @@ const OverrideForm = ({ providers, currentProvider, currentModel, currentFallbac
     const models = newProviderData?.available_models || []
     const newModel = (models.length > 0 && !models.includes(model)) ? models[0] : model
     if (newModel !== model) setModel(newModel)
-    if (newProvider === fbProvider && newModel === fbModel) setFbModel('')
+    if (newProvider === fbProvider) { setFbProvider(''); setFbModel('') }
   }
 
   const handleFbProviderChange = (newFbProvider) => {
@@ -187,7 +187,7 @@ const OverrideForm = ({ providers, currentProvider, currentModel, currentFallbac
             className="text-xs border rounded px-2 py-1.5 bg-white"
           >
             <option value="">Select fallback provider...</option>
-            {providers.filter(p => p.api_key_configured).map(p => (
+            {providers.filter(p => p.api_key_configured && p.provider !== provider).map(p => (
               <option key={p.provider} value={p.provider}>{p.provider}</option>
             ))}
           </select>
@@ -311,6 +311,7 @@ const AgentRow = ({ agent, providers, onOverride, onReset, saving, error, onClea
 const ModelManagement = () => {
   const queryClient = useQueryClient()
   const [validating, setValidating] = useState({})
+  const [cooldown, setCooldown] = useState({})
   const [validationResults, setValidationResults] = useState({})
 
   const { data, isLoading, isError, refetch } = useQuery({
@@ -354,7 +355,9 @@ const ModelManagement = () => {
     } catch (e) {
       setValidationResults(prev => ({ ...prev, [provider]: { valid: false, error: e.message, latency_ms: 0 } }))
     } finally {
-      setTimeout(() => setValidating(prev => ({ ...prev, [provider]: false })), 5000)
+      setValidating(prev => ({ ...prev, [provider]: false }))
+      setCooldown(prev => ({ ...prev, [provider]: true }))
+      setTimeout(() => setCooldown(prev => ({ ...prev, [provider]: false })), 5000)
     }
   }
 
@@ -415,6 +418,7 @@ const ModelManagement = () => {
               provider={p}
               onValidate={handleValidate}
               validating={!!validating[p.provider]}
+              cooldown={!!cooldown[p.provider]}
               validationResult={validationResults[p.provider]}
             />
           ))}

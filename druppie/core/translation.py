@@ -152,10 +152,11 @@ class TranslationService:
                     ).get("default_model", ""),
                     "db_override",
                 )
-            raise TranslationNotAvailableError(
-                f"Translation override uses provider '{self._configured_provider}' "
-                f"but its API key is not configured. "
-                f"Update the override in Model Management or configure the API key."
+            logger.warning(
+                "translation_override_unavailable_falling_through",
+                provider=self._configured_provider,
+                reason="Admin override has no API key and no admin fallback; "
+                       "falling through to env/legacy/any-available.",
             )
 
         # 2. Environment variables

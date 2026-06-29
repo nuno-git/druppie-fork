@@ -370,7 +370,6 @@ class Orchestrator:
                 logger.info("execute_pending_runs_complete", session_id=str(session_id))
                 self.session_repo.update_status(session_id, SessionStatus.COMPLETED)
                 self.session_repo.commit()
-                self._cleanup_session_state(session_id)
                 return
 
             # Rebuild context before each agent so it reflects changes
@@ -472,15 +471,6 @@ class Orchestrator:
         )
         self.execution_repo.commit()
         logger.info("translation_fallback_to_english", session_id=str(session_id))
-
-    def _cleanup_session_state(self, session_id: UUID) -> None:
-        """Release process-local state for a completed/failed session."""
-        from druppie.core.translation import TranslationService
-        from druppie.llm.fallback import FallbackLLM
-
-        sid = str(session_id)
-        FallbackLLM.clear_session(sid)
-        TranslationService.clear_session(sid)
 
     def _prepend_agent_summary(self, session_id: UUID, prompt: str) -> str:
         """Build accumulated summary from completed runs and prepend to prompt.
@@ -1010,11 +1000,38 @@ class Orchestrator:
 
             context = self.build_project_context(session_id)
             agent = Agent(agent_run.agent_id, db=db, session_id=str(session_id))
-            result = await agent.continue_run(
-                session_id=session_id,
-                agent_run_id=agent_run.id,
-                context=context,
-            )
+            try:
+                result = await agent.continue_run(
+                    session_id=session_id,
+                    agent_run_id=agent_run.id,
+                    context=context,
+                )
+            except Exception as e:
+                raw_error = f"{type(e).__name__}: {e}"
+                error_msg = clean_llm_error(raw_error)
+                logger.error(
+                    "fallback_continue_run_failed",
+                    session_id=str(session_id),
+                    agent_run_id=str(agent_run.id),
+                    agent_id=agent_run.agent_id,
+                    error=raw_error[:500],
+                )
+                try:
+                    self.execution_repo.db.rollback()
+                    self.execution_repo.update_status(
+                        agent_run.id, AgentRunStatus.FAILED, error_message=error_msg,
+                    )
+                    self.session_repo.update_status(
+                        session_id, SessionStatus.FAILED, error_message=error_msg,
+                    )
+                    self.execution_repo.commit()
+                except Exception as status_err:
+                    logger.error(
+                        "failed_to_record_fallback_run_error",
+                        session_id=str(session_id),
+                        error=str(status_err),
+                    )
+                raise
 
             status = self._handle_agent_resume_result(
                 session_id, agent_run.id, result, agent_id=agent_run.agent_id,
@@ -1045,7 +1062,6 @@ class Orchestrator:
                 ),
             )
             self.execution_repo.commit()
-            self._cleanup_session_state(session_id)
 
         return session_id
 
