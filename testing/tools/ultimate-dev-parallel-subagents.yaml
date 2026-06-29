@@ -1,0 +1,371 @@
+## Tool test: ultimate_dev_core sequential explore-then-build subagent pattern
+##
+## Verifies that ultimate_dev_core can spawn BOTH core_explorer AND
+## core_builder_subagent in sequence: first exploring the codebase to
+## understand existing patterns, then building the implementation based
+## on those findings. This tests the parent-resume-and-respawn flow
+## where the parent agent makes TWO separate builtin:subagents calls.
+##
+## Scenario: Adding a health check endpoint to Druppie. The explorer
+## maps existing health infrastructure, then the builder implements it.
+
+tool-test:
+  name: ultimate-dev-parallel-subagents
+  description: |
+    Ultimate dev core spawns core_explorer THEN core_builder_subagent in
+    sequence (explore-then-build pattern). Verifies that a parent agent
+    can resume after a subagent completes and spawn a second subagent,
+    testing the two-phase subagent orchestration flow.
+  tags: [subagent, ultimate-dev, parallel, agent-runtime]
+
+  chain:
+    # --- Router ---
+    - agent: router
+      tool: builtin:set_intent
+      arguments:
+        intent: create_project
+        project_name: parallel-subagent-test
+        description: "A test project for verifying ultimate_dev_core sequential explore-then-build subagent pattern"
+
+    - agent: router
+      tool: builtin:done
+      arguments:
+        summary: "Agent router: Classified as create_project"
+
+    # --- Planner → BA ---
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: business_analyst
+            prompt: "Gather requirements and create functional design for adding a health check endpoint to Druppie"
+          - agent_id: planner
+            prompt: "Re-evaluate after business_analyst completes"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: Planned business_analyst"
+
+    # --- Business Analyst (creates FD with health check requirements) ---
+    - agent: business_analyst
+      tool: coding:make_design
+      approval:
+        status: approved
+      arguments:
+        path: docs/functional-design.md
+        content: |
+          # Functional Design: Druppie Health Check Endpoint
+
+          ## Requirements
+          - FR-01: Add a comprehensive health check endpoint to the Druppie API
+          - FR-02: The endpoint must return service status, uptime, database connectivity, and MCP server availability
+          - FR-03: The health check should distinguish between healthy, degraded, and unhealthy states
+          - FR-04: Include response time metrics for each dependency check
+          - FR-05: This is a core platform change — the endpoint lives in druppie/api/
+
+          ## Acceptance Criteria
+          - GET /api/health returns JSON with overall status and per-dependency breakdown
+          - Response time under 5 seconds even when dependencies are slow (use timeouts)
+          - Degraded state when optional dependencies (MCP servers) are unreachable
+          - Unhealthy state when critical dependencies (database) are unreachable
+
+    - agent: business_analyst
+      tool: coding:push_changes
+
+    - agent: business_analyst
+      tool: builtin:done
+      arguments:
+        summary: "Agent business_analyst: DESIGN_APPROVED - Functional design for health check endpoint created and approved"
+
+    # --- Planner → Architect ---
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: architect
+            prompt: "Review FD and create technical design for health check endpoint. This is a CORE_UPDATE — explore the existing API structure."
+          - agent_id: planner
+            prompt: "Re-evaluate after architect completes"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: BA approved, planned architect"
+
+    # --- Architect (reads FD, creates research + TD) ---
+    - agent: architect
+      tool: coding:read_file
+      mock: true
+      mock_result: "# Functional Design: Druppie Health Check Endpoint\n## Requirements\n- FR-01: Comprehensive health check endpoint\n- FR-02: Status, uptime, DB, MCP availability\n- FR-03: Healthy/degraded/unhealthy states\n- FR-04: Response time metrics\n- FR-05: Core platform change in druppie/api/"
+      arguments:
+        path: docs/functional-design.md
+
+    - agent: architect
+      tool: coding:make_design
+      approval:
+        status: approved
+        by: architect
+      arguments:
+        path: docs/technical-research.md
+        content: |
+          # Technical Research: Druppie Health Check Endpoint
+
+          ## Approaches
+          1. Single endpoint with async dependency checks using asyncio.gather
+          2. Separate health and readiness endpoints (Kubernetes-style)
+
+          ## External Systems
+          - PostgreSQL database (CRITICAL dependency)
+          - MCP coding server on port 9001 (OPTIONAL dependency)
+          - MCP docker server on port 9002 (OPTIONAL dependency)
+
+          ## Existing Patterns
+          - druppie/api/ uses FastAPI with dependency injection
+          - Existing routes follow router pattern with APIRouter
+          - Database sessions managed via get_db dependency
+
+          ## Recommendation
+          Approach 1: Single /api/health endpoint with asyncio.gather for
+          parallel dependency checks. Simpler to implement and sufficient
+          for current needs. Can add readiness probe later if needed.
+
+    - agent: architect
+      tool: coding:make_design
+      approval:
+        status: approved
+        by: architect
+      arguments:
+        path: docs/technical-design.md
+        content: |
+          # Technical Design: Druppie Health Check Endpoint
+
+          ## Scope
+          Core platform modification: new health check endpoint in druppie/api/.
+
+          ## Architecture
+          - New file: druppie/api/health.py
+          - New router registered in druppie/api/__init__.py
+          - Async dependency checks with configurable timeouts
+
+          ## Implementation Plan
+          1. Create druppie/api/health.py with HealthRouter
+          2. Implement check_database() — async SELECT 1 query
+          3. Implement check_mcp_server(port) — async HTTP GET to /health
+          4. Implement /api/health endpoint aggregating all checks
+          5. Register router in druppie/api/__init__.py
+          6. Add unit tests in tests/test_health.py
+
+          ## Technical Requirements
+          - TR-01: Use asyncio.gather with return_exceptions=True for parallel checks
+          - TR-02: 3-second timeout per dependency check
+          - TR-03: Overall status = unhealthy if any CRITICAL dep fails
+          - TR-04: Overall status = degraded if any OPTIONAL dep fails
+          - TR-05: Include uptime calculated from process start time
+
+    - agent: architect
+      tool: coding:push_changes
+
+    - agent: architect
+      tool: builtin:done
+      arguments:
+        summary: "Agent architect: DESIGN_APPROVED BUILD_PATH=CORE_UPDATE. Reviewed FD — comprehensive health check with dependency monitoring. Wrote technical-research.md comparing async gather vs K8s-style probes. Wrote technical-design.md with detailed implementation plan for druppie/api/health.py."
+
+    # --- Planner → ultimate_dev_core ---
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: ultimate_dev_core
+            prompt: "Implement the health check endpoint. First use core_explorer to explore the existing API structure and health patterns, then use core_builder_subagent to implement the endpoint based on findings."
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: Planned ultimate_dev_core for health check implementation"
+
+    # =========================================================================
+    # PHASE 1 - EXPLORE: ultimate_dev_core spawns core_explorer
+    # =========================================================================
+    - agent: ultimate_dev_core
+      tool: builtin:subagents
+      mock: true
+      mock_result: '{"status": "success", "agents": ["core_explorer"]}'
+      arguments:
+        agents:
+          - agent: core_explorer
+            prompt: "Explore the existing Druppie API structure. Read druppie/api/__init__.py to understand router registration, read druppie/api/sessions.py for route patterns, and check if any health endpoint already exists. Report detailed findings about the API layer architecture."
+
+    # --- core_explorer reads multiple files to map the health check infrastructure ---
+    - agent: core_explorer
+      parent_agent: ultimate_dev_core
+      tool: coding:read_file
+      mock: true
+      mock_result: |
+        from fastapi import APIRouter
+        from druppie.api.sessions import router as sessions_router
+        from druppie.api.agents import router as agents_router
+        from druppie.api.evaluations import router as evaluations_router
+
+        api_router = APIRouter(prefix="/api")
+        api_router.include_router(sessions_router)
+        api_router.include_router(agents_router)
+        api_router.include_router(evaluations_router)
+      arguments:
+        path: druppie/api/__init__.py
+
+    - agent: core_explorer
+      parent_agent: ultimate_dev_core
+      tool: coding:read_file
+      mock: true
+      mock_result: |
+        from fastapi import APIRouter, Depends
+        from sqlalchemy.ext.asyncio import AsyncSession
+        from druppie.db.session import get_db
+
+        router = APIRouter(prefix="/sessions", tags=["sessions"])
+
+        @router.get("/")
+        async def list_sessions(db: AsyncSession = Depends(get_db)):
+            ...
+
+        @router.get("/{session_id}")
+        async def get_session(session_id: str, db: AsyncSession = Depends(get_db)):
+            ...
+      arguments:
+        path: druppie/api/sessions.py
+
+    - agent: core_explorer
+      parent_agent: ultimate_dev_core
+      tool: coding:read_file
+      mock: true
+      mock_result: |
+        from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+        from sqlalchemy.orm import sessionmaker
+
+        engine = create_async_engine(settings.DATABASE_URL)
+        async_session = sessionmaker(engine, class_=AsyncSession)
+
+        async def get_db():
+            async with async_session() as session:
+                yield session
+      arguments:
+        path: druppie/db/session.py
+
+    - agent: core_explorer
+      parent_agent: ultimate_dev_core
+      tool: builtin:done
+      arguments:
+        summary: "Agent core_explorer: Explored Druppie API layer. Findings: (1) Router registration in api/__init__.py uses APIRouter with /api prefix and include_router pattern. (2) Route files use FastAPI Depends(get_db) for database sessions. (3) No existing health endpoint found. (4) Database access uses SQLAlchemy AsyncSession via get_db dependency. (5) MCP servers not referenced in API layer — will need direct HTTP checks. Ready for implementation."
+
+    # =========================================================================
+    # PHASE 2 - BUILD: ultimate_dev_core resumes, spawns core_builder_subagent
+    # =========================================================================
+    - agent: ultimate_dev_core
+      tool: builtin:subagents
+      mock: true
+      mock_result: '{"status": "success", "agents": ["core_builder_subagent"]}'
+      arguments:
+        agents:
+          - agent: core_builder_subagent
+            prompt: "Implement druppie/api/health.py with a HealthRouter. Use the APIRouter pattern found by explorer (prefix=/health, tags=[health]). Include async checks for database (SELECT 1 via get_db), MCP coding server (port 9001), and MCP docker server (port 9002). Register the router in api/__init__.py. Run tests to verify."
+
+    # --- core_builder_subagent implements the health endpoint ---
+    - agent: core_builder_subagent
+      parent_agent: ultimate_dev_core
+      tool: coding:write_file
+      mock: true
+      mock_result: "File written: druppie/api/health.py (47 lines)"
+      arguments:
+        path: druppie/api/health.py
+        content: |
+          import asyncio
+          import time
+          from fastapi import APIRouter, Depends
+          from sqlalchemy.ext.asyncio import AsyncSession
+          from sqlalchemy import text
+          import httpx
+          from druppie.db.session import get_db
+
+          router = APIRouter(prefix="/health", tags=["health"])
+          _start_time = time.time()
+
+          async def check_database(db: AsyncSession) -> dict:
+              try:
+                  start = time.time()
+                  await db.execute(text("SELECT 1"))
+                  return {"status": "healthy", "response_ms": round((time.time() - start) * 1000)}
+              except Exception as e:
+                  return {"status": "unhealthy", "error": str(e)}
+
+          async def check_mcp_server(port: int, name: str) -> dict:
+              try:
+                  start = time.time()
+                  async with httpx.AsyncClient(timeout=3.0) as client:
+                      resp = await client.get(f"http://localhost:{port}/health")
+                      status = "healthy" if resp.status_code == 200 else "degraded"
+                  return {"status": status, "response_ms": round((time.time() - start) * 1000)}
+              except Exception:
+                  return {"status": "degraded", "error": f"{name} unreachable"}
+
+          @router.get("/")
+          async def health_check(db: AsyncSession = Depends(get_db)):
+              db_check, mcp_coding, mcp_docker = await asyncio.gather(
+                  check_database(db),
+                  check_mcp_server(9001, "mcp-coding"),
+                  check_mcp_server(9002, "mcp-docker"),
+                  return_exceptions=True
+              )
+              checks = {"database": db_check, "mcp_coding": mcp_coding, "mcp_docker": mcp_docker}
+              if db_check.get("status") == "unhealthy":
+                  overall = "unhealthy"
+              elif any(c.get("status") == "degraded" for c in checks.values()):
+                  overall = "degraded"
+              else:
+                  overall = "healthy"
+              return {"status": overall, "uptime_seconds": round(time.time() - _start_time), "checks": checks}
+
+    - agent: core_builder_subagent
+      parent_agent: ultimate_dev_core
+      tool: coding:bash
+      mock: true
+      mock_result: "===== test session starts =====\ntests/test_health.py::test_health_endpoint PASSED\ntests/test_health.py::test_health_degraded PASSED\n===== 2 passed in 0.34s ====="
+      arguments:
+        command: "cd /workspace && python -m pytest tests/test_health.py -v"
+
+    - agent: core_builder_subagent
+      parent_agent: ultimate_dev_core
+      tool: builtin:done
+      arguments:
+        summary: "Agent core_builder_subagent: Implemented druppie/api/health.py with HealthRouter. Includes async checks for database (SELECT 1), MCP coding server (port 9001), and MCP docker server (port 9002). Uses asyncio.gather with 3s timeout per check. Status logic: unhealthy if DB fails, degraded if MCP fails, healthy otherwise. All 2 tests passing."
+
+    # =========================================================================
+    # PHASE 3 - VERIFY: ultimate_dev_core resumes, verifies and pushes
+    # =========================================================================
+    - agent: ultimate_dev_core
+      tool: coding:read_file
+      mock: true
+      mock_result: |
+        import asyncio
+        import time
+        from fastapi import APIRouter, Depends
+        ...
+        router = APIRouter(prefix="/health", tags=["health"])
+        ...
+        @router.get("/")
+        async def health_check(db: AsyncSession = Depends(get_db)):
+            ...
+            return {"status": overall, "uptime_seconds": ..., "checks": checks}
+      arguments:
+        path: druppie/api/health.py
+
+    - agent: ultimate_dev_core
+      tool: coding:push_changes
+
+    - agent: ultimate_dev_core
+      tool: builtin:done
+      arguments:
+        summary: "Agent ultimate_dev_core: Health check endpoint implemented via explore-then-build pattern. Phase 1 (core_explorer): mapped API layer — found router registration pattern, get_db dependency, no existing health endpoint. Phase 2 (core_builder_subagent): implemented druppie/api/health.py with async dependency checks for DB, MCP coding (9001), MCP docker (9002). Tests passing. Phase 3: verified implementation and pushed changes."
+
+  assert:
+    - check: ultimate-dev-subagents-completed

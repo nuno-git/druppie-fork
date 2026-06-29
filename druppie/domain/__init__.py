@@ -31,9 +31,11 @@ from .agent_definition import AgentDefinition, ApprovalOverride, SandboxConstrai
 from .agent_run import (
     AgentRunDetail,
     AgentRunSummary,
+    CompactionEventDetail,
     LLMCallDetail,
     LLMRetryDetail,
     NormalizationDetail,
+    ResumeContext,
     ToolCallDetail,
 )
 
@@ -134,9 +136,11 @@ __all__ = [
     # Agent run
     "AgentRunSummary",
     "AgentRunDetail",
+    "CompactionEventDetail",
     "LLMCallDetail",
     "LLMRetryDetail",
     "NormalizationDetail",
+    "ResumeContext",
     "ToolCallDetail",
     # Approval
     "ApprovalSummary",

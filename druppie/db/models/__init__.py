@@ -38,6 +38,11 @@ Runtime configuration:
 # Agent execution models
 from .agent_run import AgentRun, Message
 
+# Compaction event model
+from .compaction_event import CompactionEvent
+
+from .resume_context_event import ResumeContextEvent
+
 # Approval model
 from .approval import Approval
 from .base import Base, new_uuid, utcnow
@@ -71,7 +76,7 @@ from .job import JobDefinition, JobRun
 # Model override (runtime LLM configuration)
 from .model_override import ModelOverride
 
-# Sandbox session ownership mapping
+# Sandbox session model
 from .sandbox_session import SandboxSession
 
 # Session model
@@ -101,6 +106,8 @@ __all__ = [
     # Agent execution
     "AgentRun",
     "Message",
+    "CompactionEvent",
+    "ResumeContextEvent",
     "ToolCall",
     "LlmCall",
     "LlmRetry",
@@ -111,8 +118,6 @@ __all__ = [
     "Approval",
     # Question
     "Question",
-    # Sandbox session ownership
-    "SandboxSession",
     # Benchmark and evaluation
     "BenchmarkRun",
     "EvaluationResult",
@@ -127,4 +132,5 @@ __all__ = [
     "JobRun",
     # Model override
     "ModelOverride",
+    "SandboxSession",
 ]

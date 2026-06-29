@@ -21,6 +21,7 @@ Flow:
 All database operations go through repositories (no raw db session usage).
 """
 
+from contextlib import contextmanager
 from typing import TYPE_CHECKING
 from uuid import UUID
 
@@ -29,6 +30,13 @@ import structlog
 from druppie.core.mcp_config import MCPConfig
 from druppie.core.translation import TranslationError, TranslationNotAvailableError
 from druppie.execution.mcp_http import MCPHttp, MCPHttpError
+from druppie.execution.path_validation import (
+    FILE_WRITE_TOOLS,
+    extract_file_paths,
+    normalize_path,
+    path_matches_pattern,
+    validate_file_path_access,
+)
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session as DBSession
@@ -54,17 +62,32 @@ BUILTIN_TOOLS = {
     "set_intent",
     "hitl_ask_question",
     "hitl_ask_multiple_choice_question",
+    "ask_expert_question",
+    "ask_expert_multiple_choice_question",
     "create_message",
     "invoke_skill",
-    "execute_coding_task",
     "test_report",
     "read_attachment",
 }
 
-# HITL tools require user answer (create Question record)
+# HITL tools require user answer (create Question record).
+# ask_expert tools share the same pause/resume plumbing — the only
+# difference is who is allowed to answer (an expert role instead of the
+# session owner). They are stored in the same `questions` table.
 HITL_TOOLS = {
     "hitl_ask_question",
     "hitl_ask_multiple_choice_question",
+    "ask_expert_question",
+    "ask_expert_multiple_choice_question",
+}
+
+ASK_EXPERT_TOOLS = {
+    "ask_expert_question",
+    "ask_expert_multiple_choice_question",
+}
+
+ASK_EXPERT_CHOICE_TOOLS = {
+    "ask_expert_multiple_choice_question",
 }
 
 # Tools that can take significantly longer than the default 60s timeout.
@@ -77,6 +100,14 @@ LONG_RUNNING_TOOLS = {
     "compose_up",
 }
 LONG_RUNNING_TIMEOUT = 1200.0  # 20 minutes
+
+# Tools where the LLM controls the timeout via an argument.
+# The agent specifies how long it expects the command to take,
+# clamped to a maximum to prevent abuse.
+CUSTOM_TIMEOUT_TOOLS = {"bash"}
+CUSTOM_TIMEOUT_ARG = "timeout"
+CUSTOM_TIMEOUT_DEFAULT = 120.0   # 2 min if LLM doesn't specify
+CUSTOM_TIMEOUT_MAX = 3600.0      # 60 min hard cap
 
 
 class ToolExecutor:
@@ -91,22 +122,44 @@ class ToolExecutor:
 
     def __init__(
         self,
-        db: "DBSession",
+        db: "DBSession | None",
         mcp_http: MCPHttp,
         mcp_config: MCPConfig,
+        session_factory=None,
     ):
         """Initialize with db session and MCP components.
 
         Args:
-            db: Database session (passed to repositories)
+            db: Database session (passed to repositories). May be None when a
+                session_factory is supplied (the agent_runtime child path).
             mcp_http: HTTP client for MCP servers
             mcp_config: MCP configuration (approval rules, server URLs)
+            session_factory: Optional SessionLocal factory. When supplied, every
+                public entry method (execute / execute_after_approval /
+                complete_after_answer) runs against a SHORT-LIVED session opened
+                at the start of the call and closed when it returns, so a DB
+                connection is held only for the duration of that one tool call
+                (never idle across the agent loop's LLM awaits or while awaiting
+                grandchildren). The orchestrator path passes a live `db` and no
+                factory, preserving the original single-session behaviour.
         """
         self.db = db
         self.mcp_http = mcp_http
         self.mcp_config = mcp_config
+        self._session_factory = session_factory
 
         # Lazy load repositories
+        self._execution_repo = None
+        self._approval_repo = None
+        self._question_repo = None
+
+    def _bind_session(self, db: "DBSession") -> None:
+        """Rebind this executor (and its repos) to a fresh session.
+
+        Used by the short-lived session wrapper in factory mode so each tool
+        execution gets its own connection.
+        """
+        self.db = db
         self._execution_repo = None
         self._approval_repo = None
         self._question_repo = None
@@ -141,6 +194,7 @@ class ToolExecutor:
         tool_name: str,
         args: dict,
         session_id: UUID | None,
+        agent_run_id: UUID | None = None,
     ) -> dict:
         """Apply declarative injection rules from mcp_config.yaml.
 
@@ -183,7 +237,7 @@ class ToolExecutor:
         )
 
         # Create context for resolving paths
-        context = ToolContext(self.db, session_id)
+        context = ToolContext(self.db, session_id, agent_run_id=agent_run_id)
 
         # Apply each rule
         injected_args = dict(args)
@@ -263,6 +317,26 @@ class ToolExecutor:
                 error=str(e),
             )
             return None
+
+    # Delegates to druppie.execution.path_validation (shared with agent_runtime)
+    FILE_PATH_TOOLS = FILE_WRITE_TOOLS
+
+    _extract_file_paths = staticmethod(extract_file_paths)
+    _normalize_path = staticmethod(normalize_path)
+    _path_matches_pattern = staticmethod(path_matches_pattern)
+
+    def _validate_file_path_access(self, tool_call, agent_definition) -> str | None:
+        """Validate file paths against agent sandbox constraints (write-only)."""
+        if not agent_definition or not agent_definition.sandbox_constraints:
+            return None
+        constraints = agent_definition.sandbox_constraints
+        return validate_file_path_access(
+            tool_name=tool_call.tool_name,
+            arguments=tool_call.arguments or {},
+            agent_id=agent_definition.id,
+            allowed_paths=constraints.allowed_paths,
+            forbidden_paths=constraints.forbidden_paths,
+        )
 
     def _validate_tool_arguments(self, tool_call) -> str | None:
         """Validate tool arguments against the tool's schema.
@@ -404,7 +478,55 @@ class ToolExecutor:
 
         return False
 
+    @contextmanager
+    def _scoped_session(self):
+        """Yield a short-lived session for one tool execution (factory mode).
+
+        Opens a fresh session from the configured factory, rebinds this
+        executor's repos to it, and closes it on exit so the connection is
+        returned to the pool the moment the tool call finishes. In non-factory
+        (orchestrator) mode this is a no-op that leaves the injected session in
+        place.
+        """
+        if self._session_factory is None:
+            yield
+            return
+        db = self._session_factory()
+        previous_db = self.db
+        try:
+            self._bind_session(db)
+            yield
+        finally:
+            try:
+                db.close()
+            finally:
+                # Restore prior binding (None in factory mode) so a stale,
+                # now-closed session is never reused on the next call.
+                self.db = previous_db
+                self._execution_repo = None
+                self._approval_repo = None
+                self._question_repo = None
+
     async def execute(self, tool_call_id: UUID) -> str:
+        """Execute a tool call (public entry — opens a short-lived session in factory mode)."""
+        with self._scoped_session():
+            return await self._execute_impl(tool_call_id)
+
+    async def execute_after_approval(self, approval_id: UUID) -> str:
+        """Execute a tool after approval (public entry — short-lived session in factory mode)."""
+        with self._scoped_session():
+            return await self._execute_after_approval_impl(approval_id)
+
+    async def complete_after_answer(
+        self, question_id: UUID, answer_english: str, user_answer: str | None = None, selected_choices: list[int] | None = None
+    ) -> str:
+        """Complete a HITL tool after answer (public entry — short-lived session in factory mode)."""
+        with self._scoped_session():
+            return await self._complete_after_answer_impl(
+                question_id, answer_english, user_answer, selected_choices
+            )
+
+    async def _execute_impl(self, tool_call_id: UUID) -> str:
         """Execute a tool call.
 
         This is the main entry point. It:
@@ -562,6 +684,18 @@ class ToolExecutor:
                     self.db.commit()
                     return ToolCallStatus.FAILED
 
+            # Validate file-path access for specialist agents
+            path_error = self._validate_file_path_access(tool_call, agent_definition)
+            if path_error:
+                logger.warning("file_path_access_denied", error=path_error)
+                self.execution_repo.update_tool_call(
+                    tool_call.id,
+                    status=ToolCallStatus.FAILED,
+                    error=path_error,
+                )
+                self.db.commit()
+                return ToolCallStatus.FAILED
+
             needs_approval, required_role = self.mcp_config.needs_approval(
                 tool_call.mcp_server,
                 tool_call.tool_name,
@@ -597,7 +731,7 @@ class ToolExecutor:
             # MCP tools execute via HTTP
             return await self._execute_mcp_tool(tool_call)
 
-    async def execute_after_approval(self, approval_id: UUID) -> str:
+    async def _execute_after_approval_impl(self, approval_id: UUID) -> str:
         """Execute a tool after it has been approved.
 
         Called when user approves a tool execution in the UI.
@@ -659,7 +793,7 @@ class ToolExecutor:
             return await self._execute_builtin_tool(tool_call)
         return await self._execute_mcp_tool(tool_call)
 
-    async def complete_after_answer(
+    async def _complete_after_answer_impl(
         self, question_id: UUID, answer_english: str, user_answer: str | None = None, selected_choices: list[int] | None = None
     ) -> str:
         """Complete a HITL tool after the user answers.
@@ -950,24 +1084,30 @@ class ToolExecutor:
         return ToolCallStatus.WAITING_APPROVAL
 
     async def _execute_hitl_tool(self, tool_call) -> str:
-        """Execute a HITL tool by creating a Question record.
+        """Execute a HITL or ask_expert tool by creating a Question record.
 
-        HITL (Human-in-the-Loop) tools pause execution to ask the user a question.
+        Both tool families pause execution and create a Question record.
+        The difference is who can answer:
+        - HITL: session owner only (expert_role is NULL)
+        - ask_expert: any user with the agent-allowed expert_role
         Translates English agent output to the user's language before storing.
-        Creates a Question record via QuestionRepository.
 
         Args:
             tool_call: The ToolCall model
 
         Returns:
-            ToolCallStatus.WAITING_ANSWER
+            ToolCallStatus.WAITING_ANSWER, or FAILED if expert_role is invalid
         """
         args = tool_call.arguments or {}
+        is_expert_tool = tool_call.tool_name in ASK_EXPERT_TOOLS
 
         question_text = args.get("question", "")
 
-        # Determine question type from tool name
-        if tool_call.tool_name == "hitl_ask_multiple_choice_question":
+        # Choices: both *_multiple_choice_* variants use the same shape
+        if tool_call.tool_name in (
+            "hitl_ask_multiple_choice_question",
+            "ask_expert_multiple_choice_question",
+        ):
             question_type = "choice"
             raw_choices = args.get("choices", [])
         else:
@@ -1029,6 +1169,57 @@ class ToolExecutor:
 
         choices = [{"text": c} for c in raw_choices] if raw_choices else None
 
+        # For ask_expert, validate that the requested expert_role is allowed
+        # by the agent's YAML. Without this gate, an LLM could route any
+        # question to any role. An agent with no `experts:` declared cannot
+        # use these tools at all — we fail loudly rather than silently
+        # allowing every role.
+        expert_role = None
+        if is_expert_tool:
+            expert_role = (args.get("expert_role") or "").strip()
+            if not expert_role:
+                error = (
+                    "ask_expert tools require an 'expert_role' argument naming "
+                    "the role of the expert pool to ask."
+                )
+                self.execution_repo.update_tool_call(
+                    tool_call.id,
+                    status=ToolCallStatus.FAILED,
+                    error=error,
+                )
+                self.db.commit()
+                return ToolCallStatus.FAILED
+
+            agent_definition = self._get_agent_definition(tool_call.agent_run_id)
+            allowed = agent_definition.experts if agent_definition else []
+            if not allowed:
+                error = (
+                    f"Agent '{agent_definition.id if agent_definition else '?'}' "
+                    f"has no 'experts:' declared in its YAML, so ask_expert "
+                    f"tools are disabled for this agent. Add an `experts:` "
+                    f"list to the agent definition to enable them."
+                )
+                self.execution_repo.update_tool_call(
+                    tool_call.id,
+                    status=ToolCallStatus.FAILED,
+                    error=error,
+                )
+                self.db.commit()
+                return ToolCallStatus.FAILED
+            if expert_role not in allowed:
+                error = (
+                    f"Agent '{agent_definition.id if agent_definition else '?'}' is "
+                    f"not allowed to ask experts with role '{expert_role}'. "
+                    f"Allowed experts: {allowed}."
+                )
+                self.execution_repo.update_tool_call(
+                    tool_call.id,
+                    status=ToolCallStatus.FAILED,
+                    error=error,
+                )
+                self.db.commit()
+                return ToolCallStatus.FAILED
+
         # Create question record via repository
         question = self.question_repo.create(
             session_id=tool_call.session_id,
@@ -1037,6 +1228,7 @@ class ToolExecutor:
             question=question_text,
             question_type=question_type,
             choices=choices,
+            expert_role=expert_role,
             question_english=english_question if is_translated else None,
             choices_english=[{"text": c} for c in english_choices] if english_choices and is_translated else None,
         )
@@ -1053,6 +1245,7 @@ class ToolExecutor:
             question_id=str(question.id),
             tool_call_id=str(tool_call.id),
             question_type=question_type,
+            expert_role=expert_role,
         )
 
         return ToolCallStatus.WAITING_ANSWER
@@ -1086,6 +1279,7 @@ class ToolExecutor:
                 session_id=tool_call.session_id,
                 agent_run_id=tool_call.agent_run_id,
                 execution_repo=self.execution_repo,
+                tool_call_id=tool_call.id,
             )
 
             # Handle sandbox delegation — tool is waiting for external callback
@@ -1094,21 +1288,13 @@ class ToolExecutor:
                 self.execution_repo.update_tool_call(
                     tool_call.id,
                     status=ToolCallStatus.WAITING_SANDBOX,
-                    result=result,  # Store sandbox_session_id for resume
-                    sandbox_waiting_at=datetime.now(timezone.utc),  # For accurate watchdog timeout
+                    result=result,
+                    sandbox_waiting_at=datetime.now(timezone.utc),
                 )
-                # Link the SandboxSession record to this tool call for direct lookup
-                # (avoids full table scan + JSON parsing in the webhook handler)
-                sandbox_session_id = result.get("sandbox_session_id")
-                if sandbox_session_id:
-                    from druppie.repositories import SandboxSessionRepository
-                    sandbox_repo = SandboxSessionRepository(self.db)
-                    sandbox_repo.update_tool_call_id(sandbox_session_id, tool_call.id)
                 self.db.commit()
                 logger.info(
                     "builtin_tool_waiting_sandbox",
                     tool_call_id=str(tool_call.id),
-                    sandbox_session_id=sandbox_session_id,
                 )
                 return ToolCallStatus.WAITING_SANDBOX
 
@@ -1116,11 +1302,14 @@ class ToolExecutor:
             is_success = result.get("success", True) if isinstance(result, dict) else True
             status = ToolCallStatus.COMPLETED if is_success else ToolCallStatus.FAILED
 
+            # Keep the full result even on failure — builtin tools may
+            # return diagnostic context that the LLM needs to decide
+            # whether to retry, switch approach, or give up.
             self.execution_repo.update_tool_call(
                 tool_call.id,
                 status=status,
-                result=result if is_success else None,
-                error=result.get("error") if not is_success else None,
+                result=result,
+                error=result.get("error") if (not is_success and isinstance(result, dict)) else None,
             )
             self.db.commit()
 
@@ -1186,6 +1375,7 @@ class ToolExecutor:
             tool_name=tool_call.tool_name,
             args=args,
             session_id=tool_call.session_id,
+            agent_run_id=tool_call.agent_run_id,
         )
 
         logger.info(
@@ -1205,11 +1395,23 @@ class ToolExecutor:
             )
             self.db.commit()
 
+            if tool_call.tool_name == "bash":
+                args["tool_call_id"] = str(tool_call.id)
+
             # Long-running tools (run_tests, install_test_dependencies) get a
             # generous 20-min client timeout. Server-side subprocess timeouts
             # (300s/180s) should fire first, but this prevents infinite hangs
             # if the MCP server crashes or the network drops.
-            timeout = LONG_RUNNING_TIMEOUT if tool_call.tool_name in LONG_RUNNING_TOOLS else 60.0
+            if tool_call.tool_name in CUSTOM_TIMEOUT_TOOLS:
+                try:
+                    requested = float(args.get(CUSTOM_TIMEOUT_ARG, CUSTOM_TIMEOUT_DEFAULT))
+                except (TypeError, ValueError):
+                    requested = CUSTOM_TIMEOUT_DEFAULT
+                timeout = min(requested, CUSTOM_TIMEOUT_MAX)
+            elif tool_call.tool_name in LONG_RUNNING_TOOLS:
+                timeout = LONG_RUNNING_TIMEOUT
+            else:
+                timeout = 60.0
 
             result = await self.mcp_http.call(
                 tool_call.mcp_server,
@@ -1243,14 +1445,11 @@ class ToolExecutor:
                         error=str(e),
                     )
 
-            # Update tool call with result. Preserve the full result body on
-            # failure too so test assertions and downstream callers can inspect
-            # the structured error payload, not just the error message string.
             self.execution_repo.update_tool_call(
                 tool_call.id,
                 status=ToolCallStatus.COMPLETED if is_success else ToolCallStatus.FAILED,
                 result=result,
-                error=result.get("error") if not is_success else None,
+                error=result.get("error") or result.get("stderr") if not is_success else None,
             )
             self.db.commit()
 

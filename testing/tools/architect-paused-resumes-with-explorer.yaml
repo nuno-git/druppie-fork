@@ -1,0 +1,439 @@
+## Paused session: architect has completed Level 3 exploration via core_explorer
+## and written both design docs, but has NOT pushed or called done yet.
+##
+## Scenario:
+##   router → planner → BA (writes FD for webhook delivery system, approved,
+##   pushed, done) → planner → architect reads FD, spawns core_explorer for
+##   Level 3 research (mocked), core_explorer reads files and completes,
+##   architect resumes and writes technical-research.md (approved) and
+##   technical-design.md (approved). Chain stops here — architect has NOT
+##   called push_changes or done.
+##
+## The session is left paused with the architect mid-run. A human can resume
+## the session and the architect should push its changes and call done to
+## finish the design phase.
+
+tool-test:
+  name: architect-paused-resumes-with-explorer
+  description: "Architect completes Level 3 exploration via core_explorer and writes both design docs, but is paused before push/done — resume to finish"
+  tags: [architect, subagent, pause, resume, agent-runtime]
+  session_status: paused
+
+  chain:
+    # =========================================================================
+    # Router → create_project
+    # =========================================================================
+    - agent: router
+      tool: builtin:set_intent
+      arguments:
+        intent: create_project
+        project_name: paused-architect-test
+        description: "Webhook delivery system with retry logic and dead-letter queues"
+
+    - agent: router
+      tool: builtin:done
+      arguments:
+        summary: "Agent router: Classified as create_project for paused-architect-test"
+
+    # =========================================================================
+    # Planner → plan BA
+    # =========================================================================
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: business_analyst
+            prompt: "Gather requirements and create functional design for the webhook delivery system"
+          - agent_id: planner
+            prompt: "Re-evaluate after business_analyst completes"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: Planned business_analyst to gather requirements and create functional design"
+
+    # =========================================================================
+    # BA writes FD for a webhook delivery system (approved, pushed, done)
+    # =========================================================================
+    - agent: business_analyst
+      tool: coding:make_design
+      approval:
+        status: approved
+      arguments:
+        path: docs/functional-design.md
+        content: |
+          # Functioneel Ontwerp: Webhook Delivery System
+
+          ## 1. Huidige vs Gewenste Situatie
+          De organisatie verstuurt events naar externe afnemers via ad-hoc
+          HTTP-calls vanuit individuele services. Er is geen centraal
+          mechanisme voor herhaalde bezorging, foutafhandeling of
+          inzicht in leveringsstatus. Gewenst: een betrouwbaar webhook
+          delivery systeem met retry-logica en dead-letter queues.
+
+          ## 2. Functionele Vereisten
+          - FR-01: Beheerder kan webhook-subscriptions aanmaken met een
+            doel-URL, event-filter en authenticatieconfiguratie.
+          - FR-02: Systeem bezorgt events aan geregistreerde endpoints
+            met at-least-once garantie.
+          - FR-03: Bij een mislukte bezorging voert het systeem
+            exponential-backoff retries uit (max 5 pogingen).
+          - FR-04: Na uitputting van retries wordt het event verplaatst
+            naar een dead-letter queue (DLQ).
+          - FR-05: Beheerder kan DLQ-berichten inzien en handmatig
+            opnieuw aanbieden.
+          - FR-06: Systeem logt elke bezorgpoging met timestamp,
+            HTTP-status en response-body.
+          - FR-07: Dashboard toont bezorgingsstatistieken per subscription
+            (success-rate, gemiddelde latency, DLQ-diepte).
+
+          ## 3. Niet-Functionele Vereisten
+          - NFR-01: Bezorging van een event start binnen 500ms na
+            ontvangst.
+          - NFR-02: Systeem verwerkt minimaal 1000 events per seconde.
+          - NFR-03: Alle payloads worden versleuteld in transit (TLS 1.2+).
+          - NFR-04: Systeem is horizontaal schaalbaar zonder gedeelde
+            in-memory state.
+
+          ## 4. Gebruikersrollen
+          - Platform-beheerder: beheert subscriptions, bekijkt DLQ,
+            monitort dashboard.
+          - Service-eigenaar: registreert events en ontvangt
+            bezorgingsnotificaties.
+
+          ## 5. Gebruikersinteractie
+          - Subscription-beheerpagina met CRUD-formulier.
+          - DLQ-overzicht met filter op subscription en tijdvenster.
+          - Dashboard met grafieken voor success-rate, latency en
+            DLQ-diepte per subscription.
+
+          ## 10. Aannames & Open Vragen
+          - Aanname: events worden aangeleverd via een interne message
+            bus (RabbitMQ of Kafka).
+          - Aanname: authenticatie naar externe endpoints gebruikt
+            HMAC-SHA256 signing op de payload.
+          - Open vraag: moeten DLQ-berichten automatisch verlopen na
+            een retentieperiode?
+
+    - agent: business_analyst
+      tool: coding:push_changes
+
+    - agent: business_analyst
+      tool: builtin:done
+      arguments:
+        summary: "Agent business_analyst: DESIGN_APPROVED. Wrote docs/functional-design.md with 7 functional requirements and 4 non-functional requirements for webhook delivery system."
+
+    # =========================================================================
+    # Planner → plan architect
+    # =========================================================================
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: architect
+            prompt: "Review the functional design and create technical research + design for the webhook delivery system. This involves message queues and retry infrastructure — use Level 3 context gathering via core_explorer to explore existing Druppie infrastructure before designing."
+          - agent_id: planner
+            prompt: "Re-evaluate after architect completes"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: BA approved design, planned architect to review FD and create technical research + design with Level 3 exploration"
+
+    # =========================================================================
+    # Architect: Level 1 + Level 2 — reads the FD
+    # =========================================================================
+    - agent: architect
+      tool: coding:read_file
+      arguments:
+        path: docs/functional-design.md
+
+    # =========================================================================
+    # Architect: Level 3 — spawns core_explorer for deep codebase analysis
+    # =========================================================================
+    - agent: architect
+      tool: builtin:subagents
+      mock: true
+      mock_result: '{"status": "success", "agents": ["core_explorer"]}'
+      arguments:
+        agents:
+          - agent: core_explorer
+            prompt: "Explore the Druppie infrastructure for message queue and event delivery patterns. Focus on: (1) existing RabbitMQ/Kafka usage in druppie/core/ and druppie/services/, (2) how background workers are structured, (3) any existing retry or dead-letter patterns. Report key modules, config patterns, and integration points."
+
+    # =========================================================================
+    # core_explorer runs (as child of architect) — reads relevant files
+    # =========================================================================
+    - agent: core_explorer
+      parent_agent: architect
+      tool: coding:read_file
+      mock: true
+      mock_result: |
+        # druppie/core/events.py
+        class EventBus:
+            def __init__(self, rabbitmq_url: str):
+                self.connection = aio_pika.connect_robust(rabbitmq_url)
+                self.exchange = "druppie.events"
+
+            async def publish(self, event_type: str, payload: dict):
+                # Publishes to fanout exchange
+                message = aio_pika.Message(body=json.dumps(payload).encode())
+                await self.exchange.publish(message, routing_key=event_type)
+
+            async def subscribe(self, event_type: str, handler: Callable):
+                queue = await self.channel.declare_queue(f"druppie.{event_type}", durable=True)
+                await queue.consume(handler)
+      arguments:
+        path: druppie/core/events.py
+
+    - agent: core_explorer
+      parent_agent: architect
+      tool: coding:read_file
+      mock: true
+      mock_result: |
+        # druppie/services/background_worker.py
+        class BackgroundWorker:
+            MAX_RETRIES = 3
+            RETRY_DELAYS = [5, 30, 120]  # seconds, linear backoff
+
+            async def execute_with_retry(self, task: Task):
+                for attempt in range(self.MAX_RETRIES):
+                    try:
+                        return await task.run()
+                    except Exception as e:
+                        if attempt < self.MAX_RETRIES - 1:
+                            await asyncio.sleep(self.RETRY_DELAYS[attempt])
+                        else:
+                            await self.move_to_dlq(task, str(e))
+
+            async def move_to_dlq(self, task: Task, error: str):
+                # Publishes failed task to dead-letter exchange
+                await self.event_bus.publish("dlq.failed", {
+                    "task_id": task.id, "error": error, "attempts": self.MAX_RETRIES
+                })
+      arguments:
+        path: druppie/services/background_worker.py
+
+    - agent: core_explorer
+      parent_agent: architect
+      tool: builtin:done
+      arguments:
+        summary: "Agent core_explorer: Explored Druppie infrastructure for message queue and event patterns. Found: (1) druppie/core/events.py — EventBus class using aio_pika with RabbitMQ, fanout exchange 'druppie.events', durable queues. (2) druppie/services/background_worker.py — BackgroundWorker with linear retry (3 attempts, 5/30/120s delays) and DLQ via event_bus.publish to 'dlq.failed'. Key integration points: aio_pika for AMQP, existing retry+DLQ pattern can be extended for webhook delivery."
+
+    # =========================================================================
+    # Architect resumes after core_explorer completes — writes research doc
+    # =========================================================================
+    - agent: architect
+      tool: coding:make_design
+      approval:
+        status: approved
+        by: architect
+      arguments:
+        path: docs/technical-research.md
+        content: |
+          # Technisch Onderzoek: Webhook Delivery System
+
+          ## Introductie
+          Onderzoek naar architectuuropties voor een betrouwbaar webhook
+          delivery systeem met retry-logica en dead-letter queues, aansluitend
+          op bestaande Druppie-infrastructuur.
+
+          ## Codebase Bevindingen (Level 3 Exploratie)
+          Via core_explorer de bestaande infrastructure geanalyseerd:
+          - **EventBus** (druppie/core/events.py): aio_pika RabbitMQ client,
+            fanout exchange 'druppie.events', durable queues, publish/subscribe.
+          - **BackgroundWorker** (druppie/services/background_worker.py):
+            bestaand retry-patroon (3 pogingen, lineaire backoff 5/30/120s),
+            DLQ via event_bus.publish naar 'dlq.failed'.
+
+          ## Vergeleken Benaderingen
+
+          ### Benadering A — Uitbreiding BackgroundWorker + nieuwe WebhookDeliveryService
+          Bouw voort op bestaande BackgroundWorker: verhoog MAX_RETRIES naar 5,
+          vervang lineaire door exponential backoff, voeg per-subscription
+          configuratie toe. Nieuwe WebhookDeliveryService als consumer op
+          de EventBus.
+
+          | Aspect | Beoordeling |
+          |--------|-------------|
+          | Complexiteit | Laag — hergebruik bestaande infra |
+          | Herbruikbaarheid | Hoog — past in bestaand patroon |
+          | Operationele kosten | Laag — geen nieuwe dependencies |
+          | Risico | Laag — bewezen componenten |
+          | Fit met principes | Sterk — bouwt op platform-standaarden |
+
+          ### Benadering B — Dedicated Webhook Gateway (nieuwe microservice)
+          Aparte microservice met eigen database, eigen queue en eigen
+          retry-scheduler. Volledig ontkoppeld van bestaande infra.
+
+          | Aspect | Beoordeling |
+          |--------|-------------|
+          | Complexiteit | Hoog — nieuwe service, eigen infra |
+          | Herbruikbaarheid | Gemiddeld — standalone maar geïsoleerd |
+          | Operationele kosten | Hoog — extra deployment, monitoring |
+          | Risico | Gemiddeld — nieuwe codebase |
+          | Fit met principes | Zwak — dupliceert bestaande patronen |
+
+          ## Externe Systeemkoppelingen
+
+          ### Inventarisatie koppelingen
+          | Systeem | Categorie | Doel |
+          |---------|-----------|------|
+          | RabbitMQ | organizational | Event bus (REUSE bestaande EventBus) |
+          | PostgreSQL | organizational | Subscription registratie & delivery logs |
+          | Externe endpoints | external | Webhook ontvangers (HMAC-SHA256 auth) |
+
+          ### Beslissingen per koppeling
+          - **RabbitMQ**: REUSE — bestaande EventBus in druppie/core/events.py.
+          - **PostgreSQL**: REUSE — bestaande database voor nieuwe tabellen.
+          - **Externe endpoints**: NEW — HMAC-SHA256 signing conform FD aanname.
+
+          ## Aanbeveling
+          Gekozen: **Benadering A** (Uitbreiding BackgroundWorker).
+
+          ### Afgeleide beslissingen voor TD
+          - Uitbreiding van BackgroundWorker met exponential backoff
+          - Nieuwe WebhookDeliveryService als EventBus consumer
+          - Subscription-tabel en delivery-log-tabel in PostgreSQL
+          - DLQ-viewer als nieuwe API-route
+
+          ### Afgeleide Technical Requirements
+          - TR-01: Exponential backoff met jitter (base 2s, max 5 pogingen)
+          - TR-02: Per-subscription configureerbare retry-policy
+          - TR-03: HMAC-SHA256 signing op uitgaande payloads
+          - TR-04: Delivery-log retentie van 30 dagen
+
+    # =========================================================================
+    # Architect writes technical design (approved)
+    # =========================================================================
+    - agent: architect
+      tool: coding:make_design
+      approval:
+        status: approved
+        by: architect
+      arguments:
+        path: docs/technical-design.md
+        content: |
+          # Technisch Ontwerp: Webhook Delivery System
+
+          ## Introductie
+
+          ### Onderwerp
+          Een betrouwbaar webhook delivery systeem met exponential-backoff
+          retries, dead-letter queues en een beheersdashboard.
+
+          ### Probleemomschrijving
+          Events worden ad-hoc verstuurd zonder centraal mechanisme voor
+          herhaalde bezorging, foutafhandeling of inzicht in leveringsstatus.
+
+          ### Functionele Vraag
+          Hoe kunnen events betrouwbaar worden bezorgd aan externe endpoints
+          met at-least-once garantie en inzicht in de bezorgingsstatus?
+
+          ## Oplossing
+
+          ### Toegepaste Principes (per NORA-laag)
+          * **Grondslagen:** AVG — payloads kunnen persoonsgegevens bevatten
+          * **Organisatie:** Waterschap — interne events naar externe afnemers
+          * **Informatie:** Event-payloads met metadata en delivery-logs
+          * **Applicatie:** FastAPI service + RabbitMQ consumer
+          * **Netwerk:** TLS 1.2+, HMAC-SHA256 signing
+          * **Beveiliging & Privacy:** Payload-encryptie, audit-logging
+
+          ### Vereisten
+          | ID | Bron | Vereiste | Verificatie |
+          |----|------|----------|-------------|
+          | FR-01 | BA | Webhook-subscriptions CRUD | Functionele test |
+          | FR-02 | BA | At-least-once bezorging | Integratietest |
+          | FR-03 | BA | Exponential-backoff retries (max 5) | Unit test |
+          | FR-04 | BA | Dead-letter queue na retry-uitputting | Integratietest |
+          | FR-05 | BA | DLQ handmatig opnieuw aanbieden | Functionele test |
+          | FR-06 | BA | Delivery-logging per poging | Integratietest |
+          | FR-07 | BA | Dashboard met statistieken | Functionele test |
+          | NFR-01 | BA | Start bezorging binnen 500ms | Prestatietest |
+          | NFR-02 | BA | Min 1000 events/sec throughput | Belastingstest |
+          | NFR-03 | BA | TLS 1.2+ in transit | Configuratiecheck |
+          | NFR-04 | BA | Horizontaal schaalbaar | Architectuurreview |
+          | TR-01 | AR | Exponential backoff met jitter | Unit test |
+          | TR-02 | AR | Per-subscription retry-policy | Configuratietest |
+          | TR-03 | AR | HMAC-SHA256 payload signing | Integratietest |
+          | TR-04 | AR | 30 dagen delivery-log retentie | Configuratiecheck |
+
+          ### Architectuuroplossing
+
+          #### 1. Componentstructuur
+          * **WebhookDeliveryService**: RabbitMQ consumer op EventBus,
+            verwerkt events en bezorgt aan geregistreerde endpoints.
+          * **RetryScheduler**: Uitbreiding van BackgroundWorker met
+            exponential backoff (base 2s, factor 2, jitter 0-1s, max 5
+            pogingen → 2s, 4s, 8s, 16s, 32s + jitter).
+          * **SubscriptionManager**: CRUD API voor webhook-subscriptions
+            met per-subscription retry-policy override.
+          * **DeliveryLogger**: Structured logging van elke bezorgpoging
+            naar PostgreSQL delivery_logs tabel.
+          * **DLQManager**: API-routes voor DLQ-inzicht en replay.
+          * **DashboardAPI**: Aggregatie-queries voor success-rate, latency
+            en DLQ-diepte per subscription.
+
+          #### 2. Data-architectuur & Integratie
+          * Nieuwe tabellen: webhook_subscriptions, delivery_logs, dlq_messages
+          * REST API endpoints:
+            - POST/GET/PUT/DELETE /api/webhooks/subscriptions
+            - GET /api/webhooks/deliveries?subscription_id=&status=
+            - GET /api/webhooks/dlq?subscription_id=
+            - POST /api/webhooks/dlq/{id}/replay
+            - GET /api/webhooks/stats?subscription_id=
+
+          #### 3. Infrastructuur & Deployment
+          * Horizontale schaling via meerdere consumer-instances op
+            dezelfde RabbitMQ queue (competing consumers pattern).
+          * PostgreSQL voor state (subscriptions, logs, DLQ).
+          * Docker Compose service met configureerbare concurrency.
+
+          ### Beveiliging by Design
+          | Aspect | Maatregel | Toelichting |
+          |--------|-----------|-------------|
+          | Authenticatie | HMAC-SHA256 | Signing per subscription secret |
+          | Transport | TLS 1.2+ | Verplicht voor alle uitgaande calls |
+          | Audit | Delivery-logging | Elke poging gelogd met volledig detail |
+          | Secrets | Vault/env-vars | Subscription secrets niet in DB plaintext |
+
+          ### Compliance by Design
+          | Vereiste | Implementatie | Status |
+          |----------|---------------|--------|
+          | AVG Rechtsgrond | Gerechtvaardigd belang (bedrijfsvoering) | Te toetsen |
+          | Bewaartermijn | 30 dagen delivery-logs, dan purge | Te implementeren |
+          | DPIA Vereist | Nee (geen directe persoonsgegevens in payloads) | Bevestigd |
+          | BIO Classificatie | Basis+ (externe communicatie) | Bevestigd |
+
+          ### Visualisatie
+          ```mermaid
+          flowchart TD
+            EB["EventBus (RabbitMQ)"] --> WDS["WebhookDeliveryService"]
+            WDS --> EP["Externe Endpoints"]
+            WDS --> DL["DeliveryLogger"]
+            DL --> DB["PostgreSQL"]
+            WDS -->|failure| RS["RetryScheduler"]
+            RS -->|retry| WDS
+            RS -->|exhausted| DLQ["DLQ Manager"]
+            DLQ --> DB
+            SM["SubscriptionManager"] --> DB
+            DA["DashboardAPI"] --> DB
+          ```
+
+    # =========================================================================
+    # Chain stops here. The architect has:
+    #   - Read the FD
+    #   - Spawned core_explorer for Level 3 codebase exploration (completed)
+    #   - Written docs/technical-research.md (approved)
+    #   - Written docs/technical-design.md (approved)
+    # But has NOT called push_changes or done.
+    #
+    # Session is marked paused (see session_status above). On resume, the
+    # architect sees its full tool history and should:
+    #   1. push_changes (commit both design docs)
+    #   2. done(DESIGN_APPROVED, BUILD_PATH=PROJECT)
+    # =========================================================================
+
+  verify:
+    - gitea_repo_exists: true
+    - file_exists: docs/functional-design.md

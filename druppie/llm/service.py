@@ -133,6 +133,10 @@ class LLMService:
 
         resolved = resolve_model(agent_def)
 
+        # Merge agent-level > profile-level thinking config
+        effective_thinking = agent_def.thinking or resolved.thinking
+        effective_effort = agent_def.reasoning_effort or resolved.reasoning_effort
+
         # For providers with missing API keys but a known fallback,
         # still create the primary (it will fail at call time) and wrap
         # in FallbackLLM so the user gets asked to confirm the switch.
@@ -156,6 +160,8 @@ class LLMService:
             provider=resolved.provider,
             model=resolved.model,
             temperature=agent_def.temperature,
+            thinking=effective_thinking,
+            reasoning_effort=effective_effort,
         )
 
         has_fallback = False
@@ -168,6 +174,8 @@ class LLMService:
                     provider=resolved.fallback_provider,
                     model=resolved.fallback_model,
                     temperature=agent_def.temperature,
+                    thinking=effective_thinking,
+                    reasoning_effort=effective_effort,
                 )
                 result = FallbackLLM(primary, fallback, session_id=session_id, agent_id=agent_def.id)
                 has_fallback = True

@@ -33,6 +33,8 @@ class ResolvedModel:
     fallback_provider: str | None = None
     fallback_model: str | None = None
     override_unavailable: bool = False
+    thinking: str | None = None
+    reasoning_effort: str | None = None
 
 
 
@@ -182,6 +184,8 @@ def _resolve(agent_def: AgentDefinition) -> ResolvedModel:
                 source="profile",
                 fallback_provider=fb_provider,
                 fallback_model=fb_model,
+                thinking=primary.get("thinking"),
+                reasoning_effort=primary.get("reasoning_effort"),
             )
     else:
         logger.warning("llm_profile_not_found", profile=profile_name, agent=agent_def.id)

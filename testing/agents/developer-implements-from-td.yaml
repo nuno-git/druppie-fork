@@ -1,0 +1,46 @@
+## Agent test: developer reads FD+TD and implements working code
+##
+## Setup: tool test creates a project with FD + TD already written
+##   (ready for the developer/dev_orchestrator to implement)
+##
+## continue_session: true — dev_orchestrator runs in the SAME session as setup.
+##   The developer reads both design documents, then implements the application.
+##
+## This test validates the full developer implementation workflow:
+## - Reads functional-design.md and technical-design.md before coding
+## - Creates actual source code files (not just docs)
+## - Commits and pushes implementation to Gitea
+## - Calls done() with a meaningful summary of what was built
+##
+## Judge: evaluates that the developer read designs first, wrote real code,
+##   pushed to git, and produced a substantive done summary.
+
+agent-test:
+  name: developer-implements-from-td
+  description: "Developer reads FD+TD and implements working code with tests"
+  tags: [developer, e2e, agent-runtime]
+
+  setup:
+    - setup-todo-app-dev-only
+  continue_session: true
+
+  message: |
+    Implement the todo app as described in the functional design and technical design documents.
+    Read both design documents first, then implement the application.
+    Make sure to write actual code files, not just documentation.
+    Push your changes when done.
+
+  agents: [dev_orchestrator]
+
+  judge:
+    context: all
+    checks:
+      - "The agent must have read both docs/functional-design.md and docs/technical-design.md before starting implementation. Check that read_file calls for these paths appear before any write_file calls."
+      - "The agent must have created at least 2 source code files (not markdown/docs) using write_file or edit_file. Check that the paths end in .ts, .tsx, .js, .jsx, .py, or similar code extensions."
+      - "The agent must have called coding:push_changes at least once to commit the implementation to the repository."
+      - "The agent's final done() call must include a summary that describes what was implemented. The summary should not be empty or generic — it should reference specific files or features that were built."
+
+  verify:
+    - gitea_repo_exists: true
+    - file_exists: docs/functional-design.md
+    - file_exists: docs/technical-design.md

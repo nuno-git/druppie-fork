@@ -1,0 +1,435 @@
+## Test: architect approval gate with rejection and retry
+##
+## Deterministic chain (no LLM) that verifies the architect can reject
+## a weak technical research document, provide a rejection reason, and
+## then approve a proper version on the second attempt.
+##
+## Scenario:
+##   1. Router creates a notification-service project
+##   2. Planner plans BA
+##   3. BA writes and gets FD approved, pushes, done
+##   4. Planner plans architect
+##   5. Architect reads the FD
+##   6. Architect's FIRST make_design for technical-research.md is WEAK
+##      (just "Use WebSockets" — no analysis, no comparison, no risks)
+##      → REJECTED with detailed reason
+##   7. Architect's SECOND make_design for technical-research.md is PROPER
+##      (compares WebSockets vs SSE vs polling with pros/cons)
+##      → APPROVED
+##   8. Architect writes technical-design.md → APPROVED
+##   9. Architect pushes and calls done with DESIGN_APPROVED
+##
+## Verifies:
+##   - Rejection prevents the shallow content from landing in Gitea
+##   - Retry with proper content gets approved and written
+##   - Both docs end up in the repo with the correct (approved) content
+
+tool-test:
+  name: architect-rejects-weak-td-then-approves
+  description: "Architect rejects shallow technical research, then approves thorough version with comparison of approaches"
+  tags: [architect, approval, rejection, retry, agent-runtime]
+
+  chain:
+    # =========================================================================
+    # Router
+    # =========================================================================
+    - agent: router
+      tool: builtin:set_intent
+      arguments:
+        intent: create_project
+        project_name: notification-service
+        description: "A real-time notification service for delivering alerts to users across web and mobile"
+      assert:
+        result:
+          - not_empty
+
+    - agent: router
+      tool: builtin:done
+      arguments:
+        summary: "Agent router: Classified as create_project for notification-service"
+      assert:
+        completed: true
+
+    # =========================================================================
+    # Planner → BA
+    # =========================================================================
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: business_analyst
+            prompt: "Gather requirements and create functional design for the notification service"
+          - agent_id: planner
+            prompt: "Re-evaluate after business analyst completes"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: Planned business_analyst to gather requirements and create functional design"
+
+    # =========================================================================
+    # Business Analyst — FD approved
+    # =========================================================================
+    - agent: business_analyst
+      tool: coding:make_design
+      approval:
+        status: approved
+      arguments:
+        path: docs/functional-design.md
+        content: |
+          # Functioneel Ontwerp: Notification Service
+
+          > Platform standards applied: [docs/platform-functional-standards.md](./platform-functional-standards.md) rev `2026-04-20`.
+
+          ## 1. Huidige vs Gewenste Situatie
+          Het platform heeft momenteel geen gestandaardiseerde manier om
+          gebruikers te notificeren over wijzigingen, goedkeuringen of
+          systeemgebeurtenissen. Gebruikers moeten handmatig de status
+          controleren. De gewenste situatie is een real-time notification
+          service die meldingen bezorgt via web en mobiel.
+
+          ## 2. Functionele Vereisten
+          - FR-01: Systeem kan notificaties genereren bij statuswijzigingen
+            van sessies, goedkeuringen en agent-runs
+          - FR-02: Gebruiker ontvangt real-time notificaties in de webinterface
+          - FR-03: Gebruiker kan notificatievoorkeuren instellen per categorie
+          - FR-04: Gebruiker kan notificaties markeren als gelezen
+          - FR-05: Systeem stuurt e-mailnotificaties voor kritieke meldingen
+          - FR-06: Beheerder kan systeembrede notificatietemplates beheren
+
+          ## 3. Niet-Functionele Vereisten
+          - NFR-01: Notificaties worden binnen 2 seconden bezorgd
+          - NFR-02: Systeem ondersteunt minimaal 500 gelijktijdige verbindingen
+          - NFR-03: Notificatiegeschiedenis wordt 90 dagen bewaard
+
+          ## 4. Gebruikersrollen
+          - Eindgebruiker: ontvangt en beheert eigen notificaties
+          - Beheerder: beheert templates en systeemnotificaties
+
+          ## 14. Platform standard deviations
+
+          | Standard | Deviation | Rationale |
+          |----------|-----------|-----------|
+          | (none)   |           |           |
+      assert:
+        result:
+          - { contains: "functional-design.md" }
+
+    - agent: business_analyst
+      tool: coding:push_changes
+
+    - agent: business_analyst
+      tool: builtin:done
+      arguments:
+        summary: "Agent business_analyst: DESIGN_APPROVED. Wrote docs/functional-design.md with 6 functional requirements and 3 non-functional requirements for the notification service."
+      assert:
+        completed: true
+
+    # =========================================================================
+    # Planner → Architect
+    # =========================================================================
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: architect
+            prompt: "Review the functional design and create technical research + technical design for the notification service"
+          - agent_id: planner
+            prompt: "Re-evaluate after architect completes"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: Planned architect to review FD and create technical research + design"
+
+    # =========================================================================
+    # Architect — reads the FD
+    # =========================================================================
+    - agent: architect
+      tool: coding:read_file
+      mock: true
+      mock_result: |
+        # Functioneel Ontwerp: Notification Service
+
+        > Platform standards applied: [docs/platform-functional-standards.md](./platform-functional-standards.md) rev `2026-04-20`.
+
+        ## 1. Huidige vs Gewenste Situatie
+        Het platform heeft momenteel geen gestandaardiseerde manier om
+        gebruikers te notificeren. De gewenste situatie is een real-time
+        notification service die meldingen bezorgt via web en mobiel.
+
+        ## 2. Functionele Vereisten
+        - FR-01: Notificaties bij statuswijzigingen
+        - FR-02: Real-time notificaties in webinterface
+        - FR-03: Notificatievoorkeuren per categorie
+        - FR-04: Markeren als gelezen
+        - FR-05: E-mailnotificaties voor kritieke meldingen
+        - FR-06: Systeembrede notificatietemplates
+
+        ## 14. Platform standard deviations
+        | Standard | Deviation | Rationale |
+        |----------|-----------|-----------|
+        | (none)   |           |           |
+      arguments:
+        path: docs/functional-design.md
+
+    # =========================================================================
+    # Architect — FIRST attempt: WEAK technical research → REJECTED
+    #
+    # This is deliberately shallow: no comparison of approaches, no
+    # external system analysis, no risk assessment. Just "Use WebSockets".
+    # =========================================================================
+    - agent: architect
+      tool: coding:make_design
+      status: failed
+      approval:
+        status: rejected
+        reason: "Technical research is too shallow. Missing: comparison of approaches, external system analysis, and risk assessment. Please provide a thorough investigation."
+      arguments:
+        path: docs/technical-research.md
+        content: |
+          # Technisch Onderzoek: Notification Service
+
+          ## Aanbeveling
+
+          Use WebSockets for real-time notifications. It is the best approach.
+
+    # =========================================================================
+    # Architect — SECOND attempt: PROPER technical research → APPROVED
+    #
+    # Thorough analysis comparing WebSockets vs SSE vs polling, with
+    # external system inventory, trade-off tables, and a recommendation.
+    # =========================================================================
+    - agent: architect
+      tool: coding:make_design
+      approval:
+        status: approved
+        by: architect
+      arguments:
+        path: docs/technical-research.md
+        content: |
+          # Technisch Onderzoek: Notification Service
+
+          > Platform standards: conforms to [docs/platform-technical-standards.md](./platform-technical-standards.md) rev `2026-04-20`.
+
+          ## Introductie
+          Onderzoek naar de optimale architectuur voor een real-time
+          notification service die meldingen bezorgt aan gebruikers via
+          web en mobiel. De service moet statuswijzigingen, goedkeuringen
+          en systeemgebeurtenissen in real-time communiceren.
+
+          ## Vergeleken Benaderingen
+
+          ### Benadering A — WebSockets (bidirectioneel)
+          Persistente bidirectionele verbinding tussen client en server
+          via het WebSocket-protocol (RFC 6455). Server kan op elk moment
+          berichten naar de client sturen.
+
+          | Aspect | Beoordeling |
+          |--------|-------------|
+          | Complexiteit | Gemiddeld — connection management, heartbeats, reconnect-logica |
+          | Schaalbaarheid | Hoog — maar vereist sticky sessions of pub/sub broker |
+          | Latentie | Zeer laag — sub-seconde delivery |
+          | Browserondersteuning | Uitstekend — alle moderne browsers |
+          | Serverbelasting | Hoog — elke client houdt een open verbinding |
+          | Herbruikbaarheid | Gemiddeld — platformspecifieke implementatie nodig |
+          | Risico | Gemiddeld — complexe foutafhandeling bij connectieverlies |
+          | Fit met principes | Goed — past bij event-driven architectuur |
+
+          ### Benadering B — Server-Sent Events (SSE, unidirectioneel)
+          Server stuurt events naar de client via een HTTP/2 stream.
+          Client kan niet terugsturen over hetzelfde kanaal (gebruikt
+          reguliere HTTP-requests daarvoor).
+
+          | Aspect | Beoordeling |
+          |--------|-------------|
+          | Complexiteit | Laag — eenvoudiger dan WebSockets, native browser EventSource API |
+          | Schaalbaarheid | Hoog — HTTP/2 multiplexing, geen sticky sessions nodig |
+          | Latentie | Laag — vergelijkbaar met WebSockets voor server→client |
+          | Browserondersteuning | Goed — alle moderne browsers (behalve IE, irrelevant) |
+          | Serverbelasting | Gemiddeld — open connecties maar lichter dan WebSockets |
+          | Herbruikbaarheid | Hoog — standaard HTTP, past in bestaande API-gateway |
+          | Risico | Laag — eenvoudiger protocol, minder foutscenario's |
+          | Fit met principes | Zeer goed — past in bestaande HTTP-infrastructuur |
+
+          ### Benadering C — Polling (periodiek ophalen)
+          Client vraagt periodiek (elke N seconden) de server om nieuwe
+          notificaties via een REST endpoint.
+
+          | Aspect | Beoordeling |
+          |--------|-------------|
+          | Complexiteit | Zeer laag — standaard HTTP GET |
+          | Schaalbaarheid | Laag — O(n) requests per interval, onafhankelijk van events |
+          | Latentie | Hoog — gemiddeld interval/2 vertraging |
+          | Browserondersteuning | Universeel |
+          | Serverbelasting | Hoog bij schaal — veel nutteloze requests bij weinig events |
+          | Herbruikbaarheid | Hoog — triviale implementatie |
+          | Risico | Laag — maar voldoet niet aan NFR-01 (2s bezorging) |
+          | Fit met principes | Zwak — verspilt resources, schaalt niet |
+
+          ## Externe Systeemkoppelingen
+
+          ### Inventarisatie koppelingen
+          | Systeem | Categorie | Doel |
+          |---------|-----------|------|
+          | Keycloak | organizational | OAuth2/OIDC authenticatie en gebruikersidentificatie |
+          | PostgreSQL | organizational | Persistente opslag van notificaties en voorkeuren |
+          | Redis | organizational | Pub/sub broker voor horizontale schaalbaarheid |
+          | SMTP-server | other | Verzenden van e-mailnotificaties (FR-05) |
+
+          ### Beslissingen per koppeling
+          - **Keycloak**: REUSE — bestaande platform-IdP, JWT-tokens voor WebSocket/SSE auth.
+          - **PostgreSQL**: REUSE — al beschikbaar in platform voor notificatie-opslag.
+          - **Redis**: REUSE — bestaande Redis-instantie als pub/sub broker voor event-distributie.
+          - **SMTP-server**: PROJECT-SPECIFIC — e-mailnotificaties zijn specifiek voor deze service.
+            - Direct integration rationale:
+              (a) Geen bestaand herbruikbaar e-mailmodule in het platform.
+              (b) Een generiek e-mailmodule zou overhead toevoegen voor een enkele use case.
+              (c) Risico geaccepteerd: als meer services e-mail nodig hebben, refactoren naar module.
+
+          ## Aanbeveling
+          Gekozen: **Benadering B** (Server-Sent Events).
+
+          SSE biedt de beste balans tussen lage complexiteit, goede
+          schaalbaarheid en lage latentie. Notificaties zijn inherent
+          unidirectioneel (server→client), waardoor bidirectionele
+          WebSockets onnodige complexiteit toevoegen. Polling voldoet
+          niet aan de NFR-01 latentie-eis van 2 seconden.
+
+          ### Afgeleide beslissingen voor TD
+          - SSE via FastAPI StreamingResponse voor real-time delivery
+          - Redis pub/sub als message broker tussen API-instanties
+          - PostgreSQL voor notificatie-persistentie en leesbevestigingen
+          - Keycloak JWT-validatie op SSE-endpoint
+          - SMTP-integratie via achtergrondtaak voor e-mailnotificaties
+
+          ### Afgeleide Technical Requirements
+          - TR-01: SSE-endpoint moet automatisch reconnecten bij connectieverlies
+          - TR-02: Notificaties worden gedistribueerd via Redis pub/sub
+          - TR-03: E-mailnotificaties worden asynchroon verwerkt via taakwachtrij
+
+    # =========================================================================
+    # Architect — technical design → APPROVED
+    # =========================================================================
+    - agent: architect
+      tool: coding:make_design
+      approval:
+        status: approved
+        by: architect
+      arguments:
+        path: docs/technical-design.md
+        content: |
+          # Technisch Ontwerp: Notification Service
+
+          > Platform standards: conforms to [docs/platform-technical-standards.md](./platform-technical-standards.md) rev `2026-04-20`.
+
+          ## Introductie
+
+          ### Onderwerp
+          Een real-time notification service voor het bezorgen van
+          meldingen aan gebruikers via web en mobiel.
+
+          ### Probleemomschrijving
+          Het platform mist een gestandaardiseerde notificatiedienst.
+          Gebruikers moeten handmatig statuswijzigingen controleren.
+
+          ### Functionele Vraag
+          Hoe kunnen gebruikers real-time genotificeerd worden over
+          statuswijzigingen, goedkeuringen en systeemgebeurtenissen?
+
+          ### Onderzoek
+          Zie [docs/technical-research.md](./technical-research.md).
+          Gekozen: **Benadering B — Server-Sent Events (SSE)** vanwege
+          lage complexiteit, goede schaalbaarheid en passendheid bij
+          het unidirectionele notificatiepatroon.
+
+          ## Oplossing
+
+          ### Toegepaste Principes (per NORA-laag)
+          * **Informatie:** Notificatiedata centraal in PostgreSQL
+          * **Applicatie:** SSE-endpoint als uitbreiding op bestaande API
+          * **Infrastructuur:** Redis pub/sub voor horizontale distributie
+          * **Security & Privacy:** JWT-validatie op SSE-connecties
+
+          ### Requirements
+          | ID | Source | Requirement | Verification Method |
+          |----|--------|-------------|---------------------|
+          | FR-01 | BA | Notificaties bij statuswijzigingen | Integration test |
+          | FR-02 | BA | Real-time bezorging via web | SSE endpoint test |
+          | FR-03 | BA | Voorkeuren per categorie | API test |
+          | FR-04 | BA | Markeren als gelezen | API test |
+          | FR-05 | BA | E-mailnotificaties kritieke meldingen | SMTP integration test |
+          | FR-06 | BA | Beheer notificatietemplates | API test |
+          | TR-01 | AR | SSE auto-reconnect | Connection resilience test |
+          | TR-02 | AR | Redis pub/sub distributie | Load test |
+          | TR-03 | AR | Async e-mailverwerking | Queue processing test |
+
+          ### Architectuuroplossing
+
+          #### 1. Componentstructuur
+          * New Components: NotificationService, SSEEndpoint, EmailWorker,
+            PreferenceManager, TemplateEngine
+          * Reuse: Auth-middleware, session-framework, Druppie API-gateway
+
+          #### 2. Data Architecture & Integration
+          * Data Model: `notifications`, `notification_preferences`,
+            `notification_templates`, `read_receipts` tabellen
+          * API: `/notifications/stream` (SSE), `/notifications`,
+            `/notifications/{id}/read`, `/notification-preferences`
+          * Events: Redis channels per user-id voor pub/sub
+
+          ### Platform standard deviations
+
+          | Section | Deviation | Rationale |
+          |---------|-----------|-----------|
+          | (none)  |           |           |
+
+          ### Visualisatie
+          ```mermaid
+          flowchart TD
+            E["Event Source"] --> API["FastAPI Backend"]
+            API --> Redis["Redis Pub/Sub"]
+            Redis --> SSE["SSE Endpoint"]
+            SSE --> Client["Browser Client"]
+            API --> DB["PostgreSQL"]
+            API --> SMTP["Email Worker"]
+          ```
+
+    # =========================================================================
+    # Architect — push and done
+    # =========================================================================
+    - agent: architect
+      tool: coding:push_changes
+
+    - agent: architect
+      tool: builtin:done
+      arguments:
+        summary: "Agent architect: DESIGN_APPROVED. First technical research attempt was rejected (too shallow — just 'Use WebSockets' with no analysis). Second attempt approved with thorough comparison of WebSockets vs SSE vs polling. Chose SSE. Technical design written and approved."
+      assert:
+        completed: true
+
+  # ===========================================================================
+  # Assertions
+  # ===========================================================================
+  assert:
+    - check: architect-completed
+
+  verify:
+    - gitea_repo_exists: true
+    - file_exists: docs/technical-research.md
+    - file_exists: docs/technical-design.md
+    - file_not_empty: docs/technical-research.md
+    - file_not_empty: docs/technical-design.md
+    # The APPROVED (second) content should be in the repo — SSE comparison
+    - file_contains:
+        path: docs/technical-research.md
+        content: "Benadering B — Server-Sent Events"
+    - file_contains:
+        path: docs/technical-research.md
+        content: "Benadering C — Polling"
+    - file_contains:
+        path: docs/technical-research.md
+        content: "WebSockets"
+    # The rejected (first) shallow content should NOT be the final version.
+    # The approved version contains structured analysis, not just the bare
+    # recommendation. We verify the approved content positively above.

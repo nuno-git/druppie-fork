@@ -84,6 +84,7 @@ _REDACT_PATTERNS = [
     (re.compile(r"sk-[A-Za-z0-9_-]{10,}"), "[REDACTED]"),
     (re.compile(r"Bearer\s+[A-Za-z0-9._-]{10,}"), "Bearer [REDACTED]"),
     (re.compile(r"api[_-]?key\s*[=:]\s*[\"']?[A-Za-z0-9_.-]{10,}[\"']?"), "api_key=[REDACTED]"),
+    (re.compile(r"(?<![A-Za-z0-9/])(?=[A-Za-z0-9_-]*\d)[A-Za-z0-9_-]{32,}(?![A-Za-z0-9_/-])"), "[REDACTED]"),
 ]
 
 
@@ -124,6 +125,9 @@ class LLMResponse(BaseModel):
     total_tokens: int = 0
     model: str = ""
     provider: str = ""
+    thinking_content: str | None = None
+    raw_request: dict | None = None
+    raw_response: dict | None = None
 
 
 class BaseLLM(ABC):

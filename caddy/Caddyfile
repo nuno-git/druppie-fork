@@ -1,0 +1,71 @@
+# Druppie Production - Caddy Reverse Proxy
+# ==========================================
+# Replace {$DRUPPIE_DOMAIN} with your domain (e.g., druppie.example.com)
+# or set the DRUPPIE_DOMAIN environment variable before starting Caddy.
+# Routes: /api/*, /health, /ws/* → backend | /realms/*, /protocol/* → keycloak | everything else → frontend
+
+{$DRUPPIE_DOMAIN:druppie.localhost} {
+	# TLS: wildcard cert for your domain
+	tls /secrets/cert.pem /secrets/key.pem
+
+	# HTTP Basic Auth — protects everything behind one password
+	# To add users: docker exec caddy caddy hash-password --plaintext 'newpassword'
+	# Then add to the basicauth block below
+	#
+	# The hash below is a SHARED DEFAULT — operators MUST replace it before
+	# deploying. The plaintext password is not documented on purpose; regenerate
+	# your own hash with:
+	#   caddy hash-password --plaintext '<your-password>'
+	basic_auth * {
+		druppie_team $2a$14$CXTWAw7kciICes6zH1YY.ubE0sU3gB8ulbWKFNv/URcAMOJbE9rSm
+	}
+
+	# Backend API + health + websocket
+	handle /api/* {
+		reverse_proxy backend:8000
+	}
+	handle /health {
+		reverse_proxy backend:8000
+	}
+	handle /ws/* {
+		reverse_proxy backend:8000
+	}
+
+	# Keycloak auth endpoints
+	handle /realms/* {
+		reverse_proxy keycloak:8080
+	}
+	handle /resources/* {
+		reverse_proxy keycloak:8080
+	}
+	handle /protocol/* {
+		reverse_proxy keycloak:8080
+	}
+	handle /jk* {
+		reverse_proxy keycloak:8080
+	}
+
+	# Frontend (catch-all, must be last)
+	handle {
+		reverse_proxy frontend:5173
+	}
+
+	# Logging
+	log {
+		output stdout
+		format console
+	}
+}
+
+# Gitea — separate subdomain
+{$GITEA_DOMAIN:gitea.druppie.localhost} {
+	tls /secrets/cert.pem /secrets/key.pem
+
+	# Same shared default hash as above — replace before deploying.
+	# Regenerate with: caddy hash-password --plaintext '<your-password>'
+	basic_auth * {
+		druppie_team $2a$14$CXTWAw7kciICes6zH1YY.ubE0sU3gB8ulbWKFNv/URcAMOJbE9rSm
+	}
+
+	reverse_proxy gitea:3000
+}

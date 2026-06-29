@@ -1,0 +1,69 @@
+## Test YAML-based TDD flow with execute_coding_task
+## Verifies that agent summaries are properly returned in tool results
+
+tool-test:
+  name: yaml-tdd-flow-summarize-results
+  description: "Test YAML flow returns agent summaries in tool result"
+  tags: [e2e, yaml-flow, planner, summaries, agent-runtime]
+
+  chain:
+    # --- Router ---
+    - agent: router
+      tool: builtin:set_intent
+      arguments:
+        intent: create_project
+        project_name: yaml-tdd-flow-test
+        description: "Test project for YAML TDD flow summary verification"
+      assert:
+        result:
+          - not_empty
+
+    - agent: router
+      tool: builtin:done
+      arguments:
+        summary: "Agent router: Classified as create_project for yaml-tdd-flow-test"
+
+    # --- Planner ---
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: developer
+            prompt: "Test YAML flow execution and verify summaries are returned"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: Planned developer for YAML TDD flow test"
+
+    # --- Developer: verify planner flow summary format ---
+    - agent: developer
+      tool: coding:execute_coding_task
+      arguments:
+        task: "Implement a simple hello world function in TypeScript that logs 'Hello, World!' to the console"
+        repo_target: "project"
+        flow: "planner"
+      mock: true
+      mock_result: '{"success": true, "run_id": "test-run-123", "coding_run_id": "456", "summaries": {"analyst": "Analyzed the task to implement a hello world function", "planner": "Created initial build plan with 1 wave", "wave-orchestrator": "Executed 1 wave with 1 step", "verifier": "Verified hello-world.ts compiles", "pr-author": "Skipped"}, "deliverables": {"branch": "feat/hello-world", "commits": [{"sha": "abc123"}]}}'
+      assert:
+        result:
+          - { contains: "summaries" }
+          - { contains: "analyst" }
+          - { contains: "planner" }
+          - { contains: "wave-orchestrator" }
+          - { contains: "verifier" }
+          - { contains: "pr-author" }
+
+    # --- Post result to timeline ---
+    - agent: developer
+      tool: builtin:create_message
+      arguments:
+        content: "YAML Planner Flow Test Passed! All 5 agent summaries present in tool result."
+
+    # --- Completion ---
+    - agent: developer
+      tool: builtin:done
+      arguments:
+        summary: "YAML TDD flow summarize results test completed"
+      assert:
+        completed: true

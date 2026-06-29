@@ -6,6 +6,7 @@ loop can pause and ask the user whether to switch. If the user approves
 to the fallback without asking again.
 """
 
+import time
 from typing import Any
 
 import structlog
@@ -13,6 +14,16 @@ import structlog
 from .base import BaseLLM, FallbackAvailableError, LLMError
 
 logger = structlog.get_logger()
+
+_EVICTION_TTL = 86400  # 24 hours
+
+
+def _evict(store: dict, ttl: float = _EVICTION_TTL) -> None:
+    """Remove entries older than *ttl* seconds."""
+    cutoff = time.monotonic() - ttl
+    stale = [k for k, ts in store.items() if ts < cutoff]
+    for k in stale:
+        del store[k]
 
 
 class FallbackLLM(BaseLLM):
@@ -27,12 +38,12 @@ class FallbackLLM(BaseLLM):
       this agent type auto-switches in this session
     - Session-wide: approve_fallback(session_id) — all agents auto-switch
 
-    Process-local state — requires single-worker deployment.
-    Multi-worker requires persisting approval state to DB.
+    Process-local state — requires single-worker deployment (Dockerfile).
+    Entries are evicted after 24 hours to prevent unbounded growth.
     """
 
-    _approved_sessions: set[str] = set()
-    _approved_agents: set[tuple[str, str]] = set()
+    _approved_sessions: dict[str, float] = {}
+    _approved_agents: dict[tuple[str, str], float] = {}
 
     def __init__(
         self, primary: BaseLLM, fallback: BaseLLM,
@@ -46,19 +57,21 @@ class FallbackLLM(BaseLLM):
     @classmethod
     def approve_fallback(cls, session_id: str) -> None:
         """Mark a session as approved for fallback (all agents)."""
-        cls._approved_sessions.add(session_id)
+        _evict(cls._approved_sessions)
+        cls._approved_sessions[session_id] = time.monotonic()
 
     @classmethod
     def approve_fallback_for_agent(cls, session_id: str, agent_id: str) -> None:
         """Mark a specific agent as approved for fallback in this session."""
-        cls._approved_agents.add((session_id, agent_id))
+        _evict(cls._approved_agents)
+        cls._approved_agents[(session_id, agent_id)] = time.monotonic()
 
     @classmethod
     def clear_session(cls, session_id: str) -> None:
         """Remove all approval state for a session."""
-        cls._approved_sessions.discard(session_id)
+        cls._approved_sessions.pop(session_id, None)
         cls._approved_agents = {
-            (sid, aid) for sid, aid in cls._approved_agents if sid != session_id
+            k: ts for k, ts in cls._approved_agents.items() if k[0] != session_id
         }
 
     # ------------------------------------------------------------------
@@ -98,9 +111,10 @@ class FallbackLLM(BaseLLM):
             return False
         if self._session_id in self._approved_sessions:
             return True
-        if self._agent_id and (self._session_id, self._agent_id) in self._approved_agents:
-            return True
-        return False
+        return bool(
+            self._agent_id
+            and (self._session_id, self._agent_id) in self._approved_agents
+        )
 
     def _raise_fallback_available(self, error: Exception) -> None:
         raise FallbackAvailableError(

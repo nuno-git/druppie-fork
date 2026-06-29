@@ -53,11 +53,43 @@ def wait_for_gitea():
     return False
 
 
-def run_gitea_cli(args: list) -> tuple[bool, str, str]:
-    """Run Gitea CLI command inside container as git user."""
+def _find_compose_container(service_name: str) -> str | None:
+    hostname = os.getenv("HOSTNAME", "")
+    project = ""
+    if hostname:
+        try:
+            result = subprocess.run(
+                ["docker", "inspect", hostname, "--format",
+                 "{{index .Config.Labels \"com.docker.compose.project\"}}"],
+                capture_output=True, text=True, timeout=10,
+            )
+            project = result.stdout.strip()
+        except Exception:
+            pass
+
+    filters = ["--filter", f"label=com.docker.compose.service={service_name}"]
+    if project:
+        filters += ["--filter", f"label=com.docker.compose.project={project}"]
+
     try:
         result = subprocess.run(
-            ["docker", "exec", "-u", "git", "druppie-new-gitea", "gitea"] + args,
+            ["docker", "ps", "-q", "--format", "{{.Names}}"] + filters,
+            capture_output=True, text=True, timeout=10,
+        )
+        names = [n for n in result.stdout.strip().split("\n") if n]
+        return names[0] if names else None
+    except Exception:
+        return None
+
+
+def run_gitea_cli(args: list) -> tuple[bool, str, str]:
+    """Run Gitea CLI command inside container as git user."""
+    container = _find_compose_container("gitea")
+    if not container:
+        return False, "", "Gitea container not found (no compose container with service=gitea)"
+    try:
+        result = subprocess.run(
+            ["docker", "exec", "-u", "git", container, "gitea"] + args,
             capture_output=True,
             text=True,
             timeout=30,

@@ -5,6 +5,11 @@
 
 set -e
 
+# Docker Compose project name, used as the prefix for volume and container names
+# (Compose names resources as <project>_<volume> and <project>-<service>-<ordinal>).
+# Sourced from the COMPOSE_PROJECT_NAME env var set by the reset-hard service.
+P="${COMPOSE_PROJECT_NAME:-druppie}"
+
 echo "=============================================="
 echo "  Druppie Platform - HARD RESET"
 echo "=============================================="
@@ -29,15 +34,21 @@ if [ -n "$HOST_PROJECT_DIR" ] && [ "$HOST_PROJECT_DIR" != "/project" ]; then
 fi
 COMPOSE="docker compose"
 
+# Compose project name — prefixes volume names (<P>_postgres) and container names
+# (<P>-<service>-1). Must match the project the stack was actually started with.
+P="${COMPOSE_PROJECT_NAME:-druppie}"
+
 # Step 1: Stop all services and remove volumes
 echo "--- Step 1: Stopping all services and removing volumes ---"
 $COMPOSE --profile dev --profile prod --profile infra down -v 2>/dev/null || true
 echo "  Done"
 echo ""
 
-# Step 2: Remove any remaining druppie volumes (in case they were external)
-echo "--- Step 2: Cleaning up any remaining volumes ---"
-for vol in druppie_new_postgres druppie_new_keycloak_postgres druppie_new_gitea_postgres druppie_new_gitea druppie_new_workspace druppie_new_dataset druppie_init_marker druppie_sandbox_dep_cache druppie_cache_scan_results; do
+# Step 2: Remove any remaining instance volumes (in case they were external)
+echo "--- Step 2: Cleaning up instance volumes ---"
+for vol in ${P}_postgres ${P}_keycloak_postgres ${P}_gitea_postgres \
+           ${P}_gitea_data ${P}_workspace ${P}_dataset \
+           ${P}_init_marker ${P}_sandbox_dep_cache ${P}_sandbox_bundles; do
     if docker volume inspect "$vol" >/dev/null 2>&1; then
         echo "  Removing volume: $vol"
         docker volume rm "$vol" 2>/dev/null || echo "  Warning: Could not remove $vol"
@@ -55,7 +66,7 @@ echo "--- Step 4: Waiting for services to be healthy ---"
 
 echo "  Waiting for PostgreSQL..."
 for i in $(seq 1 30); do
-    if docker exec druppie-new-db pg_isready -U druppie >/dev/null 2>&1; then
+    if $COMPOSE exec -T db pg_isready -U druppie >/dev/null 2>&1; then
         echo "  PostgreSQL is ready"
         break
     fi
@@ -64,7 +75,7 @@ done
 
 echo "  Waiting for Keycloak..."
 for i in $(seq 1 30); do
-    if docker exec druppie-new-keycloak curl -sf http://localhost:8080/health/ready >/dev/null 2>&1; then
+    if $COMPOSE exec -T keycloak curl -sf http://localhost:8080/health/ready >/dev/null 2>&1; then
         echo "  Keycloak is ready"
         break
     fi
@@ -73,7 +84,7 @@ done
 
 echo "  Waiting for Gitea..."
 for i in $(seq 1 30); do
-    if docker exec druppie-new-gitea curl -sf http://localhost:3000/api/healthz >/dev/null 2>&1; then
+    if $COMPOSE exec -T gitea curl -sf http://localhost:3000/api/healthz >/dev/null 2>&1; then
         echo "  Gitea is ready"
         break
     fi

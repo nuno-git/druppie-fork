@@ -19,7 +19,7 @@ const AnnotationBar = ({ run }) => {
 
     run.llm_calls?.forEach((llm) => {
       llm.tool_calls?.forEach((tc) => {
-        if (tc.tool_name?.includes('hitl_ask')) return
+        if (tc.question_id) return
         if (tc.approval) return
         const name = formatToolName(tc.tool_name)
         if (!toolMap.has(name)) {

@@ -31,6 +31,7 @@ from druppie.llm.base import clean_llm_error
         ("Bearer eyJhbGciOi_very_long_token in error", "Bearer [REDACTED] in error"),
         ("api_key=sk-secret123456 leaked", "api_key=[REDACTED] leaked"),
         ("api-key: my_super_secret_key_1234", "api_key=[REDACTED]"),
+        ("Error: token a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6 invalid", "Error: token [REDACTED] invalid"),
         ("simple short error", "simple short error"),
     ],
     ids=[
@@ -57,6 +58,7 @@ from druppie.llm.base import clean_llm_error
         "redact-bearer-token",
         "redact-api-key-equals",
         "redact-api-key-colon",
+        "redact-bare-token",
         "passthrough-short",
     ],
 )

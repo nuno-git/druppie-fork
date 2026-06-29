@@ -250,11 +250,6 @@ class APISettings(BaseSettings):
         alias="CORS_ORIGINS",
         description="Comma-separated list of allowed CORS origins",
     )
-    dev_mode: bool = Field(
-        default=False,
-        alias="DEV_MODE",
-        description="Enable development mode (bypasses auth)",
-    )
 
     @property
     def cors_origins_list(self) -> list[str]:
@@ -292,7 +287,6 @@ class Settings(BaseSettings):
             gitea_configured=self.gitea.is_configured,
             llm_provider=self.llm.provider,
             llm_model=self.llm.zai_model,
-            dev_mode=self.api.dev_mode,
             workspace_root=str(self.workspace.root),
         )
 
@@ -391,11 +385,6 @@ def get_settings() -> Settings:
 def get_database_url() -> str:
     """Get database URL."""
     return get_settings().database.url
-
-
-def is_dev_mode() -> bool:
-    """Check if running in development mode."""
-    return get_settings().api.dev_mode
 
 
 def get_workspace_root() -> Path:

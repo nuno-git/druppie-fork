@@ -956,6 +956,91 @@ Azure Foundry hosts both GPT and Claude models, but they use different endpoints
 
 ---
 
+## Agent Testing Tool
+
+The **Agent Testing Tool** (available at `/tools/developer` in the UI) lets users run any agent YAML definition directly in an isolated session — no pipeline, no routing, no plan flow. The selected agent receives the user's prompt and executes within the standard agent runtime loop.
+
+### How It Works
+
+1. **Select an agent** from the dropdown — all agents defined in `agents/definitions/*.yaml` are listed with their name, description, role, tools, and git scope
+2. **Select a project** (if the agent's `git_scope` is `current_project`) — or a badge indicates no project is needed
+3. **Type a prompt** describing the task
+4. **Click Execute** — the API creates a synthetic pi tool call with the agent's YAML config and the user's prompt, runs the agent via `AgentV2.run()`, and returns an `agent_run_id` for polling
+5. **Poll for results** — the frontend polls `GET /api/agent-test/runs/{agent_run_id}` every 1.5s until the run completes, fails, or is cancelled
+
+### Key Characteristics
+
+- **No session lifecycle** — runs are not full chat sessions; they execute directly and report results
+- **Polling, not WebSocket** — consistent with the existing developer page pattern
+- **Subagents supported** — agents with `role: subagent` can still be run (shown with a warning badge), and they can call `done()` and `subagents()` normally
+- **Git scope respected** — the project selector, core update badge, and no-sandbox badge reflect the agent's YAML configuration
+- **Run history** — past runs are listed as history entries filtered by session title prefix `"Agent Test: "`
+- **Inspect mode** — clicking a history entry opens the session in inspect mode (`/chat?session={id}&mode=inspect`)
+
+### API Endpoints
+
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/api/agents` | GET | Returns all agent definitions (extended with `git_scope`, `role`, `mcps_tools`, `subagents`) |
+| `/api/agent-test/execute` | POST | Executes an agent with given `agent_id`, `prompt`, and optional `project_id` |
+| `/api/agent-test/runs/{agent_run_id}` | GET | Polls the status of a running agent test |
+
+### Frontend Component
+
+The page (`webclient/src/pages/tools/DeveloperPage.jsx`) uses a sidebar + timeline layout:
+
+- **Sidebar (384px)**: Agent selector, agent detail panel (role badge, git scope, tools count, subagent warning), project selector (conditional), prompt textarea, execute/reset buttons
+- **Main area**: Run status display with status badge and icon (completed/failed/running/pending/cancelled), session info, error banner, empty state, and run history section
+
+---
+
+## Agent Runtime Library (`druppie/agent_runtime/`)
+
+A **storage-agnostic Python library** that implements the agent runtime, documented as-built in `docs/TECHNICAL.md` §11 (Agent Runtime Library); the original design is preserved in the historical `docs/agent-runtime-spec.md`. It provides the core loop, event system, subagent orchestration, sandbox management, and tool infrastructure -- with zero imports from `druppie.db`, `druppie.domain`, or `druppie.repositories`.
+
+### Why It Exists
+
+The existing `druppie/agents/` (YAML definitions) and `druppie/execution/` (LangGraph orchestrator) contain the production agent pipeline tightly coupled to the database layer. The agent runtime library extracts the reusable runtime logic into a self-contained package that can be tested independently and adapted to different storage backends.
+
+### Coexistence
+
+The library lives alongside the existing code with no modifications to `druppie/agents/` or `druppie/execution/`. Both systems coexist; the library does not replace or wrap the old code.
+
+### Key Components
+
+| Component | Module | Purpose |
+|-----------|--------|---------|
+| **AgentLoop** | `loop.py` | Main execution loop: iterates LLM calls, dispatches tool invocations, enforces iteration limits |
+| **AgentDefinition** | `definition.py` | Loads and validates agent definitions from YAML files (model, tools, prompts, limits) |
+| **EventEmitter** | `events.py` | Emits structured `AgentEvent` objects for every step (LLM call, tool use, error, completion) |
+| **SubagentsMCP** | `subagents.py` | Spawns and manages subagent sessions via the MCP protocol |
+| **SandboxWarmPool** | `sandbox.py` | Maintains a warm pool of pre-provisioned sandbox containers for fast task delegation |
+| **MCPToolProvider** | `tools/provider.py` | Resolves and provides MCP tools to the loop, handling schema fetch and parameter injection |
+| **DoneTool** | `tools/done.py` | Built-in `done` tool implementation: signals agent completion and passes summary to next agent |
+| **MCPConnection** | `tools/mcp.py` | Manages persistent connections to MCP servers (HTTP transport, reconnection, health checks) |
+
+### Public API
+
+The package exports 22 symbols from `agent_runtime/__init__.py`:
+
+- **Core loop**: `AgentLoop`, `LoopConfig`, `CancellationToken`
+- **Definition**: `AgentDefinition`
+- **Events**: `AgentEvent`, `AgentResult`, `EventEmitter`
+- **Subagents**: `SubagentsMCP`
+- **Sandbox**: `SandboxWarmPool`
+- **Tools**: `MCPToolProvider`, `MCPConnection`, `DoneTool`
+- **Types**: Remaining exports from `types.py` (configuration dataclasses, enums, and result models)
+
+### Storage-Agnostic Design
+
+The library has **zero imports** from `druppie.db`, `druppie.domain`, or `druppie.repositories`. Storage and persistence are injected via callbacks and interfaces, not hardcoded dependencies. This allows the same runtime to be used with different backends (SQL, file-based, in-memory for testing) without modification.
+
+### Test Coverage
+
+179 tests across 10 test files in `druppie/tests/agent_runtime/`, covering the loop, definition loading, event emission, subagent orchestration, sandbox pooling, tool dispatch, and error handling.
+
+---
+
 ## Automated Translation (Bilingual Support)
 
 The platform detects the user's language and automatically translates between the user's language and English. Agents always work in English internally; the platform handles all translation transparently.

@@ -34,8 +34,13 @@ class UserRepository(BaseRepository):
             User model
         """
         user = self.get_by_id(user_id)
+        if not user and username:
+            # User might exist with a different ID — lookup by username
+            user = self.db.query(User).filter_by(username=username).first()
+
         if user:
-            # Update fields if changed
+            if user.id != user_id:
+                user.id = user_id
             if username and user.username != username:
                 user.username = username
             if email and user.email != email:

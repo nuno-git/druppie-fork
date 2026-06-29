@@ -213,6 +213,16 @@ const HITLQuestionMessage = ({ question, onSubmitAnswer, isAnswering, answered =
                 )}
               </button>
             </div>
+            {hasOptions && (
+              <button
+                onClick={() => { setShowFreeText(false); setFreeText('') }}
+                disabled={isAnswering}
+                className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-600 transition-colors"
+              >
+                <X className="w-3 h-3" />
+                Back to options
+              </button>
+            )}
           </div>
         )}
       </div>

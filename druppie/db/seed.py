@@ -2,7 +2,7 @@
 
 Usage:
     python -m druppie.db.seed          # from project root
-    docker compose exec druppie-new-backend python -m druppie.db.seed
+    docker compose exec backend python -m druppie.db.seed
 """
 
 import uuid
@@ -81,8 +81,6 @@ def seed_projects(db: Session) -> None:
             "description": "A simple task management application with REST API",
             "repo_name": "todo-app-a1b2c3d4",
             "repo_owner": "gitea_admin",
-            "repo_url": "http://gitea:3000/gitea_admin/todo-app-a1b2c3d4",
-            "clone_url": "http://gitea:3000/gitea_admin/todo-app-a1b2c3d4.git",
             "owner_id": USER_IDS["admin"],
             "status": "active",
             "created_at": now - timedelta(days=7),
@@ -93,8 +91,6 @@ def seed_projects(db: Session) -> None:
             "description": "Python file search application with full-text indexing",
             "repo_name": "file-search-app-e5f6g7h8",
             "repo_owner": "gitea_admin",
-            "repo_url": "http://gitea:3000/gitea_admin/file-search-app-e5f6g7h8",
-            "clone_url": "http://gitea:3000/gitea_admin/file-search-app-e5f6g7h8.git",
             "owner_id": USER_IDS["developer"],
             "status": "active",
             "created_at": now - timedelta(days=3),
@@ -105,8 +101,6 @@ def seed_projects(db: Session) -> None:
             "description": "React dashboard for visualizing project metrics",
             "repo_name": "analytics-dashboard-i9j0k1l2",
             "repo_owner": "gitea_admin",
-            "repo_url": "http://gitea:3000/gitea_admin/analytics-dashboard-i9j0k1l2",
-            "clone_url": "http://gitea:3000/gitea_admin/analytics-dashboard-i9j0k1l2.git",
             "owner_id": USER_IDS["architect"],
             "status": "active",
             "created_at": now - timedelta(days=1),
