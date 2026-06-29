@@ -18,9 +18,12 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Login to Harbor
+        env:
+          HARBOR_USER: ${{ secrets.HARBOR_USERNAME }}
+          HARBOR_PASS: ${{ secrets.HARBOR_PASSWORD }}
+          HARBOR_REG: ${{ secrets.HARBOR_REGISTRY }}
         run: |
-          echo "Harbor credentials pre-configured in DinD daemon"
-          docker info | grep -i "insecure" || true
+          echo "$HARBOR_PASS" | docker login "$HARBOR_REG" -u "$HARBOR_USER" --password-stdin
 
       - name: Build backend
         run: |
