@@ -163,6 +163,10 @@ def ensure_user(kc: KeycloakAdmin, realm: str, username: str, password: str, rol
 
 
 def main():
+    if os.getenv("SETUP_GATE_ENABLED") != "true":
+        print("[SKIP] Security gate setup disabled (SETUP_GATE_ENABLED not set to 'true')")
+        return
+
     keycloak_url = os.getenv("KEYCLOAK_URL", "http://localhost:10080")
     admin_user = os.getenv("KEYCLOAK_ADMIN", "admin")
     admin_password = os.getenv("KEYCLOAK_ADMIN_PASSWORD", "admin")

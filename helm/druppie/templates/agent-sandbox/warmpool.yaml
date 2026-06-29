@@ -1,0 +1,16 @@
+{{- if .Values.agentSandbox.enabled }}
+# Pre-warmed pool of agent-coding sandboxes for instant allocation.
+# At scale (1500 users), this eliminates the ~10s cold-start per sandbox.
+---
+apiVersion: extensions.agents.x-k8s.io/v1beta1
+kind: SandboxWarmPool
+metadata:
+  name: agent-coding-warmpool
+  namespace: sandbox-runtime
+spec:
+  replicas: {{ .Values.agentSandbox.warmPool.replicas | default 5 }}
+  updateStrategy:
+    type: Recreate
+  sandboxTemplateRef:
+    name: agent-coding-template
+{{- end }}

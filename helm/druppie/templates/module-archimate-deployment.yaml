@@ -18,6 +18,10 @@ spec:
         {{- include "druppie.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: module-archimate
     spec:
+      {{- if .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml .Values.global.imagePullSecrets | nindent 8 }}
+      {{- end }}
       containers:
         - name: module-archimate
           image: {{ include "druppie.image" (dict "Values" .Values "image" .Values.modules.archimate.image) }}
@@ -61,6 +65,10 @@ spec:
             failureThreshold: 5
           resources:
             {{- toYaml .Values.modules.archimate.resources | nindent 12 }}
+      {{- with .Values.modules.archimate.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       volumes:
         - name: workspace
           persistentVolumeClaim:

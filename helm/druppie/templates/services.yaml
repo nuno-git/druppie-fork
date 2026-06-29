@@ -62,7 +62,7 @@ metadata:
     {{- include "druppie.labels" . | nindent 4 }}
     app.kubernetes.io/component: keycloak
 spec:
-  type: NodePort
+  type: {{ .Values.keycloak.service.type | default "NodePort" }}
   selector:
     {{- include "druppie.selectorLabels" . | nindent 4 }}
     app.kubernetes.io/component: keycloak
@@ -70,7 +70,9 @@ spec:
     - name: http
       port: 8080
       targetPort: http
-      nodePort: 30002
+      {{- if eq (.Values.keycloak.service.type | default "NodePort") "NodePort" }}
+      nodePort: {{ .Values.keycloak.service.nodePort | default 30002 }}
+      {{- end }}
 ---
 # Gitea Service
 apiVersion: v1
@@ -81,7 +83,7 @@ metadata:
     {{- include "druppie.labels" . | nindent 4 }}
     app.kubernetes.io/component: gitea
 spec:
-  type: NodePort
+  type: {{ .Values.gitea.service.type | default "NodePort" }}
   selector:
     {{- include "druppie.selectorLabels" . | nindent 4 }}
     app.kubernetes.io/component: gitea
@@ -89,7 +91,9 @@ spec:
     - name: http
       port: 3000
       targetPort: http
-      nodePort: 30003
+      {{- if eq (.Values.gitea.service.type | default "NodePort") "NodePort" }}
+      nodePort: {{ .Values.gitea.service.nodePort | default 30003 }}
+      {{- end }}
     - name: ssh
       port: 2222
       targetPort: ssh
@@ -103,7 +107,7 @@ metadata:
     {{- include "druppie.labels" . | nindent 4 }}
     app.kubernetes.io/component: backend
 spec:
-  type: NodePort
+  type: {{ .Values.backend.service.type | default "NodePort" }}
   selector:
     {{- include "druppie.selectorLabels" . | nindent 4 }}
     app.kubernetes.io/component: backend
@@ -111,7 +115,9 @@ spec:
     - name: http
       port: {{ .Values.backend.port }}
       targetPort: http
-      nodePort: 30000
+      {{- if eq (.Values.backend.service.type | default "NodePort") "NodePort" }}
+      nodePort: {{ .Values.backend.service.nodePort | default 30000 }}
+      {{- end }}
 ---
 # Frontend Service
 apiVersion: v1
@@ -122,7 +128,7 @@ metadata:
     {{- include "druppie.labels" . | nindent 4 }}
     app.kubernetes.io/component: frontend
 spec:
-  type: NodePort
+  type: {{ .Values.frontend.service.type | default "NodePort" }}
   selector:
     {{- include "druppie.selectorLabels" . | nindent 4 }}
     app.kubernetes.io/component: frontend
@@ -130,7 +136,9 @@ spec:
     - name: http
       port: {{ .Values.frontend.port }}
       targetPort: http
-      nodePort: 30001
+      {{- if eq (.Values.frontend.service.type | default "NodePort") "NodePort" }}
+      nodePort: {{ .Values.frontend.service.nodePort | default 30001 }}
+      {{- end }}
 {{- if .Values.modules.coding.enabled }}
 ---
 # Module Coding Service

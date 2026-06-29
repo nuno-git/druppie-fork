@@ -1,0 +1,106 @@
+# In-cluster container registry for the rijnland.dev RKE2 cluster
+# ===============================================================
+#
+# This manifest documents the registry that is currently deployed manually in the
+# `registry` namespace. It is a plain Docker registry:2 with ANONYMOUS access
+# (no htpasswd auth) backed by a Longhorn-distributed PVC.
+#
+# Prerequisite secret (must be created manually before applying the Ingress):
+#   - registry-tls : kubernetes.io/tls secret holding a copy of the cluster
+#                    *.rijnland.dev wildcard certificate + key.
+#
+# The host "druppie-registry.rijnland.dev" is intentionally a SINGLE label under
+# rijnland.dev so it matches the *.rijnland.dev wildcard cert.
+#
+# Images are pushed as: druppie-registry.rijnland.dev/druppie/<image>:latest
+#
+# Apply with:
+#   kubectl apply -f k8s/registry.yaml
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: registry
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: registry-data
+  namespace: registry
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: longhorn-distributed
+  resources:
+    requests:
+      storage: 50Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: registry
+  namespace: registry
+  labels:
+    app: registry
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: registry
+  template:
+    metadata:
+      labels:
+        app: registry
+    spec:
+      containers:
+        - name: registry
+          image: registry:2
+          ports:
+            - containerPort: 5000
+          volumeMounts:
+            - name: registry-data
+              mountPath: /var/lib/registry
+      volumes:
+        - name: registry-data
+          persistentVolumeClaim:
+            claimName: registry-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: registry
+  namespace: registry
+  labels:
+    app: registry
+spec:
+  selector:
+    app: registry
+  ports:
+    - name: registry
+      port: 5000
+      targetPort: 5000
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: registry
+  namespace: registry
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts:
+        - druppie-registry.rijnland.dev
+      secretName: registry-tls
+  rules:
+    - host: druppie-registry.rijnland.dev
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: registry
+                port:
+                  number: 5000

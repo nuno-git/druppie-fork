@@ -1,0 +1,88 @@
+# Druppie Platform - Helm Values Override: rijnland.dev RKE2 cluster
+# ==================================================================
+#
+# This file targets the remote RKE2 cluster at rijnland.dev. It layers on top of
+# the base values.yaml and ONLY overrides what differs from the defaults:
+#   - Traefik ingress (RKE2 ships Traefik, not nginx)
+#   - Longhorn distributed storage for persistence
+#   - No CNPG / KEDA / cert-manager operators installed on this cluster
+#     (StatefulSet Postgres + manually-provisioned TLS secrets are used instead)
+#   - In-cluster registry at druppie-registry.rijnland.dev/druppie
+#
+# All MCP modules stay at their base default (enabled: true) — do not list them here.
+#
+# IMPORTANT — domain MUST stay a single label under rijnland.dev (i.e.
+# "druppie.rijnland.dev", never "foo.druppie.rijnland.dev"). The cluster wildcard
+# TLS cert is *.rijnland.dev, which only matches single-label hosts.
+#
+# Prerequisite secret (must already exist in the druppie namespace):
+#   - druppie-tls : kubernetes.io/tls secret holding a copy of the cluster
+#                   *.rijnland.dev wildcard certificate + key.
+#
+# Usage:
+#   helm upgrade --install druppie ./helm/druppie -n druppie \
+#     -f helm/druppie/values.yaml \
+#     -f helm/druppie/values-rijnland.yaml
+
+global:
+  imageRegistry: druppie-registry.rijnland.dev/druppie
+  domain: druppie.rijnland.dev
+  ingress:
+    enabled: true
+    className: traefik
+    tls:
+      enabled: true
+      secretName: druppie-tls
+
+persistence:
+  storageClass: longhorn-distributed
+  # NOTE: Longhorn RWX is unavailable here (worker nodes lack nfs-common / mount.nfs),
+  # so shared PVCs stay ReadWriteOnce and their consumers are co-located on one node
+  # via nodeSelector below. Leaving persistence.rwx at its default (false).
+
+nfs:
+  enabled: false
+
+cnpg:
+  enabled: false
+
+keda:
+  enabled: false
+
+certManager:
+  enabled: false
+
+sandbox:
+  image: busybox:latest
+
+init:
+  enabled: true
+
+# Longhorn RWX is unavailable on this cluster, so the shared PVCs stay ReadWriteOnce.
+# RWO only allows multiple pods on the SAME node, so every module that mounts a shared
+# PVC — workspace (coding/docker/archimate/data_access) and dataset (filesearch/web) —
+# plus the backend must co-locate on one node. Pin them all to the chosen node below.
+# dockerSocket stays disabled (containerd).
+backend:
+  nodeSelector:
+    kubernetes.io/hostname: ka-k8s-ai-workers-skbh7-6gpg2
+
+modules:
+  coding:
+    nodeSelector:
+      kubernetes.io/hostname: ka-k8s-ai-workers-skbh7-6gpg2
+  docker:
+    nodeSelector:
+      kubernetes.io/hostname: ka-k8s-ai-workers-skbh7-6gpg2
+  archimate:
+    nodeSelector:
+      kubernetes.io/hostname: ka-k8s-ai-workers-skbh7-6gpg2
+  data_access:
+    nodeSelector:
+      kubernetes.io/hostname: ka-k8s-ai-workers-skbh7-6gpg2
+  filesearch:
+    nodeSelector:
+      kubernetes.io/hostname: ka-k8s-ai-workers-skbh7-6gpg2
+  web:
+    nodeSelector:
+      kubernetes.io/hostname: ka-k8s-ai-workers-skbh7-6gpg2

@@ -20,6 +20,10 @@ spec:
       annotations:
         cluster-autoscaler.kubernetes.io/safe-to-evict: "true"
     spec:
+      {{- if .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml .Values.global.imagePullSecrets | nindent 8 }}
+      {{- end }}
       initContainers:
         - name: wait-for-gitea
           image: curlimages/curl:latest
@@ -83,8 +87,13 @@ spec:
             failureThreshold: 5
           resources:
             {{- toYaml .Values.modules.coding.resources | nindent 12 }}
+      {{- with .Values.modules.coding.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- else }}
       nodeSelector:
         pool: infra
+      {{- end }}
       volumes:
         - name: workspace
           persistentVolumeClaim:

@@ -1,0 +1,86 @@
+# Druppie Platform - Helm Values Override: per-branch environment (rijnland.dev)
+# =============================================================================
+#
+# Layer this on TOP of values.yaml + values-rijnland.yaml to stand up an isolated
+# full-stack Druppie instance for a single git branch, in its own namespace.
+#
+# The companion script `scripts/deploy-branch-env.sh <branch>` computes the
+# namespace, host, and node pin from the branch name and applies them via --set,
+# so you do NOT need this file for the common case. Copy it to
+# `values-branch.yaml` (gitignored) only when you want to hand-tune a branch env
+# or pull images from a different registry/tag.
+#
+# Example below targets branch `colab-dev`:
+#   helm upgrade --install druppie ./helm/druppie -n druppie-colab-dev --create-namespace \
+#     -f helm/druppie/values.yaml \
+#     -f helm/druppie/values-rijnland.yaml \
+#     -f helm/druppie/values-branch.yaml \
+#     --set global.instance=druppie-colab-dev
+
+global:
+  # Unique instance name => unique resource names, INCLUDING the cluster-scoped
+  # `<instance>-kubernetes-readonly` ClusterRole/ClusterRoleBinding. MUST differ
+  # from the live `druppie` instance or `helm uninstall` would delete shared
+  # cluster RBAC. Keep it equal to the namespace (druppie-<branch>).
+  instance: druppie-colab-dev
+
+  # Host for this branch env. MUST stay a single label under rijnland.dev so it
+  # matches the *.rijnland.dev wildcard cert (copied into the namespace by the script).
+  domain: druppie-colab-dev.rijnland.dev
+
+  # Images are pulled from Harbor on this cluster. The deploy script copies the
+  # `harbor-regcred` pull secret into the branch namespace automatically.
+  imageRegistry: harbor.rijnland.dev/druppie
+  imagePullSecrets:
+    - name: harbor-regcred
+
+# NOTE: Branch envs are reached via Traefik ingress, so the externally-exposed
+# services (backend/frontend/keycloak/gitea) use ClusterIP instead of NodePort to
+# avoid colliding with the live instance over the cluster-global NodePort range.
+# The deploy script sets these automatically via --set:
+#   --set backend.service.type=ClusterIP   --set frontend.service.type=ClusterIP
+#   --set keycloak.service.type=ClusterIP  --set gitea.service.type=ClusterIP
+# Uncomment below only if hand-tuning a branch without the script:
+# backend:
+#   service:
+#     type: ClusterIP
+# frontend:
+#   service:
+#     type: ClusterIP
+# keycloak:
+#   service:
+#     type: ClusterIP
+# gitea:
+#   service:
+#     type: ClusterIP
+
+# Pin this instance to ONE worker node. Shared PVCs are ReadWriteOnce on this
+# cluster (Longhorn RWX unavailable), so the backend + every module that mounts a
+# shared PVC must co-locate. Use a DIFFERENT node than the live `druppie` instance
+# (which pins to ka-k8s-ai-workers-skbh7-6gpg2) to avoid resource contention.
+backend:
+  nodeSelector:
+    kubernetes.io/hostname: ka-k8s-ai-workers-skbh7-d4qwl
+  # Pin all branch images to a branch-specific tag if CI publishes one:
+  # image:
+  #   tag: colab-dev
+
+modules:
+  coding:
+    nodeSelector:
+      kubernetes.io/hostname: ka-k8s-ai-workers-skbh7-d4qwl
+  docker:
+    nodeSelector:
+      kubernetes.io/hostname: ka-k8s-ai-workers-skbh7-d4qwl
+  archimate:
+    nodeSelector:
+      kubernetes.io/hostname: ka-k8s-ai-workers-skbh7-d4qwl
+  data_access:
+    nodeSelector:
+      kubernetes.io/hostname: ka-k8s-ai-workers-skbh7-d4qwl
+  filesearch:
+    nodeSelector:
+      kubernetes.io/hostname: ka-k8s-ai-workers-skbh7-d4qwl
+  web:
+    nodeSelector:
+      kubernetes.io/hostname: ka-k8s-ai-workers-skbh7-d4qwl

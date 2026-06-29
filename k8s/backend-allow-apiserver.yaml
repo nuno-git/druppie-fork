@@ -1,0 +1,25 @@
+---
+# NetworkPolicy: allow backend pod to reach Kubernetes API server
+# The kube API (10.43.0.1:443) DNATs to node IP:6443 — standard egress rules
+# only allow port 443/80 to public IPs, missing port 6443 post-DNAT.
+# Applied standalone: kubectl apply -f k8s/backend-allow-apiserver.yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: backend-allow-apiserver
+  namespace: druppie
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: backend
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
+        - protocol: TCP
+          port: 6443
+        - protocol: TCP
+          port: 443

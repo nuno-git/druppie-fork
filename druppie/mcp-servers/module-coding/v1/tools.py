@@ -168,15 +168,34 @@ SANDBOX_PIDS_LIMIT = int(os.getenv("DRUPPIE_DOCKER_PIDS_LIMIT", "32768"))
 SANDBOX_NETWORK = os.getenv("DRUPPIE_SANDBOX_NETWORK", "bridge")
 SANDBOX_INET_NETWORK = os.getenv("DRUPPIE_SANDBOX_INET_NETWORK", "")
 SANDBOX_MODULES_NETWORK = os.getenv("DRUPPIE_SANDBOX_MODULES_NETWORK", "")
+
+# Sandbox mode: "docker" (local dev) or "k8s" (production with agent-sandbox CRD).
+# In k8s mode, sandboxes are managed by the agent-sandbox controller with gVisor.
+SANDBOX_MODE = os.getenv("DRUPPIE_SANDBOX_MODE", "docker")
+
+# Docker-specific config (only used when SANDBOX_MODE == "docker")
 SANDBOX_RUNTIME = os.getenv("DRUPPIE_SANDBOX_RUNTIME", "sysbox-runc")
 _ALLOWED_RUNTIMES = {"sysbox-runc", "kata-runtime"}
-assert SANDBOX_RUNTIME in _ALLOWED_RUNTIMES, (
-    f"Invalid DRUPPIE_SANDBOX_RUNTIME={SANDBOX_RUNTIME!r}. "
-    f"Must be one of {_ALLOWED_RUNTIMES}. "
-    f"Install sysbox-runc: https://github.com/nestybox/sysbox"
-)
+if SANDBOX_MODE == "docker":
+    assert SANDBOX_RUNTIME in _ALLOWED_RUNTIMES, (
+        f"Invalid DRUPPIE_SANDBOX_RUNTIME={SANDBOX_RUNTIME!r}. "
+        f"Must be one of {_ALLOWED_RUNTIMES}. "
+        f"Or set DRUPPIE_SANDBOX_MODE=k8s to use agent-sandbox."
+    )
 SANDBOX_CACHE_VOLUME = os.getenv("DRUPPIE_SANDBOX_CACHE_VOLUME", "sandbox_dep_cache")
 SANDBOX_USER = os.getenv("DRUPPIE_SANDBOX_USER", "druppie")
+
+# K8s sandbox manager (initialized lazily when SANDBOX_MODE == "k8s")
+_k8s_manager = None
+
+
+def _get_k8s_manager():
+    """Lazily initialize the K8s sandbox manager."""
+    global _k8s_manager
+    if _k8s_manager is None:
+        from druppie.core.k8s_sandbox import K8sSandboxManager
+        _k8s_manager = K8sSandboxManager()
+    return _k8s_manager
 
 # Sandbox container registry
 # Key: "{session_id}::{git_scope}"
@@ -275,13 +294,33 @@ async def _docker_run(cmd: list[str], timeout: float = 120) -> tuple[int, str, s
 async def _exec_in_container(
     container_id: str, command: list[str], timeout: float = 120
 ) -> tuple[int, str, str]:
+    if SANDBOX_MODE == "k8s":
+        entry = _find_entry_by_container_id(container_id)
+        if entry and entry.get("_k8s_handle"):
+            return await _get_k8s_manager().exec(entry["_k8s_handle"], command, timeout=int(timeout))
     full_cmd = ["docker", "exec", container_id, *command]
     return await _docker_run(full_cmd, timeout=timeout)
+
+
+def _find_entry_by_container_id(container_id: str) -> dict | None:
+    """Find a sandbox_containers entry by container_id or container_name."""
+    for entry in sandbox_containers.values():
+        if entry.get("container_id") == container_id or entry.get("container_name") == container_id:
+            return entry
+    return None
 
 
 async def _exec_bash_in_container(
     container_id: str, command: str, timeout: float = 120, output_file: str | None = None
 ) -> tuple[int, str, str]:
+    if SANDBOX_MODE == "k8s":
+        entry = _find_entry_by_container_id(container_id)
+        if entry and entry.get("_k8s_handle"):
+            full_cmd = command
+            if output_file:
+                full_cmd = f"set -o pipefail; ({command}) 2>&1 | tee {shlex.quote(output_file)}"
+            return await _get_k8s_manager().exec(entry["_k8s_handle"], ["bash", "-c", full_cmd], timeout=int(timeout))
+
     if output_file:
         wrapped = f"set -o pipefail; ({command}) 2>&1 | tee {shlex.quote(output_file)}"
     else:
@@ -304,6 +343,11 @@ async def _exec_bash_in_container(
 async def _write_to_container(
     container_id: str, container_path: str, content: str
 ) -> tuple[int, str]:
+    if SANDBOX_MODE == "k8s":
+        entry = _find_entry_by_container_id(container_id)
+        if entry and entry.get("_k8s_handle"):
+            await _get_k8s_manager().write_file(entry["_k8s_handle"], container_path, content)
+            return 0, ""
     proc = await asyncio.create_subprocess_exec(
         "docker", "exec", "-i", container_id,
         "sh", "-c", f"cat > {shlex.quote(container_path)}",
@@ -342,6 +386,11 @@ async def _copy_from_container(
 
 
 async def _is_container_running(container_id: str) -> bool:
+    if SANDBOX_MODE == "k8s":
+        entry = _find_entry_by_container_id(container_id)
+        if entry and entry.get("_k8s_handle"):
+            return await _get_k8s_manager().is_alive(entry["_k8s_handle"])
+        return False
     rc, stdout, _ = await _docker_run(
         ["docker", "inspect", "--format", "{{.State.Running}}", container_id],
         timeout=10,
@@ -442,6 +491,47 @@ async def _create_sandbox_container(
     Returns:
         Container name (used as identifier for docker exec).
     """
+    # ── K8s mode: use agent-sandbox SDK ──────────────────────────────────
+    if SANDBOX_MODE == "k8s":
+        scope = git_scope or "current_project"
+        clone_url = None
+        branch = "main"
+        if scope == "current_project" and repo_name:
+            clone_url = _get_gitea_clone_url(repo_name, repo_owner)
+        elif scope == "update_core":
+            core_url = DRUPPIE_CORE_REPO_URL or "https://github.com/nuno-git/druppie-fork.git"
+            token = _get_github_token()
+            if token and core_url.startswith("https://github.com"):
+                clone_url = core_url.replace("https://", f"https://x-access-token:{token}@")
+            else:
+                clone_url = core_url
+            branch = DRUPPIE_CORE_REPO_BRANCH
+
+        manager = _get_k8s_manager()
+        handle = await manager.create(
+            session_id=session_id,
+            git_scope=scope,
+            repo_clone_url=clone_url,
+            branch=branch,
+        )
+
+        key = f"{session_id}::{scope}"
+        sandbox_containers[key] = {
+            "container_name": handle.sandbox_id,
+            "container_id": handle.sandbox_id,
+            "git_scope": scope,
+            "session_id": session_id,
+            "branch": branch,
+            "created_at": handle.created_at,
+            "repo_name": repo_name,
+            "repo_owner": repo_owner or GITEA_ORG,
+            "_k8s_handle": handle,
+        }
+        logger.info("K8s sandbox created: %s (session=%s, scope=%s)",
+                     handle.sandbox_id, session_id, scope)
+        return handle.sandbox_id
+
+    # ── Docker mode: existing Docker CLI code ────────────────────────────
     scope = git_scope or "current_project"
     short_session = session_id[:12] if session_id else "unknown"
     container_name = f"druppie-{short_session}-{scope}"
@@ -783,6 +873,17 @@ async def _destroy_container(session_id: str, git_scope: str) -> None:
         return
 
     container_name = entry["container_name"]
+
+    # K8s mode: terminate the sandbox via the SDK
+    if SANDBOX_MODE == "k8s" and entry.get("_k8s_handle"):
+        try:
+            await _get_k8s_manager().destroy(entry["_k8s_handle"])
+            logger.info("Destroyed K8s sandbox: %s", container_name)
+        except Exception as e:
+            logger.warning("Failed to destroy K8s sandbox %s: %s", container_name, e)
+        return
+
+    # Docker mode
     try:
         await _docker_run(["docker", "stop", container_name], timeout=15)
         await _docker_run(["docker", "rm", "-f", container_name], timeout=15)

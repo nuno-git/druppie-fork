@@ -4,41 +4,29 @@ AI agent governance platform with MCP tool permissions and approval workflows.
 
 ## Quick Start
 
-### Prerequisites
+### Prerequisites (k3s)
+k3s + Docker + Helm required.
 
-Druppie runs agent code inside isolated sandbox containers using the **sysbox** runtime
-(default `DRUPPIE_SANDBOX_RUNTIME` is `sysbox-runc`). Install it on the Docker host first:
-
-- https://github.com/nestybox/sysbox
-
-Without sysbox-runc installed, the coding sandbox will fail to start.
-
+### Quick Start
 ```bash
-# 1. Clone (--recursive pulls in the sandbox submodule)
-git clone --recursive <repo-url>
-cd druppie-fork
+# 1. Clone
+git clone --recursive <repo-url> && cd druppie-fork
 
-# 2. Configure environment
+# 2. Configure
 cp .env.example .env
-# Edit .env and add your LLM API key (ZAI_API_KEY or DEEPINFRA_API_KEY)
 
-# 3. Start (first time includes --profile init)
-docker compose --profile dev --profile init up -d --build
+# 3. Deploy on k3s (see docs/K3S-DEV-SETUP.md for full guide)
+sudo ./scripts/setup-harbor-k8s.sh
+helm upgrade --install druppie ./helm/druppie -n druppie --create-namespace
+kubectl apply -f k8s/guacamole.yaml
 
 # 4. Open the app
-open http://localhost:5273
+open http://localhost:30001
 ```
-
-First startup takes a few minutes to build images and initialize services.
 
 > **Already cloned without `--recursive`?** Run: `git submodule update --init`
 
-## Daily Usage
-
-```bash
-docker compose --profile dev up -d    # Start
-docker compose --profile dev down     # Stop
-```
+> **Note:** Docker-compose is deprecated. See docs/K3S-DEV-SETUP.md.
 
 ## Commands
 
@@ -153,11 +141,10 @@ docker compose --profile dev --profile init up -d
 
 | Service | URL | Login |
 |---------|-----|-------|
-| Frontend | http://localhost:5273 | Test users below |
-| API Docs | http://localhost:8100/docs | - |
-| Keycloak Admin | http://localhost:8180 | admin / admin |
-| Gitea | http://localhost:3100 | gitea_admin / GiteaAdmin123 |
-| Adminer (DB) | http://localhost:8081 | druppie / druppie_secret |
+| Frontend | http://localhost:30001 | Test users below |
+| API Docs | http://localhost:30000/docs | - |
+| Keycloak Admin | http://localhost:30002 | admin / admin |
+| Gitea | http://localhost:30003 | gitea_admin / GiteaAdmin123 |
 
 ## Test Users
 
@@ -217,13 +204,13 @@ The `update_core` flow lets Druppie modify its own codebase via PRs on GitHub. I
 
 ## Custom Ports
 
-Edit `.env` if default ports conflict:
+Edit `.env` if default NodePorts conflict:
 
 ```bash
-BACKEND_PORT=8200
-FRONTEND_PORT=5274
-KEYCLOAK_PORT=8181
-GITEA_PORT=3101
+BACKEND_PORT=30000
+FRONTEND_PORT=30001
+KEYCLOAK_PORT=30002
+GITEA_PORT=30003
 ```
 
 ## Documentation

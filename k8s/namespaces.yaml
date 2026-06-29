@@ -1,0 +1,97 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: druppie-prod
+  labels:
+    app.kubernetes.io/part-of: druppie
+    environment: production
+    # Pod Security Admission. enforce stays "privileged" (non-blocking) because
+    # Phase-1 workloads in this namespace legitimately need privileged/hostPath
+    # plumbing (docker-installer DaemonSet, nfs-server, and the docker.sock
+    # mounts on backend/module-docker/module-coding). audit/warn=baseline
+    # surfaces every violation that must be cleared before the enforce level can
+    # be ratcheted to baseline -> restricted as the native-K8s migration removes
+    # the docker-socket dependency.
+    pod-security.kubernetes.io/enforce: privileged
+    pod-security.kubernetes.io/enforce-version: latest
+    pod-security.kubernetes.io/audit: baseline
+    pod-security.kubernetes.io/audit-version: latest
+    pod-security.kubernetes.io/warn: baseline
+    pod-security.kubernetes.io/warn-version: latest
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: druppie-prod-quota
+  namespace: druppie-prod
+spec:
+  hard:
+    requests.cpu: "16"
+    requests.memory: 32Gi
+    limits.cpu: "32"
+    limits.memory: 48Gi
+    persistentvolumeclaims: "20"
+    pods: "50"
+---
+# Default container limits/requests so pods that omit them are not rejected by
+# the ResourceQuota above (a quota with limits.* requires every container to
+# declare limits unless a LimitRange supplies defaults).
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: druppie-prod-limits
+  namespace: druppie-prod
+spec:
+  limits:
+    - type: Container
+      default:
+        cpu: 500m
+        memory: 512Mi
+      defaultRequest:
+        cpu: 100m
+        memory: 128Mi
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: druppie-colab-dev
+  labels:
+    app.kubernetes.io/part-of: druppie
+    environment: development
+    # See druppie-prod for rationale: enforce kept at "privileged" until the
+    # docker-socket dependency is removed; audit/warn=baseline track violations.
+    pod-security.kubernetes.io/enforce: privileged
+    pod-security.kubernetes.io/enforce-version: latest
+    pod-security.kubernetes.io/audit: baseline
+    pod-security.kubernetes.io/audit-version: latest
+    pod-security.kubernetes.io/warn: baseline
+    pod-security.kubernetes.io/warn-version: latest
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: druppie-colab-dev-quota
+  namespace: druppie-colab-dev
+spec:
+  hard:
+    requests.cpu: "8"
+    requests.memory: 16Gi
+    limits.cpu: "16"
+    limits.memory: 24Gi
+    persistentvolumeclaims: "15"
+    pods: "30"
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: druppie-colab-dev-limits
+  namespace: druppie-colab-dev
+spec:
+  limits:
+    - type: Container
+      default:
+        cpu: 500m
+        memory: 512Mi
+      defaultRequest:
+        cpu: 100m
+        memory: 128Mi

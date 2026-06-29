@@ -843,6 +843,17 @@ All configuration is centralized in `values.yaml`:
 
 See `docs/kubernetes.md` for the full setup guide and troubleshooting.
 
+### Per-Branch Environments (rijnland RKE2)
+
+The helper script `scripts/deploy-branch-env.sh <branch>` brings up a full,
+isolated Druppie instance for any git branch in its own `druppie-<branch>`
+namespace on the rijnland.dev RKE2 cluster, alongside the live deployment. It
+derives the namespace, host (`druppie-<branch>.rijnland.dev`), and a dedicated
+worker-node pin from the branch name, copies the `*.rijnland.dev` wildcard TLS
+secret into the namespace, and layers these overrides on top of `values.yaml` +
+`values-rijnland.yaml` via `helm upgrade --install`. Supports `--dry-run` and
+registry/image-tag/node overrides. See `docs/K3S-DEV-SETUP.md`.
+
 ---
 
 ## Settings Page

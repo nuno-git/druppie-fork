@@ -20,6 +20,10 @@ spec:
       annotations:
         cluster-autoscaler.kubernetes.io/safe-to-evict: "true"
     spec:
+      {{- if .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml .Values.global.imagePullSecrets | nindent 8 }}
+      {{- end }}
       containers:
         - name: module-docker
           image: {{ include "druppie.image" (dict "Values" .Values "image" .Values.modules.docker.image) }}
@@ -67,8 +71,13 @@ spec:
             failureThreshold: 5
           resources:
             {{- toYaml .Values.modules.docker.resources | nindent 12 }}
+      {{- with .Values.modules.docker.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- else }}
       nodeSelector:
         pool: infra
+      {{- end }}
       volumes:
         - name: workspace
           persistentVolumeClaim:

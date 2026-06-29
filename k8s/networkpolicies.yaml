@@ -1,0 +1,178 @@
+# Namespace-level NetworkPolicy baseline (defense in depth).
+#
+# NetworkPolicies are additive: these baselines compose with the per-app
+# policies shipped by the Helm chart and hold even if a chart policy is
+# disabled. The baseline guarantees cross-namespace isolation — e.g. a pod in
+# druppie-colab-dev cannot reach the druppie-prod database (different namespace,
+# RFC1918 ClusterIP) — while still permitting same-namespace traffic, DNS, and
+# egress to external (non-cluster) endpoints.
+#
+# Per namespace:
+#   1. default-deny      — deny all ingress and egress unless explicitly allowed
+#   2. allow-same-namespace — pods may talk to other pods in the same namespace
+#   3. allow-dns         — egress to kube-dns/CoreDNS (UDP/TCP 53)
+#   4. allow-internet-egress — egress to 0.0.0.0/0:80,443 EXCEPT RFC1918, so
+#                          external APIs/registries/LLM providers work but all
+#                          in-cluster (pod/Service) IPs — including other
+#                          namespaces — are structurally unreachable.
+#
+# CIDR assumption (load-bearing for the cross-namespace guarantee): the cluster
+# pod and Service CIDRs MUST be subsets of the excepted RFC1918 ranges below.
+# This holds for RKE2/Canal defaults (pods 10.42.0.0/16, Services 10.43.0.0/16,
+# both within 10.0.0.0/8). If this cluster uses a non-RFC1918 CIDR, add it to
+# every `except:` list or the prod DB becomes reachable from other namespaces.
+#
+# CNI assumption (allow-dns): egress policy is evaluated against the destination
+# pod IP after kube-proxy DNAT (RKE2/Canal/Calico behaviour), so selecting
+# kube-dns pods by label is sufficient. On CNIs that match the pre-DNAT Service
+# ClusterIP, add an ipBlock egress rule for the kube-dns ClusterIP/32 on :53.
+
+# ---------------------------------------------------------------------------
+# druppie-prod
+# ---------------------------------------------------------------------------
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: druppie-prod
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-same-namespace
+  namespace: druppie-prod
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector: {}
+  egress:
+    - to:
+        - podSelector: {}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns
+  namespace: druppie-prod
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-internet-egress
+  namespace: druppie-prod
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+      ports:
+        - protocol: TCP
+          port: 80
+        - protocol: TCP
+          port: 443
+---
+# ---------------------------------------------------------------------------
+# druppie-colab-dev
+# ---------------------------------------------------------------------------
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: druppie-colab-dev
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-same-namespace
+  namespace: druppie-colab-dev
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector: {}
+  egress:
+    - to:
+        - podSelector: {}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns
+  namespace: druppie-colab-dev
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-internet-egress
+  namespace: druppie-colab-dev
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+      ports:
+        - protocol: TCP
+          port: 80
+        - protocol: TCP
+          port: 443

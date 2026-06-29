@@ -1,0 +1,215 @@
+# syntax=docker/dockerfile:1
+#
+# Dockerfile.dev-vm — Druppie developer workspace VM image (dev-vm-base:latest).
+#
+# A full developer workspace: Ubuntu desktop (xfce4) + code-server + SSH + xrdp
+# + a nested (DinD) local Gitea, runnable under the sysbox runtime.
+#
+# This image is RUNTIME-AGNOSTIC: nothing sysbox-specific is baked in. The
+# runtime is chosen at launch time, exactly like Dockerfile.sandbox:
+#
+#     docker run -d --runtime sysbox-runc \
+#         --network <sandbox-net> --memory 12g --cpus 4 --shm-size 2g \
+#         --tmpfs /tmp:size=4g --storage-opt size=20G \
+#         dev-vm-base:latest
+#
+# Guacamole (separate compose service) reaches this VM via RDP (:3389) or
+# SSH (:22). code-server is on :8080 and local Gitea on :3000 / :2222.
+#
+# Layer model (see docs/dev-environment-architecture.md):
+#   Layer 1 — Ubuntu 22.04 + Python 3.12 + Node 20 + Docker + desktop services
+#   Layer 2 — Dev tooling (mirrors Dockerfile.sandbox package set)
+#   Layer 3 — developer user + workspace + service configuration
+#   Layer 4 — Local Gitea bootstrap (Docker insecure-registry config)
+#   Layer 5 — Entrypoint
+#
+FROM ubuntu:22.04
+
+LABEL maintainer="druppie"
+LABEL description="Druppie developer workspace VM (code-server + SSH + xrdp + local Gitea). Launch with the sysbox runtime."
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# ===========================================================================
+# Layer 1 — Base OS + languages + Docker + desktop services
+# ===========================================================================
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        git curl wget build-essential ripgrep jq unzip \
+        software-properties-common gnupg lsb-release ca-certificates \
+        sudo vim less htop net-tools iputils-ping dnsutils \
+        iptables xz-utils gcc g++ make libpq-dev libffi-dev \
+        openssl tzdata locales \
+        openssh-server \
+        xrdp xorgxrdp xserver-xorg-core dbus-x11 \
+        xfce4 xfce4-goodies \
+    && update-alternatives --set iptables /usr/sbin/iptables-legacy \
+    && update-alternatives --set ip6tables /usr/sbin/ip6tables-legacy \
+    && ln -fs /usr/share/zoneinfo/Etc/UTC /etc/localtime \
+    && echo "Etc/UTC" > /etc/timezone \
+    && locale-gen en_US.UTF-8 \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV LANG=en_US.UTF-8 \
+    LC_ALL=en_US.UTF-8 \
+    LANGUAGE=en_US:en \
+    XDG_CONFIG_DIRS=/etc/xdg \
+    XDG_DATA_DIRS=/usr/share/xfce4:/usr/share/gnome:/usr/local/share:/usr/share
+
+# Python 3.12 via deadsnakes PPA (get-pip avoids relying on system pip)
+RUN add-apt-repository ppa:deadsnakes/ppa -y \
+    && apt-get update && apt-get install -y --no-install-recommends \
+        python3.12 python3.12-venv python3.12-dev \
+    && rm -rf /var/lib/apt/lists/* \
+    && curl -fsSL https://bootstrap.pypa.io/get-pip.py | python3.12 \
+    && ln -sf /usr/bin/python3.12 /usr/local/bin/python3 \
+    && ln -sf /usr/bin/python3.12 /usr/local/bin/python \
+    && python3 --version && pip3 --version
+
+# Node 20 via NodeSource
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get update && apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/* \
+    && node --version && npm --version
+
+# Docker CLI (static binary — mirrors Dockerfile.sandbox)
+RUN DOCKER_VERSION=20.10.24 \
+    && curl -fsSL "https://download.docker.com/linux/static/stable/x86_64/docker-${DOCKER_VERSION}.tgz" \
+        | tar xz --strip-components=1 -C /usr/bin/ \
+    && dockerd --version
+
+# Docker compose v2 plugin (the sandbox's "5.1.4" is not a real compose release;
+# 2.29.7 is a valid, stable v2)
+RUN DOCKER_COMPOSE_VERSION=2.29.7 \
+    && mkdir -p /usr/local/lib/docker/cli-plugins \
+    && curl -fsSL "https://github.com/docker/compose/releases/download/v${DOCKER_COMPOSE_VERSION}/docker-compose-linux-x86_64" \
+        -o /usr/local/lib/docker/cli-plugins/docker-compose \
+    && chmod +x /usr/local/lib/docker/cli-plugins/docker-compose \
+    && docker compose version
+
+# code-server (browser-based VS Code)
+RUN curl -fsSL https://code-server.dev/install.sh | sh \
+    && code-server --version
+
+# ===========================================================================
+# Layer 2 — Dev tooling (mirrors Dockerfile.sandbox package set)
+# ===========================================================================
+# Python tooling + common libraries (system-wide; per-branch venvs at runtime)
+RUN python3 -m pip install --no-cache-dir --upgrade pip setuptools wheel uv \
+    && python3 -m pip install --no-cache-dir --ignore-installed \
+        flask==3.1.0 gunicorn==23.0.0 sqlalchemy==2.0.36 \
+        psycopg2-binary==2.9.10 pgvector==0.3.6 "numpy>=1.24.0" \
+        python-dotenv==1.0.1 pytest httpx redis playwright
+
+# Playwright + chromium (matches sandbox)
+RUN python3 -m playwright install --with-deps chromium
+
+# JS tooling: pnpm, corepack, bun
+# NOTE: bun is installed under /opt/bun (world-readable) so the non-root
+# developer user can execute it. The sandbox installs into /root/.bun, which
+# only works because the sandbox runs everything as root.
+RUN npm install -g pnpm \
+    && corepack enable \
+    && BUN_INSTALL=/opt/bun curl -fsSL https://bun.sh/install | bash \
+    && ln -sf /opt/bun/bin/bun /usr/local/bin/bun \
+    && ln -sf /opt/bun/bin/bunx /usr/local/bin/bunx
+
+# Pre-baked React/TS node template at /opt/node-template (matches sandbox).
+# Read-only template; per-project node_modules are created at runtime.
+RUN mkdir -p /opt/node-template && cd /opt/node-template \
+    && npm init -y \
+    && npm install \
+        react@^19.0.0 react-dom@^19.0.0 react-router-dom@^7.1.0 \
+        @radix-ui/react-slot@^1.1.1 class-variance-authority@^0.7.1 \
+        clsx@^2.1.1 tailwind-merge@^3.0.0 lucide-react@^0.469.0 \
+    && npm install -D \
+        @types/node@^22.0.0 @types/react@^19.0.0 @types/react-dom@^19.0.0 \
+        @vitejs/plugin-react@^4.3.4 typescript@~5.7.0 vite@^6.0.0 \
+        autoprefixer@^10.4.20 postcss@^8.4.49 tailwindcss@^3.4.17 \
+    && npm cache clean --force
+
+ENV NODE_PATH=/opt/node-template/node_modules
+
+# ===========================================================================
+# Layer 3 — User + workspace + service configuration
+# ===========================================================================
+# Non-root developer user (uid 1000), passwordless sudo, member of the docker
+# group so it can drive the nested dockerd. Container runs as root (default) so
+# the entrypoint can bring up dockerd/sshd/xrdp; code-server drops to developer.
+RUN groupadd -g 1000 developer \
+    && useradd -m -u 1000 -g developer -s /bin/bash developer \
+    && (groupadd docker 2>/dev/null || true) \
+    && usermod -aG docker developer \
+    && echo "developer ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/developer \
+    && chmod 0440 /etc/sudoers.d/developer \
+    && echo "developer:developer" | chpasswd \
+    && mkdir -p /workspace /cache \
+    && chown developer:developer /workspace /cache
+
+# SSH: host keys + password auth + authorized_keys placeholder
+RUN ssh-keygen -A \
+    && sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config \
+    && sed -i 's/^#\?PermitRootLogin.*/PermitRootLogin no/' /etc/ssh/sshd_config \
+    && install -d -m 700 -o developer -g developer /home/developer/.ssh \
+    && touch /home/developer/.ssh/authorized_keys \
+    && chown developer:developer /home/developer/.ssh/authorized_keys \
+    && chmod 600 /home/developer/.ssh/authorized_keys
+
+# xrdp: proper startwm.sh with dbus + XDG env vars, max_bpp for Guacamole
+RUN printf '#!/bin/bash\n\
+if test -r /etc/profile; then\n\
+    . /etc/profile\n\
+fi\n\
+export XDG_CONFIG_DIRS=/etc/xdg\n\
+export XDG_DATA_DIRS=/usr/share/xfce4:/usr/share/gnome:/usr/local/share:/usr/share\n\
+export XDG_RUNTIME_DIR=/run/user/$(id -u)\n\
+mkdir -p "$XDG_RUNTIME_DIR"\n\
+chmod 700 "$XDG_RUNTIME_DIR"\n\
+exec dbus-launch --exit-with-session startxfce4\n' \
+    > /etc/xrdp/startwm.sh \
+    && chmod +x /etc/xrdp/startwm.sh \
+    && sed -i 's/^max_bpp=.*/max_bpp=24/' /etc/xrdp/xrdp.ini \
+    && sed -i '/^\[Xorg\]/,/^\[/ s/^username=.*/username=developer/' /etc/xrdp/xrdp.ini \
+    && sed -i '/^\[Xorg\]/,/^\[/ s/^password=.*/password=developer/' /etc/xrdp/xrdp.ini \
+    && sed -i 's|.*DRMDevice.*|        # DRMDevice disabled (no GPU in containers)|' /etc/X11/xrdp/xorg.conf \
+    && sed -i 's|.*DRI3.*|        Option "DRI3" "0"|' /etc/X11/xrdp/xorg.conf \
+    && sed -i 's|Load "glx"|#Load "glx"|' /etc/X11/xrdp/xorg.conf \
+    && mkdir -p /run/xrdp /run/user/1000 \
+    && chown developer:developer /run/user/1000
+
+# code-server default config: bind 0.0.0.0:8080, no auth (behind Guacamole)
+RUN install -d -m 755 -o developer -g developer /home/developer/.config/code-server \
+    && printf 'bind-addr: 0.0.0.0:8080\nauth: none\ntelemetry: off\n' \
+        > /home/developer/.config/code-server/config.yaml \
+    && chown -R developer:developer /home/developer/.config/code-server
+
+# ===========================================================================
+# Layer 4 — Local Gitea bootstrap (Docker insecure-registry config)
+# ===========================================================================
+# Default dockerd config: Harbor insecure registry. The entrypoint recreates it
+# (idempotently) before starting dockerd, so this is just a sane baked default.
+RUN mkdir -p /etc/docker \
+    && printf '{\n  "insecure-registries": ["harbor.local:8181", "localhost:8181", "harbor.local:5000", "localhost:5000"]\n}\n' \
+        > /etc/docker/daemon.json
+
+# ===========================================================================
+# Layer 5 — Entrypoint
+# ===========================================================================
+COPY module-coding/dev-vm-entrypoint.sh /usr/local/bin/dev-vm-entrypoint.sh
+RUN chmod +x /usr/local/bin/dev-vm-entrypoint.sh
+
+# Per-user cache directories (shared /cache volume; created by entrypoint).
+# Declared at the end so they only affect runtime, not the install layers above.
+ENV UV_CACHE_DIR=/cache/uv \
+    PIP_CACHE_DIR=/cache/pip \
+    NPM_CONFIG_CACHE=/cache/npm \
+    PNPM_HOME=/cache/pnpm \
+    YARN_CACHE_FOLDER=/cache/yarn \
+    BUN_INSTALL_CACHE_DIR=/cache/bun
+
+WORKDIR /workspace
+
+# sshd:22  gitea-ssh:2222  gitea-web:3000  xrdp:3389  code-server:8080
+EXPOSE 22 2222 3000 3389 8080
+
+ENTRYPOINT ["/usr/local/bin/dev-vm-entrypoint.sh"]
+CMD []

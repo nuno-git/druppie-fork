@@ -55,6 +55,9 @@ secrets
 # Helm secrets (contains API keys — use .example.yaml as template)
 helm/druppie/values-local.secrets.yaml
 helm/druppie/values-hetzner.secrets.yaml
+helm/druppie/values-*.secrets.yaml
+# Hand-tuned per-branch env overlay (see values-branch.example.yaml)
+helm/druppie/values-branch.yaml
 
 # Local config
 .druppie/
@@ -87,3 +90,4 @@ testing/autoscaling/results/*.jpg
 testing/autoscaling/results/*.jpeg
 .omo/
 .claude/
+cicd/act-runner/data/

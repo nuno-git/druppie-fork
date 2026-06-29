@@ -1,0 +1,40 @@
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: druppie-prod
+value: 10000
+description: "Production workloads — always scheduled, never evicted"
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: druppie-colab-dev
+value: 8000
+description: "Colab-dev environment — high priority but below prod"
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: druppie-ci
+value: 3000
+description: "CI/CD runners"
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: druppie-dev-vm
+value: 1000
+description: "Developer VMs — low priority, evicted under pressure (PVC preserved)"
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: druppie-agent
+value: 500
+description: "Agent sandboxes — lowest priority, ephemeral"
+---
+apiVersion: node.k8s.io/v1
+kind: RuntimeClass
+metadata:
+  name: sysbox
+handler: sysbox-runc

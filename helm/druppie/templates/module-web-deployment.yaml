@@ -18,6 +18,10 @@ spec:
         {{- include "druppie.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: module-web
     spec:
+      {{- if .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml .Values.global.imagePullSecrets | nindent 8 }}
+      {{- end }}
       containers:
         - name: module-web
           image: {{ include "druppie.image" (dict "Values" .Values "image" .Values.modules.web.image) }}
@@ -52,6 +56,10 @@ spec:
             failureThreshold: 5
           resources:
             {{- toYaml .Values.modules.web.resources | nindent 12 }}
+      {{- with .Values.modules.web.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       volumes:
         - name: dataset
           persistentVolumeClaim:

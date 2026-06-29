@@ -1,0 +1,250 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: remote-access
+---
+# OIDC / URL configuration for Guacamole. Single source of truth for the
+# external (browser-facing) and internal (in-cluster) hostnames so the OIDC
+# authorization endpoint, issuer and redirect URI stay consistent — a mismatch
+# between the issuer and what Keycloak puts in the token `iss` claim breaks
+# login. Defaults below match the local NodePort setup; for a remote cluster
+# set these to the real external hostnames (e.g. https://keycloak.example.tld).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: guacamole-config
+  namespace: remote-access
+data:
+  # Browser-facing Keycloak base URL. MUST equal Keycloak's frontend URL so the
+  # token `iss` matches OPENID_ISSUER below.
+  KEYCLOAK_EXTERNAL_URL: "http://localhost:30002"
+  # In-cluster Keycloak base URL for server-side JWKS fetch (no browser).
+  KEYCLOAK_INTERNAL_URL: "http://druppie-keycloak.druppie.svc.cluster.local:8080"
+  # Browser-facing Guacamole base URL (used for the OIDC redirect URI).
+  GUACAMOLE_EXTERNAL_URL: "http://localhost:30020"
+---
+# Guacamole DB password — synced from Vault (secret/remote-access/guac-db,
+# seeded with a generated value by k8s/vault-setup.sh). Requires Vault + ESO to
+# be installed first (run vault-setup.sh before applying this manifest).
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: guac-db
+  namespace: remote-access
+spec:
+  # Short interval so the secret syncs quickly if Vault/ESO came up after this
+  # manifest was applied (avoids a long CreateContainerConfigError window).
+  refreshInterval: 1m
+  secretStoreRef:
+    name: vault-backend
+    kind: ClusterSecretStore
+  target:
+    name: guac-db
+    creationPolicy: Owner
+  data:
+    - secretKey: password
+      remoteRef:
+        key: remote-access/guac-db
+        property: password
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: guac-postgres
+  namespace: remote-access
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: guac-postgres
+  template:
+    metadata:
+      labels:
+        app: guac-postgres
+    spec:
+      containers:
+      - name: postgres
+        image: postgres:15-alpine
+        env:
+        - name: POSTGRES_DB
+          value: guacamole_db
+        - name: POSTGRES_USER
+          value: guacamole_user
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: guac-db
+              key: password
+        ports:
+        - containerPort: 5432
+        readinessProbe:
+          tcpSocket:
+            port: 5432
+          initialDelaySeconds: 5
+          periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: guac-postgres
+  namespace: remote-access
+spec:
+  selector:
+    app: guac-postgres
+  ports:
+  - port: 5432
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: guacd
+  namespace: remote-access
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: guacd
+  template:
+    metadata:
+      labels:
+        app: guacd
+    spec:
+      containers:
+      - name: guacd
+        image: guacamole/guacd:1.5.5
+        ports:
+        - containerPort: 4822
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: guacd
+  namespace: remote-access
+spec:
+  selector:
+    app: guacd
+  ports:
+  - port: 4822
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: guacamole
+  namespace: remote-access
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: guacamole
+  template:
+    metadata:
+      labels:
+        app: guacamole
+    spec:
+      initContainers:
+      - name: install-oidc
+        image: guacamole/guacamole:1.5.5
+        env:
+        # Pinned SHA256 of guacamole-auth-sso-1.5.5.tar.gz (Apache published
+        # checksum). The download is verified before extraction; a mismatch
+        # fails the init container so a tampered/corrupt artifact never runs.
+        - name: SSO_SHA256
+          value: "b0ef76d3e661f95c2dbe46a17a9ce8a1b8d4100727458fa55e0635a85d37add8"
+        command:
+        - sh
+        - -euc
+        - |
+          mkdir -p /guac-extensions/openid
+          # Use the immutable archive (downloads.apache.org drops old releases).
+          curl -fsSL "https://archive.apache.org/dist/guacamole/1.5.5/binary/guacamole-auth-sso-1.5.5.tar.gz" -o /tmp/sso.tar.gz
+          echo "${SSO_SHA256}  /tmp/sso.tar.gz" | sha256sum -c -
+          tar xzf /tmp/sso.tar.gz -C /tmp/
+          cp /tmp/guacamole-auth-sso-1.5.5/openid/guacamole-auth-sso-openid-1.5.5.jar /guac-extensions/openid/
+        volumeMounts:
+        - name: guac-extensions
+          mountPath: /guac-extensions
+      containers:
+      - name: guacamole
+        image: guacamole/guacamole:1.5.5
+        env:
+        - name: POSTGRESQL_HOSTNAME
+          value: guac-postgres
+        - name: POSTGRESQL_PORT
+          value: "5432"
+        - name: POSTGRESQL_DATABASE
+          value: guacamole_db
+        - name: POSTGRESQL_USER
+          value: guacamole_user
+        - name: POSTGRESQL_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: guac-db
+              key: password
+        - name: POSTGRESQL_AUTO_CREATE_ACCOUNTS
+          value: "true"
+        - name: GUACD_HOSTNAME
+          value: guacd
+        - name: GUACD_PORT
+          value: "4822"
+        # Base URLs sourced from the guacamole-config ConfigMap. Declared before
+        # the OPENID_* vars so Kubernetes $(VAR) expansion can reference them.
+        - name: KEYCLOAK_EXTERNAL_URL
+          valueFrom:
+            configMapKeyRef:
+              name: guacamole-config
+              key: KEYCLOAK_EXTERNAL_URL
+        - name: KEYCLOAK_INTERNAL_URL
+          valueFrom:
+            configMapKeyRef:
+              name: guacamole-config
+              key: KEYCLOAK_INTERNAL_URL
+        - name: GUACAMOLE_EXTERNAL_URL
+          valueFrom:
+            configMapKeyRef:
+              name: guacamole-config
+              key: GUACAMOLE_EXTERNAL_URL
+        # Authorization + issuer share KEYCLOAK_EXTERNAL_URL so the issuer always
+        # matches the token `iss`. JWKS is fetched server-side via the in-cluster
+        # URL. Redirect points back to the external Guacamole URL.
+        - name: OPENID_AUTHORIZATION_ENDPOINT
+          value: $(KEYCLOAK_EXTERNAL_URL)/realms/druppie/protocol/openid-connect/auth
+        - name: OPENID_JWKS_ENDPOINT
+          value: $(KEYCLOAK_INTERNAL_URL)/realms/druppie/protocol/openid-connect/certs
+        - name: OPENID_ISSUER
+          value: $(KEYCLOAK_EXTERNAL_URL)/realms/druppie
+        - name: OPENID_CLIENT_ID
+          value: guacamole
+        - name: OPENID_REDIRECT_URI
+          value: $(GUACAMOLE_EXTERNAL_URL)/guacamole/
+        - name: OPENID_USERNAME_CLAIM_TYPE
+          value: preferred_username
+        - name: OPENID_GROUPS_CLAIM_TYPE
+          value: roles
+        volumeMounts:
+        - name: guac-extensions
+          mountPath: /opt/guacamole/openid
+          subPath: openid
+        ports:
+        - containerPort: 8080
+        readinessProbe:
+          httpGet:
+            path: /guacamole/
+            port: 8080
+          initialDelaySeconds: 15
+          periodSeconds: 5
+      volumes:
+      - name: guac-extensions
+        emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: guacamole
+  namespace: remote-access
+spec:
+  type: NodePort
+  selector:
+    app: guacamole
+  ports:
+  - port: 8080
+    nodePort: 30020

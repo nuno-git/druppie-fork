@@ -82,8 +82,56 @@ def _find_compose_container(service_name: str) -> str | None:
         return None
 
 
+def _get_pod_namespace() -> str:
+    """Resolve the current namespace from the service account, env, or default."""
+    ns_file = "/var/run/secrets/kubernetes.io/serviceaccount/namespace"
+    try:
+        with open(ns_file) as f:
+            ns = f.read().strip()
+            if ns:
+                return ns
+    except Exception:
+        pass
+    return os.getenv("POD_NAMESPACE", "druppie")
+
+
+def _find_gitea_pod(namespace: str) -> str | None:
+    try:
+        result = subprocess.run(
+            ["kubectl", "get", "pod", "-n", namespace,
+             "-l", "app.kubernetes.io/component=gitea",
+             "-o", "jsonpath={.items[0].metadata.name}"],
+            capture_output=True, text=True, timeout=10,
+        )
+        pod = result.stdout.strip()
+        return pod or None
+    except Exception:
+        return None
+
+
+def _run_gitea_cli_k8s(args: list) -> tuple[bool, str, str]:
+    """Run Gitea CLI via kubectl exec (gitea image already runs as git)."""
+    namespace = _get_pod_namespace()
+    pod = _find_gitea_pod(namespace)
+    if not pod:
+        return False, "", f"Gitea pod not found in namespace '{namespace}'"
+    try:
+        result = subprocess.run(
+            ["kubectl", "exec", "-n", namespace, pod, "--", "gitea"] + args,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        return result.returncode == 0, result.stdout, result.stderr
+    except Exception as e:
+        return False, "", str(e)
+
+
 def run_gitea_cli(args: list) -> tuple[bool, str, str]:
-    """Run Gitea CLI command inside container as git user."""
+    """Run Gitea CLI command inside the gitea container/pod as the git user."""
+    if os.getenv("KUBERNETES_SERVICE_HOST"):
+        return _run_gitea_cli_k8s(args)
+
     container = _find_compose_container("gitea")
     if not container:
         return False, "", "Gitea container not found (no compose container with service=gitea)"
