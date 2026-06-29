@@ -69,9 +69,15 @@ jobs:
           for module in module-coding module-docker module-web module-vision \
                         module-archimate module-data-access module-registry \
                         module-filesearch module-kubernetes module-llm; do
-            if [ -d "./druppie/mcp-servers/$module" ] && [ -f "./druppie/mcp-servers/$module/Dockerfile" ]; then
-              echo "Building $module..."
-              docker build -t "$REGISTRY/druppie/druppie-$module:$TAG" "./druppie/mcp-servers/$module"
+            DF="./druppie/mcp-servers/$module/Dockerfile"
+            if [ -f "$DF" ]; then
+              if grep -q "^COPY mcp-servers/" "$DF"; then
+                CONTEXT="."
+              else
+                CONTEXT="./druppie/mcp-servers/"
+              fi
+              echo "Building $module (context=$CONTEXT)..."
+              docker build -t "$REGISTRY/druppie/druppie-$module:$TAG" -f "$DF" "$CONTEXT"
               docker tag  "$REGISTRY/druppie/druppie-$module:$TAG" "$REGISTRY/druppie/druppie-$module:latest"
               docker push --all-tags "$REGISTRY/druppie/druppie-$module"
             fi
