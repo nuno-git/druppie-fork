@@ -541,6 +541,28 @@ const MessageItem = ({ message, agentRun, sessionId }) => {
               {message.content}
             </ReactMarkdown>
           </div>
+          {(message.attachments || []).length > 0 && (
+            <div className="pl-8 mt-2 flex flex-wrap gap-1.5">
+              {message.attachments.map((att) => {
+                const Icon = att.content_type === 'application/pdf' ? FileType : FileText
+                return (
+                  <button
+                    key={att.id}
+                    type="button"
+                    onClick={() => {
+                      if (window.confirm(`Download "${att.original_filename}"?`)) {
+                        window.open(getAttachmentUrl(att.id), '_blank')
+                      }
+                    }}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-white/60 rounded-lg text-xs text-gray-600 hover:bg-white transition-colors cursor-pointer"
+                  >
+                    <Icon className="w-3.5 h-3.5 text-gray-400" />
+                    <span className="truncate max-w-[120px]">{att.original_filename}</span>
+                  </button>
+                )
+              })}
+            </div>
+          )}
         </div>
         {surfacedApprovals.length > 0 && (
           <div className="mt-3 space-y-3">

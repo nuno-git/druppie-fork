@@ -56,7 +56,8 @@ class DocumentFormatterService:
             )
 
     def _render_diagrams(
-        self, content: str, tmpdir: Path
+        self, content: str, tmpdir: Path,
+        archimate_base_path: Path | None = None,
     ) -> list[tuple[str, str]]:
         """Split markdown into segments and render diagram blocks.
 
@@ -103,6 +104,7 @@ class DocumentFormatterService:
                 self._render_archimate(
                     source, diagrams_dir, diagram_counter, segments,
                     has_archimate_ssr, node_bin, archimate_ssr,
+                    archimate_base_path,
                 )
 
             diagram_counter += 1
@@ -148,7 +150,8 @@ class DocumentFormatterService:
     def _render_archimate(
         self, source: str, out_dir: Path, counter: int,
         segments: list[tuple[str, str]],
-        has_ssr: bool, node_bin: str | None, ssr_script: Path
+        has_ssr: bool, node_bin: str | None, ssr_script: Path,
+        archimate_base_path: Path | None = None,
     ) -> None:
         # Parse spec (view-id + file)
         spec: dict[str, str] = {}
@@ -167,12 +170,13 @@ class DocumentFormatterService:
                 f"- **Source:** {xml_file}\n"))
             return
 
-        # Look for XML file relative to template dir or absolute
-        xml_candidates = [
+        xml_candidates: list[Path] = [
             self.template_dir / xml_file,
             self.template_dir / "test-inputs" / Path(xml_file).name,
-            Path(xml_file),
         ]
+        if archimate_base_path is not None:
+            xml_candidates.insert(0, archimate_base_path / xml_file)
+        xml_candidates.append(Path(xml_file))
         xml_path = next((p for p in xml_candidates if p.exists()), None)
         if xml_path is None:
             segments.append(("text",
@@ -240,7 +244,12 @@ class DocumentFormatterService:
         )
         (tmpdir / "base.typ").write_text(modified, encoding="utf-8")
 
-    def generate_pdf(self, content: str, metadata: dict[str, Any]) -> bytes:
+    def generate_pdf(
+        self,
+        content: str,
+        metadata: dict[str, Any],
+        archimate_base_path: Path | None = None,
+    ) -> bytes:
         """Generate a PDF from markdown content and metadata.
 
         Args:
@@ -248,6 +257,8 @@ class DocumentFormatterService:
             metadata: Dict of document metadata controlling formatting.
                 Expected keys: document_type, title, status, project_name,
                 include_toc, include_watermark, section_breaks.
+            archimate_base_path: Optional base path for resolving ArchiMate
+                XML files referenced in `` ```archimate `` blocks.
 
         Returns:
             PDF bytes.
@@ -259,7 +270,9 @@ class DocumentFormatterService:
             tmp = Path(tmpdir)
 
             # Split markdown and render mermaid diagrams
-            segments = self._render_diagrams(content, tmp)
+            segments = self._render_diagrams(
+                content, tmp, archimate_base_path=archimate_base_path
+            )
 
             # Generate interleaved content.typ
             self._write_content_typ(segments, tmp)

@@ -233,6 +233,12 @@
       #datetime.today().display("[day]-[month]-[year]")
     ]
 
+    // AI-generated indicator
+    #v(0.4cm)
+    #text(size: 8pt, grijs-licht)[
+      Dit document is gegenereerd met behulp van AI.
+    ]
+
     // Draft indicator badge
     #if show-watermark {
       v(0.8cm)
@@ -245,6 +251,13 @@
         ],
       )
     }
+
+    // Platform learning disclaimer
+    #v(0.6cm)
+    #text(size: 9pt, grijs-licht)[
+      Dit traject dient om het AI-platform te leren en verbeteren.
+      Geen garantie op een volledige oplossing, vaste planning of maatwerkontwikkeling.
+    ]
   ]
 
   #v(2cm)
@@ -293,7 +306,7 @@
 // SECTION BREAKS
 // ============================================================================
 
-#let breakable-tables = doc-type in ("technical_research", "core_documentation")
+#let breakable-tables = doc-type in ("technical_design", "technical_research", "core_documentation")
 
 // H1
 #show heading.where(level: 1): it => {
@@ -396,14 +409,5 @@
 #cmarker.render(read("content.md"))
 
 // ============================================================================
-// END MATTER
+// END MATTER (removed — 'AI-generated' notice moved to title page)
 // ============================================================================
-
-#pagebreak()
-#align(center + horizon)[
-  #text(size: 10pt, grijs-licht)[
-    Dit document is gegenereerd met Druppie.
-    #linebreak()
-    #datetime.today().display("[day]-[month]-[year]")
-  ]
-]

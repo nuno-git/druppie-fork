@@ -110,13 +110,18 @@ BUILTIN_TOOL_DEFS: dict[str, dict] = {
         "type": "function",
         "function": {
             "name": "create_message",
-            "description": "Create a visible message in the chat timeline for the user. Use this to provide a human-friendly summary of what was accomplished.",
+            "description": "Create a visible message in the chat timeline for the user. Use this to provide a human-friendly summary of what was accomplished. Optionally attach file IDs so the user can download them.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "content": {
                         "type": "string",
                         "description": "The message content to display to the user",
+                    },
+                    "attachment_ids": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Optional list of attachment IDs to include with the message so the user can download them",
                     },
                 },
                 "required": ["content"],
@@ -194,6 +199,41 @@ BUILTIN_TOOL_DEFS: dict[str, dict] = {
                     },
                 },
                 "required": ["skill_name"],
+            },
+        },
+    },
+    "make_pdf_document": {
+        "type": "function",
+        "function": {
+            "name": "make_pdf_document",
+            "description": (
+                "Convert a Markdown document and metadata JSON into a professionally formatted PDF "
+                "following Rijnland corporate identity (Huisstijlhandboek). "
+                "The agent must first write the markdown file and metadata JSON file to the workspace, "
+                "then call this tool with their workspace-relative paths. "
+                "The resulting PDF is saved to the workspace and its path is returned."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "markdown_path": {
+                        "type": "string",
+                        "description": "Workspace-relative path to the markdown file (e.g. 'docs/content.md')",
+                    },
+                    "metadata_path": {
+                        "type": "string",
+                        "description": "Workspace-relative path to the metadata JSON file (e.g. 'docs/metadata.json')",
+                    },
+                    "archimate_path": {
+                        "type": "string",
+                        "description": "Optional workspace-relative path to an ArchiMate model file (e.g. 'docs/architecture.archimate'). Required only if the markdown references ArchiMate diagrams.",
+                    },
+                    "output_pdf_name": {
+                        "type": "string",
+                        "description": "Optional name for the output PDF file. Defaults to '{document_type}-{project_name}.pdf'",
+                    },
+                },
+                "required": ["markdown_path", "metadata_path"],
             },
         },
     },
@@ -781,6 +821,7 @@ async def create_message(
     session_id: UUID,
     agent_run_id: UUID,
     execution_repo: "ExecutionRepository",
+    attachment_ids: list[str] | None = None,
 ) -> dict:
     """Create a visible message in the chat timeline.
 
@@ -792,9 +833,10 @@ async def create_message(
         session_id: Session UUID
         agent_run_id: Agent run UUID for tracking
         execution_repo: Execution repository
+        attachment_ids: Optional list of attachment IDs to link to the message
 
     Returns:
-        Success status
+        Success status with message_id and optional attachment_count
     """
     display_content = content
     try:
@@ -821,25 +863,78 @@ async def create_message(
     # Get next unique sequence number so message never collides with agent_run
     seq = execution_repo.get_next_sequence_number(session_id)
 
-    execution_repo.create_message(
+    caller_agent_id = "summarizer"
+    try:
+        caller_run = execution_repo.get_by_id(agent_run_id)
+        if caller_run and caller_run.agent_id:
+            caller_agent_id = caller_run.agent_id
+    except Exception:
+        pass
+
+    message_id = execution_repo.create_message(
         session_id=session_id,
         role="assistant",
         content=display_content,
         content_english=content if display_content != content else None,
         agent_run_id=agent_run_id,
-        agent_id="summarizer",
+        agent_id=caller_agent_id,
         sequence_number=seq,
     )
     execution_repo.flush()
+
+    linked_count = 0
+    if attachment_ids:
+        raw_ids = [
+            aid for aid in attachment_ids
+            if aid and isinstance(aid, str) and aid.lower() not in ("null", "none", "")
+        ]
+        if raw_ids:
+            logger.info(
+                "create_message_attachments_received",
+                session_id=str(session_id),
+                raw_count=len(attachment_ids),
+                valid_count=len(raw_ids),
+            )
+            try:
+                from druppie.repositories import AttachmentRepository
+                att_repo = AttachmentRepository(execution_repo.db)
+                att_ids = [UUID(aid) for aid in raw_ids]
+                att_repo.link_to_message(
+                    attachment_ids=att_ids,
+                    message_id=message_id,
+                    session_id=session_id,
+                )
+                linked_count = len(att_ids)
+                execution_repo.flush()
+            except Exception as e:
+                logger.error(
+                    "create_message_attachment_link_failed",
+                    session_id=str(session_id),
+                    message_id=str(message_id),
+                    error=str(e),
+                    exc_info=True,
+                )
+        else:
+            logger.warning(
+                "create_message_no_valid_attachment_ids",
+                session_id=str(session_id),
+                message_id=str(message_id),
+                received=attachment_ids,
+            )
 
     logger.info(
         "create_message",
         session_id=str(session_id),
         agent_run_id=str(agent_run_id),
         content_preview=display_content[:100] if display_content else "",
+        linked_attachments=linked_count,
     )
 
-    return {"status": "created", "message": "Message added to timeline"}
+    result: dict = {"status": "created", "message": "Message added to timeline"}
+    if linked_count:
+        result["attachment_count"] = linked_count
+        result["message_id"] = str(message_id)
+    return result
 
 
 # =============================================================================
@@ -1382,6 +1477,156 @@ async def read_attachment(
     }
 
 
+async def make_pdf_document(
+    markdown_path: str,
+    metadata_path: str,
+    archimate_path: str | None,
+    output_pdf_name: str | None,
+    session_id: UUID,
+    agent_run_id: UUID,
+    execution_repo: "ExecutionRepository",
+) -> dict:
+    """Convert markdown + metadata JSON into a PDF using the Rijnland template."""
+    import json
+    import os
+    from pathlib import Path
+
+    from druppie.db.models import Session as DBSession
+
+    db = execution_repo.db
+    session = db.query(DBSession).filter(DBSession.id == session_id).first()
+    if not session:
+        return {"success": False, "error": f"Session {session_id} not found"}
+
+    if not session.project_id:
+        return {"success": False, "error": "Session has no project"}
+
+    workspace_root = Path(os.getenv("WORKSPACE_ROOT", "/app/workspace"))
+    user_part = str(session.user_id) if session.user_id else "default"
+    workspace_path = workspace_root / user_part / str(session.project_id) / str(session.id)
+
+    md_file = workspace_path / markdown_path
+    meta_file = workspace_path / metadata_path
+
+    # Coding MCP writes to a workspace keyed by session_id, but when user_id is
+    # not injected it falls back to "default". Builtin tools use session.user_id
+    # which may differ, creating two directories on the shared workspace volume.
+    # Try the session.user_id path first, then fall back to "default".
+    if not md_file.exists():
+        fallback_path = workspace_root / "default" / str(session.project_id) / str(session.id)
+        fallback_md = fallback_path / markdown_path
+        fallback_meta = fallback_path / metadata_path
+        if fallback_md.exists() and fallback_meta.exists():
+            md_file = fallback_md
+            meta_file = fallback_meta
+            workspace_path = fallback_path
+
+    if not md_file.exists():
+        return {"success": False, "error": f"Markdown file not found: {markdown_path}"}
+    if not meta_file.exists():
+        return {"success": False, "error": f"Metadata file not found: {metadata_path}"}
+
+    try:
+        content = md_file.read_text(encoding="utf-8")
+        metadata = json.loads(meta_file.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as e:
+        return {"success": False, "error": f"Invalid metadata JSON: {e}"}
+    except Exception as e:
+        return {"success": False, "error": f"Failed to read input files: {e}"}
+
+    archimate_base = None
+    if archimate_path:
+        archimate_base = workspace_path / archimate_path
+        if not archimate_base.exists():
+            return {"success": False, "error": f"ArchiMate file not found: {archimate_path}"}
+        archimate_base = archimate_base.parent
+
+    from druppie.services.document_formatter_service import (
+        DocumentFormatterError,
+        DocumentFormatterService,
+    )
+
+    service = DocumentFormatterService()
+
+    try:
+        pdf_bytes = service.generate_pdf(
+            content=content,
+            metadata=metadata,
+            archimate_base_path=archimate_base,
+        )
+    except DocumentFormatterError as e:
+        return {"success": False, "error": f"PDF generation failed: {e}"}
+    except Exception as e:
+        return {"success": False, "error": f"Unexpected PDF generation error: {e}"}
+
+    doc_type = metadata.get("document_type", "document")
+    project_name = metadata.get("project_name", "project")
+    pdf_name = output_pdf_name or f"{doc_type}-{project_name}.pdf"
+    pdf_name = pdf_name.replace(" ", "_").replace("/", "_")
+
+    pdf_file = workspace_path / pdf_name
+    try:
+        pdf_file.write_bytes(pdf_bytes)
+    except Exception as e:
+        return {"success": False, "error": f"Failed to write PDF: {e}"}
+
+    # Copy PDF to attachment storage so the frontend can serve it via
+    # the existing /api/attachments/{id} endpoint.
+    attachment_id = None
+    attachment_error = None
+    try:
+        from druppie.repositories import AttachmentRepository
+        from druppie.services import attachment_service
+
+        att_repo = AttachmentRepository(db)
+        safe_name = attachment_service._sanitize_filename(pdf_name)
+        attachment = att_repo.create(
+            original_filename=pdf_name,
+            content_type="application/pdf",
+            file_size=len(pdf_bytes),
+            storage_path="pending",
+            session_id=session_id,
+        )
+        db.flush()
+
+        dir_path = attachment_service.UPLOAD_DIR / str(attachment.id)
+        dir_path.mkdir(parents=True, exist_ok=True)
+        att_file = dir_path / safe_name
+        att_file.write_bytes(pdf_bytes)
+
+        storage_path = f"uploads/{attachment.id}/{safe_name}"
+        attachment.storage_path = storage_path
+        db.flush()
+
+        attachment_id = str(attachment.id)
+    except Exception as e:
+        attachment_error = str(e)
+        logger.error(
+            "pdf_attachment_storage_failed",
+            session_id=str(session_id),
+            pdf_name=pdf_name,
+            error=attachment_error,
+            exc_info=True,
+        )
+
+    if not attachment_id:
+        return {
+            "success": False,
+            "error": f"PDF was generated but could not be made downloadable: {attachment_error or 'unknown attachment storage error'}. PDF path: {pdf_name}",
+            "pdf_path": pdf_name,
+            "pdf_size": len(pdf_bytes),
+        }
+
+    return {
+        "success": True,
+        "pdf_path": pdf_name,
+        "pdf_size": len(pdf_bytes),
+        "pages": metadata.get("pages", "unknown"),
+        "message": f"PDF generated: {pdf_name} ({len(pdf_bytes)} bytes)",
+        "attachment_id": attachment_id,
+    }
+
+
 # =============================================================================
 # TOOL EXECUTION (called by ToolExecutor)
 # =============================================================================
@@ -1430,6 +1675,7 @@ async def execute_builtin(
             session_id=session_id,
             agent_run_id=agent_run_id,
             execution_repo=execution_repo,
+            attachment_ids=args.get("attachment_ids"),
         )
     elif tool_name == "set_intent":
         return await set_intent(
@@ -1443,6 +1689,16 @@ async def execute_builtin(
     elif tool_name == "invoke_skill":
         return await invoke_skill(
             skill_name=args.get("skill_name", ""),
+            session_id=session_id,
+            agent_run_id=agent_run_id,
+            execution_repo=execution_repo,
+        )
+    elif tool_name == "make_pdf_document":
+        return await make_pdf_document(
+            markdown_path=args.get("markdown_path", ""),
+            metadata_path=args.get("metadata_path", ""),
+            archimate_path=args.get("archimate_path"),
+            output_pdf_name=args.get("output_pdf_name"),
             session_id=session_id,
             agent_run_id=agent_run_id,
             execution_repo=execution_repo,
@@ -1492,6 +1748,7 @@ def is_builtin_tool(tool_name: str) -> bool:
         "set_intent",
         "create_message",
         "invoke_skill",
+        "make_pdf_document",
         "execute_coding_task",
         "test_report",
         "read_attachment",

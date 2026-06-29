@@ -128,31 +128,4 @@ class TestDocumentFormatterFunctional:
         pdf_bytes = svc.generate_pdf(content=content, metadata=meta)
         assert len(pdf_bytes) > 100
 
-    def test_generate_pdf_outputs_for_manual_inspection(self):
-        """Writes FO and TO PDFs to test-outputs/ so you can inspect them.
 
-        Run:
-            pytest tests/test_document_formatter.py::TestDocumentFormatterFunctional::test_generate_pdf_outputs_for_manual_inspection -v
-
-        Then copy out of the container:
-            docker cp druppie-backend-dev:/app/druppie/templates/documents/test-outputs/fo-output.pdf ./
-            docker cp druppie-backend-dev:/app/druppie/templates/documents/test-outputs/to-output.pdf ./
-        """
-        svc = DocumentFormatterService()
-        out_dir = Path(__file__).parent.parent / "templates" / "documents" / "test-outputs"
-        out_dir.mkdir(parents=True, exist_ok=True)
-
-        fo_content, fo_meta = _load_test_input("functional-design")
-        fo_meta["status"] = "DRAFT"
-        fo_pdf = svc.generate_pdf(content=fo_content, metadata=fo_meta)
-        (out_dir / "fo-output.pdf").write_bytes(fo_pdf)
-
-        to_content, to_meta = _load_test_input("technical-design")
-        to_meta["status"] = "DRAFT"
-        to_pdf = svc.generate_pdf(content=to_content, metadata=to_meta)
-        (out_dir / "to-output.pdf").write_bytes(to_pdf)
-
-        assert len(fo_pdf) > 10_000
-        assert len(to_pdf) > 10_000
-        assert len(pypdf.PdfReader(io.BytesIO(fo_pdf)).pages) >= 3
-        assert len(pypdf.PdfReader(io.BytesIO(to_pdf)).pages) >= 3
