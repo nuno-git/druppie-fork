@@ -24,13 +24,18 @@ jobs:
 
       - name: Build backend
         run: |
-          docker build -t "$REGISTRY/druppie/druppie-backend:$TAG" ./druppie
+          docker build -t "$REGISTRY/druppie/druppie-backend:$TAG" .
           docker push "$REGISTRY/druppie/druppie-backend:$TAG"
 
       - name: Build frontend
         run: |
           docker build -t "$REGISTRY/druppie/druppie-frontend:$TAG" ./frontend
           docker push "$REGISTRY/druppie/druppie-frontend:$TAG"
+
+      - name: Build init image
+        run: |
+          docker build -t "$REGISTRY/druppie/druppie-init:$TAG" -f Dockerfile.init .
+          docker push "$REGISTRY/druppie/druppie-init:$TAG"
 
       - name: Build layout-service
         run: |
@@ -57,13 +62,6 @@ jobs:
             docker build -t "$REGISTRY/druppie/druppie-sandbox-k8s:$TAG" \
               -f ./druppie/mcp-servers/module-coding/Dockerfile.sandbox.k8s ./druppie/mcp-servers/module-coding
             docker push "$REGISTRY/druppie/druppie-sandbox-k8s:$TAG"
-          fi
-
-      - name: Build init image
-        run: |
-          if [ -d "./druppie/mcp-servers/init" ]; then
-            docker build -t "$REGISTRY/druppie/druppie-init:$TAG" ./druppie/mcp-servers/init
-            docker push "$REGISTRY/druppie/druppie-init:$TAG"
           fi
 
       - name: Summary
