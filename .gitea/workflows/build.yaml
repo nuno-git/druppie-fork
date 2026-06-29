@@ -17,13 +17,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Login to Harbor
+      - name: Configure Harbor credentials
         env:
           HARBOR_USER: ${{ secrets.HARBOR_USERNAME }}
           HARBOR_PASS: ${{ secrets.HARBOR_PASSWORD }}
           HARBOR_REG: ${{ secrets.HARBOR_REGISTRY }}
         run: |
-          echo "$HARBOR_PASS" | docker login "$HARBOR_REG" -u "$HARBOR_USER" --password-stdin
+          mkdir -p ~/.docker
+          AUTH=$(printf '%s' "$HARBOR_USER:$HARBOR_PASS" | base64 -w0)
+          cat > ~/.docker/config.json <<JSON
+          {"auths":{"$HARBOR_REG":{"auth":"$AUTH"}}}
+          JSON
+          echo "Configured Docker auth for $HARBOR_REG"
+          cat ~/.docker/config.json | python3 -c "import sys,json; d=json.load(sys.stdin); print('Auth keys:', list(d.get('auths',{}).keys()))"
 
       - name: Build backend
         run: |
