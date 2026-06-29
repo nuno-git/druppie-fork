@@ -80,6 +80,8 @@ class FallbackAvailableError(LLMError):
         self.llm_call_id = None
 
 
+_UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.IGNORECASE)
+
 _REDACT_PATTERNS = [
     (re.compile(r"sk-[A-Za-z0-9_-]{10,}"), "[REDACTED]"),
     (re.compile(r"Bearer\s+[A-Za-z0-9._-]{10,}"), "Bearer [REDACTED]"),
@@ -90,8 +92,13 @@ _REDACT_PATTERNS = [
 
 def clean_llm_error(raw: str) -> str:
     """Extract a short, user-facing message from verbose litellm errors."""
+    uuids = _UUID_RE.findall(raw)
+    for i, uid in enumerate(uuids):
+        raw = raw.replace(uid, f"__UUID{i}__", 1)
     for pattern, replacement in _REDACT_PATTERNS:
         raw = pattern.sub(replacement, raw)
+    for i, uid in enumerate(uuids):
+        raw = raw.replace(f"__UUID{i}__", uid)
     if "DeploymentNotFound" in raw or "does not exist" in raw:
         return "Model deployment not found"
     if "Authentication Failed" in raw or "AuthenticationError" in raw:

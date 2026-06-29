@@ -362,6 +362,40 @@ const ModelManagement = () => {
   }
 
   const [editingTranslation, setEditingTranslation] = useState(false)
+  const [bulkEditing, setBulkEditing] = useState(false)
+  const [bulkSaving, setBulkSaving] = useState(false)
+  const [bulkError, setBulkError] = useState(null)
+
+  const handleBulkOverride = async (provider, model, fbProvider, fbModel) => {
+    setBulkSaving(true)
+    setBulkError(null)
+    try {
+      const agentIds = (data?.agents || []).map(a => a.agent_id)
+      await Promise.all(agentIds.map(id =>
+        setAgentModelOverride(id, provider, model, fbProvider, fbModel)
+      ))
+      queryClient.invalidateQueries({ queryKey: ['model-management'] })
+      setBulkEditing(false)
+    } catch (e) {
+      setBulkError(e.message)
+    } finally {
+      setBulkSaving(false)
+    }
+  }
+
+  const handleBulkReset = async () => {
+    setBulkSaving(true)
+    setBulkError(null)
+    try {
+      const overridden = (data?.agents || []).filter(a => a.override).map(a => a.agent_id)
+      await Promise.all(overridden.map(id => removeAgentModelOverride(id)))
+      queryClient.invalidateQueries({ queryKey: ['model-management'] })
+    } catch (e) {
+      setBulkError(e.message)
+    } finally {
+      setBulkSaving(false)
+    }
+  }
 
   if (isLoading) {
     return (
@@ -395,7 +429,7 @@ const ModelManagement = () => {
   )
 
   const isSaving = agentOverrideMutation.isPending || agentResetMutation.isPending
-    || translationOverrideMutation.isPending || translationResetMutation.isPending
+    || translationOverrideMutation.isPending || translationResetMutation.isPending || bulkSaving
 
   return (
     <div className="space-y-8">
@@ -516,6 +550,46 @@ const ModelManagement = () => {
         {/* Agent Models */}
         <div className="lg:col-span-2">
           <SectionCard title={`Agent Models (${agents.length})`} icon={Bot}>
+            <div className="flex items-center gap-2 mb-3 -mt-1">
+              <button
+                onClick={() => { setBulkEditing(!bulkEditing); setBulkError(null) }}
+                disabled={bulkSaving}
+                className="text-xs px-3 py-1.5 rounded border border-purple-200 hover:bg-purple-50 text-purple-600 flex items-center gap-1"
+              >
+                {bulkSaving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Zap className="w-3 h-3" />}
+                {bulkEditing ? 'Close' : 'Set All'}
+              </button>
+              {agents.some(a => a.override) && (
+                <button
+                  onClick={handleBulkReset}
+                  disabled={isSaving}
+                  className="text-xs px-3 py-1.5 rounded border border-gray-200 hover:bg-gray-50 text-gray-500 flex items-center gap-1"
+                >
+                  <RotateCcw className="w-3 h-3" /> Reset All
+                </button>
+              )}
+            </div>
+            {bulkError && (
+              <div className="mb-3 px-2 py-1.5 rounded bg-red-50 border border-red-200 text-xs text-red-700 flex items-center gap-1.5">
+                <XCircle className="w-3.5 h-3.5 flex-shrink-0" />
+                <span>{bulkError}</span>
+              </div>
+            )}
+            {bulkEditing && (
+              <div className="mb-3 p-3 rounded-lg bg-purple-50/50 border border-purple-100">
+                <p className="text-xs text-purple-600 font-medium mb-2">Apply to all {agents.length} agents:</p>
+                <OverrideForm
+                  providers={providers}
+                  currentProvider=""
+                  currentModel=""
+                  currentFallbackProvider={null}
+                  currentFallbackModel={null}
+                  onSave={handleBulkOverride}
+                  onCancel={() => { setBulkEditing(false); setBulkError(null) }}
+                  saving={bulkSaving}
+                />
+              </div>
+            )}
             <div className="space-y-1">
               {sortedAgents.map(agent => (
                 <AgentRow

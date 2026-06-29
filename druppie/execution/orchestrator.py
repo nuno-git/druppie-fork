@@ -1396,11 +1396,11 @@ class Orchestrator:
                         context=context,
                     )
                 except Exception as e:
-                    error_msg = f"{type(e).__name__}: {e}"
+                    error_msg = clean_llm_error(f"{type(e).__name__}: {e}")
                     self.execution_repo.update_status(
                         orphan_run.id,
                         AgentRunStatus.FAILED,
-                        error_message=error_msg[:2000],
+                        error_message=error_msg,
                     )
                     self.execution_repo.commit()
                     raise
@@ -1541,11 +1541,11 @@ class Orchestrator:
                 context=context,
             )
         except Exception as e:
-            error_msg = f"{type(e).__name__}: {e}"
+            error_msg = clean_llm_error(f"{type(e).__name__}: {e}")
             self.execution_repo.update_status(
                 paused_run.id,
                 AgentRunStatus.FAILED,
-                error_message=error_msg[:2000],
+                error_message=error_msg,
             )
             self.execution_repo.commit()
             raise
@@ -1664,11 +1664,11 @@ class Orchestrator:
                 context=context,
             )
         except Exception as e:
-            error_msg = f"{type(e).__name__}: {e}"
+            error_msg = clean_llm_error(f"{type(e).__name__}: {e}")
             self.execution_repo.update_status(
                 agent_run.id,
                 AgentRunStatus.FAILED,
-                error_message=error_msg[:2000],
+                error_message=error_msg,
             )
             self.execution_repo.commit()
             raise
