@@ -58,7 +58,7 @@ class K8sSandboxManager:
             )
 
         config = SandboxInClusterConnectionConfig()
-        self.client = AsyncSandboxClient(config=config)
+        self.client = AsyncSandboxClient(connection_config=config)
         self._sandboxes: dict[str, object] = {}
         logger.info("K8sSandboxManager initialized (namespace=%s, warmpool=%s)",
                      SANDBOX_NAMESPACE, SANDBOX_WARMPOOL)
@@ -114,11 +114,11 @@ class K8sSandboxManager:
 
     async def exec(self, handle: SandboxHandle, command: list[str] | str,
                    timeout: int = 60) -> tuple[int, str, str]:
-        """Execute a command in the sandbox. Returns (rc, stdout, stderr)."""
+        """Execute a command in the sandbox. Returns (exit_code, stdout, stderr)."""
         if isinstance(command, list):
             command = " ".join(command)
         result = await handle._backend.commands.run(command, timeout=timeout)
-        return result.returncode, result.stdout, result.stderr
+        return result.exit_code, result.stdout, result.stderr
 
     async def read_file(self, handle: SandboxHandle, path: str) -> str:
         """Read a file from the sandbox."""
@@ -150,7 +150,7 @@ class K8sSandboxManager:
         """Check if the sandbox is still running."""
         try:
             result = await handle._backend.commands.run("echo ok", timeout=5)
-            return result.returncode == 0
+            return result.exit_code == 0
         except Exception:
             return False
 
