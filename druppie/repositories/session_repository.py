@@ -45,6 +45,7 @@ from ..domain import (
     ToolCallDetail,
     ToolCallStatus,
 )
+from sqlalchemy import or_
 from .base import BaseRepository
 
 
@@ -94,8 +95,6 @@ class SessionRepository(BaseRepository):
         If extra_session_ids is given, those sessions are also included
         (used to surface sessions where the current user is an expert).
         """
-        from sqlalchemy import or_
-
         query = self.db.query(SessionModel)
 
         # Filter by user if specified (None means admin viewing all)
