@@ -76,12 +76,14 @@ class AuthService:
             jwk_client = self.get_jwk_client()
             signing_key = jwk_client.get_signing_key_from_jwt(token)
 
+            leeway = int(os.getenv("JWT_LEEWAY_SECONDS", "30"))
             decoded = jwt.decode(
                 token,
                 signing_key.key,
                 algorithms=["RS256"],
                 issuer=self.issuer,
                 options={"verify_aud": False},
+                leeway=leeway,
             )
             return decoded
 
