@@ -2,11 +2,40 @@
 # Endpoints and models for benchmarking on Nutanix/Kubernetes infrastructure.
 
 endpoints:
-  azure_foundry:
-    base_url: "https://druppie-resource.openai.azure.com/openai/v1"
-    api_key: "${FOUNDRY_API_KEY}"
+  # Lokaal vLLM (LLMKube) op RKE2 cluster ka-k8s-ai, ns llm, Service qwen.
+  # DIT is het echte adres: de in-cluster DNS-naam van de Service. Gebruik dit
+  # wanneer de benchmark IN het cluster draait (bv. als Kubernetes Job) of vanuit
+  # de Druppie backend. Geen auth (vLLM open binnen het cluster-netwerk).
+  qwen_incluster:
+    base_url: "http://qwen.llm.svc.cluster.local:8000/v1"
+    api_key: "no-key-required"
     ssl_verify: true
     auth_type: "bearer"
+
+  # Extern via Traefik Ingress (Let's Encrypt, geen auth). Bereikbaar vanaf
+  # elke laptop/CI — handigst voor ad-hoc runs. Wel internet round-trip, dus
+  # absolute latency iets hoger dan een in-cluster Job.
+  qwen_ingress:
+    base_url: "https://llm.rijnland.dev/v1"
+    api_key: "no-key-required"
+    ssl_verify: true
+    auth_type: "bearer"
+
+  # Alleen voor lokaal draaien VANAF een laptop zonder de ingress te gebruiken:
+  #   kubectl port-forward -n llm svc/qwen 18000:8000
+  # localhost:18000 is GEEN echt endpoint — het is alleen die tunnel.
+  # qwen_portforward:
+  #   base_url: "http://localhost:18000/v1"
+  #   api_key: "no-key-required"
+  #   ssl_verify: true
+  #   auth_type: "bearer"
+
+  # Azure AI Foundry — inactief (geen actief model gekoppeld)
+  # azure_foundry:
+  #   base_url: "https://druppie-resource.openai.azure.com/openai/v1"
+  #   api_key: "${FOUNDRY_API_KEY}"
+  #   ssl_verify: true
+  #   auth_type: "bearer"
 
   # Ollama — momenteel offline
   # ollama:
@@ -21,16 +50,30 @@ endpoints:
   #   ssl_verify: true
 
 models:
-  - endpoint: azure_foundry
-    model: GPT-5-MINI
-    display_name: "GPT-5 Mini"
+  # Wijst naar de in-cluster Service. Voor een laptop-run: uncomment
+  # 'qwen_portforward' hierboven, start de port-forward, en zet 'endpoint: qwen_portforward'.
+  - endpoint: qwen_incluster
+    model: Qwen/Qwen3.6-27B
+    display_name: "Qwen3.6-27B (vLLM/LLMKube, ka-k8s-ai)"
     max_context: 131072
-    parameters: "unknown"
-    quantization: null
-    kv_cache_quant: null
-    flash_attention: false
+    parameters: "27B"
+    quantization: "bfloat16"
+    kv_cache_quant: "fp8"
+    flash_attention: true
     gpu_layers: -1
-    notes: "Azure AI Foundry hosted, temperature forced to 1.0"
+    notes: "LLMKube + vLLM op RKE2 ka-k8s-ai (ns llm). 2 replicas, tensor-parallel 1, prefix-caching aan, max_model_len 131072. Reasoning model (lange thinking-output)."
+
+  # Azure AI Foundry GPT-5 Mini — inactief
+  # - endpoint: azure_foundry
+  #   model: GPT-5-MINI
+  #   display_name: "GPT-5 Mini"
+  #   max_context: 131072
+  #   parameters: "unknown"
+  #   quantization: null
+  #   kv_cache_quant: null
+  #   flash_attention: false
+  #   gpu_layers: -1
+  #   notes: "Azure AI Foundry hosted, temperature forced to 1.0"
 
   # Ollama modellen — activeer wanneer endpoint beschikbaar is
   # - endpoint: ollama
