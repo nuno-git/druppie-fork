@@ -14,6 +14,7 @@ from .project_dependency_repository import ProjectDependencyRepository
 from .documentation_cache_repository import DocumentationCacheRepository
 from .job_repository import JobRepository
 from .attachment_repository import AttachmentRepository
+from .model_override_repository import ModelOverrideRepository
 from .sandbox_session_repository import SandboxSessionRepository
 
 __all__ = [
@@ -31,5 +32,6 @@ __all__ = [
     "ProjectDependencyRepository",
     "DocumentationCacheRepository",
     "JobRepository",
+    "ModelOverrideRepository",
     "SandboxSessionRepository",
 ]

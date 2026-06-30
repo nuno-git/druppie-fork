@@ -955,7 +955,12 @@ class ToolExecutor:
     def _notify_translation_unavailable(
         self, session_id, session_repo, *, reason: str
     ) -> None:
-        """Switch session to English and inject a user-facing message."""
+        """Switch session to English and inject a one-time user-facing message."""
+        from druppie.core.translation import TranslationService
+
+        if not TranslationService.mark_notified(str(session_id)):
+            return
+
         session_repo.update_language(session_id, "en")
 
         message = (

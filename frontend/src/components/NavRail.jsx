@@ -24,6 +24,7 @@ import {
   BookOpen,
   Boxes,
   Rocket,
+  Cpu,
   Terminal,
   HelpCircle,
 } from 'lucide-react'
@@ -235,6 +236,13 @@ const NavRail = () => {
       {user?.roles?.includes('admin') && (
         <>
           <div className="mt-1 pt-1 border-t border-gray-800 w-8" />
+          <NavRailItem
+            to="/admin/models"
+            icon={Cpu}
+            label="Models"
+            active={isActive('/admin/models')}
+            accent="purple"
+          />
           <NavRailItem
             to="/admin/platform"
             icon={Boxes}
