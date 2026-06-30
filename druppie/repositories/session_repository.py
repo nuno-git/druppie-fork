@@ -316,7 +316,10 @@ class SessionRepository(BaseRepository):
             .filter(MessageModel.role.in_(["user", "system", "assistant", "tool"]))
         )
         if options.since_sequence is not None:
-            messages_query = messages_query.filter(MessageModel.sequence_number > options.since_sequence)
+            # Include entries with NULL sequence_number (they cannot be delta-filtered)
+            messages_query = messages_query.filter(
+                or_(MessageModel.sequence_number.is_(None), MessageModel.sequence_number > options.since_sequence)
+            )
         messages = messages_query.order_by(MessageModel.created_at).all()
 
         # Batch-load attachments for all messages
@@ -362,7 +365,10 @@ class SessionRepository(BaseRepository):
             .filter_by(session_id=session_id, parent_run_id=None)
         )
         if options.since_sequence is not None:
-            agent_runs_query = agent_runs_query.filter(AgentRun.sequence_number > options.since_sequence)
+            # Include entries with NULL sequence_number (they cannot be delta-filtered)
+            agent_runs_query = agent_runs_query.filter(
+                or_(AgentRun.sequence_number.is_(None), AgentRun.sequence_number > options.since_sequence)
+            )
         agent_runs = agent_runs_query.order_by(AgentRun.sequence_number).all()
 
         for run in agent_runs:
