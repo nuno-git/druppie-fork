@@ -72,7 +72,7 @@ jobs:
             DF="./druppie/mcp-servers/$module/Dockerfile"
             if [ -f "$DF" ]; then
               if grep -q "^COPY mcp-servers/" "$DF"; then
-                CONTEXT="."
+                CONTEXT="./druppie/"
               else
                 CONTEXT="./druppie/mcp-servers/"
               fi
