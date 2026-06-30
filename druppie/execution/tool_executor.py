@@ -44,6 +44,10 @@ if TYPE_CHECKING:
 
 logger = structlog.get_logger()
 
+# Module-level by design: all ToolExecutor instances share this lookup point,
+# but asyncio copies the context per Task, so each concurrent tool-call sees
+# its own value.  Do NOT convert to instance state — that reintroduces the
+# cross-task race this ContextVar was added to fix.
 _task_db: contextvars.ContextVar["DBSession | None"] = contextvars.ContextVar(
     "_task_db", default=None
 )
@@ -158,21 +162,11 @@ class ToolExecutor:
         self._approval_repo = None
         self._question_repo = None
 
-    def _bind_session(self, db: "DBSession") -> None:
-        """Rebind this executor (and its repos) to a fresh session.
-
-        Used by the short-lived session wrapper in factory mode so each tool
-        execution gets its own connection.
-        """
-        self.db = db
-        self._execution_repo = None
-        self._approval_repo = None
-        self._question_repo = None
-
     @property
     def _active_db(self):
         """Return the task-local DB session if set, otherwise the instance session."""
-        return _task_db.get(None) or self.db
+        task_db = _task_db.get(None)
+        return task_db if task_db is not None else self.db
 
     @property
     def execution_repo(self):
