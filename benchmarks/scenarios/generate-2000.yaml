@@ -1,0 +1,23 @@
+scenario:
+  name: generate-2000
+  description: "Generatiesnelheid met ~2000 tokens output"
+  category: generation
+  max_output_tokens: 2000
+
+  system_prompt: "Je bent een senior software architect en technisch schrijver. Antwoord in het Nederlands."
+  user_prompt: |
+    Schrijf een uitgebreid functioneel ontwerp voor een AI-gestuurd waterbeheer
+    platform. Het platform moet de volgende functionaliteiten ondersteunen:
+
+    1. Realtime monitoring van waterstanden en -kwaliteit
+    2. Voorspellende modellen voor wateroverlast
+    3. Automatische aansturing van gemalen en stuwen
+    4. Meldingen en escalatie workflows
+    5. Rapportages voor bestuur en toezichthouders
+    6. Integratie met externe databronnen (KNMI, Rijkswaterstaat)
+    7. Gebruikersbeheer met verschillende rollen
+    8. Audit trail voor alle beslissingen
+
+    Behandel per functionaliteit: de user stories, de datamodellen, de API endpoints,
+    de business rules, en de niet-functionele eisen (performance, beschikbaarheid,
+    beveiliging). Gebruik concrete voorbeelden uit de Nederlandse watersector.

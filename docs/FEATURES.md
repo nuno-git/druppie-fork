@@ -1005,3 +1005,17 @@ What the reviewer sees:
 - **Per-view SVG exports** are written to `docs/diagrams/<view-name>.svg` on every save, so the plates are also visible directly in Gitea's file preview without opening Druppie.
 
 The choice between ArchiMate and Mermaid, plus the full element/relationship vocabulary, lives in the `making-archimate-diagrams` skill at `druppie/skills/making-archimate-diagrams/SKILL.md`.
+
+---
+
+## LLM Performance Benchmarking
+
+A standalone CLI benchmark runner (`benchmarks/`) measures LLM performance across models deployed on OpenAI-compatible endpoints (Ollama, vLLM, TGI on Nutanix/Kubernetes).
+
+- **Scenario categories**: latency, generation speed, context scaling (256 → 256K tokens), tool calling overhead, stress/consistency
+- **Metrics**: total latency, time-to-first-token (TTFT), tokens/sec, prompt eval rate
+- **Model configuration tracking**: quantization method, KV cache quant, flash attention, GPU layers — stored with results for reproducibility
+- **Export**: console tables, JSON, CSV
+- **Multi-endpoint support**: configure multiple OpenAI-compatible APIs in `benchmarks/config.yaml`
+
+See [BENCHMARKING.md](BENCHMARKING.md) for usage and [LLM-SELECTION.md](LLM-SELECTION.md) for model selection criteria.

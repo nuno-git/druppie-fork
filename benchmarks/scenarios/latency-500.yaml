@@ -1,0 +1,35 @@
+scenario:
+  name: latency-500
+  description: "Latency met ~500 tokens input"
+  category: latency
+
+  system_prompt: |
+    Je bent een senior software architect die adviseert over het ontwerp van een
+    governance platform voor AI agents. Het platform gebruikt MCP (Model Context Protocol)
+    voor tool permissions en heeft approval workflows. Je hebt diepgaande kennis van
+    microservices architectuur, event-driven systemen, en AI agent frameworks.
+    Antwoord altijd in het Nederlands.
+  user_prompt: |
+    We bouwen een platform genaamd Druppie dat AI agents beheert voor een waterschap.
+    De architectuur bestaat uit de volgende componenten:
+
+    1. Een FastAPI backend met SQLAlchemy ORM en PostgreSQL database
+    2. Een React frontend met Vite als build tool
+    3. MCP servers voor coding (poort 9001) en Docker (poort 9002)
+    4. Keycloak voor authenticatie en autorisatie
+    5. Gitea als Git server voor projectbeheer
+    6. Een agent execution engine met een tool-calling loop
+
+    De agents werken via een orchestrator die een router, planner, business analyst,
+    architect, en builder aanstuurt. Elke agent heeft een YAML definitie met LLM profiel,
+    temperature, max iterations, en toegang tot specifieke MCP tools.
+
+    We willen nu een nieuw evaluatiesysteem toevoegen waarmee we de performance van
+    verschillende LLM modellen kunnen vergelijken. Het systeem moet:
+    - Verschillende modellen kunnen aanroepen via OpenAI-compatible APIs
+    - Performance metrieken verzamelen (latency, tokens/sec, TTFT)
+    - Resultaten opslaan en vergelijken
+    - Zowel via CLI als via de webinterface bruikbaar zijn
+
+    Wat zou je adviseren qua architectuur voor dit evaluatiesysteem? Hoe integreren
+    we dit het beste met de bestaande codebase zonder te veel complexiteit toe te voegen?
