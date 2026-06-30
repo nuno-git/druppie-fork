@@ -342,6 +342,7 @@ class SessionRepository(BaseRepository):
             entries.append(TimelineEntry(
                 type=TimelineEntryType.MESSAGE,
                 timestamp=msg.created_at,
+                sequence_number=msg.sequence_number,
                 message=Message(
                     id=msg.id,
                     role=msg.role,
@@ -368,6 +369,7 @@ class SessionRepository(BaseRepository):
             entries.append(TimelineEntry(
                 type=TimelineEntryType.AGENT_RUN,
                 timestamp=run.started_at or run.created_at,
+                sequence_number=run.sequence_number,
                 agent_run=self._build_agent_run_detail(run, options=options),
             ))
 

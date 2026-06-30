@@ -48,6 +48,7 @@ class TimelineEntry(BaseModel):
     """
     type: TimelineEntryType
     timestamp: datetime
+    sequence_number: int | None = None
 
     # For messages (user input, assistant response)
     message: Message | None = None
