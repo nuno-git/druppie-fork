@@ -979,6 +979,21 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
       if (isFirstLoad) {
         return getSession(sessionId)
       }
+      
+      // Delta loading only appends new entries; it never updates existing ones.
+      // During active execution, agent_run statuses change frequently
+      // (running -> completed, etc.) We need a full fetch to see those updates.
+      // Once the session pauses/completes, switch back to delta for efficiency.
+      const cachedData = queryClient.getQueryData(['session', sessionId])
+      const hasRunningAgents = cachedData?.timeline?.some(
+        e => e.type === 'agent_run' && (e.agent_run?.status === 'running' || e.agent_run?.status === 'pending')
+      )
+      const isActive = cachedData?.status === 'active' || cachedData?.status === 'running'
+      
+      if (isActive || hasRunningAgents) {
+        return getSession(sessionId)
+      }
+      
       return getSession(sessionId, {
         sinceSequence: highestSeqRef.current,
         exclude: getExcludeForViewMode(viewModeRef.current),
