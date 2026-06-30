@@ -309,13 +309,15 @@ class SessionRepository(BaseRepository):
         entries = []
 
         # Get messages (user, system, assistant)
-        messages = (
+        # Apply since_sequence filter at DB level when possible
+        messages_query = (
             self.db.query(MessageModel)
             .filter_by(session_id=session_id)
             .filter(MessageModel.role.in_(["user", "system", "assistant", "tool"]))
-            .order_by(MessageModel.created_at)
-            .all()
         )
+        if options.since_sequence is not None:
+            messages_query = messages_query.filter(MessageModel.sequence_number > options.since_sequence)
+        messages = messages_query.order_by(MessageModel.created_at).all()
 
         # Batch-load attachments for all messages
         message_ids = [msg.id for msg in messages]
@@ -337,8 +339,6 @@ class SessionRepository(BaseRepository):
             )
 
         for msg in messages:
-            if options.since_sequence is not None and msg.sequence_number is not None and msg.sequence_number <= options.since_sequence:
-                continue
             entries.append(TimelineEntry(
                 type=TimelineEntryType.MESSAGE,
                 timestamp=msg.created_at,
@@ -356,16 +356,16 @@ class SessionRepository(BaseRepository):
             ))
 
         # Get agent runs (top-level only - parent_run_id is NULL)
-        agent_runs = (
+        # Apply since_sequence filter at DB level when possible
+        agent_runs_query = (
             self.db.query(AgentRun)
             .filter_by(session_id=session_id, parent_run_id=None)
-            .order_by(AgentRun.sequence_number)
-            .all()
         )
+        if options.since_sequence is not None:
+            agent_runs_query = agent_runs_query.filter(AgentRun.sequence_number > options.since_sequence)
+        agent_runs = agent_runs_query.order_by(AgentRun.sequence_number).all()
 
         for run in agent_runs:
-            if options.since_sequence is not None and run.sequence_number is not None and run.sequence_number <= options.since_sequence:
-                continue
             entries.append(TimelineEntry(
                 type=TimelineEntryType.AGENT_RUN,
                 timestamp=run.started_at or run.created_at,
