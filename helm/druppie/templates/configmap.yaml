@@ -58,6 +58,8 @@ data:
   DEEPSEEK_BASE_URL: {{ .Values.backend.deepseek.baseUrl | quote }}
   DEEPINFRA_MODEL: {{ .Values.backend.deepinfra.model | quote }}
   DEEPINFRA_BASE_URL: {{ .Values.backend.deepinfra.baseUrl | quote }}
+  LLMKUBE_MODEL: {{ .Values.backend.llmkube.model | quote }}
+  LLMKUBE_BASE_URL: {{ .Values.backend.llmkube.baseUrl | quote }}
 
   # Sandbox
   DRUPPIE_SANDBOX_RUNTIME: {{ .Values.sandbox.runtime | quote }}

@@ -20,6 +20,9 @@ Environment variables:
 
     For Ollama:
         OLLAMA_MODEL, OLLAMA_BASE_URL (API key optional)
+
+    For LLMKube (in-cluster vLLM):
+        LLMKUBE_MODEL, LLMKUBE_BASE_URL (API key optional)
 """
 
 import json
@@ -216,6 +219,16 @@ PROVIDER_CONFIGS = {
         "base_url_env": "OLLAMA_BASE_URL",
         "default_base_url": "https://ollama.waterschap.org/v1",
         "ssl_verify": False,  # Self-signed certificate
+    },
+    "llmkube": {
+        "prefix": "openai",  # LLMKube/vLLM serves an OpenAI-compatible API
+        "default_model": "Qwen/Qwen3.6-27B",
+        "api_key_env": "LLMKUBE_API_KEY",
+        "api_key_optional": True,  # vLLM endpoint requires no auth
+        "model_env": "LLMKUBE_MODEL",
+        "base_url_env": "LLMKUBE_BASE_URL",
+        # In-cluster default; local dev overrides via LLMKUBE_BASE_URL (ingress URL)
+        "default_base_url": "http://qwen.llm.svc.cluster.local:8000/v1",
     },
 }
 
