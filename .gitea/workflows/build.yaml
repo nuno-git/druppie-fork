@@ -7,7 +7,6 @@ on:
 
 env:
   REGISTRY: ${{ secrets.HARBOR_REGISTRY }}
-  TAG: ${{ github.sha }}
   DOCKER_BUILDKIT: "1"
 
 jobs:
@@ -15,6 +14,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Set image tags
+        id: tags
+        run: |
+          BRANCH="${{ github.ref_name }}"
+          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-8)
+          TIMESTAMP=$(date -u +%Y%m%d%H%M%S)
+          DEPLOY_TAG="${BRANCH}-${TIMESTAMP}-${SHORT_SHA}"
+          echo "deploy_tag=$DEPLOY_TAG" >> $GITHUB_OUTPUT
+          echo "Deploy tag: $DEPLOY_TAG"
 
       - name: Install Docker CLI and Buildx
         run: |
@@ -39,32 +48,38 @@ jobs:
           JSON
 
       - name: Build and push backend
+        env:
+          TAG: ${{ steps.tags.outputs.deploy_tag }}
         run: |
           docker build -t "$REGISTRY/druppie/druppie-backend:$TAG" .
-          docker tag  "$REGISTRY/druppie/druppie-backend:$TAG" "$REGISTRY/druppie/druppie-backend:latest"
-          docker push --all-tags "$REGISTRY/druppie/druppie-backend"
+          docker push "$REGISTRY/druppie/druppie-backend:$TAG"
 
       - name: Build and push frontend
+        env:
+          TAG: ${{ steps.tags.outputs.deploy_tag }}
         run: |
           docker build -t "$REGISTRY/druppie/druppie-frontend:$TAG" ./frontend
-          docker tag  "$REGISTRY/druppie/druppie-frontend:$TAG" "$REGISTRY/druppie/druppie-frontend:latest"
-          docker push --all-tags "$REGISTRY/druppie/druppie-frontend"
+          docker push "$REGISTRY/druppie/druppie-frontend:$TAG"
 
       - name: Build and push init image
+        env:
+          TAG: ${{ steps.tags.outputs.deploy_tag }}
         run: |
           if [ -f Dockerfile.init ]; then
             docker build -t "$REGISTRY/druppie/druppie-init:$TAG" -f Dockerfile.init .
-            docker tag  "$REGISTRY/druppie/druppie-init:$TAG" "$REGISTRY/druppie/druppie-init:latest"
-            docker push --all-tags "$REGISTRY/druppie/druppie-init"
+            docker push "$REGISTRY/druppie/druppie-init:$TAG"
           fi
 
       - name: Build and push layout-service
+        env:
+          TAG: ${{ steps.tags.outputs.deploy_tag }}
         run: |
           docker build -t "$REGISTRY/druppie/druppie-layout-service:$TAG" ./druppie/mcp-servers/layout-service
-          docker tag  "$REGISTRY/druppie/druppie-layout-service:$TAG" "$REGISTRY/druppie/druppie-layout-service:latest"
-          docker push --all-tags "$REGISTRY/druppie/druppie-layout-service"
+          docker push "$REGISTRY/druppie/druppie-layout-service:$TAG"
 
       - name: Build and push MCP modules
+        env:
+          TAG: ${{ steps.tags.outputs.deploy_tag }}
         run: |
           for module in module-coding module-docker module-web module-vision \
                         module-archimate module-data-access module-registry \
@@ -78,21 +93,25 @@ jobs:
               fi
               echo "Building $module (context=$CONTEXT)..."
               docker build -t "$REGISTRY/druppie/druppie-$module:$TAG" -f "$DF" "$CONTEXT"
-              docker tag  "$REGISTRY/druppie/druppie-$module:$TAG" "$REGISTRY/druppie/druppie-$module:latest"
-              docker push --all-tags "$REGISTRY/druppie/druppie-$module"
+              docker push "$REGISTRY/druppie/druppie-$module:$TAG"
             fi
           done
 
       - name: Build and push sandbox-k8s image
+        env:
+          TAG: ${{ steps.tags.outputs.deploy_tag }}
         run: |
           if [ -f "./druppie/mcp-servers/module-coding/Dockerfile.sandbox.k8s" ]; then
             docker build -t "$REGISTRY/druppie/druppie-sandbox-k8s:$TAG" \
               -f ./druppie/mcp-servers/module-coding/Dockerfile.sandbox.k8s ./druppie/mcp-servers/module-coding
-            docker tag  "$REGISTRY/druppie/druppie-sandbox-k8s:$TAG" "$REGISTRY/druppie/druppie-sandbox-k8s:latest"
-            docker push --all-tags "$REGISTRY/druppie/druppie-sandbox-k8s"
+            docker push "$REGISTRY/druppie/druppie-sandbox-k8s:$TAG"
           fi
 
       - name: Summary
+        env:
+          TAG: ${{ steps.tags.outputs.deploy_tag }}
         run: |
           echo "### Build Complete ###"
-          echo "Images pushed to $REGISTRY/druppie/ with tags: $TAG, latest"
+          echo "Tag: $TAG"
+          echo "Images pushed to $REGISTRY/druppie/"
+          echo "FluxCD will auto-detect and deploy this tag."
