@@ -2,7 +2,7 @@
  * Session Detail - right panel when a session is selected in Chat
  */
 
-import { useState, useRef, useEffect, useContext } from 'react'
+import { useState, useRef, useEffect, useMemo, useContext } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Send, CheckCircle, XCircle, Shield, ShieldOff, Loader2, ExternalLink, MessageSquare, FileCode, FilePlus, FileText, FileType, StopCircle, PlayCircle, ArrowUp, AlertTriangle, Terminal, ChevronDown, ChevronRight, Calendar } from 'lucide-react'
 import { Link } from 'react-router-dom'
@@ -960,10 +960,30 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
   const { user } = useAuth()
   const canDebug = user?.roles?.some(r => r === 'developer' || r === 'admin')
   const isAdmin = !!user?.roles?.includes('admin')
+  const highestSeqRef = useRef(undefined)
+  const prevSessionIdRef = useRef(sessionId)
+  const viewModeRef = useRef(viewMode)
+  viewModeRef.current = viewMode
+
+  const getExcludeForViewMode = (mode) => {
+    if (mode === 'inspect') return []
+    return ['llm_raw', 'tool_results', 'subagent_runs', 'compaction_events', 'resume_contexts']
+  }
+
+  const mergedTimelineRef = useRef([])
 
   const { data, isLoading, error } = useQuery({
     queryKey: ['session', sessionId],
-    queryFn: () => getSession(sessionId),
+    queryFn: () => {
+      const isFirstLoad = highestSeqRef.current === undefined
+      if (isFirstLoad) {
+        return getSession(sessionId)
+      }
+      return getSession(sessionId, {
+        sinceSequence: highestSeqRef.current,
+        exclude: getExcludeForViewMode(viewModeRef.current),
+      })
+    },
     retry: (failureCount, error) => {
       if (error?.status === 403 || error?.status === 404) return false
       return failureCount < 3
@@ -972,7 +992,6 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
       if (query.state.error) return false
       const status = query.state.data?.status
       if (status === 'completed' || status === 'failed') return false
-      // Fast poll briefly after submitting an answer/approval (translation in progress)
       if (isResuming()) return 500
       if (status === 'paused_crashed') return 1000
       if (status === 'paused_sandbox') return 1000
@@ -983,6 +1002,64 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
     },
     enabled: !!sessionId,
   })
+
+  const displayTimeline = useMemo(() => {
+    if (!data) return []
+
+    if (highestSeqRef.current === undefined) {
+      const seqs = (data.timeline || []).map(e => e.sequence_number).filter(Boolean)
+      if (seqs.length > 0) {
+        highestSeqRef.current = Math.max(...seqs)
+      }
+      mergedTimelineRef.current = data.timeline || []
+      return mergedTimelineRef.current
+    }
+
+    const newEntries = data.timeline || []
+    if (newEntries.length === 0) return mergedTimelineRef.current
+
+    const existingMap = new Map()
+    for (const entry of mergedTimelineRef.current) {
+      if (entry.sequence_number != null) {
+        existingMap.set(entry.sequence_number, entry)
+      } else {
+        existingMap.set(existingMap.size, entry)
+      }
+    }
+
+    for (const entry of newEntries) {
+      if (entry.sequence_number != null) {
+        existingMap.set(entry.sequence_number, entry)
+      }
+    }
+
+    const merged = Array.from(existingMap.values())
+      .filter(e => e.sequence_number != null)
+      .sort((a, b) => a.sequence_number - b.sequence_number)
+
+    const seqs = merged.map(e => e.sequence_number).filter(Boolean)
+    if (seqs.length > 0) {
+      highestSeqRef.current = Math.max(...seqs)
+    }
+
+    mergedTimelineRef.current = merged
+    return merged
+  }, [data])
+
+  useEffect(() => {
+    if (sessionId !== prevSessionIdRef.current) {
+      prevSessionIdRef.current = sessionId
+      highestSeqRef.current = undefined
+      mergedTimelineRef.current = []
+    }
+  }, [sessionId])
+
+  useEffect(() => {
+    if (viewMode === 'inspect') {
+      highestSeqRef.current = undefined
+      mergedTimelineRef.current = []
+    }
+  }, [viewMode])
 
   const continueMutation = useMutation({
     mutationFn: ({ message, attachmentIds }) => sendChat(message, sessionId, null, attachmentIds),
@@ -1011,12 +1088,12 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
   })
 
   // Derive "stopping" state: session is paused but agent is still finishing current operation
-  const hasRunningAgentRun = data?.timeline?.some(
+  const hasRunningAgentRun = displayTimeline?.some(
     e => e.type === 'agent_run' && e.agent_run?.status === 'running'
   )
 
   // If all tool calls are failed, don't show "Stopping..." even if agent_run is "running"
-  const hasActuallyRunningToolCall = data?.timeline?.some(
+  const hasActuallyRunningToolCall = displayTimeline?.some(
     e => e.type === 'agent_run' && (e.agent_run?.llm_calls || []).some(
       llm => (llm.tool_calls || []).some(
         tc => tc.status === 'executing' || tc.status === 'waiting_approval' || tc.status === 'waiting_sandbox'
@@ -1036,7 +1113,7 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
   }, [data?.status, queryClient])
 
   useEffect(() => {
-    const currentLength = data?.timeline?.length || 0
+    const currentLength = displayTimeline?.length || 0
     if (currentLength > prevLengthRef.current) {
       const isInitial = prevLengthRef.current === 0
       // Double rAF for initial load: ensures flex layout is fully computed
@@ -1051,7 +1128,7 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
       })
     }
     prevLengthRef.current = currentLength
-  }, [data?.timeline?.length])
+  }, [displayTimeline?.length])
 
   // Restore scroll position when returning from inspect to timeline
   const prevViewMode = useRef(viewMode)
@@ -1079,12 +1156,12 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
   // Clear optimistic message once server data catches up (new timeline entries)
   useEffect(() => {
     if (pendingMessage === null) return
-    const len = data?.timeline?.length || 0
+    const len = displayTimeline?.length || 0
     if (pendingSetAtLength.current !== null && len > pendingSetAtLength.current) {
       setPendingMessage(null)
       setIsAnswering(false)
     }
-  }, [data?.timeline?.length, pendingMessage])
+  }, [displayTimeline?.length, pendingMessage])
 
   // Safety: clear pending message after 30s in case data never arrives
   useEffect(() => {
@@ -1194,7 +1271,7 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
       if (!answer) return
       setPendingMessage(trimmed || true)
       setIsAnswering(true)
-      pendingSetAtLength.current = data?.timeline?.length || 0
+      pendingSetAtLength.current = displayTimeline?.length || 0
       setContinueInput('')
       setAttachments([])
       const attIds = attachments.map((a) => a.id)
@@ -1217,7 +1294,7 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
       : 'Zie bijlage'
     const message = trimmed || fallback
     setPendingMessage(trimmed || true)
-    pendingSetAtLength.current = data?.timeline?.length || 0
+    pendingSetAtLength.current = displayTimeline?.length || 0
     continueMutation.mutate({ message, attachmentIds: attachments.map((a) => a.id) })
   }
 
@@ -1380,7 +1457,7 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
       )}
 
       {/* Workflow Pipeline — quick-glance status bar for all modes */}
-      <WorkflowPipeline timeline={data.timeline} />
+      <WorkflowPipeline timeline={displayTimeline} />
 
       {/* Content area: Chat/Annotated timeline or Inspect event log */}
       {viewMode === 'inspect' ? (
@@ -1388,7 +1465,7 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
       ) : (
         <div ref={timelineRef} className="flex-1 overflow-y-auto overflow-x-hidden">
           <div className="max-w-3xl mx-auto px-4 py-6 space-y-6">
-          {(!data.timeline || data.timeline.length === 0) && !pendingMessage && (
+          {(!displayTimeline || displayTimeline.length === 0) && !pendingMessage && (
             data.status === 'active' || data.status === 'running' ? (
               <div className="flex items-center justify-center py-12">
                 <Loader2 className="w-5 h-5 text-gray-400 animate-spin" />
@@ -1408,7 +1485,7 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
             // annotationMap: places each agent's AnnotationBar after the last
             // timeline entry (any message role) before the next agent_run starts
             const annotationMap = new Map()
-            if (data.timeline) {
+            if (displayTimeline) {
               let lastRun = null
               let lastRunIdx = null
               let lastMsgIdx = null
@@ -1416,8 +1493,8 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
               let annotCurrentRun = null
               let annotCurrentRunIdx = null
               let annotLastEntryIdx = null
-              for (let idx = 0; idx < data.timeline.length; idx++) {
-                const e = data.timeline[idx]
+              for (let idx = 0; idx < displayTimeline.length; idx++) {
+                const e = displayTimeline[idx]
                 if (e.type === 'agent_run' && e.agent_run) {
                   // messageRunMap logic (non-user messages only)
                   if (lastRun && lastMsgIdx !== null) {
@@ -1512,7 +1589,7 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
                       onAttachmentsConsumed={() => { setAttachments([]); setUploadError(null) }}
                       onAnswerSubmitted={() => {
                         setPendingMessage(true)
-                        pendingSetAtLength.current = data?.timeline?.length || 0
+                        pendingSetAtLength.current = displayTimeline?.length || 0
                       }}
                       language={data?.language}
                     />
@@ -1543,7 +1620,7 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
           {(() => {
             // Don't show thinking indicator if session itself has ended
             if (data.status === 'failed' || data.status === 'completed') return null
-            const activeEntry = data.timeline?.findLast(
+            const activeEntry = displayTimeline?.findLast(
               (e) => e.type === 'agent_run' && (e.agent_run?.status === 'running' || e.agent_run?.status === 'paused_sandbox')
             )
             if (!activeEntry) return null
@@ -1581,7 +1658,7 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
               })
               run?.subagent_runs?.forEach(scanRun)
             }
-            data.timeline?.forEach((entry) => {
+            displayTimeline?.forEach((entry) => {
               if (entry.type !== 'agent_run' || !entry.agent_run) return
               scanRun(entry.agent_run)
             })

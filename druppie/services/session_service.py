@@ -7,6 +7,7 @@ import structlog
 from ..api.errors import AuthorizationError, NotFoundError
 from ..db.models import MessageAttachment, Session as SessionModel
 from ..domain import SessionDetail, SessionSummary
+from ..repositories.session_repository import DetailOptions
 from ..domain.common import SessionStatus
 from ..repositories import SessionRepository, QuestionRepository
 from ..services import attachment_service
@@ -40,6 +41,8 @@ class SessionService:
         session_id: UUID,
         user_id: UUID,
         user_roles: list[str],
+        since_sequence: int | None = None,
+        exclude: set[str] | None = None,
     ) -> SessionDetail:
         """Get session detail with access check.
 
@@ -64,7 +67,8 @@ class SessionService:
         if not (is_owner or is_admin or is_expert):
             raise AuthorizationError("Cannot access this session")
 
-        detail = self.session_repo.get_with_chat(session_id)
+        options = DetailOptions(since_sequence=since_sequence, exclude=exclude or set())
+        detail = self.session_repo.get_with_chat(session_id, options=options)
         if not detail:
             raise NotFoundError("session", str(session_id))
 

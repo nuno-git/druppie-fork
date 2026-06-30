@@ -48,6 +48,17 @@ from ..domain import (
 from .base import BaseRepository
 
 
+class DetailOptions:
+    """Options for filtering session detail response."""
+    def __init__(
+        self,
+        since_sequence: int | None = None,
+        exclude: set[str] | None = None,
+    ):
+        self.since_sequence = since_sequence
+        self.exclude = exclude or set()
+
+
 class SessionRepository(BaseRepository):
     """Database access for sessions."""
 
@@ -127,13 +138,14 @@ class SessionRepository(BaseRepository):
         )
         return [self._to_summary(s) for s in sessions]
 
-    def get_detail(self, session_id: UUID) -> SessionDetail | None:
+    def get_detail(self, session_id: UUID, options: DetailOptions | None = None) -> SessionDetail | None:
         """Get session with full timeline."""
         session = self.get_by_id(session_id)
         if not session:
             return None
 
-        timeline = self._build_timeline(session_id)
+        options = options or DetailOptions()
+        timeline = self._build_timeline(session_id, options=options)
         project = self._get_project_summary(session.project_id) if session.project_id else None
 
         return SessionDetail(
@@ -158,9 +170,9 @@ class SessionRepository(BaseRepository):
         )
 
     # Backward compat alias
-    def get_with_chat(self, session_id: UUID) -> SessionDetail | None:
+    def get_with_chat(self, session_id: UUID, options: DetailOptions | None = None) -> SessionDetail | None:
         """Alias for get_detail (backward compatibility)."""
-        return self.get_detail(session_id)
+        return self.get_detail(session_id, options=options)
 
     def create(
         self,
@@ -284,7 +296,7 @@ class SessionRepository(BaseRepository):
             updated_at=session.updated_at,
         )
 
-    def _build_timeline(self, session_id: UUID) -> list[TimelineEntry]:
+    def _build_timeline(self, session_id: UUID, options: DetailOptions | None = None) -> list[TimelineEntry]:
         """Build chronological timeline from messages and agent runs.
 
         Returns a unified list of TimelineEntry objects, each containing either:
@@ -293,6 +305,7 @@ class SessionRepository(BaseRepository):
 
         Items are sorted by timestamp for chronological display.
         """
+        options = options or DetailOptions()
         entries = []
 
         # Get messages (user, system, assistant)
@@ -324,6 +337,8 @@ class SessionRepository(BaseRepository):
             )
 
         for msg in messages:
+            if options.since_sequence is not None and msg.sequence_number is not None and msg.sequence_number <= options.since_sequence:
+                continue
             entries.append(TimelineEntry(
                 type=TimelineEntryType.MESSAGE,
                 timestamp=msg.created_at,
@@ -348,10 +363,12 @@ class SessionRepository(BaseRepository):
         )
 
         for run in agent_runs:
+            if options.since_sequence is not None and run.sequence_number is not None and run.sequence_number <= options.since_sequence:
+                continue
             entries.append(TimelineEntry(
                 type=TimelineEntryType.AGENT_RUN,
                 timestamp=run.started_at or run.created_at,
-                agent_run=self._build_agent_run_detail(run),
+                agent_run=self._build_agent_run_detail(run, options=options),
             ))
 
         # Sort by sequence_number (both messages and agent runs have one),
@@ -391,24 +408,42 @@ class SessionRepository(BaseRepository):
             completed_at=run.completed_at,
         )
 
-    def _build_agent_run_detail(self, run: AgentRun, _depth: int = 0) -> AgentRunDetail:
+    def _build_agent_run_detail(self, run: AgentRun, _depth: int = 0, options: DetailOptions | None = None) -> AgentRunDetail:
         """Build full agent run detail with LLM calls, tool executions, and nested subagent runs."""
-        llm_calls = self._build_llm_calls(run.id)
-        compaction_events = self._build_compaction_events(run.id)
-        resume_contexts = self._build_resume_contexts(run.id)
+        options = options or DetailOptions()
+        exclude = options.exclude
 
-        subagent_runs: list[AgentRunDetail] = []
-        if _depth < 10:
-            child_runs = (
-                self.db.query(AgentRun)
-                .filter_by(parent_run_id=run.id)
-                .order_by(AgentRun.sequence_number, AgentRun.created_at)
-                .all()
-            )
-            subagent_runs = [
-                self._build_agent_run_detail(child, _depth=_depth + 1)
-                for child in child_runs
-            ]
+        if "subagent_runs" in exclude:
+            subagent_runs: list[AgentRunDetail] = []
+        else:
+            subagent_runs = []
+            if _depth < 10:
+                child_runs = (
+                    self.db.query(AgentRun)
+                    .filter_by(parent_run_id=run.id)
+                    .order_by(AgentRun.sequence_number, AgentRun.created_at)
+                    .all()
+                )
+                subagent_runs = [
+                    self._build_agent_run_detail(child, _depth=_depth + 1, options=options)
+                    for child in child_runs
+                ]
+
+        if "compaction_events" in exclude:
+            compaction_events: list[CompactionEventDetail] = []
+        else:
+            compaction_events = self._build_compaction_events(run.id)
+
+        if "resume_contexts" in exclude:
+            resume_contexts: list[ResumeContext] = []
+        else:
+            resume_contexts = self._build_resume_contexts(run.id)
+
+        exclude_tool_results = "tool_results" in exclude
+        if "llm_raw" in exclude:
+            llm_calls = self._build_llm_calls(run.id, exclude_llm_raw=True, exclude_tool_results=exclude_tool_results)
+        else:
+            llm_calls = self._build_llm_calls(run.id, exclude_tool_results=exclude_tool_results)
 
         return AgentRunDetail(
             id=run.id,
@@ -474,7 +509,7 @@ class SessionRepository(BaseRepository):
             for e in events_db
         ]
 
-    def _build_llm_calls(self, agent_run_id: UUID) -> list[LLMCallDetail]:
+    def _build_llm_calls(self, agent_run_id: UUID, exclude_llm_raw: bool = False, exclude_tool_results: bool = False) -> list[LLMCallDetail]:
         """Build LLM calls with their tool executions for an agent run."""
         import json
 
@@ -491,7 +526,7 @@ class SessionRepository(BaseRepository):
             messages = self._parse_messages(llm.request_messages)
 
             # Get tool calls that were executed after this LLM call
-            tool_calls = self._build_tool_calls_for_llm(llm)
+            tool_calls = self._build_tool_calls_for_llm(llm, exclude_tool_results=exclude_tool_results)
 
             response_content = self._extract_response_content(llm.response_content)
 
@@ -502,6 +537,9 @@ class SessionRepository(BaseRepository):
                     response_tool_calls = raw_data.get("tool_calls")
                 except json.JSONDecodeError:
                     pass
+
+            raw_request = None if exclude_llm_raw else (llm.raw_request if llm.raw_request else None)
+            raw_response = None if exclude_llm_raw else (llm.raw_response if llm.raw_response else None)
 
             result.append(LLMCallDetail(
                 id=llm.id,
@@ -578,7 +616,7 @@ class SessionRepository(BaseRepository):
             ))
         return messages
 
-    def _build_tool_calls_for_llm(self, llm: LlmCall) -> list[ToolCallDetail]:
+    def _build_tool_calls_for_llm(self, llm: LlmCall, exclude_tool_results: bool = False) -> list[ToolCallDetail]:
         """Build tool call details for an LLM call.
 
         Uses llm_call_id foreign key for direct lookup instead of
@@ -593,11 +631,11 @@ class SessionRepository(BaseRepository):
         )
 
         return [
-            self._build_tool_call_detail(tc, tc.tool_call_index or idx)
+            self._build_tool_call_detail(tc, tc.tool_call_index or idx, exclude_tool_results=exclude_tool_results)
             for idx, tc in enumerate(tool_calls_db)
         ]
 
-    def _build_tool_call_detail(self, tc: ToolCall, index: int) -> ToolCallDetail:
+    def _build_tool_call_detail(self, tc: ToolCall, index: int, exclude_tool_results: bool = False) -> ToolCallDetail:
         """Build a single tool call detail.
 
         Uses ToolRegistry to get tool description. Parameter schema is not
@@ -725,6 +763,17 @@ class SessionRepository(BaseRepository):
                         for c in question.choices_english
                     ]
 
+        result_val = None if exclude_tool_results else tc.result
+        error_val = None if exclude_tool_results else tc.error_message
+        normalizations_val = [] if exclude_tool_results else [
+            NormalizationDetail(
+                field_name=n.field_name,
+                original_value=n.original_value,
+                normalized_value=n.normalized_value,
+            )
+            for n in tc.normalizations
+        ]
+
         return ToolCallDetail(
             id=tc.id,
             index=index,
@@ -735,16 +784,9 @@ class SessionRepository(BaseRepository):
             description=description,
             arguments=arguments,
             status=ToolCallStatus(tc.status),
-            result=tc.result,
-            error=tc.error_message,
-            normalizations=[
-                NormalizationDetail(
-                    field_name=n.field_name,
-                    original_value=n.original_value,
-                    normalized_value=n.normalized_value,
-                )
-                for n in tc.normalizations
-            ],
+            result=result_val,
+            error=error_val,
+            normalizations=normalizations_val,
             approval=approval_summary,
             question_id=question_id,
             attachments=question_attachments,
