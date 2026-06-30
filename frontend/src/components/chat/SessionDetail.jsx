@@ -1061,6 +1061,18 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
     }
   }, [viewMode])
 
+  // Listen for reset events from retry/resume operations in inspect mode
+  useEffect(() => {
+    const handleResetCache = (e) => {
+      if (e.detail?.sessionId === sessionId) {
+        highestSeqRef.current = undefined
+        mergedTimelineRef.current = []
+      }
+    }
+    window.addEventListener('druppie-reset-session-cache', handleResetCache)
+    return () => window.removeEventListener('druppie-reset-session-cache', handleResetCache)
+  }, [sessionId])
+
   const continueMutation = useMutation({
     mutationFn: ({ message, attachmentIds }) => sendChat(message, sessionId, null, attachmentIds),
     onSuccess: () => {

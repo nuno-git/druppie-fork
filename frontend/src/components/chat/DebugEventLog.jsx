@@ -372,6 +372,9 @@ const AgentDetailPanel = ({ agentRun, sessionId, sessionStatus }) => {
     },
     onSuccess: () => {
       setShowRetryConfirm(false)
+      window.dispatchEvent(new CustomEvent('druppie-reset-session-cache', {
+        detail: { sessionId }
+      }))
       queryClient.invalidateQueries({ queryKey: ['session', sessionId] })
       queryClient.invalidateQueries({ queryKey: ['sessions'] })
     },
