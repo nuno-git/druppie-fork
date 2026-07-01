@@ -119,7 +119,7 @@ jobs:
         env:
           TAG: ${{ steps.tags.outputs.deploy_tag }}
           BRANCH: ${{ github.ref_name }}
-          GIT_TOKEN: ${{ secrets.GITEA_CI_TOKEN }}
+          GIT_TOKEN: ${{ secrets.CI_GIT_TOKEN }}
         run: |
           if [ "$BRANCH" = "main" ]; then
             HR_FILE="clusters/ka-k8s-ai/apps/druppie/helmrelease.yaml"
