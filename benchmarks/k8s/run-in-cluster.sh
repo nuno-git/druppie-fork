@@ -4,6 +4,11 @@
 # Idempotent: deletes any prior Job/configmaps first, recreates the configmaps
 # from the local benchmarks/ source tree, applies the Job, and tails the logs.
 #
+# On completion the Job auto-publishes its results (JSON + CSV + console report)
+# to aigit under benchmarks/results-incluster/auto/<runid>/ on branch
+# benchmarks/auto-results and ensures an open PR into colab-dev. This uses the
+# `aigit-publish` secret in ns llm; without it publishing is silently skipped.
+#
 # Usage: ./benchmarks/k8s/run-in-cluster.sh
 set -euo pipefail
 
@@ -17,7 +22,7 @@ cd "${REPO_ROOT}"
 
 echo ">> Cleaning up any prior run..."
 kubectl delete job "${JOB}" -n "${NS}" --ignore-not-found
-kubectl delete configmap bench-pkg bench-scenarios -n "${NS}" --ignore-not-found
+kubectl delete configmap bench-pkg bench-scenarios bench-publish -n "${NS}" --ignore-not-found
 
 echo ">> Creating configmap bench-pkg (top-level package files)..."
 # Only the importable package files + config — keep the configmap small and clean.
@@ -31,6 +36,10 @@ kubectl create configmap bench-pkg -n "${NS}" \
 echo ">> Creating configmap bench-scenarios..."
 kubectl create configmap bench-scenarios -n "${NS}" \
   --from-file=benchmarks/scenarios/
+
+echo ">> Creating configmap bench-publish (aigit auto-publish script)..."
+kubectl create configmap bench-publish -n "${NS}" \
+  --from-file=publish_to_aigit.py=benchmarks/k8s/publish_to_aigit.py
 
 echo ">> Applying Job..."
 kubectl apply -f benchmarks/k8s/job.yaml
