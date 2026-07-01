@@ -15,6 +15,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Pre-install Z.AI MCP server
 RUN npx -y @z_ai/mcp-server --help 2>/dev/null || true
 
+ARG CACHEBUST
 # Copy shared router factory and module code
 COPY module_router.py .
 COPY module-vision/ .

@@ -27,6 +27,8 @@ COPY druppie/requirements.txt .
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install -r requirements.txt
 
+# Bust cache for source code layers (dependency layers above stay cached)
+ARG CACHEBUST
 # Copy application code
 COPY druppie/ /app/druppie/
 
