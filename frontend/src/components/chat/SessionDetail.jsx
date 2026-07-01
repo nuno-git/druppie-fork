@@ -22,6 +22,7 @@ import DebugEventLog from './DebugEventLog'
 import ContinueDialog from './ContinueDialog'
 import AnnotationBar from './AnnotationBar'
 import { consumePending } from '../../services/pendingChat'
+import SessionSocket from '../../services/sessionSocket'
 import {
   chatMarkdownComponents,
   CopyJsonButton,
@@ -964,6 +965,7 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
   const prevSessionIdRef = useRef(sessionId)
   const viewModeRef = useRef(viewMode)
   viewModeRef.current = viewMode
+  const isWebSocketConnected = useRef(false)
 
   const getExcludeForViewMode = (mode) => {
     if (mode === 'inspect') return []
@@ -1005,6 +1007,7 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
     },
     refetchInterval: (query) => {
       if (query.state.error) return false
+      if (isWebSocketConnected.current) return false
       const status = query.state.data?.status
       if (status === 'completed' || status === 'failed') return false
       if (isResuming()) return 500
@@ -1075,6 +1078,51 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
       mergedTimelineRef.current = []
     }
   }, [viewMode])
+
+  useEffect(() => {
+    if (!sessionId) return
+
+    if (!getUserInfo()?.id) return
+
+    const socket = new SessionSocket(sessionId, (event) => {
+      if (event.type === 'timeline_entry' && event.entry) {
+        const newEntry = event.entry
+        mergedTimelineRef.current = [...mergedTimelineRef.current, newEntry]
+        mergedTimelineRef.current.sort((a, b) => a.sequence_number - b.sequence_number)
+        const seqs = mergedTimelineRef.current.map(e => e.sequence_number).filter(Boolean)
+        if (seqs.length > 0) {
+          highestSeqRef.current = Math.max(...seqs)
+        }
+        queryClient.setQueryData(['session', sessionId], (old) => {
+          if (!old) return old
+          return { ...old, timeline: mergedTimelineRef.current }
+        })
+      } else if (event.type === 'session_status') {
+        queryClient.setQueryData(['session', sessionId], (old) => {
+          if (!old) return old
+          return { ...old, status: event.status, timeline: old.timeline }
+        })
+      }
+    })
+
+    isWebSocketConnected.current = false
+    socket.connect()
+
+    socket.ws.onopen = () => {
+      isWebSocketConnected.current = true
+    }
+
+    const origOnclose = socket.ws.onclose
+    socket.ws.onclose = (e) => {
+      isWebSocketConnected.current = false
+      if (origOnclose) origOnclose(e)
+    }
+
+    return () => {
+      socket.disconnect()
+      isWebSocketConnected.current = false
+    }
+  }, [sessionId, queryClient])
 
   // Listen for reset events from retry/resume operations in inspect mode
   useEffect(() => {

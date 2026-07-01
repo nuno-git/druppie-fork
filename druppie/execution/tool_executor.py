@@ -980,7 +980,7 @@ class ToolExecutor:
         )
 
         seq = self.execution_repo.get_next_sequence_number(session_id)
-        self.execution_repo.create_message(
+        msg_id = self.execution_repo.create_message(
             session_id=session_id,
             role="system",
             content=message,
@@ -1086,6 +1086,14 @@ class ToolExecutor:
             "approval_created",
             approval_id=str(approval.id),
             tool_call_id=str(tool_call.id),
+            required_role=required_role,
+        )
+
+        from druppie.core.session_event_manager import get_event_manager
+        await get_event_manager().broadcast_approval_created(
+            session_id=tool_call.session_id,
+            approval_id=approval.id,
+            tool_name=tool_call.tool_name,
             required_role=required_role,
         )
 
@@ -1254,6 +1262,14 @@ class ToolExecutor:
             tool_call_id=str(tool_call.id),
             question_type=question_type,
             expert_role=expert_role,
+        )
+
+        from druppie.core.session_event_manager import get_event_manager
+        await get_event_manager().broadcast_question_created(
+            session_id=tool_call.session_id,
+            question_id=question.id,
+            question_text=question_text,
+            question_type=question_type,
         )
 
         return ToolCallStatus.WAITING_ANSWER
