@@ -140,7 +140,7 @@ jobs:
         env:
           TAG: ${{ steps.tags.outputs.deploy_tag }}
           BRANCH: ${{ github.ref_name }}
-          GIT_TOKEN: ${{ secrets.GITEA_CI_TOKEN }}
+          GIT_TOKEN: ${{ secrets.CI_GIT_TOKEN }}
         run: |
           if [ "$BRANCH" = "main" ]; then
             HR_FILE="clusters/ka-k8s-ai/apps/druppie/helmrelease.yaml"
@@ -150,7 +150,7 @@ jobs:
             OLD_PATTERN='colab-dev-[0-9]*-[a-f0-9]*'
           fi
 
-          git clone "https://druppie-ci:${GIT_TOKEN}@aigit.waterschap.org:8443/ai/k8s.git" /tmp/k8s
+          git clone "https://druppie-ci:${GIT_TOKEN}@aigit.waterschap.org/ai/k8s.git" /tmp/k8s
           cd /tmp/k8s
           git config user.name "druppie-ci"
           git config user.email "druppie-ci@users.noreply.rijnland.dev"
