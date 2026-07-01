@@ -47,14 +47,12 @@ jobs:
           {"auths":{"$HARBOR_REG":{"auth":"$AUTH"}}}
           JSON
 
-      - name: Prune stale Docker build cache
-        run: docker builder prune -f 2>/dev/null || true
-
       - name: Build and push backend
         env:
           TAG: ${{ steps.tags.outputs.deploy_tag }}
+          SHA: ${{ github.sha }}
         run: |
-          docker build --no-cache -t "$REGISTRY/druppie/druppie-backend:$TAG" .
+          docker build --build-arg CACHEBUST="$SHA" -t "$REGISTRY/druppie/druppie-backend:$TAG" .
           docker push "$REGISTRY/druppie/druppie-backend:$TAG"
 
       - name: Verify backend code freshness
@@ -75,29 +73,33 @@ jobs:
       - name: Build and push frontend
         env:
           TAG: ${{ steps.tags.outputs.deploy_tag }}
+          SHA: ${{ github.sha }}
         run: |
-          docker build --no-cache -t "$REGISTRY/druppie/druppie-frontend:$TAG" ./frontend
+          docker build --build-arg CACHEBUST="$SHA" -t "$REGISTRY/druppie/druppie-frontend:$TAG" ./frontend
           docker push "$REGISTRY/druppie/druppie-frontend:$TAG"
 
       - name: Build and push init image
         env:
           TAG: ${{ steps.tags.outputs.deploy_tag }}
+          SHA: ${{ github.sha }}
         run: |
           if [ -f Dockerfile.init ]; then
-            docker build --no-cache -t "$REGISTRY/druppie/druppie-init:$TAG" -f Dockerfile.init .
+            docker build --build-arg CACHEBUST="$SHA" -t "$REGISTRY/druppie/druppie-init:$TAG" -f Dockerfile.init .
             docker push "$REGISTRY/druppie/druppie-init:$TAG"
           fi
 
       - name: Build and push layout-service
         env:
           TAG: ${{ steps.tags.outputs.deploy_tag }}
+          SHA: ${{ github.sha }}
         run: |
-          docker build --no-cache -t "$REGISTRY/druppie/druppie-layout-service:$TAG" ./druppie/mcp-servers/layout-service
+          docker build --build-arg CACHEBUST="$SHA" -t "$REGISTRY/druppie/druppie-layout-service:$TAG" ./druppie/mcp-servers/layout-service
           docker push "$REGISTRY/druppie/druppie-layout-service:$TAG"
 
       - name: Build and push MCP modules
         env:
           TAG: ${{ steps.tags.outputs.deploy_tag }}
+          SHA: ${{ github.sha }}
         run: |
           for module in module-coding module-docker module-web module-vision \
                         module-archimate module-data-access module-registry \
@@ -110,7 +112,7 @@ jobs:
                 CONTEXT="./druppie/mcp-servers/"
               fi
               echo "Building $module (context=$CONTEXT)..."
-              docker build --no-cache -t "$REGISTRY/druppie/druppie-$module:$TAG" -f "$DF" "$CONTEXT"
+              docker build --build-arg CACHEBUST="$SHA" -t "$REGISTRY/druppie/druppie-$module:$TAG" -f "$DF" "$CONTEXT"
               docker push "$REGISTRY/druppie/druppie-$module:$TAG"
             fi
           done
@@ -118,9 +120,10 @@ jobs:
       - name: Build and push sandbox-k8s image
         env:
           TAG: ${{ steps.tags.outputs.deploy_tag }}
+          SHA: ${{ github.sha }}
         run: |
           if [ -f "./druppie/mcp-servers/module-coding/Dockerfile.sandbox.k8s" ]; then
-            docker build --no-cache -t "$REGISTRY/druppie/druppie-sandbox-k8s:$TAG" \
+            docker build --build-arg CACHEBUST="$SHA" -t "$REGISTRY/druppie/druppie-sandbox-k8s:$TAG" \
               -f ./druppie/mcp-servers/module-coding/Dockerfile.sandbox.k8s ./druppie/mcp-servers/module-coding
             docker push "$REGISTRY/druppie/druppie-sandbox-k8s:$TAG"
           fi
