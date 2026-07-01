@@ -28,6 +28,10 @@ spec:
         app.kubernetes.io/component: docker-installer
         {{- include "druppie.selectorLabels" . | nindent 8 }}
     spec:
+      {{- if .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml .Values.global.imagePullSecrets | nindent 8 }}
+      {{- end }}
       hostPID: true
       hostNetwork: true
       # Only run on app pool nodes (where backend/docker-module run)

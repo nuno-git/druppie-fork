@@ -43,7 +43,7 @@ spec:
         - name: keycloak
           image: {{ .Values.keycloak.image }}
           imagePullPolicy: {{ .Values.global.imagePullPolicy }}
-          args: ["start-dev"]
+          args: ["start-dev", "--import-realm"]
           env:
             - name: KC_DB
               value: "postgres"
@@ -70,33 +70,40 @@ spec:
                 secretKeyRef:
                   name: {{ include "druppie.fullname" . }}-secrets
                   key: KEYCLOAK_ADMIN_PASSWORD
-            {{- if .Values.global.subdomains.keycloak }}
+            {{- if .Values.global.ingress.tls.enabled }}
+            # Force HTTPS frontend URLs via hostname-url (overrides scheme+host+port)
+            - name: KC_HOSTNAME_URL
+              value: "https://{{ .Values.global.domain }}"
+            {{- else if .Values.global.subdomains.keycloak }}
             - name: KC_HOSTNAME
               value: {{ .Values.global.subdomains.keycloak | quote }}
             {{- else }}
             - name: KC_HOSTNAME
               value: {{ .Values.global.domain | quote }}
             {{- end }}
+            {{- if not .Values.global.ingress.tls.enabled }}
+            {{- if .Values.global.ingress.enabled }}
             - name: KC_HOSTNAME_PORT
-              {{- if .Values.global.ingress.tls.enabled }}
-              value: "443"
-              {{- else if .Values.global.ingress.enabled }}
               value: {{ .Values.global.ingress.port | quote }}
-              {{- else }}
+            {{- else }}
+            - name: KC_HOSTNAME_PORT
               value: {{ .Values.keycloak.nodePort | quote }}
-              {{- end }}
+            {{- end }}
+            {{- end }}
             - name: KC_HOSTNAME_STRICT
-              value: "false"
+              value: {{ .Values.global.ingress.tls.enabled | quote }}
             - name: KC_PROXY
               value: "edge"
             - name: KC_PROXY_HEADERS
               value: "xforwarded"
             - name: KC_HTTP_ENABLED
               value: "true"
+            - name: QUARKUS_HTTP_PROXY_PROXY_ADDRESS_FORWARDING
+              value: "true"
             - name: KC_HEALTH_ENABLED
               value: "true"
             - name: JAVA_OPTS_APPEND
-              value: "-Xms256m -Xmx512m -XX:MaxGCPauseMillis=100 -Djava.net.preferIPv4Stack=true"
+              value: "-Xms256m -Xmx512m -XX:MaxGCPauseMillis=100 -Djava.net.preferIPv4Stack=true -Dquarkus.http.proxy.proxy-address-forwarding=true"
             - name: KC_CACHE
               value: "local"
             - name: KC_CACHE_STACK
@@ -123,3 +130,14 @@ spec:
             timeoutSeconds: 10
           resources:
             {{- toYaml .Values.keycloak.resources | nindent 12 }}
+          {{- if .Values.keycloak.realmImport.enabled }}
+          volumeMounts:
+            - name: realm-import
+              mountPath: /opt/keycloak/data/import
+          {{- end }}
+      {{- if .Values.keycloak.realmImport.enabled }}
+      volumes:
+        - name: realm-import
+          configMap:
+            name: {{ include "druppie.fullname" . }}-realm-export
+      {{- end }}

@@ -7,6 +7,9 @@ global:
   imagePullPolicy: IfNotPresent
   # Override for image registry prefix (e.g. "ghcr.io/myorg/")
   imageRegistry: ""
+  # Global image tag override — when set, overrides per-image .image.tag
+  # Used by FluxCD image automation to roll all images forward together
+  imageTag: ""
   # Registry credentials — list of secret names for private registries
   imagePullSecrets: []
   # Domain configuration — controls all external URLs
@@ -91,6 +94,13 @@ keycloak:
     initialDelaySeconds: 90
     periodSeconds: 30
     failureThreshold: 10
+  # Realm import — when enabled, mounts realm-export.json as a ConfigMap
+  # and passes --import-realm to Keycloak. Realm is re-imported on every restart.
+  realmImport:
+    enabled: true
+  # Persistent volume for Keycloak DB (PostgreSQL StatefulSet).
+  # When false, uses emptyDir (realm re-imported from Git on every restart).
+  dbPersistent: true
 
 # Gitea Git Server
 gitea:
@@ -373,6 +383,10 @@ sandbox:
   image: druppie-sandbox:latest
   memoryLimit: 4g
   cpuLimit: "2"
+
+# Sandbox image builder job (disabled by default)
+sandboxImageBuilder:
+  enabled: false
 
 # Networking (ingress config moved to global.ingress)
 
