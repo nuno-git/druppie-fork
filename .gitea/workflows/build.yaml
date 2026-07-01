@@ -150,7 +150,7 @@ jobs:
             OLD_PATTERN='colab-dev-[0-9]*-[a-f0-9]*'
           fi
 
-          git clone "https://druppie-ci:${GIT_TOKEN}@aigit.waterschap.org:8443/ai/k8s.git" /tmp/k8s
+          git clone "https://druppie-ci:${GIT_TOKEN}@aigit.waterschap.org/ai/k8s.git" /tmp/k8s
           cd /tmp/k8s
           git config user.name "druppie-ci"
           git config user.email "druppie-ci@users.noreply.rijnland.dev"
