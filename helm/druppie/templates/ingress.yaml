@@ -6,8 +6,11 @@ metadata:
   name: {{ include "druppie.fullname" . }}-main
   labels:
     {{- include "druppie.labels" . | nindent 4 }}
-  {{- if or .Values.global.ingress.annotations .Values.certManager.enabled }}
+  {{- if or .Values.global.ingress.annotations .Values.certManager.enabled (eq (.Values.global.ingress.className | default "nginx") "traefik") }}
   annotations:
+    {{- if eq (.Values.global.ingress.className | default "nginx") "traefik" }}
+    traefik.ingress.kubernetes.io/router.middlewares: kube-system-treafik-default-headers@kubernetescrd
+    {{- end }}
     {{- if .Values.certManager.enabled }}
     cert-manager.io/cluster-issuer: letsencrypt-prod
     {{- end }}
