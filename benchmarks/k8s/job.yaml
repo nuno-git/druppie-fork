@@ -17,14 +17,19 @@ spec:
       volumes:
         - name: app
           emptyDir: {}
+        - name: results
+          emptyDir: {}
         - name: bench-pkg
           configMap:
             name: bench-pkg
         - name: bench-scenarios
           configMap:
             name: bench-scenarios
+        - name: bench-publish
+          configMap:
+            name: bench-publish
       initContainers:
-        # Assemble a writable Python package dir from the two configmaps.
+        # Assemble a writable Python package dir from the configmaps.
         # Avoids read-only/nested-mount issues with configMap volumes.
         - name: assemble
           image: busybox:1.36
@@ -33,13 +38,16 @@ spec:
             - -c
             - |
               set -eu
-              mkdir -p /app/benchmarks/scenarios
+              mkdir -p /app/benchmarks/scenarios /app/publish
               cp /cm-pkg/* /app/benchmarks/
               cp /cm-scenarios/* /app/benchmarks/scenarios/
+              cp /cm-publish/* /app/publish/
               echo "Assembled package:"
               ls -la /app/benchmarks/
               echo "Scenarios:"
               ls /app/benchmarks/scenarios/ | wc -l
+              echo "Publish script:"
+              ls -la /app/publish/
           volumeMounts:
             - name: app
               mountPath: /app
@@ -47,23 +55,68 @@ spec:
               mountPath: /cm-pkg
             - name: bench-scenarios
               mountPath: /cm-scenarios
+            - name: bench-publish
+              mountPath: /cm-publish
       containers:
         - name: benchmark
           image: python:3.12-slim
           workingDir: /app
+          # aigit credentials for auto-publish. Secret keys are lowercase
+          # (api/repo/user/token); map them explicitly to the AIGIT_* env
+          # names the publish script expects. optional=true so the Job still
+          # runs (publish is skipped) if the secret is absent.
+          env:
+            - name: AIGIT_API
+              valueFrom:
+                secretKeyRef:
+                  name: aigit-publish
+                  key: api
+                  optional: true
+            - name: AIGIT_REPO
+              valueFrom:
+                secretKeyRef:
+                  name: aigit-publish
+                  key: repo
+                  optional: true
+            - name: AIGIT_USER
+              valueFrom:
+                secretKeyRef:
+                  name: aigit-publish
+                  key: user
+                  optional: true
+            - name: AIGIT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: aigit-publish
+                  key: token
+                  optional: true
+            - name: RESULTS_DIR
+              value: /results
           command:
             - sh
             - -c
             - |
               set -eu
               pip install --quiet httpx pyyaml
-              python -m benchmarks.runner --runs 2 --warmup 1 --timeout 600 --output /app/out.json
+              # Run the suite once, writing JSON to the shared /results dir and
+              # capturing the console report to /results/report.txt (tee keeps
+              # it on stdout too).
+              python -m benchmarks.runner --runs 2 --warmup 1 --timeout 600 \
+                --output /results/results.json 2>&1 | tee /results/report.txt
+              # Derive the CSV from the JSON (no second benchmark run).
+              python /app/publish/publish_to_aigit.py --json-to-csv \
+                /results/results.json /results/results.csv || true
+              # Keep the stdout JSON markers for the manual-capture path.
               echo '===RESULTS_JSON_START==='
-              cat /app/out.json
+              cat /results/results.json
               echo '===RESULTS_JSON_END==='
+              # Auto-publish results to aigit (graceful no-op without a token).
+              python /app/publish/publish_to_aigit.py
           volumeMounts:
             - name: app
               mountPath: /app
+            - name: results
+              mountPath: /results
           resources:
             requests:
               cpu: 500m
