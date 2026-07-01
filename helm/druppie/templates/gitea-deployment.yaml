@@ -77,17 +77,19 @@ spec:
                 secretKeyRef:
                   name: {{ include "druppie.fullname" . }}-secrets
                   key: GITEA_ADMIN_PASSWORD
-          # Keep the image ENTRYPOINT (it chowns /data + drops to git via
-          # su-exec); only override the command it runs.
-          args:
+          # Runs as root (container default): chown /data so the git user can
+          # write on a fresh PVC, then run the gitea CLI as git via su-exec
+          # (the gitea binary refuses to run as root). Fully idempotent.
+          command:
             - sh
             - -c
             - |
               set -e
-              if gitea admin user list | grep -q "$$GITEA_ADMIN_USER"; then
+              chown -R 1000:1000 /data 2>/dev/null || true
+              if su-exec git gitea admin user list | grep -q "$$GITEA_ADMIN_USER"; then
                 echo "admin user '$$GITEA_ADMIN_USER' already exists"
               else
-                gitea admin user create \
+                su-exec git gitea admin user create \
                   --username "$$GITEA_ADMIN_USER" \
                   --password "$$GITEA_ADMIN_PASSWORD" \
                   --email "$$GITEA_ADMIN_EMAIL" \
