@@ -1,0 +1,2 @@
+category,scenario,model,endpoint,model_id,parameters,quantization,kv_cache_quant,flash_attention,run,total_latency_ms,ttft_ms,prompt_tokens,completion_tokens,total_tokens,tokens_per_second,prompt_eval_rate,error
+latency,latency-50,"Qwen3.6-27B (vLLM/LLMKube, ka-k8s-ai)",qwen_incluster,Qwen/Qwen3.6-27B,27B,bfloat16,fp8,True,1,18290.139036020264,204.734179074876,45,474,519,25.9156039801837,219.79720339485897,
