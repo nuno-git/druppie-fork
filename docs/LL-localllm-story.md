@@ -102,3 +102,4 @@ Framework staat klaar; het lokale endpoint draait. **Benchmark is uitgevoerd op 
 4. GPU-autoscaling (KEDA/HPA op DCGM-metric) inrichten.
 5. (Apart) token-streaming implementeren.
 6. ADR + `LLM-SELECTION.md` finaliseren met de resultaten.
+7. Model-set uitbreiden + persistente weight-cache → zie [`docs/LOCAL-LLM-MODEL-EXPANSION-PLAN.md`](LOCAL-LLM-MODEL-EXPANSION-PLAN.md).

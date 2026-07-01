@@ -289,10 +289,10 @@ make_temp_isvc() {
   local out_yaml="${WORKDIR}/${bench_name}.yaml"
 
   if [ -f "${ISVC_YAML_CACHE}" ]; then
-    echo ">> Using cached prod InferenceService manifest: ${ISVC_YAML_CACHE}"
+    echo ">> Using cached prod InferenceService manifest: ${ISVC_YAML_CACHE}" >&2
     cp "${ISVC_YAML_CACHE}" "${base_yaml}"
   else
-    echo ">> Reading live prod InferenceService ${PROD_ISVC} as template..."
+    echo ">> Reading live prod InferenceService ${PROD_ISVC} as template..." >&2
     kubectl get inferenceservice "${PROD_ISVC}" -n "${NS}" -o yaml > "${base_yaml}"
   fi
 
@@ -357,8 +357,11 @@ if isinstance(ep, dict):
     ep.setdefault("port", 8000)
 
 yaml.safe_dump(doc, open(dst, "w"), sort_keys=False)
-print(f"   wrote temp InferenceService manifest: {dst}")
+print(f"   wrote temp InferenceService manifest: {dst}", file=sys.stderr)
 PY
+  # ONLY the manifest path goes to stdout -- it is captured by the caller via
+  # command substitution. All diagnostics above are redirected to stderr so they
+  # don't pollute the captured path (regression fixed 2026-07-01).
   echo "${out_yaml}"
 }
 
