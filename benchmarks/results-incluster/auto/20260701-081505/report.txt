@@ -1,0 +1,28 @@
+Running 1 scenarios x 1 models (1 runs each, 0 warmup)
+
+  Model: Qwen3.6-27B (vLLM/LLMKube, ka-k8s-ai) (Qwen/Qwen3.6-27B)
+    latency-50... 18290ms avg
+
+LLM Performance Benchmark - 2026-07-01 08:15
+Endpoint: qwen_incluster (http://qwen.llm.svc.cluster.local:8000/v1)
+Runs per test: 3
+Warmup runs: 1
+
+Model Configurations:
+  Qwen3.6-27B (vLLM/LLMK - 27B params, bfloat16, KV:fp8, flash_attn, GPU=-1
+
+================================================================================
+  LATENCY (total response time)
+================================================================================
+Scenario               | Qwen3.6-27B (vLLM/LLMKube, ka-k8s-ai)  
+----------------------------------------------------------------
+latency-50             | 18.3s                                  
+
+================================================================================
+  TIME TO FIRST TOKEN (TTFT)
+================================================================================
+Scenario               | Qwen3.6-27B (vLLM/LLMKube, ka-k8s-ai)  
+----------------------------------------------------------------
+latency-50             | 205ms                                  
+
+JSON results exported to /results/results.json
