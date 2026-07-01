@@ -18,6 +18,10 @@ spec:
       labels:
         {{- include "druppie.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: keycloak-db
+      {{- if and .Values.keycloak.realmImport.enabled (not .Values.keycloak.dbPersistent) }}
+      annotations:
+        checksum/realm-export: {{ .Files.Get "files/realm-export.json" | sha256sum }}
+      {{- end }}
     spec:
       containers:
         - name: postgres
