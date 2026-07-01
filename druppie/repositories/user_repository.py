@@ -1,12 +1,9 @@
 """User repository for database access."""
 
-import logging
 from uuid import UUID
 
 from .base import BaseRepository
 from ..db.models import User, UserRole
-
-logger = logging.getLogger(__name__)
 
 
 class UserRepository(BaseRepository):
@@ -24,14 +21,15 @@ class UserRepository(BaseRepository):
         display_name: str | None = None,
         roles: list[str] | None = None,
     ) -> User:
-        """Get or create a user (for Keycloak sync).
+        """Get or create a user from Keycloak JWT subject.
 
-        Looks up by Keycloak subject UUID first, then by username as fallback.
-        Never mutates the primary key — existing user identity is authoritative.
+        Security: lookup is ONLY by Keycloak sub (UUID). Never by username —
+        username-based lookup would allow account takeover if someone creates
+        a Keycloak user with the same name as an existing local user.
 
         Args:
-            user_id: Keycloak user ID (UUID)
-            username: Username
+            user_id: Keycloak subject UUID (from JWT 'sub' claim)
+            username: Username from Keycloak
             email: Email address
             display_name: Display name
             roles: List of role names
@@ -40,17 +38,8 @@ class UserRepository(BaseRepository):
             User model
         """
         user = self.get_by_id(user_id)
-        if not user and username:
-            user = self.db.query(User).filter_by(username=username).first()
 
         if user:
-            if user.id != user_id:
-                logger.warning(
-                    "user_id_mismatch_existing_user",
-                    db_id=str(user.id),
-                    keycloak_sub=str(user_id),
-                    username=username,
-                )
             if username and user.username != username:
                 user.username = username
             if email and user.email != email:
