@@ -60,7 +60,7 @@ PROD_ORIGINAL_REPLICAS=2             # documented prod baseline; captured live b
 FLUX_KUSTOMIZATION=llm-models        # Flux Kustomization that manages the models
 FLUX_NS=flux-system                  # namespace the Kustomization lives in
 JOB=llm-benchmark                    # Job name (matches job.yaml)
-GPU_READY_TIMEOUT=1800               # 30 min: first serve downloads weights from HF
+GPU_READY_TIMEOUT=5400               # 90 min: no weight cache, so a bench model's first serve downloads the FULL model from HF
 # Benchmark-completion wait. Must be >= the Job's activeDeadlineSeconds (9000s in
 # job.yaml): the full suite has scenarios that take 100-200s each, so 1800s is far
 # too short. Match the Job deadline so we wait for the Job to finish (or hit its
@@ -184,9 +184,26 @@ sanitize() {
 }
 
 # =============================================================================
+# 0. PARSE FLAGS
+# =============================================================================
+# --yes                 skip the interactive confirmation
+# --only slug1,slug2    benchmark only models whose NAME contains one of the
+#                       (comma-separated) tokens, e.g. --only 27b,35b-a3b
+YES_FLAG=""
+ONLY_FILTER=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --yes)     YES_FLAG="--yes"; shift ;;
+    --only)    ONLY_FILTER="${2:-}"; shift 2 ;;
+    --only=*)  ONLY_FILTER="${1#--only=}"; shift ;;
+    *)         echo "Unknown argument: $1" >&2; exit 1 ;;
+  esac
+done
+
+# =============================================================================
 # 1. CONFIRM
 # =============================================================================
-confirm "${1:-}"
+confirm "${YES_FLAG}"
 
 command -v kubectl >/dev/null || { echo "kubectl not found"; exit 1; }
 [ -n "${PYTHON}" ] || { echo "python3/python not found"; exit 1; }
@@ -211,6 +228,22 @@ for item in doc.get("items", []):
               or spec.get("uri") or spec.get("repo") or name)
     print(f"{name}\t{source}")
 ')"
+
+# Apply the optional --only filter: keep a model if its NAME contains any of the
+# comma-separated tokens (substring match, so "27b" matches "qwen3-6-27b").
+if [ -n "${ONLY_FILTER}" ]; then
+  KEPT=""
+  while IFS=$'\t' read -r _mname _msrc; do
+    [ -n "${_mname}" ] || continue
+    IFS=',' read -ra _toks <<< "${ONLY_FILTER}"
+    for _t in "${_toks[@]}"; do
+      [ -n "${_t}" ] || continue
+      case "${_mname}" in *"${_t}"*) KEPT+="${_mname}"$'\t'"${_msrc}"$'\n'; break ;; esac
+    done
+  done <<< "${MODEL_LINES}"
+  MODEL_LINES="$(printf '%s' "${KEPT}" | sed '/^$/d')"
+  echo ">> --only '${ONLY_FILTER}': narrowed to $(printf '%s\n' "${MODEL_LINES}" | grep -c . || true) model(s)."
+fi
 
 if [ -z "${MODEL_LINES}" ]; then
   echo "No models discovered. Nothing to do."
