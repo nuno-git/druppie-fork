@@ -110,14 +110,20 @@ def _find_gitea_pod(namespace: str) -> str | None:
 
 
 def _run_gitea_cli_k8s(args: list) -> tuple[bool, str, str]:
-    """Run Gitea CLI via kubectl exec (gitea image already runs as git)."""
+    """Run Gitea CLI via kubectl exec as the git user.
+
+    kubectl exec bypasses the image entrypoint and lands as root, which Gitea's
+    CLI refuses ('Gitea is not supposed to be run as root'). The gitea image
+    ships su-exec, so we drop to the git user (uid 1000) explicitly. (gosu is
+    not present in this image; su-exec is.)
+    """
     namespace = _get_pod_namespace()
     pod = _find_gitea_pod(namespace)
     if not pod:
         return False, "", f"Gitea pod not found in namespace '{namespace}'"
     try:
         result = subprocess.run(
-            ["kubectl", "exec", "-n", namespace, pod, "--", "gitea"] + args,
+            ["kubectl", "exec", "-n", namespace, pod, "--", "su-exec", "git", "gitea"] + args,
             capture_output=True,
             text=True,
             timeout=30,
