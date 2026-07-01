@@ -161,3 +161,130 @@ De Job (`benchmarks/k8s/job.yaml`) monteert de runner + scenario's via twee Conf
 package-dir, en draait `python -m benchmarks.runner --runs 2 --warmup 1 --timeout 600`.
 Het model-endpoint staat in `benchmarks/config.yaml` op `qwen_incluster`
 (`http://qwen.llm.svc.cluster.local:8000/v1`).
+
+---
+
+## GPU-node (colocated) run — 2026-06-30
+
+> Status: **uitgevoerd op 2026-06-30** als in-cluster Kubernetes Job, maar deze keer **vastgepind op de GPU-node** `ka-k8s-ai-workers-gpu-xd4xn-fk5v2`, dezelfde node waar de vLLM `qwen`-pods draaien. Doel: nagaan of **colocatie** van de benchmark-client met het model meetbaar iets verandert t.o.v. de oorspronkelijke run op een normale worker.
+> Ruwe data: `benchmarks/results-incluster/results-qwen3.6-27b-gpunode.json` + `.csv`, volledig console-rapport in `benchmarks/results-incluster/report-qwen3.6-27b-gpunode.txt`.
+> Job-definitie: `benchmarks/k8s/job-gpunode.yaml` (Job `llm-benchmark-gpunode`, configmaps `bench-pkg-gpunode` / `bench-scenarios-gpunode`).
+
+### Run-context (verschillen t.o.v. de baseline)
+
+| Veld | Baseline | GPU-node-run |
+|---|---|---|
+| Job | `llm-benchmark` | `llm-benchmark-gpunode` |
+| Node van de **client** | normale worker (`ka-k8s-ai-workers-skbh7-d4qwl`) | **GPU-node** `ka-k8s-ai-workers-gpu-xd4xn-fk5v2` (zelfde node als de `qwen`-pods) |
+| Pinning | geen | `nodeSelector` op hostname + `toleration` voor taint `gpu=true:NoSchedule` |
+| GPU-request | geen | **geen** (client vraagt geen GPU; alleen CPU 500m–2 / 1–2Gi) |
+| Runner-config | `--runs 2 --warmup 1 --timeout 600` | **identiek** (`--runs 2 --warmup 1 --timeout 600`) |
+| Model / endpoint | `qwen_incluster` | **identiek** |
+
+De benchmark-pod (`llm-benchmark-gpunode-...`) is bevestigd **op de GPU-node geschedulet** (`kubectl get pod -n llm -o wide` → node `ka-k8s-ai-workers-gpu-xd4xn-fk5v2`). De `qwen` vLLM-pods bleven gedurende de hele run gezond (`1/1 Running`, 0 restarts).
+
+### Vergelijking: colocatie vs. normale worker
+
+> Beide runs zijn al **in-cluster** (geen tunnel/ingress), dus het netwerk-pad client→Service was in beide gevallen kort. De vraag is of colocatie op dezelfde node nog een extra meetbaar effect heeft. Cijfers zijn gemiddelden over 2 gemeten runs (n=2), behalve `repeated-50` (20 metingen). `±sd` voor n=2 is indicatief.
+
+**TTFT (time-to-first-token) — geaggregeerd over alle streaming-scenario's**
+
+| Metric | Baseline (normale worker) | GPU-node (colocated) |
+|---|---|---|
+| Mediaan TTFT | **101 ms** | **100 ms** |
+| Gemiddelde TTFT | 306 ms | **160 ms** |
+
+De **mediaan** is praktisch identiek (~100 ms) — voor het typische geval maakt colocatie geen verschil; het netwerk was al geen bottleneck. Het **gemiddelde** daalt wel fors (306→160 ms), maar dat komt door enkele "koude" TTFT-uitschieters in de baseline bij grote contexten, niet door een systematisch netwerk-effect:
+
+| Scenario | TTFT baseline | TTFT GPU-node |
+|---|---|---|
+| context-16k | 1.237 ms | **201 ms** |
+| context-32k | 1.022 ms | **377 ms** |
+| context-64k | 2.218 ms | **469 ms** |
+| context-8k | 545 ms | 276 ms |
+| context-128k | 565 ms | 549 ms |
+| context-1k | 187 ms | 186 ms |
+| context-256 | 120 ms | 99 ms |
+
+De grootste TTFT-verschillen zitten in de grote-context-scenario's. Dat zijn precies de runs waar prefill-cache/scheduling-variatie domineert (prefix-caching, chunked-prefill, gelijktijdige load op de twee replicas), niet de netwerk-RTT. Met n=2 zijn deze TTFT-pieken meet-ruis, geen reproduceerbaar colocatie-voordeel. De kleine, cache-vriendelijke contexten (context-256/1k/128k) zijn in beide runs vrijwel gelijk.
+
+**Decode-doorvoer (tokens/sec)**
+
+| Metric | Baseline | GPU-node |
+|---|---|---|
+| Mediaan tokens/sec | **25,91** | **25,93** |
+| Gemiddelde tokens/sec | 25,70 | 25,81 |
+
+**Vrijwel identiek (~26 t/s).** Decode is GPU-bound en niet gevoelig voor waar de client draait — zoals verwacht. Colocatie verandert hier niets.
+
+**Per-categorie totale latency (gemiddelde over 2 runs, seconden)**
+
+| Scenario | Baseline | GPU-node | Opmerking |
+|---|---|---|---|
+| generate-100 / 500 / 1000 / 2000 | 3,9 / 19,2 / 38,3 / 76,6 | 3,9 / 19,2 / 38,3 / 76,6 | **Identiek** — gecapte output → zuivere meting |
+| latency-50 | 16,8 | 28,0 | output-lengte-ruis (geen cap) |
+| latency-200 | 113,5 | 96,0 | output-lengte-ruis (geen cap) |
+| latency-500 | 166,5 | 180,1 | output-lengte-ruis (geen cap) |
+| latency-1000 | 203,1 | 207,8 | output-lengte-ruis (geen cap) |
+| context-* | 12–48 | 20–51 | gedomineerd door ongecapte decode-lengte |
+
+De `generate-*`-scenario's (de enige met een output-cap) zijn **tot op de seconde identiek** tussen beide runs. De verschillen in `latency-*` en `context-*` komen volledig door de variërende lengte van de ongecapte reasoning-output (zie caveats bovenaan), niet door client-plaatsing.
+
+**Tool-calling overhead**
+
+| Scenario | Baseline | GPU-node |
+|---|---|---|
+| tool-call-3-tools | 3,89 s | 3,92 s |
+| tool-call-10-tools | 6,68 s | **4,34 s** |
+
+3-tools is identiek. De 10-tools-meting is in de GPU-node-run lager (4,3 s vs. 6,7 s), maar beide scenario's draaien non-streaming en hebben n=2 met variabele completion-lengte — dit valt binnen de meet-ruis, niet toe te schrijven aan colocatie.
+
+**Stress / consistentie (`repeated-50`, 20 metingen)**
+
+| Metric | Baseline | GPU-node |
+|---|---|---|
+| Gemiddelde latency | 5,93 s (±0,98) | 6,95 s (±2,95) |
+| Gemiddelde TTFT | 93 ms | 92 ms |
+| Fouten | 0 | 0 |
+
+TTFT is identiek en stabiel; de iets hogere gemiddelde latency + spreiding in de GPU-node-run komt door langere/variabelere reasoning-output in die 20 calls (geen output-cap), niet door instabiliteit — beide runs: 0 fouten.
+
+### Overgeslagen scenario's
+
+| Scenario | Reden |
+|---|---|
+| `context-256k` | Input van 262.144 tokens > `max_model_len` 131.072 → automatisch geskipt (`Context 262144 exceeds model max 131072`). **Verwacht en correct**, identiek aan de baseline. |
+
+Alle overige 19 scenario's draaiden zonder fouten; geen timeouts (langste: `latency-1000` op ~208 s, ruim onder de 600 s-limiet).
+
+### Conclusie: hielp colocatie?
+
+**Nee — colocatie op de GPU-node levert geen meetbaar latency-voordeel op.** De relevante metrics die níet door ongecapte output-lengte vertroebeld worden, zijn tussen de twee runs vrijwel identiek:
+
+- **Mediaan TTFT** ~100 ms in beide runs.
+- **Decode-doorvoer** ~26 t/s in beide runs.
+- **`generate-*`** (de enige gecapte, dus zuivere latency-meting) **exact gelijk**.
+
+Dat is precies wat te verwachten is: beide runs liepen al in-cluster, dus het netwerk-pad client→Service was in beide gevallen verwaarloosbaar t.o.v. de prefill- en decode-tijd op de GPU. De client wacht hoofdzakelijk op het model; waar die wachtende client draait, maakt niet uit. De zichtbare verschillen (gemiddelde-TTFT-daling, latency-schommelingen, de 10-tools-meting) zijn meet-ruis door n=2 en ongecapte reasoning-output, geen systematisch colocatie-effect.
+
+**Praktische gevolgtrekking:** de benchmark-client (en bij uitbreiding de Druppie-backend) hoeft **niet** op de GPU-node te draaien voor latency-redenen; een normale worker volstaat. De GPU-node-capaciteit blijft zo beschikbaar voor de modellen zelf. Voor een hardere uitspraak is, net als bij de baseline, een concurrency-/load-test met meer runs nodig.
+
+### Reproduceren (GPU-node-variant)
+
+```bash
+# Configmaps uit de huidige benchmarks/-bron + de gepinde Job aanmaken:
+kubectl create configmap bench-pkg-gpunode -n llm \
+  --from-file=__init__.py=benchmarks/__init__.py \
+  --from-file=runner.py=benchmarks/runner.py \
+  --from-file=llm_client.py=benchmarks/llm_client.py \
+  --from-file=reporter.py=benchmarks/reporter.py \
+  --from-file=config.yaml=benchmarks/config.yaml
+kubectl create configmap bench-scenarios-gpunode -n llm --from-file=benchmarks/scenarios/
+kubectl apply -f benchmarks/k8s/job-gpunode.yaml
+
+# Bevestig dat de pod op de GPU-node landt:
+kubectl get pod -n llm -l app=llm-benchmark-gpunode -o wide
+
+# Resultaten uit de Job-logs (tussen de RESULTS_JSON-markers):
+kubectl logs job/llm-benchmark-gpunode -n llm
+```
