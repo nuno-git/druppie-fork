@@ -167,36 +167,3 @@ spec:
             matchLabels:
               {{- include "druppie.selectorLabels" . | nindent 14 }}
               app.kubernetes.io/component: backend
-{{- if .Values.init.enabled }}
----
-# The init Job runs setup_gitea.py, which uses `kubectl exec` to run the gitea
-# CLI inside the gitea pod (the first admin user can only be created via the
-# CLI). The app-net policy isolates every druppie pod and its egress excludes
-# RFC1918 ranges, which blocks the Kubernetes API server (e.g. 10.43.0.1:443).
-# This additive policy grants the short-lived init pod egress to the API server
-# so kubectl can reach it. NetworkPolicy egress is the union across all
-# selecting policies, so this only *adds* an allowance.
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: {{ include "druppie.fullname" . }}-init-api
-  labels:
-    {{- include "druppie.labels" . | nindent 4 }}
-spec:
-  podSelector:
-    matchLabels:
-      {{- include "druppie.selectorLabels" . | nindent 6 }}
-      app.kubernetes.io/component: init
-  policyTypes:
-    - Egress
-  egress:
-    # Kubernetes API server (default service, ports 443 / 6443).
-    - to:
-        - ipBlock:
-            cidr: 0.0.0.0/0
-      ports:
-        - port: 443
-          protocol: TCP
-        - port: 6443
-          protocol: TCP
-{{- end }}
