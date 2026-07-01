@@ -13,7 +13,7 @@ data:
   KEYCLOAK_REALM: "druppie"
   KEYCLOAK_CLIENT_ID: "druppie-backend"
   KEYCLOAK_SERVER_URL: "http://{{ include "druppie.fullname" . }}-keycloak:8080"
-  KEYCLOAK_ISSUER_URL: "{{ include "druppie.keycloakExternalUrl" . }}{{ if and .Values.global.ingress.enabled (eq (include "druppie.scheme" .) "https") }}:443{{ end }}"
+  KEYCLOAK_ISSUER_URL: "{{ include "druppie.keycloakExternalUrl" . }}"
 
   # Gitea
   GITEA_INTERNAL_URL: "http://{{ include "druppie.fullname" . }}-gitea:3000"

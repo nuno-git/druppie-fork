@@ -17,6 +17,7 @@ spec:
         {{- include "druppie.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: backend
       annotations:
+        reloader.stakater.com/auto: "true"
         cluster-autoscaler.kubernetes.io/safe-to-evict: "true"
     spec:
       {{- if .Values.backend.serviceAccount.create }}

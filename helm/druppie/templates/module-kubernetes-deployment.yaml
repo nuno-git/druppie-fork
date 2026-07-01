@@ -17,6 +17,8 @@ spec:
       labels:
         {{- include "druppie.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: module-kubernetes
+      annotations:
+        reloader.stakater.com/auto: "true"
     spec:
       serviceAccountName: {{ include "druppie.fullname" . }}-module-kubernetes
       {{- if .Values.global.imagePullSecrets }}

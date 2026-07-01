@@ -17,6 +17,8 @@ spec:
       labels:
         {{- include "druppie.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: module-vision
+      annotations:
+        reloader.stakater.com/auto: "true"
     spec:
       {{- if .Values.global.imagePullSecrets }}
       imagePullSecrets:

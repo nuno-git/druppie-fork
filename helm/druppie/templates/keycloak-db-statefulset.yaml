@@ -69,6 +69,12 @@ spec:
             limits:
               memory: "256Mi"
               cpu: "500m"
+      {{- if not .Values.keycloak.dbPersistent }}
+      volumes:
+        - name: postgres-data
+          emptyDir: {}
+      {{- end }}
+  {{- if .Values.keycloak.dbPersistent }}
   volumeClaimTemplates:
     - metadata:
         name: postgres-data
@@ -81,4 +87,5 @@ spec:
         resources:
           requests:
             storage: {{ .Values.postgresql.keycloak.storage }}
+  {{- end }}
 {{- end }}
