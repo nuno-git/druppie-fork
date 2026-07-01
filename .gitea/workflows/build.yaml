@@ -47,18 +47,36 @@ jobs:
           {"auths":{"$HARBOR_REG":{"auth":"$AUTH"}}}
           JSON
 
+      - name: Prune stale Docker build cache
+        run: docker builder prune -f 2>/dev/null || true
+
       - name: Build and push backend
         env:
           TAG: ${{ steps.tags.outputs.deploy_tag }}
         run: |
-          docker build -t "$REGISTRY/druppie/druppie-backend:$TAG" .
+          docker build --no-cache -t "$REGISTRY/druppie/druppie-backend:$TAG" .
           docker push "$REGISTRY/druppie/druppie-backend:$TAG"
+
+      - name: Verify backend code freshness
+        env:
+          TAG: ${{ steps.tags.outputs.deploy_tag }}
+        run: |
+          docker run --rm "$REGISTRY/druppie/druppie-backend:$TAG" python3 -c "
+          from druppie.repositories.user_repository import UserRepository
+          import inspect
+          src = inspect.getsource(UserRepository.get_or_create)
+          if 'filter_by(username=' in src:
+              raise SystemExit('FAIL: stale code — username-based lookup still present')
+          if 'user.id =' in src and 'user_id' in src:
+              raise SystemExit('FAIL: stale code — primary key mutation still present')
+          print('VERIFY OK: backend code is fresh')
+          "
 
       - name: Build and push frontend
         env:
           TAG: ${{ steps.tags.outputs.deploy_tag }}
         run: |
-          docker build -t "$REGISTRY/druppie/druppie-frontend:$TAG" ./frontend
+          docker build --no-cache -t "$REGISTRY/druppie/druppie-frontend:$TAG" ./frontend
           docker push "$REGISTRY/druppie/druppie-frontend:$TAG"
 
       - name: Build and push init image
@@ -66,7 +84,7 @@ jobs:
           TAG: ${{ steps.tags.outputs.deploy_tag }}
         run: |
           if [ -f Dockerfile.init ]; then
-            docker build -t "$REGISTRY/druppie/druppie-init:$TAG" -f Dockerfile.init .
+            docker build --no-cache -t "$REGISTRY/druppie/druppie-init:$TAG" -f Dockerfile.init .
             docker push "$REGISTRY/druppie/druppie-init:$TAG"
           fi
 
@@ -74,7 +92,7 @@ jobs:
         env:
           TAG: ${{ steps.tags.outputs.deploy_tag }}
         run: |
-          docker build -t "$REGISTRY/druppie/druppie-layout-service:$TAG" ./druppie/mcp-servers/layout-service
+          docker build --no-cache -t "$REGISTRY/druppie/druppie-layout-service:$TAG" ./druppie/mcp-servers/layout-service
           docker push "$REGISTRY/druppie/druppie-layout-service:$TAG"
 
       - name: Build and push MCP modules
@@ -92,7 +110,7 @@ jobs:
                 CONTEXT="./druppie/mcp-servers/"
               fi
               echo "Building $module (context=$CONTEXT)..."
-              docker build -t "$REGISTRY/druppie/druppie-$module:$TAG" -f "$DF" "$CONTEXT"
+              docker build --no-cache -t "$REGISTRY/druppie/druppie-$module:$TAG" -f "$DF" "$CONTEXT"
               docker push "$REGISTRY/druppie/druppie-$module:$TAG"
             fi
           done
@@ -102,7 +120,7 @@ jobs:
           TAG: ${{ steps.tags.outputs.deploy_tag }}
         run: |
           if [ -f "./druppie/mcp-servers/module-coding/Dockerfile.sandbox.k8s" ]; then
-            docker build -t "$REGISTRY/druppie/druppie-sandbox-k8s:$TAG" \
+            docker build --no-cache -t "$REGISTRY/druppie/druppie-sandbox-k8s:$TAG" \
               -f ./druppie/mcp-servers/module-coding/Dockerfile.sandbox.k8s ./druppie/mcp-servers/module-coding
             docker push "$REGISTRY/druppie/druppie-sandbox-k8s:$TAG"
           fi
