@@ -290,6 +290,9 @@ make_temp_isvc() {
   fi
 
   # Transform the base manifest with Python (robust YAML edit, no fragile sed).
+  # NOTE: patched to match the ACTUAL inference.llmkube.dev/v1alpha1 CRD layout
+  # observed on ka-k8s-ai (modelRef is a STRING; model source is args[0]; gpu is
+  # a scalar spec.resources.gpu; the service block is spec.endpoint not spec.service).
   BENCH_NAME="${bench_name}" MODEL_CRD="${model_crd}" MODEL_SOURCE="${model_source}" \
   python3 - "${base_yaml}" "${out_yaml}" <<'PY'
 import os, sys
@@ -315,34 +318,36 @@ doc.pop("status", None)
 
 spec = doc.setdefault("spec", {})
 spec["replicas"] = 1
-# Point the temp service at the model being benchmarked.
-if isinstance(spec.get("modelRef"), dict):
-    spec["modelRef"]["name"] = model_crd
+
+# modelRef is a STRING on this CRD -> just set the target model CRD name.
+spec["modelRef"] = model_crd
+
+# The vLLM model id is args[0] on this CRD. Rewrite it to the bench model source
+# so vLLM actually serves the model we're benchmarking (not prod's 27B).
+args = spec.get("args")
+if isinstance(args, list) and args:
+    args[0] = model_source
 else:
-    spec["modelRef"] = {"name": model_crd}
-# Some LLMKube variants take the source directly on the isvc as `model`/args.
-if "model" in spec:
-    spec["model"] = model_source
+    # Fallback: build a minimal args list if the base had none.
+    spec["args"] = [model_source, "--host", "0.0.0.0", "--port", "8000"]
 
-# Force single-GPU footprint.
+# Force single-GPU footprint. On this CRD, gpu is a scalar under spec.resources
+# (alongside cpu/memory). Preserve cpu/memory; just pin gpu=1.
 res = spec.setdefault("resources", {})
-for side in ("limits", "requests"):
-    d = res.setdefault(side, {})
-    if any("gpu" in k for k in d) or side == "limits":
-        d["nvidia.com/gpu"] = 1
-spec.setdefault("resources", res)
+res["gpu"] = 1
 
-# GPU node toleration.
+# GPU node toleration (already present on prod; keep idempotent).
 tolerations = spec.setdefault("tolerations", [])
 gpu_tol = {"key": "gpu", "operator": "Equal", "value": "true",
            "effect": "NoSchedule"}
 if gpu_tol not in tolerations:
     tolerations.append(gpu_tol)
 
-# ClusterIP service on 8000 (default for these isvcs; set explicitly if present).
-if isinstance(spec.get("service"), dict):
-    spec["service"]["type"] = "ClusterIP"
-    spec["service"].setdefault("port", 8000)
+# endpoint block: ClusterIP:8000 with the chat path (already correct on prod).
+ep = spec.get("endpoint")
+if isinstance(ep, dict):
+    ep.setdefault("type", "ClusterIP")
+    ep.setdefault("port", 8000)
 
 yaml.safe_dump(doc, open(dst, "w"), sort_keys=False)
 print(f"   wrote temp InferenceService manifest: {dst}")
