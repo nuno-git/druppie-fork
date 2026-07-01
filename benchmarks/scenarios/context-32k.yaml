@@ -1,0 +1,8 @@
+scenario:
+  name: context-32k
+  description: "Context scaling met 32768 tokens context"
+  category: context_scaling
+  context_tokens: 32768
+
+  system_prompt: "Je bent een behulpzame assistent. Antwoord kort en bondig in het Nederlands."
+  user_prompt: "Geef een samenvatting van de bovenstaande tekst in maximaal 2 zinnen."
