@@ -16,6 +16,10 @@ spec:
       labels:
         {{- include "druppie.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: keycloak
+      {{- if .Values.keycloak.realmImport.enabled }}
+      annotations:
+        checksum/realm-export: {{ .Files.Get "files/realm-export.json" | sha256sum }}
+      {{- end }}
     spec:
       initContainers:
         - name: wait-for-db
