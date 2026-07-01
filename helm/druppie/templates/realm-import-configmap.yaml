@@ -8,10 +8,8 @@ metadata:
     app.kubernetes.io/component: keycloak-realm
 data:
   druppie-realm.json: |-
-{{- $realm := .Files.Get "files/realm-export.json" -}}
-{{- $realm = $realm | replace "__FRONTEND_URL__" (include "druppie.frontendExternalUrl" .) -}}
-{{- $realm = $realm | replace "__GITEA_URL__" (include "druppie.giteaExternalUrl" .) -}}
+{{- $realm := .Files.Get "files/realm-export.json" | replace "__FRONTEND_URL__" (include "druppie.frontendExternalUrl" .) | replace "__GITEA_URL__" (include "druppie.giteaExternalUrl" .) -}}
 {{- $realmJson := $realm | fromYaml -}}
 {{- $attrs := merge (dict "frontendUrl" (printf "https://%s" .Values.global.domain)) $realmJson.attributes -}}
-{{ merge (dict "attributes" $attrs) $realmJson | toJson | indent 4 }}
+{{ merge (dict "attributes" $attrs) $realmJson | toJson | nindent 4 }}
 {{- end }}
