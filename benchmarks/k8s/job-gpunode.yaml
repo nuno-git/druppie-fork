@@ -1,0 +1,82 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: llm-benchmark-gpunode
+  namespace: llm
+  labels:
+    app: llm-benchmark-gpunode
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 9000
+  template:
+    metadata:
+      labels:
+        app: llm-benchmark-gpunode
+    spec:
+      restartPolicy: Never
+      # Pin the benchmark client onto the GPU node so it is colocated with the
+      # vLLM model pods (qwen). The client requests NO GPU; it only needs CPU.
+      nodeSelector:
+        kubernetes.io/hostname: ka-k8s-ai-workers-gpu-xd4xn-fk5v2
+      tolerations:
+        - key: gpu
+          operator: Equal
+          value: "true"
+          effect: NoSchedule
+      volumes:
+        - name: app
+          emptyDir: {}
+        - name: bench-pkg
+          configMap:
+            name: bench-pkg-gpunode
+        - name: bench-scenarios
+          configMap:
+            name: bench-scenarios-gpunode
+      initContainers:
+        # Assemble a writable Python package dir from the two configmaps.
+        # Avoids read-only/nested-mount issues with configMap volumes.
+        - name: assemble
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              set -eu
+              mkdir -p /app/benchmarks/scenarios
+              cp /cm-pkg/* /app/benchmarks/
+              cp /cm-scenarios/* /app/benchmarks/scenarios/
+              echo "Assembled package:"
+              ls -la /app/benchmarks/
+              echo "Scenarios:"
+              ls /app/benchmarks/scenarios/ | wc -l
+          volumeMounts:
+            - name: app
+              mountPath: /app
+            - name: bench-pkg
+              mountPath: /cm-pkg
+            - name: bench-scenarios
+              mountPath: /cm-scenarios
+      containers:
+        - name: benchmark
+          image: python:3.12-slim
+          workingDir: /app
+          command:
+            - sh
+            - -c
+            - |
+              set -eu
+              pip install --quiet httpx pyyaml
+              python -m benchmarks.runner --runs 2 --warmup 1 --timeout 600 --output /app/out.json
+              echo '===RESULTS_JSON_START==='
+              cat /app/out.json
+              echo '===RESULTS_JSON_END==='
+          volumeMounts:
+            - name: app
+              mountPath: /app
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
+            limits:
+              cpu: "2"
+              memory: 2Gi

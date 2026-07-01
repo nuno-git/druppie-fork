@@ -1,0 +1,137 @@
+# LLM Performance Benchmark Configuration
+# Endpoints and models for benchmarking on Nutanix/Kubernetes infrastructure.
+
+endpoints:
+  # Lokaal vLLM (LLMKube) op RKE2 cluster ka-k8s-ai, ns llm, Service qwen.
+  # DIT is het echte adres: de in-cluster DNS-naam van de Service. Gebruik dit
+  # wanneer de benchmark IN het cluster draait (bv. als Kubernetes Job) of vanuit
+  # de Druppie backend. Geen auth (vLLM open binnen het cluster-netwerk).
+  qwen_incluster:
+    base_url: "http://qwen.llm.svc.cluster.local:8000/v1"
+    api_key: "no-key-required"
+    ssl_verify: true
+    auth_type: "bearer"
+
+  # Extern via Traefik Ingress (Let's Encrypt, geen auth). Bereikbaar vanaf
+  # elke laptop/CI — handigst voor ad-hoc runs. Wel internet round-trip, dus
+  # absolute latency iets hoger dan een in-cluster Job.
+  qwen_ingress:
+    base_url: "https://llm.rijnland.dev/v1"
+    api_key: "no-key-required"
+    ssl_verify: true
+    auth_type: "bearer"
+
+  # Alleen voor lokaal draaien VANAF een laptop zonder de ingress te gebruiken:
+  #   kubectl port-forward -n llm svc/qwen 18000:8000
+  # localhost:18000 is GEEN echt endpoint — het is alleen die tunnel.
+  # qwen_portforward:
+  #   base_url: "http://localhost:18000/v1"
+  #   api_key: "no-key-required"
+  #   ssl_verify: true
+  #   auth_type: "bearer"
+
+  # Azure AI Foundry — inactief (geen actief model gekoppeld)
+  # azure_foundry:
+  #   base_url: "https://druppie-resource.openai.azure.com/openai/v1"
+  #   api_key: "${FOUNDRY_API_KEY}"
+  #   ssl_verify: true
+  #   auth_type: "bearer"
+
+  # Ollama — momenteel offline
+  # ollama:
+  #   base_url: "https://ollama.waterschap.org/v1"
+  #   api_key: ""
+  #   ssl_verify: false
+
+  # Toekomstige endpoints op Nutanix/K8s:
+  # vllm:
+  #   base_url: "https://vllm.nutanix.internal/v1"
+  #   api_key: "${VLLM_API_KEY}"
+  #   ssl_verify: true
+
+models:
+  # Wijst naar de in-cluster Service. Voor een laptop-run: uncomment
+  # 'qwen_portforward' hierboven, start de port-forward, en zet 'endpoint: qwen_portforward'.
+  - endpoint: qwen_incluster
+    model: Qwen/Qwen3.6-27B
+    display_name: "Qwen3.6-27B (vLLM/LLMKube, ka-k8s-ai)"
+    max_context: 131072
+    parameters: "27B"
+    quantization: "bfloat16"
+    kv_cache_quant: "fp8"
+    flash_attention: true
+    gpu_layers: -1
+    notes: "LLMKube + vLLM op RKE2 ka-k8s-ai (ns llm). 2 replicas, tensor-parallel 1, prefix-caching aan, max_model_len 131072. Reasoning model (lange thinking-output)."
+
+  # Azure AI Foundry GPT-5 Mini — inactief
+  # - endpoint: azure_foundry
+  #   model: GPT-5-MINI
+  #   display_name: "GPT-5 Mini"
+  #   max_context: 131072
+  #   parameters: "unknown"
+  #   quantization: null
+  #   kv_cache_quant: null
+  #   flash_attention: false
+  #   gpu_layers: -1
+  #   notes: "Azure AI Foundry hosted, temperature forced to 1.0"
+
+  # Ollama modellen — activeer wanneer endpoint beschikbaar is
+  # - endpoint: ollama
+  #   model: gpt-oss:120b
+  #   display_name: "GPT-OSS 120B"
+  #   max_context: 32768
+  #   parameters: "120B"
+  #   quantization: "Q4_K_M"
+  #   kv_cache_quant: null
+  #   flash_attention: true
+  #   gpu_layers: -1
+  #   notes: ""
+
+  # - endpoint: ollama
+  #   model: gpt-oss:20b
+  #   display_name: "GPT-OSS 20B"
+  #   max_context: 32768
+  #   parameters: "20B"
+  #   quantization: "Q4_K_M"
+  #   kv_cache_quant: null
+  #   flash_attention: true
+  #   gpu_layers: -1
+  #   notes: ""
+
+  # - endpoint: ollama
+  #   model: qwen3-coder:30b
+  #   display_name: "Qwen3 Coder 30B"
+  #   max_context: 131072
+  #   parameters: "30B"
+  #   quantization: "Q4_K_M"
+  #   kv_cache_quant: null
+  #   flash_attention: true
+  #   gpu_layers: -1
+  #   notes: ""
+
+  # - endpoint: ollama
+  #   model: deepseek-r1:32b
+  #   display_name: "DeepSeek R1 32B"
+  #   max_context: 131072
+  #   parameters: "32B"
+  #   quantization: "Q4_K_M"
+  #   kv_cache_quant: null
+  #   flash_attention: true
+  #   gpu_layers: -1
+  #   notes: ""
+
+  # - endpoint: ollama
+  #   model: gemma3:27b
+  #   display_name: "Gemma3 27B"
+  #   max_context: 131072
+  #   parameters: "27B"
+  #   quantization: "Q4_K_M"
+  #   kv_cache_quant: null
+  #   flash_attention: true
+  #   gpu_layers: -1
+  #   notes: ""
+
+settings:
+  runs_per_test: 3
+  warmup_runs: 1
+  timeout_seconds: 300
