@@ -6,9 +6,16 @@
 # all models declared as `models.inference.llmkube.dev` in namespace `llm`.
 #
 # For each discovered model it runs the standard in-cluster benchmark Job
-# (benchmarks/k8s/job.yaml) pointed at that model's endpoint, saves the result
-# JSON to benchmarks/results-incluster/results-<model>.json, then finally
-# builds a cross-model comparison matrix and publishes everything to aigit.
+# (benchmarks/k8s/job.yaml) pointed at that model's endpoint, saves the
+# human-readable console report to benchmarks/results-incluster/<slug>/report.txt,
+# then finally builds a cross-model comparison matrix and publishes everything to
+# aigit.
+#
+# results-incluster/ holds ONLY .txt outputs (one per-model folder each) plus the
+# text COMPARISON-MATRIX.md. The per-model result JSON is kept ONLY transiently in
+# the script's temp WORKDIR: it feeds compare_models.py to build the matrix, then
+# is discarded with the WORKDIR on exit. No .json / .csv is ever written into
+# results-incluster.
 #
 # -----------------------------------------------------------------------------
 # !!! IMPACT WARNING -- READ BEFORE RUNNING !!!
@@ -390,9 +397,10 @@ wait_isvc_ready() {
 # config -- job.yaml itself is applied unchanged.
 #
 #   $1 = base_url (http://host:8000/v1)   $2 = model id   $3 = display_name
-#   $4 = destination result JSON path (in benchmarks/results-incluster/)
+#   $4 = destination result JSON path (TRANSIENT, in the temp WORKDIR)
+#   $5 = destination report.txt path (in benchmarks/results-incluster/<slug>/)
 run_benchmark_job() {
-  local base_url="$1" model_id="$2" display="$3" dest_json="$4"
+  local base_url="$1" model_id="$2" display="$3" dest_json="$4" dest_report="$5"
   local tmp_config="${WORKDIR}/config-$(sanitize "${model_id}").yaml"
 
   echo ">> Building per-model temp config -> ${tmp_config}"
@@ -430,23 +438,39 @@ run_benchmark_job() {
   kubectl apply -f "${JOB_YAML}"
 
   echo ">> Waiting for benchmark Job to complete..."
-  # Wait for either Complete or Failed; then capture the result JSON out of the
-  # pod logs (the Job prints ===RESULTS_JSON_START/END=== markers).
+  # Wait for either Complete or Failed; then capture the result JSON + console
+  # report out of the pod logs (the Job prints ===RESULTS_JSON_START/END=== and
+  # ===REPORT_TXT_START/END=== markers).
   kubectl wait --for=condition=complete "job/${JOB}" -n "${NS}" \
     --timeout="${GPU_READY_TIMEOUT}s" || \
     kubectl wait --for=condition=failed "job/${JOB}" -n "${NS}" --timeout=30s || true
 
-  echo ">> Extracting result JSON from Job logs -> ${dest_json}"
-  # Pull the JSON between the markers the Job emits on stdout.
-  kubectl logs "job/${JOB}" -n "${NS}" 2>/dev/null \
-    | awk '/===RESULTS_JSON_START===/{f=1;next} /===RESULTS_JSON_END===/{f=0} f' \
-    > "${dest_json}" || true
+  # Grab the Job logs ONCE, then scrape both marker blocks out of them.
+  local job_logs="${WORKDIR}/joblogs-$(sanitize "${model_id}").txt"
+  kubectl logs "job/${JOB}" -n "${NS}" 2>/dev/null > "${job_logs}" || true
+
+  echo ">> Extracting result JSON from Job logs -> ${dest_json} (transient)"
+  # Pull the JSON between the markers the Job emits on stdout. Kept only in the
+  # temp WORKDIR: it feeds the comparison matrix, never lands in results-incluster.
+  awk '/===RESULTS_JSON_START===/{f=1;next} /===RESULTS_JSON_END===/{f=0} f' \
+    "${job_logs}" > "${dest_json}" || true
+
+  echo ">> Extracting console report from Job logs -> ${dest_report}"
+  # Pull the human-readable report between its markers into the per-model folder.
+  mkdir -p "$(dirname "${dest_report}")"
+  awk '/===REPORT_TXT_START===/{f=1;next} /===REPORT_TXT_END===/{f=0} f' \
+    "${job_logs}" > "${dest_report}" || true
 
   if [ ! -s "${dest_json}" ]; then
     echo "   WARNING: no result JSON captured for ${display}. Job logs:"
-    kubectl logs "job/${JOB}" -n "${NS}" 2>/dev/null | tail -40 || true
+    tail -40 "${job_logs}" 2>/dev/null || true
   else
-    echo "   saved $(wc -c < "${dest_json}") bytes."
+    echo "   saved JSON $(wc -c < "${dest_json}") bytes (transient)."
+  fi
+  if [ ! -s "${dest_report}" ]; then
+    echo "   WARNING: no console report captured for ${display}."
+  else
+    echo "   saved report $(wc -c < "${dest_report}") bytes -> ${dest_report}"
   fi
 
   # Clean up the Job before the next model.
@@ -461,7 +485,11 @@ echo ">> Starting per-model benchmark sweep..."
 while IFS=$'\t' read -r model_name model_source; do
   [ -n "${model_name}" ] || continue
   slug="$(sanitize "${model_source:-$model_name}")"
-  dest_json="${RESULTS_DIR}/results-${slug}.json"
+  # Result JSON is TRANSIENT (temp WORKDIR): it only feeds the comparison matrix.
+  # The human-readable report is the sole per-model artifact in results-incluster,
+  # under a per-model folder: results-incluster/<slug>/report.txt.
+  dest_json="${WORKDIR}/results-${slug}.json"
+  dest_report="${RESULTS_DIR}/${slug}/report.txt"
 
   echo ""
   echo "==============================================================="
@@ -477,7 +505,8 @@ while IFS=$'\t' read -r model_name model_source; do
       "http://${PROD_ISVC}.${NS}.svc.cluster.local:8000/v1" \
       "${model_source}" \
       "${model_name} (prod, in-place)" \
-      "${dest_json}"
+      "${dest_json}" \
+      "${dest_report}"
   else
     # --- Case B: not served -> free a GPU, spin up a temp InferenceService. --
     bench_isvc="bench-${slug}"
@@ -498,7 +527,8 @@ while IFS=$'\t' read -r model_name model_source; do
         "http://${bench_host}:8000/v1" \
         "${model_source}" \
         "${model_name} (bench, single-GPU)" \
-        "${dest_json}"
+        "${dest_json}" \
+        "${dest_report}"
     else
       echo ">> Skipping benchmark for ${model_name}: endpoint never became ready."
     fi
@@ -519,29 +549,39 @@ done <<< "${MODEL_LINES}"
 # 4. COMPARISON MATRIX + PUBLISH
 # =============================================================================
 echo ""
-echo ">> Building comparison matrix from all result JSONs..."
+echo ">> Building comparison matrix from all (transient) result JSONs..."
 MATRIX_MD="${RESULTS_DIR}/COMPARISON-MATRIX.md"
-# Use a nullglob-safe expansion; if no results exist, warn and skip.
+# The per-model result JSONs live ONLY in the temp WORKDIR (never in
+# results-incluster). Glob them from there to feed compare_models.py, then let
+# the EXIT trap discard them with the WORKDIR.
 shopt -s nullglob
-RESULT_JSONS=("${RESULTS_DIR}"/results-*.json)
+RESULT_JSONS=("${WORKDIR}"/results-*.json)
 shopt -u nullglob
 if [ "${#RESULT_JSONS[@]}" -eq 0 ]; then
   echo ">> No result JSONs found; skipping matrix + publish."
 else
+  # Matrix is text -> keep it as COMPARISON-MATRIX.md in results-incluster.
   python3 "${COMPARE_PY}" "${RESULT_JSONS[@]}" --output "${MATRIX_MD}"
   echo ">> Matrix written to ${MATRIX_MD}"
 
-  # Publish the matrix + all result JSONs to aigit, reusing publish_to_aigit.py
-  # at RUNTIME (not edited). It uploads every file in RESULTS_DIR -> aigit and
+  # Publish ONLY the text artifacts to aigit, reusing publish_to_aigit.py at
+  # RUNTIME (not edited). It uploads every file in RESULTS_DIR -> aigit and
   # opens/updates a PR. It reads credentials from AIGIT_* env / the aigit-publish
   # secret; without a token it prints "publish skipped" and returns 0. We point
-  # RESULTS_DIR at a staging dir holding just the matrix + fresh result JSONs so
-  # we don't re-publish stale artifacts.
-  echo ">> Publishing matrix + results to aigit (reusing publish_to_aigit.py)..."
+  # RESULTS_DIR at a staging dir holding just the per-model <slug>/report.txt
+  # files + the COMPARISON-MATRIX.md -- NO json/csv, and no stale artifacts.
+  echo ">> Publishing per-model report.txt + matrix to aigit (reusing publish_to_aigit.py)..."
   STAGE="${WORKDIR}/publish"
   mkdir -p "${STAGE}"
   cp "${MATRIX_MD}" "${STAGE}/" 2>/dev/null || true
-  cp "${RESULT_JSONS[@]}" "${STAGE}/" 2>/dev/null || true
+  # Stage each per-model report as <slug>-report.txt so filenames stay unique in
+  # the flat upload dir the publish script uses (it globs RESULTS_DIR top-level).
+  shopt -s nullglob
+  for report in "${RESULTS_DIR}"/*/report.txt; do
+    slug_dir="$(basename "$(dirname "${report}")")"
+    cp "${report}" "${STAGE}/${slug_dir}-report.txt" 2>/dev/null || true
+  done
+  shopt -u nullglob
 
   # Pull aigit-publish secret values into env if present (mirrors job.yaml's
   # mapping). Non-fatal if the secret is absent -> publish skips gracefully.

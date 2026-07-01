@@ -103,10 +103,13 @@ spec:
               # it on stdout too).
               python -m benchmarks.runner --runs 2 --warmup 1 --timeout 600 \
                 --output /results/results.json 2>&1 | tee /results/report.txt
-              # Derive the CSV from the JSON (no second benchmark run).
-              python /app/publish/publish_to_aigit.py --json-to-csv \
-                /results/results.json /results/results.csv || true
-              # Keep the stdout JSON markers for the manual-capture path.
+              # Emit the human-readable console report between markers so the
+              # multi-model orchestrator can scrape it out of the Job logs
+              # (mirrors the RESULTS_JSON markers below).
+              echo '===REPORT_TXT_START==='
+              cat /results/report.txt
+              echo '===REPORT_TXT_END==='
+              # Keep the stdout JSON markers for the manual-capture + matrix path.
               echo '===RESULTS_JSON_START==='
               cat /results/results.json
               echo '===RESULTS_JSON_END==='
