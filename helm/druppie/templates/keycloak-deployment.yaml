@@ -70,11 +70,7 @@ spec:
                 secretKeyRef:
                   name: {{ include "druppie.fullname" . }}-secrets
                   key: KEYCLOAK_ADMIN_PASSWORD
-            {{- if .Values.global.ingress.tls.enabled }}
-            # Force HTTPS frontend URLs via hostname-url (overrides scheme+host+port)
-            - name: KC_HOSTNAME_URL
-              value: "https://{{ .Values.global.domain }}"
-            {{- else if .Values.global.subdomains.keycloak }}
+            {{- if .Values.global.subdomains.keycloak }}
             - name: KC_HOSTNAME
               value: {{ .Values.global.subdomains.keycloak | quote }}
             {{- else }}
