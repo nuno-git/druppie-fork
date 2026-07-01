@@ -1,9 +1,12 @@
 """User repository for database access."""
 
+import logging
 from uuid import UUID
 
 from .base import BaseRepository
 from ..db.models import User, UserRole
+
+logger = logging.getLogger(__name__)
 
 
 class UserRepository(BaseRepository):
@@ -23,6 +26,9 @@ class UserRepository(BaseRepository):
     ) -> User:
         """Get or create a user (for Keycloak sync).
 
+        Looks up by Keycloak subject UUID first, then by username as fallback.
+        Never mutates the primary key — existing user identity is authoritative.
+
         Args:
             user_id: Keycloak user ID (UUID)
             username: Username
@@ -35,12 +41,16 @@ class UserRepository(BaseRepository):
         """
         user = self.get_by_id(user_id)
         if not user and username:
-            # User might exist with a different ID — lookup by username
             user = self.db.query(User).filter_by(username=username).first()
 
         if user:
             if user.id != user_id:
-                user.id = user_id
+                logger.warning(
+                    "user_id_mismatch_existing_user",
+                    db_id=str(user.id),
+                    keycloak_sub=str(user_id),
+                    username=username,
+                )
             if username and user.username != username:
                 user.username = username
             if email and user.email != email:
@@ -50,7 +60,6 @@ class UserRepository(BaseRepository):
             self.db.flush()
             return user
 
-        # Create new user
         user = User(
             id=user_id,
             username=username,
@@ -60,7 +69,6 @@ class UserRepository(BaseRepository):
         self.db.add(user)
         self.db.flush()
 
-        # Add roles
         if roles:
             for role_name in roles:
                 role = UserRole(user_id=user_id, role=role_name)
