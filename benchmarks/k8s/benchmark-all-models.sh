@@ -229,16 +229,21 @@ for item in doc.get("items", []):
     print(f"{name}\t{source}")
 ')"
 
-# Apply the optional --only filter: keep a model if its NAME contains any of the
-# comma-separated tokens (substring match, so "27b" matches "qwen3-6-27b").
+# Apply the optional --only filter: keep a model whose NAME or slug EXACTLY
+# equals one of the comma-separated tokens. Exact (not substring) so e.g.
+# "qwen3-6-27b" does not also match "qwen3-6-27b-mtp". Accepts either the CRD
+# name (qwen3-6-27b) or the slug (qwen3.6-27b).
 if [ -n "${ONLY_FILTER}" ]; then
   KEPT=""
   while IFS=$'\t' read -r _mname _msrc; do
     [ -n "${_mname}" ] || continue
+    _mslug="$(sanitize "${_msrc:-$_mname}")"
     IFS=',' read -ra _toks <<< "${ONLY_FILTER}"
     for _t in "${_toks[@]}"; do
       [ -n "${_t}" ] || continue
-      case "${_mname}" in *"${_t}"*) KEPT+="${_mname}"$'\t'"${_msrc}"$'\n'; break ;; esac
+      if [ "${_mname}" = "${_t}" ] || [ "${_mslug}" = "${_t}" ]; then
+        KEPT+="${_mname}"$'\t'"${_msrc}"$'\n'; break
+      fi
     done
   done <<< "${MODEL_LINES}"
   MODEL_LINES="$(printf '%s' "${KEPT}" | sed '/^$/d')"
