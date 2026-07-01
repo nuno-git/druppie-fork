@@ -1086,22 +1086,17 @@
       "clientId": "druppie-frontend",
       "name": "Druppie Frontend",
       "description": "Druppie Web Application",
-      "rootUrl": null,
+      "rootUrl": "__FRONTEND_URL__",
       "surrogateAuthRequired": false,
       "enabled": true,
       "alwaysDisplayInConsole": false,
       "clientAuthenticatorType": "client-secret",
       "redirectUris": [
-        "https://druppie.rijnland.dev/*",
-        "https://colab-dev-druppie.rijnland.dev/*",
-        "https://druppie.rijnland.dev",
-        "https://colab-dev-druppie.rijnland.dev"
+        "__FRONTEND_URL__/*",
+        "__FRONTEND_URL__"
       ],
       "webOrigins": [
-        "https://druppie.rijnland.dev",
-        "https://colab-dev-druppie.rijnland.dev",
-        "https://druppie.rijnland.dev/*",
-        "https://colab-dev-druppie.rijnland.dev/*"
+        "__FRONTEND_URL__"
       ],
       "notBefore": 0,
       "bearerOnly": false,
@@ -1135,19 +1130,17 @@
       "clientId": "gitea",
       "name": "Gitea Git Server",
       "description": "Gitea OAuth2 Integration",
-      "rootUrl": null,
+      "rootUrl": "__GITEA_URL__",
       "surrogateAuthRequired": false,
       "enabled": true,
       "alwaysDisplayInConsole": false,
       "clientAuthenticatorType": "client-secret",
       "secret": "SOcsXW72h2FvBjEmPfSOydgSdaIVlx5H",
       "redirectUris": [
-        "https://druppie.rijnland.dev/git/*",
-        "https://colab-dev-druppie.rijnland.dev/git/*"
+        "__GITEA_URL__/*"
       ],
       "webOrigins": [
-        "https://druppie.rijnland.dev/git",
-        "https://colab-dev-druppie.rijnland.dev/git"
+        "__GITEA_URL__"
       ],
       "notBefore": 0,
       "bearerOnly": false,
