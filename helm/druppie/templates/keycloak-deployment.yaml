@@ -43,7 +43,7 @@ spec:
         - name: keycloak
           image: {{ .Values.keycloak.image }}
           imagePullPolicy: {{ .Values.global.imagePullPolicy }}
-          args: ["start-dev", "--import-realm"]
+          args: ["start", "--import-realm"]
           env:
             - name: KC_DB
               value: "postgres"
