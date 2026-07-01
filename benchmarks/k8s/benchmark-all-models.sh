@@ -61,7 +61,16 @@ FLUX_KUSTOMIZATION=llm-models        # Flux Kustomization that manages the model
 FLUX_NS=flux-system                  # namespace the Kustomization lives in
 JOB=llm-benchmark                    # Job name (matches job.yaml)
 GPU_READY_TIMEOUT=1800               # 30 min: first serve downloads weights from HF
+# Benchmark-completion wait. Must be >= the Job's activeDeadlineSeconds (9000s in
+# job.yaml): the full suite has scenarios that take 100-200s each, so 1800s is far
+# too short. Match the Job deadline so we wait for the Job to finish (or hit its
+# own deadline) rather than giving up early and losing results.
+JOB_COMPLETE_TIMEOUT=9000
 ISVC_YAML_CACHE=/tmp/ai-k8s2/clusters/llm-models/inferenceservice.yaml
+
+# python3 is not present in every environment (e.g. Git-Bash only ships `python`).
+# Auto-detect a usable interpreter once and use it everywhere below.
+PYTHON="$(command -v python3 || command -v python || true)"
 
 # Resolve repo root relative to this script so it works from anywhere.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -180,7 +189,7 @@ sanitize() {
 confirm "${1:-}"
 
 command -v kubectl >/dev/null || { echo "kubectl not found"; exit 1; }
-command -v python3 >/dev/null || { echo "python3 not found"; exit 1; }
+[ -n "${PYTHON}" ] || { echo "python3/python not found"; exit 1; }
 mkdir -p "${RESULTS_DIR}"
 
 # =============================================================================
@@ -191,7 +200,7 @@ MODELS_JSON="$(kubectl get models.inference.llmkube.dev -n "${NS}" -o json)"
 
 # Parse into "name<TAB>source" lines. `source` is the HF/registry model id used
 # as the vLLM --model arg; we fall back through the common CRD spec fields.
-MODEL_LINES="$(printf '%s' "${MODELS_JSON}" | python3 -c '
+MODEL_LINES="$(printf '%s' "${MODELS_JSON}" | "${PYTHON}" -c '
 import json, sys
 doc = json.load(sys.stdin)
 for item in doc.get("items", []):
@@ -301,7 +310,7 @@ make_temp_isvc() {
   # observed on ka-k8s-ai (modelRef is a STRING; model source is args[0]; gpu is
   # a scalar spec.resources.gpu; the service block is spec.endpoint not spec.service).
   BENCH_NAME="${bench_name}" MODEL_CRD="${model_crd}" MODEL_SOURCE="${model_source}" \
-  python3 - "${base_yaml}" "${out_yaml}" <<'PY'
+  "${PYTHON}" - "${base_yaml}" "${out_yaml}" <<'PY'
 import os, sys
 try:
     import yaml
@@ -445,7 +454,7 @@ run_benchmark_job() {
   # report out of the pod logs (the Job prints ===RESULTS_JSON_START/END=== and
   # ===REPORT_TXT_START/END=== markers).
   kubectl wait --for=condition=complete "job/${JOB}" -n "${NS}" \
-    --timeout="${GPU_READY_TIMEOUT}s" || \
+    --timeout="${JOB_COMPLETE_TIMEOUT}s" || \
     kubectl wait --for=condition=failed "job/${JOB}" -n "${NS}" --timeout=30s || true
 
   # Grab the Job logs ONCE, then scrape both marker blocks out of them.
@@ -521,8 +530,12 @@ while IFS=$'\t' read -r model_name model_source; do
 
     echo ">> Creating temp InferenceService ${bench_isvc}..."
     manifest="$(make_temp_isvc "${bench_isvc}" "${model_name}" "${model_source}")"
+    # Idempotent: delete any stray same-named bench-* first so a prior partial run
+    # (or a leftover from a crash) doesn't cause AlreadyExists / stale-spec issues.
+    # --wait=true ensures the old one (and its GPU claim) is gone before we apply.
+    kubectl delete inferenceservice "${bench_isvc}" -n "${NS}" --ignore-not-found --wait=true
+    TEMP_ISVCS+=("${bench_isvc}")      # track for the restore trap (before create)
     kubectl apply -f "${manifest}"
-    TEMP_ISVCS+=("${bench_isvc}")      # track for the restore trap
 
     # Wait for it to serve (first serve downloads weights -> long timeout).
     if wait_isvc_ready "${bench_host}"; then
@@ -564,7 +577,7 @@ if [ "${#RESULT_JSONS[@]}" -eq 0 ]; then
   echo ">> No result JSONs found; skipping matrix + publish."
 else
   # Matrix is text -> keep it as COMPARISON-MATRIX.md in results-incluster.
-  python3 "${COMPARE_PY}" "${RESULT_JSONS[@]}" --output "${MATRIX_MD}"
+  "${PYTHON}" "${COMPARE_PY}" "${RESULT_JSONS[@]}" --output "${MATRIX_MD}"
   echo ">> Matrix written to ${MATRIX_MD}"
 
   # Publish ONLY the text artifacts to aigit, reusing publish_to_aigit.py at
@@ -598,7 +611,7 @@ else
   export AIGIT_TOKEN="$(get_secret token)"
   export RESULTS_DIR="${STAGE}"
 
-  python3 "${REPO_ROOT}/benchmarks/k8s/publish_to_aigit.py" || \
+  "${PYTHON}" "${REPO_ROOT}/benchmarks/k8s/publish_to_aigit.py" || \
     echo ">> publish step returned non-zero (continuing; results are saved locally)."
 fi
 
