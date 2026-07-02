@@ -51,7 +51,7 @@ class Question(Base):
     status = Column(String(20), default="pending")  # pending, answered
     answer = Column(Text)  # Text answer or display string of selected choices
     answered_at = Column(DateTime(timezone=True))
-    answered_by = Column(UUID(as_uuid=True), ForeignKey("users.id"))
+    answered_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL", onupdate="CASCADE"))
 
     # Expert role for ask_expert tool calls.
     # When set, this question is for users with this Keycloak role
