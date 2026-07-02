@@ -29,7 +29,6 @@ from druppie.api.deps import get_user_roles
 from druppie.core.auth import get_auth_service
 from druppie.core.session_event_manager import get_event_manager
 from druppie.db.database import SessionLocal
-from druppie.domain.common import SessionStatus
 from druppie.repositories import SessionRepository
 
 logger = structlog.get_logger()

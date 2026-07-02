@@ -1086,22 +1086,54 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
 
     const socket = new SessionSocket(sessionId, (event) => {
       if (event.type === 'timeline_entry' && event.entry) {
-        const newEntry = event.entry
-        mergedTimelineRef.current = [...mergedTimelineRef.current, newEntry]
-        mergedTimelineRef.current.sort((a, b) => a.sequence_number - b.sequence_number)
-        const seqs = mergedTimelineRef.current.map(e => e.sequence_number).filter(Boolean)
-        if (seqs.length > 0) {
-          highestSeqRef.current = Math.max(...seqs)
+        const entry = event.entry
+        
+        if (entry.type === 'agent_run_update') {
+          // Quick visual: patch the status of an existing agent_run in place
+          const timeline = [...mergedTimelineRef.current]
+          for (const e of timeline) {
+            if (e.type === 'agent_run' && e.agent_run?.id === entry.id) {
+              e.agent_run.status = entry.status
+              if (entry.error_message) {
+                e.agent_run.error_message = entry.error_message
+              }
+              break
+            }
+          }
+          mergedTimelineRef.current = timeline
+          queryClient.setQueryData(['session', sessionId], (old) => {
+            if (!old) return old
+            return { ...old, timeline: mergedTimelineRef.current }
+          })
+        } else {
+          // Append a new full entry (message or agent_run)
+          const newTimeline = [...mergedTimelineRef.current, entry]
+          newTimeline.sort((a, b) => (a.sequence_number || 0) - (b.sequence_number || 0))
+          mergedTimelineRef.current = newTimeline
+          const seqs = newTimeline.map(e => e.sequence_number).filter(Boolean)
+          if (seqs.length > 0) {
+            highestSeqRef.current = Math.max(...seqs)
+          }
+          queryClient.setQueryData(['session', sessionId], (old) => {
+            if (!old) return old
+            return { ...old, timeline: mergedTimelineRef.current }
+          })
         }
-        queryClient.setQueryData(['session', sessionId], (old) => {
-          if (!old) return old
-          return { ...old, timeline: mergedTimelineRef.current }
-        })
+
+        // Defensive refetch: delta only returns entries with higher sequence_number.
+        // When an existing run's nested tool_call changes status (e.g. executing ->
+        // waiting_answer), its sequence_number doesn't change, so delta skips it.
+        // Reset highestSeqRef ONLY for agent_run_update to force a full fetch.
+        if (entry.type === 'agent_run_update') {
+          highestSeqRef.current = undefined
+        }
+        queryClient.invalidateQueries({ queryKey: ['session', sessionId] })
       } else if (event.type === 'session_status') {
         queryClient.setQueryData(['session', sessionId], (old) => {
           if (!old) return old
-          return { ...old, status: event.status, timeline: old.timeline }
+          return { ...old, status: event.status }
         })
+        queryClient.invalidateQueries({ queryKey: ['session', sessionId] })
       }
     })
 

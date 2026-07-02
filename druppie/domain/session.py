@@ -15,7 +15,7 @@ from datetime import datetime
 from enum import Enum
 
 from .common import Attachment, TokenUsage, SessionStatus
-from .agent_run import AgentRunSummary, AgentRunDetail
+from .agent_run import AgentRunDetail
 from .project import ProjectSummary
 
 
