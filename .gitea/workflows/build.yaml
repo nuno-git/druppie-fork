@@ -40,11 +40,8 @@ jobs:
           HARBOR_PASS: ${{ secrets.HARBOR_PASSWORD }}
         run: |
           mkdir -p ~/.docker
-          AUTH=$(printf '%s' 'robot$druppie+druppie-ci:%s' "$HARBOR_PASS" | base64 -w0)
-          cat > ~/.docker/config.json <<'EOF'
-          {"auths":{"harbor.rijnland.dev":{"auth":"PLACEHOLDER"}}}
-          EOF
-          sed -i "s|PLACEHOLDER|$AUTH|" ~/.docker/config.json
+          AUTH=$(printf 'robot$druppie+druppie-ci:%s' "$HARBOR_PASS" | base64 -w0)
+          printf '{"auths":{"harbor.rijnland.dev":{"auth":"%s"}}}\n' "$AUTH" > ~/.docker/config.json
           echo "Config written, auth length: ${#AUTH}"
 
       - name: Build and push backend
