@@ -47,7 +47,12 @@ spec:
         - name: keycloak
           image: {{ .Values.keycloak.image }}
           imagePullPolicy: {{ .Values.global.imagePullPolicy }}
-          args: ["start", "--import-realm"]
+          # Use the legacy hostname provider: it derives frontend URLs from the
+          # realm's frontendUrl attribute (https://<domain>, set by the realm
+          # import). The default v2 provider ignores X-Forwarded-Proto in this
+          # Keycloak build behind Traefik, so it generated http:// login form
+          # actions and triggered browser "unsafe" warnings.
+          args: ["start", "--import-realm", "--spi-hostname-provider=legacy"]
           env:
             - name: KC_DB
               value: "postgres"
