@@ -35,14 +35,13 @@ jobs:
           chmod +x /usr/local/lib/docker/cli-plugins/docker-buildx
           docker version --format '{{.Client.Version}}'
 
-      - name: Configure Harbor credentials
+      - name: Login to Harbor
         env:
           HARBOR_PASS: ${{ secrets.HARBOR_PASSWORD }}
         run: |
-          mkdir -p ~/.docker
-          AUTH=$(printf 'robot$druppie+druppie-ci:%s' "$HARBOR_PASS" | base64 -w0)
-          printf '{"auths":{"harbor.rijnland.dev":{"auth":"%s"}}}\n' "$AUTH" > ~/.docker/config.json
-          echo "Config written, auth length: ${#AUTH}"
+          echo "$HARBOR_PASS" | docker login harbor.rijnland.dev -u 'robot$druppie+druppie-ci' --password-stdin
+          echo "Login exit: $?"
+          docker pull harbor.rijnland.dev/druppie/druppie-backend:latest 2>&1 || echo "pull failed (expected, no images yet)"
 
       - name: Build and push backend
         env:
