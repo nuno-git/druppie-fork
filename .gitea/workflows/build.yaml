@@ -37,20 +37,15 @@ jobs:
 
       - name: Configure Harbor credentials
         env:
-          HARBOR_USER: ${{ secrets.HARBOR_USERNAME }}
           HARBOR_PASS: ${{ secrets.HARBOR_PASSWORD }}
-          HARBOR_REG: ${{ secrets.HARBOR_REGISTRY }}
         run: |
-          echo "DEBUG: username length=${#HARBOR_USER} password length=${#HARBOR_PASS} registry=$HARBOR_REG"
-          echo "DEBUG: username first 10=$(echo "$HARBOR_USER" | head -c 10)"
           mkdir -p ~/.docker
-          AUTH=$(printf '%s' "$HARBOR_USER:$HARBOR_PASS" | base64 -w0)
-          echo "DEBUG: auth length=${#AUTH}"
-          cat > ~/.docker/config.json <<JSON
-          {"auths":{"$HARBOR_REG":{"auth":"$AUTH"}}}
-          JSON
-          echo "DEBUG: config.json contents:"
-          cat ~/.docker/config.json
+          AUTH=$(printf '%s' 'robot$druppie+druppie-ci:%s' "$HARBOR_PASS" | base64 -w0)
+          cat > ~/.docker/config.json <<'EOF'
+          {"auths":{"harbor.rijnland.dev":{"auth":"PLACEHOLDER"}}}
+          EOF
+          sed -i "s|PLACEHOLDER|$AUTH|" ~/.docker/config.json
+          echo "Config written, auth length: ${#AUTH}"
 
       - name: Build and push backend
         env:
