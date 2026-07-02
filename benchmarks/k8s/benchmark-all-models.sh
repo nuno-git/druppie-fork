@@ -618,22 +618,25 @@ else
   "${PYTHON}" "${COMPARE_PY}" "${RESULT_JSONS[@]}" --output "${MATRIX_MD}"
   echo ">> Matrix written to ${MATRIX_MD}"
 
-  # Publish ONLY the text artifacts to aigit, reusing publish_to_aigit.py at
-  # RUNTIME (not edited). It uploads every file in RESULTS_DIR -> aigit and
-  # opens/updates a PR. It reads credentials from AIGIT_* env / the aigit-publish
-  # secret; without a token it prints "publish skipped" and returns 0. We point
-  # RESULTS_DIR at a staging dir holding just the per-model <slug>/report.txt
-  # files + the COMPARISON-MATRIX.md -- NO json/csv, and no stale artifacts.
+  # Publish the text artifacts to aigit, reusing publish_to_aigit.py at RUNTIME
+  # (not edited). It walks RESULTS_DIR recursively and uploads to STABLE,
+  # model-named paths under benchmarks/results-incluster (each publish OVERWRITES
+  # the same paths), then opens/updates a PR. It reads credentials from AIGIT_*
+  # env / the aigit-publish secret; without a token it prints "publish skipped"
+  # and returns 0. We point RESULTS_DIR at a staging dir that MIRRORS the desired
+  # aigit tree: per-model <slug>/report.txt subdirs + COMPARISON-MATRIX.md -- NO
+  # json/csv, and only the artifacts from THIS run (no stale files).
   echo ">> Publishing per-model report.txt + matrix to aigit (reusing publish_to_aigit.py)..."
   STAGE="${WORKDIR}/publish"
   mkdir -p "${STAGE}"
-  cp "${MATRIX_MD}" "${STAGE}/" 2>/dev/null || true
-  # Stage each per-model report as <slug>-report.txt so filenames stay unique in
-  # the flat upload dir the publish script uses (it globs RESULTS_DIR top-level).
+  cp "${MATRIX_MD}" "${STAGE}/COMPARISON-MATRIX.md" 2>/dev/null || true
+  # Mirror each per-model report into <slug>/report.txt so the publisher preserves
+  # the per-model folder structure (stable model-named paths, overwritten each run).
   shopt -s nullglob
   for report in "${RESULTS_DIR}"/*/report.txt; do
     slug_dir="$(basename "$(dirname "${report}")")"
-    cp "${report}" "${STAGE}/${slug_dir}-report.txt" 2>/dev/null || true
+    mkdir -p "${STAGE}/${slug_dir}"
+    cp "${report}" "${STAGE}/${slug_dir}/report.txt" 2>/dev/null || true
   done
   shopt -u nullglob
 
