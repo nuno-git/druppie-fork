@@ -1,0 +1,109 @@
+Running 20 scenarios x 1 models (2 runs each, 1 warmup)
+
+  Model: qwen3-6-27b (prod, in-place) (Qwen/Qwen3.6-27B)
+    context-128k... 25308ms avg
+    context-16k... 31228ms avg
+    context-1k... 23678ms avg
+    context-256... 26006ms avg
+    context-256k...  (1 errors)
+    context-32k... 49222ms avg
+    context-4k... 39240ms avg
+    context-64k... 24515ms avg
+    context-8k... 37548ms avg
+    generate-100... 3877ms avg
+    generate-1000... 38310ms avg
+    generate-2000... 76602ms avg
+    generate-500... 19162ms avg
+    latency-1000... 248996ms avg
+    latency-200... 111363ms avg
+    latency-50... 25337ms avg
+    latency-500... 189380ms avg
+    repeated-50... 6268ms avg
+    tool-call-10-tools... 4604ms avg
+    tool-call-3-tools... 4677ms avg
+
+LLM Performance Benchmark - 2026-07-02 00:07
+Endpoint: qwen_incluster (http://qwen.llm.svc.cluster.local:8000/v1)
+Runs per test: 3
+Warmup runs: 1
+
+Model Configurations:
+  qwen3-6-27b (prod, in- - 27B params, bfloat16, KV:fp8, flash_attn, GPU=-1
+
+================================================================================
+  CONTEXT SCALING (latency)
+================================================================================
+Scenario               | qwen3-6-27b (prod, in-place)  
+-------------------------------------------------------
+context-128k           | 25.3s (±0.2)                  
+context-16k            | 31.2s (±0.3)                  
+context-1k             | 23.7s (±1.4)                  
+context-256            | 26.0s (±12.4)                 
+context-256k           | ERROR                         
+context-32k            | 49.2s (±1.2)                  
+context-4k             | 39.2s (±1.3)                  
+context-64k            | 24.5s (±0.3)                  
+context-8k             | 37.5s (±15.0)                 
+
+================================================================================
+  GENERATION SPEED
+================================================================================
+Scenario               | qwen3-6-27b (prod, in-place)  
+-------------------------------------------------------
+generate-100           | 26 t/s                        
+generate-1000          | 26 t/s                        
+generate-2000          | 26 t/s                        
+generate-500           | 26 t/s                        
+
+================================================================================
+  LATENCY (total response time)
+================================================================================
+Scenario               | qwen3-6-27b (prod, in-place)  
+-------------------------------------------------------
+latency-1000           | 249.0s (±5.7)                 
+latency-200            | 111.4s (±26.1)                
+latency-50             | 25.3s (±8.9)                  
+latency-500            | 189.4s (±11.7)                
+
+================================================================================
+  STRESS / CONSISTENCY
+================================================================================
+Scenario               | qwen3-6-27b (prod, in-place)  
+-------------------------------------------------------
+repeated-50            | 6.3s (±2.8)                   
+
+================================================================================
+  TOOL CALLING OVERHEAD (latency)
+================================================================================
+Scenario               | qwen3-6-27b (prod, in-place)  
+-------------------------------------------------------
+tool-call-10-tools     | 4.6s (±0.7)                   
+tool-call-3-tools      | 4.7s (±0.4)                   
+
+================================================================================
+  TIME TO FIRST TOKEN (TTFT)
+================================================================================
+Scenario               | qwen3-6-27b (prod, in-place)  
+-------------------------------------------------------
+context-128k           | 560ms                         
+context-16k            | 1.2s                          
+context-1k             | 184ms                         
+context-256            | 118ms                         
+context-256k           | -                             
+context-32k            | 373ms                         
+context-4k             | 411ms                         
+context-64k            | 463ms                         
+context-8k             | 546ms                         
+generate-100           | 92ms                          
+generate-1000          | 92ms                          
+generate-2000          | 112ms                         
+generate-500           | 72ms                          
+latency-1000           | 184ms                         
+latency-200            | 111ms                         
+latency-50             | 127ms                         
+latency-500            | 132ms                         
+repeated-50            | 97ms                          
+tool-call-10-tools     | -                             
+tool-call-3-tools      | -                             
+
+JSON results exported to /results/results.json
