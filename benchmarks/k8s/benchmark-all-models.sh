@@ -1,0 +1,560 @@
+#!/usr/bin/env bash
+# =============================================================================
+# benchmark-all-models.sh -- benchmark EVERY LLMKube model in the cluster.
+#
+# Generalizes the "benchmark one model" workflow (run-in-cluster.sh) to sweep
+# all models declared as `models.inference.llmkube.dev` in namespace `llm`.
+#
+# For each discovered model it runs the standard in-cluster benchmark Job
+# (benchmarks/k8s/job.yaml) pointed at that model's endpoint, saves the result
+# JSON to benchmarks/results-incluster/results-<model>.json, then finally
+# builds a cross-model comparison matrix and publishes everything to aigit.
+#
+# -----------------------------------------------------------------------------
+# !!! IMPACT WARNING -- READ BEFORE RUNNING !!!
+# -----------------------------------------------------------------------------
+# The cluster has a fixed pool of GPUs. Prod `qwen` (Qwen3.6-27B) normally runs
+# 2 replicas (2 GPUs). To benchmark a DIFFERENT model we must free a GPU, which
+# means this script will TEMPORARILY:
+#   * suspend the Flux `llm-models` Kustomization (so Flux won't fight our edits
+#     or re-scale qwen back up mid-run), and
+#   * scale the prod `qwen` InferenceService down to 1 replica (freeing 1 GPU),
+#     then create a short-lived `bench-<model>` InferenceService on that GPU.
+#
+# During the run prod qwen serves at HALF capacity (1 replica). A trap ALWAYS
+# restores qwen to its original replica count and resumes Flux on exit -- even
+# on Ctrl-C or error. Still: run this in a maintenance window.
+#
+# The currently-served prod model is benchmarked in place (no serving change).
+#
+# -----------------------------------------------------------------------------
+# USAGE
+# -----------------------------------------------------------------------------
+#   ./benchmarks/k8s/benchmark-all-models.sh            # interactive confirm
+#   ./benchmarks/k8s/benchmark-all-models.sh --yes      # skip confirmation
+#
+# Requirements: kubectl (context pointed at the ka-k8s-ai / llm cluster),
+# python3 (for the comparison matrix + config munging), and the in-cluster
+# `aigit-publish` secret in ns llm for the publish step (optional -- skipped
+# gracefully if absent, exactly like run-in-cluster.sh).
+#
+# This script does NOT edit any tracked file. It reuses job.yaml and
+# publish_to_aigit.py verbatim, and generates per-model TEMP configs so the
+# tracked benchmarks/config.yaml is never touched.
+# =============================================================================
+set -euo pipefail
+
+# -----------------------------------------------------------------------------
+# Constants
+# -----------------------------------------------------------------------------
+NS=llm
+PROD_ISVC=qwen                       # prod InferenceService name (ns llm)
+PROD_ORIGINAL_REPLICAS=2             # documented prod baseline; captured live below
+FLUX_KUSTOMIZATION=llm-models        # Flux Kustomization that manages the models
+FLUX_NS=flux-system                  # namespace the Kustomization lives in
+JOB=llm-benchmark                    # Job name (matches job.yaml)
+GPU_READY_TIMEOUT=1800               # 30 min: first serve downloads weights from HF
+ISVC_YAML_CACHE=/tmp/ai-k8s2/clusters/llm-models/inferenceservice.yaml
+
+# Resolve repo root relative to this script so it works from anywhere.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+cd "${REPO_ROOT}"
+
+RESULTS_DIR="${REPO_ROOT}/benchmarks/results-incluster"
+CONFIG_SRC="${REPO_ROOT}/benchmarks/config.yaml"
+JOB_YAML="${REPO_ROOT}/benchmarks/k8s/job.yaml"
+COMPARE_PY="${REPO_ROOT}/benchmarks/compare_models.py"
+
+# Workspace for temp configs / manifests -- cleaned up on exit.
+WORKDIR="$(mktemp -d)"
+
+# -----------------------------------------------------------------------------
+# State captured at startup (used by the restore trap). Defaults are safe so a
+# trap firing before capture still does something sane.
+# -----------------------------------------------------------------------------
+CAPTURED_QWEN_REPLICAS="${PROD_ORIGINAL_REPLICAS}"
+CAPTURED_FLUX_SUSPENDED="false"      # was Flux already suspended before we started?
+FLUX_TOUCHED="false"                 # did WE change the suspend state?
+QWEN_TOUCHED="false"                 # did WE scale qwen?
+declare -a TEMP_ISVCS=()             # bench-* InferenceServices we created
+
+# -----------------------------------------------------------------------------
+# restore() -- ALWAYS runs on EXIT/INT/TERM. Idempotent and tolerant of partial
+# state: every step is guarded and never aborts the others (we clear -e here).
+# -----------------------------------------------------------------------------
+restore() {
+  local exit_code=$?
+  set +e
+  echo ""
+  echo ">> [restore] Cleaning up (exit code ${exit_code})..."
+
+  # 1. Delete any temp bench-* InferenceServices we created. Also do a
+  #    belt-and-braces sweep for anything named bench-* in case a name wasn't
+  #    tracked (e.g. crash right after create).
+  for isvc in "${TEMP_ISVCS[@]:-}"; do
+    [ -n "${isvc}" ] || continue
+    echo ">> [restore] Deleting temp InferenceService ${isvc}..."
+    kubectl delete inferenceservice "${isvc}" -n "${NS}" --ignore-not-found --wait=false
+  done
+  # Sweep any stray bench-* left behind.
+  local strays
+  strays="$(kubectl get inferenceservice -n "${NS}" -o name 2>/dev/null | grep '/bench-' || true)"
+  if [ -n "${strays}" ]; then
+    echo ">> [restore] Removing stray bench-* InferenceServices:"
+    echo "${strays}"
+    echo "${strays}" | xargs -r kubectl delete -n "${NS}" --ignore-not-found --wait=false
+  fi
+
+  # 2. Restore prod qwen replicas to the captured original (only if we scaled).
+  if [ "${QWEN_TOUCHED}" = "true" ]; then
+    echo ">> [restore] Restoring ${PROD_ISVC} to ${CAPTURED_QWEN_REPLICAS} replica(s)..."
+    kubectl patch inferenceservice "${PROD_ISVC}" -n "${NS}" --type merge \
+      -p "{\"spec\":{\"replicas\":${CAPTURED_QWEN_REPLICAS}}}" || \
+      echo ">> [restore] WARNING: failed to restore ${PROD_ISVC} replicas -- check manually!"
+  fi
+
+  # 3. Resume Flux to its ORIGINAL suspend state (only if we changed it).
+  if [ "${FLUX_TOUCHED}" = "true" ]; then
+    echo ">> [restore] Restoring Flux ${FLUX_KUSTOMIZATION} suspend=${CAPTURED_FLUX_SUSPENDED}..."
+    kubectl patch kustomization "${FLUX_KUSTOMIZATION}" -n "${FLUX_NS}" --type merge \
+      -p "{\"spec\":{\"suspend\":${CAPTURED_FLUX_SUSPENDED}}}" || \
+      echo ">> [restore] WARNING: failed to restore Flux suspend state -- check manually!"
+  fi
+
+  # 4. Best-effort: delete the benchmark Job so it doesn't linger.
+  kubectl delete job "${JOB}" -n "${NS}" --ignore-not-found --wait=false >/dev/null 2>&1 || true
+
+  # 5. Local workspace.
+  rm -rf "${WORKDIR}" 2>/dev/null || true
+
+  echo ">> [restore] Done."
+  # Preserve the original exit code.
+  exit "${exit_code}"
+}
+trap restore EXIT INT TERM
+
+# -----------------------------------------------------------------------------
+# confirm() -- require explicit go-ahead given the impact.
+# -----------------------------------------------------------------------------
+confirm() {
+  if [ "${1:-}" = "--yes" ]; then
+    echo ">> --yes supplied; skipping interactive confirmation."
+    return 0
+  fi
+  echo ""
+  echo "This will temporarily scale prod ${PROD_ISVC} to 1 replica and suspend"
+  echo "Flux ${FLUX_KUSTOMIZATION} to free a GPU for benchmarking other models."
+  echo "A trap restores everything on exit."
+  printf "Type 'yes' to proceed: "
+  read -r reply
+  if [ "${reply}" != "yes" ]; then
+    echo "Aborted."
+    exit 1
+  fi
+}
+
+# -----------------------------------------------------------------------------
+# sanitize() -- turn a model source/name into a DNS-safe, filename-safe slug.
+# e.g. "Qwen/Qwen3.6-35B-A3B" -> "qwen3.6-35b-a3b" (lowercased, path stripped,
+# non [a-z0-9.-] collapsed to '-'). Used for bench-<slug> and results-<slug>.
+# -----------------------------------------------------------------------------
+sanitize() {
+  local raw="$1"
+  # take last path segment, lowercase, replace invalid chars, trim dashes
+  echo "${raw##*/}" \
+    | tr '[:upper:]' '[:lower:]' \
+    | sed -E 's/[^a-z0-9.-]+/-/g; s/^-+//; s/-+$//'
+}
+
+# =============================================================================
+# 1. CONFIRM
+# =============================================================================
+confirm "${1:-}"
+
+command -v kubectl >/dev/null || { echo "kubectl not found"; exit 1; }
+command -v python3 >/dev/null || { echo "python3 not found"; exit 1; }
+mkdir -p "${RESULTS_DIR}"
+
+# =============================================================================
+# 2. DISCOVER models + capture current prod state
+# =============================================================================
+echo ">> Discovering models (models.inference.llmkube.dev -n ${NS})..."
+MODELS_JSON="$(kubectl get models.inference.llmkube.dev -n "${NS}" -o json)"
+
+# Parse into "name<TAB>source" lines. `source` is the HF/registry model id used
+# as the vLLM --model arg; we fall back through the common CRD spec fields.
+MODEL_LINES="$(printf '%s' "${MODELS_JSON}" | python3 -c '
+import json, sys
+doc = json.load(sys.stdin)
+for item in doc.get("items", []):
+    name = item.get("metadata", {}).get("name", "")
+    spec = item.get("spec", {}) or {}
+    # Try the likely source fields in priority order.
+    source = (spec.get("source") or spec.get("model") or spec.get("modelId")
+              or spec.get("uri") or spec.get("repo") or name)
+    print(f"{name}\t{source}")
+')"
+
+if [ -z "${MODEL_LINES}" ]; then
+  echo "No models discovered. Nothing to do."
+  exit 0
+fi
+echo ">> Discovered models:"
+printf '%s\n' "${MODEL_LINES}" | sed 's/^/   - /'
+
+# Capture prod qwen's current replicas + which model it currently serves, so we
+# can (a) benchmark that model in place and (b) restore replicas afterwards.
+echo ">> Capturing prod ${PROD_ISVC} state..."
+CAPTURED_QWEN_REPLICAS="$(kubectl get inferenceservice "${PROD_ISVC}" -n "${NS}" \
+  -o jsonpath='{.spec.replicas}' 2>/dev/null || true)"
+[ -n "${CAPTURED_QWEN_REPLICAS}" ] || CAPTURED_QWEN_REPLICAS="${PROD_ORIGINAL_REPLICAS}"
+
+# The model currently served by prod qwen. `modelRef` links the InferenceService
+# to a models.inference.llmkube.dev object; we compare BY NAME against discovery.
+PROD_MODEL_REF="$(kubectl get inferenceservice "${PROD_ISVC}" -n "${NS}" \
+  -o jsonpath='{.spec.modelRef.name}' 2>/dev/null || true)"
+[ -n "${PROD_MODEL_REF}" ] || PROD_MODEL_REF="$(kubectl get inferenceservice "${PROD_ISVC}" \
+  -n "${NS}" -o jsonpath='{.spec.modelRef}' 2>/dev/null || true)"
+
+echo "   prod replicas : ${CAPTURED_QWEN_REPLICAS}"
+echo "   prod modelRef : ${PROD_MODEL_REF:-<unknown>}"
+
+# Capture Flux suspend state so restore returns it to exactly what it was.
+CAPTURED_FLUX_SUSPENDED="$(kubectl get kustomization "${FLUX_KUSTOMIZATION}" -n "${FLUX_NS}" \
+  -o jsonpath='{.spec.suspend}' 2>/dev/null || true)"
+[ -n "${CAPTURED_FLUX_SUSPENDED}" ] || CAPTURED_FLUX_SUSPENDED="false"
+echo "   flux suspended: ${CAPTURED_FLUX_SUSPENDED}"
+
+# =============================================================================
+# Helpers for the per-model loop
+# =============================================================================
+
+# suspend_flux() -- suspend the llm-models Kustomization so Flux won't undo our
+# temporary scaling / temp InferenceService. Records that WE touched it.
+suspend_flux() {
+  if [ "${FLUX_TOUCHED}" != "true" ]; then
+    echo ">> Suspending Flux ${FLUX_KUSTOMIZATION} (was suspend=${CAPTURED_FLUX_SUSPENDED})..."
+    kubectl patch kustomization "${FLUX_KUSTOMIZATION}" -n "${FLUX_NS}" --type merge \
+      -p '{"spec":{"suspend":true}}'
+    FLUX_TOUCHED="true"
+  fi
+}
+
+# scale_qwen_to() -- scale prod qwen; record that WE touched it so restore acts.
+scale_qwen_to() {
+  local n="$1"
+  echo ">> Scaling prod ${PROD_ISVC} to ${n} replica(s) to free a GPU..."
+  kubectl patch inferenceservice "${PROD_ISVC}" -n "${NS}" --type merge \
+    -p "{\"spec\":{\"replicas\":${n}}}"
+  QWEN_TOUCHED="true"
+}
+
+# wait_free_gpu() -- wait until at least one GPU is allocatable-but-unused in the
+# llm nodes. Simple proxy: wait for qwen's scaled-down pods to actually leave so
+# the freed GPU is released before we schedule the temp InferenceService.
+wait_free_gpu() {
+  echo ">> Waiting for scaled-down ${PROD_ISVC} pod(s) to terminate (GPU release)..."
+  for _ in $(seq 1 60); do
+    local running
+    running="$(kubectl get pods -n "${NS}" -l "serving.llmkube.dev/inferenceservice=${PROD_ISVC}" \
+      --field-selector=status.phase=Running -o name 2>/dev/null | wc -l | tr -d ' ')"
+    # Also try the generic app label as a fallback selector.
+    if [ "${running}" = "0" ]; then
+      running="$(kubectl get pods -n "${NS}" -l "app=${PROD_ISVC}" \
+        --field-selector=status.phase=Running -o name 2>/dev/null | wc -l | tr -d ' ')"
+    fi
+    echo "   running prod pods: ${running} (target <= 1)"
+    [ "${running}" -le 1 ] && { echo "   GPU should be free."; return 0; }
+    sleep 5
+  done
+  echo "   WARNING: timed out waiting for GPU release; proceeding anyway."
+}
+
+# make_temp_isvc() -- write a temp InferenceService manifest for a bench model.
+# Bases it on the prod InferenceService (from the tracked YAML cache if present,
+# else live `kubectl get -o yaml`), then rewrites name/modelRef/model-source and
+# forces replicas=1, gpu=1, the gpu=true:NoSchedule toleration, ClusterIP:8000.
+#   $1 = bench isvc name (bench-<slug>)   $2 = models CRD name   $3 = model source
+make_temp_isvc() {
+  local bench_name="$1" model_crd="$2" model_source="$3"
+  local base_yaml="${WORKDIR}/prod-isvc.yaml"
+  local out_yaml="${WORKDIR}/${bench_name}.yaml"
+
+  if [ -f "${ISVC_YAML_CACHE}" ]; then
+    echo ">> Using cached prod InferenceService manifest: ${ISVC_YAML_CACHE}"
+    cp "${ISVC_YAML_CACHE}" "${base_yaml}"
+  else
+    echo ">> Reading live prod InferenceService ${PROD_ISVC} as template..."
+    kubectl get inferenceservice "${PROD_ISVC}" -n "${NS}" -o yaml > "${base_yaml}"
+  fi
+
+  # Transform the base manifest with Python (robust YAML edit, no fragile sed).
+  BENCH_NAME="${bench_name}" MODEL_CRD="${model_crd}" MODEL_SOURCE="${model_source}" \
+  python3 - "${base_yaml}" "${out_yaml}" <<'PY'
+import os, sys
+try:
+    import yaml
+except ImportError:
+    sys.stderr.write("PyYAML required to template the InferenceService.\n")
+    sys.exit(1)
+
+src, dst = sys.argv[1], sys.argv[2]
+bench = os.environ["BENCH_NAME"]
+model_crd = os.environ["MODEL_CRD"]
+model_source = os.environ["MODEL_SOURCE"]
+
+doc = yaml.safe_load(open(src))
+# Strip server-managed fields so apply is clean.
+meta = doc.setdefault("metadata", {})
+meta["name"] = bench
+for k in ("resourceVersion", "uid", "creationTimestamp", "generation",
+          "managedFields", "annotations", "ownerReferences", "labels"):
+    meta.pop(k, None)
+doc.pop("status", None)
+
+spec = doc.setdefault("spec", {})
+spec["replicas"] = 1
+# Point the temp service at the model being benchmarked.
+if isinstance(spec.get("modelRef"), dict):
+    spec["modelRef"]["name"] = model_crd
+else:
+    spec["modelRef"] = {"name": model_crd}
+# Some LLMKube variants take the source directly on the isvc as `model`/args.
+if "model" in spec:
+    spec["model"] = model_source
+
+# Force single-GPU footprint.
+res = spec.setdefault("resources", {})
+for side in ("limits", "requests"):
+    d = res.setdefault(side, {})
+    if any("gpu" in k for k in d) or side == "limits":
+        d["nvidia.com/gpu"] = 1
+spec.setdefault("resources", res)
+
+# GPU node toleration.
+tolerations = spec.setdefault("tolerations", [])
+gpu_tol = {"key": "gpu", "operator": "Equal", "value": "true",
+           "effect": "NoSchedule"}
+if gpu_tol not in tolerations:
+    tolerations.append(gpu_tol)
+
+# ClusterIP service on 8000 (default for these isvcs; set explicitly if present).
+if isinstance(spec.get("service"), dict):
+    spec["service"]["type"] = "ClusterIP"
+    spec["service"].setdefault("port", 8000)
+
+yaml.safe_dump(doc, open(dst, "w"), sort_keys=False)
+print(f"   wrote temp InferenceService manifest: {dst}")
+PY
+  echo "${out_yaml}"
+}
+
+# wait_isvc_ready() -- poll the temp service's /v1/models until HTTP 200. First
+# serve downloads weights from HuggingFace, so allow up to GPU_READY_TIMEOUT.
+# $1 = in-cluster base host (e.g. bench-foo.llm.svc.cluster.local)
+wait_isvc_ready() {
+  local host="$1"
+  local deadline=$(( $(date +%s) + GPU_READY_TIMEOUT ))
+  echo ">> Waiting for ${host}:8000/v1/models to return 200 (up to ${GPU_READY_TIMEOUT}s)..."
+  while [ "$(date +%s)" -lt "${deadline}" ]; do
+    # Probe from inside the cluster with a throwaway pod (curl image).
+    if kubectl run "bench-probe-$$" -n "${NS}" --rm -i --restart=Never \
+        --image=curlimages/curl:8.10.1 --quiet -- \
+        -sf -o /dev/null -w '%{http_code}' \
+        "http://${host}:8000/v1/models" 2>/dev/null | grep -q '^200'; then
+      echo "   endpoint is up."
+      return 0
+    fi
+    echo "   not ready yet; sleeping 15s..."
+    sleep 15
+  done
+  echo "   ERROR: ${host} did not become ready within ${GPU_READY_TIMEOUT}s."
+  return 1
+}
+
+# run_benchmark_job() -- run the standard in-cluster benchmark Job against a
+# given endpoint+model, writing the result JSON to a destination file.
+#
+# We reuse job.yaml and publish_to_aigit.py VERBATIM. The only thing that must
+# change per model is the endpoint URL + model id the runner reads from
+# config.yaml. Rather than edit the tracked config.yaml, we generate a per-model
+# TEMP config (copy + sed the base_url + model + display_name) and build the
+# `bench-pkg` configmap from THAT temp file. This mirrors run-in-cluster.sh's
+# configmap+Job mechanism but with the endpoint override injected via the temp
+# config -- job.yaml itself is applied unchanged.
+#
+#   $1 = base_url (http://host:8000/v1)   $2 = model id   $3 = display_name
+#   $4 = destination result JSON path (in benchmarks/results-incluster/)
+run_benchmark_job() {
+  local base_url="$1" model_id="$2" display="$3" dest_json="$4"
+  local tmp_config="${WORKDIR}/config-$(sanitize "${model_id}").yaml"
+
+  echo ">> Building per-model temp config -> ${tmp_config}"
+  # Start from the tracked config, then override the single active endpoint's
+  # base_url and the single active model's id/display_name. sed targets the
+  # `qwen_incluster` endpoint block's base_url and the first model entry.
+  cp "${CONFIG_SRC}" "${tmp_config}"
+  # Override the in-cluster endpoint URL.
+  sed -i -E "s|base_url: \"http://qwen\.llm\.svc\.cluster\.local:8000/v1\"|base_url: \"${base_url}\"|" "${tmp_config}"
+  # Override the active model id + display name (first `model:`/`display_name:`).
+  sed -i -E "0,/^    model: .*/s||    model: ${model_id}|" "${tmp_config}"
+  sed -i -E "0,/^    display_name: .*/s||    display_name: \"${display}\"|" "${tmp_config}"
+
+  echo ">> Cleaning up any prior benchmark Job + configmaps..."
+  kubectl delete job "${JOB}" -n "${NS}" --ignore-not-found
+  kubectl delete configmap bench-pkg bench-scenarios bench-publish -n "${NS}" --ignore-not-found
+
+  echo ">> Creating configmap bench-pkg (with per-model temp config)..."
+  kubectl create configmap bench-pkg -n "${NS}" \
+    --from-file=__init__.py=benchmarks/__init__.py \
+    --from-file=runner.py=benchmarks/runner.py \
+    --from-file=llm_client.py=benchmarks/llm_client.py \
+    --from-file=reporter.py=benchmarks/reporter.py \
+    --from-file=config.yaml="${tmp_config}"
+
+  echo ">> Creating configmap bench-scenarios..."
+  kubectl create configmap bench-scenarios -n "${NS}" \
+    --from-file=benchmarks/scenarios/
+
+  echo ">> Creating configmap bench-publish (unchanged publish script)..."
+  kubectl create configmap bench-publish -n "${NS}" \
+    --from-file=publish_to_aigit.py=benchmarks/k8s/publish_to_aigit.py
+
+  echo ">> Applying Job (job.yaml, unchanged)..."
+  kubectl apply -f "${JOB_YAML}"
+
+  echo ">> Waiting for benchmark Job to complete..."
+  # Wait for either Complete or Failed; then capture the result JSON out of the
+  # pod logs (the Job prints ===RESULTS_JSON_START/END=== markers).
+  kubectl wait --for=condition=complete "job/${JOB}" -n "${NS}" \
+    --timeout="${GPU_READY_TIMEOUT}s" || \
+    kubectl wait --for=condition=failed "job/${JOB}" -n "${NS}" --timeout=30s || true
+
+  echo ">> Extracting result JSON from Job logs -> ${dest_json}"
+  # Pull the JSON between the markers the Job emits on stdout.
+  kubectl logs "job/${JOB}" -n "${NS}" 2>/dev/null \
+    | awk '/===RESULTS_JSON_START===/{f=1;next} /===RESULTS_JSON_END===/{f=0} f' \
+    > "${dest_json}" || true
+
+  if [ ! -s "${dest_json}" ]; then
+    echo "   WARNING: no result JSON captured for ${display}. Job logs:"
+    kubectl logs "job/${JOB}" -n "${NS}" 2>/dev/null | tail -40 || true
+  else
+    echo "   saved $(wc -c < "${dest_json}") bytes."
+  fi
+
+  # Clean up the Job before the next model.
+  kubectl delete job "${JOB}" -n "${NS}" --ignore-not-found >/dev/null 2>&1 || true
+}
+
+# =============================================================================
+# 3. PER-MODEL LOOP
+# =============================================================================
+echo ""
+echo ">> Starting per-model benchmark sweep..."
+while IFS=$'\t' read -r model_name model_source; do
+  [ -n "${model_name}" ] || continue
+  slug="$(sanitize "${model_source:-$model_name}")"
+  dest_json="${RESULTS_DIR}/results-${slug}.json"
+
+  echo ""
+  echo "==============================================================="
+  echo ">> MODEL: ${model_name}  (source: ${model_source})  slug: ${slug}"
+  echo "==============================================================="
+
+  if [ -n "${PROD_MODEL_REF}" ] && [ "${model_name}" = "${PROD_MODEL_REF}" ]; then
+    # --- Case A: already served by prod qwen -> benchmark in place. ----------
+    echo ">> This model is already served by prod ${PROD_ISVC}; benchmarking in"
+    echo "   place against http://${PROD_ISVC}.${NS}.svc.cluster.local:8000/v1"
+    echo "   (no serving change, prod stays at full ${CAPTURED_QWEN_REPLICAS} replicas)."
+    run_benchmark_job \
+      "http://${PROD_ISVC}.${NS}.svc.cluster.local:8000/v1" \
+      "${model_source}" \
+      "${model_name} (prod, in-place)" \
+      "${dest_json}"
+  else
+    # --- Case B: not served -> free a GPU, spin up a temp InferenceService. --
+    bench_isvc="bench-${slug}"
+    bench_host="${bench_isvc}.${NS}.svc.cluster.local"
+
+    suspend_flux                       # stop Flux from fighting us
+    scale_qwen_to 1                    # free 1 GPU (prod now HALF capacity!)
+    wait_free_gpu                      # wait until the GPU is actually released
+
+    echo ">> Creating temp InferenceService ${bench_isvc}..."
+    manifest="$(make_temp_isvc "${bench_isvc}" "${model_name}" "${model_source}")"
+    kubectl apply -f "${manifest}"
+    TEMP_ISVCS+=("${bench_isvc}")      # track for the restore trap
+
+    # Wait for it to serve (first serve downloads weights -> long timeout).
+    if wait_isvc_ready "${bench_host}"; then
+      run_benchmark_job \
+        "http://${bench_host}:8000/v1" \
+        "${model_source}" \
+        "${model_name} (bench, single-GPU)" \
+        "${dest_json}"
+    else
+      echo ">> Skipping benchmark for ${model_name}: endpoint never became ready."
+    fi
+
+    # Tear down the temp InferenceService before the next model (frees its GPU).
+    echo ">> Deleting temp InferenceService ${bench_isvc}..."
+    kubectl delete inferenceservice "${bench_isvc}" -n "${NS}" --ignore-not-found --wait=true
+    # Drop it from the tracked list (already deleted).
+    TEMP_ISVCS=("${TEMP_ISVCS[@]/${bench_isvc}}")
+
+    # Restore prod to full capacity between models so it isn't degraded during
+    # the gaps. (The trap also does this on exit; doing it here is a courtesy.)
+    scale_qwen_to "${CAPTURED_QWEN_REPLICAS}"
+  fi
+done <<< "${MODEL_LINES}"
+
+# =============================================================================
+# 4. COMPARISON MATRIX + PUBLISH
+# =============================================================================
+echo ""
+echo ">> Building comparison matrix from all result JSONs..."
+MATRIX_MD="${RESULTS_DIR}/COMPARISON-MATRIX.md"
+# Use a nullglob-safe expansion; if no results exist, warn and skip.
+shopt -s nullglob
+RESULT_JSONS=("${RESULTS_DIR}"/results-*.json)
+shopt -u nullglob
+if [ "${#RESULT_JSONS[@]}" -eq 0 ]; then
+  echo ">> No result JSONs found; skipping matrix + publish."
+else
+  python3 "${COMPARE_PY}" "${RESULT_JSONS[@]}" --output "${MATRIX_MD}"
+  echo ">> Matrix written to ${MATRIX_MD}"
+
+  # Publish the matrix + all result JSONs to aigit, reusing publish_to_aigit.py
+  # at RUNTIME (not edited). It uploads every file in RESULTS_DIR -> aigit and
+  # opens/updates a PR. It reads credentials from AIGIT_* env / the aigit-publish
+  # secret; without a token it prints "publish skipped" and returns 0. We point
+  # RESULTS_DIR at a staging dir holding just the matrix + fresh result JSONs so
+  # we don't re-publish stale artifacts.
+  echo ">> Publishing matrix + results to aigit (reusing publish_to_aigit.py)..."
+  STAGE="${WORKDIR}/publish"
+  mkdir -p "${STAGE}"
+  cp "${MATRIX_MD}" "${STAGE}/" 2>/dev/null || true
+  cp "${RESULT_JSONS[@]}" "${STAGE}/" 2>/dev/null || true
+
+  # Pull aigit-publish secret values into env if present (mirrors job.yaml's
+  # mapping). Non-fatal if the secret is absent -> publish skips gracefully.
+  get_secret() {
+    kubectl get secret aigit-publish -n "${NS}" \
+      -o jsonpath="{.data.$1}" 2>/dev/null | base64 -d 2>/dev/null || true
+  }
+  export AIGIT_API="$(get_secret api)"
+  export AIGIT_REPO="$(get_secret repo)"
+  export AIGIT_USER="$(get_secret user)"
+  export AIGIT_TOKEN="$(get_secret token)"
+  export RESULTS_DIR="${STAGE}"
+
+  python3 "${REPO_ROOT}/benchmarks/k8s/publish_to_aigit.py" || \
+    echo ">> publish step returned non-zero (continuing; results are saved locally)."
+fi
+
+echo ""
+echo ">> Benchmark sweep complete. Local results in ${RESULTS_DIR}."
+echo ">> (Restore trap will now run to return prod + Flux to their original state.)"
+# The EXIT trap (restore) handles teardown/restore from here.

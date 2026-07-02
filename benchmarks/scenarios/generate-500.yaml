@@ -1,0 +1,11 @@
+scenario:
+  name: generate-500
+  description: "Generatiesnelheid met ~500 tokens output"
+  category: generation
+  max_output_tokens: 500
+
+  system_prompt: "Je bent een technisch schrijver. Antwoord altijd in het Nederlands met duidelijke structuur."
+  user_prompt: |
+    Schrijf een technische uitleg over hoe Kubernetes werkt, inclusief de belangrijkste
+    componenten (pods, services, deployments, ingress) en hoe ze samenwerken.
+    Gebruik concrete voorbeelden.
