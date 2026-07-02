@@ -61,7 +61,7 @@ class Approval(Base):
 
     status = Column(String(20), default="pending")  # pending, approved, rejected
 
-    resolved_by = Column(UUID(as_uuid=True), ForeignKey("users.id"))
+    resolved_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL", onupdate="CASCADE"))
     resolved_at = Column(DateTime(timezone=True))
     rejection_reason = Column(Text)
 

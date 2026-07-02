@@ -22,7 +22,7 @@ class DevVM(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
     name = Column(String(255), nullable=False)  # human label, e.g. "dev-jan-vm"
     branch = Column(String(255), nullable=False)  # git branch checked out in the VM
-    owner_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    owner_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE", onupdate="CASCADE"), nullable=False)
     container_id = Column(String(128), nullable=True)  # docker container short ID
     container_name = Column(String(255), nullable=True)  # docker container name
     guacamole_connection_id = Column(String(128), nullable=True)  # Guacamole connection identifier

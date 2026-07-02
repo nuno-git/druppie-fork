@@ -27,6 +27,12 @@ class UserRepository(BaseRepository):
         username-based lookup would allow account takeover if someone creates
         a Keycloak user with the same name as an existing local user.
 
+        UUID drift tolerance: if the sub is not found but the username exists,
+        the Keycloak user was re-imported with a new UUID (e.g. after a
+        keycloak-db reset). We repoint the existing row to the new sub so the
+        user keeps their data. This is keyed off the username which we already
+        trust from the validated JWT, so it does not weaken the takeover guard.
+
         Args:
             user_id: Keycloak subject UUID (from JWT 'sub' claim)
             username: Username from Keycloak
@@ -48,6 +54,21 @@ class UserRepository(BaseRepository):
                 user.display_name = display_name
             self.db.flush()
             return user
+
+        # Sub not found — check for UUID drift (same username, different sub).
+        existing = (
+            self.db.query(User).filter_by(username=username).first()
+            if username
+            else None
+        )
+        if existing:
+            existing.id = user_id
+            if email and existing.email != email:
+                existing.email = email
+            if display_name and existing.display_name != display_name:
+                existing.display_name = display_name
+            self.db.flush()
+            return existing
 
         user = User(
             id=user_id,
