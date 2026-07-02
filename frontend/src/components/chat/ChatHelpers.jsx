@@ -516,6 +516,6 @@ export const buildApprovalFileList = (args) => {
 // Note: These are SessionStatus values. 'running' is an AgentRunStatus, not included here.
 export const ACTIVE_STATUSES = new Set([
   'active', 'paused', 'paused_hitl', 'paused_tool',
-  'paused_approval', 'paused_sandbox', 'paused_crashed',
+  'paused_entra_auth', 'paused_approval', 'paused_sandbox', 'paused_crashed',
   'waiting_approval', 'waiting_answer',
 ])

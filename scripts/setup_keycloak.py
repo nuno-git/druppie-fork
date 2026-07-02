@@ -7,6 +7,7 @@ This script:
 2. Creates roles (admin, developer, architect, infra-engineer, etc.)
 3. Creates users with appropriate roles
 4. Configures OAuth2 clients
+5. Configures Entra ID identity provider (when ENTRA_CLIENT_ID is set)
 """
 
 import os
@@ -83,7 +84,7 @@ class KeycloakAdmin:
         }
 
         if config:
-            realm_data.update({k: v for k, v in config.items() if k not in ["roles", "clients", "clientScopes"]})
+            realm_data.update({k: v for k, v in config.items() if k not in ["roles", "clients", "clientScopes", "identityProviders"]})
 
         response = requests.post(url, json=realm_data, headers=self._headers())
 
@@ -205,6 +206,74 @@ class KeycloakAdmin:
                     return client["id"]
         return None
 
+    def create_identity_provider(self, realm: str, idp_config: dict):
+        """Create or update an identity provider."""
+        url = f"{self.base_url}/admin/realms/{realm}/identity-provider/instances"
+        alias = idp_config.get("alias", "unknown")
+
+        response = requests.post(url, json=idp_config, headers=self._headers())
+
+        if response.status_code == 409:
+            print(f"  [UPDATE] IdP '{alias}' already exists, updating...")
+            update_url = f"{self.base_url}/admin/realms/{realm}/identity-provider/instances/{alias}"
+            update_resp = requests.put(update_url, json=idp_config, headers=self._headers())
+            if update_resp.status_code in [200, 204]:
+                print(f"  [OK] Updated IdP '{alias}'")
+            else:
+                print(f"  [ERROR] Failed to update IdP '{alias}': {update_resp.text}")
+        elif response.status_code == 201:
+            print(f"  [OK] Created IdP '{alias}'")
+        else:
+            print(f"  [ERROR] Failed to create IdP '{alias}': {response.text}")
+
+    def grant_broker_read_token_role(self, realm: str, role_names: list):
+        """Grant the broker client's read-token role to specified realm roles.
+
+        The read-token role is required for users to call the broker token
+        endpoint (GET /realms/{realm}/broker/{alias}/token).
+        """
+        broker_uuid = self._get_client_uuid(realm, "broker")
+        if not broker_uuid:
+            print("  [WARN] 'broker' client not found — skipping read-token grant")
+            return
+
+        roles_url = f"{self.base_url}/admin/realms/{realm}/clients/{broker_uuid}/roles"
+        response = requests.get(roles_url, headers=self._headers())
+        if response.status_code != 200:
+            print(f"  [WARN] Could not list broker roles: {response.text}")
+            return
+
+        read_token_role = None
+        for role in response.json():
+            if role["name"] == "read-token":
+                read_token_role = role
+                break
+
+        if not read_token_role:
+            print("  [WARN] 'read-token' role not found on broker client")
+            return
+
+        for role_name in role_names:
+            role_url = f"{self.base_url}/admin/realms/{realm}/roles/{role_name}"
+            role_resp = requests.get(role_url, headers=self._headers())
+            if role_resp.status_code != 200:
+                print(f"  [WARN] Realm role '{role_name}' not found")
+                continue
+
+            realm_role = role_resp.json()
+            realm_role_id = realm_role["id"]
+
+            composites_url = f"{self.base_url}/admin/realms/{realm}/roles-by-id/{realm_role_id}/composites"
+            comp_resp = requests.post(
+                composites_url, json=[read_token_role], headers=self._headers()
+            )
+            if comp_resp.status_code in [200, 204]:
+                print(f"  [OK] Granted read-token to role '{role_name}'")
+            elif comp_resp.status_code == 409:
+                print(f"  [OK] Role '{role_name}' already has read-token")
+            else:
+                print(f"  [WARN] Could not grant read-token to '{role_name}': {comp_resp.text}")
+
     def create_client(self, realm: str, client_config: dict):
         """Create or update an OAuth2 client."""
         url = f"{self.base_url}/admin/realms/{realm}/clients"
@@ -229,6 +298,17 @@ class KeycloakAdmin:
             print(f"  [OK] Created client '{client_id}'")
         else:
             print(f"  [ERROR] Failed to create client '{client_id}': {response.text}")
+
+
+def _deep_substitute(obj, substitute_fn):
+    """Recursively apply string substitution to all values in a nested dict/list."""
+    if isinstance(obj, str):
+        return substitute_fn(obj)
+    elif isinstance(obj, dict):
+        return {k: _deep_substitute(v, substitute_fn) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [_deep_substitute(item, substitute_fn) for item in obj]
+    return obj
 
 
 def load_yaml(file_path: Path) -> dict:
@@ -304,6 +384,9 @@ def main():
         "${GITEA_PORT}": os.getenv("GITEA_PORT", "3100"),
         "${GITEA_SSH_PORT}": os.getenv("GITEA_SSH_PORT", "2223"),
         "${BACKEND_PORT}": os.getenv("BACKEND_PORT", "8100"),
+        "${ENTRA_TENANT_ID}": os.getenv("ENTRA_TENANT_ID", ""),
+        "${ENTRA_CLIENT_ID}": os.getenv("ENTRA_CLIENT_ID", ""),
+        "${ENTRA_CLIENT_SECRET}": os.getenv("ENTRA_CLIENT_SECRET", ""),
     }
 
     def substitute_env(value: str) -> str:
@@ -337,6 +420,23 @@ def main():
                 client["rootUrl"] = substitute_env(client["rootUrl"])
 
         kc.create_client(REALM_NAME, client)
+
+    # Configure Entra ID identity provider (optional)
+    entra_client_id = os.getenv("ENTRA_CLIENT_ID", "")
+    if entra_client_id:
+        print("\n[STEP 5] Configuring Entra ID identity provider...")
+        idp_configs = realm_config.get("identityProviders", [])
+        for idp in idp_configs:
+            idp_substituted = _deep_substitute(idp, substitute_env)
+            kc.create_identity_provider(REALM_NAME, idp_substituted)
+
+        # Grant read-token to roles that need Azure access (H3: not all users)
+        print("\n[STEP 6] Granting broker read-token role...")
+        kc.grant_broker_read_token_role(
+            REALM_NAME, ["admin", "developer", "architect"]
+        )
+    else:
+        print("\n[SKIP] ENTRA_CLIENT_ID not set — skipping Entra ID identity provider")
 
     print("\n" + "=" * 60)
     print("[DONE] Keycloak setup complete!")

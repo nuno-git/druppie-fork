@@ -626,6 +626,10 @@ services:
       GITEA_ADMIN_EMAIL: ${GITEA_ADMIN_EMAIL:-admin@druppie.local}
       KEYCLOAK_INTERNAL_URL: http://keycloak:8080
       KEYCLOAK_REALM: druppie
+      # Entra ID identity broker (optional — skipped if ENTRA_CLIENT_ID is empty)
+      ENTRA_TENANT_ID: ${ENTRA_TENANT_ID:-}
+      ENTRA_CLIENT_ID: ${ENTRA_CLIENT_ID:-}
+      ENTRA_CLIENT_SECRET: ${ENTRA_CLIENT_SECRET:-}
       # Override .env path for setup_gitea.py token writing
       ENV_FILE: /project/.env
     volumes:

@@ -22,6 +22,9 @@ if TYPE_CHECKING:
 logger = structlog.get_logger()
 
 
+SENSITIVE_PATHS = {"user.entra_token"}
+
+
 class ToolContext:
     """Context for resolving injection paths.
 
@@ -49,6 +52,9 @@ class ToolContext:
         self._project = None
         self._user = None
         self._loaded: dict[str, bool] = {}
+
+        # Entra ID token (set via authorize-entra endpoint, never persisted)
+        self._entra_token: str | None = None
 
     @property
     def session(self):
@@ -92,6 +98,10 @@ class ToolContext:
                 )
         return self._user
 
+    def set_entra_token(self, token: str) -> None:
+        """Set the Entra ID access token (provided via /authorize-entra)."""
+        self._entra_token = token
+
     def resolve(self, path: str) -> Any:
         """Resolve a dotted path to a value.
 
@@ -106,6 +116,7 @@ class ToolContext:
         - project.name
         - user.id
         - user.username
+        - user.entra_token (in-memory only, set via authorize-entra)
 
         Args:
             path: Dotted path like "project.repo_name"
@@ -113,6 +124,12 @@ class ToolContext:
         Returns:
             Resolved value or None if not found
         """
+        # Special case: user.entra_token is in-memory, not a DB attribute
+        if path == "user.entra_token":
+            log_value = "<redacted>" if self._entra_token else None
+            logger.info("context_resolved", path=path, value=log_value)
+            return self._entra_token
+
         parts = path.split(".", 1)
         if len(parts) != 2:
             logger.warning("invalid_context_path", path=path)
@@ -143,11 +160,10 @@ class ToolContext:
         if isinstance(value, UUID):
             value = str(value)
 
-        logger.info(
-            "context_resolved",
-            path=path,
-            value=value[:50] if isinstance(value, str) and len(value) > 50 else value,
-        )
+        log_value = "<redacted>" if path in SENSITIVE_PATHS and value else value
+        if isinstance(log_value, str) and len(log_value) > 50:
+            log_value = log_value[:50]
+        logger.info("context_resolved", path=path, value=log_value)
         return value
 
     def resolve_all(self, paths: dict[str, str]) -> dict[str, Any]:

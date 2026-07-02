@@ -116,6 +116,9 @@ export const getSession = (sessionId) => request(`/api/sessions/${sessionId}`)
 export const resumeSession = (sessionId) =>
   request(`/api/sessions/${sessionId}/resume`, { method: 'POST' })
 
+export const authorizeEntra = (sessionId) =>
+  request(`/api/sessions/${sessionId}/authorize-entra`, { method: 'POST' })
+
 export const deleteSessions = (sessionIds) =>
   request('/api/sessions', {
     method: 'DELETE',

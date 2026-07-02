@@ -177,6 +177,46 @@ Users can hold multiple roles. For example, the `architect` test user has both `
 
 ---
 
+## Entra ID Identity Brokering (User-Scoped Azure Access)
+
+When MCP tools need access to Azure resources (Azure SQL, Azure DevOps), they can use **user-scoped Entra ID tokens** instead of shared service-principal credentials. This is implemented via Keycloak identity brokering.
+
+### How It Works
+
+1. **Login**: Users see a "Microsoft (Entra ID)" button on the Keycloak login page. Clicking it triggers an OIDC login with Azure AD. Keycloak stores the resulting Entra tokens (`storeToken: true`).
+
+2. **Token retrieval**: When an MCP tool needs a `user.entra_token` (configured via injection rules in `mcp_config.yaml`), the tool executor checks if the user has a linked Entra identity. If linked but the token isn't available, the agent pauses with `waiting_entra_auth` status.
+
+3. **Frontend auto-submit**: The frontend detects the `paused_entra_auth` status and automatically POSTs to `/api/sessions/{id}/authorize-entra`. The backend uses the caller's Keycloak token to call the broker endpoint server-side and retrieve the Entra token. The agent then resumes automatically.
+
+4. **Multi-resource support**: A single Entra refresh token can be exchanged for access tokens targeting different Azure resources (e.g., `https://database.windows.net/.default` for Azure SQL, `https://app.vssps.visualstudio.com/.default` for Azure DevOps).
+
+### Security
+
+- **Tokens are never persisted in Druppie's database** — they exist only in-memory during tool execution
+- **Frontend never sees Entra tokens** — all broker calls happen server-side
+- **Session owner enforcement** — only the session owner can authorize Entra access (no admin override)
+- **`trustEmail: false`** — prevents account takeover via email matching between local and Entra accounts
+- **Sensitive values are redacted** in all log output
+
+### Configuration
+
+Set these environment variables to enable Entra ID brokering (all optional — when unset, brokering is disabled):
+
+```
+ENTRA_TENANT_ID=<your-azure-tenant-id>
+ENTRA_CLIENT_ID=<app-registration-client-id>
+ENTRA_CLIENT_SECRET=<app-registration-secret>
+```
+
+The App Registration must be a **separate** registration from any existing service principal, configured with **delegated** (not application) permissions.
+
+### Graceful Degradation
+
+When Entra ID is not configured or the user hasn't linked their Microsoft account, tools that need Azure access fail with a user-friendly message. Existing service-principal based access continues to work independently.
+
+---
+
 ## Approval Workflow
 
 When an agent calls a tool that requires approval, the workflow pauses until an authorized user approves or rejects. Only users whose roles match the tool's `required_role` (or admins) can act. Approval rules are configured in `mcp_config.yaml` (global defaults) and can be tightened per-agent in agent YAML files (see Tool System & Configuration below).

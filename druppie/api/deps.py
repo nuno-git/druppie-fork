@@ -275,6 +275,15 @@ async def get_optional_user(
     return auth.validate_request(authorization)
 
 
+def get_bearer_token(
+    authorization: str | None = Header(None),
+) -> str:
+    """Extract the raw Bearer token from the Authorization header."""
+    if not authorization or not authorization.lower().startswith("bearer "):
+        raise HTTPException(status_code=401, detail="Missing Bearer token")
+    return authorization.split(" ", 1)[1]
+
+
 # Internal API key for MCP servers to call backend.
 # Default matches docker-compose.yml and builtin_tools.py so local-dev works without .env.
 _DEFAULT_INTERNAL_KEY = "druppie-internal-secret-key"

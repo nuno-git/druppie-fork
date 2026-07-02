@@ -404,6 +404,8 @@ class Orchestrator:
                 refreshed_run = self.execution_repo.get_by_id(next_run.id)
                 if refreshed_run and refreshed_run.status == AgentRunStatus.PAUSED_HITL:
                     self.session_repo.update_status(session_id, SessionStatus.PAUSED_HITL)
+                elif refreshed_run and refreshed_run.status == AgentRunStatus.PAUSED_ENTRA_AUTH:
+                    self.session_repo.update_status(session_id, SessionStatus.PAUSED_ENTRA_AUTH)
                 elif refreshed_run and refreshed_run.status == AgentRunStatus.PAUSED_SANDBOX:
                     self.session_repo.update_status(session_id, SessionStatus.PAUSED_SANDBOX)
                 elif refreshed_run and refreshed_run.status == AgentRunStatus.PAUSED_USER:
@@ -602,6 +604,8 @@ class Orchestrator:
             pause_reason = result.get("reason", "unknown")
             if pause_reason == "waiting_answer":
                 self.execution_repo.update_status(agent_run_id, AgentRunStatus.PAUSED_HITL)
+            elif pause_reason == "waiting_entra_auth":
+                self.execution_repo.update_status(agent_run_id, AgentRunStatus.PAUSED_ENTRA_AUTH)
             elif pause_reason == "waiting_sandbox":
                 self.execution_repo.update_status(agent_run_id, AgentRunStatus.PAUSED_SANDBOX)
             elif pause_reason == "user_paused":
@@ -673,6 +677,9 @@ class Orchestrator:
             if pause_reason == "waiting_answer":
                 self.execution_repo.update_status(agent_run_id, AgentRunStatus.PAUSED_HITL)
                 self.session_repo.update_status(session_id, SessionStatus.PAUSED_HITL)
+            elif pause_reason == "waiting_entra_auth":
+                self.execution_repo.update_status(agent_run_id, AgentRunStatus.PAUSED_ENTRA_AUTH)
+                self.session_repo.update_status(session_id, SessionStatus.PAUSED_ENTRA_AUTH)
             elif pause_reason == "waiting_sandbox":
                 self.execution_repo.update_status(agent_run_id, AgentRunStatus.PAUSED_SANDBOX)
                 self.session_repo.update_status(session_id, SessionStatus.PAUSED_SANDBOX)
@@ -899,6 +906,166 @@ class Orchestrator:
 
         return session_id
 
+    async def resume_after_entra_auth(
+        self,
+        session_id: UUID,
+        user_kc_token: str,
+    ) -> UUID:
+        """Resume execution after the frontend provides the user's KC token for Entra auth.
+
+        1. Finds the waiting_entra_auth tool call
+        2. Calls KC broker endpoint with the user's token to get an Entra token
+        3. Re-executes the tool with the Entra token injected
+        4. Continues the agent run
+        """
+        from druppie.execution.tool_executor import ToolExecutor, ToolCallStatus
+        from druppie.execution.mcp_http import MCPHttp
+        from druppie.core.mcp_config import MCPConfig
+        from druppie.core.entra_token import get_entra_token
+        from druppie.agents.runtime import Agent
+
+        logger.info("resume_after_entra_auth", session_id=str(session_id))
+
+        db = self.execution_repo.db
+        mcp_config = MCPConfig()
+        mcp_http = MCPHttp(mcp_config)
+        tool_executor = ToolExecutor(db, mcp_http, mcp_config)
+
+        # Step 1: Find the waiting tool call
+        waiting_tc = self.execution_repo.get_waiting_tool_call(
+            session_id, ToolCallStatus.WAITING_ENTRA_AUTH,
+        )
+        if not waiting_tc:
+            logger.error("no_waiting_entra_auth_tool_call", session_id=str(session_id))
+            await self.execute_pending_runs(session_id)
+            return session_id
+
+        # Step 2: Get Entra token via KC broker
+        token_result = await get_entra_token(user_kc_token)
+        entra_token = token_result.get("access_token")
+
+        if not entra_token:
+            error_msg = token_result.get("error", "Failed to retrieve Entra ID token")
+            self.execution_repo.update_tool_call(
+                waiting_tc.id,
+                status=ToolCallStatus.FAILED,
+                error=error_msg,
+            )
+            db.commit()
+            logger.warning(
+                "entra_token_retrieval_failed",
+                session_id=str(session_id),
+                tool_call_id=str(waiting_tc.id),
+                error=error_msg,
+            )
+            # Still resume the agent so it sees the error
+            agent_run = self.execution_repo.get_by_id(waiting_tc.agent_run_id)
+            if agent_run:
+                self.execution_repo.update_status(agent_run.id, AgentRunStatus.RUNNING)
+                self.session_repo.update_status(session_id, SessionStatus.ACTIVE)
+                db.commit()
+                context = self.build_project_context(session_id)
+                agent = Agent(agent_run.agent_id, db=db, session_id=str(session_id))
+                result = await agent.continue_run(
+                    session_id=session_id,
+                    agent_run_id=agent_run.id,
+                    context=context,
+                )
+                status = self._handle_agent_resume_result(
+                    session_id, agent_run.id, result, agent_id=agent_run.agent_id,
+                )
+                if status == "completed":
+                    await self.execute_pending_runs(session_id)
+            return session_id
+
+        # Step 3: Re-execute the tool with Entra token injected
+        from druppie.execution.tool_context import ToolContext
+        context_obj = ToolContext(db, session_id)
+        context_obj.set_entra_token(entra_token)
+
+        # Re-run injection and execute the MCP tool
+        args = dict(waiting_tc.arguments or {})
+        args.pop("translated_content", None)
+        args.pop("translated_path", None)
+
+        try:
+            args = tool_executor._apply_injection_rules(
+                server=waiting_tc.mcp_server,
+                tool_name=waiting_tc.tool_name,
+                args=args,
+                session_id=session_id,
+            )
+        except Exception as e:
+            logger.error("entra_reinjection_failed", error=str(e))
+
+        # Manually set the entra_token param if it was resolved during injection
+        # The ToolContext we created has the token, but _apply_injection_rules
+        # creates its own ToolContext. Override by checking if there's a matching rule.
+        from druppie.execution.tool_context import SENSITIVE_PATHS
+        rules = mcp_config.get_injection_rules(waiting_tc.mcp_server, waiting_tc.tool_name)
+        if rules:
+            for rule in rules:
+                if rule.from_path == "user.entra_token":
+                    args[rule.param] = entra_token
+
+        timeout = 60.0
+        if waiting_tc.tool_name in tool_executor.__class__.__dict__.get("_long_running", set()):
+            timeout = 1200.0
+
+        try:
+            self.execution_repo.update_tool_call(
+                waiting_tc.id, status=ToolCallStatus.EXECUTING,
+            )
+            db.commit()
+
+            result = await mcp_http.call(
+                waiting_tc.mcp_server,
+                waiting_tc.tool_name,
+                args,
+                timeout_seconds=timeout,
+            )
+            is_success = result.get("success", True)
+            self.execution_repo.update_tool_call(
+                waiting_tc.id,
+                status=ToolCallStatus.COMPLETED if is_success else ToolCallStatus.FAILED,
+                result=result,
+                error=result.get("error") if not is_success else None,
+            )
+            db.commit()
+        except Exception as e:
+            logger.error("entra_tool_execution_failed", error=str(e))
+            self.execution_repo.update_tool_call(
+                waiting_tc.id, status=ToolCallStatus.FAILED, error=str(e),
+            )
+            db.commit()
+
+        # Step 4: Resume the agent run
+        agent_run = self.execution_repo.get_by_id(waiting_tc.agent_run_id)
+        if not agent_run:
+            logger.error("agent_run_not_found", agent_run_id=str(waiting_tc.agent_run_id))
+            await self.execute_pending_runs(session_id)
+            return session_id
+
+        self.execution_repo.update_status(agent_run.id, AgentRunStatus.RUNNING)
+        self.session_repo.update_status(session_id, SessionStatus.ACTIVE)
+        db.commit()
+
+        context = self.build_project_context(session_id)
+        agent = Agent(agent_run.agent_id, db=db, session_id=str(session_id))
+        result = await agent.continue_run(
+            session_id=session_id,
+            agent_run_id=agent_run.id,
+            context=context,
+        )
+
+        status = self._handle_agent_resume_result(
+            session_id, agent_run.id, result, agent_id=agent_run.agent_id,
+        )
+        if status == "completed":
+            await self.execute_pending_runs(session_id)
+
+        return session_id
+
     async def resume_paused_session(self, session_id: UUID) -> UUID:
         """Resume a paused or failed session.
 
@@ -925,6 +1092,8 @@ class Orchestrator:
             if waiting_run:
                 if waiting_run.status == AgentRunStatus.PAUSED_HITL:
                     self.session_repo.update_status(session_id, SessionStatus.PAUSED_HITL)
+                elif waiting_run.status == AgentRunStatus.PAUSED_ENTRA_AUTH:
+                    self.session_repo.update_status(session_id, SessionStatus.PAUSED_ENTRA_AUTH)
                 elif waiting_run.status == AgentRunStatus.PAUSED_SANDBOX:
                     self.session_repo.update_status(session_id, SessionStatus.PAUSED_SANDBOX)
                 else:

@@ -172,3 +172,23 @@ clients:
       - http://localhost:${GITEA_PORT}
       - http://${EXTERNAL_HOST}:${GITEA_PORT}
     secret: ${GITEA_CLIENT_SECRET}
+
+# Identity Providers (optional — configured when ENTRA_CLIENT_ID is set)
+identityProviders:
+  - alias: entra-id
+    displayName: Microsoft (Entra ID)
+    providerId: oidc
+    enabled: true
+    storeToken: true
+    trustEmail: false
+    firstBrokerLoginFlowAlias: first broker login
+    config:
+      clientId: ${ENTRA_CLIENT_ID}
+      clientSecret: ${ENTRA_CLIENT_SECRET}
+      authorizationUrl: https://login.microsoftonline.com/${ENTRA_TENANT_ID}/oauth2/v2.0/authorize
+      tokenUrl: https://login.microsoftonline.com/${ENTRA_TENANT_ID}/oauth2/v2.0/token
+      userInfoUrl: https://graph.microsoft.com/oidc/userinfo
+      defaultScope: openid profile email User.Read offline_access
+      validateSignature: "true"
+      useJwksUrl: "true"
+      jwksUrl: https://login.microsoftonline.com/${ENTRA_TENANT_ID}/discovery/v2.0/keys

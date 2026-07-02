@@ -42,9 +42,16 @@ class ToolCallStatus:
     EXECUTING = "executing"
     WAITING_APPROVAL = "waiting_approval"
     WAITING_ANSWER = "waiting_answer"
+    WAITING_ENTRA_AUTH = "waiting_entra_auth"
     WAITING_SANDBOX = "waiting_sandbox"
     COMPLETED = "completed"
     FAILED = "failed"
+
+
+class EntraTokenMissing(Exception):
+    """Tool requires user.entra_token but it resolved to None."""
+    def __init__(self, user_id: str | None):
+        self.user_id = user_id
 
 
 # Builtin tool names (no MCP server needed)
@@ -160,7 +167,7 @@ class ToolExecutor:
         Returns:
             Updated args dict with injected values
         """
-        from druppie.execution.tool_context import ToolContext
+        from druppie.execution.tool_context import SENSITIVE_PATHS, ToolContext
 
         # Get injection rules for this server/tool
         rules = self.mcp_config.get_injection_rules(server, tool_name)
@@ -196,14 +203,17 @@ class ToolExecutor:
             # Resolve the value from context
             value = context.resolve(rule.from_path)
             if value is not None:
+                is_sensitive = rule.from_path in SENSITIVE_PATHS
+                log_value = "<redacted>" if is_sensitive else value
+
                 if rule.hidden and rule.param in injected_args:
                     logger.warning(
                         "overriding_llm_value_for_hidden_param",
                         server=server,
                         tool=tool_name,
                         param=rule.param,
-                        llm_value=injected_args[rule.param],
-                        injected_value=value,
+                        llm_value="<redacted>" if is_sensitive else injected_args[rule.param],
+                        injected_value=log_value,
                     )
                 injected_args[rule.param] = value
                 logger.info(
@@ -212,9 +222,14 @@ class ToolExecutor:
                     tool=tool_name,
                     param=rule.param,
                     from_path=rule.from_path,
-                    value=value,
+                    value=log_value,
                 )
             else:
+                # user.entra_token missing → signal the caller to pause
+                if rule.from_path == "user.entra_token":
+                    user_id = str(context.session.user_id) if context.session else None
+                    raise EntraTokenMissing(user_id=user_id)
+
                 logger.warning(
                     "injection_value_is_none",
                     server=server,
@@ -944,6 +959,70 @@ class ToolExecutor:
 
         return ToolCallStatus.WAITING_APPROVAL
 
+    async def _handle_entra_token_missing(self, tool_call, user_id: str | None) -> str:
+        """Handle a tool that needs user.entra_token but it's not available.
+
+        Checks if the user has a linked Entra identity:
+        - If not linked: fails with a user-friendly message
+        - If linked: pauses with waiting_entra_auth for the HITL token flow
+        """
+        from druppie.core.entra_token import check_entra_linked, is_entra_configured
+
+        if not is_entra_configured():
+            self.execution_repo.update_tool_call(
+                tool_call.id,
+                status=ToolCallStatus.FAILED,
+                error=(
+                    "This tool requires Azure access, but Entra ID is not configured. "
+                    "Contact your administrator to set up Entra ID integration."
+                ),
+            )
+            self.db.commit()
+            return ToolCallStatus.FAILED
+
+        if not user_id:
+            self.execution_repo.update_tool_call(
+                tool_call.id,
+                status=ToolCallStatus.FAILED,
+                error="Cannot determine session owner for Entra ID authentication.",
+            )
+            self.db.commit()
+            return ToolCallStatus.FAILED
+
+        is_linked = await check_entra_linked(user_id)
+
+        if not is_linked:
+            self.execution_repo.update_tool_call(
+                tool_call.id,
+                status=ToolCallStatus.FAILED,
+                error=(
+                    "This tool requires Azure access via your Microsoft account. "
+                    "Please link your Microsoft account first by logging in via "
+                    "the 'Microsoft (Entra ID)' option on the Keycloak login page."
+                ),
+            )
+            self.db.commit()
+            logger.info(
+                "entra_token_missing_not_linked",
+                tool_call_id=str(tool_call.id),
+                user_id=user_id,
+            )
+            return ToolCallStatus.FAILED
+
+        # User has a linked identity — pause and wait for frontend to provide token
+        self.execution_repo.update_tool_call(
+            tool_call.id,
+            status=ToolCallStatus.WAITING_ENTRA_AUTH,
+        )
+        self.db.commit()
+
+        logger.info(
+            "entra_token_missing_waiting_auth",
+            tool_call_id=str(tool_call.id),
+            user_id=user_id,
+        )
+        return ToolCallStatus.WAITING_ENTRA_AUTH
+
     async def _execute_hitl_tool(self, tool_call) -> str:
         """Execute a HITL tool by creating a Question record.
 
@@ -1176,12 +1255,15 @@ class ToolExecutor:
 
         # Apply declarative injection rules from mcp_config.yaml
         # This replaces all the hardcoded injection logic
-        args = self._apply_injection_rules(
-            server=tool_call.mcp_server,
-            tool_name=tool_call.tool_name,
-            args=args,
-            session_id=tool_call.session_id,
-        )
+        try:
+            args = self._apply_injection_rules(
+                server=tool_call.mcp_server,
+                tool_name=tool_call.tool_name,
+                args=args,
+                session_id=tool_call.session_id,
+            )
+        except EntraTokenMissing as e:
+            return await self._handle_entra_token_missing(tool_call, e.user_id)
 
         logger.info(
             "mcp_tool_post_injection",
