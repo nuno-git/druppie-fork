@@ -193,7 +193,7 @@ def _get_k8s_manager():
     """Lazily initialize the K8s sandbox manager."""
     global _k8s_manager
     if _k8s_manager is None:
-        from druppie.core.k8s_sandbox import K8sSandboxManager
+        from k8s_sandbox import K8sSandboxManager
         _k8s_manager = K8sSandboxManager()
     return _k8s_manager
 
