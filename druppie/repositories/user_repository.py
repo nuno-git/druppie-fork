@@ -85,4 +85,6 @@ class UserRepository(BaseRepository):
                 self.db.add(role)
             self.db.flush()
 
+        self.db.commit()
+
         return user
