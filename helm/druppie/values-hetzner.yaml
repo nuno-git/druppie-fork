@@ -84,7 +84,10 @@ backend:
     repository: druppie-backend
     tag: latest
   port: 8000
-  workers: "2"
+  # Single worker required: FallbackLLM approval state and TranslationService
+  # notification state are process-local. Multiple workers cause cross-worker
+  # desync (e.g. "Switch all agents" approval lost on round-robin).
+  workers: "1"
   nodePort: 30000
   composeDruppieUrl: "http://172.17.0.1:30000"   # Docker bridge gateway on Hetzner app nodes
   replicaCount: 1
@@ -133,7 +136,7 @@ secrets:
 autoscaling:
   backend:
     enabled: true
-    minReplicas: 3               # Proactive baseline — 3 pods × 4 workers = 12 workers always ready
+    minReplicas: 3               # Proactive baseline — 3 pods × 1 worker each (single-worker constraint)
     maxReplicas: 8                 # 8 pods × 1Gi req = 8Gi → fills 1 CPX32, triggers 2nd node
     targetCPUUtilizationPercentage: 70
   frontend:

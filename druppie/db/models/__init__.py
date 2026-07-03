@@ -30,6 +30,9 @@ Removed tables (handled by MCPs):
 New tables (cron job pipeline):
 - job_definitions  JobDefinition       JobDefinitionSummary, JobDefinitionDetail
 - job_runs         JobRun              JobRunSummary, JobRunDetail
+
+Runtime configuration:
+- model_overrides  ModelOverride       ModelOverrideSummary, ModelOverrideDetail
 """
 
 # Agent execution models
@@ -72,6 +75,9 @@ from .documentation_cache import DocumentationCache
 from .question import Question
 
 from .job import JobDefinition, JobRun
+
+# Model override (runtime LLM configuration)
+from .model_override import ModelOverride
 
 # Sandbox session model
 from .sandbox_session import SandboxSession
@@ -129,5 +135,7 @@ __all__ = [
     # Cron jobs
     "JobDefinition",
     "JobRun",
+    # Model override
+    "ModelOverride",
     "SandboxSession",
 ]
