@@ -26,7 +26,6 @@ jobs:
           graphroot = "/buildah-cache/containers/storage"
           runroot = "/buildah-cache/containers/run"
           EOF
-          cat /buildah-cache/storage.conf
 
       - name: Checkout
         env:
@@ -53,7 +52,7 @@ jobs:
           SHA: ${{ github.sha }}
           HARBOR_PASS: ${{ secrets.HARBOR_PASSWORD }}
         run: |
-          buildah --storage-driver=vfs bud --isolation=chroot \
+          buildah --storage-driver=vfs bud --isolation=chroot --layers \
             --build-arg CACHEBUST="$SHA" \
             -t "$REGISTRY/druppie/druppie-backend:$TAG" .
           buildah --storage-driver=vfs push --tls-verify=false \
@@ -67,7 +66,7 @@ jobs:
           SHA: ${{ github.sha }}
           HARBOR_PASS: ${{ secrets.HARBOR_PASSWORD }}
         run: |
-          buildah --storage-driver=vfs bud --isolation=chroot \
+          buildah --storage-driver=vfs bud --isolation=chroot --layers \
             --build-arg CACHEBUST="$SHA" \
             -t "$REGISTRY/druppie/druppie-frontend:$TAG" ./frontend
           buildah --storage-driver=vfs push --tls-verify=false \
@@ -81,7 +80,7 @@ jobs:
           SHA: ${{ github.sha }}
           HARBOR_PASS: ${{ secrets.HARBOR_PASSWORD }}
         run: |
-          buildah --storage-driver=vfs bud --isolation=chroot \
+          buildah --storage-driver=vfs bud --isolation=chroot --layers \
             --build-arg CACHEBUST="$SHA" \
             -t "$REGISTRY/druppie/druppie-layout-service:$TAG" ./druppie/mcp-servers/layout-service
           buildah --storage-driver=vfs push --tls-verify=false \
@@ -107,7 +106,7 @@ jobs:
                 CONTEXT="./druppie/mcp-servers/"
               fi
               echo "Building $module (context=$CONTEXT)..."
-              buildah --storage-driver=vfs bud --isolation=chroot \
+              buildah --storage-driver=vfs bud --isolation=chroot --layers \
                 --build-arg CACHEBUST="$SHA" \
                 -t "$REGISTRY/druppie/druppie-$module:$TAG" \
                 -f "$DF" "$CONTEXT"
@@ -125,7 +124,7 @@ jobs:
           HARBOR_PASS: ${{ secrets.HARBOR_PASSWORD }}
         run: |
           if [ -f "./druppie/mcp-servers/module-coding/Dockerfile.sandbox.k8s" ]; then
-            buildah --storage-driver=vfs bud --isolation=chroot \
+            buildah --storage-driver=vfs bud --isolation=chroot --layers \
               --build-arg CACHEBUST="$SHA" \
               -t "$REGISTRY/druppie/druppie-sandbox-k8s:$TAG" \
               -f ./druppie/mcp-servers/module-coding/Dockerfile.sandbox.k8s \
