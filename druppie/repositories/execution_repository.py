@@ -556,6 +556,9 @@ class ExecutionRepository(BaseRepository):
         duration_ms: int,
         actual_provider: str | None = None,
         actual_model: str | None = None,
+        fallback_used: bool = False,
+        intended_provider: str | None = None,
+        intended_model: str | None = None,
         thinking_content: str | None = None,
         raw_request: dict | None = None,
         raw_response: dict | None = None,
@@ -574,6 +577,9 @@ class ExecutionRepository(BaseRepository):
                 llm_call.provider = actual_provider
             if actual_model:
                 llm_call.model = actual_model
+            llm_call.fallback_used = fallback_used
+            llm_call.intended_provider = intended_provider
+            llm_call.intended_model = intended_model
             llm_call.raw_request = raw_request
             llm_call.raw_response = raw_response
             self.db.flush()

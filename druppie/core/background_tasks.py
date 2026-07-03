@@ -32,6 +32,8 @@ from uuid import UUID
 
 import structlog
 
+from druppie.llm.base import clean_llm_error
+
 logger = structlog.get_logger()
 
 # Module-level set: prevents GC of running tasks and enables shutdown enumeration.
@@ -317,11 +319,12 @@ async def run_session_task(
             logger.error("session_cancel_cleanup_failed", session_id=str(session_id), error=str(cleanup_err))
 
     except Exception as e:
-        error_msg = f"{type(e).__name__}: {e}"
+        raw_error = f"{type(e).__name__}: {e}"
+        error_msg = clean_llm_error(raw_error)
         logger.error(
             f"{task_name}_error",
             session_id=str(session_id),
-            error=error_msg,
+            error=raw_error,
             exc_info=True,
         )
         try:
@@ -329,7 +332,7 @@ async def run_session_task(
             SessionRepository(db).update_status(
                 session_id,
                 SessionStatus.FAILED,
-                error_message=error_msg[:2000],
+                error_message=error_msg,
             )
             db.commit()
         except Exception as update_error:

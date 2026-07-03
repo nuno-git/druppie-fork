@@ -132,6 +132,11 @@ export const LlmCallRow = ({ llm, index, forceOpen }) => {
       >
         <span className="text-gray-400">#{index + 1}</span>
         <code className="text-gray-600">{llm.model}</code>
+        {llm.fallback_used && (
+          <span className="inline-flex items-center gap-0.5 px-1.5 py-0 rounded-full text-[10px] font-medium bg-amber-100 text-amber-700" title={`Configured: ${llm.intended_provider}/${llm.intended_model}`}>
+            fallback
+          </span>
+        )}
         {tokens > 0 && <span className="text-gray-400">{tokens.toLocaleString()} tok</span>}
         {toolCount > 0 && (
           <span className="text-purple-600">

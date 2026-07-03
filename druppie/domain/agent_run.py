@@ -105,6 +105,11 @@ class LLMCallDetail(BaseModel):
     raw_request: dict | None = None
     raw_response: dict | None = None
 
+    # Fallback tracking
+    fallback_used: bool = False
+    intended_provider: str | None = None
+    intended_model: str | None = None
+
     # Retry audit trail
     retries: list[LLMRetryDetail] = []
 

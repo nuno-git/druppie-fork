@@ -3,7 +3,7 @@
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import JSON, Column, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import JSON, Boolean, Column, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 
@@ -30,6 +30,9 @@ class LlmCall(Base):
     thinking_content = Column(Text, nullable=True)
     response_tool_calls = Column(JSON)  # Tool calls returned by LLM
     tools_provided = Column(JSON)  # Tools available to the LLM
+    fallback_used = Column(Boolean, default=False)
+    intended_provider = Column(String(50))
+    intended_model = Column(String(100))
     raw_request = Column(JSON, nullable=True)
     raw_response = Column(JSON, nullable=True)
     created_at = Column(DateTime(timezone=True), default=utcnow)
@@ -54,6 +57,9 @@ class LlmCall(Base):
             "thinking_content": self.thinking_content,
             "response_tool_calls": self.response_tool_calls,
             "tools_provided": self.tools_provided,
+            "fallback_used": self.fallback_used or False,
+            "intended_provider": self.intended_provider,
+            "intended_model": self.intended_model,
             "raw_request": self.raw_request,
             "raw_response": self.raw_response,
             "created_at": self.created_at.isoformat() if self.created_at else None,

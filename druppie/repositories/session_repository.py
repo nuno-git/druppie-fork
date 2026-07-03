@@ -153,6 +153,7 @@ class SessionRepository(BaseRepository):
             # SessionDetail specific
             user_id=session.user_id,
             project=project,
+            language=session.language,
             timeline=timeline,
         )
 
@@ -517,6 +518,9 @@ class SessionRepository(BaseRepository):
                 response_content=response_content,
                 thinking_content=llm.thinking_content,
                 response_tool_calls=response_tool_calls,
+                fallback_used=getattr(llm, 'fallback_used', False) or False,
+                intended_provider=getattr(llm, 'intended_provider', None),
+                intended_model=getattr(llm, 'intended_model', None),
                 raw_request=llm.raw_request if llm.raw_request else None,
                 raw_response=llm.raw_response if llm.raw_response else None,
                 retries=[
