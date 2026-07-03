@@ -52,12 +52,12 @@ jobs:
       - name: Verify backend code freshness
         env:
           TAG: ${{ steps.tags.outputs.deploy_tag }}
-          HARBOR_PASS: ${{ secrets.HARBOR_PASSWORD }}
         run: |
-          buildah --storage-driver=vfs pull --tls-verify=false \
-            --creds "robot\$druppie+druppie-ci:$HARBOR_PASS" \
-            "$REGISTRY/druppie/druppie-backend:$TAG"
-          buildah --storage-driver=vfs run "$REGISTRY/druppie/druppie-backend:$TAG" -- python3 -c "
+          echo "Creating working container from $REGISTRY/druppie/druppie-backend:$TAG ..."
+          CTR=$(buildah --storage-driver=vfs from "$REGISTRY/druppie/druppie-backend:$TAG")
+          echo "Container: $CTR"
+          echo "Running freshness check ..."
+          buildah --storage-driver=vfs run "$CTR" -- python3 -c "
           from druppie.repositories.user_repository import UserRepository
           import inspect
           src = inspect.getsource(UserRepository.get_or_create)
@@ -65,6 +65,7 @@ jobs:
               raise SystemExit('FAIL: stale code')
           print('VERIFY OK')
           "
+          buildah --storage-driver=vfs rm "$CTR"
 
       - name: Build and push frontend
         env:
