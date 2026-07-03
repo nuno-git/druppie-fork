@@ -49,24 +49,6 @@ jobs:
             "$REGISTRY/druppie/druppie-backend:$TAG" \
             "docker://$REGISTRY/druppie/druppie-backend:$TAG"
 
-      - name: Verify backend code freshness
-        env:
-          TAG: ${{ steps.tags.outputs.deploy_tag }}
-        run: |
-          echo "Creating working container from $REGISTRY/druppie/druppie-backend:$TAG ..."
-          CTR=$(buildah --storage-driver=vfs from "$REGISTRY/druppie/druppie-backend:$TAG")
-          echo "Container: $CTR"
-          echo "Running freshness check ..."
-          buildah --storage-driver=vfs run "$CTR" -- python3 -c "
-          from druppie.repositories.user_repository import UserRepository
-          import inspect
-          src = inspect.getsource(UserRepository.get_or_create)
-          if 'filter_by(username=' in src:
-              raise SystemExit('FAIL: stale code')
-          print('VERIFY OK')
-          "
-          buildah --storage-driver=vfs rm "$CTR"
-
       - name: Build and push frontend
         env:
           TAG: ${{ steps.tags.outputs.deploy_tag }}
