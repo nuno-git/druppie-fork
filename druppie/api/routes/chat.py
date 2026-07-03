@@ -117,7 +117,7 @@ async def _run_orchestrator_background(
 @router.post("/chat", response_model=ChatResponse)
 async def chat(
     request: ChatRequest,
-    user: dict | None = Depends(get_optional_user),
+    user: dict = Depends(get_current_user),
     session_repo: SessionRepository = Depends(get_session_repository),
     attachment_repo: AttachmentRepository = Depends(get_attachment_repository),
 ) -> ChatResponse:
