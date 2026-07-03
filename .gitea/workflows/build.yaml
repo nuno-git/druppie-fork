@@ -33,53 +33,85 @@ jobs:
           TIMESTAMP=$(date -u +%Y%m%d%H%M%S)
           DEPLOY_TAG="${BRANCH}-${TIMESTAMP}-${SHORT_SHA}"
           echo "deploy_tag=$DEPLOY_TAG" >> $GITHUB_OUTPUT
+          echo "cache_tag=${BRANCH}-cache" >> $GITHUB_OUTPUT
           echo "Deploy tag: $DEPLOY_TAG"
 
       - name: Build and push backend
         env:
           TAG: ${{ steps.tags.outputs.deploy_tag }}
+          CACHE_TAG: ${{ steps.tags.outputs.cache_tag }}
           SHA: ${{ github.sha }}
           HARBOR_PASS: ${{ secrets.HARBOR_PASSWORD }}
         run: |
+          IMAGE="$REGISTRY/druppie/druppie-backend"
+          CREDS="robot\$druppie+druppie-ci:$HARBOR_PASS"
+          echo "=== Pulling cache: $IMAGE:$CACHE_TAG ==="
+          buildah --storage-driver=vfs pull --tls-verify=false --creds "$CREDS" \
+            "docker://$IMAGE:$CACHE_TAG" 2>/dev/null && echo "Cache hit" || echo "No cache yet"
+          echo "=== Building backend ==="
           buildah --storage-driver=vfs bud --isolation=chroot \
+            --cache-from "$IMAGE:$CACHE_TAG" \
             --build-arg CACHEBUST="$SHA" \
-            -t "$REGISTRY/druppie/druppie-backend:$TAG" .
-          buildah --storage-driver=vfs push --tls-verify=false \
-            --creds "robot\$druppie+druppie-ci:$HARBOR_PASS" \
-            "$REGISTRY/druppie/druppie-backend:$TAG" \
-            "docker://$REGISTRY/druppie/druppie-backend:$TAG"
+            -t "$IMAGE:$TAG" .
+          echo "=== Pushing deploy tag: $TAG ==="
+          buildah --storage-driver=vfs push --tls-verify=false --creds "$CREDS" \
+            "$IMAGE:$TAG" "docker://$IMAGE:$TAG"
+          echo "=== Pushing cache tag: $CACHE_TAG ==="
+          buildah --storage-driver=vfs push --tls-verify=false --creds "$CREDS" \
+            "$IMAGE:$TAG" "docker://$IMAGE:$CACHE_TAG"
 
       - name: Build and push frontend
         env:
           TAG: ${{ steps.tags.outputs.deploy_tag }}
+          CACHE_TAG: ${{ steps.tags.outputs.cache_tag }}
           SHA: ${{ github.sha }}
           HARBOR_PASS: ${{ secrets.HARBOR_PASSWORD }}
         run: |
+          IMAGE="$REGISTRY/druppie/druppie-frontend"
+          CREDS="robot\$druppie+druppie-ci:$HARBOR_PASS"
+          echo "=== Pulling cache: $IMAGE:$CACHE_TAG ==="
+          buildah --storage-driver=vfs pull --tls-verify=false --creds "$CREDS" \
+            "docker://$IMAGE:$CACHE_TAG" 2>/dev/null && echo "Cache hit" || echo "No cache yet"
+          echo "=== Building frontend ==="
           buildah --storage-driver=vfs bud --isolation=chroot \
+            --cache-from "$IMAGE:$CACHE_TAG" \
             --build-arg CACHEBUST="$SHA" \
-            -t "$REGISTRY/druppie/druppie-frontend:$TAG" ./frontend
-          buildah --storage-driver=vfs push --tls-verify=false \
-            --creds "robot\$druppie+druppie-ci:$HARBOR_PASS" \
-            "$REGISTRY/druppie/druppie-frontend:$TAG" \
-            "docker://$REGISTRY/druppie/druppie-frontend:$TAG"
+            -t "$IMAGE:$TAG" ./frontend
+          echo "=== Pushing deploy tag: $TAG ==="
+          buildah --storage-driver=vfs push --tls-verify=false --creds "$CREDS" \
+            "$IMAGE:$TAG" "docker://$IMAGE:$TAG"
+          echo "=== Pushing cache tag: $CACHE_TAG ==="
+          buildah --storage-driver=vfs push --tls-verify=false --creds "$CREDS" \
+            "$IMAGE:$TAG" "docker://$IMAGE:$CACHE_TAG"
 
       - name: Build and push layout-service
         env:
           TAG: ${{ steps.tags.outputs.deploy_tag }}
+          CACHE_TAG: ${{ steps.tags.outputs.cache_tag }}
           SHA: ${{ github.sha }}
           HARBOR_PASS: ${{ secrets.HARBOR_PASSWORD }}
         run: |
+          IMAGE="$REGISTRY/druppie/druppie-layout-service"
+          CREDS="robot\$druppie+druppie-ci:$HARBOR_PASS"
+          echo "=== Pulling cache: $IMAGE:$CACHE_TAG ==="
+          buildah --storage-driver=vfs pull --tls-verify=false --creds "$CREDS" \
+            "docker://$IMAGE:$CACHE_TAG" 2>/dev/null && echo "Cache hit" || echo "No cache yet"
+          echo "=== Building layout-service ==="
           buildah --storage-driver=vfs bud --isolation=chroot \
+            --cache-from "$IMAGE:$CACHE_TAG" \
             --build-arg CACHEBUST="$SHA" \
-            -t "$REGISTRY/druppie/druppie-layout-service:$TAG" ./druppie/mcp-servers/layout-service
-          buildah --storage-driver=vfs push --tls-verify=false \
-            --creds "robot\$druppie+druppie-ci:$HARBOR_PASS" \
-            "$REGISTRY/druppie/druppie-layout-service:$TAG" \
-            "docker://$REGISTRY/druppie/druppie-layout-service:$TAG"
+            -t "$IMAGE:$TAG" ./druppie/mcp-servers/layout-service
+          echo "=== Pushing deploy tag: $TAG ==="
+          buildah --storage-driver=vfs push --tls-verify=false --creds "$CREDS" \
+            "$IMAGE:$TAG" "docker://$IMAGE:$TAG"
+          echo "=== Pushing cache tag: $CACHE_TAG ==="
+          buildah --storage-driver=vfs push --tls-verify=false --creds "$CREDS" \
+            "$IMAGE:$TAG" "docker://$IMAGE:$CACHE_TAG"
 
       - name: Build and push MCP modules
         env:
           TAG: ${{ steps.tags.outputs.deploy_tag }}
+          CACHE_TAG: ${{ steps.tags.outputs.cache_tag }}
           SHA: ${{ github.sha }}
           HARBOR_PASS: ${{ secrets.HARBOR_PASSWORD }}
         run: |
@@ -94,34 +126,51 @@ jobs:
               else
                 CONTEXT="./druppie/mcp-servers/"
               fi
-              echo "Building $module (context=$CONTEXT)..."
+              IMAGE="$REGISTRY/druppie/druppie-$module"
+              echo "=== Pulling cache: $IMAGE:$CACHE_TAG ==="
+              buildah --storage-driver=vfs pull --tls-verify=false --creds "$CREDS" \
+                "docker://$IMAGE:$CACHE_TAG" 2>/dev/null && echo "Cache hit" || echo "No cache yet"
+              echo "=== Building $module (context=$CONTEXT) ==="
               buildah --storage-driver=vfs bud --isolation=chroot \
+                --cache-from "$IMAGE:$CACHE_TAG" \
                 --build-arg CACHEBUST="$SHA" \
-                -t "$REGISTRY/druppie/druppie-$module:$TAG" \
+                -t "$IMAGE:$TAG" \
                 -f "$DF" "$CONTEXT"
-              buildah --storage-driver=vfs push --tls-verify=false \
-                --creds "$CREDS" \
-                "$REGISTRY/druppie/druppie-$module:$TAG" \
-                "docker://$REGISTRY/druppie/druppie-$module:$TAG"
+              echo "=== Pushing deploy tag: $TAG ==="
+              buildah --storage-driver=vfs push --tls-verify=false --creds "$CREDS" \
+                "$IMAGE:$TAG" "docker://$IMAGE:$TAG"
+              echo "=== Pushing cache tag: $CACHE_TAG ==="
+              buildah --storage-driver=vfs push --tls-verify=false --creds "$CREDS" \
+                "$IMAGE:$TAG" "docker://$IMAGE:$CACHE_TAG"
             fi
           done
 
       - name: Build and push sandbox-k8s image
         env:
           TAG: ${{ steps.tags.outputs.deploy_tag }}
+          CACHE_TAG: ${{ steps.tags.outputs.cache_tag }}
           SHA: ${{ github.sha }}
           HARBOR_PASS: ${{ secrets.HARBOR_PASSWORD }}
         run: |
           if [ -f "./druppie/mcp-servers/module-coding/Dockerfile.sandbox.k8s" ]; then
+            IMAGE="$REGISTRY/druppie/druppie-sandbox-k8s"
+            CREDS="robot\$druppie+druppie-ci:$HARBOR_PASS"
+            echo "=== Pulling cache: $IMAGE:$CACHE_TAG ==="
+            buildah --storage-driver=vfs pull --tls-verify=false --creds "$CREDS" \
+              "docker://$IMAGE:$CACHE_TAG" 2>/dev/null && echo "Cache hit" || echo "No cache yet"
+            echo "=== Building sandbox-k8s ==="
             buildah --storage-driver=vfs bud --isolation=chroot \
+              --cache-from "$IMAGE:$CACHE_TAG" \
               --build-arg CACHEBUST="$SHA" \
-              -t "$REGISTRY/druppie/druppie-sandbox-k8s:$TAG" \
+              -t "$IMAGE:$TAG" \
               -f ./druppie/mcp-servers/module-coding/Dockerfile.sandbox.k8s \
               ./druppie/mcp-servers/module-coding
-            buildah --storage-driver=vfs push --tls-verify=false \
-              --creds "robot\$druppie+druppie-ci:$HARBOR_PASS" \
-              "$REGISTRY/druppie/druppie-sandbox-k8s:$TAG" \
-              "docker://$REGISTRY/druppie/druppie-sandbox-k8s:$TAG"
+            echo "=== Pushing deploy tag: $TAG ==="
+            buildah --storage-driver=vfs push --tls-verify=false --creds "$CREDS" \
+              "$IMAGE:$TAG" "docker://$IMAGE:$TAG"
+            echo "=== Pushing cache tag: $CACHE_TAG ==="
+            buildah --storage-driver=vfs push --tls-verify=false --creds "$CREDS" \
+              "$IMAGE:$TAG" "docker://$IMAGE:$CACHE_TAG"
           fi
 
       - name: Summary
