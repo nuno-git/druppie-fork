@@ -8,7 +8,7 @@ on:
 env:
   REGISTRY: harbor.rijnland.dev
   GIT_SSL_NO_VERIFY: "true"
-  XDG_DATA_HOME: "/buildah-cache"
+  CONTAINERS_STORAGE_CONF: "/buildah-cache/storage.conf"
 
 jobs:
   build:
@@ -17,6 +17,17 @@ jobs:
       image: quay.io/buildah/stable:v1.40
       options: --security-opt seccomp=unconfined
     steps:
+      - name: Configure buildah storage on PVC
+        run: |
+          mkdir -p /buildah-cache
+          cat > /buildah-cache/storage.conf << 'EOF'
+          [storage]
+          driver = "vfs"
+          graphroot = "/buildah-cache/containers/storage"
+          runroot = "/buildah-cache/containers/run"
+          EOF
+          cat /buildah-cache/storage.conf
+
       - name: Checkout
         env:
           GIT_TOKEN: ${{ secrets.CI_GIT_TOKEN }}
