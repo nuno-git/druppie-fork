@@ -7,12 +7,20 @@ on:
 
 env:
   REGISTRY: harbor.rijnland.dev
+  GIT_SSL_NO_VERIFY: "true"
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        env:
+          GIT_TOKEN: ${{ secrets.CI_GIT_TOKEN }}
+        run: |
+          git config --global http.sslVerify false
+          git config --global --add safe.directory '*'
+          git clone "https://druppie-ci:${GIT_TOKEN}@aigit.waterschap.org/${GITHUB_REPOSITORY}.git" .
+          git checkout "${GITHUB_SHA}"
 
       - name: Login to Harbor
         env:
