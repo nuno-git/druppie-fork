@@ -37,23 +37,21 @@ jobs:
 
       - name: Configure Harbor credentials
         env:
-          HARBOR_USER: ${{ secrets.HARBOR_USERNAME }}
           HARBOR_PASS: ${{ secrets.HARBOR_PASSWORD }}
-          HARBOR_REG: ${{ secrets.HARBOR_REGISTRY }}
         run: |
-          mkdir -p ~/.docker
-          AUTH=$(printf '%s' "$HARBOR_USER:$HARBOR_PASS" | base64 -w0)
-          cat > ~/.docker/config.json <<JSON
-          {"auths":{"$HARBOR_REG":{"auth":"$AUTH"}}}
-          JSON
+          mkdir -p /tmp/docker
+          AUTH=$(printf 'robot$druppie+druppie-ci:%s' "$HARBOR_PASS" | base64 -w0)
+          printf '{"auths":{"harbor.rijnland.dev":{"auth":"%s"}}}\n' "$AUTH" > /tmp/docker/config.json
+          echo "DOCKER_CONFIG=/tmp/docker" >> $GITHUB_ENV
+          cat /tmp/docker/config.json
 
       - name: Build and push backend
         env:
           TAG: ${{ steps.tags.outputs.deploy_tag }}
           SHA: ${{ github.sha }}
         run: |
-          docker build --build-arg CACHEBUST="$SHA" -t "$REGISTRY/druppie/druppie-backend:$TAG" .
-          docker push "$REGISTRY/druppie/druppie-backend:$TAG"
+          docker --config /tmp/docker build --build-arg CACHEBUST="$SHA" -t "$REGISTRY/druppie/druppie-backend:$TAG" .
+          docker --config /tmp/docker push "$REGISTRY/druppie/druppie-backend:$TAG"
 
       - name: Verify backend code freshness
         env:
