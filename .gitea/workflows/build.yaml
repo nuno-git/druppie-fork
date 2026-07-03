@@ -7,34 +7,17 @@ on:
 
 env:
   REGISTRY: harbor.rijnland.dev
-  GIT_SSL_NO_VERIFY: "true"
-  CONTAINERS_STORAGE_CONF: "/buildah-cache/storage.conf"
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    container:
-      image: quay.io/buildah/stable:v1.40
-      options: --security-opt seccomp=unconfined
     steps:
-      - name: Configure buildah storage on PVC
-        run: |
-          mkdir -p /buildah-cache
-          cat > /buildah-cache/storage.conf << 'EOF'
-          [storage]
-          driver = "vfs"
-          graphroot = "/buildah-cache/containers/storage"
-          runroot = "/buildah-cache/containers/run"
-          EOF
+      - uses: actions/checkout@v4
 
-      - name: Checkout
+      - name: Login to Harbor
         env:
-          GIT_TOKEN: ${{ secrets.CI_GIT_TOKEN }}
-        run: |
-          git config --global http.sslVerify false
-          git config --global --add safe.directory '*'
-          git clone "https://druppie-ci:${GIT_TOKEN}@aigit.waterschap.org/${GITHUB_REPOSITORY}.git" .
-          git checkout "${GITHUB_SHA}"
+          HARBOR_PASS: ${{ secrets.HARBOR_PASSWORD }}
+        run: docker login "$REGISTRY" -u 'robot$druppie+druppie-ci' -p "$HARBOR_PASS"
 
       - name: Set image tags
         id: tags
@@ -50,51 +33,35 @@ jobs:
         env:
           TAG: ${{ steps.tags.outputs.deploy_tag }}
           SHA: ${{ github.sha }}
-          HARBOR_PASS: ${{ secrets.HARBOR_PASSWORD }}
         run: |
-          buildah --storage-driver=vfs bud --isolation=chroot --layers \
-            --build-arg CACHEBUST="$SHA" \
+          docker build --build-arg CACHEBUST="$SHA" \
             -t "$REGISTRY/druppie/druppie-backend:$TAG" .
-          buildah --storage-driver=vfs push --tls-verify=false \
-            --creds "robot\$druppie+druppie-ci:$HARBOR_PASS" \
-            "$REGISTRY/druppie/druppie-backend:$TAG" \
-            "docker://$REGISTRY/druppie/druppie-backend:$TAG"
+          docker push "$REGISTRY/druppie/druppie-backend:$TAG"
 
       - name: Build and push frontend
         env:
           TAG: ${{ steps.tags.outputs.deploy_tag }}
           SHA: ${{ github.sha }}
-          HARBOR_PASS: ${{ secrets.HARBOR_PASSWORD }}
         run: |
-          buildah --storage-driver=vfs bud --isolation=chroot --layers \
-            --build-arg CACHEBUST="$SHA" \
+          docker build --build-arg CACHEBUST="$SHA" \
             -t "$REGISTRY/druppie/druppie-frontend:$TAG" ./frontend
-          buildah --storage-driver=vfs push --tls-verify=false \
-            --creds "robot\$druppie+druppie-ci:$HARBOR_PASS" \
-            "$REGISTRY/druppie/druppie-frontend:$TAG" \
-            "docker://$REGISTRY/druppie/druppie-frontend:$TAG"
+          docker push "$REGISTRY/druppie/druppie-frontend:$TAG"
 
       - name: Build and push layout-service
         env:
           TAG: ${{ steps.tags.outputs.deploy_tag }}
           SHA: ${{ github.sha }}
-          HARBOR_PASS: ${{ secrets.HARBOR_PASSWORD }}
         run: |
-          buildah --storage-driver=vfs bud --isolation=chroot --layers \
-            --build-arg CACHEBUST="$SHA" \
-            -t "$REGISTRY/druppie/druppie-layout-service:$TAG" ./druppie/mcp-servers/layout-service
-          buildah --storage-driver=vfs push --tls-verify=false \
-            --creds "robot\$druppie+druppie-ci:$HARBOR_PASS" \
-            "$REGISTRY/druppie/druppie-layout-service:$TAG" \
-            "docker://$REGISTRY/druppie/druppie-layout-service:$TAG"
+          docker build --build-arg CACHEBUST="$SHA" \
+            -t "$REGISTRY/druppie/druppie-layout-service:$TAG" \
+            ./druppie/mcp-servers/layout-service
+          docker push "$REGISTRY/druppie/druppie-layout-service:$TAG"
 
       - name: Build and push MCP modules
         env:
           TAG: ${{ steps.tags.outputs.deploy_tag }}
           SHA: ${{ github.sha }}
-          HARBOR_PASS: ${{ secrets.HARBOR_PASSWORD }}
         run: |
-          CREDS="robot\$druppie+druppie-ci:$HARBOR_PASS"
           for module in module-coding module-docker module-web module-vision \
                         module-archimate module-data-access module-registry \
                         module-filesearch module-kubernetes module-llm; do
@@ -106,14 +73,10 @@ jobs:
                 CONTEXT="./druppie/mcp-servers/"
               fi
               echo "Building $module (context=$CONTEXT)..."
-              buildah --storage-driver=vfs bud --isolation=chroot --layers \
-                --build-arg CACHEBUST="$SHA" \
+              docker build --build-arg CACHEBUST="$SHA" \
                 -t "$REGISTRY/druppie/druppie-$module:$TAG" \
                 -f "$DF" "$CONTEXT"
-              buildah --storage-driver=vfs push --tls-verify=false \
-                --creds "$CREDS" \
-                "$REGISTRY/druppie/druppie-$module:$TAG" \
-                "docker://$REGISTRY/druppie/druppie-$module:$TAG"
+              docker push "$REGISTRY/druppie/druppie-$module:$TAG"
             fi
           done
 
@@ -121,18 +84,13 @@ jobs:
         env:
           TAG: ${{ steps.tags.outputs.deploy_tag }}
           SHA: ${{ github.sha }}
-          HARBOR_PASS: ${{ secrets.HARBOR_PASSWORD }}
         run: |
           if [ -f "./druppie/mcp-servers/module-coding/Dockerfile.sandbox.k8s" ]; then
-            buildah --storage-driver=vfs bud --isolation=chroot --layers \
-              --build-arg CACHEBUST="$SHA" \
+            docker build --build-arg CACHEBUST="$SHA" \
               -t "$REGISTRY/druppie/druppie-sandbox-k8s:$TAG" \
               -f ./druppie/mcp-servers/module-coding/Dockerfile.sandbox.k8s \
               ./druppie/mcp-servers/module-coding
-            buildah --storage-driver=vfs push --tls-verify=false \
-              --creds "robot\$druppie+druppie-ci:$HARBOR_PASS" \
-              "$REGISTRY/druppie/druppie-sandbox-k8s:$TAG" \
-              "docker://$REGISTRY/druppie/druppie-sandbox-k8s:$TAG"
+            docker push "$REGISTRY/druppie/druppie-sandbox-k8s:$TAG"
           fi
 
       - name: Summary
