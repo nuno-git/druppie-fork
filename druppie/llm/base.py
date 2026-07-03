@@ -3,6 +3,7 @@
 All LLM implementations must inherit from BaseLLM.
 """
 
+import re
 from abc import ABC, abstractmethod
 from typing import Any
 
@@ -52,6 +53,70 @@ class ServerError(LLMError):
 
     def __init__(self, message: str, provider: str = ""):
         super().__init__(message, provider, retryable=True)
+
+
+class FallbackAvailableError(LLMError):
+    """Primary provider failed but a fallback is available.
+
+    Raised by FallbackLLM instead of auto-switching. The agent loop
+    catches this to ask the user whether to switch providers.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        primary_provider: str,
+        primary_model: str,
+        fallback_provider: str,
+        fallback_model: str,
+        error_type: str,
+    ):
+        super().__init__(message, provider=primary_provider, retryable=False)
+        self.primary_provider = primary_provider
+        self.primary_model = primary_model
+        self.fallback_provider = fallback_provider
+        self.fallback_model = fallback_model
+        self.error_type = error_type
+        self.llm_call_id = None
+
+
+_UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.IGNORECASE)
+
+_REDACT_PATTERNS = [
+    (re.compile(r"sk-[A-Za-z0-9_-]{10,}"), "[REDACTED]"),
+    (re.compile(r"Bearer\s+[A-Za-z0-9._-]{10,}"), "Bearer [REDACTED]"),
+    (re.compile(r"api[_-]?key\s*[=:]\s*[\"']?[A-Za-z0-9_.-]{10,}[\"']?"), "api_key=[REDACTED]"),
+    (re.compile(r"(?<![A-Za-z0-9/])(?=[A-Za-z0-9_-]*\d)[A-Za-z0-9_-]{32,}(?![A-Za-z0-9_/-])"), "[REDACTED]"),
+]
+
+
+def clean_llm_error(raw: str) -> str:
+    """Extract a short, user-facing message from verbose litellm errors."""
+    uuids = _UUID_RE.findall(raw)
+    for i, uid in enumerate(uuids):
+        raw = raw.replace(uid, f"__UUID{i}__", 1)
+    for pattern, replacement in _REDACT_PATTERNS:
+        raw = pattern.sub(replacement, raw)
+    for i, uid in enumerate(uuids):
+        raw = raw.replace(f"__UUID{i}__", uid)
+    if "DeploymentNotFound" in raw or "does not exist" in raw:
+        return "Model deployment not found"
+    if "Authentication Failed" in raw or "AuthenticationError" in raw:
+        return "Authentication failed — check the API key"
+    if "NotFoundError" in raw:
+        return "Model not found"
+    if "RateLimitError" in raw or "rate_limit" in raw:
+        return "Rate limited — try again later"
+    if "timeout" in raw.lower():
+        return "Request timed out"
+    if "connection" in raw.lower() and ("refused" in raw.lower() or "reset" in raw.lower() or "closed" in raw.lower() or "error" in raw.lower()):
+        return "Connection failed — check the provider URL"
+    if "LLMConfigurationError" in raw:
+        return raw.split("LLMConfigurationError: ", 1)[-1][:120]
+    for prefix in ["LLM error: ", "litellm.", "AnthropicException - ", "OpenAIException - "]:
+        if prefix in raw:
+            raw = raw.split(prefix)[-1]
+    return raw[:120] + "…" if len(raw) > 120 else raw
 
 
 class LLMResponse(BaseModel):

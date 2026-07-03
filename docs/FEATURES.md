@@ -868,6 +868,105 @@ The Settings page displays system configuration and status (read-only). This pag
 
 ---
 
+## Model Management (Admin)
+
+The Model Management page (`/admin/models`) allows admins to configure which LLM provider and model each agent uses at runtime, without editing YAML files or restarting the server.
+
+### Model Resolution Chain
+
+Every agent's provider and model is determined by a resolution chain. The first match wins:
+
+| Priority | Source | Description |
+|----------|--------|-------------|
+| 1 | **Env override** | `LLM_FORCE_PROVIDER` (+ optional `LLM_FORCE_MODEL`) env var. Forces **all** agents to use this provider. |
+| 2 | **DB override** | Per-agent override set by admin via the Model Management UI. Stored in `model_overrides` table. |
+| 3 | **Profile chain** | Ordered list of `{provider, model}` entries from `llm_profiles.yaml`. First entry whose API key is configured becomes primary. |
+| 4 | **Global default** | `LLM_PROVIDER` env var (defaults to `zai`). Last resort. |
+
+### LLM Profiles
+
+Each agent YAML has an `llm_profile` field (e.g. `standard` or `cheap`) referencing a chain in `agents/definitions/llm_profiles.yaml`:
+
+```yaml
+standard:
+  - provider: openrouter
+    model: anthropic/claude-sonnet-4
+  - provider: deepinfra
+    model: moonshotai/Kimi-K2.5-Turbo
+  - provider: zai
+    model: glm-5
+  - provider: ollama
+    model: gpt-oss:120b
+  - provider: azure_foundry
+    model: GPT-5-MINI
+
+cheap:
+  - provider: deepinfra
+    model: moonshotai/Kimi-K2.5-Turbo
+  - provider: openrouter
+    model: anthropic/claude-sonnet-4
+  - provider: zai
+    model: glm-5
+  - provider: ollama
+    model: gpt-oss:20b
+  - provider: azure_foundry
+    model: GPT-5-MINI
+```
+
+The resolver walks the chain top-to-bottom:
+- **Primary** -- first entry whose API key env var is set.
+- **Fallback** -- second available entry (used when the primary fails at call time).
+
+If `LLM_PROVIDER` names a provider not already in the chain and its key is configured, it is appended as an implicit last entry.
+
+### Fallback Behavior
+
+Every agent that has a resolvable fallback is wrapped in a `FallbackLLM`. When the primary provider fails (auth error, timeout, rate limit), the platform does **not** switch silently. Instead:
+
+1. The agent pauses and a **fallback confirmation popup** appears in the chat UI.
+2. The popup shows the configured model and the fallback model, with three options:
+   - **Switch this agent** -- approves the fallback for this agent only. The next agent that fails will get its own popup.
+   - **Switch all agents** -- approves the fallback for all remaining agents in this session. No further popups appear.
+   - **Cancel request** -- fails the agent run and the session.
+3. If the user approves, the agent resumes using the fallback model. An amber banner on the agent run shows which model was configured vs. which model was actually used.
+
+For **DB overrides**, the fallback is the first available entry from the profile chain with a **different provider** than the override. Same-provider entries are skipped because they would fail the same way (e.g. if `zai` auth is broken, falling back to a different `zai` model won't help).
+
+For **profile-resolved agents** (no DB override), the fallback is simply the second available entry in the chain.
+
+### Admin UI Features
+
+- **Provider status overview** -- Shows all configured providers with API key status (configured/missing) and a "Test" button that validates the key with a live LLM call and latency measurement.
+- **Per-agent model override** -- Each agent shows its currently resolved provider/model, the resolution source (profile, override, or global default), and the fallback that would be used if the primary fails. Admins can set or remove overrides per agent.
+- **Translation model override** -- The translation service provider/model can be overridden separately. Defaults cascade: admin override → `TRANSLATION_PROVIDER`/`TRANSLATION_MODEL` env vars → DeepInfra legacy → any available provider.
+- **Unavailable override warning** -- If a DB override's API key is not configured, an amber warning shows with the suggested fallback provider.
+- **Runtime persistence** -- Overrides are stored in the `model_overrides` database table and loaded into an in-memory cache on startup. Changes take effect immediately (no restart needed).
+
+### Supported Providers
+
+| Provider | API Key Env | Notes |
+|----------|-------------|-------|
+| ZAI | `ZAI_API_KEY` | Default agent provider |
+| DeepInfra | `DEEPINFRA_API_KEY` | Legacy translation default |
+| OpenRouter | `OPENROUTER_API_KEY` | Multi-model router |
+| Azure Foundry | `FOUNDRY_API_KEY` | GPT models via OpenAI endpoint; Claude models via Azure AI endpoint (see below) |
+| Ollama | (optional) | Local models, no API key required |
+
+### Azure Foundry Claude Models
+
+Azure Foundry hosts both GPT and Claude models, but they use different endpoints and routing:
+
+- **GPT models** (e.g. `GPT-5-MINI`, `gpt-4.1-mini`) use the OpenAI endpoint (`druppie-resource.openai.azure.com`) with the `azure` litellm prefix.
+- **Claude models** (e.g. `claude-sonnet-4-6`, `claude-haiku-4-5-20251001`) use the Azure AI Services endpoint (`druppie-resource.services.ai.azure.com`) with the `azure_ai` litellm prefix. The routing is automatic — any model starting with `claude` is detected and routed accordingly.
+
+**Prerequisites for Claude on Azure Foundry:**
+
+1. **Deploy the model** as a serverless endpoint in [Azure AI Foundry portal](https://ai.azure.com). Models appearing in the model catalog are not callable until deployed.
+2. **Set `FOUNDRY_ANTHROPIC_URL`** in `.env` to your Azure AI Services endpoint (e.g. `https://druppie-resource.services.ai.azure.com`). If not set, defaults to `https://druppie-resource.services.ai.azure.com`.
+3. The same `FOUNDRY_API_KEY` authenticates both endpoints.
+
+---
+
 ## Agent Testing Tool
 
 The **Agent Testing Tool** (available at `/tools/developer` in the UI) lets users run any agent YAML definition directly in an isolated session — no pipeline, no routing, no plan flow. The selected agent receives the user's prompt and executes within the standard agent runtime loop.
@@ -975,7 +1074,14 @@ The platform detects the user's language and automatically translates between th
 
 ### Configuration
 
-Requires `DEEPINFRA_API_KEY` in `.env`. The translation service uses Qwen/Qwen3-32B on DeepInfra, independent of the main `LLM_PROVIDER`. If the key is missing, the backend logs a warning at startup and non-English sessions will fail with a clear error.
+The translation service supports **any configured LLM provider** (not just DeepInfra). The provider/model is resolved in this order:
+
+1. **Admin override** -- Set via the Model Management admin page (`/admin/models`), stored in the `model_overrides` DB table.
+2. **Environment variables** -- `TRANSLATION_PROVIDER` and `TRANSLATION_MODEL` in `.env`.
+3. **Legacy default** -- `DEEPINFRA_API_KEY` with Gemma 3 27B (backward compatible).
+4. **Any available provider** -- Falls back to whichever provider has a valid API key.
+
+If no provider is available, the backend logs a warning at startup and non-English sessions will fail with a clear error.
 
 ### Design Documents
 
