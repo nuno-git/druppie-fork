@@ -7,6 +7,7 @@ on:
 
 env:
   REGISTRY: harbor.rijnland.dev
+  GIT_SSL_NO_VERIFY: "true"
 
 jobs:
   build:
@@ -15,7 +16,14 @@ jobs:
       image: quay.io/buildah/stable:v1.40
       options: --security-opt seccomp=unconfined
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        env:
+          GIT_TOKEN: ${{ secrets.CI_GIT_TOKEN }}
+        run: |
+          git config --global http.sslVerify false
+          git config --global --add safe.directory '*'
+          git clone "https://druppie-ci:${GIT_TOKEN}@aigit.waterschap.org/${GITHUB_REPOSITORY}.git" .
+          git checkout "${GITHUB_SHA}"
 
       - name: Set image tags
         id: tags
