@@ -25,6 +25,9 @@ spec:
       imagePullSecrets:
         {{- toYaml .Values.global.imagePullSecrets | nindent 8 }}
       {{- end }}
+      {{- if .Values.agentSandbox.enabled }}
+      serviceAccountName: {{ include "druppie.fullname" . }}-module-coding
+      {{- end }}
       initContainers:
         - name: wait-for-gitea
           image: curlimages/curl:latest
