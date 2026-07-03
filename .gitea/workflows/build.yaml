@@ -13,10 +13,11 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Setup
         env:
           GIT_TOKEN: ${{ secrets.CI_GIT_TOKEN }}
         run: |
+          apt-get update -qq && apt-get install -y -qq docker.io > /dev/null 2>&1
           git config --global http.sslVerify false
           git config --global --add safe.directory '*'
           git clone "https://druppie-ci:${GIT_TOKEN}@aigit.waterschap.org/${GITHUB_REPOSITORY}.git" .
