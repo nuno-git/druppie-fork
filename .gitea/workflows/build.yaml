@@ -127,10 +127,8 @@ jobs:
         run: |
           if [ "$BRANCH" = "main" ]; then
             HR_FILE="clusters/ka-k8s-ai/apps/druppie/helmrelease.yaml"
-            OLD_PATTERN='main-[0-9]*-[a-f0-9]*'
           else
             HR_FILE="clusters/ka-k8s-ai/apps/druppie-colab-dev/helmrelease.yaml"
-            OLD_PATTERN='colab-dev-[0-9]*-[a-f0-9]*'
           fi
 
           git clone "https://druppie-ci:${GIT_TOKEN}@aigit.waterschap.org/ai/k8s.git" /tmp/k8s
@@ -138,7 +136,7 @@ jobs:
           git config user.name "druppie-ci"
           git config user.email "druppie-ci@users.noreply.rijnland.dev"
 
-          sed -i "s|${OLD_PATTERN}|${TAG}|g" "$HR_FILE"
+          sed -i "s|\(imageTag:\s*\)\"[^\"]*\"|\1\"${TAG}\"|g; s|\(tag:\s*\)[a-z-]*[0-9]*-[a-f0-9]*.*|\1${TAG}|g" "$HR_FILE"
 
           if git diff --quiet; then
             echo "No changes — tag already up to date"
