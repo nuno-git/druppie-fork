@@ -141,12 +141,38 @@ spec:
       app.kubernetes.io/component: module-coding
   policyTypes:
     - Ingress
+    {{- if .Values.agentSandbox.enabled }}
+    - Egress
+    {{- end }}
   ingress:
     - from:
         - podSelector:
             matchLabels:
               {{- include "druppie.selectorLabels" . | nindent 14 }}
               app.kubernetes.io/component: backend
+  {{- if .Values.agentSandbox.enabled }}
+  # When using the agent-sandbox warm pool, module-coding must reach the
+  # Kubernetes API (to create/watch SandboxClaims) and the sandbox runtime
+  # pods (commands/files over :8888). These are in-cluster private addresses
+  # that the app-net policy excludes, so allow them explicitly here. Egress is
+  # the UNION across selecting policies, so this only ADDS to app-net's rules.
+  egress:
+    # Kubernetes API — create/watch SandboxClaims, read sandbox status
+    - to:
+        - ipBlock:
+            cidr: {{ .Values.agentSandbox.kubeApiCIDR | default "10.43.0.1/32" }}
+      ports:
+        - port: 443
+          protocol: TCP
+    # Sandbox runtime pods — agent-sandbox command/file server
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: sandbox-runtime
+      ports:
+        - port: 8888
+          protocol: TCP
+  {{- end }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
