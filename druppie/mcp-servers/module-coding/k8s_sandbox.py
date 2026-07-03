@@ -20,8 +20,10 @@ The backend is selected via DRUPPIE_SANDBOX_MODE env var.
 from __future__ import annotations
 
 import asyncio
+import base64
 import logging
 import os
+import shlex
 import time
 from dataclasses import dataclass, field
 from typing import Optional
@@ -114,25 +116,52 @@ class K8sSandboxManager:
 
     async def exec(self, handle: SandboxHandle, command: list[str] | str,
                    timeout: int = 60) -> tuple[int, str, str]:
-        """Execute a command in the sandbox. Returns (exit_code, stdout, stderr)."""
+        """Execute a command in the sandbox. Returns (exit_code, stdout, stderr).
+
+        The agent-sandbox runtime tokenizes the command string with shlex and
+        execs the first token — it does NOT invoke a shell — so shell operators
+        (&&, pipes, redirects) are ignored unless we wrap the command in
+        ``bash -c``. tools.py passes either a tokenized list (simple command) or
+        ``["bash", "-c", <shellstring>]`` (from _exec_shell); we normalise both
+        to a single shell string and wrap once.
+        """
         if isinstance(command, list):
-            command = " ".join(command)
-        result = await handle._backend.commands.run(command, timeout=timeout)
+            if len(command) == 3 and command[0] == "bash" and command[1] == "-c":
+                shell_str = command[2]
+            else:
+                shell_str = shlex.join(command)
+        else:
+            shell_str = command
+        wrapped = "bash -c " + shlex.quote(shell_str)
+        result = await handle._backend.commands.run(wrapped, timeout=timeout)
         return result.exit_code, result.stdout, result.stderr
 
     async def read_file(self, handle: SandboxHandle, path: str) -> str:
         """Read a file from the sandbox."""
-        result = await handle._backend.commands.run(f"cat {path}")
-        return result.stdout
+        rc, out, _ = await self.exec(handle, "cat " + shlex.quote(path))
+        return out
 
     async def write_file(self, handle: SandboxHandle, path: str, content: str) -> None:
-        """Write a file into the sandbox."""
-        handle._backend.files.write(path, content)
+        """Write a file into the sandbox.
+
+        The SDK's files.write upload endpoint is unreliable for absolute paths
+        (500s), so we pipe base64-decoded content through the shell. This
+        handles arbitrary bytes without quoting/escaping issues.
+        """
+        if isinstance(content, str):
+            content = content.encode("utf-8")
+        b64 = base64.b64encode(content).decode("ascii")
+        cmd = "printf %s " + shlex.quote(b64) + " | base64 -d > " + shlex.quote(path)
+        rc, _, err = await self.exec(handle, cmd)
+        if rc != 0:
+            raise RuntimeError("write_file to %s failed: %s" % (path, err.strip()))
 
     async def file_exists(self, handle: SandboxHandle, path: str) -> bool:
         """Check if a file exists in the sandbox."""
-        result = await handle._backend.commands.run(f"test -f {path} && echo yes || echo no")
-        return "yes" in result.stdout
+        rc, out, _ = await self.exec(
+            handle, "test -f %s && echo yes || echo no" % shlex.quote(path)
+        )
+        return "yes" in out
 
     async def destroy(self, handle: SandboxHandle) -> None:
         """Terminate the sandbox and clean up."""
