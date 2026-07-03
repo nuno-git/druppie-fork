@@ -151,19 +151,13 @@ spec:
               {{- include "druppie.selectorLabels" . | nindent 14 }}
               app.kubernetes.io/component: backend
   {{- if .Values.agentSandbox.enabled }}
-  # When using the agent-sandbox warm pool, module-coding must reach the
-  # Kubernetes API (to create/watch SandboxClaims) and the sandbox runtime
-  # pods (commands/files over :8888). These are in-cluster private addresses
-  # that the app-net policy excludes, so allow them explicitly here. Egress is
-  # the UNION across selecting policies, so this only ADDS to app-net's rules.
+  # When using the agent-sandbox warm pool, module-coding must reach the sandbox
+  # runtime pods (commands/files over :8888) — in-cluster private addresses that
+  # the app-net policy excludes. (The Kubernetes API egress is granted via a
+  # separate CiliumNetworkPolicy using the kube-apiserver entity, since Cilium
+  # resolves the Service VIP to the node entity and a plain ipBlock won't match.)
+  # Egress is the UNION across selecting policies, so this only ADDS to app-net.
   egress:
-    # Kubernetes API — create/watch SandboxClaims, read sandbox status
-    - to:
-        - ipBlock:
-            cidr: {{ .Values.agentSandbox.kubeApiCIDR | default "10.43.0.1/32" }}
-      ports:
-        - port: 443
-          protocol: TCP
     # Sandbox runtime pods — agent-sandbox command/file server
     - to:
         - namespaceSelector:
