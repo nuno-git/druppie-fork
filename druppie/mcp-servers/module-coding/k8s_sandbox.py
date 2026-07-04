@@ -27,12 +27,26 @@ import shlex
 import time
 from dataclasses import dataclass, field
 from typing import Optional
+from urllib.parse import urlsplit, urlunsplit
 
 logger = logging.getLogger(__name__)
 
 SANDBOX_MODE = os.getenv("DRUPPIE_SANDBOX_MODE", "docker")  # "k8s" or "docker"
 SANDBOX_NAMESPACE = os.getenv("SANDBOX_NAMESPACE", "sandbox-runtime")
 SANDBOX_WARMPOOL = os.getenv("SANDBOX_WARMPOOL", "agent-coding-warmpool")
+
+
+def _strip_credentials(url: str) -> str:
+    """Remove any user:password@ from a URL, leaving scheme://host[:port]/path.
+
+    Used to rewrite the sandbox's origin URL after an authenticated clone so
+    no token persists in .git/config (sandboxes must hold no git credentials).
+    """
+    parts = urlsplit(url)
+    host = parts.hostname or ""
+    if parts.port:
+        host = f"{host}:{parts.port}"
+    return urlunsplit(parts._replace(netloc=host))
 
 
 @dataclass
@@ -103,6 +117,12 @@ class K8sSandboxManager:
                     "rmdir /workspace/repo 2>/dev/null; true"
                 )
                 await sandbox.commands.run("bash -c " + shlex.quote(cleanup))
+                # Rewrite origin to the credential-free URL so no token is left
+                # in /workspace/.git/config. Push/fetch still work because the
+                # host side (push_changes) exchanges git bundles with creds.
+                public_url = _strip_credentials(repo_clone_url)
+                strip = "git -C /workspace remote set-url origin " + shlex.quote(public_url)
+                await sandbox.commands.run("bash -c " + shlex.quote(strip))
 
         await sandbox.commands.run("bash -c " + shlex.quote("git config user.email 'agent@druppie.local'"))
         await sandbox.commands.run("bash -c " + shlex.quote("git config user.name 'Druppie Agent'"))
