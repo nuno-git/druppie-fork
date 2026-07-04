@@ -92,18 +92,20 @@ class K8sSandboxManager:
                 f"git clone --depth 50 --branch {branch} "
                 f"{repo_clone_url} /workspace/repo 2>&1"
             )
-            result = await sandbox.commands.run(clone_cmd)
-            if result.returncode != 0:
+            result = await sandbox.commands.run("bash -c " + shlex.quote(clone_cmd))
+            if result.exit_code != 0:
                 logger.warning("Git clone failed in sandbox %s: %s",
                                sandbox_id, result.stderr[:200])
             else:
-                await sandbox.commands.run(
-                    "cd /workspace/repo && find . -maxdepth 1 -exec mv {} /workspace/ \; 2>/dev/null; "
+                cleanup = (
+                    "cd /workspace/repo && "
+                    "find . -maxdepth 1 -exec mv {} /workspace/ \\; 2>/dev/null; "
                     "rmdir /workspace/repo 2>/dev/null; true"
                 )
+                await sandbox.commands.run("bash -c " + shlex.quote(cleanup))
 
-        await sandbox.commands.run("git config user.email 'agent@druppie.local'")
-        await sandbox.commands.run("git config user.name 'Druppie Agent'")
+        await sandbox.commands.run("bash -c " + shlex.quote("git config user.email 'agent@druppie.local'"))
+        await sandbox.commands.run("bash -c " + shlex.quote("git config user.name 'Druppie Agent'"))
 
         self._sandboxes[f"{session_id}::{git_scope}"] = sandbox
         return SandboxHandle(
