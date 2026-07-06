@@ -987,27 +987,27 @@ def _gitea_api_headers() -> dict:
 
 
 def _inject_gitea_token(repo_owner: str, repo_name: str) -> str:
-    """Build an authenticated Gitea push URL (host-side only).
+    """Build an authenticated Gitea git-over-HTTP push URL (host-side only).
 
-    Gitea access tokens authenticate as HTTP basic-auth *passwords* (the
-    username is ignored by Gitea but must be present). Injecting just
-    ``<token>@host`` makes git treat the token as the username and then prompt
-    for a password — which fails non-interactively ("could not read password:
-    No such device or address", i.e. no TTY). We therefore build
-    ``<user>:<token>@host``.
+    Uses the same ``user:password`` basic auth as ``_get_gitea_clone_url`` — the
+    admin account has repo write access and this is proven to authenticate by the
+    clone step. ``GITEA_TOKEN`` is the *REST API* token (``Authorization: token
+    …``); as a git password it needs ``write:repository`` scope and is frequently
+    scoped read-only, which surfaces as ``authentication failed`` on push, so it
+    is only a fallback here.
     """
     base = GITEA_URL.rstrip("/")
     scheme, _, rest = base.partition("://")
-    if GITEA_TOKEN:
-        user = GITEA_USER or "oauth2"
-        return f"{scheme}://{user}:{GITEA_TOKEN}@{rest}/{repo_owner}/{repo_name}.git"
-    elif GITEA_USER and GITEA_PASSWORD:
+    if GITEA_USER and GITEA_PASSWORD:
         from urllib.parse import quote
 
         return (
             f"{scheme}://{quote(GITEA_USER)}:{quote(GITEA_PASSWORD)}"
             f"@{rest}/{repo_owner}/{repo_name}.git"
         )
+    if GITEA_TOKEN:
+        user = GITEA_USER or "oauth2"
+        return f"{scheme}://{user}:{GITEA_TOKEN}@{rest}/{repo_owner}/{repo_name}.git"
     return f"{base}/{repo_owner}/{repo_name}.git"
 
 
