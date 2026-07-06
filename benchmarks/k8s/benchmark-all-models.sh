@@ -20,19 +20,29 @@
 # -----------------------------------------------------------------------------
 # !!! IMPACT WARNING -- READ BEFORE RUNNING !!!
 # -----------------------------------------------------------------------------
-# The cluster has a fixed pool of GPUs. Prod `qwen` (Qwen3.6-27B) normally runs
-# 2 replicas (2 GPUs). To benchmark a DIFFERENT model we must free a GPU, which
-# means this script will TEMPORARILY:
-#   * suspend the Flux `llm-models` Kustomization (so Flux won't fight our edits
-#     or re-scale qwen back up mid-run), and
-#   * scale the prod `qwen` InferenceService down to 1 replica (freeing 1 GPU),
-#     then create a short-lived `bench-<model>` InferenceService on that GPU.
+# The cluster has ONE GPU node with TWO GPUs. Prod serves TWO NVFP4 models, one
+# per GPU: `qwen-27b` (nvidia/Qwen3.6-27B-NVFP4) and `qwen-35b`
+# (nvidia/Qwen3.6-35B-A3B-NVFP4), each replicas:1, both GitOps-managed by the
+# Flux `llm-models` Kustomization and both mounting the shared `llm-models-cache`
+# PVC (cached HF weights + vLLM compile cache -> fast warm starts). The ns `llm`
+# GPU ResourceQuota is hard=2, so both GPUs are normally occupied.
 #
-# During the run prod qwen serves at HALF capacity (1 replica). A trap ALWAYS
-# restores qwen to its original replica count and resumes Flux on exit -- even
-# on Ctrl-C or error. Still: run this in a maintenance window.
+# To benchmark a DIFFERENT (not-yet-served) model we must free ONE GPU, so this
+# script will TEMPORARILY:
+#   * suspend the Flux `llm-models` (child) AND `ai-k8s` (parent) Kustomizations
+#     (so Flux won't fight our edits or re-scale the served model back up), and
+#   * scale ONE served InferenceService (FREE_SERVICE, default `qwen-35b`) down
+#     to 0 replicas (freeing 1 GPU), then create a short-lived `bench-<model>`
+#     InferenceService on that GPU. The bench isvc ALSO mounts llm-models-cache,
+#     so any already-cached weights load fast.
 #
-# The currently-served prod model is benchmarked in place (no serving change).
+# During the run the FREE_SERVICE model is OFFLINE (0 replicas); the OTHER served
+# model keeps running. A trap ALWAYS restores FREE_SERVICE to its original
+# replica count and resumes Flux on exit -- even on Ctrl-C or error. Still: run
+# this in a maintenance window.
+#
+# A model that is ALREADY served (qwen-27b / qwen-35b) is benchmarked in place
+# (no serving change, no scaling).
 #
 # -----------------------------------------------------------------------------
 # USAGE
@@ -55,29 +65,38 @@ set -euo pipefail
 # Constants
 # -----------------------------------------------------------------------------
 NS=llm
-PROD_ISVC=qwen                       # prod InferenceService name (ns llm)
-PROD_ORIGINAL_REPLICAS=2             # documented prod baseline; captured live below
+# NEW dual-NVFP4 topology: two GitOps-managed InferenceServices, one model per
+# GPU, each replicas:1, both mounting the shared cache PVC. To free a GPU we
+# scale ONE of them (FREE_SERVICE) to 0 for the duration of the run; the other
+# served model keeps running.
+FREE_SERVICE="${FREE_SERVICE:-qwen-35b}"          # served isvc to scale 0 to free a GPU
+SERVED_MATCH_GLOB="${SERVED_MATCH_GLOB:-qwen-*}"  # name-glob to discover served isvcs
+FREE_SERVICE_DEFAULT_REPLICAS=1                    # documented per-service baseline; captured live below
+SHARED_CACHE_PVC="${SHARED_CACHE_PVC:-llm-models-cache}"       # RWO PVC both serving pods + bench pod mount (same node)
+DEFAULT_BENCH_IMAGE="${DEFAULT_BENCH_IMAGE:-vllm/vllm-openai:cu129-nightly}"  # bench isvc image (profile-overridable)
 FLUX_KUSTOMIZATION=llm-models        # Flux Kustomization that manages the models
 # The PARENT Flux Kustomization that reconciles (and re-applies) the child
 # `llm-models` on a ~1-min interval. Suspending ONLY the child is not enough:
-# the parent re-applies the child and resets qwen to replicas:2 within ~1 min,
-# undoing our scale-down. We suspend BOTH and restore BOTH on exit.
+# the parent re-applies the child and resets replicas within ~1 min, undoing our
+# scale-down. We suspend BOTH and restore BOTH on exit.
 PARENT_FLUX_KUSTOMIZATION=ai-k8s     # parent Kustomization (ns flux-system)
 FLUX_NS=flux-system                  # namespace both Kustomizations live in
-JOB=llm-benchmark                    # Job name (matches job.yaml)
-CANDIDATES_YAML="${REPO_ROOT:-.}/benchmarks/candidates.yaml"  # fit-class + serving profiles (re-set below)
-# Ready-wait budget. A bench model's first serve downloads the FULL model from HF
-# (no weight cache), so this must be generous -- but we ALSO fast-fail the moment
-# the bench pod crashloops / errors (see wait_isvc_ready), so a broken model no
-# longer burns the whole budget while prod runs at half capacity. Overridable via
-# the environment for slow links / big weights.
-GPU_READY_TIMEOUT="${GPU_READY_TIMEOUT:-2400}"   # 40 min download budget (was 90m)
+# Job naming: the sweep uses a UNIQUE per-model Job name `llm-benchmark-<slug>`
+# so it can never collide with a MANUAL `llm-benchmark` Job (which the startup
+# collision-guard checks for). MANUAL_JOB is that reserved manual name.
+JOB_PREFIX=llm-benchmark             # sweep Job name prefix (per-model: llm-benchmark-<slug>)
+MANUAL_JOB=llm-benchmark             # reserved name for a manual/parallel run (collision guard)
+# Ready-wait budget. A bench model's first serve may download the FULL model from
+# HF -- BUT the shared llm-models-cache PVC often already holds the weights + the
+# vLLM compile cache (warm start), so this is usually fast. We ALSO fast-fail the
+# moment the bench pod crashloops / errors (see wait_isvc_ready), so a broken
+# model no longer burns the whole budget. Overridable via the environment.
+GPU_READY_TIMEOUT="${GPU_READY_TIMEOUT:-2400}"   # 40 min serve budget (cached weights => usually faster)
 # Benchmark-completion wait. Must be >= the Job's activeDeadlineSeconds (9000s in
 # job.yaml): the full suite has scenarios that take 100-200s each, so 1800s is far
 # too short. Match the Job deadline so we wait for the Job to finish (or hit its
 # own deadline) rather than giving up early and losing results.
 JOB_COMPLETE_TIMEOUT="${JOB_COMPLETE_TIMEOUT:-9000}"
-ISVC_YAML_CACHE=/tmp/ai-k8s2/clusters/llm-models/inferenceservice.yaml
 
 # python3 is not present in every environment (e.g. Git-Bash only ships `python`).
 # Auto-detect a usable interpreter once and use it everywhere below.
@@ -101,12 +120,13 @@ WORKDIR="$(mktemp -d)"
 # State captured at startup (used by the restore trap). Defaults are safe so a
 # trap firing before capture still does something sane.
 # -----------------------------------------------------------------------------
-CAPTURED_QWEN_REPLICAS="${PROD_ORIGINAL_REPLICAS}"
+CAPTURED_FREE_REPLICAS="${FREE_SERVICE_DEFAULT_REPLICAS}"  # FREE_SERVICE's original replicas
 CAPTURED_FLUX_SUSPENDED="false"      # was the CHILD (llm-models) already suspended?
 CAPTURED_PARENT_FLUX_SUSPENDED="false"  # was the PARENT (ai-k8s) already suspended?
 FLUX_TOUCHED="false"                 # did WE change either suspend state?
-QWEN_TOUCHED="false"                 # did WE scale qwen?
+FREE_TOUCHED="false"                 # did WE scale FREE_SERVICE?
 declare -a TEMP_ISVCS=()             # bench-* InferenceServices we created
+declare -a TEMP_JOBS=()              # llm-benchmark-<slug> Jobs we created
 
 # -----------------------------------------------------------------------------
 # restore() -- ALWAYS runs on EXIT/INT/TERM. Idempotent and tolerant of partial
@@ -119,11 +139,11 @@ restore() {
   echo ">> [restore] Cleaning up (exit code ${exit_code})..."
 
   # 1. Delete any temp bench-* InferenceServices we created, WAITING for each to
-  #    go away (--wait=true) so its GPU is actually released BEFORE we patch qwen
-  #    back up in step 2 -- otherwise qwen's 2nd replica is quota-rejected (the
-  #    `llm` GPU ResourceQuota is hard=2 and the bench pod still holds one). Also
-  #    do a belt-and-braces sweep for anything named bench-* in case a name wasn't
-  #    tracked (e.g. crash right after create).
+  #    go away (--wait=true) so its GPU is actually released BEFORE we scale
+  #    FREE_SERVICE back up in step 2 -- otherwise FREE_SERVICE's replica is
+  #    quota-rejected (the `llm` GPU ResourceQuota is hard=2 and the bench pod
+  #    still holds one). Also do a belt-and-braces sweep for anything named
+  #    bench-* in case a name wasn't tracked (e.g. crash right after create).
   for isvc in "${TEMP_ISVCS[@]:-}"; do
     [ -n "${isvc}" ] || continue
     echo ">> [restore] Deleting temp InferenceService ${isvc} (waiting for GPU release)..."
@@ -138,13 +158,13 @@ restore() {
     echo "${strays}" | xargs -r kubectl delete -n "${NS}" --ignore-not-found --wait=true
   fi
 
-  # 2. Restore prod qwen replicas to the captured original (only if we scaled).
-  #    Runs AFTER the bench GPU is released (step 1) so the 2nd replica schedules.
-  if [ "${QWEN_TOUCHED}" = "true" ]; then
-    echo ">> [restore] Restoring ${PROD_ISVC} to ${CAPTURED_QWEN_REPLICAS} replica(s)..."
-    kubectl patch inferenceservice "${PROD_ISVC}" -n "${NS}" --type merge \
-      -p "{\"spec\":{\"replicas\":${CAPTURED_QWEN_REPLICAS}}}" || \
-      echo ">> [restore] WARNING: failed to restore ${PROD_ISVC} replicas -- check manually!"
+  # 2. Restore FREE_SERVICE replicas to the captured original (only if we scaled).
+  #    Runs AFTER the bench GPU is released (step 1) so the replica schedules.
+  if [ "${FREE_TOUCHED}" = "true" ]; then
+    echo ">> [restore] Restoring ${FREE_SERVICE} to ${CAPTURED_FREE_REPLICAS} replica(s)..."
+    kubectl patch inferenceservice "${FREE_SERVICE}" -n "${NS}" --type merge \
+      -p "{\"spec\":{\"replicas\":${CAPTURED_FREE_REPLICAS}}}" || \
+      echo ">> [restore] WARNING: failed to restore ${FREE_SERVICE} replicas -- check manually!"
   fi
 
   # 3. Resume BOTH Flux Kustomizations to their ORIGINAL suspend states (only if
@@ -161,8 +181,13 @@ restore() {
       echo ">> [restore] WARNING: failed to restore Flux ${PARENT_FLUX_KUSTOMIZATION} suspend -- check manually!"
   fi
 
-  # 4. Best-effort: delete the benchmark Job so it doesn't linger.
-  kubectl delete job "${JOB}" -n "${NS}" --ignore-not-found --wait=false >/dev/null 2>&1 || true
+  # 4. Best-effort: delete any per-model benchmark Jobs WE created so they don't
+  #    linger. Only our tracked `llm-benchmark-<slug>` Jobs -- never a manual
+  #    `llm-benchmark` Job (we abort on that rather than touch it).
+  for j in "${TEMP_JOBS[@]:-}"; do
+    [ -n "${j}" ] || continue
+    kubectl delete job "${j}" -n "${NS}" --ignore-not-found --wait=false >/dev/null 2>&1 || true
+  done
 
   # 5. Local workspace.
   rm -rf "${WORKDIR}" 2>/dev/null || true
@@ -182,8 +207,9 @@ confirm() {
     return 0
   fi
   echo ""
-  echo "This will temporarily scale prod ${PROD_ISVC} to 1 replica and suspend"
-  echo "Flux ${FLUX_KUSTOMIZATION} to free a GPU for benchmarking other models."
+  echo "This will temporarily scale served ${FREE_SERVICE} to 0 replicas and"
+  echo "suspend Flux ${FLUX_KUSTOMIZATION}/${PARENT_FLUX_KUSTOMIZATION} to free a GPU"
+  echo "for benchmarking other models. The OTHER served model keeps running."
   echo "A trap restores everything on exit."
   printf "Type 'yes' to proceed: "
   read -r reply
@@ -233,7 +259,25 @@ command -v kubectl >/dev/null || { echo "kubectl not found"; exit 1; }
 mkdir -p "${RESULTS_DIR}"
 
 # =============================================================================
-# 2. DISCOVER models + capture current prod state
+# 1b. COLLISION GUARD -- never clobber a manual/parallel benchmark run.
+# =============================================================================
+# If a manual `llm-benchmark` Job is currently RUNNING in ns llm (someone kicked
+# off a single-model run in parallel), ABORT NOW -- BEFORE scaling or suspending
+# anything -- so we can't corrupt their run or double-book a GPU. Our own sweep
+# Jobs are named `llm-benchmark-<slug>` (unique per model) and never match this
+# reserved name, so a running sweep will not trip its own guard.
+echo ">> Collision guard: checking for a RUNNING ${MANUAL_JOB} Job in ns ${NS}..."
+MANUAL_ACTIVE="$(kubectl get job "${MANUAL_JOB}" -n "${NS}" \
+  -o jsonpath='{.status.active}' 2>/dev/null || true)"
+if [ -n "${MANUAL_ACTIVE}" ] && [ "${MANUAL_ACTIVE}" != "0" ]; then
+  echo "ERROR: a manual '${MANUAL_JOB}' Job is active (${MANUAL_ACTIVE} pod(s)) in ns ${NS}." >&2
+  echo "       Refusing to run the sweep so we don't clobber it. Nothing was scaled." >&2
+  exit 1
+fi
+echo "   no active manual ${MANUAL_JOB} Job; proceeding."
+
+# =============================================================================
+# 2. DISCOVER models + served services + capture current state
 # =============================================================================
 echo ">> Discovering models (models.inference.llmkube.dev -n ${NS})..."
 MODELS_JSON="$(kubectl get models.inference.llmkube.dev -n "${NS}" -o json)"
@@ -280,22 +324,53 @@ fi
 echo ">> Discovered models:"
 printf '%s\n' "${MODEL_LINES}" | sed 's/^/   - /'
 
-# Capture prod qwen's current replicas + which model it currently serves, so we
-# can (a) benchmark that model in place and (b) restore replicas afterwards.
-echo ">> Capturing prod ${PROD_ISVC} state..."
-CAPTURED_QWEN_REPLICAS="$(kubectl get inferenceservice "${PROD_ISVC}" -n "${NS}" \
+# Discover the currently-SERVED InferenceServices (one model per GPU). Match by
+# name-glob (SERVED_MATCH_GLOB, default qwen-*) OR any Flux-owned isvc (labelled
+# kustomize.toolkit.fluxcd.io/name). Their modelRefs tell us which discovered
+# models are ALREADY served (-> benchmark in place, Case A, no scaling).
+echo ">> Discovering served InferenceServices (${SERVED_MATCH_GLOB} or Flux-owned) in ns ${NS}..."
+SERVED_ISVCS="$(kubectl get inferenceservice -n "${NS}" -o json 2>/dev/null | "${PYTHON}" -c '
+import fnmatch, json, os, sys
+glob = os.environ.get("SERVED_MATCH_GLOB", "qwen-*")
+try:
+    doc = json.load(sys.stdin)
+except Exception:
+    doc = {}
+for it in doc.get("items", []) or []:
+    meta = it.get("metadata", {}) or {}
+    name = meta.get("name", "")
+    if not name:
+        continue
+    labels = meta.get("labels", {}) or {}
+    flux_owned = "kustomize.toolkit.fluxcd.io/name" in labels
+    if fnmatch.fnmatch(name, glob) or flux_owned:
+        spec = it.get("spec", {}) or {}
+        ref = spec.get("modelRef")
+        if isinstance(ref, dict):
+            ref = ref.get("name", "")
+        reps = spec.get("replicas", 1)
+        print("%s\t%s\t%s" % (name, ref or "", reps))
+' || true)"
+echo "   served services (name<TAB>modelRef<TAB>replicas):"
+printf '%s\n' "${SERVED_ISVCS}" | sed '/^$/d; s/^/     /' 2>/dev/null || true
+
+# served_isvc_for_model() -- echo the served isvc name whose modelRef == $1
+# (empty if none). Used to detect Case A (already-served -> benchmark in place).
+served_isvc_for_model() {
+  local want="$1"
+  [ -n "${want}" ] || return 0
+  printf '%s\n' "${SERVED_ISVCS}" | while IFS=$'\t' read -r s_name s_ref s_reps; do
+    [ -n "${s_name}" ] || continue
+    if [ "${s_ref}" = "${want}" ]; then echo "${s_name}"; return 0; fi
+  done
+}
+
+# Capture FREE_SERVICE's current replicas so restore returns it exactly.
+echo ">> Capturing FREE_SERVICE (${FREE_SERVICE}) state..."
+CAPTURED_FREE_REPLICAS="$(kubectl get inferenceservice "${FREE_SERVICE}" -n "${NS}" \
   -o jsonpath='{.spec.replicas}' 2>/dev/null || true)"
-[ -n "${CAPTURED_QWEN_REPLICAS}" ] || CAPTURED_QWEN_REPLICAS="${PROD_ORIGINAL_REPLICAS}"
-
-# The model currently served by prod qwen. `modelRef` links the InferenceService
-# to a models.inference.llmkube.dev object; we compare BY NAME against discovery.
-PROD_MODEL_REF="$(kubectl get inferenceservice "${PROD_ISVC}" -n "${NS}" \
-  -o jsonpath='{.spec.modelRef.name}' 2>/dev/null || true)"
-[ -n "${PROD_MODEL_REF}" ] || PROD_MODEL_REF="$(kubectl get inferenceservice "${PROD_ISVC}" \
-  -n "${NS}" -o jsonpath='{.spec.modelRef}' 2>/dev/null || true)"
-
-echo "   prod replicas : ${CAPTURED_QWEN_REPLICAS}"
-echo "   prod modelRef : ${PROD_MODEL_REF:-<unknown>}"
+[ -n "${CAPTURED_FREE_REPLICAS}" ] || CAPTURED_FREE_REPLICAS="${FREE_SERVICE_DEFAULT_REPLICAS}"
+echo "   ${FREE_SERVICE} replicas: ${CAPTURED_FREE_REPLICAS}"
 
 # Capture BOTH Flux Kustomizations' suspend state so restore returns each to
 # exactly what it was (child llm-models AND parent ai-k8s).
@@ -328,31 +403,27 @@ suspend_flux() {
   fi
 }
 
-# scale_qwen_to() -- scale prod qwen; record that WE touched it so restore acts.
-scale_qwen_to() {
+# scale_free_service_to() -- scale FREE_SERVICE; record that WE touched it so
+# restore acts. Scaling to 0 frees its GPU for a bench InferenceService.
+scale_free_service_to() {
   local n="$1"
-  echo ">> Scaling prod ${PROD_ISVC} to ${n} replica(s) to free a GPU..."
-  kubectl patch inferenceservice "${PROD_ISVC}" -n "${NS}" --type merge \
+  echo ">> Scaling served ${FREE_SERVICE} to ${n} replica(s)..."
+  kubectl patch inferenceservice "${FREE_SERVICE}" -n "${NS}" --type merge \
     -p "{\"spec\":{\"replicas\":${n}}}"
-  QWEN_TOUCHED="true"
+  FREE_TOUCHED="true"
 }
 
-# wait_free_gpu() -- wait until at least one GPU is allocatable-but-unused in the
-# llm nodes. Simple proxy: wait for qwen's scaled-down pods to actually leave so
-# the freed GPU is released before we schedule the temp InferenceService.
+# wait_free_gpu() -- wait until FREE_SERVICE's GPU is released. Simple proxy:
+# wait for FREE_SERVICE's scaled-down pods to actually leave (target 0) so the
+# freed GPU is available before we schedule the temp InferenceService.
 wait_free_gpu() {
-  echo ">> Waiting for scaled-down ${PROD_ISVC} pod(s) to terminate (GPU release)..."
+  echo ">> Waiting for scaled-down ${FREE_SERVICE} pod(s) to terminate (GPU release)..."
   for _ in $(seq 1 60); do
     local running
-    running="$(kubectl get pods -n "${NS}" -l "serving.llmkube.dev/inferenceservice=${PROD_ISVC}" \
+    running="$(kubectl get pods -n "${NS}" -l "serving.llmkube.dev/inferenceservice=${FREE_SERVICE}" \
       --field-selector=status.phase=Running -o name 2>/dev/null | wc -l | tr -d ' ')"
-    # Also try the generic app label as a fallback selector.
-    if [ "${running}" = "0" ]; then
-      running="$(kubectl get pods -n "${NS}" -l "app=${PROD_ISVC}" \
-        --field-selector=status.phase=Running -o name 2>/dev/null | wc -l | tr -d ' ')"
-    fi
-    echo "   running prod pods: ${running} (target <= 1)"
-    [ "${running}" -le 1 ] && { echo "   GPU should be free."; return 0; }
+    echo "   running ${FREE_SERVICE} pods: ${running} (target 0)"
+    [ "${running}" -le 0 ] && { echo "   GPU should be free."; return 0; }
     sleep 5
   done
   echo "   WARNING: timed out waiting for GPU release; proceeding anyway."
@@ -490,42 +561,38 @@ for cs in st.get("containerStatuses", []) or []:
   fi
 }
 
-# make_temp_isvc() -- write a temp InferenceService manifest for a bench model.
-# Bases it on the prod InferenceService (from the tracked YAML cache if present,
-# else live `kubectl get -o yaml`), then rewrites name/modelRef/model-source and
-# forces replicas=1, gpu=1, the gpu=true:NoSchedule toleration, ClusterIP:8000.
+# make_temp_isvc() -- write a temp InferenceService manifest for a bench model,
+# built FROM SCRATCH to mirror the NEW dual-NVFP4 prod shape:
+#   runtime: generic, image: cu129-nightly (profile-overridable), skipModelInit,
+#   modelCache -> shared llm-models-cache PVC (cached weights => fast warm start),
+#   tolerations nvidia.com/gpu Exists NoSchedule, resources.gpu 1, endpoint
+#   {port:8000,type:ClusterIP}, and per-model args from its candidates.yaml
+#   profile (or a generic default arg set when profile-less).
+# We NO LONGER clone the old prod manifest: the served models are NVFP4 with
+# qwen-specific args (--quantization modelopt, --tool-call-parser qwen3_xml) that
+# crash other families, so those come ONLY from a per-model profile.
 #   $1 = bench isvc name (bench-<slug>)   $2 = models CRD name   $3 = model source
 make_temp_isvc() {
   local bench_name="$1" model_crd="$2" model_source="$3"
-  local base_yaml="${WORKDIR}/prod-isvc.yaml"
   local out_yaml="${WORKDIR}/${bench_name}.yaml"
 
-  if [ -f "${ISVC_YAML_CACHE}" ]; then
-    echo ">> Using cached prod InferenceService manifest: ${ISVC_YAML_CACHE}" >&2
-    cp "${ISVC_YAML_CACHE}" "${base_yaml}"
-  else
-    echo ">> Reading live prod InferenceService ${PROD_ISVC} as template..." >&2
-    kubectl get inferenceservice "${PROD_ISVC}" -n "${NS}" -o yaml > "${base_yaml}"
-  fi
-
-  # Per-model serving profile from candidates.yaml (JSON, "{}" when absent). When
-  # present it REPLACES prod qwen's cloned tuning (image / vllm_args / etc.) --
-  # qwen's --tool-call-parser qwen3_xml, --kv-cache-dtype fp8, --dtype bfloat16 are
-  # qwen-specific and crash other families (gemma SentencePiece, gpt-oss MXFP4, ...).
+  # Per-model serving profile from candidates.yaml (JSON, "{}" when absent).
   local profile_json
   profile_json="$(candidate_field profile "$(sanitize "${model_source:-$model_crd}")" "${model_source}")"
   [ -n "${profile_json}" ] || profile_json="{}"
   if [ "${profile_json}" != "{}" ]; then
-    echo ">> Applying per-model serving profile for ${bench_name} (overrides qwen's cloned args)." >&2
+    echo ">> Applying per-model serving profile for ${bench_name}." >&2
   fi
 
-  # Transform the base manifest with Python (robust YAML edit, no fragile sed).
-  # NOTE: patched to match the ACTUAL inference.llmkube.dev/v1alpha1 CRD layout
-  # observed on ka-k8s-ai (modelRef is a STRING; model source is args[0]; gpu is
-  # a scalar spec.resources.gpu; the service block is spec.endpoint not spec.service).
+  # Emit the manifest with Python (robust, no fragile sed). Args come from the
+  # profile's vllm_args VERBATIM when present (element 0 is the vLLM --model),
+  # else a generic default arg set mirroring the prod NVFP4 block MINUS the
+  # model-specific bits (source is args[0]; --quantization modelopt is
+  # NVFP4-specific; --tool-call-parser qwen3_xml is qwen-specific -> profiles only).
   BENCH_NAME="${bench_name}" MODEL_CRD="${model_crd}" MODEL_SOURCE="${model_source}" \
+  BENCH_NS="${NS}" DEFAULT_BENCH_IMAGE="${DEFAULT_BENCH_IMAGE}" SHARED_CACHE_PVC="${SHARED_CACHE_PVC}" \
   PROFILE_JSON="${profile_json}" \
-  "${PYTHON}" - "${base_yaml}" "${out_yaml}" <<'PY'
+  "${PYTHON}" - "${out_yaml}" <<'PY'
 import json, os, sys
 try:
     import yaml
@@ -533,80 +600,77 @@ except ImportError:
     sys.stderr.write("PyYAML required to template the InferenceService.\n")
     sys.exit(1)
 
-src, dst = sys.argv[1], sys.argv[2]
+dst = sys.argv[1]
 bench = os.environ["BENCH_NAME"]
 model_crd = os.environ["MODEL_CRD"]
 model_source = os.environ["MODEL_SOURCE"]
+ns = os.environ.get("BENCH_NS", "llm")
+default_image = os.environ.get("DEFAULT_BENCH_IMAGE", "vllm/vllm-openai:cu129-nightly")
+cache_pvc = os.environ.get("SHARED_CACHE_PVC", "llm-models-cache")
 try:
     profile = json.loads(os.environ.get("PROFILE_JSON") or "{}") or {}
 except ValueError:
     profile = {}
 
-doc = yaml.safe_load(open(src))
-# Strip server-managed fields so apply is clean.
-meta = doc.setdefault("metadata", {})
-meta["name"] = bench
-for k in ("resourceVersion", "uid", "creationTimestamp", "generation",
-          "managedFields", "annotations", "ownerReferences", "labels"):
-    meta.pop(k, None)
-doc.pop("status", None)
-
-spec = doc.setdefault("spec", {})
-spec["replicas"] = 1
-
-# modelRef is a STRING on this CRD -> just set the target model CRD name.
-spec["modelRef"] = model_crd
-
-# --- Serving config -------------------------------------------------------
-# If a profile supplies its own vllm_args, use them VERBATIM as the full arg
-# list (element 0 is the vLLM --model). Otherwise clone prod qwen's args and
-# just swap the model source into args[0].
 prof_args = profile.get("vllm_args")
 if isinstance(prof_args, list) and prof_args:
-    spec["args"] = [str(a) for a in prof_args]
+    args = [str(a) for a in prof_args]
 else:
-    args = spec.get("args")
-    if isinstance(args, list) and args:
-        args[0] = model_source
-    else:
-        # Fallback: build a minimal args list if the base had none.
-        spec["args"] = [model_source, "--host", "0.0.0.0", "--port", "8000"]
+    # Generic default: mirrors the prod NVFP4 block minus model-specific bits.
+    args = [
+        model_source,
+        "--host", "0.0.0.0",
+        "--port", "8000",
+        "--tensor-parallel-size", "1",
+        "--max-model-len", "262144",
+        "--max-num-seqs", "256",
+        "--max-num-batched-tokens", "16384",
+        "--enable-chunked-prefill",
+        "--enable-prefix-caching",
+        "--gpu-memory-utilization", "0.95",
+    ]
 
-# Optional container image override (default: inherit prod qwen's image).
-if profile.get("image"):
-    spec["image"] = profile["image"]
+spec = {
+    # modelRef is a STRING on this CRD -> the target model CRD name.
+    "modelRef": model_crd,
+    "runtime": "generic",
+    "image": profile.get("image") or default_image,
+    "replicas": 1,
+    # skipModelInit: weights come from args[0] + the shared modelCache PVC, not a
+    # model-init download step.
+    "skipModelInit": True,
+    "args": args,
+    "endpoint": {"port": 8000, "type": "ClusterIP"},
+    "tolerations": [
+        {"key": "nvidia.com/gpu", "operator": "Exists", "effect": "NoSchedule"},
+    ],
+    "resources": {"gpu": 1, "cpu": "1500m", "memory": "6Gi"},
+    # Shared cache PVC: cached HF weights + vLLM compile cache -> fast warm start.
+    # RWO is fine because the bench pod lands on the same single GPU node.
+    "modelCache": {"claimName": cache_pvc},
+}
 
+meta = {"name": bench, "namespace": ns}
 # extra_pip is advisory: the stock vLLM image does not pip-install at startup,
 # so we only surface it as an annotation for operators (models needing it will
 # generally fast-fail with a captured reason). Never silently drop the info.
 if profile.get("extra_pip"):
-    meta.setdefault("annotations", {})["bench.druppie/extra-pip"] = \
-        ",".join(str(p) for p in profile["extra_pip"])
+    meta["annotations"] = {
+        "bench.druppie/extra-pip": ",".join(str(p) for p in profile["extra_pip"]),
+    }
 
-# Force single-GPU footprint. On this CRD, gpu is a scalar under spec.resources
-# (alongside cpu/memory). Preserve cpu/memory; just pin gpu=1.
-res = spec.setdefault("resources", {})
-res["gpu"] = 1
-
-# GPU node toleration (already present on prod; keep idempotent).
-tolerations = spec.setdefault("tolerations", [])
-gpu_tol = {"key": "gpu", "operator": "Equal", "value": "true",
-           "effect": "NoSchedule"}
-if gpu_tol not in tolerations:
-    tolerations.append(gpu_tol)
-
-# endpoint block: ClusterIP:8000 with the chat path (already correct on prod).
-ep = spec.get("endpoint")
-if isinstance(ep, dict):
-    ep.setdefault("type", "ClusterIP")
-    ep.setdefault("port", 8000)
-
+doc = {
+    "apiVersion": "inference.llmkube.dev/v1alpha1",
+    "kind": "InferenceService",
+    "metadata": meta,
+    "spec": spec,
+}
 yaml.safe_dump(doc, open(dst, "w"), sort_keys=False)
-print(f"   wrote temp InferenceService manifest: {dst}", file=sys.stderr)
+sys.stderr.write("   wrote temp InferenceService manifest: %s\n" % dst)
 PY
   # ONLY the manifest path goes to stdout -- it is captured by the caller via
   # command substitution. All diagnostics above are redirected to stderr so they
-  # don't pollute the captured path (regression fixed 2026-07-01).
+  # don't pollute the captured path.
   echo "${out_yaml}"
 }
 
@@ -665,23 +729,33 @@ wait_isvc_ready() {
 #   $1 = base_url (http://host:8000/v1)   $2 = model id   $3 = display_name
 #   $4 = destination result JSON path (TRANSIENT, in the temp WORKDIR)
 #   $5 = destination report.txt path (in benchmarks/results-incluster/<slug>/)
+#   $6 = Job name (UNIQUE per model: llm-benchmark-<slug>) so a manual
+#        `llm-benchmark` Job can never collide with the sweep.
 run_benchmark_job() {
-  local base_url="$1" model_id="$2" display="$3" dest_json="$4" dest_report="$5"
+  local base_url="$1" model_id="$2" display="$3" dest_json="$4" dest_report="$5" job_name="$6"
   local tmp_config="${WORKDIR}/config-$(sanitize "${model_id}").yaml"
+  local tmp_job="${WORKDIR}/job-$(sanitize "${model_id}").yaml"
 
   echo ">> Building per-model temp config -> ${tmp_config}"
   # Start from the tracked config, then override the single active endpoint's
-  # base_url and the single active model's id/display_name. sed targets the
-  # `qwen_incluster` endpoint block's base_url and the first model entry.
+  # base_url and the single active model's id/display_name. The FIRST endpoint
+  # (qwen_incluster) is the active one; target its base_url generically so this
+  # works regardless of the tracked default (qwen-27b.llm... today).
   cp "${CONFIG_SRC}" "${tmp_config}"
-  # Override the in-cluster endpoint URL.
-  sed -i -E "s|base_url: \"http://qwen\.llm\.svc\.cluster\.local:8000/v1\"|base_url: \"${base_url}\"|" "${tmp_config}"
+  # Override the first endpoint's base_url (the active in-cluster endpoint).
+  sed -i -E "0,/^    base_url: .*/s||    base_url: \"${base_url}\"|" "${tmp_config}"
   # Override the active model id + display name (first `model:`/`display_name:`).
   sed -i -E "0,/^    model: .*/s||    model: ${model_id}|" "${tmp_config}"
   sed -i -E "0,/^    display_name: .*/s||    display_name: \"${display}\"|" "${tmp_config}"
 
+  # Per-model Job manifest: UNIQUE name (llm-benchmark-<slug>) so it can never
+  # collide with a manual `llm-benchmark` Job. Only metadata.name changes; the
+  # `app:` labels stay as-is. job.yaml is otherwise applied unchanged.
+  cp "${JOB_YAML}" "${tmp_job}"
+  sed -i -E "0,/^  name: ${MANUAL_JOB}$/s||  name: ${job_name}|" "${tmp_job}"
+
   echo ">> Cleaning up any prior benchmark Job + configmaps..."
-  kubectl delete job "${JOB}" -n "${NS}" --ignore-not-found
+  kubectl delete job "${job_name}" -n "${NS}" --ignore-not-found
   kubectl delete configmap bench-pkg bench-scenarios bench-publish -n "${NS}" --ignore-not-found
 
   echo ">> Creating configmap bench-pkg (with per-model temp config)..."
@@ -700,20 +774,21 @@ run_benchmark_job() {
   kubectl create configmap bench-publish -n "${NS}" \
     --from-file=publish_to_aigit.py=benchmarks/k8s/publish_to_aigit.py
 
-  echo ">> Applying Job (job.yaml, unchanged)..."
-  kubectl apply -f "${JOB_YAML}"
+  echo ">> Applying Job (${job_name}, from job.yaml with unique name)..."
+  kubectl apply -f "${tmp_job}"
+  TEMP_JOBS+=("${job_name}")            # track for the restore trap
 
   echo ">> Waiting for benchmark Job to complete..."
   # Wait for either Complete or Failed; then capture the result JSON + console
   # report out of the pod logs (the Job prints ===RESULTS_JSON_START/END=== and
   # ===REPORT_TXT_START/END=== markers).
-  kubectl wait --for=condition=complete "job/${JOB}" -n "${NS}" \
+  kubectl wait --for=condition=complete "job/${job_name}" -n "${NS}" \
     --timeout="${JOB_COMPLETE_TIMEOUT}s" || \
-    kubectl wait --for=condition=failed "job/${JOB}" -n "${NS}" --timeout=30s || true
+    kubectl wait --for=condition=failed "job/${job_name}" -n "${NS}" --timeout=30s || true
 
   # Grab the Job logs ONCE, then scrape both marker blocks out of them.
   local job_logs="${WORKDIR}/joblogs-$(sanitize "${model_id}").txt"
-  kubectl logs "job/${JOB}" -n "${NS}" 2>/dev/null > "${job_logs}" || true
+  kubectl logs "job/${job_name}" -n "${NS}" 2>/dev/null > "${job_logs}" || true
 
   echo ">> Extracting result JSON from Job logs -> ${dest_json} (transient)"
   # Pull the JSON between the markers the Job emits on stdout. Kept only in the
@@ -740,7 +815,9 @@ run_benchmark_job() {
   fi
 
   # Clean up the Job before the next model.
-  kubectl delete job "${JOB}" -n "${NS}" --ignore-not-found >/dev/null 2>&1 || true
+  kubectl delete job "${job_name}" -n "${NS}" --ignore-not-found >/dev/null 2>&1 || true
+  # Drop it from the tracked list (already deleted).
+  TEMP_JOBS=("${TEMP_JOBS[@]/${job_name}}")
 }
 
 # =============================================================================
@@ -756,23 +833,29 @@ while IFS=$'\t' read -r model_name model_source; do
   # under a per-model folder: results-incluster/<slug>/report.txt.
   dest_json="${WORKDIR}/results-${slug}.json"
   dest_report="${RESULTS_DIR}/${slug}/report.txt"
+  job_name="${JOB_PREFIX}-${slug}"     # UNIQUE per-model Job (never collides with manual)
 
   echo ""
   echo "==============================================================="
   echo ">> MODEL: ${model_name}  (source: ${model_source})  slug: ${slug}"
   echo "==============================================================="
 
-  if [ -n "${PROD_MODEL_REF}" ] && [ "${model_name}" = "${PROD_MODEL_REF}" ]; then
-    # --- Case A: already served by prod qwen -> benchmark in place. ----------
-    echo ">> This model is already served by prod ${PROD_ISVC}; benchmarking in"
-    echo "   place against http://${PROD_ISVC}.${NS}.svc.cluster.local:8000/v1"
-    echo "   (no serving change, prod stays at full ${CAPTURED_QWEN_REPLICAS} replicas)."
+  # Is this model ALREADY served by one of the prod InferenceServices
+  # (qwen-27b / qwen-35b)? If so, benchmark it in place -- no scaling.
+  serving_isvc="$(served_isvc_for_model "${model_name}")"
+
+  if [ -n "${serving_isvc}" ]; then
+    # --- Case A: already served -> benchmark in place (no serving change). ----
+    echo ">> This model is already served by ${serving_isvc}; benchmarking in"
+    echo "   place against http://${serving_isvc}.${NS}.svc.cluster.local:8000/v1"
+    echo "   (no serving change, no scaling)."
     run_benchmark_job \
-      "http://${PROD_ISVC}.${NS}.svc.cluster.local:8000/v1" \
+      "http://${serving_isvc}.${NS}.svc.cluster.local:8000/v1" \
       "${model_source}" \
-      "${model_name} (prod, in-place)" \
+      "${model_name} (served, in-place)" \
       "${dest_json}" \
-      "${dest_report}"
+      "${dest_report}" \
+      "${job_name}"
     [ -s "${dest_report}" ] && clear_skip "${slug}"
   else
     # --- Upfront size-skip: never touch the cluster for a model that cannot
@@ -787,12 +870,13 @@ while IFS=$'\t' read -r model_name model_source; do
       continue
     fi
 
-    # --- Case B: not served -> free a GPU, spin up a temp InferenceService. --
+    # --- Case B: not served -> free a GPU (scale FREE_SERVICE to 0), spin up a
+    #     temp InferenceService on that freed GPU (mounts the shared cache PVC). -
     bench_isvc="bench-${slug}"
     bench_host="${bench_isvc}.${NS}.svc.cluster.local"
 
     suspend_flux                       # stop Flux from fighting us
-    scale_qwen_to 1                    # free 1 GPU (prod now HALF capacity!)
+    scale_free_service_to 0            # free 1 GPU (FREE_SERVICE now OFFLINE)
     wait_free_gpu                      # wait until the GPU is actually released
 
     echo ">> Creating temp InferenceService ${bench_isvc}..."
@@ -804,15 +888,17 @@ while IFS=$'\t' read -r model_name model_source; do
     TEMP_ISVCS+=("${bench_isvc}")      # track for the restore trap (before create)
     kubectl apply -f "${manifest}"
 
-    # Wait for it to serve (first serve downloads weights -> long budget), but
-    # fast-fail on a crashloop/error and record a matrix-ready reason.
+    # Wait for it to serve (cached weights via the shared PVC usually make this
+    # fast; a cold model downloads from HF -> long budget), but fast-fail on a
+    # crashloop/error and record a matrix-ready reason.
     if wait_isvc_ready "${bench_host}" "${bench_isvc}"; then
       run_benchmark_job \
         "http://${bench_host}:8000/v1" \
         "${model_source}" \
         "${model_name} (bench, single-GPU)" \
         "${dest_json}" \
-        "${dest_report}"
+        "${dest_report}" \
+        "${job_name}"
       if [ -s "${dest_report}" ]; then
         clear_skip "${slug}"
       else
@@ -829,9 +915,11 @@ while IFS=$'\t' read -r model_name model_source; do
     # Drop it from the tracked list (already deleted).
     TEMP_ISVCS=("${TEMP_ISVCS[@]/${bench_isvc}}")
 
-    # Restore prod to full capacity between models so it isn't degraded during
-    # the gaps. (The trap also does this on exit; doing it here is a courtesy.)
-    scale_qwen_to "${CAPTURED_QWEN_REPLICAS}"
+    # Restore FREE_SERVICE between models so it isn't offline during the gaps.
+    # (The trap also does this on exit; doing it here is a courtesy.) The bench
+    # isvc above was deleted with --wait=true, so its GPU is free before we scale
+    # FREE_SERVICE back up (avoids a quota rejection).
+    scale_free_service_to "${CAPTURED_FREE_REPLICAS}"
   fi
 done <<< "${MODEL_LINES}"
 
@@ -911,5 +999,5 @@ export RESULTS_DIR="${STAGE}"
 
 echo ""
 echo ">> Benchmark sweep complete. Local results in ${RESULTS_DIR}."
-echo ">> (Restore trap will now run to return prod + Flux to their original state.)"
+echo ">> (Restore trap will now run to return ${FREE_SERVICE} + Flux to their original state.)"
 # The EXIT trap (restore) handles teardown/restore from here.

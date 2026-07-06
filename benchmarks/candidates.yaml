@@ -25,11 +25,14 @@
 # Sizing / benchmark-control fields (consumed by benchmark-all-models.sh):
 #   fit       -- fit class on THIS hardware (1 GPU node, 2x RTX PRO 6000 Blackwell
 #                96GB = 192GB total, NO P2P so serving is tensor-parallel=1, one model
-#                per GPU; a run frees at most ONE GPU by scaling prod qwen 2->1):
-#                  served      -- currently served in prod; benchmarked in place.
+#                per GPU. Prod now serves TWO NVFP4 models (qwen-27b + qwen-35b), one
+#                per GPU; a sweep frees at most ONE GPU by scaling FREE_SERVICE 1->0.
+#                NVFP4 is ~2.5-3.5x smaller than bf16, so RE-EVALUATE every fit class
+#                against ~90GB usable on the single freed card):
+#                  served      -- currently served in prod (NVFP4); benchmarked in place.
 #                  fits-1gpu   -- fits one 96GB card; benchmarkable now (frees 1 GPU).
 #                  needs-2gpu  -- needs both cards (TP=2); full prod outage required.
-#                  too-large   -- exceeds 192GB total even quantized; not testable here.
+#                  too-large   -- exceeds 192GB total even at NVFP4; not testable here.
 #                  api         -- OpenRouter-hosted; not a cluster model.
 #   est_vram  -- rough VRAM footprint estimate (free-form, all ESTIMATES).
 #   skip_reason -- if set, the sweep does NOT create a bench InferenceService for this
@@ -37,9 +40,11 @@
 #                matrix. Set for `too-large` / `needs-2gpu`. Leave empty to attempt a
 #                real benchmark (a serving crash is then captured live via fast-fail).
 #   profile   -- OPTIONAL per-model serving profile. When present, make_temp_isvc()
-#                uses it INSTEAD OF cloning prod qwen's manifest verbatim (qwen's
-#                --tool-call-parser qwen3_xml / --kv-cache-dtype fp8 / --dtype bfloat16
-#                are qwen-specific and crash other model families). Sub-fields:
+#                drives the bench InferenceService's args/image from it INSTEAD OF the
+#                generic default arg set (which mirrors the prod NVFP4 block minus the
+#                model-specific source + --quantization). NVFP4/modelopt models MUST
+#                set `--quantization modelopt` in vllm_args and use their nvidia/*-NVFP4
+#                (or other modelopt) source as element 0. Sub-fields:
 #                  image             -- container image override (default: inherit qwen's).
 #                  vllm_args         -- COMPLETE vLLM arg list, REPLACING the cloned args.
 #                                       Element 0 is the vLLM --model (HF repo, or a
@@ -67,29 +72,49 @@ models:
     category: "local"
     params: "26B (MoE, ~A4B active)"
     fit: "fits-1gpu"
-    est_vram: "~26B bf16 ~52GB"
+    est_vram: "~52GB bf16 / ~13GB NVFP4"
     skip_reason: ""
-    notes: "backlog only (no registered CR); fit informational"
+    notes: "backlog only (no registered CR); fit informational. No confirmed nvidia/*-NVFP4 build; kept as the bf16 HF repo (already fits at bf16, so NVFP4 not required)."
 
-  - name: "Qwen3.6-35B-A3B"
+  - name: "Qwen3.6-35B-A3B (bf16)"
     source: "Qwen/Qwen3.6-35B-A3B"
     slug: "qwen3.6-35b-a3b"
     category: "local"
-    params: "35B (MoE, A3B active)"
+    params: "35B (MoE, A3B active, bf16)"
     fit: "fits-1gpu"
     est_vram: "~70GB bf16 (tight on one 96GB card)"
     skip_reason: ""
-    notes: "Qwen-family full HF repo; prod qwen's cloned args work as-is (no profile needed)"
+    notes: "Full-precision variant; SUPERSEDED in prod by the served NVFP4 build (nvidia/Qwen3.6-35B-A3B-NVFP4, isvc qwen-35b). Benchmarkable as Case B if you want a bf16-vs-NVFP4 comparison."
 
-  - name: "Qwen3.6-27B"
+  - name: "Qwen3.6-27B (bf16)"
     source: "Qwen/Qwen3.6-27B"
     slug: "qwen3.6-27b"
     category: "local"
-    params: "27B"
-    fit: "served"
+    params: "27B (bf16)"
+    fit: "fits-1gpu"
     est_vram: "~54GB bf16"
     skip_reason: ""
-    notes: "reasoning model, already benchmarked; served in prod (benchmarked in place)"
+    notes: "Full-precision variant; SUPERSEDED in prod by the served NVFP4 build (nvidia/Qwen3.6-27B-NVFP4, isvc qwen-27b). Existing results-incluster/qwen3.6-27b/ report.txt is this bf16 build. Benchmarkable as Case B (frees 1 GPU)."
+
+  - name: "Qwen3.6-27B-NVFP4"
+    source: "nvidia/Qwen3.6-27B-NVFP4"
+    slug: "qwen3.6-27b-nvfp4"
+    category: "local"
+    params: "27B (NVFP4)"
+    fit: "served"
+    est_vram: "~16GB (NVFP4 4-bit)"
+    skip_reason: ""
+    notes: "SERVED in prod by isvc qwen-27b (modelRef qwen3-6-27b); benchmarked IN PLACE, no scaling. In-cluster live 2026-07-06 (256K, cu129-nightly)."
+
+  - name: "Qwen3.6-35B-A3B-NVFP4"
+    source: "nvidia/Qwen3.6-35B-A3B-NVFP4"
+    slug: "qwen3.6-35b-a3b-nvfp4"
+    category: "local"
+    params: "35B MoE A3B (NVFP4)"
+    fit: "served"
+    est_vram: "~20GB (NVFP4 4-bit)"
+    skip_reason: ""
+    notes: "SERVED in prod by isvc qwen-35b (modelRef qwen3-6-35b-a3b); benchmarked IN PLACE, no scaling. This is the DEFAULT FREE_SERVICE (scaled 1->0 to free a GPU for other bench models). In-cluster live 2026-07-06 (256K, cu129-nightly)."
 
   - name: "Gemma-4-31B"
     source: "google/gemma-4-31B"
@@ -97,9 +122,9 @@ models:
     category: "local"
     params: "31B"
     fit: "fits-1gpu"
-    est_vram: "~62GB bf16"
+    est_vram: "~62GB bf16 / ~16GB NVFP4"
     skip_reason: ""
-    notes: "backlog only (no registered CR); fit informational"
+    notes: "backlog only (no registered CR); fit informational. No confirmed nvidia/*-NVFP4 build; kept as the bf16 HF repo (already fits at bf16)."
 
   - name: "GLM-5.1"
     source: "unsloth/GLM-5.1-GGUF"
@@ -107,19 +132,33 @@ models:
     category: "local"
     params: "744B (MoE, 40B active)"
     fit: "too-large"
-    est_vram: "~220-236GB @2-bit dynamic GGUF"
-    skip_reason: "Not benchmarked -- exceeds VRAM (744B MoE, ~220-236GB even @2-bit dynamic GGUF > 192GB total; needs RAM/MoE offload or multi-node)."
-    notes: "CPU/GPU hybrid would be required; not attempted (would only degrade prod)"
+    est_vram: "~220-236GB @2-bit GGUF / ~372GB NVFP4"
+    skip_reason: "Not benchmarked -- exceeds VRAM (744B MoE, still ~372GB at NVFP4 4-bit > 192GB total; needs RAM/MoE offload or multi-node). No confirmed nvidia/*-NVFP4 build."
+    notes: "NVFP4 does NOT rescue this: 744B @4-bit is still > 192GB. No NVFP4 source confirmed; kept as GGUF. CPU/GPU hybrid or multi-node required; not attempted."
 
-  - name: "Qwen3-Coder-Next-80B-A3B"
-    source: "Qwen3-Coder-Next-80B"
-    slug: "qwen3-coder-next-80b"
+  - name: "Qwen3-Coder-Next-80B-A3B (NVFP4)"
+    source: "Cirrascale/Qwen3-Coder-Next-NVFP4"
+    slug: "qwen3-coder-next-nvfp4"
     category: "local"
-    params: "80B (A3B active)"
-    fit: "needs-2gpu"
-    est_vram: "~160GB bf16"
-    skip_reason: "Needs 2 GPUs / TP=2 (~160GB bf16 > single 96GB card) -- full qwen outage required; not attempted outside a maintenance window."
-    notes: "testable only by taking prod fully down (or with heavy quantization)"
+    params: "80B (A3B active, NVFP4)"
+    fit: "fits-1gpu"
+    est_vram: "~44GB NVFP4 (80B @4-bit + KV cache; fits one 96GB card)"
+    skip_reason: ""
+    notes: "RECLASSIFIED needs-2gpu -> fits-1gpu at NVFP4 (~2.5-3.5x smaller than the ~160GB bf16). Source is a COMMUNITY NVFP4 quant (Cirrascale/Qwen3-Coder-Next-NVFP4); the OFFICIAL nvidia NVFP4 for the *coder-next* 80B is NOT confirmed (nvidia ships Qwen3-Next-80B-A3B-Instruct-NVFP4, a non-coder sibling). May fast-fail if the community repo layout/param-count differs -- captured as a reason."
+    profile:
+      # NVFP4 (ModelOpt) -> serve with --quantization modelopt. Generic Qwen-family
+      # coder; NO qwen3_xml (that parser is Qwen3.6-specific). Community NVFP4 source.
+      served_model_name: "Cirrascale/Qwen3-Coder-Next-NVFP4"
+      vllm_args:
+        - "Cirrascale/Qwen3-Coder-Next-NVFP4"
+        - "--quantization"
+        - "modelopt"
+        - "--served-model-name"
+        - "Cirrascale/Qwen3-Coder-Next-NVFP4"
+        - "--max-model-len"
+        - "131072"
+        - "--gpu-memory-utilization"
+        - "0.95"
 
   - name: "GPT-OSS-120B"
     source: "gpt-oss-120b"
@@ -129,7 +168,7 @@ models:
     fit: "fits-1gpu"
     est_vram: "~63GB (native MXFP4)"
     skip_reason: ""
-    notes: "ships native MXFP4 (loads without extra quant); needs gpt-oss serving config, NOT qwen3_xml"
+    notes: "ships native MXFP4 (loads without extra quant); needs gpt-oss serving config, NOT qwen3_xml. An NVFP4 modelopt quant EXISTS (community shanjiaz/gpt-oss-120b-nvfp4-modelopt) but we keep NATIVE MXFP4: it already fits, and on our SM120 (RTX PRO 6000 Blackwell) cards NVFP4/MXFP4 native MoE kernels fall back to Marlin (slower) -- native MXFP4 is the safer path."
     profile:
       # gpt-oss ships native MXFP4 -- do NOT force --dtype bfloat16 or
       # --kv-cache-dtype fp8 (both are qwen-specific and mis-quantize gpt-oss).
@@ -145,15 +184,15 @@ models:
         - "--max-model-len"
         - "131072"
 
-  - name: "Qwen3-Coder-480B-A35B-Instruct"
-    source: "Qwen3-Coder-480B-A35B-Instruct"
-    slug: "qwen3-coder-480b-a35b-instruct"
+  - name: "Qwen3-Coder-480B-A35B-Instruct (NVFP4)"
+    source: "nvidia/Qwen3-Coder-480B-A35B-Instruct-NVFP4"
+    slug: "qwen3-coder-480b-a35b-instruct-nvfp4"
     category: "local"
-    params: "480B (A35B active)"
+    params: "480B (A35B active, NVFP4)"
     fit: "too-large"
-    est_vram: "~270GB @Q4 / ~960GB bf16"
-    skip_reason: "Not benchmarked -- exceeds VRAM (~270GB @Q4 / ~960GB bf16 > 192GB total; needs multi-node)."
-    notes: "does not fit even quantized on 192GB total"
+    est_vram: "~240-270GB NVFP4 (~3.5x smaller than ~960GB bf16, still > 192GB total)"
+    skip_reason: "Not benchmarked -- still exceeds VRAM even at NVFP4 (~240-270GB > 192GB total, and far > one 96GB freed card; needs multi-node). CONFIRMED source: nvidia/Qwen3-Coder-480B-A35B-Instruct-NVFP4."
+    notes: "Official NVFP4 quant EXISTS (nvidia/Qwen3-Coder-480B-A35B-Instruct-NVFP4, ~3.5x memory reduction) but 480B @4-bit is still too big for the single freed GPU / 192GB total. Kept too-large."
 
   - name: "GLM-4.6V"
     source: "unsloth/GLM-4.6V-GGUF"
@@ -161,9 +200,9 @@ models:
     category: "local"
     params: "106B (vision)"
     fit: "fits-1gpu"
-    est_vram: "~60GB @Q4 GGUF"
+    est_vram: "~53GB NVFP4 / ~60GB @Q4 GGUF"
     skip_reason: ""
-    notes: "multimodal/vision GGUF -- fits by size but vision serving on vLLM is unverified; likely fast-fails with a captured reason"
+    notes: "multimodal/vision -- fits one 96GB card. No confirmed nvidia/*-NVFP4 build for this vision model; kept as GGUF. Vision serving on vLLM is unverified; likely fast-fails with a captured reason."
 
   - name: "Qwen3.6-27B-MTP"
     source: "unsloth/Qwen3.6-27B-MTP-GGUF"
@@ -173,7 +212,7 @@ models:
     fit: "fits-1gpu"
     est_vram: "~16-30GB GGUF quant"
     skip_reason: ""
-    notes: "multi-token-prediction speed variant of Qwen3.6-27B; GGUF -- attempted with cloned qwen args, may fast-fail on GGUF handling"
+    notes: "multi-token-prediction speed variant of Qwen3.6-27B; GGUF -- no confirmed nvidia/*-NVFP4 build (MTP is a speculative-decode variant), kept as GGUF. Attempted with the generic default args (profile-less); may fast-fail on GGUF handling -- captured as a reason."
 
   - name: "Gemma-4-E4B-it"
     source: "unsloth/gemma-4-E4B-it-GGUF"
@@ -209,9 +248,9 @@ models:
     category: "local"
     params: "671B (37B active)"
     fit: "too-large"
-    est_vram: "~380GB @Q4 GGUF (only q1 UD-TQ1_0 fits)"
-    skip_reason: "Not benchmarked -- exceeds VRAM (671B MoE, ~380GB @Q4 GGUF > 192GB total; needs multi-node)."
-    notes: "fits only at q1; not attempted (would only degrade prod)"
+    est_vram: "~335GB NVFP4 / ~380GB @Q4 GGUF (only q1 UD-TQ1_0 fits)"
+    skip_reason: "Not benchmarked -- exceeds VRAM (671B MoE, still ~335GB at NVFP4 4-bit > 192GB total; needs multi-node). No confirmed nvidia/*-NVFP4 build for V3.1."
+    notes: "NVFP4 does NOT rescue this: 671B @4-bit is still > 192GB. No NVFP4 source confirmed; kept as GGUF. Fits only at q1; not attempted."
 
   # ---------------------------------------------------------------------------
   # API -- OpenRouter-hosted (NOT cluster-downloadable; API-only if at all)
