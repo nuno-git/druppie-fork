@@ -20,6 +20,41 @@ ai/k8s push     → FluxCD detects change → Helm upgrade → pods restart
 
 FluxCD watches `ai/k8s` main branch every 5 min, applies everything under `clusters/ka-k8s-ai/`, and prunes removed objects. The chart source for HelmReleases comes from `ai/druppie` (FluxCD GitRepository `ai-druppie`).
 
+## Pushing to Gitea (Network Relay)
+
+`aigit.waterschap.org` is on the corporate network and **not directly reachable from WSL**. A local HTTP proxy relay bridges the connection.
+
+### How it works
+
+```
+WSL (git push) → 127.0.0.1:8888 (gsa-relay.ps1 on Windows) → corporate network → aigit.waterschap.org
+```
+
+- **`gsa-relay.ps1`** — PowerShell script at `C:\Users\nscholten\gsa-relay.ps1`, auto-starts on WSL login via `/init`. Listens on `0.0.0.0:8888`.
+- **Git proxy** — `~/.gitconfig` already has `[http "https://aigit.waterschap.org/"] proxy = http://127.0.0.1:8888`. No env vars needed for `git push`.
+- **Credentials** — OAuth2 token stored in `~/.git-credentials` (`credential.helper = store`). No password prompts.
+
+### Checking if the relay is up
+
+```bash
+# Quick check — should return {"version":"1.26.x"}
+curl -sk --proxy http://127.0.0.1:8888 https://aigit.waterschap.org/api/v1/version
+
+# Or check the port is listening
+ss -tlnp | grep 8888
+```
+
+### If the relay is down (git push fails with connection refused/timeout)
+
+The relay is a Windows-side process. You **cannot start it from WSL**. Ask the user to run it on Windows:
+
+```powershell
+# On Windows (PowerShell):
+C:\Users\nscholten\gsa-relay.ps1
+```
+
+Or simply ask the user: *"The GSA relay on port 8888 isn't running. Can you start `gsa-relay.ps1` on Windows?"*
+
 ## Infrastructure as Code (IaC)
 
 **Everything must be defined in git.** Both `ai/k8s` and `ai/druppie` are the source of truth. FluxCD will revert manual `kubectl apply` changes on the next reconciliation cycle (5 min).
