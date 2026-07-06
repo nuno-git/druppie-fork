@@ -400,21 +400,11 @@ externalSecrets:
   serviceAccount: external-secrets
 agentSandbox:
   enabled: false
-  # Shared across all agent-coding tiers.
   coding:
     cpuLimit: '2'
     memoryLimit: 4Gi
     workspaceSize: 10Gi
   devEnv:
     workspaceSize: 20Gi
-  # Per-tier warm-pool replicas. There is no single un-suffixed warmpool;
-  # default tier is airgapped.
   warmPool:
-    airgapped: 1
-    internet: 2
-    modules: 1
-  # Forward proxy (DaemonSet in sandbox-gateway) bridging gVisor sandboxes to
-  # in-cluster services for the "modules" tier. ALLOW_HOSTS is a comma-separated
-  # list of allowed destination host suffixes.
-  gateway:
-    allowHosts: ".rijnland.dev"
+    replicas: 5

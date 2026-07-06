@@ -1,29 +1,16 @@
 {{- if .Values.agentSandbox.enabled }}
-# Pre-warmed pools of agent-coding sandboxes for instant allocation, one per
-# network tier. At scale (1500 users) this eliminates the ~10s cold-start per
-# sandbox. There is no single un-suffixed warmpool; the default tier is airgapped.
-#
-# Tier → warmpool/template contract (chart & k8s_sandbox.py must match):
-#   airgapped → agent-coding-warmpool-airgapped  → agent-coding-template-airgapped
-#   internet  → agent-coding-warmpool-internet   → agent-coding-template-internet
-#   modules   → agent-coding-warmpool-modules    → agent-coding-template-modules
-{{- $tiers := list
-    (dict "suffix" "airgapped")
-    (dict "suffix" "internet")
-    (dict "suffix" "modules")
-}}
-{{- range $tier := $tiers }}
+# Pre-warmed pool of agent-coding sandboxes for instant allocation.
+# At scale (1500 users), this eliminates the ~10s cold-start per sandbox.
 ---
 apiVersion: extensions.agents.x-k8s.io/v1beta1
 kind: SandboxWarmPool
 metadata:
-  name: agent-coding-warmpool-{{ $tier.suffix }}
+  name: agent-coding-warmpool
   namespace: sandbox-runtime
 spec:
-  replicas: {{ index $.Values.agentSandbox.warmPool $tier.suffix | default 1 }}
+  replicas: {{ .Values.agentSandbox.warmPool.replicas | default 5 }}
   updateStrategy:
     type: Recreate
   sandboxTemplateRef:
-    name: agent-coding-template-{{ $tier.suffix }}
-{{- end }}
+    name: agent-coding-template
 {{- end }}
