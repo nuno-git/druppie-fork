@@ -333,6 +333,78 @@ class K8sSandboxManager:
                 pass
         return count
 
+    async def cleanup_orphan_claims(
+        self, known_keys: set[str], min_age_seconds: int = 300
+    ) -> int:
+        """Reap SandboxClaims in sandbox-runtime this process doesn't track.
+
+        After a restart the in-memory ``sandbox_containers`` / ``_sandboxes``
+        dicts are empty, so leftover SandboxClaims from the previous run — or
+        leaked by a recreate-without-destroy — are orphans and pin cluster
+        resources (each reserves a pod). This lists claims (labelled with
+        session-id / git-scope) and deletes any whose ``session::scope`` key is
+        not in ``known_keys`` and which are older than ``min_age_seconds`` (the
+        age gate spares fresh claims that may be mid-create in another call).
+        Single-replica assumption holds (module-coding replicas=1).
+
+        Uses the in-cluster ServiceAccount; RBAC already grants list/delete on
+        sandboxclaims in sandbox-runtime (helm agent-sandbox/rbac.yaml).
+        """
+
+        def _sweep() -> int:
+            import datetime  # local: only needed for this rarely-run sweep
+            from kubernetes import client as k8s_client
+            from kubernetes.config import load_incluster_config
+
+            try:
+                load_incluster_config()
+            except Exception as e:
+                logger.warning("orphan_sweep: no in-cluster config: %s", e)
+                return 0
+
+            api = k8s_client.CustomObjectsApi()
+            group, version, plural = (
+                "extensions.agents.x-k8s.io", "v1beta1", "sandboxclaims",
+            )
+            try:
+                res = api.list_namespaced_custom_object(
+                    group=group, version=version,
+                    namespace=SANDBOX_NAMESPACE, plural=plural,
+                )
+            except Exception as e:
+                logger.warning("orphan_sweep: list sandboxclaims failed: %s", e)
+                return 0
+
+            now = time.time()
+            deleted = 0
+            for item in res.get("items", []):
+                meta = item.get("metadata", {}) or {}
+                name = meta.get("name", "")
+                labels = meta.get("labels", {}) or {}
+                key = "%s::%s" % (labels.get("session-id", ""), labels.get("git-scope", ""))
+                if key in known_keys:
+                    continue  # this process still tracks it
+                created = meta.get("creationTimestamp")
+                if created:
+                    try:
+                        ct = datetime.datetime.fromisoformat(created.replace("Z", "+00:00"))
+                        if now - ct.timestamp() < min_age_seconds:
+                            continue
+                    except Exception:
+                        continue  # can't parse age -> don't risk deleting
+                try:
+                    api.delete_namespaced_custom_object(
+                        group=group, version=version,
+                        namespace=SANDBOX_NAMESPACE, plural=plural, name=name,
+                    )
+                    deleted += 1
+                    logger.info("orphan_sweep: deleted SandboxClaim %s (%s)", name, key)
+                except Exception as e:
+                    logger.warning("orphan_sweep: delete %s failed: %s", name, e)
+            return deleted
+
+        return await asyncio.to_thread(_sweep)
+
 
 def get_sandbox_manager():
     """Factory: returns the appropriate manager based on DRUPPIE_SANDBOX_MODE."""

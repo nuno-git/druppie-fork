@@ -830,7 +830,14 @@ async def _resolve_container(
                     entry["container_name"],
                     reason or "unknown reason",
                 )
-            del sandbox_containers[key]
+            # Destroy the old sandbox BEFORE recreating, else its claim+pod leak
+            # (the bare `del` here used to discard the handle without terminating
+            # it, so recreate-on-flaky-liveness accumulated orphan SandboxClaims).
+            try:
+                await _destroy_container(session_id, scope)
+            except Exception as e:
+                logger.warning("Failed to destroy old sandbox on recreate: %s", e)
+                sandbox_containers.pop(key, None)
 
         for attempt in range(2):
             try:
@@ -926,10 +933,19 @@ async def _destroy_all_for_session(session_id: str) -> None:
 
 
 async def _cleanup_orphan_containers() -> int:
-    """Remove druppie-sandbox containers left over from a previous server run.
+    """Remove sandboxes left over from a previous server run (startup) or leaked.
 
-    Called once at server startup.
+    Called once at server startup and periodically by the sandbox watchdog.
     """
+    if SANDBOX_MODE == "k8s":
+        try:
+            mgr = _get_k8s_manager()
+            known = set(sandbox_containers.keys())
+            return await mgr.cleanup_orphan_claims(known)
+        except Exception as e:
+            logger.warning("k8s orphan cleanup failed: %s", e)
+            return 0
+
     rc, stdout, _ = await _docker_run(
         ["docker", "ps", "-a", "--filter", "name=druppie-",
          "--format", "{{.Names}}\t{{.Label \"com.docker.compose.project\"}}"],
