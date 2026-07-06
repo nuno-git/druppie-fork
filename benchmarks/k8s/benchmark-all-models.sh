@@ -618,6 +618,15 @@ else
   "${PYTHON}" "${COMPARE_PY}" "${RESULT_JSONS[@]}" --output "${MATRIX_MD}"
   echo ">> Matrix written to ${MATRIX_MD}"
 
+  # Regenerate the self-updating model test matrix (candidates + tested status)
+  # so MODEL-TEST-MATRIX.md tracks the full backlog. Non-fatal: a matrix error
+  # must never abort the sweep/publish (mirrors the publish step below).
+  MATRIX_TEST_MD="${RESULTS_DIR}/MODEL-TEST-MATRIX.md"
+  MATRIX_PY="${REPO_ROOT}/benchmarks/update_test_matrix.py"
+  echo ">> Updating model test matrix (${MATRIX_TEST_MD})..."
+  "${PYTHON}" "${MATRIX_PY}" || \
+    echo ">> update_test_matrix step returned non-zero (continuing; matrix may be stale)."
+
   # Publish the text artifacts to aigit, reusing publish_to_aigit.py at RUNTIME
   # (not edited). It walks RESULTS_DIR recursively and uploads to STABLE,
   # model-named paths under benchmarks/results-incluster (each publish OVERWRITES
@@ -630,6 +639,7 @@ else
   STAGE="${WORKDIR}/publish"
   mkdir -p "${STAGE}"
   cp "${MATRIX_MD}" "${STAGE}/COMPARISON-MATRIX.md" 2>/dev/null || true
+  cp "${MATRIX_TEST_MD}" "${STAGE}/MODEL-TEST-MATRIX.md" 2>/dev/null || true
   # Mirror each per-model report into <slug>/report.txt so the publisher preserves
   # the per-model folder structure (stable model-named paths, overwritten each run).
   shopt -s nullglob
