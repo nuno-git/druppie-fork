@@ -21,6 +21,16 @@ from druppie.core.leader_election import try_acquire_leader_lock
 
 logger = structlog.get_logger()
 
+# Deployment version metadata, injected by the Helm chart (see
+# helm/druppie/templates/configmap.yaml). CI sets global.imageTag to
+# "<branch>-<timestamp>-<sha8>"; the chart parses branch/commit from it. These
+# drive /api/version and replace the old hardcoded "2.0.0" in /health etc.
+APP_VERSION = os.getenv("APP_VERSION", "2.0.0")
+CHART_VERSION = os.getenv("CHART_VERSION", "")
+GIT_BRANCH = os.getenv("GIT_BRANCH", "")
+GIT_COMMIT = os.getenv("GIT_COMMIT", "")
+IMAGE_TAG = os.getenv("IMAGE_TAG", "")
+
 
 def _recover_zombie_sessions() -> None:
     """Recover sessions that were active when the server stopped.
@@ -284,7 +294,7 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title="Druppie Platform",
         description="AI-powered governance platform with MCP tool permissions",
-        version="2.0.0",
+        version=APP_VERSION,
         lifespan=lifespan,
     )
 
@@ -327,7 +337,7 @@ def create_app() -> FastAPI:
     @app.get("/health")
     async def health_check():
         """Health check endpoint."""
-        return {"status": "healthy", "version": "2.0.0"}
+        return {"status": "healthy", "version": APP_VERSION}
 
     @app.get("/health/ready")
     async def readiness_check():
@@ -422,7 +432,7 @@ def create_app() -> FastAPI:
 
         return {
             "status": "healthy",
-            "version": "2.0.0",
+            "version": APP_VERSION,
             "environment": os.getenv("ENVIRONMENT", "development"),
             "keycloak": keycloak_healthy,
             "database": database_healthy,
@@ -433,12 +443,29 @@ def create_app() -> FastAPI:
             "llm_profiles": llm_profiles,
         }
 
+    @app.get("/api/version")
+    async def api_version():
+        """Deployment version info for the frontend (admin/platform badges).
+
+        ``version`` is the platform/app version; ``branch``/``commit``/``image_tag``
+        identify the exact deployed build (parsed from the CI image tag by the
+        chart). All are best-effort and may be empty in local dev.
+        """
+        return {
+            "version": APP_VERSION,
+            "branch": GIT_BRANCH or None,
+            "commit": GIT_COMMIT or None,
+            "image_tag": IMAGE_TAG or None,
+            "chart_version": CHART_VERSION or None,
+            "environment": os.getenv("ENVIRONMENT", "development"),
+        }
+
     @app.get("/")
     async def root():
         """Root endpoint."""
         return {
             "name": "Druppie Platform",
-            "version": "2.0.0",
+            "version": APP_VERSION,
             "docs": "/docs",
         }
 

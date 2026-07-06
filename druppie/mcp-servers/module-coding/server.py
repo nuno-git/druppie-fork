@@ -127,6 +127,21 @@ async def _sandbox_watchdog():
                     "Watchdog cycle: removed %d dead, %d stale containers",
                     dead_count, stale_count,
                 )
+
+            # Reap untracked leaked SandboxClaims (k8s). The loop above only
+            # handles tracked sandboxes; orphaned claims (restart, or a recreate
+            # before the destroy-before-recreate fix) accumulate and pin cluster
+            # capacity. cheap list/delete, gated by an age threshold inside.
+            try:
+                from v1.tools import _cleanup_orphan_containers as _sweep, SANDBOX_MODE
+                if SANDBOX_MODE == "k8s":
+                    orphans = await _sweep()
+                    if orphans:
+                        _logger.info(
+                            "Watchdog: reaped %d orphan k8s SandboxClaim(s)", orphans,
+                        )
+            except Exception as exc:
+                _logger.warning("Watchdog k8s orphan sweep failed: %s", exc)
         except Exception as exc:
             _logger.warning("Watchdog error: %s", exc)
 
