@@ -8,6 +8,11 @@ metadata:
     app.kubernetes.io/component: module-docker
 spec:
   replicas: {{ .Values.modules.docker.replicaCount }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
   selector:
     matchLabels:
       {{- include "druppie.selectorLabels" . | nindent 6 }}
@@ -70,6 +75,10 @@ spec:
             periodSeconds: 10
             timeoutSeconds: 5
             failureThreshold: 5
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sh", "-c", "sleep 10"]
           resources:
             {{- toYaml .Values.modules.docker.resources | nindent 12 }}
       {{- with .Values.modules.docker.nodeSelector }}
