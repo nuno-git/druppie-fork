@@ -240,7 +240,30 @@ def _slug(value):
     return (value or "").rsplit("/", 1)[-1].strip().lower()
 
 
-def merge_known_with_actual(actual_models):
+SKIPPED_FILENAME = "SKIPPED.txt"   # written per-slug by benchmark-all-models.sh
+
+
+def _runtime_skip_reason(results_dir, slug):
+    """Return the runtime skip reason recorded for a slug, or None.
+
+    The sweep writes ``<results_dir>/<slug>/SKIPPED.txt`` with a one-line reason
+    whenever it size-skips a model upfront or a serving attempt fast-fails. That
+    live reason takes precedence over the static registry ``note``.
+    """
+    if not results_dir or not slug:
+        return None
+    path = os.path.join(results_dir, slug, SKIPPED_FILENAME)
+    if not os.path.isfile(path):
+        return None
+    try:
+        with open(path, encoding="utf-8") as f:
+            reason = f.read().strip()
+    except OSError:
+        return None
+    return reason or None
+
+
+def merge_known_with_actual(actual_models, results_dir=None):
     """Merge the KNOWN_MODELS registry with actual (meta, view) results.
 
     Returns (row_specs, benchmarked):
@@ -251,6 +274,10 @@ def merge_known_with_actual(actual_models):
         only when the model was actually benchmarked).
       * benchmarked -- list of (meta, view) that carried real results, for the
         per-category throughput table.
+
+    ``results_dir`` (optional) is scanned for per-slug ``SKIPPED.txt`` files: a
+    live skip reason there overrides the static registry note for any model that
+    did not produce results, so the matrix shows exactly why it was skipped.
     """
     actual_by_slug = {}
     for meta, view in actual_models:
@@ -277,6 +304,11 @@ def merge_known_with_actual(actual_models):
             spec["note"] = km.get("note_done", "Benchmarked.")
             benchmarked.append((meta, view))
             matched.add(slug)
+        else:
+            # Not benchmarked -- prefer a live skip reason over the static note.
+            reason = _runtime_skip_reason(results_dir, slug)
+            if reason:
+                spec["note"] = f"Skipped -- {reason}"
         row_specs.append(spec)
 
     # Append any benchmarked model not covered by the registry -- never lose data.
@@ -615,6 +647,9 @@ def main(argv=None):
                         help="Directory to glob *.json from (added to any explicit files).")
     parser.add_argument("--output", dest="output",
                         help="Write the Markdown matrix to this file (also printed to stdout).")
+    parser.add_argument("--results-dir", dest="results_dir",
+                        help="Results root scanned for per-slug SKIPPED.txt reasons "
+                             "(overrides the static note for un-benchmarked models).")
     args = parser.parse_args(argv)
 
     # No input JSON is OK: the matrix still lists every registered model from
@@ -643,8 +678,9 @@ def main(argv=None):
             used_files.append(path)
 
     # Merge actual results with the known-models registry so every registered
-    # model appears -- benchmarked ones with metrics, the rest with a note.
-    row_specs, benchmarked = merge_known_with_actual(models)
+    # model appears -- benchmarked ones with metrics, the rest with a note (a
+    # live SKIPPED.txt reason under --results-dir overrides the static note).
+    row_specs, benchmarked = merge_known_with_actual(models, args.results_dir)
 
     report = render_report(row_specs, benchmarked, used_files)
     print(report)

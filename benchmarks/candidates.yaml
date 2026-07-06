@@ -1,6 +1,8 @@
 # candidates.yaml -- canonical candidate list for the in-cluster LLM benchmark
-# backlog. Single source of truth consumed by benchmarks/update_test_matrix.py,
-# which renders benchmarks/results-incluster/MODEL-TEST-MATRIX.md.
+# backlog. Single source of truth consumed by benchmarks/update_test_matrix.py
+# (renders benchmarks/results-incluster/MODEL-TEST-MATRIX.md) AND by
+# benchmarks/k8s/benchmark-all-models.sh (drives the fit-class size-skip + the
+# per-model serving profile that overrides prod qwen's cloned tuning).
 #
 # Two categories:
 #   local -- downloadable weights, pulled into aigit + the cluster and benchmarked
@@ -19,6 +21,41 @@
 #   category -- local | api
 #   params   -- parameter count / quantization summary
 #   notes    -- free-form note (may be empty)
+#
+# Sizing / benchmark-control fields (consumed by benchmark-all-models.sh):
+#   fit       -- fit class on THIS hardware (1 GPU node, 2x RTX PRO 6000 Blackwell
+#                96GB = 192GB total, NO P2P so serving is tensor-parallel=1, one model
+#                per GPU; a run frees at most ONE GPU by scaling prod qwen 2->1):
+#                  served      -- currently served in prod; benchmarked in place.
+#                  fits-1gpu   -- fits one 96GB card; benchmarkable now (frees 1 GPU).
+#                  needs-2gpu  -- needs both cards (TP=2); full prod outage required.
+#                  too-large   -- exceeds 192GB total even quantized; not testable here.
+#                  api         -- OpenRouter-hosted; not a cluster model.
+#   est_vram  -- rough VRAM footprint estimate (free-form, all ESTIMATES).
+#   skip_reason -- if set, the sweep does NOT create a bench InferenceService for this
+#                model (no prod degradation): it records this reason straight into the
+#                matrix. Set for `too-large` / `needs-2gpu`. Leave empty to attempt a
+#                real benchmark (a serving crash is then captured live via fast-fail).
+#   profile   -- OPTIONAL per-model serving profile. When present, make_temp_isvc()
+#                uses it INSTEAD OF cloning prod qwen's manifest verbatim (qwen's
+#                --tool-call-parser qwen3_xml / --kv-cache-dtype fp8 / --dtype bfloat16
+#                are qwen-specific and crash other model families). Sub-fields:
+#                  image             -- container image override (default: inherit qwen's).
+#                  vllm_args         -- COMPLETE vLLM arg list, REPLACING the cloned args.
+#                                       Element 0 is the vLLM --model (HF repo, or a
+#                                       `repo_id:quant_type` GGUF selector). Mirror qwen's
+#                                       arg style: model first, then flags, NO --host/--port
+#                                       (llmkube injects those).
+#                  served_model_name -- OpenAI served model id; keep == `source` so the
+#                                       benchmark's model_id (which is `source`) matches.
+#                  gguf_file         -- specific .gguf file / `repo:quant` selector, if the
+#                                       repo root is not directly loadable.
+#                  extra_pip         -- python deps the serving image lacks (e.g.
+#                                       sentencepiece for Gemma). NOTE: only applied if the
+#                                       serving image entrypoint pip-installs at startup;
+#                                       the stock vLLM image does not, so this is advisory
+#                                       (such models generally fast-fail with a captured
+#                                       reason -- acceptable per the sweep design).
 
 models:
   # ---------------------------------------------------------------------------
@@ -29,84 +66,152 @@ models:
     slug: "gemma-4-26b-a4b"
     category: "local"
     params: "26B (MoE, ~A4B active)"
-    notes: ""
+    fit: "fits-1gpu"
+    est_vram: "~26B bf16 ~52GB"
+    skip_reason: ""
+    notes: "backlog only (no registered CR); fit informational"
 
   - name: "Qwen3.6-35B-A3B"
     source: "Qwen/Qwen3.6-35B-A3B"
     slug: "qwen3.6-35b-a3b"
     category: "local"
     params: "35B (MoE, A3B active)"
-    notes: ""
+    fit: "fits-1gpu"
+    est_vram: "~70GB bf16 (tight on one 96GB card)"
+    skip_reason: ""
+    notes: "Qwen-family full HF repo; prod qwen's cloned args work as-is (no profile needed)"
 
   - name: "Qwen3.6-27B"
     source: "Qwen/Qwen3.6-27B"
     slug: "qwen3.6-27b"
     category: "local"
     params: "27B"
-    notes: "reasoning model, already benchmarked"
+    fit: "served"
+    est_vram: "~54GB bf16"
+    skip_reason: ""
+    notes: "reasoning model, already benchmarked; served in prod (benchmarked in place)"
 
   - name: "Gemma-4-31B"
     source: "google/gemma-4-31B"
     slug: "gemma-4-31b"
     category: "local"
     params: "31B"
-    notes: ""
+    fit: "fits-1gpu"
+    est_vram: "~62GB bf16"
+    skip_reason: ""
+    notes: "backlog only (no registered CR); fit informational"
 
   - name: "GLM-5.1"
-    source: "(GGUF, IQ3_KS quant)"
-    slug: "gguf-iq3-ks-quant"
+    source: "unsloth/GLM-5.1-GGUF"
+    slug: "glm-5.1-gguf"
     category: "local"
-    params: "quantized IQ3_KS"
-    notes: "CPU/GPU hybrid, 2x RTX 6000 Pro reference"
+    params: "744B (MoE, 40B active)"
+    fit: "too-large"
+    est_vram: "~220-236GB @2-bit dynamic GGUF"
+    skip_reason: "Not benchmarked -- exceeds VRAM (744B MoE, ~220-236GB even @2-bit dynamic GGUF > 192GB total; needs RAM/MoE offload or multi-node)."
+    notes: "CPU/GPU hybrid would be required; not attempted (would only degrade prod)"
 
   - name: "Qwen3-Coder-Next-80B-A3B"
     source: "Qwen3-Coder-Next-80B"
     slug: "qwen3-coder-next-80b"
     category: "local"
     params: "80B (A3B active)"
-    notes: ""
+    fit: "needs-2gpu"
+    est_vram: "~160GB bf16"
+    skip_reason: "Needs 2 GPUs / TP=2 (~160GB bf16 > single 96GB card) -- full qwen outage required; not attempted outside a maintenance window."
+    notes: "testable only by taking prod fully down (or with heavy quantization)"
 
   - name: "GPT-OSS-120B"
     source: "gpt-oss-120b"
     slug: "gpt-oss-120b"
     category: "local"
-    params: "120B"
-    notes: ""
+    params: "120B (MoE)"
+    fit: "fits-1gpu"
+    est_vram: "~63GB (native MXFP4)"
+    skip_reason: ""
+    notes: "ships native MXFP4 (loads without extra quant); needs gpt-oss serving config, NOT qwen3_xml"
+    profile:
+      # gpt-oss ships native MXFP4 -- do NOT force --dtype bfloat16 or
+      # --kv-cache-dtype fp8 (both are qwen-specific and mis-quantize gpt-oss).
+      # Tool calling via the Chat Completions endpoint is unreliable on gpt-oss
+      # (upstream vLLM issue #22578), so we serve WITHOUT a tool-call parser:
+      # the model still serves and non-tool scenarios run; tool scenarios simply
+      # error (counted). Reasoning parser is optional and left off.
+      served_model_name: "openai/gpt-oss-120b"
+      vllm_args:
+        - "openai/gpt-oss-120b"
+        - "--served-model-name"
+        - "openai/gpt-oss-120b"
+        - "--max-model-len"
+        - "131072"
 
   - name: "Qwen3-Coder-480B-A35B-Instruct"
     source: "Qwen3-Coder-480B-A35B-Instruct"
     slug: "qwen3-coder-480b-a35b-instruct"
     category: "local"
     params: "480B (A35B active)"
-    notes: ""
+    fit: "too-large"
+    est_vram: "~270GB @Q4 / ~960GB bf16"
+    skip_reason: "Not benchmarked -- exceeds VRAM (~270GB @Q4 / ~960GB bf16 > 192GB total; needs multi-node)."
+    notes: "does not fit even quantized on 192GB total"
 
   - name: "GLM-4.6V"
     source: "unsloth/GLM-4.6V-GGUF"
     slug: "glm-4.6v-gguf"
     category: "local"
-    params: "vision"
-    notes: "multimodal/vision"
+    params: "106B (vision)"
+    fit: "fits-1gpu"
+    est_vram: "~60GB @Q4 GGUF"
+    skip_reason: ""
+    notes: "multimodal/vision GGUF -- fits by size but vision serving on vLLM is unverified; likely fast-fails with a captured reason"
 
   - name: "Qwen3.6-27B-MTP"
     source: "unsloth/Qwen3.6-27B-MTP-GGUF"
     slug: "qwen3.6-27b-mtp-gguf"
     category: "local"
     params: "27B (MTP)"
-    notes: "multi-token-prediction speed variant of Qwen3.6-27B"
+    fit: "fits-1gpu"
+    est_vram: "~16-30GB GGUF quant"
+    skip_reason: ""
+    notes: "multi-token-prediction speed variant of Qwen3.6-27B; GGUF -- attempted with cloned qwen args, may fast-fail on GGUF handling"
 
   - name: "Gemma-4-E4B-it"
     source: "unsloth/gemma-4-E4B-it-GGUF"
     slug: "gemma-4-e4b-it-gguf"
     category: "local"
     params: "E4B"
-    notes: "extreme-speed small variant"
+    fit: "fits-1gpu"
+    est_vram: "~4-8GB GGUF"
+    skip_reason: ""
+    notes: "extreme-speed small variant; GGUF + SentencePiece tokenizer. UNSURE: gemma4 GGUF arch may be unsupported by vLLM -- expected to fast-fail with a captured reason"
+    profile:
+      # Gemma needs SentencePiece; the stock vLLM image lacks it (crash:
+      # \"Couldn't instantiate the backend tokenizer ... need sentencepiece or
+      # tiktoken\"). extra_pip is advisory (see header note). GGUF tokenizer
+      # conversion is slow/unstable, so point --tokenizer at the base HF repo.
+      # Drop qwen3_xml entirely.
+      served_model_name: "unsloth/gemma-4-E4B-it-GGUF"
+      gguf_file: "unsloth/gemma-4-E4B-it-GGUF:Q4_K_M"
+      extra_pip:
+        - "sentencepiece"
+      vllm_args:
+        - "unsloth/gemma-4-E4B-it-GGUF:Q4_K_M"
+        - "--tokenizer"
+        - "google/gemma-4-E4B-it"
+        - "--served-model-name"
+        - "unsloth/gemma-4-E4B-it-GGUF"
+        - "--max-model-len"
+        - "32768"
 
   - name: "DeepSeek-V3.1"
     source: "unsloth/DeepSeek-V3.1-GGUF"
     slug: "deepseek-v3.1-gguf"
     category: "local"
-    params: "quantized (only q1 UD-TQ1_0 fits)"
-    notes: "fits only at q1"
+    params: "671B (37B active)"
+    fit: "too-large"
+    est_vram: "~380GB @Q4 GGUF (only q1 UD-TQ1_0 fits)"
+    skip_reason: "Not benchmarked -- exceeds VRAM (671B MoE, ~380GB @Q4 GGUF > 192GB total; needs multi-node)."
+    notes: "fits only at q1; not attempted (would only degrade prod)"
 
   # ---------------------------------------------------------------------------
   # API -- OpenRouter-hosted (NOT cluster-downloadable; API-only if at all)
@@ -116,6 +221,9 @@ models:
     slug: "minimax-m2.7"
     category: "api"
     params: "NVFP4"
+    fit: "api"
+    est_vram: ""
+    skip_reason: ""
     notes: "SGlang + B12x optimization"
 
   - name: "DeepSeek-V4-Flash"
@@ -123,6 +231,9 @@ models:
     slug: "deepseek-v4-flash"
     category: "api"
     params: ""
+    fit: "api"
+    est_vram: ""
+    skip_reason: ""
     notes: ""
 
   - name: "Hy3"
@@ -130,6 +241,9 @@ models:
     slug: "hy3"
     category: "api"
     params: ""
+    fit: "api"
+    est_vram: ""
+    skip_reason: ""
     notes: ""
 
   - name: "Owl-Alpha"
@@ -137,6 +251,9 @@ models:
     slug: "owl-alpha"
     category: "api"
     params: ""
+    fit: "api"
+    est_vram: ""
+    skip_reason: ""
     notes: ""
 
   - name: "Nemotron-3-Super"
@@ -144,6 +261,9 @@ models:
     slug: "nemotron-3-super"
     category: "api"
     params: ""
+    fit: "api"
+    est_vram: ""
+    skip_reason: ""
     notes: ""
 
   - name: "Kimi-K2.6"
@@ -151,6 +271,9 @@ models:
     slug: "kimi-k2.6"
     category: "api"
     params: ""
+    fit: "api"
+    est_vram: ""
+    skip_reason: ""
     notes: ""
 
   - name: "Step-3.5-Flash"
@@ -158,4 +281,7 @@ models:
     slug: "step-3.5-flash"
     category: "api"
     params: ""
+    fit: "api"
+    est_vram: ""
+    skip_reason: ""
     notes: ""

@@ -58,14 +58,25 @@ NS=llm
 PROD_ISVC=qwen                       # prod InferenceService name (ns llm)
 PROD_ORIGINAL_REPLICAS=2             # documented prod baseline; captured live below
 FLUX_KUSTOMIZATION=llm-models        # Flux Kustomization that manages the models
-FLUX_NS=flux-system                  # namespace the Kustomization lives in
+# The PARENT Flux Kustomization that reconciles (and re-applies) the child
+# `llm-models` on a ~1-min interval. Suspending ONLY the child is not enough:
+# the parent re-applies the child and resets qwen to replicas:2 within ~1 min,
+# undoing our scale-down. We suspend BOTH and restore BOTH on exit.
+PARENT_FLUX_KUSTOMIZATION=ai-k8s     # parent Kustomization (ns flux-system)
+FLUX_NS=flux-system                  # namespace both Kustomizations live in
 JOB=llm-benchmark                    # Job name (matches job.yaml)
-GPU_READY_TIMEOUT=5400               # 90 min: no weight cache, so a bench model's first serve downloads the FULL model from HF
+CANDIDATES_YAML="${REPO_ROOT:-.}/benchmarks/candidates.yaml"  # fit-class + serving profiles (re-set below)
+# Ready-wait budget. A bench model's first serve downloads the FULL model from HF
+# (no weight cache), so this must be generous -- but we ALSO fast-fail the moment
+# the bench pod crashloops / errors (see wait_isvc_ready), so a broken model no
+# longer burns the whole budget while prod runs at half capacity. Overridable via
+# the environment for slow links / big weights.
+GPU_READY_TIMEOUT="${GPU_READY_TIMEOUT:-2400}"   # 40 min download budget (was 90m)
 # Benchmark-completion wait. Must be >= the Job's activeDeadlineSeconds (9000s in
 # job.yaml): the full suite has scenarios that take 100-200s each, so 1800s is far
 # too short. Match the Job deadline so we wait for the Job to finish (or hit its
 # own deadline) rather than giving up early and losing results.
-JOB_COMPLETE_TIMEOUT=9000
+JOB_COMPLETE_TIMEOUT="${JOB_COMPLETE_TIMEOUT:-9000}"
 ISVC_YAML_CACHE=/tmp/ai-k8s2/clusters/llm-models/inferenceservice.yaml
 
 # python3 is not present in every environment (e.g. Git-Bash only ships `python`).
@@ -81,6 +92,7 @@ RESULTS_DIR="${REPO_ROOT}/benchmarks/results-incluster"
 CONFIG_SRC="${REPO_ROOT}/benchmarks/config.yaml"
 JOB_YAML="${REPO_ROOT}/benchmarks/k8s/job.yaml"
 COMPARE_PY="${REPO_ROOT}/benchmarks/compare_models.py"
+CANDIDATES_YAML="${REPO_ROOT}/benchmarks/candidates.yaml"  # fit-class + serving profiles
 
 # Workspace for temp configs / manifests -- cleaned up on exit.
 WORKDIR="$(mktemp -d)"
@@ -90,8 +102,9 @@ WORKDIR="$(mktemp -d)"
 # trap firing before capture still does something sane.
 # -----------------------------------------------------------------------------
 CAPTURED_QWEN_REPLICAS="${PROD_ORIGINAL_REPLICAS}"
-CAPTURED_FLUX_SUSPENDED="false"      # was Flux already suspended before we started?
-FLUX_TOUCHED="false"                 # did WE change the suspend state?
+CAPTURED_FLUX_SUSPENDED="false"      # was the CHILD (llm-models) already suspended?
+CAPTURED_PARENT_FLUX_SUSPENDED="false"  # was the PARENT (ai-k8s) already suspended?
+FLUX_TOUCHED="false"                 # did WE change either suspend state?
 QWEN_TOUCHED="false"                 # did WE scale qwen?
 declare -a TEMP_ISVCS=()             # bench-* InferenceServices we created
 
@@ -105,24 +118,28 @@ restore() {
   echo ""
   echo ">> [restore] Cleaning up (exit code ${exit_code})..."
 
-  # 1. Delete any temp bench-* InferenceServices we created. Also do a
-  #    belt-and-braces sweep for anything named bench-* in case a name wasn't
+  # 1. Delete any temp bench-* InferenceServices we created, WAITING for each to
+  #    go away (--wait=true) so its GPU is actually released BEFORE we patch qwen
+  #    back up in step 2 -- otherwise qwen's 2nd replica is quota-rejected (the
+  #    `llm` GPU ResourceQuota is hard=2 and the bench pod still holds one). Also
+  #    do a belt-and-braces sweep for anything named bench-* in case a name wasn't
   #    tracked (e.g. crash right after create).
   for isvc in "${TEMP_ISVCS[@]:-}"; do
     [ -n "${isvc}" ] || continue
-    echo ">> [restore] Deleting temp InferenceService ${isvc}..."
-    kubectl delete inferenceservice "${isvc}" -n "${NS}" --ignore-not-found --wait=false
+    echo ">> [restore] Deleting temp InferenceService ${isvc} (waiting for GPU release)..."
+    kubectl delete inferenceservice "${isvc}" -n "${NS}" --ignore-not-found --wait=true
   done
-  # Sweep any stray bench-* left behind.
+  # Sweep any stray bench-* left behind (also wait, same GPU-release reasoning).
   local strays
   strays="$(kubectl get inferenceservice -n "${NS}" -o name 2>/dev/null | grep '/bench-' || true)"
   if [ -n "${strays}" ]; then
     echo ">> [restore] Removing stray bench-* InferenceServices:"
     echo "${strays}"
-    echo "${strays}" | xargs -r kubectl delete -n "${NS}" --ignore-not-found --wait=false
+    echo "${strays}" | xargs -r kubectl delete -n "${NS}" --ignore-not-found --wait=true
   fi
 
   # 2. Restore prod qwen replicas to the captured original (only if we scaled).
+  #    Runs AFTER the bench GPU is released (step 1) so the 2nd replica schedules.
   if [ "${QWEN_TOUCHED}" = "true" ]; then
     echo ">> [restore] Restoring ${PROD_ISVC} to ${CAPTURED_QWEN_REPLICAS} replica(s)..."
     kubectl patch inferenceservice "${PROD_ISVC}" -n "${NS}" --type merge \
@@ -130,12 +147,18 @@ restore() {
       echo ">> [restore] WARNING: failed to restore ${PROD_ISVC} replicas -- check manually!"
   fi
 
-  # 3. Resume Flux to its ORIGINAL suspend state (only if we changed it).
+  # 3. Resume BOTH Flux Kustomizations to their ORIGINAL suspend states (only if
+  #    we changed them). Restore the PARENT (ai-k8s) too -- it is what re-applies
+  #    the child and would otherwise reconcile qwen back regardless.
   if [ "${FLUX_TOUCHED}" = "true" ]; then
     echo ">> [restore] Restoring Flux ${FLUX_KUSTOMIZATION} suspend=${CAPTURED_FLUX_SUSPENDED}..."
     kubectl patch kustomization "${FLUX_KUSTOMIZATION}" -n "${FLUX_NS}" --type merge \
       -p "{\"spec\":{\"suspend\":${CAPTURED_FLUX_SUSPENDED}}}" || \
-      echo ">> [restore] WARNING: failed to restore Flux suspend state -- check manually!"
+      echo ">> [restore] WARNING: failed to restore Flux ${FLUX_KUSTOMIZATION} suspend -- check manually!"
+    echo ">> [restore] Restoring Flux ${PARENT_FLUX_KUSTOMIZATION} suspend=${CAPTURED_PARENT_FLUX_SUSPENDED}..."
+    kubectl patch kustomization "${PARENT_FLUX_KUSTOMIZATION}" -n "${FLUX_NS}" --type merge \
+      -p "{\"spec\":{\"suspend\":${CAPTURED_PARENT_FLUX_SUSPENDED}}}" || \
+      echo ">> [restore] WARNING: failed to restore Flux ${PARENT_FLUX_KUSTOMIZATION} suspend -- check manually!"
   fi
 
   # 4. Best-effort: delete the benchmark Job so it doesn't linger.
@@ -274,21 +297,31 @@ PROD_MODEL_REF="$(kubectl get inferenceservice "${PROD_ISVC}" -n "${NS}" \
 echo "   prod replicas : ${CAPTURED_QWEN_REPLICAS}"
 echo "   prod modelRef : ${PROD_MODEL_REF:-<unknown>}"
 
-# Capture Flux suspend state so restore returns it to exactly what it was.
+# Capture BOTH Flux Kustomizations' suspend state so restore returns each to
+# exactly what it was (child llm-models AND parent ai-k8s).
 CAPTURED_FLUX_SUSPENDED="$(kubectl get kustomization "${FLUX_KUSTOMIZATION}" -n "${FLUX_NS}" \
   -o jsonpath='{.spec.suspend}' 2>/dev/null || true)"
 [ -n "${CAPTURED_FLUX_SUSPENDED}" ] || CAPTURED_FLUX_SUSPENDED="false"
-echo "   flux suspended: ${CAPTURED_FLUX_SUSPENDED}"
+CAPTURED_PARENT_FLUX_SUSPENDED="$(kubectl get kustomization "${PARENT_FLUX_KUSTOMIZATION}" -n "${FLUX_NS}" \
+  -o jsonpath='{.spec.suspend}' 2>/dev/null || true)"
+[ -n "${CAPTURED_PARENT_FLUX_SUSPENDED}" ] || CAPTURED_PARENT_FLUX_SUSPENDED="false"
+echo "   flux suspended: ${FLUX_KUSTOMIZATION}=${CAPTURED_FLUX_SUSPENDED} ${PARENT_FLUX_KUSTOMIZATION}=${CAPTURED_PARENT_FLUX_SUSPENDED}"
 
 # =============================================================================
 # Helpers for the per-model loop
 # =============================================================================
 
-# suspend_flux() -- suspend the llm-models Kustomization so Flux won't undo our
-# temporary scaling / temp InferenceService. Records that WE touched it.
+# suspend_flux() -- suspend BOTH the child (llm-models) AND parent (ai-k8s)
+# Kustomizations so Flux won't undo our temporary scaling / temp InferenceService.
+# Suspending only the child is insufficient: the parent reconciles on a ~1-min
+# interval and re-applies the child, resetting qwen to replicas:2 within a minute.
+# Records that WE touched Flux so restore returns both to their captured states.
 suspend_flux() {
   if [ "${FLUX_TOUCHED}" != "true" ]; then
-    echo ">> Suspending Flux ${FLUX_KUSTOMIZATION} (was suspend=${CAPTURED_FLUX_SUSPENDED})..."
+    echo ">> Suspending Flux ${PARENT_FLUX_KUSTOMIZATION} (parent, was suspend=${CAPTURED_PARENT_FLUX_SUSPENDED})..."
+    kubectl patch kustomization "${PARENT_FLUX_KUSTOMIZATION}" -n "${FLUX_NS}" --type merge \
+      -p '{"spec":{"suspend":true}}'
+    echo ">> Suspending Flux ${FLUX_KUSTOMIZATION} (child, was suspend=${CAPTURED_FLUX_SUSPENDED})..."
     kubectl patch kustomization "${FLUX_KUSTOMIZATION}" -n "${FLUX_NS}" --type merge \
       -p '{"spec":{"suspend":true}}'
     FLUX_TOUCHED="true"
@@ -325,6 +358,138 @@ wait_free_gpu() {
   echo "   WARNING: timed out waiting for GPU release; proceeding anyway."
 }
 
+# candidate_field() -- read a single field for a model from candidates.yaml,
+# matching by slug (primary) or the last path segment of `source` (fallback).
+# Emits the field's value (empty if the model or field is absent). Fields:
+#   fit | skip_reason   -> plain string
+#   profile             -> compact JSON ("{}" when there is no profile)
+#   $1 = field   $2 = slug   $3 = source
+candidate_field() {
+  local field="$1" slug="$2" source="$3"
+  [ -f "${CANDIDATES_YAML}" ] || { [ "${field}" = "profile" ] && echo "{}"; return 0; }
+  CAND_FILE="${CANDIDATES_YAML}" CAND_FIELD="${field}" CAND_SLUG="${slug}" CAND_SRC="${source}" \
+  "${PYTHON}" - <<'PY'
+import json, os, sys
+try:
+    import yaml
+except ImportError:
+    # No PyYAML -> behave as "no data" (profile => {}), never abort the sweep.
+    print("{}" if os.environ["CAND_FIELD"] == "profile" else "")
+    sys.exit(0)
+
+field = os.environ["CAND_FIELD"]
+slug = os.environ["CAND_SLUG"].strip().lower()
+src = os.environ["CAND_SRC"].strip().lower()
+src_seg = src.rsplit("/", 1)[-1]
+
+def norm(v):
+    return (v or "").strip().lower()
+
+doc = {}
+try:
+    doc = yaml.safe_load(open(os.environ["CAND_FILE"], encoding="utf-8")) or {}
+except Exception:
+    doc = {}
+
+match = None
+for m in doc.get("models") or []:
+    m_slug = norm(m.get("slug"))
+    m_src_seg = norm(m.get("source")).rsplit("/", 1)[-1]
+    if slug and (slug == m_slug or (src_seg and src_seg == m_src_seg) or slug == m_src_seg):
+        match = m
+        break
+
+if field == "profile":
+    print(json.dumps((match or {}).get("profile") or {}))
+else:
+    print(((match or {}).get(field) or "").strip() if isinstance((match or {}).get(field), str)
+          else ((match or {}).get(field) or ""))
+PY
+}
+
+# record_skip() -- persist a one-line skip/failure REASON for a model so it lands
+# in BOTH matrices (compare_models.py + update_test_matrix.py read SKIPPED.txt).
+#   $1 = slug   $2 = reason
+record_skip() {
+  local slug="$1" reason="$2"
+  local dir="${RESULTS_DIR}/${slug}"
+  mkdir -p "${dir}"
+  printf '%s\n' "${reason}" > "${dir}/SKIPPED.txt"
+  echo ">> [skip] ${slug}: ${reason}"
+}
+
+# clear_skip() -- drop any stale SKIPPED.txt once a model actually produces a
+# report (Tested wins over Skipped).
+#   $1 = slug
+clear_skip() {
+  local slug="$1"
+  rm -f "${RESULTS_DIR}/${slug}/SKIPPED.txt" 2>/dev/null || true
+}
+
+# bench_pod_failure_reason() -- inspect the bench pod and, IF it is unhealthy
+# (CrashLoopBackOff / restartCount>=2 / Error / ImagePull*/ Failed), echo a
+# concise REASON (status + the last meaningful log error line). Echoes NOTHING
+# when the pod is absent or still legitimately progressing (Pending/Running).
+#   $1 = bench isvc name (bench-<slug>)
+bench_pod_failure_reason() {
+  local bench_name="$1"
+  local pod
+  pod="$(kubectl get pods -n "${NS}" -l "serving.llmkube.dev/inferenceservice=${bench_name}" \
+    -o name 2>/dev/null | head -n1)"
+  [ -n "${pod}" ] || pod="$(kubectl get pods -n "${NS}" -l "app=${bench_name}" \
+    -o name 2>/dev/null | head -n1)"
+  [ -n "${pod}" ] || return 0            # no pod yet -> not a failure
+  local podname="${pod#*/}"
+
+  local podjson
+  podjson="$(kubectl get "${pod}" -n "${NS}" -o json 2>/dev/null)"
+  [ -n "${podjson}" ] || return 0
+
+  # Let python classify the pod status; it echoes a short verdict token (e.g.
+  # "CrashLoopBackOff" / "restartCount=3" / "phase=Failed") ONLY when unhealthy.
+  local verdict
+  verdict="$(printf '%s' "${podjson}" | "${PYTHON}" -c '
+import json, sys
+doc = json.load(sys.stdin)
+st = doc.get("status", {}) or {}
+if st.get("phase") == "Failed":
+    print("phase=Failed"); sys.exit(0)
+bad_wait = {"CrashLoopBackOff", "ImagePullBackOff", "ErrImagePull",
+            "Error", "CreateContainerError", "RunContainerError",
+            "InvalidImageName", "CreateContainerConfigError"}
+for cs in st.get("containerStatuses", []) or []:
+    state = cs.get("state", {}) or {}
+    waiting = state.get("waiting") or {}
+    wr = waiting.get("reason", "")
+    term = state.get("terminated") or {}
+    tr = term.get("reason", "")
+    rc = cs.get("restartCount", 0) or 0
+    if wr in bad_wait:
+        print(wr); sys.exit(0)
+    if tr and tr != "Completed":
+        print("terminated=%s" % tr); sys.exit(0)
+    if rc >= 2:
+        print("restartCount=%d" % rc); sys.exit(0)
+' 2>/dev/null)"
+
+  [ -n "${verdict}" ] || return 0        # healthy / still progressing
+
+  # Pull the last meaningful error line from the (previous, then current) logs.
+  local errpat='ValueError|RuntimeError|AssertionError|OSError|KeyError|Traceback|Exception|[Ee]rror:|CUDA|not supported|out of memory'
+  local logline
+  logline="$(kubectl logs "${podname}" -n "${NS}" --previous --tail=200 2>/dev/null \
+    | grep -E "${errpat}" | tail -n1)"
+  [ -n "${logline}" ] || logline="$(kubectl logs "${podname}" -n "${NS}" --tail=200 2>/dev/null \
+    | grep -E "${errpat}" | tail -n1)"
+  logline="$(printf '%s' "${logline}" | tr -d '\r' | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//' | cut -c1-300)"
+
+  if [ -n "${logline}" ]; then
+    echo "Serving failed (${verdict}): ${logline}"
+  else
+    echo "Serving failed (${verdict}); no error line in pod logs -- inspect ${podname}."
+  fi
+}
+
 # make_temp_isvc() -- write a temp InferenceService manifest for a bench model.
 # Bases it on the prod InferenceService (from the tracked YAML cache if present,
 # else live `kubectl get -o yaml`), then rewrites name/modelRef/model-source and
@@ -343,13 +508,25 @@ make_temp_isvc() {
     kubectl get inferenceservice "${PROD_ISVC}" -n "${NS}" -o yaml > "${base_yaml}"
   fi
 
+  # Per-model serving profile from candidates.yaml (JSON, "{}" when absent). When
+  # present it REPLACES prod qwen's cloned tuning (image / vllm_args / etc.) --
+  # qwen's --tool-call-parser qwen3_xml, --kv-cache-dtype fp8, --dtype bfloat16 are
+  # qwen-specific and crash other families (gemma SentencePiece, gpt-oss MXFP4, ...).
+  local profile_json
+  profile_json="$(candidate_field profile "$(sanitize "${model_source:-$model_crd}")" "${model_source}")"
+  [ -n "${profile_json}" ] || profile_json="{}"
+  if [ "${profile_json}" != "{}" ]; then
+    echo ">> Applying per-model serving profile for ${bench_name} (overrides qwen's cloned args)." >&2
+  fi
+
   # Transform the base manifest with Python (robust YAML edit, no fragile sed).
   # NOTE: patched to match the ACTUAL inference.llmkube.dev/v1alpha1 CRD layout
   # observed on ka-k8s-ai (modelRef is a STRING; model source is args[0]; gpu is
   # a scalar spec.resources.gpu; the service block is spec.endpoint not spec.service).
   BENCH_NAME="${bench_name}" MODEL_CRD="${model_crd}" MODEL_SOURCE="${model_source}" \
+  PROFILE_JSON="${profile_json}" \
   "${PYTHON}" - "${base_yaml}" "${out_yaml}" <<'PY'
-import os, sys
+import json, os, sys
 try:
     import yaml
 except ImportError:
@@ -360,6 +537,10 @@ src, dst = sys.argv[1], sys.argv[2]
 bench = os.environ["BENCH_NAME"]
 model_crd = os.environ["MODEL_CRD"]
 model_source = os.environ["MODEL_SOURCE"]
+try:
+    profile = json.loads(os.environ.get("PROFILE_JSON") or "{}") or {}
+except ValueError:
+    profile = {}
 
 doc = yaml.safe_load(open(src))
 # Strip server-managed fields so apply is clean.
@@ -376,14 +557,31 @@ spec["replicas"] = 1
 # modelRef is a STRING on this CRD -> just set the target model CRD name.
 spec["modelRef"] = model_crd
 
-# The vLLM model id is args[0] on this CRD. Rewrite it to the bench model source
-# so vLLM actually serves the model we're benchmarking (not prod's 27B).
-args = spec.get("args")
-if isinstance(args, list) and args:
-    args[0] = model_source
+# --- Serving config -------------------------------------------------------
+# If a profile supplies its own vllm_args, use them VERBATIM as the full arg
+# list (element 0 is the vLLM --model). Otherwise clone prod qwen's args and
+# just swap the model source into args[0].
+prof_args = profile.get("vllm_args")
+if isinstance(prof_args, list) and prof_args:
+    spec["args"] = [str(a) for a in prof_args]
 else:
-    # Fallback: build a minimal args list if the base had none.
-    spec["args"] = [model_source, "--host", "0.0.0.0", "--port", "8000"]
+    args = spec.get("args")
+    if isinstance(args, list) and args:
+        args[0] = model_source
+    else:
+        # Fallback: build a minimal args list if the base had none.
+        spec["args"] = [model_source, "--host", "0.0.0.0", "--port", "8000"]
+
+# Optional container image override (default: inherit prod qwen's image).
+if profile.get("image"):
+    spec["image"] = profile["image"]
+
+# extra_pip is advisory: the stock vLLM image does not pip-install at startup,
+# so we only surface it as an annotation for operators (models needing it will
+# generally fast-fail with a captured reason). Never silently drop the info.
+if profile.get("extra_pip"):
+    meta.setdefault("annotations", {})["bench.druppie/extra-pip"] = \
+        ",".join(str(p) for p in profile["extra_pip"])
 
 # Force single-GPU footprint. On this CRD, gpu is a scalar under spec.resources
 # (alongside cpu/memory). Preserve cpu/memory; just pin gpu=1.
@@ -413,12 +611,18 @@ PY
 }
 
 # wait_isvc_ready() -- poll the temp service's /v1/models until HTTP 200. First
-# serve downloads weights from HuggingFace, so allow up to GPU_READY_TIMEOUT.
-# $1 = in-cluster base host (e.g. bench-foo.llm.svc.cluster.local)
+# serve downloads weights from HuggingFace, so allow up to GPU_READY_TIMEOUT --
+# BUT fast-fail the instant the bench pod crashloops / errors so a broken model
+# does not burn the whole budget while prod runs at half capacity. On failure it
+# sets LAST_FAIL_REASON to a concise, matrix-ready reason and returns non-zero.
+#   $1 = in-cluster base host (e.g. bench-foo.llm.svc.cluster.local)
+#   $2 = bench isvc name (bench-<slug>) -- used to locate the pod for health checks
+LAST_FAIL_REASON=""
 wait_isvc_ready() {
-  local host="$1"
+  local host="$1" bench_name="$2"
+  LAST_FAIL_REASON=""
   local deadline=$(( $(date +%s) + GPU_READY_TIMEOUT ))
-  echo ">> Waiting for ${host}:8000/v1/models to return 200 (up to ${GPU_READY_TIMEOUT}s)..."
+  echo ">> Waiting for ${host}:8000/v1/models to return 200 (up to ${GPU_READY_TIMEOUT}s; fast-fails on crash)..."
   while [ "$(date +%s)" -lt "${deadline}" ]; do
     # Probe from inside the cluster with a throwaway pod (curl image).
     if kubectl run "bench-probe-$$" -n "${NS}" --rm -i --restart=Never \
@@ -428,10 +632,22 @@ wait_isvc_ready() {
       echo "   endpoint is up."
       return 0
     fi
+
+    # Fast-fail: if the bench pod has crashlooped / errored, stop NOW (don't wait
+    # out the full download budget on a model that will never serve).
+    local fail_reason
+    fail_reason="$(bench_pod_failure_reason "${bench_name}")"
+    if [ -n "${fail_reason}" ]; then
+      LAST_FAIL_REASON="${fail_reason}"
+      echo "   FAST-FAIL: ${fail_reason}"
+      return 1
+    fi
+
     echo "   not ready yet; sleeping 15s..."
     sleep 15
   done
-  echo "   ERROR: ${host} did not become ready within ${GPU_READY_TIMEOUT}s."
+  LAST_FAIL_REASON="Endpoint never became ready within ${GPU_READY_TIMEOUT}s (serving did not come up -- e.g. weight download stalled)."
+  echo "   ERROR: ${LAST_FAIL_REASON}"
   return 1
 }
 
@@ -557,7 +773,20 @@ while IFS=$'\t' read -r model_name model_source; do
       "${model_name} (prod, in-place)" \
       "${dest_json}" \
       "${dest_report}"
+    [ -s "${dest_report}" ] && clear_skip "${slug}"
   else
+    # --- Upfront size-skip: never touch the cluster for a model that cannot
+    #     fit. candidates.yaml classes it too-large / needs-2gpu and carries a
+    #     skip_reason; record that reason and move on WITHOUT degrading prod. ---
+    fit="$(candidate_field fit "${slug}" "${model_source}")"
+    skip_reason="$(candidate_field skip_reason "${slug}" "${model_source}")"
+    if [ "${fit}" = "too-large" ] || [ "${fit}" = "needs-2gpu" ]; then
+      [ -n "${skip_reason}" ] || skip_reason="Not benchmarked -- fit class '${fit}' does not fit this hardware (1 GPU freed, 96GB)."
+      echo ">> Size-skip (${fit}): NOT creating a bench InferenceService for ${model_name}."
+      record_skip "${slug}" "${skip_reason}"
+      continue
+    fi
+
     # --- Case B: not served -> free a GPU, spin up a temp InferenceService. --
     bench_isvc="bench-${slug}"
     bench_host="${bench_isvc}.${NS}.svc.cluster.local"
@@ -575,16 +804,23 @@ while IFS=$'\t' read -r model_name model_source; do
     TEMP_ISVCS+=("${bench_isvc}")      # track for the restore trap (before create)
     kubectl apply -f "${manifest}"
 
-    # Wait for it to serve (first serve downloads weights -> long timeout).
-    if wait_isvc_ready "${bench_host}"; then
+    # Wait for it to serve (first serve downloads weights -> long budget), but
+    # fast-fail on a crashloop/error and record a matrix-ready reason.
+    if wait_isvc_ready "${bench_host}" "${bench_isvc}"; then
       run_benchmark_job \
         "http://${bench_host}:8000/v1" \
         "${model_source}" \
         "${model_name} (bench, single-GPU)" \
         "${dest_json}" \
         "${dest_report}"
+      if [ -s "${dest_report}" ]; then
+        clear_skip "${slug}"
+      else
+        record_skip "${slug}" "Serving came up but the benchmark Job produced no report (see cluster Job logs)."
+      fi
     else
-      echo ">> Skipping benchmark for ${model_name}: endpoint never became ready."
+      # wait_isvc_ready set LAST_FAIL_REASON (crashloop / error / never-ready).
+      record_skip "${slug}" "${LAST_FAIL_REASON:-Endpoint never became ready.}"
     fi
 
     # Tear down the temp InferenceService before the next model (frees its GPU).
@@ -605,66 +841,73 @@ done <<< "${MODEL_LINES}"
 echo ""
 echo ">> Building comparison matrix from all (transient) result JSONs..."
 MATRIX_MD="${RESULTS_DIR}/COMPARISON-MATRIX.md"
+MATRIX_TEST_MD="${RESULTS_DIR}/MODEL-TEST-MATRIX.md"
+MATRIX_PY="${REPO_ROOT}/benchmarks/update_test_matrix.py"
 # The per-model result JSONs live ONLY in the temp WORKDIR (never in
 # results-incluster). Glob them from there to feed compare_models.py, then let
 # the EXIT trap discard them with the WORKDIR.
 shopt -s nullglob
 RESULT_JSONS=("${WORKDIR}"/results-*.json)
 shopt -u nullglob
-if [ "${#RESULT_JSONS[@]}" -eq 0 ]; then
-  echo ">> No result JSONs found; skipping matrix + publish."
-else
-  # Matrix is text -> keep it as COMPARISON-MATRIX.md in results-incluster.
-  "${PYTHON}" "${COMPARE_PY}" "${RESULT_JSONS[@]}" --output "${MATRIX_MD}"
-  echo ">> Matrix written to ${MATRIX_MD}"
 
-  # Regenerate the self-updating model test matrix (candidates + tested status)
-  # so MODEL-TEST-MATRIX.md tracks the full backlog. Non-fatal: a matrix error
-  # must never abort the sweep/publish (mirrors the publish step below).
-  MATRIX_TEST_MD="${RESULTS_DIR}/MODEL-TEST-MATRIX.md"
-  MATRIX_PY="${REPO_ROOT}/benchmarks/update_test_matrix.py"
-  echo ">> Updating model test matrix (${MATRIX_TEST_MD})..."
-  "${PYTHON}" "${MATRIX_PY}" || \
-    echo ">> update_test_matrix step returned non-zero (continuing; matrix may be stale)."
+# ALWAYS regenerate the matrices -- even when zero models benchmarked (all skipped).
+# compare_models.py renders every registered model from its known-models registry,
+# and --results-dir lets it read the per-slug SKIPPED.txt this run wrote so each
+# skipped/failed model shows `Skipped -- <reason>` instead of a bare "--". Likewise
+# update_test_matrix.py folds those reasons into MODEL-TEST-MATRIX.md.
+echo ">> Building COMPARISON-MATRIX.md (${#RESULT_JSONS[@]} benchmarked; skip reasons from ${RESULTS_DIR})..."
+"${PYTHON}" "${COMPARE_PY}" "${RESULT_JSONS[@]:-}" --output "${MATRIX_MD}" --results-dir "${RESULTS_DIR}" || \
+  echo ">> compare_models step returned non-zero (continuing; matrix may be stale)."
+echo ">> Matrix written to ${MATRIX_MD}"
 
-  # Publish the text artifacts to aigit, reusing publish_to_aigit.py at RUNTIME
-  # (not edited). It walks RESULTS_DIR recursively and uploads to STABLE,
-  # model-named paths under benchmarks/results-incluster (each publish OVERWRITES
-  # the same paths), then opens/updates a PR. It reads credentials from AIGIT_*
-  # env / the aigit-publish secret; without a token it prints "publish skipped"
-  # and returns 0. We point RESULTS_DIR at a staging dir that MIRRORS the desired
-  # aigit tree: per-model <slug>/report.txt subdirs + COMPARISON-MATRIX.md -- NO
-  # json/csv, and only the artifacts from THIS run (no stale files).
-  echo ">> Publishing per-model report.txt + matrix to aigit (reusing publish_to_aigit.py)..."
-  STAGE="${WORKDIR}/publish"
-  mkdir -p "${STAGE}"
-  cp "${MATRIX_MD}" "${STAGE}/COMPARISON-MATRIX.md" 2>/dev/null || true
-  cp "${MATRIX_TEST_MD}" "${STAGE}/MODEL-TEST-MATRIX.md" 2>/dev/null || true
-  # Mirror each per-model report into <slug>/report.txt so the publisher preserves
-  # the per-model folder structure (stable model-named paths, overwritten each run).
-  shopt -s nullglob
-  for report in "${RESULTS_DIR}"/*/report.txt; do
-    slug_dir="$(basename "$(dirname "${report}")")"
-    mkdir -p "${STAGE}/${slug_dir}"
-    cp "${report}" "${STAGE}/${slug_dir}/report.txt" 2>/dev/null || true
-  done
-  shopt -u nullglob
+# Regenerate the self-updating model test matrix (candidates + tested/skipped
+# status). Non-fatal: a matrix error must never abort the sweep/publish.
+echo ">> Updating model test matrix (${MATRIX_TEST_MD})..."
+"${PYTHON}" "${MATRIX_PY}" || \
+  echo ">> update_test_matrix step returned non-zero (continuing; matrix may be stale)."
 
-  # Pull aigit-publish secret values into env if present (mirrors job.yaml's
-  # mapping). Non-fatal if the secret is absent -> publish skips gracefully.
-  get_secret() {
-    kubectl get secret aigit-publish -n "${NS}" \
-      -o jsonpath="{.data.$1}" 2>/dev/null | base64 -d 2>/dev/null || true
-  }
-  export AIGIT_API="$(get_secret api)"
-  export AIGIT_REPO="$(get_secret repo)"
-  export AIGIT_USER="$(get_secret user)"
-  export AIGIT_TOKEN="$(get_secret token)"
-  export RESULTS_DIR="${STAGE}"
+# Publish the text artifacts to aigit, reusing publish_to_aigit.py at RUNTIME
+# (not edited). It walks RESULTS_DIR recursively and uploads to STABLE,
+# model-named paths under benchmarks/results-incluster (each publish OVERWRITES
+# the same paths), then opens/updates a PR. It reads credentials from AIGIT_*
+# env / the aigit-publish secret; without a token it prints "publish skipped"
+# and returns 0. We point RESULTS_DIR at a staging dir that MIRRORS the desired
+# aigit tree: per-model <slug>/report.txt (+ SKIPPED.txt) subdirs + the two
+# matrices -- NO json/csv, and only the artifacts from THIS run (no stale files).
+echo ">> Publishing per-model report.txt/SKIPPED.txt + matrices to aigit (reusing publish_to_aigit.py)..."
+STAGE="${WORKDIR}/publish"
+mkdir -p "${STAGE}"
+cp "${MATRIX_MD}" "${STAGE}/COMPARISON-MATRIX.md" 2>/dev/null || true
+cp "${MATRIX_TEST_MD}" "${STAGE}/MODEL-TEST-MATRIX.md" 2>/dev/null || true
+# Mirror each per-model report AND skip reason into <slug>/ so the publisher
+# preserves the per-model folder structure (stable paths, overwritten each run).
+shopt -s nullglob
+for report in "${RESULTS_DIR}"/*/report.txt; do
+  slug_dir="$(basename "$(dirname "${report}")")"
+  mkdir -p "${STAGE}/${slug_dir}"
+  cp "${report}" "${STAGE}/${slug_dir}/report.txt" 2>/dev/null || true
+done
+for skipped in "${RESULTS_DIR}"/*/SKIPPED.txt; do
+  slug_dir="$(basename "$(dirname "${skipped}")")"
+  mkdir -p "${STAGE}/${slug_dir}"
+  cp "${skipped}" "${STAGE}/${slug_dir}/SKIPPED.txt" 2>/dev/null || true
+done
+shopt -u nullglob
 
-  "${PYTHON}" "${REPO_ROOT}/benchmarks/k8s/publish_to_aigit.py" || \
-    echo ">> publish step returned non-zero (continuing; results are saved locally)."
-fi
+# Pull aigit-publish secret values into env if present (mirrors job.yaml's
+# mapping). Non-fatal if the secret is absent -> publish skips gracefully.
+get_secret() {
+  kubectl get secret aigit-publish -n "${NS}" \
+    -o jsonpath="{.data.$1}" 2>/dev/null | base64 -d 2>/dev/null || true
+}
+export AIGIT_API="$(get_secret api)"
+export AIGIT_REPO="$(get_secret repo)"
+export AIGIT_USER="$(get_secret user)"
+export AIGIT_TOKEN="$(get_secret token)"
+export RESULTS_DIR="${STAGE}"
+
+"${PYTHON}" "${REPO_ROOT}/benchmarks/k8s/publish_to_aigit.py" || \
+  echo ">> publish step returned non-zero (continuing; results are saved locally)."
 
 echo ""
 echo ">> Benchmark sweep complete. Local results in ${RESULTS_DIR}."
