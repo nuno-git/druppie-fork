@@ -11,18 +11,27 @@ This plan expands the served model set beyond the single `Qwen3.6-27B` and — c
 
 ---
 
-## Current state (as of 2026-07-01)
+## Current state (as of 2026-07-06)
+
+> **Update 2026-07-06:** de serving-topologie is gewijzigd. De oude enkele `qwen` InferenceService
+> (`Qwen/Qwen3.6-27B`, bfloat16, 2 replicas, image `v0.20.0`, `--max-model-len 131072`) is **vervangen**
+> door **twee** InferenceServices — `qwen-27b` (NVFP4-variant) en `qwen-35b` — die elk **1 GPU** claimen.
+> Beide GPUs op de node zijn dus nu bezet (1 elk). De `hf-cache` PVC en `hf-prefetch` Job uit PR#1 zijn
+> **niet actief** in het cluster. Zie de detailtabel + "Weight-storage gap" hieronder.
 
 | Item | Value |
 |---|---|
 | Cluster | `ka-k8s-ai` (rijnland RKE2) |
-| GPU node | `ka-k8s-ai-workers-gpu-*` — **2× NVIDIA RTX PRO 6000 Blackwell Server Edition, 96 GB each = 192 GB VRAM total**, ~251 GB system RAM. Other workers are CPU-only. |
-| GPU allocation | ⚠️ **both GPUs 100% allocated** — `qwen` InferenceService serves `Qwen/Qwen3.6-27B` at **2 replicas (1 GPU each)** |
+| GPU node | `ka-k8s-ai-workers-gpu-xd4xn-fk5v2` — **2× NVIDIA RTX PRO 6000 Blackwell Server Edition, 96 GB each = 192 GB VRAM total**, ~251 GB system RAM. Other workers are CPU-only. |
+| GPU allocation | ⚠️ **both GPUs 100% allocated** — nu door **twee** InferenceServices: `qwen-27b` (1 GPU) + `qwen-35b` (1 GPU) op node `ka-k8s-ai-workers-gpu-xd4xn-fk5v2` (starten op / laden gewichten per 2026-07-06 ~14:54 UTC) |
+| Serving — 27B | `qwen-27b`: model `nvidia/Qwen3.6-27B-NVFP4` (**NVFP4-quantized**, ≠ de eerder gebenchmarkte `Qwen/Qwen3.6-27B` bfloat16). Args o.a. `--quantization modelopt --max-model-len 262144 --max-num-seqs 256 --max-num-batched-tokens 16384 --enable-chunked-prefill --enable-prefix-caching --gpu-memory-utilization 0.95 --enable-auto-tool-choice --tool-call-parser qwen3_xml`. Image `vllm/vllm-openai:cu129-nightly`, 1 GPU. Endpoint `http://qwen-27b.llm.svc.cluster.local:8000/v1` |
+| Serving — 35B | `qwen-35b`: model `qwen3-6-35b-a3b`, 1 GPU. Endpoint `http://qwen-35b.llm.svc.cluster.local:8000/v1` |
+| Registered models | **10 `Model` CRs Ready in ns `llm`**: deepseek-v3-1, gemma-4-e4b, glm-4-6v, glm-5-1, gpt-oss-120b, qwen3-6-27b, qwen3-6-27b-mtp, qwen3-6-35b-a3b, qwen3-coder-480b-a35b, qwen3-coder-next-80b |
 | Serving stack | **LLMKube** (`inference.llmkube.dev/v1alpha1`), CRDs `Model` / `InferenceService` / `ModelRouter` |
 | InferenceService runtimes | `vllm` \| `llamacpp` \| `tgi` \| `personaplex` \| `generic` |
 | Model formats | `gguf` \| `mlx` \| `safetensors` \| `pytorch` \| `custom` |
 | Notable knobs | `moeCPUOffload` / `moeCPULayers` / `tensorOverrides` (CPU/GPU hybrid), `mmproj` (vision), `speculativeDecoding` (MTP), `autoscaling`, `cacheTypeK`/`cacheTypeV` (KV quant) |
-| vLLM image | `vllm/vllm-openai:v0.20.0` |
+| vLLM image | `vllm/vllm-openai:cu129-nightly` (27B); was `v0.20.0` op de oude enkele `qwen` isvc |
 
 ### GitOps
 
@@ -33,6 +42,11 @@ Models are managed by a **Flux Kustomization `llm-models`** (ns `flux-system`) �
 > ⚠️ Direct `kubectl apply` **drifts and gets reverted** by Flux. All changes go via **PR to that repo**.
 
 ### Weight-storage gap (root cause of the pain)
+
+> **Update 2026-07-06:** ondanks dat PR#1 (die de `hf-cache` PVC + prefetch declareert) is **gemerged**,
+> is er **nog steeds geen live weight-cache** — er is op dit moment **geen `hf-cache` PVC** in het cluster
+> en **geen `hf-prefetch` Job**. De opvolg-PR#2 die dit moest 'unfaulten'/resizen is **CLOSED, niet gemerged**.
+> De onderstaande gap staat dus nog volledig open.
 
 There is **NO persistent weight cache**:
 
@@ -95,10 +109,18 @@ Budget: **192 GB VRAM total; single GPU = 96 GB**. Two feasibility tiers (see be
   `spec.endpoint`. (Committed on this branch.)
 - [x] Refactored results to per-model txt folders: `benchmarks/results-incluster/<slug>/report.txt` +
   `COMPARISON-MATRIX.md`. (Committed on this branch.)
-- [x] Opened **PR [ai/k8s#1](https://aigit.waterschap.org/ai/k8s/pulls/1)** — "feat(llm): register expanded
+- [x] **PR [ai/k8s#1](https://aigit.waterschap.org/ai/k8s/pulls/1)** — "feat(llm): register expanded
   model set + HF weight cache + prefetch job": 8 `Model` CRs + `hf-cache` PVC (Longhorn
   `longhorn-distributed`, RWX, 500Gi) + one-shot `hf-prefetch` Job (small/mid models) + README. Gemma left
-  commented-out (gated). ⚠️ **NOT yet merged.**
+  commented-out (gated). ✅ **MERGED (2026-07-06).**
+  > **Update 2026-07-06:** ⚠️ Ondanks de merge is de cache-declaratie in de praktijk **niet actief**: er is
+  > op dit moment **géén `hf-cache` PVC** in het cluster en **géén `hf-prefetch` Job** die draait — cold
+  > starts halen gewichten dus nog steeds opnieuw op. De opvolg-PR die dit had moeten repareren,
+  > **PR [ai/k8s#2](https://aigit.waterschap.org/ai/k8s/pulls/2)** ("fix(llm): hf-cache 200Gi + trim
+  > prefetch (unfault the cache)"), is **CLOSED en NIET gemerged** → de 'unfault'/resize-fix is niet geland.
+  > Dit blijft een open follow-up.
+- [x] Benchmark-resultaten gepubliceerd via **PR [ai/druppie#2](https://aigit.waterschap.org/ai/druppie/pulls/2)**
+  — "Automated benchmark results" — **MERGED**.
 
 ---
 
@@ -110,10 +132,14 @@ Verify the `[VERIFY]` entries, land the registration/cache PR, and prime the cac
 
 - [ ] Verify the **4 `[VERIFY]`** repo ids / quant filenames on HF (Qwen3-Coder-Next-80B, GLM-5.1,
   Qwen3-Coder-480B-A35B, DeepSeek-V3.1) — these are future/hypothetical versions and may 404.
-- [ ] Merge PR [ai/k8s#1](https://aigit.waterschap.org/ai/k8s/pulls/1).
-- [ ] Confirm Flux reconciles the 8 `Model` CRs + `hf-cache` PVC.
-- [ ] Run the `hf-prefetch` Job.
-- [ ] Confirm weights land in the `hf-cache` PVC.
+- [x] Merge PR [ai/k8s#1](https://aigit.waterschap.org/ai/k8s/pulls/1). ✅ **MERGED 2026-07-06.**
+- [x] Confirm Flux reconciles the 8 `Model` CRs. **10 `Model` CRs Ready in ns `llm`** (2026-07-06):
+  deepseek-v3-1, gemma-4-e4b, glm-4-6v, glm-5-1, gpt-oss-120b, qwen3-6-27b, qwen3-6-27b-mtp,
+  qwen3-6-35b-a3b, qwen3-coder-480b-a35b, qwen3-coder-next-80b.
+- [ ] ⚠️ `hf-cache` PVC reconciled — **NIET actief**: geen `hf-cache` PVC in het cluster (2026-07-06).
+  Opvolg-PR [ai/k8s#2](https://aigit.waterschap.org/ai/k8s/pulls/2) (unfault/resize) is **CLOSED, niet gemerged**.
+- [ ] ⚠️ Run the `hf-prefetch` Job — **geen prefetch Job draait** (2026-07-06).
+- [ ] Confirm weights land in the `hf-cache` PVC — geblokkeerd door bovenstaande.
 
 **Exit:** `hf-prefetch` Job `Complete`; cache populated for the small/mid set.
 

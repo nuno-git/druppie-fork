@@ -25,7 +25,19 @@ Bij het kiezen van modellen voor het Druppie platform wegen we de volgende crite
 
 ## Candidate Modellen
 
-### Momenteel geconfigureerd (Ollama)
+### Momenteel geserveerd (LLMKube + vLLM op `ka-k8s-ai`)
+
+> **Update 2026-07-06:** de eerdere "Ollama"-opzet is achterhaald. Het live serving-platform is
+> **LLMKube (operator) + vLLM** op cluster `ka-k8s-ai`. Er draaien nu **twee** InferenceServices, elk op 1 GPU:
+> `qwen-27b` = `nvidia/Qwen3.6-27B-NVFP4` (**NVFP4**-quantized, 256K context, image `vllm/vllm-openai:cu129-nightly`,
+> endpoint `http://qwen-27b.llm.svc.cluster.local:8000/v1`) en `qwen-35b` = `qwen3-6-35b-a3b`
+> (endpoint `http://qwen-35b.llm.svc.cluster.local:8000/v1`). Daarnaast zijn **10 `Model` CRs Ready**
+> geregistreerd in ns `llm` (deepseek-v3-1, gemma-4-e4b, glm-4-6v, glm-5-1, gpt-oss-120b, qwen3-6-27b,
+> qwen3-6-27b-mtp, qwen3-6-35b-a3b, qwen3-coder-480b-a35b, qwen3-coder-next-80b). Zie
+> [`docs/LL-localllm-story.md`](LL-localllm-story.md) + [`docs/LOCAL-LLM-MODEL-EXPANSION-PLAN.md`](LOCAL-LLM-MODEL-EXPANSION-PLAN.md).
+> NB: de eerder gebenchmarkte `Qwen/Qwen3.6-27B` (bfloat16) is een **andere variant** dan de nu geserveerde NVFP4-27B.
+
+De onderstaande tabel is de historische kandidatenlijst (Ollama-tijdperk), bewaard als referentie:
 
 | Model | Parameters | Context | Licentie | Sterke punten | Beperkingen |
 |-------|-----------|---------|----------|---------------|-------------|
@@ -48,9 +60,12 @@ Bij het kiezen van modellen voor het Druppie platform wegen we de volgende crite
 ## Infrastructuur
 
 ### Huidige Setup
-- **Ollama** op `ollama.waterschap.org`
-- Modellen worden als GGUF quantized versies geserved
-- OpenAI-compatible API endpoint
+> **Update 2026-07-06:** de live setup is **LLMKube + vLLM** op cluster `ka-k8s-ai` (rijnland RKE2), niet Ollama.
+- **LLMKube** (operator) + **vLLM** als engine op de GPU-node `ka-k8s-ai-workers-gpu-xd4xn-fk5v2` (2× RTX PRO 6000 Blackwell)
+- Twee InferenceServices, elk 1 GPU: `qwen-27b` (`nvidia/Qwen3.6-27B-NVFP4`, NVFP4, 256K, image `vllm/vllm-openai:cu129-nightly`) en `qwen-35b` (`qwen3-6-35b-a3b`)
+- In-cluster OpenAI-compatible endpoints: `http://qwen-27b.llm.svc.cluster.local:8000/v1` en `http://qwen-35b.llm.svc.cluster.local:8000/v1`
+- ⚠️ Nog geen persistente weight-cache (`hf-cache` PVC / prefetch Job niet actief) — cold starts halen gewichten opnieuw op
+- _(Historisch: Ollama op `ollama.waterschap.org`, GGUF-quantized, OpenAI-compatible API — niet meer in gebruik.)_
 
 ### Toekomstige Setup (Nutanix/Kubernetes)
 - **Nutanix** cluster met GPU nodes

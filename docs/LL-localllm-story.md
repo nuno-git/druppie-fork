@@ -6,17 +6,27 @@
 
 ## Geverifieerde cluster-staat (`ka-k8s-ai`)
 
+> Oorspronkelijk ingevuld 2026-06-30. **Update 2026-07-06:** de serving-topologie is gewijzigd — de enkele
+> `qwen` InferenceService (`Qwen/Qwen3.6-27B` bfloat16, 2 replicas, image `v0.20.0`, 131072) is **vervangen**
+> door **twee** InferenceServices: `qwen-27b` (**NVFP4**-variant `nvidia/Qwen3.6-27B-NVFP4`, 256K context,
+> image `vllm/vllm-openai:cu129-nightly`) en `qwen-35b` (`qwen3-6-35b-a3b`), elk 1 GPU op node
+> `ka-k8s-ai-workers-gpu-xd4xn-fk5v2`. Er staan nu **10 `Model` CRs Ready** in ns `llm`. De `hf-cache` PVC /
+> prefetch Job uit PR ai/k8s#1 zijn (ondanks merge) **niet actief** in het cluster. De rijen hieronder
+> zijn bijgewerkt; oude waarden staan tussen haakjes.
+
 | Onderdeel | Status | Bron (cluster) |
 |---|---|---|
-| GPU-node | `[x]` `ka-k8s-ai-workers-gpu-xd4xn`, 2× NVIDIA GPU (compute 12.0, Blackwell-class), taint `gpu=true:NoSchedule` | `kubectl get nodes` |
+| GPU-node | `[x]` `ka-k8s-ai-workers-gpu-xd4xn-fk5v2`, 2× NVIDIA GPU (compute 12.0, Blackwell-class), taint `gpu=true:NoSchedule` | `kubectl get nodes` |
 | NVIDIA GPU Operator | `[x]` namespace `gpu-operator`: driver, device-plugin, **DCGM + dcgm-exporter**, GPU-feature-discovery, container-toolkit | node labels `nvidia.com/gpu.deploy.*` |
 | Serving-operator | `[x]` **LLMKube** in `llmkube-system` (controller-manager + webhook); CRDs `models`/`inferenceservices`/`modelrouters` in `inference.llmkube.dev` | `kubectl get crd` |
-| Backend-engine | `[x]` **vLLM** `vllm/vllm-openai:v0.20.0` | InferenceService `qwen` spec |
-| Draaiend model | `[x]` InferenceService `qwen` = `Ready`, **2 replicas** op GPU-node, model `Qwen/Qwen3.6-27B` | `kubectl get inferenceservices -A` |
-| Tweede model | `[~]` `Model/qwen3-6-35b-a3b` (MoE) = `Ready` maar **geen InferenceService** (staged, niet geserveerd) | `kubectl get models -A` |
-| In-cluster OpenAI-endpoint | `[x]` `http://qwen.llm.svc.cluster.local:8000/v1` (ClusterIP, poort 8000) | Service `qwen` in ns `llm` |
+| Backend-engine | `[x]` **vLLM** `vllm/vllm-openai:cu129-nightly` (27B) _(was `v0.20.0` op de oude enkele `qwen` isvc)_ | InferenceService `qwen-27b` spec |
+| Draaiend model (27B) | `[x]` InferenceService `qwen-27b`, model `nvidia/Qwen3.6-27B-NVFP4` (**NVFP4**, ≠ de eerder gebenchmarkte bfloat16 `Qwen/Qwen3.6-27B`), 1 GPU. _(was enkele `qwen` isvc, 2 replicas, bfloat16)_ Per 2026-07-06 ~14:54 UTC nog aan het opstarten/gewichten laden | `kubectl get inferenceservices -A` |
+| Draaiend model (35B) | `[x]` InferenceService `qwen-35b`, model `qwen3-6-35b-a3b` (MoE), 1 GPU — **nu wél geserveerd** _(was `[~]` staged, geen isvc)_ | `kubectl get inferenceservices -A` |
+| Geregistreerde modellen | `[x]` **10 `Model` CRs Ready** in ns `llm`: deepseek-v3-1, gemma-4-e4b, glm-4-6v, glm-5-1, gpt-oss-120b, qwen3-6-27b, qwen3-6-27b-mtp, qwen3-6-35b-a3b, qwen3-coder-480b-a35b, qwen3-coder-next-80b | `kubectl get models -A` |
+| In-cluster OpenAI-endpoint | `[x]` `http://qwen-27b.llm.svc.cluster.local:8000/v1` + `http://qwen-35b.llm.svc.cluster.local:8000/v1` (ClusterIP, poort 8000) _(was enkele `qwen.llm.svc`)_ | Services in ns `llm` |
 | Tool calling | `[x]` aan in vLLM (`--enable-auto-tool-choice --tool-call-parser qwen3_xml`) | InferenceService spec |
-| Long context | `[x]` `--max-model-len 131072` (128K), `bfloat16`, fp8 KV-cache, prefix-caching, chunked-prefill | InferenceService spec |
+| Long context | `[x]` `qwen-27b`: `--max-model-len 262144` (256K), NVFP4-gewichten, prefix-caching, chunked-prefill _(oude `qwen` isvc: 131072 / bfloat16 / fp8 KV-cache)_ | InferenceService spec |
+| Weight-cache | `[ ]` ⚠️ **geen `hf-cache` PVC en geen `hf-prefetch` Job** in het cluster, ondanks merge van PR ai/k8s#1; opvolg-PR ai/k8s#2 (unfault/resize) is **CLOSED, niet gemerged** → cold starts halen gewichten opnieuw op | `kubectl get pvc,jobs -n llm` |
 | GPU-autoscaling | `[ ]` ⚠️ **geen HPA, geen KEDA** (replicas vast op 2; `scaledobject` CRD niet geïnstalleerd) | `kubectl get hpa -n llm` |
 | Druppie wijst naar lokaal endpoint | `[ ]` ⚠️ backend ConfigMap nog `LLM_PROVIDER: zai`, geen `qwen`/`llm.svc`-referentie | ConfigMap ns `druppie` |
 | Token streaming in LLM-client | `[ ]` ⚠️ niet geïmplementeerd (`druppie/llm/base.py` heeft alleen `chat`/`achat`) | repo |
@@ -33,7 +43,7 @@ De keuze is in de praktijk al gemaakt en gedeployed: **LLMKube** als Kubernetes-
 **Acceptatiecriteria**
 - [x] Serving-stack gekozen en draaiend: LLMKube + vLLM (geen losse vergelijking vLLM/Ollama/TGI/KubeAI meer nodig — LLMKube wrapt vLLM)
 - [ ] **ADR schrijven en goedkeuren** — `docs/ADR-LLM-SERVING-STACK.md` (Status/Context/Decision/Consequences, volg `docs/ADR-KUBERNETES.md`): waarom LLMKube boven raw vLLM-chart / KubeAI / TGI; wat de consequenties zijn (o.a. autoscaling zelf inrichten — zie LL2)
-- [ ] `docs/LLM-SELECTION.md` bijwerken: huidige "Ollama currently configured" is achterhaald; werkelijke setup = LLMKube/vLLM met `Qwen3.6-27B` op `ka-k8s-ai`. In sync brengen met `benchmarks/config.yaml`
+- [x] `docs/LLM-SELECTION.md` bijwerken: "Ollama currently configured" was achterhaald; werkelijke setup = LLMKube/vLLM op `ka-k8s-ai` — bijgewerkt 2026-07-06 (NVFP4-`qwen-27b` + `qwen-35b`). In sync brengen met `benchmarks/config.yaml`
 - [x] Spike-documentatie in `/docs` — `LLM-SELECTION.md` + `BENCHMARKING.md` aanwezig
 
 ---
