@@ -46,12 +46,6 @@ spec:
             limits:
               memory: "64Mi"
               cpu: "100m"
-      {{- with .Values.global.tolerateGpu }}
-      tolerations:
-        - key: nvidia.com/gpu
-          operator: Exists
-          effect: NoSchedule
-      {{- end }}
       containers:
         - name: module-coding
           image: {{ include "druppie.image" (dict "Values" .Values "image" .Values.modules.coding.image) }}
