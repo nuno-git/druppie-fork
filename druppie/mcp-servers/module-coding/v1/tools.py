@@ -372,7 +372,20 @@ async def _copy_from_container(
     socket mount only allows API-level operations, and `docker cp` resolves
     paths on the *daemon's* host filesystem, not inside the calling container.
     Piping through `docker exec cat` avoids this entirely.
+
+    In k8s mode the sandbox has no Docker; we read the file out through the
+    agent-sandbox SDK as bytes (base64 round-trip — `cat`-as-text would corrupt
+    binary content like git bundles).
     """
+    if SANDBOX_MODE == "k8s":
+        entry = _find_entry_by_container_id(container_id)
+        if entry and entry.get("_k8s_handle"):
+            data = await _get_k8s_manager().read_file_bytes(
+                entry["_k8s_handle"], src_path
+            )
+            with open(dst_path, "wb") as f:
+                f.write(data)
+            return
     proc = await asyncio.create_subprocess_exec(
         "docker", "exec", container_id, "cat", src_path,
         stdout=asyncio.subprocess.PIPE,
@@ -2095,6 +2108,15 @@ async def _copy_to_container(
     container_id: str, src_path: str, dst_path: str
 ) -> None:
     """Copy a file from the host into a container (reverse of _copy_from_container)."""
+    if SANDBOX_MODE == "k8s":
+        entry = _find_entry_by_container_id(container_id)
+        if entry and entry.get("_k8s_handle"):
+            with open(src_path, "rb") as f:
+                data = f.read()
+            await _get_k8s_manager().write_file(
+                entry["_k8s_handle"], dst_path, data
+            )
+            return
     with open(src_path, "rb") as f:
         data = f.read()
     proc = await asyncio.create_subprocess_exec(
