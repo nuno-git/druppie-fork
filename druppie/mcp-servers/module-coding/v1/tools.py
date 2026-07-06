@@ -513,6 +513,7 @@ async def _create_sandbox_container(
             git_scope=scope,
             repo_clone_url=clone_url,
             branch=branch,
+            networks=agent_networks,
         )
 
         key = f"{session_id}::{scope}"

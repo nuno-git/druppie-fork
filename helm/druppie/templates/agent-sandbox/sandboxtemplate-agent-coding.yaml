@@ -1,25 +1,45 @@
 {{- if .Values.agentSandbox.enabled }}
-# SandboxTemplate: agent-coding — gVisor-isolated sandbox for AI agent code execution.
-# Uses a custom image built on the agent-sandbox runtime (port 8888 server)
-# with Druppie tools (Python, git, pip packages) added.
+# SandboxTemplates: agent-coding — gVisor-isolated sandboxes for AI agent code
+# execution, split into three network tiers (airgapped / internet / modules).
+# All tiers share runtimeClassName gVisor, priorityClass druppie-agent, the
+# workspace volumeClaimTemplate, imagePullSecrets harbor-regcred, and the runner
+# container image (agent-sandbox runtime server on port 8888).
 #
 # IMPORTANT: the base image must include the agent-sandbox runtime server.
 # Build with: druppie/mcp-servers/module-coding/Dockerfile.sandbox.k8s
 # Push to: harbor.rijnland.dev/druppie/druppie-sandbox-k8s:latest
+#
+# gVisor's userspace netstack bypasses Cilium's eBPF service load-balancing, so
+# ClusterIP Services (incl. kube-dns 10.43.0.10) are UNREACHABLE from the
+# sandbox. Use a public resolver instead; external IPs work fine under gVisor.
+#   - airgapped: no egress (repo delivered host-side; default deny).
+#   - internet:  external DNS + HTTP/HTTPS only (pip/npm/github/package APIs).
+#   - modules:   same + per-node gateway proxy (env-injected) carrying in-cluster
+#                traffic; repo clone is still host-side.
+{{- $tiers := list
+    (dict "suffix" "airgapped")
+    (dict "suffix" "internet")
+    (dict "suffix" "modules")
+}}
+{{- range $tier := $tiers }}
 ---
 apiVersion: extensions.agents.x-k8s.io/v1beta1
 kind: SandboxTemplate
 metadata:
-  name: agent-coding-template
+  name: agent-coding-template-{{ $tier.suffix }}
   namespace: sandbox-runtime
 spec:
   podTemplate:
     spec:
       runtimeClassName: gvisor
       priorityClassName: druppie-agent
+      dnsPolicy: None
+      dnsConfig:
+        nameservers:
+          - 1.1.1.1
       containers:
       - name: runner
-        image: {{ .Values.global.imageRegistry }}/druppie-sandbox-k8s:{{ .Values.global.imageTag }}
+        image: {{ $.Values.global.imageRegistry }}/druppie-sandbox-k8s:{{ $.Values.global.imageTag }}
         ports:
         - containerPort: 8888
         readinessProbe:
@@ -34,8 +54,29 @@ spec:
             memory: 512Mi
             ephemeral-storage: 1Gi
           limits:
-            cpu: {{ .Values.agentSandbox.coding.cpuLimit | default "2" }}
-            memory: {{ .Values.agentSandbox.coding.memoryLimit | default "4Gi" }}
+            cpu: {{ $.Values.agentSandbox.coding.cpuLimit | default "2" }}
+            memory: {{ $.Values.agentSandbox.coding.memoryLimit | default "4Gi" }}
+{{- if eq $tier.suffix "modules" }}
+        # Point the sandbox at this node's gateway proxy (host IP :3128) so
+        # in-cluster services become reachable from gVisor. SANDBOX_NODE_IP is
+        # the node the sandbox landed on; the gateway DaemonSet runs on every
+        # worker, so the proxy is always local (no cross-node traffic).
+        env:
+        - name: SANDBOX_NODE_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.hostIP
+        - name: HTTPS_PROXY
+          value: "http://$(SANDBOX_NODE_IP):3128"
+        - name: http_proxy
+          value: "http://$(SANDBOX_NODE_IP):3128"
+        - name: https_proxy
+          value: "http://$(SANDBOX_NODE_IP):3128"
+        - name: NO_PROXY
+          value: "127.0.0.1,localhost"
+        - name: no_proxy
+          value: "127.0.0.1,localhost"
+{{- end }}
       imagePullSecrets:
       - name: harbor-regcred
   volumeClaimTemplatesPolicy: Overrides
@@ -44,47 +85,45 @@ spec:
       name: workspace
     spec:
       accessModes: ["ReadWriteOnce"]
-      storageClassName: {{ .Values.persistence.storageClass | default "longhorn-distributed" }}
+      storageClassName: {{ $.Values.persistence.storageClass | default "longhorn-distributed" }}
       resources:
         requests:
-          storage: {{ .Values.agentSandbox.coding.workspaceSize | default "10Gi" }}
+          storage: {{ $.Values.agentSandbox.coding.workspaceSize | default "10Gi" }}
   networkPolicy:
+{{- if eq $tier.suffix "airgapped" }}
+    # Default deny: empty egress list ⇒ all egress blocked. The repo is
+    # delivered host-side by module-coding; no runtime egress is needed.
+    egress: []
+{{- else }}
     egress:
-    # DNS
+    # External DNS + HTTP/HTTPS only.
     - to:
-      - namespaceSelector: {}
+      - ipBlock:
+          cidr: 0.0.0.0/0
       ports:
       - protocol: UDP
         port: 53
       - protocol: TCP
         port: 53
-    # HTTPS to external (npm, pip, git)
-    - to:
-      - ipBlock:
-          cidr: 0.0.0.0/0
-      ports:
-      - protocol: TCP
-        port: 443
-    # Gitea (git clone/push)
-    - to:
-      - namespaceSelector: {}
-      ports:
-      - protocol: TCP
-        port: 3000
-    # Harbor (image pulls)
-    - to:
-      - namespaceSelector:
-          matchLabels:
-            kubernetes.io/metadata.name: harbor
-      ports:
       - protocol: TCP
         port: 80
-    # LLM endpoint
+      - protocol: TCP
+        port: 443
+{{- if eq $tier.suffix "modules" }}
+    # Reach this node's gateway proxy (hostNetwork pod in sandbox-gateway), which
+    # carries proxied in-cluster traffic. NetworkPolicy egress is stateful, so
+    # the management ingress (module-coding → sandbox:8888) still works.
     - to:
       - namespaceSelector:
           matchLabels:
-            kubernetes.io/metadata.name: {{ .Release.Namespace }}
+            kubernetes.io/metadata.name: sandbox-gateway
+        podSelector:
+          matchLabels:
+            app.kubernetes.io/name: sandbox-gateway
       ports:
       - protocol: TCP
-        port: 8000
+        port: 3128
+{{- end }}
+{{- end }}
+{{- end }}
 {{- end }}
