@@ -165,6 +165,30 @@ def create_session_task(
     return create_tracked_task(coro, name=name)
 
 
+def cancel_session_task(session_id: UUID | str) -> int:
+    """Forcefully cancel in-flight background task(s) for a session.
+
+    The cooperative cancel (DB PAUSED flag + SessionPauseToken) only fires when
+    the orchestrator reaches its next checkpoint — which never happens if it is
+    wedged in a hanging tool call (a sandbox/git/MCP await with no hard
+    timeout). This locates the session's tracked task(s) by name and cancels
+    them, so the wedged ``await`` raises CancelledError and ``run_session_task``'s
+    handler cleans up (agent_runs -> PAUSED_USER, session -> PAUSED). Returns the
+    number of tasks scheduled for cancellation.
+
+    Safe when no task exists (returns 0). Cancellation propagates on the next
+    event-loop tick; the cleanup runs asynchronously in ``run_session_task``.
+    """
+    sid = str(session_id)
+    targets = [
+        t for t in list(_background_tasks)
+        if not t.done() and sid in (t.get_name() or "")
+    ]
+    for t in targets:
+        t.cancel()
+    return len(targets)
+
+
 async def shutdown_background_tasks(timeout: float = 30.0) -> None:
     """Wait for running background tasks to finish, then cancel stragglers.
 

@@ -36,7 +36,7 @@ from druppie.repositories import SessionRepository
 from druppie.repositories.attachment_repository import AttachmentRepository
 from druppie.domain.common import SessionStatus
 from druppie.api.errors import NotFoundError, AuthorizationError
-from druppie.core.background_tasks import create_session_task, SessionTaskConflict, run_session_task
+from druppie.core.background_tasks import create_session_task, SessionTaskConflict, run_session_task, cancel_session_task
 from druppie.services import attachment_service
 
 logger = structlog.get_logger()
@@ -335,6 +335,19 @@ async def stop_session(
             )
     except Exception as e:
         logger.warning("sandbox_cleanup_failed_on_stop", session_id=str(session_id), error=str(e))
+
+    # Hard-cancel any wedged orchestrator task. The cooperative signals above
+    # (PAUSED flag + SessionPauseToken) only take effect when the agent loop
+    # reaches a checkpoint; if it's stuck in a hanging tool call the task would
+    # stay "running" until a process restart. task.cancel() raises
+    # CancelledError at the wedged await and run_session_task cleans up.
+    cancelled = cancel_session_task(session_id)
+    if cancelled:
+        logger.info(
+            "session_task_hard_cancelled",
+            session_id=str(session_id),
+            count=cancelled,
+        )
 
     logger.info("session_stopped", session_id=str(session_id))
 

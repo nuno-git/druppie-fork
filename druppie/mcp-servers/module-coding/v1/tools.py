@@ -906,14 +906,17 @@ async def _destroy_container(session_id: str, git_scope: str) -> None:
 
 
 async def _destroy_all_for_session(session_id: str) -> None:
-    """Destroy all containers for a session (on done/pause/error)."""
+    """Destroy all containers/sandboxes for a session (on done/pause/error)."""
     keys_to_remove = [k for k in sandbox_containers if k.startswith(f"{session_id}::")]
     for key in keys_to_remove:
         entry = sandbox_containers.pop(key)
         container_name = entry["container_name"]
         try:
-            await _docker_run(["docker", "stop", container_name], timeout=15)
-            await _docker_run(["docker", "rm", "-f", container_name], timeout=15)
+            if SANDBOX_MODE == "k8s" and entry.get("_k8s_handle"):
+                await _get_k8s_manager().destroy(entry["_k8s_handle"])
+            else:
+                await _docker_run(["docker", "stop", container_name], timeout=15)
+                await _docker_run(["docker", "rm", "-f", container_name], timeout=15)
         except Exception as e:
             logger.warning("Failed to destroy container %s: %s", container_name, e)
     if keys_to_remove:
