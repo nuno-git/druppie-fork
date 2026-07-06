@@ -346,6 +346,7 @@ export const getAgent = (agentId) => request(`/api/agents/${agentId}`)
 // ============ Health ============
 export const getHealth = () => request('/health')
 export const getStatus = () => request('/api/status')
+export const getVersion = () => request('/api/version')
 
 
 // ============ Evaluations (Admin) ============
