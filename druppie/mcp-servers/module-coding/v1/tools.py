@@ -185,6 +185,14 @@ if SANDBOX_MODE == "docker":
 SANDBOX_CACHE_VOLUME = os.getenv("DRUPPIE_SANDBOX_CACHE_VOLUME", "sandbox_dep_cache")
 SANDBOX_USER = os.getenv("DRUPPIE_SANDBOX_USER", "druppie")
 
+# Max seconds a sandbox may sit idle (no tool activity) before the watchdog
+# reaps it. Catches stuck/dead sessions whose sandbox pod is still Running but
+# whose agent session is wedged — the exact leak that starves the cluster.
+# Reaping only loses UNCOMMITTED in-sandbox edits; pushed commits live in Gitea
+# and bundles on the host PVC. A reaped sandbox is recreated (fresh clone) on
+# the next tool call. Default 15 min (> normal LLM think time).
+SANDBOX_MAX_IDLE = int(os.getenv("DRUPPIE_SANDBOX_MAX_IDLE", "900"))
+
 # K8s sandbox manager (initialized lazily when SANDBOX_MODE == "k8s")
 _k8s_manager = None
 
@@ -217,6 +225,18 @@ def _get_network_lock(key: str) -> asyncio.Lock:
     if key not in _network_locks:
         _network_locks[key] = asyncio.Lock()
     return _network_locks[key]
+
+
+def _touch_sandbox(key: str) -> None:
+    """Record activity on a tracked sandbox (called from every tool op).
+
+    The watchdog reaps sandboxes whose ``last_activity`` is older than
+    ``SANDBOX_MAX_IDLE``; without this, a sandbox whose pod is up but whose
+    session is frozen would never be collected.
+    """
+    entry = sandbox_containers.get(key)
+    if entry is not None:
+        entry["last_activity"] = time.time()
 
 # =============================================================================
 # SECURITY: COMMAND BLOCKLIST
@@ -536,6 +556,7 @@ async def _create_sandbox_container(
             "session_id": session_id,
             "branch": branch,
             "created_at": handle.created_at,
+            "last_activity": time.time(),
             "repo_name": repo_name,
             "repo_owner": repo_owner or GITEA_ORG,
             "_k8s_handle": handle,
@@ -818,6 +839,7 @@ async def _resolve_container(
             if await _is_container_running(container_id):
                 rc, _, _ = await _exec_in_container(container_id, ["echo", "ok"], timeout=5)
                 if rc == 0:
+                    _touch_sandbox(key)
                     return entry["container_name"]
                 logger.warning(
                     "Container %s running but exec failed (setns?), recreating",
