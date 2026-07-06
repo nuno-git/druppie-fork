@@ -8,11 +8,6 @@ metadata:
     app.kubernetes.io/component: module-web
 spec:
   replicas: {{ .Values.modules.web.replicaCount }}
-  strategy:
-    type: RollingUpdate
-    rollingUpdate:
-      maxUnavailable: 0
-      maxSurge: 1
   selector:
     matchLabels:
       {{- include "druppie.selectorLabels" . | nindent 6 }}
@@ -28,6 +23,12 @@ spec:
       {{- if .Values.global.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml .Values.global.imagePullSecrets | nindent 8 }}
+      {{- end }}
+      {{- with .Values.global.tolerateGpu }}
+      tolerations:
+        - key: nvidia.com/gpu
+          operator: Exists
+          effect: NoSchedule
       {{- end }}
       containers:
         - name: module-web
@@ -61,10 +62,6 @@ spec:
             periodSeconds: 10
             timeoutSeconds: 5
             failureThreshold: 5
-          lifecycle:
-            preStop:
-              exec:
-                command: ["sh", "-c", "sleep 10"]
           resources:
             {{- toYaml .Values.modules.web.resources | nindent 12 }}
       {{- with .Values.modules.web.nodeSelector }}

@@ -8,11 +8,6 @@ metadata:
     app.kubernetes.io/component: module-coding
 spec:
   replicas: {{ .Values.modules.coding.replicaCount }}
-  strategy:
-    type: RollingUpdate
-    rollingUpdate:
-      maxUnavailable: 0
-      maxSurge: 1
   selector:
     matchLabels:
       {{- include "druppie.selectorLabels" . | nindent 6 }}
@@ -51,6 +46,12 @@ spec:
             limits:
               memory: "64Mi"
               cpu: "100m"
+      {{- with .Values.global.tolerateGpu }}
+      tolerations:
+        - key: nvidia.com/gpu
+          operator: Exists
+          effect: NoSchedule
+      {{- end }}
       containers:
         - name: module-coding
           image: {{ include "druppie.image" (dict "Values" .Values "image" .Values.modules.coding.image) }}
@@ -94,10 +95,6 @@ spec:
             periodSeconds: 10
             timeoutSeconds: 5
             failureThreshold: 5
-          lifecycle:
-            preStop:
-              exec:
-                command: ["sh", "-c", "sleep 10"]
           resources:
             {{- toYaml .Values.modules.coding.resources | nindent 12 }}
       {{- with .Values.modules.coding.nodeSelector }}
