@@ -1,329 +1,217 @@
 """Document Formatter Service.
 
-Converts agent-produced markdown into professionally formatted PDFs using Typst.
-
-Usage:
-    service = DocumentFormatterService()
-    pdf_bytes = service.generate_pdf(content=markdown_str, metadata={
-        "document_type": "functional_design",
-        "title": "FD: Hotel Booking",
-        "status": "DRAFT",
-        "project_name": "Hotel Booker",
-        "include_toc": True,
-        "include_watermark": True,
-        "section_breaks": True,
-    })
+Compiles native Typst source files into professionally formatted PDFs
+using the Rijnland corporate identity template.
 """
 
-import json
 import os
-import re
 import shutil
 import subprocess
 import tempfile
 from pathlib import Path
-from typing import Any
+
+import structlog
+
+from druppie.api.errors import ExternalServiceError
+
+logger = structlog.get_logger()
+
+
+class DocumentFormatterError(ExternalServiceError):
+    """Raised when document formatting fails."""
+
+    def __init__(self, message: str, original_error: str | None = None):
+        super().__init__(service="typst", message=message, original_error=original_error)
 
 
 class DocumentFormatterService:
-    """Service that formats markdown content into styled PDF via Typst."""
+    """Service that compiles .typ source files into styled PDFs via Typst."""
+
+    TYPST_TIMEOUT = 60  # seconds
 
     def __init__(self, template_dir: Path | str | None = None):
         """Initialize with path to Typst templates.
 
         Args:
-            template_dir: Directory containing base.typ and assets/.
-                Defaults to druppie/templates/documents/ relative to this file.
+            template_dir: Directory containing rijnland.typ and assets/.
+                Defaults to druppie/templates/documents/.
         """
         if template_dir is None:
             self.template_dir = Path(__file__).parent.parent / "templates" / "documents"
         else:
             self.template_dir = Path(template_dir)
 
-        self.base_template = self.template_dir / "base.typ"
-        if not self.base_template.exists():
-            raise FileNotFoundError(
-                f"Template not found: {self.base_template}. "
-                "Run from project root or set template_dir explicitly."
+        if not self.template_dir.exists():
+            raise DocumentFormatterError(
+                f"Template directory not found: {self.template_dir}"
             )
+
+        # --root flag needs the project root (parent of druppie/); the double parent
+        # traversal (templates/documents → templates → druppie → project_root) is
+        # required because template_dir points to druppie/templates/documents.
+        self.project_root = str(self.template_dir.parent.parent.parent)
 
         # Verify typst binary is available
         self.typst_bin = shutil.which("typst")
         if self.typst_bin is None:
-            raise RuntimeError(
+            raise DocumentFormatterError(
                 "Typst binary not found in PATH. "
                 "Install it or set TYPST_FONT_PATHS if using a custom location."
             )
 
-    def _render_diagrams(
-        self, content: str, tmpdir: Path,
-        archimate_base_path: Path | None = None,
-    ) -> list[tuple[str, str]]:
-        """Split markdown into segments and render diagram blocks.
-
-        Handles 'mermaid' (→ PNG via mmdc) and 'archimate' (→ SVG via Node.js SSR).
-        Unrenderable blocks fall back to styled text references.
-
-        Returns a list of (segment_type, data) tuples where segment_type
-        is 'text', 'mermaid', or 'svg'.
-        """
-        diagrams_dir = tmpdir / "assets" / "diagrams"
-        diagrams_dir.mkdir(parents=True, exist_ok=True)
-        diagram_counter = 0
-
-        # --- ArchiMate SSR setup ---
-        archimate_ssr = Path("/app/scripts/archimate-ssr/render-archimate.mjs")
-        has_archimate_ssr = archimate_ssr.exists()
-        node_bin = shutil.which("node")
-
-        DiagramBlock = tuple[int, int, str, str]
-        blocks: list[DiagramBlock] = []
-
-        for m in re.finditer(r"```mermaid\s*\n(.*?)\n```", content, re.DOTALL):
-            blocks.append((m.start(), m.end(), "mermaid", m.group(1).strip()))
-
-        for m in re.finditer(r"```archimate\s*\n(.*?)\n```", content, re.DOTALL):
-            blocks.append((m.start(), m.end(), "archimate", m.group(1).strip()))
-
-        blocks.sort(key=lambda b: b[0])
-
-        if not blocks:
-            return [("text", content)]
-
-        segments: list[tuple[str, str]] = []
-        last_end = 0
-
-        for start, end, dtype, source in blocks:
-            text_before = content[last_end:start]
-            if text_before.strip():
-                segments.append(("text", text_before))
-
-            if dtype == "mermaid":
-                self._render_mermaid(source, diagrams_dir, diagram_counter, segments)
-            elif dtype == "archimate":
-                self._render_archimate(
-                    source, diagrams_dir, diagram_counter, segments,
-                    has_archimate_ssr, node_bin, archimate_ssr,
-                    archimate_base_path,
-                )
-
-            diagram_counter += 1
-            last_end = end
-
-        text_after = content[last_end:]
-        if text_after.strip():
-            segments.append(("text", text_after))
-
-        return segments
-
-    def _render_mermaid(
-        self, source: str, out_dir: Path, counter: int,
-        segments: list[tuple[str, str]]
-    ) -> None:
-        mmdc = shutil.which("mmdc")
-        if mmdc is None:
-            segments.append(("text", f"```mermaid\n{source}\n```"))
-            return
-
-        mmd_path = out_dir / f"diagram_{counter}.mmd"
-        png_name = f"diagram_{counter}.png"
-        png_path = out_dir / png_name
-        mmd_path.write_text(source, encoding="utf-8")
-
-        puppeteer_config = out_dir.parent.parent / "puppeteer.json"
-        if not puppeteer_config.exists():
-            puppeteer_config.write_text('{"args": ["--no-sandbox"]}', encoding="utf-8")
-
-        cmd = [
-            mmdc, "-i", str(mmd_path), "-o", str(png_path),
-            "-p", str(puppeteer_config),
-        ]
-        try:
-            subprocess.run(cmd, check=True, capture_output=True, text=True)
-        except subprocess.CalledProcessError:
-            segments.append(("text", f"```mermaid\n{source}\n```"))
-            return
-
-        segments.append(("mermaid", png_name) if png_path.exists()
-                        else ("text", f"```mermaid\n{source}\n```"))
-
-    def _render_archimate(
-        self, source: str, out_dir: Path, counter: int,
-        segments: list[tuple[str, str]],
-        has_ssr: bool, node_bin: str | None, ssr_script: Path,
-        archimate_base_path: Path | None = None,
-    ) -> None:
-        # Parse spec (view-id + file)
-        spec: dict[str, str] = {}
-        for line in source.splitlines():
-            m = re.match(r"^\s*([a-zA-Z_-]+)\s*[:=]\s*(.+?)\s*$", line)
-            if m:
-                spec[m[1].lower()] = m[2]
-
-        view_id = spec.get("view-id", "")
-        xml_file = spec.get("file", "docs/architecture.archimate")
-
-        if not has_ssr or not node_bin or not view_id:
-            # Fallback to text reference
-            segments.append(("text",
-                f"**Architecture Reference**\n\n- **View ID:** {view_id}\n"
-                f"- **Source:** {xml_file}\n"))
-            return
-
-        xml_candidates: list[Path] = [
-            self.template_dir / xml_file,
-            self.template_dir / "test-inputs" / Path(xml_file).name,
-        ]
-        if archimate_base_path is not None:
-            xml_candidates.insert(0, archimate_base_path / xml_file)
-        xml_candidates.append(Path(xml_file))
-        xml_path = next((p for p in xml_candidates if p.exists()), None)
-        if xml_path is None:
-            segments.append(("text",
-                f"**Architecture Reference**\n\n- **View ID:** {view_id}\n"
-                f"- **Source:** {xml_file} *(file not found)*\n"))
-            return
-
-        svg_name = f"diagram_{counter}.svg"
-        svg_path = out_dir / svg_name
-        cmd = [
-            node_bin, str(ssr_script),
-            "--xml", str(xml_path),
-            "--view-id", view_id,
-            "--output", str(svg_path),
-        ]
-        try:
-            subprocess.run(
-                cmd, check=True, capture_output=True, text=True,
-                cwd=str(ssr_script.parent),
-            )
-        except subprocess.CalledProcessError:
-            segments.append(("text",
-                f"**Architecture Reference**\n\n- **View ID:** {view_id}\n"
-                f"- **Source:** {xml_file} *(render failed)*\n"))
-            return
-
-        segments.append(("svg", svg_name) if svg_path.exists()
-                        else ("text",
-                            f"**Architecture Reference**\n\n- **View ID:** {view_id}\n"
-                            f"- **Source:** {xml_file}\n"))
-
-    def _write_content_typ(
-        self, segments: list[tuple[str, str]], tmpdir: Path
-    ) -> None:
-        """Generate a content.typ that interleaves text segments (via cmarker)
-        and diagram images (PNG for mermaid, SVG for archimate).
-        """
-        lines: list[str] = ['#import "@preview/cmarker:0.1.8"']
-        text_counter = 0
-
-        for seg_type, data in segments:
-            if seg_type == "text":
-                seg_file = tmpdir / f"segment_{text_counter}.md"
-                seg_file.write_text(data, encoding="utf-8")
-                text_counter += 1
-                lines.append(f'#cmarker.render(read("segment_{text_counter - 1}.md"))')
-            elif seg_type == "mermaid":
-                lines.append(f'#image("assets/diagrams/{data}")')
-            elif seg_type == "svg":
-                lines.append(f'#image("assets/diagrams/{data}")')
-
-        (tmpdir / "content.typ").write_text(
-            "\n\n".join(lines) + "\n",
-            encoding="utf-8",
-        )
-
-    def _prepare_base_typ(self, tmpdir: Path) -> None:
-        """Copy base.typ and replace the cmarker.render line with #include("content.typ")."""
-        base_src = self.base_template.read_text(encoding="utf-8")
-        # Replace the single cmarker.render(read("content.md")) line
-        # with an include of the generated content.typ
-        modified = base_src.replace(
-            '#cmarker.render(read("content.md"))',
-            '#include("content.typ")',
-        )
-        (tmpdir / "base.typ").write_text(modified, encoding="utf-8")
-
-    def generate_pdf(
+    def compile_typ(
         self,
-        content: str,
-        metadata: dict[str, Any],
-        archimate_base_path: Path | None = None,
+        typ_path: Path,
+        output_pdf_path: Path | None = None,
+        extra_font_paths: list[Path] | None = None,
     ) -> bytes:
-        """Generate a PDF from markdown content and metadata.
+        """Compile a native .typ source file into a PDF.
 
         Args:
-            content: Markdown string (body of document).
-            metadata: Dict of document metadata controlling formatting.
-                Expected keys: document_type, title, status, project_name,
-                include_toc, include_watermark, section_breaks.
-            archimate_base_path: Optional base path for resolving ArchiMate
-                XML files referenced in `` ```archimate `` blocks.
+            typ_path: Path to the .typ file to compile.
+            output_pdf_path: Optional path for the output PDF.
+                If omitted, a temporary path is used.
+            extra_font_paths: Optional additional directories to search for fonts.
 
         Returns:
             PDF bytes.
 
         Raises:
-            subprocess.CalledProcessError: If Typst compilation fails.
+            DocumentFormatterError: If Typst compilation fails or PDF is missing.
         """
-        with tempfile.TemporaryDirectory(prefix="druppie-doc") as tmpdir:
-            tmp = Path(tmpdir)
+        typ_path = Path(typ_path)
+        if not typ_path.exists():
+            raise DocumentFormatterError(f"Typst source file not found: {typ_path}")
 
-            # Split markdown and render mermaid diagrams
-            segments = self._render_diagrams(
-                content, tmp, archimate_base_path=archimate_base_path
+        if output_pdf_path is None:
+            output_pdf_path = Path(tempfile.gettempdir()) / f"druppie-{typ_path.stem}.pdf"
+        else:
+            output_pdf_path = Path(output_pdf_path)
+
+        font_paths: list[str] = [str(self.template_dir / "assets" / "fonts")]
+        if extra_font_paths:
+            font_paths.extend(str(p) for p in extra_font_paths)
+
+        cmd = [
+            self.typst_bin,
+            "compile",
+            "--root",
+            self.project_root,
+            "--font-path",
+            ":".join(font_paths),
+            str(typ_path),
+            str(output_pdf_path),
+        ]
+
+        env = dict(os.environ)
+        env["TYPST_FONT_PATHS"] = ":".join(font_paths)
+
+        logger.info(
+            "typst_compile_start",
+            typ_path=str(typ_path),
+            output=str(output_pdf_path),
+        )
+
+        try:
+            result = subprocess.run(
+                cmd,
+                check=True,
+                capture_output=True,
+                text=True,
+                cwd=str(typ_path.parent),
+                env=env,
+                timeout=self.TYPST_TIMEOUT,
             )
-
-            # Generate interleaved content.typ
-            self._write_content_typ(segments, tmp)
-
-            # Write metadata JSON for template consumption
-            (tmp / "metadata.json").write_text(
-                json.dumps(metadata, ensure_ascii=False),
-                encoding="utf-8",
+            logger.info(
+                "typst_compile_success",
+                typ_path=str(typ_path),
+                stdout=result.stdout[:500] if result.stdout else None,
             )
+        except subprocess.TimeoutExpired:
+            logger.error("typst_compile_timed_out", timeout=self.TYPST_TIMEOUT)
+            raise DocumentFormatterError(
+                f"Typst compilation timed out after {self.TYPST_TIMEOUT}s"
+            )
+        except subprocess.CalledProcessError as e:
+            stderr = e.stderr[:2000] if e.stderr else ""
+            logger.error(
+                "typst_compile_failed",
+                typ_path=str(typ_path),
+                stderr=stderr,
+                returncode=e.returncode,
+            )
+            raise DocumentFormatterError(
+                f"Typst compilation failed:\n{stderr}"
+            ) from e
 
-            # Copy assets into temp workspace
-            assets_src = self.template_dir / "assets"
-            if assets_src.exists():
-                shutil.copytree(assets_src, tmp / "assets", dirs_exist_ok=True)
+        if not output_pdf_path.exists():
+            raise DocumentFormatterError("PDF output was not created")
 
-            # Prepare modified base.typ that includes content.typ
-            self._prepare_base_typ(tmp)
+        pdf_bytes = output_pdf_path.read_bytes()
+        logger.info(
+            "pdf_generated",
+            typ_path=str(typ_path),
+            pdf_size=len(pdf_bytes),
+        )
+        return pdf_bytes
 
-            # Compile with Typst
-            pdf_path = tmp / "output.pdf"
-            cmd = [
-                self.typst_bin,
-                "compile",
-                "--font-path",
-                str(tmp / "assets" / "fonts"),
-                str(tmp / "base.typ"),
-                str(pdf_path),
-            ]
+    def verify_typ(self, typ_path: Path) -> tuple[bool, str | None]:
+        """Run a syntax check on a .typ file without producing PDF output.
 
-            env = dict(os.environ)
+        Args:
+            typ_path: Path to the .typ file to validate.
 
-            try:
-                subprocess.run(
-                    cmd,
-                    check=True,
-                    capture_output=True,
-                    text=True,
-                    cwd=str(tmp),
-                    env=env,
-                )
-            except subprocess.CalledProcessError as e:
-                # Wrap compilation errors into readable messages
-                raise DocumentFormatterError(
-                    f"Typst compilation failed:\n{e.stderr}"
-                ) from e
+        Returns:
+            (is_valid, error_message) tuple. is_valid is True if syntax is clean.
+        """
+        typ_path = Path(typ_path)
+        if not typ_path.exists():
+            return False, f"Typst source file not found: {typ_path}"
 
-            if not pdf_path.exists():
-                raise DocumentFormatterError("PDF output was not created")
+        font_paths = [str(self.template_dir / "assets" / "fonts")]
+        cmd = [
+            self.typst_bin,
+            "compile",
+            "--root",
+            self.project_root,
+            "--font-path",
+            ":".join(font_paths),
+            "--format",
+            "pdf",
+            "--diagnostic-format",
+            "short",
+            str(typ_path),
+            "/dev/null" if os.name != "nt" else "nul",
+        ]
 
-            return pdf_path.read_bytes()
+        env = dict(os.environ)
+        env["TYPST_FONT_PATHS"] = ":".join(font_paths)
 
+        logger.info("typst_verify_start", typ_path=str(typ_path))
 
-class DocumentFormatterError(Exception):
-    """Raised when document formatting fails."""
+        try:
+            result = subprocess.run(
+                cmd,
+                check=False,
+                capture_output=True,
+                text=True,
+                cwd=str(typ_path.parent),
+                env=env,
+                timeout=self.TYPST_TIMEOUT,
+            )
+        except subprocess.TimeoutExpired:
+            logger.error("typst_verify_timed_out", timeout=self.TYPST_TIMEOUT)
+            return False, f"Typst syntax check timed out after {self.TYPST_TIMEOUT}s"
+
+        if result.returncode == 0:
+            logger.info("typst_verify_success", typ_path=str(typ_path))
+            return True, None
+        else:
+            stderr = result.stderr[:2000] if result.stderr else ""
+            logger.warning(
+                "typst_verify_failed",
+                typ_path=str(typ_path),
+                stderr=stderr,
+                returncode=result.returncode,
+            )
+            return False, stderr

@@ -243,6 +243,16 @@ def get_file_path(storage_path: str) -> Path:
     return full_path
 
 
+def write_attachment_file(attachment_id: str, filename: str, file_bytes: bytes) -> str:
+    """Write attachment bytes to disk and return the storage path."""
+    safe_name = _sanitize_filename(filename)
+    dir_path = UPLOAD_DIR / attachment_id
+    dir_path.mkdir(parents=True, exist_ok=True)
+    file_path = dir_path / safe_name
+    file_path.write_bytes(file_bytes)
+    return f"uploads/{attachment_id}/{safe_name}"
+
+
 def delete_file(storage_path: str) -> None:
     try:
         path = get_file_path(storage_path)
@@ -251,5 +261,5 @@ def delete_file(storage_path: str) -> None:
             parent = path.parent
             if parent.exists() and not any(parent.iterdir()):
                 parent.rmdir()
-    except Exception:
-        logger.warning("file_delete_failed", path=storage_path)
+    except (OSError, ValueError) as e:
+        logger.warning("file_delete_failed", path=storage_path, error=str(e))

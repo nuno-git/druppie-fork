@@ -163,7 +163,13 @@ class CodingModule:
             repo_name = f"project-{project_id[:8]}"
             branch = f"session-{session_id[:8]}"
 
-        workspace_path = self.workspace_root / user_id / project_id / session_id
+        from druppie.core.workspace import workspace_path_for
+
+        workspace_path = workspace_path_for(
+            user_id=user_id,
+            project_id=project_id,
+            session_id=session_id,
+        )
         workspace_path.mkdir(parents=True, exist_ok=True)
 
         if self.is_gitea_configured():

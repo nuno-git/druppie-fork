@@ -25,6 +25,7 @@ from .github_app_service import GitHubAppService, get_github_app_service
 from .evaluation_service import EvaluationService
 from .documentation_service import DocumentationService
 from .job_service import JobService
+from .document_formatter_service import DocumentFormatterService
 
 __all__ = [
     "SessionService",
@@ -40,4 +41,5 @@ __all__ = [
     "EvaluationService",
     "DocumentationService",
     "JobService",
+    "DocumentFormatterService",
 ]

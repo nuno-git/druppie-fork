@@ -4,22 +4,14 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install system dependencies (incl. Node.js, npm, Chromium for pre-approval
-# Mermaid validation via mmdc — mirrors mcp-servers/coding/Dockerfile)
+# Install system dependencies
 RUN apt-get update && apt-get install -y \
     git \
     curl \
     ca-certificates \
     fontconfig \
     docker.io \
-    nodejs \
-    npm \
-    chromium \
     && rm -rf /var/lib/apt/lists/*
-
-# Install mermaid-cli globally for PDF Mermaid diagram rendering
-RUN npm install -g @mermaid-js/mermaid-cli \
-    && mmdc --version
 
 # Install Typst (static Rust binary) for document formatting
 RUN curl -L -o /tmp/typst.tar.xz \
@@ -30,17 +22,9 @@ RUN curl -L -o /tmp/typst.tar.xz \
     && rm -rf /tmp/typst.tar.xz /tmp/typst-x86_64-unknown-linux-musl \
     && typst --version
 
-# Configure Puppeteer to use system Chromium (skip bundled download)
-ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
-ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
-
-# Install Mermaid CLI for structural diagram validation
-RUN npm install -g @mermaid-js/mermaid-cli
-
 # Install Python dependencies
 COPY druppie/requirements.txt .
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install -r requirements.txt
+RUN pip install -r requirements.txt
 
 # Copy application code
 COPY druppie/ /app/druppie/
@@ -53,8 +37,8 @@ ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
 ENV TYPST_FONT_PATHS=/app/druppie/templates/documents/assets/fonts
 
-# Create workspace directory
-RUN mkdir -p /app/workspace
+# Create workspace and tmp directories
+RUN mkdir -p /app/workspace /app/tmp
 
 # Expose port
 EXPOSE 8000

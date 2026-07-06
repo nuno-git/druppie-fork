@@ -11,7 +11,11 @@ Tool definitions are in BUILTIN_TOOL_DEFS (dict keyed by name).
 Use get_builtin_tools(names) to get OpenAI-format definitions for an agent.
 """
 
+import base64
+import json
 import os
+import re
+from pathlib import Path
 from typing import TYPE_CHECKING
 from uuid import UUID
 
@@ -207,33 +211,46 @@ BUILTIN_TOOL_DEFS: dict[str, dict] = {
         "function": {
             "name": "make_pdf_document",
             "description": (
-                "Convert a Markdown document and metadata JSON into a professionally formatted PDF "
-                "following Rijnland corporate identity (Huisstijlhandboek). "
-                "The agent must first write the markdown file and metadata JSON file to the workspace, "
-                "then call this tool with their workspace-relative paths. "
-                "The resulting PDF is saved to the workspace and its path is returned."
+                "Compile a native Typst source file (.typ) into a professionally formatted PDF "
+                "using the Rijnland corporate identity template. "
+                "The agent must first write the .typ file to the workspace, "
+                "then call this tool with the workspace-relative path. "
+                "The resulting PDF is attached to the chat and a download link is returned."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "markdown_path": {
+                    "typ_path": {
                         "type": "string",
-                        "description": "Workspace-relative path to the markdown file (e.g. 'docs/content.md')",
-                    },
-                    "metadata_path": {
-                        "type": "string",
-                        "description": "Workspace-relative path to the metadata JSON file (e.g. 'docs/metadata.json')",
-                    },
-                    "archimate_path": {
-                        "type": "string",
-                        "description": "Optional workspace-relative path to an ArchiMate model file (e.g. 'docs/architecture.archimate'). Required only if the markdown references ArchiMate diagrams.",
+                        "description": "Workspace-relative path to the .typ source file (e.g. 'docs/functional-design.typ')",
                     },
                     "output_pdf_name": {
                         "type": "string",
                         "description": "Optional name for the output PDF file. Defaults to '{document_type}-{project_name}.pdf'",
                     },
                 },
-                "required": ["markdown_path", "metadata_path"],
+                "required": ["typ_path"],
+            },
+        },
+    },
+    "verify_typst": {
+        "type": "function",
+        "function": {
+            "name": "verify_typst",
+            "description": (
+                "Run a syntax-only check on a Typst source file before committing it. "
+                "Does not produce a PDF. Use this to catch syntax errors in .typ files "
+                "before pushing to Gitea."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "typ_path": {
+                        "type": "string",
+                        "description": "Workspace-relative path to the .typ file to validate (e.g. 'docs/document.typ')",
+                    },
+                },
+                "required": ["typ_path"],
             },
         },
     },
@@ -869,7 +886,7 @@ async def create_message(
         if caller_run and caller_run.agent_id:
             caller_agent_id = caller_run.agent_id
     except Exception:
-        pass
+        logger.debug("caller_agent_id_lookup_failed", agent_run_id=str(agent_run_id))
 
     message_id = execution_repo.create_message(
         session_id=session_id,
@@ -1250,7 +1267,7 @@ async def execute_sandbox_coding_task(
             if definition and definition.sandbox_constraints:
                 constraints = definition.sandbox_constraints
     except Exception:
-        pass
+        logger.debug("sandbox_constraints_load_failed", agent_run_id=str(agent_run_id))
 
     if raw_agent is not None:
         agent = raw_agent
@@ -1477,127 +1494,227 @@ async def read_attachment(
     }
 
 
+async def _resolve_typ_file(
+    typ_path: str,
+    session,
+    executor,
+) -> tuple[Path | None, str | None]:
+    """Resolve a .typ file for builtin tools.
+
+    Checks the local workspace first, runs git pull next, and finally
+    falls back to a direct Gitea API read — the canonical source of truth.
+
+    When falling back to Gitea, also fetches image dependencies
+    (SVG/PNG/JPG files referenced via #image() in the Typst source or
+    exported from ArchiMate models in docs/diagrams/) so that PDF
+    compilation can include them.
+
+    Returns (typ_file, error_message).  typ_file is None when resolution fails.
+    """
+    import subprocess
+
+    from druppie.core.gitea import get_gitea_client
+    from druppie.core.workspace import workspace_path_for_session
+    from druppie.repositories import ProjectRepository
+
+    workspace_path = workspace_path_for_session(session)
+    typ_file = workspace_path / typ_path
+
+    if not typ_file.exists() and (workspace_path / ".git").exists():
+        try:
+            subprocess.run(
+                ["git", "pull", "--ff-only"],
+                cwd=str(workspace_path),
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+        except Exception:
+            logger.warning("_resolve_typ_file_git_pull_failed", session_id=str(session.id), workspace=str(workspace_path))
+            pass
+
+    if not typ_file.exists():
+        project_repo = ProjectRepository(executor.db)
+        project = project_repo.get_by_id(session.project_id)
+        if project and project.repo_name and project.repo_owner:
+            gitea = get_gitea_client()
+            branches = ["main", f"session-{str(session.id)[:8]}"]
+            file_content = None
+            successful_branch = None
+            for branch in branches:
+                try:
+                    file_result = await gitea.get_file(
+                        repo=project.repo_name,
+                        path=typ_path,
+                        branch=branch,
+                        owner=project.repo_owner,
+                    )
+                    if file_result.get("success") and file_result.get("content"):
+                        file_content = file_result["content"]
+                        successful_branch = branch
+                        break
+                except Exception as exc:
+                    logger.warning(
+                        "_resolve_typ_file_gitea_branch_lookup_failed",
+                        session_id=str(session.id),
+                        branch=branch,
+                        typ_path=typ_path,
+                        error=str(exc),
+                    )
+                    continue
+
+            if file_content is not None:
+                fallback_tmp = Path("/app") / "tmp" / "gitea-fallback"
+                fallback_tmp.mkdir(parents=True, exist_ok=True)
+                temp_dir = fallback_tmp / str(session.id)
+                temp_dir.mkdir(parents=True, exist_ok=True)
+                temp_typ = temp_dir / Path(typ_path).name
+                temp_typ.parent.mkdir(parents=True, exist_ok=True)
+                temp_typ.write_text(file_content, encoding="utf-8")
+
+                image_refs: set[str] = set()
+
+                for match in re.finditer(r'[#\s]*image\s*\(', file_content):
+                    start = match.end()
+                    rest = file_content[start:start + 500]
+                    quoted = re.search(r'''["']([^"']+)["']''', rest)
+                    if quoted:
+                        img_path = quoted.group(1).strip()
+                        if img_path.startswith(("http://", "https://", "/")):
+                            continue
+                        image_refs.add(img_path)
+
+                if successful_branch:
+                    try:
+                        listed = await gitea.list_files(
+                            repo=project.repo_name,
+                            path="docs/diagrams",
+                            branch=successful_branch,
+                            owner=project.repo_owner,
+                        )
+                        if listed.get("success") and listed.get("files"):
+                            for f in listed["files"]:
+                                if f.get("path", "").endswith(".svg"):
+                                    image_refs.add(f["path"])
+                    except Exception as exc:
+                        logger.warning(
+                            "_resolve_typ_file_diagram_list_failed",
+                            session_id=str(session.id),
+                            branch=successful_branch,
+                            error=str(exc),
+                        )
+
+                typ_parent = Path(typ_path).parent
+                for img_ref in image_refs:
+                    if img_ref.startswith("docs/"):
+                        gitea_img_path = img_ref
+                    else:
+                        gitea_img_path = str(typ_parent / img_ref) if typ_parent != Path(".") else img_ref
+
+                    try:
+                        img_res = await gitea.get_file(
+                            repo=project.repo_name,
+                            path=gitea_img_path,
+                            branch=successful_branch,
+                            owner=project.repo_owner,
+                        )
+                        if img_res.get("success") and img_res.get("data", {}).get("content"):
+                            raw_b64 = img_res["data"]["content"]
+                            try:
+                                img_bytes = base64.b64decode(raw_b64)
+                                local_img = temp_dir / img_ref
+                                local_img.parent.mkdir(parents=True, exist_ok=True)
+                                local_img.write_bytes(img_bytes)
+                            except (ValueError, OSError) as exc:
+                                logger.warning(
+                                    "_resolve_typ_file_image_decode_failed",
+                                    session_id=str(session.id),
+                                    img_ref=img_ref,
+                                    error=str(exc),
+                                )
+                                continue
+                    except Exception as exc:
+                        logger.warning(
+                            "_resolve_typ_file_image_download_failed",
+                            session_id=str(session.id),
+                            img_ref=img_ref,
+                            error=str(exc),
+                        )
+                        continue
+
+                return temp_typ, None
+            else:
+                return None, f"Typst source file not found in Gitea or workspace: {typ_path}"
+        else:
+            return None, f"Typst source file not found: {typ_path}"
+
+    if not typ_file.exists():
+        return None, f"Typst source file not found: {typ_path}"
+
+    return typ_file, None
+
+
 async def make_pdf_document(
-    markdown_path: str,
-    metadata_path: str,
-    archimate_path: str | None,
+    typ_path: str,
     output_pdf_name: str | None,
     session_id: UUID,
     agent_run_id: UUID,
     execution_repo: "ExecutionRepository",
 ) -> dict:
-    """Convert markdown + metadata JSON into a PDF using the Rijnland template."""
-    import json
-    import os
-    from pathlib import Path
+    """Compile a native Typst source file into a PDF via render cache.
 
-    from druppie.db.models import Session as DBSession
+    Caches renders keyed by the source file's Git blob SHA so identical
+    revisions are served instantly without recompiling.
+    """
+    from druppie.repositories import SessionRepository
+    from druppie.services.pdf_render_service import PdfRenderService
 
     db = execution_repo.db
-    session = db.query(DBSession).filter(DBSession.id == session_id).first()
+    session_repo = SessionRepository(db)
+    session = session_repo.get_by_id(session_id)
     if not session:
         return {"success": False, "error": f"Session {session_id} not found"}
 
     if not session.project_id:
         return {"success": False, "error": "Session has no project"}
 
-    workspace_root = Path(os.getenv("WORKSPACE_ROOT", "/app/workspace"))
-    user_part = str(session.user_id) if session.user_id else "default"
-    workspace_path = workspace_root / user_part / str(session.project_id) / str(session.id)
+    from druppie.repositories import ProjectRepository
+    project_repo = ProjectRepository(execution_repo.db)
+    project = project_repo.get_by_id(session.project_id)
+    if not project or not project.repo_name or not project.repo_owner:
+        return {"success": False, "error": "Project has no Gitea repository configured"}
 
-    md_file = workspace_path / markdown_path
-    meta_file = workspace_path / metadata_path
-
-    # Coding MCP writes to a workspace keyed by session_id, but when user_id is
-    # not injected it falls back to "default". Builtin tools use session.user_id
-    # which may differ, creating two directories on the shared workspace volume.
-    # Try the session.user_id path first, then fall back to "default".
-    if not md_file.exists():
-        fallback_path = workspace_root / "default" / str(session.project_id) / str(session.id)
-        fallback_md = fallback_path / markdown_path
-        fallback_meta = fallback_path / metadata_path
-        if fallback_md.exists() and fallback_meta.exists():
-            md_file = fallback_md
-            meta_file = fallback_meta
-            workspace_path = fallback_path
-
-    if not md_file.exists():
-        return {"success": False, "error": f"Markdown file not found: {markdown_path}"}
-    if not meta_file.exists():
-        return {"success": False, "error": f"Metadata file not found: {metadata_path}"}
-
-    try:
-        content = md_file.read_text(encoding="utf-8")
-        metadata = json.loads(meta_file.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as e:
-        return {"success": False, "error": f"Invalid metadata JSON: {e}"}
-    except Exception as e:
-        return {"success": False, "error": f"Failed to read input files: {e}"}
-
-    archimate_base = None
-    if archimate_path:
-        archimate_base = workspace_path / archimate_path
-        if not archimate_base.exists():
-            return {"success": False, "error": f"ArchiMate file not found: {archimate_path}"}
-        archimate_base = archimate_base.parent
-
-    from druppie.services.document_formatter_service import (
-        DocumentFormatterError,
-        DocumentFormatterService,
+    branches = ["main", f"session-{str(session.id)[:8]}"]
+    service = PdfRenderService(db=db)
+    pdf_bytes, storage_path, error = await service.get_or_create_pdf(
+        project_id=session.project_id,
+        repo_name=project.repo_name,
+        repo_owner=project.repo_owner,
+        typ_path=typ_path,
+        branches=branches,
+        output_pdf_name=output_pdf_name,
     )
+    if error:
+        return {"success": False, "error": error}
 
-    service = DocumentFormatterService()
-
-    try:
-        pdf_bytes = service.generate_pdf(
-            content=content,
-            metadata=metadata,
-            archimate_base_path=archimate_base,
-        )
-    except DocumentFormatterError as e:
-        return {"success": False, "error": f"PDF generation failed: {e}"}
-    except Exception as e:
-        return {"success": False, "error": f"Unexpected PDF generation error: {e}"}
-
-    doc_type = metadata.get("document_type", "document")
-    project_name = metadata.get("project_name", "project")
-    pdf_name = output_pdf_name or f"{doc_type}-{project_name}.pdf"
+    pdf_name = output_pdf_name or f"{Path(typ_path).stem}.pdf"
     pdf_name = pdf_name.replace(" ", "_").replace("/", "_")
 
-    pdf_file = workspace_path / pdf_name
-    try:
-        pdf_file.write_bytes(pdf_bytes)
-    except Exception as e:
-        return {"success": False, "error": f"Failed to write PDF: {e}"}
-
-    # Copy PDF to attachment storage so the frontend can serve it via
-    # the existing /api/attachments/{id} endpoint.
     attachment_id = None
     attachment_error = None
     try:
         from druppie.repositories import AttachmentRepository
-        from druppie.services import attachment_service
 
         att_repo = AttachmentRepository(db)
-        safe_name = attachment_service._sanitize_filename(pdf_name)
         attachment = att_repo.create(
             original_filename=pdf_name,
             content_type="application/pdf",
             file_size=len(pdf_bytes),
-            storage_path="pending",
+            storage_path=storage_path,
             session_id=session_id,
+            owner_user_id=session.user_id,
         )
         db.flush()
-
-        dir_path = attachment_service.UPLOAD_DIR / str(attachment.id)
-        dir_path.mkdir(parents=True, exist_ok=True)
-        att_file = dir_path / safe_name
-        att_file.write_bytes(pdf_bytes)
-
-        storage_path = f"uploads/{attachment.id}/{safe_name}"
-        attachment.storage_path = storage_path
-        db.flush()
-
         attachment_id = str(attachment.id)
     except Exception as e:
         attachment_error = str(e)
@@ -1621,10 +1738,39 @@ async def make_pdf_document(
         "success": True,
         "pdf_path": pdf_name,
         "pdf_size": len(pdf_bytes),
-        "pages": metadata.get("pages", "unknown"),
         "message": f"PDF generated: {pdf_name} ({len(pdf_bytes)} bytes)",
         "attachment_id": attachment_id,
     }
+
+
+async def verify_typst(
+    typ_path: str,
+    session_id: UUID,
+    agent_run_id: UUID,
+    execution_repo: "ExecutionRepository",
+) -> dict:
+    """Run a syntax-only check on a .typ file. Does not produce a PDF."""
+    from druppie.repositories import SessionRepository
+
+    db = execution_repo.db
+    session_repo = SessionRepository(db)
+    session = session_repo.get_by_id(session_id)
+    if not session:
+        return {"success": False, "error": f"Session {session_id} not found"}
+
+    typ_file, error = await _resolve_typ_file(typ_path, session, execution_repo)
+    if error:
+        return {"success": False, "error": error}
+
+    from druppie.services.document_formatter_service import DocumentFormatterService
+
+    service = DocumentFormatterService()
+    is_valid, error_msg = service.verify_typ(typ_file)
+
+    if is_valid:
+        return {"success": True, "message": f"{typ_path} is syntactically valid."}
+    else:
+        return {"success": False, "error": f"Syntax check failed for {typ_path}:\n{error_msg}"}
 
 
 # =============================================================================
@@ -1695,10 +1841,15 @@ async def execute_builtin(
         )
     elif tool_name == "make_pdf_document":
         return await make_pdf_document(
-            markdown_path=args.get("markdown_path", ""),
-            metadata_path=args.get("metadata_path", ""),
-            archimate_path=args.get("archimate_path"),
+            typ_path=args.get("typ_path", ""),
             output_pdf_name=args.get("output_pdf_name"),
+            session_id=session_id,
+            agent_run_id=agent_run_id,
+            execution_repo=execution_repo,
+        )
+    elif tool_name == "verify_typst":
+        return await verify_typst(
+            typ_path=args.get("typ_path", ""),
             session_id=session_id,
             agent_run_id=agent_run_id,
             execution_repo=execution_repo,
@@ -1749,6 +1900,7 @@ def is_builtin_tool(tool_name: str) -> bool:
         "create_message",
         "invoke_skill",
         "make_pdf_document",
+        "verify_typst",
         "execute_coding_task",
         "test_report",
         "read_attachment",

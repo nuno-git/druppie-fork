@@ -1050,9 +1050,9 @@ class Orchestrator:
         if not session or not session.project_id:
             return
 
-        workspace_root = Path(os.getenv("WORKSPACE_ROOT", "/app/workspace"))
-        user_part = str(session.user_id) if session.user_id else "default"
-        workspace_path = workspace_root / user_part / str(session.project_id) / str(session.id)
+        from druppie.core.workspace import workspace_path_for_session
+
+        workspace_path = workspace_path_for_session(session)
 
         if not (workspace_path / ".git").exists():
             logger.debug("sync_workspace_no_git_dir", workspace=str(workspace_path))

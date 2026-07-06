@@ -914,7 +914,7 @@ The choice between ArchiMate and Mermaid, plus the full element/relationship voc
 
 ## Document Formatter (PDF Generation)
 
-Druppie can convert agent-created Markdown documents into professionally formatted PDFs that follow the Rijnland corporate identity (Huisstijlhandboek).
+Druppie converts agent-authored **Typst** (`.typ`) source files into professionally formatted PDFs that follow the Rijnland corporate identity (Huisstijlhandboek). Agents write native Typst directly — the old Markdown pipeline was replaced in Phase 2.
 
 ### Supported Document Types
 
@@ -927,29 +927,43 @@ Druppie can convert agent-created Markdown documents into professionally formatt
 
 ### How It Works
 
-1. The agent writes Markdown content (`content.md`) and a metadata JSON file (`metadata.json`).
-2. `DocumentFormatterService.generate_pdf()` compiles a Typst template (`base.typ`) via the Typst CLI subprocess, producing PDF bytes.
-3. The resulting PDF can be returned to the agent, shown to the user inline, or attached to an approval.
+1. The **Documenter agent** writes a native `.typ` file using the Rijnland template (`#import "/druppie/templates/documents/rijnland.typ": rijnland_doc`).
+2. The agent **pushes to Gitea** — this is mandatory because `PdfRenderService` reads source from Gitea, not the local workspace.
+3. The agent calls `builtin:make_pdf_document` with the `.typ` path.
+4. `PdfRenderService.get_or_create_pdf()` fetches the source from Gitea, builds a cache key from `(project_id, typ_path, git_blob_sha)`, and checks the `pdf_renders` table.
+   - **Cache hit** → serves the cached PDF instantly.
+   - **Cache miss** → `DocumentFormatterService.compile_typ()` compiles via Typst CLI subprocess; the PDF is written to `/app/workspace/uploads/pdf-cache/` and the cache record is inserted.
+5. A `MessageAttachment` record is created so the frontend serves the PDF via `/api/attachments/{id}`.
 
 ### Corporate Identity Applied
 
 - **Primary color:** `#0065BD` (Rijnland blue, PMS 300)
-- **Typography:** Lato (free substitute for the licensed Neusa Next Std). Body text is light-weight; headings are bold.
+- **Typography:** Neusa Next Pro (brand headings) with Lato as fallback. Body text is light-weight; headings are bold.
 - **Logo:** `Logo-hoogheemraadschap-rijnland.png`, centered on the title page at 12cm wide (not shown on content pages).
 - **Pay-off:** "droge voeten, schoon water" rendered on the title page.
 - **Layout:** Grid-based margins (25mm sides, 32mm bottom), subtle blue header line on page 2+.
-- **Watermark:** Semi-transparent "DRAFT" or "Niet-definitief — ter goedkeuring" in the foreground layer (visible above all content, including title page) when `status` is not `FINAL`.
+- **Watermark:** Semi-transparent "DRAFT" or "Niet-definitief — ter goedkeuring" in the foreground layer when `include_watermark == true && status != "FINAL"`. Suppressed entirely when `status == "FINAL"`.
 - **Footer:** Full-bleed dijk-en-sloot shape above a Rijnland-blue bar. Right-aligned text: "Hoogheemraadschap van Rijnland | project-name — versie month year | page/total". Footer appears on all pages except the title page.
 
 ### Template Features
 
-- **Table of contents:** Optional, auto-generated from Markdown headings (`include_toc: true`).
+- **Table of contents:** Optional, auto-generated from Typst headings (`include_toc: true`).
 - **Tables:** Blue header row with white text, subtle striped rows, rounded corners.
 - **Code blocks:** Light blue background (`#E9EFFA`), rounded corners, monospace font.
 - **Blockquotes:** Light sand background with a Rijnland-blue left border.
-- **Diagram rendering:** Mermaid diagrams are pre-rendered to PNG (avoiding SVG `foreignObject` text bugs in PDFs); ArchiMate diagrams are rendered to SVG via a Node.js SSR script (`/app/scripts/archimate-ssr/render-archimate.mjs`). Both are embedded as images in the Markdown before PDF compilation.
+- **Mermaid diagrams:** Rendered inline by the `@preview/mmdr:0.2.2` Typst package (no Chromium/Node.js). Agents embed them with `#mermaid("...")`.
+- **ArchiMate diagrams:** The `archimate:save_model` MCP tool exports each view to SVG via pure-Python `svg_export.py`. Agents embed them in Typst with `#image("docs/diagrams/view-name.svg")`.
 - **Section breaks:** Optional page break before every H1 (`section_breaks: true`).
+- **Fonts:** Lato (Google Fonts, system fallback) + Neusa Next Pro (brand font, installed in `assets/fonts/`). Verified with `typst fonts`.
 
 ### Current Phase
 
-Phase 1 (complete): The formatting layer exists and is fully tested (9 pytest tests, all passing). It is **not yet wired into agent pipelines** — there is no database persistence, no API route, and no agent tool that calls it. Phase 2 will expose it as an MCP tool or builtin tool so agents can generate PDFs on demand.
+Phase 2 is **live**. The agent pipeline is wired:
+- **Documenter agent** (`documenter.yaml`) has instructions for native Typst authoring and a step-by-step PDF export workflow.
+- **Builtin tools** `make_pdf_document` and `verify_typst` are registered in `builtin_tools.py` and exposed to the Documenter agent.
+- **`PdfRenderService`** (`pdf_render_service.py`) provides render caching keyed by Git blob SHA so identical source revisions compile once.
+- **22 pytest tests** cover compilation, watermark logic, document types, Typst syntax validation, timeout/failure branches, cache hit/miss, and image dependency resolution over Gitea.
+
+**Remaining work:**
+- Full `DocumentSummary`/`DocumentDetail` domain models and REST endpoints for direct user-initiated PDF generation without an agent.
+- Frontend "Download PDF" convenience button outside the chat flow.
