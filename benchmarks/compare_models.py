@@ -83,6 +83,219 @@ DASH = "--"
 
 
 # ---------------------------------------------------------------------------
+# Known-model registry -- so the matrix ALWAYS lists every registered model,
+# not just the ones we happened to benchmark. Models that cannot be benchmarked
+# on this hardware (too large) or only in a maintenance window (TP=2) get an
+# explicit placeholder row with a status note instead of silently vanishing.
+#
+# Merge rule (see merge_known_with_actual): a known model is matched to an
+# actual result JSON by the normalized last path segment of its HF `source`
+# (e.g. "Qwen/Qwen3.6-27B" -> "qwen3.6-27b"); matched rows render real metrics,
+# unmatched ones render "--" + the pending/untestable note.
+#
+# HARDWARE CONTEXT (drives the `fit` classes below): ONE GPU node with 2x
+# NVIDIA RTX PRO 6000 Blackwell (96GB each = 192GB total). NO P2P between the
+# cards, so serving is tensor-parallel=1 (one model per GPU). The `llm` namespace
+# GPU ResourceQuota is hard=2 and both GPUs are normally held by the live `qwen`
+# service; a benchmark run frees at most ONE GPU (scaling qwen 2->1). Using both
+# GPUs (TP=2) would take prod fully down. All sizes are ESTIMATES (~).
+
+# Fit classes, and the one-liner shown in the legend.
+FIT_LEGEND = [
+    ("served",
+     "Currently served in prod; benchmarked in place (no serving change)."),
+    ("fits-1gpu",
+     "Fits one RTX PRO 6000 (<=~90GB usable). Benchmarkable now by freeing "
+     "1 GPU (qwen 2->1)."),
+    ("needs-2gpu",
+     "Needs both GPUs (tensor-parallel 2, ~160GB). Testable only in a full "
+     "maintenance window -- it takes prod fully down."),
+    ("too-large",
+     "Exceeds 192GB total even quantized. Not testable on this hardware "
+     "(needs multi-node / RAM-MoE offload)."),
+]
+
+HARDWARE_NOTE = (
+    "Hardware: 1 GPU node, 2x NVIDIA RTX PRO 6000 Blackwell (96GB each = 192GB "
+    "total). No P2P between cards, so serving is tensor-parallel=1 (one model "
+    "per GPU). The `llm` namespace GPU ResourceQuota is hard=2, and both GPUs "
+    "are normally held by the live `qwen` service. A benchmark run frees at most "
+    "ONE GPU (qwen 2->1); using both (TP=2) takes prod fully down. All sizes are "
+    "ESTIMATES (~)."
+)
+
+# One entry per registered `models.inference.llmkube.dev` object. Order here is
+# the row order in the matrix. `note` is used when the model has NOT been
+# benchmarked; `note_done` (optional) when a matching result JSON is present.
+KNOWN_MODELS = [
+    {
+        "crd": "gemma-4-e4b",
+        "source": "unsloth/gemma-4-E4B-it-GGUF",
+        "label": "Gemma 4 E4B (gemma-4-E4B-it)",
+        "params": "~4B (E4B eff.)",
+        "quant": "GGUF ~4-8GB",
+        "fit": "fits-1gpu",
+        "note": "Pending -- fits 1 GPU easily (~4-8GB GGUF), not yet run.",
+    },
+    {
+        "crd": "qwen3-6-27b",
+        "source": "Qwen/Qwen3.6-27B",
+        "label": "Qwen3.6-27B",
+        "params": "27B",
+        "quant": "bf16 ~54GB",
+        "fit": "served",
+        "note": "Pending -- currently served in prod.",
+        "note_done": "Benchmarked in place -- prod, no serving change "
+                     "(see qwen3.6-27b/report.txt).",
+    },
+    {
+        "crd": "qwen3-6-27b-mtp",
+        "source": "unsloth/Qwen3.6-27B-MTP-GGUF",
+        "label": "Qwen3.6-27B-MTP (GGUF)",
+        "params": "27B (+MTP head)",
+        "quant": "GGUF ~16-30GB",
+        "fit": "fits-1gpu",
+        "note": "Pending -- fits 1 GPU (~16-30GB GGUF quant), not yet run.",
+    },
+    {
+        "crd": "qwen3-6-35b-a3b",
+        "source": "Qwen/Qwen3.6-35B-A3B",
+        "label": "Qwen3.6-35B-A3B (MoE)",
+        "params": "35B (3B act.)",
+        "quant": "bf16 ~70GB",
+        "fit": "fits-1gpu",
+        "note": "Pending -- fits 1 GPU (~70GB bf16, tight). Prior run failed on "
+                "HF download timeout, NOT VRAM.",
+    },
+    {
+        "crd": "qwen3-coder-next-80b",
+        "source": "Qwen/Qwen3-Coder-Next-80B",
+        "label": "Qwen3-Coder-Next-80B",
+        "params": "80B",
+        "quant": "bf16 ~160GB",
+        "fit": "needs-2gpu",
+        "note": "Needs 2 GPUs (TP=2, ~160GB bf16) -- testable only in a full "
+                "maintenance window (or with quantization).",
+    },
+    {
+        "crd": "gpt-oss-120b",
+        "source": "openai/gpt-oss-120b",
+        "label": "gpt-oss-120b",
+        "params": "120B (MoE)",
+        "quant": "MXFP4 ~63GB (native)",
+        "fit": "fits-1gpu",
+        "note": "Pending -- fits 1 GPU (~63GB, ships native MXFP4), not yet run.",
+    },
+    {
+        "crd": "qwen3-coder-480b-a35b",
+        "source": "Qwen/Qwen3-Coder-480B-A35B-Instruct",
+        "label": "Qwen3-Coder-480B-A35B (MoE)",
+        "params": "480B (35B act.)",
+        "quant": "~270GB @Q4 / ~960GB bf16",
+        "fit": "too-large",
+        "note": "Not benchmarked -- exceeds VRAM (~270GB @Q4 / ~960GB bf16 > "
+                "192GB total; needs multi-node).",
+    },
+    {
+        "crd": "deepseek-v3-1",
+        "source": "unsloth/DeepSeek-V3.1-GGUF",
+        "label": "DeepSeek-V3.1 (GGUF, MoE)",
+        "params": "671B (37B act.)",
+        "quant": "~380GB @Q4 GGUF",
+        "fit": "too-large",
+        "note": "Not benchmarked -- exceeds VRAM (671B MoE, ~380GB @Q4 GGUF > "
+                "192GB total; needs multi-node).",
+    },
+    {
+        "crd": "glm-5-1",
+        "source": "unsloth/GLM-5.1-GGUF",
+        "label": "GLM-5.1 (GGUF, MoE)",
+        "params": "744B (40B act.)",
+        "quant": "~220-236GB @2-bit",
+        "fit": "too-large",
+        "note": "Not benchmarked -- exceeds VRAM (744B MoE, ~220-236GB even "
+                "@2-bit dynamic GGUF > 192GB total; needs RAM/MoE offload or "
+                "multi-node).",
+    },
+    {
+        "crd": "glm-4-6v",
+        "source": "unsloth/GLM-4.6V-GGUF",
+        "label": "GLM-4.6V (GGUF, vision)",
+        "params": "106B",
+        "quant": "GGUF ~60GB @Q4",
+        "fit": "fits-1gpu",
+        "note": "Pending (uncertain) -- ~60GB @Q4 GGUF fits 1 GPU, but "
+                "vision/multimodal serving on vLLM needs verification; bf16 "
+                "(~212GB) would not fit.",
+    },
+]
+
+
+def _slug(value):
+    """Normalize an HF/registry model id to its last path segment, lowercased.
+
+    "Qwen/Qwen3.6-27B" -> "qwen3.6-27b"; used to match known-model registry
+    entries to actual runner result JSONs (whose meta["model"] is the source).
+    """
+    return (value or "").rsplit("/", 1)[-1].strip().lower()
+
+
+def merge_known_with_actual(actual_models):
+    """Merge the KNOWN_MODELS registry with actual (meta, view) results.
+
+    Returns (row_specs, benchmarked):
+      * row_specs -- ordered list of dicts for the headline matrix: every known
+        model in registry order, plus any actual model NOT in the registry
+        appended at the end (so real data is never dropped). Each spec has
+        keys: label, params, quant, fit, note, and optionally view (present
+        only when the model was actually benchmarked).
+      * benchmarked -- list of (meta, view) that carried real results, for the
+        per-category throughput table.
+    """
+    actual_by_slug = {}
+    for meta, view in actual_models:
+        actual_by_slug.setdefault(_slug(meta.get("model")), (meta, view))
+
+    row_specs = []
+    benchmarked = []
+    matched = set()
+    for km in KNOWN_MODELS:
+        slug = _slug(km["source"])
+        hit = actual_by_slug.get(slug)
+        spec = {
+            "label": km["label"],
+            "params": km["params"],
+            "quant": km["quant"],
+            "fit": km["fit"],
+            "note": km["note"],
+        }
+        if hit:
+            meta, view = hit
+            spec["view"] = view
+            spec["params"] = meta.get("parameters") or km["params"]
+            spec["quant"] = meta.get("quantization") or km["quant"]
+            spec["note"] = km.get("note_done", "Benchmarked.")
+            benchmarked.append((meta, view))
+            matched.add(slug)
+        row_specs.append(spec)
+
+    # Append any benchmarked model not covered by the registry -- never lose data.
+    for slug, (meta, view) in actual_by_slug.items():
+        if slug in matched:
+            continue
+        row_specs.append({
+            "label": model_label(meta),
+            "params": meta.get("parameters") or "",
+            "quant": meta.get("quantization") or "",
+            "fit": "served",
+            "note": "Benchmarked (not in known-models registry).",
+            "view": view,
+        })
+        benchmarked.append((meta, view))
+    return row_specs, benchmarked
+
+
+# ---------------------------------------------------------------------------
 # Loading
 # ---------------------------------------------------------------------------
 def load_files(paths, directory):
@@ -243,38 +456,55 @@ def model_label(meta):
     return name
 
 
-def build_matrix_rows(models):
-    """models: list of (meta, model_view). Returns list of row dicts."""
+def build_matrix_rows(row_specs):
+    """row_specs: output of merge_known_with_actual. Returns list of row dicts.
+
+    Specs WITH a `view` (benchmarked) render real metrics; specs WITHOUT one
+    (pending / untestable) render every metric as "--" and rely on the
+    Status/Note column to explain why.
+    """
     rows = []
-    for meta, view in models:
-        rows.append({
-            "label": model_label(meta),
-            "model_id": meta.get("model", ""),
-            "params": meta.get("parameters", "") or "",
-            "quant": meta.get("quantization", "") or "",
-            "ttft": median_ttft_ms(view),
-            "tps": median_decode_tps(view),
-            "lat500": representative_latency_s(view),
-            "ttft64k": context_64k_ttft_ms(view),
-            "tool_delta": tool_overhead_delta_s(view),
-            "stress_std": stress_stddev_ms(view),
-            "errors": error_count(view),
-        })
+    for spec in row_specs:
+        view = spec.get("view")
+        if view is not None:
+            rows.append({
+                "label": spec["label"],
+                "params": spec["params"] or "",
+                "quant": spec["quant"] or "",
+                "ttft": median_ttft_ms(view),
+                "tps": median_decode_tps(view),
+                "lat500": representative_latency_s(view),
+                "ttft64k": context_64k_ttft_ms(view),
+                "tool_delta": tool_overhead_delta_s(view),
+                "stress_std": stress_stddev_ms(view),
+                "errors": error_count(view),
+                "note": spec["note"],
+            })
+        else:
+            rows.append({
+                "label": spec["label"],
+                "params": spec["params"] or "",
+                "quant": spec["quant"] or "",
+                "ttft": None, "tps": None, "lat500": None,
+                "ttft64k": None, "tool_delta": None, "stress_std": None,
+                "errors": DASH,          # no runs -> dash, not a real 0
+                "note": spec["note"],
+            })
     return rows
 
 
 def render_matrix(rows):
     header = (
-        "| Model | Params | Quant | Median TTFT (ms) | Median decode (tok/s) | "
+        "| Model | Params | Quant / size | Median TTFT (ms) | Median decode (tok/s) | "
         "latency-500 (s) | context-64k TTFT (ms) | tool 10-3 delta (s) | "
-        "stress stddev (ms) | Errors |"
+        "stress stddev (ms) | Errors | Status / Note |"
     )
-    sep = "|" + "|".join(["---"] * 10) + "|"
+    sep = "|" + "|".join(["---"] * 11) + "|"
     lines = [header, sep]
     for r in rows:
         lines.append(
             "| {label} | {params} | {quant} | {ttft} | {tps} | {lat500} | "
-            "{ttft64k} | {delta} | {stress} | {errors} |".format(
+            "{ttft64k} | {delta} | {stress} | {errors} | {note} |".format(
                 label=r["label"],
                 params=r["params"] or DASH,
                 quant=r["quant"] or DASH,
@@ -285,6 +515,7 @@ def render_matrix(rows):
                 delta=fmt(r["tool_delta"], 2),
                 stress=fmt(r["stress_std"], 0),
                 errors=r["errors"],
+                note=r["note"],
             )
         )
     return "\n".join(lines)
@@ -311,16 +542,19 @@ def render_category_breakdown(models):
     return "\n".join(lines)
 
 
-def render_report(models, source_files):
+def render_report(row_specs, benchmarked, source_files):
     parts = []
     parts.append("# Model Comparison Matrix")
     parts.append("")
-    parts.append(f"Generated from {len(source_files)} result file(s), "
-                 f"{len(models)} model(s).")
+    parts.append(f"{len(row_specs)} registered model(s) tracked; "
+                 f"{len(benchmarked)} benchmarked from {len(source_files)} "
+                 f"result file(s). Models that are not (yet) benchmarked still "
+                 f"appear, with a `Status / Note` explaining why (fits/pending, "
+                 f"needs a maintenance window, or too large for this hardware).")
     parts.append("")
     parts.append("## Headline metrics")
     parts.append("")
-    parts.append(render_matrix(build_matrix_rows(models)))
+    parts.append(render_matrix(build_matrix_rows(row_specs)))
     parts.append("")
     parts.append("**Column notes**")
     parts.append("")
@@ -337,16 +571,33 @@ def render_report(models, source_files):
     parts.append(f"- **stress stddev (ms)** -- latency stddev over `{STRESS_SCENARIO}`; "
                  "consistency under repeated calls (lower = steadier).")
     parts.append("- **Errors** -- count of errored runs across all scenarios "
-                 "(e.g. context exceeding the model's max).")
+                 "(e.g. context exceeding the model's max). `--` = not benchmarked.")
+    parts.append("- **Status / Note** -- for un-benchmarked rows, why there are "
+                 "no metrics (see fit classes below). Sizes are ESTIMATES (~).")
+    parts.append("")
+    parts.append("## Fit classes & hardware constraint")
+    parts.append("")
+    parts.append(HARDWARE_NOTE)
+    parts.append("")
+    for name, desc in FIT_LEGEND:
+        parts.append(f"- **`{name}`** -- {desc}")
     parts.append("")
     parts.append("## Per-category throughput")
     parts.append("")
-    parts.append(render_category_breakdown(models))
+    if benchmarked:
+        parts.append("_Benchmarked models only._")
+        parts.append("")
+        parts.append(render_category_breakdown(benchmarked))
+    else:
+        parts.append("_No benchmarked models yet -- run the sweep to populate._")
     parts.append("")
     parts.append("## Source files")
     parts.append("")
-    for f in source_files:
-        parts.append(f"- `{f}`")
+    if source_files:
+        for f in source_files:
+            parts.append(f"- `{f}`")
+    else:
+        parts.append("_None -- matrix rendered from the known-models registry only._")
     parts.append("")
     return "\n".join(parts)
 
@@ -366,9 +617,10 @@ def main(argv=None):
                         help="Write the Markdown matrix to this file (also printed to stdout).")
     args = parser.parse_args(argv)
 
+    # No input JSON is OK: the matrix still lists every registered model from
+    # the known-models registry (all rows show "--" metrics + a pending/untestable
+    # note). This lets us regenerate a static preview without cluster access.
     paths = load_files(args.files, args.directory)
-    if not paths:
-        parser.error("no input JSON files (pass files and/or --dir <folder>)")
 
     # (meta, model_view) tuples, in file order then model order within a file.
     models = []
@@ -390,10 +642,11 @@ def main(argv=None):
         if added:
             used_files.append(path)
 
-    if not models:
-        parser.error("no valid runner result JSON files found among inputs")
+    # Merge actual results with the known-models registry so every registered
+    # model appears -- benchmarked ones with metrics, the rest with a note.
+    row_specs, benchmarked = merge_known_with_actual(models)
 
-    report = render_report(models, used_files)
+    report = render_report(row_specs, benchmarked, used_files)
     print(report)
 
     if args.output:
