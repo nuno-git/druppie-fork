@@ -42,7 +42,7 @@ class UserRole(Base):
 
     __tablename__ = "user_roles"
 
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE", onupdate="CASCADE"), primary_key=True)
     role = Column(String(50), primary_key=True)
 
     user = relationship("User", back_populates="roles")
@@ -54,7 +54,7 @@ class UserToken(Base):
     __tablename__ = "user_tokens"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"))
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE", onupdate="CASCADE"))
     service = Column(String(100), nullable=False)  # gitea, sharepoint
     access_token = Column(Text, nullable=False)
     refresh_token = Column(Text)

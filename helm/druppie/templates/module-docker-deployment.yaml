@@ -8,6 +8,11 @@ metadata:
     app.kubernetes.io/component: module-docker
 spec:
   replicas: {{ .Values.modules.docker.replicaCount }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
   selector:
     matchLabels:
       {{- include "druppie.selectorLabels" . | nindent 6 }}
@@ -18,6 +23,7 @@ spec:
         {{- include "druppie.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: module-docker
       annotations:
+        reloader.stakater.com/auto: "true"
         cluster-autoscaler.kubernetes.io/safe-to-evict: "true"
     spec:
       {{- if .Values.global.imagePullSecrets }}
@@ -69,6 +75,10 @@ spec:
             periodSeconds: 10
             timeoutSeconds: 5
             failureThreshold: 5
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sh", "-c", "sleep 10"]
           resources:
             {{- toYaml .Values.modules.docker.resources | nindent 12 }}
       {{- with .Values.modules.docker.nodeSelector }}

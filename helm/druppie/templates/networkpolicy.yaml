@@ -141,12 +141,32 @@ spec:
       app.kubernetes.io/component: module-coding
   policyTypes:
     - Ingress
+    {{- if .Values.agentSandbox.enabled }}
+    - Egress
+    {{- end }}
   ingress:
     - from:
         - podSelector:
             matchLabels:
               {{- include "druppie.selectorLabels" . | nindent 14 }}
               app.kubernetes.io/component: backend
+  {{- if .Values.agentSandbox.enabled }}
+  # When using the agent-sandbox warm pool, module-coding must reach the sandbox
+  # runtime pods (commands/files over :8888) — in-cluster private addresses that
+  # the app-net policy excludes. (The Kubernetes API egress is granted via a
+  # separate CiliumNetworkPolicy using the kube-apiserver entity, since Cilium
+  # resolves the Service VIP to the node entity and a plain ipBlock won't match.)
+  # Egress is the UNION across selecting policies, so this only ADDS to app-net.
+  egress:
+    # Sandbox runtime pods — agent-sandbox command/file server
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: sandbox-runtime
+      ports:
+        - port: 8888
+          protocol: TCP
+  {{- end }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy

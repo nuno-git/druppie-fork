@@ -6,6 +6,7 @@ WORKDIR /app
 COPY module-llm/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+ARG CACHEBUST
 # Copy shared router factory and module code
 COPY module_router.py .
 COPY module-llm/ .

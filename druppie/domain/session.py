@@ -83,6 +83,7 @@ class SessionDetail(SessionSummary):
     """
     user_id: UUID | None
     project: ProjectSummary | None
+    language: str | None = None
     timeline: list[TimelineEntry]
 
 

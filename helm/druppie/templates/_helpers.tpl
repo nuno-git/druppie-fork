@@ -60,7 +60,7 @@ Usage: {{ include "druppie.image" (dict "Values" .Values "image" .Values.backend
 {{- define "druppie.image" -}}
 {{- $registry := .Values.global.imageRegistry -}}
 {{- $repo := .image.repository -}}
-{{- $tag := .image.tag | default "latest" -}}
+{{- $tag := .Values.global.imageTag | default (.image.tag | default "latest") -}}
 {{- if $registry -}}
 {{- printf "%s/%s:%s" $registry $repo $tag -}}
 {{- else -}}

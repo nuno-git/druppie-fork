@@ -1,0 +1,48 @@
+scenario:
+  name: tool-call-3-tools
+  description: "Tool calling overhead met 3 tools"
+  category: tool_overhead
+
+  system_prompt: "Je bent een assistent die taken uitvoert via tools. Gebruik de beschikbare tools."
+  user_prompt: "Maak een nieuw project aan met de naam 'Watermonitor'"
+
+  tools:
+    - type: function
+      function:
+        name: create_project
+        description: "Maak een nieuw project aan"
+        parameters:
+          type: object
+          properties:
+            name:
+              type: string
+              description: "Naam van het project"
+            description:
+              type: string
+              description: "Beschrijving van het project"
+          required:
+            - name
+    - type: function
+      function:
+        name: search_projects
+        description: "Zoek bestaande projecten"
+        parameters:
+          type: object
+          properties:
+            query:
+              type: string
+              description: "Zoekterm"
+          required:
+            - query
+    - type: function
+      function:
+        name: delete_project
+        description: "Verwijder een project"
+        parameters:
+          type: object
+          properties:
+            project_id:
+              type: string
+              description: "ID van het project"
+          required:
+            - project_id

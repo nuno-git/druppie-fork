@@ -51,6 +51,7 @@ from druppie.core.gitea import get_gitea_client
 from druppie.core.language_detection import LanguageDetector
 from druppie.domain.common import AgentRunStatus, SessionStatus, ApprovalStatus
 from druppie.execution.human_input import HumanInput
+from druppie.llm.base import clean_llm_error
 
 if TYPE_CHECKING:
     from druppie.repositories import SessionRepository, ExecutionRepository, ProjectRepository, QuestionRepository, JobRepository, AttachmentRepository
@@ -203,7 +204,7 @@ class Orchestrator:
         translated_message = message
         if human_input.detected_language and human_input.detected_language != "en":
             try:
-                from druppie.core.translation import get_translation_service, TranslationNotAvailableError
+                from druppie.core.translation import get_translation_service, TranslationNotAvailableError, TranslationError
                 translator = get_translation_service()
                 translated_message = await translator.translate_to_english(
                     message, human_input.detected_language
@@ -218,6 +219,10 @@ class Orchestrator:
                     )
             except TranslationNotAvailableError:
                 logger.warning("translation_skipped_no_api_key", session_id=str(current_session_id))
+                self._notify_translation_failed(current_session_id)
+            except TranslationError as e:
+                logger.warning("translate_to_english_failed", session_id=str(current_session_id), error=str(e)[:200])
+                self._notify_translation_failed(current_session_id)
 
         # Step 3b: Save user message to the timeline (after translation so we can store both versions)
         message_id = self.execution_repo.create_message(
@@ -445,6 +450,53 @@ class Orchestrator:
 
             # Otherwise "completed" — loop continues to next pending run
 
+    _TRANSLATION_FAILED_MESSAGES = {
+        "nl": (
+            "⚠️ **Vertaling niet beschikbaar** — de vertalingsservice werkt niet. "
+            "De sessie gaat verder in het Engels."
+        ),
+        "de": (
+            "⚠️ **Übersetzung nicht verfügbar** — der Übersetzungsdienst funktioniert nicht. "
+            "Die Sitzung wird auf Englisch fortgesetzt."
+        ),
+        "fr": (
+            "⚠️ **Traduction indisponible** — le service de traduction ne fonctionne pas. "
+            "La session continuera en anglais."
+        ),
+        "en": (
+            "⚠️ **Translation unavailable** — the translation service is not working. "
+            "This session will continue in English."
+        ),
+    }
+
+    def _notify_translation_failed(self, session_id: UUID) -> None:
+        """Switch session to English and inject a one-time warning message."""
+        from druppie.core.translation import TranslationService
+
+        if not TranslationService.mark_notified(str(session_id)):
+            return
+
+        session = self.session_repo.get_by_id(session_id)
+        lang = session.language if session else None
+
+        self.session_repo.update_language(session_id, "en")
+
+        en_msg = self._TRANSLATION_FAILED_MESSAGES["en"]
+        local_msg = self._TRANSLATION_FAILED_MESSAGES.get(lang)
+        if local_msg and lang != "en":
+            message = f"{local_msg}\n\n---\n\n{en_msg}"
+        else:
+            message = en_msg
+        seq = self.execution_repo.get_next_sequence_number(session_id)
+        self.execution_repo.create_message(
+            session_id=session_id,
+            role="system",
+            content=message,
+            sequence_number=seq,
+        )
+        self.execution_repo.commit()
+        logger.info("translation_fallback_to_english", session_id=str(session_id))
+
     def _prepend_agent_summary(self, session_id: UUID, prompt: str) -> str:
         """Build accumulated summary from completed runs and prepend to prompt.
 
@@ -611,13 +663,14 @@ class Orchestrator:
             # Store error on agent_run before re-raising.
             # Rollback first — if the failure was a DB error, the transaction
             # is in an ABORTED state and no further SQL will work until ROLLBACK.
-            error_msg = f"{type(e).__name__}: {e}"
+            raw_error = f"{type(e).__name__}: {e}"
+            error_msg = clean_llm_error(raw_error)
             try:
                 self.execution_repo.db.rollback()
                 self.execution_repo.update_status(
                     agent_run_id,
                     AgentRunStatus.FAILED,
-                    error_message=error_msg[:2000],
+                    error_message=error_msg,
                 )
                 self.execution_repo.commit()
             except Exception as status_err:
@@ -632,7 +685,7 @@ class Orchestrator:
                 session_id=str(session_id),
                 agent_run_id=str(agent_run_id),
                 agent_id=agent_id,
-                error=error_msg[:500],
+                error=error_msg,
             )
             raise
 
@@ -980,7 +1033,7 @@ class Orchestrator:
         translated_answer = answer
         if human_input.detected_language and human_input.detected_language != "en":
             try:
-                from druppie.core.translation import get_translation_service, TranslationNotAvailableError
+                from druppie.core.translation import get_translation_service, TranslationNotAvailableError, TranslationError
                 translator = get_translation_service()
                 translated_answer = await translator.translate_to_english(
                     answer, human_input.detected_language
@@ -994,6 +1047,10 @@ class Orchestrator:
                     )
             except TranslationNotAvailableError:
                 logger.warning("translation_skipped_no_api_key", session_id=str(session_id))
+                self._notify_translation_failed(session_id)
+            except TranslationError as e:
+                logger.warning("translate_to_english_failed", session_id=str(session_id), error=str(e)[:200])
+                self._notify_translation_failed(session_id)
 
         # Step 2.5: Complete the HITL tool call with translated answer (English for agent)
         # but preserve the original answer for display in the UI
@@ -1044,6 +1101,13 @@ class Orchestrator:
             previous_status=agent_run.status,
         )
 
+        # Step 3b: Check if this was a fallback confirmation question
+        agent_state = question.agent_state or {}
+        if agent_state.get("fallback_pending"):
+            return await self._handle_fallback_answer(
+                session_id, agent_run, question, answer, selected_choices, db,
+            )
+
         # Step 4: Set status back to running
         self.execution_repo.update_status(agent_run.id, AgentRunStatus.RUNNING)
         self.session_repo.update_status(session_id, SessionStatus.ACTIVE)
@@ -1081,6 +1145,108 @@ class Orchestrator:
                     "parent_chain_incomplete_waiting_for_siblings",
                     session_id=str(session_id),
                 )
+
+        return session_id
+
+    async def _handle_fallback_answer(
+        self, session_id, agent_run, question, answer, selected_choices, db,
+    ):
+        """Handle the user's response to a fallback confirmation question.
+
+        Choices:
+          0 — switch this agent only
+          1 — switch all agents in this session
+          2 — cancel the request
+        """
+        from druppie.agents.runtime import Agent
+        from druppie.llm.fallback import FallbackLLM
+
+        agent_state = question.agent_state or {}
+        chose_single = selected_choices and 0 in selected_choices
+        chose_all = selected_choices and 1 in selected_choices
+        user_approved = chose_single or chose_all
+
+        if user_approved:
+            if chose_all:
+                FallbackLLM.approve_fallback(str(session_id))
+            else:
+                FallbackLLM.approve_fallback_for_agent(str(session_id), agent_run.agent_id)
+            logger.info(
+                "fallback_approved_by_user",
+                session_id=str(session_id),
+                agent_id=agent_run.agent_id,
+                fallback=agent_state.get('fallback_model'),
+                scope="all_agents" if chose_all else "this_agent",
+            )
+
+            self.execution_repo.update_status(agent_run.id, AgentRunStatus.RUNNING)
+            self.session_repo.update_status(session_id, SessionStatus.ACTIVE)
+            self.execution_repo.commit()
+
+            context = self.build_project_context(session_id)
+            agent = Agent(agent_run.agent_id, db=db, session_id=str(session_id))
+            try:
+                result = await agent.continue_run(
+                    session_id=session_id,
+                    agent_run_id=agent_run.id,
+                    context=context,
+                )
+            except Exception as e:
+                raw_error = f"{type(e).__name__}: {e}"
+                error_msg = clean_llm_error(raw_error)
+                logger.error(
+                    "fallback_continue_run_failed",
+                    session_id=str(session_id),
+                    agent_run_id=str(agent_run.id),
+                    agent_id=agent_run.agent_id,
+                    error=error_msg,
+                )
+                try:
+                    self.execution_repo.db.rollback()
+                    self.execution_repo.update_status(
+                        agent_run.id, AgentRunStatus.FAILED, error_message=error_msg,
+                    )
+                    self.session_repo.update_status(
+                        session_id, SessionStatus.FAILED, error_message=error_msg,
+                    )
+                    self.execution_repo.commit()
+                except Exception as status_err:
+                    logger.error(
+                        "failed_to_record_fallback_run_error",
+                        session_id=str(session_id),
+                        error=str(status_err),
+                    )
+                raise
+
+            status = self._handle_agent_resume_result(
+                session_id, agent_run.id, result, agent_id=agent_run.agent_id,
+            )
+            if status == "completed":
+                await self.execute_pending_runs(session_id)
+        else:
+            logger.info(
+                "fallback_rejected_by_user",
+                session_id=str(session_id),
+                agent_id=agent_run.agent_id,
+            )
+            self.execution_repo.update_status(
+                agent_run.id,
+                AgentRunStatus.FAILED,
+                error_message=(
+                    f"User declined provider fallback from "
+                    f"{agent_state.get('primary_provider')} to "
+                    f"{agent_state.get('fallback_provider')}"
+                ),
+            )
+            self.session_repo.update_status(
+                session_id,
+                SessionStatus.FAILED,
+                error_message=(
+                    f"Provider {agent_state.get('primary_provider')} unavailable "
+                    f"and fallback was declined."
+                ),
+            )
+            self.execution_repo.commit()
 
         return session_id
 
@@ -1132,9 +1298,6 @@ class Orchestrator:
                     child_run_id=str(current_run.id),
                     spawning_tool_call_id=str(current_run.spawning_tool_call_id),
                 )
-                # Parent chain is NOT completed — siblings still running.
-                # Do NOT call execute_pending_runs() or the session will be
-                # prematurely marked COMPLETED.
                 return False
 
             self._patch_paused_subagents_tool_call(parent_run.id, session_id)
@@ -1233,11 +1396,11 @@ class Orchestrator:
                         context=context,
                     )
                 except Exception as e:
-                    error_msg = f"{type(e).__name__}: {e}"
+                    error_msg = clean_llm_error(f"{type(e).__name__}: {e}")
                     self.execution_repo.update_status(
                         orphan_run.id,
                         AgentRunStatus.FAILED,
-                        error_message=error_msg[:2000],
+                        error_message=error_msg,
                     )
                     self.execution_repo.commit()
                     raise
@@ -1378,11 +1541,11 @@ class Orchestrator:
                 context=context,
             )
         except Exception as e:
-            error_msg = f"{type(e).__name__}: {e}"
+            error_msg = clean_llm_error(f"{type(e).__name__}: {e}")
             self.execution_repo.update_status(
                 paused_run.id,
                 AgentRunStatus.FAILED,
-                error_message=error_msg[:2000],
+                error_message=error_msg,
             )
             self.execution_repo.commit()
             raise
@@ -1501,11 +1664,11 @@ class Orchestrator:
                 context=context,
             )
         except Exception as e:
-            error_msg = f"{type(e).__name__}: {e}"
+            error_msg = clean_llm_error(f"{type(e).__name__}: {e}")
             self.execution_repo.update_status(
                 agent_run.id,
                 AgentRunStatus.FAILED,
-                error_message=error_msg[:2000],
+                error_message=error_msg,
             )
             self.execution_repo.commit()
             raise

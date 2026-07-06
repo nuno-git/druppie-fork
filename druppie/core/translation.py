@@ -1,16 +1,25 @@
-"""Translation service — translates text between languages via DeepInfra.
+"""Translation service — translates text between languages.
 
-Uses Gemma 3 27B on DeepInfra for translations. Raises
-TranslationNotAvailableError when DEEPINFRA_API_KEY is not configured,
+Uses a configurable LLM provider for translations. The provider/model
+is resolved in this order:
+1. Runtime override (set by admin via the Model Management UI)
+2. TRANSLATION_PROVIDER / TRANSLATION_MODEL env vars
+3. Legacy: DEEPINFRA_API_KEY with Gemma 3 27B
+4. Any available provider from PROVIDER_CONFIGS
+
+Raises TranslationNotAvailableError when no provider is available,
 and TranslationError on translation failures, so callers can surface
 clear errors instead of silently serving untranslated text.
 """
 
 import os
+import time
 
 import structlog
 
 logger = structlog.get_logger()
+
+_EVICTION_TTL = 86400  # 24 hours
 
 
 class TranslationNotAvailableError(RuntimeError):
@@ -33,31 +42,159 @@ def _language_name(code: str) -> str:
     return code
 
 
+def _has_api_key_for_provider(provider: str) -> bool:
+    """Check whether the API key for a provider is configured."""
+    from druppie.llm.litellm_provider import has_api_key
+    return has_api_key(provider)
+
+
 class TranslationService:
-    """Translates text between languages using Gemma 3 27B on DeepInfra."""
+    """Translates text between languages using a configurable LLM provider.
+
+    Process-local state — requires single-worker deployment (Dockerfile).
+    Entries are evicted after 24 hours to prevent unbounded growth.
+    """
+
+    _notified_sessions: dict[str, float] = {}
 
     def __init__(self):
         self._llm = None
+        self._configured_provider: str | None = None
+        self._configured_model: str | None = None
+        self._configured_fallback_provider: str | None = None
+        self._configured_fallback_model: str | None = None
+
+    @classmethod
+    def _evict(cls) -> None:
+        cutoff = time.monotonic() - _EVICTION_TTL
+        stale = [k for k, ts in cls._notified_sessions.items() if ts < cutoff]
+        for k in stale:
+            del cls._notified_sessions[k]
+
+    @classmethod
+    def mark_notified(cls, session_id: str) -> bool:
+        """Mark a session as notified about translation failure.
+
+        Returns True if this is the first notification (caller should post
+        the message). Returns False if already notified (skip).
+        """
+        cls._evict()
+        if session_id in cls._notified_sessions:
+            return False
+        cls._notified_sessions[session_id] = time.monotonic()
+        return True
+
+    @classmethod
+    def clear_session(cls, session_id: str) -> None:
+        """Remove notification state for a completed/failed session."""
+        cls._notified_sessions.pop(session_id, None)
+
+    def configure(
+        self,
+        provider: str | None,
+        model: str | None,
+        fallback_provider: str | None = None,
+        fallback_model: str | None = None,
+    ):
+        """Set the translation provider/model at runtime.
+
+        Called by ModelManagementService when an admin sets or removes
+        a translation override. Pass None/None to clear the override.
+        """
+        self._configured_provider = provider
+        self._configured_model = model
+        self._configured_fallback_provider = fallback_provider
+        self._configured_fallback_model = fallback_model
+        self._llm = None
+
+    def get_current_config(self) -> tuple[str, str, str]:
+        """Return (provider, model, source) for the current translation config."""
+        return self._resolve_translation_config()
 
     @property
     def llm(self):
         if self._llm is None:
-            if not os.getenv("DEEPINFRA_API_KEY"):
-                raise TranslationNotAvailableError(
-                    "DEEPINFRA_API_KEY is not set. Translation requires a valid "
-                    "DeepInfra API key. Set DEEPINFRA_API_KEY in your .env file "
-                    "to enable translation for non-English sessions."
-                )
+            provider, model, source = self._resolve_translation_config()
+            logger.info(
+                "translation_llm_initialized",
+                provider=provider,
+                model=model,
+                source=source,
+            )
             from druppie.llm.litellm_provider import ChatLiteLLM
             self._llm = ChatLiteLLM(
-                provider="deepinfra",
-                model="google/gemma-3-27b-it",
+                provider=provider,
+                model=model,
                 temperature=0.1,
                 max_tokens=16384,
                 timeout=120.0,
                 max_retries=2,
             )
         return self._llm
+
+    def _resolve_translation_config(self) -> tuple[str, str, str]:
+        """Resolve which provider+model to use for translation.
+
+        Returns (provider, model, source) where source describes how it was resolved.
+        """
+        from druppie.llm.litellm_provider import PROVIDER_CONFIGS
+
+        # 1. Runtime override (set via admin UI)
+        if self._configured_provider and self._configured_model:
+            if _has_api_key_for_provider(self._configured_provider):
+                return (self._configured_provider, self._configured_model, "db_override")
+            logger.warning(
+                "translation_override_api_key_missing",
+                provider=self._configured_provider,
+            )
+            if (
+                self._configured_fallback_provider
+                and _has_api_key_for_provider(self._configured_fallback_provider)
+            ):
+                logger.info(
+                    "translation_using_admin_fallback",
+                    fallback_provider=self._configured_fallback_provider,
+                    fallback_model=self._configured_fallback_model,
+                )
+                return (
+                    self._configured_fallback_provider,
+                    self._configured_fallback_model or PROVIDER_CONFIGS.get(
+                        self._configured_fallback_provider, {}
+                    ).get("default_model", ""),
+                    "db_override",
+                )
+            logger.warning(
+                "translation_override_unavailable_falling_through",
+                provider=self._configured_provider,
+                reason="Admin override has no API key and no admin fallback; "
+                       "falling through to env/legacy/any-available.",
+            )
+
+        # 2. Environment variables
+        env_provider = os.getenv("TRANSLATION_PROVIDER")
+        env_model = os.getenv("TRANSLATION_MODEL")
+        if env_provider and env_model:
+            if _has_api_key_for_provider(env_provider):
+                return (env_provider, env_model, "env")
+            logger.warning(
+                "translation_env_api_key_missing",
+                provider=env_provider,
+            )
+
+        # 3. Legacy: DeepInfra with Gemma (backward compat)
+        if os.getenv("DEEPINFRA_API_KEY"):
+            return ("deepinfra", "google/gemma-3-27b-it", "legacy")
+
+        # 4. Any available provider
+        for name, config in PROVIDER_CONFIGS.items():
+            if _has_api_key_for_provider(name):
+                return (name, config["default_model"], "fallback")
+
+        raise TranslationNotAvailableError(
+            "No LLM provider with a valid API key is available for translation. "
+            "Configure at least one provider API key in your .env file, "
+            "or set TRANSLATION_PROVIDER and TRANSLATION_MODEL."
+        )
 
     async def translate_to_english(self, text: str, source_language: str) -> str:
         if not source_language or source_language == "en":
@@ -66,20 +203,16 @@ class TranslationService:
             return text
 
         lang_name = _language_name(source_language)
-        try:
-            result = await self._translate(text, lang_name, "English")
-            if len(result) > len(text) * 3 + 50:
-                logger.warning(
-                    "translation_hallucination_detected",
-                    input_len=len(text),
-                    output_len=len(result),
-                    input_preview=text[:60],
-                )
-                return text
-            return result
-        except TranslationError:
-            logger.warning("translate_to_english_fallback", source_language=source_language)
+        result = await self._translate(text, lang_name, "English")
+        if len(result) > len(text) * 3 + 50:
+            logger.warning(
+                "translation_hallucination_detected",
+                input_len=len(text),
+                output_len=len(result),
+                input_preview=text[:60],
+            )
             return text
+        return result
 
     async def translate_from_english(self, text: str, target_language: str) -> str:
         if not target_language or target_language == "en":

@@ -32,6 +32,8 @@ from uuid import UUID
 
 import structlog
 
+from druppie.llm.base import clean_llm_error
+
 logger = structlog.get_logger()
 
 # Module-level set: prevents GC of running tasks and enables shutdown enumeration.
@@ -161,6 +163,30 @@ def create_session_task(
             db.close()
 
     return create_tracked_task(coro, name=name)
+
+
+def cancel_session_task(session_id: UUID | str) -> int:
+    """Forcefully cancel in-flight background task(s) for a session.
+
+    The cooperative cancel (DB PAUSED flag + SessionPauseToken) only fires when
+    the orchestrator reaches its next checkpoint — which never happens if it is
+    wedged in a hanging tool call (a sandbox/git/MCP await with no hard
+    timeout). This locates the session's tracked task(s) by name and cancels
+    them, so the wedged ``await`` raises CancelledError and ``run_session_task``'s
+    handler cleans up (agent_runs -> PAUSED_USER, session -> PAUSED). Returns the
+    number of tasks scheduled for cancellation.
+
+    Safe when no task exists (returns 0). Cancellation propagates on the next
+    event-loop tick; the cleanup runs asynchronously in ``run_session_task``.
+    """
+    sid = str(session_id)
+    targets = [
+        t for t in list(_background_tasks)
+        if not t.done() and sid in (t.get_name() or "")
+    ]
+    for t in targets:
+        t.cancel()
+    return len(targets)
 
 
 async def shutdown_background_tasks(timeout: float = 30.0) -> None:
@@ -317,11 +343,12 @@ async def run_session_task(
             logger.error("session_cancel_cleanup_failed", session_id=str(session_id), error=str(cleanup_err))
 
     except Exception as e:
-        error_msg = f"{type(e).__name__}: {e}"
+        raw_error = f"{type(e).__name__}: {e}"
+        error_msg = clean_llm_error(raw_error)
         logger.error(
             f"{task_name}_error",
             session_id=str(session_id),
-            error=error_msg,
+            error=raw_error,
             exc_info=True,
         )
         try:
@@ -329,7 +356,7 @@ async def run_session_task(
             SessionRepository(db).update_status(
                 session_id,
                 SessionStatus.FAILED,
-                error_message=error_msg[:2000],
+                error_message=error_msg,
             )
             db.commit()
         except Exception as update_error:

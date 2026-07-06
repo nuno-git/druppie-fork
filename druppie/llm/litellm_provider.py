@@ -4,16 +4,13 @@ Uses LiteLLM for standardized tool calling across all providers.
 This is the only LLM implementation - all providers go through LiteLLM.
 
 Environment variables:
-    LLM_PROVIDER: zai, deepinfra, deepseek, azure_foundry, ollama
+    LLM_PROVIDER: zai, deepinfra, azure_foundry, ollama, openrouter
 
     For ZAI:
         ZAI_API_KEY, ZAI_MODEL, ZAI_BASE_URL
 
     For DeepInfra:
         DEEPINFRA_API_KEY, DEEPINFRA_MODEL, DEEPINFRA_BASE_URL
-
-    For DeepSeek:
-        DEEPSEEK_API_KEY, DEEPSEEK_MODEL, DEEPSEEK_BASE_URL
 
     For Azure Foundry:
         FOUNDRY_API_KEY, FOUNDRY_MODEL, FOUNDRY_API_URL
@@ -176,6 +173,7 @@ PROVIDER_CONFIGS = {
         "model_env": "ZAI_MODEL",
         "base_url_env": "ZAI_BASE_URL",
         "default_base_url": "https://api.z.ai/api/coding/paas/v4",
+        "known_models": ["glm-5.2", "glm-5", "glm-4.7", "glm-4.5"],
     },
     "deepinfra": {
         "prefix": "openai",  # OpenAI-compatible API (same as zai)
@@ -184,14 +182,16 @@ PROVIDER_CONFIGS = {
         "model_env": "DEEPINFRA_MODEL",
         "base_url_env": "DEEPINFRA_BASE_URL",
         "default_base_url": "https://api.deepinfra.com/v1/openai",
-    },
-    "deepseek": {
-        "prefix": "deepseek",  # LiteLLM native DeepSeek support
-        "default_model": "deepseek-chat",
-        "api_key_env": "DEEPSEEK_API_KEY",
-        "model_env": "DEEPSEEK_MODEL",
-        "base_url_env": "DEEPSEEK_BASE_URL",
-        "default_base_url": "https://api.deepseek.com/v1",
+        "known_models": [
+            "Qwen/Qwen3-32B",
+            "Qwen/Qwen3-235B-A22B",
+            "moonshotai/Kimi-K2.5-Turbo",
+            "google/gemma-3-27b-it",
+            "meta-llama/Llama-4-Maverick-17B-128E-Instruct",
+            "meta-llama/Llama-4-Scout-17B-16E-Instruct",
+            "mistralai/Mistral-Small-24B-Instruct-2501",
+            "deepseek-ai/DeepSeek-V3-0324",
+        ],
     },
     "azure_foundry": {
         "prefix": "azure",  # Overridden at runtime for Claude models → "anthropic"
@@ -206,6 +206,35 @@ PROVIDER_CONFIGS = {
         "api_version": "2024-12-01-preview",
         "anthropic_base_url_env": "FOUNDRY_ANTHROPIC_URL",
         "anthropic_default_base_url": "https://druppie-resource.services.ai.azure.com/anthropic",
+        "known_models": [
+            "GPT-5-MINI",
+            "gpt-4.1-mini",
+            "gpt-4.1-nano",
+            "claude-sonnet-4-6",
+            "claude-haiku-4-5-20251001",
+        ],
+    },
+    "openrouter": {
+        "prefix": "openrouter",
+        "default_model": "google/gemma-3-27b-it",
+        "api_key_env": "OPENROUTER_API_KEY",
+        "model_env": "OPENROUTER_MODEL",
+        "base_url_env": "OPENROUTER_BASE_URL",
+        "default_base_url": "https://openrouter.ai/api/v1",
+        "known_models": [
+            "google/gemma-3-27b-it",
+            "google/gemini-2.5-flash",
+            "google/gemini-2.5-pro",
+            "anthropic/claude-sonnet-4-6",
+            "anthropic/claude-haiku-4.5",
+            "meta-llama/llama-4-maverick",
+            "meta-llama/llama-4-scout",
+            "qwen/qwen3-235b-a22b",
+            "qwen/qwen3-32b",
+            "deepseek/deepseek-chat-v3-0324",
+            "deepseek/deepseek-r1",
+            "mistralai/mistral-small-3.2-24b-instruct",
+        ],
     },
     "ollama": {
         "prefix": "openai",  # Ollama is OpenAI-compatible
@@ -216,8 +245,25 @@ PROVIDER_CONFIGS = {
         "base_url_env": "OLLAMA_BASE_URL",
         "default_base_url": "https://ollama.waterschap.org/v1",
         "ssl_verify": False,  # Self-signed certificate
+        "known_models": [
+            "gpt-oss:120b",
+            "gpt-oss:20b",
+            "qwen3-coder:30b",
+            "deepseek-r1:32b",
+            "gemma3:27b",
+        ],
     },
 }
+
+
+def has_api_key(provider: str) -> bool:
+    """Check whether the API key env var for a provider is set (or optional)."""
+    config = PROVIDER_CONFIGS.get(provider)
+    if not config:
+        return False
+    if config.get("api_key_optional"):
+        return True
+    return bool(os.getenv(config["api_key_env"]))
 
 
 class ChatLiteLLM(BaseLLM):
@@ -300,18 +346,18 @@ class ChatLiteLLM(BaseLLM):
         # Azure API version (required for azure/ prefix)
         self._api_version = config.get("api_version")
 
-        # Azure Foundry: Claude models use Anthropic Messages API, not OpenAI
+        # Azure Foundry: Claude models route through azure_ai provider
         is_claude = self._model.lower().startswith("claude")
         if provider == "azure_foundry" and is_claude:
-            prefix = "anthropic"
+            prefix = "azure_ai"
             anthropic_url = (
                 os.getenv(config.get("anthropic_base_url_env", ""), "")
                 or config.get("anthropic_default_base_url", "")
             )
             if anthropic_url:
                 self.api_base = anthropic_url.rstrip("/")
-                if not self.api_base.endswith("/anthropic"):
-                    self.api_base += "/anthropic"
+                if self.api_base.endswith("/anthropic"):
+                    self.api_base = self.api_base[: -len("/anthropic")]
             self._api_version = None
             self._use_max_completion_tokens = False
         else:
@@ -450,9 +496,8 @@ class ChatLiteLLM(BaseLLM):
         tools: list[dict[str, Any]] | None = None,
     ) -> LLMResponse:
         """Send synchronous chat completion request."""
-        kwargs = self._build_kwargs(messages, tools)
-
         try:
+            kwargs = self._build_kwargs(messages, tools)
             response = completion(**kwargs)
             return self._parse_response(response)
         except Exception as e:
@@ -465,9 +510,8 @@ class ChatLiteLLM(BaseLLM):
         max_tokens: int | None = None,
     ) -> LLMResponse:
         """Send asynchronous chat completion request."""
-        kwargs = self._build_kwargs(messages, tools, max_tokens_override=max_tokens or self.max_tokens)
-
         try:
+            kwargs = self._build_kwargs(messages, tools, max_tokens_override=max_tokens or self.max_tokens)
             response = await acompletion(**kwargs)
             _sensitive_keys = {"api_key", "key", "authorization", "token"}
             raw_request = json.loads(json.dumps(kwargs, default=str)) if kwargs else None
