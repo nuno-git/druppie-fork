@@ -31,17 +31,33 @@ WSL (git push) → 127.0.0.1:8888 (gsa-relay.ps1 on Windows) → corporate netwo
 ```
 
 - **`gsa-relay.ps1`** — PowerShell script at `C:\Users\nscholten\gsa-relay.ps1`, auto-starts on WSL login via `/init`. Listens on `0.0.0.0:8888`.
-- **Git proxy** — `~/.gitconfig` already has `[http "https://aigit.waterschap.org/"] proxy = http://127.0.0.1:8888`. No env vars needed for `git push`.
+- **Git proxy** — `~/.gitconfig` has `[http "https://aigit.waterschap.org/"] proxy = http://127.0.0.1:8888`. **But see the NO_PROXY gotcha below** — you usually must prefix push/curl with `env -u NO_PROXY -u no_proxy`.
 - **Credentials** — OAuth2 token stored in `~/.git-credentials` (`credential.helper = store`). No password prompts.
+
+### NO_PROXY gotcha (relay is up but curl/git bypass it) — READ THIS
+
+The WSL env exports `NO_PROXY` / `no_proxy` **containing `aigit.waterschap.org`**. This tells tools "do not use a proxy for aigit", so even though the relay is running on `127.0.0.1:8888` and gitconfig points at it, `curl` / `git` / `pip` etc. try to reach aigit **directly**, which fails (it is on the corporate network). Symptoms: `curl ... --proxy http://127.0.0.1:8888` returns code `000` / times out; `git push` hangs then fails.
+
+**Fix — unset `NO_PROXY` / `no_proxy` for any command that must traverse the relay:**
+
+```bash
+# Verify the relay works (returns {"version":"1.26.x"}):
+env -u NO_PROXY -u no_proxy curl -sk --proxy http://127.0.0.1:8888 https://aigit.waterschap.org/api/v1/version
+
+# Push to aigit (the `origin` remote):
+env -u NO_PROXY -u no_proxy git push origin colab-dev   # ai/druppie
+env -u NO_PROXY -u no_proxy git push origin main        # ai/k8s, rancher-gitops
+```
+
+> `ss -tlnp | grep 8888` is **not** a valid relay check — the relay runs on **Windows**, so its port is not listed in WSL's `ss`. Use the curl check above.
 
 ### Checking if the relay is up
 
 ```bash
-# Quick check — should return {"version":"1.26.x"}
-curl -sk --proxy http://127.0.0.1:8888 https://aigit.waterschap.org/api/v1/version
-
-# Or check the port is listening
-ss -tlnp | grep 8888
+# Correct check — unsets NO_PROXY so the request actually traverses the relay:
+env -u NO_PROXY -u no_proxy curl -sk --proxy http://127.0.0.1:8888 https://aigit.waterschap.org/api/v1/version
+# -> {"version":"1.26.x"}  means relay is UP
+# -> empty / code 000      means relay is DOWN (see below)
 ```
 
 ### If the relay is down (git push fails with connection refused/timeout)
