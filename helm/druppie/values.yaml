@@ -134,7 +134,7 @@ backend:
   foundry:
     model: GPT-5-MINI
     apiUrl: ''
-  frontend:
+frontend:
   image:
     repository: druppie-frontend
     tag: latest
@@ -320,7 +320,7 @@ modules:
       limits:
         memory: 512Mi
         cpu: 1000m
-  init:
+init:
   enabled: true
   image:
     repository: druppie-init
@@ -357,7 +357,7 @@ secrets:
   keycloakClientSecret: ''
   giteaToken: ''
   moduleApiToken: ''
-  autoscaling:
+autoscaling:
   backend:
     enabled: false
     minReplicas: 2
