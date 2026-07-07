@@ -52,9 +52,6 @@ def test_startup_validation_warns_when_deepinfra_key_missing(caplog):
 
     settings = Settings()
     settings.llm.deepinfra_api_key = ""
-    settings.github_app.id = ""
-    settings.github_app.private_key_path = ""
-    settings.github_app.installation_id = ""
 
     with caplog.at_level(logging.WARNING):
         settings.validate_startup()

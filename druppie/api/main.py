@@ -203,7 +203,7 @@ async def lifespan(app: FastAPI):
     _load_model_override_cache()
 
     # Clean up orphaned sandbox Gitea users from previous runs
-    from druppie.opencode.gitea_cleanup import cleanup_orphaned_sandbox_users
+    from druppie.services.gitea_cleanup import cleanup_orphaned_sandbox_users
     await cleanup_orphaned_sandbox_users()
 
     # Initialize tool registry (discovers MCP tools from servers via tools/list)

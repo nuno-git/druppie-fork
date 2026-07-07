@@ -1,8 +1,0 @@
-{
-  "default_agent": "druppie-builder",
-  "permission": {
-    "*": {
-      "*": "allow"
-    }
-  }
-}

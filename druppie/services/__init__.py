@@ -21,7 +21,6 @@ from .deployment_service import DeploymentService
 from .workflow_service import WorkflowService
 from .skill_service import SkillService
 from .revert_service import RevertService
-from .github_app_service import GitHubAppService, get_github_app_service
 from .evaluation_service import EvaluationService
 from .documentation_service import DocumentationService
 from .job_service import JobService
@@ -39,8 +38,6 @@ __all__ = [
     "WorkflowService",
     "SkillService",
     "RevertService",
-    "GitHubAppService",
-    "get_github_app_service",
     "EvaluationService",
     "DocumentationService",
     "JobService",

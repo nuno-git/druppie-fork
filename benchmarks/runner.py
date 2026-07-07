@@ -38,6 +38,13 @@ from benchmarks.reporter import (
 BENCHMARKS_DIR = Path(__file__).resolve().parent
 SCENARIOS_DIR = BENCHMARKS_DIR / "scenarios"
 
+# Fallback output cap for scenarios that don't set max_output_tokens.
+# Reasoning models (e.g. Qwen3.6-27B-NVFP4) generate unbounded "thinking" output
+# for open-ended prompts; without a cap a single call runs for many minutes and
+# blows past the per-call timeout, so the run is recorded as an error. Latency and
+# context scenarios only need a bounded answer, so cap them here.
+DEFAULT_MAX_OUTPUT_TOKENS = 1024
+
 FILLER_PARAGRAPH = (
     "Het waterschap is verantwoordelijk voor het beheer van het watersysteem in het "
     "beheergebied. Dit omvat het onderhoud van dijken, watergangen, gemalen en stuwen. "
@@ -166,7 +173,7 @@ def run_scenario(
         )]
 
     tools = scenario.get("tools")
-    max_tokens = scenario.get("max_output_tokens")
+    max_tokens = scenario.get("max_output_tokens") or DEFAULT_MAX_OUTPUT_TOKENS
     repeat = scenario.get("repeat", 1)
 
     total_runs = warmup_runs + runs

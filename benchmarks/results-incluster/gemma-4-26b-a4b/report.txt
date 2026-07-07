@@ -1,0 +1,83 @@
+Running 20 scenarios x 1 models (2 runs each, 1 warmup)
+
+  Model: Gemma-4-26B-A4B (bench, single-GPU) (google/gemma-4-26B-A4B)
+    context-128k...  (2 errors)
+    context-16k...  (2 errors)
+    context-1k...  (2 errors)
+    context-256...  (2 errors)
+    context-256k...  (1 errors)
+    context-32k...  (2 errors)
+    context-4k...  (2 errors)
+    context-64k...  (2 errors)
+    context-8k...  (2 errors)
+    generate-100...  (2 errors)
+    generate-1000...  (2 errors)
+    generate-2000...  (2 errors)
+    generate-500...  (2 errors)
+    latency-1000...  (2 errors)
+    latency-200...  (2 errors)
+    latency-50...  (2 errors)
+    latency-500...  (2 errors)
+    repeated-50...  (20 errors)
+    tool-call-10-tools...  (2 errors)
+    tool-call-3-tools...  (2 errors)
+
+LLM Performance Benchmark - 2026-07-07 10:31
+Endpoint: qwen_incluster (http://bench-gemma-4-26b-a4b.llm.svc.cluster.local:8000/v1)
+Runs per test: 3
+Warmup runs: 1
+
+Model Configurations:
+  Gemma-4-26B-A4B (bench - 27B params, bfloat16, KV:fp8, flash_attn, GPU=-1
+
+================================================================================
+  CONTEXT SCALING (latency)
+================================================================================
+Scenario               | Gemma-4-26B-A4B (bench, single-GPU)  
+--------------------------------------------------------------
+context-128k           | ERROR                                
+context-16k            | ERROR                                
+context-1k             | ERROR                                
+context-256            | ERROR                                
+context-256k           | ERROR                                
+context-32k            | ERROR                                
+context-4k             | ERROR                                
+context-64k            | ERROR                                
+context-8k             | ERROR                                
+
+================================================================================
+  GENERATION SPEED
+================================================================================
+Scenario               | Gemma-4-26B-A4B (bench, single-GPU)  
+--------------------------------------------------------------
+generate-100           | ERROR                                
+generate-1000          | ERROR                                
+generate-2000          | ERROR                                
+generate-500           | ERROR                                
+
+================================================================================
+  LATENCY (total response time)
+================================================================================
+Scenario               | Gemma-4-26B-A4B (bench, single-GPU)  
+--------------------------------------------------------------
+latency-1000           | ERROR                                
+latency-200            | ERROR                                
+latency-50             | ERROR                                
+latency-500            | ERROR                                
+
+================================================================================
+  STRESS / CONSISTENCY
+================================================================================
+Scenario               | Gemma-4-26B-A4B (bench, single-GPU)  
+--------------------------------------------------------------
+repeated-50            | ERROR                                
+
+================================================================================
+  TOOL CALLING OVERHEAD (latency)
+================================================================================
+Scenario               | Gemma-4-26B-A4B (bench, single-GPU)  
+--------------------------------------------------------------
+tool-call-10-tools     | ERROR                                
+tool-call-3-tools      | ERROR                                
+
+JSON results exported to /results/results.json

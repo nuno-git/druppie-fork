@@ -132,16 +132,6 @@ spec:
               value: {{ .Values.backend.foundry.model | quote }}
             - name: FOUNDRY_API_URL
               value: {{ .Values.backend.foundry.apiUrl | quote }}
-            - name: GITHUB_APP_ID
-              value: {{ .Values.backend.github.appId | quote }}
-            - name: GITHUB_APP_PRIVATE_KEY_PATH
-              value: {{ .Values.backend.github.appPrivateKeyPath | quote }}
-            - name: GITHUB_APP_INSTALLATION_ID
-              value: {{ .Values.backend.github.appInstallationId | quote }}
-            - name: DRUPPIE_REPO_OWNER
-              value: {{ .Values.backend.github.repoOwner | quote }}
-            - name: DRUPPIE_REPO_NAME
-              value: {{ .Values.backend.github.repoName | quote }}
             - name: ONESHOT_SANDBOX_RUNTIME
               value: {{ .Values.sandbox.runtime | quote }}
             {{- if .Values.backend.branchEnvDeployer.enabled }}
@@ -188,11 +178,6 @@ spec:
             - name: docker-sock
               mountPath: /var/run/docker.sock
             {{- end }}
-            {{- if .Values.secrets.githubAppPrivateKey }}
-            - name: github-app-key
-              mountPath: /app/secrets
-              readOnly: true
-            {{- end }}
             {{- if and .Values.backend.branchEnvDeployer.enabled .Values.backend.branchEnvDeployer.gitops.caConfigMap }}
             - name: gitops-ca
               mountPath: /app/gitops-ca
@@ -238,12 +223,4 @@ spec:
         - name: gitops-ca
           configMap:
             name: {{ .Values.backend.branchEnvDeployer.gitops.caConfigMap }}
-        {{- end }}
-        {{- if .Values.secrets.githubAppPrivateKey }}
-        - name: github-app-key
-          secret:
-            secretName: {{ include "druppie.fullname" . }}-github-app-key
-            items:
-              - key: github-app-private-key.pem
-                path: github-app-private-key.pem
         {{- end }}

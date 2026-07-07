@@ -209,14 +209,10 @@ services:
       DRUPPIE_DOCKER_MEMORY_LIMIT: ${DRUPPIE_SANDBOX_MEMORY_LIMIT:-12g}
       DRUPPIE_DOCKER_CPU_LIMIT: ${DRUPPIE_SANDBOX_CPU_LIMIT:-4}
       # Core repo config (for update_core git scope)
-      DRUPPIE_CORE_REPO_URL: ${DRUPPIE_CORE_REPO_URL:-}
+      DRUPPIE_CORE_GITEA_URL: ${DRUPPIE_CORE_GITEA_URL:-https://aigit.waterschap.org}
+      DRUPPIE_CORE_REPO_OWNER: ${DRUPPIE_CORE_REPO_OWNER:-ai}
+      DRUPPIE_CORE_REPO_NAME: ${DRUPPIE_CORE_REPO_NAME:-druppie}
       DRUPPIE_CORE_REPO_BRANCH: ${DRUPPIE_CORE_REPO_BRANCH:-colab-dev}
-      # GitHub App (for cloning/authenticating against private GitHub repos)
-      GITHUB_APP_ID: ${GITHUB_APP_ID:-}
-      GITHUB_APP_PRIVATE_KEY_PATH: ${GITHUB_APP_PRIVATE_KEY_PATH:-}
-      GITHUB_APP_INSTALLATION_ID: ${GITHUB_APP_INSTALLATION_ID:-}
-      GITHUB_REPO_OWNER: ${GITHUB_REPO_OWNER:-}
-      GITHUB_REPO_NAME: ${GITHUB_REPO_NAME:-}
       DOCKER_HOST: unix:///var/run/docker.sock
     volumes:
       - workspace:/workspaces
@@ -726,11 +722,6 @@ services:
       SANDBOX_API_SECRET: ${SANDBOX_API_SECRET:-sandbox-dev-secret}
       SANDBOX_MODEL: ${SANDBOX_MODEL:-}
       BACKEND_URL: http://druppie-backend-dev:8000
-      GITHUB_APP_ID: ${GITHUB_APP_ID:-}
-      GITHUB_APP_PRIVATE_KEY_PATH: ${GITHUB_APP_PRIVATE_KEY_PATH:-}
-      GITHUB_APP_INSTALLATION_ID: ${GITHUB_APP_INSTALLATION_ID:-}
-      DRUPPIE_REPO_OWNER: ${DRUPPIE_REPO_OWNER:-}
-      DRUPPIE_REPO_NAME: ${DRUPPIE_REPO_NAME:-}
     volumes:
       - ./druppie:/app/druppie
       - ./testing:/app/testing:ro
@@ -825,11 +816,6 @@ services:
       SANDBOX_MODEL: ${SANDBOX_MODEL:-}
       BACKEND_URL: http://druppie-backend:8000
       ONESHOT_SANDBOX_RUNTIME: ${ONESHOT_SANDBOX_RUNTIME:-sysbox-runc}
-      GITHUB_APP_ID: ${GITHUB_APP_ID:-}
-      GITHUB_APP_PRIVATE_KEY_PATH: ${GITHUB_APP_PRIVATE_KEY_PATH:-}
-      GITHUB_APP_INSTALLATION_ID: ${GITHUB_APP_INSTALLATION_ID:-}
-      DRUPPIE_REPO_OWNER: ${DRUPPIE_REPO_OWNER:-}
-      DRUPPIE_REPO_NAME: ${DRUPPIE_REPO_NAME:-}
     volumes:
       - ./secrets:/app/secrets:ro
       - workspace:/app/workspace

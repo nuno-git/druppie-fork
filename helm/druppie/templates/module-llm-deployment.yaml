@@ -51,6 +51,11 @@ spec:
                 secretKeyRef:
                   name: {{ include "druppie.fullname" . }}-secrets
                   key: DEEPINFRA_API_KEY
+            - name: OPENROUTER_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "druppie.fullname" . }}-secrets
+                  key: OPENROUTER_API_KEY
           ports:
             - name: http
               containerPort: {{ .Values.modules.llm.port }}

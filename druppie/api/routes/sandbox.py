@@ -51,7 +51,7 @@ async def _cleanup_gitea_users(sandbox_mapping: SandboxSessionModel, context: st
         uid = getattr(sandbox_mapping, uid_attr)
         if uid:
             try:
-                from druppie.opencode.gitea_credentials import delete_sandbox_git_user
+                from druppie.services.gitea_credentials import delete_sandbox_git_user
                 await delete_sandbox_git_user(uid)
             except Exception as e:
                 logger.warning(f"sandbox_{context}gitea_cleanup_failed", attr=uid_attr, error=str(e))

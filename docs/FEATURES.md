@@ -1227,3 +1227,44 @@ What the reviewer sees:
 - **Per-view SVG exports** are written to `docs/diagrams/<view-name>.svg` on every save, so the plates are also visible directly in Gitea's file preview without opening Druppie.
 
 The choice between ArchiMate and Mermaid, plus the full element/relationship vocabulary, lives in the `making-archimate-diagrams` skill at `druppie/skills/making-archimate-diagrams/SKILL.md`.
+
+---
+
+## LLM Performance Benchmarking
+
+A standalone CLI benchmark runner (`benchmarks/`) measures LLM performance across models deployed on OpenAI-compatible endpoints (Ollama, vLLM, TGI on Nutanix/Kubernetes).
+
+- **Scenario categories**: latency, generation speed, context scaling (256 → 256K tokens), tool calling overhead, stress/consistency
+- **Metrics**: total latency, time-to-first-token (TTFT), tokens/sec, prompt eval rate
+- **Model configuration tracking**: quantization method, KV cache quant, flash attention, GPU layers — stored with results for reproducibility
+- **Export**: console tables, JSON, CSV
+- **Multi-endpoint support**: configure multiple OpenAI-compatible APIs in `benchmarks/config.yaml`
+
+See [BENCHMARKING.md](BENCHMARKING.md) for usage and [LLM-SELECTION.md](LLM-SELECTION.md) for model selection criteria.
+
+### In-cluster Automated Benchmark Sweep
+
+Where the CLI runner benchmarks one endpoint, the automated sweep
+(`benchmarks/k8s/benchmark-all-models.sh`) benchmarks *every* candidate model in the
+`ka-k8s-ai` cluster in a single run and publishes the results as a PR.
+
+- **Self-updating model test matrix**: `benchmarks/candidates.yaml` is the single
+  control surface. Every sweep regenerates `results-incluster/MODEL-TEST-MATRIX.md`
+  and `COMPARISON-MATRIX.md`, marking each candidate Tested / To-test / Skipped
+  from the presence of its per-model `report.txt` or `SKIPPED.txt`.
+- **Per-model serving profiles**: a `profile:` block in `candidates.yaml` overrides
+  the vLLM args/image per model family (the generic default mirrors prod's qwen
+  NVFP4 tuning, which crashes non-qwen families).
+- **Fit-class size-skip**: models classed `too-large` / `needs-2gpu` are skipped
+  with a recorded reason and never touch the cluster (no prod degradation).
+- **Fast-fail with captured reasons**: a bench model that crashloops or never
+  serves is abandoned early and its failure reason is written straight into the
+  matrix instead of burning the whole timeout budget.
+- **aigit auto-publish**: per-model `report.txt` + `SKIPPED.txt` and the two
+  matrices are published to stable per-slug paths on branch
+  `benchmarks/auto-results`, with a PR opened/updated into `colab-dev` (skipped
+  gracefully when no aigit token is configured).
+
+> ⚠️ **Test-cluster impact.** The sweep frees a GPU by scaling one served model to
+> 0 and suspending Flux (parent + child), restoring both on exit. See the
+> [runbook](../benchmarks/README.md#in-cluster-automated-sweep) before running.

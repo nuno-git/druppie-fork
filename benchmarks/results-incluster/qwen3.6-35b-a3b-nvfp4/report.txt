@@ -1,0 +1,109 @@
+Running 20 scenarios x 1 models (2 runs each, 1 warmup)
+
+  Model: Qwen3.6-35B-A3B-NVFP4 (vLLM, ka-k8s-ai) (nvidia/Qwen3.6-35B-A3B-NVFP4)
+    context-128k... 6502ms avg
+    context-16k... 2745ms avg
+    context-1k... 4825ms avg
+    context-256... 4726ms avg
+    context-256k... 3706ms avg
+    context-32k... 2877ms avg
+    context-4k... 3794ms avg
+    context-64k... 5379ms avg
+    context-8k... 2827ms avg
+    generate-100... 517ms avg
+    generate-1000... 4621ms avg
+    generate-2000... 9110ms avg
+    generate-500... 2300ms avg
+    latency-1000... 4942ms avg
+    latency-200... 693ms avg
+    latency-50... 4701ms avg
+    latency-500... 4670ms avg
+    repeated-50... 1569ms avg
+    tool-call-10-tools... 482ms avg
+    tool-call-3-tools... 502ms avg
+
+LLM Performance Benchmark - 2026-07-06 18:37
+Endpoint: qwen_incluster (http://qwen-35b.llm.svc.cluster.local:8000/v1)
+Runs per test: 3
+Warmup runs: 1
+
+Model Configurations:
+  Qwen3.6-35B-A3B-NVFP4  - 27B params, NVFP4, KV:fp8, flash_attn, GPU=-1
+
+================================================================================
+  CONTEXT SCALING (latency)
+================================================================================
+Scenario               | Qwen3.6-35B-A3B-NVFP4 (vLLM, ka-k8s-ai)  
+------------------------------------------------------------------
+context-128k           | 6.5s (±0.1)                              
+context-16k            | 2.7s (±3.0)                              
+context-1k             | 4.8s (±0.0)                              
+context-256            | 4.7s (±0.0)                              
+context-256k           | 3.7s (±2.7)                              
+context-32k            | 2.9s (±3.4)                              
+context-4k             | 3.8s (±1.5)                              
+context-64k            | 5.4s (±0.3)                              
+context-8k             | 2.8s (±3.0)                              
+
+================================================================================
+  GENERATION SPEED
+================================================================================
+Scenario               | Qwen3.6-35B-A3B-NVFP4 (vLLM, ka-k8s-ai)  
+------------------------------------------------------------------
+generate-100           | 193 t/s                                  
+generate-1000          | 216 t/s                                  
+generate-2000          | 220 t/s                                  
+generate-500           | 217 t/s                                  
+
+================================================================================
+  LATENCY (total response time)
+================================================================================
+Scenario               | Qwen3.6-35B-A3B-NVFP4 (vLLM, ka-k8s-ai)  
+------------------------------------------------------------------
+latency-1000           | 4.9s (±0.2)                              
+latency-200            | 0.7s (±0.1)                              
+latency-50             | 4.7s (±0.0)                              
+latency-500            | 4.7s (±0.0)                              
+
+================================================================================
+  STRESS / CONSISTENCY
+================================================================================
+Scenario               | Qwen3.6-35B-A3B-NVFP4 (vLLM, ka-k8s-ai)  
+------------------------------------------------------------------
+repeated-50            | 1.6s (±0.9)                              
+
+================================================================================
+  TOOL CALLING OVERHEAD (latency)
+================================================================================
+Scenario               | Qwen3.6-35B-A3B-NVFP4 (vLLM, ka-k8s-ai)  
+------------------------------------------------------------------
+tool-call-10-tools     | 0.5s (±0.2)                              
+tool-call-3-tools      | 0.5s (±0.1)                              
+
+================================================================================
+  TIME TO FIRST TOKEN (TTFT)
+================================================================================
+Scenario               | Qwen3.6-35B-A3B-NVFP4 (vLLM, ka-k8s-ai)  
+------------------------------------------------------------------
+context-128k           | 401ms                                    
+context-16k            | 75ms                                     
+context-1k             | 215ms                                    
+context-256            | 99ms                                     
+context-256k           | 772ms                                    
+context-32k            | 373ms                                    
+context-4k             | 226ms                                    
+context-64k            | 251ms                                    
+context-8k             | 331ms                                    
+generate-100           | 75ms                                     
+generate-1000          | 95ms                                     
+generate-2000          | 82ms                                     
+generate-500           | 59ms                                     
+latency-1000           | 335ms                                    
+latency-200            | 59ms                                     
+latency-50             | 95ms                                     
+latency-500            | 70ms                                     
+repeated-50            | 75ms                                     
+tool-call-10-tools     | -                                        
+tool-call-3-tools      | -                                        
+
+JSON results exported to /results/results.json
