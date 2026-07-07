@@ -218,12 +218,16 @@ with a recorded reason. For each candidate:
    reason), run the Job, then tear the bench service down and restore
    `FREE_SERVICE`.
 
-> **Note (target vs current).** The behavior above is the intended
-> candidates.yaml-driven model. The current script still *discovers* the models to
-> benchmark from the registered `models.inference.llmkube.dev` CRDs in ns `llm` and
-> uses `candidates.yaml` for the fit-class / profile lookup; the iteration is being
-> moved to be fully candidates-driven (creating a temporary CRD for a candidate
-> that has none). `candidates.yaml` is the control surface either way.
+> **Note.** The sweep iterates the candidates in `candidates.yaml` (not the
+> registered CRDs): models that fit are benchmarked, and `too-large` / `needs-2gpu`
+> / `api` candidates are skipped with a recorded reason. For a local candidate that
+> fits but has **no registered `models.inference.llmkube.dev` CR**, the sweep creates
+> a **temporary Model CR** (`inference.llmkube.dev/v1alpha1`) from the candidate's
+> `source`, benchmarks it, then tears it down.
+>
+> _Caveat:_ this temp-Model-CR path (the exact CR schema + the `modelRef` /
+> `skipModelInit` serving behavior) is pending live-cluster verification. If the CR
+> apply fails, the sweep records a skip for that candidate and continues.
 
 Every benchmarked model writes its human-readable console report to
 `benchmarks/results-incluster/<slug>/report.txt` (the committed source of truth).
