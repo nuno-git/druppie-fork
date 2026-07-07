@@ -151,46 +151,6 @@ class LLMSettings(BaseSettings):
     )
 
 
-class GitHubAppSettings(BaseSettings):
-    """GitHub App configuration for update_core_builder agent.
-
-    When all three values are set, the backend can generate short-lived
-    installation tokens for pushing to GitHub repos. When any are missing,
-    the GitHubAppService is disabled (no error, just returns None).
-    """
-
-    model_config = SettingsConfigDict(env_prefix="GITHUB_APP_")
-
-    # Numeric app ID from GitHub (Settings → Developer settings → GitHub Apps)
-    id: str = Field(
-        default="",
-        description="GitHub App ID",
-    )
-    # Absolute path to the .pem private key file downloaded from GitHub
-    private_key_path: str = Field(
-        default="",
-        description="Path to GitHub App private key (.pem file)",
-    )
-    # Numeric installation ID (visible in the URL after installing the app)
-    installation_id: str = Field(
-        default="",
-        description="GitHub App installation ID",
-    )
-
-    @property
-    def is_configured(self) -> bool:
-        """All three values must be set for the service to work."""
-        return bool(self.id and self.private_key_path and self.installation_id)
-
-    @property
-    def is_partially_configured(self) -> bool:
-        """Any of the three values set but not all. Indicates operator intent
-        to use the feature but a misconfiguration that would silently fall
-        back to a disabled service — we prefer to fail startup."""
-        set_count = sum(bool(v) for v in (self.id, self.private_key_path, self.installation_id))
-        return 0 < set_count < 3
-
-
 class MCPSettings(BaseSettings):
     """MCP microservice configuration."""
 
@@ -270,7 +230,6 @@ class Settings(BaseSettings):
     database: DatabaseSettings = Field(default_factory=DatabaseSettings)
     keycloak: KeycloakSettings = Field(default_factory=KeycloakSettings)
     gitea: GiteaSettings = Field(default_factory=GiteaSettings)
-    github_app: GitHubAppSettings = Field(default_factory=GitHubAppSettings)
     llm: LLMSettings = Field(default_factory=LLMSettings)
     mcp: MCPSettings = Field(default_factory=MCPSettings)
     workspace: WorkspaceSettings = Field(default_factory=WorkspaceSettings)
@@ -290,12 +249,6 @@ class Settings(BaseSettings):
             workspace_root=str(self.workspace.root),
         )
 
-        # Log GitHub App status so operators know if update_core_builder is available
-        logger.info(
-            "github_app_config",
-            configured=self.github_app.is_configured,
-        )
-
         # Security warnings for missing credentials
         if not self.gitea.is_configured:
             logger.warning(
@@ -307,47 +260,8 @@ class Settings(BaseSettings):
         """Raise at startup if misconfiguration would cause silent runtime failures.
 
         Current checks:
-        - GitHub App: if any of GITHUB_APP_ID / _PRIVATE_KEY_PATH / _INSTALLATION_ID
-          is set but not all, fail. Operator clearly intended to enable
-          update_core_builder; a partial config silently disables it and the
-          agent hangs later when it tries to push. Fail now instead.
-        - GitHub App: if all three are set, the private key file must exist and
-          be readable. A dangling GITHUB_APP_PRIVATE_KEY_PATH is the same
-          silent-failure footgun.
+        - Translation: warn when DEEPINFRA_API_KEY is not set.
         """
-        gh = self.github_app
-        if gh.is_partially_configured:
-            set_vars = [
-                name for name, val in [
-                    ("GITHUB_APP_ID", gh.id),
-                    ("GITHUB_APP_PRIVATE_KEY_PATH", gh.private_key_path),
-                    ("GITHUB_APP_INSTALLATION_ID", gh.installation_id),
-                ] if val
-            ]
-            missing = [
-                name for name, val in [
-                    ("GITHUB_APP_ID", gh.id),
-                    ("GITHUB_APP_PRIVATE_KEY_PATH", gh.private_key_path),
-                    ("GITHUB_APP_INSTALLATION_ID", gh.installation_id),
-                ] if not val
-            ]
-            raise RuntimeError(
-                "GitHub App is partially configured: set "
-                f"{set_vars} but missing {missing}. "
-                "Set all three (to enable update_core_builder) or none "
-                "(to disable it). A partial configuration silently disables "
-                "the service and hangs update_core_builder at runtime."
-            )
-        if gh.is_configured:
-            import os
-            if not os.path.isfile(gh.private_key_path):
-                raise RuntimeError(
-                    f"GITHUB_APP_PRIVATE_KEY_PATH={gh.private_key_path} does not point "
-                    "to a readable file. The GitHub App key must exist at this path "
-                    "when the backend starts. Fix the path or unset all three "
-                    "GITHUB_APP_* variables to disable the feature."
-                )
-
         # Translation: warn when DEEPINFRA_API_KEY is not set. The translation
         # service uses DeepInfra regardless of LLM_PROVIDER, so a missing key
         # silently disables all translation — Dutch users see English text with

@@ -134,13 +134,7 @@ backend:
   foundry:
     model: GPT-5-MINI
     apiUrl: ''
-  github:
-    appId: ''
-    appPrivateKeyPath: ''
-    appInstallationId: ''
-    repoOwner: ''
-    repoName: ''
-frontend:
+  frontend:
   image:
     repository: druppie-frontend
     tag: latest
@@ -311,7 +305,22 @@ modules:
       limits:
         memory: 256Mi
         cpu: 500m
-init:
+  azuredevops:
+    enabled: false
+    replicaCount: 1
+    nodeSelector: {}
+    image:
+      repository: druppie-module-azuredevops
+      tag: latest
+    port: 9012
+    resources:
+      requests:
+        memory: 256Mi
+        cpu: 100m
+      limits:
+        memory: 512Mi
+        cpu: 1000m
+  init:
   enabled: true
   image:
     repository: druppie-init
@@ -346,12 +355,9 @@ secrets:
   foundryApiKey: ''
   internalApiKey: druppie-internal-secret-key
   keycloakClientSecret: ''
-  giteaClientSecret: ''
-  giteaSecretKey: ''
   giteaToken: ''
   moduleApiToken: ''
-  githubAppPrivateKey: ''
-autoscaling:
+  autoscaling:
   backend:
     enabled: false
     minReplicas: 2

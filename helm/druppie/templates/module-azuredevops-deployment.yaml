@@ -1,0 +1,81 @@
+{{- if .Values.modules.azuredevops.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "druppie.fullname" . }}-module-azuredevops
+  labels:
+    {{- include "druppie.labels" . | nindent 4 }}
+    app.kubernetes.io/component: module-azuredevops
+spec:
+  replicas: {{ .Values.modules.azuredevops.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "druppie.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: module-azuredevops
+  template:
+    metadata:
+      labels:
+        {{- include "druppie.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: module-azuredevops
+      annotations:
+        reloader.stakater.com/auto: "true"
+    spec:
+      {{- if .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml .Values.global.imagePullSecrets | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: module-azuredevops
+          image: {{ include "druppie.image" (dict "Values" .Values "image" .Values.modules.azuredevops.image) }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          env:
+            - name: MCP_PORT
+              value: {{ .Values.modules.azuredevops.port | quote }}
+          envFrom:
+            - secretRef:
+                name: {{ include "druppie.fullname" . }}-secrets
+          ports:
+            - name: http
+              containerPort: {{ .Values.modules.azuredevops.port }}
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.modules.azuredevops.port }}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 5
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.modules.azuredevops.port }}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 5
+          resources:
+            {{- toYaml .Values.modules.azuredevops.resources | nindent 12 }}
+      {{- with .Values.modules.azuredevops.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "druppie.fullname" . }}-module-azuredevops
+  labels:
+    {{- include "druppie.labels" . | nindent 4 }}
+    app.kubernetes.io/component: module-azuredevops
+spec:
+  type: ClusterIP
+  ports:
+    - port: {{ .Values.modules.azuredevops.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "druppie.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: module-azuredevops
+{{- end }}
