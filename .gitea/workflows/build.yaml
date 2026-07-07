@@ -2,7 +2,7 @@ name: Build and Push Images
 
 on:
   push:
-    branches: [colab-dev, main]
+    branches: [colab-dev, main, 'feature/**']
   workflow_dispatch:
 
 env:
@@ -19,9 +19,13 @@ jobs:
         id: tags
         run: |
           BRANCH="${{ github.ref_name }}"
+          # Sanitize the branch into a valid Docker tag component: slashes and any
+          # other characters outside [A-Za-z0-9._-] become '-'. This keeps main /
+          # colab-dev tags unchanged while making feature/foo -> feature-foo.
+          BRANCH_SLUG=$(echo "$BRANCH" | sed 's#[^A-Za-z0-9._-]#-#g')
           SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-8)
           TIMESTAMP=$(date -u +%Y%m%d%H%M%S)
-          DEPLOY_TAG="${BRANCH}-${TIMESTAMP}-${SHORT_SHA}"
+          DEPLOY_TAG="${BRANCH_SLUG}-${TIMESTAMP}-${SHORT_SHA}"
           echo "deploy_tag=$DEPLOY_TAG" >> $GITHUB_OUTPUT
           echo "Deploy tag: $DEPLOY_TAG"
 
@@ -125,10 +129,16 @@ jobs:
           BRANCH: ${{ github.ref_name }}
           GIT_TOKEN: ${{ secrets.CI_GIT_TOKEN }}
         run: |
+          # Only the two long-lived environments have a HelmRelease in ai/k8s that
+          # FluxCD reconciles. Feature branches are deployed on-demand by the Druppie
+          # backend (branch-environments API), so they must NOT touch any HelmRelease.
           if [ "$BRANCH" = "main" ]; then
             HR_FILE="clusters/ka-k8s-ai/apps/druppie/helmrelease.yaml"
-          else
+          elif [ "$BRANCH" = "colab-dev" ]; then
             HR_FILE="clusters/ka-k8s-ai/apps/druppie-colab-dev/helmrelease.yaml"
+          else
+            echo "Branch '$BRANCH' is not main/colab-dev — skipping HelmRelease update"
+            exit 0
           fi
 
           git clone "https://druppie-ci:${GIT_TOKEN}@aigit.waterschap.org/ai/k8s.git" /tmp/k8s
@@ -146,3 +156,31 @@ jobs:
             git push origin main
             echo "Pushed image tag update: ${TAG}"
           fi
+
+      # Notify the live Druppie backend that fresh images exist for a feature
+      # branch, so its branch-environments controller can auto-upgrade the matching
+      # per-branch stack. Runs ONLY for feature branches (main/colab-dev go through
+      # the FluxCD HelmRelease path above).
+      #
+      # Requires the Gitea repo secret DRUPPIE_INTERNAL_API_KEY to be set to the
+      # SAME value as the backend's INTERNAL_API_KEY env var (see druppie/api/deps.py
+      # verify_internal_api_key; helm value secrets.internalApiKey). Non-fatal: a
+      # missing secret or unreachable backend must never fail an image build.
+      - name: Notify Druppie backend (feature branch images)
+        if: ${{ github.ref_name != 'main' && github.ref_name != 'colab-dev' }}
+        continue-on-error: true
+        env:
+          BRANCH: ${{ github.ref_name }}
+          DEPLOY_TAG: ${{ steps.tags.outputs.deploy_tag }}
+          DRUPPIE_INTERNAL_API_KEY: ${{ secrets.DRUPPIE_INTERNAL_API_KEY }}
+        run: |
+          if [ -z "$DRUPPIE_INTERNAL_API_KEY" ]; then
+            echo "DRUPPIE_INTERNAL_API_KEY not set — skipping branch-env notify"
+            exit 0
+          fi
+          # Send the RAW git branch name (e.g. feature/foo) — the backend matches on it.
+          curl -sf -X POST "https://druppie.rijnland.dev/api/branch-environments/ci-webhook" \
+            -H "X-Internal-API-Key: ${DRUPPIE_INTERNAL_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d "{\"branch\":\"${BRANCH}\",\"image_tag\":\"${DEPLOY_TAG}\"}" \
+            || echo "Branch-env notify failed (non-fatal) for ${BRANCH} @ ${DEPLOY_TAG}"

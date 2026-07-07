@@ -7,6 +7,7 @@ from .approval_repository import ApprovalRepository
 from .question_repository import QuestionRepository
 from .project_repository import ProjectRepository
 from .dev_vm_repository import DevVMRepository
+from .branch_environment_repository import BranchEnvironmentRepository
 from .execution_repository import ExecutionRepository
 from .user_repository import UserRepository
 from .evaluation_repository import EvaluationRepository
@@ -27,6 +28,7 @@ __all__ = [
     "QuestionRepository",
     "ProjectRepository",
     "DevVMRepository",
+    "BranchEnvironmentRepository",
     "ExecutionRepository",
     "UserRepository",
     "EvaluationRepository",

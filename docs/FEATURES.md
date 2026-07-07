@@ -856,6 +856,53 @@ registry/image-tag/node overrides. See `docs/K3S-DEV-SETUP.md`.
 
 ---
 
+## Branch Environments
+
+Branch Environments turn the manual `scripts/deploy-branch-env.sh` workflow into a
+self-service feature managed from the Druppie UI. From the managing instance (prod),
+a user can spin up a full, isolated Druppie stack for any git branch, keep it in sync
+as new images are built, and tear it down again — all without cluster shell access.
+
+- **Deploy button per branch** — one click stands up a complete stack (backend,
+  frontend, Keycloak, Gitea, MCP modules, databases) in its own `druppie-<branch>`
+  namespace at `druppie-<branch>.rijnland.dev`. Under the hood the backend runs
+  `helm upgrade --install` of the bundled chart (`/app/helm/druppie`) as a subprocess
+  inside its own pod, mirroring the manual `deploy-branch-env.sh` layering
+  (ClusterIP services, single-node pin, copied wildcard TLS + Harbor pull secrets).
+- **Own namespace and URL** — each branch env is fully isolated with a unique
+  `global.instance`, so nothing (including cluster-scoped RBAC) collides with the live
+  deployment.
+- **CI auto-upgrade webhook** — when CI finishes building images for a `feature/**`
+  branch it POSTs `{"branch", "image_tag"}` to
+  `POST /api/branch-environments/ci-webhook`, and the backend re-runs
+  `helm upgrade` on the matching branch env with the fresh tag. main/colab-dev keep
+  going through the FluxCD HelmRelease path instead.
+- **Teardown** — removing a branch env uninstalls the release and deletes its
+  namespace, freeing the node and cluster resources it held.
+
+### Required Setup
+
+Branch Environments are managed by a single instance (prod). To enable them:
+
+1. **Gitea repo secret** `DRUPPIE_INTERNAL_API_KEY` on `ai/druppie` — set it to the
+   same value as the backend's `INTERNAL_API_KEY` env var (helm value
+   `secrets.internalApiKey`). CI uses it to authenticate the branch-env webhook; if it
+   is unset the notify step is skipped and the build still passes.
+2. **Helm values flag** `backend.branchEnvDeployer.enabled=true` on the managing
+   instance (set via the ai/k8s HelmRelease for prod — left `false` in `values.yaml`
+   and never enabled on the per-branch instances).
+3. **Cluster RBAC** — flag (2) renders a ClusterRole + ClusterRoleBinding
+   (`templates/branch-env-deployer-rbac.yaml`) granting the backend ServiceAccount the
+   cluster-wide permissions an in-pod `helm upgrade --install` of this chart into
+   another namespace needs (create namespaces + every resource kind the chart renders,
+   including per-instance cluster-scoped RBAC).
+
+The backend image ships pinned `helm` and `kubectl` binaries and the chart source at
+`/app/helm/druppie` (`BRANCH_ENV_CHART_PATH`) so the deploy subprocess is fully
+self-contained.
+
+---
+
 ## Settings Page
 
 The Settings page displays system configuration and status (read-only). This page too is a prototype and might not work correctly.

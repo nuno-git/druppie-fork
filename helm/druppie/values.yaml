@@ -116,6 +116,13 @@ backend:
   serviceAccount:
     create: true
     name: ''
+  # Branch-environments deployer: grants the backend ServiceAccount cluster-wide
+  # RBAC to run `helm upgrade --install` of this chart into fresh druppie-<branch>
+  # namespaces (see templates/branch-env-deployer-rbac.yaml). Enable ONLY on the
+  # single instance that manages branch environments (e.g. prod, via the ai/k8s
+  # HelmRelease) — never on the per-branch instances themselves.
+  branchEnvDeployer:
+    enabled: false
   guacamoleUrl: http://guacamole.remote-access.svc.cluster.local:8080
   guacamolePublicUrl: http://localhost:30020
   llm:

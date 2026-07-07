@@ -10,6 +10,14 @@
 # `values-branch.yaml` (gitignored) only when you want to hand-tune a branch env
 # or pull images from a different registry/tag.
 #
+# UI-managed branch environments: the same per-branch stack can now be deployed,
+# auto-upgraded (via a CI webhook), and torn down straight from the Druppie UI —
+# no shell access needed. That path runs `helm upgrade --install` from inside the
+# backend pod and requires the managing instance to set
+# `backend.branchEnvDeployer.enabled=true` (grants the cluster RBAC in
+# templates/branch-env-deployer-rbac.yaml). See docs/FEATURES.md "Branch
+# Environments". This example file remains the way to hand-tune a branch env.
+#
 # Example below targets branch `colab-dev`:
 #   helm upgrade --install druppie ./helm/druppie -n druppie-colab-dev --create-namespace \
 #     -f helm/druppie/values.yaml \

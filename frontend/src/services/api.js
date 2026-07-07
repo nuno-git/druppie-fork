@@ -336,6 +336,22 @@ export const devEnvironmentsApi = {
     }),
 }
 
+// ============ Branch Environments ============
+// Full per-branch Druppie instances deployed to the cluster. Status transitions
+// (deploying → running/failed, deleting → gone) happen server-side asynchronously.
+export const branchEnvironmentsApi = {
+  list: () => request('/api/branch-environments'),
+  deploy: ({ branch, image_tag }) =>
+    request('/api/branch-environments', {
+      method: 'POST',
+      body: JSON.stringify({ branch, ...(image_tag ? { image_tag } : {}) }),
+    }),
+  redeploy: (id) =>
+    request(`/api/branch-environments/${encodeURIComponent(id)}/redeploy`, { method: 'POST' }),
+  teardown: (id) =>
+    request(`/api/branch-environments/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+}
+
 // ============ Agents (Transparency) ============
 export const getAgents = async () => {
   const response = await request('/api/agents')

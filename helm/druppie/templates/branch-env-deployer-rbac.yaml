@@ -1,0 +1,117 @@
+{{- if .Values.backend.branchEnvDeployer.enabled }}
+# Cluster-scoped RBAC for the branch-environments deployer. The backend runs
+# `helm upgrade --install` of THIS chart into a fresh `druppie-<branch>` namespace
+# from inside its pod, so its ServiceAccount needs to create every resource kind the
+# chart renders — across namespaces — plus create the namespaces themselves. The
+# chart also renders cluster-scoped RBAC per instance (see module-kubernetes-rbac
+# and this file), so rbac.authorization.k8s.io/* is required (all verbs cover the
+# `bind`/`escalate` the API server demands to create Roles/ClusterRoles/bindings).
+#
+# Gated by backend.branchEnvDeployer.enabled — enable ONLY on the instance that
+# manages branch environments (e.g. prod), never on the branch envs themselves.
+#
+# ACCEPTED RISK: these grants are effectively cluster-admin (cluster-wide secrets
+# access + RBAC bind/escalate). A compromise of the deployer backend pod therefore
+# compromises the cluster. This is a deliberate trade-off for in-pod helm deploys
+# on this single-team test cluster; revisit (e.g. a dedicated deployer Job with a
+# scoped SA, or namespace-enumerated RoleBindings) before any multi-tenant use.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "druppie.fullname" . }}-branch-env-deployer
+  labels:
+    {{- include "druppie.labels" . | nindent 4 }}
+    app.kubernetes.io/component: branch-env-deployer
+rules:
+  # Core objects the chart creates, plus namespaces for `--create-namespace` and
+  # the TLS/pull-secret copy the deployer performs before install.
+  - apiGroups: [""]
+    resources:
+      - namespaces
+      - secrets
+      - services
+      - configmaps
+      - serviceaccounts
+      - persistentvolumeclaims
+      - persistentvolumes
+      - pods
+    verbs: ["*"]
+  # Workloads: backend/frontend/keycloak/gitea/modules Deployments, DB StatefulSets,
+  # docker-installer DaemonSet.
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets", "daemonsets", "replicasets"]
+    verbs: ["*"]
+  # Ingress (Traefik/nginx) + NetworkPolicies.
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses", "networkpolicies"]
+    verbs: ["*"]
+  # init Job + sandbox-image-builder Job (cronjobs included for completeness).
+  - apiGroups: ["batch"]
+    resources: ["jobs", "cronjobs"]
+    verbs: ["*"]
+  # The chart creates namespaced (backend-devvm, init, agent-sandbox) AND cluster-
+  # scoped (<instance>-kubernetes-readonly, this deployer) RBAC per instance.
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["roles", "rolebindings", "clusterroles", "clusterrolebindings"]
+    verbs: ["*"]
+  # HorizontalPodAutoscaler (backend/frontend autoscaling).
+  - apiGroups: ["autoscaling"]
+    resources: ["horizontalpodautoscalers"]
+    verbs: ["*"]
+  # PodDisruptionBudget (highAvailability.pdb).
+  - apiGroups: ["policy"]
+    resources: ["poddisruptionbudgets"]
+    verbs: ["*"]
+  # StorageClass + PersistentVolume for the optional in-chart NFS server.
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["storageclasses"]
+    verbs: ["*"]
+  # cert-manager ClusterIssuer (certManager.enabled).
+  - apiGroups: ["cert-manager.io"]
+    resources: ["clusterissuers", "issuers", "certificates"]
+    verbs: ["*"]
+  # CloudNativePG Cluster/Pooler (cnpg.enabled).
+  - apiGroups: ["postgresql.cnpg.io"]
+    resources: ["clusters", "poolers"]
+    verbs: ["*"]
+  # External Secrets Operator (externalSecrets.enabled).
+  - apiGroups: ["external-secrets.io"]
+    resources: ["externalsecrets", "secretstores"]
+    verbs: ["*"]
+  # KEDA autoscaling (keda.enabled).
+  - apiGroups: ["keda.sh"]
+    resources: ["scaledobjects", "triggerauthentications"]
+    verbs: ["*"]
+  # Traefik IngressRoute middleware (traefik-middleware).
+  - apiGroups: ["traefik.io", "traefik.containo.us"]
+    resources: ["middlewares"]
+    verbs: ["*"]
+  # Cilium network policy for the coding sandbox (agent-sandbox).
+  - apiGroups: ["cilium.io"]
+    resources: ["ciliumnetworkpolicies"]
+    verbs: ["*"]
+  # Agent sandbox CRDs (agentSandbox.enabled): warm pool + templates.
+  - apiGroups: ["agents.x-k8s.io"]
+    resources: ["sandboxwarmpools", "sandboxtemplates", "sandboxes"]
+    verbs: ["*"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "druppie.fullname" . }}-branch-env-deployer
+  labels:
+    {{- include "druppie.labels" . | nindent 4 }}
+    app.kubernetes.io/component: branch-env-deployer
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "druppie.fullname" . }}-branch-env-deployer
+subjects:
+  - kind: ServiceAccount
+    {{- if .Values.backend.serviceAccount.create }}
+    name: {{ include "druppie.fullname" . }}-backend
+    {{- else }}
+    name: default
+    {{- end }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}

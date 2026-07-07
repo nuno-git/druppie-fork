@@ -68,6 +68,9 @@ from .project_dependency import ProjectDependency
 # Dev VM model
 from .dev_vm import DevVM
 
+# Branch environment model
+from .branch_environment import BranchEnvironment
+
 # Documentation cache
 from .documentation_cache import DocumentationCache
 
@@ -104,6 +107,8 @@ __all__ = [
     "ProjectDependency",
     # Dev VM
     "DevVM",
+    # Branch environment
+    "BranchEnvironment",
     # Documentation cache
     "DocumentationCache",
     # Session
