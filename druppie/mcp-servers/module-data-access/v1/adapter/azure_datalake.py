@@ -41,6 +41,7 @@ class AzureDataLakeAdapter(BaseDataSourceAdapter):
             source_type="azure-datalake",
             name=self.config.get("name", self.account_name),
             auth_type="public" if self.is_public else "key",
+            detail=f"{self.account_name}.dfs.core.windows.net",
         )
 
     async def list_available_data(

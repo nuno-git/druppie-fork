@@ -81,11 +81,18 @@ class AzureSQLAdapter(BaseDataSourceAdapter):
 
     @property
     def source_info(self) -> DataSourceInfo:
+        detail = ""
+        if self.use_obo:
+            server = self.obo_config.get("server", "")
+            database = self.obo_config.get("database", "")
+            if server and database:
+                detail = f"{database}@{server}"
         return DataSourceInfo(
             source_id=self.config.get("source_id", f"azure-sql-{self.config.get('name', 'unknown')}"),
             source_type="azure-sql",
             name=self.config.get("name", "unknown"),
             auth_type="obo" if self.use_obo else "connection_string",
+            detail=detail,
         )
 
     async def _get_connection(self, user_token: str | None = None) -> pyodbc.Connection:

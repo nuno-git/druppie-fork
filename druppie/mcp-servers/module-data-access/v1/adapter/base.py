@@ -19,6 +19,7 @@ class DataSourceInfo:
     source_type: str
     name: str
     auth_type: str
+    detail: str = ""
 
 
 @dataclass

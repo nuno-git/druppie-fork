@@ -124,6 +124,7 @@ class DataAccessModule:
                 "source_type": info.source_type,
                 "name": info.name,
                 "auth_type": info.auth_type,
+                "detail": info.detail,
             })
 
         return {

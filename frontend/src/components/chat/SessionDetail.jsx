@@ -13,6 +13,7 @@ import { getUserInfo, getKeycloak } from '../../services/keycloak'
 import { useAuth } from '../../App'
 import { getAgentConfig, getAgentMessageColors, formatToolName } from '../../utils/agentConfig'
 import { FilePreviewModal } from './ApprovalCard'
+import DataSourcesMenu from './DataSourcesMenu'
 import DownloadMenu from './DownloadMenu'
 import { downloadAsMarkdown, downloadContentAsPdf, buildChatTranscript } from '../../utils/downloadDesign'
 import HITLQuestionMessage from './HITLQuestionMessage'
@@ -1179,6 +1180,7 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
                 {data.project.name}
               </a>
             )}
+            <DataSourcesMenu />
             <DownloadMenu
               loading={transcriptPdfLoading}
               onDownloadMd={() => {
