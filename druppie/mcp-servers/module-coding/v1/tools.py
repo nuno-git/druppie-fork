@@ -606,7 +606,7 @@ async def _create_sandbox_container(
         await _docker_run(["rm", "-rf", tmp_dir], timeout=5)
 
         rc, _, err = await _docker_run(
-            ["git", "clone", "--depth=50", clone_url, tmp_dir],
+            ["git", "-c", "http.sslVerify=false", "clone", "--depth=50", clone_url, tmp_dir],
             timeout=120,
         )
         if rc == 0:
@@ -643,7 +643,7 @@ async def _create_sandbox_container(
         await _docker_run(["rm", "-rf", tmp_dir], timeout=5)
 
         rc, _, err = await _docker_run(
-            ["git", "clone", "--branch", DRUPPIE_CORE_REPO_BRANCH,
+            ["git", "-c", "http.sslVerify=false", "clone", "--branch", DRUPPIE_CORE_REPO_BRANCH,
              "--depth=50", clone_url, tmp_dir],
             timeout=120,
         )
@@ -2087,11 +2087,12 @@ async def git_fetch(
         container = entry["container_name"]
         resolved_repo_name = entry.get("repo_name") or repo_name
         resolved_repo_owner = entry.get("repo_owner") or repo_owner or GITEA_ORG
+        resolved_gitea_url = entry.get("gitea_url", GITEA_URL)
 
         if not resolved_repo_name:
             return {"success": False, "error": "repo_name is required for git_fetch"}
 
-        fetch_url = _inject_gitea_token(resolved_repo_owner, resolved_repo_name)
+        fetch_url = _inject_gitea_token(resolved_repo_owner, resolved_repo_name, resolved_gitea_url)
 
         tmpdir = tempfile.mkdtemp(prefix="druppie-git-fetch-")
         try:
@@ -3262,7 +3263,7 @@ async def _internal_revert_to_commit(
 
                     push_url = _inject_gitea_token(resolved_repo_owner, resolved_repo_name, resolved_gitea_url)
                     rc, _, stderr = await _docker_run(
-                        ["git", "-C", bare_repo, "push", "--force", push_url, f"{branch}:{branch}"],
+                        ["git", "-c", "http.sslVerify=false", "-C", bare_repo, "push", "--force", push_url, f"{branch}:{branch}"],
                         timeout=60,
                     )
                     force_pushed = rc == 0
