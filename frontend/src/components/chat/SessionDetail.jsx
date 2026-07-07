@@ -908,15 +908,22 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
 
   const isBusy = continueMutation.isPending || isAnswering
 
-  // Clear optimistic message once server data catches up (new timeline entries)
+  // Clear optimistic message once server data catches up
   useEffect(() => {
     if (pendingMessage === null) return
     const len = data?.timeline?.length || 0
+    // New timeline entry appeared (regular follow-up messages)
     if (pendingSetAtLength.current !== null && len > pendingSetAtLength.current) {
       setPendingMessage(null)
       setIsAnswering(false)
+      return
     }
-  }, [data?.timeline?.length, pendingMessage])
+    // HITL answer: timeline length stays the same but question is no longer pending
+    if (pendingSetAtLength.current !== null && !findPendingQuestion(data?.timeline)) {
+      setPendingMessage(null)
+      setIsAnswering(false)
+    }
+  }, [data?.timeline, pendingMessage])
 
   // Safety: clear pending message after 30s in case data never arrives
   useEffect(() => {
@@ -1022,6 +1029,7 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
       const attIds = attachments.map((a) => a.id)
       answerQuestion(pendingQuestion.tc.question_id, answer, null, attIds)
         .then(() => {
+          setPendingMessage(null)
           setIsAnswering(false)
           markResuming()
           queryClient.invalidateQueries({ queryKey: ['session', sessionId] })
