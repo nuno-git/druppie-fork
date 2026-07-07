@@ -33,6 +33,7 @@ import {
 } from '../services/api'
 import { useToast } from '../components/Toast'
 import LogsDrawer from '../components/shared/LogsDrawer'
+import VersionBadge from '../components/shared/VersionBadge'
 
 const POLL_MS = 5000
 
@@ -170,13 +171,16 @@ const Platform = () => {
           <Boxes className="w-6 h-6 text-purple-600" />
           <h1 className="text-2xl font-semibold">Platform</h1>
         </div>
-        <button
-          onClick={() => refetchDeploy()}
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm bg-white border border-gray-200 rounded hover:bg-gray-50"
-        >
-          <RefreshCw className="w-4 h-4" />
-          Refresh
-        </button>
+        <div className="flex items-center gap-2">
+          <VersionBadge />
+          <button
+            onClick={() => refetchDeploy()}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm bg-white border border-gray-200 rounded hover:bg-gray-50"
+          >
+            <RefreshCw className="w-4 h-4" />
+            Refresh
+          </button>
+        </div>
       </div>
 
       {/* Stats row */}

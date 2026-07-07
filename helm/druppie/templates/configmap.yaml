@@ -8,12 +8,33 @@ data:
   # Global
   DRUPPIE_INSTANCE: {{ .Values.global.instance | quote }}
   DOMAIN: {{ .Values.global.domain | quote }}
+  {{- /*
+    Version (deployment metadata). CI sets global.imageTag to
+    "<branch>-<timestamp>-<sha8>" (see .gitea/workflows/build.yaml); we parse
+    branch/commit from it here so /api/version (frontend badges) reports the
+    exact running build. Safe when imageTag is empty or "latest".
+  */ -}}
+  {{- $tag := .Values.global.imageTag | toString -}}
+  {{- $commit := "" -}}
+  {{- $branch := "" -}}
+  {{- if $tag -}}
+    {{- $parts := splitList "-" $tag -}}
+    {{- if ge (len $parts) 3 -}}
+      {{- $commit = last $parts -}}
+      {{- $branch = initial (initial $parts) | join "-" -}}
+    {{- end -}}
+  {{- end }}
+  APP_VERSION: {{ .Chart.AppVersion | quote }}
+  CHART_VERSION: {{ .Chart.Version | quote }}
+  IMAGE_TAG: {{ .Values.global.imageTag | quote }}
+  GIT_BRANCH: {{ $branch | quote }}
+  GIT_COMMIT: {{ $commit | quote }}
 
   # Keycloak
   KEYCLOAK_REALM: "druppie"
   KEYCLOAK_CLIENT_ID: "druppie-backend"
   KEYCLOAK_SERVER_URL: "http://{{ include "druppie.fullname" . }}-keycloak:8080"
-  KEYCLOAK_ISSUER_URL: "{{ include "druppie.keycloakExternalUrl" . }}{{ if and .Values.global.ingress.enabled (eq (include "druppie.scheme" .) "https") }}:443{{ end }}"
+  KEYCLOAK_ISSUER_URL: "{{ include "druppie.keycloakExternalUrl" . }}"
 
   # Gitea
   GITEA_INTERNAL_URL: "http://{{ include "druppie.fullname" . }}-gitea:3000"
@@ -58,10 +79,17 @@ data:
   DEEPSEEK_BASE_URL: {{ .Values.backend.deepseek.baseUrl | quote }}
   DEEPINFRA_MODEL: {{ .Values.backend.deepinfra.model | quote }}
   DEEPINFRA_BASE_URL: {{ .Values.backend.deepinfra.baseUrl | quote }}
+  LLMKUBE_MODEL: {{ .Values.backend.llmkube.model | quote }}
+  LLMKUBE_BASE_URL: {{ .Values.backend.llmkube.baseUrl | quote }}
 
   # Sandbox
+  DRUPPIE_SANDBOX_MODE: {{ if .Values.agentSandbox.enabled }}k8s{{ else }}docker{{ end }}
   DRUPPIE_SANDBOX_RUNTIME: {{ .Values.sandbox.runtime | quote }}
   DRUPPIE_SANDBOX_IMAGE: {{ .Values.sandbox.image | quote }}
+  {{- if .Values.agentSandbox.enabled }}
+  SANDBOX_NAMESPACE: "sandbox-runtime"
+  SANDBOX_WARMPOOL: "agent-coding-warmpool"
+  {{- end }}
   DRUPPIE_SANDBOX_USER: {{ .Values.global.instance | quote }}
   DRUPPIE_SANDBOX_NETWORK: "{{ .Values.global.instance }}-sandbox-net"
   DRUPPIE_SANDBOX_INET_NETWORK: "{{ .Values.global.instance }}-sandbox-inet"

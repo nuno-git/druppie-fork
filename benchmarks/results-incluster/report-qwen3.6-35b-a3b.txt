@@ -1,0 +1,109 @@
+Running 20 scenarios x 1 models (2 runs each, 1 warmup)
+
+  Model: Qwen3.6-35B-A3B (vLLM/LLMKube) (Qwen/Qwen3.6-35B-A3B)
+    context-128k... 5021ms avg
+    context-16k... 5675ms avg
+    context-1k... 6238ms avg
+    context-256... 4282ms avg
+    context-256k...  (1 errors)
+    context-32k... 7136ms avg
+    context-4k... 5001ms avg
+    context-64k... 2548ms avg
+    context-8k... 4839ms avg
+    generate-100... 725ms avg
+    generate-1000... 6705ms avg
+    generate-2000... 13369ms avg
+    generate-500... 3390ms avg
+    latency-1000... 42437ms avg
+    latency-200... 18003ms avg
+    latency-50... 4850ms avg
+    latency-500... 34065ms avg
+    repeated-50... 1437ms avg
+    tool-call-10-tools... 1247ms avg
+    tool-call-3-tools... 704ms avg
+
+LLM Performance Benchmark - 2026-07-01 12:20
+Endpoint: qwen35b_test (http://qwen-35b-test.llm.svc.cluster.local:8000/v1)
+Runs per test: 3
+Warmup runs: 1
+
+Model Configurations:
+  Qwen3.6-35B-A3B (vLLM/ - 35B-A3B params, bfloat16, KV:fp8, flash_attn, GPU=-1
+
+================================================================================
+  CONTEXT SCALING (latency)
+================================================================================
+Scenario               | Qwen3.6-35B-A3B (vLLM/LLMKube)  
+---------------------------------------------------------
+context-128k           | 5.0s (±0.3)                     
+context-16k            | 5.7s (±3.5)                     
+context-1k             | 6.2s (±2.9)                     
+context-256            | 4.3s (±0.5)                     
+context-256k           | ERROR                           
+context-32k            | 7.1s (±3.5)                     
+context-4k             | 5.0s (±4.0)                     
+context-64k            | 2.5s (±0.5)                     
+context-8k             | 4.8s (±3.3)                     
+
+================================================================================
+  GENERATION SPEED
+================================================================================
+Scenario               | Qwen3.6-35B-A3B (vLLM/LLMKube)  
+---------------------------------------------------------
+generate-100           | 138 t/s                         
+generate-1000          | 149 t/s                         
+generate-2000          | 150 t/s                         
+generate-500           | 147 t/s                         
+
+================================================================================
+  LATENCY (total response time)
+================================================================================
+Scenario               | Qwen3.6-35B-A3B (vLLM/LLMKube)  
+---------------------------------------------------------
+latency-1000           | 42.4s (±8.5)                    
+latency-200            | 18.0s (±2.2)                    
+latency-50             | 4.9s (±0.9)                     
+latency-500            | 34.1s (±2.0)                    
+
+================================================================================
+  STRESS / CONSISTENCY
+================================================================================
+Scenario               | Qwen3.6-35B-A3B (vLLM/LLMKube)  
+---------------------------------------------------------
+repeated-50            | 1.4s (±0.5)                     
+
+================================================================================
+  TOOL CALLING OVERHEAD (latency)
+================================================================================
+Scenario               | Qwen3.6-35B-A3B (vLLM/LLMKube)  
+---------------------------------------------------------
+tool-call-10-tools     | 1.2s (±0.7)                     
+tool-call-3-tools      | 0.7s (±0.0)                     
+
+================================================================================
+  TIME TO FIRST TOKEN (TTFT)
+================================================================================
+Scenario               | Qwen3.6-35B-A3B (vLLM/LLMKube)  
+---------------------------------------------------------
+context-128k           | 491ms                           
+context-16k            | 183ms                           
+context-1k             | 138ms                           
+context-256            | 75ms                            
+context-256k           | -                               
+context-32k            | 152ms                           
+context-4k             | 158ms                           
+context-64k            | 223ms                           
+context-8k             | 164ms                           
+generate-100           | 69ms                            
+generate-1000          | 67ms                            
+generate-2000          | 75ms                            
+generate-500           | 74ms                            
+latency-1000           | 147ms                           
+latency-200            | 69ms                            
+latency-50             | 75ms                            
+latency-500            | 82ms                            
+repeated-50            | 68ms                            
+tool-call-10-tools     | -                               
+tool-call-3-tools      | -                               
+
+JSON results exported to /results/results.json

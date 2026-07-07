@@ -1,0 +1,111 @@
+# =============================================================================
+# job-gpunode.yaml -- MANUAL, node-colocated benchmark Job.
+#
+# This is NOT wired into any script (neither run-in-cluster.sh nor
+# benchmark-all-models.sh create its configmaps or apply it). Use it by hand ONLY
+# when you want the benchmark CLIENT colocated on the GPU node with the vLLM pods
+# to remove the network hop and isolate raw model latency (the client requests NO
+# GPU -- CPU only). For the normal in-cluster run use run-in-cluster.sh; for the
+# full sweep use benchmark-all-models.sh.
+#
+# Differences from job.yaml:
+#   * pins the client to the GPU node via nodeSelector kubernetes.io/hostname
+#     (HARD-CODED below -- update it if the GPU node is renamed) + a gpu toleration;
+#   * reads its own configmaps `bench-pkg-gpunode` / `bench-scenarios-gpunode`
+#     (distinct names so it never clashes with the run-in-cluster.sh configmaps);
+#   * has NO aigit auto-publish (no bench-publish configmap / AIGIT_* env).
+#
+# Create its configmaps first (from the repo root), then apply:
+#   kubectl create configmap bench-pkg-gpunode -n llm \
+#     --from-file=__init__.py=benchmarks/__init__.py \
+#     --from-file=runner.py=benchmarks/runner.py \
+#     --from-file=llm_client.py=benchmarks/llm_client.py \
+#     --from-file=reporter.py=benchmarks/reporter.py \
+#     --from-file=config.yaml=benchmarks/config.yaml
+#   kubectl create configmap bench-scenarios-gpunode -n llm \
+#     --from-file=benchmarks/scenarios/
+#   kubectl apply -f benchmarks/k8s/job-gpunode.yaml
+#   kubectl logs -f job/llm-benchmark-gpunode -n llm
+# =============================================================================
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: llm-benchmark-gpunode
+  namespace: llm
+  labels:
+    app: llm-benchmark-gpunode
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 9000
+  template:
+    metadata:
+      labels:
+        app: llm-benchmark-gpunode
+    spec:
+      restartPolicy: Never
+      # Pin the benchmark client onto the GPU node so it is colocated with the
+      # vLLM model pods (qwen). The client requests NO GPU; it only needs CPU.
+      nodeSelector:
+        kubernetes.io/hostname: ka-k8s-ai-workers-gpu-xd4xn-fk5v2
+      tolerations:
+        - key: gpu
+          operator: Equal
+          value: "true"
+          effect: NoSchedule
+      volumes:
+        - name: app
+          emptyDir: {}
+        - name: bench-pkg
+          configMap:
+            name: bench-pkg-gpunode
+        - name: bench-scenarios
+          configMap:
+            name: bench-scenarios-gpunode
+      initContainers:
+        # Assemble a writable Python package dir from the two configmaps.
+        # Avoids read-only/nested-mount issues with configMap volumes.
+        - name: assemble
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              set -eu
+              mkdir -p /app/benchmarks/scenarios
+              cp /cm-pkg/* /app/benchmarks/
+              cp /cm-scenarios/* /app/benchmarks/scenarios/
+              echo "Assembled package:"
+              ls -la /app/benchmarks/
+              echo "Scenarios:"
+              ls /app/benchmarks/scenarios/ | wc -l
+          volumeMounts:
+            - name: app
+              mountPath: /app
+            - name: bench-pkg
+              mountPath: /cm-pkg
+            - name: bench-scenarios
+              mountPath: /cm-scenarios
+      containers:
+        - name: benchmark
+          image: python:3.12-slim
+          workingDir: /app
+          command:
+            - sh
+            - -c
+            - |
+              set -eu
+              pip install --quiet httpx pyyaml
+              python -m benchmarks.runner --runs 2 --warmup 1 --timeout 600 --output /app/out.json
+              echo '===RESULTS_JSON_START==='
+              cat /app/out.json
+              echo '===RESULTS_JSON_END==='
+          volumeMounts:
+            - name: app
+              mountPath: /app
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
+            limits:
+              cpu: "2"
+              memory: 2Gi

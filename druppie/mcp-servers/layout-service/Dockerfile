@@ -7,6 +7,7 @@ RUN apk add --no-cache curl
 COPY package.json ./
 RUN npm install --omit=dev
 
+ARG CACHEBUST
 COPY server.js ./
 
 EXPOSE 8090

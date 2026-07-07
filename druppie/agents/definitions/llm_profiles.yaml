@@ -45,3 +45,8 @@ profiles:
       model: deepseek-r1:32b
     - provider: ollama
       model: gemma3:27b
+
+  # In-cluster LLMKube/vLLM (OpenAI-compatible, no API key required).
+  llmkube:
+    - provider: llmkube
+      model: Qwen/Qwen3.6-27B

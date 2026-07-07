@@ -1,0 +1,1012 @@
+#!/usr/bin/env python3
+"""Cross-model comparison matrix generator for in-cluster LLM benchmarks.
+
+Reads N runner-output result JSON files (the exact schema produced by
+``benchmarks/runner.py`` / ``benchmarks/reporter.py``) and emits a single
+Markdown comparison matrix: one row per model, columns = high-signal,
+directly-comparable metrics. Missing scenarios degrade gracefully to "--".
+
+Depends on PyYAML (to read the canonical model registry
+``benchmarks/candidates.yaml``) plus the stdlib (json, argparse, glob, os,
+statistics) and the stdlib-only ``report_metrics``. This is a HOST-side
+aggregator run by ``benchmarks/k8s/benchmark-all-models.sh`` AFTER the sweep --
+the same place ``update_test_matrix.py`` runs (which also needs PyYAML) -- not
+inside the slim benchmark Job image.
+
+Usage:
+  # explicit files
+  python benchmarks/compare_models.py results-a.json results-b.json
+
+  # every *.json in a folder
+  python benchmarks/compare_models.py --dir benchmarks/results-incluster
+
+  # files + folder, write to a file (also printed to stdout)
+  python benchmarks/compare_models.py a.json --dir some/dir \
+      --output benchmarks/results-incluster/COMPARISON-MATRIX.md
+
+Result JSON schema this tool relies on (verified against real runner output,
+e.g. benchmarks/results-incluster/results-qwen3.6-27b.json):
+
+  {
+    "timestamp": "...",
+    "settings": {...},
+    "models": [ {"display_name": "...", "model": "...", "parameters": "...",
+                 "quantization": "...", "max_context": 131072, ...} ],
+    "results": {
+      "<category>": {                     # latency | generation |
+        "<scenario_name>": {              # context_scaling | tool_overhead | stress
+          "<model_display_name>": [       # list of per-run dicts
+            {"total_latency_ms": float, "time_to_first_token_ms": float|null,
+             "prompt_tokens": int, "completion_tokens": int, "total_tokens": int,
+             "tokens_per_second": float, "prompt_eval_rate": float,
+             "error": str|null},
+            ...
+          ]
+        }
+      }
+    }
+  }
+
+Each result JSON usually holds ONE model (the in-cluster orchestrator runs one
+model per Job), but this tool handles files with several models too: every
+model in every file becomes its own matrix row.
+"""
+
+import argparse
+import glob
+import json
+import os
+import statistics
+import sys
+
+import yaml
+
+# Shared, stdlib-only report.txt parser (also used by update_test_matrix.py so
+# the two matrices can never drift). The committed per-model report.txt is the
+# REPRODUCIBLE source of truth: the per-run result JSONs are transient (they live
+# only in the sweep's temp WORKDIR and are discarded), so re-running this
+# generator from the repo has no JSON to read -- it falls back to report.txt.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from report_metrics import extract_metrics, is_all_error  # noqa: E402
+
+# ---------------------------------------------------------------------------
+# Schema field names -- kept as constants so the reliance on the runner schema
+# is explicit and easy to audit against a sample result JSON.
+# ---------------------------------------------------------------------------
+F_TTFT = "time_to_first_token_ms"
+F_TPS = "tokens_per_second"
+F_LATENCY = "total_latency_ms"
+F_ERROR = "error"
+
+CAT_LATENCY = "latency"
+CAT_GENERATION = "generation"
+CAT_CONTEXT = "context_scaling"
+CAT_TOOLS = "tool_overhead"
+CAT_STRESS = "stress"
+
+# Representative scenarios used for the headline columns. If a given result
+# file lacks one of these, the corresponding cell shows "--".
+REPRESENTATIVE_LATENCY_SCENARIO = "latency-500"   # 500-token generation, cold-ish
+CONTEXT_64K_SCENARIO = "context-64k"              # ~64k-token prompt TTFT
+TOOLS_HI_SCENARIO = "tool-call-10-tools"
+TOOLS_LO_SCENARIO = "tool-call-3-tools"
+STRESS_SCENARIO = "repeated-50"
+
+DASH = "--"
+
+
+# ---------------------------------------------------------------------------
+# Known-model registry -- so the matrix ALWAYS lists every registered model,
+# not just the ones we happened to benchmark. Models that cannot be benchmarked
+# on this hardware (too large) or only in a maintenance window (TP=2) get an
+# explicit placeholder row with a status note instead of silently vanishing.
+#
+# Merge rule (see merge_known_with_actual): a known model is matched to an
+# actual result JSON by the normalized last path segment of its HF `source`
+# (e.g. "Qwen/Qwen3.6-27B" -> "qwen3.6-27b"); matched rows render real metrics,
+# unmatched ones render "--" + the pending/untestable note.
+#
+# HARDWARE CONTEXT (drives the `fit` classes below): ONE GPU node with 2x
+# NVIDIA RTX PRO 6000 Blackwell (96GB each = 192GB total). NO P2P between the
+# cards, so serving is tensor-parallel=1 (one model per GPU). The `llm` namespace
+# GPU ResourceQuota is hard=2 and both GPUs are normally held by the live `qwen`
+# service; a benchmark run frees at most ONE GPU (scaling qwen 2->1). Using both
+# GPUs (TP=2) would take prod fully down. All sizes are ESTIMATES (~).
+
+# Fit classes, and the one-liner shown in the legend.
+FIT_LEGEND = [
+    ("served",
+     "Currently served in prod; benchmarked in place (no serving change)."),
+    ("fits-1gpu",
+     "Fits one RTX PRO 6000 (<=~90GB usable). Benchmarkable now by freeing "
+     "1 GPU (qwen 2->1)."),
+    ("needs-2gpu",
+     "Needs both GPUs (tensor-parallel 2, ~160GB). Testable only in a full "
+     "maintenance window -- it takes prod fully down."),
+    ("too-large",
+     "Exceeds 192GB total even quantized. Not testable on this hardware "
+     "(needs multi-node / RAM-MoE offload)."),
+]
+
+HARDWARE_NOTE = (
+    "Hardware: 1 GPU node, 2x NVIDIA RTX PRO 6000 Blackwell (96GB each = 192GB "
+    "total). No P2P between cards, so serving is tensor-parallel=1 (one model "
+    "per GPU). The `llm` namespace GPU ResourceQuota is hard=2, and both GPUs "
+    "are normally held by the live `qwen` service. A benchmark run frees at most "
+    "ONE GPU (qwen 2->1); using both (TP=2) takes prod fully down. All sizes are "
+    "ESTIMATES (~)."
+)
+
+METHODOLOGY_NOTE = (
+    "All benchmarked models were served in-cluster (ka-k8s-ai) from a LOCAL-DISK "
+    "model cache (`pvc://` volume, no per-run HF download) via the vLLM runtime "
+    "(`runtime: vllm`) with a per-model command/args override (see the `profile` "
+    "blocks in `benchmarks/candidates.yaml`), tensor-parallel=1, on 2026-07-07. "
+    "On the SM120 (RTX PRO 6000 Blackwell) cards, native NVFP4/MXFP4 MoE kernels "
+    "fall back to Marlin (slower) for the MoE models "
+    "(Qwen3.6-35B-A3B-NVFP4, Qwen3-Coder-Next-80B-NVFP4, gpt-oss-120b). "
+    "gpt-oss-120b was served at max-model-len 8192, so its 16k+ context scenarios "
+    "are out-of-range BY CONFIG (not a model limit) and are counted as errors. "
+    "Headline metrics here are parsed from each model's committed "
+    "`results-incluster/<slug>/report.txt` (the per-run JSONs are transient), so "
+    "re-running `compare_models.py` reproduces this matrix deterministically."
+)
+
+# ---------------------------------------------------------------------------
+# Single source of truth: the model registry is DERIVED from candidates.yaml
+# (the same file update_test_matrix.py reads) so the two matrices can never
+# disagree on the model set or on a model's slug. candidates.yaml `slug` is,
+# for every model: the results-incluster/<slug> dir name, the report_dir, the
+# runner meta["model"] slug, AND the SKIPPED.txt key -- so all lookups line up
+# (this fixes the old KNOWN_MODELS slug drift, e.g. the 480B `...instruct` vs
+# `...instruct-nvfp4` mismatch that hid its SKIPPED.txt).
+#
+# The ONLY per-model metadata not present in candidates.yaml is the curated
+# Status/Note text, kept here and mapped onto candidates entries by slug.
+# ---------------------------------------------------------------------------
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+REPO_ROOT = os.path.dirname(SCRIPT_DIR)
+DEFAULT_CANDIDATES = os.path.join(SCRIPT_DIR, "candidates.yaml")
+
+# Curated Status/Note text, keyed by candidates.yaml `slug`. `done` renders when
+# the model is benchmarked (report.txt / live JSON present); `pending` renders
+# when it is NOT benchmarked and no runtime SKIPPED.txt reason exists (otherwise
+# the static candidates.yaml skip_reason / notes are used).
+_MODEL_NOTES = {
+    "gemma-4-e4b-it-gguf": {"pending": "Pending -- gated (HF token not in vault)."},
+    "qwen3.6-27b-nvfp4": {
+        "done": "Served in prod (isvc qwen-27b); benchmarked IN PLACE from "
+                "local-disk cache, TP=1, 256K ctx OK.",
+    },
+    "qwen3.6-27b-mtp-gguf": {"pending": "Not benchmarked -- GGUF, not staged."},
+    "qwen3.6-35b-a3b-nvfp4": {
+        "done": "Served in prod (isvc qwen-35b); benchmarked IN PLACE from "
+                "local-disk cache, TP=1, 256K ctx OK. SM120 Marlin MoE fallback.",
+    },
+    "qwen3-coder-next-nvfp4": {
+        "done": "Benchmarked from local-disk cache via runtime:vllm + command "
+                "override, TP=1, 256K ctx OK (TTFT 30.8s@256k). SM120 Marlin MoE "
+                "fallback.",
+    },
+    "gpt-oss-120b": {
+        "done": "Benchmarked from local-disk cache via runtime:vllm + command "
+                "override, TP=1. Served at max-model-len 8192, so the 16k+ "
+                "context scenarios are out-of-range BY CONFIG (not a model limit) "
+                "and are the errored runs; 0 errors on the 15 in-range scenarios. "
+                "SM120 Marlin MoE fallback.",
+    },
+    "glm-4.6v-gguf": {"pending": "Not benchmarked -- vision GGUF, not staged."},
+}
+
+
+def load_known_models(candidates_path=None):
+    """Build the model registry from candidates.yaml (single source of truth).
+
+    Returns an ordered list of dicts shaped like the former hand-maintained
+    KNOWN_MODELS, so the rest of this module is unchanged:
+      source     -- HF/registry id (candidates `source`).
+      slug       -- candidates `slug`; == the results-incluster/<slug> dir name,
+                    the report_dir, the meta["model"] slug, and the SKIPPED.txt
+                    key (so every lookup lines up -- no slug drift).
+      report_dir -- == slug (report.txt lives at results-incluster/<slug>/).
+      label/params/quant/fit -- candidates name/params/est_vram/fit.
+      note       -- pending/skip note: curated `pending`, else the static
+                    candidates skip_reason, else candidates notes.
+      note_done  -- curated benchmarked note (or None -> "Benchmarked.").
+    """
+    path = candidates_path or DEFAULT_CANDIDATES
+    with open(path, encoding="utf-8") as f:
+        doc = yaml.safe_load(f) or {}
+    models = []
+    for entry in doc.get("models") or []:
+        slug = (entry.get("slug") or "").strip()
+        notes = _MODEL_NOTES.get(slug, {})
+        static_note = (notes.get("pending")
+                       or (entry.get("skip_reason") or "").strip()
+                       or (entry.get("notes") or "").strip())
+        models.append({
+            "source": entry.get("source", "") or "",
+            "slug": slug,
+            "report_dir": slug,
+            "label": entry.get("name", "") or entry.get("source", "") or slug,
+            "params": entry.get("params", "") or "",
+            "quant": entry.get("est_vram", "") or "",
+            "fit": entry.get("fit", "") or "",
+            "note": static_note,
+            "note_done": notes.get("done"),
+        })
+    return models
+
+
+def _slug(value):
+    """Normalize an HF/registry model id to its last path segment, lowercased.
+
+    "Qwen/Qwen3.6-27B" -> "qwen3.6-27b"; used to match known-model registry
+    entries to actual runner result JSONs (whose meta["model"] is the source).
+    """
+    return (value or "").rsplit("/", 1)[-1].strip().lower()
+
+
+SKIPPED_FILENAME = "SKIPPED.txt"   # written per-slug by benchmark-all-models.sh
+
+
+def _runtime_skip_reason(results_dir, slug):
+    """Return the runtime skip reason recorded for a slug, or None.
+
+    The sweep writes ``<results_dir>/<slug>/SKIPPED.txt`` with a one-line reason
+    whenever it size-skips a model upfront or a serving attempt fast-fails. That
+    live reason takes precedence over the static registry ``note``.
+    """
+    if not results_dir or not slug:
+        return None
+    path = os.path.join(results_dir, slug, SKIPPED_FILENAME)
+    if not os.path.isfile(path):
+        return None
+    try:
+        with open(path, encoding="utf-8") as f:
+            reason = f.read().strip()
+    except OSError:
+        return None
+    return reason or None
+
+
+REPORT_FILENAME = "report.txt"    # committed per-model report under <results_dir>/<report_dir>/
+LOAD_TEST_FILENAME = "load-test.json"  # committed per-model concurrency sweep
+
+
+def _load_concurrency(results_dir, report_dir):
+    """Read committed <results_dir>/<report_dir>/load-test.json, or None.
+
+    The concurrency sweep JSON is self-describing (see the ``levels`` list and
+    the ``saturation`` block written by the load-test runner), so it is parsed
+    directly here -- no report.txt round-trip. Returns the decoded dict, or None
+    when the file is absent / empty / malformed / has no ``levels``.
+    """
+    if not results_dir or not report_dir:
+        return None
+    path = os.path.join(results_dir, report_dir, LOAD_TEST_FILENAME)
+    if not os.path.isfile(path) or os.path.getsize(path) == 0:
+        return None
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict) or not isinstance(data.get("levels"), list) \
+            or not data["levels"]:
+        return None
+    return data
+
+
+def collect_load_tests(results_dir, candidates_path=None):
+    """Ordered ``[(label, path, data)]`` for each registered slug that has a
+    committed ``load-test.json``.
+
+    Iterates the candidates.yaml registry in order (so the rendered section is
+    deterministic / idempotent) and uses the registry label for the column
+    header -- NOT the verbose per-file ``display_name``.
+    """
+    out = []
+    for km in load_known_models(candidates_path):
+        data = _load_concurrency(results_dir, km["report_dir"])
+        if data is not None:
+            path = os.path.join(results_dir, km["report_dir"], LOAD_TEST_FILENAME)
+            out.append((km["label"], path, data))
+    return out
+
+
+def _report_metrics(results_dir, report_dir):
+    """Parse committed <results_dir>/<report_dir>/report.txt -> row-ready metrics.
+
+    Returns a dict keyed for build_matrix_rows (ttft/tps/lat500/ttft64k/
+    tool_delta/stress_std/errors), or None if the report is absent/unreadable.
+    This is the reproducible metric source when no live per-run JSON is present.
+    """
+    if not results_dir or not report_dir:
+        return None
+    path = os.path.join(results_dir, report_dir, REPORT_FILENAME)
+    # A 0-byte report.txt is NOT a benchmark result -- treat it as absent so the
+    # SKIPPED.txt reason (if any) surfaces instead of an all-"--" "Benchmarked" row.
+    if not os.path.isfile(path) or os.path.getsize(path) == 0:
+        return None
+    try:
+        with open(path, encoding="utf-8") as f:
+            m = extract_metrics(f.read())
+    except OSError:
+        return None
+    return {
+        "ttft": m["ttft_ms"],
+        "tps": m["tps"],
+        "lat500": m["lat500_s"],
+        "ttft64k": m["ttft64k_ms"],
+        "tool_delta": m["tool_delta_s"],
+        "stress_std": m["stress_std_ms"],
+        "errors": m["errors"],
+        # True when the report parsed but every scenario errored (no usable
+        # metric): a FAILED run, rendered as "Failed -- ..." not "Benchmarked."
+        "all_error": is_all_error(m),
+    }
+
+
+def merge_known_with_actual(actual_models, results_dir=None, candidates_path=None):
+    """Merge the candidates.yaml registry with actual (meta, view) results.
+
+    Returns (row_specs, benchmarked, report_sources):
+      * row_specs -- ordered list of dicts for the headline matrix: every
+        registered model in candidates.yaml order, plus any actual model NOT in
+        the registry appended at the end (so real data is never dropped). Each
+        spec has keys: label, params, quant, fit, note, and -- when benchmarked
+        -- `metrics` (parsed from the committed report.txt) and/or `view` (the
+        live per-run JSON, used ONLY for the per-category throughput table).
+      * benchmarked -- list of (meta, view) that carried a live JSON view, for
+        the per-category throughput table.
+      * report_sources -- report.txt paths whose metrics were parsed.
+
+    HEADLINE numbers ALWAYS come from report.txt (via report_metrics) whenever a
+    report exists -- the live JSON view never feeds the headline cells. This is
+    what guarantees the first-published (live-JSON sweep) matrix and the
+    regenerated (report.txt) matrix carry identical numbers, since the sweep
+    writes report.txt for every benchmarked model. A live view without a
+    committed report.txt is the only case that falls back to view aggregation
+    (whose method is aligned with report_metrics -- per-scenario mean, then
+    median; sample stddev).
+
+    ``results_dir`` (optional) is scanned for per-slug ``SKIPPED.txt`` files: a
+    live skip reason there overrides the static registry note for any model that
+    did not produce results, so the matrix shows exactly why it was skipped.
+    """
+    known = load_known_models(candidates_path)
+    actual_by_slug = {}
+    for meta, view in actual_models:
+        actual_by_slug.setdefault(_slug(meta.get("model")), (meta, view))
+
+    row_specs = []
+    benchmarked = []
+    report_sources = []
+    matched = set()
+    for km in known:
+        slug = km["slug"]
+        hit = actual_by_slug.get(slug)
+        # report.txt is the SINGLE reproducible source for the headline numbers,
+        # parsed for EVERY model that has one -- even when a live JSON view is
+        # also present. The view then only powers the per-category throughput
+        # table, never the headline cells (keeps both matrices in lock-step).
+        metrics = _report_metrics(results_dir, km["report_dir"])
+        # A non-empty report with no usable metric + errors is a FAILED run: it is
+        # NOT a benchmarked result, so it renders "Failed -- ..." with "--" cells
+        # (never "Benchmarked.").
+        report_failed = metrics is not None and metrics.get("all_error")
+        spec = {
+            "label": km["label"],
+            "params": km["params"],
+            "quant": km["quant"],
+            "fit": km["fit"],
+            "note": km["note"],
+        }
+        if metrics is not None and not report_failed:
+            spec["metrics"] = metrics
+            spec["note"] = km.get("note_done") or "Benchmarked."
+            report_sources.append(
+                os.path.join(results_dir, km["report_dir"], REPORT_FILENAME))
+        if hit:
+            meta, view = hit
+            spec["params"] = meta.get("parameters") or km["params"]
+            spec["quant"] = meta.get("quantization") or km["quant"]
+            matched.add(slug)
+            # A failed run keeps "--" cells: don't attach its (all-error) view.
+            if not report_failed:
+                spec["view"] = view
+                if metrics is None:
+                    spec["note"] = km.get("note_done") or "Benchmarked."
+                benchmarked.append((meta, view))
+        if report_failed:
+            # Prefer a runtime SKIPPED.txt reason; else a generic all-error note.
+            reason = _runtime_skip_reason(results_dir, slug)
+            spec["note"] = (f"Failed -- {reason}" if reason
+                            else "Failed -- all scenarios errored (no usable metrics).")
+        elif not hit and metrics is None:
+            # Not benchmarked -- prefer a live skip reason over the static note.
+            reason = _runtime_skip_reason(results_dir, slug)
+            if reason:
+                spec["note"] = f"Skipped -- {reason}"
+        row_specs.append(spec)
+
+    # Append any benchmarked model not covered by the registry -- never lose data.
+    for slug, (meta, view) in actual_by_slug.items():
+        if slug in matched:
+            continue
+        row_specs.append({
+            "label": model_label(meta),
+            "params": meta.get("parameters") or "",
+            "quant": meta.get("quantization") or "",
+            "fit": "served",
+            "note": "Benchmarked (not in candidates.yaml registry).",
+            "view": view,
+        })
+        benchmarked.append((meta, view))
+    return row_specs, benchmarked, report_sources
+
+
+# ---------------------------------------------------------------------------
+# Loading
+# ---------------------------------------------------------------------------
+def load_files(paths, directory):
+    """Resolve positional paths + optional --dir glob into a de-duplicated,
+    ordered list of existing JSON file paths."""
+    resolved = []
+    seen = set()
+
+    def add(p):
+        ap = os.path.abspath(p)
+        if ap not in seen and os.path.isfile(ap):
+            seen.add(ap)
+            resolved.append(ap)
+
+    for p in paths or []:
+        add(p)
+    if directory:
+        for p in sorted(glob.glob(os.path.join(directory, "*.json"))):
+            add(p)
+    return resolved
+
+
+def iter_models(doc):
+    """Yield (model_meta_dict, results_dict) for every model in one result doc.
+
+    ``results`` is filtered to just this model's per-scenario run lists so the
+    metric helpers never have to re-key by display_name.
+    """
+    results = doc.get("results", {}) or {}
+    for meta in doc.get("models", []) or []:
+        name = meta.get("display_name") or meta.get("model") or "unknown"
+        # Rebuild a per-model view: {category: {scenario: [run, ...]}}
+        model_view = {}
+        for category, scenarios in results.items():
+            for scenario, per_model in scenarios.items():
+                runs = per_model.get(name)
+                if runs is not None:
+                    model_view.setdefault(category, {})[scenario] = runs
+        yield meta, model_view
+
+
+# ---------------------------------------------------------------------------
+# Metric helpers -- all tolerate missing scenarios / all-error runs and return
+# None (rendered as "--") rather than raising.
+# ---------------------------------------------------------------------------
+def _ok_runs(runs):
+    """Filter to runs that completed without an error."""
+    return [r for r in (runs or []) if not r.get(F_ERROR)]
+
+
+def _values(runs, field):
+    """Non-null numeric values of ``field`` across successful runs."""
+    out = []
+    for r in _ok_runs(runs):
+        v = r.get(field)
+        if isinstance(v, (int, float)):
+            out.append(v)
+    return out
+
+
+def _all_runs_of_category(model_view, category):
+    """Flatten every run across all scenarios in a category."""
+    flat = []
+    for _scenario, runs in (model_view.get(category, {}) or {}).items():
+        flat.extend(runs or [])
+    return flat
+
+
+def median_or_none(values):
+    return statistics.median(values) if values else None
+
+
+# NOTE (metric-basis alignment): report_metrics parses report.txt, whose
+# per-scenario cells are reporter.py's per-scenario MEAN, and it then takes the
+# MEDIAN over those per-scenario values (and the reporter's SAMPLE stddev). The
+# live-JSON helpers below mirror that basis exactly -- per-scenario mean, then
+# median; sample stddev -- so the (rare) live-only fallback produces the same
+# numbers report.txt would. In practice report.txt always wins (see
+# merge_known_with_actual), so the two matrices are identical regardless of source.
+def _scenario_means(model_view, category, field):
+    """One value per scenario: the MEAN of ``field`` over successful runs.
+
+    Mirrors reporter.py (per-scenario mean), so a median over these values
+    matches report_metrics' median-over-scenarios basis.
+    """
+    out = []
+    for _scenario, runs in (model_view.get(category, {}) or {}).items():
+        vals = _values(runs, field)
+        if vals:
+            out.append(statistics.fmean(vals))
+    return out
+
+
+def scenario_mean(model_view, category, scenario, field):
+    """Mean of ``field`` over successful runs of one scenario (reporter basis)."""
+    runs = (model_view.get(category, {}) or {}).get(scenario)
+    vals = _values(runs, field)
+    return statistics.fmean(vals) if vals else None
+
+
+def median_ttft_ms(model_view):
+    """Median of per-scenario mean TTFT over the streaming scenarios.
+
+    context_scaling/latency/generation stream and report TTFT; tool_overhead
+    does not (its TTFT is null) and stress is excluded -- matching
+    report_metrics' TTFT streaming prefixes (context-/generate-/latency-).
+    """
+    scen_means = (
+        _scenario_means(model_view, CAT_LATENCY, F_TTFT)
+        + _scenario_means(model_view, CAT_GENERATION, F_TTFT)
+        + _scenario_means(model_view, CAT_CONTEXT, F_TTFT)
+    )
+    return median_or_none(scen_means)
+
+
+def median_decode_tps(model_view):
+    """Median of per-scenario mean decode throughput (tok/s) over generation.
+
+    Generation scenarios (fixed output sizes, tiny prompt) isolate decode
+    speed best. Fall back to latency scenarios if generation is absent.
+    """
+    gen = _scenario_means(model_view, CAT_GENERATION, F_TPS)
+    if gen:
+        return median_or_none(gen)
+    return median_or_none(_scenario_means(model_view, CAT_LATENCY, F_TPS))
+
+
+def representative_latency_s(model_view):
+    ms = scenario_mean(model_view, CAT_LATENCY, REPRESENTATIVE_LATENCY_SCENARIO, F_LATENCY)
+    return ms / 1000.0 if ms is not None else None
+
+
+def context_64k_ttft_ms(model_view):
+    return scenario_mean(model_view, CAT_CONTEXT, CONTEXT_64K_SCENARIO, F_TTFT)
+
+
+def tool_overhead_delta_s(model_view):
+    """(mean 10-tools latency) - (mean 3-tools latency), in seconds.
+
+    Positive = tool-schema bloat costs latency. None if either side is missing.
+    """
+    hi = scenario_mean(model_view, CAT_TOOLS, TOOLS_HI_SCENARIO, F_LATENCY)
+    lo = scenario_mean(model_view, CAT_TOOLS, TOOLS_LO_SCENARIO, F_LATENCY)
+    if hi is None or lo is None:
+        return None
+    return (hi - lo) / 1000.0
+
+
+def stress_stddev_ms(model_view):
+    """SAMPLE latency stddev over the stress scenario -- consistency under
+    repetition. Sample (n-1) stddev matches reporter.py / report_metrics."""
+    runs = (model_view.get(CAT_STRESS, {}) or {}).get(STRESS_SCENARIO)
+    vals = _values(runs, F_LATENCY)
+    if len(vals) < 2:
+        return None
+    return statistics.stdev(vals)
+
+
+def error_count(model_view):
+    """Total errored runs across every scenario in every category."""
+    total = 0
+    for _category, scenarios in model_view.items():
+        for _scenario, runs in scenarios.items():
+            total += sum(1 for r in (runs or []) if r.get(F_ERROR))
+    return total
+
+
+# ---------------------------------------------------------------------------
+# Rendering
+# ---------------------------------------------------------------------------
+def _repo_rel(path):
+    """Repo-relative, forward-slash path -- so the committed matrix never leaks
+    absolute Windows paths (e.g. C:\\Users\\...). Falls back to the basename when
+    the path is on a different drive / outside the repo (can't be made relative)."""
+    try:
+        rel = os.path.relpath(path, REPO_ROOT)
+    except ValueError:
+        return os.path.basename(path)
+    if rel.startswith(os.pardir):
+        return os.path.basename(path)
+    return rel.replace(os.sep, "/")
+
+
+def fmt(value, digits=0, suffix=""):
+    """Format a metric value, or the dash placeholder if None."""
+    if value is None:
+        return DASH
+    if digits == 0:
+        return f"{value:,.0f}{suffix}"
+    return f"{value:,.{digits}f}{suffix}"
+
+
+def model_label(meta):
+    name = meta.get("display_name") or meta.get("model") or "unknown"
+    return name
+
+
+def build_matrix_rows(row_specs):
+    """row_specs: output of merge_known_with_actual. Returns list of row dicts.
+
+    Specs WITH a `view` (benchmarked) render real metrics; specs WITHOUT one
+    (pending / untestable) render every metric as "--" and rely on the
+    Status/Note column to explain why.
+    """
+    rows = []
+    for spec in row_specs:
+        metrics = spec.get("metrics")
+        view = spec.get("view")
+        if metrics is not None:
+            # report.txt is the single source of truth for the headline numbers,
+            # so this matrix is byte-identical whether built from a live sweep or
+            # regenerated from the committed reports.
+            rows.append({
+                "label": spec["label"],
+                "params": spec["params"] or "",
+                "quant": spec["quant"] or "",
+                "ttft": metrics["ttft"],
+                "tps": metrics["tps"],
+                "lat500": metrics["lat500"],
+                "ttft64k": metrics["ttft64k"],
+                "tool_delta": metrics["tool_delta"],
+                "stress_std": metrics["stress_std"],
+                "errors": metrics["errors"],
+                "note": spec["note"],
+            })
+        elif view is not None:
+            # Live JSON without a committed report.txt: fall back to view
+            # aggregation, whose method is aligned with report_metrics.
+            rows.append({
+                "label": spec["label"],
+                "params": spec["params"] or "",
+                "quant": spec["quant"] or "",
+                "ttft": median_ttft_ms(view),
+                "tps": median_decode_tps(view),
+                "lat500": representative_latency_s(view),
+                "ttft64k": context_64k_ttft_ms(view),
+                "tool_delta": tool_overhead_delta_s(view),
+                "stress_std": stress_stddev_ms(view),
+                "errors": error_count(view),
+                "note": spec["note"],
+            })
+        else:
+            rows.append({
+                "label": spec["label"],
+                "params": spec["params"] or "",
+                "quant": spec["quant"] or "",
+                "ttft": None, "tps": None, "lat500": None,
+                "ttft64k": None, "tool_delta": None, "stress_std": None,
+                "errors": DASH,          # no runs -> dash, not a real 0
+                "note": spec["note"],
+            })
+    return rows
+
+
+def render_matrix(rows):
+    header = (
+        "| Model | Params | Quant / size | Median TTFT (ms) | Median decode (tok/s) | "
+        "latency-500 (s) | context-64k TTFT (ms) | tool 10-3 delta (s) | "
+        "stress stddev (ms) | Errors | Status / Note |"
+    )
+    sep = "|" + "|".join(["---"] * 11) + "|"
+    lines = [header, sep]
+    for r in rows:
+        lines.append(
+            "| {label} | {params} | {quant} | {ttft} | {tps} | {lat500} | "
+            "{ttft64k} | {delta} | {stress} | {errors} | {note} |".format(
+                label=r["label"],
+                params=r["params"] or DASH,
+                quant=r["quant"] or DASH,
+                ttft=fmt(r["ttft"], 0),
+                tps=fmt(r["tps"], 1),
+                lat500=fmt(r["lat500"], 1),
+                ttft64k=fmt(r["ttft64k"], 0),
+                delta=fmt(r["tool_delta"], 2),
+                stress=fmt(r["stress_std"], 0),
+                errors=r["errors"],
+                note=r["note"],
+            )
+        )
+    return "\n".join(lines)
+
+
+def render_category_breakdown(models):
+    """Compact per-category median decode-throughput (tok/s) table.
+
+    One row per category, one column per model. Gives a quick feel for where a
+    model is fast/slow without dumping every scenario.
+    """
+    categories = [CAT_LATENCY, CAT_GENERATION, CAT_CONTEXT, CAT_TOOLS, CAT_STRESS]
+    labels = [model_label(meta) for meta, _ in models]
+
+    header = "| Category (median tok/s) | " + " | ".join(labels) + " |"
+    sep = "|" + "|".join(["---"] * (len(labels) + 1)) + "|"
+    lines = [header, sep]
+    for cat in categories:
+        cells = []
+        for _meta, view in models:
+            vals = _values(_all_runs_of_category(view, cat), F_TPS)
+            cells.append(fmt(median_or_none(vals), 1))
+        lines.append(f"| {cat} | " + " | ".join(cells) + " |")
+    return "\n".join(lines)
+
+
+CONCURRENCY_EXPLAINER = (
+    "This measures the production-relevant CONCURRENT workload -- N streaming "
+    "requests kept in flight at once -- and is distinct from the single-stream "
+    "headline table above (which sends one request at a time). *Aggregate tok/s* "
+    "is the total decode rate summed across all concurrent requests. MoE models "
+    "(e.g. Qwen3.6-35B-A3B, only ~A3B params active per token) sustain far higher "
+    "aggregate throughput under load than the dense 27B, despite comparable "
+    "single-stream decode speeds."
+)
+
+
+def render_concurrency_section(load_tests):
+    """Render the concurrency / throughput-under-load table + per-model summary.
+
+    ``load_tests`` is ``collect_load_tests`` output: ``[(label, path, data)]``,
+    where ``data`` is a decoded ``load-test.json``. Rows are the concurrency
+    levels (union across models, ascending); columns are each model; cells are
+    aggregate tok/s. Followed by a one-line summary per model.
+    """
+    # Union of concurrency levels across all models, ascending -> stable rows.
+    conc_levels = sorted({
+        lvl.get("concurrency")
+        for _label, _path, data in load_tests
+        for lvl in data.get("levels", [])
+        if isinstance(lvl.get("concurrency"), (int, float))
+    })
+
+    lines = [CONCURRENCY_EXPLAINER, ""]
+    lines.append("_Cells = aggregate throughput (tok/s) at that concurrency level "
+                 "(higher is better)._")
+    lines.append("")
+
+    labels = [label for label, _p, _d in load_tests]
+    # Per-model {concurrency: level_dict} lookup for the table cells.
+    by_model = []
+    for _label, _path, data in load_tests:
+        by_model.append({
+            lvl.get("concurrency"): lvl for lvl in data.get("levels", [])
+        })
+
+    header = "| Concurrency | " + " | ".join(labels) + " |"
+    sep = "|" + "|".join(["---"] * (len(labels) + 1)) + "|"
+    lines.append(header)
+    lines.append(sep)
+    for conc in conc_levels:
+        cells = []
+        for level_map in by_model:
+            lvl = level_map.get(conc)
+            agg = lvl.get("aggregate_tok_s") if lvl else None
+            cells.append(fmt(agg, 0))
+        lines.append(f"| {fmt(conc, 0)} | " + " | ".join(cells) + " |")
+
+    lines.append("")
+    lines.append("**Per-model summary**")
+    lines.append("")
+    for label, _path, data in load_tests:
+        levels = sorted(data.get("levels", []),
+                        key=lambda l: l.get("concurrency", 0))
+        last = levels[-1]
+        max_conc = last.get("concurrency")
+        sat = data.get("saturation", {}) or {}
+        peak_tps = sat.get("peak_tok_s")
+        peak_conc = sat.get("peak_concurrency")
+        p95_lat_s = (last.get("latency_ms_p95") or 0) / 1000.0 \
+            if last.get("latency_ms_p95") is not None else None
+        p95_ttft_s = (last.get("ttft_ms_p95") or 0) / 1000.0 \
+            if last.get("ttft_ms_p95") is not None else None
+        errors = sum(int(lvl.get("errors") or 0) for lvl in levels)
+        # Peaking AT the top of the swept range => throughput was still rising,
+        # i.e. it had NOT saturated within the levels we measured.
+        not_saturated = (peak_conc is not None and max_conc is not None
+                         and peak_conc >= max_conc)
+        sat_note = (
+            f" Throughput had NOT saturated within the swept range (still rising "
+            f"at concurrency {fmt(max_conc, 0)})."
+            if not_saturated else
+            f" Throughput saturated at concurrency {fmt(peak_conc, 0)} (below the "
+            f"{fmt(max_conc, 0)} max)."
+        )
+        lines.append(
+            f"- **{label}** -- peak **{fmt(peak_tps, 0)} tok/s** @ concurrency "
+            f"{fmt(peak_conc, 0)}; at max concurrency {fmt(max_conc, 0)}: p95 "
+            f"latency {fmt(p95_lat_s, 1)}s, p95 TTFT {fmt(p95_ttft_s, 1)}s, "
+            f"{errors} error(s).{sat_note}"
+        )
+    return "\n".join(lines)
+
+
+def render_report(row_specs, benchmarked, source_files, report_sources=None,
+                  load_tests=None):
+    report_sources = report_sources or []
+    benchmarked_count = sum(
+        1 for s in row_specs
+        if s.get("view") is not None or s.get("metrics") is not None)
+    parts = []
+    parts.append("# Model Comparison Matrix")
+    parts.append("")
+    parts.append(f"{len(row_specs)} registered model(s) tracked; "
+                 f"{benchmarked_count} benchmarked "
+                 f"(from {len(report_sources)} committed report.txt + "
+                 f"{len(source_files)} live result JSON(s)). Models that are not "
+                 f"(yet) benchmarked still appear, with a `Status / Note` "
+                 f"explaining why (fits/pending, needs a maintenance window, or "
+                 f"too large for this hardware).")
+    parts.append("")
+    parts.append("## Headline metrics")
+    parts.append("")
+    parts.append(render_matrix(build_matrix_rows(row_specs)))
+    parts.append("")
+    parts.append("**Column notes**")
+    parts.append("")
+    parts.append("- **Median TTFT (ms)** -- median time-to-first-token over all "
+                 "streaming runs (latency + generation + context_scaling). Lower is better.")
+    parts.append("- **Median decode (tok/s)** -- median steady-state generation "
+                 "throughput over generation scenarios. Higher is better.")
+    parts.append(f"- **latency-500 (s)** -- median total latency of the "
+                 f"`{REPRESENTATIVE_LATENCY_SCENARIO}` scenario (representative single-call latency).")
+    parts.append(f"- **context-64k TTFT (ms)** -- prefill cost at ~64k prompt "
+                 f"tokens (`{CONTEXT_64K_SCENARIO}`); measures context scaling.")
+    parts.append(f"- **tool 10-3 delta (s)** -- `{TOOLS_HI_SCENARIO}` minus "
+                 f"`{TOOLS_LO_SCENARIO}` median latency; cost of extra tool schemas.")
+    parts.append(f"- **stress stddev (ms)** -- latency stddev over `{STRESS_SCENARIO}`; "
+                 "consistency under repeated calls (lower = steadier).")
+    parts.append("- **Errors** -- count of errored runs across all scenarios "
+                 "(e.g. context exceeding the model's max). `--` = not benchmarked.")
+    parts.append("- **Status / Note** -- for un-benchmarked rows, why there are "
+                 "no metrics (see fit classes below). Sizes are ESTIMATES (~).")
+    parts.append("")
+    parts.append("## Fit classes & hardware constraint")
+    parts.append("")
+    parts.append(HARDWARE_NOTE)
+    parts.append("")
+    for name, desc in FIT_LEGEND:
+        parts.append(f"- **`{name}`** -- {desc}")
+    parts.append("")
+    parts.append("## Methodology")
+    parts.append("")
+    parts.append(METHODOLOGY_NOTE)
+    parts.append("")
+    parts.append("## Per-category throughput")
+    parts.append("")
+    if benchmarked:
+        parts.append("_Benchmarked models only._")
+        parts.append("")
+        parts.append(render_category_breakdown(benchmarked))
+    elif benchmarked_count:
+        parts.append("_Per-category tok/s breakdown needs the transient per-run "
+                     "result JSON (kept only in the sweep's WORKDIR, not "
+                     "committed). The reproducible headline metrics above are "
+                     "parsed from each model's committed `report.txt`; see "
+                     "`MODEL-TEST-MATRIX.md` and the per-model `report.txt` for "
+                     "the full per-scenario detail._")
+    else:
+        parts.append("_No benchmarked models yet -- run the sweep to populate._")
+    parts.append("")
+    parts.append("## Concurrency / throughput under load")
+    parts.append("")
+    load_tests = load_tests or []
+    if load_tests:
+        parts.append(render_concurrency_section(load_tests))
+    else:
+        parts.append("_No concurrency load-test data yet -- run the load-test "
+                     "sweep to populate `results-incluster/<slug>/load-test.json`._")
+    parts.append("")
+    parts.append("## Source files")
+    parts.append("")
+    load_test_sources = [path for _label, path, _data in load_tests]
+    if source_files or report_sources or load_test_sources:
+        for f in source_files:
+            parts.append(f"- `{_repo_rel(f)}` (live result JSON)")
+        for f in report_sources:
+            parts.append(f"- `{_repo_rel(f)}` (committed report.txt)")
+        for f in load_test_sources:
+            parts.append(f"- `{_repo_rel(f)}` (committed load-test.json)")
+    else:
+        parts.append("_None -- matrix rendered from the known-models registry only._")
+    parts.append("")
+    return "\n".join(parts)
+
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+def main(argv=None):
+    parser = argparse.ArgumentParser(
+        description="Generate a cross-model comparison matrix (Markdown) from "
+                    "runner result JSON files.",
+    )
+    parser.add_argument("files", nargs="*", help="Result JSON files to compare.")
+    parser.add_argument("--dir", dest="directory",
+                        help="Directory to glob *.json from (added to any explicit files).")
+    parser.add_argument("--output", dest="output",
+                        help="Write the Markdown matrix to this file (also printed to stdout).")
+    parser.add_argument("--results-dir", dest="results_dir",
+                        help="Results root holding <report_dir>/report.txt (parsed "
+                             "for reproducible metrics when no live JSON is given) "
+                             "and per-slug SKIPPED.txt reasons. Defaults to the "
+                             "results-incluster dir beside this script.")
+    parser.add_argument("--candidates", dest="candidates", default=DEFAULT_CANDIDATES,
+                        help=f"Canonical model registry YAML (single source of "
+                             f"truth, shared with update_test_matrix.py). "
+                             f"Default: {DEFAULT_CANDIDATES}.")
+    args = parser.parse_args(argv)
+
+    # results_dir defaults to the conventional results-incluster dir beside this
+    # script, so `python benchmarks/compare_models.py` (no args) reproduces the
+    # real matrix from the committed report.txt files -- not a blank preview.
+    results_dir = args.results_dir or os.path.join(SCRIPT_DIR, "results-incluster")
+
+    # No input JSON is OK: benchmarked rows come from the committed report.txt
+    # under results_dir; un-benchmarked ones show "--" + a pending/untestable note.
+    paths = load_files(args.files, args.directory)
+
+    # (meta, model_view) tuples, in file order then model order within a file.
+    models = []
+    used_files = []
+    for path in paths:
+        try:
+            doc = json.loads(open(path, encoding="utf-8").read())
+        except (OSError, ValueError) as exc:
+            print(f"warning: skipping {path}: {exc}", file=sys.stderr)
+            continue
+        # Only treat files that look like runner output (have models + results).
+        if not isinstance(doc, dict) or "models" not in doc or "results" not in doc:
+            print(f"warning: skipping {path}: not a runner result JSON", file=sys.stderr)
+            continue
+        added = False
+        for meta, view in iter_models(doc):
+            models.append((meta, view))
+            added = True
+        if added:
+            used_files.append(path)
+
+    # Merge actual results with the known-models registry so every registered
+    # model appears -- benchmarked ones with metrics, the rest with a note (a
+    # live SKIPPED.txt reason under --results-dir overrides the static note).
+    row_specs, benchmarked, report_sources = merge_known_with_actual(
+        models, results_dir, args.candidates)
+
+    # Committed per-model concurrency sweeps (results-incluster/<slug>/load-test.json),
+    # rendered as the "Concurrency / throughput under load" section. Reproducible
+    # from the repo, like the report.txt headline metrics.
+    load_tests = collect_load_tests(results_dir, args.candidates)
+
+    report = render_report(row_specs, benchmarked, used_files, report_sources,
+                           load_tests)
+    print(report)
+
+    if args.output:
+        os.makedirs(os.path.dirname(os.path.abspath(args.output)), exist_ok=True)
+        with open(args.output, "w", encoding="utf-8") as f:
+            f.write(report + "\n")
+        print(f"\n[compare_models] wrote matrix to {args.output}", file=sys.stderr)
+
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

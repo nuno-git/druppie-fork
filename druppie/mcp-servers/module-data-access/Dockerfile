@@ -17,6 +17,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY module-data-access/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+ARG CACHEBUST
 COPY module_router.py .
 COPY module-data-access/ .
 

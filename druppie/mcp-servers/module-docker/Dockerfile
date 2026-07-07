@@ -12,6 +12,7 @@ RUN apt-get update && \
 COPY module-docker/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+ARG CACHEBUST
 # Copy shared router factory and module code
 COPY module_router.py .
 COPY module-docker/ .

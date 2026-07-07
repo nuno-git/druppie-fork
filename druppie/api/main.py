@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import httpx
 import structlog
 
-from druppie.api.routes import agent_test, agents, approvals, cache, chat, deployments, dev_vms, documentation, evaluations, jobs, mcp_bridge, mcps, modules, projects, questions, registry_webhook, sandbox, sessions, tool_output, workspace
+from druppie.api.routes import agent_test, agents, approvals, cache, chat, deployments, dev_vms, documentation, evaluations, jobs, mcp_bridge, mcps, model_management, modules, projects, questions, registry_webhook, sandbox, sessions, tool_output, workspace
 from druppie.api.errors import register_exception_handlers
 from druppie.core.auth import get_auth_service
 from druppie.core.config import get_settings
@@ -20,6 +20,16 @@ from druppie.core.background_tasks import create_tracked_task, shutdown_backgrou
 from druppie.core.leader_election import try_acquire_leader_lock
 
 logger = structlog.get_logger()
+
+# Deployment version metadata, injected by the Helm chart (see
+# helm/druppie/templates/configmap.yaml). CI sets global.imageTag to
+# "<branch>-<timestamp>-<sha8>"; the chart parses branch/commit from it. These
+# drive /api/version and replace the old hardcoded "2.0.0" in /health etc.
+APP_VERSION = os.getenv("APP_VERSION", "2.0.0")
+CHART_VERSION = os.getenv("CHART_VERSION", "")
+GIT_BRANCH = os.getenv("GIT_BRANCH", "")
+GIT_COMMIT = os.getenv("GIT_COMMIT", "")
+IMAGE_TAG = os.getenv("IMAGE_TAG", "")
 
 
 def _recover_zombie_sessions() -> None:
@@ -129,6 +139,45 @@ def _recover_orphaned_batch_runs() -> None:
         db.close()
 
 
+def _load_model_override_cache():
+    """Populate the resolver's DB override cache and translation override on startup."""
+    from druppie.db.database import SessionLocal
+    from druppie.repositories.model_override_repository import ModelOverrideRepository
+    from druppie.llm.resolver import set_db_overrides
+    from druppie.core.translation import get_translation_service
+
+    db = SessionLocal()
+    try:
+        repo = ModelOverrideRepository(db)
+
+        agent_overrides = repo.get_agent_overrides()
+        override_map = {
+            o.target_id: (o.provider, o.model, o.fallback_provider, o.fallback_model)
+            for o in agent_overrides
+            if o.target_type == "agent" and o.enabled
+        }
+        set_db_overrides(override_map)
+
+        translation_override = repo.get_translation_override()
+        if translation_override and translation_override.enabled:
+            get_translation_service().configure(
+                translation_override.provider,
+                translation_override.model,
+                translation_override.fallback_provider,
+                translation_override.fallback_model,
+            )
+
+        logger.info(
+            "model_overrides_loaded",
+            agent_overrides=len(override_map),
+            translation_override=translation_override is not None,
+        )
+    except Exception as e:
+        logger.warning("model_override_cache_load_failed", error=str(e))
+    finally:
+        db.close()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan handler."""
@@ -147,6 +196,11 @@ async def lifespan(app: FastAPI):
     _recover_orphaned_batch_runs()
 
     _recover_stuck_job_runs()
+
+    # Load DB model overrides into the resolver cache so agents use
+    # admin-configured models immediately, not just after the first
+    # Model Management page load.
+    _load_model_override_cache()
 
     # Clean up orphaned sandbox Gitea users from previous runs
     from druppie.opencode.gitea_cleanup import cleanup_orphaned_sandbox_users
@@ -240,7 +294,7 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title="Druppie Platform",
         description="AI-powered governance platform with MCP tool permissions",
-        version="2.0.0",
+        version=APP_VERSION,
         lifespan=lifespan,
     )
 
@@ -276,13 +330,14 @@ def create_app() -> FastAPI:
     app.include_router(modules.router, prefix="/api", tags=["Modules"])
     app.include_router(documentation.router, prefix="/api", tags=["Documentation"])
     app.include_router(jobs.router, prefix="/api/jobs", tags=["Jobs"])
+    app.include_router(model_management.router, prefix="/api", tags=["Model Management"])
     app.include_router(agent_test.router, prefix="/api", tags=["Agent Test"])
     app.include_router(tool_output.router, prefix="/api", tags=["Tool Output"])
 
     @app.get("/health")
     async def health_check():
         """Health check endpoint."""
-        return {"status": "healthy", "version": "2.0.0"}
+        return {"status": "healthy", "version": APP_VERSION}
 
     @app.get("/health/ready")
     async def readiness_check():
@@ -377,7 +432,7 @@ def create_app() -> FastAPI:
 
         return {
             "status": "healthy",
-            "version": "2.0.0",
+            "version": APP_VERSION,
             "environment": os.getenv("ENVIRONMENT", "development"),
             "keycloak": keycloak_healthy,
             "database": database_healthy,
@@ -388,12 +443,29 @@ def create_app() -> FastAPI:
             "llm_profiles": llm_profiles,
         }
 
+    @app.get("/api/version")
+    async def api_version():
+        """Deployment version info for the frontend (admin/platform badges).
+
+        ``version`` is the platform/app version; ``branch``/``commit``/``image_tag``
+        identify the exact deployed build (parsed from the CI image tag by the
+        chart). All are best-effort and may be empty in local dev.
+        """
+        return {
+            "version": APP_VERSION,
+            "branch": GIT_BRANCH or None,
+            "commit": GIT_COMMIT or None,
+            "image_tag": IMAGE_TAG or None,
+            "chart_version": CHART_VERSION or None,
+            "environment": os.getenv("ENVIRONMENT", "development"),
+        }
+
     @app.get("/")
     async def root():
         """Root endpoint."""
         return {
             "name": "Druppie Platform",
-            "version": "2.0.0",
+            "version": APP_VERSION,
             "docs": "/docs",
         }
 

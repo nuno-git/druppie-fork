@@ -20,7 +20,7 @@ class Project(Base):
     repo_name = Column(String(255), nullable=True)  # repo name only (e.g., "todo-app-abc12345")
     repo_owner = Column(String(255), nullable=True)  # Gitea username who owns the repo
     repo_url = Column(String(512))  # Full public URL (e.g., "http://gitea:3000/username/repo") - kept for backward compat
-    owner_id = Column(UUID(as_uuid=True), ForeignKey("users.id"))
+    owner_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE", onupdate="CASCADE"))
     status = Column(String(20), default="active")  # active, archived
     created_at = Column(DateTime(timezone=True), default=utcnow)
     updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)

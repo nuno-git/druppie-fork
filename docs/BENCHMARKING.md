@@ -21,8 +21,8 @@ Standalone CLI tool die performance metrieken meet van LLM modellen via OpenAI-c
 Zie [benchmarks/README.md](../benchmarks/README.md) voor CLI documentatie.
 
 ```bash
-# Snelle test met 1 model
-python -m benchmarks.runner --model gpt-oss:20b --category latency --runs 1
+# Snelle test met 1 model (gebruik een model uit config.yaml)
+python -m benchmarks.runner --model Qwen/Qwen3.6-27B --category latency --runs 1
 
 # Volledige benchmark suite
 python -m benchmarks.runner --runs 3 --output results.json
@@ -30,6 +30,22 @@ python -m benchmarks.runner --runs 3 --output results.json
 # Alleen context scaling
 python -m benchmarks.runner --category context_scaling
 ```
+
+## In-cluster automated sweep
+
+Naast de CLI-runner (die één endpoint meet) is er een **geautomatiseerde sweep**
+die *alle* kandidaat-modellen in het cluster in één run benchmarkt, de
+vergelijkingsmatrices herbouwt en de resultaten als PR naar aigit publiceert:
+`benchmarks/k8s/benchmark-all-models.sh`.
+
+De volledige runbook — prerequisites, `--yes` / `--only` flags, de tunable
+env-knoppen, de **GPU-vrijmaak-impact op prod** (één served model 1→0, parent +
+child Flux suspend, restore-trap), de aigit auto-publish setup, en
+`candidates.yaml` als control surface — staat in
+[benchmarks/README.md → In-cluster automated sweep](../benchmarks/README.md#in-cluster-automated-sweep).
+
+> ⚠️ **Test-cluster impact.** De sweep zet tijdelijk één geserveerd model offline
+> en suspendt Flux. Lees de impact-sectie in de README vóór het draaien.
 
 ## Configuratie
 

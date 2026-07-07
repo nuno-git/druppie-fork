@@ -1,0 +1,145 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: llm-benchmark
+  namespace: llm
+  labels:
+    app: llm-benchmark
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 9000
+  template:
+    metadata:
+      labels:
+        app: llm-benchmark
+    spec:
+      restartPolicy: Never
+      volumes:
+        - name: app
+          emptyDir: {}
+        - name: results
+          emptyDir: {}
+        - name: bench-pkg
+          configMap:
+            name: bench-pkg
+        - name: bench-scenarios
+          configMap:
+            name: bench-scenarios
+        - name: bench-publish
+          configMap:
+            name: bench-publish
+      initContainers:
+        # Assemble a writable Python package dir from the configmaps.
+        # Avoids read-only/nested-mount issues with configMap volumes.
+        - name: assemble
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              set -eu
+              mkdir -p /app/benchmarks/scenarios /app/publish
+              cp /cm-pkg/* /app/benchmarks/
+              cp /cm-scenarios/* /app/benchmarks/scenarios/
+              cp /cm-publish/* /app/publish/
+              echo "Assembled package:"
+              ls -la /app/benchmarks/
+              echo "Scenarios:"
+              ls /app/benchmarks/scenarios/ | wc -l
+              echo "Publish script:"
+              ls -la /app/publish/
+          volumeMounts:
+            - name: app
+              mountPath: /app
+            - name: bench-pkg
+              mountPath: /cm-pkg
+            - name: bench-scenarios
+              mountPath: /cm-scenarios
+            - name: bench-publish
+              mountPath: /cm-publish
+      containers:
+        - name: benchmark
+          image: python:3.12-slim
+          workingDir: /app
+          # aigit credentials for auto-publish. Secret keys are lowercase
+          # (api/repo/user/token); map them explicitly to the AIGIT_* env
+          # names the publish script expects. optional=true so the Job still
+          # runs (publish is skipped) if the secret is absent.
+          env:
+            - name: AIGIT_API
+              valueFrom:
+                secretKeyRef:
+                  name: aigit-publish
+                  key: api
+                  optional: true
+            - name: AIGIT_REPO
+              valueFrom:
+                secretKeyRef:
+                  name: aigit-publish
+                  key: repo
+                  optional: true
+            - name: AIGIT_USER
+              valueFrom:
+                secretKeyRef:
+                  name: aigit-publish
+                  key: user
+                  optional: true
+            - name: AIGIT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: aigit-publish
+                  key: token
+                  optional: true
+            - name: RESULTS_DIR
+              value: /results
+            # In-pod publish gate. Default "" => publish ON (a standalone single
+            # Job run, e.g. run-in-cluster.sh, still auto-publishes). The
+            # multi-model sweep (benchmark-all-models.sh) flips this to "1" on
+            # every Job it launches so the per-model pods DON'T publish -- the
+            # sweep does one clean per-slug publish at the end instead (otherwise
+            # each pod would upload a flat results.json + report.txt to the
+            # results-incluster root, clobbering across models + spamming the PR).
+            - name: SKIP_INPOD_PUBLISH
+              value: ""
+          command:
+            - sh
+            - -c
+            - |
+              set -eu
+              pip install --quiet httpx pyyaml
+              # Run the suite once, writing JSON to the shared /results dir and
+              # capturing the console report to /results/report.txt (tee keeps
+              # it on stdout too).
+              python -m benchmarks.runner --runs 2 --warmup 1 --timeout 600 \
+                --output /results/results.json 2>&1 | tee /results/report.txt
+              # Emit the human-readable console report between markers so the
+              # multi-model orchestrator can scrape it out of the Job logs
+              # (mirrors the RESULTS_JSON markers below).
+              echo '===REPORT_TXT_START==='
+              cat /results/report.txt
+              echo '===REPORT_TXT_END==='
+              # Keep the stdout JSON markers for the manual-capture + matrix path.
+              echo '===RESULTS_JSON_START==='
+              cat /results/results.json
+              echo '===RESULTS_JSON_END==='
+              # Auto-publish results to aigit (graceful no-op without a token),
+              # UNLESS the multi-model sweep set SKIP_INPOD_PUBLISH -- it does a
+              # single clean per-slug publish at the end, so per-model pods must
+              # NOT publish (they would clobber the tree + refresh the PR N times).
+              if [ -n "${SKIP_INPOD_PUBLISH:-}" ]; then
+                echo "in-pod publish skipped (SKIP_INPOD_PUBLISH=${SKIP_INPOD_PUBLISH})"
+              else
+                python /app/publish/publish_to_aigit.py
+              fi
+          volumeMounts:
+            - name: app
+              mountPath: /app
+            - name: results
+              mountPath: /results
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
+            limits:
+              cpu: "2"
+              memory: 2Gi

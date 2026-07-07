@@ -243,7 +243,7 @@ export const extractSurfacedApprovals = (llmCalls) => {
 const _scanRunForPendingQuestion = (run) => {
   for (const llm of run.llm_calls || []) {
     for (const tc of llm.tool_calls || []) {
-      if (tc.question_id && tc.status === 'waiting_answer') {
+      if (tc.question_id && tc.status === 'waiting_answer' && tc.arguments?._type !== 'provider_fallback') {
         return { tc, agentId: run.agent_id }
       }
     }
@@ -281,6 +281,21 @@ export const findPendingQuestion = (timeline) => {
     if (entry.type !== 'agent_run' || !entry.agent_run) continue
     const found = _scanRunForPendingQuestion(entry.agent_run)
     if (found) return found
+  }
+  return null
+}
+
+export const findFallbackQuestion = (timeline) => {
+  if (!timeline) return null
+  for (const entry of timeline) {
+    if (entry.type !== 'agent_run' || !entry.agent_run) continue
+    for (const llm of entry.agent_run.llm_calls || []) {
+      for (const tc of llm.tool_calls || []) {
+        if (tc.arguments?._type === 'provider_fallback' && tc.status === 'waiting_answer') {
+          return tc
+        }
+      }
+    }
   }
   return null
 }
@@ -488,7 +503,9 @@ export const extractOrderedItems = (agentRun, hasFollowingMessage) => {
       if (!hasFollowingMessage && tc.approval && tc.approval.status !== 'pending') {
         items.push({ type: 'approval', tc })
       }
-      if (tc.question_id && tc.status !== 'pending') {
+      // HITL questions — skip pending (translation in progress, args still English)
+      // Also skip provider_fallback questions — they render as a modal, not inline
+      if (tc.question_id && tc.status !== 'pending' && tc.arguments?._type !== 'provider_fallback') {
         items.push({ type: 'question', tc, agentId: agentRun.agent_id })
       }
       // Test results

@@ -52,6 +52,7 @@ Last updated: 2026-06-11
 - Dependency Cache — Automated Periodic Vulnerability Scanning
 - Dependency Cache — Read-Only Cache Mount with Separate Write Service
 - Sandbox — Investigate Rootless Docker (dockerd-rootless) for E2E Testing
+- LLM Benchmark Candidate Backlog (untested / fast-fail-risk / too-large / API-only models)
 
 ---
 
@@ -539,3 +540,56 @@ Deze items zijn out-of-scope voor de eerste Kubernetes migratie (Story 3) en wor
 | gVisor runtime | Runtime isolatie voor sandbox workloads | Laag |
 | Longhorn RWX | Alleen nodig als MCP modules onafhankelijk moeten schalen (wordt herbouwd als built-in tools) | Laag |
 | Harbor registry | Vulnerability scanning en image signing (Gitea registry volstaat voor Phase 1) | Laag |
+
+---
+
+## LLM Benchmark Candidate Backlog
+
+The candidate models awaiting in-cluster benchmarking currently live only in
+`benchmarks/candidates.yaml` (and the generated
+`benchmarks/results-incluster/MODEL-TEST-MATRIX.md`). Surfaced here so they are
+visible from the backlog. `candidates.yaml` remains the source of truth — edit it
+to add/skip a model; the sweep regenerates the matrix.
+
+### Untested models that should fit (`fits-1gpu`)
+
+Benchmarkable now by freeing one GPU, not yet run. May need a per-model `profile:`
+(non-qwen families crash on prod's cloned qwen NVFP4 args):
+
+| Model | Source | Note |
+|-------|--------|------|
+| Qwen3.6-27B (bf16) | `Qwen/Qwen3.6-27B` | bf16 vs NVFP4 comparison baseline. |
+| Qwen3.6-35B-A3B (bf16) | `Qwen/Qwen3.6-35B-A3B` | Full-precision, superseded in prod by the NVFP4 build. |
+| Gemma-4-26B-A4B / Gemma-4-31B | `google/gemma-4-*` | Backlog only (no registered CR); bf16 HF repos. |
+
+### Known fast-fail risks
+
+These are attempted (or left as-is) but expected to fast-fail; the failure reason
+is captured into the matrix rather than blocking the sweep:
+
+- **Gemma SentencePiece** — older Gemma builds need `sentencepiece`; the stock vLLM
+  image does not pip-install at startup, so `profile.extra_pip` is advisory only.
+  (The chosen `google/gemma-4-E4B-it` safetensors ships a fast tokenizer, avoiding
+  this — but other Gemma GGUFs will trip it.)
+- **GGUF on vLLM** — GGUF `repo:quant` selectors are rejected by vLLM's `--model`
+  repo-id validator (e.g. Qwen3.6-27B-MTP-GGUF, GLM GGUFs). Prefer a safetensors
+  source where one exists.
+- **Vision serving** — GLM-4.6V (vision) serving on vLLM is unverified and likely
+  fast-fails.
+
+### Too-large models (need multi-node)
+
+Exceed 192GB total even at NVFP4/GGUF; classed `too-large` and skipped with a
+recorded reason until multi-node / RAM-MoE offload is available:
+
+| Model | Source | Reason |
+|-------|--------|--------|
+| GLM-5.1 | `unsloth/GLM-5.1-GGUF` | 744B MoE, ~372GB @NVFP4. |
+| DeepSeek-V3.1 | `unsloth/DeepSeek-V3.1-GGUF` | 671B MoE, ~335GB @NVFP4. |
+| Qwen3-Coder-480B-A35B (NVFP4) | `nvidia/Qwen3-Coder-480B-A35B-Instruct-NVFP4` | 480B, ~240-270GB @NVFP4. |
+
+### API-only candidates
+
+OpenRouter-hosted, not cluster-downloadable (`category: api`) — testable via API
+only, if at all: MiniMax-M2.7, DeepSeek-V4-Flash, Hy3, Owl-Alpha, Nemotron-3-Super,
+Kimi-K2.6, Step-3.5-Flash.

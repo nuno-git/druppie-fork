@@ -30,6 +30,7 @@ import CachedDependencies from './pages/CachedDependencies'
 import Documentation from './pages/Documentation'
 import Deployments from './pages/Deployments'
 import DevEnvironments from './pages/DevEnvironments'
+import ModelManagement from './pages/ModelManagement'
 
 // Auth context
 const AuthContext = React.createContext(null)
@@ -284,6 +285,14 @@ function App() {
                             element={
                               <ProtectedRoute requiredRole="admin">
                                 <Platform />
+                              </ProtectedRoute>
+                            }
+                          />
+                          <Route
+                            path="/admin/models"
+                            element={
+                              <ProtectedRoute requiredRole="admin">
+                                <ModelManagement />
                               </ProtectedRoute>
                             }
                           />
