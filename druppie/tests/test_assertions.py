@@ -8,50 +8,15 @@ from __future__ import annotations
 import uuid
 
 import pytest
-from sqlalchemy import String, TypeDecorator, create_engine
+from sqlalchemy import create_engine
 from sqlalchemy.orm import Session as DbSession, sessionmaker
 
 from druppie.testing.assertions import AssertionResult, match_assertions
 from druppie.testing.schema import CheckAssertion
 from druppie.db.models import AgentRun, Base, Project, Session, ToolCall, User
 
-# ---------------------------------------------------------------------------
-# SQLite / PostgreSQL-UUID compatibility (same shim as other test files)
-# ---------------------------------------------------------------------------
-
-from sqlalchemy.dialects.postgresql import UUID as PG_UUID  # noqa: E402
-
-
-class _SQLiteUUID(TypeDecorator):
-    """Store Python uuid.UUID as a String(36) in SQLite."""
-
-    impl = String(36)
-    cache_ok = True
-
-    def process_bind_param(self, value, dialect):
-        if value is not None:
-            return str(value)
-        return value
-
-    def process_result_value(self, value, dialect):
-        if value is not None:
-            return uuid.UUID(value) if not isinstance(value, uuid.UUID) else value
-        return value
-
-
-_patched = False
-
-
-def _patch_uuid_columns_for_sqlite(base):
-    global _patched
-    if _patched:
-        return
-    for table in base.metadata.tables.values():
-        for col in table.columns:
-            if isinstance(col.type, PG_UUID):
-                col.type = _SQLiteUUID()
-    _patched = True
-
+# SQLite/PG-UUID compatibility comes from the shared autouse fixture in
+# conftest.py.
 
 # ---------------------------------------------------------------------------
 # Fixtures (pytest)
@@ -62,7 +27,6 @@ def _patch_uuid_columns_for_sqlite(base):
 def db_session():
     """Create an in-memory SQLite DB, create all tables, yield a session."""
     engine = create_engine("sqlite:///:memory:")
-    _patch_uuid_columns_for_sqlite(Base)
     Base.metadata.create_all(bind=engine)
     factory = sessionmaker(bind=engine, autoflush=False)
     session = factory()

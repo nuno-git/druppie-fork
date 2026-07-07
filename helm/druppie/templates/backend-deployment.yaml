@@ -114,6 +114,13 @@ spec:
                 name: {{ include "druppie.fullname" . }}-config
             - secretRef:
                 name: {{ include "druppie.fullname" . }}-secrets
+            {{- if .Values.global.extraEnvFromSecret }}
+            # Branch environments: Vault-sourced overrides (ESO-managed). Listed
+            # last so its keys win; optional so pods start while it syncs.
+            - secretRef:
+                name: {{ .Values.global.extraEnvFromSecret }}
+                optional: true
+            {{- end }}
           env:
             - name: DEV_MODE
               value: {{ .Values.backend.devMode | quote }}
@@ -127,6 +134,37 @@ spec:
               value: {{ .Values.backend.foundry.apiUrl | quote }}
             - name: ONESHOT_SANDBOX_RUNTIME
               value: {{ .Values.sandbox.runtime | quote }}
+            {{- if .Values.backend.branchEnvDeployer.enabled }}
+            {{- with .Values.backend.branchEnvDeployer }}
+            # Branch-environments deployer (GitOps): the backend commits env
+            # manifests to the GitOps repo; Flux deploys. See branch-env-deployer-rbac.yaml.
+            - name: BRANCH_ENV_GITOPS_URL
+              value: {{ .gitops.url | quote }}
+            - name: BRANCH_ENV_GITOPS_REPO
+              value: {{ .gitops.repo | quote }}
+            - name: BRANCH_ENV_GITOPS_BRANCH
+              value: {{ .gitops.branch | quote }}
+            - name: BRANCH_ENV_GITOPS_PATH
+              value: {{ .gitops.path | quote }}
+            - name: BRANCH_ENV_CHART_REPO_URL
+              value: {{ .gitops.chartRepoUrl | quote }}
+            - name: BRANCH_ENV_GITOPS_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .gitops.tokenSecret.name }}
+                  key: {{ .gitops.tokenSecret.key }}
+            {{- if .gitops.caConfigMap }}
+            - name: BRANCH_ENV_GITOPS_CA
+              value: /app/gitops-ca/chain.pem
+            {{- end }}
+            - name: BRANCH_ENV_NODE
+              value: {{ .node | quote }}
+            - name: BRANCH_ENV_REGISTRY
+              value: {{ .registry | quote }}
+            - name: BRANCH_ENV_DOMAIN_SUFFIX
+              value: {{ .domainSuffix | quote }}
+            {{- end }}
+            {{- end }}
           ports:
             - name: http
               containerPort: {{ .Values.backend.port }}
@@ -139,6 +177,11 @@ spec:
             {{- if .Values.backend.dockerSocket.enabled }}
             - name: docker-sock
               mountPath: /var/run/docker.sock
+            {{- end }}
+            {{- if and .Values.backend.branchEnvDeployer.enabled .Values.backend.branchEnvDeployer.gitops.caConfigMap }}
+            - name: gitops-ca
+              mountPath: /app/gitops-ca
+              readOnly: true
             {{- end }}
           livenessProbe:
             httpGet:
@@ -175,4 +218,9 @@ spec:
             path: /var/run/docker.sock
             type: Socket
         {{- end }}
-
+        {{- if and .Values.backend.branchEnvDeployer.enabled .Values.backend.branchEnvDeployer.gitops.caConfigMap }}
+        # Private CA for the GitOps Gitea server (branch-environments deployer).
+        - name: gitops-ca
+          configMap:
+            name: {{ .Values.backend.branchEnvDeployer.gitops.caConfigMap }}
+        {{- end }}

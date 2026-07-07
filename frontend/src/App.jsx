@@ -30,6 +30,7 @@ import CachedDependencies from './pages/CachedDependencies'
 import Documentation from './pages/Documentation'
 import Deployments from './pages/Deployments'
 import DevEnvironments from './pages/DevEnvironments'
+import BranchEnvironments from './pages/BranchEnvironments'
 import ModelManagement from './pages/ModelManagement'
 
 // Auth context
@@ -264,6 +265,14 @@ function App() {
                             element={
                               <ProtectedRoute>
                                 <DevEnvironments />
+                              </ProtectedRoute>
+                            }
+                          />
+                          <Route
+                            path="/branch-environments"
+                            element={
+                              <ProtectedRoute requiredRole="developer">
+                                <BranchEnvironments />
                               </ProtectedRoute>
                             }
                           />

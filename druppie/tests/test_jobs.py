@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
 import pytest
-from sqlalchemy import String, TypeDecorator, create_engine
+from sqlalchemy import create_engine
 from sqlalchemy.orm import Session as DbSession, sessionmaker
 
 from druppie.db.models import Base, JobDefinition, JobRun
@@ -27,53 +27,12 @@ from druppie.domain.job import (
 from druppie.repositories.job_repository import JobRepository
 from druppie.services.job_service import JobService
 
-# ---------------------------------------------------------------------------
-# SQLite / PostgreSQL-UUID compatibility (same shim as test_assertions.py)
-# ---------------------------------------------------------------------------
-
-from sqlalchemy.dialects.postgresql import UUID as PG_UUID  # noqa: E402
-
-
-class _SQLiteUUID(TypeDecorator):
-    """Store Python uuid.UUID as a String(36) in SQLite."""
-
-    impl = String(36)
-    cache_ok = True
-
-    def process_bind_param(self, value, dialect):
-        if value is not None:
-            return str(value)
-        return value
-
-    def process_result_value(self, value, dialect):
-        if value is not None:
-            return uuid.UUID(value) if not isinstance(value, uuid.UUID) else value
-        return value
-
-
-_patched = False
-
-
-def _patch_uuid_columns_for_sqlite(base):
-    global _patched
-    if _patched:
-        return
-    for table in base.metadata.tables.values():
-        for col in table.columns:
-            if isinstance(col.type, PG_UUID):
-                col.type = _SQLiteUUID()
-    _patched = True
-
+# SQLite/PG-UUID compatibility comes from the shared autouse fixture in
+# conftest.py.
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
-
-
-@pytest.fixture(autouse=True)
-def _patch_uuid():
-    _patch_uuid_columns_for_sqlite(Base)
-    yield
 
 
 @pytest.fixture()

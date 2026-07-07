@@ -6,3 +6,7 @@ __pycache__/
 .env
 .git/
 frontend/node_modules/
+# Gitignored helm overlays with local secrets — must never end up in an image
+# (the backend Dockerfile does COPY helm/ /app/helm/).
+helm/druppie/values-*.secrets.yaml
+helm/druppie/values-branch.yaml
