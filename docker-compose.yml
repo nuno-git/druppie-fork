@@ -427,6 +427,7 @@ services:
       DATA_SOURCE_1: ${DATA_SOURCE_1:-}
       DATA_SOURCE_2: ${DATA_SOURCE_2:-}
       DATA_SOURCE_3: ${DATA_SOURCE_3:-}
+      DATA_SOURCE_4: ${DATA_SOURCE_4:-}
     volumes:
       - druppie_new_workspace:/workspaces
     ports:

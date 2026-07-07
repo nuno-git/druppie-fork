@@ -61,16 +61,17 @@ async def list_sources() -> dict:
 
 
 @mcp.tool()
-async def test_connection(source_id: str) -> dict:
+async def test_connection(source_id: str, user_token: str = "") -> dict:
     """Test connection to a data source.
 
     Args:
         source_id: Source ID from list_sources()
+        user_token: User Entra ID token (auto-injected by backend)
 
     Returns:
         Dict with connection status.
     """
-    return await module.test_connection(source_id)
+    return await module.test_connection(source_id, user_token=user_token or None)
 
 
 @mcp.tool()
@@ -78,27 +79,30 @@ async def list_available_data(
     source_id: str,
     path: str = "",
     recursive: bool = False,
+    user_token: str = "",
 ) -> dict:
     """List available data in a source.
 
     For Azure Data Lake: returns containers or files
-    For Azure SQL: returns tables
+    For Azure SQL: returns tables and views
 
     Args:
         source_id: Source ID from list_sources()
         path: Optional path/namespace (container for datalake, schema for SQL)
         recursive: List recursively (datalake only)
+        user_token: User Entra ID token (auto-injected by backend)
 
     Returns:
         Dict with list of data_items (item_id, name, type, metadata).
     """
-    return await module.list_available_data(source_id, path, recursive)
+    return await module.list_available_data(source_id, path, recursive, user_token=user_token or None)
 
 
 @mcp.tool()
 async def get_schema(
     source_id: str,
     data_id: str,
+    user_token: str = "",
 ) -> dict:
     """Get schema/metadata for a specific data item.
 
@@ -107,11 +111,12 @@ async def get_schema(
     Args:
         source_id: Source ID from list_sources()
         data_id: Data item ID (table name or file path) from list_available_data()
+        user_token: User Entra ID token (auto-injected by backend)
 
     Returns:
         Dict with schema information (columns, metadata).
     """
-    return await module.get_schema(source_id, data_id)
+    return await module.get_schema(source_id, data_id, user_token=user_token or None)
 
 
 @mcp.tool()
@@ -121,6 +126,7 @@ async def read_data(
     filter_expr: str | None = None,
     limit: int | None = None,
     offset: int | None = None,
+    user_token: str = "",
 ) -> dict:
     """Read data from a source.
 
@@ -134,11 +140,12 @@ async def read_data(
         filter_expr: Optional filter (SQL WHERE or pandas query)
         limit: Optional maximum rows to return
         offset: Optional offset for pagination
+        user_token: User Entra ID token (auto-injected by backend)
 
     Returns:
         Dict with data records, row_count, columns, and metadata.
     """
-    return await module.read_data(source_id, data_id, filter_expr, limit, offset)
+    return await module.read_data(source_id, data_id, filter_expr, limit, offset, user_token=user_token or None)
 
 
 @mcp.tool()
@@ -146,6 +153,7 @@ async def execute_query(
     source_id: str,
     query: str,
     limit: int | None = None,
+    user_token: str = "",
 ) -> dict:
     """Run a free-form read-only SQL query against a SQL data source.
 
@@ -162,11 +170,12 @@ async def execute_query(
         source_id: Source ID from list_sources()
         query: Read-only SELECT or WITH statement
         limit: Optional maximum rows to return
+        user_token: User Entra ID token (auto-injected by backend)
 
     Returns:
         Dict with data records, row_count, columns, warnings and metadata.
     """
-    return await module.execute_query(source_id, query, limit)
+    return await module.execute_query(source_id, query, limit, user_token=user_token or None)
 
 
 @mcp.tool()
@@ -176,6 +185,7 @@ async def download_data(
     destination: str,
     session_id: str = "",
     project_id: str = "",
+    user_token: str = "",
 ) -> dict:
     """Download data from a source to the workspace.
 
@@ -185,6 +195,7 @@ async def download_data(
         destination: Destination path relative to workspace (e.g., data/myfile.csv)
         session_id: Session ID (auto-injected by backend)
         project_id: Project ID (auto-injected by backend)
+        user_token: User Entra ID token (auto-injected by backend)
 
     Returns:
         Dict with download result (destination, row_count/size).
@@ -201,7 +212,7 @@ async def download_data(
         }
 
     destination_path.parent.mkdir(parents=True, exist_ok=True)
-    return await module.download_data(source_id, data_id, str(destination_path))
+    return await module.download_data(source_id, data_id, str(destination_path), user_token=user_token or None)
 
 
 @mcp.tool()
@@ -283,6 +294,7 @@ async def create_chart_from_source(
     title: str = "",
     x_label: str | None = None,
     y_label: str | None = None,
+    user_token: str = "",
 ) -> dict:
     """Build a chart spec by reading + aggregating data SERVER-SIDE.
 
@@ -344,6 +356,8 @@ async def create_chart_from_source(
                      "category_count": int, "series_count": int (multi only)}.
         On failure: {"success": False, "error": "<reason>"}.
     """
+    effective_token = user_token or None
+
     normalized_filter = filter_expr
     if normalized_filter is not None and normalized_filter.strip().lower() in ("", "null", "none"):
         normalized_filter = None
@@ -390,7 +404,7 @@ async def create_chart_from_source(
                     sample_q += f"{quote_ident(schema)}.{quote_ident(table)}"
                 else:
                     sample_q += quote_ident(data_id)
-                sample_result = await module.execute_query(source_id, sample_q, limit=10)
+                sample_result = await module.execute_query(source_id, sample_q, limit=10, user_token=effective_token)
                 if sample_result.get("success"):
                     sample_vals = [r.get(x_column) or r.get("x") for r in sample_result.get("data", [])]
                     resolved_sort = "label" if is_temporal(sample_vals) else "value"
@@ -399,7 +413,7 @@ async def create_chart_from_source(
             except Exception:
                 resolved_sort = "value"
         else:
-            sample_result = await module.read_data(source_id, data_id, limit=10)
+            sample_result = await module.read_data(source_id, data_id, limit=10, user_token=effective_token)
             if sample_result.get("success"):
                 sample_vals = [r.get(x_column) for r in sample_result.get("data", [])]
                 resolved_sort = "label" if is_temporal(sample_vals) else "value"
@@ -421,7 +435,7 @@ async def create_chart_from_source(
         except ValueError as exc:
             return {"success": False, "error": str(exc)}
 
-        q_result = await module.execute_query(source_id, query, limit=100000)
+        q_result = await module.execute_query(source_id, query, limit=100000, user_token=effective_token)
         if not q_result.get("success"):
             return {
                 "success": False,
@@ -444,7 +458,7 @@ async def create_chart_from_source(
             agg_x_col, agg_y_col = "x", "y"
     else:
         read_result = await module.read_data(
-            source_id, data_id, filter_expr=normalized_filter, limit=read_limit
+            source_id, data_id, filter_expr=normalized_filter, limit=read_limit, user_token=effective_token
         )
         if not read_result.get("success"):
             return {

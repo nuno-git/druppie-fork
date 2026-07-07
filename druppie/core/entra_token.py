@@ -26,9 +26,35 @@ ENTRA_CLIENT_SECRET = os.getenv("ENTRA_CLIENT_SECRET", "")
 
 IDP_ALIAS = "entra-id"
 
+# Security: only these Entra ID accounts are allowed to authenticate.
+# All other accounts will be rejected even if they have valid Entra credentials.
+ALLOWED_ENTRA_EMAILS = {
+    "dataplatformtest@waterschap.org",
+}
+
 
 def is_entra_configured() -> bool:
     return bool(ENTRA_CLIENT_ID and ENTRA_TENANT_ID)
+
+
+def _check_entra_email_allowed(access_token: str) -> str | None:
+    """Check if the Entra token's email is in the allowlist.
+
+    Returns None if allowed, or an error message if blocked.
+    """
+    claims = _decode_jwt_payload(access_token)
+    email = (claims.get("email") or claims.get("preferred_username") or claims.get("upn") or "").lower()
+
+    if not email:
+        logger.warning("entra_email_check_failed", reason="no email claim in token")
+        return "Entra ID token does not contain an email claim."
+
+    if email not in ALLOWED_ENTRA_EMAILS:
+        logger.warning("entra_email_blocked", email=email)
+        return f"Entra ID account '{email}' is not authorized. Contact your administrator."
+
+    logger.info("entra_email_allowed", email=email)
+    return None
 
 
 def _decode_jwt_payload(token: str) -> dict[str, Any]:
@@ -156,6 +182,11 @@ async def get_entra_token(
     if not access_token:
         return {"access_token": None, "error": "Broker returned no access token", "needs_reauth": True}
 
+    # Security: reject tokens from accounts not in the allowlist
+    email_error = _check_entra_email_allowed(access_token)
+    if email_error:
+        return {"access_token": None, "error": email_error, "needs_reauth": False}
+
     # M5: verify the token belongs to the expected user
     if expected_user_id:
         token_oid = _get_token_claim(access_token, "oid")
@@ -167,6 +198,9 @@ async def get_entra_token(
     if scope and refresh_token:
         scoped_token = await _exchange_refresh_for_scope(refresh_token, scope)
         if scoped_token:
+            scoped_error = _check_entra_email_allowed(scoped_token)
+            if scoped_error:
+                return {"access_token": None, "error": scoped_error, "needs_reauth": False}
             return {"access_token": scoped_token, "error": None, "needs_reauth": False}
 
     # Check if the default access token is expired
@@ -176,6 +210,9 @@ async def get_entra_token(
                 refresh_token, scope or "openid profile email User.Read"
             )
             if refreshed:
+                refreshed_error = _check_entra_email_allowed(refreshed)
+                if refreshed_error:
+                    return {"access_token": None, "error": refreshed_error, "needs_reauth": False}
                 return {"access_token": refreshed, "error": None, "needs_reauth": False}
 
         logger.warning("entra_token_expired", has_refresh=bool(refresh_token))

@@ -73,8 +73,6 @@ class DataAccessModule:
                     adapter = AzureSQLAdapter(config)
 
                 elif source_type == "azure-sql-obo":
-                    # Interim client_credentials flow — true on-behalf-of and
-                    # a colon-safe config format are a separate follow-up.
                     obo = config_blob.split(":")
                     if len(obo) < 6:
                         raise ValueError(
@@ -131,10 +129,12 @@ class DataAccessModule:
             raise ValueError(f"Unknown data source: {source_id}")
         return adapter
 
-    async def test_connection(self, source_id: str) -> dict:
+    async def test_connection(self, source_id: str, user_token: str | None = None) -> dict:
         """Test connection to a data source."""
         try:
             adapter = self.get_adapter(source_id)
+            if isinstance(adapter, AzureSQLAdapter):
+                return await adapter.test_connection(user_token=user_token)
             return await adapter.test_connection()
         except ValueError as e:
             return {"success": False, "error": str(e)}
@@ -144,19 +144,25 @@ class DataAccessModule:
         source_id: str,
         path: str = "",
         recursive: bool = False,
+        user_token: str | None = None,
     ) -> dict:
         """List available data in a source."""
         try:
             adapter = self.get_adapter(source_id)
+            if isinstance(adapter, AzureSQLAdapter):
+                return await adapter.list_available_data(path, recursive, user_token=user_token)
             return await adapter.list_available_data(path, recursive)
         except ValueError as e:
             return {"success": False, "error": str(e)}
 
-    async def get_schema(self, source_id: str, data_id: str) -> dict:
+    async def get_schema(self, source_id: str, data_id: str, user_token: str | None = None) -> dict:
         """Get schema for a data item."""
         try:
             adapter = self.get_adapter(source_id)
-            result = await adapter.get_schema(data_id)
+            if isinstance(adapter, AzureSQLAdapter):
+                result = await adapter.get_schema(data_id, user_token=user_token)
+            else:
+                result = await adapter.get_schema(data_id)
             if result.get("success") and "schema" in result:
                 result["schema"] = {
                     "columns": result["schema"].columns,
@@ -173,10 +179,13 @@ class DataAccessModule:
         filter_expr: str | None = None,
         limit: int | None = None,
         offset: int | None = None,
+        user_token: str | None = None,
     ) -> dict:
         """Read data from a source."""
         try:
             adapter = self.get_adapter(source_id)
+            if isinstance(adapter, AzureSQLAdapter):
+                return await adapter.read_data(data_id, filter_expr, limit, offset, user_token=user_token)
             return await adapter.read_data(data_id, filter_expr, limit, offset)
         except ValueError as e:
             return {"success": False, "error": str(e)}
@@ -186,10 +195,13 @@ class DataAccessModule:
         source_id: str,
         query: str,
         limit: int | None = None,
+        user_token: str | None = None,
     ) -> dict:
         """Run a free-form read-only query against a SQL source."""
         try:
             adapter = self.get_adapter(source_id)
+            if isinstance(adapter, AzureSQLAdapter):
+                return await adapter.execute_query(query, limit, user_token=user_token)
             return await adapter.execute_query(query, limit)
         except ValueError as e:
             return {"success": False, "error": str(e)}
@@ -199,10 +211,13 @@ class DataAccessModule:
         source_id: str,
         data_id: str,
         destination_path: str,
+        user_token: str | None = None,
     ) -> dict:
         """Download data from a source."""
         try:
             adapter = self.get_adapter(source_id)
+            if isinstance(adapter, AzureSQLAdapter):
+                return await adapter.download_data(data_id, destination_path, user_token=user_token)
             return await adapter.download_data(data_id, destination_path)
         except ValueError as e:
             return {"success": False, "error": str(e)}
