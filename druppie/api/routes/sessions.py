@@ -398,6 +398,20 @@ async def authorize_entra(
         user_id=str(user_id),
     )
 
+    # Pre-check: verify the Keycloak broker can return an Entra token.
+    # If the user's KC session didn't go through the Entra broker (e.g.
+    # after a session refresh), the stored token won't be available and
+    # the user must re-authenticate via Entra.
+    from druppie.core.entra_token import get_entra_token
+
+    token_result = await get_entra_token(bearer_token)
+    if token_result.get("needs_reauth"):
+        return {
+            "success": False,
+            "needs_reauth": True,
+            "message": token_result.get("error", "Please sign in with Microsoft again."),
+        }
+
     # Transition session to active
     try:
         service.lock_for_resume(session_id)

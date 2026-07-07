@@ -160,10 +160,14 @@ async def get_entra_token(
             return {"access_token": None, "error": f"Broker request failed: {e}", "needs_reauth": False}
 
     if response.status_code == 400:
-        logger.info("entra_no_linked_identity")
+        try:
+            body = response.json()
+        except Exception:
+            body = {"raw": response.text[:200]}
+        logger.warning("entra_broker_400", body=body)
         return {
             "access_token": None,
-            "error": "No linked Entra ID identity. Log in with Microsoft to link your account.",
+            "error": "Your Microsoft session has expired. Please sign in with Microsoft again.",
             "needs_reauth": True,
         }
 

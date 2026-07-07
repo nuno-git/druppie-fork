@@ -73,23 +73,33 @@ class DataAccessModule:
                     adapter = AzureSQLAdapter(config)
 
                 elif source_type == "azure-sql-obo":
-                    obo = config_blob.split(":")
-                    if len(obo) < 6:
+                    # Reads Entra credentials from ENTRA_* env vars (shared
+                    # with the Keycloak broker). Config blob only carries
+                    # scope:server:database.
+                    entra_tenant = os.getenv("ENTRA_TENANT_ID", "")
+                    entra_client = os.getenv("ENTRA_CLIENT_ID", "")
+                    entra_secret = os.getenv("ENTRA_CLIENT_SECRET", "")
+                    if not all([entra_tenant, entra_client, entra_secret]):
                         raise ValueError(
-                            "azure-sql-obo expects "
-                            "tenant:client:secret:scope:server:database"
+                            "azure-sql-obo requires ENTRA_TENANT_ID, "
+                            "ENTRA_CLIENT_ID and ENTRA_CLIENT_SECRET env vars"
+                        )
+                    obo = config_blob.rsplit(":", 2)
+                    if len(obo) < 3:
+                        raise ValueError(
+                            "azure-sql-obo expects scope:server:database"
                         )
                     config = {
                         "source_id": name,
                         "name": name,
                         "use_obo": True,
                         "obo_config": {
-                            "tenant_id": obo[0],
-                            "client_id": obo[1],
-                            "client_secret": obo[2],
-                            "scope": obo[3],
-                            "server": obo[4],
-                            "database": obo[5],
+                            "tenant_id": entra_tenant,
+                            "client_id": entra_client,
+                            "client_secret": entra_secret,
+                            "scope": obo[0],
+                            "server": obo[1],
+                            "database": obo[2],
                         },
                     }
                     adapter = AzureSQLAdapter(config)

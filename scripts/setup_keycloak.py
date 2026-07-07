@@ -274,6 +274,50 @@ class KeycloakAdmin:
             else:
                 print(f"  [WARN] Could not grant read-token to '{role_name}': {comp_resp.text}")
 
+    def grant_service_account_client_role(
+        self, realm: str, client_id: str, target_client_id: str, role_name: str,
+    ):
+        """Grant a client role to a service account.
+
+        Used to give the backend service account permissions like view-users
+        from the realm-management client.
+        """
+        client_uuid = self._get_client_uuid(realm, client_id)
+        if not client_uuid:
+            print(f"  [WARN] Client '{client_id}' not found")
+            return
+
+        sa_url = f"{self.base_url}/admin/realms/{realm}/clients/{client_uuid}/service-account-user"
+        sa_resp = requests.get(sa_url, headers=self._headers())
+        if sa_resp.status_code != 200:
+            print(f"  [WARN] Could not get service account for '{client_id}'")
+            return
+        sa_user_id = sa_resp.json()["id"]
+
+        target_uuid = self._get_client_uuid(realm, target_client_id)
+        if not target_uuid:
+            print(f"  [WARN] Target client '{target_client_id}' not found")
+            return
+
+        role_url = f"{self.base_url}/admin/realms/{realm}/clients/{target_uuid}/roles/{role_name}"
+        role_resp = requests.get(role_url, headers=self._headers())
+        if role_resp.status_code != 200:
+            print(f"  [WARN] Role '{role_name}' not found on '{target_client_id}'")
+            return
+        role_data = role_resp.json()
+
+        mapping_url = (
+            f"{self.base_url}/admin/realms/{realm}"
+            f"/users/{sa_user_id}/role-mappings/clients/{target_uuid}"
+        )
+        resp = requests.post(mapping_url, json=[role_data], headers=self._headers())
+        if resp.status_code in [200, 204]:
+            print(f"  [OK] Granted '{role_name}' to service account of '{client_id}'")
+        elif resp.status_code == 409:
+            print(f"  [OK] Service account of '{client_id}' already has '{role_name}'")
+        else:
+            print(f"  [WARN] Could not grant '{role_name}': {resp.text}")
+
     def create_client(self, realm: str, client_config: dict):
         """Create or update an OAuth2 client."""
         url = f"{self.base_url}/admin/realms/{realm}/clients"
@@ -434,6 +478,12 @@ def main():
         print("\n[STEP 6] Granting broker read-token role...")
         kc.grant_broker_read_token_role(
             REALM_NAME, ["admin", "developer", "architect"]
+        )
+
+        # Backend service account needs view-users to check federated identities
+        print("\n[STEP 7] Granting view-users to backend service account...")
+        kc.grant_service_account_client_role(
+            REALM_NAME, "druppie-backend", "realm-management", "view-users",
         )
     else:
         print("\n[SKIP] ENTRA_CLIENT_ID not set — skipping Entra ID identity provider")

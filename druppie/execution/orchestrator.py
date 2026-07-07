@@ -604,14 +604,19 @@ class Orchestrator:
             pause_reason = result.get("reason", "unknown")
             if pause_reason == "waiting_answer":
                 self.execution_repo.update_status(agent_run_id, AgentRunStatus.PAUSED_HITL)
+                self.session_repo.update_status(session_id, SessionStatus.PAUSED_HITL)
             elif pause_reason == "waiting_entra_auth":
                 self.execution_repo.update_status(agent_run_id, AgentRunStatus.PAUSED_ENTRA_AUTH)
+                self.session_repo.update_status(session_id, SessionStatus.PAUSED_ENTRA_AUTH)
             elif pause_reason == "waiting_sandbox":
                 self.execution_repo.update_status(agent_run_id, AgentRunStatus.PAUSED_SANDBOX)
+                self.session_repo.update_status(session_id, SessionStatus.PAUSED_SANDBOX)
             elif pause_reason == "user_paused":
                 self.execution_repo.update_status(agent_run_id, AgentRunStatus.PAUSED_USER)
+                self.session_repo.update_status(session_id, SessionStatus.PAUSED)
             else:
                 self.execution_repo.update_status(agent_run_id, AgentRunStatus.PAUSED_TOOL)
+                self.session_repo.update_status(session_id, SessionStatus.PAUSED)
             self.execution_repo.commit()
             return "paused"
 
@@ -941,7 +946,14 @@ class Orchestrator:
             return session_id
 
         # Step 2: Get Entra token via KC broker
-        token_result = await get_entra_token(user_kc_token)
+        # For dataaccess tools, exchange the broker refresh token for a
+        # database-scoped token directly.  The default broker token is a
+        # Microsoft Graph opaque token that cannot be used as an OBO
+        # assertion (AADSTS50013).
+        scope = None
+        if waiting_tc.mcp_server == "dataaccess":
+            scope = "https://database.windows.net/.default"
+        token_result = await get_entra_token(user_kc_token, scope=scope)
         entra_token = token_result.get("access_token")
 
         if not entra_token:

@@ -5,6 +5,7 @@ Supports OBO token authentication via Keycloak.
 
 import logging
 import re
+import struct
 from typing import Any
 
 import pyodbc
@@ -12,6 +13,21 @@ import pyodbc
 from .base import BaseDataSourceAdapter, DataSourceInfo, DataItem, SchemaInfo
 
 logger = logging.getLogger("dataaccess-mcp")
+
+SQL_COPT_SS_ACCESS_TOKEN = 1256
+
+
+def _token_connect(conn_str: str, access_token: str) -> pyodbc.Connection:
+    """Connect using an Azure AD access token via attrs_before.
+
+    pyodbc's AccessToken= connection-string keyword is not supported by
+    ODBC Driver 18. The correct mechanism is SQL_COPT_SS_ACCESS_TOKEN
+    passed as a UTF-16-LE length-prefixed struct.
+    """
+    raw = access_token.encode("UTF-16-LE")
+    token_struct = struct.pack(f"<I{len(raw)}s", len(raw), raw)
+    return pyodbc.connect(conn_str, attrs_before={SQL_COPT_SS_ACCESS_TOKEN: token_struct})
+
 
 # When read_data is called without an explicit limit, cap the result so an
 # agent can't pull an entire Synapse table into the LLM context by accident.
@@ -75,15 +91,15 @@ class AzureSQLAdapter(BaseDataSourceAdapter):
     async def _get_connection(self, user_token: str | None = None) -> pyodbc.Connection:
         """Get a database connection.
 
-        When user_token is provided and the source uses OBO, performs a true
-        On-Behalf-Of exchange to get a user-scoped token. These connections
+        When user_token is provided and the source uses OBO, connects as the
+        user.  The token is expected to be pre-scoped to the database resource
+        (exchanged via refresh_token grant by the backend).  These connections
         are NOT cached — each request gets a fresh connection as the user.
 
         Without user_token, falls back to the service principal
         (client_credentials) or connection string.
         """
         if user_token and self.use_obo:
-            access_token = await self._fetch_user_obo_token(user_token)
             driver = self.obo_config.get("driver", "ODBC Driver 18 for SQL Server")
             server = self.obo_config.get("server")
             database = self.obo_config.get("database")
@@ -92,11 +108,10 @@ class AzureSQLAdapter(BaseDataSourceAdapter):
                 f"DRIVER={{{driver}}};"
                 f"SERVER={server};"
                 f"DATABASE={database};"
-                f"AccessToken={access_token};"
                 "TrustServerCertificate=yes;"
             )
-            logger.info("connecting_as_user_obo", server=server, database=database)
-            return pyodbc.connect(conn_str)
+            logger.info("connecting_as_user server=%s database=%s", server, database)
+            return _token_connect(conn_str, user_token)
 
         if self._connection:
             return self._connection
@@ -111,13 +126,11 @@ class AzureSQLAdapter(BaseDataSourceAdapter):
                 f"DRIVER={{{driver}}};"
                 f"SERVER={server};"
                 f"DATABASE={database};"
-                f"AccessToken={access_token};"
                 "TrustServerCertificate=yes;"
             )
+            self._connection = _token_connect(conn_str, access_token)
         else:
-            conn_str = self.connection_string
-
-        self._connection = pyodbc.connect(conn_str)
+            self._connection = pyodbc.connect(self.connection_string)
         return self._connection
 
     async def _ensure_connection(self):
@@ -208,7 +221,7 @@ class AzureSQLAdapter(BaseDataSourceAdapter):
             if response.status_code != 200:
                 error_body = response.json() if response.headers.get("content-type", "").startswith("application/json") else {}
                 error_desc = error_body.get("error_description", response.text[:200])
-                logger.error("obo_token_exchange_failed", status=response.status_code, error=error_desc)
+                logger.error("obo_token_exchange_failed status=%s error=%s", response.status_code, error_desc)
                 raise RuntimeError(f"OBO token exchange failed: {error_desc}")
             return response.json()["access_token"]
 

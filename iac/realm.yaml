@@ -128,6 +128,8 @@ clients:
     webOrigins:
       - http://localhost:${FRONTEND_PORT}
       - http://${EXTERNAL_HOST}:${FRONTEND_PORT}
+    attributes:
+      post.logout.redirect.uris: "http://localhost:${FRONTEND_PORT}/*##http://${EXTERNAL_HOST}:${FRONTEND_PORT}/*"
     defaultClientScopes:
       - web-origins
       - profile
@@ -192,3 +194,4 @@ identityProviders:
       validateSignature: "true"
       useJwksUrl: "true"
       jwksUrl: https://login.microsoftonline.com/${ENTRA_TENANT_ID}/discovery/v2.0/keys
+      prompt: select_account

@@ -9,7 +9,7 @@ import { Link } from 'react-router-dom'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { getSession, sendChat, cancelChat, resumeSession, authorizeEntra, approveApproval, rejectApproval, answerQuestion, getSandboxEvents, getAttachmentUrl } from '../../services/api'
-import { getUserInfo } from '../../services/keycloak'
+import { getUserInfo, getKeycloak } from '../../services/keycloak'
 import { useAuth } from '../../App'
 import { getAgentConfig, getAgentMessageColors, formatToolName } from '../../utils/agentConfig'
 import { FilePreviewModal } from './ApprovalCard'
@@ -851,7 +851,14 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
     if (entraAuthSentRef.current) return
     entraAuthSentRef.current = true
     authorizeEntra(sessionId)
-      .then(() => {
+      .then((result) => {
+        if (result?.needs_reauth) {
+          const kc = getKeycloak()
+          if (kc) {
+            kc.login({ idpHint: 'entra-id', redirectUri: window.location.href })
+          }
+          return
+        }
         queryClient.invalidateQueries({ queryKey: ['session', sessionId] })
       })
       .catch((err) => {

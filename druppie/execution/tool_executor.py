@@ -225,18 +225,40 @@ class ToolExecutor:
                     value=log_value,
                 )
             else:
-                # user.entra_token missing → signal the caller to pause
-                if rule.from_path == "user.entra_token":
+                # Value resolved to None.
+                # If the rule is optional, inject None and let the downstream
+                # tool/adapter decide whether it actually needs this value.
+                # This is critical for user.entra_token: key-based data sources
+                # (e.g., Azure Data Lake) don't need it, while OBO sources
+                # (e.g., waterschap) do — but the injection layer can't tell
+                # which source the tool will query.
+                if rule.optional:
+                    # Don't inject the param — let the MCP tool use its
+                    # default value (e.g. user_token="" which the tool
+                    # converts to None via `or None`).  This avoids
+                    # sending JSON null for a str-typed parameter.
+                    # Also strip any LLM-guessed value for hidden params.
+                    if rule.hidden and rule.param in injected_args:
+                        del injected_args[rule.param]
+                    logger.info(
+                        "skipping_optional_param_value_is_none",
+                        server=server,
+                        tool=tool_name,
+                        param=rule.param,
+                        from_path=rule.from_path,
+                    )
+                elif rule.from_path == "user.entra_token":
+                    # Non-optional entra_token missing → signal the caller to pause
                     user_id = str(context.session.user_id) if context.session else None
                     raise EntraTokenMissing(user_id=user_id)
-
-                logger.warning(
-                    "injection_value_is_none",
-                    server=server,
-                    tool=tool_name,
-                    param=rule.param,
-                    from_path=rule.from_path,
-                )
+                else:
+                    logger.warning(
+                        "injection_value_is_none",
+                        server=server,
+                        tool=tool_name,
+                        param=rule.param,
+                        from_path=rule.from_path,
+                    )
 
         logger.info(
             "injection_complete",
