@@ -1,0 +1,36 @@
+{{- if .Values.backend.branchEnvDeployer.enabled }}
+# CiliumNetworkPolicy: allow the backend to reach the external GitOps Gitea.
+#
+# The branch-env deployer reads/writes the GitOps repo via the Gitea API on
+# aigit.waterschap.org, which resolves to a private IP (10.23.0.101). The
+# app-net NetworkPolicy blocks egress to 10/8, so without this exception every
+# /api/branch-environments call times out. Same pattern as
+# agent-sandbox/cnp-module-coding-gitea.yaml (Cilium unions CNP and NP egress).
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: {{ include "druppie.fullname" . }}-backend-gitops
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "druppie.labels" . | nindent 4 }}
+spec:
+  endpointSelector:
+    matchLabels:
+      {{- include "druppie.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: backend
+  egress:
+    - toFQDNs:
+        - matchPattern: "aigit.waterschap.org"
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+      # Also allow by known IP to avoid dependency on DNS proxy
+    - toCIDR:
+        - 10.23.0.101/32
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+{{- end }}
