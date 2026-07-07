@@ -60,6 +60,9 @@ GITEA_ORG = os.getenv("GITEA_ORG", "druppie")
 GITEA_TOKEN = os.getenv("GITEA_TOKEN", "")
 GITEA_USER = os.getenv("GITEA_USER", "gitea_admin")
 GITEA_PASSWORD = os.getenv("GITEA_PASSWORD", "")
+# External Gitea (aigit.waterschap.org) — shared across environments, uses OAuth2 token
+EXTERNAL_GITEA_TOKEN = os.getenv("EXTERNAL_GITEA_TOKEN", "")
+EXTERNAL_GITEA_URL = os.getenv("EXTERNAL_GITEA_URL", "https://aigit.waterschap.org")
 # Core repo lives on the external Gitea (aigit.waterschap.org), not the internal one.
 # The sandbox container may need to reach it externally for clone/push/PR.
 DRUPPIE_CORE_GITEA_URL = os.getenv("DRUPPIE_CORE_GITEA_URL", "https://aigit.waterschap.org")
@@ -407,6 +410,8 @@ def _get_gitea_clone_url(repo_name: str, repo_owner: str | None = None, base_url
     """Get Gitea clone URL with embedded credentials for initial clone only."""
     owner = repo_owner or GITEA_ORG
     url = (base_url or GITEA_URL).rstrip("/")
+    if "aigit.waterschap.org" in url and EXTERNAL_GITEA_TOKEN:
+        return f"https://oauth2:{EXTERNAL_GITEA_TOKEN}@aigit.waterschap.org/{owner}/{repo_name}.git"
     if GITEA_USER and GITEA_PASSWORD and "://" in url:
         from urllib.parse import quote
         protocol, rest = url.split("://", 1)
@@ -967,8 +972,13 @@ def _inject_gitea_token(repo_owner: str, repo_name: str, base_url: str | None = 
     …``); as a git password it needs ``write:repository`` scope and is frequently
     scoped read-only, which surfaces as ``authentication failed`` on push, so it
     is only a fallback here.
+
+    For the external Gitea (aigit.waterschap.org) the ``EXTERNAL_GITEA_TOKEN``
+    is used instead (OAuth2 token with ``git clone`` scope).
     """
     base = (base_url or GITEA_URL).rstrip("/")
+    if "aigit.waterschap.org" in base and EXTERNAL_GITEA_TOKEN:
+        return f"https://oauth2:{EXTERNAL_GITEA_TOKEN}@aigit.waterschap.org/{repo_owner}/{repo_name}.git"
     scheme, _, rest = base.partition("://")
     if GITEA_USER and GITEA_PASSWORD:
         from urllib.parse import quote

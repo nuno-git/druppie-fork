@@ -159,7 +159,7 @@ class K8sSandboxManager:
         tmpdir = await asyncio.to_thread(tempfile.mkdtemp, prefix="sandbox-clone-")
         try:
             clone_cmd = (
-                "git", "clone", "--depth", "50",
+                "git", "-c", "http.sslVerify=false", "clone", "--depth", "50",
                 "--branch", branch,
                 repo_clone_url, tmpdir,
             )
