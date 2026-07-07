@@ -2310,7 +2310,10 @@ async def create_pr(
         })
 
         curl_headers = ["Content-Type: application/json"]
-        if GITEA_TOKEN:
+        is_external = "aigit.waterschap.org" in resolved_gitea_url
+        if is_external and EXTERNAL_GITEA_TOKEN:
+            curl_headers.append(f"Authorization: token {EXTERNAL_GITEA_TOKEN}")
+        elif GITEA_TOKEN:
             curl_headers.append(f"Authorization: token {GITEA_TOKEN}")
         elif GITEA_USER and GITEA_PASSWORD:
             import base64 as _b64
@@ -2325,7 +2328,7 @@ async def create_pr(
                 "error": "No Gitea credentials configured (GITEA_TOKEN or GITEA_USER+GITEA_PASSWORD)",
             }
 
-        curl_args = ["curl", "-s", "-w", "\\n%{http_code}", "-X", "POST", api_url]
+        curl_args = ["curl", "-s", "-k", "-w", "\\n%{http_code}", "-X", "POST", api_url]
         for h in curl_headers:
             curl_args += ["-H", h]
         curl_args += ["-d", payload]
