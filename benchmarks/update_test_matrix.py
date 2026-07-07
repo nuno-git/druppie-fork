@@ -33,7 +33,7 @@ import yaml
 # Shared, stdlib-only report.txt parser (also used by compare_models.py so the
 # two matrices can never drift). Importable because the script's own directory
 # is on sys.path[0] when run as `python benchmarks/update_test_matrix.py`.
-from report_metrics import extract_metrics
+from report_metrics import extract_metrics, is_all_error
 
 # ---------------------------------------------------------------------------
 # Paths (defaults resolve relative to this file so the script runs from anywhere)
@@ -50,6 +50,7 @@ DASH = "--"
 STATUS_TESTED = "✅ Tested"    # green check
 STATUS_TO_TEST = "⬜ To test"  # white square
 STATUS_SKIPPED = "⛔ Skipped"  # could not / will not run (reason in Notes)
+STATUS_FAILED = "❌ Failed"    # report exists but every scenario errored (no usable metrics)
 
 
 def _empty_metrics():
@@ -98,10 +99,12 @@ def _read_skip_reason(results_dir, slug):
 
 
 def resolve_rows(candidates, results_dir):
-    """Attach status (tested/skipped/to-test) + parsed metrics to each candidate.
+    """Attach status (tested/failed/skipped/to-test) + parsed metrics to each candidate.
 
     Status precedence, per candidate (yaml order preserved):
-      * tested  -- results-incluster/<slug>/report.txt exists (real metrics).
+      * tested  -- report.txt exists WITH real metrics.
+      * failed  -- report.txt exists but every scenario errored (no usable
+                   metric): a benchmarked-but-broken run, not a real result.
       * skipped -- no report, but either a runtime SKIPPED.txt exists OR the
                    candidate declares a static skip_reason in candidates.yaml.
       * to-test -- otherwise (on the backlog, nothing recorded yet).
@@ -112,23 +115,33 @@ def resolve_rows(candidates, results_dir):
         report_path = os.path.join(results_dir, slug, REPORT_FILENAME)
         # A 0-byte report.txt is NOT a benchmark result: don't count it as Tested
         # (that would render an all-"--" "Tested" row and mask a SKIPPED.txt reason).
-        tested = (bool(slug) and os.path.isfile(report_path)
-                  and os.path.getsize(report_path) > 0)
-        if tested:
+        has_report = (bool(slug) and os.path.isfile(report_path)
+                      and os.path.getsize(report_path) > 0)
+        if has_report:
             with open(report_path, encoding="utf-8") as f:
                 metrics = extract_metrics(f.read())
         else:
             metrics = _empty_metrics()
 
-        # A skip reason (runtime file wins; else the static candidates.yaml one).
-        skip_reason = None
-        if not tested:
-            skip_reason = (_read_skip_reason(results_dir, slug)
-                           or (entry.get("skip_reason") or "").strip() or None)
+        # A non-empty report with no usable metric + errors is a FAILED run, not
+        # a Tested one -- render ❌ Failed and blank the metric cells.
+        failed = has_report and is_all_error(metrics)
+        tested = has_report and not failed
+        if failed:
+            metrics = _empty_metrics()
 
-        if tested:
+        # A reason for the Notes column (runtime SKIPPED.txt wins; else the static
+        # candidates.yaml one). Needed for skipped AND failed rows.
+        reason = None
+        if not tested:
+            reason = (_read_skip_reason(results_dir, slug)
+                      or (entry.get("skip_reason") or "").strip() or None)
+
+        if failed:
+            status = "failed"
+        elif tested:
             status = "tested"
-        elif skip_reason:
+        elif reason:
             status = "skipped"
         else:
             status = "to_test"
@@ -142,21 +155,21 @@ def resolve_rows(candidates, results_dir):
             "notes": entry.get("notes", "") or "",
             "status": status,
             "tested": tested,
-            "skip_reason": skip_reason,
+            "skip_reason": reason,
             "metrics": metrics,
         })
     return rows
 
 
-# Sort priority per status: tested first, then skipped, then to-test.
-_STATUS_ORDER = {"tested": 0, "skipped": 1, "to_test": 2}
+# Sort priority per status: tested, then failed, then skipped, then to-test.
+_STATUS_ORDER = {"tested": 0, "failed": 1, "skipped": 2, "to_test": 3}
 
 
 def sort_rows(rows):
-    """Stable sort: tested, then skipped, then to-test, preserving yaml order."""
+    """Stable sort: tested, failed, skipped, to-test, preserving yaml order."""
     indexed = sorted(
         enumerate(rows),
-        key=lambda item: (_STATUS_ORDER.get(item[1]["status"], 3), item[0]),
+        key=lambda item: (_STATUS_ORDER.get(item[1]["status"], 4), item[0]),
     )
     return [row for _, row in indexed]
 
@@ -193,16 +206,23 @@ SEP = "|" + "|".join(["---"] * 12) + "|"
 
 _STATUS_LABEL = {
     "tested": STATUS_TESTED,
+    "failed": STATUS_FAILED,
     "skipped": STATUS_SKIPPED,
     "to_test": STATUS_TO_TEST,
 }
 
 
 def _notes_cell(r):
-    """Notes column: for skipped rows, lead with the skip reason, then the
-    static candidate note (de-duplicated)."""
+    """Notes column: for failed/skipped rows, lead with the reason (a runtime
+    SKIPPED.txt, else the static candidate note), then the static candidate note
+    (de-duplicated)."""
     reason = r.get("skip_reason")
     base = r["notes"] or ""
+    if r["status"] == "failed":
+        why = reason or "All scenarios errored -- no usable metrics (see report.txt / Job logs)."
+        if base and base not in why and why not in base:
+            return f"Failed -- {why} ({base})"
+        return f"Failed -- {why}"
     if r["status"] == "skipped" and reason:
         if base and base not in reason and reason not in base:
             return f"Skipped -- {reason} ({base})"
@@ -232,6 +252,7 @@ def render_matrix(rows):
     local = sort_rows([r for r in rows if r["category"] == "local"])
     api = sort_rows([r for r in rows if r["category"] == "api"])
     tested = sum(1 for r in rows if r["status"] == "tested")
+    failed = sum(1 for r in rows if r["status"] == "failed")
     skipped = sum(1 for r in rows if r["status"] == "skipped")
     total = len(rows)
 
@@ -241,20 +262,23 @@ def render_matrix(rows):
     parts.append(
         "Self-updating backlog of LLM benchmark candidates. Regenerated every "
         "sweep by `benchmarks/update_test_matrix.py` from `benchmarks/candidates.yaml`; "
-        "a model is **Tested** once `results-incluster/<slug>/report.txt` exists, or "
-        "**Skipped** when the sweep records a reason (a runtime "
+        "a model is **Tested** once `results-incluster/<slug>/report.txt` exists with "
+        "real metrics, **Failed** when that report exists but every scenario errored "
+        "(no usable metrics), or **Skipped** when the sweep records a reason (a runtime "
         "`results-incluster/<slug>/SKIPPED.txt`, or a static `skip_reason` in "
         "`candidates.yaml` for models too large / needing 2 GPUs)."
     )
     parts.append("")
     parts.append("**Legend** -- "
                  f"{STATUS_TESTED}: benchmarked, metrics parsed from its `report.txt`. "
+                 f"{STATUS_FAILED}: attempted but every scenario errored -- no usable "
+                 f"metrics (e.g. wrong/absent serving profile); reason in Notes. "
                  f"{STATUS_SKIPPED}: not benchmarked, reason in Notes (too large / needs "
                  f"a maintenance window / serving fast-failed). "
                  f"{STATUS_TO_TEST}: on the backlog, not yet attempted (`--` metrics).")
     parts.append("")
-    parts.append(f"**Progress:** {tested} tested / {skipped} skipped / {total} total "
-                 f"({len(local)} local, {len(api)} API).")
+    parts.append(f"**Progress:** {tested} tested / {failed} failed / {skipped} skipped / "
+                 f"{total} total ({len(local)} local, {len(api)} API).")
     parts.append("")
     parts.append(
         "Columns: TTFT (med) = median time-to-first-token over streaming scenarios; "

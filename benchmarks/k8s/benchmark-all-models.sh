@@ -615,6 +615,37 @@ clear_skip() {
   rm -f "${RESULTS_DIR}/${slug}/SKIPPED.txt" 2>/dev/null || true
 }
 
+# report_is_all_error() -- true (exit 0) when a report exists and is NON-EMPTY
+# but every scenario errored (no usable metric). Reuses the SAME detection as the
+# matrix generators (benchmarks/report_metrics.is_all_error) so "failed" means
+# exactly the same thing everywhere. A serving that came up but returned an error
+# on every request (e.g. wrong serving args/profile) produces such a report.
+#   $1 = report path
+report_is_all_error() {
+  local report="$1"
+  [ -s "${report}" ] || return 1          # empty/absent -> not an all-error report
+  BENCH_DIR="${REPO_ROOT}/benchmarks" REPORT_PATH="${report}" "${PYTHON}" - <<'PY'
+import os, sys
+sys.path.insert(0, os.environ["BENCH_DIR"])
+from report_metrics import extract_metrics, is_all_error
+with open(os.environ["REPORT_PATH"], encoding="utf-8") as f:
+    sys.exit(0 if is_all_error(extract_metrics(f.read())) else 1)
+PY
+}
+
+# record_failure() -- persist a FAILED-run REASON for a model WITHOUT deleting its
+# report. Unlike record_skip (a model we never benchmarked), a failed run HAS an
+# all-error report.txt: the matrix generators key ❌ Failed off THAT report and use
+# this SKIPPED.txt only for the human reason, so we KEEP the report as evidence.
+#   $1 = slug   $2 = reason
+record_failure() {
+  local slug="$1" reason="$2"
+  local dir="${RESULTS_DIR}/${slug}"
+  mkdir -p "${dir}"
+  printf '%s\n' "${reason}" > "${dir}/SKIPPED.txt"
+  echo ">> [failed] ${slug}: ${reason}"
+}
+
 # bench_pod_failure_reason() -- inspect the bench pod and, IF it is unhealthy
 # (CrashLoopBackOff / restartCount>=2 / Error / ImagePull*/ Failed), echo a
 # concise REASON (status + the last meaningful log error line). Echoes NOTHING
@@ -1079,8 +1110,12 @@ while IFS=$'\t' read -r cand_name cand_source cand_slug cand_category cand_fit; 
       "${dest_json}" \
       "${dest_report}" \
       "${job_name}"
-    if [ -s "${dest_report}" ]; then
+    if [ -s "${dest_report}" ] && ! report_is_all_error "${dest_report}"; then
       clear_skip "${slug}"
+    elif report_is_all_error "${dest_report}"; then
+      # Non-empty report but EVERY scenario errored -> FAILED (keep the report as
+      # evidence; do not clear it). Renders ❌ Failed in the matrices.
+      record_failure "${slug}" "All scenarios errored -- no usable metrics (serving came up but every request failed; likely wrong serving args/profile). See report.txt / Job logs for ${job_name}."
     else
       record_skip "${slug}" "Served model produced no report (see cluster Job logs for ${job_name})."
     fi
@@ -1134,8 +1169,12 @@ while IFS=$'\t' read -r cand_name cand_source cand_slug cand_category cand_fit; 
       "${dest_json}" \
       "${dest_report}" \
       "${job_name}"
-    if [ -s "${dest_report}" ]; then
+    if [ -s "${dest_report}" ] && ! report_is_all_error "${dest_report}"; then
       clear_skip "${slug}"
+    elif report_is_all_error "${dest_report}"; then
+      # Non-empty report but EVERY scenario errored -> FAILED (keep the report as
+      # evidence; do not clear it). Renders ❌ Failed in the matrices.
+      record_failure "${slug}" "All scenarios errored -- no usable metrics (serving came up but every request failed; likely wrong serving args/profile). See report.txt / Job logs for ${job_name}."
     else
       record_skip "${slug}" "Serving came up but the benchmark Job produced no report (see cluster Job logs)."
     fi

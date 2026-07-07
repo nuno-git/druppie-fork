@@ -6,7 +6,7 @@
 
 | Model | Params | Quant / size | Median TTFT (ms) | Median decode (tok/s) | latency-500 (s) | context-64k TTFT (ms) | tool 10-3 delta (s) | stress stddev (ms) | Errors | Status / Note |
 |---|---|---|---|---|---|---|---|---|---|---|
-| Gemma-4-26B-A4B | 26B (MoE, ~A4B active) | ~52GB bf16 / ~13GB NVFP4 | -- | -- | -- | -- | -- | -- | -- | Skipped -- Attempted in-cluster 2026-07-07 -- the vLLM InferenceService came up but ALL 20 scenarios errored (context/generate/latency/tool-call/stress); no usable numbers. Root cause: launched with qwen's serving args/profile -- gemma needs its OWN vLLM profile. Evidence kept in report-FAILED-all-errors.txt. |
+| Gemma-4-26B-A4B | 26B (MoE, ~A4B active) | ~52GB bf16 / ~13GB NVFP4 | -- | -- | -- | -- | -- | -- | -- | Failed -- Attempted in-cluster 2026-07-07 -- the vLLM InferenceService came up but ALL 20 scenarios errored (context/generate/latency/tool-call/stress); no usable numbers. Root cause: launched with qwen's serving args/profile -- gemma needs its OWN vLLM profile. |
 | Qwen3.6-35B-A3B (bf16) | 35B (MoE, A3B active, bf16) | ~70GB bf16 (tight on one 96GB card) | -- | -- | -- | -- | -- | -- | -- | Full-precision variant; SUPERSEDED in prod by the served NVFP4 build (nvidia/Qwen3.6-35B-A3B-NVFP4, isvc qwen-35b). Benchmarkable as Case B if you want a bf16-vs-NVFP4 comparison. |
 | Qwen3.6-27B (bf16) | 27B (bf16) | ~54GB bf16 | 158 | 26.0 | 189.4 | 463 | -0.10 | 2,800 | 1 | Benchmarked. |
 | Qwen3.6-27B-NVFP4 | 27B (NVFP4) | ~16GB (NVFP4 4-bit) | 191 | 64.0 | 16.1 | 443 | -0.20 | 6,700 | 0 | Served in prod (isvc qwen-27b); benchmarked IN PLACE from local-disk cache, TP=1, 256K ctx OK. |

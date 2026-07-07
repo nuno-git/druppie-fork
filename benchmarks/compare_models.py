@@ -67,7 +67,7 @@ import yaml
 # only in the sweep's temp WORKDIR and are discarded), so re-running this
 # generator from the repo has no JSON to read -- it falls back to report.txt.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from report_metrics import extract_metrics  # noqa: E402
+from report_metrics import extract_metrics, is_all_error  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Schema field names -- kept as constants so the reliance on the runner schema
@@ -342,6 +342,9 @@ def _report_metrics(results_dir, report_dir):
         "tool_delta": m["tool_delta_s"],
         "stress_std": m["stress_std_ms"],
         "errors": m["errors"],
+        # True when the report parsed but every scenario errored (no usable
+        # metric): a FAILED run, rendered as "Failed -- ..." not "Benchmarked."
+        "all_error": is_all_error(m),
     }
 
 
@@ -389,6 +392,10 @@ def merge_known_with_actual(actual_models, results_dir=None, candidates_path=Non
         # also present. The view then only powers the per-category throughput
         # table, never the headline cells (keeps both matrices in lock-step).
         metrics = _report_metrics(results_dir, km["report_dir"])
+        # A non-empty report with no usable metric + errors is a FAILED run: it is
+        # NOT a benchmarked result, so it renders "Failed -- ..." with "--" cells
+        # (never "Benchmarked.").
+        report_failed = metrics is not None and metrics.get("all_error")
         spec = {
             "label": km["label"],
             "params": km["params"],
@@ -396,21 +403,28 @@ def merge_known_with_actual(actual_models, results_dir=None, candidates_path=Non
             "fit": km["fit"],
             "note": km["note"],
         }
-        if metrics is not None:
+        if metrics is not None and not report_failed:
             spec["metrics"] = metrics
             spec["note"] = km.get("note_done") or "Benchmarked."
             report_sources.append(
                 os.path.join(results_dir, km["report_dir"], REPORT_FILENAME))
         if hit:
             meta, view = hit
-            spec["view"] = view
             spec["params"] = meta.get("parameters") or km["params"]
             spec["quant"] = meta.get("quantization") or km["quant"]
-            if metrics is None:
-                spec["note"] = km.get("note_done") or "Benchmarked."
-            benchmarked.append((meta, view))
             matched.add(slug)
-        elif metrics is None:
+            # A failed run keeps "--" cells: don't attach its (all-error) view.
+            if not report_failed:
+                spec["view"] = view
+                if metrics is None:
+                    spec["note"] = km.get("note_done") or "Benchmarked."
+                benchmarked.append((meta, view))
+        if report_failed:
+            # Prefer a runtime SKIPPED.txt reason; else a generic all-error note.
+            reason = _runtime_skip_reason(results_dir, slug)
+            spec["note"] = (f"Failed -- {reason}" if reason
+                            else "Failed -- all scenarios errored (no usable metrics).")
+        elif not hit and metrics is None:
             # Not benchmarked -- prefer a live skip reason over the static note.
             reason = _runtime_skip_reason(results_dir, slug)
             if reason:

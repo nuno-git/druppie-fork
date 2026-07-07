@@ -180,3 +180,26 @@ def extract_metrics(text):
         "stress_std_ms": stress_std,
         "errors": errors,
     }
+
+
+# Headline metric keys (errors is a count, not a headline metric).
+_HEADLINE_KEYS = (
+    "ttft_ms", "tps", "lat500_s", "ttft64k_ms", "tool_delta_s", "stress_std_ms",
+)
+
+
+def is_all_error(metrics):
+    """True when a report PARSED but produced NO usable metric while recording at
+    least one errored run -- i.e. every scenario errored (serving came up but
+    every request failed, e.g. wrong serving args/profile).
+
+    This is a FAILED benchmark, distinct from a real result (some usable metric)
+    and from a never-attempted model (no report at all). Callers use it to render
+    a ❌ Failed status instead of a bogus all-"--" "Tested" row. Takes the dict
+    returned by ``extract_metrics`` (does NOT change that return type)."""
+    if not metrics:
+        return False
+    errors = metrics.get("errors") or 0
+    if errors <= 0:
+        return False
+    return all(metrics.get(k) is None for k in _HEADLINE_KEYS)
