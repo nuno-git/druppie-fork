@@ -333,7 +333,7 @@ const TimelineQuestion = ({ tc, agentId, sessionId, attachments = [], onAttachme
   const isAnswered = tc.status === 'completed'
 
   const rawChoices = tc.arguments?.choices || tc.arguments?.options || []
-  const choices = rawChoices
+  const choices = (Array.isArray(rawChoices) ? rawChoices : [])
     .map(c => (typeof c === 'string' ? c : c.text || c.label || String(c)))
     .filter(c => !/^other\b/i.test(c.trim()))
 
