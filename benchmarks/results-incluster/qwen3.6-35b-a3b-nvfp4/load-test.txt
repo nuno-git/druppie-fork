@@ -1,0 +1,21 @@
+LLM Concurrency / Load Benchmark - 2026-07-07 12:15 UTC
+Model:    Qwen3.6-35B-A3B-NVFP4 (in-cluster, concurrency) (nvidia/Qwen3.6-35B-A3B-NVFP4)
+Endpoint: http://qwen-35b.llm.svc.cluster.local:8000/v1
+Prompt:   ~258 input tokens, max_tokens=256, streaming
+
+Concurrency sweep (each level keeps N streaming requests in flight):
+-------------------------------------------------------------------------------------------------
+Conc | Reqs | Err |  AggTok/s |  Req/s |  Lat p50 |  Lat p95 |  TTFT p50 |  TTFT p95 | Decode p50
+-------------------------------------------------------------------------------------------------
+   1 |    8 |   0 |     218.7 |   0.85 |     1.2s |     1.2s |       61ms |       63ms |    230.3t/s
+   8 |   24 |   0 |    1058.7 |   4.14 |     1.7s |     2.4s |      239ms |      918ms |    173.3t/s
+  32 |   96 |   0 |    2474.8 |   9.67 |     2.8s |     4.3s |      460ms |     1874ms |    106.4t/s
+  64 |  192 |   0 |    3072.4 |  12.00 |     5.2s |     5.6s |     1830ms |     2040ms |     74.6t/s
+ 128 |  384 |   0 |    4414.1 |  17.24 |     7.6s |     7.6s |     2014ms |     2212ms |     46.5t/s
+-------------------------------------------------------------------------------------------------
+
+Saturation analysis:
+  Peak aggregate throughput: 4414.1 tok/s at concurrency 128
+  Throughput knee (flattens / p95 climbs): concurrency 128
+  Total errors across sweep: 0
+

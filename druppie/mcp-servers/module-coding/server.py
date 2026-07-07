@@ -12,7 +12,6 @@ from starlette.routing import Mount, Route
 _logger = logging.getLogger("coding-mcp")
 
 WATCHDOG_INTERVAL = 60  # seconds between health checks
-CONTAINER_MAX_IDLE = 3600  # 1 hour — remove containers idle longer than this
 
 
 async def cleanup_session(request):
@@ -77,6 +76,7 @@ async def _sandbox_watchdog():
         _is_container_running,
         _get_container_death_reason,
         _destroy_container,
+        SANDBOX_MAX_IDLE,
     )
 
     while True:
@@ -110,11 +110,16 @@ async def _sandbox_watchdog():
                     dead_count += 1
                     continue
 
-                age = now - entry.get("created_at", now)
-                if age > CONTAINER_MAX_IDLE:
+                # Idle reap: a sandbox whose pod is Running but which has seen
+                # no tool activity for > SANDBOX_MAX_IDLE is a wedged/abandoned
+                # session pinning cluster capacity. created_at is the fallback
+                # for entries that don't track last_activity (e.g. docker mode).
+                last = entry.get("last_activity") or entry.get("created_at") or now
+                idle = now - last
+                if idle > SANDBOX_MAX_IDLE:
                     _logger.info(
-                        "Watchdog: removing stale container %s (age=%.0fs, session=%s)",
-                        container_name, age, session_id,
+                        "Watchdog: reaping idle sandbox %s (idle=%.0fs, max=%ss, session=%s)",
+                        container_name, idle, SANDBOX_MAX_IDLE, session_id,
                     )
                     try:
                         await _destroy_container(session_id, git_scope)
@@ -152,7 +157,7 @@ _base_lifespan = app.router.lifespan_context
 
 @asynccontextmanager
 async def _extended_lifespan(app_ref):
-    from v1.tools import _cleanup_orphan_containers, _check_github_app_config
+    from v1.tools import _cleanup_orphan_containers, _check_github_app_config, SANDBOX_MAX_IDLE
     try:
         cleaned = await _cleanup_orphan_containers()
         _logger.info("Startup: cleaned %d orphan sandbox containers", cleaned)
@@ -165,7 +170,7 @@ async def _extended_lifespan(app_ref):
         _logger.warning("GitHub App config check failed: %s", exc)
 
     watchdog_task = asyncio.create_task(_sandbox_watchdog())
-    _logger.info("Sandbox watchdog started (interval=%ds, max_idle=%ds)", WATCHDOG_INTERVAL, CONTAINER_MAX_IDLE)
+    _logger.info("Sandbox watchdog started (interval=%ds, max_idle=%ss)", WATCHDOG_INTERVAL, SANDBOX_MAX_IDLE)
 
     async with _base_lifespan(app_ref):
         try:

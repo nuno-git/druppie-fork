@@ -75,6 +75,10 @@ testing/reports/*.md
 # Generated nginx config (use generate-config.sh)
 nginx/druppie-prod.conf
 
+# Benchmark output files
+benchmarks/*.json
+benchmarks/*.csv
+
 # Debug/temp files
 debug_*.png
 debug_*.js

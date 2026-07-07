@@ -189,7 +189,9 @@ class K8sSandboxManager:
             await asyncio.to_thread(_build_tar)
             # Relative name -> /app/repo.tar inside the sandbox.
             await sandbox.files.write("repo.tar", buf.getvalue())
-            extract = "tar -xf /app/repo.tar -C /workspace && rm -f /app/repo.tar"
+            # /workspace is a PVC mount; a recycled warm-pool sandbox may still
+            # hold the previous session's files, so wipe it before extracting.
+            extract = "find /workspace -mindepth 1 -delete 2>/dev/null; tar -xf /app/repo.tar -C /workspace && rm -f /app/repo.tar"
             await sandbox.commands.run("bash -c " + shlex.quote(extract))
 
             # Verify the repo landed so clone success/failure is observable.

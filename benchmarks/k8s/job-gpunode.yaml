@@ -1,3 +1,32 @@
+# =============================================================================
+# job-gpunode.yaml -- MANUAL, node-colocated benchmark Job.
+#
+# This is NOT wired into any script (neither run-in-cluster.sh nor
+# benchmark-all-models.sh create its configmaps or apply it). Use it by hand ONLY
+# when you want the benchmark CLIENT colocated on the GPU node with the vLLM pods
+# to remove the network hop and isolate raw model latency (the client requests NO
+# GPU -- CPU only). For the normal in-cluster run use run-in-cluster.sh; for the
+# full sweep use benchmark-all-models.sh.
+#
+# Differences from job.yaml:
+#   * pins the client to the GPU node via nodeSelector kubernetes.io/hostname
+#     (HARD-CODED below -- update it if the GPU node is renamed) + a gpu toleration;
+#   * reads its own configmaps `bench-pkg-gpunode` / `bench-scenarios-gpunode`
+#     (distinct names so it never clashes with the run-in-cluster.sh configmaps);
+#   * has NO aigit auto-publish (no bench-publish configmap / AIGIT_* env).
+#
+# Create its configmaps first (from the repo root), then apply:
+#   kubectl create configmap bench-pkg-gpunode -n llm \
+#     --from-file=__init__.py=benchmarks/__init__.py \
+#     --from-file=runner.py=benchmarks/runner.py \
+#     --from-file=llm_client.py=benchmarks/llm_client.py \
+#     --from-file=reporter.py=benchmarks/reporter.py \
+#     --from-file=config.yaml=benchmarks/config.yaml
+#   kubectl create configmap bench-scenarios-gpunode -n llm \
+#     --from-file=benchmarks/scenarios/
+#   kubectl apply -f benchmarks/k8s/job-gpunode.yaml
+#   kubectl logs -f job/llm-benchmark-gpunode -n llm
+# =============================================================================
 apiVersion: batch/v1
 kind: Job
 metadata:

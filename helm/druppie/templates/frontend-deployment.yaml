@@ -7,11 +7,6 @@ metadata:
     app.kubernetes.io/component: frontend
 spec:
   replicas: {{ .Values.frontend.replicaCount }}
-  strategy:
-    type: RollingUpdate
-    rollingUpdate:
-      maxUnavailable: 0
-      maxSurge: 1
   selector:
     matchLabels:
       {{- include "druppie.selectorLabels" . | nindent 6 }}
@@ -60,6 +55,12 @@ spec:
               memory: "64Mi"
               cpu: "100m"
       
+      {{- with .Values.global.tolerateGpu }}
+      tolerations:
+        - key: nvidia.com/gpu
+          operator: Exists
+          effect: NoSchedule
+      {{- end }}
       containers:
         - name: frontend
           image: {{ include "druppie.image" (dict "Values" .Values "image" .Values.frontend.image) }}
@@ -98,9 +99,5 @@ spec:
             periodSeconds: 10
             timeoutSeconds: 5
             failureThreshold: 6
-          lifecycle:
-            preStop:
-              exec:
-                command: ["sh", "-c", "sleep 10"]
           resources:
             {{- toYaml .Values.frontend.resources | nindent 12 }}

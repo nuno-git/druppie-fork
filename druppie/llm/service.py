@@ -45,6 +45,7 @@ class LLMService:
         "openrouter": "OPENROUTER_API_KEY",
         "azure_foundry": "FOUNDRY_API_KEY",
         "ollama": None,
+        "llmkube": None,
         "mock": None,
     }
 
