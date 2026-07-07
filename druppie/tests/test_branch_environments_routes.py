@@ -54,6 +54,17 @@ class FakeGitea:
     def __init__(self):
         self.files: dict[str, str] = {}
         self.commits: list[str] = []
+        # App-repo branches (repo -> set of branch names); create() ensures the
+        # env's branch exists here before committing manifests.
+        self.branches: dict[str, set[str]] = {"ai/druppie": {"colab-dev", "main"}}
+        self.created_branches: list[tuple[str, str, str]] = []
+
+    async def branch_exists(self, repo: str, branch: str) -> bool:
+        return branch in self.branches.get(repo, set())
+
+    async def create_branch(self, repo: str, branch: str, from_branch: str) -> None:
+        self.branches.setdefault(repo, set()).add(branch)
+        self.created_branches.append((repo, branch, from_branch))
 
     @staticmethod
     def _sha(content: str) -> str:
@@ -255,6 +266,20 @@ def test_create_commits_manifests(client, as_owner, fake_gitea):
 
     hr = yaml.safe_load(fake_gitea.files[f"{d}/helmrelease.yaml"])
     assert hr["spec"]["values"]["global"]["imageTag"] == "feature-foo-123-abc"
+
+
+def test_create_missing_app_branch_is_created(client, as_owner, fake_gitea):
+    r = _deploy(client, branch="feature/nieuw")
+    assert r.status_code == 202, r.text
+    assert ("ai/druppie", "feature/nieuw", "colab-dev") in fake_gitea.created_branches
+    assert "created branch 'feature/nieuw' from colab-dev" in r.json()["status_message"]
+
+
+def test_create_existing_app_branch_is_not_recreated(client, as_owner, fake_gitea):
+    fake_gitea.branches["ai/druppie"].add("feature/bestaat")
+    r = _deploy(client, branch="feature/bestaat")
+    assert r.status_code == 202, r.text
+    assert fake_gitea.created_branches == []
 
 
 def test_create_duplicate_branch_conflicts(client, as_owner):

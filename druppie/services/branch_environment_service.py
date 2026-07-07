@@ -33,6 +33,7 @@ import re
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import quote, urlparse
 from uuid import UUID
 
 import httpx
@@ -67,6 +68,11 @@ GITOPS_CA = os.getenv("BRANCH_ENV_GITOPS_CA", "")
 CHART_REPO_URL = os.getenv(
     "BRANCH_ENV_CHART_REPO_URL", "https://aigit.waterschap.org/ai/druppie.git"
 )
+# "https://aigit.waterschap.org/ai/druppie.git" -> "ai/druppie" (same Gitea as
+# the GitOps repo, so the GitOps token/CA apply).
+CHART_REPO = urlparse(CHART_REPO_URL).path.strip("/").removesuffix(".git")
+# Base for app branches the deployer creates when they don't exist yet.
+APP_BASE_BRANCH = os.getenv("BRANCH_ENV_APP_BASE_BRANCH", "colab-dev")
 
 BRANCH_ENV_NODE = os.getenv("BRANCH_ENV_NODE", "ka-k8s-ai-workers-skbh7-d4qwl")
 BRANCH_ENV_REGISTRY = os.getenv("BRANCH_ENV_REGISTRY", "harbor.rijnland.dev/druppie")
@@ -670,7 +676,8 @@ class GiteaGitopsClient:
         token: str = GITOPS_TOKEN,
         ca_path: str = GITOPS_CA,
     ):
-        self._api = f"{base_url.rstrip('/')}/api/v1/repos/{repo}"
+        self._base = base_url.rstrip("/")
+        self._api = f"{self._base}/api/v1/repos/{repo}"
         self._branch = branch
         self._headers = {"Authorization": f"token {token}"} if token else {}
         self._verify: bool | str = ca_path if ca_path else True
@@ -713,6 +720,28 @@ class GiteaGitopsClient:
         body = resp.json()
         content = base64.b64decode(body.get("content") or "").decode("utf-8")
         return content, body["sha"]
+
+    async def branch_exists(self, repo: str, branch: str) -> bool:
+        """True if `branch` exists in `repo` (any repo on the same Gitea)."""
+        async with self._client() as client:
+            resp = await client.get(
+                f"{self._base}/api/v1/repos/{repo}/branches/{quote(branch, safe='')}"
+            )
+        if resp.status_code == 404:
+            return False
+        self._raise_for(resp, f"checking branch '{branch}' in {repo}")
+        return True
+
+    async def create_branch(self, repo: str, branch: str, from_branch: str) -> None:
+        """Create `branch` in `repo` from `from_branch`; existing branch is fine."""
+        async with self._client() as client:
+            resp = await client.post(
+                f"{self._base}/api/v1/repos/{repo}/branches",
+                json={"new_branch_name": branch, "old_ref_name": from_branch},
+            )
+        if resp.status_code == 409:  # created concurrently — it exists, which is all we need
+            return
+        self._raise_for(resp, f"creating branch '{branch}' in {repo}")
 
     async def change_files(self, message: str, files: list[dict]) -> None:
         """Single-commit batch create/update/delete via POST /contents.
@@ -914,6 +943,20 @@ class BranchEnvironmentService:
                 f"namespace '{namespace}' still exists (previous teardown in progress); retry later"
             )
 
+        # The env's GitRepository clones this branch from the app repo. Create
+        # it from the base branch when it doesn't exist yet, so Flux never
+        # stalls on a missing ref.
+        branch_created = False
+        if not await self.gitea.branch_exists(CHART_REPO, branch):
+            await self.gitea.create_branch(CHART_REPO, branch, APP_BASE_BRANCH)
+            branch_created = True
+            logger.info(
+                "branch_env_app_branch_created",
+                branch=branch,
+                repo=CHART_REPO,
+                base=APP_BASE_BRANCH,
+            )
+
         created_at = _utcnow_iso()
         files = [
             {
@@ -952,7 +995,12 @@ class BranchEnvironmentService:
             url=f"https://{host}",
             image_tag=image_tag,
             status=BranchEnvironmentStatus.DEPLOYING.value,
-            status_message="manifests committed; waiting for Flux to deploy",
+            status_message=(
+                f"created branch '{branch}' from {APP_BASE_BRANCH}; "
+                "manifests committed; waiting for Flux to deploy"
+                if branch_created
+                else "manifests committed; waiting for Flux to deploy"
+            ),
             created_at=datetime.fromisoformat(created_at),
             owner_id=owner_id,
             secrets_source=secrets_source,
