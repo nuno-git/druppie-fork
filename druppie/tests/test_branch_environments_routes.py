@@ -10,8 +10,7 @@ import uuid
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import String, TypeDecorator, create_engine
-from sqlalchemy.dialects.postgresql import UUID as PG_UUID
+from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -28,53 +27,8 @@ OWNER_SUB = "22222222-2222-2222-2222-222222222222"
 OTHER_SUB = "33333333-3333-3333-3333-333333333333"
 
 
-# ---------------------------------------------------------------------------
-# SQLite / PostgreSQL-UUID compatibility (same shim as test_jobs.py)
-# ---------------------------------------------------------------------------
-
-
-class _SQLiteUUID(TypeDecorator):
-    """Store Python uuid.UUID as a String(36) in SQLite."""
-
-    impl = String(36)
-    cache_ok = True
-
-    def process_bind_param(self, value, dialect):
-        if value is not None:
-            return str(value)
-        return value
-
-    def process_result_value(self, value, dialect):
-        if value is not None:
-            return uuid.UUID(value) if not isinstance(value, uuid.UUID) else value
-        return value
-
-
-def _patch_uuid_columns_for_sqlite(base):
-    """Replace PG UUID column types with a SQLite-safe decorator.
-
-    Idempotent. Besides swapping ``col.type``, this resets each mapped
-    attribute's memoized ``__clause_element__`` (an annotated clone of the
-    column created at mapper-configure time). Without that reset, WHERE
-    clauses built via ``Model.attr`` keep binding with the pre-swap type
-    (hex-without-dashes) while inserts store dashed strings, making committed
-    rows invisible to ORM lookups when other test modules configured the
-    mappers first.
-    """
-    for table in base.metadata.tables.values():
-        for col in table.columns:
-            if isinstance(col.type, PG_UUID):
-                col.type = _SQLiteUUID()
-            if type(col.type).__name__ == "_SQLiteUUID":
-                col.__dict__.pop("comparator", None)
-    for mapper in base.registry.mappers:
-        for prop in mapper.column_attrs:
-            comparator = getattr(mapper.class_, prop.key).comparator
-            for slot in ("__clause_element__", "expressions"):
-                try:
-                    delattr(comparator, slot)
-                except AttributeError:
-                    pass
+# SQLite/PG-UUID compatibility comes from the shared autouse fixture in
+# conftest.py.
 
 
 def _user(sub: str, admin: bool = False, developer: bool = True) -> dict:
@@ -89,12 +43,6 @@ def _user(sub: str, admin: bool = False, developer: bool = True) -> dict:
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
-
-
-@pytest.fixture(autouse=True)
-def _patch_uuid():
-    _patch_uuid_columns_for_sqlite(Base)
-    yield
 
 
 @pytest.fixture()
@@ -368,3 +316,14 @@ def test_ci_webhook_skips_env_mid_deploy(client, session_factory, monkeypatch):
     )
     assert r.status_code == 200, r.text
     assert r.json()["environment_updated"] is False
+
+
+def test_teardown_while_deploying_conflicts(client, session_factory, as_owner):
+    env_id = _make_env(session_factory, status="deploying")
+    r = client.delete(f"/api/branch-environments/{env_id}")
+    assert r.status_code == 409, r.text
+
+
+def test_list_rejects_page_zero(client, session_factory, as_owner):
+    r = client.get("/api/branch-environments?page=0")
+    assert r.status_code == 422, r.text

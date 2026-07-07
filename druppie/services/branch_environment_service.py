@@ -21,7 +21,6 @@ list (never ``shell=True``) so user-derived branch names cannot be interpreted
 by a shell. The long-running deploy/teardown run as tracked background tasks.
 """
 
-import asyncio
 import json
 import os
 import re
@@ -29,13 +28,13 @@ from pathlib import Path
 from uuid import UUID
 
 import structlog
-from sqlalchemy.exc import IntegrityError
 
 from ..api.errors import AuthorizationError, ConflictError, NotFoundError, ValidationError
 from ..core.background_tasks import create_tracked_task
 from ..domain import BranchEnvironmentDetail
 from ..domain.branch_environment import BranchEnvironmentStatus
 from ..repositories import BranchEnvironmentRepository
+from .deploy_service import _run_cmd
 
 logger = structlog.get_logger()
 
@@ -96,6 +95,30 @@ _PROTECTED_NAMESPACES = frozenset({"druppie", "druppie-colab-dev"})
 _TRANSITIONAL_STATUSES = frozenset(
     {"deploying", "deleting"}
 )
+
+
+def _assert_safe_namespace(namespace: str, slug: str) -> None:
+    """Refuse any helm/kubectl operation on a live or mismatched namespace.
+
+    Shared by every mutating path (create/redeploy/teardown). A wrong helm
+    instance would delete the shared, cluster-scoped
+    druppie-kubernetes-readonly ClusterRole and break prod.
+    """
+    if (
+        namespace in _PROTECTED_NAMESPACES
+        or not namespace.startswith("druppie-")
+        or namespace != f"druppie-{slug}"
+    ):
+        raise ValidationError(
+            f"refusing to operate on protected/mismatched namespace '{namespace}'",
+            field="namespace",
+        )
+
+
+def _require_owner_or_admin(env, user_id: UUID, user_roles: list[str], action: str) -> None:
+    """Authorize a mutating action on an environment: owner or admin only."""
+    if env.owner_id != user_id and "admin" not in user_roles:
+        raise AuthorizationError(f"Only owner or admin can {action} a branch environment")
 
 # Subprocess timeouts (seconds).
 _KUBECTL_TIMEOUT = 60.0
@@ -168,35 +191,24 @@ class BranchEnvironmentService:
         # SAFETY GUARD: never deploy over the live instances (e.g. branch
         # "colab-dev" would target namespace druppie-colab-dev and overwrite
         # its secrets and helm release).
-        if namespace in _PROTECTED_NAMESPACES:
-            raise ValidationError(
-                f"branch '{branch}' targets protected namespace '{namespace}'",
-                field="branch",
-            )
+        _assert_safe_namespace(namespace, slug)
 
         if image_tag is not None:
             image_tag = _validate_image_tag(image_tag)
 
-        if self.repo.get_by_branch(branch) is not None:
+        # The unique constraints on branch/slug/namespace decide conflicts
+        # atomically (including create races across replicas).
+        env = self.repo.create_committed(
+            branch=branch,
+            slug=slug,
+            namespace=namespace,
+            url=url,
+            owner_id=owner_id,
+            image_tag=image_tag,
+            status=BranchEnvironmentStatus.DEPLOYING.value,
+        )
+        if env is None:
             raise ConflictError(f"branch environment already exists for branch '{branch}'")
-
-        try:
-            env = self.repo.create(
-                branch=branch,
-                slug=slug,
-                namespace=namespace,
-                url=url,
-                owner_id=owner_id,
-                image_tag=image_tag,
-                status=BranchEnvironmentStatus.DEPLOYING.value,
-            )
-            self.repo.commit()
-        except IntegrityError:
-            # Unique constraint on branch/slug/namespace lost a create race.
-            self.repo.rollback()
-            raise ConflictError(
-                f"branch environment already exists for branch '{branch}'"
-            ) from None
         env_id = env.id
 
         logger.info(
@@ -228,14 +240,13 @@ class BranchEnvironmentService:
 
         Owner or admin only. Optionally updates the deployed image tag first.
         """
-        env = self.repo.get_by_id(env_id)
+        # Row lock: serializes the status check-then-flip against concurrent
+        # triggers (CI webhook, other replicas) until the commit below.
+        env = self.repo.get_by_id(env_id, for_update=True)
         if env is None:
             raise NotFoundError("branch_environment", str(env_id))
 
-        is_owner = env.owner_id == user_id
-        is_admin = "admin" in user_roles
-        if not is_owner and not is_admin:
-            raise AuthorizationError("Only owner or admin can redeploy a branch environment")
+        _require_owner_or_admin(env, user_id, user_roles, "redeploy")
 
         if env.status in _TRANSITIONAL_STATUSES:
             raise ConflictError(
@@ -259,13 +270,8 @@ class BranchEnvironmentService:
         namespace = env.namespace
         host = f"druppie-{slug}.{DOMAIN_SUFFIX}"
 
-        # SAFETY GUARD: mirror the create/teardown checks in case a stored row
-        # is ever inconsistent.
-        if namespace in _PROTECTED_NAMESPACES or namespace != f"druppie-{slug}":
-            raise ValidationError(
-                f"refusing to deploy to protected/mismatched namespace '{namespace}'",
-                field="namespace",
-            )
+        # SAFETY GUARD: re-check in case a stored row is ever inconsistent.
+        _assert_safe_namespace(namespace, slug)
 
         self.repo.update(
             env_id,
@@ -296,31 +302,23 @@ class BranchEnvironmentService:
         """Uninstall the environment and delete its namespace + DB row.
 
         Owner or admin only. Guards against tearing down live/mismatched
-        namespaces.
+        namespaces, and refuses while a deploy is still in flight (a concurrent
+        uninstall would race the running helm upgrade and orphan the namespace
+        after its DB row is gone).
         """
-        env = self.repo.get_by_id(env_id)
+        env = self.repo.get_by_id(env_id, for_update=True)
         if env is None:
             raise NotFoundError("branch_environment", str(env_id))
 
-        is_owner = env.owner_id == user_id
-        is_admin = "admin" in user_roles
-        if not is_owner and not is_admin:
-            raise AuthorizationError("Only owner or admin can tear down a branch environment")
+        _require_owner_or_admin(env, user_id, user_roles, "tear down")
+
+        if env.status in _TRANSITIONAL_STATUSES:
+            raise ConflictError(
+                f"branch environment is '{env.status}'; wait for it to finish"
+            )
 
         namespace = env.namespace
-        slug = env.slug
-        # SAFETY GUARD: never uninstall the live instances or a mismatched
-        # namespace. A wrong helm instance would delete the shared, cluster-scoped
-        # druppie-kubernetes-readonly ClusterRole and break prod.
-        if (
-            namespace in _PROTECTED_NAMESPACES
-            or not namespace.startswith("druppie-")
-            or namespace != f"druppie-{slug}"
-        ):
-            raise ValidationError(
-                f"refusing to tear down protected/mismatched namespace '{namespace}'",
-                field="namespace",
-            )
+        _assert_safe_namespace(namespace, env.slug)
 
         self.repo.update(
             env_id,
@@ -364,7 +362,8 @@ class BranchEnvironmentService:
         False if no (non-deleting) environment exists for the branch.
         """
         image_tag = _validate_image_tag(image_tag)
-        env = self.repo.get_by_branch(branch)
+        # Row lock: serializes against a concurrent user redeploy/teardown.
+        env = self.repo.get_by_branch(branch, for_update=True)
         if env is None or env.status == BranchEnvironmentStatus.DELETING.value:
             logger.info("branch_env_ci_push_no_env", branch=branch)
             return False
@@ -396,10 +395,18 @@ class BranchEnvironmentService:
         repo = BranchEnvironmentRepository(db)
         try:
             await self._ensure_namespace(namespace)
-            await self._copy_secret(BRANCH_ENV_TLS_SECRET, BRANCH_ENV_TLS_SRC_NS, namespace)
+            await self._copy_secret(
+                BRANCH_ENV_TLS_SECRET,
+                BRANCH_ENV_TLS_SRC_NS,
+                namespace,
+                required_keys=("tls.crt", "tls.key"),
+            )
             if BRANCH_ENV_PULL_SECRET:
                 await self._copy_secret(
-                    BRANCH_ENV_PULL_SECRET, BRANCH_ENV_PULL_SECRET_SRC_NS, namespace
+                    BRANCH_ENV_PULL_SECRET,
+                    BRANCH_ENV_PULL_SECRET_SRC_NS,
+                    namespace,
+                    required_keys=(".dockerconfigjson",),
                 )
             await self._helm_upgrade(namespace, host, image_tag)
 
@@ -436,7 +443,7 @@ class BranchEnvironmentService:
         repo = BranchEnvironmentRepository(db)
         try:
             # helm uninstall (tolerate not-found so teardown is idempotent).
-            rc, out, err = await self._run_cmd(
+            rc, out, err = await _run_cmd(
                 [HELM_PATH, "uninstall", "druppie", "-n", namespace],
                 timeout=_HELM_TIMEOUT,
             )
@@ -444,7 +451,7 @@ class BranchEnvironmentService:
                 raise RuntimeError(f"helm uninstall failed: {err.strip() or out.strip()}")
 
             # Delete the namespace (don't block on finalizers).
-            rc, out, err = await self._run_cmd(
+            rc, out, err = await _run_cmd(
                 [KUBECTL_PATH, "delete", "namespace", namespace, "--wait=false"],
                 timeout=_KUBECTL_TIMEOUT,
             )
@@ -479,27 +486,35 @@ class BranchEnvironmentService:
 
     async def _ensure_namespace(self, namespace: str) -> None:
         """Create the namespace if it does not already exist."""
-        rc, _out, _err = await self._run_cmd(
+        rc, _out, _err = await _run_cmd(
             [KUBECTL_PATH, "get", "namespace", namespace],
             timeout=_KUBECTL_TIMEOUT,
         )
         if rc == 0:
             return
-        rc, out, err = await self._run_cmd(
+        rc, out, err = await _run_cmd(
             [KUBECTL_PATH, "create", "namespace", namespace],
             timeout=_KUBECTL_TIMEOUT,
         )
         if rc != 0:
             raise RuntimeError(f"failed to create namespace {namespace}: {err.strip() or out.strip()}")
 
-    async def _copy_secret(self, name: str, src_ns: str, dst_ns: str) -> None:
+    async def _copy_secret(
+        self,
+        name: str,
+        src_ns: str,
+        dst_ns: str,
+        required_keys: tuple[str, ...] = (),
+    ) -> None:
         """Copy a secret from src_ns into dst_ns (idempotent).
 
         Reads the secret as JSON, strips all metadata except name, re-targets it
         at the destination namespace, and applies it via ``kubectl apply -f -``
-        over stdin (no shell, no temp files).
+        over stdin (no shell, no temp files). ``required_keys`` must be present
+        and non-empty in the source secret's data — copying an empty TLS or
+        pull secret would bring the env up broken while it reports RUNNING.
         """
-        rc, out, err = await self._run_cmd(
+        rc, out, err = await _run_cmd(
             [KUBECTL_PATH, "get", "secret", name, "-n", src_ns, "-o", "json"],
             timeout=_KUBECTL_TIMEOUT,
         )
@@ -509,17 +524,23 @@ class BranchEnvironmentService:
             )
 
         secret = json.loads(out)
+        data = secret.get("data") or {}
+        for key in required_keys:
+            if not data.get(key):
+                raise RuntimeError(
+                    f"secret {name} in {src_ns} has missing/empty data key '{key}'"
+                )
         # Keep only the fields needed to recreate the secret in the new namespace.
         cleaned = {
             "apiVersion": secret.get("apiVersion", "v1"),
             "kind": "Secret",
             "type": secret.get("type", "Opaque"),
             "metadata": {"name": name, "namespace": dst_ns},
-            "data": secret.get("data", {}),
+            "data": data,
         }
         payload = json.dumps(cleaned).encode("utf-8")
 
-        rc, out, err = await self._run_cmd(
+        rc, out, err = await _run_cmd(
             [KUBECTL_PATH, "apply", "-n", dst_ns, "-f", "-"],
             timeout=_KUBECTL_TIMEOUT,
             stdin=payload,
@@ -585,32 +606,9 @@ class BranchEnvironmentService:
                 args += ["--set", f"modules.{module}.image.tag={image_tag}"]
         args += ["--wait", "--timeout", BRANCH_ENV_HELM_TIMEOUT]
 
-        rc, out, err = await self._run_cmd(args, timeout=_HELM_TIMEOUT)
+        rc, out, err = await _run_cmd(args, timeout=_HELM_TIMEOUT)
         if rc != 0:
             raise RuntimeError(f"helm upgrade failed: {err.strip() or out.strip()}")
-
-    async def _run_cmd(
-        self,
-        cmd: list[str],
-        timeout: float,
-        stdin: bytes | None = None,
-    ) -> tuple[int, str, str]:
-        """Run a subprocess via argv (never a shell), return (rc, stdout, stderr)."""
-        logger.debug("branch_env_run_cmd", cmd=" ".join(cmd))
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdin=asyncio.subprocess.PIPE if stdin is not None else None,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        try:
-            stdout, stderr = await asyncio.wait_for(
-                proc.communicate(input=stdin), timeout=timeout
-            )
-        except asyncio.TimeoutError:
-            proc.kill()
-            raise RuntimeError(f"command timed out after {timeout}s: {' '.join(cmd)}")
-        return proc.returncode or 0, stdout.decode(), stderr.decode()
 
     @staticmethod
     def _error_message(exc: Exception) -> str:

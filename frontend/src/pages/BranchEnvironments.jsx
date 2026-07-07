@@ -180,7 +180,7 @@ const BranchEnvCard = ({ env, onRedeploy, onDelete, isRedeploying, isDeleting })
         </button>
         <button
           onClick={handleDelete}
-          disabled={isDeleting}
+          disabled={isTransitional || isDeleting}
           className="py-2 px-3 text-sm text-red-600 bg-red-50 hover:bg-red-100 rounded-lg transition-colors flex items-center justify-center focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 disabled:opacity-50"
           aria-label={`Delete ${env.branch}`}
         >

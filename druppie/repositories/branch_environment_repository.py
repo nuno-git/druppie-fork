@@ -7,6 +7,8 @@ the inherited ``self.db`` session.
 
 from uuid import UUID
 
+from sqlalchemy.exc import IntegrityError
+
 from ..db.models import BranchEnvironment
 from ..domain import BranchEnvironmentDetail, BranchEnvironmentSummary
 from .base import BaseRepository
@@ -15,13 +17,23 @@ from .base import BaseRepository
 class BranchEnvironmentRepository(BaseRepository):
     """Database access for branch environments."""
 
-    def get_by_id(self, env_id: UUID) -> BranchEnvironment | None:
-        """Get raw branch environment model."""
-        return self.db.query(BranchEnvironment).filter_by(id=env_id).first()
+    def get_by_id(self, env_id: UUID, for_update: bool = False) -> BranchEnvironment | None:
+        """Get raw branch environment model.
 
-    def get_by_branch(self, branch: str) -> BranchEnvironment | None:
-        """Get raw branch environment model by git branch."""
-        return self.db.query(BranchEnvironment).filter_by(branch=branch).first()
+        ``for_update`` takes a row lock (SELECT ... FOR UPDATE, held until
+        commit) so concurrent status transitions serialize across replicas.
+        """
+        query = self.db.query(BranchEnvironment).filter_by(id=env_id)
+        if for_update:
+            query = query.with_for_update()
+        return query.first()
+
+    def get_by_branch(self, branch: str, for_update: bool = False) -> BranchEnvironment | None:
+        """Get raw branch environment model by git branch (see get_by_id)."""
+        query = self.db.query(BranchEnvironment).filter_by(branch=branch)
+        if for_update:
+            query = query.with_for_update()
+        return query.first()
 
     def create(
         self,
@@ -46,6 +58,20 @@ class BranchEnvironmentRepository(BaseRepository):
         self.db.add(env)
         self.db.flush()
         return env
+
+    def create_committed(self, **kwargs: object) -> BranchEnvironment | None:
+        """Create and commit; returns None when a unique constraint loses a race.
+
+        Keeps the SQLAlchemy IntegrityError inside the repository layer so the
+        service can translate ``None`` into its own conflict error.
+        """
+        try:
+            env = self.create(**kwargs)  # type: ignore[arg-type]
+            self.commit()
+            return env
+        except IntegrityError:
+            self.rollback()
+            return None
 
     def update(self, env_id: UUID, **fields: object) -> None:
         """Update branch environment fields by id."""

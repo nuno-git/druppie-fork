@@ -15,7 +15,7 @@ Architecture:
 from uuid import UUID
 
 import structlog
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
 from druppie.api.deps import (
@@ -52,8 +52,8 @@ class CIWebhookResponse(BaseModel):
 
 @router.get("/branch-environments", response_model=BranchEnvironmentListResponse)
 async def list_branch_environments(
-    page: int = 1,
-    limit: int = 100,
+    page: int = Query(1, ge=1),
+    limit: int = Query(100, ge=1, le=500),
     service: BranchEnvironmentService = Depends(get_branch_environment_service),
     user: dict = Depends(get_current_user),
     _: bool = Depends(require_any_role(["developer", "admin"])),

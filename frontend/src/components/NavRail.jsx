@@ -230,7 +230,9 @@ const NavRail = () => {
       <NavRailItem to="/tools/cache" icon={Package} label="Dep Cache" active={isActive('/tools/cache')} />
       <NavRailItem to="/deployments" icon={Rocket} label="Deployments" active={isActive('/deployments')} />
       <NavRailItem to="/dev-environments" icon={MonitorDot} label="Dev Environments" active={isActive('/dev-environments')} />
-      <NavRailItem to="/branch-environments" icon={GitPullRequestArrow} label="Branch Environments" active={isActive('/branch-environments')} />
+      {(user?.roles?.includes('developer') || user?.roles?.includes('admin')) && (
+        <NavRailItem to="/branch-environments" icon={GitPullRequestArrow} label="Branch Environments" active={isActive('/branch-environments')} />
+      )}
 
       {/* Doc Portal */}
       <div className='mt-1 pt-1 border-t border-gray-800 w-8'></div>
