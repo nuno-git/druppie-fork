@@ -106,7 +106,7 @@ class AzureSQLAdapter(BaseDataSourceAdapter):
         Without user_token, falls back to the service principal
         (client_credentials) or connection string.
         """
-        if user_token and self.use_obo:
+        if self.use_obo and user_token:
             driver = self.obo_config.get("driver", "ODBC Driver 18 for SQL Server")
             server = self.obo_config.get("server")
             database = self.obo_config.get("database")
@@ -119,6 +119,12 @@ class AzureSQLAdapter(BaseDataSourceAdapter):
             )
             logger.info("connecting_as_user server=%s database=%s", server, database)
             return _token_connect(conn_str, user_token)
+
+        if self.use_obo and not user_token:
+            raise PermissionError(
+                "This data source requires Microsoft authentication. "
+                "Please sign in with your Microsoft account to access it."
+            )
 
         if self._connection:
             return self._connection
