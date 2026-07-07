@@ -271,7 +271,7 @@ function App() {
                           <Route
                             path="/branch-environments"
                             element={
-                              <ProtectedRoute>
+                              <ProtectedRoute requiredRole="developer">
                                 <BranchEnvironments />
                               </ProtectedRoute>
                             }
