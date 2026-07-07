@@ -350,6 +350,10 @@ export const branchEnvironmentsApi = {
     request(`/api/branch-environments/${encodeURIComponent(id)}/redeploy`, { method: 'POST' }),
   teardown: (id) =>
     request(`/api/branch-environments/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  enableWorkspace: (id) =>
+    request(`/api/branch-environments/${encodeURIComponent(id)}/workspace`, { method: 'POST' }),
+  disableWorkspace: (id) =>
+    request(`/api/branch-environments/${encodeURIComponent(id)}/workspace`, { method: 'DELETE' }),
 }
 
 // ============ Agents (Transparency) ============

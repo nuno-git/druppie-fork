@@ -17,6 +17,8 @@ import {
   AlertCircle,
   Loader2,
   X,
+  Code2,
+  PowerOff,
 } from 'lucide-react'
 
 import { branchEnvironmentsApi } from '../services/api'
@@ -80,7 +82,103 @@ const formatDate = (value) => {
   return Number.isNaN(d.getTime()) ? '—' : d.toLocaleDateString()
 }
 
-const BranchEnvCard = ({ env, onRedeploy, onDelete, isRedeploying, isDeleting }) => {
+const WorkspaceSection = ({
+  env,
+  onEnableWorkspace,
+  onDisableWorkspace,
+  isEnablingWorkspace,
+  isDisablingWorkspace,
+}) => {
+  const status = env.workspace_status
+  const canOpenWorkspace = status === 'running' && env.workspace_url
+
+  const handleDisable = () => {
+    if (
+      window.confirm(
+        `Turn off the workspace for "${env.branch}"?\n\nThe in-browser VS Code will be removed. The environment itself stays running.`
+      )
+    ) {
+      onDisableWorkspace(env.id)
+    }
+  }
+
+  return (
+    <div className="mt-3 pt-3 border-t border-gray-100">
+      {env.workspace_enabled ? (
+        <div className="flex items-center gap-2">
+          {status === 'deploying' ? (
+            <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-700">
+              <Loader2 className="w-3 h-3 mr-1.5 animate-spin" />
+              deploying
+            </span>
+          ) : (
+            <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-700">
+              <span className="w-2 h-2 rounded-full mr-1.5 bg-green-500" />
+              running
+            </span>
+          )}
+          {canOpenWorkspace && (
+            <a
+              href={env.workspace_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 py-1 px-2.5 text-xs text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2"
+            >
+              <ExternalLink className="w-3.5 h-3.5" />
+              Open workspace
+            </a>
+          )}
+          <button
+            onClick={handleDisable}
+            disabled={isDisablingWorkspace}
+            title="Turn off workspace"
+            aria-label={`Turn off workspace for ${env.branch}`}
+            className="ml-auto py-1 px-2 text-xs text-gray-500 bg-gray-50 hover:bg-gray-100 hover:text-gray-700 rounded-lg transition-colors flex items-center justify-center focus:outline-none focus:ring-2 focus:ring-gray-400 focus:ring-offset-2 disabled:opacity-50"
+          >
+            {isDisablingWorkspace ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <PowerOff className="w-3.5 h-3.5" />
+            )}
+          </button>
+        </div>
+      ) : (
+        <button
+          onClick={() => onEnableWorkspace(env.id)}
+          disabled={env.status !== 'running' || isEnablingWorkspace}
+          title={
+            env.status !== 'running'
+              ? 'The environment must be running before you can turn on a workspace'
+              : 'Turn on an in-browser VS Code workspace'
+          }
+          className="inline-flex items-center gap-1.5 py-1 px-2.5 text-xs text-gray-600 bg-gray-50 hover:bg-gray-100 hover:text-gray-800 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-gray-400 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {isEnablingWorkspace ? (
+            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+          ) : (
+            <Code2 className="w-3.5 h-3.5" />
+          )}
+          Workspace aanzetten
+        </button>
+      )}
+      <p className="mt-1.5 text-xs text-gray-400">
+        VS Code in the browser with hot reload on this branch.
+      </p>
+    </div>
+  )
+}
+
+const BranchEnvCard = ({
+  env,
+  onRedeploy,
+  onDelete,
+  onEnableWorkspace,
+  onDisableWorkspace,
+  isRedeploying,
+  isDeleting,
+  isEnablingWorkspace,
+  isDisablingWorkspace,
+}) => {
   const isTransitional = TRANSITIONAL.has(env.status)
   const canOpen = env.status === 'running' && env.url
 
@@ -187,6 +285,15 @@ const BranchEnvCard = ({ env, onRedeploy, onDelete, isRedeploying, isDeleting })
           {isDeleting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
         </button>
       </div>
+
+      {/* Workspace */}
+      <WorkspaceSection
+        env={env}
+        onEnableWorkspace={onEnableWorkspace}
+        onDisableWorkspace={onDisableWorkspace}
+        isEnablingWorkspace={isEnablingWorkspace}
+        isDisablingWorkspace={isDisablingWorkspace}
+      />
     </div>
   )
 }
@@ -321,7 +428,10 @@ const BranchEnvironments = () => {
     queryFn: () => branchEnvironmentsApi.list(),
     refetchInterval: (query) => {
       const items = query.state.data?.items || []
-      return items.some((e) => TRANSITIONAL.has(e.status)) ? POLL_MS : false
+      const busy = items.some(
+        (e) => TRANSITIONAL.has(e.status) || e.workspace_status === 'deploying'
+      )
+      return busy ? POLL_MS : false
     },
   })
 
@@ -365,6 +475,24 @@ const BranchEnvironments = () => {
       invalidate()
     },
     onError: (err) => toast.error('Teardown failed', err.message),
+  })
+
+  const enableWorkspaceMut = useMutation({
+    mutationFn: (id) => branchEnvironmentsApi.enableWorkspace(id),
+    onSuccess: () => {
+      toast.success('Workspace starting', 'The in-browser VS Code is being deployed.')
+      invalidate()
+    },
+    onError: (err) => toast.error('Could not turn on workspace', err.message),
+  })
+
+  const disableWorkspaceMut = useMutation({
+    mutationFn: (id) => branchEnvironmentsApi.disableWorkspace(id),
+    onSuccess: () => {
+      toast.success('Workspace stopping', 'The workspace is being removed.')
+      invalidate()
+    },
+    onError: (err) => toast.error('Could not turn off workspace', err.message),
   })
 
   return (
@@ -444,8 +572,12 @@ const BranchEnvironments = () => {
               env={env}
               onRedeploy={(id) => redeployMut.mutate(id)}
               onDelete={(id) => deleteMut.mutate(id)}
+              onEnableWorkspace={(id) => enableWorkspaceMut.mutate(id)}
+              onDisableWorkspace={(id) => disableWorkspaceMut.mutate(id)}
               isRedeploying={redeployMut.isPending && redeployMut.variables === env.id}
               isDeleting={deleteMut.isPending && deleteMut.variables === env.id}
+              isEnablingWorkspace={enableWorkspaceMut.isPending && enableWorkspaceMut.variables === env.id}
+              isDisablingWorkspace={disableWorkspaceMut.isPending && disableWorkspaceMut.variables === env.id}
             />
           ))}
         </div>
