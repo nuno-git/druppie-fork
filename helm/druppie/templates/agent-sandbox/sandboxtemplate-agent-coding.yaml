@@ -16,6 +16,7 @@ spec:
   podTemplate:
     spec:
       runtimeClassName: gvisor
+      dnsPolicy: Default
       priorityClassName: druppie-agent
       containers:
       - name: runner

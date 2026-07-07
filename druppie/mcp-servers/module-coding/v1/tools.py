@@ -246,7 +246,13 @@ async def _exec_bash_in_container(
             full_cmd = command
             if output_file:
                 full_cmd = f"set -o pipefail; ({command}) 2>&1 | tee {shlex.quote(output_file)}"
-            return await _get_k8s_manager().exec(entry["_k8s_handle"], ["bash", "-c", full_cmd], timeout=int(timeout))
+            try:
+                return await asyncio.wait_for(
+                    _get_k8s_manager().exec(entry["_k8s_handle"], ["bash", "-c", full_cmd], timeout=int(timeout)),
+                    timeout=timeout + 10,
+                )
+            except asyncio.TimeoutError:
+                return (-1, "", f"Command timed out after {timeout}s")
 
     if output_file:
         wrapped = f"set -o pipefail; ({command}) 2>&1 | tee {shlex.quote(output_file)}"
@@ -273,7 +279,13 @@ async def _write_to_container(
     if SANDBOX_MODE == "k8s":
         entry = _find_entry_by_container_id(container_id)
         if entry and entry.get("_k8s_handle"):
-            await _get_k8s_manager().write_file(entry["_k8s_handle"], container_path, content)
+            try:
+                await asyncio.wait_for(
+                    _get_k8s_manager().write_file(entry["_k8s_handle"], container_path, content),
+                    timeout=30,
+                )
+            except asyncio.TimeoutError:
+                return (1, "Write file timed out")
             return 0, ""
     proc = await asyncio.create_subprocess_exec(
         "docker", "exec", "-i", container_id,
@@ -307,9 +319,15 @@ async def _copy_from_container(
     if SANDBOX_MODE == "k8s":
         entry = _find_entry_by_container_id(container_id)
         if entry and entry.get("_k8s_handle"):
-            data = await _get_k8s_manager().read_file_bytes(
-                entry["_k8s_handle"], src_path
-            )
+            try:
+                data = await asyncio.wait_for(
+                    _get_k8s_manager().read_file_bytes(
+                        entry["_k8s_handle"], src_path
+                    ),
+                    timeout=30,
+                )
+            except asyncio.TimeoutError:
+                raise RuntimeError(f"Read file from sandbox timed out: {src_path}")
             with open(dst_path, "wb") as f:
                 f.write(data)
             return
@@ -677,7 +695,13 @@ async def _sync_networks(container_name: str, requested_networks: list[str]) -> 
     Connects networks the agent needs but container doesn't have.
     Disconnects networks the container has but agent doesn't need.
     The base SANDBOX_NETWORK is always kept (never disconnected).
+
+    In k8s mode this is a no-op: network policy is enforced at the pod level
+    via the SandboxTemplate's networkPolicy + CiliumNetworkPolicy, not by
+    Docker network attachments.
     """
+    if SANDBOX_MODE == "k8s":
+        return
     NETWORK_MAP = {
         "internet": SANDBOX_INET_NETWORK,
         "modules": SANDBOX_MODULES_NETWORK,
