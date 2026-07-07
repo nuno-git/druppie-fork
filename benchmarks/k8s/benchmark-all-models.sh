@@ -409,9 +409,23 @@ for it in doc.get("items", []) or []:
         if isinstance(ref, dict):
             ref = ref.get("name", "")
         reps = spec.get("replicas", 1)
-        print("%s\t%s\t%s" % (name, ref or "", reps))
+        # The model the isvc ACTUALLY serves is its vLLM --served-model-name (the
+        # OpenAI model id clients query with), else args[0] (the vLLM --model).
+        # This is the SOURCE of truth for served detection: the prod qwen CRs carry
+        # the bf16 HF repo as spec.source but SERVE the NVFP4 build via args, so
+        # matching a candidate against the CR spec.source misses them.
+        args = spec.get("args") or []
+        served_id = ""
+        for i, a in enumerate(args):
+            if a == "--served-model-name" and i + 1 < len(args):
+                served_id = str(args[i + 1]); break
+        if not served_id:
+            for a in args:
+                if not str(a).startswith("-"):
+                    served_id = str(a); break
+        print("%s\t%s\t%s\t%s" % (name, ref or "", reps, served_id))
 ' || true)"
-echo "   served services (name<TAB>modelRef<TAB>replicas):"
+echo "   served services (name<TAB>modelRef<TAB>replicas<TAB>servedModelId):"
 printf '%s\n' "${SERVED_ISVCS}" | sed '/^$/d; s/^/     /' 2>/dev/null || true
 
 # served_isvc_for_model() -- echo the served isvc name whose modelRef == $1
@@ -419,9 +433,28 @@ printf '%s\n' "${SERVED_ISVCS}" | sed '/^$/d; s/^/     /' 2>/dev/null || true
 served_isvc_for_model() {
   local want="$1"
   [ -n "${want}" ] || return 0
-  printf '%s\n' "${SERVED_ISVCS}" | while IFS=$'\t' read -r s_name s_ref s_reps; do
+  printf '%s\n' "${SERVED_ISVCS}" | while IFS=$'\t' read -r s_name s_ref s_reps s_served; do
     [ -n "${s_name}" ] || continue
     if [ "${s_ref}" = "${want}" ]; then echo "${s_name}"; return 0; fi
+  done
+}
+
+# served_isvc_for_source() -- echo the served isvc name whose ACTUAL served model
+# id (its --served-model-name / args[0]) matches candidate source $1 (empty if
+# none). This is the authoritative Case-A check: prod serves the NVFP4 build via
+# args while the modelRef CR's spec.source is the bf16 base repo, so the served
+# NVFP4 candidates only resolve by what is actually served, not by CR spec.source.
+#   $1 = candidate source (e.g. nvidia/Qwen3.6-27B-NVFP4)
+served_isvc_for_source() {
+  local want="$1"
+  [ -n "${want}" ] || return 0
+  local want_seg; want_seg="$(sanitize "${want}")"
+  printf '%s\n' "${SERVED_ISVCS}" | while IFS=$'\t' read -r s_name s_ref s_reps s_served; do
+    [ -n "${s_name}" ] || continue
+    [ -n "${s_served}" ] || continue
+    if [ "${s_served}" = "${want}" ] || [ "$(sanitize "${s_served}")" = "${want_seg}" ]; then
+      echo "${s_name}"; return 0
+    fi
   done
 }
 
@@ -1023,8 +1056,14 @@ while IFS=$'\t' read -r cand_name cand_source cand_slug cand_category cand_fit; 
   # detection). A candidate is ALREADY SERVED when its matching CR is the
   # modelRef of a running prod InferenceService (qwen-27b / qwen-35b).
   crd_name="$(cluster_crd_for_source "${cand_source}")"
-  serving_isvc=""
-  if [ -n "${crd_name}" ]; then
+  # Served detection is authoritative on what the isvc ACTUALLY serves (its
+  # --served-model-name / args[0] model id), NOT the modelRef CR's spec.source:
+  # the prod qwen CRs carry the bf16 HF repo as spec.source but SERVE the NVFP4
+  # build via args, so a spec.source match misses the served NVFP4 candidates.
+  # Match candidate source to the served model id first; fall back to the legacy
+  # modelRef-based check for any served model whose id isn't discoverable in args.
+  serving_isvc="$(served_isvc_for_source "${cand_source}")"
+  if [ -z "${serving_isvc}" ] && [ -n "${crd_name}" ]; then
     serving_isvc="$(served_isvc_for_model "${crd_name}")"
   fi
 
