@@ -56,6 +56,17 @@ spec:
                 secretKeyRef:
                   name: {{ include "druppie.fullname" . }}-secrets
                   key: OPENROUTER_API_KEY
+                  # Branch envs: the chart secret has no OPENROUTER_API_KEY
+                  # (it comes from Vault via extraEnvFromSecret below).
+                  optional: true
+          {{- if .Values.global.extraEnvFromSecret }}
+          envFrom:
+            # Branch environments: Vault-sourced overrides (ESO-managed).
+            # Optional so the pod starts while the secret syncs.
+            - secretRef:
+                name: {{ .Values.global.extraEnvFromSecret }}
+                optional: true
+          {{- end }}
           ports:
             - name: http
               containerPort: {{ .Values.modules.llm.port }}

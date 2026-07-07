@@ -108,6 +108,24 @@ DOMAIN_SUFFIX = os.getenv("BRANCH_ENV_DOMAIN_SUFFIX", "rijnland.dev")
 
 # Modules that mount a shared RWO PVC and must co-locate with the backend.
 PINNED_MODULES = ["coding", "docker", "archimate", "data_access", "filesearch", "web"]
+# Every module the chart deploys (values.yaml modules.*).
+ALL_MODULES = [
+    "coding",
+    "docker",
+    "filesearch",
+    "web",
+    "archimate",
+    "registry",
+    "llm",
+    "vision",
+    "data_access",
+    "layout_service",
+    "azuredevops",
+]
+# Dev-profile CPU requests: a whole env must fit on the shared pinned node, so
+# request little and burst up to the chart's default limits. Memory requests
+# stay at chart defaults (the node is CPU-request-bound, not memory-bound).
+_DEV_CPU = {"backend": "100m", "component": "50m", "module": "25m"}
 
 # Namespaces that must never be deployed to or torn down by this service
 # (live instances).
@@ -274,14 +292,31 @@ def build_helmrelease_yaml(
         "backend": {
             "service": {"type": "ClusterIP"},
             "nodeSelector": {"kubernetes.io/hostname": BRANCH_ENV_NODE},
+            "resources": {"requests": {"cpu": _DEV_CPU["backend"]}},
         },
-        "frontend": {"service": {"type": "ClusterIP"}},
-        "keycloak": {"service": {"type": "ClusterIP"}},
-        "gitea": {"service": {"type": "ClusterIP"}},
+        "frontend": {
+            "service": {"type": "ClusterIP"},
+            "resources": {"requests": {"cpu": _DEV_CPU["component"]}},
+        },
+        "keycloak": {
+            "service": {"type": "ClusterIP"},
+            "resources": {"requests": {"cpu": _DEV_CPU["component"]}},
+        },
+        "gitea": {
+            "service": {"type": "ClusterIP"},
+            "resources": {"requests": {"cpu": _DEV_CPU["component"]}},
+        },
         # Modules sharing the RWO workspace PVC must co-locate with the backend.
         "modules": {
-            module: {"nodeSelector": {"kubernetes.io/hostname": BRANCH_ENV_NODE}}
-            for module in PINNED_MODULES
+            module: {
+                "resources": {"requests": {"cpu": _DEV_CPU["module"]}},
+                **(
+                    {"nodeSelector": {"kubernetes.io/hostname": BRANCH_ENV_NODE}}
+                    if module in PINNED_MODULES
+                    else {}
+                ),
+            }
+            for module in ALL_MODULES
         },
     }
     if image_tag is not None:
