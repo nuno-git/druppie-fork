@@ -499,10 +499,19 @@ const BranchEnvironments = () => {
 
   const deployMut = useMutation({
     mutationFn: (payload) => branchEnvironmentsApi.deploy(payload),
-    onSuccess: () => {
+    onSuccess: (env, payload) => {
       setShowDeploy(false)
       setDeployError(null)
-      toast.success('Deploy started', 'The environment will appear below once ready.')
+      // Surface the secrets source the backend actually used, and call out a
+      // fallback explicitly when it differs from what was requested.
+      const used = env?.secrets_source || 'colab-dev'
+      const fellBack = payload?.secrets_source && payload.secrets_source !== used
+      toast.success(
+        'Deploy started',
+        fellBack
+          ? `Requested "${payload.secrets_source}" secrets were unavailable — fell back to "${used}". The environment will appear below once ready.`
+          : `Using "${used}" secrets. The environment will appear below once ready.`
+      )
       invalidate()
     },
     onError: (err) => setDeployError(err.message),

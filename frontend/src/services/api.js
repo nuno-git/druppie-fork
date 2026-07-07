@@ -341,11 +341,24 @@ export const devEnvironmentsApi = {
 // (deploying → running/failed, deleting → gone) happen server-side asynchronously.
 export const branchEnvironmentsApi = {
   list: () => request('/api/branch-environments'),
-  deploy: ({ branch, image_tag }) =>
-    request('/api/branch-environments', {
+  deploy: ({ branch, image_tag, secrets_source }) => {
+    // Callers should always pass secrets_source; fall back to the shared
+    // colab-dev keys so a deploy never silently uses an unintended source.
+    if (!secrets_source) {
+      console.warn(
+        'branchEnvironmentsApi.deploy: no secrets_source given — falling back to "colab-dev" defaults'
+      )
+      secrets_source = 'colab-dev'
+    }
+    return request('/api/branch-environments', {
       method: 'POST',
-      body: JSON.stringify({ branch, ...(image_tag ? { image_tag } : {}) }),
-    }),
+      body: JSON.stringify({
+        branch,
+        secrets_source,
+        ...(image_tag ? { image_tag } : {}),
+      }),
+    })
+  },
   redeploy: (id) =>
     request(`/api/branch-environments/${encodeURIComponent(id)}/redeploy`, { method: 'POST' }),
   teardown: (id) =>
