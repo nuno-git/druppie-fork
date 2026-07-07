@@ -21,7 +21,7 @@
 #   L1 — Debian slim + Python 3.12 + Node 20 + git + curl + build essentials
 #   L2 — code-server (pinned GitHub release)
 #   L3 — repo snapshot baked at build time (colab-dev HEAD) -> /opt/druppie-src
-#   L4 — frontend node_modules (npm ci)
+#   L4 — frontend node_modules (npm install)
 #   L5 — backend virtualenv (pip install -r requirements.txt)
 #
 FROM python:3.12-slim-bookworm
@@ -90,10 +90,12 @@ ARG CACHEBUST
 COPY --chown=developer:developer . /opt/druppie-src
 
 # ===========================================================================
-# Layer 4 — Frontend node_modules (npm ci from the baked lockfile)
+# Layer 4 — Frontend node_modules
 # ===========================================================================
+# npm install, not npm ci: package-lock.json is gitignored repo-wide, so the
+# build context has no lockfile (same reason frontend/Dockerfile uses install).
 RUN cd /opt/druppie-src/frontend \
-    && npm ci \
+    && npm install \
     && npm cache clean --force \
     && chown -R developer:developer /opt/druppie-src/frontend/node_modules
 
