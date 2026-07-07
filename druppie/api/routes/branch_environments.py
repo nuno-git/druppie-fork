@@ -104,6 +104,49 @@ async def redeploy_branch_environment(
     )
 
 
+@router.post(
+    "/branch-environments/{env_id}/workspace",
+    response_model=BranchEnvironmentDetail,
+    status_code=202,
+)
+async def enable_branch_environment_workspace(
+    env_id: str,
+    service: BranchEnvironmentService = Depends(get_branch_environment_service),
+    user: dict = Depends(get_current_user),
+    _: bool = Depends(require_any_role(["developer", "admin"])),
+) -> BranchEnvironmentDetail:
+    """Enable the dev workspace for a branch environment. Owner or admin only.
+
+    Commits ``workspace.yaml`` to the env's GitOps directory; Flux stands up a
+    code-server pod (branch checked out, hot reload) fronted by a Keycloak
+    oauth2-proxy sidecar.
+    """
+    return await service.enable_workspace(
+        env_id=env_id,
+        user_id=UUID(user["sub"]),
+        user_roles=get_user_roles(user),
+    )
+
+
+@router.delete(
+    "/branch-environments/{env_id}/workspace",
+    response_model=BranchEnvironmentDetail,
+    status_code=202,
+)
+async def disable_branch_environment_workspace(
+    env_id: str,
+    service: BranchEnvironmentService = Depends(get_branch_environment_service),
+    user: dict = Depends(get_current_user),
+    _: bool = Depends(require_any_role(["developer", "admin"])),
+) -> BranchEnvironmentDetail:
+    """Disable the dev workspace for a branch environment. Owner or admin only."""
+    return await service.disable_workspace(
+        env_id=env_id,
+        user_id=UUID(user["sub"]),
+        user_roles=get_user_roles(user),
+    )
+
+
 @router.delete(
     "/branch-environments/{env_id}", response_model=BranchEnvironmentDetail, status_code=202
 )

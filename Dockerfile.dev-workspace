@@ -1,0 +1,136 @@
+# syntax=docker/dockerfile:1
+#
+# Dockerfile.dev-workspace — Druppie per-branch developer workspace image.
+#
+# Build context: repo root (.) — same as the backend Dockerfile.
+#
+# A single-pod, browser-based developer workspace for a branch environment
+# (namespace druppie-<slug>). It runs THREE processes on plain HTTP, all bound
+# to 0.0.0.0 but only reachable inside the pod / via the oauth2-proxy sidecar
+# that another manifest wires up:
+#
+#   :8080  code-server (VS Code in the browser) opened on /workspace
+#   :8000  backend  — uvicorn --reload (hot reload), SQLite, dev/degraded mode
+#   :5173  frontend — Vite dev server with HMR
+#
+# This is NOT the old dev-vm image (mcp-servers/module-coding/Dockerfile.dev-vm):
+# no xrdp/desktop, no Docker-in-Docker, no in-pod Gitea. Access is HTTP only and
+# authentication is handled entirely by the oauth2-proxy sidecar.
+#
+# Layer model (see docs/research-dev-environments.md §"Dev VM base image"):
+#   L1 — Debian slim + Python 3.12 + Node 20 + git + curl + build essentials
+#   L2 — code-server (pinned GitHub release)
+#   L3 — repo snapshot baked at build time (colab-dev HEAD) -> /opt/druppie-src
+#   L4 — frontend node_modules (npm ci)
+#   L5 — backend virtualenv (pip install -r requirements.txt)
+#
+FROM python:3.12-slim-bookworm
+
+LABEL maintainer="druppie"
+LABEL description="Druppie per-branch developer workspace (code-server + hot-reload backend/frontend). ClusterIP-only, fronted by oauth2-proxy."
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONUNBUFFERED=1
+
+# ===========================================================================
+# Layer 1 — Base OS packages + Node 20
+# (Python 3.12 comes from the base image.)
+# ===========================================================================
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        git \
+        curl \
+        ca-certificates \
+        build-essential \
+        libpq-dev \
+        libffi-dev \
+        openssl \
+        tini \
+    && rm -rf /var/lib/apt/lists/* \
+    && python --version && pip --version
+
+# Node 20 via NodeSource (mirrors mcp-servers/module-coding/Dockerfile.dev-vm)
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get update && apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/* \
+    && node --version && npm --version
+
+# ===========================================================================
+# Layer 2 — code-server (pinned release from GitHub)
+# ===========================================================================
+# Bind 0.0.0.0:8080 with auth:none ON PURPOSE. The pod is ClusterIP-only and
+# the ONLY ingress path is the oauth2-proxy sidecar (built by a separate
+# manifest), which terminates authentication before any request reaches this
+# port. code-server must therefore not add a second, conflicting auth layer.
+ARG CODE_SERVER_VERSION=4.99.3
+RUN curl -fsSL "https://github.com/coder/code-server/releases/download/v${CODE_SERVER_VERSION}/code-server-${CODE_SERVER_VERSION}-linux-amd64.tar.gz" \
+        -o /tmp/code-server.tar.gz \
+    && mkdir -p /opt/code-server \
+    && tar -xzf /tmp/code-server.tar.gz -C /opt/code-server --strip-components=1 \
+    && ln -sf /opt/code-server/bin/code-server /usr/local/bin/code-server \
+    && rm /tmp/code-server.tar.gz \
+    && code-server --version
+
+# ===========================================================================
+# Layer 3 — Non-root user + baked repo snapshot (colab-dev HEAD)
+# ===========================================================================
+# Non-root developer user (uid 1000). /workspace is the runtime checkout
+# (backed by a PVC in k8s) and is owned by developer.
+RUN groupadd -g 1000 developer \
+    && useradd -m -u 1000 -g developer -s /bin/bash developer \
+    && mkdir -p /workspace \
+    && chown developer:developer /workspace
+
+# Bust cache for the source snapshot only (dependency layers below are keyed on
+# the lock/requirements files, so they stay cached across code-only commits).
+# Mirrors the CACHEBUST ARG pattern in the backend Dockerfile.
+ARG CACHEBUST
+# The whole build context (repo root) is baked in as an offline seed. .git is
+# excluded by .dockerignore, so the entrypoint re-inits git and fetches at
+# runtime. node_modules / the venv are (re)built fresh in L4/L5 below.
+COPY --chown=developer:developer . /opt/druppie-src
+
+# ===========================================================================
+# Layer 4 — Frontend node_modules (npm ci from the baked lockfile)
+# ===========================================================================
+RUN cd /opt/druppie-src/frontend \
+    && npm ci \
+    && npm cache clean --force \
+    && chown -R developer:developer /opt/druppie-src/frontend/node_modules
+
+# ===========================================================================
+# Layer 5 — Backend virtualenv (pip install -r requirements.txt)
+# ===========================================================================
+# A relocatable venv baked at /opt/venv. The entrypoint copies it to
+# /workspace/.venv on first seed and always invokes it as
+# "$VENV/bin/python -m ..." (module form), which resolves site-packages from
+# the executable's location — so the copy works regardless of path.
+RUN python -m venv /opt/venv \
+    && /opt/venv/bin/python -m pip install --no-cache-dir --upgrade pip setuptools wheel \
+    && /opt/venv/bin/python -m pip install --no-cache-dir -r /opt/druppie-src/druppie/requirements.txt \
+    && chown -R developer:developer /opt/venv
+
+# ===========================================================================
+# Entrypoint
+# ===========================================================================
+COPY --chown=developer:developer scripts/dev-workspace-entrypoint.sh /usr/local/bin/dev-workspace-entrypoint.sh
+RUN sed -i 's/\r$//' /usr/local/bin/dev-workspace-entrypoint.sh \
+    && chmod +x /usr/local/bin/dev-workspace-entrypoint.sh
+
+# code-server default config (also passed explicitly on the CLI by the
+# entrypoint). See the L2 comment for why auth:none is correct here.
+RUN install -d -m 755 -o developer -g developer /home/developer/.config/code-server \
+    && printf 'bind-addr: 0.0.0.0:8080\nauth: none\ntelemetry: off\n' \
+        > /home/developer/.config/code-server/config.yaml \
+    && chown -R developer:developer /home/developer/.config
+
+USER developer
+WORKDIR /workspace
+
+# code-server:8080  backend:8000  frontend/vite:5173
+EXPOSE 8000 5173 8080
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD curl -fsS http://localhost:8080/healthz || exit 1
+
+# tini reaps the backgrounded children the entrypoint spawns (PID 1 hygiene).
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/dev-workspace-entrypoint.sh"]

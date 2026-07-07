@@ -41,6 +41,10 @@ class BranchEnvironmentSummary(BaseModel):
     status: BranchEnvironmentStatus
     status_message: str | None = None
     created_at: datetime
+    # Optional per-env dev workspace (code-server behind a Keycloak oauth2-proxy).
+    workspace_enabled: bool = False
+    workspace_url: str | None = None
+    workspace_status: str | None = None
 
 
 class BranchEnvironmentDetail(BranchEnvironmentSummary):

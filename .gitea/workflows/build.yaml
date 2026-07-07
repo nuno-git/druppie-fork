@@ -115,6 +115,23 @@ jobs:
             docker push "$REGISTRY/druppie/druppie-sandbox-k8s:$TAG"
           fi
 
+      - name: Build and push dev-workspace image
+        # Branch environments check out their branch at runtime from the SAME
+        # shared image, so this only needs building on the two long-lived
+        # branches. Feature-branch pushes skip it (the workspace pod pulls
+        # dev-workspace:latest and `git checkout`s the feature branch itself).
+        if: github.ref_name == 'colab-dev' || github.ref_name == 'main'
+        env:
+          TAG: ${{ steps.tags.outputs.deploy_tag }}
+          SHA: ${{ github.sha }}
+        run: |
+          docker build --build-arg CACHEBUST="$SHA" \
+            -t "$REGISTRY/druppie/dev-workspace:$TAG" \
+            -t "$REGISTRY/druppie/dev-workspace:latest" \
+            -f Dockerfile.dev-workspace .
+          docker push "$REGISTRY/druppie/dev-workspace:$TAG"
+          docker push "$REGISTRY/druppie/dev-workspace:latest"
+
       - name: Summary
         env:
           TAG: ${{ steps.tags.outputs.deploy_tag }}

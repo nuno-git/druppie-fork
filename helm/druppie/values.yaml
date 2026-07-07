@@ -141,6 +141,20 @@ backend:
     node: ka-k8s-ai-workers-skbh7-d4qwl
     registry: harbor.rijnland.dev/druppie
     domainSuffix: rijnland.dev
+    # Optional per-env dev workspace (code-server behind a Keycloak oauth2-proxy),
+    # committed as workspace.yaml when enabled from the UI. It is served at
+    # druppie-<slug>-dev.<domainSuffix> and authenticates against the env's own
+    # Keycloak realm 'druppie' (issuer https://druppie-<slug>.<domainSuffix>/realms/druppie).
+    # REQUIRED one-time cluster-side setup (the backend creates neither; see
+    # docs/FEATURES.md "Dev Workspace"):
+    #   1. Vault secret 'branch-env/workspace-oauth' (in the vault-ai-team-k8s
+    #      store's KV mount) with keys client-secret + cookie-secret. The env's
+    #      workspace.yaml ExternalSecret mirrors it into the 'workspace-oauth' Secret.
+    #   2. A confidential Keycloak client 'workspace' per environment, redirect URI
+    #      https://druppie-<slug>-dev.<domainSuffix>/oauth2/callback, whose secret
+    #      matches Vault branch-env/workspace-oauth#client-secret.
+    # Overridable via env on the backend: BRANCH_ENV_WORKSPACE_IMAGE,
+    # BRANCH_ENV_OAUTH2_PROXY_IMAGE, BRANCH_ENV_WORKSPACE_STORAGE_CLASS.
   guacamoleUrl: http://guacamole.remote-access.svc.cluster.local:8080
   guacamolePublicUrl: http://localhost:30020
   llm:

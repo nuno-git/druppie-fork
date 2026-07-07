@@ -21,6 +21,7 @@ from druppie.services.branch_environment_service import (
     BranchEnvironmentService,
     _slugify,
     build_helmrelease_yaml,
+    build_workspace_yaml,
 )
 
 ADMIN_SUB = "11111111-1111-1111-1111-111111111111"
@@ -99,12 +100,17 @@ class FakeCluster:
         self.available = available
         self.namespaces: dict[str, dict] = {}
         self.helmreleases: dict[str, dict] = {}
+        # keyed by (namespace, name)
+        self.deployments: dict[tuple[str, str], dict] = {}
 
     async def get_helmrelease(self, namespace: str):
         return self.helmreleases.get(namespace)
 
     async def get_namespace(self, namespace: str):
         return self.namespaces.get(namespace)
+
+    async def get_deployment(self, namespace: str, name: str):
+        return self.deployments.get((namespace, name))
 
     async def list_branch_namespaces(self):
         return [
@@ -415,3 +421,154 @@ async def test_redeploy_conflicts_on_concurrent_change(service, fake_gitea):
         await service.gitea.change_files(
             "stale", [{"operation": "update", "path": path, "content": "x", "sha": env["helmrelease_sha"]}]
         )
+
+
+# ---------------------------------------------------------------------------
+# workspace: build_workspace_yaml
+# ---------------------------------------------------------------------------
+
+
+def test_build_workspace_yaml_shape():
+    docs = list(
+        yaml.safe_load_all(
+            build_workspace_yaml(
+                "feature-foo", "feature/foo", "druppie-feature-foo.rijnland.dev", "now"
+            )
+        )
+    )
+    kinds = {d["kind"] for d in docs}
+    assert kinds == {
+        "ExternalSecret",
+        "PersistentVolumeClaim",
+        "Deployment",
+        "Service",
+        "Ingress",
+    }
+    by_kind = {d["kind"]: d for d in docs}
+
+    # Ingress host = env host with -dev inserted before the first dot.
+    ingress = by_kind["Ingress"]
+    assert ingress["spec"]["rules"][0]["host"] == "druppie-feature-foo-dev.rijnland.dev"
+    assert ingress["spec"]["tls"][0]["secretName"] == "druppie-tls"
+    assert ingress["spec"]["ingressClassName"] == "traefik"
+
+    # Deployment: workspace + oauth2-proxy containers, Recreate strategy.
+    dep = by_kind["Deployment"]
+    assert dep["spec"]["strategy"]["type"] == "Recreate"
+    containers = {c["name"]: c for c in dep["spec"]["template"]["spec"]["containers"]}
+    assert set(containers) == {"workspace", "oauth2-proxy"}
+
+    ws = containers["workspace"]
+    env_vars = {e["name"]: e["value"] for e in ws["env"]}
+    assert env_vars["DRUPPIE_GIT_BRANCH"] == "feature/foo"
+    assert "druppie.git" in env_vars["DRUPPIE_REPO_URL"]
+    ports = {p["containerPort"] for p in ws["ports"]}
+    assert {8080, 8000, 5173} <= ports
+
+    # oauth2-proxy: issuer points at the ENV's OWN Keycloak realm (path-routed).
+    proxy = containers["oauth2-proxy"]
+    args = " ".join(proxy["args"])
+    assert "--oidc-issuer-url=https://druppie-feature-foo.rijnland.dev/realms/druppie" in args
+    assert "--redirect-url=https://druppie-feature-foo-dev.rijnland.dev/oauth2/callback" in args
+    assert "--client-id=workspace" in args
+
+    # Service maps 80 -> 4180 (oauth2-proxy).
+    svc = by_kind["Service"]
+    assert svc["spec"]["ports"][0]["port"] == 80
+    assert svc["spec"]["ports"][0]["targetPort"] == 4180
+
+
+# ---------------------------------------------------------------------------
+# workspace: enable / disable
+# ---------------------------------------------------------------------------
+
+
+def _ready_deployment():
+    return {"status": {"readyReplicas": 1}}
+
+
+def test_enable_workspace_commits_file(client, as_owner, fake_gitea):
+    _deploy(client)
+    r = client.post("/api/branch-environments/feature-foo/workspace")
+    assert r.status_code == 202, r.text
+    body = r.json()
+    assert body["workspace_enabled"] is True
+    assert body["workspace_url"] == "https://druppie-feature-foo-dev.rijnland.dev"
+
+    path = f"{_env_dir('feature-foo')}/workspace.yaml"
+    assert path in fake_gitea.files
+    docs = {d["kind"]: d for d in yaml.safe_load_all(fake_gitea.files[path])}
+    containers = {
+        c["name"] for c in docs["Deployment"]["spec"]["template"]["spec"]["containers"]
+    }
+    assert "oauth2-proxy" in containers
+    assert docs["Ingress"]["spec"]["rules"][0]["host"] == "druppie-feature-foo-dev.rijnland.dev"
+
+
+def test_enable_workspace_twice_conflicts(client, as_owner):
+    _deploy(client)
+    assert client.post("/api/branch-environments/feature-foo/workspace").status_code == 202
+    assert client.post("/api/branch-environments/feature-foo/workspace").status_code == 409
+
+
+def test_enable_workspace_non_owner_forbidden(client, as_owner, app, fake_gitea):
+    _deploy(client)
+    app.dependency_overrides[get_current_user] = lambda: _user(OTHER_SUB)
+    assert client.post("/api/branch-environments/feature-foo/workspace").status_code == 403
+    assert f"{_env_dir('feature-foo')}/workspace.yaml" not in fake_gitea.files
+
+
+def test_enable_workspace_unknown_env_404(client, as_owner):
+    assert client.post("/api/branch-environments/nope/workspace").status_code == 404
+
+
+def test_enable_workspace_host_too_long_422(client, as_owner):
+    # slug 52 chars -> namespace 'druppie-<slug>' (60) is a valid label, but the
+    # workspace label 'druppie-<slug>-dev' (64) exceeds 63.
+    long_branch = "a" * 52
+    assert _deploy(client, branch=long_branch).status_code == 202
+    slug = _slugify(long_branch)
+    assert client.post(f"/api/branch-environments/{slug}/workspace").status_code == 422
+
+
+def test_disable_workspace_deletes_file(client, as_owner, fake_gitea):
+    _deploy(client)
+    client.post("/api/branch-environments/feature-foo/workspace")
+    r = client.delete("/api/branch-environments/feature-foo/workspace")
+    assert r.status_code == 202, r.text
+    assert r.json()["workspace_enabled"] is False
+    assert f"{_env_dir('feature-foo')}/workspace.yaml" not in fake_gitea.files
+
+
+def test_disable_workspace_when_absent(client, as_owner):
+    _deploy(client)
+    assert client.delete("/api/branch-environments/feature-foo/workspace").status_code in (404, 409)
+
+
+def test_disable_workspace_unknown_env_404(client, as_owner):
+    assert client.delete("/api/branch-environments/nope/workspace").status_code == 404
+
+
+def test_detail_reports_workspace_running(client, as_owner, fake_cluster):
+    _deploy(client)
+    client.post("/api/branch-environments/feature-foo/workspace")
+    fake_cluster.deployments[("druppie-feature-foo", "workspace")] = _ready_deployment()
+    body = client.get("/api/branch-environments/feature-foo").json()
+    assert body["workspace_enabled"] is True
+    assert body["workspace_url"] == "https://druppie-feature-foo-dev.rijnland.dev"
+    assert body["workspace_status"] == "running"
+
+
+def test_detail_workspace_deploying_before_ready(client, as_owner):
+    _deploy(client)
+    client.post("/api/branch-environments/feature-foo/workspace")
+    body = client.get("/api/branch-environments/feature-foo").json()
+    assert body["workspace_status"] == "deploying"
+
+
+def test_detail_workspace_disabled_by_default(client, as_owner):
+    _deploy(client)
+    body = client.get("/api/branch-environments/feature-foo").json()
+    assert body["workspace_enabled"] is False
+    assert body["workspace_url"] is None
+    assert body["workspace_status"] is None

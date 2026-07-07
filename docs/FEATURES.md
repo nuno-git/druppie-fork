@@ -904,6 +904,58 @@ CiliumNetworkPolicy for kube-API egress, and the `BRANCH_ENV_GITOPS_*` env wirin
 (see `templates/branch-env-deployer-rbac.yaml`). Because git arbitrates concurrent
 writes, the flag is safe to enable on multiple instances (prod and colab-dev).
 
+### Dev Workspace (per environment)
+
+Each branch environment can optionally run a **dev workspace**: a `code-server`
+pod with the branch checked out and hot reload, fronted by an **oauth2-proxy
+sidecar doing Keycloak OIDC** against the environment's OWN Keycloak realm
+`druppie`. Enable/disable it from the UI (owner or admin) — the backend commits
+or deletes a single extra file `workspace.yaml` in the env's GitOps directory and
+Flux applies/prunes it.
+
+- **Exposure** — the workspace is served at the env host with `-dev` inserted
+  before the first label's dot: `druppie-<slug>-dev.rijnland.dev` (a sibling
+  label under the same `*.rijnland.dev` wildcard cert, Traefik ingress, tls
+  secret `druppie-tls` mirrored into the namespace). The oauth2-proxy Service
+  exposes port 80 → 4180; the proxy upstreams to code-server on `127.0.0.1:8080`.
+- **OIDC issuer** — for branch envs `global.subdomains.keycloak` is empty, so
+  Keycloak is path-routed under the base env host. The proxy's issuer is
+  therefore `https://druppie-<slug>.rijnland.dev/realms/druppie` and its
+  redirect URL is `https://druppie-<slug>-dev.rijnland.dev/oauth2/callback`.
+- **Live status** — `workspace_status` is read from the `workspace` Deployment
+  (`running` once `readyReplicas >= 1`, else `deploying`; `null` when disabled).
+
+#### Required setup (one-time, cluster-side)
+
+Two pieces of cluster-side state must exist. The backend never creates them
+(Vault is read-only from the cluster, and the Keycloak `workspace` client only
+makes sense once a workspace is enabled, which is after the install-time init
+job runs — so seeding it automatically is intentionally out of scope):
+
+1. **Vault secret `branch-env/workspace-oauth`** in the same KV mount the
+   `vault-ai-team-k8s` ClusterSecretStore reads (the one already used for
+   `ci/harbor`). It must hold two keys, shared by every env's workspace:
+   - `client-secret` — the confidential client secret (see step 2).
+   - `cookie-secret` — a 32-byte base64/hex value for oauth2-proxy cookie
+     encryption (`openssl rand -base64 32`).
+   `workspace.yaml` declares an ExternalSecret `workspace-oauth` that mirrors
+   this into a namespace Secret; oauth2-proxy reads it via `secretKeyRef`.
+
+2. **Keycloak confidential client `workspace`** in each environment's `druppie`
+   realm. Create it once per environment (Keycloak admin UI or Admin API):
+   - Client ID `workspace`, `Client authentication` ON (confidential),
+     `Standard flow` enabled.
+   - Valid redirect URI `https://druppie-<slug>-dev.rijnland.dev/oauth2/callback`
+     (the env's `-dev` host).
+   - Set the client secret to the SAME value stored in Vault
+     `branch-env/workspace-oauth#client-secret` above.
+
+   TODO: fold this into per-instance Keycloak seeding once the seeding path has
+   access to the workspace client secret (today `scripts/setup_keycloak.py` runs
+   at install time from the `init` Job, before any workspace exists, and cannot
+   read the Vault client secret — so wiring it there would couple install to a
+   secret that only the workspace ExternalSecret consumes).
+
 ---
 
 ## Settings Page
