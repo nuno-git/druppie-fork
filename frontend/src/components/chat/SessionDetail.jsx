@@ -3,7 +3,7 @@
  */
 
 import { useState, useRef, useEffect, useMemo, useContext } from 'react'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query'
 import { Send, CheckCircle, XCircle, Shield, ShieldOff, Loader2, ExternalLink, MessageSquare, FileCode, FilePlus, FileText, FileType, StopCircle, PlayCircle, ArrowUp, AlertTriangle, Terminal, ChevronDown, ChevronRight, Calendar } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import ReactMarkdown from 'react-markdown'
@@ -312,6 +312,7 @@ const InlineApproval = ({ tc, sessionId, sessionUserId }) => {
 
 const TimelineQuestion = ({ tc, agentId, sessionId, isOwner, isAdmin, userRoles, attachments = [], onAttachmentsConsumed, onAnswerSubmitted }) => {
   const queryClient = useQueryClient()
+  const [localAnswer, setLocalAnswer] = useState(null)
 
   const answerMut = useMutation({
     mutationFn: ({ questionId, answer, selectedChoices = null, attachmentIds = [] }) =>
@@ -321,6 +322,9 @@ const TimelineQuestion = ({ tc, agentId, sessionId, isOwner, isAdmin, userRoles,
       markResuming()
       onAnswerSubmitted?.()
       queryClient.invalidateQueries({ queryKey: ['session', sessionId] })
+    },
+    onError: () => {
+      setLocalAnswer(null)
     },
   })
 
@@ -333,10 +337,12 @@ const TimelineQuestion = ({ tc, agentId, sessionId, isOwner, isAdmin, userRoles,
   // - ask_expert: any user with the expert_role, or admin
   // The session owner does NOT get to answer expert questions (unless they
   // hold the role themselves) — they have to wait for the expert.
-  const canAnswer = isAdmin
+  // Prevent double-submission while the backend processes the answer.
+  const canAnswer = (isAdmin
     || (isExpertTool
       ? !!expertRole && Array.isArray(userRoles) && userRoles.includes(expertRole)
-      : !!isOwner)
+      : !!isOwner))
+    && !localAnswer
 
   const rawChoices = tc.arguments?.choices || tc.arguments?.options || []
   const choices = rawChoices
@@ -385,7 +391,10 @@ const TimelineQuestion = ({ tc, agentId, sessionId, isOwner, isAdmin, userRoles,
       )}
       <HITLQuestionMessage
         question={questionData}
-        onSubmitAnswer={({ indices, answerText }) => answerMut.mutate({ questionId: tc.question_id, answer: answerText, selectedChoices: indices, attachmentIds: attachments.map((a) => a.id) })}
+        onSubmitAnswer={({ indices, answerText }) => {
+          setLocalAnswer(answerText)
+          answerMut.mutate({ questionId: tc.question_id, answer: answerText, selectedChoices: indices, attachmentIds: attachments.map((a) => a.id) })
+        }}
         isAnswering={answerMut.isPending}
         answered={isAnswered || showAsReadOnly}
       />
@@ -394,6 +403,16 @@ const TimelineQuestion = ({ tc, agentId, sessionId, isOwner, isAdmin, userRoles,
           {isExpertTool
             ? `Waiting for a user with the "${expertRole}" role to answer.`
             : 'Only the session owner can answer this question.'}
+        </div>
+      )}
+      {localAnswer && !isAnswered && (
+        <div className="flex justify-end mt-2">
+          <div className="max-w-[85%] rounded-2xl px-4 py-2.5 text-sm bg-blue-50 text-gray-900">
+            <div className="flex items-center gap-2">
+              <Loader2 className="w-3.5 h-3.5 text-blue-500 animate-spin" />
+              <span className="whitespace-pre-wrap">{localAnswer}</span>
+            </div>
+          </div>
         </div>
       )}
       {isAnswered && displayAnswer && (
@@ -1019,6 +1038,7 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
       return 500
     },
     enabled: !!sessionId,
+    placeholderData: keepPreviousData,
   })
 
   const displayTimeline = useMemo(() => {
@@ -1121,10 +1141,10 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
         }
 
         // Defensive refetch: delta only returns entries with higher sequence_number.
-        // When an existing run's nested tool_call changes status (e.g. executing ->
-        // waiting_answer), its sequence_number doesn't change, so delta skips it.
-        // Reset highestSeqRef ONLY for agent_run_update to force a full fetch.
-        if (entry.type === 'agent_run_update') {
+        // When an existing run's nested tool_call changes status (question asked,
+        // approval needed), its sequence_number doesn't change, so delta skips it.
+        // Reset highestSeqRef for all update-like events to force a full fetch.
+        if (entry.type === 'agent_run_update' || entry.type === 'question' || entry.type === 'approval') {
           highestSeqRef.current = undefined
         }
         queryClient.invalidateQueries({ queryKey: ['session', sessionId] })

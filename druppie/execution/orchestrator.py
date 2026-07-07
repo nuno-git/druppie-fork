@@ -226,7 +226,7 @@ class Orchestrator:
                 self._notify_translation_failed(current_session_id)
 
         # Step 3b: Save user message to the timeline (after translation so we can store both versions)
-        message_id = self.execution_repo.create_message(
+        user_message = self.execution_repo.create_message(
             session_id=current_session_id,
             role="user",
             content=message,
@@ -238,16 +238,14 @@ class Orchestrator:
         _event_mgr = get_event_manager()
         await _event_mgr.broadcast_message_created(
             session_id=current_session_id,
-            message_id=message_id,
-            sequence_number=next_seq - 1,
-            role="user",
+            message=user_message,
         )
 
         # Step 3c: Link uploaded attachments to the user message
         attachment_context = ""
         if attachment_ids and self.attachment_repo:
             self.attachment_repo.link_to_message(
-                attachment_ids, message_id, current_session_id,
+                attachment_ids, user_message.id, current_session_id,
             )
             attachments = self.attachment_repo.get_by_ids(attachment_ids)
             attachment_context = self._build_attachment_context(attachments)
@@ -274,10 +272,7 @@ class Orchestrator:
 
         await _event_mgr.broadcast_agent_run_created(
             session_id=current_session_id,
-            agent_run_id=router_run.id,
-            agent_id="router",
-            sequence_number=next_seq,
-            status=AgentRunStatus.PENDING.value,
+            agent_run=router_run,
         )
 
         # Planner starts with basic prompt - set_intent will update it with context
@@ -296,10 +291,7 @@ class Orchestrator:
 
         await _event_mgr.broadcast_agent_run_created(
             session_id=current_session_id,
-            agent_run_id=planner_run.id,
-            agent_id="planner",
-            sequence_number=next_seq + 1,
-            status=AgentRunStatus.PENDING.value,
+            agent_run=planner_run,
         )
 
         # Step 6: Execute all pending runs

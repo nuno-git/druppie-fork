@@ -6,11 +6,16 @@ and broadcasts events to all connected clients.
 
 import asyncio
 import json
-from typing import Any
+from datetime import datetime, timezone
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 import structlog
 from fastapi import WebSocket
+
+if TYPE_CHECKING:
+    from druppie.domain.agent_run import AgentRunSummary
+    from druppie.domain.session import Message
 
 logger = structlog.get_logger()
 
@@ -85,48 +90,50 @@ class SessionEventManager:
     async def broadcast_message_created(
         self,
         session_id: UUID,
-        message_id: UUID,
-        sequence_number: int,
-        role: str,
-        agent_id: str | None = None,
+        message: "Message",  # type: ignore # noqa: F821
     ) -> None:
-        """Broadcast when a new message is created in the timeline."""
+        """Broadcast when a new message is created in the timeline.
+
+        Sends full nested TimelineEntry shape matching REST API response
+        so the frontend can render immediately without refetching.
+        """
         await self.broadcast(session_id, {
             "type": "timeline_entry",
             "entry": {
                 "type": "message",
-                "id": str(message_id),
-                "sequence_number": sequence_number,
-                "role": role,
-                "agent_id": agent_id,
+                "sequence_number": message.sequence_number,
+                "timestamp": message.created_at or datetime.now(timezone.utc),
+                "message": {
+                    "id": str(message.id),
+                    "role": message.role,
+                    "content": message.content,
+                    "agent_id": message.agent_id,
+                    "agent_run_id": str(message.agent_run_id) if message.agent_run_id else None,
+                    "sequence_number": message.sequence_number,
+                    "created_at": message.created_at or datetime.now(timezone.utc),
+                    "attachments": [],
+                },
             },
         })
 
     async def broadcast_agent_run_created(
         self,
         session_id: UUID,
-        agent_run_id: UUID,
-        agent_id: str,
-        sequence_number: int,
-        status: str,
-        planned_prompt: str | None = None,
-        parent_run_id: UUID | None = None,
+        agent_run: "AgentRunSummary",  # type: ignore # noqa: F821
     ) -> None:
-        """Broadcast when a new agent run is created."""
-        entry: dict[str, Any] = {
-            "type": "agent_run",
-            "id": str(agent_run_id),
-            "sequence_number": sequence_number,
-            "agent_id": agent_id,
-            "status": status,
-        }
-        if planned_prompt:
-            entry["planned_prompt"] = planned_prompt
-        if parent_run_id:
-            entry["parent_run_id"] = str(parent_run_id)
+        """Broadcast when a new agent run is created.
+
+        Sends full nested TimelineEntry shape matching REST API response
+        so the frontend can render immediately without refetching.
+        """
         await self.broadcast(session_id, {
             "type": "timeline_entry",
-            "entry": entry,
+            "entry": {
+                "type": "agent_run",
+                "sequence_number": agent_run.sequence_number,
+                "timestamp": agent_run.started_at or datetime.now(timezone.utc),
+                "agent_run": agent_run.model_dump(),
+            },
         })
 
     async def broadcast_agent_run_updated(
