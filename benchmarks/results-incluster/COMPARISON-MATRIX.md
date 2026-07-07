@@ -1,48 +1,54 @@
 # Model Comparison Matrix
 
-10 registered model(s) tracked; **4 benchmarked** (NVFP4/MXFP4, served from the GPU-node local-disk weight cache, TP=1, 2026-07-07). Models not (yet) benchmarked still appear with a `Status / Note` (pending/gated, or too large for this hardware).
+10 registered model(s) tracked; 4 benchmarked (from 4 committed report.txt + 0 live result JSON(s)). Models that are not (yet) benchmarked still appear, with a `Status / Note` explaining why (fits/pending, needs a maintenance window, or too large for this hardware).
 
 ## Headline metrics
 
-| Model | Params | Quant / size | Median TTFT (ms) | Median decode (tok/s) | latency-500 (s) | context-64k TTFT (ms) | tool 10-3 delta (s) | Errors | Status / Note |
-|---|---|---|---|---|---|---|---|---|---|
-| **Qwen3.6-27B-NVFP4** | 27B (dense) | NVFP4 ~22GB | ~95 | ~64 | 16.1 | 443 | -0.2 | 0 | ✅ Benchmarked — served as `qwen-27b`, loaded from local-disk cache; 256k ctx ✅ |
-| **Qwen3.6-35B-A3B-NVFP4** | 35B (3B act., MoE) | NVFP4 ~22GB | ~80 | ~218 | 4.7 | 173 | ~0.0 | 0 | ✅ Benchmarked — served as `qwen-35b`, from cache; 256k ctx ✅; SM120 Marlin MoE fallback |
-| **gpt-oss-120b** | 120B (MoE) | MXFP4 ~63GB VRAM (~183GB on disk) | ~284 | ~176 | 5.8 | n/a¹ | ~0.1 | 0² | ✅ Benchmarked — MXFP4, from cache |
-| **Qwen3-Coder-Next-80B-NVFP4** | 80B (MoE) | NVFP4 ~47GB | ~138 | ~140 | 7.3 | 3,200 | ~0.1 | 0 | ✅ Benchmarked — Cirrascale NVFP4, from cache; 256k ctx ✅ (TTFT 30.8s@256k); SM120 Marlin MoE fallback |
-| Gemma 4 E4B | ~4B (E4B eff.) | GGUF ~4-8GB | -- | -- | -- | -- | -- | -- | ⏳ Pending — **gated** (HF token not yet in vault) |
-| Qwen3.6-27B-MTP (GGUF) | 27B (+MTP head) | GGUF ~16-30GB | -- | -- | -- | -- | -- | -- | Not benchmarked — GGUF, not staged |
-| GLM-4.6V (GGUF, vision) | 106B | GGUF ~60GB @Q4 | -- | -- | -- | -- | -- | -- | Not benchmarked — vision/GGUF, not staged (vLLM support unverified) |
-| Qwen3-Coder-480B-A35B (MoE) | 480B (35B act.) | ~270GB @NVFP4 | -- | -- | -- | -- | -- | -- | ❌ Too large — >192GB total (needs multi-node) |
-| DeepSeek-V3.1 (MoE) | 671B (37B act.) | ~380GB @Q4 | -- | -- | -- | -- | -- | -- | ❌ Too large — >192GB total (needs multi-node) |
-| GLM-5.1 (MoE) | 744B (40B act.) | ~220-236GB @2-bit | -- | -- | -- | -- | -- | -- | ❌ Too large — >192GB total (needs RAM/MoE offload or multi-node) |
-
-¹ gpt-oss was served at `--max-model-len 8192` for the run, so the 16k/32k/64k/128k/256k context scenarios were **out of range (config choice, not a model limit)** — TTFT at low context ~200-500 ms.
-² 0 errors on the 15 in-range scenarios (incl. both tool-calling scenarios); the 5 over-8k context scenarios were N/A per ¹.
+| Model | Params | Quant / size | Median TTFT (ms) | Median decode (tok/s) | latency-500 (s) | context-64k TTFT (ms) | tool 10-3 delta (s) | stress stddev (ms) | Errors | Status / Note |
+|---|---|---|---|---|---|---|---|---|---|---|
+| Gemma 4 E4B (gemma-4-E4B-it) | ~4B (E4B eff.) | GGUF ~4-8GB | -- | -- | -- | -- | -- | -- | -- | Pending -- gated (HF token not in vault). |
+| Qwen3.6-27B-NVFP4 | 27B (dense) | NVFP4 ~22GB | 191 | 64.0 | 16.1 | 443 | -0.20 | 6,700 | 0 | Served in prod (isvc qwen-27b); benchmarked IN PLACE from local-disk cache, TP=1, 256K ctx OK. |
+| Qwen3.6-27B-MTP (GGUF) | 27B (+MTP head) | GGUF ~16-30GB | -- | -- | -- | -- | -- | -- | -- | Not benchmarked -- GGUF, not staged. |
+| Qwen3.6-35B-A3B-NVFP4 (MoE) | 35B MoE (3B act.) | NVFP4 ~22GB | 99 | 216.5 | 4.7 | 251 | 0.00 | 900 | 0 | Served in prod (isvc qwen-35b); benchmarked IN PLACE from local-disk cache, TP=1, 256K ctx OK. SM120 Marlin MoE fallback. |
+| Qwen3-Coder-Next-80B-NVFP4 (MoE) | 80B MoE | NVFP4 ~47GB | 197 | 139.5 | 7.3 | 3,200 | 0.10 | 0 | 0 | Benchmarked from local-disk cache via runtime:vllm + command override, TP=1, 256K ctx OK (TTFT 30.8s@256k). SM120 Marlin MoE fallback. |
+| gpt-oss-120b (MoE) | 120B MoE | MXFP4 ~63GB | 480 | 176.5 | 5.8 | -- | 0.00 | 100 | 5 | Benchmarked from local-disk cache via runtime:vllm + command override, TP=1. Served at max-model-len 8192, so the 16k+ context scenarios are out-of-range BY CONFIG (not a model limit) and are the errored runs; 0 errors on the 15 in-range scenarios. SM120 Marlin MoE fallback. |
+| Qwen3-Coder-480B-A35B (MoE) | 480B (35B act.) | ~270GB @Q4 / ~960GB bf16 | -- | -- | -- | -- | -- | -- | -- | Too large -- >192GB total. |
+| DeepSeek-V3.1 (GGUF, MoE) | 671B (37B act.) | ~380GB @Q4 GGUF | -- | -- | -- | -- | -- | -- | -- | Too large -- >192GB total. |
+| GLM-5.1 (GGUF, MoE) | 744B (40B act.) | ~220-236GB @2-bit | -- | -- | -- | -- | -- | -- | -- | Too large -- >192GB total. |
+| GLM-4.6V (GGUF, vision) | 106B | GGUF ~60GB @Q4 | -- | -- | -- | -- | -- | -- | -- | Not benchmarked -- vision GGUF, not staged. |
 
 **Column notes**
 
-- **Median TTFT (ms)** — median time-to-first-token over streaming runs. Lower is better.
-- **Median decode (tok/s)** — median steady-state generation throughput. Higher is better. Note the MoE models (35B-A3B, gpt-oss, coder-next) decode far faster than the dense 27B because only a few B params are active per token.
-- **latency-500 (s)** — total latency of the `latency-500` scenario (a fixed-output single call); scales inversely with decode tok/s, so it's comparable across models.
-- **context-64k TTFT (ms)** — prefill cost at ~64k prompt tokens.
-- **tool 10-3 delta (s)** — `tool-call-10-tools` minus `tool-call-3-tools`; cost of extra tool schemas (≈0 = negligible).
-- **Errors** — errored runs across all scenarios. `--` = not benchmarked.
-
-## Methodology & serving
-
-All benchmarked models were served **from the persistent weight cache** (a `local` PersistentVolume on the GPU node's disk, `pvc://llm-model-weights/<model>`) via `runtime: vllm` on `vllm/vllm-openai:cu129-nightly` with a `command` override (to drop the auto-injected `--enable-metrics` that this image rejects), TP=1, KV-cache fp8. Each was benchmarked with the standard 20-scenario suite (`--runs 2 --warmup 1 --timeout 600`). The two served models (27B, 35B-A3B) were benchmarked against their live prod endpoints (non-disruptive); gpt-oss and coder-next were rotated onto a freed GPU (scale `qwen-35b`→0, serve from cache, benchmark, restore) — `qwen-27b` stayed serving throughout.
-
-**SM120 caveat:** the NVFP4 **MoE** models (35B-A3B, coder-next) log `Using 'MARLIN' NvFp4 MoE backend` on the RTX PRO 6000 Blackwell (SM120) — the Marlin fallback kernel, not the faster FLASHINFER/CUTLASS backends — so their decode throughput has upside once vLLM enables native SM120 NVFP4-MoE kernels.
+- **Median TTFT (ms)** -- median time-to-first-token over all streaming runs (latency + generation + context_scaling). Lower is better.
+- **Median decode (tok/s)** -- median steady-state generation throughput over generation scenarios. Higher is better.
+- **latency-500 (s)** -- median total latency of the `latency-500` scenario (representative single-call latency).
+- **context-64k TTFT (ms)** -- prefill cost at ~64k prompt tokens (`context-64k`); measures context scaling.
+- **tool 10-3 delta (s)** -- `tool-call-10-tools` minus `tool-call-3-tools` median latency; cost of extra tool schemas.
+- **stress stddev (ms)** -- latency stddev over `repeated-50`; consistency under repeated calls (lower = steadier).
+- **Errors** -- count of errored runs across all scenarios (e.g. context exceeding the model's max). `--` = not benchmarked.
+- **Status / Note** -- for un-benchmarked rows, why there are no metrics (see fit classes below). Sizes are ESTIMATES (~).
 
 ## Fit classes & hardware constraint
 
-Hardware: 1 GPU node, 2× NVIDIA RTX PRO 6000 Blackwell (96GB each = 192GB total), no P2P → TP=1 (one model per GPU). ns `llm` GPU ResourceQuota hard=2, both GPUs held by the two live `qwen-*` services. A benchmark run frees at most ONE GPU. Sizes are ESTIMATES (~).
+Hardware: 1 GPU node, 2x NVIDIA RTX PRO 6000 Blackwell (96GB each = 192GB total). No P2P between cards, so serving is tensor-parallel=1 (one model per GPU). The `llm` namespace GPU ResourceQuota is hard=2, and both GPUs are normally held by the live `qwen` service. A benchmark run frees at most ONE GPU (qwen 2->1); using both (TP=2) takes prod fully down. All sizes are ESTIMATES (~).
 
-- **`served`** — currently served in prod; benchmarked against the live endpoint.
-- **`fits-1gpu`** — fits one card (≤~90GB); benchmarkable by freeing 1 GPU (rotation).
-- **`too-large`** — exceeds 192GB total even quantized; not testable on this hardware.
+- **`served`** -- Currently served in prod; benchmarked in place (no serving change).
+- **`fits-1gpu`** -- Fits one RTX PRO 6000 (<=~90GB usable). Benchmarkable now by freeing 1 GPU (qwen 2->1).
+- **`needs-2gpu`** -- Needs both GPUs (tensor-parallel 2, ~160GB). Testable only in a full maintenance window -- it takes prod fully down.
+- **`too-large`** -- Exceeds 192GB total even quantized. Not testable on this hardware (needs multi-node / RAM-MoE offload).
 
-## Per-model reports
+## Methodology
 
-Full per-scenario reports: `benchmarks/results-incluster/<model>/report.txt` (27B-NVFP4 and 35B-A3B committed; gpt-oss and coder-next captured during their rotation runs).
+All benchmarked models were served in-cluster (ka-k8s-ai) from a LOCAL-DISK model cache (`pvc://` volume, no per-run HF download) via the vLLM runtime (`runtime: vllm`) with a per-model command/args override (see the `profile` blocks in `benchmarks/candidates.yaml`), tensor-parallel=1, on 2026-07-07. On the SM120 (RTX PRO 6000 Blackwell) cards, native NVFP4/MXFP4 MoE kernels fall back to Marlin (slower) for the MoE models (Qwen3.6-35B-A3B-NVFP4, Qwen3-Coder-Next-80B-NVFP4, gpt-oss-120b). gpt-oss-120b was served at max-model-len 8192, so its 16k+ context scenarios are out-of-range BY CONFIG (not a model limit) and are counted as errors. Headline metrics here are parsed from each model's committed `results-incluster/<slug>/report.txt` (the per-run JSONs are transient), so re-running `compare_models.py` reproduces this matrix deterministically.
+
+## Per-category throughput
+
+_Per-category tok/s breakdown needs the transient per-run result JSON (kept only in the sweep's WORKDIR, not committed). The reproducible headline metrics above are parsed from each model's committed `report.txt`; see `MODEL-TEST-MATRIX.md` and the per-model `report.txt` for the full per-scenario detail._
+
+## Source files
+
+- `C:\Users\rdonker\dev\druppie-fork\benchmarks\results-incluster\qwen3.6-27b-nvfp4\report.txt` (committed report.txt)
+- `C:\Users\rdonker\dev\druppie-fork\benchmarks\results-incluster\qwen3.6-35b-a3b-nvfp4\report.txt` (committed report.txt)
+- `C:\Users\rdonker\dev\druppie-fork\benchmarks\results-incluster\qwen3-coder-next-nvfp4\report.txt` (committed report.txt)
+- `C:\Users\rdonker\dev\druppie-fork\benchmarks\results-incluster\gpt-oss-120b\report.txt` (committed report.txt)
+

@@ -56,6 +56,14 @@ import os
 import statistics
 import sys
 
+# Shared, stdlib-only report.txt parser (also used by update_test_matrix.py so
+# the two matrices can never drift). The committed per-model report.txt is the
+# REPRODUCIBLE source of truth: the per-run result JSONs are transient (they live
+# only in the sweep's temp WORKDIR and are discarded), so re-running this
+# generator from the repo has no JSON to read -- it falls back to report.txt.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from report_metrics import extract_metrics  # noqa: E402
+
 # ---------------------------------------------------------------------------
 # Schema field names -- kept as constants so the reliance on the runner schema
 # is explicit and easy to audit against a sample result JSON.
@@ -124,9 +132,29 @@ HARDWARE_NOTE = (
     "ESTIMATES (~)."
 )
 
+METHODOLOGY_NOTE = (
+    "All benchmarked models were served in-cluster (ka-k8s-ai) from a LOCAL-DISK "
+    "model cache (`pvc://` volume, no per-run HF download) via the vLLM runtime "
+    "(`runtime: vllm`) with a per-model command/args override (see the `profile` "
+    "blocks in `benchmarks/candidates.yaml`), tensor-parallel=1, on 2026-07-07. "
+    "On the SM120 (RTX PRO 6000 Blackwell) cards, native NVFP4/MXFP4 MoE kernels "
+    "fall back to Marlin (slower) for the MoE models "
+    "(Qwen3.6-35B-A3B-NVFP4, Qwen3-Coder-Next-80B-NVFP4, gpt-oss-120b). "
+    "gpt-oss-120b was served at max-model-len 8192, so its 16k+ context scenarios "
+    "are out-of-range BY CONFIG (not a model limit) and are counted as errors. "
+    "Headline metrics here are parsed from each model's committed "
+    "`results-incluster/<slug>/report.txt` (the per-run JSONs are transient), so "
+    "re-running `compare_models.py` reproduces this matrix deterministically."
+)
+
 # One entry per registered `models.inference.llmkube.dev` object. Order here is
 # the row order in the matrix. `note` is used when the model has NOT been
 # benchmarked; `note_done` (optional) when a matching result JSON is present.
+#
+# `report_dir` (optional): the results-incluster/<report_dir>/report.txt whose
+# committed metrics are parsed for this row when no live result JSON is present.
+# This is what makes the matrix REPRODUCIBLE -- re-running the generator from the
+# repo (no transient JSONs) still renders the real numbers from report.txt.
 KNOWN_MODELS = [
     {
         "crd": "gemma-4-e4b",
@@ -135,18 +163,19 @@ KNOWN_MODELS = [
         "params": "~4B (E4B eff.)",
         "quant": "GGUF ~4-8GB",
         "fit": "fits-1gpu",
-        "note": "Pending -- fits 1 GPU easily (~4-8GB GGUF), not yet run.",
+        "note": "Pending -- gated (HF token not in vault).",
     },
     {
         "crd": "qwen3-6-27b",
-        "source": "Qwen/Qwen3.6-27B",
-        "label": "Qwen3.6-27B",
-        "params": "27B",
-        "quant": "bf16 ~54GB",
+        "source": "nvidia/Qwen3.6-27B-NVFP4",
+        "report_dir": "qwen3.6-27b-nvfp4",
+        "label": "Qwen3.6-27B-NVFP4",
+        "params": "27B (dense)",
+        "quant": "NVFP4 ~22GB",
         "fit": "served",
         "note": "Pending -- currently served in prod.",
-        "note_done": "Benchmarked in place -- prod, no serving change "
-                     "(see qwen3.6-27b/report.txt).",
+        "note_done": "Served in prod (isvc qwen-27b); benchmarked IN PLACE from "
+                     "local-disk cache, TP=1, 256K ctx OK.",
     },
     {
         "crd": "qwen3-6-27b-mtp",
@@ -155,36 +184,48 @@ KNOWN_MODELS = [
         "params": "27B (+MTP head)",
         "quant": "GGUF ~16-30GB",
         "fit": "fits-1gpu",
-        "note": "Pending -- fits 1 GPU (~16-30GB GGUF quant), not yet run.",
+        "note": "Not benchmarked -- GGUF, not staged.",
     },
     {
         "crd": "qwen3-6-35b-a3b",
-        "source": "Qwen/Qwen3.6-35B-A3B",
-        "label": "Qwen3.6-35B-A3B (MoE)",
-        "params": "35B (3B act.)",
-        "quant": "bf16 ~70GB",
-        "fit": "fits-1gpu",
-        "note": "Pending -- fits 1 GPU (~70GB bf16, tight). Prior run failed on "
-                "HF download timeout, NOT VRAM.",
+        "source": "nvidia/Qwen3.6-35B-A3B-NVFP4",
+        "report_dir": "qwen3.6-35b-a3b-nvfp4",
+        "label": "Qwen3.6-35B-A3B-NVFP4 (MoE)",
+        "params": "35B MoE (3B act.)",
+        "quant": "NVFP4 ~22GB",
+        "fit": "served",
+        "note": "Pending -- fits 1 GPU (NVFP4).",
+        "note_done": "Served in prod (isvc qwen-35b); benchmarked IN PLACE from "
+                     "local-disk cache, TP=1, 256K ctx OK. SM120 Marlin MoE "
+                     "fallback.",
     },
     {
         "crd": "qwen3-coder-next-80b",
-        "source": "Qwen/Qwen3-Coder-Next-80B",
-        "label": "Qwen3-Coder-Next-80B",
-        "params": "80B",
-        "quant": "bf16 ~160GB",
-        "fit": "needs-2gpu",
-        "note": "Needs 2 GPUs (TP=2, ~160GB bf16) -- testable only in a full "
-                "maintenance window (or with quantization).",
+        "source": "Cirrascale/Qwen3-Coder-Next-NVFP4",
+        "report_dir": "qwen3-coder-next-nvfp4",
+        "label": "Qwen3-Coder-Next-80B-NVFP4 (MoE)",
+        "params": "80B MoE",
+        "quant": "NVFP4 ~47GB",
+        "fit": "fits-1gpu",
+        "note": "Pending -- fits 1 GPU at NVFP4.",
+        "note_done": "Benchmarked from local-disk cache via runtime:vllm + "
+                     "command override, TP=1, 256K ctx OK (TTFT 30.8s@256k). "
+                     "SM120 Marlin MoE fallback.",
     },
     {
         "crd": "gpt-oss-120b",
         "source": "openai/gpt-oss-120b",
-        "label": "gpt-oss-120b",
-        "params": "120B (MoE)",
-        "quant": "MXFP4 ~63GB (native)",
+        "report_dir": "gpt-oss-120b",
+        "label": "gpt-oss-120b (MoE)",
+        "params": "120B MoE",
+        "quant": "MXFP4 ~63GB",
         "fit": "fits-1gpu",
         "note": "Pending -- fits 1 GPU (~63GB, ships native MXFP4), not yet run.",
+        "note_done": "Benchmarked from local-disk cache via runtime:vllm + "
+                     "command override, TP=1. Served at max-model-len 8192, so "
+                     "the 16k+ context scenarios are out-of-range BY CONFIG (not "
+                     "a model limit) and are the errored runs; 0 errors on the 15 "
+                     "in-range scenarios. SM120 Marlin MoE fallback.",
     },
     {
         "crd": "qwen3-coder-480b-a35b",
@@ -193,8 +234,7 @@ KNOWN_MODELS = [
         "params": "480B (35B act.)",
         "quant": "~270GB @Q4 / ~960GB bf16",
         "fit": "too-large",
-        "note": "Not benchmarked -- exceeds VRAM (~270GB @Q4 / ~960GB bf16 > "
-                "192GB total; needs multi-node).",
+        "note": "Too large -- >192GB total.",
     },
     {
         "crd": "deepseek-v3-1",
@@ -203,8 +243,7 @@ KNOWN_MODELS = [
         "params": "671B (37B act.)",
         "quant": "~380GB @Q4 GGUF",
         "fit": "too-large",
-        "note": "Not benchmarked -- exceeds VRAM (671B MoE, ~380GB @Q4 GGUF > "
-                "192GB total; needs multi-node).",
+        "note": "Too large -- >192GB total.",
     },
     {
         "crd": "glm-5-1",
@@ -213,9 +252,7 @@ KNOWN_MODELS = [
         "params": "744B (40B act.)",
         "quant": "~220-236GB @2-bit",
         "fit": "too-large",
-        "note": "Not benchmarked -- exceeds VRAM (744B MoE, ~220-236GB even "
-                "@2-bit dynamic GGUF > 192GB total; needs RAM/MoE offload or "
-                "multi-node).",
+        "note": "Too large -- >192GB total.",
     },
     {
         "crd": "glm-4-6v",
@@ -224,9 +261,7 @@ KNOWN_MODELS = [
         "params": "106B",
         "quant": "GGUF ~60GB @Q4",
         "fit": "fits-1gpu",
-        "note": "Pending (uncertain) -- ~60GB @Q4 GGUF fits 1 GPU, but "
-                "vision/multimodal serving on vLLM needs verification; bf16 "
-                "(~212GB) would not fit.",
+        "note": "Not benchmarked -- vision GGUF, not staged.",
     },
 ]
 
@@ -263,17 +298,54 @@ def _runtime_skip_reason(results_dir, slug):
     return reason or None
 
 
+REPORT_FILENAME = "report.txt"    # committed per-model report under <results_dir>/<report_dir>/
+
+
+def _report_metrics(results_dir, report_dir):
+    """Parse committed <results_dir>/<report_dir>/report.txt -> row-ready metrics.
+
+    Returns a dict keyed for build_matrix_rows (ttft/tps/lat500/ttft64k/
+    tool_delta/stress_std/errors), or None if the report is absent/unreadable.
+    This is the reproducible metric source when no live per-run JSON is present.
+    """
+    if not results_dir or not report_dir:
+        return None
+    path = os.path.join(results_dir, report_dir, REPORT_FILENAME)
+    if not os.path.isfile(path):
+        return None
+    try:
+        with open(path, encoding="utf-8") as f:
+            m = extract_metrics(f.read())
+    except OSError:
+        return None
+    return {
+        "ttft": m["ttft_ms"],
+        "tps": m["tps"],
+        "lat500": m["lat500_s"],
+        "ttft64k": m["ttft64k_ms"],
+        "tool_delta": m["tool_delta_s"],
+        "stress_std": m["stress_std_ms"],
+        "errors": m["errors"],
+    }
+
+
 def merge_known_with_actual(actual_models, results_dir=None):
     """Merge the KNOWN_MODELS registry with actual (meta, view) results.
 
-    Returns (row_specs, benchmarked):
+    Returns (row_specs, benchmarked, report_sources):
       * row_specs -- ordered list of dicts for the headline matrix: every known
         model in registry order, plus any actual model NOT in the registry
         appended at the end (so real data is never dropped). Each spec has
-        keys: label, params, quant, fit, note, and optionally view (present
-        only when the model was actually benchmarked).
-      * benchmarked -- list of (meta, view) that carried real results, for the
-        per-category throughput table.
+        keys: label, params, quant, fit, note, and EITHER `view` (live per-run
+        JSON, richest -- also feeds the per-category table) OR `metrics`
+        (precomputed from the committed report.txt, the reproducible fallback).
+      * benchmarked -- list of (meta, view) that carried a live JSON view, for
+        the per-category throughput table.
+      * report_sources -- report.txt paths whose metrics were parsed.
+
+    Precedence: a live JSON view wins over report.txt (it is richer). Without any
+    JSON, each registry entry with a `report_dir` renders its committed report.txt
+    metrics -- so re-running from the repo reproduces the real matrix, not a blank.
 
     ``results_dir`` (optional) is scanned for per-slug ``SKIPPED.txt`` files: a
     live skip reason there overrides the static registry note for any model that
@@ -285,6 +357,7 @@ def merge_known_with_actual(actual_models, results_dir=None):
 
     row_specs = []
     benchmarked = []
+    report_sources = []
     matched = set()
     for km in KNOWN_MODELS:
         slug = _slug(km["source"])
@@ -305,10 +378,18 @@ def merge_known_with_actual(actual_models, results_dir=None):
             benchmarked.append((meta, view))
             matched.add(slug)
         else:
-            # Not benchmarked -- prefer a live skip reason over the static note.
-            reason = _runtime_skip_reason(results_dir, slug)
-            if reason:
-                spec["note"] = f"Skipped -- {reason}"
+            # No live JSON -- fall back to the committed report.txt (reproducible).
+            metrics = _report_metrics(results_dir, km.get("report_dir"))
+            if metrics is not None:
+                spec["metrics"] = metrics
+                spec["note"] = km.get("note_done", "Benchmarked.")
+                report_sources.append(
+                    os.path.join(results_dir, km["report_dir"], REPORT_FILENAME))
+            else:
+                # Not benchmarked -- prefer a live skip reason over the static note.
+                reason = _runtime_skip_reason(results_dir, slug)
+                if reason:
+                    spec["note"] = f"Skipped -- {reason}"
         row_specs.append(spec)
 
     # Append any benchmarked model not covered by the registry -- never lose data.
@@ -324,7 +405,7 @@ def merge_known_with_actual(actual_models, results_dir=None):
             "view": view,
         })
         benchmarked.append((meta, view))
-    return row_specs, benchmarked
+    return row_specs, benchmarked, report_sources
 
 
 # ---------------------------------------------------------------------------
@@ -498,6 +579,7 @@ def build_matrix_rows(row_specs):
     rows = []
     for spec in row_specs:
         view = spec.get("view")
+        metrics = spec.get("metrics")
         if view is not None:
             rows.append({
                 "label": spec["label"],
@@ -510,6 +592,21 @@ def build_matrix_rows(row_specs):
                 "tool_delta": tool_overhead_delta_s(view),
                 "stress_std": stress_stddev_ms(view),
                 "errors": error_count(view),
+                "note": spec["note"],
+            })
+        elif metrics is not None:
+            # Reproducible metrics parsed from the committed report.txt.
+            rows.append({
+                "label": spec["label"],
+                "params": spec["params"] or "",
+                "quant": spec["quant"] or "",
+                "ttft": metrics["ttft"],
+                "tps": metrics["tps"],
+                "lat500": metrics["lat500"],
+                "ttft64k": metrics["ttft64k"],
+                "tool_delta": metrics["tool_delta"],
+                "stress_std": metrics["stress_std"],
+                "errors": metrics["errors"],
                 "note": spec["note"],
             })
         else:
@@ -574,15 +671,21 @@ def render_category_breakdown(models):
     return "\n".join(lines)
 
 
-def render_report(row_specs, benchmarked, source_files):
+def render_report(row_specs, benchmarked, source_files, report_sources=None):
+    report_sources = report_sources or []
+    benchmarked_count = sum(
+        1 for s in row_specs
+        if s.get("view") is not None or s.get("metrics") is not None)
     parts = []
     parts.append("# Model Comparison Matrix")
     parts.append("")
     parts.append(f"{len(row_specs)} registered model(s) tracked; "
-                 f"{len(benchmarked)} benchmarked from {len(source_files)} "
-                 f"result file(s). Models that are not (yet) benchmarked still "
-                 f"appear, with a `Status / Note` explaining why (fits/pending, "
-                 f"needs a maintenance window, or too large for this hardware).")
+                 f"{benchmarked_count} benchmarked "
+                 f"(from {len(report_sources)} committed report.txt + "
+                 f"{len(source_files)} live result JSON(s)). Models that are not "
+                 f"(yet) benchmarked still appear, with a `Status / Note` "
+                 f"explaining why (fits/pending, needs a maintenance window, or "
+                 f"too large for this hardware).")
     parts.append("")
     parts.append("## Headline metrics")
     parts.append("")
@@ -614,20 +717,33 @@ def render_report(row_specs, benchmarked, source_files):
     for name, desc in FIT_LEGEND:
         parts.append(f"- **`{name}`** -- {desc}")
     parts.append("")
+    parts.append("## Methodology")
+    parts.append("")
+    parts.append(METHODOLOGY_NOTE)
+    parts.append("")
     parts.append("## Per-category throughput")
     parts.append("")
     if benchmarked:
         parts.append("_Benchmarked models only._")
         parts.append("")
         parts.append(render_category_breakdown(benchmarked))
+    elif benchmarked_count:
+        parts.append("_Per-category tok/s breakdown needs the transient per-run "
+                     "result JSON (kept only in the sweep's WORKDIR, not "
+                     "committed). The reproducible headline metrics above are "
+                     "parsed from each model's committed `report.txt`; see "
+                     "`MODEL-TEST-MATRIX.md` and the per-model `report.txt` for "
+                     "the full per-scenario detail._")
     else:
         parts.append("_No benchmarked models yet -- run the sweep to populate._")
     parts.append("")
     parts.append("## Source files")
     parts.append("")
-    if source_files:
+    if source_files or report_sources:
         for f in source_files:
-            parts.append(f"- `{f}`")
+            parts.append(f"- `{f}` (live result JSON)")
+        for f in report_sources:
+            parts.append(f"- `{f}` (committed report.txt)")
     else:
         parts.append("_None -- matrix rendered from the known-models registry only._")
     parts.append("")
@@ -648,13 +764,20 @@ def main(argv=None):
     parser.add_argument("--output", dest="output",
                         help="Write the Markdown matrix to this file (also printed to stdout).")
     parser.add_argument("--results-dir", dest="results_dir",
-                        help="Results root scanned for per-slug SKIPPED.txt reasons "
-                             "(overrides the static note for un-benchmarked models).")
+                        help="Results root holding <report_dir>/report.txt (parsed "
+                             "for reproducible metrics when no live JSON is given) "
+                             "and per-slug SKIPPED.txt reasons. Defaults to the "
+                             "results-incluster dir beside this script.")
     args = parser.parse_args(argv)
 
-    # No input JSON is OK: the matrix still lists every registered model from
-    # the known-models registry (all rows show "--" metrics + a pending/untestable
-    # note). This lets us regenerate a static preview without cluster access.
+    # results_dir defaults to the conventional results-incluster dir beside this
+    # script, so `python benchmarks/compare_models.py` (no args) reproduces the
+    # real matrix from the committed report.txt files -- not a blank preview.
+    results_dir = args.results_dir or os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "results-incluster")
+
+    # No input JSON is OK: benchmarked rows come from the committed report.txt
+    # under results_dir; un-benchmarked ones show "--" + a pending/untestable note.
     paths = load_files(args.files, args.directory)
 
     # (meta, model_view) tuples, in file order then model order within a file.
@@ -680,9 +803,10 @@ def main(argv=None):
     # Merge actual results with the known-models registry so every registered
     # model appears -- benchmarked ones with metrics, the rest with a note (a
     # live SKIPPED.txt reason under --results-dir overrides the static note).
-    row_specs, benchmarked = merge_known_with_actual(models, args.results_dir)
+    row_specs, benchmarked, report_sources = merge_known_with_actual(
+        models, results_dir)
 
-    report = render_report(row_specs, benchmarked, used_files)
+    report = render_report(row_specs, benchmarked, used_files, report_sources)
     print(report)
 
     if args.output:
