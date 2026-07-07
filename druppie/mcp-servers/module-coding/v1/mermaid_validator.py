@@ -187,13 +187,10 @@ _PUPPETEER_CONFIG = Path(__file__).parent / "puppeteer-config.json"
 
 
 def _validate_with_mmdc(markdown: str) -> list[MermaidError]:
-    """Validate Mermaid blocks structurally using mmdc (mermaid-cli).
+    """Validate Mermaid blocks structurally using native Node.js parser.
 
-    Extracts each Mermaid block, writes it to a temp file, and runs mmdc
-    to check for structural errors (mismatched subgraph/end, invalid syntax, etc.).
-
-    Returns:
-        List of MermaidError objects for blocks that fail structural validation.
+    Replaces mmdc (broken in Docker due to Chromium crashpad/sysfs issues)
+    with mermaid.parse() via a small Node.js script. No browser needed.
     """
     errors: list[MermaidError] = []
     lines = markdown.split("\n")
@@ -202,28 +199,20 @@ def _validate_with_mmdc(markdown: str) -> list[MermaidError]:
     if not blocks:
         return errors
 
-    # Build mmdc command with puppeteer config if available
-    mmdc_cmd = ["mmdc"]
-    if _PUPPETEER_CONFIG.exists():
-        mmdc_cmd.extend(["-p", str(_PUPPETEER_CONFIG)])
+    # Path to native Node.js validator script (ES module, uses mermaid.parse)
+    validator_script = Path(__file__).parent / "validate-mermaid.mjs"
+    if not validator_script.exists():
+        logger.warning("validate-mermaid.mjs not found, skipping structural validation")
+        return errors
 
     for block_start, block_end in blocks:
         block_lines = lines[block_start - 1 : block_end]
         block_content = "\n".join(block_lines)
 
-        tmp_input = None
-        tmp_output = None
         try:
-            with tempfile.NamedTemporaryFile(
-                mode="w", suffix=".mmd", delete=False
-            ) as f:
-                f.write(block_content)
-                tmp_input = f.name
-
-            tmp_output = tmp_input.replace(".mmd", ".svg")
-
             result = subprocess.run(
-                [*mmdc_cmd, "-i", tmp_input, "-o", tmp_output],
+                ["node", str(validator_script)],
+                input=block_content,
                 capture_output=True,
                 text=True,
                 timeout=15,
@@ -231,27 +220,18 @@ def _validate_with_mmdc(markdown: str) -> list[MermaidError]:
 
             if result.returncode != 0:
                 stderr = result.stderr.strip()
-                message = _parse_mmdc_error(stderr, block_content)
                 errors.append(
                     MermaidError(
                         line_number=block_start,
                         line_content=block_lines[0] if block_lines else "",
                         rule="mmdc-structural",
-                        message=message,
+                        message=stderr or "Mermaid syntax error",
                     )
                 )
-        except FileNotFoundError:
-            logger.warning("mmdc not found, skipping structural validation")
-            break
         except subprocess.TimeoutExpired:
-            logger.warning("mmdc timed out for block at line %d", block_start)
+            logger.warning("mermaid validation timed out for block at line %d", block_start)
         except Exception as e:
-            logger.warning("mmdc validation failed: %s", e)
-        finally:
-            if tmp_input:
-                Path(tmp_input).unlink(missing_ok=True)
-            if tmp_output:
-                Path(tmp_output).unlink(missing_ok=True)
+            logger.warning("mermaid validation failed: %s", e)
 
     return errors
 
