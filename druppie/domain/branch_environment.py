@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel
@@ -41,6 +42,9 @@ class BranchEnvironmentSummary(BaseModel):
     status: BranchEnvironmentStatus
     status_message: str | None = None
     created_at: datetime
+    # Where the env's Vault-sourced app secrets come from: "colab-dev" (borrowed
+    # defaults) or "developer" (the deployer's own druppie/developers/<user> map).
+    secrets_source: str | None = None
     # Optional per-env dev workspace (code-server behind a Keycloak oauth2-proxy).
     workspace_enabled: bool = False
     workspace_url: str | None = None
@@ -60,6 +64,9 @@ class BranchEnvironmentCreate(BaseModel):
 
     branch: str
     image_tag: str | None = None
+    # "developer" syncs the deployer's own Vault map (druppie/developers/<user>,
+    # self-service via the Vault UI); default borrows the colab-dev LLM keys.
+    secrets_source: Literal["colab-dev", "developer"] = "colab-dev"
 
 
 class BranchEnvironmentListResponse(BaseModel):

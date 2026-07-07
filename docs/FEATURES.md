@@ -876,6 +876,20 @@ history is the audit log.
   `druppie` namespace by the `druppie-tls-mirror` ClusterSecretStore (kubernetes
   provider); the Harbor pull secret comes from Vault (`ci/harbor`), identical to the
   live instances.
+- **App secrets: pick a source at deploy** — the deploy dialog offers two options
+  for the env's LLM/API keys, materialized as the `branch-env-secrets` Secret and
+  appended (optional, last-wins) to `envFrom` via `global.extraEnvFromSecret`:
+  - *colab-dev defaults* (default): borrows the LLM API keys the colab-dev instance
+    uses (`druppie/colab-dev/app`) — works with zero setup.
+  - *my developer Vault map*: syncs the deployer's own self-service map
+    `druppie/developers/<username>` wholesale (`dataFrom`); key names are the env
+    var names (e.g. `ZAI_API_KEY`, `DATA_SOURCE_1`). Edit it in the Vault UI —
+    ESO refreshes within a minute, no redeploy needed. The source is a hard
+    allowlist (no free-form Vault paths) and always resolves to the deployer's
+    own identity, so an env can never sync another user's or prod's secrets.
+  Infra secrets (DB passwords, Keycloak/Gitea admin) always stay the chart's
+  in-namespace defaults — overriding those would detach the env from its own
+  databases.
 - **CI auto-upgrade** — when CI finishes building images for a `feature/**` branch it
   updates the `imageTag` in the env's committed HelmRelease directly (same mechanism
   as main/colab-dev). No webhook, no backend involvement.

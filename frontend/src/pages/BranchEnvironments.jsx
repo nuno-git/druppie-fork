@@ -22,6 +22,7 @@ import {
 } from 'lucide-react'
 
 import { branchEnvironmentsApi } from '../services/api'
+import { useAuth } from '../App'
 import { useToast } from '../components/Toast'
 import PageHeader from '../components/shared/PageHeader'
 import EmptyState from '../components/shared/EmptyState'
@@ -298,9 +299,10 @@ const BranchEnvCard = ({
   )
 }
 
-const DeployBranchDialog = ({ onClose, onDeploy, isDeploying, deployError }) => {
+const DeployBranchDialog = ({ onClose, onDeploy, isDeploying, deployError, username }) => {
   const [branch, setBranch] = useState('')
   const [imageTag, setImageTag] = useState('')
+  const [secretsSource, setSecretsSource] = useState('colab-dev')
   const [showAdvanced, setShowAdvanced] = useState(false)
 
   useEffect(() => {
@@ -315,7 +317,11 @@ const DeployBranchDialog = ({ onClose, onDeploy, isDeploying, deployError }) => 
   const submit = (e) => {
     e.preventDefault()
     if (!slug) return
-    onDeploy({ branch: branch.trim(), image_tag: imageTag.trim() || undefined })
+    onDeploy({
+      branch: branch.trim(),
+      image_tag: imageTag.trim() || undefined,
+      secrets_source: secretsSource,
+    })
   }
 
   return (
@@ -360,6 +366,48 @@ const DeployBranchDialog = ({ onClose, onDeploy, isDeploying, deployError }) => 
                 'A DNS-safe slug is derived from the branch name.'
               )}
             </p>
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-gray-700 mb-1">Secrets</label>
+            <div className="space-y-1.5">
+              <label className="flex items-start gap-2 text-sm text-gray-700 cursor-pointer">
+                <input
+                  type="radio"
+                  name="secrets-source"
+                  value="colab-dev"
+                  checked={secretsSource === 'colab-dev'}
+                  onChange={() => setSecretsSource('colab-dev')}
+                  className="mt-0.5"
+                />
+                <span>
+                  colab-dev defaults
+                  <span className="block text-xs text-gray-400">
+                    Borrow the LLM API keys colab-dev uses — works out of the box.
+                  </span>
+                </span>
+              </label>
+              <label className="flex items-start gap-2 text-sm text-gray-700 cursor-pointer">
+                <input
+                  type="radio"
+                  name="secrets-source"
+                  value="developer"
+                  checked={secretsSource === 'developer'}
+                  onChange={() => setSecretsSource('developer')}
+                  className="mt-0.5"
+                />
+                <span>
+                  My developer Vault map
+                  <span className="block text-xs text-gray-400 font-mono">
+                    druppie/developers/{(username || 'you').toLowerCase()}
+                  </span>
+                  <span className="block text-xs text-gray-400">
+                    Self-service in the Vault UI; key names are the env var names
+                    (e.g. ZAI_API_KEY). Missing keys fall back to chart defaults.
+                  </span>
+                </span>
+              </label>
+            </div>
           </div>
 
           <div>
@@ -420,6 +468,7 @@ const DeployBranchDialog = ({ onClose, onDeploy, isDeploying, deployError }) => 
 const BranchEnvironments = () => {
   const [showDeploy, setShowDeploy] = useState(false)
   const [deployError, setDeployError] = useState(null)
+  const { user } = useAuth() || {}
   const toast = useToast()
   const qc = useQueryClient()
 
@@ -590,6 +639,7 @@ const BranchEnvironments = () => {
           onDeploy={(payload) => deployMut.mutate(payload)}
           isDeploying={deployMut.isPending}
           deployError={deployError}
+          username={user?.username}
         />
       )}
     </div>

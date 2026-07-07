@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter } from 'react-router-dom'
 
@@ -148,5 +148,46 @@ describe('BranchEnvironments page', () => {
     const enableButton = await screen.findByRole('button', { name: /workspace aanzetten/i })
     expect(enableButton).toBeTruthy()
     expect(enableButton.disabled).toBe(false)
+  })
+
+  it('deploys with the colab-dev secrets source by default', async () => {
+    branchEnvironmentsApi.list.mockResolvedValue({ items: [], total: 0 })
+    branchEnvironmentsApi.deploy.mockResolvedValue({})
+
+    renderPage()
+
+    fireEvent.click(await screen.findByRole('button', { name: /deploy branch/i }))
+    fireEvent.change(screen.getByPlaceholderText('feature/my-branch'), {
+      target: { value: 'feature/foo' },
+    })
+    fireEvent.submit(screen.getByRole('button', { name: /^deploy$/i }).closest('form'))
+
+    await waitFor(() =>
+      expect(branchEnvironmentsApi.deploy).toHaveBeenCalledWith({
+        branch: 'feature/foo',
+        image_tag: undefined,
+        secrets_source: 'colab-dev',
+      })
+    )
+  })
+
+  it('deploys with the developer secrets source when selected', async () => {
+    branchEnvironmentsApi.list.mockResolvedValue({ items: [], total: 0 })
+    branchEnvironmentsApi.deploy.mockResolvedValue({})
+
+    renderPage()
+
+    fireEvent.click(await screen.findByRole('button', { name: /deploy branch/i }))
+    fireEvent.change(screen.getByPlaceholderText('feature/my-branch'), {
+      target: { value: 'feature/foo' },
+    })
+    fireEvent.click(screen.getByRole('radio', { name: /my developer vault map/i }))
+    fireEvent.submit(screen.getByRole('button', { name: /^deploy$/i }).closest('form'))
+
+    await waitFor(() =>
+      expect(branchEnvironmentsApi.deploy).toHaveBeenCalledWith(
+        expect.objectContaining({ secrets_source: 'developer' })
+      )
+    )
   })
 })

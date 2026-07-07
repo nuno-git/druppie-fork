@@ -29,13 +29,18 @@ OWNER_SUB = "22222222-2222-2222-2222-222222222222"
 OTHER_SUB = "33333333-3333-3333-3333-333333333333"
 
 
-def _user(sub: str, admin: bool = False, developer: bool = True) -> dict:
+def _user(
+    sub: str, admin: bool = False, developer: bool = True, username: str | None = "robbe"
+) -> dict:
     roles = []
     if admin:
         roles.append("admin")
     if developer:
         roles.append("developer")
-    return {"sub": sub, "realm_access": {"roles": roles}}
+    user = {"sub": sub, "realm_access": {"roles": roles}}
+    if username:
+        user["preferred_username"] = username
+    return user
 
 
 # ---------------------------------------------------------------------------
@@ -182,10 +187,12 @@ def _env_dir(slug: str) -> str:
     return f"{GITOPS_PATH}/druppie-{slug}"
 
 
-def _deploy(client, branch="feature/foo", image_tag=None):
+def _deploy(client, branch="feature/foo", image_tag=None, secrets_source=None):
     body = {"branch": branch}
     if image_tag:
         body["image_tag"] = image_tag
+    if secrets_source:
+        body["secrets_source"] = secrets_source
     return client.post("/api/branch-environments", json=body)
 
 
@@ -276,6 +283,51 @@ def test_create_blocked_while_namespace_terminating(client, as_owner, fake_clust
         "metadata": {"name": "druppie-feature-foo", "labels": {"druppie.io/branch-env": "true"}}
     }
     assert _deploy(client).status_code == 409
+
+
+# ---------------------------------------------------------------------------
+# secrets source (Vault-backed app secrets)
+# ---------------------------------------------------------------------------
+
+
+def test_create_default_secrets_source_borrows_colab_dev_keys(client, as_owner, fake_gitea):
+    r = _deploy(client)
+    assert r.status_code == 202, r.text
+    assert r.json()["secrets_source"] == "colab-dev"
+
+    docs = list(yaml.safe_load_all(fake_gitea.files[f"{_env_dir('feature-foo')}/externalsecrets.yaml"]))
+    app_es = next(d for d in docs if d["metadata"]["name"] == "branch-env-secrets")
+    props = {d["remoteRef"]["key"] for d in app_es["spec"]["data"]}
+    assert props == {"druppie/colab-dev/app"}
+    keys = {d["secretKey"] for d in app_es["spec"]["data"]}
+    assert "ZAI_API_KEY" in keys and "OPENROUTER_API_KEY" in keys
+
+    hr = yaml.safe_load(fake_gitea.files[f"{_env_dir('feature-foo')}/helmrelease.yaml"])
+    assert hr["spec"]["values"]["global"]["extraEnvFromSecret"] == "branch-env-secrets"
+
+
+def test_create_developer_secrets_source_uses_own_vault_map(client, as_owner, fake_gitea):
+    r = _deploy(client, secrets_source="developer")
+    assert r.status_code == 202, r.text
+    assert r.json()["secrets_source"] == "developer"
+
+    docs = list(yaml.safe_load_all(fake_gitea.files[f"{_env_dir('feature-foo')}/externalsecrets.yaml"]))
+    app_es = next(d for d in docs if d["metadata"]["name"] == "branch-env-secrets")
+    # dataFrom extract on the deployer's OWN map (username from the token).
+    assert app_es["spec"]["dataFrom"] == [{"extract": {"key": "druppie/developers/robbe"}}]
+    assert "data" not in app_es["spec"]
+
+    ns = yaml.safe_load(fake_gitea.files[f"{_env_dir('feature-foo')}/namespace.yaml"])
+    assert ns["metadata"]["annotations"]["druppie.io/secrets-source"] == "developer"
+
+
+def test_create_invalid_secrets_source_rejected(client, as_owner):
+    assert _deploy(client, secrets_source="druppie/main/app").status_code == 422
+
+
+def test_create_developer_secrets_requires_usable_username(app, client):
+    app.dependency_overrides[get_current_user] = lambda: _user(OWNER_SUB, username=None)
+    assert _deploy(client, secrets_source="developer").status_code == 422
 
 
 # ---------------------------------------------------------------------------

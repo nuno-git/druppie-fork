@@ -71,6 +71,10 @@ async def create_branch_environment(
         branch=body.branch,
         image_tag=body.image_tag,
         user_roles=user_roles,
+        secrets_source=body.secrets_source,
+        # The deployer's own identity — "developer" secrets always resolve to
+        # THEIR Vault map; there is deliberately no way to pick someone else's.
+        owner_username=user.get("preferred_username"),
     )
 
 

@@ -4,6 +4,11 @@ global:
   imageRegistry: ''
   imageTag: ''
   imagePullSecrets: []
+  # Name of an extra Secret appended (optional: true) to envFrom on the backend
+  # and secret-consuming modules, AFTER <instance>-secrets so its keys override
+  # the chart defaults. Branch environments set this to their ESO-managed
+  # Vault-sourced secret (see BranchEnvironmentService); leave empty otherwise.
+  extraEnvFromSecret: ''
   domain: localhost
   subdomains:
     keycloak: ''
