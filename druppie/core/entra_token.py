@@ -30,6 +30,7 @@ IDP_ALIAS = "entra-id"
 # All other accounts will be rejected even if they have valid Entra credentials.
 ALLOWED_ENTRA_EMAILS = {
     "dataplatformtest@waterschap.org",
+    "tst_jbode@waterschap.org",
 }
 
 

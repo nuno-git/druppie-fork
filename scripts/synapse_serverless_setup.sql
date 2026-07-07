@@ -121,29 +121,44 @@ GO
 
 
 -- ---------------------------------------------------------------------------
--- 3. ENTRA ID USER
+-- 3. ENTRA ID USERS
 -- ---------------------------------------------------------------------------
 
 CREATE USER [dataplatformtest@waterschap.org] FROM EXTERNAL PROVIDER;
+GO
+
+CREATE USER [TST_jbode@waterschap.org] FROM EXTERNAL PROVIDER;
 GO
 
 
 -- ---------------------------------------------------------------------------
 -- 4. PERMISSIONS (per object)
 -- ---------------------------------------------------------------------------
--- Grant: water_quality, pump_stations, water_levels  (user CAN see these)
--- Deny:  budget, incidents                            (user CANNOT see these)
+-- dataplatformtest: financial data           (budget, incidents)
+-- TST_jbode:        water/operational data   (water_quality, pump_stations, water_levels)
 
-GRANT SELECT ON OBJECT::dbo.water_quality  TO [dataplatformtest@waterschap.org];
+-- --- dataplatformtest@waterschap.org ---
+DENY SELECT ON OBJECT::dbo.water_quality  TO [dataplatformtest@waterschap.org];
 GO
-GRANT SELECT ON OBJECT::dbo.pump_stations  TO [dataplatformtest@waterschap.org];
+DENY SELECT ON OBJECT::dbo.pump_stations  TO [dataplatformtest@waterschap.org];
 GO
-GRANT SELECT ON OBJECT::dbo.water_levels   TO [dataplatformtest@waterschap.org];
+DENY SELECT ON OBJECT::dbo.water_levels   TO [dataplatformtest@waterschap.org];
+GO
+GRANT SELECT ON OBJECT::dbo.budget    TO [dataplatformtest@waterschap.org];
+GO
+GRANT SELECT ON OBJECT::dbo.incidents TO [dataplatformtest@waterschap.org];
 GO
 
-DENY SELECT ON OBJECT::dbo.budget    TO [dataplatformtest@waterschap.org];
+-- --- TST_jbode@waterschap.org ---
+GRANT SELECT ON OBJECT::dbo.water_quality  TO [TST_jbode@waterschap.org];
 GO
-DENY SELECT ON OBJECT::dbo.incidents TO [dataplatformtest@waterschap.org];
+GRANT SELECT ON OBJECT::dbo.pump_stations  TO [TST_jbode@waterschap.org];
+GO
+GRANT SELECT ON OBJECT::dbo.water_levels   TO [TST_jbode@waterschap.org];
+GO
+DENY SELECT ON OBJECT::dbo.budget    TO [TST_jbode@waterschap.org];
+GO
+DENY SELECT ON OBJECT::dbo.incidents TO [TST_jbode@waterschap.org];
 GO
 
 
@@ -153,7 +168,7 @@ GO
 
 SELECT name, type_desc, authentication_type_desc
 FROM sys.database_principals
-WHERE name = 'dataplatformtest@waterschap.org';
+WHERE name IN ('dataplatformtest@waterschap.org', 'TST_jbode@waterschap.org');
 GO
 
 SELECT
@@ -166,12 +181,25 @@ FROM sys.database_permissions p
 JOIN sys.database_principals dp ON p.grantee_principal_id = dp.principal_id
 LEFT JOIN sys.objects o ON p.major_id = o.object_id
 LEFT JOIN sys.schemas s ON o.schema_id = s.schema_id
-WHERE dp.name = 'dataplatformtest@waterschap.org'
-ORDER BY p.state_desc, o.name;
+WHERE dp.name IN ('dataplatformtest@waterschap.org', 'TST_jbode@waterschap.org')
+ORDER BY dp.name, p.state_desc, o.name;
 GO
 
--- Test as the user (or log in as dataplatformtest@waterschap.org)
+-- Test as dataplatformtest (financial data only)
 -- EXECUTE AS USER = 'dataplatformtest@waterschap.org';
+-- GO
+--
+-- SELECT * FROM water_quality;   -- should FAIL  (access denied)
+-- SELECT * FROM pump_stations;   -- should FAIL  (access denied)
+-- SELECT * FROM water_levels;    -- should FAIL  (access denied)
+-- SELECT * FROM budget;          -- should work  (12 rows)
+-- SELECT * FROM incidents;       -- should work  (5 rows)
+--
+-- REVERT;
+-- GO
+
+-- Test as TST_jbode (water/operational data only)
+-- EXECUTE AS USER = 'TST_jbode@waterschap.org';
 -- GO
 --
 -- SELECT * FROM water_quality;   -- should work  (12 rows)
