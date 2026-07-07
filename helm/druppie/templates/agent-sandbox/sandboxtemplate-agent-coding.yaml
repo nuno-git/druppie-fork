@@ -28,6 +28,9 @@ spec:
             port: 8888
           initialDelaySeconds: 3
           periodSeconds: 5
+        volumeMounts:
+        - name: workspace
+          mountPath: /workspace
         resources:
           requests:
             cpu: "250m"

@@ -1,0 +1,32 @@
+{{- if .Values.agentSandbox.enabled }}
+# CiliumNetworkPolicy: allow module-coding to reach the Kubernetes API.
+#
+# In agent-sandbox (k8s) mode, module-coding creates/watches SandboxClaims and
+# reads sandbox status via the Kubernetes API. The restrictive app-net
+# NetworkPolicy blocks private ranges (10/8), and the kube API Service VIP is
+# DNATed to the control-plane node IPs, so a plain ipBlock won't match. Cilium's
+# built-in kube-apiserver entity tracks the real API endpoints reliably.
+# Cilium unions CNP and NP egress, so this adds to the standard policies.
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: {{ include "druppie.fullname" . }}-module-coding-kubeapi
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "druppie.labels" . | nindent 4 }}
+spec:
+  endpointSelector:
+    matchLabels:
+      {{- include "druppie.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: module-coding
+  egress:
+    - toEntities:
+        - kube-apiserver
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+            - port: "6443"
+              protocol: TCP
+{{- end }}

@@ -17,10 +17,18 @@ spec:
       labels:
         {{- include "druppie.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: module-llm
+      annotations:
+        reloader.stakater.com/auto: "true"
     spec:
       {{- if .Values.global.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml .Values.global.imagePullSecrets | nindent 8 }}
+      {{- end }}
+      {{- with .Values.global.tolerateGpu }}
+      tolerations:
+        - key: nvidia.com/gpu
+          operator: Exists
+          effect: NoSchedule
       {{- end }}
       containers:
         - name: module-llm

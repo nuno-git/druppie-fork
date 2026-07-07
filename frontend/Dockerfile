@@ -9,6 +9,7 @@ COPY package*.json ./
 # Install dependencies
 RUN npm install
 
+ARG CACHEBUST
 # Copy source
 COPY . .
 

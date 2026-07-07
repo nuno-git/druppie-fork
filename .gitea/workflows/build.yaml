@@ -1,0 +1,148 @@
+name: Build and Push Images
+
+on:
+  push:
+    branches: [colab-dev, main]
+  workflow_dispatch:
+
+env:
+  REGISTRY: ${{ secrets.HARBOR_REGISTRY }}
+  DOCKER_BUILDKIT: "1"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set image tags
+        id: tags
+        run: |
+          BRANCH="${{ github.ref_name }}"
+          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-8)
+          TIMESTAMP=$(date -u +%Y%m%d%H%M%S)
+          DEPLOY_TAG="${BRANCH}-${TIMESTAMP}-${SHORT_SHA}"
+          echo "deploy_tag=$DEPLOY_TAG" >> $GITHUB_OUTPUT
+          echo "Deploy tag: $DEPLOY_TAG"
+
+      - name: Install Docker CLI and Buildx
+        run: |
+          curl -fsSL https://download.docker.com/linux/static/stable/x86_64/docker-27.5.1.tgz | tar xz -C /tmp
+          install -m 755 /tmp/docker/docker /usr/local/bin/docker
+          mkdir -p /usr/local/lib/docker/cli-plugins
+          curl -fsSL https://github.com/docker/buildx/releases/download/v0.20.1/buildx-v0.20.1.linux-amd64 \
+            -o /usr/local/lib/docker/cli-plugins/docker-buildx
+          chmod +x /usr/local/lib/docker/cli-plugins/docker-buildx
+          docker version --format '{{.Client.Version}}'
+
+      - name: Configure Harbor credentials
+        env:
+          HARBOR_PASS: ${{ secrets.HARBOR_PASSWORD }}
+        run: |
+          mkdir -p /tmp/docker
+          AUTH=$(printf 'robot$druppie+druppie-ci:%s' "$HARBOR_PASS" | base64 -w0)
+          printf '{"auths":{"harbor.rijnland.dev":{"auth":"%s"}}}\n' "$AUTH" > /tmp/docker/config.json
+          echo "DOCKER_CONFIG=/tmp/docker" >> $GITHUB_ENV
+          cat /tmp/docker/config.json
+
+      - name: Build and push backend
+        env:
+          TAG: ${{ steps.tags.outputs.deploy_tag }}
+          SHA: ${{ github.sha }}
+        run: |
+          docker --config /tmp/docker build --build-arg CACHEBUST="$SHA" -t "$REGISTRY/druppie/druppie-backend:$TAG" .
+          docker --config /tmp/docker push "$REGISTRY/druppie/druppie-backend:$TAG"
+
+      - name: Build and push frontend
+        env:
+          TAG: ${{ steps.tags.outputs.deploy_tag }}
+          SHA: ${{ github.sha }}
+        run: |
+          docker build --build-arg CACHEBUST="$SHA" -t "$REGISTRY/druppie/druppie-frontend:$TAG" ./frontend
+          docker push "$REGISTRY/druppie/druppie-frontend:$TAG"
+
+      - name: Build and push init image
+        env:
+          TAG: ${{ steps.tags.outputs.deploy_tag }}
+          SHA: ${{ github.sha }}
+        run: |
+          if [ -f Dockerfile.init ]; then
+            docker build --build-arg CACHEBUST="$SHA" -t "$REGISTRY/druppie/druppie-init:$TAG" -f Dockerfile.init .
+            docker push "$REGISTRY/druppie/druppie-init:$TAG"
+          fi
+
+      - name: Build and push layout-service
+        env:
+          TAG: ${{ steps.tags.outputs.deploy_tag }}
+          SHA: ${{ github.sha }}
+        run: |
+          docker build --build-arg CACHEBUST="$SHA" -t "$REGISTRY/druppie/druppie-layout-service:$TAG" ./druppie/mcp-servers/layout-service
+          docker push "$REGISTRY/druppie/druppie-layout-service:$TAG"
+
+      - name: Build and push MCP modules
+        env:
+          TAG: ${{ steps.tags.outputs.deploy_tag }}
+          SHA: ${{ github.sha }}
+        run: |
+          for module in module-coding module-docker module-web module-vision \
+                        module-archimate module-data-access module-registry \
+                        module-filesearch module-kubernetes module-llm; do
+            DF="./druppie/mcp-servers/$module/Dockerfile"
+            if [ -f "$DF" ]; then
+              if grep -q "^COPY mcp-servers/" "$DF"; then
+                CONTEXT="./druppie/"
+              else
+                CONTEXT="./druppie/mcp-servers/"
+              fi
+              echo "Building $module (context=$CONTEXT)..."
+              docker build --build-arg CACHEBUST="$SHA" -t "$REGISTRY/druppie/druppie-$module:$TAG" -f "$DF" "$CONTEXT"
+              docker push "$REGISTRY/druppie/druppie-$module:$TAG"
+            fi
+          done
+
+      - name: Build and push sandbox-k8s image
+        env:
+          TAG: ${{ steps.tags.outputs.deploy_tag }}
+          SHA: ${{ github.sha }}
+        run: |
+          if [ -f "./druppie/mcp-servers/module-coding/Dockerfile.sandbox.k8s" ]; then
+            docker build --build-arg CACHEBUST="$SHA" -t "$REGISTRY/druppie/druppie-sandbox-k8s:$TAG" \
+              -f ./druppie/mcp-servers/module-coding/Dockerfile.sandbox.k8s ./druppie/mcp-servers/module-coding
+            docker push "$REGISTRY/druppie/druppie-sandbox-k8s:$TAG"
+          fi
+
+      - name: Summary
+        env:
+          TAG: ${{ steps.tags.outputs.deploy_tag }}
+        run: |
+          echo "### Build Complete ###"
+          echo "Tag: $TAG"
+          echo "Images pushed to $REGISTRY/druppie/"
+
+      - name: Update HelmRelease image tag in ai/k8s
+        env:
+          TAG: ${{ steps.tags.outputs.deploy_tag }}
+          BRANCH: ${{ github.ref_name }}
+          GIT_TOKEN: ${{ secrets.CI_GIT_TOKEN }}
+        run: |
+          if [ "$BRANCH" = "main" ]; then
+            HR_FILE="clusters/ka-k8s-ai/apps/druppie/helmrelease.yaml"
+          else
+            HR_FILE="clusters/ka-k8s-ai/apps/druppie-colab-dev/helmrelease.yaml"
+          fi
+
+          git clone "https://druppie-ci:${GIT_TOKEN}@aigit.waterschap.org/ai/k8s.git" /tmp/k8s
+          cd /tmp/k8s
+          git config user.name "druppie-ci"
+          git config user.email "druppie-ci@users.noreply.rijnland.dev"
+
+          sed -i "s|\"\?imageTag\"\?\s*:\s*\"[^\"]*\"|imageTag: \"${TAG}\"|g; s|\(tag:\s*\)[a-z-]*[0-9]*-[a-f0-9]*.*|\1${TAG}|g" "$HR_FILE"
+
+          if git diff --quiet; then
+            echo "No changes — tag already up to date"
+          else
+            git add "$HR_FILE"
+            git commit -m "ci: auto-update image tag to ${TAG}"
+            git push origin main
+            echo "Pushed image tag update: ${TAG}"
+          fi

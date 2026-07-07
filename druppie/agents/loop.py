@@ -11,7 +11,7 @@ import structlog
 from druppie.agents.builtin_tools import DEFAULT_BUILTIN_TOOLS, is_builtin_tool
 from druppie.domain.common import SessionStatus
 from druppie.execution.tool_executor import ToolCallStatus
-from druppie.llm.base import LLMError
+from druppie.llm.base import FallbackAvailableError, LLMError
 
 logger = structlog.get_logger()
 
@@ -91,10 +91,16 @@ class AgentLoop:
                 logger.info("agent_loop_paused_by_user", agent_id=self.agent_id, iteration=iteration)
                 return {"status": "paused", "reason": "user_paused"}
 
-            response, llm_call_id = await self._call_llm(
-                messages, openai_tools, execution_repo,
-                session_id, agent_run_id, iteration,
-            )
+            try:
+                response, llm_call_id = await self._call_llm(
+                    messages, openai_tools, execution_repo,
+                    session_id, agent_run_id, iteration,
+                )
+            except FallbackAvailableError as e:
+                return self._create_fallback_question(
+                    e, execution_repo, session_id, agent_run_id,
+                    iteration, messages, prompt, context,
+                )
 
             # No tool calls — nudge or raise
             if not response.tool_calls:
@@ -290,6 +296,16 @@ class AgentLoop:
             try:
                 response = await self.llm.achat(messages, openai_tools, max_tokens=self.definition.max_tokens)
                 break  # Success
+            except FallbackAvailableError as e:
+                duration_ms = int((time.time() - start_time) * 1000)
+                execution_repo.update_llm_error(
+                    llm_call_id=llm_call_id,
+                    error_message=str(e)[:2000],
+                    duration_ms=duration_ms,
+                )
+                self.db.commit()
+                e.llm_call_id = llm_call_id
+                raise
             except Exception as e:
                 retryable = isinstance(e, LLMError) and e.retryable
                 is_last_attempt = attempt >= LLM_MAX_RETRIES
@@ -363,6 +379,24 @@ class AgentLoop:
             "completion_tokens": response.completion_tokens or 0,
             "total_tokens": response.total_tokens or 0,
         })
+        intended_provider = self.llm.provider_name if hasattr(self.llm, 'provider_name') else None
+        intended_model = self.llm.model if hasattr(self.llm, 'model') else None
+        fallback_used = (
+            response.provider is not None
+            and intended_provider is not None
+            and response.provider != intended_provider
+        )
+
+        if fallback_used:
+            logger.warning(
+                "llm_fallback_used_in_session",
+                agent_id=self.agent_id,
+                intended_provider=intended_provider,
+                intended_model=intended_model,
+                actual_provider=response.provider,
+                actual_model=response.model,
+            )
+
         execution_repo.update_llm_response(
             llm_call_id=llm_call_id,
             response_content=raw_response_json[:10000],
@@ -379,6 +413,9 @@ class AgentLoop:
             duration_ms=duration_ms,
             actual_provider=response.provider,
             actual_model=response.model,
+            fallback_used=fallback_used,
+            intended_provider=intended_provider,
+            intended_model=intended_model,
             thinking_content=response.thinking_content,
             raw_request=response.raw_request,
             raw_response=response.raw_response,
@@ -517,6 +554,98 @@ class AgentLoop:
             "reason": reason,
             "tool_call_id": str(db_tool_call_id),
             "agent_state": agent_state,
+        }
+
+    # ------------------------------------------------------------------
+    # Fallback confirmation (system-initiated HITL question)
+    # ------------------------------------------------------------------
+
+    def _create_fallback_question(
+        self, error, execution_repo, session_id, agent_run_id,
+        iteration, messages, prompt, context,
+    ):
+        """Create a HITL question asking the user to confirm provider fallback.
+
+        Creates a synthetic tool call + Question record, then returns a
+        pause state so the orchestrator pauses the session.
+        """
+        from druppie.repositories import QuestionRepository
+
+        question_repo = QuestionRepository(self.db)
+
+        fb_label = error.fallback_model
+        primary_label = error.primary_model
+
+        question_text = (
+            f"Model {primary_label} is unavailable ({error.error_type}). "
+            f"Switch to {fb_label}?"
+        )
+        choices = [
+            f"Yes, switch to {fb_label}",
+            f"Yes, switch all agents to fallback",
+            "No, cancel this request",
+        ]
+
+        db_tool_call_id = execution_repo.create_tool_call(
+            session_id=session_id,
+            agent_run_id=agent_run_id,
+            mcp_server="builtin",
+            tool_name="hitl_ask_multiple_choice_question",
+            arguments={
+                "question": question_text,
+                "choices": choices,
+                "_type": "provider_fallback",
+                "_primary": primary_label,
+                "_fallback": fb_label,
+            },
+            llm_call_id=error.llm_call_id,
+        )
+        execution_repo.update_tool_call(
+            db_tool_call_id,
+            status=ToolCallStatus.WAITING_ANSWER,
+        )
+
+        fallback_state = {
+            "fallback_pending": True,
+            "fallback_provider": error.fallback_provider,
+            "fallback_model": error.fallback_model,
+            "primary_provider": error.primary_provider,
+            "primary_model": error.primary_model,
+        }
+
+        question_repo.create(
+            session_id=session_id,
+            agent_run_id=agent_run_id,
+            tool_call_id=db_tool_call_id,
+            question=question_text,
+            question_type="choice",
+            choices=[{"text": c} for c in choices],
+            agent_id=self.agent_id,
+            agent_state=fallback_state,
+        )
+        self.db.commit()
+
+        logger.info(
+            "fallback_question_created",
+            agent_id=self.agent_id,
+            primary=primary_label,
+            fallback=fb_label,
+            session_id=str(session_id),
+        )
+
+        return {
+            "status": "paused",
+            "paused": True,
+            "reason": "waiting_answer",
+            "tool_call_id": str(db_tool_call_id),
+            "agent_state": {
+                **fallback_state,
+                "agent_id": self.agent_id,
+                "messages": messages,
+                "prompt": prompt,
+                "context": context,
+                "iteration": iteration,
+            },
         }
 
     # ------------------------------------------------------------------

@@ -18,11 +18,15 @@ spec:
         {{- include "druppie.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: module-coding
       annotations:
+        reloader.stakater.com/auto: "true"
         cluster-autoscaler.kubernetes.io/safe-to-evict: "true"
     spec:
       {{- if .Values.global.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml .Values.global.imagePullSecrets | nindent 8 }}
+      {{- end }}
+      {{- if .Values.agentSandbox.enabled }}
+      serviceAccountName: {{ include "druppie.fullname" . }}-module-coding
       {{- end }}
       initContainers:
         - name: wait-for-gitea
@@ -92,7 +96,7 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- else }}
       nodeSelector:
-        pool: infra
+        node-role.kubernetes.io/worker: "true"
       {{- end }}
       volumes:
         - name: workspace

@@ -19,6 +19,7 @@ RUN apt-get update && apt-get install -y \
 # Install Python dependencies for setup scripts
 RUN pip install --no-cache-dir requests pyyaml
 
+ARG CACHEBUST
 # Copy setup scripts and IAC configuration
 COPY scripts/setup_keycloak.py /app/scripts/setup_keycloak.py
 COPY scripts/setup_gitea.py /app/scripts/setup_gitea.py

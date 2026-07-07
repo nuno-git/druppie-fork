@@ -185,6 +185,14 @@ if SANDBOX_MODE == "docker":
 SANDBOX_CACHE_VOLUME = os.getenv("DRUPPIE_SANDBOX_CACHE_VOLUME", "sandbox_dep_cache")
 SANDBOX_USER = os.getenv("DRUPPIE_SANDBOX_USER", "druppie")
 
+# Max seconds a sandbox may sit idle (no tool activity) before the watchdog
+# reaps it. Catches stuck/dead sessions whose sandbox pod is still Running but
+# whose agent session is wedged — the exact leak that starves the cluster.
+# Reaping only loses UNCOMMITTED in-sandbox edits; pushed commits live in Gitea
+# and bundles on the host PVC. A reaped sandbox is recreated (fresh clone) on
+# the next tool call. Default 15 min (> normal LLM think time).
+SANDBOX_MAX_IDLE = int(os.getenv("DRUPPIE_SANDBOX_MAX_IDLE", "900"))
+
 # K8s sandbox manager (initialized lazily when SANDBOX_MODE == "k8s")
 _k8s_manager = None
 
@@ -193,7 +201,7 @@ def _get_k8s_manager():
     """Lazily initialize the K8s sandbox manager."""
     global _k8s_manager
     if _k8s_manager is None:
-        from druppie.core.k8s_sandbox import K8sSandboxManager
+        from k8s_sandbox import K8sSandboxManager
         _k8s_manager = K8sSandboxManager()
     return _k8s_manager
 
@@ -217,6 +225,18 @@ def _get_network_lock(key: str) -> asyncio.Lock:
     if key not in _network_locks:
         _network_locks[key] = asyncio.Lock()
     return _network_locks[key]
+
+
+def _touch_sandbox(key: str) -> None:
+    """Record activity on a tracked sandbox (called from every tool op).
+
+    The watchdog reaps sandboxes whose ``last_activity`` is older than
+    ``SANDBOX_MAX_IDLE``; without this, a sandbox whose pod is up but whose
+    session is frozen would never be collected.
+    """
+    entry = sandbox_containers.get(key)
+    if entry is not None:
+        entry["last_activity"] = time.time()
 
 # =============================================================================
 # SECURITY: COMMAND BLOCKLIST
@@ -372,7 +392,20 @@ async def _copy_from_container(
     socket mount only allows API-level operations, and `docker cp` resolves
     paths on the *daemon's* host filesystem, not inside the calling container.
     Piping through `docker exec cat` avoids this entirely.
+
+    In k8s mode the sandbox has no Docker; we read the file out through the
+    agent-sandbox SDK as bytes (base64 round-trip — `cat`-as-text would corrupt
+    binary content like git bundles).
     """
+    if SANDBOX_MODE == "k8s":
+        entry = _find_entry_by_container_id(container_id)
+        if entry and entry.get("_k8s_handle"):
+            data = await _get_k8s_manager().read_file_bytes(
+                entry["_k8s_handle"], src_path
+            )
+            with open(dst_path, "wb") as f:
+                f.write(data)
+            return
     proc = await asyncio.create_subprocess_exec(
         "docker", "exec", container_id, "cat", src_path,
         stdout=asyncio.subprocess.PIPE,
@@ -523,6 +556,7 @@ async def _create_sandbox_container(
             "session_id": session_id,
             "branch": branch,
             "created_at": handle.created_at,
+            "last_activity": time.time(),
             "repo_name": repo_name,
             "repo_owner": repo_owner or GITEA_ORG,
             "_k8s_handle": handle,
@@ -805,6 +839,7 @@ async def _resolve_container(
             if await _is_container_running(container_id):
                 rc, _, _ = await _exec_in_container(container_id, ["echo", "ok"], timeout=5)
                 if rc == 0:
+                    _touch_sandbox(key)
                     return entry["container_name"]
                 logger.warning(
                     "Container %s running but exec failed (setns?), recreating",
@@ -817,7 +852,14 @@ async def _resolve_container(
                     entry["container_name"],
                     reason or "unknown reason",
                 )
-            del sandbox_containers[key]
+            # Destroy the old sandbox BEFORE recreating, else its claim+pod leak
+            # (the bare `del` here used to discard the handle without terminating
+            # it, so recreate-on-flaky-liveness accumulated orphan SandboxClaims).
+            try:
+                await _destroy_container(session_id, scope)
+            except Exception as e:
+                logger.warning("Failed to destroy old sandbox on recreate: %s", e)
+                sandbox_containers.pop(key, None)
 
         for attempt in range(2):
             try:
@@ -893,14 +935,17 @@ async def _destroy_container(session_id: str, git_scope: str) -> None:
 
 
 async def _destroy_all_for_session(session_id: str) -> None:
-    """Destroy all containers for a session (on done/pause/error)."""
+    """Destroy all containers/sandboxes for a session (on done/pause/error)."""
     keys_to_remove = [k for k in sandbox_containers if k.startswith(f"{session_id}::")]
     for key in keys_to_remove:
         entry = sandbox_containers.pop(key)
         container_name = entry["container_name"]
         try:
-            await _docker_run(["docker", "stop", container_name], timeout=15)
-            await _docker_run(["docker", "rm", "-f", container_name], timeout=15)
+            if SANDBOX_MODE == "k8s" and entry.get("_k8s_handle"):
+                await _get_k8s_manager().destroy(entry["_k8s_handle"])
+            else:
+                await _docker_run(["docker", "stop", container_name], timeout=15)
+                await _docker_run(["docker", "rm", "-f", container_name], timeout=15)
         except Exception as e:
             logger.warning("Failed to destroy container %s: %s", container_name, e)
     if keys_to_remove:
@@ -910,10 +955,19 @@ async def _destroy_all_for_session(session_id: str) -> None:
 
 
 async def _cleanup_orphan_containers() -> int:
-    """Remove druppie-sandbox containers left over from a previous server run.
+    """Remove sandboxes left over from a previous server run (startup) or leaked.
 
-    Called once at server startup.
+    Called once at server startup and periodically by the sandbox watchdog.
     """
+    if SANDBOX_MODE == "k8s":
+        try:
+            mgr = _get_k8s_manager()
+            known = set(sandbox_containers.keys())
+            return await mgr.cleanup_orphan_claims(known)
+        except Exception as e:
+            logger.warning("k8s orphan cleanup failed: %s", e)
+            return 0
+
     rc, stdout, _ = await _docker_run(
         ["docker", "ps", "-a", "--filter", "name=druppie-",
          "--format", "{{.Names}}\t{{.Label \"com.docker.compose.project\"}}"],
@@ -974,18 +1028,27 @@ def _gitea_api_headers() -> dict:
 
 
 def _inject_gitea_token(repo_owner: str, repo_name: str) -> str:
-    """Build an authenticated Gitea push URL (host-side only)."""
+    """Build an authenticated Gitea git-over-HTTP push URL (host-side only).
+
+    Uses the same ``user:password`` basic auth as ``_get_gitea_clone_url`` — the
+    admin account has repo write access and this is proven to authenticate by the
+    clone step. ``GITEA_TOKEN`` is the *REST API* token (``Authorization: token
+    …``); as a git password it needs ``write:repository`` scope and is frequently
+    scoped read-only, which surfaces as ``authentication failed`` on push, so it
+    is only a fallback here.
+    """
     base = GITEA_URL.rstrip("/")
     scheme, _, rest = base.partition("://")
-    if GITEA_TOKEN:
-        return f"{scheme}://{GITEA_TOKEN}@{rest}/{repo_owner}/{repo_name}.git"
-    elif GITEA_USER and GITEA_PASSWORD:
+    if GITEA_USER and GITEA_PASSWORD:
         from urllib.parse import quote
 
         return (
             f"{scheme}://{quote(GITEA_USER)}:{quote(GITEA_PASSWORD)}"
             f"@{rest}/{repo_owner}/{repo_name}.git"
         )
+    if GITEA_TOKEN:
+        user = GITEA_USER or "oauth2"
+        return f"{scheme}://{user}:{GITEA_TOKEN}@{rest}/{repo_owner}/{repo_name}.git"
     return f"{base}/{repo_owner}/{repo_name}.git"
 
 
@@ -2095,6 +2158,15 @@ async def _copy_to_container(
     container_id: str, src_path: str, dst_path: str
 ) -> None:
     """Copy a file from the host into a container (reverse of _copy_from_container)."""
+    if SANDBOX_MODE == "k8s":
+        entry = _find_entry_by_container_id(container_id)
+        if entry and entry.get("_k8s_handle"):
+            with open(src_path, "rb") as f:
+                data = f.read()
+            await _get_k8s_manager().write_file(
+                entry["_k8s_handle"], dst_path, data
+            )
+            return
     with open(src_path, "rb") as f:
         data = f.read()
     proc = await asyncio.create_subprocess_exec(

@@ -46,6 +46,7 @@ const AnnotationBar = ({ run }) => {
     return { toolSummary, totalTokens, duration }
   }, [run])
 
+  const hasFallback = run.llm_calls?.some(llm => llm.fallback_used)
   const llmCount = run.llm_calls?.length || 0
   const hasContent = toolSummary.length > 0 || totalTokens > 0 || llmCount > 0
   if (!hasContent) return null
@@ -77,6 +78,11 @@ const AnnotationBar = ({ run }) => {
           )}
         </div>
         <div className="flex items-center gap-1.5 flex-shrink-0 ml-auto">
+          {hasFallback && (
+            <span className="inline-flex items-center gap-0.5 px-1.5 py-0 rounded-full text-[10px] font-medium bg-amber-100 text-amber-700">
+              fallback
+            </span>
+          )}
           {totalTokens > 0 && <span>{formatTokens(totalTokens)} tok</span>}
           {duration != null && totalTokens > 0 && <span>&middot;</span>}
           {duration != null && <span>{formatDuration(duration)}</span>}

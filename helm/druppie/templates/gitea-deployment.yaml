@@ -95,6 +95,24 @@ spec:
             - name: ssh
               containerPort: 22
               protocol: TCP
+          lifecycle:
+            postStart:
+              exec:
+                command:
+                  - sh
+                  - -c
+                  - |
+                    sleep 10
+                    ADMIN_USER={{ .Values.gitea.adminUser | quote }}
+                    ADMIN_PASS={{ .Values.gitea.adminPassword | quote }}
+                    ADMIN_EMAIL={{ .Values.gitea.adminEmail | quote }}
+                    GITEA_ORG={{ .Values.gitea.org | quote }}
+                    until wget -qO- http://localhost:3000/api/healthz >/dev/null 2>&1; do sleep 3; done
+                    su-exec git sh -c "
+                      if ! gitea admin user list | grep -q $ADMIN_USER; then
+                        gitea admin user create --username $ADMIN_USER --password $ADMIN_PASS --email $ADMIN_EMAIL --admin --must-change-password=false
+                      fi
+                    "
           volumeMounts:
             - name: gitea-data
               mountPath: /data

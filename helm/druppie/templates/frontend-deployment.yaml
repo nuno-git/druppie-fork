@@ -17,6 +17,7 @@ spec:
         {{- include "druppie.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: frontend
       annotations:
+        reloader.stakater.com/auto: "true"
         cluster-autoscaler.kubernetes.io/safe-to-evict: "true"
     spec:
       {{- if .Values.global.imagePullSecrets }}
@@ -54,6 +55,12 @@ spec:
               memory: "64Mi"
               cpu: "100m"
       
+      {{- with .Values.global.tolerateGpu }}
+      tolerations:
+        - key: nvidia.com/gpu
+          operator: Exists
+          effect: NoSchedule
+      {{- end }}
       containers:
         - name: frontend
           image: {{ include "druppie.image" (dict "Values" .Values "image" .Values.frontend.image) }}

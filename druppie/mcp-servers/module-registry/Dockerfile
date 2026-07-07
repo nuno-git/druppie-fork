@@ -9,6 +9,7 @@ RUN apt-get update && \
 COPY mcp-servers/module-registry/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+ARG CACHEBUST
 COPY mcp-servers/module_router.py .
 COPY mcp-servers/module-registry/ .
 

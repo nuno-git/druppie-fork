@@ -73,7 +73,7 @@ class JobRun(Base):
     logs = Column(Text)
 
     required_role = Column(String(50))
-    approved_by = Column(UUID(as_uuid=True), ForeignKey("users.id"))
+    approved_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL", onupdate="CASCADE"))
     approved_at = Column(DateTime(timezone=True))
     rejection_reason = Column(Text)
 
