@@ -378,7 +378,6 @@ mcps:
       user_token:
         from: user.entra_token
         hidden: true
-        optional: true
         tools: [test_connection, list_available_data, get_schema, read_data, execute_query, download_data, create_chart_from_source]
     tools:
       - name: list_sources

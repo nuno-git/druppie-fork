@@ -1014,22 +1014,12 @@ class ToolExecutor:
         is_linked = await check_entra_linked(user_id)
 
         if not is_linked:
-            self.execution_repo.update_tool_call(
-                tool_call.id,
-                status=ToolCallStatus.FAILED,
-                error=(
-                    "This tool requires Azure access via your Microsoft account. "
-                    "Please link your Microsoft account first by logging in via "
-                    "the 'Microsoft (Entra ID)' option on the Keycloak login page."
-                ),
-            )
-            self.db.commit()
             logger.info(
-                "entra_token_missing_not_linked",
+                "entra_token_missing_not_linked_proceeding",
                 tool_call_id=str(tool_call.id),
                 user_id=user_id,
             )
-            return ToolCallStatus.FAILED
+            return None
 
         # User has a linked identity — pause and wait for frontend to provide token
         self.execution_repo.update_tool_call(
@@ -1285,7 +1275,12 @@ class ToolExecutor:
                 session_id=tool_call.session_id,
             )
         except EntraTokenMissing as e:
-            return await self._handle_entra_token_missing(tool_call, e.user_id)
+            entra_result = await self._handle_entra_token_missing(tool_call, e.user_id)
+            if entra_result is not None:
+                return entra_result
+            # User has no Entra identity — proceed without token so
+            # non-OBO sources (datalake with key/public auth) still work.
+            # OBO sources will fail at the adapter level with a clear error.
 
         logger.info(
             "mcp_tool_post_injection",

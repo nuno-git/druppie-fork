@@ -147,7 +147,7 @@ class DataAccessModule:
             if isinstance(adapter, AzureSQLAdapter):
                 return await adapter.test_connection(user_token=user_token)
             return await adapter.test_connection()
-        except ValueError as e:
+        except (ValueError, PermissionError) as e:
             return {"success": False, "error": str(e)}
 
     async def list_available_data(
@@ -163,7 +163,7 @@ class DataAccessModule:
             if isinstance(adapter, AzureSQLAdapter):
                 return await adapter.list_available_data(path, recursive, user_token=user_token)
             return await adapter.list_available_data(path, recursive)
-        except ValueError as e:
+        except (ValueError, PermissionError) as e:
             return {"success": False, "error": str(e)}
 
     async def get_schema(self, source_id: str, data_id: str, user_token: str | None = None) -> dict:
@@ -180,7 +180,7 @@ class DataAccessModule:
                     "metadata": result["schema"].metadata,
                 }
             return result
-        except ValueError as e:
+        except (ValueError, PermissionError) as e:
             return {"success": False, "error": str(e)}
 
     async def read_data(
@@ -198,7 +198,7 @@ class DataAccessModule:
             if isinstance(adapter, AzureSQLAdapter):
                 return await adapter.read_data(data_id, filter_expr, limit, offset, user_token=user_token)
             return await adapter.read_data(data_id, filter_expr, limit, offset)
-        except ValueError as e:
+        except (ValueError, PermissionError) as e:
             return {"success": False, "error": str(e)}
 
     async def execute_query(
@@ -214,7 +214,7 @@ class DataAccessModule:
             if isinstance(adapter, AzureSQLAdapter):
                 return await adapter.execute_query(query, limit, user_token=user_token)
             return await adapter.execute_query(query, limit)
-        except ValueError as e:
+        except (ValueError, PermissionError) as e:
             return {"success": False, "error": str(e)}
 
     async def download_data(
@@ -230,5 +230,5 @@ class DataAccessModule:
             if isinstance(adapter, AzureSQLAdapter):
                 return await adapter.download_data(data_id, destination_path, user_token=user_token)
             return await adapter.download_data(data_id, destination_path)
-        except ValueError as e:
+        except (ValueError, PermissionError) as e:
             return {"success": False, "error": str(e)}
