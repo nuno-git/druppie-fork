@@ -6,7 +6,7 @@
 
 | Model | Params | Quant / size | Median TTFT (ms) | Median decode (tok/s) | latency-500 (s) | context-64k TTFT (ms) | tool 10-3 delta (s) | stress stddev (ms) | Errors | Status / Note |
 |---|---|---|---|---|---|---|---|---|---|---|
-| Gemma-4-26B-A4B | 26B (MoE, ~A4B active) | ~52GB bf16 / ~13GB NVFP4 | -- | -- | -- | -- | -- | -- | -- | backlog only (no registered CR); fit informational. No confirmed nvidia/*-NVFP4 build; kept as the bf16 HF repo (already fits at bf16, so NVFP4 not required). |
+| Gemma-4-26B-A4B | 26B (MoE, ~A4B active) | ~52GB bf16 / ~13GB NVFP4 | -- | -- | -- | -- | -- | -- | -- | Skipped -- Attempted in-cluster 2026-07-07 -- the vLLM InferenceService came up but ALL 20 scenarios errored (context/generate/latency/tool-call/stress); no usable numbers. Root cause: launched with qwen's serving args/profile -- gemma needs its OWN vLLM profile. Evidence kept in report-FAILED-all-errors.txt. |
 | Qwen3.6-35B-A3B (bf16) | 35B (MoE, A3B active, bf16) | ~70GB bf16 (tight on one 96GB card) | -- | -- | -- | -- | -- | -- | -- | Full-precision variant; SUPERSEDED in prod by the served NVFP4 build (nvidia/Qwen3.6-35B-A3B-NVFP4, isvc qwen-35b). Benchmarkable as Case B if you want a bf16-vs-NVFP4 comparison. |
 | Qwen3.6-27B (bf16) | 27B (bf16) | ~54GB bf16 | 158 | 26.0 | 189.4 | 463 | -0.10 | 2,800 | 1 | Benchmarked. |
 | Qwen3.6-27B-NVFP4 | 27B (NVFP4) | ~16GB (NVFP4 4-bit) | 191 | 64.0 | 16.1 | 443 | -0.20 | 6,700 | 0 | Served in prod (isvc qwen-27b); benchmarked IN PLACE from local-disk cache, TP=1, 256K ctx OK. |
@@ -56,6 +56,25 @@ All benchmarked models were served in-cluster (ka-k8s-ai) from a LOCAL-DISK mode
 
 _Per-category tok/s breakdown needs the transient per-run result JSON (kept only in the sweep's WORKDIR, not committed). The reproducible headline metrics above are parsed from each model's committed `report.txt`; see `MODEL-TEST-MATRIX.md` and the per-model `report.txt` for the full per-scenario detail._
 
+## Concurrency / throughput under load
+
+This measures the production-relevant CONCURRENT workload -- N streaming requests kept in flight at once -- and is distinct from the single-stream headline table above (which sends one request at a time). *Aggregate tok/s* is the total decode rate summed across all concurrent requests. MoE models (e.g. Qwen3.6-35B-A3B, only ~A3B params active per token) sustain far higher aggregate throughput under load than the dense 27B, despite comparable single-stream decode speeds.
+
+_Cells = aggregate throughput (tok/s) at that concurrency level (higher is better)._
+
+| Concurrency | Qwen3.6-27B-NVFP4 | Qwen3.6-35B-A3B-NVFP4 |
+|---|---|---|
+| 1 | 64 | 219 |
+| 8 | 409 | 1,059 |
+| 32 | 1,094 | 2,475 |
+| 64 | 1,434 | 3,072 |
+| 128 | 1,658 | 4,414 |
+
+**Per-model summary**
+
+- **Qwen3.6-27B-NVFP4** -- peak **1,658 tok/s** @ concurrency 128; at max concurrency 128: p95 latency 20.7s, p95 TTFT 6.2s, 0 error(s). Throughput had NOT saturated within the swept range (still rising at concurrency 128).
+- **Qwen3.6-35B-A3B-NVFP4** -- peak **4,414 tok/s** @ concurrency 128; at max concurrency 128: p95 latency 7.6s, p95 TTFT 2.2s, 0 error(s). Throughput had NOT saturated within the swept range (still rising at concurrency 128).
+
 ## Source files
 
 - `benchmarks/results-incluster/qwen3.6-27b/report.txt` (committed report.txt)
@@ -64,4 +83,6 @@ _Per-category tok/s breakdown needs the transient per-run result JSON (kept only
 - `benchmarks/results-incluster/qwen3-coder-next-nvfp4/report.txt` (committed report.txt)
 - `benchmarks/results-incluster/gpt-oss-120b/report.txt` (committed report.txt)
 - `benchmarks/results-incluster/gemma-4-e4b-it-gguf/report.txt` (committed report.txt)
+- `benchmarks/results-incluster/qwen3.6-27b-nvfp4/load-test.json` (committed load-test.json)
+- `benchmarks/results-incluster/qwen3.6-35b-a3b-nvfp4/load-test.json` (committed load-test.json)
 

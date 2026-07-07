@@ -1,0 +1,1 @@
+Attempted in-cluster 2026-07-07 -- the vLLM InferenceService came up but ALL 20 scenarios errored (context/generate/latency/tool-call/stress); no usable numbers. Root cause: launched with qwen's serving args/profile -- gemma needs its OWN vLLM profile. Evidence kept in report-FAILED-all-errors.txt.

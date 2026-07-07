@@ -271,6 +271,48 @@ def _runtime_skip_reason(results_dir, slug):
 
 
 REPORT_FILENAME = "report.txt"    # committed per-model report under <results_dir>/<report_dir>/
+LOAD_TEST_FILENAME = "load-test.json"  # committed per-model concurrency sweep
+
+
+def _load_concurrency(results_dir, report_dir):
+    """Read committed <results_dir>/<report_dir>/load-test.json, or None.
+
+    The concurrency sweep JSON is self-describing (see the ``levels`` list and
+    the ``saturation`` block written by the load-test runner), so it is parsed
+    directly here -- no report.txt round-trip. Returns the decoded dict, or None
+    when the file is absent / empty / malformed / has no ``levels``.
+    """
+    if not results_dir or not report_dir:
+        return None
+    path = os.path.join(results_dir, report_dir, LOAD_TEST_FILENAME)
+    if not os.path.isfile(path) or os.path.getsize(path) == 0:
+        return None
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict) or not isinstance(data.get("levels"), list) \
+            or not data["levels"]:
+        return None
+    return data
+
+
+def collect_load_tests(results_dir, candidates_path=None):
+    """Ordered ``[(label, path, data)]`` for each registered slug that has a
+    committed ``load-test.json``.
+
+    Iterates the candidates.yaml registry in order (so the rendered section is
+    deterministic / idempotent) and uses the registry label for the column
+    header -- NOT the verbose per-file ``display_name``.
+    """
+    out = []
+    for km in load_known_models(candidates_path):
+        data = _load_concurrency(results_dir, km["report_dir"])
+        if data is not None:
+            path = os.path.join(results_dir, km["report_dir"], LOAD_TEST_FILENAME)
+            out.append((km["label"], path, data))
+    return out
 
 
 def _report_metrics(results_dir, report_dir):
@@ -695,7 +737,96 @@ def render_category_breakdown(models):
     return "\n".join(lines)
 
 
-def render_report(row_specs, benchmarked, source_files, report_sources=None):
+CONCURRENCY_EXPLAINER = (
+    "This measures the production-relevant CONCURRENT workload -- N streaming "
+    "requests kept in flight at once -- and is distinct from the single-stream "
+    "headline table above (which sends one request at a time). *Aggregate tok/s* "
+    "is the total decode rate summed across all concurrent requests. MoE models "
+    "(e.g. Qwen3.6-35B-A3B, only ~A3B params active per token) sustain far higher "
+    "aggregate throughput under load than the dense 27B, despite comparable "
+    "single-stream decode speeds."
+)
+
+
+def render_concurrency_section(load_tests):
+    """Render the concurrency / throughput-under-load table + per-model summary.
+
+    ``load_tests`` is ``collect_load_tests`` output: ``[(label, path, data)]``,
+    where ``data`` is a decoded ``load-test.json``. Rows are the concurrency
+    levels (union across models, ascending); columns are each model; cells are
+    aggregate tok/s. Followed by a one-line summary per model.
+    """
+    # Union of concurrency levels across all models, ascending -> stable rows.
+    conc_levels = sorted({
+        lvl.get("concurrency")
+        for _label, _path, data in load_tests
+        for lvl in data.get("levels", [])
+        if isinstance(lvl.get("concurrency"), (int, float))
+    })
+
+    lines = [CONCURRENCY_EXPLAINER, ""]
+    lines.append("_Cells = aggregate throughput (tok/s) at that concurrency level "
+                 "(higher is better)._")
+    lines.append("")
+
+    labels = [label for label, _p, _d in load_tests]
+    # Per-model {concurrency: level_dict} lookup for the table cells.
+    by_model = []
+    for _label, _path, data in load_tests:
+        by_model.append({
+            lvl.get("concurrency"): lvl for lvl in data.get("levels", [])
+        })
+
+    header = "| Concurrency | " + " | ".join(labels) + " |"
+    sep = "|" + "|".join(["---"] * (len(labels) + 1)) + "|"
+    lines.append(header)
+    lines.append(sep)
+    for conc in conc_levels:
+        cells = []
+        for level_map in by_model:
+            lvl = level_map.get(conc)
+            agg = lvl.get("aggregate_tok_s") if lvl else None
+            cells.append(fmt(agg, 0))
+        lines.append(f"| {fmt(conc, 0)} | " + " | ".join(cells) + " |")
+
+    lines.append("")
+    lines.append("**Per-model summary**")
+    lines.append("")
+    for label, _path, data in load_tests:
+        levels = sorted(data.get("levels", []),
+                        key=lambda l: l.get("concurrency", 0))
+        last = levels[-1]
+        max_conc = last.get("concurrency")
+        sat = data.get("saturation", {}) or {}
+        peak_tps = sat.get("peak_tok_s")
+        peak_conc = sat.get("peak_concurrency")
+        p95_lat_s = (last.get("latency_ms_p95") or 0) / 1000.0 \
+            if last.get("latency_ms_p95") is not None else None
+        p95_ttft_s = (last.get("ttft_ms_p95") or 0) / 1000.0 \
+            if last.get("ttft_ms_p95") is not None else None
+        errors = sum(int(lvl.get("errors") or 0) for lvl in levels)
+        # Peaking AT the top of the swept range => throughput was still rising,
+        # i.e. it had NOT saturated within the levels we measured.
+        not_saturated = (peak_conc is not None and max_conc is not None
+                         and peak_conc >= max_conc)
+        sat_note = (
+            f" Throughput had NOT saturated within the swept range (still rising "
+            f"at concurrency {fmt(max_conc, 0)})."
+            if not_saturated else
+            f" Throughput saturated at concurrency {fmt(peak_conc, 0)} (below the "
+            f"{fmt(max_conc, 0)} max)."
+        )
+        lines.append(
+            f"- **{label}** -- peak **{fmt(peak_tps, 0)} tok/s** @ concurrency "
+            f"{fmt(peak_conc, 0)}; at max concurrency {fmt(max_conc, 0)}: p95 "
+            f"latency {fmt(p95_lat_s, 1)}s, p95 TTFT {fmt(p95_ttft_s, 1)}s, "
+            f"{errors} error(s).{sat_note}"
+        )
+    return "\n".join(lines)
+
+
+def render_report(row_specs, benchmarked, source_files, report_sources=None,
+                  load_tests=None):
     report_sources = report_sources or []
     benchmarked_count = sum(
         1 for s in row_specs
@@ -761,13 +892,25 @@ def render_report(row_specs, benchmarked, source_files, report_sources=None):
     else:
         parts.append("_No benchmarked models yet -- run the sweep to populate._")
     parts.append("")
+    parts.append("## Concurrency / throughput under load")
+    parts.append("")
+    load_tests = load_tests or []
+    if load_tests:
+        parts.append(render_concurrency_section(load_tests))
+    else:
+        parts.append("_No concurrency load-test data yet -- run the load-test "
+                     "sweep to populate `results-incluster/<slug>/load-test.json`._")
+    parts.append("")
     parts.append("## Source files")
     parts.append("")
-    if source_files or report_sources:
+    load_test_sources = [path for _label, path, _data in load_tests]
+    if source_files or report_sources or load_test_sources:
         for f in source_files:
             parts.append(f"- `{_repo_rel(f)}` (live result JSON)")
         for f in report_sources:
             parts.append(f"- `{_repo_rel(f)}` (committed report.txt)")
+        for f in load_test_sources:
+            parts.append(f"- `{_repo_rel(f)}` (committed load-test.json)")
     else:
         parts.append("_None -- matrix rendered from the known-models registry only._")
     parts.append("")
@@ -833,7 +976,13 @@ def main(argv=None):
     row_specs, benchmarked, report_sources = merge_known_with_actual(
         models, results_dir, args.candidates)
 
-    report = render_report(row_specs, benchmarked, used_files, report_sources)
+    # Committed per-model concurrency sweeps (results-incluster/<slug>/load-test.json),
+    # rendered as the "Concurrency / throughput under load" section. Reproducible
+    # from the repo, like the report.txt headline metrics.
+    load_tests = collect_load_tests(results_dir, args.candidates)
+
+    report = render_report(row_specs, benchmarked, used_files, report_sources,
+                           load_tests)
     print(report)
 
     if args.output:

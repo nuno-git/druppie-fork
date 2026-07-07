@@ -1,0 +1,112 @@
+{
+  "timestamp": "2026-07-07T12:15:43.409459+00:00",
+  "test": "concurrency_load",
+  "display_name": "Qwen3.6-35B-A3B-NVFP4 (in-cluster, concurrency)",
+  "endpoint": "http://qwen-35b.llm.svc.cluster.local:8000/v1",
+  "model": "nvidia/Qwen3.6-35B-A3B-NVFP4",
+  "settings": {
+    "concurrency_levels": [
+      1,
+      8,
+      32,
+      64,
+      128
+    ],
+    "max_tokens": 256,
+    "req_multiplier": 3,
+    "window_seconds": 45.0,
+    "streaming": true
+  },
+  "saturation": {
+    "peak_concurrency": 128,
+    "peak_tok_s": 4414.1,
+    "knee_concurrency": 128
+  },
+  "levels": [
+    {
+      "concurrency": 1,
+      "total_requests": 8,
+      "ok": 8,
+      "errors": 0,
+      "wall_clock_s": 9.365,
+      "aggregate_tok_s": 218.68,
+      "req_per_s": 0.854,
+      "latency_ms_median": 1172.4,
+      "latency_ms_p95": 1175.5,
+      "ttft_ms_median": 61.2,
+      "ttft_ms_p95": 63.3,
+      "decode_tps_median": 230.28,
+      "total_output_tokens": 2048,
+      "prompt_tokens": 258,
+      "error_samples": []
+    },
+    {
+      "concurrency": 8,
+      "total_requests": 24,
+      "ok": 24,
+      "errors": 0,
+      "wall_clock_s": 5.803,
+      "aggregate_tok_s": 1058.73,
+      "req_per_s": 4.136,
+      "latency_ms_median": 1717.4,
+      "latency_ms_p95": 2374.8,
+      "ttft_ms_median": 239.4,
+      "ttft_ms_p95": 918.3,
+      "decode_tps_median": 173.35,
+      "total_output_tokens": 6144,
+      "prompt_tokens": 258,
+      "error_samples": []
+    },
+    {
+      "concurrency": 32,
+      "total_requests": 96,
+      "ok": 96,
+      "errors": 0,
+      "wall_clock_s": 9.931,
+      "aggregate_tok_s": 2474.79,
+      "req_per_s": 9.667,
+      "latency_ms_median": 2840.4,
+      "latency_ms_p95": 4283.1,
+      "ttft_ms_median": 460.5,
+      "ttft_ms_p95": 1874.3,
+      "decode_tps_median": 106.41,
+      "total_output_tokens": 24576,
+      "prompt_tokens": 258,
+      "error_samples": []
+    },
+    {
+      "concurrency": 64,
+      "total_requests": 192,
+      "ok": 192,
+      "errors": 0,
+      "wall_clock_s": 15.998,
+      "aggregate_tok_s": 3072.37,
+      "req_per_s": 12.001,
+      "latency_ms_median": 5210.2,
+      "latency_ms_p95": 5610.2,
+      "ttft_ms_median": 1830.1,
+      "ttft_ms_p95": 2040.3,
+      "decode_tps_median": 74.6,
+      "total_output_tokens": 49152,
+      "prompt_tokens": 258,
+      "error_samples": []
+    },
+    {
+      "concurrency": 128,
+      "total_requests": 384,
+      "ok": 384,
+      "errors": 0,
+      "wall_clock_s": 22.271,
+      "aggregate_tok_s": 4414.09,
+      "req_per_s": 17.243,
+      "latency_ms_median": 7571.3,
+      "latency_ms_p95": 7620.7,
+      "ttft_ms_median": 2014.5,
+      "ttft_ms_p95": 2212.3,
+      "decode_tps_median": 46.51,
+      "total_output_tokens": 98304,
+      "prompt_tokens": 258,
+      "error_samples": []
+    }
+  ]
+}
