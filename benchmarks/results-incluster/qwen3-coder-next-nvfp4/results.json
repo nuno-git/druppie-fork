@@ -1,0 +1,693 @@
+{
+  "timestamp": "2026-07-06T22:10:12.461005",
+  "settings": {
+    "runs_per_test": 2,
+    "warmup_runs": 1,
+    "timeout_seconds": 600
+  },
+  "models": [
+    {
+      "display_name": "Qwen3-Coder-Next-80B (NVFP4, pvc, ka-k8s-ai)",
+      "endpoint": "bench",
+      "model": "Qwen3-Coder-Next-NVFP4",
+      "max_context": 262144,
+      "parameters": "80B",
+      "quantization": "NVFP4",
+      "kv_cache_quant": null,
+      "flash_attention": true,
+      "gpu_layers": -1,
+      "notes": "LLMKube+vLLM cu129-nightly, single GPU, --quantization modelopt, max-model-len 262144, tool parser qwen3_xml"
+    }
+  ],
+  "results": {
+    "context_scaling": {
+      "context-128k": {
+        "Qwen3-Coder-Next-80B (NVFP4, pvc, ka-k8s-ai)": [
+          {
+            "total_latency_ms": 10090.708754956722,
+            "time_to_first_token_ms": 9202.302027028054,
+            "prompt_tokens": 114487,
+            "completion_tokens": 114,
+            "total_tokens": 114601,
+            "tokens_per_second": 11.297521588263196,
+            "prompt_eval_rate": 12441.12610776527,
+            "error": null
+          },
+          {
+            "total_latency_ms": 10175.653899088502,
+            "time_to_first_token_ms": 9271.30222111009,
+            "prompt_tokens": 114487,
+            "completion_tokens": 118,
+            "total_tokens": 114605,
+            "tokens_per_second": 11.596306357331002,
+            "prompt_eval_rate": 12348.535002916991,
+            "error": null
+          }
+        ]
+      },
+      "context-16k": {
+        "Qwen3-Coder-Next-80B (NVFP4, pvc, ka-k8s-ai)": [
+          {
+            "total_latency_ms": 1436.5015679504722,
+            "time_to_first_token_ms": 544.6806738618761,
+            "prompt_tokens": 14362,
+            "completion_tokens": 124,
+            "total_tokens": 14486,
+            "tokens_per_second": 86.32082468027997,
+            "prompt_eval_rate": 26367.74295326295,
+            "error": null
+          },
+          {
+            "total_latency_ms": 1402.043002191931,
+            "time_to_first_token_ms": 546.5864231809974,
+            "prompt_tokens": 14362,
+            "completion_tokens": 119,
+            "total_tokens": 14481,
+            "tokens_per_second": 84.87614132659081,
+            "prompt_eval_rate": 26275.808162992274,
+            "error": null
+          }
+        ]
+      },
+      "context-1k": {
+        "Qwen3-Coder-Next-80B (NVFP4, pvc, ka-k8s-ai)": [
+          {
+            "total_latency_ms": 1008.2174821291119,
+            "time_to_first_token_ms": 218.15488813444972,
+            "prompt_tokens": 951,
+            "completion_tokens": 112,
+            "total_tokens": 1063,
+            "tokens_per_second": 111.08714338446407,
+            "prompt_eval_rate": 4359.288064239454,
+            "error": null
+          },
+          {
+            "total_latency_ms": 907.3813799768686,
+            "time_to_first_token_ms": 223.74216094613075,
+            "prompt_tokens": 951,
+            "completion_tokens": 97,
+            "total_tokens": 1048,
+            "tokens_per_second": 106.90102545687324,
+            "prompt_eval_rate": 4250.428242842293,
+            "error": null
+          }
+        ]
+      },
+      "context-256": {
+        "Qwen3-Coder-Next-80B (NVFP4, pvc, ka-k8s-ai)": [
+          {
+            "total_latency_ms": 878.5843879450113,
+            "time_to_first_token_ms": 68.1628289166838,
+            "prompt_tokens": 282,
+            "completion_tokens": 115,
+            "total_tokens": 397,
+            "tokens_per_second": 130.89237821421156,
+            "prompt_eval_rate": 4137.152235050159,
+            "error": null
+          },
+          {
+            "total_latency_ms": 704.3427629396319,
+            "time_to_first_token_ms": 63.625287963077426,
+            "prompt_tokens": 282,
+            "completion_tokens": 91,
+            "total_tokens": 373,
+            "tokens_per_second": 129.19845959686458,
+            "prompt_eval_rate": 4432.19997941146,
+            "error": null
+          }
+        ]
+      },
+      "context-256k": {
+        "Qwen3-Coder-Next-80B (NVFP4, pvc, ka-k8s-ai)": [
+          {
+            "total_latency_ms": 31843.909619841725,
+            "time_to_first_token_ms": 30765.107025858015,
+            "prompt_tokens": 228916,
+            "completion_tokens": 127,
+            "total_tokens": 229043,
+            "tokens_per_second": 3.9882037575206266,
+            "prompt_eval_rate": 7440.767223972162,
+            "error": null
+          },
+          {
+            "total_latency_ms": 31894.490484846756,
+            "time_to_first_token_ms": 30866.743912920356,
+            "prompt_tokens": 228916,
+            "completion_tokens": 124,
+            "total_tokens": 229040,
+            "tokens_per_second": 3.887818808672083,
+            "prompt_eval_rate": 7416.2665374036815,
+            "error": null
+          }
+        ]
+      },
+      "context-32k": {
+        "Qwen3-Coder-Next-80B (NVFP4, pvc, ka-k8s-ai)": [
+          {
+            "total_latency_ms": 1997.0893289428204,
+            "time_to_first_token_ms": 1242.9236110765487,
+            "prompt_tokens": 28665,
+            "completion_tokens": 104,
+            "total_tokens": 28769,
+            "tokens_per_second": 52.075787744083264,
+            "prompt_eval_rate": 23062.559713683477,
+            "error": null
+          },
+          {
+            "total_latency_ms": 2134.3284379690886,
+            "time_to_first_token_ms": 1237.5677060335875,
+            "prompt_tokens": 28665,
+            "completion_tokens": 123,
+            "total_tokens": 28788,
+            "tokens_per_second": 57.6293684757535,
+            "prompt_eval_rate": 23162.36910534092,
+            "error": null
+          }
+        ]
+      },
+      "context-4k": {
+        "Qwen3-Coder-Next-80B (NVFP4, pvc, ka-k8s-ai)": [
+          {
+            "total_latency_ms": 1013.9189909677953,
+            "time_to_first_token_ms": 222.39177185110748,
+            "prompt_tokens": 3636,
+            "completion_tokens": 112,
+            "total_tokens": 3748,
+            "tokens_per_second": 110.46247382455569,
+            "prompt_eval_rate": 16349.525747896474,
+            "error": null
+          },
+          {
+            "total_latency_ms": 1103.3719559200108,
+            "time_to_first_token_ms": 234.37585588544607,
+            "prompt_tokens": 3636,
+            "completion_tokens": 123,
+            "total_tokens": 3759,
+            "tokens_per_second": 111.47646026352052,
+            "prompt_eval_rate": 15513.543347985202,
+            "error": null
+          }
+        ]
+      },
+      "context-64k": {
+        "Qwen3-Coder-Next-80B (NVFP4, pvc, ka-k8s-ai)": [
+          {
+            "total_latency_ms": 4080.0632818136364,
+            "time_to_first_token_ms": 3185.8247618656605,
+            "prompt_tokens": 57271,
+            "completion_tokens": 120,
+            "total_tokens": 57391,
+            "tokens_per_second": 29.41130852918011,
+            "prompt_eval_rate": 17976.82053499432,
+            "error": null
+          },
+          {
+            "total_latency_ms": 4108.9391629211605,
+            "time_to_first_token_ms": 3192.336509935558,
+            "prompt_tokens": 57271,
+            "completion_tokens": 123,
+            "total_tokens": 57394,
+            "tokens_per_second": 29.934733789671355,
+            "prompt_eval_rate": 17940.1513035216,
+            "error": null
+          }
+        ]
+      },
+      "context-8k": {
+        "Qwen3-Coder-Next-80B (NVFP4, pvc, ka-k8s-ai)": [
+          {
+            "total_latency_ms": 971.6892768628895,
+            "time_to_first_token_ms": 258.2293590530753,
+            "prompt_tokens": 7209,
+            "completion_tokens": 101,
+            "total_tokens": 7310,
+            "tokens_per_second": 103.94269279792786,
+            "prompt_eval_rate": 27917.042533178013,
+            "error": null
+          },
+          {
+            "total_latency_ms": 1007.3910858482122,
+            "time_to_first_token_ms": 255.28105604462326,
+            "prompt_tokens": 7209,
+            "completion_tokens": 106,
+            "total_tokens": 7315,
+            "tokens_per_second": 105.22229299929646,
+            "prompt_eval_rate": 28239.463247675783,
+            "error": null
+          }
+        ]
+      }
+    },
+    "generation": {
+      "generate-100": {
+        "Qwen3-Coder-Next-80B (NVFP4, pvc, ka-k8s-ai)": [
+          {
+            "total_latency_ms": 753.1401570886374,
+            "time_to_first_token_ms": 50.945385126397014,
+            "prompt_tokens": 52,
+            "completion_tokens": 100,
+            "total_tokens": 152,
+            "tokens_per_second": 132.7774107631748,
+            "prompt_eval_rate": 1020.7008911795731,
+            "error": null
+          },
+          {
+            "total_latency_ms": 767.8781561553478,
+            "time_to_first_token_ms": 66.41865521669388,
+            "prompt_tokens": 52,
+            "completion_tokens": 100,
+            "total_tokens": 152,
+            "tokens_per_second": 130.2289942725877,
+            "prompt_eval_rate": 782.9125692224216,
+            "error": null
+          }
+        ]
+      },
+      "generate-1000": {
+        "Qwen3-Coder-Next-80B (NVFP4, pvc, ka-k8s-ai)": [
+          {
+            "total_latency_ms": 7163.676508003846,
+            "time_to_first_token_ms": 60.68194308318198,
+            "prompt_tokens": 137,
+            "completion_tokens": 1000,
+            "total_tokens": 1137,
+            "tokens_per_second": 139.59312636224126,
+            "prompt_eval_rate": 2257.6732556537004,
+            "error": null
+          },
+          {
+            "total_latency_ms": 7153.525531059131,
+            "time_to_first_token_ms": 49.32861402630806,
+            "prompt_tokens": 137,
+            "completion_tokens": 1000,
+            "total_tokens": 1137,
+            "tokens_per_second": 139.7912114324897,
+            "prompt_eval_rate": 2777.2927073713204,
+            "error": null
+          }
+        ]
+      },
+      "generate-2000": {
+        "Qwen3-Coder-Next-80B (NVFP4, pvc, ka-k8s-ai)": [
+          {
+            "total_latency_ms": 14273.940121987835,
+            "time_to_first_token_ms": 56.62216292694211,
+            "prompt_tokens": 245,
+            "completion_tokens": 2000,
+            "total_tokens": 2245,
+            "tokens_per_second": 140.11548198378415,
+            "prompt_eval_rate": 4326.927608119036,
+            "error": null
+          },
+          {
+            "total_latency_ms": 14293.258892837912,
+            "time_to_first_token_ms": 56.70077493414283,
+            "prompt_tokens": 245,
+            "completion_tokens": 2000,
+            "total_tokens": 2245,
+            "tokens_per_second": 139.92610187744958,
+            "prompt_eval_rate": 4320.928599028217,
+            "error": null
+          }
+        ]
+      },
+      "generate-500": {
+        "Qwen3-Coder-Next-80B (NVFP4, pvc, ka-k8s-ai)": [
+          {
+            "total_latency_ms": 3611.0881590284407,
+            "time_to_first_token_ms": 64.5789559930563,
+            "prompt_tokens": 86,
+            "completion_tokens": 500,
+            "total_tokens": 586,
+            "tokens_per_second": 138.4624185233197,
+            "prompt_eval_rate": 1331.703163631926,
+            "error": null
+          },
+          {
+            "total_latency_ms": 3606.6144960932434,
+            "time_to_first_token_ms": 61.694988049566746,
+            "prompt_tokens": 86,
+            "completion_tokens": 500,
+            "total_tokens": 586,
+            "tokens_per_second": 138.63416801036263,
+            "prompt_eval_rate": 1393.9543991953806,
+            "error": null
+          }
+        ]
+      }
+    },
+    "latency": {
+      "latency-1000": {
+        "Qwen3-Coder-Next-80B (NVFP4, pvc, ka-k8s-ai)": [
+          {
+            "total_latency_ms": 7485.605565831065,
+            "time_to_first_token_ms": 195.57415298186243,
+            "prompt_tokens": 938,
+            "completion_tokens": 1024,
+            "total_tokens": 1962,
+            "tokens_per_second": 136.79587990504996,
+            "prompt_eval_rate": 4796.134794391723,
+            "error": null
+          },
+          {
+            "total_latency_ms": 7489.790640072897,
+            "time_to_first_token_ms": 199.28201101720333,
+            "prompt_tokens": 938,
+            "completion_tokens": 1024,
+            "total_tokens": 1962,
+            "tokens_per_second": 136.71944239953194,
+            "prompt_eval_rate": 4706.89750275064,
+            "error": null
+          }
+        ]
+      },
+      "latency-200": {
+        "Qwen3-Coder-Next-80B (NVFP4, pvc, ka-k8s-ai)": [
+          {
+            "total_latency_ms": 7333.328679902479,
+            "time_to_first_token_ms": 63.18270601332188,
+            "prompt_tokens": 204,
+            "completion_tokens": 1024,
+            "total_tokens": 1228,
+            "tokens_per_second": 139.63645224389663,
+            "prompt_eval_rate": 3228.7316082503216,
+            "error": null
+          },
+          {
+            "total_latency_ms": 7367.559371050447,
+            "time_to_first_token_ms": 94.00044684298337,
+            "prompt_tokens": 204,
+            "completion_tokens": 1024,
+            "total_tokens": 1228,
+            "tokens_per_second": 138.98768213848825,
+            "prompt_eval_rate": 2170.2024495772653,
+            "error": null
+          }
+        ]
+      },
+      "latency-50": {
+        "Qwen3-Coder-Next-80B (NVFP4, pvc, ka-k8s-ai)": [
+          {
+            "total_latency_ms": 1261.2872358877212,
+            "time_to_first_token_ms": 66.66863895952702,
+            "prompt_tokens": 46,
+            "completion_tokens": 169,
+            "total_tokens": 215,
+            "tokens_per_second": 133.99009772825787,
+            "prompt_eval_rate": 689.9795873727905,
+            "error": null
+          },
+          {
+            "total_latency_ms": 1537.056096130982,
+            "time_to_first_token_ms": 59.02055115438998,
+            "prompt_tokens": 46,
+            "completion_tokens": 209,
+            "total_tokens": 255,
+            "tokens_per_second": 135.97421754878476,
+            "prompt_eval_rate": 779.3895363611578,
+            "error": null
+          }
+        ]
+      },
+      "latency-500": {
+        "Qwen3-Coder-Next-80B (NVFP4, pvc, ka-k8s-ai)": [
+          {
+            "total_latency_ms": 7331.501454114914,
+            "time_to_first_token_ms": 64.69119596295059,
+            "prompt_tokens": 414,
+            "completion_tokens": 1024,
+            "total_tokens": 1438,
+            "tokens_per_second": 139.67125375461322,
+            "prompt_eval_rate": 6399.634352673008,
+            "error": null
+          },
+          {
+            "total_latency_ms": 7330.770312109962,
+            "time_to_first_token_ms": 65.57945301756263,
+            "prompt_tokens": 414,
+            "completion_tokens": 1024,
+            "total_tokens": 1438,
+            "tokens_per_second": 139.68518401243833,
+            "prompt_eval_rate": 6312.952928856054,
+            "error": null
+          }
+        ]
+      }
+    },
+    "stress": {
+      "repeated-50": {
+        "Qwen3-Coder-Next-80B (NVFP4, pvc, ka-k8s-ai)": [
+          {
+            "total_latency_ms": 75.66408393904567,
+            "time_to_first_token_ms": 55.649037938565016,
+            "prompt_tokens": 41,
+            "completion_tokens": 4,
+            "total_tokens": 45,
+            "tokens_per_second": 52.86524057070942,
+            "prompt_eval_rate": 736.760266103124,
+            "error": null
+          },
+          {
+            "total_latency_ms": 116.87030596658587,
+            "time_to_first_token_ms": 53.988503059372306,
+            "prompt_tokens": 41,
+            "completion_tokens": 10,
+            "total_tokens": 51,
+            "tokens_per_second": 85.56493385804156,
+            "prompt_eval_rate": 759.4209447687673,
+            "error": null
+          },
+          {
+            "total_latency_ms": 119.01586805470288,
+            "time_to_first_token_ms": 56.72446312382817,
+            "prompt_tokens": 41,
+            "completion_tokens": 10,
+            "total_tokens": 51,
+            "tokens_per_second": 84.02240947739618,
+            "prompt_eval_rate": 722.7922089010867,
+            "error": null
+          },
+          {
+            "total_latency_ms": 81.96669700555503,
+            "time_to_first_token_ms": 53.41916088946164,
+            "prompt_tokens": 41,
+            "completion_tokens": 4,
+            "total_tokens": 45,
+            "tokens_per_second": 48.80030727270751,
+            "prompt_eval_rate": 767.514863905104,
+            "error": null
+          },
+          {
+            "total_latency_ms": 73.99543817155063,
+            "time_to_first_token_ms": 53.84261813014746,
+            "prompt_tokens": 41,
+            "completion_tokens": 4,
+            "total_tokens": 45,
+            "tokens_per_second": 54.05738649356223,
+            "prompt_eval_rate": 761.4785726224438,
+            "error": null
+          },
+          {
+            "total_latency_ms": 115.81780086271465,
+            "time_to_first_token_ms": 53.412162931635976,
+            "prompt_tokens": 41,
+            "completion_tokens": 10,
+            "total_tokens": 51,
+            "tokens_per_second": 86.34251320186577,
+            "prompt_eval_rate": 767.6154222115529,
+            "error": null
+          },
+          {
+            "total_latency_ms": 74.04562598094344,
+            "time_to_first_token_ms": 53.88613999821246,
+            "prompt_tokens": 41,
+            "completion_tokens": 4,
+            "total_tokens": 45,
+            "tokens_per_second": 54.02074662761916,
+            "prompt_eval_rate": 760.863554178497,
+            "error": null
+          },
+          {
+            "total_latency_ms": 118.08902490884066,
+            "time_to_first_token_ms": 55.72853400371969,
+            "prompt_tokens": 41,
+            "completion_tokens": 10,
+            "total_tokens": 51,
+            "tokens_per_second": 84.68187460875001,
+            "prompt_eval_rate": 735.7092866872003,
+            "error": null
+          },
+          {
+            "total_latency_ms": 117.80404695309699,
+            "time_to_first_token_ms": 55.343398824334145,
+            "prompt_tokens": 41,
+            "completion_tokens": 10,
+            "total_tokens": 51,
+            "tokens_per_second": 84.88672722747329,
+            "prompt_eval_rate": 740.8290938208977,
+            "error": null
+          },
+          {
+            "total_latency_ms": 116.7752689216286,
+            "time_to_first_token_ms": 54.17006090283394,
+            "prompt_tokens": 41,
+            "completion_tokens": 10,
+            "total_tokens": 51,
+            "tokens_per_second": 85.63457050748735,
+            "prompt_eval_rate": 756.8756489593509,
+            "error": null
+          },
+          {
+            "total_latency_ms": 115.40424101985991,
+            "time_to_first_token_ms": 52.7873239479959,
+            "prompt_tokens": 41,
+            "completion_tokens": 10,
+            "total_tokens": 51,
+            "tokens_per_second": 86.65192814083063,
+            "prompt_eval_rate": 776.7016195098594,
+            "error": null
+          },
+          {
+            "total_latency_ms": 73.06599011644721,
+            "time_to_first_token_ms": 53.15568018704653,
+            "prompt_tokens": 41,
+            "completion_tokens": 4,
+            "total_tokens": 45,
+            "tokens_per_second": 54.74503245114579,
+            "prompt_eval_rate": 771.3192617557975,
+            "error": null
+          },
+          {
+            "total_latency_ms": 73.39183404110372,
+            "time_to_first_token_ms": 53.48096392117441,
+            "prompt_tokens": 41,
+            "completion_tokens": 4,
+            "total_tokens": 45,
+            "tokens_per_second": 54.50197630651614,
+            "prompt_eval_rate": 766.6279175601603,
+            "error": null
+          },
+          {
+            "total_latency_ms": 72.47116509824991,
+            "time_to_first_token_ms": 52.137817023321986,
+            "prompt_tokens": 41,
+            "completion_tokens": 4,
+            "total_tokens": 45,
+            "tokens_per_second": 55.194365849881926,
+            "prompt_eval_rate": 786.3773809643798,
+            "error": null
+          },
+          {
+            "total_latency_ms": 115.04057794809341,
+            "time_to_first_token_ms": 52.28014406748116,
+            "prompt_tokens": 41,
+            "completion_tokens": 10,
+            "total_tokens": 51,
+            "tokens_per_second": 86.92584980329309,
+            "prompt_eval_rate": 784.2365535006714,
+            "error": null
+          },
+          {
+            "total_latency_ms": 115.96192489378154,
+            "time_to_first_token_ms": 53.661776008084416,
+            "prompt_tokens": 41,
+            "completion_tokens": 10,
+            "total_tokens": 51,
+            "tokens_per_second": 86.23520184888075,
+            "prompt_eval_rate": 764.0447828976653,
+            "error": null
+          },
+          {
+            "total_latency_ms": 119.38550509512424,
+            "time_to_first_token_ms": 57.41038406267762,
+            "prompt_tokens": 41,
+            "completion_tokens": 10,
+            "total_tokens": 51,
+            "tokens_per_second": 83.7622623620194,
+            "prompt_eval_rate": 714.1565183615279,
+            "error": null
+          },
+          {
+            "total_latency_ms": 117.29072593152523,
+            "time_to_first_token_ms": 54.98224077746272,
+            "prompt_tokens": 41,
+            "completion_tokens": 10,
+            "total_tokens": 51,
+            "tokens_per_second": 85.25823265718415,
+            "prompt_eval_rate": 745.6953267136748,
+            "error": null
+          },
+          {
+            "total_latency_ms": 74.0293359849602,
+            "time_to_first_token_ms": 54.00231201201677,
+            "prompt_tokens": 41,
+            "completion_tokens": 4,
+            "total_tokens": 45,
+            "tokens_per_second": 54.03263377659689,
+            "prompt_eval_rate": 759.2267529374769,
+            "error": null
+          },
+          {
+            "total_latency_ms": 115.33983401022851,
+            "time_to_first_token_ms": 52.88147507235408,
+            "prompt_tokens": 41,
+            "completion_tokens": 10,
+            "total_tokens": 51,
+            "tokens_per_second": 86.70031551383353,
+            "prompt_eval_rate": 775.3187660499735,
+            "error": null
+          }
+        ]
+      }
+    },
+    "tool_overhead": {
+      "tool-call-10-tools": {
+        "Qwen3-Coder-Next-80B (NVFP4, pvc, ka-k8s-ai)": [
+          {
+            "total_latency_ms": 434.72764384932816,
+            "time_to_first_token_ms": null,
+            "prompt_tokens": 1337,
+            "completion_tokens": 33,
+            "total_tokens": 1370,
+            "tokens_per_second": 75.90959642639481,
+            "prompt_eval_rate": 0.0,
+            "error": null
+          },
+          {
+            "total_latency_ms": 447.4940679501742,
+            "time_to_first_token_ms": null,
+            "prompt_tokens": 1337,
+            "completion_tokens": 33,
+            "total_tokens": 1370,
+            "tokens_per_second": 73.74399430848847,
+            "prompt_eval_rate": 0.0,
+            "error": null
+          }
+        ]
+      },
+      "tool-call-3-tools": {
+        "Qwen3-Coder-Next-80B (NVFP4, pvc, ka-k8s-ai)": [
+          {
+            "total_latency_ms": 219.19463691301644,
+            "time_to_first_token_ms": null,
+            "prompt_tokens": 480,
+            "completion_tokens": 22,
+            "total_tokens": 502,
+            "tokens_per_second": 100.36741915693091,
+            "prompt_eval_rate": 0.0,
+            "error": null
+          },
+          {
+            "total_latency_ms": 418.65512006916106,
+            "time_to_first_token_ms": null,
+            "prompt_tokens": 480,
+            "completion_tokens": 50,
+            "total_tokens": 530,
+            "tokens_per_second": 119.43004540763789,
+            "prompt_eval_rate": 0.0,
+            "error": null
+          }
+        ]
+      }
+    }
+  }

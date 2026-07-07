@@ -4,7 +4,7 @@
 # Idempotent: deletes any prior Job/configmaps first, recreates the configmaps
 # from the local benchmarks/ source tree, applies the Job, and tails the logs.
 #
-# On completion the Job auto-publishes its results (JSON + CSV + console report)
+# On completion the Job auto-publishes its results (JSON + console report)
 # to aigit under benchmarks/results-incluster/auto/<runid>/ on branch
 # benchmarks/auto-results and ensures an open PR into colab-dev. This uses the
 # `aigit-publish` secret in ns llm; without it publishing is silently skipped.

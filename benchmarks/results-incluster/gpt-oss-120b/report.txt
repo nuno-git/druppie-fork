@@ -1,0 +1,109 @@
+Running 20 scenarios x 1 models (2 runs each, 1 warmup)
+
+  Model: gpt-oss-120b (MXFP4, PVC, ka-k8s-ai) (gpt-oss-120b)
+    context-128k...  (1 errors)
+    context-16k...  (1 errors)
+    context-1k... 652ms avg
+    context-256... 977ms avg
+    context-256k...  (1 errors)
+    context-32k...  (1 errors)
+    context-4k... 929ms avg
+    context-64k...  (1 errors)
+    context-8k... 912ms avg
+    generate-100... 578ms avg
+    generate-1000... 5640ms avg
+    generate-2000... 11359ms avg
+    generate-500... 2822ms avg
+    latency-1000... 5852ms avg
+    latency-200... 5790ms avg
+    latency-50... 1027ms avg
+    latency-500... 5805ms avg
+    repeated-50... 285ms avg
+    tool-call-10-tools... 421ms avg
+    tool-call-3-tools... 362ms avg
+
+LLM Performance Benchmark - 2026-07-06 21:36
+Endpoint: bench (http://bench-gptoss.llm.svc.cluster.local:8000/v1)
+Runs per test: 2
+Warmup runs: 1
+
+Model Configurations:
+  gpt-oss-120b (MXFP4, P - 120B params, MXFP4, flash_attn, GPU=-1
+
+================================================================================
+  CONTEXT SCALING (latency)
+================================================================================
+Scenario               | gpt-oss-120b (MXFP4, PVC, ka-k8s-ai)  
+---------------------------------------------------------------
+context-128k           | ERROR                                 
+context-16k            | ERROR                                 
+context-1k             | 0.7s (±0.1)                           
+context-256            | 1.0s (±0.3)                           
+context-256k           | ERROR                                 
+context-32k            | ERROR                                 
+context-4k             | 0.9s (±0.4)                           
+context-64k            | ERROR                                 
+context-8k             | 0.9s (±0.2)                           
+
+================================================================================
+  GENERATION SPEED
+================================================================================
+Scenario               | gpt-oss-120b (MXFP4, PVC, ka-k8s-ai)  
+---------------------------------------------------------------
+generate-100           | 173 t/s                               
+generate-1000          | 177 t/s                               
+generate-2000          | 176 t/s                               
+generate-500           | 177 t/s                               
+
+================================================================================
+  LATENCY (total response time)
+================================================================================
+Scenario               | gpt-oss-120b (MXFP4, PVC, ka-k8s-ai)  
+---------------------------------------------------------------
+latency-1000           | 5.9s (±0.0)                           
+latency-200            | 5.8s (±0.0)                           
+latency-50             | 1.0s (±0.3)                           
+latency-500            | 5.8s (±0.0)                           
+
+================================================================================
+  STRESS / CONSISTENCY
+================================================================================
+Scenario               | gpt-oss-120b (MXFP4, PVC, ka-k8s-ai)  
+---------------------------------------------------------------
+repeated-50            | 0.3s (±0.1)                           
+
+================================================================================
+  TOOL CALLING OVERHEAD (latency)
+================================================================================
+Scenario               | gpt-oss-120b (MXFP4, PVC, ka-k8s-ai)  
+---------------------------------------------------------------
+tool-call-10-tools     | 0.4s (±0.1)                           
+tool-call-3-tools      | 0.4s (±0.1)                           
+
+================================================================================
+  TIME TO FIRST TOKEN (TTFT)
+================================================================================
+Scenario               | gpt-oss-120b (MXFP4, PVC, ka-k8s-ai)  
+---------------------------------------------------------------
+context-128k           | -                                     
+context-16k            | -                                     
+context-1k             | 206ms                                 
+context-256            | 505ms                                 
+context-256k           | -                                     
+context-32k            | -                                     
+context-4k             | 455ms                                 
+context-64k            | -                                     
+context-8k             | 416ms                                 
+generate-100           | 284ms                                 
+generate-1000          | 1.0s                                  
+generate-2000          | 960ms                                 
+generate-500           | 355ms                                 
+latency-1000           | 598ms                                 
+latency-200            | 772ms                                 
+latency-50             | 319ms                                 
+latency-500            | 1.6s                                  
+repeated-50            | 256ms                                 
+tool-call-10-tools     | -                                     
+tool-call-3-tools      | -                                     
+
+JSON results exported to /results/results.json

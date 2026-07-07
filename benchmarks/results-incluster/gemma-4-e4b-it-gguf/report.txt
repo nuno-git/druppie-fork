@@ -1,0 +1,109 @@
+Running 20 scenarios x 1 models (2 runs each, 1 warmup)
+
+  Model: gemma-4-e4b (bench, single-GPU) (unsloth/gemma-4-E4B-it-GGUF)
+    context-128k...  (2 errors)
+    context-16k... 732ms avg
+    context-1k... 602ms avg
+    context-256... 630ms avg
+    context-256k...  (1 errors)
+    context-32k... 764ms avg
+    context-4k... 637ms avg
+    context-64k...  (2 errors)
+    context-8k... 724ms avg
+    generate-100... 853ms avg
+    generate-1000... 8450ms avg
+    generate-2000... 17140ms avg
+    generate-500... 4204ms avg
+    latency-1000... 8818ms avg
+    latency-200... 4720ms avg
+    latency-50... 495ms avg
+    latency-500... 8714ms avg
+    repeated-50... 43ms avg
+    tool-call-10-tools...  (2 errors)
+    tool-call-3-tools...  (2 errors)
+
+LLM Performance Benchmark - 2026-07-07 10:10
+Endpoint: qwen_incluster (http://bench-gemma-4-e4b-it-gguf.llm.svc.cluster.local:8000/v1)
+Runs per test: 3
+Warmup runs: 1
+
+Model Configurations:
+  gemma-4-e4b (bench, si - 27B params, bfloat16, KV:fp8, flash_attn, GPU=-1
+
+================================================================================
+  CONTEXT SCALING (latency)
+================================================================================
+Scenario               | gemma-4-e4b (bench, single-GPU)  
+----------------------------------------------------------
+context-128k           | ERROR                            
+context-16k            | 0.7s (±0.0)                      
+context-1k             | 0.6s (±0.1)                      
+context-256            | 0.6s (±0.0)                      
+context-256k           | ERROR                            
+context-32k            | 0.8s (±0.1)                      
+context-4k             | 0.6s (±0.2)                      
+context-64k            | ERROR                            
+context-8k             | 0.7s (±0.0)                      
+
+================================================================================
+  GENERATION SPEED
+================================================================================
+Scenario               | gemma-4-e4b (bench, single-GPU)  
+----------------------------------------------------------
+generate-100           | 117 t/s                          
+generate-1000          | 118 t/s                          
+generate-2000          | 117 t/s                          
+generate-500           | 119 t/s                          
+
+================================================================================
+  LATENCY (total response time)
+================================================================================
+Scenario               | gemma-4-e4b (bench, single-GPU)  
+----------------------------------------------------------
+latency-1000           | 8.8s (±0.0)                      
+latency-200            | 4.7s (±0.1)                      
+latency-50             | 0.5s (±0.1)                      
+latency-500            | 8.7s (±0.0)                      
+
+================================================================================
+  STRESS / CONSISTENCY
+================================================================================
+Scenario               | gemma-4-e4b (bench, single-GPU)  
+----------------------------------------------------------
+repeated-50            | 0.0s (±0.0)                      
+
+================================================================================
+  TOOL CALLING OVERHEAD (latency)
+================================================================================
+Scenario               | gemma-4-e4b (bench, single-GPU)  
+----------------------------------------------------------
+tool-call-10-tools     | ERROR                            
+tool-call-3-tools      | ERROR                            
+
+================================================================================
+  TIME TO FIRST TOKEN (TTFT)
+================================================================================
+Scenario               | gemma-4-e4b (bench, single-GPU)  
+----------------------------------------------------------
+context-128k           | -                                
+context-16k            | 66ms                             
+context-1k             | 36ms                             
+context-256            | 37ms                             
+context-256k           | -                                
+context-32k            | 119ms                            
+context-4k             | 46ms                             
+context-64k            | -                                
+context-8k             | 52ms                             
+generate-100           | 30ms                             
+generate-1000          | 36ms                             
+generate-2000          | 38ms                             
+generate-500           | 34ms                             
+latency-1000           | 37ms                             
+latency-200            | 34ms                             
+latency-50             | 30ms                             
+latency-500            | 37ms                             
+repeated-50            | 26ms                             
+tool-call-10-tools     | -                                
+tool-call-3-tools      | -                                
+
+JSON results exported to /results/results.json

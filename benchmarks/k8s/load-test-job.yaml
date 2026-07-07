@@ -1,0 +1,92 @@
+apiVersion: batch/v1
+kind: Job
+# Concurrency / load benchmark Job. Runs `python -m benchmarks.load_test` against
+# ONE live OpenAI-compatible endpoint, sweeping several concurrency levels. Unlike
+# the single-stream suite Job (job.yaml, name `llm-benchmark`), this is named
+# `loadtest-<slug>` so it never collides with the sweep, and it does NOT publish.
+#
+# It is NON-DISRUPTIVE to serving config: it only sends concurrent requests to the
+# live Service; it never scales/patches an InferenceService or Deployment.
+#
+# The run script (run-load-test.sh) substitutes the __PLACEHOLDER__ tokens and the
+# LOADTEST_* env values per target model before applying.
+metadata:
+  name: __JOB_NAME__
+  namespace: llm
+  labels:
+    app: llm-loadtest
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 3600
+  template:
+    metadata:
+      labels:
+        app: llm-loadtest
+    spec:
+      restartPolicy: Never
+      volumes:
+        - name: app
+          emptyDir: {}
+        - name: loadtest-pkg
+          configMap:
+            name: loadtest-pkg
+      initContainers:
+        # Assemble a writable Python package dir from the configmap (mirrors
+        # job.yaml -- avoids read-only/nested-mount issues with configMap volumes).
+        - name: assemble
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              set -eu
+              mkdir -p /app/benchmarks
+              cp /cm-pkg/* /app/benchmarks/
+              echo "Assembled package:"
+              ls -la /app/benchmarks/
+          volumeMounts:
+            - name: app
+              mountPath: /app
+            - name: loadtest-pkg
+              mountPath: /cm-pkg
+      containers:
+        - name: loadtest
+          image: python:3.12-slim
+          workingDir: /app
+          env:
+            - name: LOADTEST_BASE_URL
+              value: "__BASE_URL__"
+            - name: LOADTEST_MODEL
+              value: "__MODEL_ID__"
+            - name: LOADTEST_DISPLAY_NAME
+              value: "__DISPLAY_NAME__"
+            - name: LOADTEST_CONCURRENCY
+              value: "__CONCURRENCY__"
+            - name: LOADTEST_MAX_TOKENS
+              value: "__MAX_TOKENS__"
+            - name: LOADTEST_REQ_MULTIPLIER
+              value: "__REQ_MULTIPLIER__"
+            - name: LOADTEST_WINDOW_SECONDS
+              value: "__WINDOW_SECONDS__"
+            - name: LOADTEST_OUTPUT
+              value: /tmp/load-test.json
+          command:
+            - sh
+            - -c
+            - |
+              set -eu
+              pip install --quiet httpx
+              # load_test.py emits the ===REPORT_TXT_START/END=== and
+              # ===RESULTS_JSON_START/END=== marker blocks on stdout itself, so
+              # the run script scrapes them straight out of the Job logs.
+              python -m benchmarks.load_test
+          volumeMounts:
+            - name: app
+              mountPath: /app
+          resources:
+            requests:
+              cpu: 500m
+              memory: 512Mi
+            limits:
+              cpu: "2"
+              memory: 2Gi

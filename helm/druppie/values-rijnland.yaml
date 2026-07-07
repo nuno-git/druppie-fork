@@ -66,6 +66,10 @@ init:
 backend:
   nodeSelector:
     kubernetes.io/hostname: ka-k8s-ai-workers-skbh7-6gpg2
+  # In-cluster LLMKube/vLLM endpoint (cluster DNS, not the external ingress).
+  # The LLM provider is still zai by default; llmkube is just selectable.
+  llmkube:
+    baseUrl: http://qwen.llm.svc.cluster.local:8000/v1
 
 modules:
   coding:

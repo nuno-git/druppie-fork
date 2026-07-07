@@ -11,12 +11,20 @@ Env (from the aigit-publish secret, mapped to uppercase in the Job):
   AIGIT_TOKEN  - Gitea token with write:repository (empty -> graceful skip)
   AIGIT_BRANCH - target branch for results (default benchmarks/auto-results)
   AIGIT_BASE   - base branch to branch/PR from (default colab-dev)
+  AIGIT_DIR    - stable base dir in the repo to publish under
+                 (default benchmarks/results-incluster)
   RESULTS_DIR  - directory of files to publish (default /results)
 
-Uploads every file in RESULTS_DIR to
-  benchmarks/results-incluster/auto/<runid>/<filename>
-on AIGIT_BRANCH (created from AIGIT_BASE on first file if missing), then
-ensures an open PR AIGIT_BRANCH -> AIGIT_BASE. Idempotent and non-fatal:
+Walks RESULTS_DIR recursively and uploads every file to AIGIT_DIR PRESERVING
+its relative subdirectory structure, e.g. <RESULTS_DIR>/qwen3.6-27b/report.txt
+-> benchmarks/results-incluster/qwen3.6-27b/report.txt and
+<RESULTS_DIR>/COMPARISON-MATRIX.md -> benchmarks/results-incluster/COMPARISON-MATRIX.md.
+Paths are STABLE (no timestamp/run-id): each publish OVERWRITES the same paths
+via the Gitea contents API (create if missing, update-with-sha if present), so
+the results tree always shows exactly one report per model + one matrix.
+
+Publishes on AIGIT_BRANCH (created from AIGIT_BASE on first file if missing),
+then ensures an open PR AIGIT_BRANCH -> AIGIT_BASE. Idempotent and non-fatal:
 a missing token or an already-existing PR never fails the Job.
 """
 
@@ -25,7 +33,6 @@ import csv
 import json
 import os
 import sys
-from datetime import datetime, timezone
 from pathlib import Path
 
 import httpx
@@ -87,6 +94,7 @@ def main() -> int:
     token = _env("AIGIT_TOKEN")
     branch = _env("AIGIT_BRANCH", "benchmarks/auto-results")
     base = _env("AIGIT_BASE", "colab-dev")
+    aigit_dir = _env("AIGIT_DIR", "benchmarks/results-incluster").strip("/")
     results_dir = Path(_env("RESULTS_DIR", "/results"))
 
     if not token:
@@ -97,7 +105,9 @@ def main() -> int:
         print(f"publish skipped (missing AIGIT_API/AIGIT_REPO): api={api!r} repo={repo!r}")
         return 0
 
-    files = sorted(p for p in results_dir.glob("*") if p.is_file())
+    # Walk RESULTS_DIR recursively, preserving the relative subdir structure so
+    # e.g. <RESULTS_DIR>/qwen3.6-27b/report.txt -> <aigit_dir>/qwen3.6-27b/report.txt.
+    files = sorted(p for p in results_dir.rglob("*") if p.is_file())
     if not files:
         print(f"publish skipped (no files in {results_dir})")
         return 0
@@ -108,15 +118,14 @@ def main() -> int:
     # Held in a variable (not a literal) so intent is explicit and centralized.
     tls_verify = False
 
-    runid = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     headers = {
         "Authorization": f"token {token}",
         "Content-Type": "application/json",
         "Accept": "application/json",
     }
-    dest_dir = f"benchmarks/results-incluster/auto/{runid}"
+    dest_dir = aigit_dir
 
-    print(f"Publishing {len(files)} file(s) as {user} to {repo} run {runid}")
+    print(f"Publishing {len(files)} file(s) as {user} to {repo}")
     print(f"  target branch: {branch}  base: {base}  dir: {dest_dir}")
 
     # tls_verify is False: aigit uses a private CA (see note above).
@@ -130,24 +139,42 @@ def main() -> int:
 
         for i, f in enumerate(files):
             content_b64 = base64.b64encode(f.read_bytes()).decode()
+            # Preserve the file's path relative to RESULTS_DIR under the stable dir.
+            rel = f.relative_to(results_dir).as_posix()
+            path = f"{dest_dir}/{rel}"
             body = {
                 "content": content_b64,
-                "message": f"benchmark auto-publish {runid}",
+                "message": f"benchmark auto-publish {rel}",
             }
             if branch_exists:
                 body["branch"] = branch
+                # Stable paths OVERWRITE: the contents API rejects a create-PUT if
+                # the file already exists, so look it up first and, if present,
+                # include its blob sha to turn this into an update.
+                get = client.get(
+                    f"{api}/repos/{repo}/contents/{path}",
+                    params={"ref": branch},
+                )
+                if get.status_code == 200:
+                    sha = (get.json() or {}).get("sha")
+                    if sha:
+                        body["sha"] = sha
+                elif get.status_code != 404:
+                    print(f"  WARNING: unexpected status checking {path}: "
+                          f"{get.status_code} {get.text[:200]}")
             else:
-                # First PUT creates the branch from base via new_branch.
+                # First PUT creates the branch from base via new_branch. The branch
+                # does not exist yet, so nothing to overwrite -> plain create.
                 body["new_branch"] = branch
                 body["branch"] = base
 
-            path = f"{dest_dir}/{f.name}"
             resp = client.put(
                 f"{api}/repos/{repo}/contents/{path}",
                 json=body,
             )
             if resp.status_code in (200, 201):
-                print(f"  [{i + 1}/{len(files)}] PUT {path} -> {resp.status_code}")
+                verb = "updated" if "sha" in body else "created"
+                print(f"  [{i + 1}/{len(files)}] PUT {path} -> {resp.status_code} ({verb})")
                 # Branch now exists; subsequent files target it directly.
                 branch_exists = True
             else:
