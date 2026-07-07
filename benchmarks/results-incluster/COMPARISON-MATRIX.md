@@ -1,21 +1,32 @@
 # Model Comparison Matrix
 
-10 registered model(s) tracked; 4 benchmarked (from 4 committed report.txt + 0 live result JSON(s)). Models that are not (yet) benchmarked still appear, with a `Status / Note` explaining why (fits/pending, needs a maintenance window, or too large for this hardware).
+21 registered model(s) tracked; 6 benchmarked (from 6 committed report.txt + 0 live result JSON(s)). Models that are not (yet) benchmarked still appear, with a `Status / Note` explaining why (fits/pending, needs a maintenance window, or too large for this hardware).
 
 ## Headline metrics
 
 | Model | Params | Quant / size | Median TTFT (ms) | Median decode (tok/s) | latency-500 (s) | context-64k TTFT (ms) | tool 10-3 delta (s) | stress stddev (ms) | Errors | Status / Note |
 |---|---|---|---|---|---|---|---|---|---|---|
-| Gemma 4 E4B (gemma-4-E4B-it) | ~4B (E4B eff.) | GGUF ~4-8GB | -- | -- | -- | -- | -- | -- | -- | Pending -- gated (HF token not in vault). |
-| Qwen3.6-27B-NVFP4 | 27B (dense) | NVFP4 ~22GB | 191 | 64.0 | 16.1 | 443 | -0.20 | 6,700 | 0 | Served in prod (isvc qwen-27b); benchmarked IN PLACE from local-disk cache, TP=1, 256K ctx OK. |
-| Qwen3.6-27B-MTP (GGUF) | 27B (+MTP head) | GGUF ~16-30GB | -- | -- | -- | -- | -- | -- | -- | Not benchmarked -- GGUF, not staged. |
-| Qwen3.6-35B-A3B-NVFP4 (MoE) | 35B MoE (3B act.) | NVFP4 ~22GB | 99 | 216.5 | 4.7 | 251 | 0.00 | 900 | 0 | Served in prod (isvc qwen-35b); benchmarked IN PLACE from local-disk cache, TP=1, 256K ctx OK. SM120 Marlin MoE fallback. |
-| Qwen3-Coder-Next-80B-NVFP4 (MoE) | 80B MoE | NVFP4 ~47GB | 197 | 139.5 | 7.3 | 3,200 | 0.10 | 0 | 0 | Benchmarked from local-disk cache via runtime:vllm + command override, TP=1, 256K ctx OK (TTFT 30.8s@256k). SM120 Marlin MoE fallback. |
-| gpt-oss-120b (MoE) | 120B MoE | MXFP4 ~63GB | 480 | 176.5 | 5.8 | -- | 0.00 | 100 | 5 | Benchmarked from local-disk cache via runtime:vllm + command override, TP=1. Served at max-model-len 8192, so the 16k+ context scenarios are out-of-range BY CONFIG (not a model limit) and are the errored runs; 0 errors on the 15 in-range scenarios. SM120 Marlin MoE fallback. |
-| Qwen3-Coder-480B-A35B (MoE) | 480B (35B act.) | ~270GB @Q4 / ~960GB bf16 | -- | -- | -- | -- | -- | -- | -- | Too large -- >192GB total. |
-| DeepSeek-V3.1 (GGUF, MoE) | 671B (37B act.) | ~380GB @Q4 GGUF | -- | -- | -- | -- | -- | -- | -- | Too large -- >192GB total. |
-| GLM-5.1 (GGUF, MoE) | 744B (40B act.) | ~220-236GB @2-bit | -- | -- | -- | -- | -- | -- | -- | Too large -- >192GB total. |
-| GLM-4.6V (GGUF, vision) | 106B | GGUF ~60GB @Q4 | -- | -- | -- | -- | -- | -- | -- | Not benchmarked -- vision GGUF, not staged. |
+| Gemma-4-26B-A4B | 26B (MoE, ~A4B active) | ~52GB bf16 / ~13GB NVFP4 | -- | -- | -- | -- | -- | -- | -- | backlog only (no registered CR); fit informational. No confirmed nvidia/*-NVFP4 build; kept as the bf16 HF repo (already fits at bf16, so NVFP4 not required). |
+| Qwen3.6-35B-A3B (bf16) | 35B (MoE, A3B active, bf16) | ~70GB bf16 (tight on one 96GB card) | -- | -- | -- | -- | -- | -- | -- | Full-precision variant; SUPERSEDED in prod by the served NVFP4 build (nvidia/Qwen3.6-35B-A3B-NVFP4, isvc qwen-35b). Benchmarkable as Case B if you want a bf16-vs-NVFP4 comparison. |
+| Qwen3.6-27B (bf16) | 27B (bf16) | ~54GB bf16 | 158 | 26.0 | 189.4 | 463 | -0.10 | 2,800 | 1 | Benchmarked. |
+| Qwen3.6-27B-NVFP4 | 27B (NVFP4) | ~16GB (NVFP4 4-bit) | 191 | 64.0 | 16.1 | 443 | -0.20 | 6,700 | 0 | Served in prod (isvc qwen-27b); benchmarked IN PLACE from local-disk cache, TP=1, 256K ctx OK. |
+| Qwen3.6-35B-A3B-NVFP4 | 35B MoE A3B (NVFP4) | ~20GB (NVFP4 4-bit) | 99 | 216.5 | 4.7 | 251 | 0.00 | 900 | 0 | Served in prod (isvc qwen-35b); benchmarked IN PLACE from local-disk cache, TP=1, 256K ctx OK. SM120 Marlin MoE fallback. |
+| Gemma-4-31B | 31B | ~62GB bf16 / ~16GB NVFP4 | -- | -- | -- | -- | -- | -- | -- | backlog only (no registered CR); fit informational. No confirmed nvidia/*-NVFP4 build; kept as the bf16 HF repo (already fits at bf16). |
+| GLM-5.1 | 744B (MoE, 40B active) | ~220-236GB @2-bit GGUF / ~372GB NVFP4 | -- | -- | -- | -- | -- | -- | -- | Not benchmarked -- exceeds VRAM (744B MoE, still ~372GB at NVFP4 4-bit > 192GB total; needs RAM/MoE offload or multi-node). No confirmed nvidia/*-NVFP4 build. |
+| Qwen3-Coder-Next-80B-A3B (NVFP4) | 80B (A3B active, NVFP4) | ~44GB NVFP4 (80B @4-bit + KV cache; fits one 96GB card) | 197 | 139.5 | 7.3 | 3,200 | 0.10 | 0 | 0 | Benchmarked from local-disk cache via runtime:vllm + command override, TP=1, 256K ctx OK (TTFT 30.8s@256k). SM120 Marlin MoE fallback. |
+| GPT-OSS-120B | 120B (MoE) | ~63GB (native MXFP4) | 480 | 176.5 | 5.8 | -- | 0.00 | 100 | 5 | Benchmarked from local-disk cache via runtime:vllm + command override, TP=1. Served at max-model-len 8192, so the 16k+ context scenarios are out-of-range BY CONFIG (not a model limit) and are the errored runs; 0 errors on the 15 in-range scenarios. SM120 Marlin MoE fallback. |
+| Qwen3-Coder-480B-A35B-Instruct (NVFP4) | 480B (A35B active, NVFP4) | ~240-270GB NVFP4 (~3.5x smaller than ~960GB bf16, still > 192GB total) | -- | -- | -- | -- | -- | -- | -- | Not benchmarked -- still exceeds VRAM even at NVFP4 (~240-270GB > 192GB total, and far > one 96GB freed card; needs multi-node). CONFIRMED source: nvidia/Qwen3-Coder-480B-A35B-Instruct-NVFP4. |
+| GLM-4.6V | 106B (vision) | ~53GB NVFP4 / ~60GB @Q4 GGUF | -- | -- | -- | -- | -- | -- | -- | Not benchmarked -- vision GGUF, not staged. |
+| Qwen3.6-27B-MTP | 27B (MTP) | ~16-30GB GGUF quant | -- | -- | -- | -- | -- | -- | -- | Not benchmarked -- GGUF, not staged. |
+| Gemma-4-E4B-it | E4B | ~4-8GB GGUF | 37 | 117.5 | 8.7 | -- | -- | 0 | 9 | Benchmarked. |
+| DeepSeek-V3.1 | 671B (37B active) | ~335GB NVFP4 / ~380GB @Q4 GGUF (only q1 UD-TQ1_0 fits) | -- | -- | -- | -- | -- | -- | -- | Not benchmarked -- exceeds VRAM (671B MoE, still ~335GB at NVFP4 4-bit > 192GB total; needs multi-node). No confirmed nvidia/*-NVFP4 build for V3.1. |
+| MiniMax-M2.7 | NVFP4 | -- | -- | -- | -- | -- | -- | -- | -- | SGlang + B12x optimization |
+| DeepSeek-V4-Flash | -- | -- | -- | -- | -- | -- | -- | -- | -- |  |
+| Hy3 | -- | -- | -- | -- | -- | -- | -- | -- | -- |  |
+| Owl-Alpha | -- | -- | -- | -- | -- | -- | -- | -- | -- |  |
+| Nemotron-3-Super | -- | -- | -- | -- | -- | -- | -- | -- | -- |  |
+| Kimi-K2.6 | -- | -- | -- | -- | -- | -- | -- | -- | -- |  |
+| Step-3.5-Flash | -- | -- | -- | -- | -- | -- | -- | -- | -- |  |
 
 **Column notes**
 
@@ -47,8 +58,10 @@ _Per-category tok/s breakdown needs the transient per-run result JSON (kept only
 
 ## Source files
 
-- `C:\Users\rdonker\dev\druppie-fork\benchmarks\results-incluster\qwen3.6-27b-nvfp4\report.txt` (committed report.txt)
-- `C:\Users\rdonker\dev\druppie-fork\benchmarks\results-incluster\qwen3.6-35b-a3b-nvfp4\report.txt` (committed report.txt)
-- `C:\Users\rdonker\dev\druppie-fork\benchmarks\results-incluster\qwen3-coder-next-nvfp4\report.txt` (committed report.txt)
-- `C:\Users\rdonker\dev\druppie-fork\benchmarks\results-incluster\gpt-oss-120b\report.txt` (committed report.txt)
+- `benchmarks/results-incluster/qwen3.6-27b/report.txt` (committed report.txt)
+- `benchmarks/results-incluster/qwen3.6-27b-nvfp4/report.txt` (committed report.txt)
+- `benchmarks/results-incluster/qwen3.6-35b-a3b-nvfp4/report.txt` (committed report.txt)
+- `benchmarks/results-incluster/qwen3-coder-next-nvfp4/report.txt` (committed report.txt)
+- `benchmarks/results-incluster/gpt-oss-120b/report.txt` (committed report.txt)
+- `benchmarks/results-incluster/gemma-4-e4b-it-gguf/report.txt` (committed report.txt)
 

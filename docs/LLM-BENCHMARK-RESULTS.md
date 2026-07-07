@@ -2,7 +2,7 @@
 
 > Status: **uitgevoerd op 2026-06-30** als **in-cluster Kubernetes Job** (geen tunnel) tegen het live model.
 > Hoort bij user story **LL3** (`docs/LL-localllm-story.md`).
-> Ruwe data van deze run: `benchmarks/results-incluster/results-qwen3.6-27b.json` + `.csv`, volledig console-rapport in `benchmarks/results-incluster/report-qwen3.6-27b.txt`.
+> Ruwe data van deze run: `benchmarks/results-qwen3.6-27b.json` + `.csv` (repo top-level), volledig console-rapport in `benchmarks/results-incluster/qwen3.6-27b/report.txt`.
 > Job-definitie + draaiscript: `benchmarks/k8s/` (`job.yaml`, `run-in-cluster.sh`).
 >
 > ⚠️ **Update 2026-07-06 — serving is inmiddels gewijzigd.** Deze benchmark mat de toenmalige enkele `qwen`

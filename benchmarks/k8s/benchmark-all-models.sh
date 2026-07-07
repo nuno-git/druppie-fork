@@ -126,6 +126,7 @@ CAPTURED_PARENT_FLUX_SUSPENDED="false"  # was the PARENT (ai-k8s) already suspen
 FLUX_TOUCHED="false"                 # did WE change either suspend state?
 FREE_TOUCHED="false"                 # did WE scale FREE_SERVICE?
 declare -a TEMP_ISVCS=()             # bench-* InferenceServices we created
+declare -a TEMP_MODELS=()            # bench-model-* Model CRs we created (CR-less candidates)
 declare -a TEMP_JOBS=()              # llm-benchmark-<slug> Jobs we created
 
 # -----------------------------------------------------------------------------
@@ -156,6 +157,23 @@ restore() {
     echo ">> [restore] Removing stray bench-* InferenceServices:"
     echo "${strays}"
     echo "${strays}" | xargs -r kubectl delete -n "${NS}" --ignore-not-found --wait=true
+  fi
+
+  # 1b. Delete any temp Model CRs we created for CR-less candidates (Case B).
+  #     Done AFTER their bench InferenceService is gone (step 1) since the isvc
+  #     modelRef references the Model. Model CRs hold no GPU, so no quota concern.
+  #     Also sweep any stray bench-model-* left behind by a crash mid-create.
+  for m in "${TEMP_MODELS[@]:-}"; do
+    [ -n "${m}" ] || continue
+    echo ">> [restore] Deleting temp Model CR ${m}..."
+    kubectl delete models.inference.llmkube.dev "${m}" -n "${NS}" --ignore-not-found --wait=false >/dev/null 2>&1 || true
+  done
+  local model_strays
+  model_strays="$(kubectl get models.inference.llmkube.dev -n "${NS}" -o name 2>/dev/null | grep '/bench-model-' || true)"
+  if [ -n "${model_strays}" ]; then
+    echo ">> [restore] Removing stray bench-model-* Model CRs:"
+    echo "${model_strays}"
+    echo "${model_strays}" | xargs -r kubectl delete -n "${NS}" --ignore-not-found --wait=false >/dev/null 2>&1 || true
   fi
 
   # 2. Restore FREE_SERVICE replicas to the captured original (only if we scaled).
@@ -277,52 +295,94 @@ fi
 echo "   no active manual ${MANUAL_JOB} Job; proceeding."
 
 # =============================================================================
-# 2. DISCOVER models + served services + capture current state
+# 2. LOAD candidates + DISCOVER served services / cluster CRDs + capture state
 # =============================================================================
-echo ">> Discovering models (models.inference.llmkube.dev -n ${NS})..."
-MODELS_JSON="$(kubectl get models.inference.llmkube.dev -n "${NS}" -o json)"
+# The sweep is driven by the LOCAL candidate list (candidates.yaml), NOT by
+# whatever Model CRDs happen to already exist in the cluster. This is what makes
+# "benchmark all models" actually true: a candidate that has no manually-
+# registered CRD still gets a temp Model CR + bench InferenceService created for
+# it (Case B), and candidates that cannot run on this 1-node/2-GPU topology
+# (too-large / needs-2gpu / API-only) are recorded as skips up front WITHOUT
+# touching the cluster. Cluster Model CRDs are still discovered below, but ONLY
+# as a lookup table (to reuse an existing CR as the bench modelRef, and to detect
+# which candidates are already served -> Case A benchmark-in-place).
+echo ">> Loading candidates from ${CANDIDATES_YAML}..."
+# CANDIDATE_LINES: one TAB-separated record per candidate --
+#   name<TAB>source<TAB>slug<TAB>category<TAB>fit
+CANDIDATE_LINES="$(CAND_FILE="${CANDIDATES_YAML}" "${PYTHON}" - <<'PY' || true
+import os, sys
+try:
+    import yaml
+except ImportError:
+    sys.stderr.write("PyYAML required to read candidates.yaml\n")
+    sys.exit(2)
+try:
+    doc = yaml.safe_load(open(os.environ["CAND_FILE"], encoding="utf-8")) or {}
+except Exception as exc:  # noqa: BLE001
+    sys.stderr.write("Failed to parse candidates.yaml: %s\n" % exc)
+    sys.exit(2)
+for m in doc.get("models") or []:
+    name = (m.get("name") or "").strip()
+    source = (m.get("source") or "").strip()
+    slug = (m.get("slug") or "").strip()
+    category = (m.get("category") or "").strip().lower()
+    fit = (m.get("fit") or "").strip().lower()
+    if not (name or source or slug):
+        continue
+    # Fields never contain tabs, so TAB is a safe separator.
+    print("\t".join([name, source, slug, category, fit]))
+PY
+)"
 
-# Parse into "name<TAB>source" lines. `source` is the HF/registry model id used
-# as the vLLM --model arg; we fall back through the common CRD spec fields.
-MODEL_LINES="$(printf '%s' "${MODELS_JSON}" | "${PYTHON}" -c '
+# Apply the optional --only filter: keep a candidate whose NAME, slug, or source
+# last-segment EXACTLY equals one of the comma-separated tokens. Exact (not
+# substring) so e.g. "qwen3.6-27b" does not also match "qwen3.6-27b-nvfp4".
+if [ -n "${ONLY_FILTER}" ]; then
+  KEPT=""
+  while IFS=$'\t' read -r _cname _csrc _cslug _ccat _cfit; do
+    [ -n "${_cname}${_cslug}" ] || continue
+    _cseg="$(sanitize "${_csrc:-$_cname}")"
+    IFS=',' read -ra _toks <<< "${ONLY_FILTER}"
+    for _t in "${_toks[@]}"; do
+      [ -n "${_t}" ] || continue
+      if [ "${_cname}" = "${_t}" ] || [ "${_cslug}" = "${_t}" ] || [ "${_cseg}" = "${_t}" ]; then
+        KEPT+="${_cname}"$'\t'"${_csrc}"$'\t'"${_cslug}"$'\t'"${_ccat}"$'\t'"${_cfit}"$'\n'; break
+      fi
+    done
+  done <<< "${CANDIDATE_LINES}"
+  CANDIDATE_LINES="$(printf '%s' "${KEPT}" | sed '/^$/d')"
+  echo ">> --only '${ONLY_FILTER}': narrowed to $(printf '%s\n' "${CANDIDATE_LINES}" | grep -c . || true) candidate(s)."
+fi
+
+if [ -z "${CANDIDATE_LINES}" ]; then
+  echo "No candidates found in ${CANDIDATES_YAML} (or none matched --only). Nothing to do." >&2
+  exit 0
+fi
+echo ">> Candidates to process (name / source / slug / category / fit):"
+printf '%s\n' "${CANDIDATE_LINES}" | sed 's/^/   - /'
+
+echo ">> Discovering cluster Model CRDs (models.inference.llmkube.dev -n ${NS}) for modelRef lookup..."
+MODELS_JSON="$(kubectl get models.inference.llmkube.dev -n "${NS}" -o json 2>/dev/null || echo '{}')"
+
+# CLUSTER_MODEL_LINES: "name<TAB>source" for each registered Model CR. Used ONLY
+# as a lookup (cluster_crd_for_source) -- NOT iterated. `source` is the
+# HF/registry model id; we fall back through the common CRD spec fields.
+CLUSTER_MODEL_LINES="$(printf '%s' "${MODELS_JSON}" | "${PYTHON}" -c '
 import json, sys
-doc = json.load(sys.stdin)
-for item in doc.get("items", []):
+try:
+    doc = json.load(sys.stdin)
+except Exception:
+    doc = {}
+for item in doc.get("items", []) or []:
     name = item.get("metadata", {}).get("name", "")
     spec = item.get("spec", {}) or {}
     # Try the likely source fields in priority order.
     source = (spec.get("source") or spec.get("model") or spec.get("modelId")
               or spec.get("uri") or spec.get("repo") or name)
     print(f"{name}\t{source}")
-')"
-
-# Apply the optional --only filter: keep a model whose NAME or slug EXACTLY
-# equals one of the comma-separated tokens. Exact (not substring) so e.g.
-# "qwen3-6-27b" does not also match "qwen3-6-27b-mtp". Accepts either the CRD
-# name (qwen3-6-27b) or the slug (qwen3.6-27b).
-if [ -n "${ONLY_FILTER}" ]; then
-  KEPT=""
-  while IFS=$'\t' read -r _mname _msrc; do
-    [ -n "${_mname}" ] || continue
-    _mslug="$(sanitize "${_msrc:-$_mname}")"
-    IFS=',' read -ra _toks <<< "${ONLY_FILTER}"
-    for _t in "${_toks[@]}"; do
-      [ -n "${_t}" ] || continue
-      if [ "${_mname}" = "${_t}" ] || [ "${_mslug}" = "${_t}" ]; then
-        KEPT+="${_mname}"$'\t'"${_msrc}"$'\n'; break
-      fi
-    done
-  done <<< "${MODEL_LINES}"
-  MODEL_LINES="$(printf '%s' "${KEPT}" | sed '/^$/d')"
-  echo ">> --only '${ONLY_FILTER}': narrowed to $(printf '%s\n' "${MODEL_LINES}" | grep -c . || true) model(s)."
-fi
-
-if [ -z "${MODEL_LINES}" ]; then
-  echo "No models discovered. Nothing to do."
-  exit 0
-fi
-echo ">> Discovered models:"
-printf '%s\n' "${MODEL_LINES}" | sed 's/^/   - /'
+' || true)"
+echo "   registered Model CRs (name<TAB>source):"
+printf '%s\n' "${CLUSTER_MODEL_LINES}" | sed '/^$/d; s/^/     /' 2>/dev/null || true
 
 # Discover the currently-SERVED InferenceServices (one model per GPU). Match by
 # name-glob (SERVED_MATCH_GLOB, default qwen-*) OR any Flux-owned isvc (labelled
@@ -362,6 +422,26 @@ served_isvc_for_model() {
   printf '%s\n' "${SERVED_ISVCS}" | while IFS=$'\t' read -r s_name s_ref s_reps; do
     [ -n "${s_name}" ] || continue
     if [ "${s_ref}" = "${want}" ]; then echo "${s_name}"; return 0; fi
+  done
+}
+
+# cluster_crd_for_source() -- echo the name of an EXISTING cluster Model CR that
+# corresponds to a candidate `source` (empty if none). Matches by exact source,
+# by the sanitized last-segment of the CR's source, or by the CR name equalling
+# the wanted token. Used to (a) reuse a registered CR as the bench modelRef and
+# (b) drive Case-A served detection (served isvc modelRef == this CR name).
+#   $1 = candidate source (e.g. nvidia/Qwen3.6-27B-NVFP4)
+cluster_crd_for_source() {
+  local want="$1"
+  [ -n "${want}" ] || return 0
+  local want_seg; want_seg="$(sanitize "${want}")"
+  printf '%s\n' "${CLUSTER_MODEL_LINES}" | while IFS=$'\t' read -r c_name c_src; do
+    [ -n "${c_name}" ] || continue
+    if [ "${c_src}" = "${want}" ] \
+       || [ "$(sanitize "${c_src:-$c_name}")" = "${want_seg}" ] \
+       || [ "${c_name}" = "${want}" ]; then
+      echo "${c_name}"; return 0
+    fi
   done
 }
 
@@ -486,6 +566,11 @@ record_skip() {
   local dir="${RESULTS_DIR}/${slug}"
   mkdir -p "${dir}"
   printf '%s\n' "${reason}" > "${dir}/SKIPPED.txt"
+  # CRITICAL: drop any prior GOOD report.txt. Otherwise update_test_matrix.py /
+  # compare_models.py still see a report and mark the model "Tested" with STALE
+  # numbers, masking a regression (a model that used to pass but now skips/fails).
+  # A skip must win over a stale report -- mirror what clear_skip does in reverse.
+  rm -f "${dir}/report.txt" 2>/dev/null || true
   echo ">> [skip] ${slug}: ${reason}"
 }
 
@@ -559,6 +644,53 @@ for cs in st.get("containerStatuses", []) or []:
   else
     echo "Serving failed (${verdict}); no error line in pod logs -- inspect ${podname}."
   fi
+}
+
+# make_temp_model_crd() -- write a MINIMAL temp Model CR manifest for a candidate
+# that has NO registered cluster Model CR (e.g. the bf16 Qwen variants, gemma bf16
+# repos). The bench InferenceService's modelRef must resolve to a Model, so we
+# create a throwaway `bench-model-<slug>` Model CR pointing at the candidate's
+# source. Serving details (image/args/quant) all live on the InferenceService
+# (skipModelInit=True, source in args[0]); the Model CR is essentially just the
+# reference target, so we keep its spec minimal (source + inferred format).
+#   $1 = model CR name (bench-model-<slug>)   $2 = model source
+make_temp_model_crd() {
+  local crd_name="$1" model_source="$2"
+  local out_yaml="${WORKDIR}/model-${crd_name}.yaml"
+  BENCH_MODEL_NAME="${crd_name}" MODEL_SOURCE="${model_source}" BENCH_NS="${NS}" \
+  "${PYTHON}" - "${out_yaml}" <<'PY'
+import os, sys
+try:
+    import yaml
+except ImportError:
+    sys.stderr.write("PyYAML required to template the Model CR.\n")
+    sys.exit(1)
+
+dst = sys.argv[1]
+name = os.environ["BENCH_MODEL_NAME"]
+source = os.environ["MODEL_SOURCE"]
+ns = os.environ.get("BENCH_NS", "llm")
+
+# Infer a format from the source string. The InferenceService overrides serving,
+# so this is only a best-effort hint for the Model CR.
+lower = source.lower()
+if "gguf" in lower:
+    fmt = "gguf"
+elif "mlx" in lower:
+    fmt = "mlx"
+else:
+    fmt = "safetensors"
+
+doc = {
+    "apiVersion": "inference.llmkube.dev/v1alpha1",
+    "kind": "Model",
+    "metadata": {"name": name, "namespace": ns},
+    "spec": {"source": source, "format": fmt},
+}
+yaml.safe_dump(doc, open(dst, "w"), sort_keys=False)
+sys.stderr.write("   wrote temp Model CR manifest: %s (format=%s)\n" % (dst, fmt))
+PY
+  echo "${out_yaml}"
 }
 
 # make_temp_isvc() -- write a temp InferenceService manifest for a bench model,
@@ -753,6 +885,15 @@ run_benchmark_job() {
   # `app:` labels stay as-is. job.yaml is otherwise applied unchanged.
   cp "${JOB_YAML}" "${tmp_job}"
   sed -i -E "0,/^  name: ${MANUAL_JOB}$/s||  name: ${job_name}|" "${tmp_job}"
+  # Gate OFF the in-pod publish for sweep-driven Jobs: the sweep does ONE clean
+  # per-slug publish at the end (section 4). Leaving the in-pod publish on would
+  # make every per-model Job upload a FLAT results.json + report.txt to the
+  # results-incluster root (no <slug>/ subdir), clobbering across models and
+  # refreshing the PR once per model. job.yaml defaults SKIP_INPOD_PUBLISH to ""
+  # (publish ON, for a standalone single Job run); here we flip it to "1". The
+  # sed finds the env var's `name:` line, then rewrites the `value:` on the NEXT
+  # line, so it can't accidentally match any other value.
+  sed -i '/name: SKIP_INPOD_PUBLISH/{n;s|value: .*|value: "1"|;}' "${tmp_job}"
 
   echo ">> Cleaning up any prior benchmark Job + configmaps..."
   kubectl delete job "${job_name}" -n "${NS}" --ignore-not-found
@@ -825,103 +966,164 @@ run_benchmark_job() {
 # =============================================================================
 echo ""
 echo ">> Starting per-model benchmark sweep..."
-while IFS=$'\t' read -r model_name model_source; do
-  [ -n "${model_name}" ] || continue
-  slug="$(sanitize "${model_source:-$model_name}")"
+while IFS=$'\t' read -r cand_name cand_source cand_slug cand_category cand_fit; do
+  [ -n "${cand_name}${cand_slug}" ] || continue
+  # The candidate's slug is authoritative: it is EXACTLY the key that
+  # update_test_matrix.py / compare_models.py look for under results-incluster/,
+  # so per-model artifacts MUST use it verbatim. Fall back to sanitize(source)
+  # only for a malformed candidate with no slug.
+  slug="${cand_slug:-$(sanitize "${cand_source:-$cand_name}")}"
+  # k8s resource names must be RFC-1035 labels (no dots): the candidate slug can
+  # contain dots (e.g. qwen3.6-27b), which would break a Service/InferenceService
+  # name and its in-cluster DNS. Derive a dot-free variant for cluster resources
+  # (bench isvc, temp Model CR, Job); the results dir still uses the real slug.
+  k8s_slug="$(printf '%s' "${slug}" | tr '.' '-')"
   # Result JSON is TRANSIENT (temp WORKDIR): it only feeds the comparison matrix.
   # The human-readable report is the sole per-model artifact in results-incluster,
   # under a per-model folder: results-incluster/<slug>/report.txt.
-  dest_json="${WORKDIR}/results-${slug}.json"
+  dest_json="${WORKDIR}/results-${k8s_slug}.json"
   dest_report="${RESULTS_DIR}/${slug}/report.txt"
-  job_name="${JOB_PREFIX}-${slug}"     # UNIQUE per-model Job (never collides with manual)
+  job_name="${JOB_PREFIX}-${k8s_slug}"  # UNIQUE per-model Job (never collides with manual)
 
   echo ""
   echo "==============================================================="
-  echo ">> MODEL: ${model_name}  (source: ${model_source})  slug: ${slug}"
+  echo ">> CANDIDATE: ${cand_name}  (source: ${cand_source})"
+  echo "   slug: ${slug}  category: ${cand_category:-?}  fit: ${cand_fit:-?}"
   echo "==============================================================="
 
-  # Is this model ALREADY served by one of the prod InferenceServices
-  # (qwen-27b / qwen-35b)? If so, benchmark it in place -- no scaling.
-  serving_isvc="$(served_isvc_for_model "${model_name}")"
+  # --- Gate 1: API-only candidates. Not cluster-downloadable weights, so we do
+  #     NOT serve them in-cluster. Record a tracked skip so they still appear in
+  #     the matrix (tracked-but-not-benchmarked). ------------------------------
+  if [ "${cand_category}" = "api" ] || [ "${cand_fit}" = "api" ]; then
+    record_skip "${slug}" "API model -- not benchmarked in-cluster (hosted API, no local weights to serve)."
+    continue
+  fi
+
+  # --- Gate 2: does-not-fit candidates. candidates.yaml classes it too-large /
+  #     needs-2gpu; record its skip_reason and move on WITHOUT touching the
+  #     cluster (never degrade prod for a model that cannot fit). --------------
+  if [ "${cand_fit}" = "too-large" ] || [ "${cand_fit}" = "needs-2gpu" ]; then
+    skip_reason="$(candidate_field skip_reason "${slug}" "${cand_source}")"
+    [ -n "${skip_reason}" ] || skip_reason="Not benchmarked -- fit class '${cand_fit}' does not fit this hardware (1 freed GPU, ~96GB)."
+    echo ">> Size-skip (${cand_fit}): NOT creating a bench InferenceService for ${cand_name}."
+    record_skip "${slug}" "${skip_reason}"
+    continue
+  fi
+
+  # --- Gate 3: unclassified guard. Only `served` and `fits-1gpu` are runnable on
+  #     this topology. Anything else (empty / unknown fit) is skipped with a
+  #     reason rather than attempted -- so an un-triaged (possibly giant) model
+  #     can never OOM-crashloop and degrade prod / waste the GPU budget. --------
+  if [ "${cand_fit}" != "served" ] && [ "${cand_fit}" != "fits-1gpu" ]; then
+    record_skip "${slug}" "Unclassified fit '${cand_fit:-<none>}' -- not attempted (guard against OOM / wasted GPU time; classify it in candidates.yaml to run)."
+    continue
+  fi
+
+  # Resolve to an existing cluster Model CR (for modelRef reuse + served
+  # detection). A candidate is ALREADY SERVED when its matching CR is the
+  # modelRef of a running prod InferenceService (qwen-27b / qwen-35b).
+  crd_name="$(cluster_crd_for_source "${cand_source}")"
+  serving_isvc=""
+  if [ -n "${crd_name}" ]; then
+    serving_isvc="$(served_isvc_for_model "${crd_name}")"
+  fi
 
   if [ -n "${serving_isvc}" ]; then
     # --- Case A: already served -> benchmark in place (no serving change). ----
-    echo ">> This model is already served by ${serving_isvc}; benchmarking in"
+    echo ">> Served by ${serving_isvc} (modelRef ${crd_name}); benchmarking in"
     echo "   place against http://${serving_isvc}.${NS}.svc.cluster.local:8000/v1"
     echo "   (no serving change, no scaling)."
     run_benchmark_job \
       "http://${serving_isvc}.${NS}.svc.cluster.local:8000/v1" \
-      "${model_source}" \
-      "${model_name} (served, in-place)" \
+      "${cand_source}" \
+      "${cand_name} (served, in-place)" \
       "${dest_json}" \
       "${dest_report}" \
       "${job_name}"
-    [ -s "${dest_report}" ] && clear_skip "${slug}"
-  else
-    # --- Upfront size-skip: never touch the cluster for a model that cannot
-    #     fit. candidates.yaml classes it too-large / needs-2gpu and carries a
-    #     skip_reason; record that reason and move on WITHOUT degrading prod. ---
-    fit="$(candidate_field fit "${slug}" "${model_source}")"
-    skip_reason="$(candidate_field skip_reason "${slug}" "${model_source}")"
-    if [ "${fit}" = "too-large" ] || [ "${fit}" = "needs-2gpu" ]; then
-      [ -n "${skip_reason}" ] || skip_reason="Not benchmarked -- fit class '${fit}' does not fit this hardware (1 GPU freed, 96GB)."
-      echo ">> Size-skip (${fit}): NOT creating a bench InferenceService for ${model_name}."
-      record_skip "${slug}" "${skip_reason}"
+    if [ -s "${dest_report}" ]; then
+      clear_skip "${slug}"
+    else
+      record_skip "${slug}" "Served model produced no report (see cluster Job logs for ${job_name})."
+    fi
+    continue
+  fi
+
+  # --- Case B: not served -> free a GPU (scale FREE_SERVICE to 0), spin up a
+  #     temp InferenceService on that freed GPU (mounts the shared cache PVC).
+  #     If the candidate has NO registered cluster Model CR, create a throwaway
+  #     bench-model-<slug> Model CR first so the isvc's modelRef resolves. ------
+  bench_isvc="bench-${k8s_slug}"
+  bench_host="${bench_isvc}.${NS}.svc.cluster.local"
+
+  suspend_flux                         # stop Flux from fighting us / reverting our CRs
+
+  # Create a temp Model CR when no registered CR matches this candidate.
+  if [ -z "${crd_name}" ]; then
+    crd_name="bench-model-${k8s_slug}"
+    echo ">> No registered Model CR for ${cand_source}; creating temp CR ${crd_name}..."
+    model_manifest="$(make_temp_model_crd "${crd_name}" "${cand_source}")"
+    kubectl delete models.inference.llmkube.dev "${crd_name}" -n "${NS}" --ignore-not-found --wait=true >/dev/null 2>&1 || true
+    TEMP_MODELS+=("${crd_name}")       # track for the restore trap (before create)
+    if ! kubectl apply -f "${model_manifest}"; then
+      # Nothing GPU-side created yet (we only suspended Flux, which the trap
+      # restores at exit), so a plain skip + continue is safe here.
+      record_skip "${slug}" "Could not create temp Model CR ${crd_name} (apply failed -- check the Model CRD schema)."
       continue
     fi
-
-    # --- Case B: not served -> free a GPU (scale FREE_SERVICE to 0), spin up a
-    #     temp InferenceService on that freed GPU (mounts the shared cache PVC). -
-    bench_isvc="bench-${slug}"
-    bench_host="${bench_isvc}.${NS}.svc.cluster.local"
-
-    suspend_flux                       # stop Flux from fighting us
-    scale_free_service_to 0            # free 1 GPU (FREE_SERVICE now OFFLINE)
-    wait_free_gpu                      # wait until the GPU is actually released
-
-    echo ">> Creating temp InferenceService ${bench_isvc}..."
-    manifest="$(make_temp_isvc "${bench_isvc}" "${model_name}" "${model_source}")"
-    # Idempotent: delete any stray same-named bench-* first so a prior partial run
-    # (or a leftover from a crash) doesn't cause AlreadyExists / stale-spec issues.
-    # --wait=true ensures the old one (and its GPU claim) is gone before we apply.
-    kubectl delete inferenceservice "${bench_isvc}" -n "${NS}" --ignore-not-found --wait=true
-    TEMP_ISVCS+=("${bench_isvc}")      # track for the restore trap (before create)
-    kubectl apply -f "${manifest}"
-
-    # Wait for it to serve (cached weights via the shared PVC usually make this
-    # fast; a cold model downloads from HF -> long budget), but fast-fail on a
-    # crashloop/error and record a matrix-ready reason.
-    if wait_isvc_ready "${bench_host}" "${bench_isvc}"; then
-      run_benchmark_job \
-        "http://${bench_host}:8000/v1" \
-        "${model_source}" \
-        "${model_name} (bench, single-GPU)" \
-        "${dest_json}" \
-        "${dest_report}" \
-        "${job_name}"
-      if [ -s "${dest_report}" ]; then
-        clear_skip "${slug}"
-      else
-        record_skip "${slug}" "Serving came up but the benchmark Job produced no report (see cluster Job logs)."
-      fi
-    else
-      # wait_isvc_ready set LAST_FAIL_REASON (crashloop / error / never-ready).
-      record_skip "${slug}" "${LAST_FAIL_REASON:-Endpoint never became ready.}"
-    fi
-
-    # Tear down the temp InferenceService before the next model (frees its GPU).
-    echo ">> Deleting temp InferenceService ${bench_isvc}..."
-    kubectl delete inferenceservice "${bench_isvc}" -n "${NS}" --ignore-not-found --wait=true
-    # Drop it from the tracked list (already deleted).
-    TEMP_ISVCS=("${TEMP_ISVCS[@]/${bench_isvc}}")
-
-    # Restore FREE_SERVICE between models so it isn't offline during the gaps.
-    # (The trap also does this on exit; doing it here is a courtesy.) The bench
-    # isvc above was deleted with --wait=true, so its GPU is free before we scale
-    # FREE_SERVICE back up (avoids a quota rejection).
-    scale_free_service_to "${CAPTURED_FREE_REPLICAS}"
   fi
-done <<< "${MODEL_LINES}"
+
+  scale_free_service_to 0              # free 1 GPU (FREE_SERVICE now OFFLINE)
+  wait_free_gpu                        # wait until the GPU is actually released
+
+  echo ">> Creating temp InferenceService ${bench_isvc} (modelRef ${crd_name})..."
+  manifest="$(make_temp_isvc "${bench_isvc}" "${crd_name}" "${cand_source}")"
+  # Idempotent: delete any stray same-named bench-* first so a prior partial run
+  # (or a leftover from a crash) doesn't cause AlreadyExists / stale-spec issues.
+  # --wait=true ensures the old one (and its GPU claim) is gone before we apply.
+  kubectl delete inferenceservice "${bench_isvc}" -n "${NS}" --ignore-not-found --wait=true
+  TEMP_ISVCS+=("${bench_isvc}")        # track for the restore trap (before create)
+  kubectl apply -f "${manifest}"
+
+  # Wait for it to serve (cached weights via the shared PVC usually make this
+  # fast; a cold model downloads from HF -> long budget), but fast-fail on a
+  # crashloop/error and record a matrix-ready reason.
+  if wait_isvc_ready "${bench_host}" "${bench_isvc}"; then
+    run_benchmark_job \
+      "http://${bench_host}:8000/v1" \
+      "${cand_source}" \
+      "${cand_name} (bench, single-GPU)" \
+      "${dest_json}" \
+      "${dest_report}" \
+      "${job_name}"
+    if [ -s "${dest_report}" ]; then
+      clear_skip "${slug}"
+    else
+      record_skip "${slug}" "Serving came up but the benchmark Job produced no report (see cluster Job logs)."
+    fi
+  else
+    # wait_isvc_ready set LAST_FAIL_REASON (crashloop / error / never-ready).
+    record_skip "${slug}" "${LAST_FAIL_REASON:-Endpoint never became ready.}"
+  fi
+
+  # Tear down the temp InferenceService before the next model (frees its GPU).
+  echo ">> Deleting temp InferenceService ${bench_isvc}..."
+  kubectl delete inferenceservice "${bench_isvc}" -n "${NS}" --ignore-not-found --wait=true
+  # Drop it from the tracked list (already deleted).
+  TEMP_ISVCS=("${TEMP_ISVCS[@]/${bench_isvc}}")
+
+  # Delete the temp Model CR too (if we created one) now its isvc is gone.
+  if [ "${crd_name}" = "bench-model-${k8s_slug}" ]; then
+    echo ">> Deleting temp Model CR ${crd_name}..."
+    kubectl delete models.inference.llmkube.dev "${crd_name}" -n "${NS}" --ignore-not-found --wait=false >/dev/null 2>&1 || true
+    TEMP_MODELS=("${TEMP_MODELS[@]/${crd_name}}")
+  fi
+
+  # Restore FREE_SERVICE between models so it isn't offline during the gaps.
+  # (The trap also does this on exit; doing it here is a courtesy.) The bench
+  # isvc above was deleted with --wait=true, so its GPU is free before we scale
+  # FREE_SERVICE back up (avoids a quota rejection).
+  scale_free_service_to "${CAPTURED_FREE_REPLICAS}"
+done <<< "${CANDIDATE_LINES}"
 
 # =============================================================================
 # 4. COMPARISON MATRIX + PUBLISH

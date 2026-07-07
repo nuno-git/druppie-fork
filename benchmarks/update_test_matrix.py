@@ -110,7 +110,10 @@ def resolve_rows(candidates, results_dir):
     for entry in candidates:
         slug = (entry.get("slug") or "").strip()
         report_path = os.path.join(results_dir, slug, REPORT_FILENAME)
-        tested = bool(slug) and os.path.isfile(report_path)
+        # A 0-byte report.txt is NOT a benchmark result: don't count it as Tested
+        # (that would render an all-"--" "Tested" row and mask a SKIPPED.txt reason).
+        tested = (bool(slug) and os.path.isfile(report_path)
+                  and os.path.getsize(report_path) > 0)
         if tested:
             with open(report_path, encoding="utf-8") as f:
                 metrics = extract_metrics(f.read())

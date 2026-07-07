@@ -92,6 +92,15 @@ spec:
                   optional: true
             - name: RESULTS_DIR
               value: /results
+            # In-pod publish gate. Default "" => publish ON (a standalone single
+            # Job run, e.g. run-in-cluster.sh, still auto-publishes). The
+            # multi-model sweep (benchmark-all-models.sh) flips this to "1" on
+            # every Job it launches so the per-model pods DON'T publish -- the
+            # sweep does one clean per-slug publish at the end instead (otherwise
+            # each pod would upload a flat results.json + report.txt to the
+            # results-incluster root, clobbering across models + spamming the PR).
+            - name: SKIP_INPOD_PUBLISH
+              value: ""
           command:
             - sh
             - -c
@@ -113,8 +122,15 @@ spec:
               echo '===RESULTS_JSON_START==='
               cat /results/results.json
               echo '===RESULTS_JSON_END==='
-              # Auto-publish results to aigit (graceful no-op without a token).
-              python /app/publish/publish_to_aigit.py
+              # Auto-publish results to aigit (graceful no-op without a token),
+              # UNLESS the multi-model sweep set SKIP_INPOD_PUBLISH -- it does a
+              # single clean per-slug publish at the end, so per-model pods must
+              # NOT publish (they would clobber the tree + refresh the PR N times).
+              if [ -n "${SKIP_INPOD_PUBLISH:-}" ]; then
+                echo "in-pod publish skipped (SKIP_INPOD_PUBLISH=${SKIP_INPOD_PUBLISH})"
+              else
+                python /app/publish/publish_to_aigit.py
+              fi
           volumeMounts:
             - name: app
               mountPath: /app

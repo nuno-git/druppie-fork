@@ -222,20 +222,20 @@ models:
     fit: "fits-1gpu"
     est_vram: "~4-8GB GGUF"
     skip_reason: ""
-    notes: "extreme-speed small variant; GGUF + SentencePiece tokenizer. UNSURE: gemma4 GGUF arch may be unsupported by vLLM -- expected to fast-fail with a captured reason"
+    notes: "extreme-speed small variant; served from the SAFETENSORS repo google/gemma-4-E4B-it (natively supported by vLLM)"
     profile:
-      # Gemma needs SentencePiece; the stock vLLM image lacks it (crash:
-      # \"Couldn't instantiate the backend tokenizer ... need sentencepiece or
-      # tiktoken\"). extra_pip is advisory (see header note). GGUF tokenizer
-      # conversion is slow/unstable, so point --tokenizer at the base HF repo.
-      # Drop qwen3_xml entirely.
+      # Load the SAFETENSORS repo google/gemma-4-E4B-it as --model (vllm_args[0]).
+      # It is PUBLIC (gated=False, so NO HF token needed) and natively supported by
+      # vLLM. GGUF dropped entirely (the `repo:quant` selector was rejected by
+      # vLLM's --model repo-id validator). Modern gemma safetensors ship a fast
+      # tokenizer (tokenizer.json), so sentencepiece is not required (extra_pip
+      # omitted -- verified: vLLM resolved Gemma4ForConditionalGeneration cleanly).
+      # served_model_name MUST equal the CRD `source` (unsloth/gemma-4-E4B-it-GGUF)
+      # because the benchmark queries the endpoint with model_id == source; if the
+      # OpenAI served id differed, every request would 400 (model-not-found). So we
+      # serve the safetensors WEIGHTS under the source's OpenAI id.
       served_model_name: "unsloth/gemma-4-E4B-it-GGUF"
-      gguf_file: "unsloth/gemma-4-E4B-it-GGUF:Q4_K_M"
-      extra_pip:
-        - "sentencepiece"
       vllm_args:
-        - "unsloth/gemma-4-E4B-it-GGUF:Q4_K_M"
-        - "--tokenizer"
         - "google/gemma-4-E4B-it"
         - "--served-model-name"
         - "unsloth/gemma-4-E4B-it-GGUF"

@@ -1578,3 +1578,71 @@ Stored in `sessions.language` (VARCHAR(10), nullable). Set on the first user mes
 - Startup validation logs a warning when `DEEPINFRA_API_KEY` is not set.
 - Test framework pre-flight check: `runner.py` logs a warning before executing agent tests when `DEEPINFRA_API_KEY` is missing, and wraps `TranslationNotAvailableError` with a clear "set it in .env" message in test results.
 
+---
+
+## 13. In-cluster LLM Benchmark Sweep
+
+The benchmark sweep (`benchmarks/k8s/benchmark-all-models.sh`) benchmarks every
+candidate LLM in the `ka-k8s-ai` cluster and publishes the results. Operator
+runbook: [benchmarks/README.md](../benchmarks/README.md#in-cluster-automated-sweep).
+This section describes the artifact/data flow.
+
+### 13.1 Data flow
+
+```
+candidates.yaml                (control surface: fit class + per-model serving profile)
+      │
+      ▼
+benchmark-all-models.sh         (per model: benchmark-if-fits vs skip-with-reason;
+      │                          served-in-place vs free-a-GPU + temp bench isvc)
+      ▼
+per-model job.yaml Job          (llm-benchmark-<slug>; runs benchmarks.runner once,
+      │                          emits report.txt + results.json between ===MARKERS===)
+      ▼
+pod-log marker scrape           (===REPORT_TXT_START/END=== -> results-incluster/<slug>/report.txt
+      │                          ===RESULTS_JSON_START/END=== -> temp WORKDIR/results-<slug>.json)
+      ▼
+compare_models.py  +  update_test_matrix.py     (both import report_metrics.py — the shared parser)
+      │                          │
+      ▼                          ▼
+COMPARISON-MATRIX.md      MODEL-TEST-MATRIX.md   (in benchmarks/results-incluster/)
+      │
+      ▼
+publish_to_aigit.py             (stable per-slug paths -> branch benchmarks/auto-results -> PR into colab-dev)
+```
+
+### 13.2 Components
+
+- **`candidates.yaml`** — canonical candidate list. Drives the fit-class size-skip
+  and supplies per-model serving `profile:` blocks (vLLM args/image overrides).
+- **`benchmark-all-models.sh`** — discovers `models.inference.llmkube.dev` CRDs,
+  benchmarks each (in place if served, else on a GPU freed by scaling
+  `FREE_SERVICE` 1→0 with Flux suspended), and orchestrates the matrix + publish
+  steps. Never edits a tracked file — it generates per-model TEMP configs/manifests
+  in a `mktemp` WORKDIR and applies `job.yaml` with a unique per-model name.
+- **`job.yaml`** — the benchmark Job. Runs `benchmarks.runner` once, tees the
+  console report to `/results/report.txt`, and prints both the report and the
+  results JSON between marker lines so the orchestrator can scrape them out of the
+  pod logs.
+- **`report_metrics.py`** — the **shared, stdlib-only `report.txt` parser** imported
+  by both `compare_models.py` and `update_test_matrix.py`, so the two matrices can
+  never drift. It parses the headline metrics (median TTFT, median decode tok/s,
+  latency-500, context-64k TTFT, tool 10-3 delta, stress stddev, error count).
+- **`compare_models.py`** → `COMPARISON-MATRIX.md` (headline per-model metrics).
+  **`update_test_matrix.py`** → `MODEL-TEST-MATRIX.md` (candidate status:
+  Tested / To-test / Skipped). Both read `results-incluster/<slug>/` for `report.txt`
+  and `SKIPPED.txt`.
+- **`publish_to_aigit.py`** — walks the staged results dir and PUTs each file to a
+  stable path under `benchmarks/results-incluster/` on branch
+  `benchmarks/auto-results` (private-CA aigit, `verify=False`), then opens/updates
+  a PR into `colab-dev`.
+
+### 13.3 Source of truth
+
+The per-run result **JSONs are transient**: they live only in the sweep's temp
+WORKDIR and are discarded with it on exit. The committed **`report.txt`** (one per
+model, under `results-incluster/<slug>/`) is the reproducible source of truth —
+re-running `compare_models.py` / `update_test_matrix.py` against the committed
+`report.txt` files deterministically reproduces both matrices. No `.json`/`.csv`
+is written into `results-incluster/`.
+
