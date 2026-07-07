@@ -1977,7 +1977,7 @@ async def push_changes(
             # Fetch base branch from Gitea so prerequisites exist for bundle fetch
             push_url = _inject_gitea_token(resolved_repo_owner, resolved_repo_name, resolved_gitea_url)
             rc, _, stderr = await _docker_run(
-                ["git", "-C", bare_repo, "fetch", push_url, "main:refs/heads/main"],
+                ["git", "-c", "http.sslVerify=false", "-C", bare_repo, "fetch", push_url, "main:refs/heads/main"],
                 timeout=60,
             )
             if rc != 0:
@@ -1998,7 +1998,7 @@ async def push_changes(
 
             # Push to Gitea with credentials
             rc, _, stderr = await _docker_run(
-                ["git", "-C", bare_repo, "push", push_url, f"{branch}:{push_branch}"],
+                ["git", "-c", "http.sslVerify=false", "-C", bare_repo, "push", push_url, f"{branch}:{push_branch}"],
                 timeout=60,
             )
             if rc != 0:
@@ -2103,7 +2103,7 @@ async def git_fetch(
                 return {"success": False, "error": f"git init --bare failed: {stderr}"}
 
             rc, _, stderr = await _docker_run(
-                ["git", "-C", bare_repo, "fetch", fetch_url, "+refs/heads/*:refs/heads/*"],
+                ["git", "-c", "http.sslVerify=false", "-C", bare_repo, "fetch", fetch_url, "+refs/heads/*:refs/heads/*"],
                 timeout=120,
             )
             if rc != 0:

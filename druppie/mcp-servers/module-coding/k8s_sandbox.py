@@ -265,6 +265,20 @@ class K8sSandboxManager:
                     "Host-side clone: set-origin timed out for sandbox %s",
                     sandbox_id,
                 )
+
+            # Corporate Gitea uses a self-signed/internal CA cert — disable SSL
+            # verification so git fetch/pull/push inside the sandbox work.
+            try:
+                await asyncio.wait_for(
+                    sandbox.commands.run("bash -c " + shlex.quote("git -C /workspace config http.sslVerify false")),
+                    timeout=15,
+                )
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "Host-side clone: git config http.sslVerify timed out for sandbox %s",
+                    sandbox_id,
+                )
+
             logger.info(
                 "Host-side clone OK for sandbox %s (branch=%s)", sandbox_id, branch
             )
