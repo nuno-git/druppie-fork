@@ -116,13 +116,31 @@ backend:
   serviceAccount:
     create: true
     name: ''
-  # Branch-environments deployer: grants the backend ServiceAccount cluster-wide
-  # RBAC to run `helm upgrade --install` of this chart into fresh druppie-<branch>
-  # namespaces (see templates/branch-env-deployer-rbac.yaml). Enable ONLY on the
-  # single instance that manages branch environments (e.g. prod, via the ai/k8s
-  # HelmRelease) — never on the per-branch instances themselves.
+  # Branch-environments deployer (GitOps). When enabled, the backend commits
+  # per-env manifest directories to <gitops.repo>/<gitops.path> via the Gitea
+  # API and FluxCD (Kustomization/branch-envs in that repo) does the actual
+  # deploys/teardowns. The backend itself only needs read-only cluster access
+  # for status (see templates/branch-env-deployer-rbac.yaml). Safe to enable
+  # on multiple instances: git arbitrates concurrent writes.
   branchEnvDeployer:
     enabled: false
+    gitops:
+      url: https://aigit.waterschap.org
+      repo: ai/k8s
+      branch: main
+      path: clusters/branch-envs
+      chartRepoUrl: https://aigit.waterschap.org/ai/druppie.git
+      # Secret holding a Gitea token (key below) with push access to the GitOps repo.
+      tokenSecret:
+        name: druppie-branch-env-git
+        key: token
+      # Optional ConfigMap (key chain.pem) with the private CA of the Gitea
+      # server; mounted and used for TLS verification when set.
+      caConfigMap: ''
+    # Node pin for branch envs (RWO PVC co-location) + image source + domain.
+    node: ka-k8s-ai-workers-skbh7-d4qwl
+    registry: harbor.rijnland.dev/druppie
+    domainSuffix: rijnland.dev
   guacamoleUrl: http://guacamole.remote-access.svc.cluster.local:8080
   guacamolePublicUrl: http://localhost:30020
   llm:

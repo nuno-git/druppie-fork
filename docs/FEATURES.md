@@ -859,47 +859,50 @@ registry/image-tag/node overrides. See `docs/K3S-DEV-SETUP.md`.
 ## Branch Environments
 
 Branch Environments turn the manual `scripts/deploy-branch-env.sh` workflow into a
-self-service feature managed from the Druppie UI. From the managing instance (prod),
-a user can spin up a full, isolated Druppie stack for any git branch, keep it in sync
-as new images are built, and tear it down again — all without cluster shell access.
+self-service feature managed from the Druppie UI — GitOps-style. Deploying a branch
+commits the environment's manifests to the `ai/k8s` repo and FluxCD stands up the
+stack; git is the single source of truth, so any instance with the feature enabled
+shows the same environment list, nothing is lost on a database reset, and the git
+history is the audit log.
 
-- **Deploy button per branch** — one click stands up a complete stack (backend,
-  frontend, Keycloak, Gitea, MCP modules, databases) in its own `druppie-<branch>`
-  namespace at `druppie-<branch>.rijnland.dev`. Under the hood the backend runs
-  `helm upgrade --install` of the bundled chart (`/app/helm/druppie`) as a subprocess
-  inside its own pod, mirroring the manual `deploy-branch-env.sh` layering
-  (ClusterIP services, single-node pin, copied wildcard TLS + Harbor pull secrets).
-- **Own namespace and URL** — each branch env is fully isolated with a unique
-  `global.instance`, so nothing (including cluster-scoped RBAC) collides with the live
-  deployment.
-- **CI auto-upgrade webhook** — when CI finishes building images for a `feature/**`
-  branch it POSTs `{"branch", "image_tag"}` to
-  `POST /api/branch-environments/ci-webhook`, and the backend re-runs
-  `helm upgrade` on the matching branch env with the fresh tag. main/colab-dev keep
-  going through the FluxCD HelmRelease path instead.
-- **Teardown** — removing a branch env uninstalls the release and deletes its
-  namespace, freeing the node and cluster resources it held.
+- **Deploy button per branch** — one click commits a directory
+  `clusters/branch-envs/druppie-<slug>/` (Namespace, GitRepository pinned to the
+  branch, HelmRelease with the branch overrides, ExternalSecrets) to `ai/k8s`.
+  `Kustomization/branch-envs` reconciles it: a complete stack (backend, frontend,
+  Keycloak, Gitea, MCP modules, databases) in its own `druppie-<slug>` namespace at
+  `druppie-<slug>.rijnland.dev`, mirroring the `deploy-branch-env.sh` layering
+  (values.yaml + values-rijnland.yaml, ClusterIP services, single-node pin).
+- **Secrets via ESO** — the `*.rijnland.dev` wildcard TLS cert is mirrored from the
+  `druppie` namespace by the `druppie-tls-mirror` ClusterSecretStore (kubernetes
+  provider); the Harbor pull secret comes from Vault (`ci/harbor`), identical to the
+  live instances.
+- **CI auto-upgrade** — when CI finishes building images for a `feature/**` branch it
+  updates the `imageTag` in the env's committed HelmRelease directly (same mechanism
+  as main/colab-dev). No webhook, no backend involvement.
+- **Redeploy** — commits a `reconcile.fluxcd.io/requestedAt`/`forceAt` annotation bump
+  (and optionally a new tag), which makes helm-controller reconcile and retry a failed
+  release. Pure git; the backend performs no cluster writes.
+- **Teardown** — deletes the env directory from git; Flux prunes the Namespace and
+  everything in it. Environments whose namespace is still terminating keep showing up
+  as `deleting`.
+- **Live status** — the backend reads the env's HelmRelease `Ready` condition via the
+  Kubernetes API (read-only) and maps it to deploying/running/failed.
+
+Access requires the `developer` or `admin` role (API + UI). Mutating an existing
+environment (redeploy/teardown) additionally requires being its owner (recorded as a
+namespace annotation) or admin.
 
 ### Required Setup
 
-Branch Environments are managed by a single instance (prod). To enable them:
-
-1. **Gitea repo secret** `DRUPPIE_INTERNAL_API_KEY` on `ai/druppie` — set it to the
-   same value as the backend's `INTERNAL_API_KEY` env var (helm value
-   `secrets.internalApiKey`). CI uses it to authenticate the branch-env webhook; if it
-   is unset the notify step is skipped and the build still passes.
-2. **Helm values flag** `backend.branchEnvDeployer.enabled=true` on the managing
-   instance (set via the ai/k8s HelmRelease for prod — left `false` in `values.yaml`
-   and never enabled on the per-branch instances).
-3. **Cluster RBAC** — flag (2) renders a ClusterRole + ClusterRoleBinding
-   (`templates/branch-env-deployer-rbac.yaml`) granting the backend ServiceAccount the
-   cluster-wide permissions an in-pod `helm upgrade --install` of this chart into
-   another namespace needs (create namespaces + every resource kind the chart renders,
-   including per-instance cluster-scoped RBAC).
-
-The backend image ships pinned `helm` and `kubectl` binaries and the chart source at
-`/app/helm/druppie` (`BRANCH_ENV_CHART_PATH`) so the deploy subprocess is fully
-self-contained.
+All plumbing lives in `ai/k8s` (see `clusters/ka-k8s-ai/infra/branch-envs/`):
+`Kustomization/branch-envs`, the `druppie-tls-mirror` ClusterSecretStore, the
+`druppie-branch-env-git` ExternalSecret (Gitea token from Vault `ci/gitea`), and the
+`aigit-ca` ConfigMap (private CA for TLS to the Gitea API). On the app side, enable
+`backend.branchEnvDeployer.enabled=true` in the instance's HelmRelease values — this
+renders read-only status RBAC (get/list on Namespaces + HelmReleases), a
+CiliumNetworkPolicy for kube-API egress, and the `BRANCH_ENV_GITOPS_*` env wiring
+(see `templates/branch-env-deployer-rbac.yaml`). Because git arbitrates concurrent
+writes, the flag is safe to enable on multiple instances (prod and colab-dev).
 
 ---
 

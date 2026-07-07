@@ -26,9 +26,13 @@ class BranchEnvironmentStatus(str, Enum):
 
 
 class BranchEnvironmentSummary(BaseModel):
-    """Lightweight branch environment for lists and embedding."""
+    """Lightweight branch environment for lists and embedding.
 
-    id: UUID
+    ``id`` is the environment slug (the environment's directory in the GitOps
+    repo is the source of truth; there is no database row).
+    """
+
+    id: str
     branch: str
     slug: str
     namespace: str
@@ -42,7 +46,8 @@ class BranchEnvironmentSummary(BaseModel):
 class BranchEnvironmentDetail(BranchEnvironmentSummary):
     """Full branch environment. Inherits from BranchEnvironmentSummary."""
 
-    owner_id: UUID
+    # None when the owner annotation is missing/unreadable (then admin-only).
+    owner_id: UUID | None = None
     updated_at: datetime | None = None
 
 

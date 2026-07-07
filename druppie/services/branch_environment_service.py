@@ -1,132 +1,101 @@
-"""Branch environment service.
+"""Branch environment service (GitOps).
 
-Ports ``scripts/deploy-branch-env.sh`` to Python: brings up a full, isolated
-Druppie stack for a git branch in its own namespace on the rijnland.dev RKE2
-cluster, tracks state in the database, supports teardown, and handles CI-driven
-image upgrades.
+Git is the source of truth: deploying a branch environment commits a manifest
+directory to the ``ai/k8s`` GitOps repo (via the Gitea API) and FluxCD does the
+actual deploy; tearing one down deletes the directory and Flux prunes the
+namespace. The backend never runs helm/kubectl and needs no write access to the
+cluster — live status is read from the HelmRelease conditions via the
+Kubernetes API (read-only ServiceAccount).
 
 For a branch ``feature/foo`` the environment is:
     slug       feature-foo
     namespace  druppie-feature-foo
-    host        druppie-feature-foo.rijnland.dev   (single label -> *.rijnland.dev cert)
-    url         https://druppie-feature-foo.rijnland.dev
+    host       druppie-feature-foo.rijnland.dev   (single label -> *.rijnland.dev cert)
+    url        https://druppie-feature-foo.rijnland.dev
 
-The wildcard ``*.rijnland.dev`` TLS secret and the Harbor image pull secret are
-copied from the source namespace (default: druppie) into the new namespace,
-since both are namespace-scoped. Helm then installs the chart with branch
-overrides layered on top of the base + rijnland values.
+Each environment is one directory ``clusters/branch-envs/druppie-<slug>/`` in
+the GitOps repo (reconciled by Kustomization/branch-envs with prune):
+    namespace.yaml        Namespace + owner/branch annotations (authz metadata)
+    gitrepository.yaml    Flux GitRepository pinned to the branch (chart source)
+    helmrelease.yaml      HelmRelease with the branch overrides + imageTag
+    externalsecrets.yaml  druppie-tls mirror + harbor-regcred (ESO)
 
-kubectl/helm are invoked via ``asyncio.create_subprocess_exec`` with an argv
-list (never ``shell=True``) so user-derived branch names cannot be interpreted
-by a shell. The long-running deploy/teardown run as tracked background tasks.
+Because both the prod and colab-dev instances read/write the same git repo,
+the feature is safe to enable on multiple instances: git (compare-and-swap on
+file SHAs) arbitrates concurrent writes, and the environment list is identical
+everywhere.
 """
 
-import json
+import asyncio
+import base64
 import os
 import re
+import time
+from datetime import datetime, timezone
 from pathlib import Path
 from uuid import UUID
 
+import httpx
 import structlog
+import yaml
 
-from ..api.errors import AuthorizationError, ConflictError, NotFoundError, ValidationError
-from ..core.background_tasks import create_tracked_task
+from ..api.errors import (
+    AuthorizationError,
+    ConflictError,
+    ExternalServiceError,
+    NotFoundError,
+    ValidationError,
+)
 from ..domain import BranchEnvironmentDetail
 from ..domain.branch_environment import BranchEnvironmentStatus
-from ..repositories import BranchEnvironmentRepository
-from .deploy_service import _run_cmd
 
 logger = structlog.get_logger()
 
 # -----------------------------------------------------------------------------
-# Configuration (env-overridable, matching scripts/deploy-branch-env.sh defaults)
+# Configuration (env-overridable; values come from the chart's branchEnvDeployer
+# block in the cluster)
 # -----------------------------------------------------------------------------
-KUBECTL_PATH = os.getenv("KUBECTL_PATH", "kubectl")
-HELM_PATH = os.getenv("HELM_PATH", "helm")
+GITOPS_URL = os.getenv("BRANCH_ENV_GITOPS_URL", "https://aigit.waterschap.org")
+GITOPS_REPO = os.getenv("BRANCH_ENV_GITOPS_REPO", "ai/k8s")
+GITOPS_BRANCH = os.getenv("BRANCH_ENV_GITOPS_BRANCH", "main")
+GITOPS_PATH = os.getenv("BRANCH_ENV_GITOPS_PATH", "clusters/branch-envs")
+GITOPS_TOKEN = os.getenv("BRANCH_ENV_GITOPS_TOKEN", "")
+# Optional CA bundle for the (private-CA) Gitea server; falls back to system CAs.
+GITOPS_CA = os.getenv("BRANCH_ENV_GITOPS_CA", "")
+
+# The application repo whose branch supplies the chart + images for an env.
+CHART_REPO_URL = os.getenv(
+    "BRANCH_ENV_CHART_REPO_URL", "https://aigit.waterschap.org/ai/druppie.git"
+)
 
 BRANCH_ENV_NODE = os.getenv("BRANCH_ENV_NODE", "ka-k8s-ai-workers-skbh7-d4qwl")
 BRANCH_ENV_REGISTRY = os.getenv("BRANCH_ENV_REGISTRY", "harbor.rijnland.dev/druppie")
-BRANCH_ENV_TLS_SRC_NS = os.getenv("BRANCH_ENV_TLS_SRC_NS", "druppie")
-BRANCH_ENV_TLS_SECRET = os.getenv("BRANCH_ENV_TLS_SECRET", "druppie-tls")
 BRANCH_ENV_PULL_SECRET = os.getenv("BRANCH_ENV_PULL_SECRET", "harbor-regcred")
-BRANCH_ENV_PULL_SECRET_SRC_NS = os.getenv("BRANCH_ENV_PULL_SECRET_SRC_NS", "druppie")
-BRANCH_ENV_HELM_TIMEOUT = os.getenv("BRANCH_ENV_HELM_TIMEOUT", "10m")
-
-
-def _default_chart_path() -> str:
-    """Resolve helm/druppie relative to the repo root (overridable via env).
-
-    In-cluster the chart lives at e.g. /app/helm/druppie, set via
-    BRANCH_ENV_CHART_PATH.
-    """
-    # services/branch_environment_service.py -> services -> druppie -> repo root
-    repo_root = Path(__file__).resolve().parents[2]
-    return str(repo_root / "helm" / "druppie")
-
-
-BRANCH_ENV_CHART_PATH = os.getenv("BRANCH_ENV_CHART_PATH", _default_chart_path())
 
 # Domain suffix: environments live at druppie-<slug>.<DOMAIN_SUFFIX>. Must stay a
 # single label under this suffix to match the *.rijnland.dev wildcard cert.
-DOMAIN_SUFFIX = "rijnland.dev"
+DOMAIN_SUFFIX = os.getenv("BRANCH_ENV_DOMAIN_SUFFIX", "rijnland.dev")
 
 # Modules that mount a shared RWO PVC and must co-locate with the backend.
 PINNED_MODULES = ["coding", "docker", "archimate", "data_access", "filesearch", "web"]
-# All deployable components (used when overriding image tags for a branch build).
-ALL_MODULES = [
-    "coding",
-    "docker",
-    "filesearch",
-    "web",
-    "archimate",
-    "registry",
-    "llm",
-    "kubernetes",
-    "vision",
-    "data_access",
-    "layout_service",
-]
 
 # Namespaces that must never be deployed to or torn down by this service
 # (live instances).
 _PROTECTED_NAMESPACES = frozenset({"druppie", "druppie-colab-dev"})
 
-# Statuses during which no second deploy/teardown may start.
-_TRANSITIONAL_STATUSES = frozenset(
-    {"deploying", "deleting"}
-)
+# In-cluster ServiceAccount credentials (absent in local dev / tests).
+_SA_DIR = Path(os.getenv("KUBE_SA_DIR", "/var/run/secrets/kubernetes.io/serviceaccount"))
+_KUBE_URL = os.getenv("KUBE_API_URL", "https://kubernetes.default.svc")
 
+HELMRELEASE_NAME = "druppie"
+_ANN = "druppie.io"  # annotation prefix
 
-def _assert_safe_namespace(namespace: str, slug: str) -> None:
-    """Refuse any helm/kubectl operation on a live or mismatched namespace.
+_HTTP_TIMEOUT = 30.0
 
-    Shared by every mutating path (create/redeploy/teardown). A wrong helm
-    instance would delete the shared, cluster-scoped
-    druppie-kubernetes-readonly ClusterRole and break prod.
-    """
-    if (
-        namespace in _PROTECTED_NAMESPACES
-        or not namespace.startswith("druppie-")
-        or namespace != f"druppie-{slug}"
-    ):
-        raise ValidationError(
-            f"refusing to operate on protected/mismatched namespace '{namespace}'",
-            field="namespace",
-        )
-
-
-def _require_owner_or_admin(env, user_id: UUID, user_roles: list[str], action: str) -> None:
-    """Authorize a mutating action on an environment: owner or admin only."""
-    if env.owner_id != user_id and "admin" not in user_roles:
-        raise AuthorizationError(f"Only owner or admin can {action} a branch environment")
-
-# Subprocess timeouts (seconds).
-_KUBECTL_TIMEOUT = 60.0
-# Helm --wait can take a while; give it the helm timeout plus a margin.
-_HELM_TIMEOUT = 900.0
-
-# Strict image tag validation: a leading alphanumeric then tag-safe chars only.
+# Strict input validation.
 _IMAGE_TAG_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+_BRANCH_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$")
+_SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
 
 
 def _slugify(branch: str) -> str:
@@ -151,11 +120,437 @@ def _validate_image_tag(image_tag: str) -> str:
     return image_tag
 
 
-class BranchEnvironmentService:
-    """Business logic for per-branch Druppie environments."""
+def _validate_branch(branch: str) -> str:
+    """Validate a git branch name (also guards the GitRepository ref we commit)."""
+    if not _BRANCH_RE.match(branch) or ".." in branch:
+        raise ValidationError(f"invalid branch name: {branch!r}", field="branch")
+    return branch
 
-    def __init__(self, repo: BranchEnvironmentRepository):
-        self.repo = repo
+
+def _validate_slug(slug: str) -> str:
+    """Validate a slug/id path segment (route input → git path, so be strict)."""
+    if not _SLUG_RE.match(slug):
+        raise ValidationError(f"invalid environment id: {slug!r}", field="env_id")
+    return slug
+
+
+def _assert_safe_namespace(namespace: str, slug: str) -> None:
+    """Refuse any git operation targeting a live or mismatched namespace."""
+    if (
+        namespace in _PROTECTED_NAMESPACES
+        or not namespace.startswith("druppie-")
+        or namespace != f"druppie-{slug}"
+    ):
+        raise ValidationError(
+            f"refusing to operate on protected/mismatched namespace '{namespace}'",
+            field="namespace",
+        )
+
+
+def _utcnow_iso() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+# -----------------------------------------------------------------------------
+# Manifest builders — the exact YAML committed per environment
+# -----------------------------------------------------------------------------
+
+
+def _dump(*docs: dict) -> str:
+    """Render one or more manifests as a multi-doc YAML string."""
+    return yaml.safe_dump_all(docs, sort_keys=False, default_flow_style=False)
+
+
+def build_namespace_yaml(slug: str, branch: str, owner_id: UUID, created_at: str) -> str:
+    return _dump(
+        {
+            "apiVersion": "v1",
+            "kind": "Namespace",
+            "metadata": {
+                "name": f"druppie-{slug}",
+                "labels": {
+                    f"{_ANN}/branch-env": "true",
+                    "app.kubernetes.io/managed-by": "druppie-branch-environments",
+                },
+                "annotations": {
+                    f"{_ANN}/branch": branch,
+                    f"{_ANN}/owner-id": str(owner_id),
+                    f"{_ANN}/created-at": created_at,
+                },
+            },
+        }
+    )
+
+
+def build_gitrepository_yaml(slug: str, branch: str) -> str:
+    return _dump(
+        {
+            "apiVersion": "source.toolkit.fluxcd.io/v1",
+            "kind": "GitRepository",
+            "metadata": {
+                "name": f"druppie-branch-{slug}",
+                "namespace": "flux-system",
+                "labels": {f"{_ANN}/branch-env": slug},
+            },
+            "spec": {
+                "interval": "1m",
+                "ref": {"branch": branch},
+                "secretRef": {"name": "flux-git-auth"},
+                "url": CHART_REPO_URL,
+            },
+        }
+    )
+
+
+def build_helmrelease_yaml(
+    slug: str,
+    branch: str,
+    host: str,
+    image_tag: str | None,
+    updated_at: str,
+    reconcile_epoch: str | None = None,
+) -> str:
+    namespace = f"druppie-{slug}"
+    annotations = {
+        f"{_ANN}/branch": branch,
+        f"{_ANN}/updated-at": updated_at,
+    }
+    if reconcile_epoch:
+        # Committed annotation bump: forces helm-controller to reconcile (and
+        # retry a previously failed release) without any kube write from us.
+        annotations["reconcile.fluxcd.io/requestedAt"] = reconcile_epoch
+        annotations["reconcile.fluxcd.io/forceAt"] = reconcile_epoch
+
+    values: dict = {
+        "global": {
+            "instance": namespace,
+            "domain": host,
+            "imageRegistry": BRANCH_ENV_REGISTRY,
+            "imagePullSecrets": [{"name": BRANCH_ENV_PULL_SECRET}],
+        },
+        # Branch envs are reached via Traefik ingress, not NodePort — ClusterIP
+        # so they don't grab cluster-global NodePorts held by the live instance.
+        "backend": {
+            "service": {"type": "ClusterIP"},
+            "nodeSelector": {"kubernetes.io/hostname": BRANCH_ENV_NODE},
+        },
+        "frontend": {"service": {"type": "ClusterIP"}},
+        "keycloak": {"service": {"type": "ClusterIP"}},
+        "gitea": {"service": {"type": "ClusterIP"}},
+        # Modules sharing the RWO workspace PVC must co-locate with the backend.
+        "modules": {
+            module: {"nodeSelector": {"kubernetes.io/hostname": BRANCH_ENV_NODE}}
+            for module in PINNED_MODULES
+        },
+    }
+    if image_tag is not None:
+        values["global"]["imageTag"] = image_tag
+
+    return _dump(
+        {
+            "apiVersion": "helm.toolkit.fluxcd.io/v2",
+            "kind": "HelmRelease",
+            "metadata": {
+                "name": HELMRELEASE_NAME,
+                "namespace": namespace,
+                "annotations": annotations,
+            },
+            "spec": {
+                "interval": "10m",
+                "releaseName": HELMRELEASE_NAME,
+                "storageNamespace": namespace,
+                "targetNamespace": namespace,
+                "chart": {
+                    "spec": {
+                        "chart": "./helm/druppie",
+                        "sourceRef": {
+                            "kind": "GitRepository",
+                            "name": f"druppie-branch-{slug}",
+                            "namespace": "flux-system",
+                        },
+                        "reconcileStrategy": "Revision",
+                        # Same layering as the original imperative deploy:
+                        # base values + rijnland overrides, from the BRANCH.
+                        "valuesFiles": [
+                            "helm/druppie/values.yaml",
+                            "helm/druppie/values-rijnland.yaml",
+                        ],
+                    }
+                },
+                "install": {"timeout": "10m", "remediation": {"retries": 3}},
+                "upgrade": {
+                    "timeout": "10m",
+                    "cleanupOnFail": True,
+                    "remediation": {"retries": 3},
+                },
+                "values": values,
+            },
+        }
+    )
+
+
+def build_externalsecrets_yaml(slug: str) -> str:
+    namespace = f"druppie-{slug}"
+    return _dump(
+        # Wildcard TLS cert, mirrored from ns druppie (not in Vault) via the
+        # druppie-tls-mirror ClusterSecretStore (ESO kubernetes provider).
+        {
+            "apiVersion": "external-secrets.io/v1",
+            "kind": "ExternalSecret",
+            "metadata": {"name": "druppie-tls", "namespace": namespace},
+            "spec": {
+                "refreshInterval": "1h",
+                "secretStoreRef": {"name": "druppie-tls-mirror", "kind": "ClusterSecretStore"},
+                "target": {
+                    "name": "druppie-tls",
+                    "creationPolicy": "Owner",
+                    "template": {"type": "kubernetes.io/tls"},
+                },
+                "data": [
+                    {
+                        "secretKey": "tls.crt",
+                        "remoteRef": {"key": "druppie-tls", "property": "tls.crt"},
+                    },
+                    {
+                        "secretKey": "tls.key",
+                        "remoteRef": {"key": "druppie-tls", "property": "tls.key"},
+                    },
+                ],
+            },
+        },
+        # Harbor pull secret, same Vault path as the live instances.
+        {
+            "apiVersion": "external-secrets.io/v1",
+            "kind": "ExternalSecret",
+            "metadata": {"name": BRANCH_ENV_PULL_SECRET, "namespace": namespace},
+            "spec": {
+                "refreshInterval": "1h",
+                "secretStoreRef": {"name": "vault-ai-team-k8s", "kind": "ClusterSecretStore"},
+                "target": {
+                    "name": BRANCH_ENV_PULL_SECRET,
+                    "creationPolicy": "Owner",
+                    "template": {
+                        "type": "kubernetes.io/dockerconfigjson",
+                        "data": {
+                            ".dockerconfigjson": (
+                                '{"auths":{"{{ .registry }}":{"username":"{{ .username }}",'
+                                '"password":"{{ .password }}",'
+                                '"auth":"{{ printf "%s:%s" .username .password | b64enc }}"}}}'
+                            )
+                        },
+                    },
+                },
+                "data": [
+                    {"secretKey": "username", "remoteRef": {"key": "ci/harbor", "property": "username"}},
+                    {"secretKey": "password", "remoteRef": {"key": "ci/harbor", "property": "password"}},
+                    {"secretKey": "registry", "remoteRef": {"key": "ci/harbor", "property": "registry"}},
+                ],
+            },
+        },
+    )
+
+
+_ENV_FILES = ("namespace.yaml", "gitrepository.yaml", "helmrelease.yaml", "externalsecrets.yaml")
+
+
+# -----------------------------------------------------------------------------
+# Gitea GitOps client — commits/reads the env directories
+# -----------------------------------------------------------------------------
+
+
+class GiteaGitopsClient:
+    """Minimal Gitea contents-API client for the GitOps repo."""
+
+    def __init__(
+        self,
+        base_url: str = GITOPS_URL,
+        repo: str = GITOPS_REPO,
+        branch: str = GITOPS_BRANCH,
+        token: str = GITOPS_TOKEN,
+        ca_path: str = GITOPS_CA,
+    ):
+        self._api = f"{base_url.rstrip('/')}/api/v1/repos/{repo}"
+        self._branch = branch
+        self._headers = {"Authorization": f"token {token}"} if token else {}
+        self._verify: bool | str = ca_path if ca_path else True
+
+    def _client(self) -> httpx.AsyncClient:
+        return httpx.AsyncClient(
+            headers=self._headers, verify=self._verify, timeout=_HTTP_TIMEOUT
+        )
+
+    @staticmethod
+    def _raise_for(resp: httpx.Response, what: str) -> None:
+        if resp.status_code < 400:
+            return
+        if resp.status_code in (409, 422):
+            raise ConflictError(
+                f"git conflict while {what} (concurrent change?): {resp.text[:300]}"
+            )
+        raise ExternalServiceError(
+            service="gitops-repo",
+            message=f"{what} failed: HTTP {resp.status_code} {resp.text[:300]}",
+        )
+
+    async def list_dir(self, path: str) -> list[dict] | None:
+        """List a directory; None if the path does not exist."""
+        async with self._client() as client:
+            resp = await client.get(f"{self._api}/contents/{path}", params={"ref": self._branch})
+        if resp.status_code == 404:
+            return None
+        self._raise_for(resp, f"listing {path}")
+        entries = resp.json()
+        return entries if isinstance(entries, list) else [entries]
+
+    async def get_file(self, path: str) -> tuple[str, str] | None:
+        """Return (decoded content, blob sha) for a file; None if absent."""
+        async with self._client() as client:
+            resp = await client.get(f"{self._api}/contents/{path}", params={"ref": self._branch})
+        if resp.status_code == 404:
+            return None
+        self._raise_for(resp, f"reading {path}")
+        body = resp.json()
+        content = base64.b64decode(body.get("content") or "").decode("utf-8")
+        return content, body["sha"]
+
+    async def change_files(self, message: str, files: list[dict]) -> None:
+        """Single-commit batch create/update/delete via POST /contents.
+
+        files: [{"operation": "create"|"update"|"delete", "path": ...,
+                 "content": <plain str, for create/update>, "sha": <for update/delete>}]
+        """
+        payload_files = []
+        for f in files:
+            entry: dict = {"operation": f["operation"], "path": f["path"]}
+            if f["operation"] in ("create", "update"):
+                entry["content"] = base64.b64encode(f["content"].encode("utf-8")).decode("ascii")
+            if f.get("sha"):
+                entry["sha"] = f["sha"]
+            payload_files.append(entry)
+        async with self._client() as client:
+            resp = await client.post(
+                f"{self._api}/contents",
+                json={"branch": self._branch, "message": message, "files": payload_files},
+            )
+        self._raise_for(resp, f"committing '{message}'")
+
+
+# -----------------------------------------------------------------------------
+# Cluster status client — read-only, in-cluster ServiceAccount
+# -----------------------------------------------------------------------------
+
+
+class ClusterStatusClient:
+    """Read-only Kubernetes API reader for live env status.
+
+    Outside the cluster (local dev, tests) ``available`` is False and all reads
+    return None — envs then report status from git alone.
+    """
+
+    def __init__(self, sa_dir: Path = _SA_DIR, api_url: str = _KUBE_URL):
+        self._token_path = sa_dir / "token"
+        self._ca_path = sa_dir / "ca.crt"
+        self._api_url = api_url
+
+    @property
+    def available(self) -> bool:
+        return self._token_path.exists()
+
+    async def _get(self, path: str) -> dict | None:
+        if not self.available:
+            return None
+        token = self._token_path.read_text().strip()
+        verify: bool | str = str(self._ca_path) if self._ca_path.exists() else True
+        async with httpx.AsyncClient(
+            headers={"Authorization": f"Bearer {token}"}, verify=verify, timeout=_HTTP_TIMEOUT
+        ) as client:
+            resp = await client.get(f"{self._api_url}{path}")
+        if resp.status_code == 404:
+            return None
+        if resp.status_code >= 400:
+            raise ExternalServiceError(
+                service="kubernetes",
+                message=f"GET {path} failed: HTTP {resp.status_code} {resp.text[:300]}",
+            )
+        return resp.json()
+
+    async def get_helmrelease(self, namespace: str) -> dict | None:
+        return await self._get(
+            f"/apis/helm.toolkit.fluxcd.io/v2/namespaces/{namespace}"
+            f"/helmreleases/{HELMRELEASE_NAME}"
+        )
+
+    async def get_namespace(self, namespace: str) -> dict | None:
+        return await self._get(f"/api/v1/namespaces/{namespace}")
+
+    async def list_branch_namespaces(self) -> list[dict]:
+        body = await self._get(f"/api/v1/namespaces?labelSelector={_ANN}%2Fbranch-env%3Dtrue")
+        return (body or {}).get("items", [])
+
+
+# -----------------------------------------------------------------------------
+# Status derivation
+# -----------------------------------------------------------------------------
+
+_FAILED_REASONS = frozenset(
+    {"InstallFailed", "UpgradeFailed", "RollbackFailed", "UninstallFailed", "ArtifactFailed"}
+)
+
+
+def _derive_status(hr: dict | None, cluster_available: bool) -> tuple[str, str | None]:
+    """Map a HelmRelease object (or its absence) to (status, message)."""
+    if not cluster_available:
+        return (
+            BranchEnvironmentStatus.DEPLOYING.value,
+            "committed to GitOps repo; live status unavailable from here",
+        )
+    if hr is None:
+        return (
+            BranchEnvironmentStatus.DEPLOYING.value,
+            "waiting for Flux to apply the environment manifests",
+        )
+    conditions = {c.get("type"): c for c in (hr.get("status", {}).get("conditions") or [])}
+    ready = conditions.get("Ready") or {}
+    stalled = conditions.get("Stalled") or {}
+    if ready.get("status") == "True":
+        return BranchEnvironmentStatus.RUNNING.value, None
+    message = ready.get("message") or stalled.get("message")
+    if stalled.get("status") == "True" or ready.get("reason") in _FAILED_REASONS:
+        return BranchEnvironmentStatus.FAILED.value, (message or "helm release failed")[:900]
+    return (
+        BranchEnvironmentStatus.DEPLOYING.value,
+        (message or "helm release reconciling")[:900],
+    )
+
+
+# -----------------------------------------------------------------------------
+# Service
+# -----------------------------------------------------------------------------
+
+
+def _require_owner_or_admin(
+    owner_id: UUID | None, user_id: UUID, user_roles: list[str], action: str
+) -> None:
+    """Authorize a mutating action: owner or admin only.
+
+    Environments without a readable owner annotation are admin-only.
+    """
+    if "admin" in user_roles:
+        return
+    if owner_id is None or owner_id != user_id:
+        raise AuthorizationError(f"Only owner or admin can {action} a branch environment")
+
+
+class BranchEnvironmentService:
+    """Business logic for per-branch Druppie environments (GitOps-backed)."""
+
+    def __init__(
+        self,
+        gitea: GiteaGitopsClient | None = None,
+        cluster: ClusterStatusClient | None = None,
+    ):
+        self.gitea = gitea or GiteaGitopsClient()
+        self.cluster = cluster or ClusterStatusClient()
 
     # -------------------------------------------------------------------------
     # Public API
@@ -168,16 +563,12 @@ class BranchEnvironmentService:
         image_tag: str | None,
         user_roles: list[str],
     ) -> BranchEnvironmentDetail:
-        """Validate inputs, create the DB record, and kick off the deploy.
-
-        Returns the Detail immediately (status=deploying); the actual helm
-        install runs in a tracked background task.
-        """
+        """Commit the environment manifests; Flux does the deploy."""
         _ = user_roles  # role gating happens at the route layer
+        _validate_branch(branch)
         slug = _slugify(branch)
         namespace = f"druppie-{slug}"
         host = f"druppie-{slug}.{DOMAIN_SUFFIX}"
-        url = f"https://{host}"
 
         # Namespace must be a valid DNS-1123 label (<=63 chars).
         if len(namespace) > 63:
@@ -187,430 +578,304 @@ class BranchEnvironmentService:
             raise ValidationError(
                 f"host '{host}' is not a single label under {DOMAIN_SUFFIX}", field="branch"
             )
-
-        # SAFETY GUARD: never deploy over the live instances (e.g. branch
-        # "colab-dev" would target namespace druppie-colab-dev and overwrite
-        # its secrets and helm release).
+        # SAFETY GUARD: never target the live instances (e.g. branch "colab-dev"
+        # would map to namespace druppie-colab-dev).
         _assert_safe_namespace(namespace, slug)
-
         if image_tag is not None:
             image_tag = _validate_image_tag(image_tag)
 
-        # The unique constraints on branch/slug/namespace decide conflicts
-        # atomically (including create races across replicas).
-        env = self.repo.create_committed(
+        if await self.gitea.get_file(self._env_path(slug, "namespace.yaml")) is not None:
+            raise ConflictError(f"branch environment already exists for branch '{branch}'")
+        # A namespace still terminating from an earlier teardown blocks recreation.
+        if self.cluster.available and await self.cluster.get_namespace(namespace) is not None:
+            raise ConflictError(
+                f"namespace '{namespace}' still exists (previous teardown in progress); retry later"
+            )
+
+        created_at = _utcnow_iso()
+        files = [
+            {
+                "operation": "create",
+                "path": self._env_path(slug, "namespace.yaml"),
+                "content": build_namespace_yaml(slug, branch, owner_id, created_at),
+            },
+            {
+                "operation": "create",
+                "path": self._env_path(slug, "gitrepository.yaml"),
+                "content": build_gitrepository_yaml(slug, branch),
+            },
+            {
+                "operation": "create",
+                "path": self._env_path(slug, "helmrelease.yaml"),
+                "content": build_helmrelease_yaml(slug, branch, host, image_tag, created_at),
+            },
+            {
+                "operation": "create",
+                "path": self._env_path(slug, "externalsecrets.yaml"),
+                "content": build_externalsecrets_yaml(slug),
+            },
+        ]
+        await self.gitea.change_files(
+            f"branch-env: deploy {namespace} (branch {branch}, by {owner_id})", files
+        )
+        logger.info("branch_env_created", slug=slug, branch=branch, namespace=namespace)
+
+        return BranchEnvironmentDetail(
+            id=slug,
             branch=branch,
             slug=slug,
             namespace=namespace,
-            url=url,
-            owner_id=owner_id,
+            url=f"https://{host}",
             image_tag=image_tag,
             status=BranchEnvironmentStatus.DEPLOYING.value,
+            status_message="manifests committed; waiting for Flux to deploy",
+            created_at=datetime.fromisoformat(created_at),
+            owner_id=owner_id,
         )
-        if env is None:
-            raise ConflictError(f"branch environment already exists for branch '{branch}'")
-        env_id = env.id
-
-        logger.info(
-            "branch_env_create",
-            env_id=str(env_id),
-            branch=branch,
-            namespace=namespace,
-            host=host,
-        )
-
-        create_tracked_task(
-            self._run_deploy(env_id, slug, namespace, host, image_tag),
-            name=f"branch-env-deploy-{env_id}",
-        )
-
-        detail = self.repo.get_detail(env_id)
-        if detail is None:
-            raise NotFoundError("branch_environment", str(env_id))
-        return detail
 
     async def redeploy(
         self,
-        env_id: UUID,
+        env_id: str,
         user_id: UUID,
         user_roles: list[str],
         image_tag: str | None = None,
     ) -> BranchEnvironmentDetail:
-        """Re-run the helm upgrade for an existing environment (idempotent).
+        """Commit a new image tag and/or a forced-reconcile annotation bump.
 
-        Owner or admin only. Optionally updates the deployed image tag first.
+        Owner or admin only. The committed ``reconcile.fluxcd.io`` annotations
+        make helm-controller reconcile (and retry a failed release) as soon as
+        Flux applies the change — no kube write needed from the backend.
         """
-        # Row lock: serializes the status check-then-flip against concurrent
-        # triggers (CI webhook, other replicas) until the commit below.
-        env = self.repo.get_by_id(env_id, for_update=True)
+        slug = _validate_slug(env_id)
+        env = await self._read_env(slug)
         if env is None:
-            raise NotFoundError("branch_environment", str(env_id))
+            raise NotFoundError("branch_environment", slug)
 
-        _require_owner_or_admin(env, user_id, user_roles, "redeploy")
+        _require_owner_or_admin(env["owner_id"], user_id, user_roles, "redeploy")
+        _assert_safe_namespace(env["namespace"], slug)
 
-        if env.status in _TRANSITIONAL_STATUSES:
-            raise ConflictError(
-                f"branch environment is already '{env.status}'; wait for it to finish"
-            )
-
-        return self._start_redeploy(env, image_tag)
-
-    def _start_redeploy(self, env, image_tag: str | None) -> BranchEnvironmentDetail:
-        """Mark the env as deploying and kick off the helm upgrade task.
-
-        Callers must have done authz and status checks.
-        """
         if image_tag is not None:
             image_tag = _validate_image_tag(image_tag)
         else:
-            image_tag = env.image_tag
+            image_tag = env["image_tag"]
 
-        env_id = env.id
-        slug = env.slug
-        namespace = env.namespace
-        host = f"druppie-{slug}.{DOMAIN_SUFFIX}"
-
-        # SAFETY GUARD: re-check in case a stored row is ever inconsistent.
-        _assert_safe_namespace(namespace, slug)
-
-        self.repo.update(
-            env_id,
-            status=BranchEnvironmentStatus.DEPLOYING.value,
-            image_tag=image_tag,
-            status_message=None,
+        updated_at = _utcnow_iso()
+        content = build_helmrelease_yaml(
+            slug,
+            env["branch"],
+            env["host"],
+            image_tag,
+            updated_at,
+            reconcile_epoch=str(int(time.time())),
         )
-        self.repo.commit()
-
-        logger.info("branch_env_redeploy", env_id=str(env_id), image_tag=image_tag)
-
-        create_tracked_task(
-            self._run_deploy(env_id, slug, namespace, host, image_tag),
-            name=f"branch-env-redeploy-{env_id}",
+        await self.gitea.change_files(
+            f"branch-env: redeploy {env['namespace']} (tag {image_tag or 'unchanged'}, by {user_id})",
+            [
+                {
+                    "operation": "update",
+                    "path": self._env_path(slug, "helmrelease.yaml"),
+                    "content": content,
+                    "sha": env["helmrelease_sha"],
+                }
+            ],
         )
+        logger.info("branch_env_redeploy", slug=slug, image_tag=image_tag)
 
-        detail = self.repo.get_detail(env_id)
-        if detail is None:
-            raise NotFoundError("branch_environment", str(env_id))
-        return detail
+        detail = await self.get(slug)
+        return detail.model_copy(
+            update={
+                "status": BranchEnvironmentStatus.DEPLOYING,
+                "status_message": "redeploy committed; waiting for Flux",
+                "image_tag": image_tag,
+            }
+        )
 
     async def teardown(
         self,
-        env_id: UUID,
+        env_id: str,
         user_id: UUID,
         user_roles: list[str],
     ) -> BranchEnvironmentDetail:
-        """Uninstall the environment and delete its namespace + DB row.
-
-        Owner or admin only. Guards against tearing down live/mismatched
-        namespaces, and refuses while a deploy is still in flight (a concurrent
-        uninstall would race the running helm upgrade and orphan the namespace
-        after its DB row is gone).
-        """
-        env = self.repo.get_by_id(env_id, for_update=True)
+        """Delete the env directory from git; Flux prunes the namespace."""
+        slug = _validate_slug(env_id)
+        env = await self._read_env(slug)
         if env is None:
-            raise NotFoundError("branch_environment", str(env_id))
+            # Already gone from git (possibly still pruning in the cluster).
+            raise NotFoundError("branch_environment", slug)
 
-        _require_owner_or_admin(env, user_id, user_roles, "tear down")
+        _require_owner_or_admin(env["owner_id"], user_id, user_roles, "tear down")
+        _assert_safe_namespace(env["namespace"], slug)
 
-        if env.status in _TRANSITIONAL_STATUSES:
-            raise ConflictError(
-                f"branch environment is '{env.status}'; wait for it to finish"
-            )
-
-        namespace = env.namespace
-        _assert_safe_namespace(namespace, env.slug)
-
-        self.repo.update(
-            env_id,
-            status=BranchEnvironmentStatus.DELETING.value,
-            status_message=None,
-        )
-        self.repo.commit()
-
-        logger.info("branch_env_teardown", env_id=str(env_id), namespace=namespace)
-
-        create_tracked_task(
-            self._run_teardown(env_id, namespace),
-            name=f"branch-env-teardown-{env_id}",
-        )
-
-        detail = self.repo.get_detail(env_id)
-        if detail is None:
-            raise NotFoundError("branch_environment", str(env_id))
-        return detail
-
-    def list_all(
-        self,
-        page: int = 1,
-        limit: int = 100,
-    ):
-        """List all branch environments."""
-        offset = (page - 1) * limit
-        return self.repo.list_all(limit, offset)
-
-    def get(self, env_id: UUID) -> BranchEnvironmentDetail:
-        """Get a single branch environment detail."""
-        detail = self.repo.get_detail(env_id)
-        if detail is None:
-            raise NotFoundError("branch_environment", str(env_id))
-        return detail
-
-    async def handle_ci_image_push(self, branch: str, image_tag: str) -> bool:
-        """Upgrade an existing environment when CI pushes a new branch image.
-
-        Returns True if an environment was found and a redeploy was triggered,
-        False if no (non-deleting) environment exists for the branch.
-        """
-        image_tag = _validate_image_tag(image_tag)
-        # Row lock: serializes against a concurrent user redeploy/teardown.
-        env = self.repo.get_by_branch(branch, for_update=True)
-        if env is None or env.status == BranchEnvironmentStatus.DELETING.value:
-            logger.info("branch_env_ci_push_no_env", branch=branch)
-            return False
-        if env.status == BranchEnvironmentStatus.DEPLOYING.value:
-            # A deploy is already in flight; don't race a second helm upgrade.
-            logger.info(
-                "branch_env_ci_push_skipped_deploying", branch=branch, image_tag=image_tag
-            )
-            return False
-        self._start_redeploy(env, image_tag)
-        return True
-
-    # -------------------------------------------------------------------------
-    # Background task bodies (fresh DB session each)
-    # -------------------------------------------------------------------------
-
-    async def _run_deploy(
-        self,
-        env_id: UUID,
-        slug: str,
-        namespace: str,
-        host: str,
-        image_tag: str | None,
-    ) -> None:
-        """Provision namespace + secrets, then helm install/upgrade the chart."""
-        from ..db.database import SessionLocal
-
-        db = SessionLocal()
-        repo = BranchEnvironmentRepository(db)
-        try:
-            await self._ensure_namespace(namespace)
-            await self._copy_secret(
-                BRANCH_ENV_TLS_SECRET,
-                BRANCH_ENV_TLS_SRC_NS,
-                namespace,
-                required_keys=("tls.crt", "tls.key"),
-            )
-            if BRANCH_ENV_PULL_SECRET:
-                await self._copy_secret(
-                    BRANCH_ENV_PULL_SECRET,
-                    BRANCH_ENV_PULL_SECRET_SRC_NS,
-                    namespace,
-                    required_keys=(".dockerconfigjson",),
-                )
-            await self._helm_upgrade(namespace, host, image_tag)
-
-            fields = {"status": BranchEnvironmentStatus.RUNNING.value, "status_message": None}
-            if image_tag is not None:
-                fields["image_tag"] = image_tag
-            repo.update(env_id, **fields)
-            repo.commit()
-            logger.info("branch_env_deploy_succeeded", env_id=str(env_id), namespace=namespace)
-        except Exception as e:
-            db.rollback()
-            message = self._error_message(e)
-            repo.update(
-                env_id,
-                status=BranchEnvironmentStatus.FAILED.value,
-                status_message=message,
-            )
-            repo.commit()
-            logger.error(
-                "branch_env_deploy_failed",
-                env_id=str(env_id),
-                namespace=namespace,
-                error=str(e),
-                exc_info=True,
-            )
-        finally:
-            db.close()
-
-    async def _run_teardown(self, env_id: UUID, namespace: str) -> None:
-        """Uninstall the release, delete the namespace, and drop the DB row."""
-        from ..db.database import SessionLocal
-
-        db = SessionLocal()
-        repo = BranchEnvironmentRepository(db)
-        try:
-            # helm uninstall (tolerate not-found so teardown is idempotent).
-            rc, out, err = await _run_cmd(
-                [HELM_PATH, "uninstall", "druppie", "-n", namespace],
-                timeout=_HELM_TIMEOUT,
-            )
-            if rc != 0 and "not found" not in (err + out).lower():
-                raise RuntimeError(f"helm uninstall failed: {err.strip() or out.strip()}")
-
-            # Delete the namespace (don't block on finalizers).
-            rc, out, err = await _run_cmd(
-                [KUBECTL_PATH, "delete", "namespace", namespace, "--wait=false"],
-                timeout=_KUBECTL_TIMEOUT,
-            )
-            if rc != 0 and "not found" not in (err + out).lower():
-                raise RuntimeError(f"kubectl delete namespace failed: {err.strip() or out.strip()}")
-
-            repo.delete(env_id)
-            repo.commit()
-            logger.info("branch_env_teardown_succeeded", env_id=str(env_id), namespace=namespace)
-        except Exception as e:
-            db.rollback()
-            message = self._error_message(e)
-            repo.update(
-                env_id,
-                status=BranchEnvironmentStatus.FAILED.value,
-                status_message=message,
-            )
-            repo.commit()
-            logger.error(
-                "branch_env_teardown_failed",
-                env_id=str(env_id),
-                namespace=namespace,
-                error=str(e),
-                exc_info=True,
-            )
-        finally:
-            db.close()
-
-    # -------------------------------------------------------------------------
-    # kubectl / helm helpers
-    # -------------------------------------------------------------------------
-
-    async def _ensure_namespace(self, namespace: str) -> None:
-        """Create the namespace if it does not already exist."""
-        rc, _out, _err = await _run_cmd(
-            [KUBECTL_PATH, "get", "namespace", namespace],
-            timeout=_KUBECTL_TIMEOUT,
-        )
-        if rc == 0:
-            return
-        rc, out, err = await _run_cmd(
-            [KUBECTL_PATH, "create", "namespace", namespace],
-            timeout=_KUBECTL_TIMEOUT,
-        )
-        if rc != 0:
-            raise RuntimeError(f"failed to create namespace {namespace}: {err.strip() or out.strip()}")
-
-    async def _copy_secret(
-        self,
-        name: str,
-        src_ns: str,
-        dst_ns: str,
-        required_keys: tuple[str, ...] = (),
-    ) -> None:
-        """Copy a secret from src_ns into dst_ns (idempotent).
-
-        Reads the secret as JSON, strips all metadata except name, re-targets it
-        at the destination namespace, and applies it via ``kubectl apply -f -``
-        over stdin (no shell, no temp files). ``required_keys`` must be present
-        and non-empty in the source secret's data — copying an empty TLS or
-        pull secret would bring the env up broken while it reports RUNNING.
-        """
-        rc, out, err = await _run_cmd(
-            [KUBECTL_PATH, "get", "secret", name, "-n", src_ns, "-o", "json"],
-            timeout=_KUBECTL_TIMEOUT,
-        )
-        if rc != 0:
-            raise RuntimeError(
-                f"failed to read secret {name} from {src_ns}: {err.strip() or out.strip()}"
-            )
-
-        secret = json.loads(out)
-        data = secret.get("data") or {}
-        for key in required_keys:
-            if not data.get(key):
-                raise RuntimeError(
-                    f"secret {name} in {src_ns} has missing/empty data key '{key}'"
-                )
-        # Keep only the fields needed to recreate the secret in the new namespace.
-        cleaned = {
-            "apiVersion": secret.get("apiVersion", "v1"),
-            "kind": "Secret",
-            "type": secret.get("type", "Opaque"),
-            "metadata": {"name": name, "namespace": dst_ns},
-            "data": data,
-        }
-        payload = json.dumps(cleaned).encode("utf-8")
-
-        rc, out, err = await _run_cmd(
-            [KUBECTL_PATH, "apply", "-n", dst_ns, "-f", "-"],
-            timeout=_KUBECTL_TIMEOUT,
-            stdin=payload,
-        )
-        if rc != 0:
-            raise RuntimeError(
-                f"failed to apply secret {name} into {dst_ns}: {err.strip() or out.strip()}"
-            )
-
-    async def _helm_upgrade(self, namespace: str, host: str, image_tag: str | None) -> None:
-        """Run ``helm upgrade --install`` with the branch overrides."""
-        chart = BRANCH_ENV_CHART_PATH
-        args = [
-            HELM_PATH,
-            "upgrade",
-            "--install",
-            "druppie",
-            chart,
-            "-n",
-            namespace,
-            "--create-namespace",
-            "-f",
-            f"{chart}/values.yaml",
-            "-f",
-            f"{chart}/values-rijnland.yaml",
-            "--set",
-            f"global.instance={namespace}",
-            "--set",
-            f"global.domain={host}",
-            # Branch envs are reached via Traefik ingress, not NodePort — request
-            # ClusterIP so they don't grab cluster-global NodePorts held by the
-            # live instance.
-            "--set",
-            "backend.service.type=ClusterIP",
-            "--set",
-            "frontend.service.type=ClusterIP",
-            "--set",
-            "keycloak.service.type=ClusterIP",
-            "--set",
-            "gitea.service.type=ClusterIP",
-            "--set",
-            f"backend.nodeSelector.kubernetes\\.io/hostname={BRANCH_ENV_NODE}",
+        entries = await self.gitea.list_dir(self._env_path(slug)) or []
+        deletes = [
+            {"operation": "delete", "path": e["path"], "sha": e["sha"]}
+            for e in entries
+            if e.get("type") == "file"
         ]
-        for module in PINNED_MODULES:
-            args += [
-                "--set",
-                f"modules.{module}.nodeSelector.kubernetes\\.io/hostname={BRANCH_ENV_NODE}",
-            ]
-        if BRANCH_ENV_REGISTRY:
-            args += ["--set", f"global.imageRegistry={BRANCH_ENV_REGISTRY}"]
-        if BRANCH_ENV_PULL_SECRET:
-            args += ["--set", f"global.imagePullSecrets[0].name={BRANCH_ENV_PULL_SECRET}"]
-        if image_tag is not None:
-            args += [
-                "--set",
-                f"backend.image.tag={image_tag}",
-                "--set",
-                f"frontend.image.tag={image_tag}",
-                "--set",
-                f"init.image.tag={image_tag}",
-            ]
-            for module in ALL_MODULES:
-                args += ["--set", f"modules.{module}.image.tag={image_tag}"]
-        args += ["--wait", "--timeout", BRANCH_ENV_HELM_TIMEOUT]
+        if not deletes:
+            raise NotFoundError("branch_environment", slug)
+        await self.gitea.change_files(
+            f"branch-env: teardown {env['namespace']} (by {user_id})", deletes
+        )
+        logger.info("branch_env_teardown", slug=slug, namespace=env["namespace"])
 
-        rc, out, err = await _run_cmd(args, timeout=_HELM_TIMEOUT)
-        if rc != 0:
-            raise RuntimeError(f"helm upgrade failed: {err.strip() or out.strip()}")
+        return self._detail_from_env(
+            env,
+            status=BranchEnvironmentStatus.DELETING.value,
+            message="removed from GitOps repo; Flux is pruning the namespace",
+        )
+
+    async def list_all(self, page: int = 1, limit: int = 100):
+        """List all branch environments (git = source of truth, plus any
+        namespaces still terminating after teardown)."""
+        entries = await self.gitea.list_dir(GITOPS_PATH) or []
+        slugs = [
+            e["name"].removeprefix("druppie-")
+            for e in entries
+            if e.get("type") == "dir" and e["name"].startswith("druppie-")
+        ]
+
+        envs = await asyncio.gather(*(self._read_env(s) for s in slugs))
+        details: list[BranchEnvironmentDetail] = []
+        statuses = await asyncio.gather(
+            *(self._live_status(env["namespace"]) for env in envs if env)
+        )
+        for env, (status, message) in zip([e for e in envs if e], statuses):
+            details.append(self._detail_from_env(env, status=status, message=message))
+
+        # Envs deleted from git but whose namespace is still terminating.
+        in_git = {d.namespace for d in details}
+        if self.cluster.available:
+            for ns in await self.cluster.list_branch_namespaces():
+                name = ns["metadata"]["name"]
+                if name in in_git:
+                    continue
+                details.append(self._detail_from_namespace(ns))
+
+        details.sort(key=lambda d: d.created_at, reverse=True)
+        total = len(details)
+        offset = (page - 1) * limit
+        return details[offset : offset + limit], total
+
+    async def get(self, env_id: str) -> BranchEnvironmentDetail:
+        """Get a single branch environment detail."""
+        slug = _validate_slug(env_id)
+        env = await self._read_env(slug)
+        if env is not None:
+            status, message = await self._live_status(env["namespace"])
+            return self._detail_from_env(env, status=status, message=message)
+        # Gone from git — still visible while the namespace terminates.
+        if self.cluster.available:
+            ns = await self.cluster.get_namespace(f"druppie-{slug}")
+            if ns is not None and ns.get("metadata", {}).get("labels", {}).get(
+                f"{_ANN}/branch-env"
+            ):
+                return self._detail_from_namespace(ns)
+        raise NotFoundError("branch_environment", slug)
+
+    # -------------------------------------------------------------------------
+    # Internals
+    # -------------------------------------------------------------------------
 
     @staticmethod
-    def _error_message(exc: Exception) -> str:
-        """Trim an error to the last ~900 chars for the status_message column."""
-        return str(exc)[-900:]
+    def _env_path(slug: str, filename: str | None = None) -> str:
+        base = f"{GITOPS_PATH}/druppie-{slug}"
+        return f"{base}/{filename}" if filename else base
+
+    async def _read_env(self, slug: str) -> dict | None:
+        """Read an env's metadata from its committed manifests. None if absent."""
+        ns_file, hr_file = await asyncio.gather(
+            self.gitea.get_file(self._env_path(slug, "namespace.yaml")),
+            self.gitea.get_file(self._env_path(slug, "helmrelease.yaml")),
+        )
+        if ns_file is None:
+            return None
+        ns_manifest = yaml.safe_load(ns_file[0]) or {}
+        annotations = ns_manifest.get("metadata", {}).get("annotations", {}) or {}
+
+        image_tag = None
+        updated_at = None
+        helmrelease_sha = None
+        if hr_file is not None:
+            helmrelease_sha = hr_file[1]
+            hr_manifest = yaml.safe_load(hr_file[0]) or {}
+            image_tag = (
+                hr_manifest.get("spec", {}).get("values", {}).get("global", {}).get("imageTag")
+            )
+            updated_at = (
+                hr_manifest.get("metadata", {}).get("annotations", {}) or {}
+            ).get(f"{_ANN}/updated-at")
+
+        owner_raw = annotations.get(f"{_ANN}/owner-id")
+        try:
+            owner_id = UUID(owner_raw) if owner_raw else None
+        except ValueError:
+            owner_id = None
+
+        return {
+            "slug": slug,
+            "branch": annotations.get(f"{_ANN}/branch", slug),
+            "namespace": f"druppie-{slug}",
+            "host": f"druppie-{slug}.{DOMAIN_SUFFIX}",
+            "owner_id": owner_id,
+            "created_at": annotations.get(f"{_ANN}/created-at"),
+            "updated_at": updated_at,
+            "image_tag": image_tag,
+            "helmrelease_sha": helmrelease_sha,
+        }
+
+    async def _live_status(self, namespace: str) -> tuple[str, str | None]:
+        if not self.cluster.available:
+            return _derive_status(None, cluster_available=False)
+        hr = await self.cluster.get_helmrelease(namespace)
+        return _derive_status(hr, cluster_available=True)
+
+    def _detail_from_env(
+        self, env: dict, status: str, message: str | None
+    ) -> BranchEnvironmentDetail:
+        return BranchEnvironmentDetail(
+            id=env["slug"],
+            branch=env["branch"],
+            slug=env["slug"],
+            namespace=env["namespace"],
+            url=f"https://{env['host']}",
+            image_tag=env["image_tag"],
+            status=status,
+            status_message=message,
+            created_at=self._parse_ts(env["created_at"]),
+            updated_at=self._parse_ts(env["updated_at"]) if env["updated_at"] else None,
+            owner_id=env["owner_id"],
+        )
+
+    def _detail_from_namespace(self, ns: dict) -> BranchEnvironmentDetail:
+        """Detail for an env that only exists as a terminating namespace."""
+        meta = ns.get("metadata", {})
+        annotations = meta.get("annotations", {}) or {}
+        name = meta["name"]
+        slug = name.removeprefix("druppie-")
+        owner_raw = annotations.get(f"{_ANN}/owner-id")
+        try:
+            owner_id = UUID(owner_raw) if owner_raw else None
+        except ValueError:
+            owner_id = None
+        return BranchEnvironmentDetail(
+            id=slug,
+            branch=annotations.get(f"{_ANN}/branch", slug),
+            slug=slug,
+            namespace=name,
+            url=f"https://druppie-{slug}.{DOMAIN_SUFFIX}",
+            image_tag=None,
+            status=BranchEnvironmentStatus.DELETING.value,
+            status_message="removed from GitOps repo; namespace is terminating",
+            created_at=self._parse_ts(annotations.get(f"{_ANN}/created-at")),
+            owner_id=owner_id,
+        )
+
+    @staticmethod
+    def _parse_ts(value: str | None) -> datetime:
+        if value:
+            try:
+                return datetime.fromisoformat(value)
+            except ValueError:
+                pass
+        return datetime.fromtimestamp(0, tz=timezone.utc)

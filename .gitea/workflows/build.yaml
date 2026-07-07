@@ -129,58 +129,45 @@ jobs:
           BRANCH: ${{ github.ref_name }}
           GIT_TOKEN: ${{ secrets.CI_GIT_TOKEN }}
         run: |
-          # Only the two long-lived environments have a HelmRelease in ai/k8s that
-          # FluxCD reconciles. Feature branches are deployed on-demand by the Druppie
-          # backend (branch-environments API), so they must NOT touch any HelmRelease.
+          # main/colab-dev: their HelmRelease lives under clusters/ka-k8s-ai/apps/.
+          # Feature branches: a branch environment (deployed from the Druppie UI)
+          # has a machine-managed HelmRelease under clusters/branch-envs/ — update
+          # its imageTag so the env auto-upgrades. No env dir -> nothing to do.
           if [ "$BRANCH" = "main" ]; then
             HR_FILE="clusters/ka-k8s-ai/apps/druppie/helmrelease.yaml"
           elif [ "$BRANCH" = "colab-dev" ]; then
             HR_FILE="clusters/ka-k8s-ai/apps/druppie-colab-dev/helmrelease.yaml"
           else
-            echo "Branch '$BRANCH' is not main/colab-dev — skipping HelmRelease update"
-            exit 0
+            # Same slugify as the backend: lowercase, non-[a-z0-9-] -> '-',
+            # collapse dashes, trim.
+            SLUG=$(echo "$BRANCH" | tr '[:upper:]' '[:lower:]' | sed -e 's/[^a-z0-9-]/-/g' -e 's/--*/-/g' -e 's/^-*//' -e 's/-*$//')
+            HR_FILE="clusters/branch-envs/druppie-${SLUG}/helmrelease.yaml"
           fi
 
           git clone "https://druppie-ci:${GIT_TOKEN}@aigit.waterschap.org/ai/k8s.git" /tmp/k8s
           cd /tmp/k8s
+
+          if [ ! -f "$HR_FILE" ]; then
+            echo "No HelmRelease at $HR_FILE (no branch environment deployed) — skipping"
+            exit 0
+          fi
+
           git config user.name "druppie-ci"
           git config user.email "druppie-ci@users.noreply.rijnland.dev"
 
-          sed -i "s|\"\?imageTag\"\?\s*:\s*\"[^\"]*\"|imageTag: \"${TAG}\"|g; s|\(tag:\s*\)[a-z-]*[0-9]*-[a-f0-9]*.*|\1${TAG}|g" "$HR_FILE"
+          # Replace any imageTag (quoted or not, any indent); also the init tag.
+          sed -i -E "s|^([[:space:]]*)imageTag:.*|\1imageTag: \"${TAG}\"|; s|(tag:[[:space:]]*)[a-z-]*[0-9]*-[a-f0-9]*.*|\1${TAG}|g" "$HR_FILE"
+          # Branch envs deployed without an explicit tag have no imageTag key
+          # yet — insert it under global (same indent as instance:).
+          if ! grep -qE '^[[:space:]]*imageTag:' "$HR_FILE"; then
+            sed -i -E "s|^([[:space:]]*)instance:(.*)|\1instance:\2\n\1imageTag: \"${TAG}\"|" "$HR_FILE"
+          fi
 
           if git diff --quiet; then
             echo "No changes — tag already up to date"
           else
             git add "$HR_FILE"
-            git commit -m "ci: auto-update image tag to ${TAG}"
+            git commit -m "ci: auto-update image tag to ${TAG} (${BRANCH})"
             git push origin main
             echo "Pushed image tag update: ${TAG}"
           fi
-
-      # Notify the live Druppie backend that fresh images exist for a feature
-      # branch, so its branch-environments controller can auto-upgrade the matching
-      # per-branch stack. Runs ONLY for feature branches (main/colab-dev go through
-      # the FluxCD HelmRelease path above).
-      #
-      # Requires the Gitea repo secret DRUPPIE_INTERNAL_API_KEY to be set to the
-      # SAME value as the backend's INTERNAL_API_KEY env var (see druppie/api/deps.py
-      # verify_internal_api_key; helm value secrets.internalApiKey). Non-fatal: a
-      # missing secret or unreachable backend must never fail an image build.
-      - name: Notify Druppie backend (feature branch images)
-        if: ${{ github.ref_name != 'main' && github.ref_name != 'colab-dev' }}
-        continue-on-error: true
-        env:
-          BRANCH: ${{ github.ref_name }}
-          DEPLOY_TAG: ${{ steps.tags.outputs.deploy_tag }}
-          DRUPPIE_INTERNAL_API_KEY: ${{ secrets.DRUPPIE_INTERNAL_API_KEY }}
-        run: |
-          if [ -z "$DRUPPIE_INTERNAL_API_KEY" ]; then
-            echo "DRUPPIE_INTERNAL_API_KEY not set — skipping branch-env notify"
-            exit 0
-          fi
-          # Send the RAW git branch name (e.g. feature/foo) — the backend matches on it.
-          curl -sf -X POST "https://druppie.rijnland.dev/api/branch-environments/ci-webhook" \
-            -H "X-Internal-API-Key: ${DRUPPIE_INTERNAL_API_KEY}" \
-            -H "Content-Type: application/json" \
-            -d "{\"branch\":\"${BRANCH}\",\"image_tag\":\"${DEPLOY_TAG}\"}" \
-            || echo "Branch-env notify failed (non-fatal) for ${BRANCH} @ ${DEPLOY_TAG}"
