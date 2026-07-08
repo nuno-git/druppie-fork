@@ -15,6 +15,17 @@ export default defineConfig({
       usePolling: true,
       interval: 200,
     },
+    // The branch-env dev workspace sets VITE_API_URL=/proxy/8000: that path is
+    // normally resolved by code-server's port proxy (page served via
+    // /proxy/5173). When the dev server is reached DIRECTLY on :5173 there is
+    // no code-server in front, so mirror the same prefix-strip here. Unused
+    // (and harmless) when VITE_API_URL is an absolute URL, as in docker-compose.
+    proxy: {
+      '/proxy/8000': {
+        target: 'http://localhost:8000',
+        rewrite: (path) => path.replace(/^\/proxy\/8000/, ''),
+      },
+    },
   },
   build: {
     outDir: 'dist',

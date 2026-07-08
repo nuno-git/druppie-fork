@@ -578,6 +578,26 @@ def build_workspace_yaml(slug: str, branch: str, host_env: str, created_at: str)
                                 # fetch fails and the workspace silently serves
                                 # the baked colab-dev snapshot.
                                 {"name": "GIT_SSL_NO_VERIFY", "value": "1"},
+                                # Wire the workspace's own frontend/backend to
+                                # the ENV's Keycloak (same pattern as the chart
+                                # configmap: internal svc for JWKS, external
+                                # URL for the browser + issuer check). Without
+                                # these both default to http://localhost:8080,
+                                # which inside the pod is code-server — login
+                                # redirects to a dead URL and every API call
+                                # 401s.
+                                {
+                                    "name": "VITE_KEYCLOAK_URL",
+                                    "value": f"https://{host_env}",
+                                },
+                                {
+                                    "name": "KEYCLOAK_SERVER_URL",
+                                    "value": f"http://{namespace}-keycloak:8080",
+                                },
+                                {
+                                    "name": "KEYCLOAK_ISSUER_URL",
+                                    "value": f"https://{host_env}",
+                                },
                                 # The app repo is private: fetching the branch
                                 # needs a read-only Gitea token (Vault key
                                 # git-token, mirrored by the ExternalSecret
@@ -725,7 +745,39 @@ def build_workspace_yaml(slug: str, branch: str, host_env: str, created_at: str)
         },
     }
 
-    return _dump(external_secret, pvc, deployment, service, ingress)
+    # The chart's app-net NetworkPolicy restricts ingress on the env's pods to
+    # peers carrying the app labels (+ Traefik/kube-system). The workspace pod
+    # deliberately does NOT carry those labels (that would subject it to the
+    # app-net egress rules and break its git fetch to the corporate Gitea), so
+    # its backend cannot reach Keycloak for JWKS — every authenticated API call
+    # times out. This policy adds workspace -> keycloak:8080 to the allow set.
+    keycloak_netpol = {
+        "apiVersion": "networking.k8s.io/v1",
+        "kind": "NetworkPolicy",
+        "metadata": {
+            "name": "workspace-keycloak",
+            "namespace": namespace,
+            "labels": labels,
+        },
+        "spec": {
+            "podSelector": {
+                "matchLabels": {
+                    "app.kubernetes.io/component": "keycloak",
+                    "app.kubernetes.io/instance": "druppie",
+                    "app.kubernetes.io/name": namespace,
+                }
+            },
+            "policyTypes": ["Ingress"],
+            "ingress": [
+                {
+                    "from": [{"podSelector": {"matchLabels": {"app": "workspace"}}}],
+                    "ports": [{"port": 8080, "protocol": "TCP"}],
+                }
+            ],
+        },
+    }
+
+    return _dump(external_secret, pvc, deployment, service, ingress, keycloak_netpol)
 
 
 _ENV_FILES = ("namespace.yaml", "gitrepository.yaml", "helmrelease.yaml", "externalsecrets.yaml")

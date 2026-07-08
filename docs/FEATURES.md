@@ -938,6 +938,13 @@ Flux applies/prunes it.
   redirect URL is `https://druppie-<slug>-dev.rijnland.dev/oauth2/callback`.
 - **Live status** — `workspace_status` is read from the `workspace` Deployment
   (`running` once `readyReplicas >= 1`, else `deploying`; `null` when disabled).
+- **App login inside the workspace** — the workspace's hot-reload frontend and
+  backend are wired to the ENV's own Keycloak (`VITE_KEYCLOAK_URL` /
+  `KEYCLOAK_ISSUER_URL` = the env host, `KEYCLOAK_SERVER_URL` = the in-cluster
+  Keycloak service), so the app at `/proxy/5173/` supports real logins with the
+  env's test users. The realm seeding allows the workspace `-dev` host and
+  `http://localhost:8080` (code-server's proxy as seen from the desktop's
+  Chromium) as redirect/CORS origins on the `druppie-frontend` client.
 - **Desktop (GUI)** — the workspace image ships a lightweight XFCE desktop
   served over noVNC (TigerVNC → websockify on `127.0.0.1:6080`), with Chromium
   preinstalled for in-env GUI testing. Open it in the browser through
