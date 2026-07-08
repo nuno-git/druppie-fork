@@ -2,8 +2,9 @@
  * Branch Environments — deploy full per-branch Druppie instances to the cluster.
  *
  * Lists branch environments as cards keyed by branch, supports deploy (modal),
- * open via the env URL, redeploy, and teardown. Polls every 5s while any env
- * is in a transitional state (deploying / deleting).
+ * open via the env URL, redeploy, teardown, and cancelling an in-flight deploy
+ * (of the env or its workspace — a cancel is a teardown of what's deploying).
+ * Polls every 5s while any env is in a transitional state (deploying / deleting).
  */
 
 import { useState, useEffect, useMemo, useCallback } from 'react'
@@ -21,6 +22,7 @@ import {
   PowerOff,
   ChevronDown,
   ChevronUp,
+  Ban,
 } from 'lucide-react'
 
 import { branchEnvironmentsApi } from '../services/api'
@@ -106,15 +108,41 @@ const WorkspaceSection = ({
     }
   }
 
+  const handleCancelDeploy = () => {
+    if (
+      window.confirm(
+        `Cancel the workspace deployment for "${env.branch}"?\n\nThe workspace being deployed will be removed. The environment itself stays running.`
+      )
+    ) {
+      onDisableWorkspace(env.id)
+    }
+  }
+
   return (
     <div className="mt-3 pt-3 border-t border-gray-100">
       {env.workspace_enabled ? (
         <div className="flex items-center gap-2">
           {status === 'deploying' ? (
-            <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-700">
-              <Loader2 className="w-3 h-3 mr-1.5 animate-spin" />
-              deploying
-            </span>
+            <>
+              <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-700">
+                <Loader2 className="w-3 h-3 mr-1.5 animate-spin" />
+                deploying
+              </span>
+              <button
+                onClick={handleCancelDeploy}
+                disabled={isDisablingWorkspace}
+                title="Cancel workspace deployment"
+                aria-label={`Cancel workspace deployment for ${env.branch}`}
+                className="ml-auto inline-flex items-center gap-1.5 py-1 px-2.5 text-xs text-amber-700 bg-amber-50 hover:bg-amber-100 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-amber-400 focus:ring-offset-2 disabled:opacity-50"
+              >
+                {isDisablingWorkspace ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Ban className="w-3.5 h-3.5" />
+                )}
+                Cancel
+              </button>
+            </>
           ) : (
             <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-700">
               <span className="w-2 h-2 rounded-full mr-1.5 bg-green-500" />
@@ -132,19 +160,21 @@ const WorkspaceSection = ({
               Open workspace
             </a>
           )}
-          <button
-            onClick={handleDisable}
-            disabled={isDisablingWorkspace}
-            title="Turn off workspace"
-            aria-label={`Turn off workspace for ${env.branch}`}
-            className="ml-auto py-1 px-2 text-xs text-gray-500 bg-gray-50 hover:bg-gray-100 hover:text-gray-700 rounded-lg transition-colors flex items-center justify-center focus:outline-none focus:ring-2 focus:ring-gray-400 focus:ring-offset-2 disabled:opacity-50"
-          >
-            {isDisablingWorkspace ? (
-              <Loader2 className="w-3.5 h-3.5 animate-spin" />
-            ) : (
-              <PowerOff className="w-3.5 h-3.5" />
-            )}
-          </button>
+          {status !== 'deploying' && (
+            <button
+              onClick={handleDisable}
+              disabled={isDisablingWorkspace}
+              title="Turn off workspace"
+              aria-label={`Turn off workspace for ${env.branch}`}
+              className="ml-auto py-1 px-2 text-xs text-gray-500 bg-gray-50 hover:bg-gray-100 hover:text-gray-700 rounded-lg transition-colors flex items-center justify-center focus:outline-none focus:ring-2 focus:ring-gray-400 focus:ring-offset-2 disabled:opacity-50"
+            >
+              {isDisablingWorkspace ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <PowerOff className="w-3.5 h-3.5" />
+              )}
+            </button>
+          )}
         </div>
       ) : (
         <button
@@ -203,6 +233,18 @@ const BranchEnvCard = ({
     if (
       window.confirm(
         `Tear down the environment for "${env.branch}"?\n\nThis removes the deployment from the cluster. This cannot be undone.`
+      )
+    ) {
+      onDelete(env.id)
+    }
+  }
+
+  // Cancelling a deploy IS a teardown — the manifests are removed from the
+  // GitOps repo and Flux prunes whatever was already stood up.
+  const handleCancelDeploy = () => {
+    if (
+      window.confirm(
+        `Cancel the deployment of "${env.branch}"?\n\nThe environment being deployed will be removed from the cluster.`
       )
     ) {
       onDelete(env.id)
@@ -293,14 +335,26 @@ const BranchEnvCard = ({
             <RefreshCw className="w-4 h-4" />
           )}
         </button>
-        <button
-          onClick={handleDelete}
-          disabled={isTransitional || isDeleting}
-          className="py-2 px-3 text-sm text-red-600 bg-red-50 hover:bg-red-100 rounded-lg transition-colors flex items-center justify-center focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 disabled:opacity-50"
-          aria-label={`Delete ${env.branch}`}
-        >
-          {isDeleting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
-        </button>
+        {env.status === 'deploying' ? (
+          <button
+            onClick={handleCancelDeploy}
+            disabled={isDeleting}
+            title="Cancel deployment"
+            className="py-2 px-3 text-sm text-amber-700 bg-amber-50 hover:bg-amber-100 rounded-lg transition-colors flex items-center justify-center focus:outline-none focus:ring-2 focus:ring-amber-400 focus:ring-offset-2 disabled:opacity-50"
+            aria-label={`Cancel deployment of ${env.branch}`}
+          >
+            {isDeleting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Ban className="w-4 h-4" />}
+          </button>
+        ) : (
+          <button
+            onClick={handleDelete}
+            disabled={isTransitional || isDeleting}
+            className="py-2 px-3 text-sm text-red-600 bg-red-50 hover:bg-red-100 rounded-lg transition-colors flex items-center justify-center focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 disabled:opacity-50"
+            aria-label={`Delete ${env.branch}`}
+          >
+            {isDeleting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+          </button>
+        )}
       </div>
 
       {/* Deploy pipeline */}
