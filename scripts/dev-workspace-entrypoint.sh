@@ -228,7 +228,19 @@ log "workspace boot: branch=${DRUPPIE_GIT_BRANCH} repo=${DRUPPIE_REPO_URL}"
 # refuses the repo with "dubious ownership" unless it is marked safe.
 git config --global --add safe.directory "${WORKSPACE}"
 
+# Claude Code: keep login/config on the PVC so it survives pod restarts.
+export CLAUDE_CONFIG_DIR="${WORKSPACE}/.claude"
+mkdir -p "${CLAUDE_CONFIG_DIR}"
+
 seed_workspace
+
+# Keep the workspace's own runtime artifacts out of the Source Control pane:
+# they are per-pod state, not repo changes. Repo-local ignore (info/exclude)
+# so the repo's .gitignore stays untouched. After seed_workspace: that step
+# creates .git on first boot.
+printf '.seeded\n.logs/\n.dep-hashes/\n.venv/\n.data/\n.claude/\n' \
+    > "${WORKSPACE}/.git/info/exclude"
+
 checkout_branch
 ensure_frontend_deps
 ensure_backend_deps
