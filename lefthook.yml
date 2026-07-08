@@ -1,0 +1,36 @@
+# Lefthook configuration for Druppie
+# https://github.com/evilmartians/lefthook/blob/master/docs/configuration.md
+
+pre-commit:
+  commands:
+    python-lint:
+      glob: "druppie/**/*.py"
+      run: cd druppie && ruff check {staged_files}
+
+    python-format:
+      glob: "druppie/**/*.py"
+      run: cd druppie && black --check {staged_files}
+
+    import-linter:
+      glob: "druppie/**/*.py"
+      run: cd druppie && lint-imports
+
+    doc-links:
+      glob: "docs/**/*.md"
+      run: python scripts/validate_doc_links.py {staged_files}
+
+    adr-status:
+      glob: "docs/adrs/**/*.md"
+      run: python scripts/validate_adr_status.py
+
+    frontend-lint:
+      glob: "frontend/src/**/*.{js,jsx}"
+      run: cd frontend && npx eslint {staged_files}
+
+pre-push:
+  commands:
+    backend-tests:
+      run: cd druppie && pytest --tb=short -q
+
+    bdd-tests:
+      run: cd druppie && python -m behave ../testing/bdd/features/ --tags=-wip

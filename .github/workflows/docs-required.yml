@@ -1,0 +1,64 @@
+name: Documentation Required
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+
+# CRITICAL: Do NOT add a top-level `paths:` filter here.
+# If you do, the check won't run on code-only PRs, and since it is a
+# required status check, those PRs will be stuck "pending" forever.
+
+jobs:
+  docs-check:
+    runs-on: ubuntu-latest
+    # Skip entirely if the PR has the 'docs-exempt' label
+    if: "!contains(github.event.pull_request.labels.*.name, 'docs-exempt')"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install pyyaml jsonschema
+
+      - name: Detect changed paths
+        id: changes
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            docs:
+              - 'docs/adrs/**'
+              - 'docs/prds/**'
+              - 'docs/research/**'
+              - 'docs/design-system/**'
+            code:
+              - 'druppie/**'
+              - 'frontend/**'
+              - 'scripts/**'
+
+      - name: Validate ADR frontmatter
+        if: steps.changes.outputs.docs == 'true'
+        run: python3 scripts/validate_adr_status.py
+
+      - name: Validate doc links
+        if: steps.changes.outputs.docs == 'true'
+        run: python3 scripts/validate_doc_links.py
+
+      - name: Check ADR required for architectural changes
+        if: steps.changes.outputs.code == 'true' && steps.changes.outputs.docs == 'false'
+        run: |
+          echo "Warning: This PR changes code but has no documentation changes."
+          echo "If this is an architectural change, add an ADR in docs/adrs/."
+          echo "If this is a minor change (bugfix, typo, config), add the 'docs-exempt' label."
+          # For now, this is a warning, not a failure. Uncomment to make it mandatory:
+          # exit 1
+
+      - name: Regenerate CAS and check freshness
+        if: steps.changes.outputs.docs == 'true'
+        run: |
+          python3 scripts/generate_cas.py
+          python3 scripts/validate_doc_links.py
