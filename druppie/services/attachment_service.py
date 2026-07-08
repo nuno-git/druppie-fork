@@ -12,7 +12,7 @@ import structlog
 
 logger = structlog.get_logger()
 
-UPLOAD_DIR = Path(os.getenv("WORKSPACE_PATH", "/app/workspace")) / "uploads"
+UPLOAD_DIR = Path(os.getenv("WORKSPACE_ROOT", "/app/workspace")) / "uploads"
 MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
 MAX_EXTRACTED_TEXT = 50_000  # characters
 
@@ -241,16 +241,6 @@ def get_file_path(storage_path: str) -> Path:
     if not full_path.is_relative_to(UPLOAD_DIR.resolve()):
         raise ValueError("Invalid storage path")
     return full_path
-
-
-def write_attachment_file(attachment_id: str, filename: str, file_bytes: bytes) -> str:
-    """Write attachment bytes to disk and return the storage path."""
-    safe_name = _sanitize_filename(filename)
-    dir_path = UPLOAD_DIR / attachment_id
-    dir_path.mkdir(parents=True, exist_ok=True)
-    file_path = dir_path / safe_name
-    file_path.write_bytes(file_bytes)
-    return f"uploads/{attachment_id}/{safe_name}"
 
 
 def delete_file(storage_path: str) -> None:

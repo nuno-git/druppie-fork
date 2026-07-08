@@ -11,7 +11,7 @@ import pytest
 @pytest.mark.asyncio
 async def test_cache_miss_compiles_and_stores(tmp_path, monkeypatch):
     """First call resolves from Gitea, compiles Typst, and inserts cache row."""
-    monkeypatch.setenv("WORKSPACE_PATH", str(tmp_path))
+    monkeypatch.setenv("WORKSPACE_ROOT", str(tmp_path))
 
     from druppie.services.pdf_render_service import PdfRenderService
 
@@ -55,7 +55,7 @@ async def test_cache_miss_compiles_and_stores(tmp_path, monkeypatch):
 @pytest.mark.asyncio
 async def test_cache_hit_returns_cached_bytes(tmp_path, monkeypatch):
     """Second call with identical sha returns pre-cached PDF instantly."""
-    monkeypatch.setenv("WORKSPACE_PATH", str(tmp_path))
+    monkeypatch.setenv("WORKSPACE_ROOT", str(tmp_path))
 
     from druppie.services.pdf_render_service import PdfRenderService
 
@@ -100,7 +100,7 @@ async def test_cache_hit_returns_cached_bytes(tmp_path, monkeypatch):
 @pytest.mark.asyncio
 async def test_branch_fallback_on_miss(tmp_path, monkeypatch):
     """Tries first branch, falls back to second when first returns no content."""
-    monkeypatch.setenv("WORKSPACE_PATH", str(tmp_path))
+    monkeypatch.setenv("WORKSPACE_ROOT", str(tmp_path))
 
     from druppie.services.pdf_render_service import PdfRenderService
 
@@ -137,7 +137,7 @@ async def test_branch_fallback_on_miss(tmp_path, monkeypatch):
 @pytest.mark.asyncio
 async def test_gitea_file_not_found_returns_error(tmp_path, monkeypatch):
     """No branch resolves the file → error message, no compilation."""
-    monkeypatch.setenv("WORKSPACE_PATH", str(tmp_path))
+    monkeypatch.setenv("WORKSPACE_ROOT", str(tmp_path))
 
     from druppie.services.pdf_render_service import PdfRenderService
 

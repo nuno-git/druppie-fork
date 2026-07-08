@@ -5,7 +5,7 @@ This directory contains Typst document templates for PDF generation.
 ## Structure
 
 ```
-base.typ                                       # Master template with Rijnland corporate identity
+rijnland.typ                                   # Rijnland corporate identity template library
 assets/
   Logo-hoogheemraadschap-rijnland.png         # Rijnland corporate logo
   fonts/
@@ -34,7 +34,7 @@ The template applies the Rijnland brand identity (from `style-guide.pdf`):
 
 ### Font Setup Note
 
-Typst identifies fonts by internal family name. The Google Fonts Lato `.ttf` files register as family **"Lato"** with weight encoded in metadata. We reference `"Lato"` in `base.typ` and control weight via Typst's `weight` parameter. If you add custom fonts, verify the family name recognised by Typst with:
+Typst identifies fonts by internal family name. The Google Fonts Lato `.ttf` files register as family **"Lato"** with weight encoded in metadata. We reference `"Lato"` in `rijnland.typ` and control weight via Typst's `weight` parameter. If you add custom fonts, verify the family name recognised by Typst with:
 
 ```bash
 typst fonts --font-path assets/fonts
@@ -81,5 +81,5 @@ It expects two inputs in the working directory:
 
 1. Place `.ttf` or `.otf` files in `assets/fonts/`
 2. Run `typst fonts --font-path assets/fonts` to discover the exact family name
-3. Reference them in `base.typ` via `#set text(font: "Your Font")`
+3. Reference them in `rijnland.typ` via `#set text(font: "Your Font")`
 4. Ensure `TYPST_FONT_PATHS` env var points to this directory (already set in Dockerfile)

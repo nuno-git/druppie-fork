@@ -24,11 +24,7 @@ from druppie.services.document_formatter_service import (
 
 logger = structlog.get_logger()
 
-CACHE_ROOT = Path(os.getenv("WORKSPACE_PATH", "/app/workspace")) / "uploads" / "pdf-cache"
-
-
-class PdfRenderError(Exception):
-    """Error during PDF render or cache retrieval."""
+CACHE_ROOT = Path(os.getenv("WORKSPACE_ROOT", "/app/workspace")) / "uploads" / "pdf-cache"
 
 
 class PdfRenderService:
@@ -77,7 +73,7 @@ class PdfRenderService:
         repo = PdfRenderRepository(self.db)
         cached = repo.get_by_cache_key(project_id, typ_path, file_sha)
         if cached:
-            cache_file = Path(os.getenv("WORKSPACE_PATH", "/app/workspace")) / cached.pdf_storage_path
+            cache_file = Path(os.getenv("WORKSPACE_ROOT", "/app/workspace")) / cached.pdf_storage_path
             if cache_file.exists():
                 pdf_bytes = cache_file.read_bytes()
                 logger.info(
