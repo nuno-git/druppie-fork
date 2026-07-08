@@ -499,8 +499,10 @@ def build_workspace_yaml(slug: str, branch: str, host_env: str, created_at: str)
     ``workspace-oauth`` in the namespace, delivered by the ExternalSecret below
     from the ``vault-ai-team-k8s`` ClusterSecretStore (same mechanism as the
     Harbor pull secret). The cluster-side Vault path ``branch-env/workspace-oauth``
-    (keys ``client-secret`` + ``cookie-secret``) is a documented one-time setup
-    step (see docs/FEATURES.md) — this builder never creates cluster-side state.
+    (keys ``client-secret`` + ``cookie-secret``, plus optional ``git-token`` —
+    a read-only Gitea token so the workspace can fetch the private app repo)
+    is a documented one-time setup step (see docs/FEATURES.md) — this builder
+    never creates cluster-side state.
     """
     namespace = f"druppie-{slug}"
     workspace_host = _workspace_host(host_env)
@@ -518,22 +520,10 @@ def build_workspace_yaml(slug: str, branch: str, host_env: str, created_at: str)
             "refreshInterval": "1h",
             "secretStoreRef": {"name": "vault-ai-team-k8s", "kind": "ClusterSecretStore"},
             "target": {"name": "workspace-oauth", "creationPolicy": "Owner"},
-            "data": [
-                {
-                    "secretKey": "client-secret",
-                    "remoteRef": {
-                        "key": "branch-env/workspace-oauth",
-                        "property": "client-secret",
-                    },
-                },
-                {
-                    "secretKey": "cookie-secret",
-                    "remoteRef": {
-                        "key": "branch-env/workspace-oauth",
-                        "property": "cookie-secret",
-                    },
-                },
-            ],
+            # dataFrom/extract mirrors ALL keys of the Vault secret, so the
+            # optional git-token key (private-repo fetch) syncs when present
+            # without a per-key sync error when it is absent.
+            "dataFrom": [{"extract": {"key": "branch-env/workspace-oauth"}}],
         },
     }
 
@@ -579,6 +569,26 @@ def build_workspace_yaml(slug: str, branch: str, host_env: str, created_at: str)
                             "env": [
                                 {"name": "DRUPPIE_GIT_BRANCH", "value": branch},
                                 {"name": "DRUPPIE_REPO_URL", "value": CHART_REPO_URL},
+                                # aigit serves a private-CA certificate the
+                                # image does not trust; without this the branch
+                                # fetch fails and the workspace silently serves
+                                # the baked colab-dev snapshot.
+                                {"name": "GIT_SSL_NO_VERIFY", "value": "1"},
+                                # The app repo is private: fetching the branch
+                                # needs a read-only Gitea token (Vault key
+                                # git-token, mirrored by the ExternalSecret
+                                # above). Optional: without it the workspace
+                                # still boots on the baked snapshot.
+                                {
+                                    "name": "DRUPPIE_GIT_TOKEN",
+                                    "valueFrom": {
+                                        "secretKeyRef": {
+                                            "name": "workspace-oauth",
+                                            "key": "git-token",
+                                            "optional": True,
+                                        }
+                                    },
+                                },
                             ],
                             "ports": [
                                 {"name": "code-server", "containerPort": 8080},

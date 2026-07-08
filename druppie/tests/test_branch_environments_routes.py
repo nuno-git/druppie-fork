@@ -560,9 +560,18 @@ def test_build_workspace_yaml_shape():
     assert set(containers) == {"workspace", "oauth2-proxy"}
 
     ws = containers["workspace"]
-    env_vars = {e["name"]: e["value"] for e in ws["env"]}
+    env_vars = {e["name"]: e.get("value") for e in ws["env"]}
     assert env_vars["DRUPPIE_GIT_BRANCH"] == "feature/foo"
     assert "druppie.git" in env_vars["DRUPPIE_REPO_URL"]
+    # Private repo + private-CA Gitea: without these the branch fetch fails
+    # and the workspace silently serves the baked colab-dev snapshot.
+    assert env_vars["GIT_SSL_NO_VERIFY"] == "1"
+    token = next(e for e in ws["env"] if e["name"] == "DRUPPIE_GIT_TOKEN")
+    assert token["valueFrom"]["secretKeyRef"] == {
+        "name": "workspace-oauth",
+        "key": "git-token",
+        "optional": True,
+    }
     ports = {p["containerPort"] for p in ws["ports"]}
     assert {8080, 8000, 5173} <= ports
 
