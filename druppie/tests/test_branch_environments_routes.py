@@ -540,8 +540,20 @@ def test_build_workspace_yaml_shape():
         "Deployment",
         "Service",
         "Ingress",
+        "NetworkPolicy",
     }
     by_kind = {d["kind"]: d for d in docs}
+
+    # The app-net policy blocks unlabeled peers; without this extra allow the
+    # workspace backend cannot fetch JWKS from Keycloak and all API calls hang.
+    netpol = by_kind["NetworkPolicy"]
+    assert (
+        netpol["spec"]["podSelector"]["matchLabels"]["app.kubernetes.io/component"]
+        == "keycloak"
+    )
+    assert netpol["spec"]["ingress"][0]["from"] == [
+        {"podSelector": {"matchLabels": {"app": "workspace"}}}
+    ]
 
     # Ingress host = env host with -dev inserted before the first dot.
     ingress = by_kind["Ingress"]

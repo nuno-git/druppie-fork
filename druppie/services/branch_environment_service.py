@@ -745,7 +745,39 @@ def build_workspace_yaml(slug: str, branch: str, host_env: str, created_at: str)
         },
     }
 
-    return _dump(external_secret, pvc, deployment, service, ingress)
+    # The chart's app-net NetworkPolicy restricts ingress on the env's pods to
+    # peers carrying the app labels (+ Traefik/kube-system). The workspace pod
+    # deliberately does NOT carry those labels (that would subject it to the
+    # app-net egress rules and break its git fetch to the corporate Gitea), so
+    # its backend cannot reach Keycloak for JWKS — every authenticated API call
+    # times out. This policy adds workspace -> keycloak:8080 to the allow set.
+    keycloak_netpol = {
+        "apiVersion": "networking.k8s.io/v1",
+        "kind": "NetworkPolicy",
+        "metadata": {
+            "name": "workspace-keycloak",
+            "namespace": namespace,
+            "labels": labels,
+        },
+        "spec": {
+            "podSelector": {
+                "matchLabels": {
+                    "app.kubernetes.io/component": "keycloak",
+                    "app.kubernetes.io/instance": "druppie",
+                    "app.kubernetes.io/name": namespace,
+                }
+            },
+            "policyTypes": ["Ingress"],
+            "ingress": [
+                {
+                    "from": [{"podSelector": {"matchLabels": {"app": "workspace"}}}],
+                    "ports": [{"port": 8080, "protocol": "TCP"}],
+                }
+            ],
+        },
+    }
+
+    return _dump(external_secret, pvc, deployment, service, ingress, keycloak_netpol)
 
 
 _ENV_FILES = ("namespace.yaml", "gitrepository.yaml", "helmrelease.yaml", "externalsecrets.yaml")
