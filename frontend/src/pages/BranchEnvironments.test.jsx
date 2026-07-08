@@ -8,6 +8,7 @@ vi.mock('../services/api', () => ({
   branchEnvironmentsApi: {
     list: vi.fn(),
     deploy: vi.fn(),
+    pipeline: vi.fn(),
     redeploy: vi.fn(),
     teardown: vi.fn(),
     enableWorkspace: vi.fn(),
@@ -189,5 +190,88 @@ describe('BranchEnvironments page', () => {
         expect.objectContaining({ secrets_source: 'developer' })
       )
     )
+  })
+
+  it('auto-opens the deploy pipeline for a deploying environment', async () => {
+    branchEnvironmentsApi.list.mockResolvedValue({
+      items: [
+        {
+          id: 'feature-busy',
+          branch: 'feature/busy',
+          slug: 'feature-busy',
+          namespace: 'druppie-feature-busy',
+          url: 'https://druppie-feature-busy.rijnland.dev',
+          image_tag: null,
+          status: 'deploying',
+          status_message: 'helm release reconciling',
+          created_at: '2026-07-07T10:00:00Z',
+          workspace_enabled: false,
+          workspace_url: null,
+          workspace_status: null,
+        },
+      ],
+      total: 1,
+    })
+    branchEnvironmentsApi.pipeline.mockResolvedValue({
+      env_id: 'feature-busy',
+      status: 'deploying',
+      stages: [
+        { id: 'commit', name: 'Commit (aigit)', status: 'done', message: null, detail: null },
+        { id: 'flux', name: 'Flux sync', status: 'done', message: null, detail: null },
+        { id: 'source', name: 'Chart source', status: 'done', message: null, detail: null },
+        { id: 'secrets', name: 'Secrets (Vault)', status: 'done', message: null, detail: null },
+        {
+          id: 'helm',
+          name: 'Helm install',
+          status: 'busy',
+          message: 'helm release reconciling',
+          detail: null,
+        },
+        { id: 'workloads', name: 'Pods & images', status: 'pending', message: null, detail: null },
+        { id: 'live', name: 'Live', status: 'pending', message: null, detail: null },
+      ],
+    })
+
+    renderPage()
+
+    expect(await screen.findByTestId('branch-env-pipeline')).toBeTruthy()
+    expect(branchEnvironmentsApi.pipeline).toHaveBeenCalledWith('feature-busy')
+    expect(screen.getByTestId('pipeline-stage-helm').getAttribute('data-status')).toBe('busy')
+  })
+
+  it('does not fetch the pipeline for a running environment until expanded', async () => {
+    branchEnvironmentsApi.list.mockResolvedValue({
+      items: [
+        {
+          id: 'feature-ok',
+          branch: 'feature/ok',
+          slug: 'feature-ok',
+          namespace: 'druppie-feature-ok',
+          url: 'https://druppie-feature-ok.rijnland.dev',
+          image_tag: 'abc123',
+          status: 'running',
+          status_message: null,
+          created_at: '2026-07-07T10:00:00Z',
+          workspace_enabled: false,
+          workspace_url: null,
+          workspace_status: null,
+        },
+      ],
+      total: 1,
+    })
+    branchEnvironmentsApi.pipeline.mockResolvedValue({
+      env_id: 'feature-ok',
+      status: 'running',
+      stages: [{ id: 'commit', name: 'Commit (aigit)', status: 'done', message: null, detail: null }],
+    })
+
+    renderPage()
+
+    await screen.findByText('feature/ok')
+    expect(branchEnvironmentsApi.pipeline).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByRole('button', { name: /pipeline/i }))
+    expect(await screen.findByTestId('branch-env-pipeline')).toBeTruthy()
+    expect(branchEnvironmentsApi.pipeline).toHaveBeenCalledWith('feature-ok')
   })
 })

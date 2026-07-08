@@ -80,8 +80,11 @@ from .branch_environment import (
     BranchEnvironmentCreate,
     BranchEnvironmentDetail,
     BranchEnvironmentListResponse,
+    BranchEnvironmentPipeline,
     BranchEnvironmentStatus,
     BranchEnvironmentSummary,
+    PipelineStage,
+    PipelineStageStatus,
 )
 
 # Question models
@@ -179,6 +182,9 @@ __all__ = [
     "BranchEnvironmentCreate",
     "BranchEnvironmentListResponse",
     "BranchEnvironmentStatus",
+    "BranchEnvironmentPipeline",
+    "PipelineStage",
+    "PipelineStageStatus",
     # User
     "UserInfo",
     # Documentation

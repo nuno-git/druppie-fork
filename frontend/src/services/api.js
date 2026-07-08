@@ -359,6 +359,8 @@ export const branchEnvironmentsApi = {
       }),
     })
   },
+  pipeline: (id) =>
+    request(`/api/branch-environments/${encodeURIComponent(id)}/pipeline`),
   redeploy: (id) =>
     request(`/api/branch-environments/${encodeURIComponent(id)}/redeploy`, { method: 'POST' }),
   teardown: (id) =>

@@ -118,6 +118,11 @@ class FakeCluster:
         self.helmreleases: dict[str, dict] = {}
         # keyed by (namespace, name)
         self.deployments: dict[tuple[str, str], dict] = {}
+        # Pipeline reads
+        self.kustomization: dict | None = None
+        self.gitrepositories: dict[str, dict] = {}  # keyed by slug
+        self.externalsecrets: dict[str, list[dict]] = {}  # keyed by namespace
+        self.pods: dict[str, list[dict]] = {}  # keyed by namespace
 
     async def get_helmrelease(self, namespace: str):
         return self.helmreleases.get(namespace)
@@ -134,6 +139,21 @@ class FakeCluster:
             for ns in self.namespaces.values()
             if ns.get("metadata", {}).get("labels", {}).get("druppie.io/branch-env")
         ]
+
+    async def get_kustomization(self):
+        return self.kustomization
+
+    async def get_gitrepository(self, slug: str):
+        return self.gitrepositories.get(slug)
+
+    async def list_externalsecrets(self, namespace: str):
+        return self.externalsecrets.get(namespace, [])
+
+    async def list_deployments(self, namespace: str):
+        return [d for (ns, _), d in self.deployments.items() if ns == namespace]
+
+    async def list_pods(self, namespace: str):
+        return self.pods.get(namespace, [])
 
 
 def _hr_ready(status: str = "True", reason: str = "ReconciliationSucceeded", message: str = "ok"):
@@ -649,3 +669,194 @@ def test_detail_workspace_disabled_by_default(client, as_owner):
     assert body["workspace_enabled"] is False
     assert body["workspace_url"] is None
     assert body["workspace_status"] is None
+
+
+# ---------------------------------------------------------------------------
+# pipeline
+# ---------------------------------------------------------------------------
+
+_NS = "druppie-feature-foo"
+_PIPELINE_URL = "/api/branch-environments/feature-foo/pipeline"
+
+
+def _branch_env_ns(name: str = _NS) -> dict:
+    return {
+        "metadata": {
+            "name": name,
+            "labels": {"druppie.io/branch-env": "true"},
+            "annotations": {
+                "druppie.io/branch": "feature/foo",
+                "druppie.io/owner-id": OWNER_SUB,
+                "druppie.io/created-at": "2026-01-01T00:00:00+00:00",
+            },
+        }
+    }
+
+
+def _stages(body: dict) -> dict[str, dict]:
+    return {s["id"]: s for s in body["stages"]}
+
+
+def _make_cluster_all_ready(fake_cluster):
+    fake_cluster.namespaces[_NS] = _branch_env_ns()
+    fake_cluster.gitrepositories["feature-foo"] = _hr_ready()
+    fake_cluster.externalsecrets[_NS] = [
+        {"metadata": {"name": "branch-env-secrets"}, **_hr_ready()},
+        {"metadata": {"name": "druppie-tls"}, **_hr_ready()},
+    ]
+    fake_cluster.helmreleases[_NS] = _hr_ready()
+    fake_cluster.deployments[(_NS, "druppie-backend")] = {
+        "spec": {"replicas": 1},
+        "status": {"readyReplicas": 1},
+    }
+
+
+def test_pipeline_all_done(client, as_owner, fake_cluster):
+    _deploy(client)
+    _make_cluster_all_ready(fake_cluster)
+    r = client.get(_PIPELINE_URL)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["status"] == "running"
+    assert [s["id"] for s in body["stages"]] == [
+        "commit",
+        "flux",
+        "source",
+        "secrets",
+        "helm",
+        "workloads",
+        "live",
+    ]
+    assert all(s["status"] == "done" for s in body["stages"])
+    assert _stages(body)["live"]["detail"] == "https://druppie-feature-foo.rijnland.dev"
+    assert _stages(body)["workloads"]["detail"] == "1/1 deployments ready"
+
+
+def test_pipeline_waiting_for_flux(client, as_owner):
+    _deploy(client)
+    body = client.get(_PIPELINE_URL).json()
+    s = _stages(body)
+    assert body["status"] == "deploying"
+    assert s["commit"]["status"] == "done"
+    assert s["flux"]["status"] == "busy"
+    for sid in ("source", "secrets", "helm", "workloads", "live"):
+        assert s[sid]["status"] == "pending", sid
+
+
+def test_pipeline_source_fetch_failure(client, as_owner, fake_cluster):
+    _deploy(client)
+    fake_cluster.namespaces[_NS] = _branch_env_ns()
+    fake_cluster.gitrepositories["feature-foo"] = _hr_ready(
+        status="False",
+        reason="GitOperationFailed",
+        message="couldn't find remote ref refs/heads/feature/foo",
+    )
+    body = client.get(_PIPELINE_URL).json()
+    s = _stages(body)
+    assert body["status"] == "failed"
+    assert s["source"]["status"] == "failed"
+    assert "remote ref" in s["source"]["message"]
+
+
+def test_pipeline_secrets_sync_failure(client, as_owner, fake_cluster):
+    _deploy(client)
+    fake_cluster.namespaces[_NS] = _branch_env_ns()
+    fake_cluster.externalsecrets[_NS] = [
+        {
+            "metadata": {"name": "branch-env-secrets"},
+            **_hr_ready(
+                status="False",
+                reason="SecretSyncedError",
+                message="key not found: druppie/developers/robbe",
+            ),
+        }
+    ]
+    body = client.get(_PIPELINE_URL).json()
+    s = _stages(body)
+    assert body["status"] == "failed"
+    assert s["secrets"]["status"] == "failed"
+    assert "branch-env-secrets" in s["secrets"]["message"]
+    assert "key not found" in s["secrets"]["message"]
+    assert s["secrets"]["detail"] == "0/1 secrets synced"
+
+
+def test_pipeline_image_pull_backoff(client, as_owner, fake_cluster):
+    _deploy(client)
+    fake_cluster.namespaces[_NS] = _branch_env_ns()
+    fake_cluster.gitrepositories["feature-foo"] = _hr_ready()
+    fake_cluster.helmreleases[_NS] = _hr_ready(
+        status="Unknown", reason="Progressing", message="reconciling"
+    )
+    fake_cluster.deployments[(_NS, "druppie-backend")] = {
+        "spec": {"replicas": 1},
+        "status": {},
+    }
+    fake_cluster.pods[_NS] = [
+        {
+            "metadata": {"name": "druppie-backend-abc"},
+            "status": {
+                "containerStatuses": [
+                    {
+                        "state": {
+                            "waiting": {
+                                "reason": "ImagePullBackOff",
+                                "message": 'pulling image "harbor.rijnland.dev/druppie/backend:nope"',
+                            }
+                        }
+                    }
+                ]
+            },
+        }
+    ]
+    body = client.get(_PIPELINE_URL).json()
+    s = _stages(body)
+    assert body["status"] == "failed"
+    assert s["workloads"]["status"] == "failed"
+    assert "druppie-backend-abc" in s["workloads"]["message"]
+    assert "ImagePullBackOff" in s["workloads"]["message"]
+    assert s["helm"]["status"] == "busy"
+
+
+def test_pipeline_workloads_progress_detail(client, as_owner, fake_cluster):
+    _deploy(client)
+    _make_cluster_all_ready(fake_cluster)
+    fake_cluster.deployments[(_NS, "druppie-frontend")] = {
+        "spec": {"replicas": 1},
+        "status": {"readyReplicas": 0},
+    }
+    body = client.get(_PIPELINE_URL).json()
+    s = _stages(body)
+    assert body["status"] == "deploying"
+    assert s["workloads"]["status"] == "busy"
+    assert s["workloads"]["detail"] == "1/2 deployments ready"
+    assert s["live"]["status"] == "pending"
+
+
+def test_pipeline_cluster_unavailable(client, as_owner, fake_cluster):
+    _deploy(client)
+    fake_cluster.available = False
+    body = client.get(_PIPELINE_URL).json()
+    s = _stages(body)
+    assert body["status"] == "deploying"
+    assert s["commit"]["status"] == "done"
+    for sid in ("flux", "source", "secrets", "helm", "workloads", "live"):
+        assert s[sid]["status"] == "pending", sid
+        assert "unavailable" in s[sid]["message"]
+
+
+def test_pipeline_deleting_env(client, as_owner, fake_cluster):
+    # Gone from git, but the labeled namespace is still terminating.
+    fake_cluster.namespaces[_NS] = _branch_env_ns()
+    body = client.get(_PIPELINE_URL).json()
+    assert body["status"] == "deleting"
+    assert [s["id"] for s in body["stages"]] == ["commit-removed", "pruning"]
+    assert _stages(body)["pruning"]["status"] == "busy"
+
+
+def test_pipeline_unknown_env_404(client, as_owner):
+    assert client.get("/api/branch-environments/nope/pipeline").status_code == 404
+
+
+def test_pipeline_requires_developer_role(client, app):
+    app.dependency_overrides[get_current_user] = lambda: _user(OWNER_SUB, developer=False)
+    assert client.get(_PIPELINE_URL).status_code == 403

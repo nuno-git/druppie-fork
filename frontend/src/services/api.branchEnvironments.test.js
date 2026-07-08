@@ -42,3 +42,19 @@ describe('branchEnvironmentsApi.deploy request body', () => {
     expect(sentBody().image_tag).toBe('tag-1')
   })
 })
+
+describe('branchEnvironmentsApi.pipeline', () => {
+  beforeEach(() => {
+    global.fetch = vi.fn().mockResolvedValue(okResponse)
+  })
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('GETs the env pipeline with an encoded id', async () => {
+    await branchEnvironmentsApi.pipeline('feature-foo')
+    const [url, options] = global.fetch.mock.calls[0]
+    expect(url).toContain('/api/branch-environments/feature-foo/pipeline')
+    expect(options?.method).toBeUndefined()
+  })
+})
