@@ -556,6 +556,9 @@ def test_build_workspace_yaml_shape():
     # Harbor is a private registry: without the pull secret the image pull
     # fails with "no basic auth credentials".
     assert pod_spec["imagePullSecrets"] == [{"name": "harbor-regcred"}]
+    # Fresh Longhorn volumes mount root-owned; uid 1000 needs fsGroup to
+    # write /workspace.
+    assert pod_spec["securityContext"] == {"fsGroup": 1000}
     containers = {c["name"]: c for c in pod_spec["containers"]}
     assert set(containers) == {"workspace", "oauth2-proxy"}
 
