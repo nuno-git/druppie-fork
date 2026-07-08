@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://druppie.local/docs/adrs/adr.schema.json",
+  "title": "ADR Frontmatter",
+  "description": "JSON Schema for the YAML frontmatter of an Architecture Decision Record.",
+  "type": "object",
+  "required": ["id", "title", "status", "date"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^\\d{3}$",
+      "description": "3-digit zero-padded ADR identifier, e.g. \"001\"."
+    },
+    "title": {
+      "type": "string",
+      "description": "Short imperative title for the decision."
+    },
+    "status": {
+      "type": "string",
+      "enum": ["proposed", "accepted", "deprecated", "superseded"],
+      "description": "Lifecycle status of the ADR."
+    },
+    "date": {
+      "type": "string",
+      "format": "date",
+      "description": "Date the decision was made, in YYYY-MM-DD format."
+    },
+    "deciders": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Roles or people who made the decision."
+    },
+    "supersedes": {
+      "type": ["string", "null"],
+      "pattern": "^\\d{3}$",
+      "description": "ID of an ADR that this ADR supersedes, or null."
+    },
+    "superseded_by": {
+      "type": ["string", "null"],
+      "pattern": "^\\d{3}$",
+      "description": "ID of the ADR that supersedes this one, or null."
+    },
+    "enforcement": {
+      "type": "object",
+      "properties": {
+        "lint_rules": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Linter rule IDs that guard this decision."
+        },
+        "ci_checks": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "CI job names or script paths that verify compliance."
+        }
+      },
+      "description": "How this rule is enforced in CI/runtime."
+    },
+    "linked_prd": {
+      "type": ["string", "null"],
+      "description": "Path or URL to a PRD section motivating this ADR, or null."
+    },
+    "linked_research": {
+      "type": ["string", "null"],
+      "description": "Path or URL to a research/spike document, or null."
+    }
+  }
+}
