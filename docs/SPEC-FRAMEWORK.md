@@ -11,7 +11,7 @@ This document describes the complete specification-driven framework for the Drup
 ## Table of Contents
 
 1. [Overview](#1-overview)
-2. [The Eight Pillars](#2-the-eight-pillars)
+2. [Framework Structure](#2-framework-structure)
 3. [Directory Structure](#3-directory-structure)
 4. [Artifact Lifecycle](#4-artifact-lifecycle)
 5. [The Enforcement Loop (The Harness)](#5-the-enforcement-loop-the-harness)
@@ -34,22 +34,58 @@ The framework is built on a key insight from Michal's talk: **humans and LLMs bo
 1. **Text-based, agent-readable** — Every artifact is Markdown that humans and AI agents can read
 2. **Enforced, not just documented** — Rules have corresponding lint/CI checks
 3. **Living, not static** — The Current Architecture Specification (CAS) auto-updates from accepted ADRs
-4. **Linked, not isolated** — PRDs link to ADRs, BDD scenarios link to PRDs, everything traces back
+4. **Linked, not isolated** — PRDs link to ADRs, acceptance specs link to PRDs, everything traces back
 
 ---
 
-## 2. The Eight Pillars
+## 2. Framework Structure
 
-| Pillar | Purpose | Format | Location |
-|--------|---------|--------|----------|
+The framework is organized into three tiers:
+
+- **Tier 1 — Artifact Types:** per-feature, in the traceability chain. These have templates, enforcement gates, and link-back tags.
+- **Tier 2 — Reference Docs:** cross-cutting, not per-feature. Regular Markdown consulted during implementation.
+- **Tier 3 — Infrastructure:** the mechanisms (memory, harness) that make the framework run, not artifacts themselves.
+
+### Tier 1 — Artifact Types
+
+Per-feature artifacts that form the traceability chain. Each one links to the others so any behavior can be traced from "why does this exist?" all the way to "does it actually work?"
+
+| Artifact | Purpose | Format | Location |
+|----------|---------|--------|----------|
 | **PRD** | Describe why a feature exists, the problem, user journey | Lightweight Markdown | `docs/prds/` |
-| **Research** | Investigate options before committing to a decision | Markdown with trade-off tables | `docs/research/` |
-| **ADR** | Record why a technical decision was made and how it's enforced | Markdown with YAML frontmatter | `docs/adrs/` |
-| **BDD** | Executable specification of what the system does | Gherkin `.feature` files | `testing/bdd/` |
-| **Design System** | Component library, visual rules, usage constraints | Markdown + code examples | `docs/design-system/` |
+| **Research** | Investigate options before committing to a decision (optional) | Markdown with trade-off tables | `docs/research/` |
+| **ADR** | Record why a technical decision was made and how it's enforced (optional) | Markdown with YAML frontmatter | `docs/adrs/` |
+| **Acceptance Specs** | Executable specification of what the system does | Gherkin `.feature` files | `testing/specs/` |
 | **CAS** | Current Architecture Specification — living snapshot of all active rules | Auto-generated Markdown | `docs/adrs/CAS.md` |
-| **Memory** | Hierarchical context management for agents | Runtime (DB-backed) | Agent loop integration |
-| **Harness** | Git hooks + CI that enforce all rules | Config files | Root of repo |
+
+Of these five, **Acceptance Specs are always written** for any feature that needs verification. **Research and ADR are optional** — they only get written when the situation calls for them (see [Research vs ADR](#research-vs-adr--whats-the-difference)).
+
+### Tier 2 — Reference Documentation
+
+Reference docs are **cross-cutting, not per-feature**. They describe stable knowledge that applies across many features — not the traceability chain for a single feature.
+
+- They live in `docs/<topic>/`
+- They don't have mandatory templates, enforcement gates, or link-back tags
+- They're consulted during implementation, not produced per feature
+
+| Reference Doc | Purpose | Location |
+|---------------|---------|----------|
+| **Design System** | Component library, visual rules, usage constraints | `docs/design-system/` |
+| **API contracts** | Endpoint shapes, request/response schemas, versioning | `docs/api/` (or similar) |
+| **Infrastructure specs** | Deployment topology, runtime config, sandbox setup | `docs/` (e.g. `docs/SANDBOX.md`) |
+| **Data model docs** | Entity relationships, migration notes | `docs/` |
+| **Security policies** | Auth flows, role model, secret handling | `docs/` |
+
+These are regular Markdown files. An agent or human reads the relevant reference doc when a feature touches its domain (e.g., consult the Design System when building UI), but the reference doc itself isn't part of the per-feature traceability chain.
+
+### Tier 3 — Infrastructure
+
+These are the **mechanisms** that make the framework run. They aren't artifacts you author per feature — they're the machinery underneath.
+
+| Mechanism | Purpose | Location |
+|-----------|---------|----------|
+| **Memory** | Hierarchical context management for agents (conceptual, not yet implemented) | Agent loop integration |
+| **Harness** | Git hooks + CI that enforce all rules | Config files at root of repo |
 
 ### What Goes Where
 
@@ -60,8 +96,7 @@ Each artifact answers a different question. Using the subagent retry feature as 
 | **PRD** | Why does this exist? What does the user want? | Problem, goal, user journey, constraints | "Users need to retry a failed subagent without losing work from successful ones" |
 | **Research** | What are the options? Which one do we pick? | Findings, comparison tables, recommendation | (Skipped — straightforward, one obvious approach) |
 | **ADR** | Why did we pick X? How is it enforced? | Context, decision, consequences, enforcement | "We chose granular per-subagent retry because full restart wastes completed work" |
-| **BDD** | What must the system do? Does it work? | Gherkin Given/When/Then scenarios | "Given 3 parallel subagents, When user clicks retry on B, Then only B resets" |
-| **Design System** | How should UI look and behave? | Component variants, visual rules, usage rules | "Retry button: ghost variant, appears on hover of failed agent card" |
+| **Acceptance Specs** | What must the system do? Does it work? | Gherkin Given/When/Then scenarios | "Given 3 parallel subagents, When user clicks retry on B, Then only B resets" |
 
 The same feature flows through multiple artifacts, each from a different angle:
 
@@ -69,11 +104,18 @@ The same feature flows through multiple artifacts, each from a different angle:
 flowchart LR
     subgraph "Same feature, three angles"
         PRD["PRD<br/><b>User-facing story</b><br/>User clicks retry on<br/>the failed one"]
-        BDD["BDD<br/><b>Machine-checkable proof</b><br/>Given/When/Then<br/>with exact state"]
+        SPECS["Acceptance Specs<br/><b>Machine-checkable proof</b><br/>Given/When/Then<br/>with exact state"]
         ADR["ADR<br/><b>Design rationale</b><br/>Granular retry saves<br/>completed work"]
     end
-    PRD --- BDD --- ADR
+    PRD --- SPECS --- ADR
 ```
+
+> **Acceptance Specs are domain-agnostic.** They aren't limited to backend behavior — they can describe any observable system behavior:
+> - **Backend:** "Given an admin user, When they request all sessions, Then they get all sessions"
+> - **Frontend:** "Given a modal is open, When the user presses Escape, Then the modal closes"
+> - **Infrastructure:** "Given a deployment is rolled out, When health checks fail, Then rollback triggers"
+>
+> The same Given/When/Then format and the same tooling (`behave` + Gherkin `.feature` files) apply regardless of domain.
 
 ### Research vs ADR — What's the difference?
 
@@ -98,16 +140,17 @@ flowchart LR
     PRD["PRD<br/>docs/prds/001-bulk-export.md"]
     RESEARCH["Research<br/>docs/research/001-zip-approaches.md"]
     ADR["ADR<br/>docs/adrs/004-background-jobs.md"]
-    BDD["BDD<br/>testing/bdd/features/bulk-export.feature"]
+    SPECS["Acceptance Specs<br/>testing/specs/features/bulk-export.feature"]
     CAS["CAS<br/>docs/adrs/CAS.md"]
 
     PRD -->|"unclear? investigate"| RESEARCH
     RESEARCH -->|"recommendation"| ADR
     PRD -->|"architectural choice"| ADR
-    PRD -->|"verify behavior"| BDD
+    PRD -->|"verify behavior"| SPECS
+    RESEARCH -->|"informs spec"| SPECS
     ADR -->|"accepted → regenerate"| CAS
-    BDD -.->|"@prd tag links back"| PRD
-    BDD -.->|"@adr tag links back"| ADR
+    SPECS -.->|"@prd tag links back"| PRD
+    SPECS -.->|"@adr tag links back"| ADR
 ```
 
 ---
@@ -125,7 +168,7 @@ docs/
 │   └── TEMPLATE.md
 ├── prds/                          # Product Requirements Documents
 │   └── TEMPLATE.md
-├── design-system/                 # Frontend design system
+├── design-system/                 # Reference doc: frontend design system
 │   ├── README.md                  # Component index + visual rules
 │   └── components/                # Per-component documentation
 │       └── button.md
@@ -143,7 +186,7 @@ testing/
 ├── agents/                        # Existing: YAML agent tests
 ├── checks/                        # Existing: assertion bundles
 ├── profiles/                      # Existing: judges, HITL
-└── bdd/                           # NEW: BDD acceptance tests
+└── specs/                         # Acceptance specs (Gherkin .feature files)
     ├── features/                  # Gherkin .feature files
     │   ├── approval-workflow.feature
     │   └── session-lifecycle.feature
@@ -179,9 +222,9 @@ lefthook.yml                       # Git hooks
 
 ## 4. Artifact Lifecycle
 
-### The Correct Flow: Want → PRD → Research → ADR → BDD → Build
+### The Correct Flow: Want → PRD → (Research?) → (ADR?) → Acceptance Specs → Build
 
-Every feature starts with a want. Then we write a PRD to define what we're building. If the technical approach is unclear, we research options. Then we commit to a decision in an ADR, write BDD scenarios to prove it works, and build.
+Every feature starts with a want. Then we write a PRD to define what we're building. If the technical approach is unclear, we research options. Then, if a decision needs recording, we commit to it in an ADR. We always write acceptance specs to prove the feature works, and then we build.
 
 ```mermaid
 flowchart TD
@@ -191,9 +234,9 @@ flowchart TD
     RESEARCH_DOC["Research Doc<br/><i>Investigate options, trade-offs</i>"]
     ADR{"ADR needed?<br/>(architectural choice?)"}
     ADR_DOC["ADR<br/><i>Record the decision + enforcement</i>"]
-    BDD["BDD Scenarios<br/><i>Executable acceptance criteria</i>"]
+    SPECS["Acceptance Specs<br/><i>Executable acceptance criteria</i>"]
     IMPL["Implementation"]
-    VERIFY["Verification<br/>(lint + BDD + tests)"]
+    VERIFY["Verification<br/>(lint + specs + tests)"]
     MERGE["Merge"]
 
     WANT --> PRD
@@ -202,16 +245,16 @@ flowchart TD
     RESEARCH -->|"No: straightforward"| ADR
     RESEARCH_DOC --> ADR
     ADR -->|"Yes: new decision"| ADR_DOC
-    ADR -->|"No: covered by existing ADRs"| BDD
-    ADR_DOC --> BDD
-    BDD --> IMPL
+    ADR -->|"No: covered by existing ADRs"| SPECS
+    ADR_DOC --> SPECS
+    SPECS --> IMPL
     IMPL --> VERIFY
     VERIFY --> MERGE
 
     style PRD fill:#4CAF50,color:#fff
     style RESEARCH_DOC fill:#2196F3,color:#fff
     style ADR_DOC fill:#FF9800,color:#fff
-    style BDD fill:#9C27B0,color:#fff
+    style SPECS fill:#9C27B0,color:#fff
 ```
 
 Key points:
@@ -219,7 +262,7 @@ Key points:
 - **PRD always comes first.** Before you research, before you decide, you need to know what you're building and why.
 - **Research is optional.** Only write a research doc when multiple viable options exist and the trade-offs aren't obvious.
 - **ADR captures the decision.** If existing ADRs already cover the architectural choice, skip writing a new one.
-- **BDD is the proof.** Scenarios are executable acceptance criteria that link back to the PRD and ADR.
+- **Acceptance Specs are the proof.** Scenarios are executable acceptance criteria that link back to the PRD and ADR.
 
 ### ADR Status Model
 
@@ -267,7 +310,7 @@ Developer/Agent writes code
   │  1. Lint & format           │
   │  2. Architecture compliance │
   │  3. Type checking           │
-  │  4. BDD suite               │
+  │  4. Spec suite              │
   │  5. YAML tool/agent tests   │
   │  6. Doc link validation     │
   │  7. CAS freshness check     │
@@ -284,10 +327,10 @@ Developer/Agent writes code
 | Python lint | ruff | Style, unused imports, complexity |
 | Python format | black | Formatting consistency |
 | Architecture layers | import-linter | API importing DB, domain importing services |
-| Doc cross-references | validate_doc_links.py | Broken links between PRD↔ADR↔BDD |
+| Doc cross-references | validate_doc_links.py | Broken links between PRD↔ADR↔Acceptance Specs |
 | ADR consistency | validate_adr_status.py | Superseded without replacement, invalid status |
 | CAS freshness | validate_doc_links.py | CAS.md stale vs accepted ADRs |
-| BDD scenarios | behave | Acceptance criteria violations |
+| Acceptance specs | behave | Acceptance criteria violations |
 | Integration tests | YAML framework | Full pipeline regressions |
 
 ### Agent Failure Recovery
@@ -308,12 +351,12 @@ Skills tailor the enforcement loop's focus for different task types. Each skill 
 
 | Skill | When used | Documents loaded | Loop focus |
 |-------|-----------|-----------------|------------|
-| `feature-dev` | Building a new feature | PRD, relevant BDD, ADRs, CAS | Full lint + BDD tag filter |
+| `feature-dev` | Building a new feature | PRD, relevant acceptance specs, ADRs, CAS | Full lint + spec tag filter |
 | `refactor` | Changing structure without behavior | ADRs for boundaries, import rules | Architecture lint + duplication |
-| `bug-fix` | Fixing a failing behavior | Failing BDD scenario, related PRD | Affected scenario + unit tests |
+| `bug-fix` | Fixing a failing behavior | Failing spec scenario, related PRD | Affected scenario + unit tests |
 | `adr-writer` | Proposing or modifying an ADR | All ADRs, affected code | ADR consistency check |
 | `research-writer` | Investigating options | Existing research, related ADRs | Doc link validation |
-| `prd-writer` | Writing a feature spec | Related ADRs, BDD scenarios | Doc link validation |
+| `prd-writer` | Writing a feature spec | Related ADRs, acceptance specs | Doc link validation |
 | `generate-cas` | After ADR acceptance | All accepted ADRs | CAS freshness |
 
 ### How Agents Use Skills
@@ -409,18 +452,21 @@ memory_enabled: true    # enable smart truncation + memory store
 - CAS regenerated automatically
 - Links back to PRD-001 and Research-001
 
-**Step 4: BDD** — "When user clicks Export All, background job created." Verification.
-- Output: `testing/bdd/features/bulk-export.feature`
+**Step 4: Acceptance Specs** — "When user clicks Export All, background job created." Verification.
+- Output: `testing/specs/features/bulk-export.feature`
 - Tagged: `@prd docs/prds/001-bulk-export.md`
 - Scenarios: successful export, exceeding max reports, concurrent export prevention
 - Each scenario links back to the PRD and ADR via tags
 
+> This walkthrough uses a backend example, but acceptance specs can cover any domain — frontend interactions, infrastructure behavior, or any other observable system property. See [Acceptance Specs are domain-agnostic](#what-goes-where).
+
 **Step 5: Implementation** — Agent follows feature-dev skill.
 - Loads CAS, ADR-004, PRD-001
 - Writes code following layered architecture
+- Consults relevant reference docs (e.g., Design System for any UI touched)
 - Pre-commit hook runs: lint passes, import-linter passes
 
-**Step 6: Verification** — BDD scenarios run, tests pass.
+**Step 6: Verification** — Acceptance specs run, tests pass.
 
 **Step 7: Merge** — CI runs full suite, CAS freshness check passes, merge to `colab-dev`.
 
@@ -434,7 +480,7 @@ memory_enabled: true    # enable smart truncation + memory store
 | Python lint | [ruff](https://docs.astral.sh/ruff/) | Style, complexity, imports |
 | Python format | [black](https://github.com/psf/black) | Formatting |
 | Architecture lint | [import-linter](https://github.com/seddonym/import-linter) | Layer import rules |
-| BDD | [behave](https://github.com/behave/behave) | Gherkin feature runner |
+| Acceptance specs | [behave](https://github.com/behave/behave) | Gherkin feature runner |
 | Integration tests | YAML framework (existing) | Full MCP pipeline tests |
 | Doc validation | Custom scripts | Cross-reference checking |
 | CAS generation | `scripts/generate_cas.py` | Auto-generate from ADRs |
@@ -495,9 +541,9 @@ This framework prevents the five-monkeys problem through three mechanisms:
 
 **Humans leaving:** Decisions live in permanent ADRs. Lint rules enforce them automatically.
 
-**LLM context compaction:** Important constraints survive because the agent re-reads documents after rule violations. The loop re-injects the relevant ADR/PRD/BDD scenario on every failure.
+**LLM context compaction:** Important constraints survive because the agent re-reads documents after rule violations. The loop re-injects the relevant ADR/PRD/spec scenario on every failure.
 
-**Consistency:** Architecture rules and the design system act as automated guards. Tabs vs spaces, import ordering, layer violations — these are not for discussion. They are rules, and they are enforced.
+**Consistency:** Architecture rules, reference docs, and the design system act as automated guards. Tabs vs spaces, import ordering, layer violations — these are not for discussion. They are rules, and they are enforced.
 
 ---
 

@@ -53,9 +53,9 @@ The layered architecture import rules are non-negotiable:
 
 If the refactored code violates any of these rules, the refactor is wrong.
 
-### BDD suite must stay green
+### Spec suite must stay green
 
-- Run the full BDD test suite before starting. All must pass.
+- Run the full spec suite before starting. All must pass.
 - After each structural change, re-run affected tests.
 - At the end of the refactor, the full suite must still pass — zero
   new failures.
@@ -99,7 +99,7 @@ Example:
 refactor(sessions): extract approval logic to dedicated service [ADR-0012]
 
 Moved approval workflow logic from SessionService to ApprovalService
-to align with module boundaries defined in ADR-0012. BDD suite green.
+to align with module boundaries defined in ADR-0012. Spec suite green.
 Architecture lint: 3 violations → 1 violation (pre-existing, tracked in
 BACKLOG-0045).
 ```

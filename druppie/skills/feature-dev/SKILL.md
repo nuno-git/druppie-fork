@@ -1,7 +1,7 @@
 ---
 name: feature-dev
 description: >
-  Guides end-to-end feature development: PRD → Research → ADR → BDD → Implementation → Test.
+  Guides end-to-end feature development: PRD → Research → ADR → Acceptance Specs → Implementation → Test.
   Loads relevant ADRs, platform standards, and architecture principles.
   Used by developer and builder_planner agents.
 allowed-tools:
@@ -15,7 +15,7 @@ allowed-tools:
 # Feature Development Workflow
 
 End-to-end guide for building features following the spec-driven documentation
-pipeline: PRD → Research → ADR → BDD → Implementation → Verification.
+pipeline: PRD → Research → ADR → Acceptance Specs → Implementation → Verification.
 
 ## Pre-conditions
 
@@ -60,9 +60,9 @@ by an accepted ADR:
 
 Skip this phase if no new architectural decision is needed.
 
-## Phase 3: BDD Scenarios
+## Phase 3: Acceptance Specs
 
-Write behavior-driven test scenarios *before* implementation:
+Write acceptance scenarios *before* implementation:
 
 1. Create a `.feature` file in the appropriate test directory.
 2. Tag the feature with `@prd:<prd-id>` to link it back to the PRD.
@@ -125,7 +125,7 @@ Follow the layered architecture strictly. The data flow is:
 
 Before considering the feature complete:
 
-1. **Run BDD scenarios** — Execute the `.feature` file written in Phase 3.
+1. **Run acceptance specs** — Execute the `.feature` file written in Phase 3.
    All scenarios must pass.
 2. **Run existing tests** — `cd druppie && pytest`. No regressions.
 3. **Check architecture lint** — Verify import rules are respected. No layer

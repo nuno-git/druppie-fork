@@ -3,7 +3,7 @@ name: prd-writer
 description: >
   Guides creation of Product Requirements Documents before any feature
   work begins. Covers the lightweight template, problem-goal-journey flow,
-  and linking to ADRs and BDD scenarios.
+  and linking to ADRs and acceptance specs.
 allowed-tools:
   coding:
     - read_file
@@ -15,7 +15,7 @@ allowed-tools:
 
 Product Requirements Documents define *what* needs to be built and *why*,
 before any architectural decisions or implementation. They are the starting
-point of the spec-driven pipeline: PRD → Research → ADR → BDD → Code.
+point of the spec-driven pipeline: PRD → Research → ADR → Acceptance Specs → Code.
 
 ## Where the PRD Fits in the Flow
 
@@ -24,11 +24,11 @@ The PRD is the START of the spec-driven pipeline. Everything flows from here:
 1. **PRD** — We want something. Why? What's the user journey?
 2. **Research** (optional) — How should we build it? What are the options?
 3. **ADR** — We decided X. Here's why. Here's how it's enforced.
-4. **BDD** — The system must do Y. Here's the executable proof.
+4. **Acceptance Specs** — The system must do Y. Here's the executable proof.
 5. **Implementation** — Build it following the ADRs.
 
 The PRD is the user-facing story. It does NOT contain technical decisions (that's ADRs)
-or executable tests (that's BDD). It describes the PROBLEM and the GOAL.
+or executable tests (that's Acceptance Specs). It describes the PROBLEM and the GOAL.
 
 ## When to Write a PRD
 
@@ -63,7 +63,7 @@ author: role name                    # Who authored this PRD (e.g. "architect")
 date: 2026-06-09                     # Date of initial draft (YYYY-MM-DD)
 linked_adrs: []                      # ADR file paths, e.g. ["docs/adrs/001-layered-architecture.md"]
 linked_research: []                  # Research doc paths, e.g. ["docs/research/001-state-mgmt.md"]
-linked_bdd: []                       # .feature file paths, e.g. ["tests/features/approval-workflow.feature"]
+linked_specs: []                     # .feature file paths, e.g. ["tests/features/approval-workflow.feature"]
 ---
 
 # PRD: {title}
@@ -90,7 +90,7 @@ Describe the primary user journey as a sequence of steps:
 3. User does Z
 4. ...
 
-Keep it to the happy path. Edge cases go in BDD scenarios.
+Keep it to the happy path. Edge cases go in acceptance specs.
 
 ## Constraints
 
@@ -120,7 +120,7 @@ Explicitly list what this PRD does NOT cover:
 
 ### ADRs
 ### Research
-### BDD / Feature Files
+### Acceptance Specs / Feature Files
 ```
 
 ### Required frontmatter fields
@@ -134,14 +134,14 @@ Explicitly list what this PRD does NOT cover:
 | `date` | string | `YYYY-MM-DD`. |
 | `linked_adrs` | list | ADR file paths, e.g. `["docs/adrs/001-layered-architecture.md"]`. |
 | `linked_research` | list | Research doc paths. |
-| `linked_bdd` | list | `.feature` file paths. |
+| `linked_specs` | list | `.feature` file paths. |
 
 ### Body sections (fixed order)
 
 **Problem**, **Goal**, **User Journey**, **Constraints**, **Out of Scope**,
 **Open Questions**, **Linked Documents** — matching `docs/prds/TEMPLATE.md`.
 There is no separate "Requirements" section; testable requirements belong in the
-**Goal** (as measurable outcomes) and in linked BDD scenarios. There is no prose
+**Goal** (as measurable outcomes) and in linked acceptance specs. There is no prose
 "Related" header — all cross-links live in the frontmatter and are rendered into
 the **Linked Documents** section.
 
@@ -168,7 +168,7 @@ A PRD is a direction-setting document, not a detailed spec:
 - **No technical jargon** in Problem and Goal. Those sections must be
   understandable by non-technical stakeholders.
 - **Requirements are testable.** Each "must have" should map to at least
-  one BDD scenario.
+  one acceptance spec.
 
 ## Constraints Section Is Critical
 
@@ -182,7 +182,7 @@ For each constraint:
 - Note if it's a hard constraint (cannot be changed) or a soft constraint
   (negotiable with justification).
 
-## Linking to ADRs and BDD Scenarios
+## Linking to ADRs and Acceptance Specs
 
 The PRD is the root of the documentation tree. From it, branches grow. All
 cross-links live in the **frontmatter** (not in a prose "Related" section) so
@@ -192,9 +192,9 @@ they stay machine-readable:
   create a research doc and add its path to `linked_research`.
 - **PRD → ADR** — If the PRD requires architectural decisions, create ADRs and
   add their paths to `linked_adrs` (e.g. `"docs/adrs/001-layered-architecture.md"`).
-- **PRD → BDD** — During implementation, BDD scenarios are tagged with
+- **PRD → Acceptance Specs** — During implementation, acceptance specs are tagged with
   `@prd:NNN` to trace back to the PRD, and the `.feature` paths are added to
-  `linked_bdd`.
+  `linked_specs`.
 
 Keep the frontmatter link fields updated as these documents are created. The
 **Linked Documents** body section renders from these fields — never edit it by

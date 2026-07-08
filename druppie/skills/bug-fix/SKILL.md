@@ -1,7 +1,7 @@
 ---
 name: bug-fix
 description: >
-  Guides bug fixing with minimal, targeted changes. Reproduce with BDD,
+  Guides bug fixing with minimal, targeted changes. Reproduce with acceptance specs,
   trace through layers, fix minimally, and guard against regressions.
   Used by developer agents.
 allowed-tools:
@@ -22,9 +22,9 @@ the bug.
 
 Before touching any code, reproduce the failure:
 
-1. **Find the failing BDD scenario.** If one already exists, run it and
+1. **Find the failing acceptance spec.** If one already exists, run it and
    confirm it fails.
-2. **Write a new BDD scenario if none exists.** This is mandatory — a bug
+2. **Write a new acceptance spec if none exists.** This is mandatory — a bug
    without a failing test is a bug that will come back.
 3. Tag the scenario: `@bug:<short-description>` and `@prd:<prd-id>` if
    applicable.
@@ -73,7 +73,7 @@ That's the root cause layer. The fix should be in that layer.
 
 ## Step 4: Verify the Fix
 
-1. **Run the failing BDD scenario** — Must now pass.
+1. **Run the failing acceptance spec** — Must now pass.
 2. **Run related tests** — Run tests for the affected module/service.
 3. **Run full test suite** — `cd druppie && pytest`. Zero new failures.
 4. **Lint check** — `cd druppie && ruff check .` clean.
@@ -82,7 +82,7 @@ That's the root cause layer. The fix should be in that layer.
 
 Ensure the fix doesn't break other scenarios:
 
-1. Scan the BDD scenarios for any that cover the same component or
+1. Scan the acceptance specs for any that cover the same component or
    workflow. Run them all.
 2. If the fix changes shared behavior (e.g., a domain model or base
    service), run the *full* test suite.
@@ -97,7 +97,7 @@ fix(scope): description of the bug and fix [BUG-XXXX]
 The <component> was <what went wrong> because <root cause>.
 Fixed by <what changed>.
 
-BDD: @bug:<short-description> now passes.
+Specs: @bug:<short-description> now passes.
 ```
 
 Example:
@@ -108,5 +108,5 @@ SessionService.transition_status() did not acquire a row lock before
 checking current status, allowing two concurrent transitions to both
 succeed. Fixed by adding SELECT FOR UPDATE in the repository query.
 
-BDD: @bug:session-status-race now passes.
+Specs: @bug:session-status-race now passes.
 ```

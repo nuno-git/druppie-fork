@@ -3,7 +3,7 @@
 
 Checks that:
 - ADR linked_prd/linked_research paths exist (if non-null)
-- BDD @prd and @adr tags point to existing files
+- Acceptance spec @prd and @adr tags point to existing files
 - CAS.md is up to date (warns if its content_hash doesn't match the current ADR contents)
 - Markdown [links](./path) in docs/ point to existing files
 
@@ -71,12 +71,12 @@ def check_adr_links(errors: list[str]) -> None:
                     )
 
 
-def check_bdd_tags(errors: list[str]) -> None:
-    """Check BDD feature file @prd and @adr tags reference existing files."""
-    bdd_dir = TESTING_DIR / "bdd" / "features"
-    if not bdd_dir.exists():
+def check_spec_tags(errors: list[str]) -> None:
+    """Check acceptance spec @prd and @adr tags reference existing files."""
+    specs_dir = TESTING_DIR / "specs" / "features"
+    if not specs_dir.exists():
         return
-    for feature_file in bdd_dir.glob("*.feature"):
+    for feature_file in specs_dir.glob("*.feature"):
         text = feature_file.read_text(encoding="utf-8")
         # @prd path/to/prd.md
         for match in re.finditer(r"@prd\s+(\S+)", text):
@@ -184,7 +184,7 @@ def main() -> int:
 
     # Run all checks
     check_adr_links(errors)
-    check_bdd_tags(errors)
+    check_spec_tags(errors)
     check_markdown_links(errors, targets)
     check_cas_freshness(warnings)
 

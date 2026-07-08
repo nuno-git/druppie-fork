@@ -6,15 +6,15 @@ author: role name                     # Who authored this PRD (e.g. "architect",
 date: 2026-06-09                      # Date of initial draft (YYYY-MM-DD)
 linked_adrs: []                       # List of ADR file paths, e.g. ["docs/adrs/001-choice-of-state-management.md"]
 linked_research: []                   # List of research doc paths, e.g. ["docs/research/001-auth-providers.md"]
-linked_bdd: []                        # List of .feature file paths, e.g. ["tests/features/approval-workflow.feature"]
+linked_specs: []                      # List of .feature file paths, e.g. ["tests/features/approval-workflow.feature"]
 ---
 
 # PRD: {title}
 
 > **Where this fits:** The PRD is the START of the spec-driven pipeline. Everything flows
-> from here: PRD → Research (optional, only when unclear) → ADR (decision) → BDD (verification)
+> from here: PRD → Research (optional, only when unclear) → ADR (decision) → Acceptance Specs (verification)
 > → Implementation. The PRD describes the PROBLEM and the GOAL from the user's perspective.
-> It does NOT contain technical decisions (that's ADRs) or executable tests (that's BDD).
+> It does NOT contain technical decisions (that's ADRs) or executable tests (that's Acceptance Specs).
 
 ## Problem
 
@@ -104,6 +104,6 @@ _Definition of done with measurable criteria._
 <!-- Rendered from `linked_research` frontmatter -->
 <!-- {% for doc in linked_research %}- [{{ doc }}](/{{ doc }}){% endfor %} -->
 
-### BDD / Feature Files
-<!-- Rendered from `linked_bdd` frontmatter -->
-<!-- {% for bdd in linked_bdd %}- [{{ bdd }}](/{{ bdd }}){% endfor %} -->
+### Acceptance Specs / Feature Files
+<!-- Rendered from `linked_specs` frontmatter -->
+<!-- {% for spec in linked_specs %}- [{{ spec }}](/{{ spec }}){% endfor %} -->
