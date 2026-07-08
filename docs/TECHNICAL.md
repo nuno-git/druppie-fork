@@ -114,6 +114,7 @@ druppie/
     workflow_service.py
     deployment_service.py
     revert_service.py
+    document_formatter_service.py
   repositories/
     session_repository.py
     approval_repository.py
@@ -227,6 +228,33 @@ Project isolation is enforced in two independent layers:
 Tools: `list_backlog_items`, `get_work_item`, `search_work_items` (all
 `requires_approval: false`). Consumed by the **Product Owner** agent. Isolation is pinned
 by `druppie/tests/test_azuredevops_isolation.py`.
+
+### 2.6 Document Formatter Service
+
+PDF compilation from native **Typst** source files authored by agents. The Documenter agent writes `.typ` files using the Rijnland corporate identity template, pushes them to Gitea, and calls `builtin:make_pdf_document` to generate PDFs.
+
+**Flow:** Agent writes `.typ` file → pushes to Gitea → calls `builtin:make_pdf_document` → `PdfRenderService.get_or_create_pdf()` fetches source from Gitea → checks render cache (`pdf_renders` table keyed by Git blob SHA) → cache hit returns instantly; cache miss compiles via `DocumentFormatterService.compile_typ()` → stores PDF → creates `MessageAttachment` record → user downloads via `/api/attachments/{id}`.
+
+**Template library:** `druppie/templates/documents/rijnland.typ` — exposes a `rijnland_doc(body, ...)` function with parameters for document type (FO, TO, technical_research, core_documentation), title, status, TOC, watermark, section breaks, and author. Agents import it with `#import "/druppie/templates/documents/rijnland.typ": rijnland_doc`. `base.typ` remains as a backward-compat alias but the Markdown conversion pipeline is gone.
+
+**Rijnland corporate identity applied by the template:**
+
+- Primary color `#0065BD` (PMS 300)
+- Secondary palette: sand/zand, dark-blue, mint, brick
+- Typography: Neusa Next Pro (brand headings) with Lato as fallback. Body uses `weight: "light"`; headings use `weight: "bold"`.
+- Logo: `Logo-hoogheemraadschap-rijnland.png` centered on title page at 12cm wide; not shown on content pages
+- Pay-off: "droge voeten, schoon water" on title page
+- Grid-based margins: 25mm sides, 32mm bottom
+- Draft watermark: semi-transparent rotated text in **foreground** layer (`transparentize(50%)`) when `include_watermark == true && status != "FINAL"` — visible above all content including title page
+- Table of contents: optional via `include_toc`
+- Tables: Rijnland blue header row, striped rows, rounded corners
+- Code blocks: light blue background (`#E9EFFA`), rounded corners
+- Footer: Full-bleed dijk-en-sloot shape (`dijkEnSloot.png`) above a Rijnland-blue bar. Right-aligned text: "Hoogheemraadschap van Rijnland | project-name — versie month year | page / total". Excluded from title page.
+- Diagram rendering: Mermaid diagrams are rendered inline by the `@preview/mmdr:0.2.2` Typst package (pure Typst, no Chromium/Node.js). ArchiMate diagrams export to SVG via the `archimate:save_model` MCP tool (`module-archimate/v1/svg_export.py`, pure Python) and are embedded via `#image()` in the Typst source.
+
+**Font path resolution:** The Dockerfile installs Typst CLI and sets `TYPST_FONT_PATHS` to `/app/druppie/templates/documents/assets/fonts`. Custom TTF/OTF files are referenced by their internal family name (verify with `typst fonts --font-path <dir>`). The Google Fonts Lato files register as family **"Lato"** — weight is controlled via Typst's `weight` parameter. Neusa Next Pro files register as family **"Neusa Next Pro"**.
+
+**Test fixtures:** `druppie/templates/documents/test-inputs/` contains FO and TO `.typ` source files for pytest.
 
 ---
 

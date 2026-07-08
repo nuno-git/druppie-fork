@@ -53,6 +53,7 @@ from druppie.services import (
     EvaluationService,
     DocumentationService,
     JobService,
+    DocumentFormatterService,
 )
 
 # Initialize database tables on import
@@ -202,6 +203,14 @@ def get_documentation_service(
 ) -> DocumentationService:
     """Get DocumentationService with repositories injected."""
     return DocumentationService(project_repo, cache_repo)
+
+
+def get_document_formatter_service() -> DocumentFormatterService:
+    """Get DocumentFormatterService.
+
+    Stateless service with no repository dependencies.
+    """
+    return DocumentFormatterService()
 
 
 def get_workflow_service(

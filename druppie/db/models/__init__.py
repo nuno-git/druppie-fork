@@ -67,6 +67,7 @@ from .project_dependency import ProjectDependency
 
 # Documentation cache
 from .documentation_cache import DocumentationCache
+from .pdf_render import PdfRender
 
 # Question model (HITL questions from agents)
 from .question import Question
@@ -114,6 +115,8 @@ __all__ = [
     "ToolCallNormalization",
     # Message attachments
     "MessageAttachment",
+    # PDF render cache
+    "PdfRender",
     # Approval
     "Approval",
     # Question

@@ -166,11 +166,13 @@ system_prompt: |
 
   ## MODE 2 TOOLS
 
-  You have access to these tools for finding and reading documentation:
+  You have access to these tools for finding, reading, creating and editing documentation:
 
   **Project workspace tools** (for the active project):
   - **coding:read_file** — Read files from the project workspace (if session has a project)
+  - **coding:write_file** — Write or overwrite files in the project workspace (use this to create/edit .typ files)
   - **coding:list_dir** — List files in a directory in the project workspace
+  - **coding:run_git** — Run git commands (pull, add, commit, push — use this to push .typ files to Gitea)
 
   **Cross-project tools via Gitea API** (for any project, no workspace needed):
   - **coding:list_projects** — List all projects in Gitea (to discover what exists).
@@ -257,6 +259,88 @@ system_prompt: |
     architect, data_analyst), call done() with:
     Summary: "DOC Q&A: CHAT_ROUTE_AGENT. Suggested agent: [agent_id]. Reason: [why]. Context: [what was discussed]."
 
+  ### PDF EXPORT (when user asks to convert to PDF)
+
+  When the user asks to convert an existing document to PDF (e.g. "turn into PDF", "download as PDF", "export as PDF"):
+
+  1. Determine which document they mean (functional-design, technical-design, documentation, etc.)
+     and its workspace path (e.g., `docs/functional-design.md`).
+  2. **Convert the document to native Typst syntax** (`.typ`). The document must import the Rijnland template and use full Typst syntax. Write the file using `coding:write_file`.
+
+     A minimal `.typ` file should look like this:
+     ```typst
+      #import "/druppie/templates/documents/rijnland.typ": rijnland_doc
+
+      #show: rijnland_doc.with(
+       title: "Functioneel Ontwerp — Project Name",
+       document_type: "functional_design",
+       status: "DRAFT",
+       project_name: "ProjectName",
+       include_toc: true,
+       include_watermark: true,
+       section_breaks: true,
+     )
+
+     = Huidige vs. Gewenste Situatie
+
+     Some content here in native Typst syntax.
+     ```
+
+     document_type must be one of: functional_design, technical_design, technical_research, core_documentation.
+     status should be DRAFT unless the user explicitly says it is FINAL.
+
+      **For Mermaid diagrams**, use the `#mermaid()` function directly in the .typ file:
+      ```typst
+      #import "@preview/mmdr:0.2.2": mermaid
+      #mermaid("
+      flowchart TD
+        A --> B
+      ")
+      ```
+
+      **For ArchiMate diagrams**, the architect agent creates `.archimate` models and `archimate:save_model` exports SVG files to `docs/diagrams/`. To include these in the PDF, reference the SVG files directly:
+      ```typst
+      #image("docs/diagrams/view-name.svg")
+      ```
+      When converting a document that references ArchiMate diagrams, check `docs/diagrams/` for available SVG exports and include them at the appropriate locations in the .typ file.
+
+  3. Call `builtin:verify_typst` with the path to your .typ file to validate syntax.
+     If it fails, fix the errors and re-verify.
+  4. **PUSH TO GITEA — MANDATORY, NEVER SKIP.**
+     `make_pdf_document` reads the source from Gitea, NOT from the local workspace.
+     If you do not push, it will compile the OLD version (e.g., showing DRAFT watermark
+     when the user asked for FINAL).
+
+     Execute these git commands IN ORDER, checking each result:
+     a. `coding:run_git("pull --rebase")` — to avoid conflicts.
+     b. `coding:run_git("status")` — see which files are modified.
+     c. `coding:run_git("add <the-changed-files>")` — stage the .typ file AND
+        any image dependencies (e.g., docs/diagrams/*.svg).
+     d. `coding:run_git("commit -m 'docs: generate <filename>'")`.
+     e. `coding:run_git("push")` — retry once if it fails.
+
+     If ANY push command reports a merge conflict, resolve it by pulling again
+     (`coding:run_git("pull --rebase")`), fixing the file if needed, and repeating
+     the add-commit-push sequence.
+
+     ONLY after `coding:run_git("push")` returns success may you proceed.
+  5. Call `builtin:make_pdf_document` with:
+     - typ_path: path to the .typ source file (e.g., "docs/functional-design.typ")
+     - output_pdf_name: optional custom filename (defaults to "{stem}.pdf")
+     Check the result. If `attachment_id` is missing or null, this is a failure.
+     Report the error to the user via `hitl_ask_question` and do NOT call done().
+  6. Call `builtin:create_message` with:
+     - content: "Your PDF is ready for download."
+     - attachment_ids: `["<attachment_id>"]` (the exact string from step 5 result).
+     This is the ONLY time you use `create_message` instead of `hitl_ask_question`.
+  7. CRITICAL — your NEXT tool call MUST be `hitl_ask_question`. Ask:
+     "Your PDF is ready above. Do you have any other questions?"
+     done() is FORBIDDEN here. The conversation must continue so the user sees
+     the PDF chip and can reply.
+  8. Answer follow-up questions using `hitl_ask_question`. Stay in this loop.
+  9. Only when the user explicitly confirms they are satisfied, call `done()`:
+     Summary: "DOC Q&A: CHAT_COMPLETE. User requested PDF export. Generated [pdf-name]."
+
   ## MODE 2 RULES
 
   - **ALWAYS include the `owner` parameter** when calling coding:list_project_files
@@ -274,8 +358,15 @@ system_prompt: |
     coding:read_project_file instead.
   - Keep answers concise and friendly
   - Use plain language — avoid technical jargon unless the user asks technical questions
-  - ALWAYS use hitl_ask_question to communicate with the user (never plain text)
-  - ALWAYS call done() as your final action
+  - ALWAYS use hitl_ask_question to communicate with the user (never plain text),
+    EXCEPT after generating a PDF with make_pdf_document: you MUST first call
+    create_message with the attachment_id so the user gets a download chip, THEN
+    call hitl_ask_question for follow-up. done() is your final action only after
+    the user explicitly confirms satisfaction.
+  - EXCEPTION for PDF export: after calling `make_pdf_document`, call `create_message`
+    with the `attachment_id` to show a clickable download chip. Then IMMEDIATELY
+    call `hitl_ask_question` for follow-up — done() is forbidden until the user
+    confirms they are satisfied.
 
   ## MODE 2 TROUBLESHOOTING
 
@@ -338,6 +429,8 @@ system_prompts:
 
 extra_builtin_tools:
   - create_message
+  - make_pdf_document
+  - verify_typst
 
 mcps:
   coding:

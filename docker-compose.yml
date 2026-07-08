@@ -248,8 +248,9 @@ services:
 
   module-docker:
     build:
-      context: ./druppie/mcp-servers
-      dockerfile: module-docker/Dockerfile
+      context: ./druppie
+      dockerfile: mcp-servers/module-docker/Dockerfile
+    container_name: druppie-module-docker
     profiles: [infra, dev, prod]
     environment:
       MCP_PORT: "9002"
