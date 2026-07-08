@@ -31,6 +31,7 @@ from druppie.domain import (
     BranchEnvironmentCreate,
     BranchEnvironmentDetail,
     BranchEnvironmentListResponse,
+    BranchEnvironmentPipeline,
 )
 from druppie.services import BranchEnvironmentService
 
@@ -87,6 +88,24 @@ async def get_branch_environment(
 ) -> BranchEnvironmentDetail:
     """Get a single branch environment detail (id = slug)."""
     return await service.get(env_id)
+
+
+@router.get(
+    "/branch-environments/{env_id}/pipeline", response_model=BranchEnvironmentPipeline
+)
+async def get_branch_environment_pipeline(
+    env_id: str,
+    service: BranchEnvironmentService = Depends(get_branch_environment_service),
+    user: dict = Depends(get_current_user),
+    _: bool = Depends(require_any_role(["developer", "admin"])),
+) -> BranchEnvironmentPipeline:
+    """Live deploy pipeline for one environment (id = slug).
+
+    One stage per hop in the GitOps chain — commit (aigit) → Flux sync → chart
+    source / secrets → helm install → pods & images — so the UI can show where
+    a deploy is busy and where it went wrong.
+    """
+    return await service.pipeline(env_id)
 
 
 @router.post(

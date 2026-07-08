@@ -25,9 +25,27 @@ rules:
     resources: ["helmreleases"]
     verbs: ["get", "list"]
   # Read the optional per-env dev workspace Deployment to report its live
-  # status (running once a replica is ready, else deploying).
+  # status (running once a replica is ready, else deploying), plus all env
+  # Deployments for the pipeline's workloads stage.
   - apiGroups: ["apps"]
     resources: ["deployments"]
+    verbs: ["get", "list"]
+  # Deploy-pipeline stages (all read-only): the branch-envs Kustomization and
+  # the env's GitRepository (Flux sync + chart-source nodes) ...
+  - apiGroups: ["kustomize.toolkit.fluxcd.io"]
+    resources: ["kustomizations"]
+    verbs: ["get", "list"]
+  - apiGroups: ["source.toolkit.fluxcd.io"]
+    resources: ["gitrepositories"]
+    verbs: ["get", "list"]
+  # ... ESO sync state (secrets node: missing Vault keys stall the env) ...
+  - apiGroups: ["external-secrets.io"]
+    resources: ["externalsecrets"]
+    verbs: ["get", "list"]
+  # ... and pod container statuses (workloads node: ImagePullBackOff from
+  # Harbor, crash loops).
+  - apiGroups: [""]
+    resources: ["pods"]
     verbs: ["get", "list"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1

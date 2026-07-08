@@ -48,7 +48,12 @@ from ..api.errors import (
     ValidationError,
 )
 from ..domain import BranchEnvironmentDetail
-from ..domain.branch_environment import BranchEnvironmentStatus
+from ..domain.branch_environment import (
+    BranchEnvironmentPipeline,
+    BranchEnvironmentStatus,
+    PipelineStage,
+    PipelineStageStatus,
+)
 
 logger = structlog.get_logger()
 
@@ -857,6 +862,36 @@ class ClusterStatusClient:
         body = await self._get(f"/api/v1/namespaces?labelSelector={_ANN}%2Fbranch-env%3Dtrue")
         return (body or {}).get("items", [])
 
+    # ---- pipeline reads (all read-only; None/[] outside the cluster) ----
+
+    async def get_kustomization(self) -> dict | None:
+        """The Flux Kustomization that applies the branch-envs directory."""
+        return await self._get(
+            "/apis/kustomize.toolkit.fluxcd.io/v1/namespaces/flux-system"
+            "/kustomizations/branch-envs"
+        )
+
+    async def get_gitrepository(self, slug: str) -> dict | None:
+        """The env's Flux GitRepository (chart source pinned to the branch)."""
+        return await self._get(
+            "/apis/source.toolkit.fluxcd.io/v1/namespaces/flux-system"
+            f"/gitrepositories/druppie-branch-{slug}"
+        )
+
+    async def list_externalsecrets(self, namespace: str) -> list[dict]:
+        body = await self._get(
+            f"/apis/external-secrets.io/v1/namespaces/{namespace}/externalsecrets"
+        )
+        return (body or {}).get("items", [])
+
+    async def list_deployments(self, namespace: str) -> list[dict]:
+        body = await self._get(f"/apis/apps/v1/namespaces/{namespace}/deployments")
+        return (body or {}).get("items", [])
+
+    async def list_pods(self, namespace: str) -> list[dict]:
+        body = await self._get(f"/api/v1/namespaces/{namespace}/pods")
+        return (body or {}).get("items", [])
+
 
 # -----------------------------------------------------------------------------
 # Status derivation
@@ -891,6 +926,160 @@ def _derive_status(hr: dict | None, cluster_available: bool) -> tuple[str, str |
         BranchEnvironmentStatus.DEPLOYING.value,
         (message or "helm release reconciling")[:900],
     )
+
+
+# -----------------------------------------------------------------------------
+# Pipeline stage derivation — one pure function per node in the deploy visual
+# -----------------------------------------------------------------------------
+
+_STAGE_DONE = PipelineStageStatus.DONE
+_STAGE_BUSY = PipelineStageStatus.BUSY
+_STAGE_PENDING = PipelineStageStatus.PENDING
+_STAGE_FAILED = PipelineStageStatus.FAILED
+
+# Container waiting reasons that mean the workloads stage has hard-failed
+# (image can't be pulled from Harbor, or the container keeps crashing).
+_POD_BAD_REASONS = frozenset(
+    {
+        "ImagePullBackOff",
+        "ErrImagePull",
+        "InvalidImageName",
+        "CrashLoopBackOff",
+        "CreateContainerConfigError",
+        "CreateContainerError",
+    }
+)
+
+
+def _ready_condition(obj: dict | None) -> dict:
+    """The Ready condition of any Flux/ESO object ({} when absent)."""
+    conditions = (obj or {}).get("status", {}).get("conditions") or []
+    return next((c for c in conditions if c.get("type") == "Ready"), {})
+
+
+def _derive_flux_stage(ns: dict | None, kustomization: dict | None) -> PipelineStage:
+    """Flux applying the env manifests: done once the namespace exists."""
+    if ns is not None:
+        return PipelineStage(id="flux", name="Flux sync", status=_STAGE_DONE)
+    ready = _ready_condition(kustomization)
+    if ready.get("status") == "False":
+        return PipelineStage(
+            id="flux",
+            name="Flux sync",
+            status=_STAGE_FAILED,
+            message=(ready.get("message") or "branch-envs kustomization failed")[:900],
+        )
+    return PipelineStage(
+        id="flux",
+        name="Flux sync",
+        status=_STAGE_BUSY,
+        message="waiting for Flux to apply the environment manifests",
+    )
+
+
+def _derive_source_stage(gitrepo: dict | None, branch: str) -> PipelineStage:
+    """The env's GitRepository fetching the app branch (chart source)."""
+    name = "Chart source"
+    if gitrepo is None:
+        return PipelineStage(id="source", name=name, status=_STAGE_PENDING)
+    ready = _ready_condition(gitrepo)
+    if ready.get("status") == "True":
+        return PipelineStage(id="source", name=name, status=_STAGE_DONE)
+    message = (ready.get("message") or f"fetching branch '{branch}'")[:900]
+    if ready.get("status") == "False":
+        return PipelineStage(id="source", name=name, status=_STAGE_FAILED, message=message)
+    return PipelineStage(id="source", name=name, status=_STAGE_BUSY, message=message)
+
+
+def _derive_secrets_stage(ns: dict | None, externalsecrets: list[dict]) -> PipelineStage:
+    """ESO syncing the env's ExternalSecrets (Vault keys, TLS mirror, Harbor pull)."""
+    name = "Secrets (Vault)"
+    if ns is None:
+        return PipelineStage(id="secrets", name=name, status=_STAGE_PENDING)
+    if not externalsecrets:
+        return PipelineStage(
+            id="secrets",
+            name=name,
+            status=_STAGE_BUSY,
+            message="waiting for ExternalSecrets to appear",
+        )
+    failures: list[str] = []
+    synced = 0
+    for es in externalsecrets:
+        es_name = es.get("metadata", {}).get("name", "?")
+        ready = _ready_condition(es)
+        if ready.get("status") == "True":
+            synced += 1
+        elif ready.get("status") == "False":
+            failures.append(f"{es_name}: {ready.get('message') or 'sync failed'}")
+    total = len(externalsecrets)
+    if failures:
+        return PipelineStage(
+            id="secrets",
+            name=name,
+            status=_STAGE_FAILED,
+            message="; ".join(failures)[:900],
+            detail=f"{synced}/{total} secrets synced",
+        )
+    if synced < total:
+        return PipelineStage(
+            id="secrets",
+            name=name,
+            status=_STAGE_BUSY,
+            detail=f"{synced}/{total} secrets synced",
+        )
+    return PipelineStage(id="secrets", name=name, status=_STAGE_DONE)
+
+
+def _derive_helm_stage(ns: dict | None, hr: dict | None) -> PipelineStage:
+    """helm-controller installing/upgrading the chart (HelmRelease conditions)."""
+    name = "Helm install"
+    if hr is None and ns is None:
+        return PipelineStage(id="helm", name=name, status=_STAGE_PENDING)
+    status, message = _derive_status(hr, cluster_available=True)
+    if status == BranchEnvironmentStatus.RUNNING.value:
+        return PipelineStage(id="helm", name=name, status=_STAGE_DONE)
+    if status == BranchEnvironmentStatus.FAILED.value:
+        return PipelineStage(id="helm", name=name, status=_STAGE_FAILED, message=message)
+    return PipelineStage(id="helm", name=name, status=_STAGE_BUSY, message=message)
+
+
+def _derive_workloads_stage(deployments: list[dict], pods: list[dict]) -> PipelineStage:
+    """Pods starting up — images pulled from Harbor, containers becoming ready."""
+    name = "Pods & images"
+    if not deployments:
+        # Helm hasn't created the workloads yet.
+        return PipelineStage(id="workloads", name=name, status=_STAGE_PENDING)
+
+    # Hard container failures first (ImagePullBackOff from Harbor, crash loops).
+    for pod in pods:
+        pod_name = pod.get("metadata", {}).get("name", "?")
+        pod_status = pod.get("status", {}) or {}
+        statuses = (pod_status.get("containerStatuses") or []) + (
+            pod_status.get("initContainerStatuses") or []
+        )
+        for cs in statuses:
+            waiting = (cs.get("state") or {}).get("waiting") or {}
+            reason = waiting.get("reason")
+            if reason in _POD_BAD_REASONS:
+                message = f"{pod_name}: {reason}"
+                if waiting.get("message"):
+                    message += f" — {waiting['message']}"
+                return PipelineStage(
+                    id="workloads", name=name, status=_STAGE_FAILED, message=message[:900]
+                )
+
+    total = len(deployments)
+    ready = sum(
+        1
+        for d in deployments
+        if ((d.get("status", {}) or {}).get("readyReplicas") or 0)
+        >= ((d.get("spec", {}) or {}).get("replicas") or 1)
+    )
+    detail = f"{ready}/{total} deployments ready"
+    if ready >= total:
+        return PipelineStage(id="workloads", name=name, status=_STAGE_DONE, detail=detail)
+    return PipelineStage(id="workloads", name=name, status=_STAGE_BUSY, detail=detail)
 
 
 # -----------------------------------------------------------------------------
@@ -1278,6 +1467,102 @@ class BranchEnvironmentService:
             ):
                 return self._detail_from_namespace(ns)
         raise NotFoundError("branch_environment", slug)
+
+    async def pipeline(self, env_id: str) -> BranchEnvironmentPipeline:
+        """Live deploy pipeline for an env — one stage per hop in the chain.
+
+        commit → flux → (source | secrets) → helm → workloads → live, each
+        derived read-only from git + the cluster. Envs deleted from git but
+        still terminating report a short teardown pipeline instead.
+        """
+        slug = _validate_slug(env_id)
+        env = await self._read_env(slug)
+        namespace = f"druppie-{slug}"
+
+        if env is None:
+            # Gone from git — teardown pipeline while the namespace terminates.
+            if self.cluster.available:
+                ns = await self.cluster.get_namespace(namespace)
+                if ns is not None and ns.get("metadata", {}).get("labels", {}).get(
+                    f"{_ANN}/branch-env"
+                ):
+                    return BranchEnvironmentPipeline(
+                        env_id=slug,
+                        status=BranchEnvironmentStatus.DELETING,
+                        stages=[
+                            PipelineStage(
+                                id="commit-removed",
+                                name="Removed from GitOps repo",
+                                status=_STAGE_DONE,
+                            ),
+                            PipelineStage(
+                                id="pruning",
+                                name="Flux pruning namespace",
+                                status=_STAGE_BUSY,
+                                message="namespace is terminating",
+                            ),
+                        ],
+                    )
+            raise NotFoundError("branch_environment", slug)
+
+        commit = PipelineStage(id="commit", name="Commit (aigit)", status=_STAGE_DONE)
+
+        if not self.cluster.available:
+            # Local dev / tests: git says the env exists, but the deploy chain
+            # is not observable from here.
+            unavailable = "live status unavailable from here"
+            stages = [commit] + [
+                PipelineStage(id=sid, name=sname, status=_STAGE_PENDING, message=unavailable)
+                for sid, sname in (
+                    ("flux", "Flux sync"),
+                    ("source", "Chart source"),
+                    ("secrets", "Secrets (Vault)"),
+                    ("helm", "Helm install"),
+                    ("workloads", "Pods & images"),
+                    ("live", "Live"),
+                )
+            ]
+            return BranchEnvironmentPipeline(
+                env_id=slug, status=BranchEnvironmentStatus.DEPLOYING, stages=stages
+            )
+
+        ns, kustomization, gitrepo, externalsecrets, hr, deployments, pods = (
+            await asyncio.gather(
+                self.cluster.get_namespace(namespace),
+                self.cluster.get_kustomization(),
+                self.cluster.get_gitrepository(slug),
+                self.cluster.list_externalsecrets(namespace),
+                self.cluster.get_helmrelease(namespace),
+                self.cluster.list_deployments(namespace),
+                self.cluster.list_pods(namespace),
+            )
+        )
+
+        stages = [
+            commit,
+            _derive_flux_stage(ns, kustomization),
+            _derive_source_stage(gitrepo, env["branch"]),
+            _derive_secrets_stage(ns, externalsecrets),
+            _derive_helm_stage(ns, hr),
+            _derive_workloads_stage(deployments, pods),
+        ]
+        all_done = all(s.status == _STAGE_DONE for s in stages)
+        stages.append(
+            PipelineStage(
+                id="live",
+                name="Live",
+                status=_STAGE_DONE if all_done else _STAGE_PENDING,
+                detail=f"https://{env['host']}" if all_done else None,
+            )
+        )
+
+        if any(s.status == _STAGE_FAILED for s in stages):
+            overall = BranchEnvironmentStatus.FAILED
+        elif all(s.status == _STAGE_DONE for s in stages):
+            overall = BranchEnvironmentStatus.RUNNING
+        else:
+            overall = BranchEnvironmentStatus.DEPLOYING
+        return BranchEnvironmentPipeline(env_id=slug, status=overall, stages=stages)
 
     # -------------------------------------------------------------------------
     # Internals

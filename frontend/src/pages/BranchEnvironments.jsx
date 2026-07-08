@@ -19,11 +19,14 @@ import {
   X,
   Code2,
   PowerOff,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react'
 
 import { branchEnvironmentsApi } from '../services/api'
 import { useAuth } from '../App'
 import { useToast } from '../components/Toast'
+import BranchEnvPipeline from '../components/BranchEnvPipeline'
 import PageHeader from '../components/shared/PageHeader'
 import EmptyState from '../components/shared/EmptyState'
 import { SkeletonProjectCard } from '../components/shared/Skeleton'
@@ -183,6 +186,19 @@ const BranchEnvCard = ({
   const isTransitional = TRANSITIONAL.has(env.status)
   const canOpen = env.status === 'running' && env.url
 
+  // Deploy pipeline: auto-open while the env is transitioning or failed so you
+  // can see which hop is busy/broken; the toggle overrides the default.
+  const pipelineAutoOpen = isTransitional || env.status === 'failed'
+  const [pipelineChoice, setPipelineChoice] = useState(null)
+  const pipelineOpen = pipelineChoice ?? pipelineAutoOpen
+
+  const { data: pipeline, isLoading: pipelineLoading } = useQuery({
+    queryKey: ['branch-env-pipeline', env.id],
+    queryFn: () => branchEnvironmentsApi.pipeline(env.id),
+    enabled: pipelineOpen,
+    refetchInterval: pipelineOpen && pipelineAutoOpen ? POLL_MS : false,
+  })
+
   const handleDelete = () => {
     if (
       window.confirm(
@@ -285,6 +301,33 @@ const BranchEnvCard = ({
         >
           {isDeleting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
         </button>
+      </div>
+
+      {/* Deploy pipeline */}
+      <div className="mt-3 pt-3 border-t border-gray-100">
+        <button
+          onClick={() => setPipelineChoice(!pipelineOpen)}
+          aria-expanded={pipelineOpen}
+          className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-700 transition-colors focus:outline-none"
+        >
+          {pipelineOpen ? (
+            <ChevronUp className="w-3.5 h-3.5" />
+          ) : (
+            <ChevronDown className="w-3.5 h-3.5" />
+          )}
+          Pipeline
+        </button>
+        {pipelineOpen &&
+          (pipeline ? (
+            <div className="mt-2">
+              <BranchEnvPipeline stages={pipeline.stages} />
+            </div>
+          ) : pipelineLoading ? (
+            <div className="mt-2 flex items-center gap-2 text-xs text-gray-400">
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              Loading pipeline…
+            </div>
+          ) : null)}
       </div>
 
       {/* Workspace */}

@@ -26,6 +26,41 @@ class BranchEnvironmentStatus(str, Enum):
     DELETING = "deleting"
 
 
+class PipelineStageStatus(str, Enum):
+    """Status of a single stage in the deploy pipeline."""
+
+    PENDING = "pending"
+    BUSY = "busy"
+    DONE = "done"
+    FAILED = "failed"
+    SKIPPED = "skipped"
+
+
+class PipelineStage(BaseModel):
+    """One node in the deploy pipeline visual.
+
+    ``id`` is a stable machine key (commit/flux/source/secrets/helm/workloads/
+    live for deploys; commit-removed/pruning for teardowns); ``name`` is the
+    human label shown under the node.
+    """
+
+    id: str
+    name: str
+    status: PipelineStageStatus
+    # Error/context message; shown in the failure callout under the pipeline.
+    message: str | None = None
+    # Short progress hint for busy stages, e.g. "7/12 deployments ready".
+    detail: str | None = None
+
+
+class BranchEnvironmentPipeline(BaseModel):
+    """Live deploy pipeline for one branch environment (derived, not stored)."""
+
+    env_id: str
+    status: BranchEnvironmentStatus
+    stages: list[PipelineStage]
+
+
 class BranchEnvironmentSummary(BaseModel):
     """Lightweight branch environment for lists and embedding.
 
