@@ -552,7 +552,11 @@ def test_build_workspace_yaml_shape():
     # Deployment: workspace + oauth2-proxy containers, Recreate strategy.
     dep = by_kind["Deployment"]
     assert dep["spec"]["strategy"]["type"] == "Recreate"
-    containers = {c["name"]: c for c in dep["spec"]["template"]["spec"]["containers"]}
+    pod_spec = dep["spec"]["template"]["spec"]
+    # Harbor is a private registry: without the pull secret the image pull
+    # fails with "no basic auth credentials".
+    assert pod_spec["imagePullSecrets"] == [{"name": "harbor-regcred"}]
+    containers = {c["name"]: c for c in pod_spec["containers"]}
     assert set(containers) == {"workspace", "oauth2-proxy"}
 
     ws = containers["workspace"]

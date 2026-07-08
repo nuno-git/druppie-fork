@@ -568,6 +568,9 @@ def build_workspace_yaml(slug: str, branch: str, host_env: str, created_at: str)
                 "spec": {
                     # Co-locate with the RWO workspace PVC (same pin as the env).
                     "nodeSelector": {"kubernetes.io/hostname": BRANCH_ENV_NODE},
+                    # Same ESO-synced Harbor credentials as the env's own pods;
+                    # without this the private registry rejects the pull.
+                    "imagePullSecrets": [{"name": BRANCH_ENV_PULL_SECRET}],
                     "containers": [
                         {
                             "name": "workspace",
