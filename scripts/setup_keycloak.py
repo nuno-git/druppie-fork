@@ -367,10 +367,17 @@ def main():
                 #     dot (mirrors _workspace_host in branch_environment_service)
                 #   - http://localhost:8080 — code-server's port proxy as seen
                 #     from Chromium inside the workspace desktop
+                #   - http://localhost:5173 — the bare Vite dev server, also
+                #     from the workspace desktop (vite.config.js mirrors the
+                #     /proxy/8000 backend route so the app fully works there)
                 scheme, sep, rest = frontend_url.partition("://")
                 label, dot, domain = rest.partition(".")
                 workspace_url = f"{scheme}{sep}{label}-dev.{domain}" if dot else ""
-                extra_origins = [u for u in (workspace_url, "http://localhost:8080") if u]
+                extra_origins = [
+                    u
+                    for u in (workspace_url, "http://localhost:8080", "http://localhost:5173")
+                    if u
+                ]
                 client["redirectUris"] = [
                     f"{frontend_url}/*",
                     frontend_url,
