@@ -70,6 +70,12 @@ RUN curl -fsSL "https://github.com/coder/code-server/releases/download/v${CODE_S
     && rm /tmp/code-server.tar.gz \
     && code-server --version
 
+# Claude Code CLI (used from the integrated terminal and by the VS Code
+# extension installed below). Login state lives under CLAUDE_CONFIG_DIR on
+# the workspace PVC (set by the entrypoint), so it survives pod restarts.
+RUN npm install -g @anthropic-ai/claude-code \
+    && claude --version
+
 # ===========================================================================
 # Layer 3 — Non-root user + baked repo snapshot (colab-dev HEAD)
 # ===========================================================================
@@ -127,6 +133,11 @@ RUN install -d -m 755 -o developer -g developer /home/developer/.config/code-ser
 
 USER developer
 WORKDIR /workspace
+
+# Claude Code VS Code extension (Open VSX). Installed as the developer user so
+# it lands in ~/.local/share/code-server; the extension drives the CLI above.
+RUN code-server --install-extension Anthropic.claude-code \
+    && code-server --list-extensions | grep -i claude
 
 # code-server:8080  backend:8000  frontend/vite:5173
 EXPOSE 8000 5173 8080
