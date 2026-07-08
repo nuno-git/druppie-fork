@@ -594,6 +594,21 @@ def build_workspace_yaml(slug: str, branch: str, host_env: str, created_at: str)
                                     },
                                 },
                             ],
+                            # Same Vault-sourced env vars as the app pods (the
+                            # env's secrets_source: colab-dev shared map or the
+                            # deployer's own druppie/developers/<user> map), so
+                            # personal tool config — e.g. Claude Code's
+                            # ANTHROPIC_* keys — reaches the workspace without
+                            # manual copying. Optional: workspace boots fine
+                            # without the secret.
+                            "envFrom": [
+                                {
+                                    "secretRef": {
+                                        "name": BRANCH_ENV_APP_SECRET,
+                                        "optional": True,
+                                    }
+                                }
+                            ],
                             "ports": [
                                 {"name": "code-server", "containerPort": 8080},
                                 {"name": "backend-dev", "containerPort": 8000},

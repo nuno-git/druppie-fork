@@ -575,6 +575,11 @@ def test_build_workspace_yaml_shape():
         "key": "git-token",
         "optional": True,
     }
+    # Vault-sourced env vars (secrets_source map) reach the workspace too, so
+    # personal tool config (e.g. Claude Code) needs no manual copying.
+    assert ws["envFrom"] == [
+        {"secretRef": {"name": "branch-env-secrets", "optional": True}}
+    ]
     ports = {p["containerPort"] for p in ws["ports"]}
     assert {8080, 8000, 5173} <= ports
 
