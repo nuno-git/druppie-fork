@@ -87,3 +87,6 @@ testing/autoscaling/results/*.jpg
 testing/autoscaling/results/*.jpeg
 .omo/
 .claude/
+
+# Auto-generated Current Architecture Specification (regen via scripts/generate_cas.py)
+docs/adrs/CAS.md
