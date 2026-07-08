@@ -19,8 +19,7 @@ class Project(Base):
     description = Column(Text)
     repo_name = Column(String(255), nullable=True)  # repo name only (e.g., "todo-app-abc12345")
     repo_owner = Column(String(255), nullable=True)  # Gitea username who owns the repo
-    repo_url = Column(String(512))  # Full public URL (e.g., "http://gitea:3000/username/repo")
-    clone_url = Column(String(512))
+    repo_url = Column(String(512))  # Full public URL (e.g., "http://gitea:3000/username/repo") - kept for backward compat
     owner_id = Column(UUID(as_uuid=True), ForeignKey("users.id"))
     status = Column(String(20), default="active")  # active, archived
     created_at = Column(DateTime(timezone=True), default=utcnow)
@@ -34,7 +33,6 @@ class Project(Base):
             "repo_name": self.repo_name,
             "repo_owner": self.repo_owner,
             "repo_url": self.repo_url,
-            "clone_url": self.clone_url,
             "owner_id": str(self.owner_id) if self.owner_id else None,
             "status": self.status,
             "created_at": self.created_at.isoformat() if self.created_at else None,

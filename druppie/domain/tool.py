@@ -348,7 +348,8 @@ class ToolDefinition(BaseModel):
                     normalized[key] = value
             else:
                 normalized[key] = value
-        return normalized
+        # Strip null values - LLMs send null instead of omitting optional params
+        return {k: v for k, v in normalized.items() if v is not None}
 
     def validate_arguments(self, arguments: dict | None) -> tuple[bool, str | None, dict | None, dict | None]:
         """Validate arguments against JSON schema.
@@ -374,6 +375,11 @@ class ToolDefinition(BaseModel):
         if not self.json_schema:
             # No schema to validate against - accept everything
             return True, None, arguments, None
+
+        # Strip None values — strict mode schema tells LLM all fields are required
+        # with nullable types, so LLMs send null for optional params. The raw
+        # schema may not have nullable types, so strip before validating.
+        arguments = {k: v for k, v in arguments.items() if v is not None}
 
         # First try with original arguments
         try:

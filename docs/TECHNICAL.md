@@ -1228,8 +1228,8 @@ Optional:
 | `VITE_KEYCLOAK_URL` | `http://localhost:8180` | Frontend Keycloak URL |
 | `SANDBOX_CONTROL_PLANE_URL` | `http://sandbox-control-plane:8787` | Sandbox control plane endpoint |
 | `SANDBOX_API_SECRET` | `sandbox-dev-secret` | HMAC-SHA256 secret for sandbox auth tokens |
-| `SANDBOX_MEMORY_LIMIT` | `4g` | Docker memory limit per sandbox container |
-| `SANDBOX_CPU_LIMIT` | `2` | Docker CPU limit per sandbox container |
+| `SANDBOX_MEMORY_LIMIT` | `12g` | Docker memory limit per sandbox container |
+| `SANDBOX_CPU_LIMIT` | `4` | Docker CPU limit per sandbox container |
 
 ### 10.2 Configuration Files
 
@@ -1297,11 +1297,239 @@ The `tool_call_id` FK enables direct lookup from webhook → tool call without t
 
 ---
 
-## 11. Translation Service
+## 11. Agent Runtime Library (`druppie/agent_runtime/`)
+
+### 11.1 Design Principle
+
+The `agent_runtime` package is a **storage-agnostic, self-contained agent execution library** with zero coupling to `druppie.db`, `druppie.domain`, or `druppie.repositories`. It defines its own types (dataclasses, not Pydantic), its own event system, and its own tool routing. The only external dependencies are stdlib and PyYAML.
+
+This library can execute an LLM agent loop with MCP tool calling, event emission, subagent spawning, and sandbox management without touching any database or web framework.
+
+### 11.2 Dependencies
+
+| Dependency | Purpose |
+|------------|---------|
+| Python stdlib | Core types, async IO, dataclasses |
+| PyYAML | Agent definition parsing |
+
+No Pydantic, no SQLAlchemy, no FastAPI, no LiteLLM. All domain types use `@dataclass` for zero-framework overhead.
+
+### 11.3 Layer Architecture (Bottom-Up)
+
+The package is organized in strict dependency layers. Higher layers import from lower layers, never the reverse.
+
+```
+Layer 0: types.py          Core types (dataclasses)
+Layer 1: definition.py     YAML parsing + schema generation
+Layer 2: events.py         EventEmitter (callback-based)
+Layer 3: compaction.py     Context estimation + LLM-summarized compaction
+Layer 4: tools/mcp.py      MCPConnection type
+Layer 5: tools/done.py     DoneTool with dynamic schema + validation
+Layer 6: tools/provider.py ToolProvider protocol + MCPToolProvider
+Layer 7: loop.py           AgentLoop main execution loop
+Layer 8: subagents.py      Parallel subagent spawning
+Layer 9: compat.py         Bridge from old Druppie backend to the runtime
+```
+
+#### Layer 0: `types.py` — Core Types
+
+Defines the foundational data structures used by all higher layers:
+
+| Type | Purpose |
+|------|---------|
+| `AgentEvent` | Lifecycle event emitted during execution (agent_start, agent_end, tool_call, tool_result, etc.) |
+| `AgentResult` | Final result returned by `AgentLoop.run()` — contains output, status, and metadata |
+| `LoopConfig` | Configuration for the agent loop (max iterations, timeouts, temperature, etc.) |
+| `CancellationToken` | Cooperative cancellation check (polled between iterations) |
+| `DoneResult` | Structured result from the `done` tool (summary, status, preconditions) |
+| `RequiredToolCall` | Specifies a tool that must be called before the agent can finish |
+| `CompletionPrecondition` | A condition that must be satisfied for the agent to complete |
+| `CompletionSummaryRequirement` | Defines what the summary must contain |
+| `AgentLoopError` | Base exception for loop errors |
+| `AgentCancelledError` | Raised when the cancellation token is triggered |
+
+#### Layer 1: `definition.py` — Agent Definition Parsing
+
+Parses YAML agent definition files into structured types. Also provides `build_done_schema()` which dynamically generates the JSON schema for the `done` tool based on the agent's declared summary requirements and preconditions.
+
+#### Layer 2: `events.py` — EventEmitter
+
+Callback-based event system. Consumers register handlers for named events. The loop emits events at key lifecycle points:
+
+| Event | When |
+|-------|------|
+| `agent_start` | Loop begins execution |
+| `agent_end` | Loop completes (success or failure) |
+| `tool_call` | A tool invocation starts |
+| `tool_result` | A tool invocation completes |
+| `subagent_start` | A subagent is spawned |
+| `subagent_end` | A subagent completes |
+| `context_compressed` | Conversation body summarized to relieve context pressure |
+| `context_overflow` | Context window exceeds limits |
+
+#### Layer 3: `compaction.py` — Message Compaction
+
+Manages context pressure with a calibrated token estimator and an LLM-based summarizer. `MessageCompactor.estimate_tokens()` approximates token usage from message chars (calibrated against real `prompt_tokens` from each LLM response). When usage crosses `CompactionConfig.summarization_threshold`, `compress()` summarizes the conversation body via the LLM and replaces it with a single summary message, keeping the system + user header intact (falling back to a static notice if summarization fails). `truncate_tool_result()` caps oversized tool outputs.
+
+#### Layer 4: `tools/mcp.py` — MCP Connection
+
+Defines the `MCPConnection` type representing a connection to a single MCP server (URL, headers, metadata). Used by `MCPToolProvider` to route tool calls.
+
+#### Layer 5: `tools/done.py` — Done Tool
+
+Implements the `DoneTool` with a **dynamically generated schema** derived from the agent definition. Validation follows a three-stage pipeline:
+
+1. **Schema validation** — arguments must conform to the generated JSON schema
+2. **Summary status check** — the `summary_status` field must match allowed values
+3. **Preconditions check** — all declared `CompletionPrecondition` items must be satisfied
+
+Agents cannot finish until all preconditions are met and a valid summary is provided.
+
+#### Layer 6: `tools/provider.py` — Tool Provider
+
+Defines the `ToolProvider` protocol (abstract interface) and `MCPToolProvider` implementation:
+
+```
+ToolProvider (protocol)
+  |-- list_tools()        -> list of available tools
+  |-- call_tool(name, args) -> tool result
+  |-- get_tool_schema(name) -> JSON schema
+
+MCPToolProvider (implementation)
+  |-- Routes calls to MCPConnection per server
+  |-- One MCPConnection per configured MCP server
+```
+
+The protocol allows alternative tool backends (e.g., builtins, mocks) without modifying the loop.
+
+#### Layer 7: `loop.py` — AgentLoop
+
+The main execution loop. Orchestrates the full agent lifecycle:
+
+```
+AgentLoop.run(llm, tool_provider, definition, events, cancellation_token)
+  |
+  |-- 1. Build messages from definition (system prompt + user prompt)
+  |-- 2. Call LLM with messages + tool schemas
+  |-- 3. Parse response for tool calls
+  |-- 4. Route each tool call through ToolProvider
+  |-- 5. If "done" tool -> validate + return AgentResult
+  |-- 6. If context overflow -> truncate and retry
+  |-- 7. If cancellation triggered -> raise AgentCancelledError
+  |-- 8. If pause detected -> yield control
+  |-- 9. Otherwise -> append results, loop to step 2
+```
+
+Key responsibilities:
+
+- **LLM interface**: The `llm` parameter is an async callable compatible with litellm's `acompletion` signature. The library does not import litellm — it receives the callable from the caller.
+- **Tool routing**: All tool calls go through the `ToolProvider` protocol.
+- **Context overflow**: Detects when the message history exceeds the model's context window and truncates older messages.
+- **Done enforcement**: The `done` tool is always available. Agents must call it to finish.
+- **Pause detection**: Checks the cancellation token between iterations for cooperative stopping.
+
+#### Layer 8: `subagents.py` — Subagent Management
+
+`SubagentsMCP` provides parallel subagent spawning with safety guardrails:
+
+| Feature | Behavior |
+|---------|----------|
+| Parallel spawning | Multiple subagents run concurrently via `asyncio` |
+| Depth limits | Maximum nesting depth prevents infinite recursion |
+| Circular detection | Tracks active agent IDs to prevent re-entrant cycles |
+| Sandbox sharing | Subagents inherit the parent's sandbox context |
+
+#### Layer 9: `compat.py` — Backend Compatibility Bridge
+
+Bridges the storage-agnostic runtime to the existing Druppie backend without modifying either. Provides `adapt_llm()` (wraps the old `BaseLLM` as the runtime's async LLM callable), `DruppieToolProvider` (implements the `ToolProvider` protocol over the old `ToolExecutor`/builtin tools, persisting every call to the DB via short-lived sessions), `create_event_persister()` (an event callback that maps runtime `AgentEvent`s to DB writes for runs, LLM calls, tool calls, and compaction events), `SubagentsMCPConnection` (in-process MCP wrapper around `SubagentsMCP`), and `old_definition_to_new()` (converts the old Pydantic `AgentDefinition` to the new dataclass).
+
+### 11.4 Data Flow
+
+```
+AgentDefinition (YAML)
+  |
+  v
+AgentLoop.run(llm, tool_provider, ...)
+  |
+  |-- LLM call (async callable)
+  |     |
+  |     v
+  |   Tool calls (parsed from LLM response)
+  |     |
+  |     v
+  |   ToolProvider.call_tool(name, args)
+  |     |
+  |     v
+  |   MCPToolProvider -> MCPConnection -> MCP server (HTTP)
+  |
+  |-- EventEmitter callbacks (lifecycle events)
+  |
+  v
+AgentResult (output, status, metadata)
+```
+
+### 11.5 LLM Interface
+
+The library accepts an **async callable** as its LLM interface, compatible with litellm's `acompletion`:
+
+```python
+async def llm(messages: list, tools: list, **kwargs) -> LLMResponse:
+    ...
+```
+
+The library never imports litellm directly. The caller (typically the druppie backend) wraps litellm or any compatible provider and passes the callable. This keeps the library provider-agnostic.
+
+### 11.6 Tool Routing
+
+```
+AgentLoop
+  |
+  v
+ToolProvider (protocol)
+  |
+  v
+MCPToolProvider
+  |
+  +-- MCPConnection (server A)  ->  HTTP POST to MCP server A
+  +-- MCPConnection (server B)  ->  HTTP POST to MCP server B
+  +-- ...
+```
+
+Each MCP server has its own `MCPConnection`. The provider maps tool names to their originating server and routes calls accordingly.
+
+### 11.7 Coexistence with Existing Agent System
+
+The `agent_runtime` library is **completely separate** from the existing agent system in `druppie/agents/` and `druppie/execution/`:
+
+| Aspect | Existing (`druppie/agents/` + `druppie/execution/`) | Library (`druppie/agent_runtime/`) |
+|--------|------------------------------------------------------|-------------------------------------|
+| Types | Pydantic models (`druppie/domain/`) | Dataclasses (self-contained) |
+| Storage | Direct DB access via repositories | Storage-agnostic, no DB dependency |
+| Tool routing | `ToolExecutor` + `ToolRegistry` | `ToolProvider` protocol |
+| Event system | None (DB writes for status) | `EventEmitter` callbacks |
+| LLM calls | `LLMService` singleton | Async callable injection |
+| Agent definitions | `AgentDefinitionLoader` (YAML + DB) | `definition.py` (YAML only) |
+
+Zero modifications are required to existing code when using the library. Both systems can coexist in the same process.
+
+### 11.8 Test Suite
+
+179 tests in `druppie/tests/agent_runtime/` with a shared `conftest.py` providing:
+
+| Fixture | Purpose |
+|---------|---------|
+| `MockLLM` | Simulates LLM responses (configurable per-call) |
+| `mock_mcp_connection` | Simulates MCP server connections with canned responses |
+
+Tests cover all layers: type construction, YAML parsing, event emission, tool routing, loop iteration, done enforcement, subagent spawning, and sandbox pool management.
+
+---
+
+## 12. Translation Service
 
 The platform provides automatic translation so agents always work in English while users interact in their own language.
 
-### 11.1 Architecture
+### 12.1 Architecture
 
 | Component | Location | Responsibility |
 |-----------|----------|----------------|
@@ -1311,7 +1539,7 @@ The platform provides automatic translation so agents always work in English whi
 
 The translation service is separate from the main LLM provider — it always uses DeepInfra regardless of `LLM_PROVIDER`. This requires `DEEPINFRA_API_KEY` to be set. If the key is missing, `TranslationNotAvailableError` is raised on first use (not silently swallowed).
 
-### 11.2 Data Flow
+### 12.2 Data Flow
 
 ```
 User (Dutch) → Orchestrator → [detect language] → [translate to English] → Router/Planner/Agent
@@ -1323,7 +1551,7 @@ Agent (English) ← ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ 
     └─► done (summary) → [translate to Dutch] → Chat timeline
 ```
 
-### 11.3 Integration Points
+### 12.3 Integration Points
 
 | Point | File | What happens |
 |-------|------|--------------|
@@ -1335,7 +1563,7 @@ Agent (English) ← ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ 
 | Summarizer message | `builtin_tools.py` ~line 731 | Translate to session language before storing |
 | Agent prompt | `prompt_builder.py` ~line 82 | Inject English-only instruction block |
 
-### 11.3.1 HITL Answer Field Naming
+### 12.3.1 HITL Answer Field Naming
 
 The tool call result for answered HITL questions stores two versions of the answer:
 
@@ -1346,7 +1574,7 @@ The tool call result for answered HITL questions stores two versions of the answ
 
 `message_history.py` strips `user_answer` before reconstructing tool results for agent context, so agents only see the English version.
 
-### 11.3.2 HITL Question Bilingual Storage
+### 12.3.2 HITL Question Bilingual Storage
 
 HITL questions store both the translated (display) and original (English) versions:
 
@@ -1359,7 +1587,7 @@ HITL questions store both the translated (display) and original (English) versio
 
 The debug panel (`DebugEventLog.jsx`) shows an "Original (English)" section on HITL tool calls when `question_english` is present, making it easy to compare what the agent generated vs what the user saw.
 
-### 11.4 Design Document Translation Paths
+### 12.4 Design Document Translation Paths
 
 | English path | Dutch path |
 |--------------|------------|
@@ -1367,11 +1595,11 @@ The debug panel (`DebugEventLog.jsx`) shows an "Original (English)" section on H
 | `docs/technical-design.md` | `docs/technisch-ontwerp.md` |
 | `docs/technical-research.md` | `docs/technisch-onderzoek.md` |
 
-### 11.5 Session Language
+### 12.5 Session Language
 
 Stored in `sessions.language` (VARCHAR(10), nullable). Set on the first user message and locked — HITL answers do not update it, preventing a Dutch user's English-sounding answer from flipping the session language.
 
-### 11.6 Error Handling
+### 12.6 Error Handling
 
 - `TranslationNotAvailableError` (missing API key) propagates — the session fails with a clear error message.
 - Transient translation errors (API timeouts, empty responses) fall back to the original English text with a logged warning.

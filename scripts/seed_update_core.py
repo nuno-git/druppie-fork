@@ -303,8 +303,6 @@ def create_gitea_repo(client: httpx.Client, name: str) -> dict:
     return {
         "repo_name": repo_name,
         "repo_owner": "druppie_admin",
-        "repo_url": f"{GITEA_URL}/druppie_admin/{repo_name}",
-        "clone_url": data.get("clone_url", f"{GITEA_URL}/druppie_admin/{repo_name}.git"),
     }
 
 
@@ -366,13 +364,12 @@ def populate_db(repo_info: dict):
         # Project
         cur.execute(
             """INSERT INTO projects
-               (id, name, description, repo_name, repo_owner, repo_url, clone_url,
+               (id, name, description, repo_name, repo_owner,
                 owner_id, status, created_at, updated_at)
-               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s)""",
             (project_id, "druppie-smiley",
-             "Add a smiley.md file to the Druppie codebase with ASCII art",
+             "Add a smiley.md file to Druppie codebase with ASCII art",
              repo_info["repo_name"], repo_info["repo_owner"],
-             repo_info["repo_url"], repo_info["clone_url"],
              admin_id, "active", _ts(30), _ts(30)),
         )
 
@@ -586,7 +583,7 @@ def main():
     print(f"  Session:     {session_url}")
     print(f"  Session ID:  {session_id}")
     print(f"  Project:     druppie-smiley")
-    print(f"  Gitea repo:  {repo_info['repo_url']}")
+    print(f"  Gitea repo:  {GITEA_URL}/druppie_admin/{repo_info['repo_name']}")
     print()
     print("  Agent pipeline state:")
     for seq_idx, (agent_id, status, _, _, _) in enumerate(AGENTS):

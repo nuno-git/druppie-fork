@@ -7,6 +7,7 @@ from collections import defaultdict
 from ..db.models import (
     AgentRun,
     Approval,
+    CompactionEvent,
     LlmCall,
     MessageAttachment,
     Project,
@@ -26,6 +27,7 @@ from ..domain import (
     AgentRunSummary,
     ApprovalStatus,
     ApprovalSummary,
+    CompactionEventDetail,
     Attachment,
     LLMCallDetail,
     LLMMessage,
@@ -33,6 +35,7 @@ from ..domain import (
     Message,
     NormalizationDetail,
     ProjectSummary,
+    ResumeContext,
     SessionDetail,
     SessionStatus,
     SessionSummary,
@@ -72,16 +75,29 @@ class SessionRepository(BaseRepository):
         limit: int = 20,
         offset: int = 0,
         status: str | None = None,
+        extra_session_ids: list[UUID] | None = None,
     ) -> tuple[list[SessionSummary], int]:
         """List sessions for a user with pagination.
 
         If user_id is None, returns all sessions (admin view).
+        If extra_session_ids is given, those sessions are also included
+        (used to surface sessions where the current user is an expert).
         """
+        from sqlalchemy import or_
+
         query = self.db.query(SessionModel)
 
         # Filter by user if specified (None means admin viewing all)
         if user_id is not None:
-            query = query.filter_by(user_id=user_id)
+            if extra_session_ids:
+                query = query.filter(
+                    or_(
+                        SessionModel.user_id == user_id,
+                        SessionModel.id.in_(list(extra_session_ids)),
+                    )
+                )
+            else:
+                query = query.filter_by(user_id=user_id)
 
         if status:
             query = query.filter_by(status=status)
@@ -137,6 +153,7 @@ class SessionRepository(BaseRepository):
             # SessionDetail specific
             user_id=session.user_id,
             project=project,
+            language=session.language,
             timeline=timeline,
         )
 
@@ -245,6 +262,11 @@ class SessionRepository(BaseRepository):
             user = self.db.query(UserModel).filter_by(id=session.user_id).first()
             if user:
                 username = user.username
+        project_name = None
+        if session.project_id:
+            project = self.db.query(Project).filter_by(id=session.project_id).first()
+            if project:
+                project_name = project.name
         return SessionSummary(
             id=session.id,
             title=session.title or "Untitled",
@@ -252,6 +274,7 @@ class SessionRepository(BaseRepository):
             error_message=session.error_message,
             project_id=session.project_id,
             username=username,
+            project_name=project_name,
             token_usage=TokenUsage(
                 prompt_tokens=session.prompt_tokens or 0,
                 completion_tokens=session.completion_tokens or 0,
@@ -309,6 +332,7 @@ class SessionRepository(BaseRepository):
                     role=msg.role,
                     content=msg.content or "",
                     agent_id=msg.agent_id,
+                    agent_run_id=msg.agent_run_id,
                     sequence_number=msg.sequence_number,
                     created_at=msg.created_at,
                     attachments=attachments_by_msg.get(msg.id, []),
@@ -357,6 +381,7 @@ class SessionRepository(BaseRepository):
             error_message=run.error_message,
             planned_prompt=run.planned_prompt,
             sequence_number=run.sequence_number,
+            spawning_tool_call_id=run.spawning_tool_call_id,
             token_usage=TokenUsage(
                 prompt_tokens=run.prompt_tokens or 0,
                 completion_tokens=run.completion_tokens or 0,
@@ -366,9 +391,24 @@ class SessionRepository(BaseRepository):
             completed_at=run.completed_at,
         )
 
-    def _build_agent_run_detail(self, run: AgentRun) -> AgentRunDetail:
-        """Build full agent run detail with LLM calls and their tool executions."""
+    def _build_agent_run_detail(self, run: AgentRun, _depth: int = 0) -> AgentRunDetail:
+        """Build full agent run detail with LLM calls, tool executions, and nested subagent runs."""
         llm_calls = self._build_llm_calls(run.id)
+        compaction_events = self._build_compaction_events(run.id)
+        resume_contexts = self._build_resume_contexts(run.id)
+
+        subagent_runs: list[AgentRunDetail] = []
+        if _depth < 10:
+            child_runs = (
+                self.db.query(AgentRun)
+                .filter_by(parent_run_id=run.id)
+                .order_by(AgentRun.sequence_number, AgentRun.created_at)
+                .all()
+            )
+            subagent_runs = [
+                self._build_agent_run_detail(child, _depth=_depth + 1)
+                for child in child_runs
+            ]
 
         return AgentRunDetail(
             id=run.id,
@@ -378,6 +418,7 @@ class SessionRepository(BaseRepository):
             error_message=run.error_message,
             planned_prompt=run.planned_prompt,
             sequence_number=run.sequence_number,
+            spawning_tool_call_id=run.spawning_tool_call_id,
             token_usage=TokenUsage(
                 prompt_tokens=run.prompt_tokens or 0,
                 completion_tokens=run.completion_tokens or 0,
@@ -386,7 +427,52 @@ class SessionRepository(BaseRepository):
             started_at=run.started_at,
             completed_at=run.completed_at,
             llm_calls=llm_calls,
+            subagent_runs=subagent_runs,
+            compaction_events=compaction_events,
+            resume_contexts=resume_contexts,
         )
+
+    def _build_compaction_events(self, agent_run_id: UUID) -> list[CompactionEventDetail]:
+        """Build compaction event details for an agent run."""
+        events_db = (
+            self.db.query(CompactionEvent)
+            .filter_by(agent_run_id=agent_run_id)
+            .order_by(CompactionEvent.created_at)
+            .all()
+        )
+        return [
+            CompactionEventDetail(
+                id=ce.id,
+                agent_run_id=ce.agent_run_id,
+                llm_call_id=ce.llm_call_id,
+                phase=ce.phase,
+                tokens_before=ce.tokens_before or 0,
+                tokens_after=ce.tokens_after or 0,
+                turns_compressed=ce.turns_compressed or 0,
+                summary_text=ce.summary_text,
+                created_at=ce.created_at,
+            )
+            for ce in events_db
+        ]
+
+    def _build_resume_contexts(self, agent_run_id: UUID) -> list[ResumeContext]:
+        """Build resume context entries for an agent run from the events table."""
+        from ..db.models.resume_context_event import ResumeContextEvent
+
+        events_db = (
+            self.db.query(ResumeContextEvent)
+            .filter_by(agent_run_id=agent_run_id)
+            .order_by(ResumeContextEvent.created_at)
+            .all()
+        )
+        return [
+            ResumeContext(
+                content=e.content,
+                created_at=e.created_at,
+                llm_call_index=e.llm_call_index,
+            )
+            for e in events_db
+        ]
 
     def _build_llm_calls(self, agent_run_id: UUID) -> list[LLMCallDetail]:
         """Build LLM calls with their tool executions for an agent run."""
@@ -407,33 +493,36 @@ class SessionRepository(BaseRepository):
             # Get tool calls that were executed after this LLM call
             tool_calls = self._build_tool_calls_for_llm(llm)
 
-            # Parse response_content and response_tool_calls from the
-            # JSON blob stored in llm_calls.response_content
-            response_content = None
-            response_tool_calls = None
-            if llm.response_content:
+            response_content = self._extract_response_content(llm.response_content)
+
+            response_tool_calls = llm.response_tool_calls
+            if not response_tool_calls and llm.response_content:
                 try:
                     raw_data = json.loads(llm.response_content)
-                    response_content = raw_data.get("content")
                     response_tool_calls = raw_data.get("tool_calls")
                 except json.JSONDecodeError:
-                    # Fallback for old format (plain text)
-                    response_content = llm.response_content
+                    pass
 
             result.append(LLMCallDetail(
                 id=llm.id,
                 model=llm.model,
                 provider=llm.provider,
                 token_usage=TokenUsage(
-                    prompt_tokens=llm.prompt_tokens,
-                    completion_tokens=llm.completion_tokens,
-                    total_tokens=llm.total_tokens,
+                    prompt_tokens=llm.prompt_tokens or 0,
+                    completion_tokens=llm.completion_tokens or 0,
+                    total_tokens=llm.total_tokens or 0,
                 ),
                 duration_ms=llm.duration_ms,
                 messages=messages,
                 tools_provided=llm.tools_provided,
                 response_content=response_content,
+                thinking_content=llm.thinking_content,
                 response_tool_calls=response_tool_calls,
+                fallback_used=getattr(llm, 'fallback_used', False) or False,
+                intended_provider=getattr(llm, 'intended_provider', None),
+                intended_model=getattr(llm, 'intended_model', None),
+                raw_request=llm.raw_request if llm.raw_request else None,
+                raw_response=llm.raw_response if llm.raw_response else None,
                 retries=[
                     LLMRetryDetail(
                         attempt=r.attempt,
@@ -447,6 +536,29 @@ class SessionRepository(BaseRepository):
             ))
 
         return result
+
+    @staticmethod
+    def _extract_response_content(raw: str | None) -> str | None:
+        """Extract the LLM text content from the response_content column.
+
+        The column may contain:
+        - A JSON blob: {"content": "...", "tool_calls": [...], ...}
+        - Plain text (legacy format)
+        - An error JSON: {"error": "..."}
+        - None
+
+        Returns the actual LLM response text, or None.
+        """
+        if not raw:
+            return None
+        import json
+        try:
+            data = json.loads(raw)
+            if isinstance(data, dict):
+                return data.get("content") or None
+            return raw
+        except json.JSONDecodeError:
+            return raw
 
     def _parse_messages(self, raw_messages: list | None) -> list[LLMMessage]:
         """Parse raw message dicts into LLMMessage objects."""
@@ -566,11 +678,14 @@ class SessionRepository(BaseRepository):
             if child_run_db:
                 child_run = self._build_agent_run_detail(child_run_db)
 
-        # For HITL tools, get question_id, attachments, and use the Question
-        # record's translated text instead of the raw tool call arguments
         question_id = None
         question_attachments = []
-        if tc.tool_name in ("hitl_ask_question", "hitl_ask_multiple_choice_question"):
+        if tc.tool_name in (
+            "hitl_ask_question",
+            "hitl_ask_multiple_choice_question",
+            "ask_expert_question",
+            "ask_expert_multiple_choice_question",
+        ):
             question = (
                 self.db.query(Question)
                 .filter_by(tool_call_id=tc.id)
@@ -641,19 +756,30 @@ class SessionRepository(BaseRepository):
         project = self.db.query(Project).filter_by(id=project_id).first()
         if not project:
             return None
+
         # Look up username from users table
         username = None
         if project.owner_id:
             user = self.db.query(UserModel).filter_by(id=project.owner_id).first()
             if user:
                 username = user.username
+
+        # Resolve repo_url dynamically from repo_name + repo_owner
+        repo_url = None
+        if project.repo_name:
+            from druppie.core.gitea import get_gitea_client
+            try:
+                repo_url = get_gitea_client().get_public_url(project.repo_name, project.repo_owner)
+            except Exception:
+                repo_url = project.repo_url  # Fallback to stored value
+
         return ProjectSummary(
             id=project.id,
             name=project.name,
             description=project.description,
-            repo_url=project.repo_url,
             repo_name=project.repo_name,
             repo_owner=project.repo_owner,
+            repo_url=repo_url,
             username=username,
             created_at=project.created_at,
         )

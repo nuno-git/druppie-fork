@@ -1,0 +1,48 @@
+## Agent test: architect reads FD and produces quality technical research + design
+##
+## Setup: tool test creates a project with FD already written
+##   (router -> planner -> BA -> FD written and pushed to Gitea)
+##
+## continue_session: true — architect runs in the SAME session as setup.
+##   The architect can read the FD from the workspace because it's the same session.
+##
+## This test validates the full architect workflow:
+## - Reads functional-design.md from the project repo
+## - Produces technical-research.md comparing multiple approaches
+## - Produces technical-design.md with concrete implementation details
+## - Commits and pushes design documents to Gitea
+## - Calls done() with DESIGN_APPROVED and BUILD_PATH
+##
+## Judge: evaluates that the architect followed the correct tool sequence
+##   (read before write), produced substantive documents, and signaled approval.
+
+agent-test:
+  name: architect-designs-from-fd
+  description: "Architect reads FD and produces technical research + technical design with proper analysis"
+  tags: [architect, e2e, agent-runtime]
+
+  setup:
+    - setup-project-with-fd
+  continue_session: true
+
+  message: |
+    Review the functional design and create the technical research and technical design documents.
+    This is a PROJECT build path — the project repo has the functional design at docs/functional-design.md.
+
+  agents: [architect]
+
+  judge:
+    context: [architect]
+    checks:
+      - "The architect must have called coding:read_file to read docs/functional-design.md before writing any designs. Check that read_file appears BEFORE any make_design calls in the tool_calls sequence."
+      - "The architect must have created docs/technical-research.md via coding:make_design. The research document should compare at least 2 different technical approaches with pros and cons for each."
+      - "The architect must have created docs/technical-design.md via coding:make_design. The design document should reference the chosen approach from the research and include concrete implementation details like components, data models, or API endpoints."
+      - "The architect's final done() summary must contain DESIGN_APPROVED and BUILD_PATH. Check the last builtin:done call's arguments."
+      - "The architect must have called coding:push_changes at least once to commit the design documents to the repository."
+
+  verify:
+    - gitea_repo_exists: true
+    - file_exists: docs/technical-research.md
+    - file_exists: docs/technical-design.md
+    - file_not_empty: docs/technical-research.md
+    - file_not_empty: docs/technical-design.md

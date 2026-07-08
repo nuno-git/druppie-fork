@@ -102,6 +102,22 @@ export const getAttachmentUrl = (attachmentId) => {
   return `${API_URL}/api/attachments/${attachmentId}${params}`
 }
 
+export const getSandboxEvents = async (sessionId, messageId) => {
+  const allEvents = []
+  let cursor = null
+  while (true) {
+    let url = `/api/sandbox-sessions/${sessionId}/events?limit=500`
+    if (messageId) url += `&message_id=${messageId}`
+    if (cursor) url += `&cursor=${cursor}`
+    const data = await request(url)
+    const events = data.events || []
+    allEvents.push(...events)
+    if (!data.hasMore || !data.cursor) break
+    cursor = data.cursor
+  }
+  return { events: allEvents }
+}
+
 export const cancelChat = (sessionId) =>
   request(`/api/chat/${sessionId}/cancel`, { method: 'POST' })
 
@@ -113,8 +129,17 @@ export const getSessions = (page = 1, limit = 20) =>
 // Get complete session with ALL data (messages, llm_calls, events, approvals, etc.)
 export const getSession = (sessionId) => request(`/api/sessions/${sessionId}`)
 
-export const resumeSession = (sessionId) =>
-  request(`/api/sessions/${sessionId}/resume`, { method: 'POST' })
+export const resumeSession = (sessionId, contexts = null) => {
+  const body = {}
+  if (contexts) body.contexts = contexts
+  return request(`/api/sessions/${sessionId}/resume`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+}
+
+export const getResumableRuns = (sessionId) =>
+  request(`/api/sessions/${sessionId}/resumable`)
 
 export const deleteSessions = (sessionIds) =>
   request('/api/sessions', {
@@ -122,11 +147,14 @@ export const deleteSessions = (sessionIds) =>
     body: sessionIds ? JSON.stringify({ session_ids: sessionIds }) : undefined,
   })
 
-export const retryFromRun = (sessionId, agentRunId, plannedPrompt = null) =>
-  request(`/api/sessions/${sessionId}/retry-from/${agentRunId}`, {
+export const retryRun = (sessionId, agentRunId, plannedPrompt = null) =>
+  request(`/api/sessions/${sessionId}/retry/${agentRunId}`, {
     method: 'POST',
     body: plannedPrompt !== null ? JSON.stringify({ planned_prompt: plannedPrompt }) : JSON.stringify({}),
   })
+
+export const getToolCallLiveOutput = (toolCallId) =>
+  request(`/api/tool-calls/${toolCallId}/live-output`)
 
 // Legacy aliases (use getSession instead - it returns everything)
 export const getSessionTrace = (sessionId) => request(`/api/sessions/${sessionId}`)
@@ -187,10 +215,11 @@ export const getMCPPermissions = () => request('/api/mcps')
 export const checkMCPPermission = (tool) =>
   request('/api/mcps/check', { method: 'POST', body: JSON.stringify({ tool }) })
 
-// ============ Questions (HITL - Human in the Loop) ============
+// ============ Questions (HITL - Human in the Loop, ask_expert) ============
 export const getQuestions = (sessionId = null) =>
   request(`/api/questions${sessionId ? `?session_id=${sessionId}` : ''}`)
 export const getQuestion = (questionId) => request(`/api/questions/${questionId}`)
+export const getPendingQuestions = () => request('/api/questions/pending')
 export const answerQuestion = (questionId, answer, selectedChoices = null, attachmentIds = []) =>
   request(`/api/questions/${questionId}/answer`, {
     method: 'POST',
@@ -292,24 +321,6 @@ export const getAgents = async () => {
   return response.agents || []
 }
 export const getAgent = (agentId) => request(`/api/agents/${agentId}`)
-
-// ============ Sandbox ============
-export const getSandboxEvents = async (sessionId, messageId) => {
-  const allEvents = []
-  let cursor = null
-  // Paginate through all events
-  while (true) {
-    let url = `/api/sandbox-sessions/${sessionId}/events?limit=500`
-    if (messageId) url += `&message_id=${messageId}`
-    if (cursor) url += `&cursor=${cursor}`
-    const data = await request(url)
-    const events = data.events || []
-    allEvents.push(...events)
-    if (!data.hasMore || !data.cursor) break
-    cursor = data.cursor
-  }
-  return { events: allEvents }
-}
 
 // ============ Health ============
 export const getHealth = () => request('/health')
@@ -456,6 +467,11 @@ export const getActiveRun = () =>
 // Kept for backwards compat - used by Evaluations.jsx TestRunDetail
 export const getTestRunAssertionsList = getTestRunAssertions
 
+// ============ Agent Testing ============
+export const executeAgentTest = (params) =>
+  request('/api/agent-test/execute', { method: 'POST', body: JSON.stringify(params) })
+export const getAgentTestRun = (runId) =>
+  request(`/api/agent-test/runs/${runId}`)
 
 // ============ Documentation ============
 export const getDocumentation = () => request("/api/documentation")
@@ -492,3 +508,29 @@ export const getPackageProjects = (manager, name) =>
   request(`/api/cache/packages/${encodeURIComponent(manager)}/${encodeURIComponent(name)}/projects`)
 export const getProjectDependencies = (projectId) =>
   request(`/api/projects/${projectId}/dependencies`)
+
+// ============ Model Management (Admin) ============
+export const getModelManagement = () => request('/api/admin/models')
+export const setAgentModelOverride = (agentId, provider, model, fallbackProvider = null, fallbackModel = null) =>
+  request(`/api/admin/models/agents/${agentId}`, {
+    method: 'PUT',
+    body: JSON.stringify({
+      provider, model,
+      ...(fallbackProvider && { fallback_provider: fallbackProvider, fallback_model: fallbackModel }),
+    }),
+  })
+export const removeAgentModelOverride = (agentId) =>
+  request(`/api/admin/models/agents/${agentId}`, { method: 'DELETE' })
+export const setTranslationModelOverride = (provider, model, fallbackProvider = null, fallbackModel = null) =>
+  request('/api/admin/models/translation', {
+    method: 'PUT',
+    body: JSON.stringify({
+      provider, model,
+      ...(fallbackProvider && { fallback_provider: fallbackProvider, fallback_model: fallbackModel }),
+    }),
+  })
+export const removeTranslationModelOverride = () =>
+  request('/api/admin/models/translation', { method: 'DELETE' })
+export const getProviderStatuses = () => request('/api/admin/models/providers')
+export const validateProvider = (provider, model) =>
+  request(`/api/admin/models/providers/${provider}/validate${model ? `?model=${encodeURIComponent(model)}` : ''}`, { method: 'POST' })

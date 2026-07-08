@@ -15,6 +15,7 @@ class MessageAttachment(Base):
     __tablename__ = "message_attachments"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    owner_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     message_id = Column(UUID(as_uuid=True), ForeignKey("messages.id", ondelete="CASCADE"), nullable=True)
     session_id = Column(UUID(as_uuid=True), ForeignKey("sessions.id", ondelete="CASCADE"), nullable=True)
     question_id = Column(UUID(as_uuid=True), ForeignKey("questions.id", ondelete="CASCADE"), nullable=True)
@@ -34,6 +35,7 @@ class MessageAttachment(Base):
     def to_dict(self):
         return {
             "id": str(self.id),
+            "owner_user_id": str(self.owner_user_id) if self.owner_user_id else None,
             "message_id": str(self.message_id) if self.message_id else None,
             "session_id": str(self.session_id) if self.session_id else None,
             "original_filename": self.original_filename,

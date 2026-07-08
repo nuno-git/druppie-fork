@@ -42,6 +42,7 @@ class LLMService:
     PROVIDERS = {
         "zai": "ZAI_API_KEY",
         "deepinfra": "DEEPINFRA_API_KEY",
+        "openrouter": "OPENROUTER_API_KEY",
         "azure_foundry": "FOUNDRY_API_KEY",
         "ollama": None,
         "mock": None,
@@ -132,18 +133,35 @@ class LLMService:
 
         resolved = resolve_model(agent_def)
 
-        # Validate API key for the resolved provider
-        api_key_env = self.PROVIDERS.get(resolved.provider)
-        if api_key_env and not os.getenv(api_key_env):
+        # Merge agent-level > profile-level thinking config
+        effective_thinking = agent_def.thinking or resolved.thinking
+        effective_effort = agent_def.reasoning_effort or resolved.reasoning_effort
+
+        # For providers with missing API keys but a known fallback,
+        # still create the primary (it will fail at call time) and wrap
+        # in FallbackLLM so the user gets asked to confirm the switch.
+        if resolved.override_unavailable and not resolved.fallback_provider:
             raise LLMConfigurationError(
-                f"{api_key_env} environment variable is required for "
-                f"provider={resolved.provider} (source={resolved.source})"
+                f"Admin override for agent '{agent_def.id}' uses provider "
+                f"'{resolved.provider}' but its API key is not configured "
+                f"and no fallback provider is available."
             )
+
+        # Validate API key unless we know it's unavailable (will fail at call time)
+        if not resolved.override_unavailable:
+            api_key_env = self.PROVIDERS.get(resolved.provider)
+            if api_key_env and not os.getenv(api_key_env):
+                raise LLMConfigurationError(
+                    f"{api_key_env} environment variable is required for "
+                    f"provider={resolved.provider} (source={resolved.source})"
+                )
 
         primary = ChatLiteLLM(
             provider=resolved.provider,
             model=resolved.model,
             temperature=agent_def.temperature,
+            thinking=effective_thinking,
+            reasoning_effort=effective_effort,
         )
 
         has_fallback = False
@@ -156,8 +174,10 @@ class LLMService:
                     provider=resolved.fallback_provider,
                     model=resolved.fallback_model,
                     temperature=agent_def.temperature,
+                    thinking=effective_thinking,
+                    reasoning_effort=effective_effort,
                 )
-                result = FallbackLLM(primary, fallback, session_id=session_id)
+                result = FallbackLLM(primary, fallback, session_id=session_id, agent_id=agent_def.id)
                 has_fallback = True
 
         logger.info(

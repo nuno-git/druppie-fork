@@ -3,18 +3,19 @@
 import os
 from urllib.parse import urljoin
 from uuid import UUID
+
 from sqlalchemy import func
 
 from .base import BaseRepository
-from ..domain import (
-    ProjectSummary,
-    ProjectDetail,
-    TokenUsage,
-    SessionSummary,
-    SessionStatus,
-)
 from ..db.models import Project, Session as SessionModel
 from ..db.models.user import User as UserModel
+from ..domain import (
+    ProjectDetail,
+    ProjectSummary,
+    SessionStatus,
+    SessionSummary,
+    TokenUsage,
+)
 
 
 def _derive_repo_url(repo_url: str | None, repo_owner: str | None, repo_name: str | None) -> str | None:
@@ -140,14 +141,14 @@ class ProjectRepository(BaseRepository):
         self,
         project_id: UUID,
         repo_name: str,
-        repo_url: str,
         repo_owner: str | None = None,
     ) -> None:
-        """Update project with Gitea repository info."""
-        updates = {
-            "repo_name": repo_name,
-            "repo_url": repo_url,
-        }
+        """Update project with Gitea repository info.
+
+        Only writes repo_name and repo_owner. The repo_url is resolved
+        dynamically at read time using GiteaClient.get_public_url().
+        """
+        updates = {"repo_name": repo_name}
         if repo_owner:
             updates["repo_owner"] = repo_owner
         self.db.query(Project).filter_by(id=project_id).update(updates)
@@ -183,6 +184,7 @@ class ProjectRepository(BaseRepository):
             user = self.db.query(UserModel).filter_by(id=project.owner_id).first()
             if user:
                 username = user.username
+
         return ProjectSummary(
             id=project.id,
             name=project.name,

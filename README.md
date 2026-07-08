@@ -4,10 +4,19 @@ AI agent governance platform with MCP tool permissions and approval workflows.
 
 ## Quick Start
 
+### Prerequisites
+
+Druppie runs agent code inside isolated sandbox containers using the **sysbox** runtime
+(default `DRUPPIE_SANDBOX_RUNTIME` is `sysbox-runc`). Install it on the Docker host first:
+
+- https://github.com/nestybox/sysbox
+
+Without sysbox-runc installed, the coding sandbox will fail to start.
+
 ```bash
 # 1. Clone (--recursive pulls in the sandbox submodule)
 git clone --recursive <repo-url>
-cd cleaner-druppie
+cd druppie-fork
 
 # 2. Configure environment
 cp .env.example .env

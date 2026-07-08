@@ -4,16 +4,13 @@ Uses LiteLLM for standardized tool calling across all providers.
 This is the only LLM implementation - all providers go through LiteLLM.
 
 Environment variables:
-    LLM_PROVIDER: zai, deepinfra, deepseek, azure_foundry, ollama
+    LLM_PROVIDER: zai, deepinfra, azure_foundry, ollama, openrouter
 
     For ZAI:
         ZAI_API_KEY, ZAI_MODEL, ZAI_BASE_URL
 
     For DeepInfra:
         DEEPINFRA_API_KEY, DEEPINFRA_MODEL, DEEPINFRA_BASE_URL
-
-    For DeepSeek:
-        DEEPSEEK_API_KEY, DEEPSEEK_MODEL, DEEPSEEK_BASE_URL
 
     For Azure Foundry:
         FOUNDRY_API_KEY, FOUNDRY_MODEL, FOUNDRY_API_URL
@@ -23,6 +20,7 @@ Environment variables:
 """
 
 import json
+import logging
 import os
 import time
 from typing import Any
@@ -62,15 +60,7 @@ class DruppieLogger(CustomLogger if LITELLM_AVAILABLE else object):
 
     def log_pre_api_call(self, model, messages, kwargs):
         """Capture raw request before sending to API."""
-        self.last_request = {
-            "model": model,
-            "messages": messages,
-            "tools": kwargs.get("tools"),
-            "tool_choice": kwargs.get("tool_choice"),
-            "temperature": kwargs.get("temperature"),
-            "max_tokens": kwargs.get("max_tokens"),
-            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        }
+        self.last_request = kwargs
 
     def log_success_event(self, kwargs, response_obj, start_time, end_time):
         """Capture successful response."""
@@ -118,6 +108,7 @@ class DruppieLogger(CustomLogger if LITELLM_AVAILABLE else object):
                 "completion_tokens": response_obj.usage.completion_tokens if response_obj.usage else 0,
                 "total_tokens": response_obj.usage.total_tokens if response_obj.usage else 0,
             },
+            "headers": dict(getattr(response_obj, "_hidden_params", {}).get("additional_headers", {})) if hasattr(response_obj, "_hidden_params") else None,
         }
 
         self.call_history.append(call_record)
@@ -182,6 +173,7 @@ PROVIDER_CONFIGS = {
         "model_env": "ZAI_MODEL",
         "base_url_env": "ZAI_BASE_URL",
         "default_base_url": "https://api.z.ai/api/coding/paas/v4",
+        "known_models": ["glm-5.2", "glm-5", "glm-4.7", "glm-4.5"],
     },
     "deepinfra": {
         "prefix": "openai",  # OpenAI-compatible API (same as zai)
@@ -190,14 +182,16 @@ PROVIDER_CONFIGS = {
         "model_env": "DEEPINFRA_MODEL",
         "base_url_env": "DEEPINFRA_BASE_URL",
         "default_base_url": "https://api.deepinfra.com/v1/openai",
-    },
-    "deepseek": {
-        "prefix": "deepseek",  # LiteLLM native DeepSeek support
-        "default_model": "deepseek-chat",
-        "api_key_env": "DEEPSEEK_API_KEY",
-        "model_env": "DEEPSEEK_MODEL",
-        "base_url_env": "DEEPSEEK_BASE_URL",
-        "default_base_url": "https://api.deepseek.com/v1",
+        "known_models": [
+            "Qwen/Qwen3-32B",
+            "Qwen/Qwen3-235B-A22B",
+            "moonshotai/Kimi-K2.5-Turbo",
+            "google/gemma-3-27b-it",
+            "meta-llama/Llama-4-Maverick-17B-128E-Instruct",
+            "meta-llama/Llama-4-Scout-17B-16E-Instruct",
+            "mistralai/Mistral-Small-24B-Instruct-2501",
+            "deepseek-ai/DeepSeek-V3-0324",
+        ],
     },
     "azure_foundry": {
         "prefix": "azure",  # Overridden at runtime for Claude models → "anthropic"
@@ -212,6 +206,35 @@ PROVIDER_CONFIGS = {
         "api_version": "2024-12-01-preview",
         "anthropic_base_url_env": "FOUNDRY_ANTHROPIC_URL",
         "anthropic_default_base_url": "https://druppie-resource.services.ai.azure.com/anthropic",
+        "known_models": [
+            "GPT-5-MINI",
+            "gpt-4.1-mini",
+            "gpt-4.1-nano",
+            "claude-sonnet-4-6",
+            "claude-haiku-4-5-20251001",
+        ],
+    },
+    "openrouter": {
+        "prefix": "openrouter",
+        "default_model": "google/gemma-3-27b-it",
+        "api_key_env": "OPENROUTER_API_KEY",
+        "model_env": "OPENROUTER_MODEL",
+        "base_url_env": "OPENROUTER_BASE_URL",
+        "default_base_url": "https://openrouter.ai/api/v1",
+        "known_models": [
+            "google/gemma-3-27b-it",
+            "google/gemini-2.5-flash",
+            "google/gemini-2.5-pro",
+            "anthropic/claude-sonnet-4-6",
+            "anthropic/claude-haiku-4.5",
+            "meta-llama/llama-4-maverick",
+            "meta-llama/llama-4-scout",
+            "qwen/qwen3-235b-a22b",
+            "qwen/qwen3-32b",
+            "deepseek/deepseek-chat-v3-0324",
+            "deepseek/deepseek-r1",
+            "mistralai/mistral-small-3.2-24b-instruct",
+        ],
     },
     "ollama": {
         "prefix": "openai",  # Ollama is OpenAI-compatible
@@ -222,8 +245,25 @@ PROVIDER_CONFIGS = {
         "base_url_env": "OLLAMA_BASE_URL",
         "default_base_url": "https://ollama.waterschap.org/v1",
         "ssl_verify": False,  # Self-signed certificate
+        "known_models": [
+            "gpt-oss:120b",
+            "gpt-oss:20b",
+            "qwen3-coder:30b",
+            "deepseek-r1:32b",
+            "gemma3:27b",
+        ],
     },
 }
+
+
+def has_api_key(provider: str) -> bool:
+    """Check whether the API key env var for a provider is set (or optional)."""
+    config = PROVIDER_CONFIGS.get(provider)
+    if not config:
+        return False
+    if config.get("api_key_optional"):
+        return True
+    return bool(os.getenv(config["api_key_env"]))
 
 
 class ChatLiteLLM(BaseLLM):
@@ -243,6 +283,8 @@ class ChatLiteLLM(BaseLLM):
         max_tokens: int = 16384,
         timeout: float = 300.0,
         max_retries: int = 3,
+        thinking: str | None = None,
+        reasoning_effort: str | None = None,
     ):
         """Initialize LiteLLM provider.
 
@@ -280,6 +322,8 @@ class ChatLiteLLM(BaseLLM):
         self.max_tokens = max_tokens
         self.timeout = timeout
         self.max_retries = max_retries
+        self.thinking = thinking
+        self.reasoning_effort = reasoning_effort
 
         # Model name (user-friendly, e.g., "glm-4.7")
         self._model = model or os.getenv(config["model_env"], "") or config["default_model"]
@@ -302,18 +346,18 @@ class ChatLiteLLM(BaseLLM):
         # Azure API version (required for azure/ prefix)
         self._api_version = config.get("api_version")
 
-        # Azure Foundry: Claude models use Anthropic Messages API, not OpenAI
+        # Azure Foundry: Claude models route through azure_ai provider
         is_claude = self._model.lower().startswith("claude")
         if provider == "azure_foundry" and is_claude:
-            prefix = "anthropic"
+            prefix = "azure_ai"
             anthropic_url = (
                 os.getenv(config.get("anthropic_base_url_env", ""), "")
                 or config.get("anthropic_default_base_url", "")
             )
             if anthropic_url:
                 self.api_base = anthropic_url.rstrip("/")
-                if not self.api_base.endswith("/anthropic"):
-                    self.api_base += "/anthropic"
+                if self.api_base.endswith("/anthropic"):
+                    self.api_base = self.api_base[: -len("/anthropic")]
             self._api_version = None
             self._use_max_completion_tokens = False
         else:
@@ -369,6 +413,8 @@ class ChatLiteLLM(BaseLLM):
             max_tokens=self.max_tokens,
             timeout=self.timeout,
             max_retries=self.max_retries,
+            thinking=self.thinking,
+            reasoning_effort=self.reasoning_effort,
         )
         new_instance._bound_tools = tools
         return new_instance
@@ -376,7 +422,7 @@ class ChatLiteLLM(BaseLLM):
     def _build_kwargs(self, messages, tools, max_tokens_override=None):
         """Build common kwargs for LiteLLM completion calls."""
         effective_tools = tools or self._bound_tools
-        effective_max_tokens = min(max_tokens_override or self.max_tokens, 16384)
+        effective_max_tokens = min(max_tokens_override or self.max_tokens, 32768)
 
         token_param = "max_completion_tokens" if self._use_max_completion_tokens else "max_tokens"
         kwargs = {
@@ -403,9 +449,44 @@ class ChatLiteLLM(BaseLLM):
         if self._extra_headers:
             kwargs["extra_headers"] = self._extra_headers
 
+        # Thinking/reasoning — provider-specific dispatch
+        if self.thinking == "enabled":
+            if self.provider in ("zai", "deepinfra"):
+                kwargs.setdefault("extra_body", {})["thinking"] = {"type": "enabled"}
+            elif self.provider == "anthropic":
+                kwargs["thinking"] = {"type": "enabled", "budget_tokens": 10000}
+        elif self.thinking == "disabled":
+            if self.provider in ("zai", "deepinfra"):
+                kwargs.setdefault("extra_body", {})["thinking"] = {"type": "disabled"}
+
+        if self.reasoning_effort:
+            kwargs["reasoning_effort"] = self.reasoning_effort
+
         if effective_tools:
             kwargs["tools"] = effective_tools
             kwargs["tool_choice"] = "auto"
+
+        url = f"{self.api_base}/chat/completions" if self.api_base else "https://api.openai.com/v1/chat/completions"
+        tool_details = []
+        for t in (effective_tools or []):
+            td = {"type": t.get("type")}
+            fn = t.get("function")
+            if fn:
+                td["fn_name"] = fn.get("name")
+                td["fn_desc"] = (fn.get("description") or "")[:50]
+            else:
+                td["raw_name"] = t.get("name")
+                td["raw_keys"] = list(t.keys())
+            tool_details.append(td)
+        logger.info(
+            "llm_request_url",
+            provider=self.provider,
+            model=self._litellm_model,
+            url=url,
+            tool_count=len(effective_tools or []),
+            tool_details=tool_details,
+            api_key_prefix=self.api_key[:8] + "..." if self.api_key else "MISSING",
+        )
 
         return kwargs
 
@@ -415,9 +496,8 @@ class ChatLiteLLM(BaseLLM):
         tools: list[dict[str, Any]] | None = None,
     ) -> LLMResponse:
         """Send synchronous chat completion request."""
-        kwargs = self._build_kwargs(messages, tools)
-
         try:
+            kwargs = self._build_kwargs(messages, tools)
             response = completion(**kwargs)
             return self._parse_response(response)
         except Exception as e:
@@ -430,11 +510,21 @@ class ChatLiteLLM(BaseLLM):
         max_tokens: int | None = None,
     ) -> LLMResponse:
         """Send asynchronous chat completion request."""
-        kwargs = self._build_kwargs(messages, tools, max_tokens_override=max_tokens or self.max_tokens)
-
         try:
+            kwargs = self._build_kwargs(messages, tools, max_tokens_override=max_tokens or self.max_tokens)
             response = await acompletion(**kwargs)
-            return self._parse_response(response)
+            _sensitive_keys = {"api_key", "key", "authorization", "token"}
+            raw_request = json.loads(json.dumps(kwargs, default=str)) if kwargs else None
+            if raw_request:
+                for k in _sensitive_keys:
+                    raw_request.pop(k, None)
+            parsed = self._parse_response(response)
+            parsed.raw_request = raw_request
+            try:
+                parsed.raw_response = json.loads(json.dumps(response.model_dump(), default=str))
+            except Exception:
+                parsed.raw_response = None
+            return parsed
         except Exception as e:
             raise self._convert_exception(e)
 
@@ -444,6 +534,12 @@ class ChatLiteLLM(BaseLLM):
         message = choice.message
 
         content = message.content or ""
+
+        thinking_content = None
+        if hasattr(message, 'reasoning_content') and message.reasoning_content:
+            thinking_content = message.reasoning_content
+        elif hasattr(message, 'thinking') and message.thinking:
+            thinking_content = message.thinking
 
         tool_calls = []
         raw_tool_calls = []  # Keep original for debugging
@@ -502,6 +598,7 @@ class ChatLiteLLM(BaseLLM):
             total_tokens=usage.total_tokens if usage else 0,
             model=self.model,  # User-friendly: "zai/glm-4.7"
             provider=self.provider,
+            thinking_content=thinking_content,
         )
 
     def _convert_exception(self, e: Exception) -> LLMError:

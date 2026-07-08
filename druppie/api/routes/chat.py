@@ -25,10 +25,11 @@ approvals/questions and uses:
 
 from uuid import UUID
 
+import httpx
+import structlog
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
-import structlog
 
 from druppie.api.deps import get_attachment_repository, get_current_user, get_optional_user, get_session_repository, get_user_roles
 from druppie.repositories import SessionRepository
@@ -162,7 +163,7 @@ async def chat(
     try:
         # Step 1: Get or create session (fast, synchronous)
         if session_id_param:
-            existing = session_repo.get_by_id(session_id_param)
+            existing = session_repo.get_by_id_for_update(session_id_param)
             if not existing:
                 return ChatResponse(
                     success=False,
@@ -170,13 +171,11 @@ async def chat(
                     status="error",
                     message=f"Session {session_id_param} not found",
                 )
-            # Only owner or admin can continue a session
             user_roles = get_user_roles(user)
             is_owner = existing.user_id == user_id
             is_admin = "admin" in user_roles
             if not is_owner and not is_admin:
                 raise AuthorizationError("Cannot continue this session")
-            # Only allow continuing a completed session
             if existing.status != SessionStatus.COMPLETED.value:
                 return ChatResponse(
                     success=False,
@@ -184,6 +183,7 @@ async def chat(
                     status="error",
                     message=f"Cannot continue session: status is '{existing.status}', must be 'completed'",
                 )
+            session_repo.commit()
             current_session_id = session_id_param
         else:
             session = session_repo.create(
@@ -211,7 +211,7 @@ async def chat(
             raise HTTPException(status_code=400, detail="Invalid attachment ID format")
         if attachment_uuids:
             try:
-                attachment_repo.validate_ownership(attachment_uuids, current_session_id)
+                attachment_repo.validate_ownership(attachment_uuids, current_session_id, owner_user_id=user_id)
             except ValueError as e:
                 raise HTTPException(status_code=403, detail=str(e))
 
@@ -287,8 +287,11 @@ async def stop_session(
     user_id = UUID(user["sub"])
     user_roles = user.get("realm_access", {}).get("roles", [])
 
-    # Lock the row to prevent race with concurrent operations
-    session = session_repo.get_by_id_for_update(session_id)
+    # Read without row lock — avoid deadlocking with the background task's
+    # long-running transaction (agent execution holds an open DB session).
+    # Setting PAUSED is a "fire and forget" flag; the background task's
+    # SessionPauseToken polls for it cooperatively.
+    session = session_repo.get_by_id(session_id)
     if not session:
         raise NotFoundError("session", str(session_id))
 
@@ -304,10 +307,34 @@ async def stop_session(
             detail=f"Cannot stop session with status '{session.status}'",
         )
 
-    # Set session status to paused — the background task will detect this
-    # Agent runs are NOT touched: they keep their current status
-    session_repo.update_status(session_id, SessionStatus.PAUSED)
-    session_repo.commit()
+    # Signal the pause two ways:
+    # 1. Direct in-memory cancel (zero latency — agent loop checks is_cancelled)
+    # 2. DB status flag (fallback if token not registered yet, or for resume flows)
+    from druppie.agent_runtime.types import SessionPauseToken
+    from druppie.db.database import SessionLocal
+    _db = SessionLocal()
+    try:
+        _repo = SessionRepository(_db)
+        _repo.update_status(session_id, SessionStatus.PAUSED)
+        _db.commit()
+    finally:
+        _db.close()
+
+    SessionPauseToken.cancel_session(session_id)
+
+    from druppie.db.listen_notify import notify_session_cancel
+    notify_session_cancel(session_id)
+
+    try:
+        import os
+        coding_url = os.getenv("MCP_CODING_URL", "http://module-coding:9001")
+        async with httpx.AsyncClient() as client:
+            await client.post(
+                f"{coding_url}/management/sandbox/cleanup/{session_id}",
+                timeout=10,
+            )
+    except Exception as e:
+        logger.warning("sandbox_cleanup_failed_on_stop", session_id=str(session_id), error=str(e))
 
     logger.info("session_stopped", session_id=str(session_id))
 
@@ -350,19 +377,20 @@ async def upload_attachment(
 
     # Verify session ownership when session_id is provided
     sid = UUID(session_id) if session_id else None
+    owner_user_id = UUID(user["sub"])
     if sid:
         session = session_repo.get_by_id(sid)
         if not session:
             raise NotFoundError("session", str(sid))
-        user_id = UUID(user["sub"])
         user_roles = get_user_roles(user)
-        if session.user_id != user_id and "admin" not in user_roles:
+        if session.user_id != owner_user_id and "admin" not in user_roles:
             raise AuthorizationError("Cannot upload to this session")
     attachment = attachment_repo.create(
         original_filename=filename,
         content_type=content_type,
         file_size=file_size,
         storage_path="pending",
+        owner_user_id=owner_user_id,
         session_id=sid,
     )
     attachment_repo.db.flush()
@@ -413,16 +441,14 @@ async def get_attachment(
     if not attachment:
         raise NotFoundError("attachment", str(attachment_id))
 
-    # Check access: user must own the session or be admin
-    if attachment.session_id:
-        session = session_repo.get_by_id(attachment.session_id)
-        if session:
-            user_id = UUID(user["sub"])
-            user_roles = get_user_roles(user)
-            is_owner = session.user_id == user_id
-            is_admin = "admin" in user_roles
-            if not is_owner and not is_admin:
-                raise AuthorizationError("Cannot access this attachment")
+    # Check access: user must own the attachment or be admin.
+    # Unconditional — uploads to new chats have session_id=None, so the
+    # owner check cannot rely on session linkage.
+    user_id = UUID(user["sub"])
+    user_roles = get_user_roles(user)
+    is_admin = "admin" in user_roles
+    if attachment.owner_user_id != user_id and not is_admin:
+        raise AuthorizationError("Cannot access this attachment")
 
     file_path = attachment_service.get_file_path(attachment.storage_path)
     if not file_path.exists():

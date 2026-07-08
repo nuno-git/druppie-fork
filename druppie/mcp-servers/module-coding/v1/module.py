@@ -1,21 +1,12 @@
-"""Coding MCP Server - Business Logic Module.
+"""Coding MCP Server - Security Module.
 
-Contains all business logic for file operations, git operations,
-test execution, and workspace management.
+Contains the BLOCKED_COMMAND_PATTERNS used by the bash tool for command safety.
+The sandbox orchestrator architecture moved all workspace/container management
+directly into tools.py. This module retains the security patterns for reference
+and potential reuse.
 """
 
-import json
-import logging
 import re
-import shlex
-import subprocess
-import uuid
-from pathlib import Path
-from typing import Any
-
-import httpx
-
-logger = logging.getLogger("coding-mcp")
 
 # =============================================================================
 # SECURITY: COMMAND BLOCKLIST

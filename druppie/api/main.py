@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import httpx
 import structlog
 
-from druppie.api.routes import agents, approvals, cache, chat, deployments, documentation, evaluations, jobs, mcp_bridge, mcps, modules, projects, questions, sandbox, sessions, workspace
+from druppie.api.routes import agent_test, agents, approvals, cache, chat, deployments, documentation, evaluations, jobs, mcp_bridge, mcps, model_management, modules, projects, questions, sandbox, sessions, tool_output, workspace
 from druppie.api.errors import register_exception_handlers
 from druppie.core.auth import get_auth_service
 from druppie.core.config import get_settings
@@ -129,6 +129,45 @@ def _recover_orphaned_batch_runs() -> None:
         db.close()
 
 
+def _load_model_override_cache():
+    """Populate the resolver's DB override cache and translation override on startup."""
+    from druppie.db.database import SessionLocal
+    from druppie.repositories.model_override_repository import ModelOverrideRepository
+    from druppie.llm.resolver import set_db_overrides
+    from druppie.core.translation import get_translation_service
+
+    db = SessionLocal()
+    try:
+        repo = ModelOverrideRepository(db)
+
+        agent_overrides = repo.get_agent_overrides()
+        override_map = {
+            o.target_id: (o.provider, o.model, o.fallback_provider, o.fallback_model)
+            for o in agent_overrides
+            if o.target_type == "agent" and o.enabled
+        }
+        set_db_overrides(override_map)
+
+        translation_override = repo.get_translation_override()
+        if translation_override and translation_override.enabled:
+            get_translation_service().configure(
+                translation_override.provider,
+                translation_override.model,
+                translation_override.fallback_provider,
+                translation_override.fallback_model,
+            )
+
+        logger.info(
+            "model_overrides_loaded",
+            agent_overrides=len(override_map),
+            translation_override=translation_override is not None,
+        )
+    except Exception as e:
+        logger.warning("model_override_cache_load_failed", error=str(e))
+    finally:
+        db.close()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan handler."""
@@ -147,6 +186,11 @@ async def lifespan(app: FastAPI):
     _recover_orphaned_batch_runs()
 
     _recover_stuck_job_runs()
+
+    # Load DB model overrides into the resolver cache so agents use
+    # admin-configured models immediately, not just after the first
+    # Model Management page load.
+    _load_model_override_cache()
 
     # Clean up orphaned sandbox Gitea users from previous runs
     from druppie.opencode.gitea_cleanup import cleanup_orphaned_sandbox_users
@@ -212,7 +256,14 @@ async def lifespan(app: FastAPI):
         logger.info("job_scheduler_skipped", hint="another_replica_is_leader")
         app.state.job_scheduler = None
 
+    # Start Postgres LISTEN/NOTIFY listener for cross-replica session cancellation
+    from druppie.db.listen_notify import start_cancel_listener
+    start_cancel_listener()
+
     yield
+
+    from druppie.db.listen_notify import stop_cancel_listener
+    stop_cancel_listener()
 
     if hasattr(app.state, "job_scheduler") and app.state.job_scheduler is not None:
         app.state.job_scheduler.stop()
@@ -267,6 +318,9 @@ def create_app() -> FastAPI:
     app.include_router(modules.router, prefix="/api", tags=["Modules"])
     app.include_router(documentation.router, prefix="/api", tags=["Documentation"])
     app.include_router(jobs.router, prefix="/api/jobs", tags=["Jobs"])
+    app.include_router(model_management.router, prefix="/api", tags=["Model Management"])
+    app.include_router(agent_test.router, prefix="/api", tags=["Agent Test"])
+    app.include_router(tool_output.router, prefix="/api", tags=["Tool Output"])
 
     @app.get("/health")
     async def health_check():

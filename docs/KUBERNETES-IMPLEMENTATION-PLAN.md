@@ -8,6 +8,8 @@
 | **Referentie** | [KUBERNETES-STRATEGY.md](./KUBERNETES-STRATEGY.md), [kubernetes.md](./kubernetes.md) |
 | **Delivery** | 1 PR naar `colab-dev` |
 
+> **Status: Historisch — Phase 1 delivery record.** Huidige as-built staat: `docs/AS-BUILT-ARCHITECTURE.md`.
+
 ---
 
 ## Acceptatiecriteria (Story 3)
@@ -772,6 +774,8 @@ Task 1 (Stateless backend) ─── P0 ─── ✅ Voltooid
 | `helm/druppie/templates/druppie-db-statefulset.yaml` | 6 | Vervangen door CloudNativePG |
 | `helm/druppie/templates/keycloak-db-statefulset.yaml` | 6 | Vervangen door CloudNativePG |
 | `helm/druppie/templates/gitea-db-statefulset.yaml` | 6 | Vervangen door CloudNativePG |
+
+> **Correctie:** De StatefulSet templates zijn NIET verwijderd — ze blijven bestaan voor het kind/lokale pad (`values-local.yaml` met `cnpg.enabled: false`) in `helm/druppie/templates/databases/`; ze worden simpelweg uitgeschakeld wanneer CNPG ingeschakeld is.
 
 ---
 
