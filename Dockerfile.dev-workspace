@@ -5,17 +5,19 @@
 # Build context: repo root (.) — same as the backend Dockerfile.
 #
 # A single-pod, browser-based developer workspace for a branch environment
-# (namespace druppie-<slug>). It runs THREE processes on plain HTTP, all bound
-# to 0.0.0.0 but only reachable inside the pod / via the oauth2-proxy sidecar
-# that another manifest wires up:
+# (namespace druppie-<slug>). It runs on plain HTTP, only reachable inside the
+# pod / via the oauth2-proxy sidecar that another manifest wires up:
 #
 #   :8080  code-server (VS Code in the browser) opened on /workspace
 #   :8000  backend  — uvicorn --reload (hot reload), SQLite, dev/degraded mode
 #   :5173  frontend — Vite dev server with HMR
+#   :6080  desktop  — XFCE over noVNC (127.0.0.1 only; reached through
+#          code-server's authenticated port proxy at /proxy/6080/)
 #
 # This is NOT the old dev-vm image (mcp-servers/module-coding/Dockerfile.dev-vm):
-# no xrdp/desktop, no Docker-in-Docker, no in-pod Gitea. Access is HTTP only and
-# authentication is handled entirely by the oauth2-proxy sidecar.
+# no xrdp, no Docker-in-Docker, no in-pod Gitea. The GUI is a browser desktop
+# (Layer 1b) served over HTTP like everything else, and authentication is
+# handled entirely by the oauth2-proxy sidecar.
 #
 # Layer model (see docs/research-dev-environments.md §"Dev VM base image"):
 #   L1 — Debian slim + Python 3.12 + Node 20 + git + curl + build essentials
@@ -53,6 +55,34 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get update && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/* \
     && node --version && npm --version
+
+# ===========================================================================
+# Layer 1b — Browser desktop: XFCE + TigerVNC + noVNC (HTTP-only GUI)
+# ===========================================================================
+# The desktop is reached through code-server's port proxy
+# (https://<workspace-host>/proxy/6080/), so it rides the same oauth2-proxy
+# authentication as every other port — no new Service/Ingress. Xvnc runs
+# without its own auth on 127.0.0.1 only: same trust model as code-server's
+# auth:none (the oauth2-proxy sidecar is the single gate).
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        tigervnc-standalone-server \
+        novnc \
+        websockify \
+        xfce4-session xfwm4 xfce4-panel xfdesktop4 xfce4-terminal thunar \
+        dbus-x11 x11-xserver-utils \
+        fonts-dejavu \
+        chromium \
+    && rm -rf /var/lib/apt/lists/*
+
+# Chromium's own sandbox needs user namespaces / SUID, which the pod's
+# restricted runtime does not grant; k8s also mounts a tiny /dev/shm.
+RUN printf 'export CHROMIUM_FLAGS="$CHROMIUM_FLAGS --no-sandbox --disable-dev-shm-usage"\n' \
+        > /etc/chromium.d/99-druppie-container
+
+# noVNC web root: the packaged client plus an index.html that redirects to
+# vnc.html with the websocket path rewritten for the /proxy/6080/ prefix.
+RUN mkdir -p /opt/novnc-web && ln -s /usr/share/novnc/* /opt/novnc-web/
+COPY scripts/dev-workspace-desktop-index.html /opt/novnc-web/index.html
 
 # ===========================================================================
 # Layer 2 — code-server (pinned release from GitHub)

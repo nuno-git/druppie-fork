@@ -4,15 +4,19 @@
 #
 # Baked into Dockerfile.dev-workspace. Seeds /workspace from the image's
 # offline snapshot, checks out the requested branch, (re)installs deps only
-# when their lockfiles changed, then launches three plain-HTTP dev services:
+# when their lockfiles changed, then launches the plain-HTTP dev services:
 #
 #   code-server (:8080)  VS Code in the browser, opened on /workspace
 #   backend     (:8000)  uvicorn --reload, SQLite, dev/degraded mode
 #   frontend    (:5173)  Vite dev server with HMR
+#   desktop     (:6080)  XFCE over noVNC, 127.0.0.1 only — open
+#                        https://<workspace-host>/proxy/6080/ (code-server's
+#                        authenticated port proxy)
 #
 # Auth is handled by the oauth2-proxy sidecar; every port is plain HTTP.
 # No Docker daemon, no xrdp, no in-pod Gitea. k8s restarts the pod on crash,
-# so there are no in-process restart loops.
+# so there are no in-process restart loops (the XFCE session respawn loop is
+# the one exception: "Log out" must not take the whole pod down).
 #
 # Environment contract (set by the k8s manifest):
 #   DRUPPIE_GIT_BRANCH   branch to check out            (default: colab-dev)
@@ -21,6 +25,8 @@
 #   VITE_API_URL         backend URL for the frontend   (default: /proxy/8000)
 #   DATABASE_URL         backend DB URL                 (default: sqlite:////workspace/.data/druppie.db)
 #   GIT_SSL_NO_VERIFY    set to "1" to skip TLS verify on fetch (default: unset)
+#   DRUPPIE_DESKTOP      set to "0" to skip the XFCE/noVNC desktop (default: 1)
+#   DRUPPIE_DESKTOP_GEOMETRY  initial Xvnc resolution   (default: 1600x900)
 #
 set -u
 
@@ -199,6 +205,44 @@ start_frontend() {
     PIDS="${PIDS} $!"
 }
 
+start_desktop() {
+    if [ "${DRUPPIE_DESKTOP:-1}" != "1" ]; then
+        log "DRUPPIE_DESKTOP=${DRUPPIE_DESKTOP:-} — desktop disabled"
+        return 0
+    fi
+    # Pods can run an older image (pre-desktop) until dev-workspace:latest is
+    # rebuilt; skip instead of crash-looping the whole workspace.
+    if ! command -v Xvnc >/dev/null 2>&1; then
+        warn "Xvnc not in this image — desktop disabled (rebuild dev-workspace)"
+        return 0
+    fi
+
+    log "starting desktop (XFCE over noVNC) — open /proxy/6080/ on the workspace host"
+    # 127.0.0.1 only and -SecurityTypes None: the ONLY way in is code-server's
+    # authenticated port proxy, same trust model as code-server's auth:none.
+    Xvnc :1 -geometry "${DRUPPIE_DESKTOP_GEOMETRY:-1600x900}" -depth 24 \
+        -SecurityTypes None -localhost -AlwaysShared -rfbport 5901 \
+        >"${LOGS}/xvnc.log" 2>&1 &
+    PIDS="${PIDS} $!"
+
+    # Respawn loop: an XFCE "Log out" (or session crash) restarts the session
+    # instead of tearing down the pod via the wait -n below. The first
+    # iterations fail fast until Xvnc is accepting connections — harmless.
+    (
+        export DISPLAY=:1
+        while :; do
+            dbus-launch --exit-with-session startxfce4 >>"${LOGS}/xfce.log" 2>&1
+            sleep 2
+        done
+    ) &
+    PIDS="${PIDS} $!"
+
+    # noVNC static client + websocket bridge to Xvnc.
+    websockify --web /opt/novnc-web 127.0.0.1:6080 127.0.0.1:5901 \
+        >"${LOGS}/novnc.log" 2>&1 &
+    PIDS="${PIDS} $!"
+}
+
 start_code_server() {
     log "starting code-server on 0.0.0.0:8080 (auth handled by oauth2-proxy sidecar)"
     code-server --bind-addr 0.0.0.0:8080 --auth none "${WORKSPACE}" \
@@ -248,6 +292,7 @@ ensure_backend_deps
 start_code_server
 start_backend
 start_frontend
+start_desktop
 
 log "all services started (pids:${PIDS}) — tailing until a child exits or SIGTERM"
 

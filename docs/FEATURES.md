@@ -938,6 +938,15 @@ Flux applies/prunes it.
   redirect URL is `https://druppie-<slug>-dev.rijnland.dev/oauth2/callback`.
 - **Live status** — `workspace_status` is read from the `workspace` Deployment
   (`running` once `readyReplicas >= 1`, else `deploying`; `null` when disabled).
+- **Desktop (GUI)** — the workspace image ships a lightweight XFCE desktop
+  served over noVNC (TigerVNC → websockify on `127.0.0.1:6080`), with Chromium
+  preinstalled for in-env GUI testing. Open it in the browser through
+  code-server's authenticated port proxy:
+  `https://druppie-<slug>-dev.rijnland.dev/proxy/6080/` — same oauth2-proxy
+  gate, no extra Service or Ingress, nothing listens outside the pod. Disable
+  per env with `DRUPPIE_DESKTOP=0`; initial resolution via
+  `DRUPPIE_DESKTOP_GEOMETRY` (default `1600x900`, auto-resizes to the browser
+  window).
 
 #### Required setup (one-time, cluster-side)
 
