@@ -274,4 +274,79 @@ describe('BranchEnvironments page', () => {
     expect(await screen.findByTestId('branch-env-pipeline')).toBeTruthy()
     expect(branchEnvironmentsApi.pipeline).toHaveBeenCalledWith('feature-ok')
   })
+
+  it('cancels an in-flight deployment via the cancel button (teardown)', async () => {
+    branchEnvironmentsApi.list.mockResolvedValue({
+      items: [
+        {
+          id: 'feature-busy',
+          branch: 'feature/busy',
+          slug: 'feature-busy',
+          namespace: 'druppie-feature-busy',
+          url: 'https://druppie-feature-busy.rijnland.dev',
+          image_tag: null,
+          status: 'deploying',
+          status_message: null,
+          created_at: '2026-07-07T10:00:00Z',
+          workspace_enabled: false,
+          workspace_url: null,
+          workspace_status: null,
+        },
+      ],
+      total: 1,
+    })
+    branchEnvironmentsApi.pipeline.mockResolvedValue({
+      env_id: 'feature-busy',
+      status: 'deploying',
+      stages: [{ id: 'commit', name: 'Commit (aigit)', status: 'done', message: null, detail: null }],
+    })
+    branchEnvironmentsApi.teardown.mockResolvedValue({})
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+
+    renderPage()
+
+    fireEvent.click(
+      await screen.findByRole('button', { name: /cancel deployment of feature\/busy/i })
+    )
+    expect(confirmSpy).toHaveBeenCalledWith(expect.stringContaining('Cancel the deployment'))
+    await waitFor(() => expect(branchEnvironmentsApi.teardown).toHaveBeenCalledWith('feature-busy'))
+    // A deploying env has no delete (trash) button — cancel replaces it.
+    expect(screen.queryByRole('button', { name: /^delete feature\/busy$/i })).toBeNull()
+  })
+
+  it('cancels an in-flight workspace deployment (disable workspace)', async () => {
+    branchEnvironmentsApi.list.mockResolvedValue({
+      items: [
+        {
+          id: 'feature-ws',
+          branch: 'feature/ws',
+          slug: 'feature-ws',
+          namespace: 'druppie-feature-ws',
+          url: 'https://druppie-feature-ws.rijnland.dev',
+          image_tag: 'abc123',
+          status: 'running',
+          status_message: null,
+          created_at: '2026-07-07T10:00:00Z',
+          workspace_enabled: true,
+          workspace_url: 'https://druppie-feature-ws-dev.rijnland.dev',
+          workspace_status: 'deploying',
+        },
+      ],
+      total: 1,
+    })
+    branchEnvironmentsApi.disableWorkspace.mockResolvedValue({})
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+
+    renderPage()
+
+    fireEvent.click(
+      await screen.findByRole('button', { name: /cancel workspace deployment for feature\/ws/i })
+    )
+    expect(confirmSpy).toHaveBeenCalledWith(
+      expect.stringContaining('Cancel the workspace deployment')
+    )
+    await waitFor(() =>
+      expect(branchEnvironmentsApi.disableWorkspace).toHaveBeenCalledWith('feature-ws')
+    )
+  })
 })
