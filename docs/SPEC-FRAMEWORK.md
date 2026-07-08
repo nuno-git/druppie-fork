@@ -1,6 +1,6 @@
 # Spec-Driven Documentation Framework
 
-This document describes the complete specification-driven framework for the Druppie platform. It covers all artifact types, the enforcement loop, skills, and the hierarchical memory strategy.
+This document describes the complete specification-driven framework for the Druppie platform. It covers all artifact types and the enforcement loop that keeps them honest.
 
 **Status:** Active
 **Branch:** `feature/vast-documentatieformat`
@@ -15,11 +15,9 @@ This document describes the complete specification-driven framework for the Drup
 3. [Directory Structure](#3-directory-structure)
 4. [Artifact Lifecycle](#4-artifact-lifecycle)
 5. [The Enforcement Loop (The Harness)](#5-the-enforcement-loop-the-harness)
-6. [Skills — Contextual Loop Focus](#6-skills--contextual-loop-focus)
-7. [Hierarchical Memory & Context Management](#7-hierarchical-memory--context-management)
-8. [Putting It All Together — Feature Walkthrough](#8-putting-it-all-together--feature-walkthrough)
-9. [Tooling Stack](#9-tooling-stack)
-10. [Getting Started](#10-getting-started)
+6. [Putting It All Together — Feature Walkthrough](#6-putting-it-all-together--feature-walkthrough)
+7. [Tooling Stack](#7-tooling-stack)
+8. [Getting Started](#8-getting-started)
 
 ---
 
@@ -40,11 +38,10 @@ The framework is built on a key insight from Michal's talk: **humans and LLMs bo
 
 ## 2. Framework Structure
 
-The framework is organized into three tiers:
+The framework is organized into two tiers:
 
 - **Tier 1 — Artifact Types:** per-feature, in the traceability chain. These have templates, enforcement gates, and link-back tags.
 - **Tier 2 — Reference Docs:** cross-cutting, not per-feature. Regular Markdown consulted during implementation.
-- **Tier 3 — Infrastructure:** the mechanisms (memory, harness) that make the framework run, not artifacts themselves.
 
 ### Tier 1 — Artifact Types
 
@@ -77,15 +74,6 @@ Reference docs are **cross-cutting, not per-feature**. They describe stable know
 | **Security policies** | Auth flows, role model, secret handling | `docs/` |
 
 These are regular Markdown files. An agent or human reads the relevant reference doc when a feature touches its domain (e.g., consult the Design System when building UI), but the reference doc itself isn't part of the per-feature traceability chain.
-
-### Tier 3 — Infrastructure
-
-These are the **mechanisms** that make the framework run. They aren't artifacts you author per feature — they're the machinery underneath.
-
-| Mechanism | Purpose | Location |
-|-----------|---------|----------|
-| **Memory** | Hierarchical context management for agents (conceptual, not yet implemented) | Agent loop integration |
-| **Harness** | Git hooks + CI that enforce all rules | Config files at root of repo |
 
 ### What Goes Where
 
@@ -195,18 +183,9 @@ testing/
         ├── session_steps.py
         └── environment.py
 
-druppie/skills/                    # Skills (existing + new framework skills)
-├── feature-dev/SKILL.md           # NEW: end-to-end feature workflow
-├── refactor/SKILL.md              # NEW: safe refactoring
-├── bug-fix/SKILL.md               # NEW: root cause → fix → verify
-├── adr-writer/SKILL.md            # NEW: ADR creation guidance
-├── research-writer/SKILL.md       # NEW: research doc writing
-├── prd-writer/SKILL.md            # NEW: PRD writing
-├── generate-cas/SKILL.md          # NEW: CAS regeneration
-├── architecture-principles/       # Existing
-├── code-review/                   # Existing
-├── git-workflow/                  # Existing
-└── ...                            # Other existing skills
+druppie/skills/                    # Skills (existing)
+├── (skill directories)
+└── ...
 
 scripts/
 ├── generate_cas.py                # Generate CAS.md from accepted ADRs
@@ -283,6 +262,30 @@ When a new ADR replaces an old one:
 4. Regenerate CAS — old rule disappears, new rule appears
 5. Agents on next task load fresh CAS and never see the old rule
 
+### PRD Status Model
+
+PRDs follow the same governance lifecycle as ADRs:
+
+| Status | Meaning | Agent visibility |
+|--------|---------|-----------------|
+| `proposed` | Under review, not yet accepted | Not loaded by agents |
+| `accepted` | Active feature definition, currently the truth | Loaded via linked specs |
+| `deprecated` | No longer relevant, do not use for new work | Visible but flagged |
+| `superseded` | Replaced by a newer PRD (`superseded_by` field) | Not loaded by agents |
+
+**Supersession flow:** create the new PRD with `status: accepted`, then update the old PRD to `status: superseded` with a `superseded_by` field pointing to the new PRD id. Any linked acceptance specs now follow the new PRD.
+
+### Acceptance Spec Status
+
+Acceptance Specs (`.feature` files) do not carry their own status field. Their status is **derived from the linked PRD**:
+
+| Linked PRD status | Spec status | Meaning |
+|-------------------|-------------|---------|
+| `proposed` | draft | Spec is written but not yet binding |
+| `accepted` | active | Spec is the current truth — must pass |
+| `deprecated` | deprecated | Spec is archived, no longer enforced |
+| `superseded` | deprecated | Spec is archived, superseding PRD's specs take over |
+
 ---
 
 ## 5. The Enforcement Loop (The Harness)
@@ -345,93 +348,7 @@ When an agent's commit fails the harness:
 
 ---
 
-## 6. Skills — Contextual Loop Focus
-
-Skills tailor the enforcement loop's focus for different task types. Each skill is a Markdown file in `druppie/skills/<name>/SKILL.md` that the agent reads when `invoke_skill` is called.
-
-| Skill | When used | Documents loaded | Loop focus |
-|-------|-----------|-----------------|------------|
-| `feature-dev` | Building a new feature | PRD, relevant acceptance specs, ADRs, CAS | Full lint + spec tag filter |
-| `refactor` | Changing structure without behavior | ADRs for boundaries, import rules | Architecture lint + duplication |
-| `bug-fix` | Fixing a failing behavior | Failing spec scenario, related PRD | Affected scenario + unit tests |
-| `adr-writer` | Proposing or modifying an ADR | All ADRs, affected code | ADR consistency check |
-| `research-writer` | Investigating options | Existing research, related ADRs | Doc link validation |
-| `prd-writer` | Writing a feature spec | Related ADRs, acceptance specs | Doc link validation |
-| `generate-cas` | After ADR acceptance | All accepted ADRs | CAS freshness |
-
-### How Agents Use Skills
-
-1. Agent YAML definition includes `skills: [feature-dev, adr-writer]`
-2. When the agent calls `invoke_skill(skill_name="feature-dev")`:
-   - The skill's `allowed_tools` are added to the agent's tool set
-   - The skill's Markdown body is returned as instructions
-3. The agent follows the workflow described in the skill
-4. If a rule violation occurs, the agent re-reads the linked ADR
-
----
-
-## 7. Hierarchical Memory & Context Management
-
-Based on the insight that **agents don't fail because of prompts, they fail because of context**.
-
-### The Problem
-
-- Long agent sessions accumulate messages without limit
-- Context windows fill up with tool call results, conversation history, and intermediate reasoning
-- Over-truncation breaks reasoning (agent forgets what it was doing)
-- Raw summarization is unreliable (LLM decides what's important, inconsistently)
-
-### The Solution: Smart Truncation + Memory Store
-
-```
-Agent's context window:
-┌──────────────────────────────────────────────────┐
-│ HEAD (always present)                             │
-│ • System prompt                                   │
-│ • First user message                              │
-│ • Current task description                        │
-├──────────────────────────────────────────────────┤
-│ MEMORY REFERENCE                                  │
-│ "N earlier exchanges available. Use memory_recall │
-│  to retrieve specific context."                   │
-├──────────────────────────────────────────────────┤
-│ TAIL (always present)                             │
-│ • Last K tool exchanges                           │
-│ • Most recent results                             │
-│ • Current reasoning context                       │
-└──────────────────────────────────────────────────┘
-```
-
-**How it works:**
-1. **Head** — System prompt + first user message (always kept)
-2. **Middle** — Compressed and offloaded to memory store (DB table)
-3. **Tail** — Last N tool exchanges (always kept)
-4. **Memory recall** — Agent can use `memory_recall(query)` to retrieve specific offloaded context
-
-### Sub-Agent Offloading
-
-Heavy data operations (search, analysis, large file reads) run in sub-agents:
-- Main agent context stays small (chat + light context only)
-- Sub-agent handles heavy data in its own context
-- Only the result (not the process) passes back to main agent
-
-### Long-Session Evaluation
-
-- Load 10 turns, test the 11th
-- Context management bugs become testable
-- Part of the CI pipeline for agent behavior tests
-
-### Agent Configuration
-
-```yaml
-# In agent YAML definitions
-context_budget: 8000    # tokens; 0 = unlimited (current behavior)
-memory_enabled: true    # enable smart truncation + memory store
-```
-
----
-
-## 8. Putting It All Together — Feature Walkthrough
+## 6. Putting It All Together — Feature Walkthrough
 
 ### Scenario: "Bulk Export" feature
 
@@ -460,7 +377,7 @@ memory_enabled: true    # enable smart truncation + memory store
 
 > This walkthrough uses a backend example, but acceptance specs can cover any domain — frontend interactions, infrastructure behavior, or any other observable system property. See [Acceptance Specs are domain-agnostic](#what-goes-where).
 
-**Step 5: Implementation** — Agent follows feature-dev skill.
+**Step 5: Implementation** — Agent implements following accepted specs and ADRs.
 - Loads CAS, ADR-004, PRD-001
 - Writes code following layered architecture
 - Consults relevant reference docs (e.g., Design System for any UI touched)
@@ -472,7 +389,7 @@ memory_enabled: true    # enable smart truncation + memory store
 
 ---
 
-## 9. Tooling Stack
+## 7. Tooling Stack
 
 | Layer | Tool | Purpose |
 |-------|------|---------|
@@ -484,12 +401,10 @@ memory_enabled: true    # enable smart truncation + memory store
 | Integration tests | YAML framework (existing) | Full MCP pipeline tests |
 | Doc validation | Custom scripts | Cross-reference checking |
 | CAS generation | `scripts/generate_cas.py` | Auto-generate from ADRs |
-| Skills | Markdown + YAML | Agent guidance |
-| Context management | Agent loop integration | Smart truncation + memory |
 
 ---
 
-## 10. Getting Started
+## 8. Getting Started
 
 ### For Humans
 
@@ -501,12 +416,12 @@ memory_enabled: true    # enable smart truncation + memory store
 
 ### For AI Agents
 
-1. **Before any task:** Load `docs/adrs/CAS.md` for current architecture state
-2. **Feature work:** Invoke `feature-dev` skill
-3. **Writing an ADR:** Invoke `adr-writer` skill
-4. **Fixing a bug:** Invoke `bug-fix` skill
-5. **Refactoring:** Invoke `refactor` skill
-6. **After ADR acceptance:** Invoke `generate-cas` skill to update CAS
+Follow the artifact lifecycle in [Section 4](#4-artifact-lifecycle):
+
+1. **Before any task:** Load `docs/adrs/CAS.md` for the current architecture state
+2. **Feature work:** Start from the PRD template (`docs/prds/TEMPLATE.md`), write acceptance specs, then implement
+3. **Writing an ADR:** Use `docs/adrs/TEMPLATE.md`, set status to `proposed`, request review
+4. **After ADR acceptance:** Run `python scripts/generate_cas.py` to regenerate CAS
 
 ### First-Time Setup
 

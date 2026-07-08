@@ -58,7 +58,8 @@ frontmatter `id`):
 ---
 id: 000                              # Sequential PRD number (e.g. 001, 002)
 title: Feature name                  # Short, descriptive name
-status: draft                        # draft | review | approved | implemented
+status: proposed                     # proposed | accepted | deprecated | superseded
+superseded_by: null                  # ID of replacement PRD when status is superseded
 author: role name                    # Who authored this PRD (e.g. "architect")
 date: 2026-06-09                     # Date of initial draft (YYYY-MM-DD)
 linked_adrs: []                      # ADR file paths, e.g. ["docs/adrs/001-layered-architecture.md"]
@@ -129,7 +130,8 @@ Explicitly list what this PRD does NOT cover:
 |-------|------|-------|
 | `id` | integer | Sequential PRD number (e.g. `001`). |
 | `title` | string | Short, descriptive name. |
-| `status` | string | One of `draft`, `review`, `approved`, `implemented`. |
+| `status` | string | One of `proposed`, `accepted`, `deprecated`, `superseded`. |
+| `superseded_by` | integer \| null | ID of the PRD that replaces this one. Set only when `status` is `superseded`; `null` otherwise. |
 | `author` | string | Role or name of the author. |
 | `date` | string | `YYYY-MM-DD`. |
 | `linked_adrs` | list | ADR file paths, e.g. `["docs/adrs/001-layered-architecture.md"]`. |
@@ -145,6 +147,36 @@ There is no separate "Requirements" section; testable requirements belong in the
 "Related" header — all cross-links live in the frontmatter and are rendered into
 the **Linked Documents** section.
 
+### PRD Governance Status Model
+
+PRD status tracks **governance truth**, not build progress. It mirrors the ADR
+status model exactly. The lifecycle is:
+
+```
+proposed → accepted → (deprecated | superseded)
+```
+
+- **`proposed`** — A new PRD has been written and is seeking acceptance. This is
+  the initial status of every PRD you create.
+- **`accepted`** — The PRD is agreed as the current truth. The team has committed
+  to the problem, goal, and journey. This is the steady state of an active PRD.
+- **`deprecated`** — The PRD is no longer relevant and has not been replaced by a
+  specific successor. Set `superseded_by: null`.
+- **`superseded`** — The PRD has been replaced by a newer one. The `superseded_by`
+  field MUST point to the replacing PRD's `id`.
+
+There is no `review` status (acceptance is the gate, not a separate review phase)
+and no `implemented` status (PRD governance does not track implementation — that
+is the job of the acceptance specs and code).
+
+#### How to supersede a PRD
+
+To replace an existing accepted PRD with a new one:
+
+1. Create the new PRD with `status: proposed` (then move to `accepted` once agreed).
+2. Update the old PRD: set `status: superseded` and `superseded_by: <new PRD id>`.
+3. Do not delete the old PRD — its history and links must remain intact.
+
 ## Problem → Goal → User Journey Flow
 
 This is the core narrative of the PRD. It must flow logically:
@@ -156,7 +188,7 @@ This is the core narrative of the PRD. It must flow logically:
 3. **User Journey** — How a user moves through the feature from start to
    finish. Concrete steps, not abstract descriptions.
 
-If any of these three are unclear, the PRD is not ready for approval.
+If any of these three are unclear, the PRD is not ready to be accepted.
 
 ## Keep It Lightweight
 

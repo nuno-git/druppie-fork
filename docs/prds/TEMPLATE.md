@@ -1,9 +1,13 @@
 ---
 id: 000                              # Sequential PRD number (e.g. 001, 002)
 title: Feature name                   # Short, descriptive name
-status: draft                         # draft | review | approved | implemented
+status: proposed                      # proposed | accepted | deprecated | superseded
 author: role name                     # Who authored this PRD (e.g. "architect", "developer")
 date: 2026-06-09                      # Date of initial draft (YYYY-MM-DD)
+
+# Supersession tracking — only relevant when status is "superseded"
+superseded_by: null                   # PRD id (e.g. 003) — only when status is "superseded"
+
 linked_adrs: []                       # List of ADR file paths, e.g. ["docs/adrs/001-choice-of-state-management.md"]
 linked_research: []                   # List of research doc paths, e.g. ["docs/research/001-auth-providers.md"]
 linked_specs: []                      # List of .feature file paths, e.g. ["tests/features/approval-workflow.feature"]

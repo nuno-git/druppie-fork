@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://druppie.local/docs/prds/prd.schema.json",
+  "title": "PRD Frontmatter",
+  "description": "JSON Schema for the YAML frontmatter of a Product Requirements Document. Mirrors docs/adrs/adr.schema.json to keep PRD and ADR governance lifecycles identical.",
+  "type": "object",
+  "required": ["id", "title", "status", "date", "author", "superseded_by"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^\\d{3}$",
+      "description": "3-digit zero-padded PRD identifier, e.g. \"001\". Must match the filename prefix."
+    },
+    "title": {
+      "type": "string",
+      "description": "Short, descriptive name of the feature."
+    },
+    "status": {
+      "type": "string",
+      "enum": ["proposed", "accepted", "deprecated", "superseded"],
+      "description": "Lifecycle status of the PRD."
+    },
+    "date": {
+      "type": "string",
+      "format": "date",
+      "description": "Date of the initial draft, in YYYY-MM-DD format."
+    },
+    "author": {
+      "type": "string",
+      "description": "Role or name of the person who authored this PRD, e.g. \"architect\", \"developer\"."
+    },
+    "superseded_by": {
+      "type": ["string", "null"],
+      "pattern": "^\\d{3}$",
+      "description": "ID of the PRD that supersedes this one, or null. Required only when status is \"superseded\"."
+    },
+    "linked_adrs": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "List of ADR file paths, e.g. [\"docs/adrs/001-choice-of-state-management.md\"]."
+    },
+    "linked_research": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "List of research document paths, e.g. [\"docs/research/001-auth-providers.md\"]."
+    },
+    "linked_specs": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "List of .feature file paths, e.g. [\"tests/features/approval-workflow.feature\"]."
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "status": { "const": "superseded" } },
+        "required": ["status"]
+      },
+      "then": {
+        "properties": {
+          "superseded_by": {
+            "type": "string",
+            "pattern": "^\\d{3}$",
+            "minLength": 1
+          }
+        },
+        "required": ["superseded_by"]
+      }
+    },
+    {
+      "if": {
+        "properties": { "status": { "const": "accepted" } },
+        "required": ["status"]
+      },
+      "then": {
+        "properties": {
+          "superseded_by": { "type": "null" }
+        }
+      }
+    }
+  ]
+}

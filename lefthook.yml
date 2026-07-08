@@ -23,6 +23,10 @@ pre-commit:
       glob: "docs/adrs/**/*.md"
       run: python scripts/validate_adr_status.py
 
+    prd-status:
+      glob: "docs/prds/**/*.md"
+      run: python scripts/validate_prd_status.py
+
     frontend-lint:
       glob: "frontend/src/**/*.{js,jsx}"
       run: cd frontend && npx eslint {staged_files}
