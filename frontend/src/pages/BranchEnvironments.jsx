@@ -19,6 +19,7 @@ import {
   Loader2,
   X,
   Code2,
+  Monitor,
   PowerOff,
   ChevronDown,
   ChevronUp,
@@ -150,15 +151,27 @@ const WorkspaceSection = ({
             </span>
           )}
           {canOpenWorkspace && (
-            <a
-              href={env.workspace_url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-1.5 py-1 px-2.5 text-xs text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2"
-            >
-              <ExternalLink className="w-3.5 h-3.5" />
-              Open workspace
-            </a>
+            <>
+              <a
+                href={env.workspace_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 py-1 px-2.5 text-xs text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2"
+              >
+                <ExternalLink className="w-3.5 h-3.5" />
+                Open workspace
+              </a>
+              <a
+                href={`${env.workspace_url.replace(/\/$/, '')}/proxy/6080/`}
+                target="_blank"
+                rel="noopener noreferrer"
+                title="XFCE desktop (noVNC) in this workspace"
+                className="inline-flex items-center gap-1.5 py-1 px-2.5 text-xs text-indigo-700 bg-indigo-50 hover:bg-indigo-100 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2"
+              >
+                <Monitor className="w-3.5 h-3.5" />
+                Open desktop
+              </a>
+            </>
           )}
           {status !== 'deploying' && (
             <button
