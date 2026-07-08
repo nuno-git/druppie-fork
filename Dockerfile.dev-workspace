@@ -121,7 +121,7 @@ RUN sed -i 's/\r$//' /usr/local/bin/dev-workspace-entrypoint.sh \
 # code-server default config (also passed explicitly on the CLI by the
 # entrypoint). See the L2 comment for why auth:none is correct here.
 RUN install -d -m 755 -o developer -g developer /home/developer/.config/code-server \
-    && printf 'bind-addr: 0.0.0.0:8080\nauth: none\ntelemetry: off\n' \
+    && printf 'bind-addr: 0.0.0.0:8080\nauth: none\ndisable-telemetry: true\n' \
         > /home/developer/.config/code-server/config.yaml \
     && chown -R developer:developer /home/developer/.config
 

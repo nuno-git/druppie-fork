@@ -224,6 +224,10 @@ trap terminate TERM INT
 mkdir -p "${LOGS}" "${DEP_DIR}"
 log "workspace boot: branch=${DRUPPIE_GIT_BRANCH} repo=${DRUPPIE_REPO_URL}"
 
+# The PVC mount root stays root-owned (fsGroup only changes the group), so git
+# refuses the repo with "dubious ownership" unless it is marked safe.
+git config --global --add safe.directory "${WORKSPACE}"
+
 seed_workspace
 checkout_branch
 ensure_frontend_deps
