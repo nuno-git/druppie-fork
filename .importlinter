@@ -1,0 +1,12 @@
+[importlinter]
+root_package = druppie
+
+[importlinter:contract:layered-flow]
+name = Layered architecture flow
+type = layers
+layers =
+    druppie.api
+    druppie.services
+    druppie.repositories
+    druppie.domain
+    druppie.db
