@@ -67,6 +67,14 @@ spec:
                 secretKeyRef:
                   name: {{ include "druppie.fullname" . }}-secrets
                   key: GITEA_DB_PASSWORD
+            # Admin password sourced from the secret (ESO-managed in prod/dev,
+            # chart-managed via templates/secrets.yaml otherwise) rather than the
+            # bare Helm value, so it tracks Vault and is not leaked in values.
+            - name: GITEA_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "druppie.fullname" . }}-secrets
+                  key: GITEA_ADMIN_PASSWORD
             - name: GITEA__server__ROOT_URL
               value: "{{ include "druppie.giteaExternalUrl" . }}/"
             - name: GITEA__server__HTTP_PORT
@@ -104,7 +112,7 @@ spec:
                   - |
                     sleep 10
                     ADMIN_USER={{ .Values.gitea.adminUser | quote }}
-                    ADMIN_PASS={{ .Values.gitea.adminPassword | quote }}
+                    ADMIN_PASS="${GITEA_ADMIN_PASSWORD}"
                     ADMIN_EMAIL={{ .Values.gitea.adminEmail | quote }}
                     GITEA_ORG={{ .Values.gitea.org | quote }}
                     until wget -qO- http://localhost:3000/api/healthz >/dev/null 2>&1; do sleep 3; done
