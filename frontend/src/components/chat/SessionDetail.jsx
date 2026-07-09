@@ -1068,12 +1068,18 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
     for (const entry of newEntries) {
       if (entry.sequence_number != null) {
         existingMap.set(entry.sequence_number, entry)
+      } else {
+        existingMap.set(existingMap.size, entry)
       }
     }
 
     const merged = Array.from(existingMap.values())
-      .filter(e => e.sequence_number != null)
-      .sort((a, b) => a.sequence_number - b.sequence_number)
+      .sort((a, b) => {
+        if (a.sequence_number == null && b.sequence_number == null) return 0
+        if (a.sequence_number == null) return 1
+        if (b.sequence_number == null) return -1
+        return a.sequence_number - b.sequence_number
+      })
 
     const seqs = merged.map(e => e.sequence_number).filter(Boolean)
     if (seqs.length > 0) {

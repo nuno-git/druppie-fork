@@ -168,46 +168,10 @@ class ToolExecutor:
         task_db = _task_db.get(None)
         return task_db if task_db is not None else self.db
 
-    def _bind_session(self, db: "DBSession") -> None:
-        """Rebind this executor (and its repos) to a fresh session.
-
-        Used by the short-lived session wrapper in factory mode so each tool
-        execution gets its own connection.
-        """
-        self.db = db
-        self._execution_repo = None
-        self._approval_repo = None
-        self._question_repo = None
-
     def _update_tool_call_safe(self, tool_call_id: UUID, **kwargs) -> None:
         """Update a tool call, falling back to a fresh session if the
-        cached session was invalidated (e.g. by _bind_session from another
-        async task during an await).  Only used in factory-mode error
-        handlers where the captured _db / _repo have gone stale."""
-        db = self.db
-        repo = self._execution_repo
-        if db is not None and repo is not None:
-            try:
-                repo.update_tool_call(tool_call_id, **kwargs)
-                db.commit()
-                return
-            except (AttributeError, NameError):
-                pass
-        if self._session_factory is None:
-            raise RuntimeError("ToolExecutor has no db session and no session_factory")
-        db = self._session_factory()
-        try:
-            from druppie.repositories import ExecutionRepository
-            repo = ExecutionRepository(db)
-            repo.update_tool_call(tool_call_id, **kwargs)
-            db.commit()
-        finally:
-            db.close()
-
-    def _update_tool_call_safe(self, tool_call_id: UUID, **kwargs) -> None:
-        """Update a tool call, falling back to a fresh session if the
-        cached session was invalidated (e.g. by _bind_session from another
-        async task during an await).  Only used in factory-mode error
+        cached session was invalidated (e.g. by concurrent modification
+        from another async task during an await).  Only used in error
         handlers where the captured _db / _repo have gone stale."""
         db = self.db
         repo = self._execution_repo
