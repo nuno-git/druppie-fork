@@ -69,23 +69,15 @@ async def session_events_ws(
         user_roles = get_user_roles(user)
         is_admin = "admin" in user_roles
 
-        # Step 2: Verify session access
+        # Step 2: Verify session access via SessionService (DRY with REST routes)
         db = SessionLocal()
         try:
-            session_repo = SessionRepository(db)
-            session = session_repo.get_by_id(session_id)
-            if not session:
-                await websocket.close(code=4004, reason="Session not found")
-                return
-
-            is_owner = session.user_id == user_id
-            # Check expert access (user was asked a question in this session)
-            from druppie.repositories import QuestionRepository
-            question_repo = QuestionRepository(db)
-            expert_session_ids = question_repo.list_session_ids_with_expert_role(user_roles)
-            is_expert = session_id in expert_session_ids
-
-            if not is_owner and not is_admin and not is_expert:
+            from druppie.services import SessionService, SessionRepository, QuestionRepository
+            session_service = SessionService(
+                SessionRepository(db),
+                QuestionRepository(db),
+            )
+            if not session_service.check_access(session_id, user_id, user_roles):
                 await websocket.close(code=4003, reason="Not authorized to access this session")
                 return
         finally:

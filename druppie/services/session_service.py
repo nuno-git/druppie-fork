@@ -36,15 +36,13 @@ class SessionService:
         expert_session_ids = self.question_repo.list_session_ids_with_expert_role(user_roles)
         return session_id in expert_session_ids
 
-    def get_detail(
+    def check_access(
         self,
         session_id: UUID,
         user_id: UUID,
         user_roles: list[str],
-        since_sequence: int | None = None,
-        exclude: set[str] | None = None,
-    ) -> SessionDetail:
-        """Get session detail with access check.
+    ) -> bool:
+        """Check whether a user is allowed to access a session.
 
         Access rules:
           - Owner: full access
@@ -64,7 +62,25 @@ class SessionService:
             and self._user_is_session_expert(session_id, user_roles)
         )
 
-        if not (is_owner or is_admin or is_expert):
+        return is_owner or is_admin or is_expert
+
+    def get_detail(
+        self,
+        session_id: UUID,
+        user_id: UUID,
+        user_roles: list[str],
+        since_sequence: int | None = None,
+        exclude: set[str] | None = None,
+    ) -> SessionDetail:
+        """Get session detail with access check.
+
+        Access rules:
+          - Owner: full access
+          - Admin: full access
+          - Expert (a user holding a role this session has asked an expert
+            question for): read-only access
+        """
+        if not self.check_access(session_id, user_id, user_roles):
             raise AuthorizationError("Cannot access this session")
 
         options = DetailOptions(since_sequence=since_sequence, exclude=exclude or set())

@@ -1041,23 +1041,22 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
     placeholderData: keepPreviousData,
   })
 
-  const displayTimeline = useMemo(() => {
+  // Merge incoming data.timeline with accumulated entries.
+  // Pure computation: no ref mutations during render.
+  const mergedTimeline = useMemo(() => {
     if (!data) return []
 
+    const incoming = data.timeline || []
+    const existing = mergedTimelineRef.current || []
+
     if (highestSeqRef.current === undefined) {
-      const seqs = (data.timeline || []).map(e => e.sequence_number).filter(Boolean)
-      if (seqs.length > 0) {
-        highestSeqRef.current = Math.max(...seqs)
-      }
-      mergedTimelineRef.current = data.timeline || []
-      return mergedTimelineRef.current
+      return incoming
     }
 
-    const newEntries = data.timeline || []
-    if (newEntries.length === 0) return mergedTimelineRef.current
+    if (incoming.length === 0) return existing
 
     const existingMap = new Map()
-    for (const entry of mergedTimelineRef.current) {
+    for (const entry of existing) {
       if (entry.sequence_number != null) {
         existingMap.set(entry.sequence_number, entry)
       } else {
@@ -1065,7 +1064,7 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
       }
     }
 
-    for (const entry of newEntries) {
+    for (const entry of incoming) {
       if (entry.sequence_number != null) {
         existingMap.set(entry.sequence_number, entry)
       } else {
@@ -1073,22 +1072,26 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
       }
     }
 
-    const merged = Array.from(existingMap.values())
+    return Array.from(existingMap.values())
       .sort((a, b) => {
         if (a.sequence_number == null && b.sequence_number == null) return 0
         if (a.sequence_number == null) return 1
         if (b.sequence_number == null) return -1
         return a.sequence_number - b.sequence_number
       })
+  }, [data])
 
-    const seqs = merged.map(e => e.sequence_number).filter(Boolean)
+  // After render, update the accumulated refs so WebSocket handler
+  // and next delta load have the latest merged state.
+  useEffect(() => {
+    mergedTimelineRef.current = mergedTimeline
+    const seqs = mergedTimeline.map(e => e.sequence_number).filter(Boolean)
     if (seqs.length > 0) {
       highestSeqRef.current = Math.max(...seqs)
     }
+  }, [mergedTimeline])
 
-    mergedTimelineRef.current = merged
-    return merged
-  }, [data])
+  const displayTimeline = mergedTimeline
 
   useEffect(() => {
     if (sessionId !== prevSessionIdRef.current) {
@@ -1147,10 +1150,11 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
         }
 
         // Defensive refetch: delta only returns entries with higher sequence_number.
-        // When an existing run's nested tool_call changes status (question asked,
-        // approval needed), its sequence_number doesn't change, so delta skips it.
-        // Reset highestSeqRef for all update-like events to force a full fetch.
-        if (entry.type === 'agent_run_update' || entry.type === 'question' || entry.type === 'approval') {
+        // When an approval or question is created, its sequence_number may not
+        // increase, so delta skips it. Reset highestSeqRef for those events
+        // to force a full fetch. agent_run_update is NOT reset — status changes
+        // are already patched inline (lines 1117-1133) and don't need refetch.
+        if (entry.type === 'question' || entry.type === 'approval') {
           highestSeqRef.current = undefined
         }
         queryClient.invalidateQueries({ queryKey: ['session', sessionId] })

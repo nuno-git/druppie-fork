@@ -215,3 +215,14 @@ def get_event_manager() -> SessionEventManager:
     if _event_manager is None:
         _event_manager = SessionEventManager()
     return _event_manager
+
+
+def reset_event_manager() -> None:
+    """Reset the singleton for test isolation.
+
+    Clears all connection state so tests don't leak WebSocket
+    connections between test cases. Mirrors the pattern used by
+    reset_tool_registry().
+    """
+    global _event_manager
+    _event_manager = None
