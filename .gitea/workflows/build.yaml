@@ -2,14 +2,53 @@ name: Build and Push Images
 
 on:
   push:
-    branches: [colab-dev, main]
+    branches: [colab-dev, main, 'feature/**']
   workflow_dispatch:
 
 env:
   REGISTRY: ${{ secrets.HARBOR_REGISTRY }}
+  # Harbor robot username. Stored as a secret so the auth string stays out of the
+  # log; falls back to the known robot account when the secret is unset.
+  HARBOR_USER: ${{ secrets.HARBOR_USERNAME }}
   DOCKER_BUILDKIT: "1"
 
+# Serialize builds per ref so two pushes to the same branch don't race. Cross-
+# branch collisions on `git push origin main` (ai/k8s) are handled by the push
+# retry/rebase loop in the deploy step. cancel-in-progress: false lets an
+# in-flight build finish instead of throwing away (potentially long) work.
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
+  # ---------------------------------------------------------------------------
+  # test: lint + unit tests. Reporting-only for now (continue-on-error) because
+  # the tree is not yet lint-clean. To make this a hard gate, drop
+  # `continue-on-error: true` below and add `needs: [test]` to the build job.
+  # ---------------------------------------------------------------------------
+  test:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Backend lint (ruff) + tests (pytest)
+        run: |
+          docker run --rm -v "$PWD":/src -w /src python:3.11-slim bash -lc '
+            pip install --no-cache-dir -q -r druppie/requirements.txt || true
+            pip install --no-cache-dir -q ruff pytest pytest-asyncio || true
+            ruff check druppie || true
+            (cd druppie && pytest -q) || true
+          '
+
+      - name: Frontend lint + tests
+        run: |
+          docker run --rm -v "$PWD/frontend":/fe -w /fe node:20-slim bash -lc '
+            npm ci || npm install
+            npm run lint || true
+            (npm test -- --run) || true
+          '
+
   build:
     runs-on: ubuntu-latest
     steps:
@@ -19,39 +58,52 @@ jobs:
         id: tags
         run: |
           BRANCH="${{ github.ref_name }}"
+          # Sanitize the branch into a valid Docker tag component: slashes and any
+          # other characters outside [A-Za-z0-9._-] become '-'. This keeps main /
+          # colab-dev tags unchanged while making feature/foo -> feature-foo.
+          BRANCH_SLUG=$(echo "$BRANCH" | sed 's#[^A-Za-z0-9._-]#-#g')
           SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-8)
           TIMESTAMP=$(date -u +%Y%m%d%H%M%S)
-          DEPLOY_TAG="${BRANCH}-${TIMESTAMP}-${SHORT_SHA}"
+          DEPLOY_TAG="${BRANCH_SLUG}-${TIMESTAMP}-${SHORT_SHA}"
           echo "deploy_tag=$DEPLOY_TAG" >> $GITHUB_OUTPUT
           echo "Deploy tag: $DEPLOY_TAG"
 
-      - name: Install Docker CLI and Buildx
+      - name: Install Docker CLI
+        # Only the docker CLI is needed (the runner is DinD). buildx was previously
+        # downloaded but never used, so it is no longer installed.
         run: |
           curl -fsSL https://download.docker.com/linux/static/stable/x86_64/docker-27.5.1.tgz | tar xz -C /tmp
           install -m 755 /tmp/docker/docker /usr/local/bin/docker
-          mkdir -p /usr/local/lib/docker/cli-plugins
-          curl -fsSL https://github.com/docker/buildx/releases/download/v0.20.1/buildx-v0.20.1.linux-amd64 \
-            -o /usr/local/lib/docker/cli-plugins/docker-buildx
-          chmod +x /usr/local/lib/docker/cli-plugins/docker-buildx
           docker version --format '{{.Client.Version}}'
 
+      - name: Install yq (for robust HelmRelease imageTag patching)
+        # Pinned version; used instead of sed so JSON-vs-YAML key quoting and
+        # accidental global `tag:` matches can no longer corrupt the HelmRelease.
+        run: |
+          curl -fsSL -o /usr/local/bin/yq https://github.com/mikefarah/yq/releases/download/v4.45.4/yq_linux_amd64
+          chmod +x /usr/local/bin/yq
+          yq --version
+
       - name: Configure Harbor credentials
+        # Writes DOCKER_CONFIG once; every later `docker` call reads it via the
+        # env var (no per-command --config). Registry + username come from
+        # secrets/env so they can't drift out of sync with the image paths.
         env:
           HARBOR_PASS: ${{ secrets.HARBOR_PASSWORD }}
         run: |
+          USER="${HARBOR_USER:-robot\$druppie+druppie-ci}"
           mkdir -p /tmp/docker
-          AUTH=$(printf 'robot$druppie+druppie-ci:%s' "$HARBOR_PASS" | base64 -w0)
-          printf '{"auths":{"harbor.rijnland.dev":{"auth":"%s"}}}\n' "$AUTH" > /tmp/docker/config.json
+          AUTH=$(printf '%s:%s' "$USER" "$HARBOR_PASS" | base64 -w0)
+          printf '{"auths":{"%s":{"auth":"%s"}}}\n' "$REGISTRY" "$AUTH" > /tmp/docker/config.json
           echo "DOCKER_CONFIG=/tmp/docker" >> $GITHUB_ENV
-          cat /tmp/docker/config.json
 
       - name: Build and push backend
         env:
           TAG: ${{ steps.tags.outputs.deploy_tag }}
           SHA: ${{ github.sha }}
         run: |
-          docker --config /tmp/docker build --build-arg CACHEBUST="$SHA" -t "$REGISTRY/druppie/druppie-backend:$TAG" .
-          docker --config /tmp/docker push "$REGISTRY/druppie/druppie-backend:$TAG"
+          docker build --build-arg CACHEBUST="$SHA" -t "$REGISTRY/druppie/druppie-backend:$TAG" .
+          docker push "$REGISTRY/druppie/druppie-backend:$TAG"
 
       - name: Build and push frontend
         env:
@@ -86,7 +138,8 @@ jobs:
         run: |
           for module in module-coding module-docker module-web module-vision \
                         module-archimate module-data-access module-registry \
-                        module-filesearch module-kubernetes module-llm; do
+                        module-filesearch module-kubernetes module-llm \
+                        module-azuredevops; do
             DF="./druppie/mcp-servers/$module/Dockerfile"
             if [ -f "$DF" ]; then
               if grep -q "^COPY mcp-servers/" "$DF"; then
@@ -111,6 +164,27 @@ jobs:
             docker push "$REGISTRY/druppie/druppie-sandbox-k8s:$TAG"
           fi
 
+      - name: Build and push dev-workspace image
+        # Branch environments check out their branch at runtime from the SAME
+        # shared image, so this only needs building on the two long-lived
+        # branches. Feature-branch pushes skip it (the workspace pod pulls
+        # dev-workspace:latest and `git checkout`s the feature branch itself).
+        if: github.ref_name == 'colab-dev' || github.ref_name == 'main'
+        env:
+          TAG: ${{ steps.tags.outputs.deploy_tag }}
+          SHA: ${{ github.sha }}
+        run: |
+          if [ ! -f Dockerfile.dev-workspace ]; then
+            echo "Dockerfile.dev-workspace not present on this branch — skipping (dev-workspace:latest is shared from colab-dev)"
+            exit 0
+          fi
+          docker build --build-arg CACHEBUST="$SHA" \
+            -t "$REGISTRY/druppie/dev-workspace:$TAG" \
+            -t "$REGISTRY/druppie/dev-workspace:latest" \
+            -f Dockerfile.dev-workspace .
+          docker push "$REGISTRY/druppie/dev-workspace:$TAG"
+          docker push "$REGISTRY/druppie/dev-workspace:latest"
+
       - name: Summary
         env:
           TAG: ${{ steps.tags.outputs.deploy_tag }}
@@ -120,29 +194,77 @@ jobs:
           echo "Images pushed to $REGISTRY/druppie/"
 
       - name: Update HelmRelease image tag in ai/k8s
+        # SECURITY NOTE (review point 2): on push events Gitea runs the workflow
+        # file from the pushed branch, so anyone with push rights to a feature/**
+        # branch can submit a workflow that reads HARBOR_PASSWORD / CI_GIT_TOKEN
+        # (the latter can push ai/k8s main). The durable fix is operational, not
+        # in-repo: (1) restrict CI_GIT_TOKEN to ai/k8s only (no admin), and
+        # (2) use Gitea "environments" tied to main/colab-dev for these secrets
+        # so feature branches can't reference them, plus branch protection on
+        # .gitea/workflows/ for the long-lived branches. The token is injected
+        # ONLY into this step's env (never a global job/env secret).
         env:
           TAG: ${{ steps.tags.outputs.deploy_tag }}
           BRANCH: ${{ github.ref_name }}
           GIT_TOKEN: ${{ secrets.CI_GIT_TOKEN }}
         run: |
+          # main/colab-dev: their HelmRelease lives under clusters/ka-k8s-ai/apps/.
+          # Feature branches: a branch environment (deployed from the Druppie UI)
+          # has a machine-managed HelmRelease under clusters/branch-envs/ — update
+          # its imageTag so the env auto-upgrades. No env dir -> nothing to do.
           if [ "$BRANCH" = "main" ]; then
             HR_FILE="clusters/ka-k8s-ai/apps/druppie/helmrelease.yaml"
-          else
+          elif [ "$BRANCH" = "colab-dev" ]; then
             HR_FILE="clusters/ka-k8s-ai/apps/druppie-colab-dev/helmrelease.yaml"
+          else
+            # Same slugify as the backend: lowercase, non-[a-z0-9-] -> '-',
+            # collapse dashes, trim.
+            SLUG=$(echo "$BRANCH" | tr '[:upper:]' '[:lower:]' | sed -e 's/[^a-z0-9-]/-/g' -e 's/--*/-/g' -e 's/^-*//' -e 's/-*$//')
+            HR_FILE="clusters/branch-envs/druppie-${SLUG}/helmrelease.yaml"
           fi
 
-          git clone "https://druppie-ci:${GIT_TOKEN}@aigit.waterschap.org/ai/k8s.git" /tmp/k8s
+          # Authenticate via an HTTP extra header instead of embedding the token
+          # in the clone URL (which would leak into .git/config and error msgs).
+          AUTH=$(printf 'druppie-ci:%s' "$GIT_TOKEN" | base64 -w0)
+          git config --global http.https://aigit.waterschap.org/.extraheader "AUTHORIZATION: basic $AUTH"
+          git clone https://aigit.waterschap.org/ai/k8s.git /tmp/k8s
           cd /tmp/k8s
+
+          if [ ! -f "$HR_FILE" ]; then
+            echo "No HelmRelease at $HR_FILE (no branch environment deployed) — skipping"
+            exit 0
+          fi
+
           git config user.name "druppie-ci"
           git config user.email "druppie-ci@users.noreply.rijnland.dev"
 
-          sed -i "s|\"\?imageTag\"\?\s*:\s*\"[^\"]*\"|imageTag: \"${TAG}\"|g; s|\(tag:\s*\)[a-z-]*[0-9]*-[a-f0-9]*.*|\1${TAG}|g" "$HR_FILE"
+          # Patch imageTag with yq (robust against JSON/YAML quoting). Only touch
+          # init.image.tag when that key already exists (don't create stray keys
+          # on branch-env HelmReleases that have no init section).
+          export TAG
+          yq -i '.spec.values.global.imageTag = strenv(TAG)' "$HR_FILE"
+          if yq -e '.spec.values.init.image.tag' "$HR_FILE" >/dev/null 2>&1; then
+            yq -i '.spec.values.init.image.tag = strenv(TAG)' "$HR_FILE"
+          fi
 
           if git diff --quiet; then
             echo "No changes — tag already up to date"
           else
             git add "$HR_FILE"
-            git commit -m "ci: auto-update image tag to ${TAG}"
-            git push origin main
-            echo "Pushed image tag update: ${TAG}"
+            git commit -m "ci: auto-update image tag to ${TAG} (${BRANCH})"
+            # Retry the push with a rebase: another branch's build may push to
+            # ai/k8s main concurrently. Without this, the loser fails non-fast-
+            # forward and the deploy silently never happens (images are in Harbor
+            # but Flux never sees the new tag).
+            for attempt in 1 2 3 4 5; do
+              if git push origin main; then
+                echo "Pushed image tag update: ${TAG}"
+                exit 0
+              fi
+              echo "Push failed (attempt $attempt/5); rebasing and retrying..."
+              git pull --rebase origin main
+              sleep 5
+            done
+            echo "ERROR: could not push image tag update after 5 attempts" >&2
+            exit 1
           fi
