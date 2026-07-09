@@ -22,25 +22,26 @@ postgresql:
   druppie:
     database: druppie
     username: druppie
-    password: druppie_secret
+    # Empty by default: set explicitly or enable externalSecrets.managed (ESO).
+    password: ""
     port: 5432
     storage: 5Gi
   keycloak:
     database: keycloak
     username: keycloak
-    password: keycloak_secret
+    password: ""
     port: 5432
     storage: 5Gi
   gitea:
     database: gitea
     username: gitea
-    password: gitea_secret
+    password: ""
     port: 5432
     storage: 5Gi
 keycloak:
   image: quay.io/keycloak/keycloak:24.0
   adminUser: admin
-  adminPassword: admin
+  adminPassword: ""
   hostname: ''
   nodePort: 8080
   service:
@@ -74,7 +75,7 @@ keycloak:
 gitea:
   image: gitea/gitea:1.21
   adminUser: gitea_admin
-  adminPassword: GiteaAdmin123
+  adminPassword: ""
   adminEmail: admin@druppie.local
   org: druppie
   sshPort: 2222
@@ -350,7 +351,7 @@ secrets:
   deepseekApiKey: ''
   deepinfraApiKey: ''
   foundryApiKey: ''
-  internalApiKey: druppie-internal-secret-key
+  internalApiKey: ''
   keycloakClientSecret: ''
   giteaClientSecret: ''
   giteaSecretKey: ''
@@ -401,6 +402,10 @@ certManager:
   email: ''
 externalSecrets:
   enabled: false
+  # When true, secrets are owned by ExternalSecrets (ai/k8s vault-eso layer) and
+  # this chart's templates/secrets.yaml is NOT rendered — avoids a dual-owner
+  # race where Helm and ESO both reconcile the same Secret. Prod/dev set this.
+  managed: false
   vaultAddress: http://vault.vault.svc.cluster.local:8200
   vaultRole: external-secrets
   serviceAccount: external-secrets
