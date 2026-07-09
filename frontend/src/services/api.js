@@ -315,27 +315,6 @@ export const getDeploymentVolumes = (projectId = null) => {
 export const wipeProject = (projectId) =>
   request(`/api/deployments/project/${encodeURIComponent(projectId)}/wipe`, { method: 'POST' })
 
-// ============ Dev Environments (Dev VMs) ============
-// Dev VMs are sysbox workspaces exposed through Guacamole. DELETE stops + removes.
-export const devEnvironmentsApi = {
-  list: () => request('/api/dev-vms'),
-  get: (id) => request(`/api/dev-vms/${encodeURIComponent(id)}`),
-  create: (data) =>
-    request('/api/dev-vms', { method: 'POST', body: JSON.stringify(data) }),
-  delete: (id) =>
-    request(`/api/dev-vms/${encodeURIComponent(id)}`, { method: 'DELETE' }),
-  triggerDeploy: (image, tag) =>
-    request('/api/registry/webhook', {
-      method: 'POST',
-      body: JSON.stringify({
-        type: 'PUSH_ARTIFACT',
-        event_data: {
-          resources: [{ resource_url: image, tag }],
-        },
-      }),
-    }),
-}
-
 // ============ Branch Environments ============
 // Full per-branch Druppie instances deployed to the cluster. Status transitions
 // (deploying → running/failed, deleting → gone) happen server-side asynchronously.

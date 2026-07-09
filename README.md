@@ -18,7 +18,6 @@ cp .env.example .env
 # 3. Deploy on k3s (see docs/K3S-DEV-SETUP.md for full guide)
 sudo ./scripts/setup-harbor-k8s.sh
 helm upgrade --install druppie ./helm/druppie -n druppie --create-namespace
-kubectl apply -f k8s/guacamole.yaml
 
 # 4. Open the app
 open http://localhost:30001

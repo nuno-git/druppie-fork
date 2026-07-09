@@ -22,13 +22,6 @@ description: "CI/CD runners"
 apiVersion: scheduling.k8s.io/v1
 kind: PriorityClass
 metadata:
-  name: druppie-dev-vm
-value: 1000
-description: "Developer VMs — low priority, evicted under pressure (PVC preserved)"
----
-apiVersion: scheduling.k8s.io/v1
-kind: PriorityClass
-metadata:
   name: druppie-agent
 value: 500
 description: "Agent sandboxes — lowest priority, ephemeral"

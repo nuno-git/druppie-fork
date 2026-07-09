@@ -2,7 +2,7 @@
 
 This guide walks through setting up the full Druppie development environment on a single VM. The environment is a hybrid of two layers:
 
-- **Docker Compose** runs the Druppie application (backend, frontend, Keycloak, Gitea, MCP servers), the optional Guacamole remote-access gateway, and the dev-VM image builder.
+- **Docker Compose** runs the Druppie application (backend, frontend, Keycloak, Gitea, MCP servers).
 - **k3s** runs Harbor (the container registry) and acts as the deployment target that CI/CD rolls images out to.
 
 Everything runs on one host. Compose owns the app and the developer tooling. k3s owns the registry and the place images get deployed.
@@ -19,18 +19,17 @@ Everything runs on one host. Compose owns the app and the developer tooling. k3s
 │                                                                         │
 │  ┌────────────────────── Docker Compose ────────────────────────────┐   │
 │  │                                                                  │   │
-│  │  Druppie app (profile: dev)            Remote access (opt-in)    │   │
-│  │  ┌──────────────────────────────┐      ┌──────────────────────┐  │   │
-│  │  │ backend  :8100  (host)       │      │ guacamole  :8484     │  │   │
-│  │  │ frontend :5273               │      │ guacd                │  │   │
-│  │  │ keycloak :8180  (realm:      │      │ guac-postgres        │  │   │
-│  │  │   druppie, OIDC SSO)         │      └──────────────────────┘  │   │
-│  │  │ gitea    :3100               │                               │   │
-│  │  │ adminer  :8081               │      Image builder (opt-in)   │   │
-│  │  │ postgres :5432               │      ┌──────────────────────┐  │   │
-│  │  │ 9x MCP servers :9001-9012    │      │ dev-vm-image-builder │  │   │
-│  │  └──────────────────────────────┘      │ → dev-vm-base:latest │  │   │
-│  │                                        └──────────────────────┘  │   │
+│  │  Druppie app (profile: dev)                                      │   │
+│  │  ┌──────────────────────────────┐                                │   │
+│  │  │ backend  :8100  (host)       │                                │   │
+│  │  │ frontend :5273               │                                │   │
+│  │  │ keycloak :8180  (realm:      │                                │   │
+│  │  │   druppie, OIDC SSO)         │                                │   │
+│  │  │ gitea    :3100               │                                │   │
+│  │  │ adminer  :8081               │                                │   │
+│  │  │ postgres :5432               │                                │   │
+│  │  │ 9x MCP servers :9001-9012    │                                │   │
+│  │  └──────────────────────────────┘                                │   │
 │  └──────────────────────────────────────────────────────────────────┘   │
 │                                                                         │
 │  ┌──────────────────────── k3s (local cluster) ──────────────────────┐  │
@@ -76,11 +75,11 @@ Install these on the host before you start.
 | Requirement | Notes |
 |-------------|-------|
 | Docker + Docker Compose plugin | `docker compose version` should work. |
-| sysbox runtime | `sysbox-runc` for dev VMs. Check with `docker info \| grep runtime`. Install from [nestybox/sysbox](https://github.com/nestybox/sysbox). |
+| sysbox runtime | `sysbox-runc` for agent sandboxes. Check with `docker info \| grep runtime`. Install from [nestybox/sysbox](https://github.com/nestybox/sysbox). |
 | k3s (local) | `kubectl get nodes` must succeed. Defaults to `KUBECONFIG=$HOME/.kube/config`. |
 | Helm 3.x | Harbor installs via the official chart. |
 | curl | Used by the setup scripts and health checks. |
-| RAM | 16GB minimum, 32GB recommended when Guacamole and dev VMs run alongside the app. |
+| RAM | 16GB minimum, 32GB recommended. |
 
 You also need an LLM API key copied into `.env` (see [Environment Variables Reference](#environment-variables-reference)).
 
@@ -158,63 +157,9 @@ API docs live at `http://localhost:8100/docs`.
 
 ---
 
-## 2. Remote Access (Guacamole + Dev VMs)
+## 2. Container Registry (Harbor on k3s)
 
-Remote access is opt-in. The `remote-access` profile adds Apache Guacamole (a browser-based RDP/SSH gateway) and the one-shot dev-VM image builder. Guacamole authenticates against the existing Keycloak `druppie` realm over OpenID Connect, so a developer logs in once and reaches both the Druppie frontend and Guacamole.
-
-### Start the remote-access profile
-
-Run it together with the app so Guacamole can reach Keycloak:
-
-```bash
-docker compose --profile dev --profile remote-access up -d
-```
-
-### Build the dev-VM image
-
-The dev-VM base image is a one-shot build that tags `dev-vm-base:latest`:
-
-```bash
-docker compose --profile remote-access build dev-vm-image-builder
-```
-
-Rebuild it whenever the dev-VM Dockerfile (`druppie/mcp-servers/module-coding/Dockerfile.dev-vm`) changes.
-
-### Access Guacamole
-
-Open `http://localhost:8484/guacamole/` and log in with any Keycloak test user (for example `developer` / `Developer123!`). The OpenID Connect flow redirects through Keycloak and back. The first OIDC login auto-provisions the local Guacamole account.
-
-> Only `http://localhost:8484/guacamole/` works locally. The trailing slash matters. The internal compose address is `http://guacamole:8080`, used by the backend when it provisions connections.
-
-### Launch a dev VM manually
-
-Dev VMs use the sysbox runtime so Docker-in-Docker works without privileged mode. Once the base image is built:
-
-```bash
-docker run -d --name dev-sandbox \
-  --runtime=sysbox-runc \
-  -p 2222:22 -p 3390:3389 -p 8090:8080 \
-  dev-vm-base:latest
-```
-
-In production, the backend provisions these VMs as Kata pods on k3s and registers them as Guacamole connections. Locally you can run one by hand for testing.
-
-### Dev VM services
-
-| Service | In-VM port | Example host port |
-|---------|------------|-------------------|
-| SSH | 22 | 2222 |
-| RDP | 3389 | 3390 |
-| code-server | 8080 | 8090 |
-| Local Gitea (Docker-in-Docker) | 3000 | mapped inside the VM |
-| Backend (hot reload) | 8000 | mapped inside the VM |
-| Frontend (Vite HMR) | 5273 | mapped inside the VM |
-
----
-
-## 3. Container Registry (Harbor on k3s)
-
-Harbor holds the images CI builds and the dev-VM base image. There are two supported ways to install it:
+Harbor holds the images CI builds. There are two supported ways to install it:
 
 | Script | Approach | Where | Port | When to use |
 |--------|----------|-------|------|-------------|
@@ -291,11 +236,11 @@ curl -sf -u "admin:Harbor12345" -X POST \
   }'
 ```
 
-> When the backend runs inside Compose, `localhost:8100` is the host port. Harbor pods reach the backend through the nodePort, so use a stable address. See [Backend kubectl Access](#5-backend-kubectl-access) for wiring.
+> When the backend runs inside Compose, `localhost:8100` is the host port. Harbor pods reach the backend through the nodePort, so use a stable address. See [Backend kubectl Access](#4-backend-kubectl-access) for wiring.
 
 ---
 
-## 4. CI/CD Flow
+## 3. CI/CD Flow
 
 ### How the deploy loop works
 
@@ -345,7 +290,7 @@ The exact endpoint name follows the backend's deploy API; check `http://localhos
 
 ---
 
-## 5. Backend kubectl Access
+## 4. Backend kubectl Access
 
 For the deploy loop to work, the backend container needs a kubeconfig that reaches k3s and a `kubectl` binary.
 
@@ -388,9 +333,6 @@ docker compose --profile dev up -d druppie-backend-dev
 | `KUBECTL_PATH` | Optional explicit `kubectl` binary path. | `/usr/local/bin/kubectl` |
 | `REGISTRY_URL` | Harbor address used for push/pull. | `localhost:30010` |
 | `REGISTRY_PROJECT` | Default Harbor project. | `ci` |
-| `GUACAMOLE_URL` | Internal compose address of Guacamole. | `http://guacamole:8080` |
-| `GUACAMOLE_ADMIN_USER` | Guacamole admin user. | `guacadmin` |
-| `GUACAMOLE_ADMIN_PASSWORD` | Guacamole admin password. Change in any shared env. | `guacadmin` |
 
 ---
 
@@ -407,7 +349,6 @@ Default host ports. The real values come from `.env` (see `BACKEND_PORT`, `KEYCL
 | Adminer | 8081 | infra / dev / prod | `ADMINER_PORT` |
 | PostgreSQL | 5432 | infra / dev / prod | internal |
 | MCP servers | 9001-9012 | infra / dev / prod | `MCP_*_PORT` |
-| Guacamole | 8484 | remote-access | `GUACAMOLE_PORT` |
 | Harbor | 30010 | (k3s) | `HARBOR_PORT`, NodePort |
 | k3s API | 6443 | (k3s) | cluster API |
 
@@ -417,23 +358,14 @@ Default host ports. The real values come from `.env` (see `BACKEND_PORT`, `KEYCL
 
 ## Troubleshooting
 
-**Guacamole DB not initializing.** The schema lives in the `guac_initdb` volume. If the web app throws DB errors on first boot, check that the volume has the JDBC schema and that `guac-postgres` reports healthy:
-
-```bash
-docker compose --profile dev --profile remote-access ps
-docker volume inspect druppie_guac_initdb
-```
-
-A hard reset rebuilds it: `docker volume rm druppie_guac_initdb` then start the `remote-access` profile again.
-
-**Dev VM won't start.** Dev VMs need sysbox. Confirm the runtime is registered:
+**Sandbox won't start.** Sandboxes need sysbox. Confirm the runtime is registered:
 
 ```bash
 docker info | grep -i runtime
 docker run --rm --runtime=sysbox-runc hello-world
 ```
 
-If sysbox is missing, install `sysbox-ce` from [nestybox/sysbox](https://github.com/nestybox/sysbox) and restart Docker. Also check `SANDBOX_RUNTIME` in `.env` (`sysbox-runc` for sysbox VMs, `docker` for plain containers).
+If sysbox is missing, install `sysbox-ce` from [nestybox/sysbox](https://github.com/nestybox/sysbox) and restart Docker. Also check `SANDBOX_RUNTIME` in `.env` (`sysbox-runc` for sysbox isolation, `docker` for plain containers).
 
 **Harbor pods pending.** Usually a storage issue. k3s ships the local-path provisioner, so PVCs should bind fast. If they hang:
 
@@ -457,7 +389,7 @@ docker compose exec druppie-backend-dev kubectl get nodes
 docker compose exec druppie-backend-dev kubectl config view --minify | grep server
 ```
 
-The server line must point at `host.docker.internal:6443` or the host IP, not `127.0.0.1`. See [Backend kubectl Access](#5-backend-kubectl-access).
+The server line must point at `host.docker.internal:6443` or the host IP, not `127.0.0.1`. See [Backend kubectl Access](#4-backend-kubectl-access).
 
 **Harbor `docker login` fails with HTTPS error.** TLS is off, so Docker rejects the plain HTTP registry. Add `localhost:30010` to `insecure-registries` in `/etc/docker/daemon.json` and restart Docker.
 
@@ -487,24 +419,14 @@ All variables come from `.env` (copy `.env.example` to start). Required ones are
 | `KEYCLOAK_PORT` | 8180 | Keycloak |
 | `GITEA_PORT` | 3100 | Gitea |
 | `ADMINER_PORT` | 8081 | Adminer |
-| `GUACAMOLE_PORT` | 8484 | Guacamole web UI |
 | `MCP_CODING_PORT` | 9001 | MCP coding |
 | `MCP_DOCKER_PORT` | 9002 | MCP docker |
 
-### Remote access
+### Sandbox
 
 | Variable | Purpose | Default |
 |----------|---------|---------|
-| `GUAC_DB_PASSWORD` | Guacamole PostgreSQL password. | `guac_pass` |
-| `GUACAMOLE_URL` | Internal compose address of Guacamole. | `http://guacamole:8080` |
-| `GUACAMOLE_ADMIN_USER` | Guacamole admin user. | `guacadmin` |
-| `GUACAMOLE_ADMIN_PASSWORD` | Guacamole admin password. | `guacadmin` |
-
-### Sandbox / dev VMs
-
-| Variable | Purpose | Default |
-|----------|---------|---------|
-| `SANDBOX_RUNTIME` | Runtime for sandboxes and dev VMs. Use `sysbox-runc` for VM-style isolation. | `docker` |
+| `SANDBOX_RUNTIME` | Runtime for sandboxes. Use `sysbox-runc` for VM-style isolation. | `docker` |
 | `SANDBOX_API_SECRET` | Shared secret between backend and sandbox control plane. | `sandbox-dev-secret` |
 | `SANDBOX_MODEL` | Optional model override for the coding agent. | none |
 | `SANDBOX_MEMORY_LIMIT` | Per-sandbox memory cap. | `4g` (commented) |

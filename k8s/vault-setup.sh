@@ -16,7 +16,7 @@
 # Credentials are GENERATED at install time — none are committed to the repo.
 # They are written to ${SECRETS_FILE} (default .vault-setup-secrets.env, mode
 # 600, gitignored) and reused automatically next run. Override any value by
-# exporting it first: VAULT_DEV_ROOT_TOKEN, HARBOR_ADMIN_PASSWORD, GUAC_DB_PASSWORD.
+# exporting it first: VAULT_DEV_ROOT_TOKEN, HARBOR_ADMIN_PASSWORD.
 #
 # NOTE: Vault runs in DEV MODE — storage is in-memory. Restarting the vault-0
 # pod (or the node) wipes all secrets. Re-run this script to re-seed.
@@ -58,12 +58,10 @@ umask 077
 rand_pw() { openssl rand -base64 24 | tr -dc 'A-Za-z0-9'; }
 VAULT_DEV_ROOT_TOKEN="${VAULT_DEV_ROOT_TOKEN:-$(openssl rand -hex 16)}"
 HARBOR_ADMIN_PASSWORD="${HARBOR_ADMIN_PASSWORD:-$(rand_pw)}"
-GUAC_DB_PASSWORD="${GUAC_DB_PASSWORD:-$(rand_pw)}"
 
 cat > "${SECRETS_FILE}" <<EOF
 VAULT_DEV_ROOT_TOKEN=${VAULT_DEV_ROOT_TOKEN}
 HARBOR_ADMIN_PASSWORD=${HARBOR_ADMIN_PASSWORD}
-GUAC_DB_PASSWORD=${GUAC_DB_PASSWORD}
 EOF
 
 # ---- 1. Helm repos ----------------------------------------------------------
@@ -99,9 +97,6 @@ log "Seeding initial secrets (3-layer model)"
 # Layer 1 — CI/CD Harbor credentials (password generated, never committed)
 kubectl exec -n "${VAULT_NS}" "${VAULT_POD}" -- vault kv put secret/ci/harbor \
   username=admin password="${HARBOR_ADMIN_PASSWORD}" >/dev/null
-# Remote-access — Guacamole database password (generated, never committed)
-kubectl exec -n "${VAULT_NS}" "${VAULT_POD}" -- vault kv put secret/remote-access/guac-db \
-  password="${GUAC_DB_PASSWORD}" >/dev/null
 # Layer 3 — Cluster static config
 kubectl exec -n "${VAULT_NS}" "${VAULT_POD}" -- vault kv put secret/cluster/config \
   registry_url=localhost:30010 llm_base_url="" vault_addr=http://vault.vault.svc.cluster.local:8200 >/dev/null
@@ -157,5 +152,4 @@ log "Verify with:"
 echo "  kubectl get clustersecretstore vault-backend                    # STATUS=Valid"
 echo "  kubectl get externalsecret -n druppie                          # STATUS=SecretSynced"
 echo "  kubectl get externalsecret -n harbor harbor-admin              # STATUS=SecretSynced"
-echo "  kubectl get externalsecret -n remote-access guac-db           # STATUS=SecretSynced"
 echo "  kubectl get secret harbor-creds -n druppie -o jsonpath='{.data}'"

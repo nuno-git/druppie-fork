@@ -124,34 +124,11 @@ docker push localhost:30010/druppie/druppie-backend:latest
 # Frontend
 docker build -t localhost:30010/druppie/druppie-frontend:latest -f frontend/Dockerfile frontend/
 docker push localhost:30010/druppie/druppie-frontend:latest
-
-# Dev VM base image
-docker build -t localhost:30010/druppie/dev-vm-base:latest \
-  -f druppie/mcp-servers/module-coding/Dockerfile.dev-vm ./druppie/mcp-servers/
-docker push localhost:30010/druppie/dev-vm-base:latest
 ```
 
 After the push, the pods from step 7 start pulling and become `Running`.
 
-### 9. Deploy Guacamole **(once)**
-
-```bash
-kubectl apply -f k8s/guacamole.yaml
-```
-
-This creates the `remote-access` namespace with guacd, the Guacamole web app, and a
-PostgreSQL instance for Guacamole's own schema.
-
-### 10. Initialize the Guacamole DB schema **(once)**
-
-```bash
-kubectl exec -n remote-access deploy/guacamole -- \
-  /opt/guacamole/bin/initdb.sh --postgresql \
-  | kubectl exec -i -n remote-access deploy/guac-postgres -- \
-    psql -U guacamole_user -d guacamole_db
-```
-
-### 11. Run the Keycloak setup **(once)**
+### 9. Run the Keycloak setup **(once)**
 
 This creates the `druppie` realm, the test users, and the Gitea OAuth client.
 
@@ -166,7 +143,7 @@ GITEA_PORT=30003 \
 python3 scripts/setup_keycloak.py
 ```
 
-### 12. Configure k3s insecure registry for Harbor **(once)**
+### 10. Configure k3s insecure registry for Harbor **(once)**
 
 k3s needs to know that Harbor on NodePort 30010 is an insecure (HTTP) registry.
 Create `/etc/rancher/k3s/registries.yaml`:
@@ -189,13 +166,7 @@ sudo systemctl restart k3s
 
 Without this, k3s pulls from `localhost:30010` fail with TLS errors.
 
-### 13. Patch the NetworkPolicy for Guacamole access
-
-The Druppie namespace ships a default-deny `NetworkPolicy` that blocks egress to the
-`remote-access` namespace, so the backend cannot reach Guacamole until you allow it.
-See the [Troubleshooting](#backend-cant-reach-guacamole) section for the exact patch.
-
-### 14. Open the app
+### 11. Open the app
 
 Point your browser at http://localhost:30001 and log in with `admin` / `Admin123!`.
 
@@ -212,7 +183,6 @@ All services are exposed as NodePorts, so you reach them on `localhost:<port>`.
 | Keycloak | 30002 | http://localhost:30002 |
 | Gitea | 30003 | http://localhost:30003 |
 | Harbor | 30010 | http://localhost:30010 |
-| Guacamole | 30020 | http://localhost:30020/guacamole/ |
 | Grafana | 30050 | http://localhost:30050 |
 
 ---
@@ -232,45 +202,9 @@ Everything described below runs on the single k3s node.
 **Namespace `harbor`** runs the Harbor registry as seven pods (core, jobservice,
 registry, portal, database, redis, trivy).
 
-**Namespace `remote-access`** runs Guacamole: `guacd` (the protocol gateway), the
-`guacamole` web app, and a dedicated `guac-postgres`.
-
 **On the host**, outside the cluster:
 
-- The Docker daemon, used by the backend to start dev VM containers via the mounted
-  `/var/run/docker.sock`.
 - The Gitea `act-runner`, the CI/CD executor that builds and deploys on push.
-
----
-
-## Creating a Dev VM
-
-Dev VMs are Docker containers (optionally on the sysbox runtime) that give each
-developer an isolated coding environment with its own branch checked out.
-
-**Via API:**
-
-```bash
-TOKEN=$(curl -s -X POST "http://localhost:30000/realms/druppie/protocol/openid-connect/token" \
-  -H "Content-Type: application/x-www-form-urlencoded" \
-  -d "grant_type=password&client_id=druppie-frontend&username=admin&password=Admin123!" \
-  | python3 -c "import sys,json; print(json.load(sys.stdin)['access_token'])")
-
-curl -X POST http://localhost:30000/api/dev-vms \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"name":"my-vm","branch":"colab-dev"}'
-```
-
-**Via UI:** Open http://localhost:30001, log in, and go to the **Dev Environments**
-tab. Click to create a new VM and pick a branch.
-
-**Access the VM through Guacamole:**
-
-1. Open http://localhost:30020/guacamole/
-2. Log in with `guacadmin` / `guacadmin` (change this in any non-throwaway setup).
-3. The connection created for your VM appears in the list.
-4. RDP credentials inside the session: `developer` / `developer`.
 
 ---
 
@@ -311,60 +245,6 @@ FRONTEND_PORT=30001 BACKEND_PORT=30000 \
 KEYCLOAK_PORT=30002 GITEA_PORT=30003 \
 python3 scripts/setup_keycloak.py
 ```
-
-### Backend can't reach Guacamole
-
-Symptom: dev VM creation fails, backend logs show timeouts to `guacd` or the
-Guacamole API.
-
-The Druppie namespace uses a restrictive `NetworkPolicy` named `druppie-app-net`.
-By default it denies egress to the `remote-access` namespace. You need to **add**
-an egress rule for `remote-access` without removing the existing ones.
-
-A strategic merge patch would *replace* the whole `egress` array and silently drop
-the rules the app already needs. Use a JSON Patch instead so the new rule is appended
-to the list:
-
-```bash
-kubectl patch networkpolicy druppie-app-net -n druppie --type=json -p='[
-  {
-    "op": "add",
-    "path": "/spec/egress/-",
-    "value": {
-      "to": [
-        { "namespaceSelector": { "matchLabels": { "kubernetes.io/metadata.name": "remote-access" } } }
-      ],
-      "ports": [
-        { "protocol": "TCP", "port": 4822 },
-        { "protocol": "TCP", "port": 8080 }
-      ]
-    }
-  }
-]'
-```
-
-The `/spec/egress/-` path means "append to the end of the egress array", so every
-existing rule stays in place. Port 4822 is guacd, port 8080 is the Guacamole web app.
-
-Verify the rule landed:
-
-```bash
-kubectl get networkpolicy druppie-app-net -n druppie -o jsonpath='{.spec.egress}' | python3 -m json.tool
-```
-
-### Backend can't launch dev VMs
-
-The backend launches dev VMs through Docker, so it needs the host socket. Check that
-the socket is mounted and reachable inside the pod:
-
-```bash
-kubectl exec -n druppie deploy/druppie-backend -- docker ps
-```
-
-If that fails with "permission denied" or "cannot connect to the Docker daemon", the
-socket mount in `helm/druppie/values.yaml` is wrong or the container user is not in
-the right group. Confirm `/var/run/docker.sock` is mounted and the backend runs as a
-user that can access it.
 
 ### Image pull errors
 
