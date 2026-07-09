@@ -174,7 +174,11 @@ jobs:
         # shared image, so this only needs building on the two long-lived
         # branches. Feature-branch pushes skip it (the workspace pod pulls
         # dev-workspace:latest and `git checkout`s the feature branch itself).
+        # Non-blocking: dev-workspace is auxiliary (branch-env pods); a flaky
+        # npm build here must not block the core app deploy. :latest from a
+        # prior green build keeps branch envs working if this fails.
         if: github.ref_name == 'colab-dev' || github.ref_name == 'main'
+        continue-on-error: true
         env:
           TAG: ${{ steps.tags.outputs.deploy_tag }}
           SHA: ${{ github.sha }}
