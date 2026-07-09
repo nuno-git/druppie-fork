@@ -23,6 +23,13 @@ export default defineConfig({
     // workspace; when accessed via the noVNC desktop on localhost:5173 HMR
     // falls back to a (now redirect-free) full reload.
     ...(inCodeServerProxy && {
+      // The workspace is reached at druppie-<slug>-dev.rijnland.dev. Vite 5.4+
+      // rejects unknown Host headers by default (DNS-rebinding guard), which
+      // surfaces as "Blocked request. This host is not allowed." Allow the
+      // rijnland.dev wildcard so every branch-env workspace host passes; the
+      // dev server sits behind the workspace's oauth2-proxy on that ingress
+      // anyway. (localhost is always allowed, so the noVNC desktop still works.)
+      allowedHosts: ['.rijnland.dev'],
       hmr: {
         protocol: 'wss',
         clientPort: 443,
