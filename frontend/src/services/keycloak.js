@@ -87,14 +87,37 @@ export const initKeycloak = async () => {
 
   const savedTokens = loadTokens()
 
+  // Adopting a previously stored session must NOT trigger a Keycloak redirect.
+  // The branch-env dev workspace serves this app via Vite on a separate host
+  // (<slug>-dev.rijnland.dev) while Keycloak lives on the base env host, so a
+  // hot-reload (Vite currently does this as a full page refresh) would
+  // otherwise re-run `check-sso` and bounce through a cross-origin Keycloak
+  // redirect on every edit — surfacing as "not authenticated" flashes and
+  // 401s even though the user is logged in. When we already hold tokens we
+  // adopt them directly and only refresh; check-sso is used solely for a cold
+  // first load with no stored session.
+  const hasStoredSession = Boolean(savedTokens.token && savedTokens.refreshToken)
+  const initOptions = { checkLoginIframe: false }
+  if (hasStoredSession) {
+    initOptions.token = savedTokens.token
+    initOptions.refreshToken = savedTokens.refreshToken
+  } else {
+    initOptions.onLoad = 'check-sso'
+    initOptions.silentCheckSsoFallback = true
+  }
+
   try {
-    const authenticated = await keycloakInstance.init({
-      onLoad: 'check-sso',
-      checkLoginIframe: false,
-      token: savedTokens.token,
-      refreshToken: savedTokens.refreshToken,
-      silentCheckSsoFallback: true,
-    })
+    let authenticated = await keycloakInstance.init(initOptions)
+
+    // A stored access token may already be expired after an idle period; the
+    // refresh token usually still works, so force a refresh before giving up.
+    if (!authenticated && hasStoredSession) {
+      try {
+        authenticated = await keycloakInstance.updateToken(-1)
+      } catch {
+        authenticated = false
+      }
+    }
 
     if (authenticated) {
       saveTokens(keycloakInstance.token, keycloakInstance.refreshToken)
