@@ -115,7 +115,9 @@ class AzureSQLAdapter(BaseDataSourceAdapter):
                 f"DRIVER={{{driver}}};"
                 f"SERVER={server};"
                 f"DATABASE={database};"
+                "Encrypt=yes;"
                 "TrustServerCertificate=yes;"
+                "Login Timeout=90;"
             )
             logger.info("connecting_as_user server=%s database=%s", server, database)
             return _token_connect(conn_str, user_token)
@@ -139,7 +141,9 @@ class AzureSQLAdapter(BaseDataSourceAdapter):
                 f"DRIVER={{{driver}}};"
                 f"SERVER={server};"
                 f"DATABASE={database};"
+                "Encrypt=yes;"
                 "TrustServerCertificate=yes;"
+                "Login Timeout=90;"
             )
             self._connection = _token_connect(conn_str, access_token)
         else:

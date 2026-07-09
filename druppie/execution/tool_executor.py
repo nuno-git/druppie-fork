@@ -51,6 +51,7 @@ class ToolCallStatus:
 class EntraTokenMissing(Exception):
     """Tool requires user.entra_token but it resolved to None."""
     def __init__(self, user_id: str | None):
+        super().__init__(f"user.entra_token is None for user_id={user_id}")
         self.user_id = user_id
 
 
