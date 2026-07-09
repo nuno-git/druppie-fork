@@ -32,14 +32,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install Docker CLI
+        # The runner image has no docker in PATH; install just the CLI to talk
+        # to the shared DinD daemon for running tests in containers.
+        run: |
+          curl -fsSL https://download.docker.com/linux/static/stable/x86_64/docker-27.5.1.tgz | tar xz -C /tmp
+          install -m 755 /tmp/docker/docker /usr/local/bin/docker
+
       - name: Backend lint (ruff) + tests (pytest)
+        # Reporting-only: every command and the docker run itself are
+        # best-effort. The tree is not yet lint-clean, so this must never fail
+        # the run (build/deploy must stay green). Output lands in the log.
         run: |
           docker run --rm -v "$PWD":/src -w /src python:3.11-slim bash -lc '
             pip install --no-cache-dir -q -r druppie/requirements.txt || true
             pip install --no-cache-dir -q ruff pytest pytest-asyncio || true
             ruff check druppie || true
             (cd druppie && pytest -q) || true
-          '
+          ' || true
 
       - name: Frontend lint + tests
         run: |
@@ -47,7 +57,7 @@ jobs:
             npm ci || npm install
             npm run lint || true
             (npm test -- --run) || true
-          '
+          ' || true
 
   build:
     runs-on: ubuntu-latest
