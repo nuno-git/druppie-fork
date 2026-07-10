@@ -15,6 +15,7 @@ Special services:
 
 from .session_service import SessionService
 from .approval_service import ApprovalService
+from .escalation_service import EscalationService
 from .question_service import QuestionService
 from .project_service import ProjectService
 from .deployment_service import DeploymentService
@@ -31,6 +32,7 @@ from .model_management_service import ModelManagementService
 __all__ = [
     "SessionService",
     "ApprovalService",
+    "EscalationService",
     "QuestionService",
     "ProjectService",
     "DeploymentService",

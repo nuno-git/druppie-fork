@@ -38,6 +38,7 @@ from uuid import UUID
 from druppie.repositories import (
     SessionRepository,
     ApprovalRepository,
+    EscalationRepository,
     QuestionRepository,
     ProjectRepository,
     EvaluationRepository,
@@ -47,6 +48,7 @@ from druppie.repositories import (
 from druppie.services import (
     SessionService,
     ApprovalService,
+    EscalationService,
     QuestionService,
     ProjectService,
     WorkflowService,
@@ -74,6 +76,11 @@ def get_session_repository(db: Session = Depends(get_db)) -> SessionRepository:
 def get_approval_repository(db: Session = Depends(get_db)) -> ApprovalRepository:
     """Get ApprovalRepository with DB session injected."""
     return ApprovalRepository(db)
+
+
+def get_escalation_repository(db: Session = Depends(get_db)) -> EscalationRepository:
+    """Get EscalationRepository with DB session injected."""
+    return EscalationRepository(db)
 
 
 def get_question_repository(db: Session = Depends(get_db)) -> QuestionRepository:
@@ -132,6 +139,18 @@ def get_approval_service(
 ) -> ApprovalService:
     """Get ApprovalService with repositories injected."""
     return ApprovalService(approval_repo, session_repo=session_repo)
+
+
+def get_escalation_service(
+    escalation_repo: EscalationRepository = Depends(get_escalation_repository),
+    session_repo: SessionRepository = Depends(get_session_repository),
+) -> EscalationService:
+    """Get EscalationService with repositories injected.
+
+    Authorizes human HITL decisions and records them as audit events. Does NOT
+    resume execution — the route coordinates with the orchestrator for that.
+    """
+    return EscalationService(escalation_repo, session_repo=session_repo)
 
 
 def get_question_service(
