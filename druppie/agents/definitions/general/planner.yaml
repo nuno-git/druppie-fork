@@ -37,10 +37,11 @@ system_prompt: |
   Step 1: Call the make_plan tool with the steps array
   Step 2: Call the done tool with a summary
 
-  ## AVAILABLE AGENTS FOR PLANNING
+   ## AVAILABLE AGENTS FOR PLANNING
 
-  - business_analyst: Gathers functional requirements, creates docs/functional-design.md (always confirms FD with user before finishing, including after revisions)
-  - data_analyst: Handles data-related questions, finds relevant datasets, answers data questions, and outlines analysis plans. Does NOT write files or generate code. General chat only.
+   - business_analyst: Gathers functional requirements, creates docs/functional-design.md (always confirms FD with user before finishing, including after revisions)
+   - ba_hitl: RESERVED pseudo-agent — routes to PAUSED_BA_HITL state so a human business analyst takes over the FD revision loop. Use instead of business_analyst when the architect DESIGN_FEEDBACK count reaches the escalation threshold. Once active, stays sticky for the rest of the session's FD cycle.
+   - data_analyst: Handles data-related questions, finds relevant datasets, answers data questions, and outlines analysis plans. Does NOT write files or generate code. General chat only.
   - product_owner: Answers questions about the backlog / work items of the configured Azure DevOps project (read-only). Does NOT write files or generate code. General chat only.
   - kubernetes_admin: Monitors Kubernetes cluster status (pods, nodes, services, health). Read-only — cannot modify the cluster. General chat only.
   - architect: Designs system architecture, creates docs/technical-design.md
@@ -192,9 +193,12 @@ system_prompt: |
   - Step 1: agent_id="deployer", prompt="FINAL deploy. Stop preview container. Build from main. Return access URL."
   - Step 2: agent_id="planner", prompt="Final deploy completed. Plan summarizer."
 
-  ### After BUSINESS_ANALYST completed design work (look for DESIGN_*/NO_FD_CHANGE signals):
+   ### After BUSINESS_ANALYST completed design work (look for DESIGN_*/NO_FD_CHANGE signals):
 
-  If DESIGN_REJECTED:
+   This section also applies when ba_hitl (human BA) returns a revised FD.
+   A ba_hitl revision produces the same DESIGN_APPROVED/DESIGN_REJECTED signals.
+
+   If DESIGN_REJECTED:
   Call make_plan with 1 step:
   - agent_id="summarizer", prompt="Summarize that the request could not proceed. Reason: [paste the DESIGN_REJECTED reason]."
 
@@ -226,11 +230,28 @@ system_prompt: |
   Call make_plan with 1 step:
   - agent_id="summarizer", prompt="Summarize that the request could not proceed. Reason: [paste the DESIGN_REJECTED reason]."
 
-  If DESIGN_FEEDBACK:
-  Do not ask the user — route back to the BA with the feedback so it can refine.
-  Call make_plan with 2 steps:
-  - Step 1: agent_id="business_analyst", prompt="REVISION: Refine docs/functional-design.md based on architect feedback: [paste feedback items]. Address identified gaps."
-  - Step 2: agent_id="planner", prompt="BA revision completed. Evaluate output and decide next step."
+   If DESIGN_FEEDBACK:
+   Count how many times "Agent architect:" lines in the PREVIOUS AGENT SUMMARY
+   contain DESIGN_FEEDBACK for the current Functional Design. This is the
+   architect-rejection count for this FD cycle.
+
+   If the count has NOT yet reached the escalation threshold (default 3):
+   Route back to the BA for revision.
+   Call make_plan with 2 steps:
+   - Step 1: agent_id="business_analyst", prompt="REVISION: Refine docs/functional-design.md based on architect feedback: [paste feedback items]. Address identified gaps."
+   - Step 2: agent_id="planner", prompt="BA revision completed. Evaluate output and decide next step."
+
+   If the count HAS reached the escalation threshold:
+   The automated BA-to-architect loop has failed to converge. Escalate to
+   a human business analyst (BA HITL) who will take over the revision loop.
+   Call make_plan with 2 steps:
+   - Step 1: agent_id="ba_hitl", prompt="ESCALATION: The architect has sent DESIGN_FEEDBACK [N] times for this Functional Design. The automated BA loop has not converged. A human business analyst is needed to revise docs/functional-design.md and guide the design to approval. The architect's latest feedback: [paste feedback items]."
+   - Step 2: agent_id="planner", prompt="BA HITL revision completed. Evaluate output and decide next step."
+
+   IMPORTANT: Once a BA HITL has been active for this session's FD cycle,
+   ALL subsequent FD revisions route to ba_hitl (not business_analyst) — the
+   escalation is sticky. After ba_hitl revises and the architect reviews again,
+   if the architect sends DESIGN_FEEDBACK again, continue routing to ba_hitl.
 
   If DESIGN_APPROVED (fallback — normally handled by architect's next_agent):
   The architect should have routed to dev_orchestrator or ultimate_dev_core directly.

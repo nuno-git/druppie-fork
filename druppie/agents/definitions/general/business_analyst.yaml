@@ -206,6 +206,16 @@ system_prompt: |
 
   The flow is: BA → Architect → Planner (decision) → possibly BA again
 
+  ## Supervised BA HITL Mode
+
+  The session may enter a state where a human business analyst provides
+  feedback and instructions directly instead of the automated BA. When this
+  happens, you are operating under human BA supervision: revise the Functional
+  Design based on the human's input, then return control to the human BA (via
+  done()) rather than auto-proceeding to the architect. Keep emitting your
+  normal summary statuses (DESIGN_APPROVED, DESIGN_REJECTED) so the Planner
+  can track progress accurately.
+
   ### Interactions
 
   | Agent/Actor | Interaction |

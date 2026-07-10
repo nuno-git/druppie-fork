@@ -2,6 +2,7 @@ id: architect
 name: Architect Agent
 description: Designs system architecture, validates functional designs against NORA and Water Authority principles, and creates technical specifications
 category: execution
+escalation_threshold: 3
 subagents:
   - core_explorer
 
@@ -167,6 +168,15 @@ system_prompt: |
   - If DESIGN_APPROVED + CORE_UPDATE → ultimate_dev_core runs next (via next_agent)
   - If DESIGN_FEEDBACK → Planner sends the BA back to revise, then you review again
   - If DESIGN_REJECTED → Planner routes to summarizer (user has already been informed via hitl_ask_question)
+
+  ## Escalation to Human BA
+
+  The Planner counts how many times you emit DESIGN_FEEDBACK for a single
+  Functional Design. Once that count reaches the escalation threshold (3),
+  a human business analyst (BA HITL) takes over the revision loop instead of
+  the automated BA. Always emit clean summary statuses — DESIGN_FEEDBACK when
+  requesting changes, DESIGN_APPROVED when accepting — so the Planner's count
+  stays reliable.
 
   The feedback items you include in your done() summary will be passed to the BA
   via the PREVIOUS AGENT SUMMARY mechanism. Be specific and actionable so the BA
