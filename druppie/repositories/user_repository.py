@@ -5,6 +5,22 @@ from uuid import UUID
 from .base import BaseRepository
 from ..db.models import User, UserRole
 
+# Druppie application roles defined in Keycloak (iac/realm.yaml, iac/users.yaml).
+# Realm-level built-ins such as offline_access / uma_authorization /
+# default-roles-druppie are excluded so the user_roles table only carries the
+# app roles that role-targeted features (HITL notifications, approvals) match on.
+APP_ROLES = frozenset({
+    "admin",
+    "developer",
+    "architect",
+    "business_analyst",
+    "infra-engineer",
+    "product-owner",
+    "compliance-officer",
+    "viewer",
+    "user",
+})
+
 
 class UserRepository(BaseRepository):
     """Database access for users."""
@@ -21,6 +37,26 @@ class UserRepository(BaseRepository):
             .filter(UserRole.role == role)
             .all()
         )
+
+    def sync_roles(self, user_id: UUID, roles: list[str]) -> None:
+        """Reconcile a user's app-role set to match ``roles``.
+
+        Only APP_ROLES are considered; Keycloak built-ins are ignored. Adds
+        missing roles and removes stale ones so the table reflects the token.
+        """
+        target = {r for r in roles if r in APP_ROLES}
+        existing = {
+            r.role
+            for r in self.db.query(UserRole).filter(UserRole.user_id == user_id).all()
+        }
+        for role in target - existing:
+            self.db.add(UserRole(user_id=user_id, role=role))
+        for role in existing - target:
+            self.db.query(UserRole).filter(
+                UserRole.user_id == user_id, UserRole.role == role
+            ).delete(synchronize_session=False)
+        self.db.flush()
+
 
     def get_or_create(
         self,

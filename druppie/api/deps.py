@@ -281,6 +281,9 @@ async def get_current_user(
                 email=user.get("email"),
                 display_name=user.get("name"),
             )
+            # Persist app roles so role-targeted features (HITL notifications,
+            # approvals) can resolve recipients via user_roles.
+            user_repo.sync_roles(UUID(user_id), get_user_roles(user))
             db.commit()
             logger.debug("user_synced", user_id=user_id, username=username)
         except Exception as e:
