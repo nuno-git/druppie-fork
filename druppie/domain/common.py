@@ -1,37 +1,34 @@
 """Common domain models shared across entities."""
 
-from datetime import datetime
 from enum import Enum
-from typing import Any
 from uuid import UUID
-
 from pydantic import BaseModel
+from datetime import datetime
+from typing import Any
+
 
 # =============================================================================
 # STATUS ENUMS
 # =============================================================================
 
-
 class SessionStatus(str, Enum):
     """Session execution status."""
-
     ACTIVE = "active"
     PAUSED_APPROVAL = "paused_approval"  # Waiting for tool approval
-    PAUSED_HITL = "paused_hitl"  # Waiting for user answer
-    PAUSED_SANDBOX = "paused_sandbox"  # Waiting for sandbox completion
-    PAUSED = "paused"  # User-initiated pause (Stop button)
-    PAUSED_CRASHED = "paused_crashed"  # System crashed during execution
+    PAUSED_HITL = "paused_hitl"          # Waiting for user answer
+    PAUSED_SANDBOX = "paused_sandbox"    # Waiting for sandbox completion
+    PAUSED = "paused"                    # User-initiated pause (Stop button)
+    PAUSED_CRASHED = "paused_crashed"    # System crashed during execution
+    PAUSED_BA_HITL = "paused_ba_hitl"              # Waiting for BA human review after FD escalation
+    PAUSED_ARCHITECT_HITL = "paused_architect_hitl"  # Waiting for architect human review
+    TERMINATED = "terminated"                        # Hard-terminated, not resumable
     COMPLETED = "completed"
     FAILED = "failed"
-    PAUSED_BA_HITL = "paused_ba_hitl"  # Waiting for BA human review after FD escalation
-    PAUSED_ARCHITECT_HITL = "paused_architect_hitl"  # Waiting for architect human review
-    TERMINATED = "terminated"  # Hard-terminated, not resumable
 
 
 class AgentRunStatus(str, Enum):
     """Agent run execution status."""
-
-    PENDING = "pending"  # Created by planner, not started yet
+    PENDING = "pending"       # Created by planner, not started yet
     RUNNING = "running"
     PAUSED_TOOL = "paused_tool"  # Waiting for tool approval
     PAUSED_HITL = "paused_hitl"  # Waiting for user answer
@@ -39,12 +36,11 @@ class AgentRunStatus(str, Enum):
     PAUSED_USER = "paused_user"  # User-initiated pause (via Stop button)
     COMPLETED = "completed"
     FAILED = "failed"
-    CANCELLED = "cancelled"  # Superseded by a new plan (make_plan only)
+    CANCELLED = "cancelled"   # Superseded by a new plan (make_plan only)
 
 
 class ToolCallStatus(str, Enum):
     """Tool call execution status."""
-
     PENDING = "pending"  # Not yet executed
     WAITING_APPROVAL = "waiting_approval"  # Needs approval before execution
     WAITING_ANSWER = "waiting_answer"  # HITL tool waiting for user answer
@@ -57,15 +53,13 @@ class ToolCallStatus(str, Enum):
 
 class ApprovalStatus(str, Enum):
     """Approval resolution status."""
-
     PENDING = "pending"
     APPROVED = "approved"
     REJECTED = "rejected"
 
 
 class EscalationEventType(str, Enum):
-    """Escalation event types for the FD-escalation HITL state machine."""
-
+    """Escalation event types for HITL workflows."""
     BA_HITL_ENTERED = "ba_hitl_entered"
     BA_HITL_ITERATE = "ba_hitl_iterate"
     BA_HITL_READY = "ba_hitl_ready"
@@ -79,14 +73,12 @@ class EscalationEventType(str, Enum):
 
 class QuestionStatus(str, Enum):
     """HITL question status."""
-
     PENDING = "pending"
     ANSWERED = "answered"
 
 
 class DeploymentStatus(str, Enum):
     """Deployment/container status."""
-
     STARTING = "starting"
     RUNNING = "running"
     STOPPED = "stopped"
@@ -95,7 +87,6 @@ class DeploymentStatus(str, Enum):
 
 class JobRunStatus(str, Enum):
     """Scheduled job run execution status."""
-
     PENDING = "pending"
     RUNNING = "running"
     WAITING_APPROVAL = "waiting_approval"
@@ -109,10 +100,8 @@ class JobRunStatus(str, Enum):
 # COMMON MODELS
 # =============================================================================
 
-
 class Attachment(BaseModel):
     """A file attached to a message or HITL answer."""
-
     id: UUID
     original_filename: str
     content_type: str
@@ -122,7 +111,6 @@ class Attachment(BaseModel):
 
 class TokenUsage(BaseModel):
     """Token usage tracking."""
-
     prompt_tokens: int
     completion_tokens: int
     total_tokens: int
@@ -130,14 +118,12 @@ class TokenUsage(BaseModel):
 
 class TimestampMixin(BaseModel):
     """Mixin for timestamp fields."""
-
     created_at: datetime
     updated_at: datetime | None = None
 
 
 class LLMMessage(BaseModel):
     """A single message in the LLM conversation."""
-
     role: str  # system, user, assistant, tool
     content: str | None = None
     # For assistant messages with tool calls
