@@ -85,6 +85,9 @@ class SessionDetail(SessionSummary):
     project: ProjectSummary | None
     language: str | None = None
     timeline: list[TimelineEntry]
+    fd_escalation_mode: bool = False
+    fd_rejection_count: int = 0
+    fd_post_hitl_rejection_count: int = 0
 
 
 

@@ -155,6 +155,9 @@ class SessionRepository(BaseRepository):
             project=project,
             language=session.language,
             timeline=timeline,
+            fd_escalation_mode=session.fd_escalation_mode or False,
+            fd_rejection_count=session.fd_rejection_count or 0,
+            fd_post_hitl_rejection_count=session.fd_post_hitl_rejection_count or 0,
         )
 
     # Backward compat alias

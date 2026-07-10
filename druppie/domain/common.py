@@ -21,6 +21,9 @@ class SessionStatus(str, Enum):
     PAUSED_CRASHED = "paused_crashed"    # System crashed during execution
     COMPLETED = "completed"
     FAILED = "failed"
+    PAUSED_BA_HITL = "paused_ba_hitl"              # Waiting for BA human review after FD escalation
+    PAUSED_ARCHITECT_HITL = "paused_architect_hitl"  # Waiting for architect human review
+    TERMINATED = "terminated"                        # Hard-terminated, not resumable
 
 
 class AgentRunStatus(str, Enum):

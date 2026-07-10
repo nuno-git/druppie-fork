@@ -3,7 +3,7 @@
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 
 from .base import Base, utcnow
@@ -29,6 +29,11 @@ class Session(Base):
     prompt_tokens = Column(Integer, default=0)
     completion_tokens = Column(Integer, default=0)
     total_tokens = Column(Integer, default=0)
+
+    # FD escalation state
+    fd_rejection_count = Column(Integer, default=0)
+    fd_escalation_mode = Column(Boolean, default=False)
+    fd_post_hitl_rejection_count = Column(Integer, default=0)
 
     created_at = Column(DateTime(timezone=True), default=utcnow, index=True)
     updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)

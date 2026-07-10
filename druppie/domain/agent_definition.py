@@ -143,6 +143,10 @@ class AgentDefinition(BaseModel):
     # Enforces the agent's status protocol regardless of LLM language drift.
     required_summary_status: CompletionSummaryRequirement | None = None
 
+    # Number of FD rejections before escalating to human review (HITL).
+    # When None, escalation is disabled for this agent.
+    escalation_threshold: int | None = None
+
     # LLM settings
     llm_profile: str = "standard"
     temperature: float = 0.1
