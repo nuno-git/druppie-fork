@@ -243,6 +243,86 @@ export const submitHITLResponse = (requestId, answer, selected = null) =>
     }),
   })
 
+// ============ FD Escalation HITL (human review surfaces) ============
+// String-literal unions mirror the backend Pydantic Literal types (druppie/api/routes/escalations.py);
+// runtime validation via the frozen sets below guards against an unknown decision reaching the network.
+/**
+ * @typedef {('iterate' | 'ready' | 'escalate' | 'terminate')} BaHitlDecision
+ * @typedef {('approve' | 'reject')} ArchitectHitlDecision
+ * @typedef {('ba_hitl' | 'terminate')} ArchitectRejectNext
+ * @typedef {{ decision: BaHitlDecision, feedback?: string }} BaHitlRequest
+ * @typedef {{ decision: ArchitectHitlDecision, next_on_reject?: ArchitectRejectNext }} ArchitectHitlRequest
+ * @typedef {{ reason?: string }} TerminateRequest
+ * @typedef {{
+ *   id: string,
+ *   session_id: string,
+ *   event_type: string,
+ *   actor_user_id: string | null,
+ *   created_at: string,
+ *   decision: string | null,
+ *   feedback: string | null,
+ *   rejection_count_at_event: number,
+ * }} EscalationEventDetail
+ * @typedef {{ event: EscalationEventDetail, message: string }} EscalationDecisionResponse
+ * @typedef {{ items: EscalationEventDetail[] }} EscalationEventList
+ */
+
+export const BA_HITL_DECISIONS = Object.freeze(['iterate', 'ready', 'escalate', 'terminate'])
+export const ARCHITECT_HITL_DECISIONS = Object.freeze(['approve', 'reject'])
+export const ARCHITECT_REJECT_NEXT = Object.freeze(['ba_hitl', 'terminate'])
+
+/**
+ * Submit a BA human-in-the-loop decision.
+ * @param {string} sessionId
+ * @param {BaHitlRequest} data
+ * @returns {Promise<EscalationDecisionResponse>}
+ */
+export const submitBaHitl = (sessionId, data) => {
+  if (!BA_HITL_DECISIONS.includes(data?.decision)) {
+    throw new Error(`Invalid BA HITL decision: ${data?.decision}`)
+  }
+  return request(`/api/sessions/${sessionId}/ba-hitl`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  })
+}
+
+/**
+ * Submit an architect human-in-the-loop decision.
+ * @param {string} sessionId
+ * @param {ArchitectHitlRequest} data
+ * @returns {Promise<EscalationDecisionResponse>}
+ */
+export const submitArchitectHitl = (sessionId, data) => {
+  if (!ARCHITECT_HITL_DECISIONS.includes(data?.decision)) {
+    throw new Error(`Invalid architect HITL decision: ${data?.decision}`)
+  }
+  return request(`/api/sessions/${sessionId}/architect-hitl`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  })
+}
+
+/**
+ * Hard-terminate a session (not resumable).
+ * @param {string} sessionId
+ * @param {TerminateRequest} [data]
+ * @returns {Promise<EscalationDecisionResponse>}
+ */
+export const terminateSession = (sessionId, data = {}) =>
+  request(`/api/sessions/${sessionId}/terminate`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  })
+
+/**
+ * Get the escalation event history for a session.
+ * @param {string} sessionId
+ * @returns {Promise<EscalationEventList>}
+ */
+export const getEscalationHistory = (sessionId) =>
+  request(`/api/sessions/${sessionId}/escalation-history`)
+
 // ============ Workspace ============
 export const getWorkspaceFiles = (sessionId = null) =>
   request(`/api/workspace${sessionId ? `?session_id=${sessionId}` : ''}`)

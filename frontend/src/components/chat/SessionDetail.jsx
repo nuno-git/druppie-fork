@@ -4,7 +4,7 @@
 
 import { useState, useRef, useEffect, useContext } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Send, CheckCircle, XCircle, Shield, ShieldOff, Loader2, ExternalLink, MessageSquare, FileCode, FilePlus, FileText, FileType, StopCircle, PlayCircle, ArrowUp, AlertTriangle, Terminal, ChevronDown, ChevronRight, Calendar } from 'lucide-react'
+import { Send, CheckCircle, XCircle, Shield, ShieldOff, Loader2, ExternalLink, MessageSquare, FileCode, FilePlus, FileText, FileType, StopCircle, PlayCircle, ArrowUp, AlertTriangle, Terminal, ChevronDown, ChevronRight, Calendar, Ban } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -39,6 +39,9 @@ import FileUploadButton from './FileUploadButton'
 import AttachmentChips from './AttachmentChips'
 import SurfacedFileCard from './SurfacedFileCard'
 import TestResultCard from './TestResultCard'
+import BAHitlCard from './BAHitlCard'
+import ArchitectHitlCard from './ArchitectHitlCard'
+import EscalationHistoryList from './EscalationHistoryList'
 
 // Fast-poll window after user actions (answer/approve/continue) so the
 // loading indicator appears promptly instead of waiting for the 2s paused poll.
@@ -441,6 +444,9 @@ const STATUS_COLORS = {
   paused_tool: { bg: 'bg-amber-50', text: 'text-amber-700', border: 'border-amber-200' },
   paused_sandbox: { bg: 'bg-amber-50', text: 'text-amber-700', border: 'border-amber-200' },
   paused_crashed: { bg: 'bg-red-50', text: 'text-red-700', border: 'border-red-200' },
+  paused_ba_hitl: { bg: 'bg-amber-50', text: 'text-amber-700', border: 'border-amber-200' },
+  paused_architect_hitl: { bg: 'bg-indigo-50', text: 'text-indigo-700', border: 'border-indigo-200' },
+  terminated: { bg: 'bg-gray-100', text: 'text-gray-600', border: 'border-gray-300' },
 }
 
 const StatusBadge = ({ status }) => {
@@ -993,12 +999,12 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
     refetchInterval: (query) => {
       if (query.state.error) return false
       const status = query.state.data?.status
-      if (status === 'completed' || status === 'failed') return false
+      if (status === 'completed' || status === 'failed' || status === 'terminated') return false
       // Fast poll briefly after submitting an answer/approval (translation in progress)
       if (isResuming()) return 500
       if (status === 'paused_crashed') return 1000
       if (status === 'paused_sandbox') return 1000
-      if (status === 'paused' || status === 'paused_approval' || status === 'paused_hitl') {
+      if (status === 'paused' || status === 'paused_approval' || status === 'paused_hitl' || status === 'paused_ba_hitl' || status === 'paused_architect_hitl') {
         return 500
       }
       return 500
@@ -1258,6 +1264,9 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
         paused_sandbox: 'bg-blue-500 animate-pulse',
         paused_approval: 'bg-amber-500 animate-pulse',
         waiting_answer: 'bg-amber-500 animate-pulse',
+        paused_ba_hitl: 'bg-amber-500 animate-pulse',
+        paused_architect_hitl: 'bg-indigo-500 animate-pulse',
+        terminated: 'bg-gray-400',
       }[data.status] || 'bg-gray-400'
 
   const projectRepo = data?.project
@@ -1650,10 +1659,44 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
         </div>
       )}
 
-      {/* Floating input bar — hidden in inspect mode, during sandbox, and
-          for non-owner experts (they can only view the session here; they
-          answer their expert questions on the /questions page). */}
-      {canControlSession && data.status !== 'failed' && data.status !== 'paused_sandbox' && viewMode !== 'inspect' && (
+      {/* FD escalation HITL review surfaces — replace the input bar while a
+          human review is pending. Terminated sessions show a final banner. */}
+      {viewMode !== 'inspect' && (data.status === 'paused_ba_hitl' || data.status === 'paused_architect_hitl' || data.status === 'terminated') && (
+        <div className="px-4 pb-4 pt-2 flex-shrink-0">
+          <div className="max-w-3xl mx-auto space-y-3">
+            {data.status === 'paused_ba_hitl' && (
+              <>
+                <BAHitlCard sessionId={sessionId} session={data} />
+                <EscalationHistoryList sessionId={sessionId} />
+              </>
+            )}
+            {data.status === 'paused_architect_hitl' && (
+              <>
+                <ArchitectHitlCard sessionId={sessionId} session={data} />
+                <EscalationHistoryList sessionId={sessionId} />
+              </>
+            )}
+            {data.status === 'terminated' && (
+              <>
+                <div className="flex items-start gap-2.5 border border-gray-300 rounded-2xl shadow-sm px-4 py-3.5 bg-gray-100">
+                  <Ban className="w-5 h-5 text-gray-500 flex-shrink-0 mt-0.5" />
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-gray-800">Session terminated</p>
+                    <p className="text-sm text-gray-600 mt-0.5">This session has been permanently terminated and cannot be resumed.</p>
+                  </div>
+                </div>
+                <EscalationHistoryList sessionId={sessionId} />
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Floating input bar — hidden in inspect mode, during sandbox, HITL
+          review states, terminated sessions, and for non-owner experts (they
+          can only view the session here; they answer their expert questions
+          on the /questions page). */}
+      {canControlSession && !['failed', 'paused_sandbox', 'paused_ba_hitl', 'paused_architect_hitl', 'terminated'].includes(data.status) && viewMode !== 'inspect' && (
         <div className="px-4 pb-4 pt-2 flex-shrink-0">
           <div className="max-w-3xl mx-auto">
             <div className="border border-gray-200 rounded-2xl shadow-lg px-4 py-3 bg-white focus-within:border-gray-300 focus-within:shadow-xl transition-shadow">
