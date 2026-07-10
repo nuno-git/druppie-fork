@@ -37,3 +37,14 @@ class NotificationRepository(BaseRepository):
         if unread_only:
             query = query.filter(Notification.is_read.is_(False))
         return query.order_by(Notification.created_at.desc()).all()
+
+    def mark_as_read(self, notification_id: UUID, user_id: UUID) -> bool:
+        updated = (
+            self.db.query(Notification)
+            .filter(
+                Notification.id == notification_id,
+                Notification.user_id == user_id,
+            )
+            .update({"is_read": True}, synchronize_session="fetch")
+        )
+        return updated > 0

@@ -94,6 +94,9 @@ from .model_override import (
     TranslationModelInfo,
 )
 
+# Notification models
+from .notification import NotificationDetail
+
 # Project models
 from .project import DeploymentInfo, DeploymentSummary, ProjectDetail, ProjectSummary
 
@@ -206,6 +209,8 @@ __all__ = [
     "JobRunSummary",
     "JobRunDetail",
     "JobRunList",
+    # Notification
+    "NotificationDetail",
     # Model override
     "ModelOverrideSummary",
     "ModelOverrideDetail",

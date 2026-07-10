@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import httpx
 import structlog
 
-from druppie.api.routes import agent_test, agents, approvals, cache, chat, deployments, documentation, escalations, evaluations, jobs, mcp_bridge, mcps, model_management, modules, projects, questions, sandbox, sessions, tool_output, workspace
+from druppie.api.routes import agent_test, agents, approvals, cache, chat, deployments, documentation, escalations, evaluations, jobs, mcp_bridge, mcps, model_management, modules, notifications, projects, questions, sandbox, sessions, tool_output, workspace
 from druppie.api.errors import register_exception_handlers
 from druppie.core.auth import get_auth_service
 from druppie.core.config import get_settings
@@ -306,6 +306,7 @@ def create_app() -> FastAPI:
     app.include_router(sessions.router, prefix="/api", tags=["Sessions"])
     app.include_router(escalations.router, prefix="/api/sessions", tags=["Escalations"])
     app.include_router(approvals.router, prefix="/api/approvals", tags=["Approvals"])
+    app.include_router(notifications.router, prefix="/api/notifications", tags=["Notifications"])
     app.include_router(questions.router, prefix="/api/questions", tags=["Questions"])
     app.include_router(projects.router, prefix="/api", tags=["Projects"])
     app.include_router(deployments.router, prefix="/api", tags=["Deployments"])
