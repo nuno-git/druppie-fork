@@ -49,7 +49,12 @@ import structlog
 from druppie.agents.prompt_builder import DEFAULT_LANGUAGE
 from druppie.core.gitea import get_gitea_client
 from druppie.core.language_detection import LanguageDetector
-from druppie.domain.common import AgentRunStatus, SessionStatus, ApprovalStatus
+from druppie.domain.common import (
+    AgentRunStatus,
+    ApprovalStatus,
+    EscalationEventType,
+    SessionStatus,
+)
 from druppie.execution.human_input import HumanInput
 from druppie.llm.base import clean_llm_error
 
@@ -70,6 +75,20 @@ async def _cleanup_sandbox(session_id: str) -> None:
             )
     except Exception as e:
         logger.warning("sandbox_cleanup_failed", session_id=session_id, error=str(e))
+
+
+def _terminated_conflict(session_id: UUID):
+    """Build the ConflictError raised when a terminated session is touched."""
+    from druppie.api.errors import ConflictError
+
+    return ConflictError(f"Session {session_id} is terminated and cannot be resumed.")
+
+
+# Reserved pseudo-agent ids used by the Planner to signal FD-escalation HITL.
+# They never resolve to an agent definition; the orchestrator intercepts them.
+_BA_HITL_AGENT_ID = "ba_hitl"
+_ARCHITECT_HITL_AGENT_ID = "architect_hitl"
+_DEFAULT_ESCALATION_THRESHOLD = 3
 
 
 class Orchestrator:
@@ -378,6 +397,9 @@ class Orchestrator:
                 # Pending runs stay PENDING — they'll resume later
                 logger.info("execution_paused_by_user", session_id=str(session_id))
                 return
+            if session and session.status == SessionStatus.TERMINATED.value:
+                # Hard-terminated sessions are not resumable.
+                raise _terminated_conflict(session_id)
 
             # Get next pending run
             next_run = self.execution_repo.get_next_pending(session_id)
@@ -387,6 +409,14 @@ class Orchestrator:
                 self.session_repo.update_status(session_id, SessionStatus.COMPLETED)
                 self.session_repo.commit()
                 await _cleanup_sandbox(str(session_id))
+                return
+
+            # RESERVED pseudo-agent interception (FD-escalation HITL).
+            # A pending run with agent_id "ba_hitl" / "architect_hitl" is a
+            # routing signal from the Planner, never a runnable agent. It must
+            # be intercepted here — before any agent-definition lookup that
+            # would fail on the unknown id and before run_agent is called.
+            if self._intercept_reserved_agent(session_id, next_run, session):
                 return
 
             # Rebuild context before each agent so it reflects changes
@@ -449,6 +479,12 @@ class Orchestrator:
                 return
 
             # Otherwise "completed" — loop continues to next pending run
+
+            # FD-escalation chokepoint: evaluate the backstop counter, the
+            # sticky supervised BA loop, and post-HITL rejection counting
+            # immediately after a run completes and before fetching the next.
+            if self._evaluate_escalation(session_id, next_run):
+                return
 
     _TRANSLATION_FAILED_MESSAGES = {
         "nl": (
@@ -908,6 +944,8 @@ class Orchestrator:
         from druppie.execution.tool_executor import ToolCallStatus, ToolExecutor
         from druppie.repositories import ApprovalRepository
 
+        self._assert_not_terminated(session_id)
+
         logger.info(
             "resume_after_approval",
             session_id=str(session_id),
@@ -1004,6 +1042,8 @@ class Orchestrator:
         from druppie.core.mcp_config import MCPConfig
         from druppie.execution.mcp_http import MCPHttp
         from druppie.execution.tool_executor import ToolCallStatus, ToolExecutor
+
+        self._assert_not_terminated(session_id)
 
         logger.info(
             "resume_after_answer",
@@ -1342,6 +1382,8 @@ class Orchestrator:
             contexts: Optional dict of agent_run_id -> context string for each leaf
         """
         from druppie.agents.runtime_v2 import AgentV2 as Agent
+
+        self._assert_not_terminated(session_id)
 
         logger.info(
             "resume_paused_session",
@@ -1692,5 +1734,365 @@ class Orchestrator:
                     "parent_chain_incomplete_waiting_for_siblings",
                     session_id=str(session_id),
                 )
+
+        return session_id
+
+    # =====================================================================
+    # FD-escalation / HITL state machine
+    # =====================================================================
+
+    def _get_escalation_repo(self):
+        from druppie.repositories import EscalationRepository
+
+        return EscalationRepository(self.execution_repo.db)
+
+    def _architect_escalation_threshold(self) -> int:
+        try:
+            from druppie.agents.definition_loader import AgentDefinitionLoader
+
+            defn = AgentDefinitionLoader.load("architect")
+            return defn.escalation_threshold or _DEFAULT_ESCALATION_THRESHOLD
+        except Exception:
+            return _DEFAULT_ESCALATION_THRESHOLD
+
+    def _has_completed_architect(self, session_id: UUID) -> bool:
+        completed = self.execution_repo.get_completed_runs(session_id)
+        return any(r.agent_id == "architect" for r in completed)
+
+    def _assert_not_terminated(self, session_id: UUID) -> None:
+        session = self.session_repo.get_by_id(session_id)
+        if session and session.status == SessionStatus.TERMINATED.value:
+            raise _terminated_conflict(session_id)
+
+    def _intercept_reserved_agent(self, session_id: UUID, run, session) -> bool:
+        """Handle reserved pseudo-agent ids before any agent is loaded.
+
+        Returns True when the run was intercepted (session paused); False when
+        the run is a normal agent and the loop should proceed.
+        """
+        if run.agent_id == _BA_HITL_AGENT_ID:
+            self._enter_ba_hitl(
+                session_id,
+                rejection_count=session.fd_rejection_count or 0,
+                cancel_pending=True,
+                cancel_intercepted_run_id=run.id,
+            )
+            return True
+        if run.agent_id == _ARCHITECT_HITL_AGENT_ID:
+            self._cancel_all_pending(session_id, except_run_id=run.id)
+            self.execution_repo.update_status(run.id, AgentRunStatus.CANCELLED)
+            self.session_repo.update_status(session_id, SessionStatus.PAUSED_ARCHITECT_HITL)
+            self._get_escalation_repo().create(
+                session_id=session_id,
+                event_type=EscalationEventType.ARCHITECT_HITL_ENTERED.value,
+                rejection_count_at_event=session.fd_rejection_count or 0,
+            )
+            self.session_repo.commit()
+            logger.info(
+                "architect_hitl_entered",
+                session_id=str(session_id),
+                agent_run_id=str(run.id),
+            )
+            return True
+        return False
+
+    def _cancel_all_pending(self, session_id: UUID, except_run_id: UUID | None = None) -> None:
+        """Cancel all pending runs for a session.
+
+        The Planner leaves a trailing 'planner' step after escalation signals;
+        leaving it pending would run on the next resume and override the
+        human's HITL decision, so every pending run (including that trailing
+        planner) is cancelled to leave a clean HITL state.
+        """
+        if except_run_id is not None:
+            from druppie.db.models.agent_run import AgentRun
+
+            pending = (
+                self.execution_repo.db.query(AgentRun)
+                .filter(
+                    AgentRun.session_id == session_id,
+                    AgentRun.status == AgentRunStatus.PENDING.value,
+                    AgentRun.id != except_run_id,
+                )
+                .all()
+            )
+            from datetime import datetime, timezone
+
+            for r in pending:
+                r.status = AgentRunStatus.CANCELLED.value
+                r.completed_at = datetime.now(timezone.utc)
+        else:
+            self.execution_repo.cancel_pending_runs(session_id)
+
+    def _enter_ba_hitl(
+        self,
+        session_id: UUID,
+        rejection_count: int,
+        cancel_pending: bool,
+        cancel_intercepted_run_id: UUID | None = None,
+        event_type: str = EscalationEventType.BA_HITL_ENTERED.value,
+    ) -> None:
+        if cancel_pending:
+            self._cancel_all_pending(session_id, except_run_id=cancel_intercepted_run_id)
+        if cancel_intercepted_run_id is not None:
+            self.execution_repo.update_status(cancel_intercepted_run_id, AgentRunStatus.CANCELLED)
+        self.session_repo.update_status(session_id, SessionStatus.PAUSED_BA_HITL)
+        self._get_escalation_repo().create(
+            session_id=session_id,
+            event_type=event_type,
+            rejection_count_at_event=rejection_count,
+        )
+        self.session_repo.commit()
+        logger.info(
+            "ba_hitl_pause",
+            session_id=str(session_id),
+            event_type=event_type,
+            rejection_count=rejection_count,
+        )
+
+    def _evaluate_escalation(self, session_id: UUID, completed_run) -> bool:
+        """Post-completion escalation chokepoint.
+
+        Returns True when the session was paused (caller must stop the loop).
+        Implements: backstop counter (B), sticky supervised BA loop (C), and
+        post-HITL rejection counting (D).
+        """
+        session = self.session_repo.get_by_id(session_id)
+        if session is None:
+            return False
+        if session.status == SessionStatus.TERMINATED.value:
+            return False
+
+        # Behavior C: a business_analyst run completing while escalated returns
+        # control to the human — the supervised loop never auto-proceeds.
+        if completed_run.agent_id == "business_analyst" and (session.fd_escalation_mode or False):
+            self._enter_ba_hitl(
+                session_id,
+                rejection_count=session.fd_rejection_count or 0,
+                cancel_pending=True,
+                event_type=EscalationEventType.BA_HITL_ITERATE.value,
+            )
+            return True
+
+        # Behavior B + D: backstop counter.
+        # A rejection is an architect->business_analyst revision routing. The
+        # reliable signal is a pending business_analyst run appearing after an
+        # architect has completed. With the Planner-mediated routing the BA run
+        # appears when the Planner re-plans (so this fires on the architect OR
+        # the planner completion that produced the pending BA run).
+        if completed_run.agent_id in ("architect", "planner"):
+            pending_ba = self.execution_repo.get_pending_by_agent_id(session_id, "business_analyst")
+            if pending_ba is not None and self._has_completed_architect(session_id):
+                return self._handle_rejection_routing(session_id, session)
+
+        return False
+
+    def _handle_rejection_routing(self, session_id: UUID, session) -> bool:
+        """Count a rejection and escalate to BA-HITL when the threshold is met."""
+        in_escalation = bool(session.fd_escalation_mode or False)
+        session.fd_rejection_count = (session.fd_rejection_count or 0) + 1
+        count = session.fd_rejection_count
+        if in_escalation:
+            session.fd_post_hitl_rejection_count = (session.fd_post_hitl_rejection_count or 0) + 1
+        self.session_repo.commit()
+
+        if in_escalation:
+            # Behavior D: a post-HITL rejection — override routing, return to human.
+            self._enter_ba_hitl(session_id, rejection_count=count, cancel_pending=True)
+            return True
+
+        threshold = self._architect_escalation_threshold()
+        if count >= threshold:
+            session.fd_escalation_mode = True
+            self.session_repo.commit()
+            self._enter_ba_hitl(session_id, rejection_count=count, cancel_pending=True)
+            return True
+
+        # Below threshold — leave the BA run pending, normal flow continues.
+        logger.info(
+            "fd_rejection_below_threshold",
+            session_id=str(session_id),
+            rejection_count=count,
+            threshold=threshold,
+        )
+        return False
+
+    def terminate_session(
+        self,
+        session_id: UUID,
+        reason: str | None = None,
+        user_id: UUID | None = None,
+    ) -> None:
+        """Hard-terminate a session: cancel pending runs, mark TERMINATED.
+
+        TERMINATED is a hard terminal state — distinct from the soft PAUSED /
+        COMPLETED / FAILED statuses — and is not resumable.
+        """
+        self.execution_repo.cancel_pending_runs(session_id)
+        self.session_repo.update_status(session_id, SessionStatus.TERMINATED, error_message=reason)
+        self._get_escalation_repo().create(
+            session_id=session_id,
+            event_type=EscalationEventType.SESSION_TERMINATED.value,
+            actor_user_id=user_id,
+            feedback=reason,
+        )
+        self.session_repo.commit()
+        logger.info(
+            "session_terminated",
+            session_id=str(session_id),
+            reason=reason,
+        )
+
+    async def resume_after_ba_hitl(
+        self,
+        session_id: UUID,
+        decision: str,
+        feedback: str | None = None,
+        user_id: UUID | None = None,
+    ) -> UUID:
+        """Resume a PAUSED_BA_HITL session per the human's decision.
+
+        decision: "iterate" | "ready" | "escalate" | "terminate"
+        """
+        from druppie.api.errors import ConflictError
+
+        self._assert_not_terminated(session_id)
+        session = self.session_repo.get_by_id(session_id)
+        if not session:
+            raise ValueError(f"Session {session_id} not found")
+        if session.status != SessionStatus.PAUSED_BA_HITL.value:
+            raise ConflictError(f"Session not paused for BA HITL (status={session.status})")
+
+        escalation_repo = self._get_escalation_repo()
+
+        match decision:
+            case "iterate":
+                seq = self.execution_repo.get_next_sequence_number(session_id)
+                prompt = feedback or ""
+                self.execution_repo.create_agent_run(
+                    session_id=session_id,
+                    agent_id="business_analyst",
+                    status=AgentRunStatus.PENDING,
+                    planned_prompt=prompt,
+                    sequence_number=seq,
+                )
+                self.execution_repo.commit()
+                escalation_repo.create(
+                    session_id=session_id,
+                    event_type=EscalationEventType.BA_HITL_ITERATE.value,
+                    actor_user_id=user_id,
+                    feedback=feedback,
+                    rejection_count_at_event=session.fd_rejection_count or 0,
+                )
+                self.session_repo.commit()
+                self.session_repo.update_status(session_id, SessionStatus.ACTIVE)
+                self.session_repo.commit()
+                await self.execute_pending_runs(session_id)
+            case "ready":
+                seq = self.execution_repo.get_next_sequence_number(session_id)
+                self.execution_repo.create_agent_run(
+                    session_id=session_id,
+                    agent_id="architect",
+                    status=AgentRunStatus.PENDING,
+                    planned_prompt="",
+                    sequence_number=seq,
+                )
+                self.execution_repo.commit()
+                escalation_repo.create(
+                    session_id=session_id,
+                    event_type=EscalationEventType.BA_HITL_READY.value,
+                    actor_user_id=user_id,
+                    rejection_count_at_event=session.fd_rejection_count or 0,
+                )
+                self.session_repo.commit()
+                self.session_repo.update_status(session_id, SessionStatus.ACTIVE)
+                self.session_repo.commit()
+                await self.execute_pending_runs(session_id)
+            case "escalate":
+                if (session.fd_post_hitl_rejection_count or 0) < 1:
+                    raise ConflictError(
+                        "Cannot escalate to architect HITL before at least one "
+                        "post-HITL rejection has occurred."
+                    )
+                self.session_repo.update_status(session_id, SessionStatus.PAUSED_ARCHITECT_HITL)
+                escalation_repo.create(
+                    session_id=session_id,
+                    event_type=EscalationEventType.BA_HITL_ESCALATE.value,
+                    actor_user_id=user_id,
+                    rejection_count_at_event=session.fd_rejection_count or 0,
+                )
+                self.session_repo.commit()
+            case "terminate":
+                self.terminate_session(session_id, reason=feedback, user_id=user_id)
+            case _:
+                raise ValueError(f"Unknown BA HITL decision: {decision}")
+
+        return session_id
+
+    async def resume_after_architect_hitl(
+        self,
+        session_id: UUID,
+        decision: str,
+        next_on_reject: str | None = None,
+        user_id: UUID | None = None,
+    ) -> UUID:
+        """Resume a PAUSED_ARCHITECT_HITL session per the architect's decision.
+
+        decision: "approve" | "reject"
+        When rejecting, next_on_reject: "ba_hitl" | "terminate"
+        """
+        from druppie.api.errors import ConflictError
+
+        self._assert_not_terminated(session_id)
+        session = self.session_repo.get_by_id(session_id)
+        if not session:
+            raise ValueError(f"Session {session_id} not found")
+        if session.status != SessionStatus.PAUSED_ARCHITECT_HITL.value:
+            raise ConflictError(f"Session not paused for architect HITL (status={session.status})")
+
+        escalation_repo = self._get_escalation_repo()
+
+        match decision:
+            case "approve":
+                seq = self.execution_repo.get_next_sequence_number(session_id)
+                self.execution_repo.create_agent_run(
+                    session_id=session_id,
+                    agent_id="architect",
+                    status=AgentRunStatus.PENDING,
+                    planned_prompt="",
+                    sequence_number=seq,
+                )
+                self.execution_repo.commit()
+                escalation_repo.create(
+                    session_id=session_id,
+                    event_type=EscalationEventType.ARCHITECT_HITL_APPROVE.value,
+                    actor_user_id=user_id,
+                )
+                self.session_repo.commit()
+                self.session_repo.update_status(session_id, SessionStatus.ACTIVE)
+                self.session_repo.commit()
+                await self.execute_pending_runs(session_id)
+            case "reject":
+                match next_on_reject:
+                    case "ba_hitl":
+                        self._cancel_all_pending(session_id)
+                        self.session_repo.update_status(session_id, SessionStatus.PAUSED_BA_HITL)
+                        escalation_repo.create(
+                            session_id=session_id,
+                            event_type=EscalationEventType.ARCHITECT_HITL_REJECT_TO_BA.value,
+                            actor_user_id=user_id,
+                            rejection_count_at_event=session.fd_rejection_count or 0,
+                        )
+                        self.session_repo.commit()
+                    case "terminate":
+                        self.terminate_session(
+                            session_id,
+                            reason="Architect HITL rejected",
+                            user_id=user_id,
+                        )
+                    case _:
+                        raise ValueError(f"Unknown next_on_reject: {next_on_reject}")
+            case _:
+                raise ValueError(f"Unknown architect HITL decision: {decision}")
 
         return session_id
