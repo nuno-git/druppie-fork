@@ -13,6 +13,15 @@ class UserRepository(BaseRepository):
         """Get user by ID."""
         return self.db.query(User).filter_by(id=user_id).first()
 
+    def get_by_role(self, role: str) -> list[User]:
+        """Return all users that have ``role``."""
+        return (
+            self.db.query(User)
+            .join(UserRole, UserRole.user_id == User.id)
+            .filter(UserRole.role == role)
+            .all()
+        )
+
     def get_or_create(
         self,
         user_id: UUID,

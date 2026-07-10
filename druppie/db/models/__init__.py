@@ -61,6 +61,7 @@ from .message_attachment import MessageAttachment
 
 # Model override (runtime LLM configuration)
 from .model_override import ModelOverride
+from .notification import Notification
 from .pdf_render import PdfRender
 
 # Project model
@@ -124,6 +125,8 @@ __all__ = [
     "Question",
     # Escalation event
     "EscalationEvent",
+    # In-app notification
+    "Notification",
     # Benchmark and evaluation
     "BenchmarkRun",
     "EvaluationResult",

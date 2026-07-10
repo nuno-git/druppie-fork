@@ -11,6 +11,7 @@ from .evaluation_repository import EvaluationRepository
 from .execution_repository import ExecutionRepository
 from .job_repository import JobRepository
 from .model_override_repository import ModelOverrideRepository
+from .notification_repository import NotificationRepository
 from .project_dependency_repository import ProjectDependencyRepository
 from .project_repository import ProjectRepository
 from .question_repository import QuestionRepository
@@ -35,5 +36,6 @@ __all__ = [
     "DocumentationCacheRepository",
     "JobRepository",
     "ModelOverrideRepository",
+    "NotificationRepository",
     "SandboxSessionRepository",
 ]

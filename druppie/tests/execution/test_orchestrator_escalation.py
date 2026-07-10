@@ -36,6 +36,9 @@ def _make_orchestrator() -> Orchestrator:
     # escalation repo is constructed lazily from execution_repo.db
     orch._escalation_repo = MagicMock()
     orch._get_escalation_repo = MagicMock(return_value=orch._escalation_repo)
+    # stub lazily-built notification repos to isolate escalation tests
+    orch._get_notification_repo = MagicMock(return_value=MagicMock())
+    orch._get_user_repo = MagicMock(return_value=MagicMock())
     return orch
 
 
@@ -455,3 +458,63 @@ class TestTermination:
 
         with pytest.raises(ConflictError):
             await orch.resume_paused_session(session.id)
+
+
+# ---------------------------------------------------------------------------
+# Behavior: role-targeted notifications on HITL pause
+# ---------------------------------------------------------------------------
+
+
+class TestHitlRoleNotifications:
+    """When a session enters a HITL pause, the responsible role is notified."""
+
+    def _wire_notif(self, orch, *, role_users):
+        user_repo = MagicMock()
+        user_repo.get_by_role.return_value = role_users
+        notif_repo = MagicMock()
+        orch._get_user_repo = MagicMock(return_value=user_repo)
+        orch._get_notification_repo = MagicMock(return_value=notif_repo)
+        return notif_repo
+
+    def test_ba_hitl_notifies_business_analysts(self):
+        orch = _make_orchestrator()
+        session = _make_session()
+        ba_users = [MagicMock(id=uuid4()), MagicMock(id=uuid4())]
+        notif_repo = self._wire_notif(orch, role_users=ba_users)
+
+        orch._enter_ba_hitl(session.id, rejection_count=0, cancel_pending=False)
+
+        orch._get_user_repo().get_by_role.assert_called_once_with("business_analyst")
+        assert notif_repo.create.call_count == len(ba_users)
+        for call in notif_repo.create.call_args_list:
+            assert call.kwargs["role"] == "business_analyst"
+            assert call.kwargs["kind"] == "ba_hitl"
+            assert call.kwargs["session_id"] == session.id
+        notif_repo.commit.assert_called_once()
+
+    def test_architect_hitl_notifies_architects(self):
+        orch = _make_orchestrator()
+        session = _make_session(status=SessionStatus.ACTIVE)
+        arch_users = [MagicMock(id=uuid4())]
+        notif_repo = self._wire_notif(orch, role_users=arch_users)
+
+        intercepted = orch._intercept_reserved_agent(
+            session.id, _make_run("architect_hitl"), session
+        )
+
+        assert intercepted is True
+        orch._get_user_repo().get_by_role.assert_called_once_with("architect")
+        assert notif_repo.create.call_count == len(arch_users)
+        call = notif_repo.create.call_args
+        assert call.kwargs["role"] == "architect"
+        assert call.kwargs["kind"] == "architect_hitl"
+        assert call.kwargs["session_id"] == session.id
+
+    def test_no_users_with_role_skips_silently(self):
+        orch = _make_orchestrator()
+        session = _make_session()
+        notif_repo = self._wire_notif(orch, role_users=[])
+
+        orch._enter_ba_hitl(session.id, rejection_count=0, cancel_pending=False)
+
+        notif_repo.create.assert_not_called()

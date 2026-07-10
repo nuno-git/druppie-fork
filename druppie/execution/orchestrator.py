@@ -1746,6 +1746,57 @@ class Orchestrator:
 
         return EscalationRepository(self.execution_repo.db)
 
+    def _get_notification_repo(self):
+        from druppie.repositories import NotificationRepository
+
+        return NotificationRepository(self.execution_repo.db)
+
+    def _get_user_repo(self):
+        from druppie.repositories import UserRepository
+
+        return UserRepository(self.execution_repo.db)
+
+    def _notify_role_of_pause(
+        self,
+        session_id: UUID,
+        role: str,
+        kind: str,
+        message: str,
+    ) -> None:
+        """Best-effort: notify every user with ``role`` that a session awaits review.
+
+        The HITL pause has already been persisted when this is called, so any
+        notification failure is logged and never propagated.
+        """
+        try:
+            users = self._get_user_repo().get_by_role(role)
+            if not users:
+                return
+            notif_repo = self._get_notification_repo()
+            for user in users:
+                notif_repo.create(
+                    user_id=user.id,
+                    session_id=session_id,
+                    kind=kind,
+                    role=role,
+                    message=message,
+                )
+            notif_repo.commit()
+            logger.info(
+                "hitl_notification_sent",
+                session_id=str(session_id),
+                role=role,
+                kind=kind,
+                recipient_count=len(users),
+            )
+        except Exception as e:
+            logger.warning(
+                "hitl_notification_failed",
+                session_id=str(session_id),
+                role=role,
+                error=str(e),
+            )
+
     def _architect_escalation_threshold(self) -> int:
         try:
             from druppie.agents.definition_loader import AgentDefinitionLoader
@@ -1788,6 +1839,12 @@ class Orchestrator:
                 rejection_count_at_event=session.fd_rejection_count or 0,
             )
             self.session_repo.commit()
+            self._notify_role_of_pause(
+                session_id,
+                role="architect",
+                kind="architect_hitl",
+                message="Session is waiting for architect human review.",
+            )
             logger.info(
                 "architect_hitl_entered",
                 session_id=str(session_id),
@@ -1843,6 +1900,12 @@ class Orchestrator:
             rejection_count_at_event=rejection_count,
         )
         self.session_repo.commit()
+        self._notify_role_of_pause(
+            session_id,
+            role="business_analyst",
+            kind="ba_hitl",
+            message="Session is waiting for business analyst (BA) human review.",
+        )
         logger.info(
             "ba_hitl_pause",
             session_id=str(session_id),
