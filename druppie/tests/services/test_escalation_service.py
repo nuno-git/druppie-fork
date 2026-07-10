@@ -16,8 +16,8 @@ from uuid import uuid4
 
 import pytest
 
-from druppie.api.errors import AuthorizationError, NotFoundError
-from druppie.domain.common import EscalationEventType
+from druppie.api.errors import AuthorizationError, ConflictError, NotFoundError
+from druppie.domain.common import EscalationEventType, SessionStatus
 from druppie.domain.escalation import EscalationEventDetail, EscalationEventList
 from druppie.services.escalation_service import EscalationService
 
@@ -26,12 +26,19 @@ from druppie.services.escalation_service import EscalationService
 # ---------------------------------------------------------------------------
 
 
-def _make_session(user_id=None, fd_rejection_count=0):
+def _make_session(
+    user_id=None,
+    fd_rejection_count=0,
+    fd_post_hitl_rejection_count=0,
+    status=SessionStatus.PAUSED_BA_HITL.value,
+):
     """A mock Session ORM row with the fields the service inspects."""
     session = MagicMock()
     session.id = uuid4()
     session.user_id = user_id or uuid4()
     session.fd_rejection_count = fd_rejection_count
+    session.fd_post_hitl_rejection_count = fd_post_hitl_rejection_count
+    session.status = status
     return session
 
 
@@ -128,7 +135,11 @@ class TestRecordBaHitlDecision:
         ids=["iterate", "ready", "escalate", "terminate"],
     )
     def test_maps_decision_to_event_type(self, decision, expected_event):
-        session = _make_session(user_id=OWNER_ID, fd_rejection_count=3)
+        session = _make_session(
+            user_id=OWNER_ID,
+            fd_rejection_count=3,
+            fd_post_hitl_rejection_count=1,
+        )
         svc, escalation_repo = _make_service(session=session)
 
         result = svc.record_ba_hitl_decision(
@@ -184,6 +195,30 @@ class TestRecordBaHitlDecision:
             )
         escalation_repo.create.assert_not_called()
 
+    def test_escalate_without_post_hitl_rejection_raises_conflict(self):
+        session = _make_session(user_id=OWNER_ID, fd_post_hitl_rejection_count=0)
+        svc, escalation_repo = _make_service(session=session)
+        with pytest.raises(ConflictError):
+            svc.record_ba_hitl_decision(
+                session_id=session.id,
+                user_id=OWNER_ID,
+                user_roles=["business_analyst"],
+                decision="escalate",
+            )
+        escalation_repo.create.assert_not_called()
+
+    def test_wrong_status_raises_conflict(self):
+        session = _make_session(user_id=OWNER_ID, status=SessionStatus.ACTIVE.value)
+        svc, escalation_repo = _make_service(session=session)
+        with pytest.raises(ConflictError):
+            svc.record_ba_hitl_decision(
+                session_id=session.id,
+                user_id=OWNER_ID,
+                user_roles=["business_analyst"],
+                decision="iterate",
+            )
+        escalation_repo.create.assert_not_called()
+
 
 # ---------------------------------------------------------------------------
 # record_architect_hitl_decision
@@ -192,7 +227,7 @@ class TestRecordBaHitlDecision:
 
 class TestRecordArchitectHitlDecision:
     def test_approve_maps(self):
-        session = _make_session(fd_rejection_count=1)
+        session = _make_session(fd_rejection_count=1, status=SessionStatus.PAUSED_ARCHITECT_HITL.value)
         svc, escalation_repo = _make_service(session=session)
         svc.record_architect_hitl_decision(
             session_id=session.id,
@@ -213,7 +248,7 @@ class TestRecordArchitectHitlDecision:
         ids=["reject_to_ba", "reject_terminate"],
     )
     def test_reject_maps_by_next_on_reject(self, next_on_reject, expected_event):
-        session = _make_session(fd_rejection_count=2)
+        session = _make_session(fd_rejection_count=2, status=SessionStatus.PAUSED_ARCHITECT_HITL.value)
         svc, escalation_repo = _make_service(session=session)
         svc.record_architect_hitl_decision(
             session_id=session.id,
@@ -228,7 +263,7 @@ class TestRecordArchitectHitlDecision:
 
     @pytest.mark.parametrize("next_on_reject", [None, "bogus"])
     def test_reject_requires_valid_next_on_reject(self, next_on_reject):
-        session = _make_session()
+        session = _make_session(status=SessionStatus.PAUSED_ARCHITECT_HITL.value)
         svc, escalation_repo = _make_service(session=session)
         with pytest.raises(ValueError):
             svc.record_architect_hitl_decision(
@@ -241,7 +276,7 @@ class TestRecordArchitectHitlDecision:
         escalation_repo.create.assert_not_called()
 
     def test_invalid_decision_raises_value_error(self):
-        session = _make_session()
+        session = _make_session(status=SessionStatus.PAUSED_ARCHITECT_HITL.value)
         svc, _ = _make_service(session=session)
         with pytest.raises(ValueError):
             svc.record_architect_hitl_decision(

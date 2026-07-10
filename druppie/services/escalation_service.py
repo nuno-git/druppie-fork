@@ -20,10 +20,10 @@ from uuid import UUID
 
 import structlog
 
-from ..api.errors import AuthorizationError, NotFoundError
+from ..api.errors import AuthorizationError, ConflictError, NotFoundError
 from ..db.models import Session
 from ..domain import EscalationEventDetail, EscalationEventList
-from ..domain.common import EscalationEventType
+from ..domain.common import EscalationEventType, SessionStatus
 from ..repositories import EscalationRepository, SessionRepository
 
 logger = structlog.get_logger()
@@ -62,6 +62,17 @@ class EscalationService:
         """
         session = self._get_session_or_404(session_id)
         self._check_authorization(session, user_id, user_roles, level="ba_hitl")
+        self._assert_status(session, SessionStatus.PAUSED_BA_HITL)
+
+        # Escalation precondition: a human may only escalate to the architect
+        # HITL after at least one post-HITL rejection. Enforced synchronously
+        # here so the API returns 409 (the orchestrator re-checks in the
+        # background task as defense in depth).
+        if decision == "escalate" and (session.fd_post_hitl_rejection_count or 0) < 1:
+            raise ConflictError(
+                "Cannot escalate to architect HITL before at least one "
+                "post-HITL rejection has occurred."
+            )
 
         event_type = self._ba_decision_event_type(decision)
         return self._record(
@@ -87,6 +98,7 @@ class EscalationService:
         """
         session = self._get_session_or_404(session_id)
         self._check_authorization(session, user_id, user_roles, level="architect_hitl")
+        self._assert_status(session, SessionStatus.PAUSED_ARCHITECT_HITL)
 
         event_type = self._architect_decision_event_type(decision, next_on_reject)
         return self._record(
@@ -210,6 +222,19 @@ class EscalationService:
         if not session:
             raise NotFoundError("session", str(session_id))
         return session
+
+    @staticmethod
+    def _assert_status(session: Session, expected: SessionStatus) -> None:
+        """Raise ConflictError unless the session is in the expected HITL status.
+
+        Enforced synchronously so the API returns 409 for decisions on a session
+        that is terminated or in the wrong pause state (the orchestrator performs
+        the same check inside the background task as defense in depth).
+        """
+        if session.status != expected.value:
+            raise ConflictError(
+                f"Session not in {expected.value} (status={session.status})"
+            )
 
     def _record(
         self,

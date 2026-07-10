@@ -13,12 +13,12 @@ from uuid import UUID, uuid4
 import pytest
 from fastapi.testclient import TestClient
 
-from druppie.api.deps import get_current_user
+from druppie.api.deps import get_current_user, get_escalation_service, get_orchestrator
 from druppie.api.errors import AuthorizationError, ConflictError, NotFoundError
 from druppie.api.main import create_app
 from druppie.api.routes import escalations as esc_mod
 from druppie.domain.common import EscalationEventType
-from druppie.domain.escalation import EscalationEventDetail
+from druppie.domain.escalation import EscalationEventDetail, EscalationEventList
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -36,6 +36,16 @@ EVENT_ID = uuid4()
 
 def _user(sub: str, roles: list[str] | None = None) -> dict:
     return {"sub": sub, "realm_access": {"roles": roles or ["user"]}}
+
+
+def _override_deps(app, mock_service, mock_orchestrator) -> None:
+    """Wire mocked service/orchestrator via FastAPI dependency overrides.
+
+    patch.object(esc_mod, ...) does NOT intercept dependencies that FastAPI
+    captures by reference at route-definition time; dependency_overrides does.
+    """
+    app.dependency_overrides[get_escalation_service] = lambda: mock_service
+    app.dependency_overrides[get_orchestrator] = lambda: mock_orchestrator
 
 
 def _fake_event(**overrides) -> EscalationEventDetail:
@@ -81,11 +91,8 @@ def mock_orchestrator():
 @pytest.fixture()
 def as_admin(app, mock_service, mock_orchestrator):
     app.dependency_overrides[get_current_user] = lambda: _user(ADMIN_SUB, ["admin"])
-    with (
-        patch.object(esc_mod, "get_escalation_service", return_value=mock_service),
-        patch.object(esc_mod, "get_orchestrator", return_value=mock_orchestrator),
-        patch.object(esc_mod, "create_tracked_task"),
-    ):
+    _override_deps(app, mock_service, mock_orchestrator)
+    with patch.object(esc_mod, "create_tracked_task"):
         yield
     app.dependency_overrides.clear()
 
@@ -93,11 +100,8 @@ def as_admin(app, mock_service, mock_orchestrator):
 @pytest.fixture()
 def as_ba(app, mock_service, mock_orchestrator):
     app.dependency_overrides[get_current_user] = lambda: _user(BA_SUB, ["business_analyst"])
-    with (
-        patch.object(esc_mod, "get_escalation_service", return_value=mock_service),
-        patch.object(esc_mod, "get_orchestrator", return_value=mock_orchestrator),
-        patch.object(esc_mod, "create_tracked_task"),
-    ):
+    _override_deps(app, mock_service, mock_orchestrator)
+    with patch.object(esc_mod, "create_tracked_task"):
         yield
     app.dependency_overrides.clear()
 
@@ -105,11 +109,8 @@ def as_ba(app, mock_service, mock_orchestrator):
 @pytest.fixture()
 def as_architect(app, mock_service, mock_orchestrator):
     app.dependency_overrides[get_current_user] = lambda: _user(ARCHITECT_SUB, ["architect"])
-    with (
-        patch.object(esc_mod, "get_escalation_service", return_value=mock_service),
-        patch.object(esc_mod, "get_orchestrator", return_value=mock_orchestrator),
-        patch.object(esc_mod, "create_tracked_task"),
-    ):
+    _override_deps(app, mock_service, mock_orchestrator)
+    with patch.object(esc_mod, "create_tracked_task"):
         yield
     app.dependency_overrides.clear()
 
@@ -117,11 +118,8 @@ def as_architect(app, mock_service, mock_orchestrator):
 @pytest.fixture()
 def as_owner(app, mock_service, mock_orchestrator):
     app.dependency_overrides[get_current_user] = lambda: _user(OWNER_SUB, ["user"])
-    with (
-        patch.object(esc_mod, "get_escalation_service", return_value=mock_service),
-        patch.object(esc_mod, "get_orchestrator", return_value=mock_orchestrator),
-        patch.object(esc_mod, "create_tracked_task"),
-    ):
+    _override_deps(app, mock_service, mock_orchestrator)
+    with patch.object(esc_mod, "create_tracked_task"):
         yield
     app.dependency_overrides.clear()
 
@@ -129,11 +127,8 @@ def as_owner(app, mock_service, mock_orchestrator):
 @pytest.fixture()
 def as_plain(app, mock_service, mock_orchestrator):
     app.dependency_overrides[get_current_user] = lambda: _user(PLAIN_SUB, ["user"])
-    with (
-        patch.object(esc_mod, "get_escalation_service", return_value=mock_service),
-        patch.object(esc_mod, "get_orchestrator", return_value=mock_orchestrator),
-        patch.object(esc_mod, "create_tracked_task"),
-    ):
+    _override_deps(app, mock_service, mock_orchestrator)
+    with patch.object(esc_mod, "create_tracked_task"):
         yield
     app.dependency_overrides.clear()
 
@@ -206,9 +201,8 @@ class TestBaHitlRoute:
         assert r.status_code == 403
 
     def test_409_wrong_session_state(self, client, as_admin, mock_service, mock_orchestrator):
-        mock_service.record_ba_hitl_decision.return_value = _fake_event(decision="iterate")
-        mock_orchestrator.resume_after_ba_hitl = AsyncMock(
-            side_effect=ConflictError("Session not paused for BA HITL (status=active)"),
+        mock_service.record_ba_hitl_decision.side_effect = ConflictError(
+            "Session not in paused_ba_hitl (status=active)"
         )
         r = client.post(self.BASE, json={"decision": "iterate"})
         assert r.status_code == 409
@@ -259,22 +253,21 @@ class TestArchitectHitlRoute:
         r = client.post(self.BASE, json={"decision": "reject", "next_on_reject": "terminate"})
         assert r.status_code == 200
 
-    def test_reject_terminate_calls_orchestrator(
-        self, client, as_architect, mock_service, mock_orchestrator
-    ):
+    def test_reject_terminate_records_decision(self, client, as_architect, mock_service, mock_orchestrator):
         mock_service.record_architect_hitl_decision.return_value = _fake_event(
             decision="reject",
             event_type=EscalationEventType.ARCHITECT_HITL_REJECT_TERMINATE,
         )
-        # Orchestrator's resume_after_architect_hitl handles the terminate internally
-        mock_orchestrator.resume_after_architect_hitl = AsyncMock(return_value=SESSION_ID)
+        # The orchestrator resume runs in a background task (create_tracked_task,
+        # patched out here); the synchronous contract is the service audit call.
         r = client.post(self.BASE, json={"decision": "reject", "next_on_reject": "terminate"})
         assert r.status_code == 200
-        mock_orchestrator.resume_after_architect_hitl.assert_called_once_with(
-            SESSION_ID,
-            "reject",
-            "terminate",
+        mock_service.record_architect_hitl_decision.assert_called_once_with(
+            session_id=SESSION_ID,
             user_id=UUID(ARCHITECT_SUB),
+            user_roles=["architect"],
+            decision="reject",
+            next_on_reject="terminate",
         )
 
     def test_403_non_architect(self, client, as_plain, mock_service):
@@ -293,9 +286,8 @@ class TestArchitectHitlRoute:
         assert r.status_code == 404
 
     def test_409_wrong_state(self, client, as_architect, mock_service, mock_orchestrator):
-        mock_service.record_architect_hitl_decision.return_value = _fake_event(decision="approve")
-        mock_orchestrator.resume_after_architect_hitl = AsyncMock(
-            side_effect=ConflictError("Session not paused for architect HITL (status=active)"),
+        mock_service.record_architect_hitl_decision.side_effect = ConflictError(
+            "Session not in paused_architect_hitl (status=active)"
         )
         r = client.post(self.BASE, json={"decision": "approve"})
         assert r.status_code == 409
@@ -389,5 +381,5 @@ class TestEscalationHistoryRoute:
 # =============================================================================
 
 
-def _fake_event_list(count: int) -> list[EscalationEventDetail]:
-    return [_fake_event() for _ in range(count)]
+def _fake_event_list(count: int) -> EscalationEventList:
+    return EscalationEventList(items=[_fake_event() for _ in range(count)])

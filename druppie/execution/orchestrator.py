@@ -1993,12 +1993,6 @@ class Orchestrator:
         """
         self.execution_repo.cancel_pending_runs(session_id)
         self.session_repo.update_status(session_id, SessionStatus.TERMINATED, error_message=reason)
-        self._get_escalation_repo().create(
-            session_id=session_id,
-            event_type=EscalationEventType.SESSION_TERMINATED.value,
-            actor_user_id=user_id,
-            feedback=reason,
-        )
         self.session_repo.commit()
         logger.info(
             "session_terminated",
@@ -2026,7 +2020,10 @@ class Orchestrator:
         if session.status != SessionStatus.PAUSED_BA_HITL.value:
             raise ConflictError(f"Session not paused for BA HITL (status={session.status})")
 
-        escalation_repo = self._get_escalation_repo()
+        # The human-decision audit event is recorded by EscalationService (the
+        # authorize+audit gate) before this method runs; only state transitions
+        # happen here. State-machine events (BA_HITL_ENTERED, sticky ITERATE
+        # during the automated supervised loop) are recorded by _enter_ba_hitl.
 
         match decision:
             case "iterate":
@@ -2040,14 +2037,6 @@ class Orchestrator:
                     sequence_number=seq,
                 )
                 self.execution_repo.commit()
-                escalation_repo.create(
-                    session_id=session_id,
-                    event_type=EscalationEventType.BA_HITL_ITERATE.value,
-                    actor_user_id=user_id,
-                    feedback=feedback,
-                    rejection_count_at_event=session.fd_rejection_count or 0,
-                )
-                self.session_repo.commit()
                 self.session_repo.update_status(session_id, SessionStatus.ACTIVE)
                 self.session_repo.commit()
                 await self.execute_pending_runs(session_id)
@@ -2061,13 +2050,6 @@ class Orchestrator:
                     sequence_number=seq,
                 )
                 self.execution_repo.commit()
-                escalation_repo.create(
-                    session_id=session_id,
-                    event_type=EscalationEventType.BA_HITL_READY.value,
-                    actor_user_id=user_id,
-                    rejection_count_at_event=session.fd_rejection_count or 0,
-                )
-                self.session_repo.commit()
                 self.session_repo.update_status(session_id, SessionStatus.ACTIVE)
                 self.session_repo.commit()
                 await self.execute_pending_runs(session_id)
@@ -2078,12 +2060,6 @@ class Orchestrator:
                         "post-HITL rejection has occurred."
                     )
                 self.session_repo.update_status(session_id, SessionStatus.PAUSED_ARCHITECT_HITL)
-                escalation_repo.create(
-                    session_id=session_id,
-                    event_type=EscalationEventType.BA_HITL_ESCALATE.value,
-                    actor_user_id=user_id,
-                    rejection_count_at_event=session.fd_rejection_count or 0,
-                )
                 self.session_repo.commit()
             case "terminate":
                 self.terminate_session(session_id, reason=feedback, user_id=user_id)
@@ -2113,8 +2089,6 @@ class Orchestrator:
         if session.status != SessionStatus.PAUSED_ARCHITECT_HITL.value:
             raise ConflictError(f"Session not paused for architect HITL (status={session.status})")
 
-        escalation_repo = self._get_escalation_repo()
-
         match decision:
             case "approve":
                 seq = self.execution_repo.get_next_sequence_number(session_id)
@@ -2126,12 +2100,6 @@ class Orchestrator:
                     sequence_number=seq,
                 )
                 self.execution_repo.commit()
-                escalation_repo.create(
-                    session_id=session_id,
-                    event_type=EscalationEventType.ARCHITECT_HITL_APPROVE.value,
-                    actor_user_id=user_id,
-                )
-                self.session_repo.commit()
                 self.session_repo.update_status(session_id, SessionStatus.ACTIVE)
                 self.session_repo.commit()
                 await self.execute_pending_runs(session_id)
@@ -2140,12 +2108,6 @@ class Orchestrator:
                     case "ba_hitl":
                         self._cancel_all_pending(session_id)
                         self.session_repo.update_status(session_id, SessionStatus.PAUSED_BA_HITL)
-                        escalation_repo.create(
-                            session_id=session_id,
-                            event_type=EscalationEventType.ARCHITECT_HITL_REJECT_TO_BA.value,
-                            actor_user_id=user_id,
-                            rejection_count_at_event=session.fd_rejection_count or 0,
-                        )
                         self.session_repo.commit()
                     case "terminate":
                         self.terminate_session(

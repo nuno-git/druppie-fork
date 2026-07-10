@@ -301,10 +301,9 @@ class TestResumeAfterBaHitl:
         orch.session_repo.update_status.assert_any_call(
             session.id, SessionStatus.PAUSED_ARCHITECT_HITL
         )
-        assert (
-            orch._escalation_repo.create.call_args.kwargs["event_type"]
-            == EscalationEventType.BA_HITL_ESCALATE.value
-        )
+        # The human-decision audit event is owned by EscalationService; the
+        # orchestrator only performs the state transition (no event recorded).
+        orch._escalation_repo.create.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_iterate_creates_ba_run_and_executes(self):
@@ -383,10 +382,6 @@ class TestResumeAfterArchitectHitl:
         )
 
         orch.session_repo.update_status.assert_any_call(session.id, SessionStatus.PAUSED_BA_HITL)
-        assert (
-            orch._escalation_repo.create.call_args.kwargs["event_type"]
-            == EscalationEventType.ARCHITECT_HITL_REJECT_TO_BA.value
-        )
 
     @pytest.mark.asyncio
     async def test_reject_terminate(self):
@@ -421,7 +416,7 @@ class TestResumeAfterArchitectHitl:
 
 
 class TestTermination:
-    def test_terminate_cancels_pending_sets_status_and_writes_event(self):
+    def test_terminate_cancels_pending_sets_status(self):
         orch = _make_orchestrator()
         session = _make_session(status=SessionStatus.PAUSED_BA_HITL)
         _wire_session(orch, session)
@@ -432,10 +427,9 @@ class TestTermination:
         orch.session_repo.update_status.assert_any_call(
             session.id, SessionStatus.TERMINATED, error_message="user requested"
         )
-        assert (
-            orch._escalation_repo.create.call_args.kwargs["event_type"]
-            == EscalationEventType.SESSION_TERMINATED.value
-        )
+        # SESSION_TERMINATED audit event is owned by EscalationService; the
+        # orchestrator only performs the state transition.
+        orch._escalation_repo.create.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_execute_pending_runs_on_terminated_raises_conflict(self):

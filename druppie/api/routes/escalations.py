@@ -34,7 +34,7 @@ from uuid import UUID
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from druppie.api.deps import (
     get_current_user,
@@ -68,6 +68,12 @@ class ArchitectHitlRequest(BaseModel):
 
     decision: Literal["approve", "reject"]
     next_on_reject: Literal["ba_hitl", "terminate"] | None = Field(default=None)
+
+    @model_validator(mode="after")
+    def _reject_requires_target(self) -> "ArchitectHitlRequest":
+        if self.decision == "reject" and self.next_on_reject is None:
+            raise ValueError("next_on_reject is required when decision is 'reject'")
+        return self
 
 
 class TerminateRequest(BaseModel):
