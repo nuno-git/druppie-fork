@@ -38,18 +38,44 @@ Runtime configuration:
 # Agent execution models
 from .agent_run import AgentRun, Message
 
-# Compaction event model
-from .compaction_event import CompactionEvent
-
-from .resume_context_event import ResumeContextEvent
-
 # Approval model
 from .approval import Approval
 from .base import Base, new_uuid, utcnow
 
 # Benchmark and evaluation models
 from .benchmark_run import BenchmarkRun
+
+# Compaction event model
+from .compaction_event import CompactionEvent
+
+# Documentation cache
+from .documentation_cache import DocumentationCache
+
+# Escalation event model (audit history for escalation state-machine)
+from .escalation_event import EscalationEvent
 from .evaluation_result import EvaluationResult
+from .job import JobDefinition, JobRun
+from .llm_call import LlmCall
+from .llm_retry import LlmRetry
+from .message_attachment import MessageAttachment
+
+# Model override (runtime LLM configuration)
+from .model_override import ModelOverride
+from .pdf_render import PdfRender
+
+# Project model
+from .project import Project
+from .project_dependency import ProjectDependency
+
+# Question model (HITL questions from agents)
+from .question import Question
+from .resume_context_event import ResumeContextEvent
+
+# Sandbox session model
+from .sandbox_session import SandboxSession
+
+# Session model
+from .session import Session
 
 # Test run models (testing framework)
 from .test_assertion_result import TestAssertionResult
@@ -57,31 +83,6 @@ from .test_batch_run import TestBatchRun
 from .test_run import TestRun
 from .test_run_tag import TestRunTag
 from .test_running_status import TestRunningStatus
-from .llm_call import LlmCall
-from .message_attachment import MessageAttachment
-from .llm_retry import LlmRetry
-
-# Project model
-from .project import Project
-from .project_dependency import ProjectDependency
-
-# Documentation cache
-from .documentation_cache import DocumentationCache
-from .pdf_render import PdfRender
-
-# Question model (HITL questions from agents)
-from .question import Question
-
-from .job import JobDefinition, JobRun
-
-# Model override (runtime LLM configuration)
-from .model_override import ModelOverride
-
-# Sandbox session model
-from .sandbox_session import SandboxSession
-
-# Session model
-from .session import Session
 from .tool_call import ToolCall
 from .tool_call_normalization import ToolCallNormalization
 
@@ -121,6 +122,8 @@ __all__ = [
     "Approval",
     # Question
     "Question",
+    # Escalation event
+    "EscalationEvent",
     # Benchmark and evaluation
     "BenchmarkRun",
     "EvaluationResult",
