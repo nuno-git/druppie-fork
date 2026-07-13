@@ -13,6 +13,13 @@ const inCodeServerProxy = (process.env.VITE_API_URL || '').startsWith('/proxy')
 
 export default defineConfig({
   plugins: [react()],
+  // code-server's port proxy serves the app under the /proxy/5173/ path but
+  // does NOT rewrite absolute asset URLs, so with the default base='/' the
+  // browser fetches /@vite/client and /src/main.jsx from the host root
+  // (bypassing the proxy) -> 404 -> blank page. Setting base makes Vite emit
+  // /proxy/5173/-prefixed URLs that route back through code-server. Only in the
+  // workspace; local/compose keep base='/'.
+  ...(inCodeServerProxy && { base: './' }),
   server: {
     host: '0.0.0.0',
     port: 5173,
