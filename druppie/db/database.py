@@ -13,20 +13,35 @@ from sqlalchemy.orm import Session, sessionmaker
 # Database URL from environment
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./druppie.db")
 
-# pool_size=30 + max_overflow=50 = 80 max connections per worker process.
-# Generous to absorb frontend burst loads (page refresh + parallel polling
-# while long-running agent tasks hold a connection). Default timeout raised
-# to 60s so short-lived burst requests queue instead of crashing.
+# ── Connection pool sizing ─────────────────────────────────────────
+# Production math: (pool_size + max_overflow) * workers per pod * pods
+#
+# Example with defaults (10 + 15 = 25 per worker):
+#   Docker dev  (--workers 1, 1 pod):  25 connections
+#   Docker prod (--workers 1, 1 pod):  25 connections
+#   K8s         (--workers 2, 3 pods): 150 connections
+#
+# PostgreSQL defaults to max_connections=100. If you increase workers
+# or scale replicas, tune via env vars (see docker-compose.yml):
+#   DB_POOL_SIZE, DB_MAX_OVERFLOW, DB_POOL_TIMEOUT
+#
+# For high-throughput K8s deployments, run PgBouncer in transaction
+# mode (see docs/ADR-KUBERNETES.md §4.3).
+# ────────────────────────────────────────────────────────────────────
+_pool_size = int(os.getenv("DB_POOL_SIZE", "10"))
+_max_overflow = int(os.getenv("DB_MAX_OVERFLOW", "15"))
+_pool_timeout = int(os.getenv("DB_POOL_TIMEOUT", "30"))
+
 _is_sqlite = "sqlite" in DATABASE_URL
 engine = create_engine(
     DATABASE_URL,
     connect_args={"check_same_thread": False} if _is_sqlite else {},
     pool_pre_ping=True,
     **({} if _is_sqlite else {
-        "pool_size": 30,
-        "max_overflow": 50,
+        "pool_size": _pool_size,
+        "max_overflow": _max_overflow,
         "pool_recycle": 3600,
-        "pool_timeout": 60,
+        "pool_timeout": _pool_timeout,
         "pool_use_lifo": True,
     }),
 )
