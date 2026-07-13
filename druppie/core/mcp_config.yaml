@@ -469,3 +469,20 @@ mcps:
       - name: update_work_item
         requires_approval: true
         required_role: session_owner
+
+  # PR review on a fixed allowlist of Gitea repos (PRREVIEW_REPOS).
+  # The Gitea instance and repos are configured server-side — the agent cannot
+  # point these tools at other repos. Which PRs need review is decided in code
+  # (head SHA vs sticky-comment marker), and post_pr_review edits one sticky
+  # comment per PR, so reviews never stack. Ungated: the tools run from a
+  # scheduled job with no session owner to approve them.
+  prreview:
+    url: ${MCP_PRREVIEW_URL:-http://module-prreview:9014}
+    type: module
+    tools:
+      - name: list_prs_needing_review
+        requires_approval: false
+      - name: get_pr_diff
+        requires_approval: false
+      - name: post_pr_review
+        requires_approval: false

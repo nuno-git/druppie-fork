@@ -67,6 +67,7 @@ data:
   MCP_KUBERNETES_URL: "http://{{ include "druppie.fullname" . }}-module-kubernetes:{{ .Values.modules.kubernetes.port }}"
   MCP_DATA_ACCESS_URL: "http://{{ include "druppie.fullname" . }}-module-data-access:9010"
   MCP_AZUREDEVOPS_URL: "http://{{ include "druppie.fullname" . }}-module-azuredevops:{{ .Values.modules.azuredevops.port }}"
+  MCP_PRREVIEW_URL: "http://{{ include "druppie.fullname" . }}-module-prreview:{{ .Values.modules.prreview.port }}"
   LAYOUT_SERVICE_URL: "http://{{ include "druppie.fullname" . }}-layout-service:8090"
 
   # CORS

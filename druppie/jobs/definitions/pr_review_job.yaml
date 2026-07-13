@@ -1,0 +1,24 @@
+id: pr_review_job
+name: PR Review
+description: >
+  Scheduled review of open PRs on the Gitea repos configured in module-prreview
+  (PRREVIEW_REPOS). Only PRs changed since their last review are reviewed
+  (dedup happens server-side in the module), each PR gets one sticky review
+  comment that is updated in place, and oversized diffs are skipped with a
+  note. Costs per run are visible via the run's session (llm_calls).
+schedule: "*/20 * * * *"
+agent_id: pr_reviewer
+prompt: |
+  Run the scheduled PR review round.
+
+  Call list_prs_needing_review, review each returned PR strictly within its
+  diff per your checklist, publish each review with post_pr_review, and finish
+  with done() summarizing per-PR verdicts. If nothing needs review, say so and
+  stop — do not invent work.
+approval_required: false
+required_role: null
+# Disabled by default: enabling requires module-prreview to be deployed with
+# PRREVIEW_GITEA_URL / PRREVIEW_GITEA_TOKEN / PRREVIEW_REPOS configured.
+# Flip to true in the deployment where that is the case (IaC: via a commit).
+# A manual pilot works regardless: POST /api/jobs/{definition_id}/trigger.
+enabled: false

@@ -3,20 +3,17 @@
 import asyncio
 import os
 from datetime import datetime, timezone
-from typing import Callable
+from typing import Any, Callable
 from uuid import UUID
 
 import structlog
 import yaml
-
 from croniter import croniter
-from sqlalchemy.orm import Session
 
-from ..repositories import JobRepository, SessionRepository, ExecutionRepository
-from ..domain.job import JobDefinitionList, JobDefinitionDetail, JobRunList, JobRunDetail
-from ..db.models.job import JobDefinition
-from ..domain.common import AgentRunStatus, SessionStatus, JobRunStatus
 from ..core.background_tasks import create_tracked_task, run_session_task
+from ..domain.common import AgentRunStatus, JobRunStatus, SessionStatus
+from ..domain.job import JobDefinitionDetail, JobDefinitionList, JobRunDetail, JobRunList
+from ..repositories import ExecutionRepository, JobRepository, SessionRepository
 
 logger = structlog.get_logger()
 
@@ -57,11 +54,13 @@ class JobService:
         else:
             from ..agents.definition_loader import AgentDefinitionLoader
 
-            definitions_path = AgentDefinitionLoader._get_definitions_path()
-            agent_file = os.path.join(definitions_path, f"{agent_id}.yaml")
-            if not os.path.exists(agent_file):
+            # Agents live in subdirectories (general/, coding/core/, ...), so
+            # search recursively — a flat path check would reject valid agents.
+            agent_file = AgentDefinitionLoader._find_agent_yaml(str(agent_id))
+            if not agent_file:
+                definitions_path = AgentDefinitionLoader._get_definitions_path()
                 errors.append(
-                    f"agent_id '{agent_id}' not found (looked in {agent_file})"
+                    f"agent_id '{agent_id}' not found (searched {definitions_path})"
                 )
 
         prompt = data.get("prompt")
@@ -102,10 +101,8 @@ class JobService:
                         )
                     continue
                 seen_job_ids.add(job_id)
-                existing = self.job_repo.get_definition_by_job_id(job_id)
-                if existing:
-                    self._update_definition_from_yaml(existing, data, filepath)
-                else:
+                updated = self.job_repo.update_definition_from_yaml(job_id, data, filepath)
+                if not updated:
                     self.job_repo.create_definition(
                         job_id=job_id,
                         name=data.get("name", job_id),
@@ -137,19 +134,6 @@ class JobService:
         self.job_repo.commit()
 
         return self.list_definitions()
-
-    def _update_definition_from_yaml(
-        self, definition: JobDefinition, data: dict, filepath: str
-    ) -> None:
-        definition.name = data.get("name", definition.name)
-        definition.description = data.get("description", definition.description)
-        definition.schedule = data.get("schedule", definition.schedule)
-        definition.agent_id = data.get("agent_id", definition.agent_id)
-        definition.prompt = data.get("prompt", definition.prompt)
-        definition.approval_required = data.get("approval_required", definition.approval_required)
-        definition.required_role = data.get("required_role", definition.required_role)
-        definition.enabled = data.get("enabled", True) if data.get("enabled") is not None else definition.enabled
-        definition.yaml_path = filepath
 
     def list_definitions(self) -> JobDefinitionList:
         return self.job_repo.list_definitions()
@@ -185,10 +169,7 @@ class JobService:
 
     def _get_system_user_id(self) -> UUID | None:
         """Lookup the 'admin' user to own sessions created by scheduled jobs."""
-        from ..db.models.user import User as UserModel
-
-        admin = self.job_repo.db.query(UserModel).filter_by(username="admin").first()
-        return admin.id if admin else None
+        return self.job_repo.get_system_user_id()
 
     def trigger_job(self, definition_id: UUID, user_id: UUID | None = None, trigger_type: str = "manual") -> JobRunDetail:
         """Create a new job run, session, and agent run for a job definition.
@@ -246,7 +227,7 @@ class JobService:
 
         self.job_repo.set_job_run_session(run.id, session.id, agent_run.id)
         self.job_repo.commit()
-        self.job_repo.db.refresh(run)
+        run = self.job_repo.get_job_run_by_id(run.id)
 
         if definition.approval_required:
             self.job_repo.set_job_run_approval_required(run.id, definition.required_role or "admin")
@@ -281,7 +262,7 @@ class JobService:
         user_id: UUID,
         user_roles: list[str],
     ) -> JobRunDetail:
-        from ..api.errors import NotFoundError, AuthorizationError, ConflictError
+        from ..api.errors import AuthorizationError, ConflictError, NotFoundError
 
         run = self.job_repo.get_job_run_by_id(job_run_id)
         if not run:
@@ -297,11 +278,7 @@ class JobService:
                 required_roles=[required_role],
             )
 
-        from datetime import datetime, timezone
-        from ..db.models.base import utcnow
-        self.job_repo.db.query(JobRun).filter(JobRun.id == job_run_id).update(
-            {"approved_by": user_id, "approved_at": utcnow()}
-        )
+        self.job_repo.set_job_run_approved(job_run_id, user_id)
 
         if run.session_id:
             self.session_repo.update_status(run.session_id, SessionStatus.ACTIVE)
@@ -325,7 +302,7 @@ class JobService:
         user_roles: list[str],
         reason: str,
     ) -> JobRunDetail:
-        from ..api.errors import NotFoundError, AuthorizationError, ConflictError
+        from ..api.errors import AuthorizationError, ConflictError, NotFoundError
 
         run = self.job_repo.get_job_run_by_id(job_run_id)
         if not run:
@@ -441,7 +418,7 @@ class JobService:
 
 
 class JobScheduler:
-    def __init__(self, job_service_factory: Callable[[Session], JobService]):
+    def __init__(self, job_service_factory: Callable[[Any], JobService]):
         self._job_service_factory = job_service_factory
         self._running = False
         self._task: asyncio.Task | None = None

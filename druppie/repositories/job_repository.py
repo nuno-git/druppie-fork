@@ -3,7 +3,8 @@
 from datetime import datetime
 from uuid import UUID
 
-from .base import BaseRepository
+from ..db.models.job import JobDefinition, JobRun
+from ..domain.common import JobRunStatus
 from ..domain.job import (
     JobDefinitionDetail,
     JobDefinitionList,
@@ -11,8 +12,7 @@ from ..domain.job import (
     JobRunList,
     JobRunSummary,
 )
-from ..db.models.job import JobDefinition, JobRun
-from ..domain.common import JobRunStatus
+from .base import BaseRepository
 
 
 class JobRepository(BaseRepository):
@@ -49,6 +49,24 @@ class JobRepository(BaseRepository):
 
     def get_definition_by_job_id(self, job_id: str) -> JobDefinition | None:
         return self.db.query(JobDefinition).filter(JobDefinition.job_id == job_id).first()
+
+    def update_definition_from_yaml(
+        self, job_id: str, data: dict, yaml_path: str
+    ) -> bool:
+        """Update an existing definition from YAML data. Returns False if absent."""
+        definition = self.get_definition_by_job_id(job_id)
+        if not definition:
+            return False
+        definition.name = data.get("name", definition.name)
+        definition.description = data.get("description", definition.description)
+        definition.schedule = data.get("schedule", definition.schedule)
+        definition.agent_id = data.get("agent_id", definition.agent_id)
+        definition.prompt = data.get("prompt", definition.prompt)
+        definition.approval_required = data.get("approval_required", definition.approval_required)
+        definition.required_role = data.get("required_role", definition.required_role)
+        definition.enabled = data.get("enabled", True) if data.get("enabled") is not None else definition.enabled
+        definition.yaml_path = yaml_path
+        return True
 
     def get_definition_by_id(self, definition_id: UUID) -> JobDefinition | None:
         return self.db.query(JobDefinition).filter(JobDefinition.id == definition_id).first()
@@ -147,6 +165,19 @@ class JobRepository(BaseRepository):
             {"required_role": required_role}
         )
 
+    def set_job_run_approved(self, run_id: UUID, user_id: UUID) -> None:
+        """Record who approved a run and when."""
+        from ..db.models.base import utcnow
+        self.db.query(JobRun).filter(JobRun.id == run_id).update(
+            {"approved_by": user_id, "approved_at": utcnow()}
+        )
+
+    def get_system_user_id(self) -> UUID | None:
+        """Lookup the 'admin' user to own sessions created by scheduled jobs."""
+        from ..db.models.user import User
+        admin = self.db.query(User).filter_by(username="admin").first()
+        return admin.id if admin else None
+
     def get_pending_approval_runs(
         self, roles: list[str] | None = None
     ) -> list[JobRun]:
@@ -233,7 +264,7 @@ class JobRepository(BaseRepository):
             self.db.query(JobDefinition)
             .filter(
                 JobDefinition.id == definition_id,
-                (JobDefinition.last_triggered_at == None)
+                (JobDefinition.last_triggered_at.is_(None))
                 | (JobDefinition.last_triggered_at < last_scheduled),
             )
             .update({"last_triggered_at": now})

@@ -1,0 +1,108 @@
+{{- if .Values.modules.prreview.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "druppie.fullname" . }}-module-prreview
+  labels:
+    {{- include "druppie.labels" . | nindent 4 }}
+    app.kubernetes.io/component: module-prreview
+spec:
+  replicas: {{ .Values.modules.prreview.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "druppie.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: module-prreview
+  template:
+    metadata:
+      labels:
+        {{- include "druppie.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: module-prreview
+      annotations:
+        reloader.stakater.com/auto: "true"
+    spec:
+      {{- if .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml .Values.global.imagePullSecrets | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: module-prreview
+          image: {{ include "druppie.image" (dict "Values" .Values "image" .Values.modules.prreview.image) }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          env:
+            - name: MCP_PORT
+              value: {{ .Values.modules.prreview.port | quote }}
+            # Non-secret config; PRREVIEW_GITEA_TOKEN comes from the secret.
+            - name: PRREVIEW_GITEA_URL
+              value: {{ .Values.modules.prreview.giteaUrl | quote }}
+            - name: PRREVIEW_REPOS
+              value: {{ .Values.modules.prreview.repos | quote }}
+            - name: PRREVIEW_MAX_PRS_PER_RUN
+              value: {{ .Values.modules.prreview.maxPrsPerRun | quote }}
+            - name: PRREVIEW_MAX_DIFF_LINES
+              value: {{ .Values.modules.prreview.maxDiffLines | quote }}
+            {{- if .Values.modules.prreview.caConfigMap }}
+            - name: PRREVIEW_SSL_CA_BUNDLE
+              value: /app/gitea-ca/chain.pem
+            {{- end }}
+          envFrom:
+            - secretRef:
+                name: {{ include "druppie.fullname" . }}-secrets
+          ports:
+            - name: http
+              containerPort: {{ .Values.modules.prreview.port }}
+              protocol: TCP
+          {{- if .Values.modules.prreview.caConfigMap }}
+          volumeMounts:
+            - name: gitea-ca
+              mountPath: /app/gitea-ca
+              readOnly: true
+          {{- end }}
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.modules.prreview.port }}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 5
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.modules.prreview.port }}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 5
+          resources:
+            {{- toYaml .Values.modules.prreview.resources | nindent 12 }}
+      {{- if .Values.modules.prreview.caConfigMap }}
+      volumes:
+        # Private CA for the Gitea server (same ConfigMap pattern as the
+        # branch-environments deployer: key chain.pem).
+        - name: gitea-ca
+          configMap:
+            name: {{ .Values.modules.prreview.caConfigMap }}
+      {{- end }}
+      {{- with .Values.modules.prreview.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "druppie.fullname" . }}-module-prreview
+  labels:
+    {{- include "druppie.labels" . | nindent 4 }}
+    app.kubernetes.io/component: module-prreview
+spec:
+  type: ClusterIP
+  ports:
+    - port: {{ .Values.modules.prreview.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "druppie.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: module-prreview
+{{- end }}
