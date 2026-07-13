@@ -56,6 +56,21 @@ services:
     networks:
       - app-net
 
+  redis:
+    image: redis:7-alpine
+    profiles: [infra, dev, prod]
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - app-net
+
   keycloak-db:
     image: postgres:15-alpine
     profiles: [infra, dev, prod]
@@ -706,6 +721,7 @@ services:
       GITEA_ORG: druppie
       WORKSPACE_PATH: /app/workspace
       INTERNAL_API_KEY: ${INTERNAL_API_KEY:-druppie-internal-secret-key}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
       DRUPPIE_MODULE_API_TOKEN: ${DRUPPIE_MODULE_API_TOKEN:-}
       USE_MCP_MICROSERVICES: "true"
       MCP_CODING_URL: ${MCP_CODING_URL:-http://module-coding:9001}
@@ -806,6 +822,7 @@ services:
       GITEA_ORG: druppie
       WORKSPACE_PATH: /app/workspace
       INTERNAL_API_KEY: ${INTERNAL_API_KEY:-druppie-internal-secret-key}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
       USE_MCP_MICROSERVICES: "true"
       MCP_CODING_URL: ${MCP_CODING_URL:-http://module-coding:9001}
       MCP_DOCKER_URL: ${MCP_DOCKER_URL:-http://module-docker:9002}
@@ -1114,6 +1131,8 @@ volumes:
     name: ${DRUPPIE_INSTANCE:-druppie}_dataset
   init_marker:
     name: ${DRUPPIE_INSTANCE:-druppie}_init_marker
+  redis_data:
+    name: ${DRUPPIE_INSTANCE:-druppie}_redis_data
   sandbox_dep_cache:
     name: ${DRUPPIE_INSTANCE:-druppie}_sandbox_dep_cache
   sandbox_bundles:

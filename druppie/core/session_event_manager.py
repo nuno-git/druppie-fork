@@ -1,11 +1,13 @@
 """WebSocket event manager for session timeline updates.
 
-Thread-safe manager that maintains WebSocket connections per session
-and broadcasts events to all connected clients.
+Manages WebSocket connections per session and broadcasts real-time events.
+Uses Redis pub/sub for cross-process broadcasting so events reach clients
+connected to any backend replica.
 """
 
 import asyncio
 import json
+import os
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
@@ -19,47 +21,89 @@ if TYPE_CHECKING:
 
 logger = structlog.get_logger()
 
+# Redis connection settings (optional — falls back to in-process-only if absent)
+REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379")
+
+
+try:
+    import redis.asyncio as redis
+
+    _redis_available = True
+except ImportError:
+    _redis_available = False
+    redis = None  # type: ignore[assignment]
+
 
 class SessionEventManager:
     """Manages WebSocket connections per session for real-time event streaming.
 
-    Thread-safe: uses asyncio.Lock for connection list mutations.
+    Broadcasts events locally and, when Redis is available, publishes to a
+    Redis channel so all backend replicas receive the event and can
+    broadcast it to their local WebSocket clients.
     """
 
     def __init__(self) -> None:
         self._connections: dict[UUID, list[WebSocket]] = {}
         self._lock = asyncio.Lock()
+        self._redis: Any | None = None
+        self._pubsub: Any | None = None
+        self._subscriber_task: asyncio.Task | None = None
 
-    async def connect(self, session_id: UUID, websocket: WebSocket) -> None:
-        """Register a WebSocket connection for a session."""
-        async with self._lock:
-            if session_id not in self._connections:
-                self._connections[session_id] = []
-            self._connections[session_id].append(websocket)
-            logger.debug(
-                "ws_connected",
-                session_id=str(session_id),
-                total_connections=len(self._connections[session_id]),
-            )
+    async def _ensure_redis(self) -> None:
+        """Lazy-connect to Redis on first broadcast.
 
-    async def disconnect(self, session_id: UUID, websocket: WebSocket) -> None:
-        """Remove a WebSocket connection for a session."""
-        async with self._lock:
-            conns = self._connections.get(session_id)
-            if conns:
-                conns[:] = [ws for ws in conns if ws is not websocket]
-                if not conns:
-                    del self._connections[session_id]
-                    logger.debug(
-                        "ws_last_disconnected",
-                        session_id=str(session_id),
-                    )
-
-    async def broadcast(self, session_id: UUID, event: dict[str, Any]) -> None:
-        """Send a JSON event to all connected clients for a session.
-
-        Silently removes closed/stale connections.
+        Connection failures are logged but not fatal — the manager falls
+        back to local-only broadcasting.
         """
+        if self._redis is not None or not _redis_available:
+            return
+        try:
+            self._redis = redis.from_url(REDIS_URL, decode_responses=True)
+            self._pubsub = self._redis.pubsub()
+            self._subscriber_task = asyncio.create_task(
+                self._redis_subscriber_loop(), name="redis-event-subscriber"
+            )
+            logger.info("redis_event_manager_connected", url=REDIS_URL)
+        except Exception as exc:
+            logger.warning("redis_connect_failed", error=str(exc))
+            self._redis = None
+
+    async def _redis_subscriber_loop(self) -> None:
+        """Background task: receive Redis messages and broadcast locally."""
+        if self._pubsub is None:
+            return
+        try:
+            async with self._pubsub as ps:
+                await ps.psubscribe("session:*")
+                async for message in ps.listen():
+                    if message["type"] != "pmessage":
+                        continue
+                    data = json.loads(message["data"])
+                    session_id = UUID(data["session_id"])
+                    event = data["event"]
+                    await self._broadcast_local(session_id, event)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.error("redis_subscriber_error", error=str(exc))
+
+    async def shutdown(self) -> None:
+        """Graceful shutdown: cancel subscriber task and close Redis."""
+        if self._subscriber_task is not None:
+            self._subscriber_task.cancel()
+            try:
+                await self._subscriber_task
+            except asyncio.CancelledError:
+                pass
+        if self._redis is not None:
+            await self._redis.aclose()
+            self._redis = None
+        self._pubsub = None
+
+    async def _broadcast_local(
+        self, session_id: UUID, event: dict[str, Any]
+    ) -> None:
+        """Send event to locally-connected WebSocket clients only."""
         async with self._lock:
             conns = self._connections.get(session_id)
             if not conns:
@@ -87,16 +131,59 @@ class SessionEventManager:
                         session_id=str(session_id),
                     )
 
+    async def connect(self, session_id: UUID, websocket: WebSocket) -> None:
+        """Register a WebSocket connection for a session."""
+        async with self._lock:
+            if session_id not in self._connections:
+                self._connections[session_id] = []
+            self._connections[session_id].append(websocket)
+            logger.debug(
+                "ws_connected",
+                session_id=str(session_id),
+                total_connections=len(self._connections[session_id]),
+            )
+
+    async def disconnect(self, session_id: UUID, websocket: WebSocket) -> None:
+        """Remove a WebSocket connection for a session."""
+        async with self._lock:
+            conns = self._connections.get(session_id)
+            if conns:
+                conns[:] = [ws for ws in conns if ws is not websocket]
+                if not conns:
+                    del self._connections[session_id]
+                    logger.debug(
+                        "ws_last_disconnected",
+                        session_id=str(session_id),
+                    )
+
+    async def broadcast(self, session_id: UUID, event: dict[str, Any]) -> None:
+        """Broadcast an event to all clients for a session.
+
+        Sends to locally-connected clients immediately and publishes
+        the event to Redis so other backend replicas can also broadcast
+        to their clients.
+        """
+        await self._ensure_redis()
+        await self._broadcast_local(session_id, event)
+
+        if self._redis is not None:
+            try:
+                await self._redis.publish(
+                    f"session:{session_id}",
+                    json.dumps(
+                        {"session_id": str(session_id), "event": event},
+                        default=str,
+                    ),
+                )
+            except Exception as exc:
+                logger.warning("redis_publish_failed", error=str(exc))
+
     async def broadcast_message_created(
         self,
         session_id: UUID,
         message: "Message",  # type: ignore # noqa: F821
     ) -> None:
-        """Broadcast when a new message is created in the timeline.
-
-        Sends full nested TimelineEntry shape matching REST API response
-        so the frontend can render immediately without refetching.
-        """
+        """Broadcast when a new message is created in the timeline."""
         await self.broadcast(session_id, {
             "type": "timeline_entry",
             "entry": {
@@ -121,11 +208,7 @@ class SessionEventManager:
         session_id: UUID,
         agent_run: "AgentRunSummary",  # type: ignore # noqa: F821
     ) -> None:
-        """Broadcast when a new agent run is created.
-
-        Sends full nested TimelineEntry shape matching REST API response
-        so the frontend can render immediately without refetching.
-        """
+        """Broadcast when a new agent run is created."""
         await self.broadcast(session_id, {
             "type": "timeline_entry",
             "entry": {

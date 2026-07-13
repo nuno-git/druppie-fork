@@ -268,6 +268,10 @@ async def lifespan(app: FastAPI):
     if hasattr(app.state, "job_scheduler") and app.state.job_scheduler is not None:
         app.state.job_scheduler.stop()
 
+    # Shutdown event manager (cancels Redis subscriber, closes connection)
+    from druppie.core.session_event_manager import get_event_manager
+    await get_event_manager().shutdown()
+
     # Shutdown — wait for background tasks before exiting
     await shutdown_background_tasks(timeout=30.0)
     logger.info("druppie_stopping")
