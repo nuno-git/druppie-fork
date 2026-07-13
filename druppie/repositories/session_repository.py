@@ -315,10 +315,8 @@ class SessionRepository(BaseRepository):
             .filter(MessageModel.role.in_(["user", "system", "assistant", "tool"]))
         )
         if options.since_sequence is not None:
-            # Include entries with NULL sequence_number (they cannot be delta-filtered)
             messages_query = messages_query.filter(
-                or_(MessageModel.sequence_number.is_(None), MessageModel.sequence_number > options.since_sequence)
-            )
+                MessageModel.sequence_number > options.since_sequence)
         messages = messages_query.order_by(MessageModel.created_at).all()
 
         # Batch-load attachments for all messages
@@ -364,10 +362,8 @@ class SessionRepository(BaseRepository):
             .filter_by(session_id=session_id, parent_run_id=None)
         )
         if options.since_sequence is not None:
-            # Include entries with NULL sequence_number (they cannot be delta-filtered)
             agent_runs_query = agent_runs_query.filter(
-                or_(AgentRun.sequence_number.is_(None), AgentRun.sequence_number > options.since_sequence)
-            )
+                AgentRun.sequence_number > options.since_sequence)
         agent_runs = agent_runs_query.order_by(AgentRun.sequence_number).all()
 
         for run in agent_runs:
@@ -566,8 +562,8 @@ class SessionRepository(BaseRepository):
                 fallback_used=getattr(llm, 'fallback_used', False) or False,
                 intended_provider=getattr(llm, 'intended_provider', None),
                 intended_model=getattr(llm, 'intended_model', None),
-                raw_request=llm.raw_request if llm.raw_request else None,
-                raw_response=llm.raw_response if llm.raw_response else None,
+                raw_request=raw_request,
+                raw_response=raw_response,
                 retries=[
                     LLMRetryDetail(
                         attempt=r.attempt,

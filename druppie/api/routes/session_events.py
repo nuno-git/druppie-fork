@@ -29,7 +29,7 @@ from druppie.api.deps import get_user_roles
 from druppie.core.auth import get_auth_service
 from druppie.core.session_event_manager import get_event_manager
 from druppie.db.database import SessionLocal
-from druppie.repositories import SessionRepository
+from druppie.repositories import SessionRepository, QuestionRepository
 
 logger = structlog.get_logger()
 
@@ -72,7 +72,7 @@ async def session_events_ws(
         # Step 2: Verify session access via SessionService (DRY with REST routes)
         db = SessionLocal()
         try:
-            from druppie.services import SessionService, SessionRepository, QuestionRepository
+            from druppie.services import SessionService
             session_service = SessionService(
                 SessionRepository(db),
                 QuestionRepository(db),
