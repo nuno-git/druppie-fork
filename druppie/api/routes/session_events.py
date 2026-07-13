@@ -1,18 +1,22 @@
 """WebSocket route for session timeline event streaming.
 
 Endpoint:
-    GET /api/sessions/{session_id}/events?token=<jwt>
+    GET /api/sessions/{session_id}/events
 
-On connect, authenticates via the token query parameter, verifies session
-access, and subscribes to real-time timeline events via a persistent
-WebSocket connection.
+On connect the server immediately accepts the WebSocket, then waits
+(up to 10 s) for an authentication message of the form:
+    {"type":"auth","token":"<jwt>"}
 
-Architecture:
+After the token is validated and session access verified, the client
+receives real-time timeline events.
+
+Authentication flow:
     Client ──WebSocket──▶ FastAPI endpoint
-                              │
-                              ├─► authenticate via token
-                              ├─► verify session access
-                              └─► subscribe to SessionEventManager
+                         1. accept()
+                         2. await auth message (≤10 s)
+                         3. validate JWT
+                         4. verify session access
+                         5. subscribe to SessionEventManager
 
 The SessionEventManager broadcasts events from the orchestrator and
 other services. The client receives JSON events like:
@@ -20,10 +24,12 @@ other services. The client receives JSON events like:
     {"type": "session_status", "session_id": "...", "status": "..."}
 """
 
+import asyncio
+import json
 from uuid import UUID
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from druppie.api.deps import get_user_roles
 from druppie.core.auth import get_auth_service
@@ -35,41 +41,85 @@ logger = structlog.get_logger()
 
 router = APIRouter()
 
+# Seconds to wait for the client to send the auth message
+AUTH_TIMEOUT = 10
+
 
 @router.websocket("/sessions/{session_id}/events")
 async def session_events_ws(
     websocket: WebSocket,
     session_id: UUID,
-    token: str = Query(..., description="JWT token (same Bearer token used for HTTP)"),
 ):
     """WebSocket endpoint for real-time session timeline events.
 
     Authentication:
-        Pass the JWT token as the `token` query parameter.
-        Same token as the Authorization: Bearer header used for HTTP endpoints.
+        After the WebSocket is accepted, the client must send a JSON
+        auth message within 10 seconds:
+            {"type":"auth","token":"<jwt>"}
 
     Events:
-        timeline_entry — new or updated timeline entries (messages, agent runs)
+        timeline_entry — new or updated timeline entries
         session_status — session status changes
 
-    The connection stays open until the client disconnects or the session
-    no longer exists. Clients should reconnect on disconnect.
+    The connection stays open until the client disconnects.
     """
     user = None
     db = None
+
     try:
-        # Step 1: Authenticate via token query parameter
+        # Step 1: Accept immediately (no auth yet)
+        await websocket.accept()
+
+        # Step 2: Wait for auth message with timeout
+        token = None
+        try:
+            async with asyncio.timeout(AUTH_TIMEOUT):
+                raw = await websocket.receive_text()
+                data = json.loads(raw)
+
+                # Support direct auth message or ping-before-auth
+                if data.get("type") == "auth":
+                    token = data.get("token")
+                else:
+                    # Client sent something else first (e.g., ping).
+                    # Wait one more message for auth.
+                    raw2 = await websocket.receive_text()
+                    data2 = json.loads(raw2)
+                    if data2.get("type") == "auth":
+                        token = data2.get("token")
+
+        except asyncio.TimeoutError:
+            await websocket.close(
+                code=4001,
+                reason="Authentication timeout — send {'type':'auth','token':'<jwt>'} within 10s",
+            )
+            return
+        except (json.JSONDecodeError, KeyError, TypeError):
+            await websocket.close(
+                code=4001,
+                reason="Invalid auth message — expected {'type':'auth','token':'<jwt>'}",
+            )
+            return
+
+        if not token:
+            await websocket.close(
+                code=4001,
+                reason="Missing token — expected {'type':'auth','token':'<jwt>'}",
+            )
+            return
+
+        # Step 3: Validate JWT
         auth = get_auth_service()
         user = auth.validate_request(f"Bearer {token}")
         if not user:
-            await websocket.close(code=4001, reason="Invalid or missing authentication token")
+            await websocket.close(code=4001, reason="Invalid authentication token")
             return
 
         user_id = UUID(user["sub"])
         user_roles = get_user_roles(user)
         is_admin = "admin" in user_roles
 
-        # Step 2: Verify session access via SessionService (DRY with REST routes)
+        # Step 4: Verify session access
         db = SessionLocal()
         try:
             from druppie.services import SessionService
@@ -84,8 +134,9 @@ async def session_events_ws(
             db.close()
             db = None
 
-        # Step 3: Accept the WebSocket and subscribe
-        await websocket.accept()
+        # Step 5: Subscribe and confirm
+        await websocket.send_text(json.dumps({"type": "auth_success"}))
+
         logger.info(
             "ws_session_events_connected",
             session_id=str(session_id),
@@ -98,10 +149,14 @@ async def session_events_ws(
         try:
             # Keep the connection alive until the client disconnects
             while True:
-                # Receive ping/pong or disconnect signals
                 data = await websocket.receive_text()
                 if data == "ping":
-                    await websocket.send_text('{"type":"pong"}')
+                    await websocket.send_text(json.dumps({"type": "pong"}))
+                elif data == "pong":
+                    pass
+                else:
+                    # Ignore other client messages
+                    pass
         except WebSocketDisconnect:
             logger.info(
                 "ws_session_events_disconnected",
@@ -111,6 +166,13 @@ async def session_events_ws(
         finally:
             await event_manager.disconnect(session_id, websocket)
 
+    except WebSocketDisconnect:
+        # Client disconnected before auth completed or during normal operation
+        logger.info(
+            "ws_session_events_disconnected",
+            session_id=str(session_id),
+            user_id=str(user_id) if user else None,
+        )
     except Exception as e:
         logger.error(
             "ws_session_events_error",

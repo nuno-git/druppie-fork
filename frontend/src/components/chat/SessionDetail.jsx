@@ -1113,6 +1113,8 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
 
     if (!getUserInfo()?.id) return
 
+    isWebSocketConnected.current = false
+
     const socket = new SessionSocket(sessionId, (event) => {
       if (event.type === 'timeline_entry' && event.entry) {
         const entry = event.entry
@@ -1165,20 +1167,12 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
         })
         queryClient.invalidateQueries({ queryKey: ['session', sessionId] })
       }
+    }, {
+      onOpen: () => { isWebSocketConnected.current = true },
+      onClose: () => { isWebSocketConnected.current = false }
     })
 
-    isWebSocketConnected.current = false
     socket.connect()
-
-    socket.ws.onopen = () => {
-      isWebSocketConnected.current = true
-    }
-
-    const origOnclose = socket.ws.onclose
-    socket.ws.onclose = (e) => {
-      isWebSocketConnected.current = false
-      if (origOnclose) origOnclose(e)
-    }
 
     return () => {
       socket.disconnect()
