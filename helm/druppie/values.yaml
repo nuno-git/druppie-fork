@@ -488,6 +488,13 @@ secrets:
   keycloakClientSecret: ''
   giteaToken: ''
   moduleApiToken: ''
+  # Token for the external (GitOps) Gitea, aigit.waterschap.org.
+  externalGiteaToken: ''
+  # Optional dedicated bot token for the scheduled PR review (read +
+  # PR-comment rights on the PRREVIEW_REPOS only). Empty = the reviewer
+  # falls back to externalGiteaToken. With externalSecrets.managed=true
+  # both come from Vault via the ESO-managed Secret in ai/k8s.
+  prreviewGiteaToken: ''
 autoscaling:
   backend:
     enabled: false
