@@ -204,20 +204,6 @@ jobs:
           docker push "$REGISTRY/druppie/dev-workspace:$TAG"
           docker push "$REGISTRY/druppie/dev-workspace:latest"
 
-      - name: Build and push model-server
-        env:
-          TAG: ${{ steps.tags.outputs.deploy_tag }}
-          SHA: ${{ github.sha }}
-        run: |
-          if [ -f model-server/Dockerfile ]; then
-            docker build --build-arg CACHEBUST="$SHA" \
-              -t "$REGISTRY/druppie/model-server:$TAG" \
-              -t "$REGISTRY/druppie/model-server:latest" \
-              -f model-server/Dockerfile model-server
-            docker push "$REGISTRY/druppie/model-server:$TAG"
-            docker push "$REGISTRY/druppie/model-server:latest"
-          fi
-
       - name: Summary
         env:
           TAG: ${{ steps.tags.outputs.deploy_tag }}
