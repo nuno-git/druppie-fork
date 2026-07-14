@@ -604,7 +604,7 @@ standards.
 
 ### 6.9 Data Access Server (port 9010)
 
-Adapter-based access to heterogeneous data sources (Azure SQL, Azure Data Lake) plus inline chart generation. Full reference: [`docs/MCP/data-access.md`](MCP/data-access.md).
+Adapter-based access to heterogeneous data sources (Azure SQL, Azure Data Lake) plus inline chart generation. Full reference: [`docs/reference/mcp/data-access.md`](reference/mcp/data-access.md).
 
 | Tool | Approval | Description |
 |------|----------|-------------|

@@ -418,7 +418,7 @@ Last updated: 2026-06-11
   - Use DuckDB/Polars to run SQL-style aggregation directly over CSV/Parquet with column projection (no full in-memory materialization).
   - Cache the read/aggregation within a session so follow-up charts don't re-scan.
   - Chunked/streaming aggregation for files too large to hold in memory.
-- **Priority:** Medium — removes the in-memory ceiling flagged in `docs/MCP/data-access.md`.
+- **Priority:** Medium — removes the in-memory ceiling flagged in `docs/reference/mcp/data-access.md`.
 
 ### Visualization — Smarter Graphing
 
