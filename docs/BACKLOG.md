@@ -30,6 +30,7 @@ Last updated: 2026-06-11
 - ~~Test-Driven Development (TDD) Workflow~~ ✅ DONE
 - ~~Scheduled Jobs (Cron Jobs)~~ ✅ DONE (see `feature/cronjobs` branch)
 - Agents Should Be Able to Spawn Sub-Agents and Inject Next Steps
+- Entra ID Integration — Security Hardening (see details below)
 - ~~Skills System~~ ✅ DONE
 - Skill: MCP Server Integration for Generated Applications
 - ~~Language Matching~~ ✅ DONE
@@ -526,6 +527,26 @@ Branch `Archimate-end-to-end` delivers ArchiMate generation, rendering, and incr
 ## Kubernetes Phase 2
 
 Deze items zijn out-of-scope voor de eerste Kubernetes migratie (Story 3) en worden in Phase 2 opgepakt.
+
+### Entra ID Integration — Security Hardening
+
+Security review findings from the Entra ID broker implementation. These are known issues to address before production use.
+
+**Critical:**
+- **C1: `expected_user_id` verification is dead code** — `entra_token.py:195-200` extracts `oid`/`sub` from the JWT but never compares them to `expected_user_id`. If Keycloak's broker returns a stored token for the wrong user, the backend cannot detect the mismatch. Fix: compare `token_oid` against the user's known Entra identity.
+- **C2: `storeToken: true` + `offline_access` = persistent credential store** — Keycloak stores long-lived Entra refresh tokens in its PostgreSQL database. These survive logout and can mint fresh Azure tokens indefinitely. Evaluate whether `storeToken` can be disabled or add a purge-on-logout hook.
+
+**High:**
+- **H1: KC tokens in localStorage** — All three Keycloak tokens (access, refresh, id) are stored in `localStorage`. XSS anywhere in the app exfiltrates all three. Migrate to `sessionStorage` or httpOnly cookies via BFF proxy.
+- **H2: Allowlist only gates Azure API calls, not Druppie login** — `ALLOWED_ENTRA_EMAILS` blocks token exchange but any Entra tenant user can still authenticate to Druppie and access non-Azure features. Add a Keycloak first-broker-login flow or use Entra group-based assignment.
+- **H3: JWT audience verification disabled** — `auth.py:118` has `verify_aud: False`. Any JWT signed by the Keycloak realm is accepted regardless of client. Set `verify_aud: True` and configure expected audience.
+
+**Medium:**
+- **M1: Dead ToolContext + fragile manual token injection** — `orchestrator.py` `resume_after_entra_auth` creates a `ToolContext` with the token, but `_apply_injection_rules` creates a separate one without it. The workaround manually forces the token. Fix: pass existing `ToolContext` into `_apply_injection_rules`.
+- **M3: `directAccessGrantsEnabled: true` on frontend client** — Enables ROPC on a public client. Deprecated by OAuth 2.1. Set to `false`.
+- **M4: `redirectUri: window.location.href` includes query params** — Use `window.location.origin + window.location.pathname` instead.
+
+---
 
 | Item | Omschrijving | Prioriteit |
 |------|-------------|-----------|

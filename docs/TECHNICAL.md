@@ -20,7 +20,7 @@ Druppie is a full-stack platform composed of the following services:
 | MCP File Search | Python / FastMCP | 9004 | Local file search within datasets |
 | MCP Web | Python / FastMCP | 9005 | Web browsing, URL fetching, web search |
 | MCP ArchiMate | Python / FastMCP | 9006 | ArchiMate model operations (list, read, search, export) |
-| MCP Azure DevOps | Python / FastMCP | 9012 | Read-only backlog / work items for a single Azure DevOps project |
+| MCP Azure DevOps | Python / FastMCP | 9012 | Backlog / work items for a single Azure DevOps project (read + write with approval) |
 | Sandbox Control Plane | Node.js | 8787 | Sandbox session/event management, coordinates sandbox lifecycle |
 | Sandbox Manager | Node.js | 8000 | Creates/manages sandbox Docker containers, enforces resource limits |
 | Sandbox Image Builder | Docker | — | One-shot build producing `open-inspect-sandbox:latest` image |
@@ -207,26 +207,37 @@ druppie/
 
 ### Azure DevOps backlog MCP (single-project isolation)
 
-`module-azuredevops` (port 9012) gives agents **read-only** access to the backlog /
-work items of **exactly one** Azure DevOps project. It authenticates to Azure DevOps
-with an **Entra ID service principal** (`ClientSecretCredential`, resource scope
-`{scope_id}/.default`); tokens are fetched on demand and
-never written to disk. Configuration is via env vars: `AZURE_DEVOPS_ORG_URL`,
-`AZURE_DEVOPS_PROJECT`, `AZURE_DEVOPS_TENANT_ID`, `AZURE_DEVOPS_CLIENT_ID`,
-`AZURE_DEVOPS_CLIENT_SECRET` (the server fails fast at startup if any are missing).
+`module-azuredevops` (port 9012) gives agents access to the backlog / work items of
+**exactly one** Azure DevOps project. It supports two authentication modes:
+
+1. **User-scoped OBO tokens (preferred):** When the logged-in user has a linked Entra
+   identity, the backend exchanges the Keycloak broker refresh token for an Azure
+   DevOps-scoped access token (`499b84ac-1321-427f-aa17-267ca6975798/.default`). This
+   token is injected as a hidden `user_token` parameter via `mcp_config.yaml` rules.
+   Operations are performed as the actual user.
+2. **Service principal fallback:** For non-Entra users, authentication falls back to
+   `ClientSecretCredential` (resource scope `{scope_id}/.default`). Tokens are fetched
+   on demand and never written to disk.
+
+Configuration is via env vars: `AZURE_DEVOPS_ORG_URL`, `AZURE_DEVOPS_PROJECT`,
+`AZURE_DEVOPS_TENANT_ID`, `AZURE_DEVOPS_CLIENT_ID`, `AZURE_DEVOPS_CLIENT_SECRET`
+(the server fails fast at startup if any are missing).
 
 Project isolation is enforced in two independent layers:
 
-1. **Azure-side (the real boundary):** grant the service principal read-only access to
-   only the one project. Any other project returns 403 from Azure itself.
+1. **Azure-side (the real boundary):** grant the service principal access to only the
+   one project. Any other project returns 403 from Azure itself.
 2. **Server-side allowlist:** every tool is hard-scoped to `AZURE_DEVOPS_PROJECT` — the
    project is put in the REST path and the WIQL `[System.TeamProject]` clause, is never a
    tool argument, and there is no `list_projects` tool. So the server cannot be steered
    at another project even if the credential were over-scoped.
 
-Tools: `list_backlog_items`, `get_work_item`, `search_work_items` (all
-`requires_approval: false`). Consumed by the **Product Owner** agent. Isolation is pinned
-by `druppie/tests/test_azuredevops_isolation.py`.
+Read tools: `list_backlog_items`, `get_work_item`, `search_work_items`,
+`get_current_sprint`, `get_sprint_summary`, `get_work_item_comments` (all
+`requires_approval: false`). Write tools: `create_work_item`, `update_work_item`,
+`add_work_item_comment` (`requires_approval: true`, `required_role: session_owner`).
+Consumed by the **Product Owner** agent. Isolation is pinned by
+`druppie/tests/test_azuredevops_isolation.py`.
 
 ---
 
