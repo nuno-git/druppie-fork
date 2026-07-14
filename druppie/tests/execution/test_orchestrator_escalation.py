@@ -295,15 +295,30 @@ class TestResumeAfterBaHitl:
         orch = _make_orchestrator()
         session = _make_session(status=SessionStatus.PAUSED_BA_HITL, fd_post_hitl_rejection_count=1)
         _wire_session(orch, session)
+        arch_users = [MagicMock(id=uuid4()), MagicMock(id=uuid4())]
+        user_repo = MagicMock()
+        user_repo.get_by_role.return_value = arch_users
+        notif_repo = MagicMock()
+        orch._get_user_repo = MagicMock(return_value=user_repo)
+        orch._get_notification_repo = MagicMock(return_value=notif_repo)
 
         await orch.resume_after_ba_hitl(session.id, decision="escalate", user_id=uuid4())
 
         orch.session_repo.update_status.assert_any_call(
             session.id, SessionStatus.PAUSED_ARCHITECT_HITL
         )
-        # The human-decision audit event is owned by EscalationService; the
-        # orchestrator only performs the state transition (no event recorded).
-        orch._escalation_repo.create.assert_not_called()
+        # The BA->escalate path records the orchestrator-owned architect_hitl_entered
+        # event and notifies architects, mirroring the automated-interception path.
+        orch._escalation_repo.create.assert_called_once()
+        create_kwargs = orch._escalation_repo.create.call_args.kwargs
+        assert create_kwargs["event_type"] == EscalationEventType.ARCHITECT_HITL_ENTERED.value
+        assert create_kwargs["rejection_count_at_event"] == session.fd_rejection_count
+        orch._get_user_repo().get_by_role.assert_called_once_with("architect")
+        assert notif_repo.create.call_count == len(arch_users)
+        for call in notif_repo.create.call_args_list:
+            assert call.kwargs["role"] == "architect"
+            assert call.kwargs["kind"] == "architect_hitl"
+            assert call.kwargs["session_id"] == session.id
 
     @pytest.mark.asyncio
     async def test_iterate_creates_ba_run_and_executes(self):

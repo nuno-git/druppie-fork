@@ -2060,7 +2060,18 @@ class Orchestrator:
                         "post-HITL rejection has occurred."
                     )
                 self.session_repo.update_status(session_id, SessionStatus.PAUSED_ARCHITECT_HITL)
+                self._get_escalation_repo().create(
+                    session_id=session_id,
+                    event_type=EscalationEventType.ARCHITECT_HITL_ENTERED.value,
+                    rejection_count_at_event=session.fd_rejection_count or 0,
+                )
                 self.session_repo.commit()
+                self._notify_role_of_pause(
+                    session_id,
+                    role="architect",
+                    kind="architect_hitl",
+                    message="Session is waiting for architect human review.",
+                )
             case "terminate":
                 self.terminate_session(session_id, reason=feedback, user_id=user_id)
             case _:
