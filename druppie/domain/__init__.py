@@ -75,6 +75,18 @@ from .project import DeploymentInfo, DeploymentSummary, ProjectDetail, ProjectSu
 # Dev VM models
 from .dev_vm import DevVMCreate, DevVMDetail, DevVMListResponse, DevVMSummary
 
+# Branch environment models
+from .branch_environment import (
+    BranchEnvironmentCreate,
+    BranchEnvironmentDetail,
+    BranchEnvironmentListResponse,
+    BranchEnvironmentPipeline,
+    BranchEnvironmentStatus,
+    BranchEnvironmentSummary,
+    PipelineStage,
+    PipelineStageStatus,
+)
+
 # Question models
 from .question import PendingQuestionList, QuestionChoice, QuestionDetail
 
@@ -164,6 +176,15 @@ __all__ = [
     "DevVMDetail",
     "DevVMCreate",
     "DevVMListResponse",
+    # Branch environment
+    "BranchEnvironmentSummary",
+    "BranchEnvironmentDetail",
+    "BranchEnvironmentCreate",
+    "BranchEnvironmentListResponse",
+    "BranchEnvironmentStatus",
+    "BranchEnvironmentPipeline",
+    "PipelineStage",
+    "PipelineStageStatus",
     # User
     "UserInfo",
     # Documentation

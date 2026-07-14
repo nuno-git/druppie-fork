@@ -169,7 +169,7 @@ metadata:
     nginx.ingress.kubernetes.io/rewrite-target: /$2
     nginx.ingress.kubernetes.io/use-regex: "true"
     {{- else if eq .Values.global.ingress.className "traefik" }}
-    traefik.ingress.kubernetes.io/router.middlewares: {{ .Release.Namespace }}-{{ include "druppie.fullname" . }}-git-stripprefix@kubernetes
+    traefik.ingress.kubernetes.io/router.middlewares: {{ .Release.Namespace }}-{{ include "druppie.fullname" . }}-git-stripprefix@kubernetescrd
     {{- end }}
     {{- if .Values.certManager.enabled }}
     cert-manager.io/cluster-issuer: letsencrypt-prod

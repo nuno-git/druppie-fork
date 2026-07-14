@@ -99,6 +99,8 @@ spec:
       targetPort: ssh
 ---
 # Backend Service
+# When devWorkspace.enabled this routes to the workspace pod's hot-reload
+# backend (container port "backend"), instead of the baked backend Deployment.
 apiVersion: v1
 kind: Service
 metadata:
@@ -107,6 +109,16 @@ metadata:
     {{- include "druppie.labels" . | nindent 4 }}
     app.kubernetes.io/component: backend
 spec:
+  {{- if .Values.devWorkspace.enabled }}
+  type: ClusterIP
+  selector:
+    {{- include "druppie.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: dev-workspace
+  ports:
+    - name: http
+      port: {{ .Values.backend.port }}
+      targetPort: backend
+  {{- else }}
   type: {{ .Values.backend.service.type | default "NodePort" }}
   selector:
     {{- include "druppie.selectorLabels" . | nindent 4 }}
@@ -118,8 +130,11 @@ spec:
       {{- if eq (.Values.backend.service.type | default "NodePort") "NodePort" }}
       nodePort: {{ .Values.backend.service.nodePort | default 30000 }}
       {{- end }}
+  {{- end }}
 ---
 # Frontend Service
+# When devWorkspace.enabled this routes to the workspace pod's Vite HMR
+# frontend (container port "frontend"), instead of the baked frontend Deployment.
 apiVersion: v1
 kind: Service
 metadata:
@@ -128,6 +143,16 @@ metadata:
     {{- include "druppie.labels" . | nindent 4 }}
     app.kubernetes.io/component: frontend
 spec:
+  {{- if .Values.devWorkspace.enabled }}
+  type: ClusterIP
+  selector:
+    {{- include "druppie.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: dev-workspace
+  ports:
+    - name: http
+      port: {{ .Values.frontend.port }}
+      targetPort: frontend
+  {{- else }}
   type: {{ .Values.frontend.service.type | default "NodePort" }}
   selector:
     {{- include "druppie.selectorLabels" . | nindent 4 }}
@@ -139,6 +164,27 @@ spec:
       {{- if eq (.Values.frontend.service.type | default "NodePort") "NodePort" }}
       nodePort: {{ .Values.frontend.service.nodePort | default 30001 }}
       {{- end }}
+  {{- end }}
+{{- if .Values.devWorkspace.enabled }}
+---
+# Dev workspace Service — oauth2-proxy fronting code-server on the -dev subdomain.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "druppie.fullname" . }}-workspace
+  labels:
+    {{- include "druppie.labels" . | nindent 4 }}
+    app.kubernetes.io/component: dev-workspace
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "druppie.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: dev-workspace
+  ports:
+    - name: http
+      port: 80
+      targetPort: proxy
+{{- end }}
 {{- if .Values.modules.coding.enabled }}
 ---
 # Module Coding Service

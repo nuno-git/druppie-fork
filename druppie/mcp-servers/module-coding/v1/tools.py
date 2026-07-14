@@ -31,8 +31,6 @@ import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-import jwt
-
 from fastmcp import FastMCP
 
 from .mermaid_validator import validate_mermaid_in_markdown
@@ -62,103 +60,15 @@ GITEA_ORG = os.getenv("GITEA_ORG", "druppie")
 GITEA_TOKEN = os.getenv("GITEA_TOKEN", "")
 GITEA_USER = os.getenv("GITEA_USER", "gitea_admin")
 GITEA_PASSWORD = os.getenv("GITEA_PASSWORD", "")
-DRUPPIE_CORE_REPO_URL = os.getenv("DRUPPIE_CORE_REPO_URL", "")
+# External Gitea (aigit.waterschap.org) — shared across environments, uses OAuth2 token
+EXTERNAL_GITEA_TOKEN = os.getenv("EXTERNAL_GITEA_TOKEN", "")
+EXTERNAL_GITEA_URL = os.getenv("EXTERNAL_GITEA_URL", "https://aigit.waterschap.org")
+# Core repo lives on the external Gitea (aigit.waterschap.org), not the internal one.
+# The sandbox container may need to reach it externally for clone/push/PR.
+DRUPPIE_CORE_GITEA_URL = os.getenv("DRUPPIE_CORE_GITEA_URL", "https://aigit.waterschap.org")
+DRUPPIE_CORE_REPO_OWNER = os.getenv("DRUPPIE_CORE_REPO_OWNER", "ai")
+DRUPPIE_CORE_REPO_NAME = os.getenv("DRUPPIE_CORE_REPO_NAME", "druppie")
 DRUPPIE_CORE_REPO_BRANCH = os.getenv("DRUPPIE_CORE_REPO_BRANCH", "colab-dev")
-GITHUB_APP_ID = os.environ.get("GITHUB_APP_ID", "")
-GITHUB_APP_PRIVATE_KEY_PATH = os.environ.get("GITHUB_APP_PRIVATE_KEY_PATH", "")
-GITHUB_APP_INSTALLATION_ID = os.environ.get("GITHUB_APP_INSTALLATION_ID", "")
-GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "")
-GITHUB_REPO_OWNER = os.getenv("GITHUB_REPO_OWNER", "")
-GITHUB_REPO_NAME = os.getenv("GITHUB_REPO_NAME", "")
-
-_github_installation_token: str | None = None
-_github_token_expires_at: float = 0.0
-
-
-def _generate_github_app_jwt() -> str:
-    now = int(time.time())
-    payload = {
-        "iss": GITHUB_APP_ID,
-        "iat": now - 60,
-        "exp": now + (9 * 60),
-    }
-    with open(GITHUB_APP_PRIVATE_KEY_PATH) as f:
-        private_key = f.read()
-    return jwt.encode(payload, private_key, algorithm="RS256")
-
-
-def _check_github_app_config() -> None:
-    """Log clear warnings about GitHub App configuration at startup."""
-    missing = []
-    if not GITHUB_APP_ID:
-        missing.append("GITHUB_APP_ID")
-    if not GITHUB_APP_PRIVATE_KEY_PATH:
-        missing.append("GITHUB_APP_PRIVATE_KEY_PATH")
-    if not GITHUB_APP_INSTALLATION_ID:
-        missing.append("GITHUB_APP_INSTALLATION_ID")
-
-    if missing:
-        logger.warning(
-            "GitHub App not configured (missing: %s). "
-            "update_core clone will use unauthenticated public URL. "
-            "push_changes, create_pr, git_fetch, and git_pull will NOT work "
-            "for update_core scope until these are set in .env",
-            ", ".join(missing),
-        )
-        return
-
-    if not os.path.isfile(GITHUB_APP_PRIVATE_KEY_PATH):
-        logger.error(
-            "GitHub App private key not found at %s. "
-            "update_core push/pull will fail. "
-            "Check GITHUB_APP_PRIVATE_KEY_PATH in .env",
-            GITHUB_APP_PRIVATE_KEY_PATH,
-        )
-        return
-
-    logger.info(
-        "GitHub App configured: app_id=%s, installation=%s, key=%s",
-        GITHUB_APP_ID, GITHUB_APP_INSTALLATION_ID, GITHUB_APP_PRIVATE_KEY_PATH,
-    )
-
-
-def _get_github_token() -> str | None:
-    global _github_installation_token, _github_token_expires_at
-    if not GITHUB_APP_ID or not GITHUB_APP_PRIVATE_KEY_PATH or not GITHUB_APP_INSTALLATION_ID:
-        logger.warning("GitHub App credentials not configured — update_core git operations unavailable")
-        return None
-    if _github_installation_token and time.time() < _github_token_expires_at - 60:
-        return _github_installation_token
-    import httpx
-    from datetime import datetime
-    try:
-        app_jwt = _generate_github_app_jwt()
-        resp = httpx.post(
-            f"https://api.github.com/app/installations/{GITHUB_APP_INSTALLATION_ID}/access_tokens",
-            headers={
-                "Authorization": f"Bearer {app_jwt}",
-                "Accept": "application/vnd.github+json",
-                "X-GitHub-Api-Version": "2022-11-28",
-            },
-            timeout=15,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        _github_installation_token = data["token"]
-        _github_token_expires_at = datetime.fromisoformat(
-            data["expires_at"].replace("Z", "+00:00")
-        ).timestamp()
-        return _github_installation_token
-    except FileNotFoundError:
-        logger.error("GitHub App private key not found at %s", GITHUB_APP_PRIVATE_KEY_PATH)
-    except Exception as e:
-        logger.error("GitHub App token request failed (invalid key, expired, or wrong installation ID?): %s", e)
-    return None
-
-
-def _get_github_push_url() -> str:
-    token = _get_github_token()
-    return f"https://x-access-token:{token}@github.com/{GITHUB_REPO_OWNER}/{GITHUB_REPO_NAME}.git"
 
 
 SANDBOX_IMAGE = os.getenv("DRUPPIE_SANDBOX_IMAGE", "druppie-sandbox:latest")
@@ -339,7 +249,13 @@ async def _exec_bash_in_container(
             full_cmd = command
             if output_file:
                 full_cmd = f"set -o pipefail; ({command}) 2>&1 | tee {shlex.quote(output_file)}"
-            return await _get_k8s_manager().exec(entry["_k8s_handle"], ["bash", "-c", full_cmd], timeout=int(timeout))
+            try:
+                return await asyncio.wait_for(
+                    _get_k8s_manager().exec(entry["_k8s_handle"], ["bash", "-c", full_cmd], timeout=int(timeout)),
+                    timeout=timeout + 10,
+                )
+            except asyncio.TimeoutError:
+                return (-1, "", f"Command timed out after {timeout}s")
 
     if output_file:
         wrapped = f"set -o pipefail; ({command}) 2>&1 | tee {shlex.quote(output_file)}"
@@ -366,7 +282,13 @@ async def _write_to_container(
     if SANDBOX_MODE == "k8s":
         entry = _find_entry_by_container_id(container_id)
         if entry and entry.get("_k8s_handle"):
-            await _get_k8s_manager().write_file(entry["_k8s_handle"], container_path, content)
+            try:
+                await asyncio.wait_for(
+                    _get_k8s_manager().write_file(entry["_k8s_handle"], container_path, content),
+                    timeout=30,
+                )
+            except asyncio.TimeoutError:
+                return (1, "Write file timed out")
             return 0, ""
     proc = await asyncio.create_subprocess_exec(
         "docker", "exec", "-i", container_id,
@@ -400,9 +322,15 @@ async def _copy_from_container(
     if SANDBOX_MODE == "k8s":
         entry = _find_entry_by_container_id(container_id)
         if entry and entry.get("_k8s_handle"):
-            data = await _get_k8s_manager().read_file_bytes(
-                entry["_k8s_handle"], src_path
-            )
+            try:
+                data = await asyncio.wait_for(
+                    _get_k8s_manager().read_file_bytes(
+                        entry["_k8s_handle"], src_path
+                    ),
+                    timeout=30,
+                )
+            except asyncio.TimeoutError:
+                raise RuntimeError(f"Read file from sandbox timed out: {src_path}")
             with open(dst_path, "wb") as f:
                 f.write(data)
             return
@@ -478,14 +406,17 @@ def _sanitize_param(value: str | None) -> str | None:
     return value
 
 
-def _get_gitea_clone_url(repo_name: str, repo_owner: str | None = None) -> str:
+def _get_gitea_clone_url(repo_name: str, repo_owner: str | None = None, base_url: str | None = None) -> str:
     """Get Gitea clone URL with embedded credentials for initial clone only."""
     owner = repo_owner or GITEA_ORG
-    if GITEA_USER and GITEA_PASSWORD and "://" in GITEA_URL:
+    url = (base_url or GITEA_URL).rstrip("/")
+    if "aigit.waterschap.org" in url and EXTERNAL_GITEA_TOKEN:
+        return f"https://oauth2:{EXTERNAL_GITEA_TOKEN}@aigit.waterschap.org/{owner}/{repo_name}.git"
+    if GITEA_USER and GITEA_PASSWORD and "://" in url:
         from urllib.parse import quote
-        protocol, rest = GITEA_URL.split("://", 1)
+        protocol, rest = url.split("://", 1)
         return f"{protocol}://{quote(GITEA_USER)}:{quote(GITEA_PASSWORD)}@{rest}/{owner}/{repo_name}.git"
-    return f"{GITEA_URL}/{owner}/{repo_name}.git"
+    return f"{url}/{owner}/{repo_name}.git"
 
 
 def _get_public_clone_url(repo_name: str, repo_owner: str | None = None) -> str:
@@ -524,6 +455,14 @@ async def _create_sandbox_container(
     Returns:
         Container name (used as identifier for docker exec).
     """
+    # For update_core scope, always use the core repo identity on Gitea
+    if git_scope == "update_core":
+        repo_name = DRUPPIE_CORE_REPO_NAME
+        repo_owner = DRUPPIE_CORE_REPO_OWNER
+        effective_gitea_url = DRUPPIE_CORE_GITEA_URL
+    else:
+        effective_gitea_url = GITEA_URL
+
     # ── K8s mode: use agent-sandbox SDK ──────────────────────────────────
     if SANDBOX_MODE == "k8s":
         scope = git_scope or "current_project"
@@ -532,12 +471,7 @@ async def _create_sandbox_container(
         if scope == "current_project" and repo_name:
             clone_url = _get_gitea_clone_url(repo_name, repo_owner)
         elif scope == "update_core":
-            core_url = DRUPPIE_CORE_REPO_URL or "https://github.com/nuno-git/druppie-fork.git"
-            token = _get_github_token()
-            if token and core_url.startswith("https://github.com"):
-                clone_url = core_url.replace("https://", f"https://x-access-token:{token}@")
-            else:
-                clone_url = core_url
+            clone_url = _get_gitea_clone_url(DRUPPIE_CORE_REPO_NAME, DRUPPIE_CORE_REPO_OWNER, DRUPPIE_CORE_GITEA_URL)
             branch = DRUPPIE_CORE_REPO_BRANCH
 
         manager = _get_k8s_manager()
@@ -559,6 +493,7 @@ async def _create_sandbox_container(
             "last_activity": time.time(),
             "repo_name": repo_name,
             "repo_owner": repo_owner or GITEA_ORG,
+            "gitea_url": effective_gitea_url,
             "_k8s_handle": handle,
         }
         logger.info("K8s sandbox created: %s (session=%s, scope=%s)",
@@ -671,7 +606,7 @@ async def _create_sandbox_container(
         await _docker_run(["rm", "-rf", tmp_dir], timeout=5)
 
         rc, _, err = await _docker_run(
-            ["git", "clone", "--depth=50", clone_url, tmp_dir],
+            ["git", "-c", "http.sslVerify=false", "clone", "--depth=50", clone_url, tmp_dir],
             timeout=120,
         )
         if rc == 0:
@@ -703,18 +638,13 @@ async def _create_sandbox_container(
             )
 
     elif scope == "update_core":
-        core_url = DRUPPIE_CORE_REPO_URL or "https://github.com/nuno-git/druppie-fork.git"
-        token = _get_github_token()
-        if token and core_url.startswith("https://github.com"):
-            auth_url = core_url.replace("https://", f"https://x-access-token:{token}@")
-        else:
-            auth_url = core_url
+        clone_url = _get_gitea_clone_url(DRUPPIE_CORE_REPO_NAME, DRUPPIE_CORE_REPO_OWNER, DRUPPIE_CORE_GITEA_URL)
         tmp_dir = f"/tmp/sandbox-clone-{short_session}-core"
         await _docker_run(["rm", "-rf", tmp_dir], timeout=5)
 
         rc, _, err = await _docker_run(
-            ["git", "clone", "--branch", DRUPPIE_CORE_REPO_BRANCH,
-             "--depth=50", auth_url, tmp_dir],
+            ["git", "-c", "http.sslVerify=false", "clone", "--branch", DRUPPIE_CORE_REPO_BRANCH,
+             "--depth=50", clone_url, tmp_dir],
             timeout=120,
         )
         if rc == 0:
@@ -729,9 +659,8 @@ async def _create_sandbox_container(
         else:
             logger.error("update_core clone failed: %s", err[:500])
             raise RuntimeError(
-                f"Failed to clone Druppie core repo ({core_url}). "
-                f"If the repo is private, configure GITHUB_APP_ID, "
-                f"GITHUB_APP_PRIVATE_KEY_PATH, and GITHUB_APP_INSTALLATION_ID in .env. "
+                f"Failed to clone Druppie core repo ({clone_url}). "
+                f"Check GITEA_TOKEN or GITEA_USER+GITEA_PASSWORD in .env. "
                 f"Clone error: {err[:200]}"
             )
         branch = DRUPPIE_CORE_REPO_BRANCH
@@ -759,6 +688,7 @@ async def _create_sandbox_container(
         "created_at": time.time(),
         "repo_name": repo_name,
         "repo_owner": repo_owner or GITEA_ORG,
+        "gitea_url": effective_gitea_url,
     }
 
     return container_name
@@ -770,7 +700,13 @@ async def _sync_networks(container_name: str, requested_networks: list[str]) -> 
     Connects networks the agent needs but container doesn't have.
     Disconnects networks the container has but agent doesn't need.
     The base SANDBOX_NETWORK is always kept (never disconnected).
+
+    In k8s mode this is a no-op: network policy is enforced at the pod level
+    via the SandboxTemplate's networkPolicy + CiliumNetworkPolicy, not by
+    Docker network attachments.
     """
+    if SANDBOX_MODE == "k8s":
+        return
     NETWORK_MAP = {
         "internet": SANDBOX_INET_NETWORK,
         "modules": SANDBOX_MODULES_NETWORK,
@@ -1027,7 +963,7 @@ def _gitea_api_headers() -> dict:
     return headers
 
 
-def _inject_gitea_token(repo_owner: str, repo_name: str) -> str:
+def _inject_gitea_token(repo_owner: str, repo_name: str, base_url: str | None = None) -> str:
     """Build an authenticated Gitea git-over-HTTP push URL (host-side only).
 
     Uses the same ``user:password`` basic auth as ``_get_gitea_clone_url`` — the
@@ -1036,8 +972,13 @@ def _inject_gitea_token(repo_owner: str, repo_name: str) -> str:
     …``); as a git password it needs ``write:repository`` scope and is frequently
     scoped read-only, which surfaces as ``authentication failed`` on push, so it
     is only a fallback here.
+
+    For the external Gitea (aigit.waterschap.org) the ``EXTERNAL_GITEA_TOKEN``
+    is used instead (OAuth2 token with ``git clone`` scope).
     """
-    base = GITEA_URL.rstrip("/")
+    base = (base_url or GITEA_URL).rstrip("/")
+    if "aigit.waterschap.org" in base and EXTERNAL_GITEA_TOKEN:
+        return f"https://oauth2:{EXTERNAL_GITEA_TOKEN}@aigit.waterschap.org/{repo_owner}/{repo_name}.git"
     scheme, _, rest = base.partition("://")
     if GITEA_USER and GITEA_PASSWORD:
         from urllib.parse import quote
@@ -1970,6 +1911,7 @@ async def push_changes(
         branch = entry.get("branch", "main")
         resolved_repo_name = entry.get("repo_name") or repo_name
         resolved_repo_owner = entry.get("repo_owner") or repo_owner or GITEA_ORG
+        resolved_gitea_url = entry.get("gitea_url", GITEA_URL)
         scope = git_scope or "current_project"
 
         if not resolved_repo_name:
@@ -2018,73 +1960,6 @@ async def push_changes(
         if rc != 0:
             return {"success": False, "error": f"git bundle create failed: {stderr}"}
 
-        if scope == "update_core":
-            token = _get_github_token()
-            if not token:
-                return {"success": False, "error": "GitHub App token not available for update_core push"}
-
-            bundle_name = f"changes-{uuid.uuid4().hex[:8]}.bundle"
-            bundle_container_path = f"/tmp/{bundle_name}"
-
-            rc, _, stderr = await _exec_in_container(
-                container,
-                ["git", "bundle", "create", bundle_container_path, "HEAD", "^origin/main"],
-                timeout=120,
-            )
-            if rc != 0:
-                rc, _, stderr = await _exec_in_container(
-                    container,
-                    ["git", "bundle", "create", bundle_container_path, "--all"],
-                    timeout=120,
-                )
-            if rc != 0:
-                return {"success": False, "error": f"git bundle create failed: {stderr}"}
-
-            tmpdir = tempfile.mkdtemp(prefix="druppie-git-")
-            try:
-                bundle_host_path = os.path.join(tmpdir, bundle_name)
-                await _copy_from_container(container, bundle_container_path, bundle_host_path)
-
-                bare_repo = os.path.join(tmpdir, "bare")
-                rc, _, stderr = await _docker_run(
-                    ["git", "init", "--bare", bare_repo], timeout=30,
-                )
-                if rc != 0:
-                    return {"success": False, "error": f"git init --bare failed: {stderr}"}
-
-                github_url = _get_github_push_url()
-                base_branch = DRUPPIE_CORE_REPO_BRANCH or "colab-dev"
-                await _docker_run(
-                    ["git", "-C", bare_repo, "fetch", github_url,
-                     f"{base_branch}:refs/heads/{base_branch}"],
-                    timeout=60,
-                )
-
-                rc, _, stderr = await _docker_run(
-                    ["git", "-C", bare_repo, "fetch", bundle_host_path,
-                     f"HEAD:refs/heads/{branch}"],
-                    timeout=60,
-                )
-                if rc != 0:
-                    return {"success": False, "error": f"git fetch from bundle failed: {stderr}"}
-
-                rc, _, stderr = await _docker_run(
-                    ["git", "-C", bare_repo, "push", github_url,
-                     f"{branch}:{push_branch}"],
-                    timeout=60,
-                )
-                if rc != 0:
-                    return {"success": False, "error": f"GitHub push failed: {stderr}"}
-
-                logger.info("Pushed to GitHub branch=%s", push_branch)
-                return {"success": True, "branch": branch, "pushed_to": push_branch, "stdout": f"Pushed to GitHub: {push_branch}"}
-
-            finally:
-                shutil.rmtree(tmpdir, ignore_errors=True)
-                await _exec_in_container(
-                    container, ["rm", "-f", bundle_container_path], timeout=10
-                )
-
         # Copy bundle from sandbox container to host
         tmpdir = tempfile.mkdtemp(prefix="druppie-git-")
         try:
@@ -2100,9 +1975,9 @@ async def push_changes(
                 return {"success": False, "error": f"git init --bare failed: {stderr}"}
 
             # Fetch base branch from Gitea so prerequisites exist for bundle fetch
-            push_url = _inject_gitea_token(resolved_repo_owner, resolved_repo_name)
+            push_url = _inject_gitea_token(resolved_repo_owner, resolved_repo_name, resolved_gitea_url)
             rc, _, stderr = await _docker_run(
-                ["git", "-C", bare_repo, "fetch", push_url, "main:refs/heads/main"],
+                ["git", "-c", "http.sslVerify=false", "-C", bare_repo, "fetch", push_url, "main:refs/heads/main"],
                 timeout=60,
             )
             if rc != 0:
@@ -2123,7 +1998,7 @@ async def push_changes(
 
             # Push to Gitea with credentials
             rc, _, stderr = await _docker_run(
-                ["git", "-C", bare_repo, "push", push_url, f"{branch}:{push_branch}"],
+                ["git", "-c", "http.sslVerify=false", "-C", bare_repo, "push", push_url, f"{branch}:{push_branch}"],
                 timeout=60,
             )
             if rc != 0:
@@ -2212,11 +2087,12 @@ async def git_fetch(
         container = entry["container_name"]
         resolved_repo_name = entry.get("repo_name") or repo_name
         resolved_repo_owner = entry.get("repo_owner") or repo_owner or GITEA_ORG
+        resolved_gitea_url = entry.get("gitea_url", GITEA_URL)
 
         if not resolved_repo_name:
             return {"success": False, "error": "repo_name is required for git_fetch"}
 
-        fetch_url = _inject_gitea_token(resolved_repo_owner, resolved_repo_name)
+        fetch_url = _inject_gitea_token(resolved_repo_owner, resolved_repo_name, resolved_gitea_url)
 
         tmpdir = tempfile.mkdtemp(prefix="druppie-git-fetch-")
         try:
@@ -2228,7 +2104,7 @@ async def git_fetch(
                 return {"success": False, "error": f"git init --bare failed: {stderr}"}
 
             rc, _, stderr = await _docker_run(
-                ["git", "-C", bare_repo, "fetch", fetch_url, "+refs/heads/*:refs/heads/*"],
+                ["git", "-c", "http.sslVerify=false", "-C", bare_repo, "fetch", fetch_url, "+refs/heads/*:refs/heads/*"],
                 timeout=120,
             )
             if rc != 0:
@@ -2409,6 +2285,7 @@ async def create_pr(
         branch = entry.get("branch", "main")
         resolved_repo_name = entry.get("repo_name") or repo_name
         resolved_repo_owner = entry.get("repo_owner") or repo_owner or GITEA_ORG
+        resolved_gitea_url = entry.get("gitea_url", GITEA_URL)
 
         if not resolved_repo_name:
             return {"success": False, "error": "repo_name is required for create_pr"}
@@ -2423,80 +2300,8 @@ async def create_pr(
             else:
                 head_branch = branch
 
-        if scope == "update_core":
-            token = _get_github_token()
-            if not token:
-                return {"success": False, "error": "GitHub App token not available for update_core PR"}
-            owner = GITHUB_REPO_OWNER
-            repo = GITHUB_REPO_NAME
-            if not owner or not repo:
-                return {"success": False, "error": "GITHUB_REPO_OWNER and GITHUB_REPO_NAME not configured"}
-            target_base = base_branch or DRUPPIE_CORE_REPO_BRANCH or "colab-dev"
-            api_url = f"https://api.github.com/repos/{owner}/{repo}/pulls"
-            pr_body_clean = pr_body.replace("\\n", "\n")
-            payload = json.dumps({
-                "head": head_branch,
-                "base": target_base,
-                "title": pr_title,
-                "body": pr_body_clean,
-            })
-            curl_args = [
-                "curl", "-s", "-w", "\\n%{http_code}", "-X", "POST", api_url,
-                "-H", "Accept: application/vnd.github+json",
-                "-H", f"Authorization: Bearer {token}",
-                "-H", "Content-Type: application/json",
-                "-d", payload,
-            ]
-            proc = await asyncio.create_subprocess_exec(
-                *curl_args,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
-            if proc.returncode != 0:
-                return {"success": False, "error": f"GitHub PR creation failed (curl error): {stderr.decode()}"}
-            raw = stdout.decode()
-            body, _, status_line = raw.rpartition("\n")
-            http_status = int(status_line.strip()) if status_line.strip().isdigit() else 0
-            pr_data = json.loads(body) if body.strip() else {}
-            # Check for HTTP-level errors
-            if http_status < 200 or http_status >= 300:
-                err_msg = pr_data.get("message", body[:500]) if isinstance(pr_data, dict) else body[:500]
-                logger.error(
-                    "GitHub PR creation HTTP %s: %s", http_status, err_msg,
-                )
-                return {
-                    "success": False,
-                    "error": f"GitHub PR creation HTTP {http_status}: {err_msg}",
-                }
-
-            pr_number = pr_data.get("number")
-            html_url = pr_data.get("html_url", "")
-
-            if not pr_number:
-                logger.error(
-                    "GitHub PR response missing 'number': %s", body[:500],
-                )
-                return {
-                    "success": False,
-                    "error": f"GitHub PR response missing 'number': {body[:500]}",
-                }
-
-            logger.info(
-                "Created GitHub PR #%s for %s/%s branch=%s",
-                pr_number, owner, repo, head_branch,
-            )
-
-            return {
-                "success": True,
-                "pr_number": pr_number,
-                "pr_url": html_url,
-                "html_url": html_url,
-                "branch": head_branch,
-            }
-
         # --- Gitea PR path ---
-        api_url = f"{GITEA_URL}/api/v1/repos/{resolved_repo_owner}/{resolved_repo_name}/pulls"
+        api_url = f"{resolved_gitea_url}/api/v1/repos/{resolved_repo_owner}/{resolved_repo_name}/pulls"
         pr_body_clean = pr_body.replace("\\n", "\n")
         payload = json.dumps({
             "head": head_branch,
@@ -2506,7 +2311,10 @@ async def create_pr(
         })
 
         curl_headers = ["Content-Type: application/json"]
-        if GITEA_TOKEN:
+        is_external = "aigit.waterschap.org" in resolved_gitea_url
+        if is_external and EXTERNAL_GITEA_TOKEN:
+            curl_headers.append(f"Authorization: token {EXTERNAL_GITEA_TOKEN}")
+        elif GITEA_TOKEN:
             curl_headers.append(f"Authorization: token {GITEA_TOKEN}")
         elif GITEA_USER and GITEA_PASSWORD:
             import base64 as _b64
@@ -2521,7 +2329,7 @@ async def create_pr(
                 "error": "No Gitea credentials configured (GITEA_TOKEN or GITEA_USER+GITEA_PASSWORD)",
             }
 
-        curl_args = ["curl", "-s", "-w", "\\n%{http_code}", "-X", "POST", api_url]
+        curl_args = ["curl", "-s", "-k", "-w", "\\n%{http_code}", "-X", "POST", api_url]
         for h in curl_headers:
             curl_args += ["-H", h]
         curl_args += ["-d", payload]
@@ -3453,9 +3261,9 @@ async def _internal_revert_to_commit(
                         timeout=60,
                     )
 
-                    push_url = _inject_gitea_token(resolved_repo_owner, resolved_repo_name)
+                    push_url = _inject_gitea_token(resolved_repo_owner, resolved_repo_name, resolved_gitea_url)
                     rc, _, stderr = await _docker_run(
-                        ["git", "-C", bare_repo, "push", "--force", push_url, f"{branch}:{branch}"],
+                        ["git", "-c", "http.sslVerify=false", "-C", bare_repo, "push", "--force", push_url, f"{branch}:{branch}"],
                         timeout=60,
                     )
                     force_pushed = rc == 0

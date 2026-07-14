@@ -4,6 +4,11 @@ global:
   imageRegistry: ''
   imageTag: ''
   imagePullSecrets: []
+  # Name of an extra Secret appended (optional: true) to envFrom on the backend
+  # and secret-consuming modules, AFTER <instance>-secrets so its keys override
+  # the chart defaults. Branch environments set this to their ESO-managed
+  # Vault-sourced secret (see BranchEnvironmentService); leave empty otherwise.
+  extraEnvFromSecret: ''
   domain: localhost
   subdomains:
     keycloak: ''
@@ -117,6 +122,45 @@ backend:
   serviceAccount:
     create: true
     name: ''
+  # Branch-environments deployer (GitOps). When enabled, the backend commits
+  # per-env manifest directories to <gitops.repo>/<gitops.path> via the Gitea
+  # API and FluxCD (Kustomization/branch-envs in that repo) does the actual
+  # deploys/teardowns. The backend itself only needs read-only cluster access
+  # for status (see templates/branch-env-deployer-rbac.yaml). Safe to enable
+  # on multiple instances: git arbitrates concurrent writes.
+  branchEnvDeployer:
+    enabled: false
+    gitops:
+      url: https://aigit.waterschap.org
+      repo: ai/k8s
+      branch: main
+      path: clusters/branch-envs
+      chartRepoUrl: https://aigit.waterschap.org/ai/druppie.git
+      # Secret holding a Gitea token (key below) with push access to the GitOps repo.
+      tokenSecret:
+        name: druppie-branch-env-git
+        key: token
+      # Optional ConfigMap (key chain.pem) with the private CA of the Gitea
+      # server; mounted and used for TLS verification when set.
+      caConfigMap: ''
+    # Node pin for branch envs (RWO PVC co-location) + image source + domain.
+    node: ka-k8s-ai-workers-skbh7-d4qwl
+    registry: harbor.rijnland.dev/druppie
+    domainSuffix: rijnland.dev
+    # Optional per-env dev workspace (code-server behind a Keycloak oauth2-proxy),
+    # committed as workspace.yaml when enabled from the UI. It is served at
+    # druppie-<slug>-dev.<domainSuffix> and authenticates against the env's own
+    # Keycloak realm 'druppie' (issuer https://druppie-<slug>.<domainSuffix>/realms/druppie).
+    # REQUIRED one-time cluster-side setup (the backend creates neither; see
+    # docs/FEATURES.md "Dev Workspace"):
+    #   1. Vault secret 'branch-env/workspace-oauth' (in the vault-ai-team-k8s
+    #      store's KV mount) with keys client-secret + cookie-secret. The env's
+    #      workspace.yaml ExternalSecret mirrors it into the 'workspace-oauth' Secret.
+    #   2. A confidential Keycloak client 'workspace' per environment, redirect URI
+    #      https://druppie-<slug>-dev.<domainSuffix>/oauth2/callback, whose secret
+    #      matches Vault branch-env/workspace-oauth#client-secret.
+    # Overridable via env on the backend: BRANCH_ENV_WORKSPACE_IMAGE,
+    # BRANCH_ENV_OAUTH2_PROXY_IMAGE, BRANCH_ENV_WORKSPACE_STORAGE_CLASS.
   guacamoleUrl: http://guacamole.remote-access.svc.cluster.local:8080
   guacamolePublicUrl: http://localhost:30020
   llm:
@@ -141,12 +185,6 @@ backend:
   foundry:
     model: GPT-5-MINI
     apiUrl: ''
-  github:
-    appId: ''
-    appPrivateKeyPath: ''
-    appInstallationId: ''
-    repoOwner: ''
-    repoName: ''
 frontend:
   image:
     repository: druppie-frontend
@@ -167,6 +205,58 @@ frontend:
   vite:
     keycloakRealm: druppie
     keycloakClientId: druppie-frontend
+# Dev workspace — when enabled, a single pod (code-server + hot-reload backend
+# via `uvicorn --reload` + Vite HMR frontend + optional desktop) REPLACES the
+# baked backend/frontend Deployments. The existing <instance>-backend and
+# <instance>-frontend Services are repointed at this pod, so the branch
+# namespace has exactly one backend and one frontend — and they hot-reload.
+#
+# stackMode:
+#   real      = backend consumes the deployed Keycloak/Postgres/MCP (prod-parity)
+#   degraded  = SQLite + mock auth (fast, offline-friendly). Default; intended as
+#               the future default selectable at dev-env creation time.
+#
+# Branch environments set enabled:true + stackMode:real. Prod/colab-dev leave
+# this disabled and keep the baked backend/frontend.
+devWorkspace:
+  enabled: false
+  stackMode: degraded
+  image: harbor.rijnland.dev/druppie/dev-workspace:latest
+  imagePullPolicy: Always
+  gitBranch: ""                       # DRUPPIE_GIT_BRANCH (set per branch)
+  repoUrl: https://aigit.waterschap.org/ai/druppie.git
+  gitSslNoVerify: true
+  # Optional K8s Secret (with key git-token) injected as DRUPPIE_GIT_TOKEN.
+  gitTokenSecret: {}                  # {name: ..., key: git-token}
+  desktop:
+    enabled: true
+  workspace:
+    size: 20Gi
+    storageClassName: longhorn-distributed
+  nodeSelector: {}
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: "2"
+      memory: 6Gi
+  # code-server IDE is exposed on its own -dev subdomain behind oauth2-proxy.
+  codeServer:
+    devHost: ""                       # e.g. druppie-<slug>-dev.rijnland.dev
+    tlsSecretName: druppie-tls
+  oauth:
+    clientId: workspace
+    issuerUrl: ""                     # e.g. https://druppie-<slug>.rijnland.dev/realms/druppie
+    # oauth2-proxy client/cookie secrets are sourced from Vault via ESO
+    # (keys: client-secret, cookie-secret) into this Secret.
+    externalSecret:
+      enabled: true
+      storeRef:
+        name: vault-ai-team-k8s
+        kind: ClusterSecretStore
+      vaultKey: branch-env/workspace-oauth
+      secretName: workspace-oauth
 modules:
   coding:
     enabled: true
@@ -318,6 +408,21 @@ modules:
       limits:
         memory: 256Mi
         cpu: 500m
+  azuredevops:
+    enabled: false
+    replicaCount: 1
+    nodeSelector: {}
+    image:
+      repository: druppie-module-azuredevops
+      tag: latest
+    port: 9012
+    resources:
+      requests:
+        memory: 256Mi
+        cpu: 100m
+      limits:
+        memory: 512Mi
+        cpu: 1000m
 init:
   enabled: true
   image:
@@ -353,11 +458,8 @@ secrets:
   foundryApiKey: ''
   internalApiKey: ''
   keycloakClientSecret: ''
-  giteaClientSecret: ''
-  giteaSecretKey: ''
   giteaToken: ''
   moduleApiToken: ''
-  githubAppPrivateKey: ''
 autoscaling:
   backend:
     enabled: false

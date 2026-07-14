@@ -71,6 +71,8 @@ SLUG="$(printf '%s' "$BRANCH" \
 
 NS="druppie-${SLUG}"
 HOST="druppie-${SLUG}.rijnland.dev"
+# code-server IDE subdomain (behind oauth2-proxy). Single label under rijnland.dev.
+DEV_HOST="druppie-${SLUG}-dev.rijnland.dev"
 
 # Host must stay a single label under rijnland.dev to match the *.rijnland.dev cert.
 if [[ "${HOST%.rijnland.dev}" == *.* ]]; then
@@ -86,6 +88,7 @@ fi
 echo "==> Branch:    $BRANCH"
 echo "==> Namespace: $NS"
 echo "==> Host:      https://$HOST"
+echo "==> Dev IDE:   https://$DEV_HOST"
 echo "==> Node pin:  $NODE"
 echo "==> Context:   $(kubectl config current-context)"
 
@@ -139,6 +142,15 @@ HELM_ARGS=(
   --set "keycloak.service.type=ClusterIP"
   --set "gitea.service.type=ClusterIP"
   --set "backend.nodeSelector.kubernetes\.io/hostname=${NODE}"
+  # Dev workspace: the branch namespace IS the hot-reloading workspace. The
+  # baked backend/frontend Deployments are skipped; <instance>-backend /
+  # <instance>-frontend Services route to the workspace pod instead.
+  --set "devWorkspace.enabled=true"
+  --set "devWorkspace.stackMode=real"
+  --set "devWorkspace.gitBranch=${BRANCH}"
+  --set "devWorkspace.codeServer.devHost=${DEV_HOST}"
+  --set "devWorkspace.oauth.issuerUrl=https://${HOST}/realms/druppie"
+  --set "devWorkspace.nodeSelector.kubernetes\.io/hostname=${NODE}"
 )
 for m in "${PINNED_MODULES[@]}"; do
   HELM_ARGS+=(--set "modules.${m}.nodeSelector.kubernetes\.io/hostname=${NODE}")

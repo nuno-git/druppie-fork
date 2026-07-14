@@ -1,3 +1,4 @@
+{{- if not .Values.devWorkspace.enabled }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -101,3 +102,4 @@ spec:
             failureThreshold: 6
           resources:
             {{- toYaml .Values.frontend.resources | nindent 12 }}
+{{- end }}

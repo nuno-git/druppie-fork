@@ -336,6 +336,41 @@ export const devEnvironmentsApi = {
     }),
 }
 
+// ============ Branch Environments ============
+// Full per-branch Druppie instances deployed to the cluster. Status transitions
+// (deploying → running/failed, deleting → gone) happen server-side asynchronously.
+export const branchEnvironmentsApi = {
+  list: () => request('/api/branch-environments'),
+  deploy: ({ branch, image_tag, secrets_source }) => {
+    // Callers should always pass secrets_source; fall back to the shared
+    // colab-dev keys so a deploy never silently uses an unintended source.
+    if (!secrets_source) {
+      console.warn(
+        'branchEnvironmentsApi.deploy: no secrets_source given — falling back to "colab-dev" defaults'
+      )
+      secrets_source = 'colab-dev'
+    }
+    return request('/api/branch-environments', {
+      method: 'POST',
+      body: JSON.stringify({
+        branch,
+        secrets_source,
+        ...(image_tag ? { image_tag } : {}),
+      }),
+    })
+  },
+  pipeline: (id) =>
+    request(`/api/branch-environments/${encodeURIComponent(id)}/pipeline`),
+  redeploy: (id) =>
+    request(`/api/branch-environments/${encodeURIComponent(id)}/redeploy`, { method: 'POST' }),
+  teardown: (id) =>
+    request(`/api/branch-environments/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  enableWorkspace: (id) =>
+    request(`/api/branch-environments/${encodeURIComponent(id)}/workspace`, { method: 'POST' }),
+  disableWorkspace: (id) =>
+    request(`/api/branch-environments/${encodeURIComponent(id)}/workspace`, { method: 'DELETE' }),
+}
+
 // ============ Agents (Transparency) ============
 export const getAgents = async () => {
   const response = await request('/api/agents')

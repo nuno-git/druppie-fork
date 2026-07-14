@@ -1,0 +1,19 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Druppie workspace desktop</title>
+</head>
+<body>
+<script>
+  // Served by websockify at the desktop web root (Dockerfile.dev-workspace
+  // Layer 1b). Under code-server's port proxy this page lives at
+  // /proxy/6080/, and noVNC's websocket must carry the SAME prefix — so the
+  // path is computed from the current location instead of hardcoded. Direct
+  // access (e.g. kubectl port-forward 6080) then works too.
+  var base = location.pathname.replace(/index\.html$/, "");
+  var ws = (base + "websockify").replace(/^\//, "");
+  location.replace(base + "vnc.html?autoconnect=true&resize=remote&path=" + encodeURIComponent(ws));
+</script>
+</body>
+</html>

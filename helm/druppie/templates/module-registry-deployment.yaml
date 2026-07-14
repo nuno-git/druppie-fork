@@ -44,6 +44,13 @@ spec:
                 name: {{ include "druppie.fullname" . }}-config
             - secretRef:
                 name: {{ include "druppie.fullname" . }}-secrets
+            {{- if .Values.global.extraEnvFromSecret }}
+            # Branch environments: Vault-sourced overrides (ESO-managed). Listed
+            # last so its keys win; optional so pods start while it syncs.
+            - secretRef:
+                name: {{ .Values.global.extraEnvFromSecret }}
+                optional: true
+            {{- end }}
           ports:
             - name: http
               containerPort: {{ .Values.modules.registry.port }}

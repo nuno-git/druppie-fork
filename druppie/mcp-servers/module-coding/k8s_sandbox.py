@@ -96,28 +96,38 @@ class K8sSandboxManager:
             "git-scope": git_scope,
         }
 
-        sandbox = await self.client.create_sandbox(
-            warmpool=SANDBOX_WARMPOOL,
-            namespace=SANDBOX_NAMESPACE,
-            labels=labels,
+        sandbox = await asyncio.wait_for(
+            self.client.create_sandbox(
+                warmpool=SANDBOX_WARMPOOL,
+                namespace=SANDBOX_NAMESPACE,
+                labels=labels,
+            ),
+            timeout=120,
         )
         sandbox_id = sandbox.sandbox_id
         logger.info("Sandbox claimed: %s (session=%s, scope=%s)",
                      sandbox_id, session_id, git_scope)
 
         if repo_clone_url:
-            # Host-side clone: the gVisor sandbox cannot reach Gitea's ClusterIP
-            # (gVisor's userspace netstack bypasses Cilium service LB), so we
-            # clone on the module-coding host (which can), tar the tree in
-            # memory, upload it to the sandbox via the SDK files.write endpoint
-            # and extract into /workspace. Works for every tier and keeps git
-            # credentials out of the sandbox (origin is stripped post-extract).
             await self._host_side_clone(
                 sandbox, sandbox_id, repo_clone_url, branch
             )
 
-        await sandbox.commands.run("bash -c " + shlex.quote("git -C /workspace config user.email 'agent@druppie.local'"))
-        await sandbox.commands.run("bash -c " + shlex.quote("git -C /workspace config user.name 'Druppie Agent'"))
+        try:
+            await asyncio.wait_for(
+                sandbox.commands.run("bash -c " + shlex.quote("git -C /workspace config user.email 'agent@druppie.local'")),
+                timeout=15,
+            )
+        except asyncio.TimeoutError:
+            logger.warning("Sandbox %s: git config user.email timed out", sandbox_id)
+
+        try:
+            await asyncio.wait_for(
+                sandbox.commands.run("bash -c " + shlex.quote("git -C /workspace config user.name 'Druppie Agent'")),
+                timeout=15,
+            )
+        except asyncio.TimeoutError:
+            logger.warning("Sandbox %s: git config user.name timed out", sandbox_id)
 
         self._sandboxes[f"{session_id}::{git_scope}"] = sandbox
         return SandboxHandle(
@@ -149,7 +159,7 @@ class K8sSandboxManager:
         tmpdir = await asyncio.to_thread(tempfile.mkdtemp, prefix="sandbox-clone-")
         try:
             clone_cmd = (
-                "git", "clone", "--depth", "50",
+                "git", "-c", "http.sslVerify=false", "clone", "--depth", "50",
                 "--branch", branch,
                 repo_clone_url, tmpdir,
             )
@@ -188,15 +198,45 @@ class K8sSandboxManager:
 
             await asyncio.to_thread(_build_tar)
             # Relative name -> /app/repo.tar inside the sandbox.
-            await sandbox.files.write("repo.tar", buf.getvalue())
+            try:
+                await asyncio.wait_for(
+                    sandbox.files.write("repo.tar", buf.getvalue()),
+                    timeout=30,
+                )
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "Host-side clone: files.write timed out for sandbox %s",
+                    sandbox_id,
+                )
+                return
             # /workspace is a PVC mount; a recycled warm-pool sandbox may still
             # hold the previous session's files, so wipe it before extracting.
             extract = "find /workspace -mindepth 1 -delete 2>/dev/null; tar -xf /app/repo.tar -C /workspace && rm -f /app/repo.tar"
-            await sandbox.commands.run("bash -c " + shlex.quote(extract))
+            try:
+                await asyncio.wait_for(
+                    sandbox.commands.run("bash -c " + shlex.quote(extract)),
+                    timeout=60,
+                )
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "Host-side clone: extract timed out for sandbox %s",
+                    sandbox_id,
+                )
+                return
 
             # Verify the repo landed so clone success/failure is observable.
             verify = "git -C /workspace rev-parse --is-inside-work-tree"
-            vres = await sandbox.commands.run("bash -c " + shlex.quote(verify))
+            try:
+                vres = await asyncio.wait_for(
+                    sandbox.commands.run("bash -c " + shlex.quote(verify)),
+                    timeout=15,
+                )
+            except asyncio.TimeoutError:
+                logger.error(
+                    "Sandbox %s: git verify timed out after host-side clone",
+                    sandbox_id,
+                )
+                return
             if vres.exit_code != 0:
                 logger.error(
                     "Sandbox %s: /workspace is not a git repo after host-side "
@@ -215,7 +255,30 @@ class K8sSandboxManager:
                 + shlex.quote(public_url)
                 + " || true"
             )
-            await sandbox.commands.run("bash -c " + shlex.quote(set_origin))
+            try:
+                await asyncio.wait_for(
+                    sandbox.commands.run("bash -c " + shlex.quote(set_origin)),
+                    timeout=15,
+                )
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "Host-side clone: set-origin timed out for sandbox %s",
+                    sandbox_id,
+                )
+
+            # Corporate Gitea uses a self-signed/internal CA cert — disable SSL
+            # verification so git fetch/pull/push inside the sandbox work.
+            try:
+                await asyncio.wait_for(
+                    sandbox.commands.run("bash -c " + shlex.quote("git -C /workspace config http.sslVerify false")),
+                    timeout=15,
+                )
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "Host-side clone: git config http.sslVerify timed out for sandbox %s",
+                    sandbox_id,
+                )
+
             logger.info(
                 "Host-side clone OK for sandbox %s (branch=%s)", sandbox_id, branch
             )
@@ -254,7 +317,13 @@ class K8sSandboxManager:
             shell_str = command
         shell_str = "cd /workspace && " + shell_str
         wrapped = "bash -c " + shlex.quote(shell_str)
-        result = await handle._backend.commands.run(wrapped, timeout=timeout)
+        try:
+            result = await asyncio.wait_for(
+                handle._backend.commands.run(wrapped, timeout=timeout),
+                timeout=timeout + 10,
+            )
+        except asyncio.TimeoutError:
+            return (-1, "", f"Command timed out after {timeout}s")
         return result.exit_code, result.stdout, result.stderr
 
     async def read_file(self, handle: SandboxHandle, path: str) -> str:
@@ -306,8 +375,10 @@ class K8sSandboxManager:
         sandbox = self._sandboxes.pop(key, None)
         if sandbox:
             try:
-                await sandbox.terminate()
+                await asyncio.wait_for(sandbox.terminate(), timeout=30)
                 logger.info("Sandbox destroyed: %s", handle.sandbox_id)
+            except asyncio.TimeoutError:
+                logger.warning("Sandbox %s: terminate timed out", handle.sandbox_id)
             except Exception as e:
                 logger.warning("Failed to destroy sandbox %s: %s",
                                handle.sandbox_id, e)
@@ -315,9 +386,12 @@ class K8sSandboxManager:
     async def is_alive(self, handle: SandboxHandle) -> bool:
         """Check if the sandbox is still running."""
         try:
-            result = await handle._backend.commands.run("echo ok", timeout=5)
+            result = await asyncio.wait_for(
+                handle._backend.commands.run("echo ok", timeout=5),
+                timeout=10,
+            )
             return result.exit_code == 0
-        except Exception:
+        except (asyncio.TimeoutError, Exception):
             return False
 
     async def destroy_all_for_session(self, session_id: str) -> int:
@@ -329,9 +403,9 @@ class K8sSandboxManager:
         for key in keys_to_remove:
             sandbox = self._sandboxes.pop(key)
             try:
-                await sandbox.terminate()
+                await asyncio.wait_for(sandbox.terminate(), timeout=30)
                 count += 1
-            except Exception:
+            except (asyncio.TimeoutError, Exception):
                 pass
         return count
 

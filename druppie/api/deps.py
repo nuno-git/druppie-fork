@@ -56,6 +56,7 @@ from druppie.services import (
     JobService,
     DevEnvService,
     DeployService,
+    BranchEnvironmentService,
 )
 
 # Initialize database tables on import
@@ -170,6 +171,11 @@ def get_dev_env_service(
 def get_deploy_service() -> DeployService:
     """Get DeployService (stateless, no DB dependency)."""
     return DeployService()
+
+
+def get_branch_environment_service() -> BranchEnvironmentService:
+    """Get BranchEnvironmentService (GitOps-backed, no DB dependency)."""
+    return BranchEnvironmentService()
 
 
 def get_evaluation_service(

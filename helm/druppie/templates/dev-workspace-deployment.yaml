@@ -1,0 +1,163 @@
+{{- if .Values.devWorkspace.enabled }}
+# Dev workspace — replaces the baked backend/frontend with a single hot-reload
+# pod. The workspace container runs code-server (:8080) + uvicorn --reload
+# (:8000) + Vite HMR (:5173) + optional desktop (:6080) against the /workspace
+# PVC, so edits in code-server reload the running app live. The oauth2-proxy
+# sidecar authenticates only the code-server -dev subdomain; the app itself is
+# served (via <instance>-backend / <instance>-frontend Services) like any other
+# instance and authenticates through Keycloak at the app layer.
+#
+# stackMode=real: the backend envFrom's the same <instance>-config ConfigMap +
+# <instance>-secrets Secret (+ extraEnvFromSecret) as the baked backend, so it
+# talks to the deployed Postgres / Keycloak / MCP modules over in-cluster DNS.
+# stackMode=degraded: the image's entrypoint falls back to SQLite + mock auth.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "druppie.fullname" . }}-workspace
+  labels:
+    {{- include "druppie.labels" . | nindent 4 }}
+    app.kubernetes.io/component: dev-workspace
+  annotations:
+    druppie.io/branch: {{ .Values.devWorkspace.gitBranch | quote }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "druppie.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: dev-workspace
+  template:
+    metadata:
+      labels:
+        {{- include "druppie.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: dev-workspace
+      annotations:
+        reloader.stakater.com/auto: "true"
+        cluster-autoscaler.kubernetes.io/safe-to-evict: "false"
+    spec:
+      securityContext:
+        fsGroup: 1000
+      {{- if .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml .Values.global.imagePullSecrets | nindent 8 }}
+      {{- end }}
+      terminationGracePeriodSeconds: 30
+      initContainers:
+        # Wait for Postgres so uvicorn does not crash-loop on a missing DB
+        # (only meaningful in stackMode=real; harmless otherwise).
+        - name: wait-for-druppie-db
+          image: {{ .Values.postgresql.image }}
+          command:
+            - sh
+            - -c
+            - |
+              {{- if .Values.cnpg.enabled }}
+              until pg_isready -h {{ include "druppie.fullname" . }}-druppie-db-rw -p 5432 -U {{ .Values.postgresql.druppie.username }}; do
+              {{- else }}
+              until pg_isready -h {{ include "druppie.fullname" . }}-druppie-db -p 5432 -U {{ .Values.postgresql.druppie.username }}; do
+              {{- end }}
+                echo "Waiting for druppie-db..."
+                sleep 2
+              done
+          resources:
+            requests: { memory: "32Mi", cpu: "50m" }
+            limits:   { memory: "64Mi", cpu: "100m" }
+        - name: wait-for-keycloak
+          image: curlimages/curl:latest
+          command: [sh, -c, "until curl -sf http://{{ include "druppie.fullname" . }}-keycloak:8080/health/ready; do echo waiting for keycloak; sleep 5; done"]
+          resources:
+            requests: { memory: "32Mi", cpu: "50m" }
+            limits:   { memory: "64Mi", cpu: "100m" }
+      containers:
+        - name: workspace
+          image: {{ .Values.devWorkspace.image }}
+          imagePullPolicy: {{ .Values.devWorkspace.imagePullPolicy }}
+          env:
+            - name: DRUPPIE_GIT_BRANCH
+              value: {{ .Values.devWorkspace.gitBranch | quote }}
+            - name: DRUPPIE_REPO_URL
+              value: {{ .Values.devWorkspace.repoUrl | quote }}
+            - name: GIT_SSL_NO_VERIFY
+              value: {{ .Values.devWorkspace.gitSslNoVerify | quote }}
+            - name: DEV_STACK
+              value: {{ .Values.devWorkspace.stackMode | quote }}
+            - name: DRUPPIE_DESKTOP
+              value: {{ .Values.devWorkspace.desktop.enabled | quote }}
+            # The frontend preview is reached through code-server's port proxy
+            # (/proxy/5173); its API calls go to /proxy/8000 on the same origin.
+            - name: VITE_API_URL
+              value: /proxy/8000
+            # KEYCLOAK_SERVER_URL / KEYCLOAK_ISSUER_URL / KEYCLOAK_REALM /
+            # MCP_*_URL / GITEA_* come from <instance>-config via envFrom below
+            # (identical wiring to the baked backend).
+            {{- with .Values.devWorkspace.gitTokenSecret }}
+            - name: DRUPPIE_GIT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .name | quote }}
+                  key: {{ .key | default "git-token" | quote }}
+                  optional: true
+            {{- end }}
+          # Same wiring as the baked backend: ConfigMap (KEYCLOAK/MCP/GITEA URLs)
+          # + Secret (DATABASE_URL, INTERNAL_API_KEY, ...). In degraded mode the
+          # image entrypoint ignores these and uses SQLite/mock.
+          envFrom:
+            - configMapRef:
+                name: {{ include "druppie.fullname" . }}-config
+            - secretRef:
+                name: {{ include "druppie.fullname" . }}-secrets
+            {{- if .Values.global.extraEnvFromSecret }}
+            - secretRef:
+                name: {{ .Values.global.extraEnvFromSecret }}
+                optional: true
+            {{- end }}
+          ports:
+            - { name: backend,     containerPort: 8000 }
+            - { name: frontend,    containerPort: 5173 }
+            - { name: code-server, containerPort: 8080 }
+          volumeMounts:
+            - name: workspace
+              mountPath: /workspace
+          resources:
+            {{- toYaml .Values.devWorkspace.resources | nindent 12 }}
+        - name: oauth2-proxy
+          image: quay.io/oauth2-proxy/oauth2-proxy:v7.7.1
+          args:
+            - --provider=oidc
+            # issuerUrl is the FULL OIDC issuer (…/realms/<realm>). Default to
+            # <keycloakExternalUrl>/realms/<realm> when not set explicitly.
+            - --oidc-issuer-url={{ .Values.devWorkspace.oauth.issuerUrl | default (printf "%s/realms/%s" (include "druppie.keycloakExternalUrl" .) .Values.frontend.vite.keycloakRealm) }}
+            - --client-id={{ .Values.devWorkspace.oauth.clientId }}
+            - --redirect-url=https://{{ .Values.devWorkspace.codeServer.devHost }}/oauth2/callback
+            - --upstream=http://127.0.0.1:8080
+            - --http-address=0.0.0.0:4180
+            - --email-domain=*
+            - --cookie-secure=true
+            - --skip-provider-button=true
+          env:
+            - name: OAUTH2_PROXY_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.devWorkspace.oauth.externalSecret.secretName }}
+                  key: client-secret
+            - name: OAUTH2_PROXY_COOKIE_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.devWorkspace.oauth.externalSecret.secretName }}
+                  key: cookie-secret
+          ports:
+            - { name: proxy, containerPort: 4180 }
+          resources:
+            requests: { memory: 64Mi, cpu: 50m }
+            limits:   { memory: 256Mi, cpu: 500m }
+      volumes:
+        - name: workspace
+          persistentVolumeClaim:
+            claimName: {{ include "druppie.fullname" . }}-workspace-dev
+      {{- with .Values.devWorkspace.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

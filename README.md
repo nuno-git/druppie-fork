@@ -26,97 +26,54 @@ open http://localhost:30001
 
 > **Already cloned without `--recursive`?** Run: `git submodule update --init`
 
-> **Note:** Docker-compose is deprecated. See docs/K3S-DEV-SETUP.md.
+> Docker-compose has been **removed**. All development runs in Kubernetes dev
+> workspaces (a branch namespace that *is* the hot-reloading environment). See
+> `dev-workspace-hotreload-plan.md`.
 
 ## Commands
 
-### Development Mode (hot reload)
+### Development — Kubernetes dev workspace (hot reload)
+
+A dev workspace is a branch namespace whose backend (`uvicorn --reload`) and
+frontend (Vite HMR) **are** the running app — edits in code-server reload it
+live. Bring one up for a branch:
 
 ```bash
-# First time (or after reset)
-docker compose --profile dev --profile init up -d
+# Deploy an isolated branch env (full stack + hot-reload workspace)
+./scripts/deploy-branch-env.sh feature/my-thing
 
-# Daily usage
-docker compose --profile dev up -d
-docker compose --profile dev down
-docker compose --profile dev restart
-docker compose --profile dev up -d --build   # Rebuild after Dockerfile changes
+# App:   https://druppie-feature-my-thing.rijnland.dev
+# IDE:   https://druppie-feature-my-thing-dev.rijnland.dev   (code-server, oauth2-proxy)
 ```
 
-### Production Mode
+The workspace pod consumes the namespace's real Postgres/Keycloak/MCP
+(`devWorkspace.stackMode=real`). For an isolated SQLite/mock workspace, set
+`devWorkspace.stackMode=degraded`.
+
+### Logs / status
 
 ```bash
-# First time (or after reset)
-docker compose --profile prod --profile init up -d
-
-# Daily usage
-docker compose --profile prod up -d
-docker compose --profile prod down
-```
-
-### Switching Between Dev and Prod
-
-Dev and prod use the same ports and container names, so stop one before starting the other:
-
-```bash
-# Switch from dev to prod
-docker compose --profile dev down
-docker compose --profile prod up -d --build
-
-# Switch from prod to dev
-docker compose --profile prod down
-docker compose --profile dev up -d
-```
-
-### Infrastructure Only
-
-Start only databases, Keycloak, Gitea, and MCP servers (no backend/frontend):
-
-```bash
-# First time (or after reset)
-docker compose --profile infra --profile init up -d
-
-# Daily usage
-docker compose --profile infra up -d
-docker compose --profile infra down
-```
-
-### Logs
-
-```bash
-docker compose logs -f                       # All services
-docker compose logs -f druppie-backend-dev   # Backend only
-docker compose logs -f druppie-frontend-dev  # Frontend only
-docker compose logs -f keycloak              # Keycloak only
-docker compose logs -f sandbox-control-plane # Sandbox control plane
-docker compose logs -f sandbox-manager       # Sandbox manager
+kubectl -n druppie-feature-my-thing get pods
+kubectl -n druppie-feature-my-thing logs -f deploy/druppie-feature-my-thing-workspace -c workspace
+# Backend/frontend/code-server logs also live on the PVC at /workspace/.logs/
 ```
 
 ### Reset
 
 ```bash
-# Soft reset - clears projects, sessions, chats (keeps user accounts, make sure to logout in the browser because tokens are kept there in cache.)
-docker compose --profile reset-db run --rm reset-db
-
-# Hard reset - wipes all data volumes and re-initializes Keycloak & Gitea
-docker compose --profile reset-hard run --rm reset-hard
-docker compose --profile dev up -d --build   # Rebuild + start (MCP servers need --build)
-
-# Full nuke - destroys EVERYTHING (containers, volumes, images) and rebuilds from scratch
-docker compose --profile nuke run --rm nuke
-
-# Nuke without restarting (tear down only)
-START_AFTER=false docker compose --profile nuke run --rm nuke
+# Tear down the whole branch env (Flux prunes when the manifest dir is removed)
+kubectl -n druppie-feature-my-thing delete deploy/druppie-feature-my-thing-workspace
+# Wipe the workspace source PVC to force a fresh seed on next start
+kubectl -n druppie-feature-my-thing delete pvc/druppie-feature-my-thing-workspace-dev
 ```
 
-**Soft reset keeps:** User accounts, Keycloak config, Gitea repos
-**Soft reset clears:** Projects, sessions, agent runs, messages, approvals, questions
+DB schema changes are applied manually (no migrations yet):
+```bash
+kubectl -n druppie-feature-my-thing exec pod/druppie-feature-my-thing-druppie-db-0 -- \
+  psql -U druppie -d druppie -c "ALTER TABLE ... ;"
+```
 
-**Hard reset clears:** All data (databases, Keycloak, Gitea, workspace files). Keeps Docker images.
-
-**Nuke clears:** Everything including Docker images. Rebuilds all images and starts fresh.
-
-## What is `--profile init`?
+## What is the init job?
 
 The init container configures Keycloak and Gitea on first run:
 - Creates the `druppie` realm in Keycloak
@@ -124,18 +81,8 @@ The init container configures Keycloak and Gitea on first run:
 - Sets up Gitea admin account and OAuth integration
 - Creates the sample repository
 
-**It only runs once.** A marker volume tracks completion. On subsequent runs, it exits immediately doing nothing.
-
-**When to include `--profile init`:**
-- First-time setup
-- After changing `iac/users.yaml` or `iac/realm.yaml`
-- After running `reset-hard`
-
-**To force re-initialization:**
-```bash
-docker volume rm druppie_init_marker
-docker compose --profile dev --profile init up -d
-```
+**It only runs once** (tracked by a marker). Re-run by deleting the init job /
+marker after changing `iac/users.yaml` or `iac/realm.yaml`.
 
 ## URLs
 
@@ -172,9 +119,10 @@ DEEPINFRA_API_KEY=your_key_here
 
 Both providers use LiteLLM internally for standardized tool calling.
 
-After editing `.env`, apply changes:
+After editing `.env` (or a Vault/ExternalSecret), apply changes by restarting the
+workspace pod so it picks up the new env:
 ```bash
-docker compose --profile dev up -d
+kubectl -n druppie-feature-my-thing rollout restart deploy/druppie-feature-my-thing-workspace
 ```
 
 ## GitHub App Setup (for `update_core`)
@@ -198,7 +146,7 @@ The `update_core` flow lets Druppie modify its own codebase via PRs on GitHub. I
    GITHUB_APP_INSTALLATION_ID=<from install URL>
    ```
 
-5. **Restart:** `docker compose --profile dev up -d`
+5. **Restart the workspace:** `kubectl -n druppie-feature-my-thing rollout restart deploy/druppie-feature-my-thing-workspace`
 
 > See [docs/SANDBOX.md](docs/SANDBOX.md#github-app-setup) for detailed setup instructions.
 
@@ -226,15 +174,18 @@ GITEA_PORT=30003
 
 **Check logs:**
 ```bash
-docker compose logs -f
+kubectl -n druppie-feature-my-thing logs -f deploy/druppie-feature-my-thing-workspace -c workspace
 ```
 
-**Fresh start (nuclear option):**
+**Fresh workspace (re-seed source PVC):**
 ```bash
-docker compose --profile nuke run --rm nuke
+kubectl -n druppie-feature-my-thing delete pvc/druppie-feature-my-thing-workspace-dev
+kubectl -n druppie-feature-my-thing rollout restart deploy/druppie-feature-my-thing-workspace
 ```
 
-**Container won't start:**
+**Workspace pod won't start:**
 ```bash
-docker compose --profile dev up -d --build  # Force rebuild
+kubectl -n druppie-feature-my-thing describe pod -l app.kubernetes.io/component=dev-workspace
+# Rebuild the dev-workspace image (CI builds it on colab-dev/main pushes):
+#   .gitea/workflows/build.yaml → "Build and push dev-workspace image"
 ```

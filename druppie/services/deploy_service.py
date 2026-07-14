@@ -22,21 +22,30 @@ async def _run_cmd(
     cmd: list[str],
     timeout: float = 60,
     env: dict[str, str] | None = None,
+    stdin: bytes | None = None,
 ) -> tuple[int, str, str]:
-    """Run a subprocess, return (returncode, stdout, stderr)."""
+    """Run a subprocess via argv (never a shell), return (rc, stdout, stderr)."""
     logger.debug("deploy_run_cmd", cmd=" ".join(cmd))
     proc = await asyncio.create_subprocess_exec(
         *cmd,
+        stdin=asyncio.subprocess.PIPE if stdin is not None else None,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         env=env,
     )
     try:
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        stdout, stderr = await asyncio.wait_for(proc.communicate(input=stdin), timeout=timeout)
     except asyncio.TimeoutError:
         proc.kill()
+        # Reap the killed child; otherwise it lingers as a zombie and asyncio
+        # warns about a pending task at shutdown.
+        await proc.wait()
         raise RuntimeError(f"Command timed out after {timeout}s: {' '.join(cmd)}")
-    return proc.returncode or 0, stdout.decode(), stderr.decode()
+    return (
+        proc.returncode or 0,
+        stdout.decode(errors="replace"),
+        stderr.decode(errors="replace"),
+    )
 
 
 class DeployService:

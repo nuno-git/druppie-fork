@@ -856,6 +856,138 @@ registry/image-tag/node overrides. See `docs/K3S-DEV-SETUP.md`.
 
 ---
 
+## Branch Environments
+
+Branch Environments turn the manual `scripts/deploy-branch-env.sh` workflow into a
+self-service feature managed from the Druppie UI — GitOps-style. Deploying a branch
+commits the environment's manifests to the `ai/k8s` repo and FluxCD stands up the
+stack; git is the single source of truth, so any instance with the feature enabled
+shows the same environment list, nothing is lost on a database reset, and the git
+history is the audit log.
+
+- **Deploy button per branch** — one click commits a directory
+  `clusters/branch-envs/druppie-<slug>/` (Namespace, GitRepository pinned to the
+  branch, HelmRelease with the branch overrides, ExternalSecrets) to `ai/k8s`.
+  `Kustomization/branch-envs` reconciles it: a complete stack (backend, frontend,
+  Keycloak, Gitea, MCP modules, databases) in its own `druppie-<slug>` namespace at
+  `druppie-<slug>.rijnland.dev`, mirroring the `deploy-branch-env.sh` layering
+  (values.yaml + values-rijnland.yaml, ClusterIP services, single-node pin).
+- **Secrets via ESO** — the `*.rijnland.dev` wildcard TLS cert is mirrored from the
+  `druppie` namespace by the `druppie-tls-mirror` ClusterSecretStore (kubernetes
+  provider); the Harbor pull secret comes from Vault (`ci/harbor`), identical to the
+  live instances.
+- **App secrets: pick a source at deploy** — the deploy dialog offers two options
+  for the env's LLM/API keys, materialized as the `branch-env-secrets` Secret and
+  appended (optional, last-wins) to `envFrom` via `global.extraEnvFromSecret`:
+  - *colab-dev defaults* (default): borrows the LLM API keys the colab-dev instance
+    uses (`druppie/colab-dev/app`) — works with zero setup.
+  - *my developer Vault map*: syncs the deployer's own self-service map
+    `druppie/developers/<username>` wholesale (`dataFrom`); key names are the env
+    var names (e.g. `ZAI_API_KEY`, `DATA_SOURCE_1`). Edit it in the Vault UI —
+    ESO refreshes within a minute, no redeploy needed. The source is a hard
+    allowlist (no free-form Vault paths) and always resolves to the deployer's
+    own identity, so an env can never sync another user's or prod's secrets.
+  Infra secrets (DB passwords, Keycloak/Gitea admin) always stay the chart's
+  in-namespace defaults — overriding those would detach the env from its own
+  databases.
+- **CI auto-upgrade** — when CI finishes building images for a `feature/**` branch it
+  updates the `imageTag` in the env's committed HelmRelease directly (same mechanism
+  as main/colab-dev). No webhook, no backend involvement.
+- **Redeploy** — commits a `reconcile.fluxcd.io/requestedAt`/`forceAt` annotation bump
+  (and optionally a new tag), which makes helm-controller reconcile and retry a failed
+  release. Pure git; the backend performs no cluster writes.
+- **Teardown** — deletes the env directory from git; Flux prunes the Namespace and
+  everything in it. Environments whose namespace is still terminating keep showing up
+  as `deleting`.
+- **Live status** — the backend reads the env's HelmRelease `Ready` condition via the
+  Kubernetes API (read-only) and maps it to deploying/running/failed.
+
+Access requires the `developer` or `admin` role (API + UI). Mutating an existing
+environment (redeploy/teardown) additionally requires being its owner (recorded as a
+namespace annotation) or admin.
+
+### Required Setup
+
+All plumbing lives in `ai/k8s` (see `clusters/ka-k8s-ai/infra/branch-envs/`):
+`Kustomization/branch-envs`, the `druppie-tls-mirror` ClusterSecretStore, the
+`druppie-branch-env-git` ExternalSecret (Gitea token from Vault `ci/gitea`), and the
+`aigit-ca` ConfigMap (private CA for TLS to the Gitea API). On the app side, enable
+`backend.branchEnvDeployer.enabled=true` in the instance's HelmRelease values — this
+renders read-only status RBAC (get/list on Namespaces + HelmReleases), a
+CiliumNetworkPolicy for kube-API egress, and the `BRANCH_ENV_GITOPS_*` env wiring
+(see `templates/branch-env-deployer-rbac.yaml`). Because git arbitrates concurrent
+writes, the flag is safe to enable on multiple instances (prod and colab-dev).
+
+### Dev Workspace (per environment)
+
+Each branch environment can optionally run a **dev workspace**: a `code-server`
+pod with the branch checked out and hot reload, fronted by an **oauth2-proxy
+sidecar doing Keycloak OIDC** against the environment's OWN Keycloak realm
+`druppie`. Enable/disable it from the UI (owner or admin) — the backend commits
+or deletes a single extra file `workspace.yaml` in the env's GitOps directory and
+Flux applies/prunes it.
+
+- **Exposure** — the workspace is served at the env host with `-dev` inserted
+  before the first label's dot: `druppie-<slug>-dev.rijnland.dev` (a sibling
+  label under the same `*.rijnland.dev` wildcard cert, Traefik ingress, tls
+  secret `druppie-tls` mirrored into the namespace). The oauth2-proxy Service
+  exposes port 80 → 4180; the proxy upstreams to code-server on `127.0.0.1:8080`.
+- **OIDC issuer** — for branch envs `global.subdomains.keycloak` is empty, so
+  Keycloak is path-routed under the base env host. The proxy's issuer is
+  therefore `https://druppie-<slug>.rijnland.dev/realms/druppie` and its
+  redirect URL is `https://druppie-<slug>-dev.rijnland.dev/oauth2/callback`.
+- **Live status** — `workspace_status` is read from the `workspace` Deployment
+  (`running` once `readyReplicas >= 1`, else `deploying`; `null` when disabled).
+- **App login inside the workspace** — the workspace's hot-reload frontend and
+  backend are wired to the ENV's own Keycloak (`VITE_KEYCLOAK_URL` /
+  `KEYCLOAK_ISSUER_URL` = the env host, `KEYCLOAK_SERVER_URL` = the in-cluster
+  Keycloak service), so the app at `/proxy/5173/` supports real logins with the
+  env's test users. The realm seeding allows the workspace `-dev` host and
+  `http://localhost:8080` (code-server's proxy as seen from the desktop's
+  Chromium) as redirect/CORS origins on the `druppie-frontend` client.
+- **Desktop (GUI)** — the workspace image ships a lightweight XFCE desktop
+  served over noVNC (TigerVNC → websockify on `127.0.0.1:6080`), with Chromium
+  preinstalled for in-env GUI testing. Open it in the browser through
+  code-server's authenticated port proxy:
+  `https://druppie-<slug>-dev.rijnland.dev/proxy/6080/` — same oauth2-proxy
+  gate, no extra Service or Ingress, nothing listens outside the pod. Disable
+  per env with `DRUPPIE_DESKTOP=0`; initial resolution via
+  `DRUPPIE_DESKTOP_GEOMETRY` (default `1600x900`, auto-resizes to the browser
+  window).
+
+#### Required setup (one-time, cluster-side)
+
+Two pieces of cluster-side state must exist. The backend never creates them
+(Vault is read-only from the cluster, and the Keycloak `workspace` client only
+makes sense once a workspace is enabled, which is after the install-time init
+job runs — so seeding it automatically is intentionally out of scope):
+
+1. **Vault secret `branch-env/workspace-oauth`** in the same KV mount the
+   `vault-ai-team-k8s` ClusterSecretStore reads (the one already used for
+   `ci/harbor`). It must hold two keys, shared by every env's workspace:
+   - `client-secret` — the confidential client secret (see step 2).
+   - `cookie-secret` — a 32-byte base64/hex value for oauth2-proxy cookie
+     encryption (`openssl rand -base64 32`).
+   `workspace.yaml` declares an ExternalSecret `workspace-oauth` that mirrors
+   this into a namespace Secret; oauth2-proxy reads it via `secretKeyRef`.
+
+2. **Keycloak confidential client `workspace`** in each environment's `druppie`
+   realm. Create it once per environment (Keycloak admin UI or Admin API):
+   - Client ID `workspace`, `Client authentication` ON (confidential),
+     `Standard flow` enabled.
+   - Valid redirect URI `https://druppie-<slug>-dev.rijnland.dev/oauth2/callback`
+     (the env's `-dev` host).
+   - Set the client secret to the SAME value stored in Vault
+     `branch-env/workspace-oauth#client-secret` above.
+
+   TODO: fold this into per-instance Keycloak seeding once the seeding path has
+   access to the workspace client secret (today `scripts/setup_keycloak.py` runs
+   at install time from the `init` Job, before any workspace exists, and cannot
+   read the Vault client secret — so wiring it there would couple install to a
+   secret that only the workspace ExternalSecret consumes).
+
+---
+
 ## Settings Page
 
 The Settings page displays system configuration and status (read-only). This page too is a prototype and might not work correctly.
