@@ -221,6 +221,12 @@ frontend:
 devWorkspace:
   enabled: false
   stackMode: degraded
+  # developer: whose Vault secret set (druppie/developers/<developer>/*) backs
+  # this env. When set, the chart renders ExternalSecrets that sync
+  # database/keycloak/gitea/app/workspace into the namespace, so the developer
+  # env owns its own secrets (mirroring main/colab-dev). Leave empty to use the
+  # legacy shared branch-env paths.
+  developer: ""
   image: harbor.rijnland.dev/druppie/dev-workspace:latest
   imagePullPolicy: Always
   gitBranch: ""                       # DRUPPIE_GIT_BRANCH (set per branch)
