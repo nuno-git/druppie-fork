@@ -1282,6 +1282,7 @@ class ToolExecutor:
             # User has no Entra identity — proceed without token so
             # non-OBO sources (datalake with key/public auth) still work.
             # OBO sources will fail at the adapter level with a clear error.
+            args.pop("user_token", None)
 
         logger.info(
             "mcp_tool_post_injection",

@@ -856,7 +856,7 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
         if (result?.needs_reauth) {
           const kc = getKeycloak()
           if (kc) {
-            kc.login({ idpHint: 'entra-id', redirectUri: window.location.href })
+            kc.login({ idpHint: 'entra-id', redirectUri: window.location.origin + window.location.pathname })
           }
           return
         }

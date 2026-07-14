@@ -158,14 +158,14 @@ async def get_entra_token(
             )
         except Exception as e:
             logger.error("entra_broker_error", error=str(e))
-            return {"access_token": None, "error": f"Broker request failed: {e}", "needs_reauth": False}
+            return {"access_token": None, "error": "Broker request failed", "needs_reauth": False}
 
     if response.status_code == 400:
         try:
             body = response.json()
         except Exception:
             body = {"raw": response.text[:200]}
-        logger.warning("entra_broker_400", body=body)
+        logger.warning("entra_broker_400", status=400)
         return {
             "access_token": None,
             "error": "Your Microsoft session has expired. Please sign in with Microsoft again.",
