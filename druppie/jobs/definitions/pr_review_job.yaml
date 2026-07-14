@@ -1,7 +1,7 @@
 id: pr_review_job
 name: PR Review
 description: >
-  Scheduled review of open PRs on the Gitea repos configured in module-prreview
+  Scheduled review of open PRs on the Gitea repos configured in module-coding
   (PRREVIEW_REPOS). Only PRs changed since their last review are reviewed
   (dedup happens server-side in the module), each PR gets one sticky review
   comment that is updated in place, and oversized diffs are skipped with a
@@ -17,8 +17,8 @@ prompt: |
   stop — do not invent work.
 approval_required: false
 required_role: null
-# Disabled by default: enabling requires module-prreview to be deployed with
-# PRREVIEW_GITEA_URL / PRREVIEW_GITEA_TOKEN / PRREVIEW_REPOS configured.
+# Disabled by default: enabling requires module-coding to have PRREVIEW_REPOS
+# set (URL/token default to its EXTERNAL_GITEA_* config).
 # Flip to true in the deployment where that is the case (IaC: via a commit).
 # A manual pilot works regardless: POST /api/jobs/{definition_id}/trigger.
 enabled: false

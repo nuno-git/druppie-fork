@@ -127,6 +127,18 @@ mcps:
       - name: list_project_files
         requires_approval: false
 
+      # Scheduled PR review (fixed Gitea repo allowlist via PRREVIEW_REPOS).
+      # Instance/token/allowlist are server-side config, never tool arguments.
+      # Dedup is decided in code (head SHA vs sticky-comment marker) and
+      # post_pr_review edits one sticky comment per PR, so reviews never
+      # stack. Ungated: they run from a scheduled job with no session owner.
+      - name: list_prs_needing_review
+        requires_approval: false
+      - name: get_pr_diff
+        requires_approval: false
+      - name: post_pr_review
+        requires_approval: false
+
       # Internal tools (not visible to agents, callable by backend)
       - name: validate_design
         requires_approval: false
@@ -469,20 +481,3 @@ mcps:
       - name: update_work_item
         requires_approval: true
         required_role: session_owner
-
-  # PR review on a fixed allowlist of Gitea repos (PRREVIEW_REPOS).
-  # The Gitea instance and repos are configured server-side — the agent cannot
-  # point these tools at other repos. Which PRs need review is decided in code
-  # (head SHA vs sticky-comment marker), and post_pr_review edits one sticky
-  # comment per PR, so reviews never stack. Ungated: the tools run from a
-  # scheduled job with no session owner to approve them.
-  prreview:
-    url: ${MCP_PRREVIEW_URL:-http://module-prreview:9014}
-    type: module
-    tools:
-      - name: list_prs_needing_review
-        requires_approval: false
-      - name: get_pr_diff
-        requires_approval: false
-      - name: post_pr_review
-        requires_approval: false

@@ -1,19 +1,22 @@
-"""Tests for the prreview MCP server (scheduled PR review).
+"""Tests for the PR-review tools in module-coding (scheduled PR review).
 
-The module's guarantees, pinned from two angles:
+The feature's guarantees, pinned from two angles:
 
-1. Static (tools.py): the tool surface is exactly the three review tools, and
-   no tool accepts a base URL / token / owner argument that could steer it at
-   another Gitea instance or outside the configured repo allowlist.
-2. Behavioral (module.py): the dedup decision (head SHA vs sticky-comment
+1. Static (tools.py): module-coding exposes the three review tools, and none
+   of them accepts a base URL / token / owner argument that could steer them
+   at another Gitea instance or outside the configured repo allowlist.
+2. Behavioral (pr_review.py): the dedup decision (head SHA vs sticky-comment
    marker) is made in code; drafts and unchanged PRs are skipped; the per-run
    cap and diff-size guard hold; post_pr_review edits the one sticky comment
-   instead of stacking new ones and validates repo/verdict/sha inputs.
+   instead of stacking new ones and validates repo/verdict/sha inputs; missing
+   configuration raises per instantiation (surfaced per call), never at the
+   coding module's import.
 
-The module-server tree (`druppie/mcp-servers/module-prreview`) is a standalone
-service: `tools.py` needs `fastmcp`, which is NOT installed in the main druppie
-test environment. We therefore stub network deps and load the source by path,
-mirroring `test_azuredevops_isolation.py`.
+The module-server tree (`druppie/mcp-servers/module-coding`) is a standalone
+service: `tools.py` needs `fastmcp`, which is NOT installed in the main
+druppie test environment. pr_review.py is deliberately self-contained (httpx
+only), so we stub httpx and load it by path, mirroring
+`test_azuredevops_isolation.py`.
 """
 
 from __future__ import annotations
@@ -30,18 +33,24 @@ import pytest
 _MOD_DIR = (
     Path(__file__).resolve().parents[1]
     / "mcp-servers"
-    / "module-prreview"
+    / "module-coding"
 )
 _REPO = "ai/druppie"
 
+PR_REVIEW_TOOLS = {
+    "list_prs_needing_review",
+    "get_pr_diff",
+    "post_pr_review",
+}
+
 
 # ---------------------------------------------------------------------------
-# Static check — tools.py exposes exactly the review tools, no scope leaks
+# Static check — tools.py exposes the review tools, no scope leaks
 # ---------------------------------------------------------------------------
 
 def _tool_functions(source_path: Path) -> dict[str, ast.AsyncFunctionDef]:
     """Return {name: node} for every @mcp.tool()-decorated async function."""
-    tree = ast.parse(source_path.read_text())
+    tree = ast.parse(source_path.read_text(encoding="utf-8"))
     tools: dict[str, ast.AsyncFunctionDef] = {}
     for node in ast.walk(tree):
         if not isinstance(node, ast.AsyncFunctionDef):
@@ -53,26 +62,22 @@ def _tool_functions(source_path: Path) -> dict[str, ast.AsyncFunctionDef]:
     return tools
 
 
-def test_tools_expose_exactly_the_expected_tools():
+def test_coding_module_exposes_the_pr_review_tools():
     tools = _tool_functions(_MOD_DIR / "v1" / "tools.py")
-    assert set(tools) == {
-        "list_prs_needing_review",
-        "get_pr_diff",
-        "post_pr_review",
-    }
+    assert PR_REVIEW_TOOLS <= set(tools)
 
 
-def test_no_tool_accepts_instance_or_token_arguments():
+def test_no_pr_review_tool_accepts_instance_or_token_arguments():
     tools = _tool_functions(_MOD_DIR / "v1" / "tools.py")
     forbidden = {"base_url", "url", "gitea_url", "token", "owner", "org"}
-    for name, node in tools.items():
-        params = {a.arg for a in node.args.args}
+    for name in PR_REVIEW_TOOLS:
+        params = {a.arg for a in tools[name].args.args}
         leaked = params & forbidden
         assert not leaked, f"tool {name} exposes instance/token argument(s): {leaked}"
 
 
 # ---------------------------------------------------------------------------
-# Behavioral checks — module.py
+# Behavioral checks — pr_review.py
 # ---------------------------------------------------------------------------
 
 def _install_dep_stubs() -> None:
@@ -100,27 +105,23 @@ def _install_dep_stubs() -> None:
 
 
 def _load_module_under_test(monkeypatch):
-    """Load v1.module (and its v1.client dependency) with env + deps stubbed."""
+    """Load pr_review.py with env + deps stubbed (self-contained module)."""
     _install_dep_stubs()
+    for var in ("EXTERNAL_GITEA_URL", "EXTERNAL_GITEA_TOKEN"):
+        monkeypatch.delenv(var, raising=False)
     monkeypatch.setenv("PRREVIEW_GITEA_URL", "https://gitea.example.org")
     monkeypatch.setenv("PRREVIEW_GITEA_TOKEN", "stub-token")
     monkeypatch.setenv("PRREVIEW_REPOS", _REPO)
     monkeypatch.setenv("PRREVIEW_MAX_PRS_PER_RUN", "2")
     monkeypatch.setenv("PRREVIEW_MAX_DIFF_LINES", "10")
 
-    pkg = types.ModuleType("prreview_v1")
-    pkg.__path__ = [str(_MOD_DIR / "v1")]
-    sys.modules["prreview_v1"] = pkg
-
-    for name in ("client", "module"):
-        spec = importlib.util.spec_from_file_location(
-            f"prreview_v1.{name}", _MOD_DIR / "v1" / f"{name}.py"
-        )
-        mod = importlib.util.module_from_spec(spec)
-        sys.modules[f"prreview_v1.{name}"] = mod
-        spec.loader.exec_module(mod)
-
-    return sys.modules["prreview_v1.module"]
+    spec = importlib.util.spec_from_file_location(
+        "coding_pr_review", _MOD_DIR / "v1" / "pr_review.py"
+    )
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["coding_pr_review"] = mod
+    spec.loader.exec_module(mod)
+    return mod
 
 
 class _FakeClient:
@@ -194,10 +195,25 @@ def test_parse_marker_ignores_regular_comments(mod):
 
 # --- config validation ------------------------------------------------------
 
-def test_missing_env_raises(mod, monkeypatch):
+def test_missing_repos_raises(mod, monkeypatch):
+    monkeypatch.delenv("PRREVIEW_REPOS")
+    with pytest.raises(ValueError, match="PRREVIEW_REPOS"):
+        mod.PrReviewModule()
+
+
+def test_missing_token_raises(mod, monkeypatch):
     monkeypatch.delenv("PRREVIEW_GITEA_TOKEN")
     with pytest.raises(ValueError, match="PRREVIEW_GITEA_TOKEN"):
         mod.PrReviewModule()
+
+
+def test_url_and_token_fall_back_to_external_gitea(mod, monkeypatch):
+    monkeypatch.delenv("PRREVIEW_GITEA_URL")
+    monkeypatch.delenv("PRREVIEW_GITEA_TOKEN")
+    monkeypatch.setenv("EXTERNAL_GITEA_URL", "https://aigit.example.org")
+    monkeypatch.setenv("EXTERNAL_GITEA_TOKEN", "external-token")
+    m = mod.PrReviewModule()  # does not raise
+    assert m.repos == [_REPO]
 
 
 def test_malformed_repo_entry_raises(mod, monkeypatch):

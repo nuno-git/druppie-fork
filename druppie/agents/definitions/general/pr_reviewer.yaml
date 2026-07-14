@@ -13,22 +13,22 @@ system_prompt: |
   WORKFLOW
   =============================================================================
 
-  1. Call prreview_list_prs_needing_review. The result is already deduped:
+  1. Call coding_list_prs_needing_review. The result is already deduped:
      it contains ONLY non-draft PRs whose head commit changed since their last
      review, capped per run. Never try to review anything not in this list.
   2. If the list is empty, call done() immediately:
      "Agent pr_reviewer: NO_CHANGED_PRS. Nothing to review (N unchanged, M drafts skipped)."
   3. For EACH PR in the list, in order:
-     a. Call prreview_get_pr_diff(repo, number).
+     a. Call coding_get_pr_diff(repo, number).
      b. If the result has too_large=true: do NOT review. Call
-        prreview_post_pr_review with verdict "SKIPPED_TOO_LARGE" and a 2-3 line
+        coding_post_pr_review with verdict "SKIPPED_TOO_LARGE" and a 2-3 line
         body asking the author to split the PR (mention the line counts).
         Continue with the next PR.
      c. Otherwise review the diff against the CHECKLIST below, reading
         surrounding code from the repo checkout where a judgement needs it
         (see SCOPE).
      d. Decide the verdict with the SEVERITY GATE below and call
-        prreview_post_pr_review(repo, number, head_sha, verdict, body) —
+        coding_post_pr_review(repo, number, head_sha, verdict, body) —
         head_sha MUST be the exact value from list_prs_needing_review.
   4. Call done() with one line per PR:
      "Agent pr_reviewer: REVIEWED n PRs. #12 druppie REQUEST_CHANGES (1 blocker); #14 druppie APPROVE; ..."
@@ -87,8 +87,8 @@ system_prompt: |
     MINOR (should fix, not urgent), NIT (style).
   - Verdict REQUEST_CHANGES only when there is at least one BLOCKER or MAJOR.
   - Verdict APPROVE otherwise — even with MINOR/NIT findings.
-  - Only report findings you are confident about from the diff alone. When
-    unsure, drop the finding. No praise, no summary of what the PR does
+  - Only report findings you are confident about from the diff plus the
+    context you actually read. When unsure, drop the finding. No praise, no summary of what the PR does
     beyond one line, no restating the diff.
 
   =============================================================================
@@ -111,16 +111,22 @@ system_prompts:
   - summary_relay
   - done_tool_format
 
+# Everything runs through the coding MCP: the three PR-review tools (Gitea
+# API, fixed allowlist via PRREVIEW_*) plus read-only context tools on an
+# update_core sandbox checkout of ai/druppie at the colab-dev base branch,
+# same pattern as core_explorer. No write/bash/push tools — the reviewer
+# reads context, it never changes code.
 mcps:
-  prreview:
-    - list_prs_needing_review
-    - get_pr_diff
-    - post_pr_review
-  # Read-only context: a sandbox checkout of the core repo (ai/druppie) at
-  # the colab-dev base branch, same pattern as core_explorer. No write/bash/
-  # push tools — the reviewer reads context, it never changes code.
   coding:
-    tools: [read_file, grep, find, ls, list_dir]
+    tools:
+      - list_prs_needing_review
+      - get_pr_diff
+      - post_pr_review
+      - read_file
+      - grep
+      - find
+      - ls
+      - list_dir
     git: update_core
 
 # Local models only (in-cluster LLMKube/vLLM, no per-token API cost). The

@@ -3283,3 +3283,102 @@ async def _internal_revert_to_commit(
     except Exception as e:
         logger.error("revert_to_commit error: %s", e)
         return {"success": False, "error": str(e)}
+
+
+# =============================================================================
+# MCP TOOLS — SCHEDULED PR REVIEW (fixed repo allowlist, no sandbox needed)
+# =============================================================================
+# These three tools talk to the external Gitea REST API directly from this
+# module; they never touch a sandbox container. The Gitea instance, token and
+# repo allowlist are server configuration (PRREVIEW_*, defaulting to
+# EXTERNAL_GITEA_*) — never tool arguments — so an agent cannot review or
+# comment outside them. Which PRs need review is decided in code (head SHA vs
+# sticky-comment marker), and post_pr_review edits one sticky comment per PR,
+# so reviews never stack. PrReviewModule is stateless and cheap: one instance
+# per call, and a missing configuration surfaces as a per-call error instead
+# of failing the whole coding module at startup.
+
+from .pr_review import PrReviewModule  # noqa: E402
+
+
+def _pr_review_module() -> PrReviewModule | None:
+    try:
+        return PrReviewModule()
+    except ValueError as exc:
+        logger.warning("pr_review_unconfigured: %s", exc)
+        return None
+
+
+_PR_REVIEW_UNCONFIGURED = {
+    "success": False,
+    "error": (
+        "PR review is not configured on this deployment "
+        "(set PRREVIEW_REPOS and Gitea credentials)."
+    ),
+}
+
+
+@mcp.tool()
+async def list_prs_needing_review() -> dict:
+    """List open PRs that changed since their last review (deduped server-side).
+
+    A PR needs review when its head commit differs from the SHA recorded in its
+    sticky review comment. Draft PRs and unchanged PRs are skipped; the result
+    is capped per run (skipped_over_cap tells you how many wait for next run).
+
+    Returns:
+        Dict with prs (repo, number, title, author, base_branch, head_branch,
+        head_sha, previously_reviewed_sha, url), total_needing_review,
+        skipped_over_cap, skipped_unchanged and skipped_drafts counts.
+    """
+    module = _pr_review_module()
+    if module is None:
+        return dict(_PR_REVIEW_UNCONFIGURED)
+    return await module.list_prs_needing_review()
+
+
+@mcp.tool()
+async def get_pr_diff(repo: str, pr_number: int) -> dict:
+    """Fetch the unified diff of a PR (base...head), size-guarded.
+
+    Args:
+        repo: '<owner>/<repo>' — must come from list_prs_needing_review.
+        pr_number: The PR number to fetch.
+
+    Returns:
+        Dict with diff (unified diff text) and diff_lines. When the diff is
+        over the size limit, too_large is true and diff is null — post a
+        SKIPPED_TOO_LARGE review instead of reviewing.
+    """
+    module = _pr_review_module()
+    if module is None:
+        return dict(_PR_REVIEW_UNCONFIGURED)
+    return await module.get_pr_diff(repo, pr_number)
+
+
+@mcp.tool()
+async def post_pr_review(
+    repo: str, pr_number: int, head_sha: str, verdict: str, body: str
+) -> dict:
+    """Publish the review as the PR's single sticky comment (create or update).
+
+    Posting also marks the PR as reviewed at head_sha, so it will not be
+    reviewed again until new commits are pushed. Reviews never stack — an
+    existing sticky comment is edited in place.
+
+    Args:
+        repo: '<owner>/<repo>' — must come from list_prs_needing_review.
+        pr_number: The PR number to review.
+        head_sha: The head_sha value from list_prs_needing_review (records
+            exactly which commit was reviewed).
+        verdict: One of APPROVE, REQUEST_CHANGES, COMMENT, SKIPPED_TOO_LARGE.
+        body: The review body in Markdown (findings with severities, or a
+            one-line approval).
+
+    Returns:
+        Dict with action (created/updated), comment_id and comment_url.
+    """
+    module = _pr_review_module()
+    if module is None:
+        return dict(_PR_REVIEW_UNCONFIGURED)
+    return await module.post_pr_review(repo, pr_number, head_sha, verdict, body)

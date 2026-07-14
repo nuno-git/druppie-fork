@@ -429,33 +429,20 @@ modules:
       limits:
         memory: 512Mi
         cpu: 1000m
-  # Scheduled PR review of a fixed repo allowlist on the GitOps Gitea.
-  # Requires PRREVIEW_GITEA_TOKEN in the chart secret; giteaUrl and repos are
-  # non-secret config. Disabled by default - enable per environment via the
-  # HelmRelease in ai/k8s.
-  prreview:
-    enabled: false
-    replicaCount: 1
-    nodeSelector: {}
-    image:
-      repository: druppie-module-prreview
-      tag: latest
-    port: 9014
-    giteaUrl: https://aigit.waterschap.org
-    # Comma-separated '<owner>/<repo>' allowlist the reviewer may touch.
-    repos: ai/druppie
-    maxPrsPerRun: 5
-    maxDiffLines: 3000
-    # Optional ConfigMap (key chain.pem) with the private CA of the Gitea
-    # server; mounted and used for TLS verification when set.
-    caConfigMap: ''
-    resources:
-      requests:
-        memory: 256Mi
-        cpu: 100m
-      limits:
-        memory: 512Mi
-        cpu: 1000m
+
+# Scheduled PR review of a fixed repo allowlist on the GitOps Gitea, served
+# by module-coding's PR-review tools (no separate deployment). Disabled by
+# default: with repos empty no PRREVIEW_* config is emitted and the tools
+# return "not configured". Gitea URL/token default to the coding module's
+# EXTERNAL_GITEA_* config (chart secret externalGiteaToken); aigit egress is
+# covered by cnp-module-coding-gitea (agentSandbox.enabled).
+prReview:
+  # Comma-separated '<owner>/<repo>' allowlist the reviewer may touch.
+  # Empty = PR review disabled. Enable per environment via the HelmRelease
+  # in ai/k8s, e.g. repos: ai/druppie
+  repos: ''
+  maxPrsPerRun: 5
+  maxDiffLines: 3000
 init:
   enabled: true
   image:
