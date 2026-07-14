@@ -107,7 +107,12 @@ mcps:
     - get_pr_diff
     - post_pr_review
 
-llm_profile: cheap
+# Local models only (in-cluster LLMKube/vLLM, no per-token API cost). The
+# llmkube profile resolves dynamically against what the endpoint serves and
+# prefers the best-ranked local model; an external fallback is never used
+# silently (FallbackLLM requires explicit approval, which an unattended
+# cron run never gives).
+llm_profile: llmkube
 temperature: 0.1
 max_tokens: 16000
 max_iterations: 30
