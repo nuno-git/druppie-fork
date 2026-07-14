@@ -1081,7 +1081,7 @@ When a Dutch user's session produces a design document, the platform:
 
 Both files are committed to the project repository.
 
-See [docs/TRANSLATION.md](TRANSLATION.md) for detailed architecture and data flow.
+See [docs/reference/TRANSLATION.md](reference/TRANSLATION.md) for detailed architecture and data flow.
 
 ## ArchiMate Diagrams in Technical Designs
 

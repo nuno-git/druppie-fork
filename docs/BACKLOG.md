@@ -241,7 +241,7 @@ Last updated: 2026-06-11
 
 ### ~~Language Matching~~ ✅ DONE
 
-- **Implemented:** Automated bilingual translation. The platform detects the user's language, translates user messages to English for agents, and translates all agent output (HITL questions, design documents, summaries) back to the user's language. Agents always work in English; the platform handles translation transparently via a dedicated DeepInfra/Qwen service. See [docs/TRANSLATION.md](TRANSLATION.md) for details.
+- **Implemented:** Automated bilingual translation. The platform detects the user's language, translates user messages to English for agents, and translates all agent output (HITL questions, design documents, summaries) back to the user's language. Agents always work in English; the platform handles translation transparently via a configurable translation model (legacy default Gemma 3 27B). See [docs/reference/TRANSLATION.md](reference/TRANSLATION.md) for details.
 
 ### File Upload: Context Window Guardrails for Large Attachments
 
