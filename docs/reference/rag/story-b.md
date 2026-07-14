@@ -50,7 +50,7 @@ storage to `app-local pgvector (`rag.py`)`); may carry a tiny Postgres for query
 audit / freshness tracking — see open question §1 in the spec.
 
 The seven tools to expose are spelled out in
-[`module-rag-spec.md`](./module-rag-spec.md) §3:
+[`module-rag-spec.md`](../../prds/001-module-rag.md) §3:
 
 - `rag_query` — simple RAG: one question, one cited answer.
 - `rag_conversational_query` — adds chat-history-aware query rewrite.
@@ -95,7 +95,7 @@ All the supporting artifacts are already in the repo. Use them as
 your reference; do not re-derive.
 
 ### Research foundation (read this first)
-- **`docs/RAG/rag-patterns.md`** *(Dutch, ~760 lines)* — the research
+- **`docs/research/001-rag-patterns.md`** *(Dutch, ~760 lines)* — the research
   document that backs every default in this Story. Per-axis
   comparisons (chunking, retrieval, embedding, vector store, advanced
   patterns, NFRs) with 2026 benchmarks and decision-guides. Read at
@@ -118,7 +118,7 @@ your reference; do not re-derive.
   `rag-patterns` skill. Likely no change needed.
 
 ### Module spec (the actual instructions)
-- **`docs/RAG/module-rag-spec.md`** — full design: identity, the 7
+- **`docs/prds/001-module-rag.md`** — full design: identity, the 7
   tools, defaults the module enforces, dependencies, open questions
   for the implementation, validation scenarios.
 
@@ -129,7 +129,7 @@ your reference; do not re-derive.
   `rag-patterns`. Story B should add an end-to-end test that goes
   one step further: real `module-rag` tools called by a built
   application against a real corpus.
-- **`docs/RAG/testing.md`** — manual e2e instructions for Story A.
+- **`docs/reference/rag/testing.md`** — manual e2e instructions for Story A.
   Add a Story B equivalent that covers `rag_query` against a real
   indexed corpus.
 
@@ -240,6 +240,6 @@ would split this into two PRs).
 - TECHNICAL.md gets a new §6.9 "module-rag orchestrator".
 - FEATURES.md "Architect-Side Skills" row for `rag-patterns` updated
   to say `module-rag` is now built.
-- `docs/RAG/testing.md` has a Story B manual e2e section.
+- `docs/reference/rag/testing.md` has a Story B manual e2e section.
 - This handoff document gets a closing note: "Story B done — see
   [linked PR]".

@@ -1,3 +1,16 @@
+---
+id: "001"
+title: "module-rag (orchestrator)"
+status: draft
+author: mk2023-land
+date: 2026-06-01
+linked_adrs: []
+linked_research: ["docs/research/001-rag-patterns.md"]
+linked_specs: []
+supersedes: null
+superseded_by: null
+---
+
 # MODULE_SPEC — `module-rag` (orchestrator, Story B)
 
 > Status: design document for the future `module-rag` orchestration
@@ -11,7 +24,7 @@
 > query rewriting, and citation formatting into high-level tools so
 > the application no longer wires the pipeline itself.
 >
-> Predecessor: [rag-patterns.md](./rag-patterns.md) — research
+> Predecessor: [rag-patterns.md](../research/001-rag-patterns.md) — research
 > foundation with the per-layer choices that `module-rag` will
 > implement as defaults.
 > Convention: follows
@@ -121,7 +134,7 @@ multi-entity / synthesis improvement.
 ## 4. Defaults the module enforces
 
 The module enforces the platform defaults from
-[`rag-patterns.md`](./rag-patterns.md) and platform standards §5:
+[`rag-patterns.md`](../research/001-rag-patterns.md) and platform standards §5:
 
 - Chunking: recursive, `chunk_size=2048` / `chunk_overlap=256` characters
   (≈ 512 tokens) as default; `parent_document` strategy for long
@@ -181,7 +194,7 @@ The module enforces the platform defaults from
 When `module-rag` lands, at minimum cover:
 
 - A Dutch-language doc-heavy use-case (e.g. HDSR-notas validation
-  scenario from `docs/RAG/testing.md`) end-to-end via `rag_query`.
+  scenario from `docs/reference/rag/testing.md`) end-to-end via `rag_query`.
 - Multilingual corpus: same corpus with NL and EN documents, each
   findable in its own language with `question_language` auto-detect.
 - Conversational follow-up resolution via `rag_conversational_query`.

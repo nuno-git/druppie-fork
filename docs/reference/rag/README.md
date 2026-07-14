@@ -58,16 +58,16 @@ agentic search" in de skill.
 Een `module-rag`-orchestrator die `app/rag.py`-patroon + `module-llm` +
 chunking + rerank + query-rewriting + citations achter high-level tools
 verpakt. Handoff: [`story-b.md`](story-b.md), spec:
-[`module-rag-spec.md`](module-rag-spec.md).
+[`module-rag-spec.md`](../../prds/001-module-rag.md).
 
 Daarnaast: een data-scientist / AI-engineer subagent voor de diepe
 RAG-implementatiekeuzes zodra subagents in de core zitten — zie issue #231.
 
 ## Verder lezen
 
-- [`rag-patterns.md`](rag-patterns.md) — volledig onderzoek (per-as
+- [`rag-patterns.md`](../../research/001-rag-patterns.md) — volledig onderzoek (per-as
   vergelijkingen, 2026-benchmarks, NFR-menu).
-- [`module-rag-spec.md`](module-rag-spec.md) — Story B orchestrator-spec.
+- [`module-rag-spec.md`](../../prds/001-module-rag.md) — Story B orchestrator-spec.
 - [`story-b.md`](story-b.md) — handoff voor Story B.
 - [`testing.md`](testing.md) — e2e-testinstructies (geautomatiseerd + handmatig).
 - `docs/TECHNICAL.md` §6.8 — architectuur in de platformdocumentatie.

@@ -1,3 +1,12 @@
+---
+id: "002"
+title: "LLM-Orchestratie binnen Gebouwde Apps — Platform Standaard & Onderbouwing"
+status: complete
+author: mk2023-land
+date: 2026-06-01
+outcome: null
+---
+
 # LLM-Orchestratie binnen Gebouwde Apps — Platform Standaard & Onderbouwing
 
 > Status: platform-research, juni 2026.

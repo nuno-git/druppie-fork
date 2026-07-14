@@ -1,3 +1,12 @@
+---
+id: "001"
+title: "Technisch Onderzoek — RAG-patronen als platform-bouwblok"
+status: complete
+author: mk2023-land
+date: 2026-06-01
+outcome: null
+---
+
 # Technisch Onderzoek — RAG-patronen als platform-bouwblok
 
 > Status: Research-fundament voor de skill `rag-patterns` en de
