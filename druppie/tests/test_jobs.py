@@ -643,3 +643,78 @@ class TestJobEnvOverrides:
         assert by_id["ovr_job"].enabled is True
         assert by_id["other_job"].enabled is False
 
+
+# ---------------------------------------------------------------------------
+# JobRepository — usage aggregation (cost per run)
+# ---------------------------------------------------------------------------
+
+
+def _add_llm_call(db, session_id, **kwargs):
+    from druppie.db.models.llm_call import LlmCall
+
+    call = LlmCall(
+        session_id=session_id,
+        provider=kwargs.get("provider", "llmkube"),
+        model=kwargs.get("model", "Qwen/Qwen3.6-27B"),
+        prompt_tokens=kwargs.get("prompt_tokens", 100),
+        completion_tokens=kwargs.get("completion_tokens", 10),
+        total_tokens=kwargs.get("total_tokens", 110),
+        duration_ms=kwargs.get("duration_ms", 500),
+        fallback_used=kwargs.get("fallback_used", False),
+    )
+    db.add(call)
+    return call
+
+
+class TestJobRunUsage:
+    def test_no_session_returns_none(self, job_repo: JobRepository):
+        assert job_repo.get_job_run_usage(None) is None
+
+    def test_no_llm_calls_returns_none(self, job_repo: JobRepository):
+        assert job_repo.get_job_run_usage(uuid.uuid4()) is None
+
+    def test_aggregates_calls_of_the_session_only(
+        self, job_repo: JobRepository, db_session: DbSession
+    ):
+        session_id = uuid.uuid4()
+        _add_llm_call(db_session, session_id, prompt_tokens=100, completion_tokens=10, total_tokens=110)
+        _add_llm_call(
+            db_session, session_id,
+            provider="zai", model="glm-4.7",
+            prompt_tokens=200, completion_tokens=20, total_tokens=220,
+            duration_ms=700, fallback_used=True,
+        )
+        _add_llm_call(db_session, uuid.uuid4(), prompt_tokens=999)  # other session
+        db_session.commit()
+
+        usage = job_repo.get_job_run_usage(session_id)
+
+        assert usage is not None
+        assert usage.llm_calls == 2
+        assert usage.prompt_tokens == 300
+        assert usage.completion_tokens == 30
+        assert usage.total_tokens == 330
+        assert usage.duration_ms == 1200
+        assert usage.fallback_calls == 1
+        assert sorted(usage.models) == ["llmkube/Qwen/Qwen3.6-27B", "zai/glm-4.7"]
+
+    def test_job_run_detail_includes_usage(
+        self, job_repo: JobRepository, db_session: DbSession
+    ):
+        definition = _make_definition(job_repo)
+        job_repo.commit()
+        session_id = uuid.uuid4()
+        run = job_repo.create_job_run(
+            job_definition_id=definition.id,
+            session_id=session_id,
+            trigger_type="scheduled",
+            status="completed",
+        )
+        _add_llm_call(db_session, session_id)
+        db_session.commit()
+
+        detail = job_repo.to_job_run_detail(run)
+
+        assert detail.usage is not None
+        assert detail.usage.llm_calls == 1
+        assert detail.usage.total_tokens == 110

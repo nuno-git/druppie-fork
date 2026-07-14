@@ -3,7 +3,10 @@
 from datetime import datetime
 from uuid import UUID
 
+from sqlalchemy import case, func
+
 from ..db.models.job import JobDefinition, JobRun
+from ..db.models.llm_call import LlmCall
 from ..domain.common import JobRunStatus
 from ..domain.job import (
     JobDefinitionDetail,
@@ -11,6 +14,7 @@ from ..domain.job import (
     JobRunDetail,
     JobRunList,
     JobRunSummary,
+    JobRunUsage,
 )
 from .base import BaseRepository
 
@@ -314,8 +318,45 @@ class JobRepository(BaseRepository):
             rejection_reason=run.rejection_reason,
         )
 
+    def get_job_run_usage(self, session_id: UUID | None) -> JobRunUsage | None:
+        """Aggregate the LLM usage of a run's session (cost per run)."""
+        if not session_id:
+            return None
+        row = (
+            self.db.query(
+                func.count(LlmCall.id),
+                func.coalesce(func.sum(LlmCall.prompt_tokens), 0),
+                func.coalesce(func.sum(LlmCall.completion_tokens), 0),
+                func.coalesce(func.sum(LlmCall.total_tokens), 0),
+                func.coalesce(func.sum(LlmCall.duration_ms), 0),
+                func.coalesce(
+                    func.sum(case((LlmCall.fallback_used.is_(True), 1), else_=0)), 0
+                ),
+            )
+            .filter(LlmCall.session_id == session_id)
+            .one()
+        )
+        if not row[0]:
+            return None
+        models = [
+            f"{provider}/{model}"
+            for provider, model in self.db.query(LlmCall.provider, LlmCall.model)
+            .filter(LlmCall.session_id == session_id)
+            .distinct()
+        ]
+        return JobRunUsage(
+            llm_calls=row[0],
+            prompt_tokens=row[1],
+            completion_tokens=row[2],
+            total_tokens=row[3],
+            duration_ms=row[4],
+            fallback_calls=row[5],
+            models=models,
+        )
+
     def to_job_run_detail(self, run: JobRun) -> JobRunDetail:
         return JobRunDetail(
+            usage=self.get_job_run_usage(run.session_id),
             id=run.id,
             job_definition_id=run.job_definition_id,
             session_id=run.session_id,

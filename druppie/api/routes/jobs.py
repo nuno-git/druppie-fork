@@ -64,6 +64,19 @@ async def list_all_job_runs(
     return service.list_job_runs(status=status, page=page, limit=limit)
 
 
+@router.get("/runs/{job_run_id}")
+async def get_job_run(
+    job_run_id: UUID,
+    service: JobService = Depends(get_job_service),
+    user: dict = Depends(require_admin),
+) -> JobRunDetail:
+    """Single run incl. usage (LLM calls/tokens/duration) — cost per run."""
+    run = service.get_job_run(job_run_id)
+    if not run:
+        raise NotFoundError("job_run", str(job_run_id))
+    return run
+
+
 @router.get("/pending-approvals")
 async def list_pending_job_approvals(
     service: JobService = Depends(get_job_service),

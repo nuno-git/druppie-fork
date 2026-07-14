@@ -104,7 +104,15 @@ from .session import (
     TimelineEntryType,
 )
 
-from .job import JobDefinitionDetail, JobDefinitionList, JobDefinitionSummary, JobRunDetail, JobRunList, JobRunSummary
+from .job import (
+    JobDefinitionDetail,
+    JobDefinitionList,
+    JobDefinitionSummary,
+    JobRunDetail,
+    JobRunList,
+    JobRunSummary,
+    JobRunUsage,
+)
 
 # Model override models
 from .model_override import (
@@ -215,6 +223,7 @@ __all__ = [
     "JobRunSummary",
     "JobRunDetail",
     "JobRunList",
+    "JobRunUsage",
     # Model override
     "ModelOverrideSummary",
     "ModelOverrideDetail",

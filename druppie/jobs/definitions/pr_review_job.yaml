@@ -5,7 +5,8 @@ description: >
   (PRREVIEW_REPOS). Only PRs changed since their last review are reviewed
   (dedup happens server-side in the module), each PR gets one sticky review
   comment that is updated in place, and oversized diffs are skipped with a
-  note. Costs per run are visible via the run's session (llm_calls).
+  note. Cost per run is reported on the job run itself (usage: LLM calls,
+  tokens, duration, fallback calls) via GET /api/jobs/runs/{run_id}.
 schedule: "*/20 * * * *"
 agent_id: pr_reviewer
 prompt: |
