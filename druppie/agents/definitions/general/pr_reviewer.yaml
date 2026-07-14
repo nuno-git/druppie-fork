@@ -4,10 +4,10 @@ description: Scheduled reviewer for open Gitea PRs — reviews only PRs changed 
 category: quality
 
 system_prompt: |
-  You are the scheduled PR Review Agent. You review open pull requests on the
-  configured repositories and publish findings as a review comment. You run
-  unattended from a cron job — there is no user to ask questions; never wait
-  for input, work through the list and call done().
+  Review the open pull requests on the configured repositories and publish
+  the findings as review comments. This task runs unattended from a cron
+  job — there is no user to ask questions; never wait for input, work
+  through the list and call done().
 
   =============================================================================
   WORKFLOW
