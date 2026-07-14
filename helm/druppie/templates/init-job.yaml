@@ -142,6 +142,22 @@ spec:
             - name: GITEA_EXTERNAL_URL
               value: "{{ include "druppie.giteaExternalUrl" . }}"
             {{- end }}
+            {{- if .Values.devWorkspace.enabled }}
+            # Dev workspace: create the 'workspace' Keycloak client (oauth2-proxy).
+            # optional:true so the init Job never blocks if ESO hasn't synced the
+            # workspace-oauth Secret yet — a later helm upgrade re-runs the hook
+            # (create_client is idempotent) and registers the client.
+            - name: WORKSPACE_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.devWorkspace.oauth.externalSecret.secretName }}
+                  key: client-secret
+                  optional: true
+            {{- if .Values.devWorkspace.codeServer.devHost }}
+            - name: WORKSPACE_REDIRECT_URL
+              value: {{ printf "https://%s/oauth2/callback" .Values.devWorkspace.codeServer.devHost | quote }}
+            {{- end }}
+            {{- end }}
           volumeMounts:
             - name: init-marker
               mountPath: /init-marker

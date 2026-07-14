@@ -423,6 +423,51 @@ def main():
     }
     kc.create_client(REALM_NAME, guac_client)
 
+    # Dev-workspace oauth2-proxy client (STEP 4c).
+    # Only for envs that run a dev workspace. oauth2-proxy needs a CONFIDENTIAL
+    # client with a secret — druppie-frontend is publicClient:true (SPAs carry no
+    # secret), so it cannot be reused. The secret is provisioned in Vault
+    # (developers/<user>/workspace#client-secret, or legacy branch-env/workspace-oauth)
+    # and synced into the 'workspace-oauth' Secret, which the init Job exposes as
+    # WORKSPACE_CLIENT_SECRET. Unset (prod/colab-dev) -> skip; nothing to create.
+    workspace_secret = os.getenv("WORKSPACE_CLIENT_SECRET", "").strip()
+    if workspace_secret:
+        print("\n[STEP 4c] Creating dev-workspace oauth2-proxy client...")
+        # Origin = env host with '-dev' before the first dot (mirrors
+        # _workspace_host in branch_environment_service.py / step 4 frontend block).
+        ws_origin = ""
+        if ingress_enabled and frontend_url:
+            scheme, sep, rest = frontend_url.partition("://")
+            label, dot, domain = rest.partition(".")
+            if dot:
+                ws_origin = f"{scheme}{sep}{label}-dev.{domain}"
+        ws_redirect = (
+            os.getenv("WORKSPACE_REDIRECT_URL", "").strip()
+            or (ws_origin + "/oauth2/callback" if ws_origin else "")
+        )
+        redirect_uris = ([ws_redirect] if ws_redirect else []) + [
+            "http://localhost:8080/oauth2/callback",
+        ]
+        workspace_client = {
+            "clientId": "workspace",
+            "name": "Dev Workspace (code-server)",
+            "description": "oauth2-proxy in front of the per-env code-server dev workspace",
+            "enabled": True,
+            "protocol": "openid-connect",
+            "publicClient": False,
+            "standardFlowEnabled": True,
+            "implicitFlowEnabled": False,
+            "directAccessGrantsEnabled": False,
+            "serviceAccountsEnabled": False,
+            "frontchannelLogout": False,
+            "secret": workspace_secret,
+            "redirectUris": redirect_uris,
+            "webOrigins": [ws_origin] if ws_origin else [],
+        }
+        kc.create_client(REALM_NAME, workspace_client)
+    else:
+        print("\n[STEP 4c] WORKSPACE_CLIENT_SECRET unset — skipping dev-workspace client")
+
     # Set realm frontendUrl so tokens always have the correct HTTPS issuer
     print("\n[STEP 5] Setting realm frontend URL...")
     kc.set_realm_frontend_url(REALM_NAME, keycloak_public_url)
