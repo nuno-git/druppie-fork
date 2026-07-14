@@ -9,15 +9,15 @@ supersedes: null                      # PRD id string this replaces (e.g. "003")
 superseded_by: null                   # PRD id string that replaces this (e.g. "005") or null
 linked_adrs: []                       # List of ADR file paths, e.g. ["docs/adrs/001-choice-of-state-management.md"]
 linked_research: []                   # List of research doc paths, e.g. ["docs/research/001-auth-providers.md"]
-linked_bdd: []                        # List of .feature file paths, e.g. ["testing/bdd/features/approval-workflow.feature"]
+linked_specs: []                      # List of .feature file paths, e.g. ["testing/specs/features/approval-workflow.feature"]
 ---
 
 # PRD: {title}
 
 > **Where this fits:** The PRD is the START of the spec-driven pipeline. Everything flows
-> from here: PRD → Research (optional, only when unclear) → ADR (decision) → BDD (verification)
+> from here: PRD → Research (optional, only when unclear) → ADR (decision) → Spec (verification)
 > → Implementation. The PRD describes the PROBLEM and the GOAL from the user's perspective.
-> It does NOT contain technical decisions (that's ADRs) or executable tests (that's BDD).
+> It does NOT contain technical decisions (that's ADRs) or executable tests (that's Specs).
 
 ## Problem
 
@@ -100,4 +100,4 @@ _Definition of done with measurable criteria._
 
 - **ADRs:** _list the items from `linked_adrs`_
 - **Research:** _list the items from `linked_research`_
-- **BDD / Feature files:** _list the items from `linked_bdd`_
+- **Specs / Feature files:** _list the items from `linked_specs`_

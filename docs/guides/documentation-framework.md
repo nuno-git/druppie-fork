@@ -14,18 +14,18 @@ This is the practical guide to how we document decisions and specs in this repo.
 | **PRD** | The feature: the problem and goal from the user's side | Start of a non-trivial feature | `docs/prds/TEMPLATE.md` |
 | **Research** | An options / trade-off investigation | Only when the choice isn't obvious | `docs/research/TEMPLATE.md` |
 | **ADR** | A committed technical/architecture decision + why | When you make a decision worth remembering | `docs/adrs/TEMPLATE.md` |
-| **BDD** | Executable acceptance criteria (Gherkin) | Before implementing, to pin behaviour | `testing/bdd/features/TEMPLATE.feature` |
+| **Spec** | Executable acceptance criteria (Gherkin) | Before implementing, to pin behaviour | `testing/specs/features/TEMPLATE.feature` |
 
 ## The flow
 
 ```
-PRD  →  Research?  →  ADR?  →  BDD  →  build
+PRD  →  Research?  →  ADR?  →  Spec  →  build
 ```
 
 - **PRD first** — know what you're building and why.
 - **Research is optional** — skip it if the choice is obvious or an ADR already covers it.
 - **ADR is conditional** — only for a *new* decision; skip if an existing ADR applies.
-- **BDD** pins the acceptance criteria and links back to its PRD/ADR via `@prd` / `@adr` tags.
+- **Specs** pin the acceptance criteria and link back to their PRD/ADR via `@prd` / `@adr` tags.
 
 Not every change needs docs: a bugfix or chore usually needs none.
 

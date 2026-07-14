@@ -30,18 +30,18 @@ We adopt a spec-driven documentation standard:
 - **Format:** Markdown with YAML frontmatter. Frontmatter carries the machine-readable fields
   (id, status, links); the body is free-form Markdown for human reasoning.
 - **Document types (4):** PRD (feature), ADR (decision), Research (investigation),
-  and BDD (`.feature` acceptance criteria).
-- **Flow:** `PRD → Research? → ADR? → BDD → build` (Research and ADR are conditional).
+  and Spec (executable `.feature` acceptance criteria).
+- **Flow:** `PRD → Research? → ADR? → Spec → build` (Research and ADR are conditional).
 - **Status per type** (not one shared enum): ADR `proposed | accepted | deprecated | superseded`;
   PRD `draft | review | approved | implemented`; Research `draft | complete`.
 - **Identifiers:** 3-digit zero-padded **string** ids (`"001"`); filenames `NNN-kebab-title.md`.
 - **Traceability:** documents link via `linked_prd`, `linked_adrs`, `linked_research`,
-  `linked_bdd`, and `supersedes`/`superseded_by`; BDD links back via `@prd`/`@adr` tags.
+  `linked_specs`, and `supersedes`/`superseded_by`; specs link back via `@prd`/`@adr` tags.
 - **Validation contract:** one JSON Schema per frontmatter type
   (`docs/{adrs,prds,research}/*.schema.json`) defines the required fields.
 - **Language:** English is the source of truth; frontmatter, ids and status are never translated.
 - **Templates** live at fixed locations: `docs/adrs/TEMPLATE.md`, `docs/prds/TEMPLATE.md`,
-  `docs/research/TEMPLATE.md`, `testing/bdd/features/TEMPLATE.feature`.
+  `docs/research/TEMPLATE.md`, `testing/specs/features/TEMPLATE.feature`.
 
 ## Consequences
 

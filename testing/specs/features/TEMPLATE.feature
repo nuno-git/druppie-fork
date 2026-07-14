@@ -1,20 +1,18 @@
-# BDD feature TEMPLATE (Gherkin).
-# Copy this to testing/bdd/features/<feature-name>.feature and fill it in.
+# Spec (executable Gherkin) TEMPLATE.
+# Copy this to testing/specs/features/<feature-name>.feature and fill it in.
 #
 # Traceability: the @prd / @adr tags below link this behaviour back to the PRD and ADR that
 # motivated it. Keep the paths pointing at real files.
 #
-# LATER (PBI 9744 — afdwingen): the behave runner + Python step definitions in testing/bdd/steps/
+# LATER (PBI 9744 — afdwingen): the behave runner + Python step definitions in testing/specs/steps/
 # (incl. environment.py) and the `behave` dependency are set up in PBI 9744. This template is the
 # skeleton only — the scenarios below are not yet executable until that harness exists.
 
 @prd docs/prds/NNN-<feature-name>.md
 @adr docs/adrs/NNN-<feature-name>.md
 Feature: <feature name>
-  # Keep this a one-line summary — the full problem / goal / user journey lives in the linked PRD (@prd). The value of this .feature is the Scenarios below, not re-describing the feature.
-  In order to <business value>
-  As a <role>
-  I want <capability>
+  # The "why" (problem, goal, user journey) lives in the linked PRD (@prd).
+  # This spec holds only the acceptance Scenarios below.
 
   Scenario: <happy path name>
     Given <precondition>
