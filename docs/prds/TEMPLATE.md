@@ -1,7 +1,7 @@
 ---
 id: "001"                            # Sequential PRD number as STRING (quote it!) — e.g. "001", "002"
 title: Feature name                   # Short, descriptive name
-status: draft                         # draft | review | approved | implemented
+status: draft                         # draft | review | approved | implemented | deprecated | superseded
 author: role name                     # Who authored this PRD (e.g. "architect", "developer")
 date: YYYY-MM-DD                      # Date of initial draft (YYYY-MM-DD)
 # Supersession tracking — only relevant when a PRD is replaced

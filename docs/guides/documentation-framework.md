@@ -37,6 +37,7 @@ Not every change needs docs: a bugfix or chore usually needs none.
 - **Links:** use the `linked_*` frontmatter fields to connect documents.
 - **Language:** English is the source of truth; ids, status and frontmatter are never translated.
 - **Schemas:** `docs/{adrs,prds,research}/*.schema.json` define the required frontmatter fields.
+- **Outdated docs:** mark them `deprecated` / `superseded` — don't delete (the *why* must survive).
 
 ## Not done yet (later stories)
 

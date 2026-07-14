@@ -33,7 +33,8 @@ We adopt a spec-driven documentation standard:
   and Spec (executable `.feature` acceptance criteria).
 - **Flow:** `PRD → Research? → ADR? → Spec → build` (Research and ADR are conditional).
 - **Status per type** (not one shared enum): ADR `proposed | accepted | deprecated | superseded`;
-  PRD `draft | review | approved | implemented`; Research `draft | complete`.
+  PRD `draft | review | approved | implemented | deprecated | superseded`; Research `draft | complete`.
+- **Deprecation:** outdated documents are marked, never deleted — set `status: deprecated` or `superseded` (with `superseded_by`) so the rationale stays discoverable. Research docs remain a historical record.
 - **Identifiers:** 3-digit zero-padded **string** ids (`"001"`); filenames `NNN-kebab-title.md`.
 - **Traceability:** documents link via `linked_prd`, `linked_adrs`, `linked_research`,
   `linked_specs`, and `supersedes`/`superseded_by`; specs link back via `@prd`/`@adr` tags.
