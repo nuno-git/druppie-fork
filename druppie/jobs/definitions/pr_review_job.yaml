@@ -17,8 +17,9 @@ prompt: |
   stop — do not invent work.
 approval_required: false
 required_role: null
-# Disabled by default: enabling requires module-coding to have PRREVIEW_REPOS
-# set (URL/token default to its EXTERNAL_GITEA_* config).
-# Flip to true in the deployment where that is the case (IaC: via a commit).
+# Disabled by default; enable PER ENVIRONMENT via the env override
+# JOB_PR_REVIEW_JOB_ENABLED=true (Helm: prReview.jobEnabled, set in the
+# ai/k8s HelmRelease), which requires module-coding to have PRREVIEW_REPOS
+# set. JOB_PR_REVIEW_JOB_SCHEDULE overrides the cron the same way.
 # A manual pilot works regardless: POST /api/jobs/{definition_id}/trigger.
 enabled: false

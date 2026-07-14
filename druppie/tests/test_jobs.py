@@ -551,3 +551,95 @@ class TestJobModelToDict:
         assert d["trigger_type"] == "manual"
         assert d["status"] == "completed"
         assert "id" in d
+
+
+# ---------------------------------------------------------------------------
+# JobService — per-environment env overrides (JOB_<ID>_ENABLED / _SCHEDULE)
+# ---------------------------------------------------------------------------
+
+
+def _write_job_yaml(defs_dir, job_id: str = "ovr_job", enabled: str = "false"):
+    (defs_dir / f"{job_id}.yaml").write_text(
+        f"id: {job_id}\nname: Override Job\nschedule: '*/20 * * * *'\n"
+        f"agent_id: summarizer\nprompt: Do it\nenabled: {enabled}\n"
+    )
+
+
+class TestJobEnvOverrides:
+    def test_enabled_override_turns_job_on(self, job_service: JobService, tmp_path, monkeypatch):
+        defs_dir = tmp_path / "defs"
+        defs_dir.mkdir()
+        _write_job_yaml(defs_dir, enabled="false")
+        monkeypatch.setenv("JOB_OVR_JOB_ENABLED", "true")
+
+        result = job_service.load_definitions_from_yaml(str(defs_dir))
+
+        assert result.total == 1
+        assert result.items[0].enabled is True
+
+    def test_enabled_override_turns_job_off(self, job_service: JobService, tmp_path, monkeypatch):
+        defs_dir = tmp_path / "defs"
+        defs_dir.mkdir()
+        _write_job_yaml(defs_dir, enabled="true")
+        monkeypatch.setenv("JOB_OVR_JOB_ENABLED", "false")
+
+        result = job_service.load_definitions_from_yaml(str(defs_dir))
+
+        assert result.items[0].enabled is False
+
+    def test_enabled_override_applies_on_resync(self, job_service: JobService, tmp_path, monkeypatch):
+        """The override must survive a YAML re-sync (which resets DB state)."""
+        defs_dir = tmp_path / "defs"
+        defs_dir.mkdir()
+        _write_job_yaml(defs_dir, enabled="false")
+        monkeypatch.setenv("JOB_OVR_JOB_ENABLED", "true")
+
+        job_service.load_definitions_from_yaml(str(defs_dir))
+        result = job_service.load_definitions_from_yaml(str(defs_dir))
+
+        assert result.items[0].enabled is True
+
+    def test_invalid_enabled_value_keeps_yaml(self, job_service: JobService, tmp_path, monkeypatch):
+        defs_dir = tmp_path / "defs"
+        defs_dir.mkdir()
+        _write_job_yaml(defs_dir, enabled="false")
+        monkeypatch.setenv("JOB_OVR_JOB_ENABLED", "banana")
+
+        result = job_service.load_definitions_from_yaml(str(defs_dir))
+
+        assert result.items[0].enabled is False
+
+    def test_schedule_override(self, job_service: JobService, tmp_path, monkeypatch):
+        defs_dir = tmp_path / "defs"
+        defs_dir.mkdir()
+        _write_job_yaml(defs_dir)
+        monkeypatch.setenv("JOB_OVR_JOB_SCHEDULE", "0 6 * * *")
+
+        result = job_service.load_definitions_from_yaml(str(defs_dir))
+
+        assert result.items[0].schedule == "0 6 * * *"
+
+    def test_invalid_schedule_override_skips_job(self, job_service: JobService, tmp_path, monkeypatch):
+        """An overridden schedule is validated like a YAML one."""
+        defs_dir = tmp_path / "defs"
+        defs_dir.mkdir()
+        _write_job_yaml(defs_dir)
+        monkeypatch.setenv("JOB_OVR_JOB_SCHEDULE", "not a cron")
+
+        result = job_service.load_definitions_from_yaml(str(defs_dir))
+
+        assert result.total == 0
+
+    def test_override_ignores_other_jobs(self, job_service: JobService, tmp_path, monkeypatch):
+        defs_dir = tmp_path / "defs"
+        defs_dir.mkdir()
+        _write_job_yaml(defs_dir, job_id="ovr_job", enabled="false")
+        _write_job_yaml(defs_dir, job_id="other_job", enabled="false")
+        monkeypatch.setenv("JOB_OVR_JOB_ENABLED", "true")
+
+        result = job_service.load_definitions_from_yaml(str(defs_dir))
+
+        by_id = {d.job_id: d for d in result.items}
+        assert by_id["ovr_job"].enabled is True
+        assert by_id["other_job"].enabled is False
+

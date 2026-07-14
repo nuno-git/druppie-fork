@@ -441,6 +441,14 @@ prReview:
   # Empty = PR review disabled. Enable per environment via the HelmRelease
   # in ai/k8s, e.g. repos: ai/druppie
   repos: ''
+  # Whether the pr_review_job cron runs in THIS environment. The job YAML
+  # ships enabled:false; this value is emitted as JOB_PR_REVIEW_JOB_ENABLED
+  # and overrides it, so prod and colab-dev can differ on the same image.
+  jobEnabled: false
+  # Optional cron override for the job (empty = schedule from
+  # pr_review_job.yaml, currently every 20 minutes). Tune per environment
+  # to trade feedback latency against GPU load.
+  jobSchedule: ''
   maxPrsPerRun: 5
   maxDiffLines: 3000
 init:

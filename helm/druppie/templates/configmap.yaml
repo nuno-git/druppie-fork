@@ -75,6 +75,13 @@ data:
   PRREVIEW_REPOS: {{ .Values.prReview.repos | quote }}
   PRREVIEW_MAX_PRS_PER_RUN: {{ .Values.prReview.maxPrsPerRun | quote }}
   PRREVIEW_MAX_DIFF_LINES: {{ .Values.prReview.maxDiffLines | quote }}
+  # Per-environment override of the pr_review_job YAML (consumed by the
+  # backend's job loader): the same image runs with the cron enabled here
+  # and disabled elsewhere.
+  JOB_PR_REVIEW_JOB_ENABLED: {{ .Values.prReview.jobEnabled | quote }}
+  {{- if .Values.prReview.jobSchedule }}
+  JOB_PR_REVIEW_JOB_SCHEDULE: {{ .Values.prReview.jobSchedule | quote }}
+  {{- end }}
   {{- end }}
 
   # CORS

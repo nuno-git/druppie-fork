@@ -2,6 +2,7 @@
 
 import asyncio
 import os
+import re
 from datetime import datetime, timezone
 from typing import Any, Callable
 from uuid import UUID
@@ -18,6 +19,39 @@ from ..repositories import ExecutionRepository, JobRepository, SessionRepository
 logger = structlog.get_logger()
 
 DEFAULT_JOBS_DIR = os.path.join(os.path.dirname(__file__), "..", "jobs", "definitions")
+
+_TRUTHY = {"1", "true", "yes", "on"}
+_FALSY = {"0", "false", "no", "off"}
+
+
+def _apply_job_env_overrides(data: dict) -> dict:
+    """Apply per-deployment env overrides to a YAML job definition.
+
+    JOB_<ID>_ENABLED and JOB_<ID>_SCHEDULE (id uppercased, e.g.
+    JOB_PR_REVIEW_JOB_ENABLED) override the YAML values, so the same image
+    can run a job enabled in one environment and disabled in another —
+    the YAML stays the single default, the HelmRelease decides per env.
+    """
+    prefix = f"JOB_{re.sub(r'[^A-Z0-9]', '_', str(data['id']).upper())}_"
+
+    enabled_raw = os.getenv(f"{prefix}ENABLED", "").strip().lower()
+    if enabled_raw in _TRUTHY | _FALSY:
+        data["enabled"] = enabled_raw in _TRUTHY
+        logger.info("job_enabled_env_override", job_id=data["id"], enabled=data["enabled"])
+    elif enabled_raw:
+        logger.warning(
+            "job_enabled_env_override_invalid",
+            job_id=data["id"],
+            value=enabled_raw,
+            hint="expected true/false; keeping YAML value",
+        )
+
+    schedule = os.getenv(f"{prefix}SCHEDULE", "").strip()
+    if schedule:
+        data["schedule"] = schedule
+        logger.info("job_schedule_env_override", job_id=data["id"], schedule=schedule)
+
+    return data
 
 
 class JobService:
@@ -90,6 +124,9 @@ class JobService:
                 if not job_id:
                     logger.warning("job_yaml_missing_id", file=filename)
                     continue
+                # Env overrides before validation, so an overridden cron
+                # schedule is validated like a YAML one.
+                data = _apply_job_env_overrides(data)
                 validation_errors = self._validate_job_data(data, filepath)
                 if validation_errors:
                     for error in validation_errors:
