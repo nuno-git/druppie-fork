@@ -11,6 +11,7 @@
 @prd docs/prds/NNN-<feature-name>.md
 @adr docs/adrs/NNN-<feature-name>.md
 Feature: <feature name>
+  # Keep this a one-line summary — the full problem / goal / user journey lives in the linked PRD (@prd). The value of this .feature is the Scenarios below, not re-describing the feature.
   In order to <business value>
   As a <role>
   I want <capability>
