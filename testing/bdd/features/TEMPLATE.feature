@@ -4,8 +4,8 @@
 # Traceability: the @prd / @adr tags below link this behaviour back to the PRD and ADR that
 # motivated it. Keep the paths pointing at real files.
 #
-# LATER (Story #3 — afdwingen): the behave runner + Python step definitions in testing/bdd/steps/
-# (incl. environment.py) and the `behave` dependency are set up in Story #3. This template is the
+# LATER (PBI 9744 — afdwingen): the behave runner + Python step definitions in testing/bdd/steps/
+# (incl. environment.py) and the `behave` dependency are set up in PBI 9744. This template is the
 # skeleton only — the scenarios below are not yet executable until that harness exists.
 
 @prd docs/prds/NNN-<feature-name>.md

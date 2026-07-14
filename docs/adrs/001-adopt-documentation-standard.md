@@ -55,6 +55,6 @@ We adopt a spec-driven documentation standard:
 - (-) Until enforcement exists, compliance is manual and can drift.
 
 Enforcement of this standard (pre-commit + CI validation using the schemas) is deliberately
-**out of scope here** and handled in a later story, so the team can first agree the best
-enforcement mechanism. Migrating existing docs to the standard is likewise a separate story.
+**out of scope here** and handled in a later story (PBI 9744), so the team can first agree the best
+enforcement mechanism. Migrating existing docs to the standard is likewise a separate story (PBI 9743).
 This ADR stays `proposed` until the team signs off, then flips to `accepted`.

@@ -35,6 +35,6 @@ What is the change that we're proposing and/or doing? State the decision clearly
 
 What becomes easier or more difficult to do because of this change? Cover both positive and negative effects. Include impacts on performance, developer experience, testing, deployment, and future evolution.
 
-<!-- LATER (Story #3 — afdwingen): hoe deze beslissing wordt afgedwongen (welke frontmatter-velden
-     en CI-/lint-checks daarvoor nodig zijn) wordt in Story #3 onderzocht en hier toegevoegd.
+<!-- LATER (PBI 9744 — afdwingen): hoe deze beslissing wordt afgedwongen (welke frontmatter-velden
+     en CI-/lint-checks daarvoor nodig zijn) wordt in PBI 9744 onderzocht en hier toegevoegd.
      Bewust nog niet opgenomen zodat we het afdwing-mechanisme eerst goed uitzoeken. -->

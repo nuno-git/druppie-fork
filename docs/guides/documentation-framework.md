@@ -43,8 +43,8 @@ Not every change needs docs: a bugfix or chore usually needs none.
 
 ## Not done yet (later stories)
 
-- **Enforcement** — pre-commit + CI that validate docs against the schemas → **Story #3**.
-- **Migrating existing docs** to this standard → **Story #2**.
+- **Enforcement** — pre-commit + CI that validate docs against the schemas → **PBI 9744**.
+- **Migrating existing docs** to this standard → **PBI 9743**.
 - **In-core documentation portal**, **decision-aware agents**, and **agent writer-skills** →
   later epics (relevant once we build Druppie via Druppie itself).
 
