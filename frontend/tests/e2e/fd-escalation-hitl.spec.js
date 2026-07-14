@@ -38,7 +38,7 @@ async function login(page, { username, password }) {
 }
 
 async function getToken(request) {
-  const resp = await request.post(`${API_URL.replace(/\/$/, '')}/realms/druppie/protocol/openid-connect/token`, {
+  const resp = await request.post(`${KEYCLOAK_URL.replace(/\/$/, '')}/realms/druppie/protocol/openid-connect/token`, {
     form: {
       grant_type: 'password',
       client_id: 'druppie-frontend',
@@ -61,11 +61,11 @@ async function backendUp(request) {
 
 // Find the most recent session in an escalation HITL status.
 async function findEscalationSession(request, token, status) {
-  const resp = await request.get(`${API_URL.replace(/\/$/, '')}/api/sessions`, {
+  const resp = await request.get(`${API_URL.replace(/\/$/, '')}/api/sessions?limit=100`, {
     headers: { Authorization: `Bearer ${token}` },
   })
   const sessions = await resp.json()
-  return (sessions || []).find((s) => s.status === status) || null
+  return (sessions.items || []).find((s) => s.status === status) || null
 }
 
 test.beforeEach(async ({ page }) => {
@@ -73,7 +73,7 @@ test.beforeEach(async ({ page }) => {
 })
 
 test.describe('FD escalation HITL', () => {
-  test.skip('BA review card — escalate is disabled until a post-HITL rejection', async ({ page, request }) => {
+  test('BA review card — escalate is disabled until a post-HITL rejection', async ({ page, request }) => {
     test.skip(!(await backendUp(request)), 'backend not running locally')
 
     const token = await getToken(request)
@@ -89,7 +89,7 @@ test.describe('FD escalation HITL', () => {
     await expect(card.getByRole('button', { name: /iterate|ready|terminate/i })).toHaveCount(3)
   })
 
-  test.skip('Architect review card — reject reveals next-on-reject chooser', async ({ page, request }) => {
+  test('Architect review card — reject reveals next-on-reject chooser', async ({ page, request }) => {
     test.skip(!(await backendUp(request)), 'backend not running locally')
 
     const token = await getToken(request)
