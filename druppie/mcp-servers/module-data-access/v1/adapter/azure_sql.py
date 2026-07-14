@@ -370,7 +370,9 @@ class AzureSQLAdapter(BaseDataSourceAdapter):
             conn = await self._get_connection(user_token=user_token)
             cursor = conn.cursor()
 
-            query = f"SELECT * FROM [{schema}].[{table_name}]"
+            safe_schema = schema.replace("]", "]]")
+            safe_table = table_name.replace("]", "]]")
+            query = f"SELECT * FROM [{safe_schema}].[{safe_table}]"
             params: list = []
 
             if filter_expr:
@@ -487,9 +489,11 @@ class AzureSQLAdapter(BaseDataSourceAdapter):
             import csv
 
             schema, table_name = data_id.split(".", 1)
+            safe_schema = schema.replace("]", "]]")
+            safe_table = table_name.replace("]", "]]")
             conn = await self._get_connection(user_token=user_token)
             cursor = conn.cursor()
-            cursor.execute(f"SELECT * FROM [{schema}].[{table_name}]")
+            cursor.execute(f"SELECT * FROM [{safe_schema}].[{safe_table}]")
 
             columns = [desc[0] for desc in cursor.description]
             row_count = 0

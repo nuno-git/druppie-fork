@@ -115,7 +115,7 @@ class AuthService:
                 signing_key.key,
                 algorithms=["RS256"],
                 issuer=self.issuer,
-                options={"verify_aud": False},
+                audience="account",
             )
             return decoded
 

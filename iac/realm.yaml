@@ -117,7 +117,7 @@ clients:
     publicClient: true
     standardFlowEnabled: true
     implicitFlowEnabled: false
-    directAccessGrantsEnabled: true
+    directAccessGrantsEnabled: false
     serviceAccountsEnabled: false
     protocol: openid-connect
     rootUrl: http://${EXTERNAL_HOST}:${FRONTEND_PORT}

@@ -10,6 +10,7 @@ caches in memory and refreshes near expiry) and are NEVER written to disk.
 """
 
 import logging
+from urllib.parse import quote
 
 import httpx
 from azure.identity.aio import ClientSecretCredential
@@ -171,7 +172,7 @@ class AzureDevOpsClient:
     ) -> dict:
         """Create a work item in the configured project."""
         return await self._post_patch(
-            f"{self._project}/_apis/wit/workitems/${work_item_type}",
+            f"{self._project}/_apis/wit/workitems/${quote(work_item_type, safe='')}",
             operations,
             user_token=user_token,
         )

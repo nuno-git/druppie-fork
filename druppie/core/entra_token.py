@@ -131,7 +131,6 @@ async def check_entra_linked(user_id: str) -> bool:
 
 async def get_entra_token(
     user_kc_token: str,
-    expected_user_id: str | None = None,
     scope: str | None = None,
 ) -> dict[str, Any]:
     """Retrieve a user-scoped Entra ID token via Keycloak's broker endpoint.
@@ -192,12 +191,27 @@ async def get_entra_token(
     if email_error:
         return {"access_token": None, "error": email_error, "needs_reauth": False}
 
-    # M5: verify the token belongs to the expected user
-    if expected_user_id:
-        token_oid = _get_token_claim(access_token, "oid")
-        token_sub = _get_token_claim(access_token, "sub")
-        if token_oid:
-            logger.debug("entra_token_identity_verified", oid_present=True)
+    # C1: verify the Entra token belongs to the same user as the KC token
+    kc_claims = _decode_jwt_payload(user_kc_token)
+    kc_email = (kc_claims.get("email") or kc_claims.get("preferred_username") or "").lower()
+    entra_claims = _decode_jwt_payload(access_token)
+    entra_email = (
+        entra_claims.get("email")
+        or entra_claims.get("preferred_username")
+        or entra_claims.get("upn")
+        or ""
+    ).lower()
+    if kc_email and entra_email and kc_email != entra_email:
+        logger.error(
+            "entra_token_identity_mismatch",
+            kc_email=kc_email,
+            entra_email=entra_email,
+        )
+        return {
+            "access_token": None,
+            "error": "Entra token identity does not match authenticated user.",
+            "needs_reauth": True,
+        }
 
     # If a specific scope is requested and we have a refresh token, exchange it
     if scope and refresh_token:
