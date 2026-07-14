@@ -121,10 +121,10 @@ class AzureDevOpsModule:
         except (ValueError, IndexError):
             return None
 
-    async def get_current_sprint(self) -> dict:
+    async def get_current_sprint(self, user_token: str | None = None) -> dict:
         """Return info about the current sprint (iteration) based on today's date."""
         try:
-            iterations = await self._client.get_team_iterations()
+            iterations = await self._client.get_team_iterations(user_token=user_token)
             now = datetime.now(timezone.utc)
             current = None
             all_sprints = []
@@ -162,6 +162,7 @@ class AzureDevOpsModule:
         iteration: str | None = None,
         assigned_to: str | None = None,
         limit: int = 100,
+        user_token: str | None = None,
     ) -> dict:
         """List work items in the configured project, newest first."""
         clauses = [self._project_clause()]
@@ -190,8 +191,8 @@ class AzureDevOpsModule:
             + " ORDER BY [System.ChangedDate] DESC"
         )
         try:
-            ids = await self._client.query_wiql(wiql, top=limit)
-            items = await self._client.get_work_items(ids, fields=_SUMMARY_FIELDS)
+            ids = await self._client.query_wiql(wiql, top=limit, user_token=user_token)
+            items = await self._client.get_work_items(ids, fields=_SUMMARY_FIELDS, user_token=user_token)
             return {
                 "success": True,
                 "project": self._project,
@@ -202,10 +203,10 @@ class AzureDevOpsModule:
             logger.warning("list_backlog_items failed: %s", exc)
             return {"success": False, "error": str(exc)}
 
-    async def get_work_item(self, item_id: int) -> dict:
+    async def get_work_item(self, item_id: int, user_token: str | None = None) -> dict:
         """Return full detail for one work item, including parent and children."""
         try:
-            item = await self._client.get_work_item(item_id)
+            item = await self._client.get_work_item(item_id, user_token=user_token)
             f = item.get("fields", {})
 
             parent_id = None
@@ -226,6 +227,7 @@ class AzureDevOpsModule:
                     parent_items = await self._client.get_work_items(
                         [parent_id],
                         fields=["System.Id", "System.Title", "System.WorkItemType", "System.State"],
+                        user_token=user_token,
                     )
                     if parent_items:
                         pf = parent_items[0].get("fields", {})
@@ -248,6 +250,7 @@ class AzureDevOpsModule:
                             "System.State", "System.AssignedTo",
                             "Microsoft.VSTS.Scheduling.Effort",
                         ],
+                        user_token=user_token,
                     )
                     for ch in child_items:
                         cf = ch.get("fields", {})
@@ -302,7 +305,7 @@ class AzureDevOpsModule:
             "completion_pct": round(done / total * 100) if total else 0,
         }
 
-    async def get_sprint_summary(self, iteration: str) -> dict:
+    async def get_sprint_summary(self, iteration: str, user_token: str | None = None) -> dict:
         """Aggregate sprint-level stats: effort by person, by board column, progress."""
         try:
             clauses = [
@@ -315,8 +318,8 @@ class AzureDevOpsModule:
                 + " AND ".join(clauses)
                 + " ORDER BY [System.ChangedDate] DESC"
             )
-            ids = await self._client.query_wiql(wiql, top=200)
-            items = await self._client.get_work_items(ids, fields=_SUMMARY_FIELDS)
+            ids = await self._client.query_wiql(wiql, top=200, user_token=user_token)
+            items = await self._client.get_work_items(ids, fields=_SUMMARY_FIELDS, user_token=user_token)
 
             by_type: dict[str, list] = {}
             by_board: dict[str, list] = {}
@@ -370,7 +373,7 @@ class AzureDevOpsModule:
             logger.warning("get_sprint_summary failed: %s", exc)
             return {"success": False, "error": str(exc)}
 
-    async def search_work_items(self, text: str, limit: int = 50) -> dict:
+    async def search_work_items(self, text: str, limit: int = 50, user_token: str | None = None) -> dict:
         """Find work items whose title or description contains `text`."""
         needle = _wiql_escape(text)
         wiql = (
@@ -381,8 +384,8 @@ class AzureDevOpsModule:
             + " ORDER BY [System.ChangedDate] DESC"
         )
         try:
-            ids = await self._client.query_wiql(wiql, top=limit)
-            items = await self._client.get_work_items(ids, fields=_SUMMARY_FIELDS)
+            ids = await self._client.query_wiql(wiql, top=limit, user_token=user_token)
+            items = await self._client.get_work_items(ids, fields=_SUMMARY_FIELDS, user_token=user_token)
             return {
                 "success": True,
                 "project": self._project,
@@ -393,10 +396,10 @@ class AzureDevOpsModule:
             logger.warning("search_work_items failed: %s", exc)
             return {"success": False, "error": str(exc)}
 
-    async def get_work_item_comments(self, item_id: int, top: int = 50) -> dict:
+    async def get_work_item_comments(self, item_id: int, top: int = 50, user_token: str | None = None) -> dict:
         """Return comments for a work item, newest first."""
         try:
-            result = await self._client.get_work_item_comments(item_id, top=top, order="desc")
+            result = await self._client.get_work_item_comments(item_id, top=top, order="desc", user_token=user_token)
             comments = []
             for c in result.get("comments", []):
                 comments.append({
@@ -417,10 +420,10 @@ class AzureDevOpsModule:
             logger.warning("get_work_item_comments(%s) failed: %s", item_id, exc)
             return {"success": False, "error": str(exc)}
 
-    async def add_work_item_comment(self, item_id: int, text: str) -> dict:
+    async def add_work_item_comment(self, item_id: int, text: str, user_token: str | None = None) -> dict:
         """Add a comment to a work item."""
         try:
-            result = await self._client.add_work_item_comment(item_id, text)
+            result = await self._client.add_work_item_comment(item_id, text, user_token=user_token)
             return {
                 "success": True,
                 "project": self._project,
@@ -464,6 +467,7 @@ class AzureDevOpsModule:
         effort: float | None = None,
         tags: str | None = None,
         parent_id: int | None = None,
+        user_token: str | None = None,
     ) -> dict:
         """Create a new work item in the configured project."""
         if work_item_type not in VALID_WORK_ITEM_TYPES:
@@ -496,13 +500,13 @@ class AzureDevOpsModule:
             })
 
         try:
-            result = await self._client.create_work_item(work_item_type, operations)
+            result = await self._client.create_work_item(work_item_type, operations, user_token=user_token)
         except httpx.HTTPStatusError as exc:
             if exc.response.status_code == 403 and "permissions to create tags" in str(exc) and tags:
                 logger.warning("create_work_item: tag permission denied, retrying without tags")
                 operations = [op for op in operations if op.get("path") != "/fields/System.Tags"]
                 try:
-                    result = await self._client.create_work_item(work_item_type, operations)
+                    result = await self._client.create_work_item(work_item_type, operations, user_token=user_token)
                 except Exception as retry_exc:
                     logger.warning("create_work_item retry failed: %s", retry_exc)
                     return {"success": False, "error": str(retry_exc)}
@@ -532,14 +536,14 @@ class AzureDevOpsModule:
             resp["warning"] = warning
         return resp
 
-    async def _discover_kanban_column_field(self, item_id: int) -> str | None:
+    async def _discover_kanban_column_field(self, item_id: int, user_token: str | None = None) -> str | None:
         """Find the WEF Kanban.Column field reference name from a work item.
 
         Azure DevOps stores board column state in a team-specific field
         like ``WEF_<hex>_Kanban.Column``.  ``System.BoardColumn`` is
         read-only — this writable WEF field is what we need to PATCH.
         """
-        item = await self._client.get_work_item(item_id)
+        item = await self._client.get_work_item(item_id, user_token=user_token)
         for field_name in item.get("fields", {}):
             if field_name.endswith("_Kanban.Column"):
                 return field_name
@@ -558,6 +562,7 @@ class AzureDevOpsModule:
         effort: float | None = None,
         tags: str | None = None,
         parent_id: int | None = None,
+        user_token: str | None = None,
     ) -> dict:
         """Update an existing work item in the configured project."""
         if state and board_column:
@@ -580,7 +585,7 @@ class AzureDevOpsModule:
         operations = self._build_patch_operations(fields)
 
         if board_column:
-            kanban_field = await self._discover_kanban_column_field(item_id)
+            kanban_field = await self._discover_kanban_column_field(item_id, user_token=user_token)
             if kanban_field:
                 operations.append({
                     "op": "add",
@@ -608,7 +613,7 @@ class AzureDevOpsModule:
             return {"success": False, "error": "No fields to update."}
 
         try:
-            result = await self._client.update_work_item(item_id, operations)
+            result = await self._client.update_work_item(item_id, operations, user_token=user_token)
         except httpx.HTTPStatusError as exc:
             if exc.response.status_code == 403 and "permissions to create tags" in str(exc) and tags:
                 logger.warning("update_work_item: tag permission denied, retrying without tags")
@@ -616,7 +621,7 @@ class AzureDevOpsModule:
                 if not operations:
                     return {"success": False, "error": "No fields to update (tags were the only change and the service principal lacks tag-creation permissions)."}
                 try:
-                    result = await self._client.update_work_item(item_id, operations)
+                    result = await self._client.update_work_item(item_id, operations, user_token=user_token)
                 except Exception as retry_exc:
                     logger.warning("update_work_item retry failed: %s", retry_exc)
                     return {"success": False, "error": str(retry_exc)}

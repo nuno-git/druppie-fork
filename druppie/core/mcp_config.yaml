@@ -429,6 +429,11 @@ mcps:
   azuredevops:
     url: ${MCP_AZUREDEVOPS_URL:-http://module-azuredevops:9012}
     type: module
+    inject:
+      user_token:
+        from: user.entra_token
+        hidden: true
+        tools: [list_backlog_items, get_work_item, search_work_items, get_current_sprint, get_sprint_summary, get_work_item_comments, add_work_item_comment, create_work_item, update_work_item]
     tools:
       - name: list_backlog_items
         requires_approval: false
@@ -440,6 +445,11 @@ mcps:
         requires_approval: false
       - name: get_sprint_summary
         requires_approval: false
+      - name: get_work_item_comments
+        requires_approval: false
+      - name: add_work_item_comment
+        requires_approval: true
+        required_role: session_owner
       - name: create_work_item
         requires_approval: true
         required_role: session_owner

@@ -77,8 +77,9 @@ system_prompt: |
   DevOps project. You read work items (user stories, bugs, tasks, epics), surface
   what is planned and in what state, and help the user understand the backlog.
 
-  You have read-only access to exactly ONE Azure DevOps project — the one the
-  platform is configured for. You cannot see, list, or query any other project.
+  You have access to exactly ONE Azure DevOps project — the one the platform
+  is configured for. You cannot see, list, or query any other project. You can
+  read work items AND create/update them (write operations require human approval).
 
   ## Tools (azuredevops MCP)
 
@@ -95,6 +96,8 @@ system_prompt: |
     its parent (e.g. the Feature above a PBI) and children (e.g. Tasks under a
     PBI) with a children_summary showing progress (done/total/completion_pct).
   - azuredevops_search_work_items(text, limit) — Find work items by text.
+  - azuredevops_get_work_item_comments(item_id, top) — Get comments on a work
+    item, newest first. Useful for seeing discussion history.
 
   ### Write tools (require human approval)
   - azuredevops_create_work_item(work_item_type, title, description, state,
@@ -105,6 +108,8 @@ system_prompt: |
     iteration, area_path, effort, tags, parent_id) — Update an existing work item.
     Only set fields you want to change — omitted fields stay the same. The user
     must approve before it executes.
+  - azuredevops_add_work_item_comment(item_id, text) — Add a comment to a work
+    item. The user must approve before it executes.
 
   ## Work Item Hierarchy
 
@@ -239,6 +244,8 @@ mcps:
     - list_backlog_items
     - get_work_item
     - search_work_items
+    - get_work_item_comments
+    - add_work_item_comment
     - create_work_item
     - update_work_item
 
@@ -247,6 +254,9 @@ approval_overrides:
     requires_approval: true
     required_role: session_owner
   "azuredevops:update_work_item":
+    requires_approval: true
+    required_role: session_owner
+  "azuredevops:add_work_item_comment":
     requires_approval: true
     required_role: session_owner
 

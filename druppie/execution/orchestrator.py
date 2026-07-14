@@ -470,6 +470,7 @@ class Orchestrator:
             or None if session not found
         """
         from druppie.db.models import Session as DBSession, Project
+        from druppie.db.models.user import User
 
         # Expire cached objects to ensure we read fresh data from DB.
         # Previous agents (e.g., router's set_intent) may have modified
@@ -486,6 +487,14 @@ class Orchestrator:
             "conversational_language": session.language or DEFAULT_LANGUAGE,
             "language_info": self._last_language_info,
         }
+
+        # Add user identity so agents know who is logged in
+        if session.user_id:
+            user = self.session_repo.db.query(User).filter(User.id == session.user_id).first()
+            if user:
+                context["user_display_name"] = user.display_name or user.username
+                if user.email:
+                    context["user_email"] = user.email
 
         # Add intent so agents know what workflow to follow
         if session.intent:
@@ -753,6 +762,20 @@ class Orchestrator:
             tool_status=tool_status,
         )
 
+        # If the tool needs Entra auth, stop here — the frontend will call
+        # authorize-entra which triggers resume_after_entra_auth to finish
+        # the job.  Without this early return the agent would resume, see the
+        # failure, and retry → infinite approval loop.
+        if tool_status == ToolCallStatus.WAITING_ENTRA_AUTH:
+            logger.info(
+                "approval_deferred_to_entra_auth",
+                approval_id=str(approval_id),
+                session_id=str(session_id),
+            )
+            self.session_repo.update_status(session_id, SessionStatus.PAUSED_ENTRA_AUTH)
+            self.execution_repo.commit()
+            return session_id
+
         # Step 3: Get the paused agent run
         agent_run = self.execution_repo.get_by_id(approval.agent_run_id)
         if not agent_run:
@@ -953,6 +976,8 @@ class Orchestrator:
         scope = None
         if waiting_tc.mcp_server == "dataaccess":
             scope = "https://database.windows.net/.default"
+        elif waiting_tc.mcp_server == "azuredevops":
+            scope = "499b84ac-1321-427f-aa17-267ca6975798/.default"
         token_result = await get_entra_token(user_kc_token, scope=scope)
         entra_token = token_result.get("access_token")
 
