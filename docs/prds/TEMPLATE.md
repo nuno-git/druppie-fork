@@ -4,6 +4,9 @@ title: Feature name                   # Short, descriptive name
 status: draft                         # draft | review | approved | implemented
 author: role name                     # Who authored this PRD (e.g. "architect", "developer")
 date: YYYY-MM-DD                      # Date of initial draft (YYYY-MM-DD)
+# Supersession tracking — only relevant when a PRD is replaced
+supersedes: null                      # PRD id string this replaces (e.g. "003") or null
+superseded_by: null                   # PRD id string that replaces this (e.g. "005") or null
 linked_adrs: []                       # List of ADR file paths, e.g. ["docs/adrs/001-choice-of-state-management.md"]
 linked_research: []                   # List of research doc paths, e.g. ["docs/research/001-auth-providers.md"]
 linked_bdd: []                        # List of .feature file paths, e.g. ["testing/bdd/features/approval-workflow.feature"]

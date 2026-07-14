@@ -5,13 +5,15 @@
   "description": "Required YAML frontmatter for a Product Requirements Document. Definition only; enforcement is a later story.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["id", "title", "status", "author", "date", "linked_adrs", "linked_research", "linked_bdd"],
+  "required": ["id", "title", "status", "author", "date", "linked_adrs", "linked_research", "linked_bdd", "supersedes", "superseded_by"],
   "properties": {
     "id": { "type": "string", "pattern": "^[0-9]{3}$" },
     "title": { "type": "string", "minLength": 1 },
     "status": { "enum": ["draft", "review", "approved", "implemented"] },
     "author": { "type": "string", "minLength": 1 },
     "date": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" },
+    "supersedes": { "oneOf": [{ "type": "string", "pattern": "^[0-9]{3}$" }, { "type": "null" }] },
+    "superseded_by": { "oneOf": [{ "type": "string", "pattern": "^[0-9]{3}$" }, { "type": "null" }] },
     "linked_adrs": { "type": "array", "items": { "type": "string" } },
     "linked_research": { "type": "array", "items": { "type": "string" } },
     "linked_bdd": { "type": "array", "items": { "type": "string" } }

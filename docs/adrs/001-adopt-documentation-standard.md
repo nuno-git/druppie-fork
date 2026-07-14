@@ -8,13 +8,12 @@ deciders:
 supersedes: null
 superseded_by: null
 linked_prd: null
-linked_research: docs/research/documentation-standards.md
+linked_research: https://github.com/nuno-git/druppie-fork/pull/283
 ---
 
 > **Where this fits:** This ADR is the first application of the standard it defines
 > (dogfooding). It records *that* we adopt a documentation standard and *what* that standard is.
-> The detailed framework reference lives in [`SPEC-FRAMEWORK.md`](../SPEC-FRAMEWORK.md); the
-> empirical rationale lives in the linked research.
+> The empirical rationale lives in the linked research (PR #283).
 
 ## Context
 
@@ -30,8 +29,8 @@ We adopt a spec-driven documentation standard:
 
 - **Format:** Markdown with YAML frontmatter. Frontmatter carries the machine-readable fields
   (id, status, links); the body is free-form Markdown for human reasoning.
-- **Document types (5):** PRD (feature), ADR (decision), Research (investigation),
-  BDD (`.feature` acceptance criteria), and Design-system component docs.
+- **Document types (4):** PRD (feature), ADR (decision), Research (investigation),
+  and BDD (`.feature` acceptance criteria).
 - **Flow:** `PRD → Research? → ADR? → BDD → build` (Research and ADR are conditional).
 - **Status per type** (not one shared enum): ADR `proposed | accepted | deprecated | superseded`;
   PRD `draft | review | approved | implemented`; Research `draft | complete`.
@@ -42,8 +41,7 @@ We adopt a spec-driven documentation standard:
   (`docs/{adrs,prds,research}/*.schema.json`) defines the required fields.
 - **Language:** English is the source of truth; frontmatter, ids and status are never translated.
 - **Templates** live at fixed locations: `docs/adrs/TEMPLATE.md`, `docs/prds/TEMPLATE.md`,
-  `docs/research/TEMPLATE.md`, `testing/bdd/features/TEMPLATE.feature`,
-  `docs/design-system/components/TEMPLATE.md`.
+  `docs/research/TEMPLATE.md`, `testing/bdd/features/TEMPLATE.feature`.
 
 ## Consequences
 

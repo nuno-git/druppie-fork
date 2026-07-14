@@ -5,11 +5,9 @@ status: draft
 
 # Documentation framework — how it works
 
-This is the practical guide to how we document decisions and specs in this repo. For the deep
-reference see [`SPEC-FRAMEWORK.md`](../SPEC-FRAMEWORK.md); for the decision and rationale see
-[ADR 001](../adrs/001-adopt-documentation-standard.md).
+This is the practical guide to how we document decisions and specs in this repo. For the decision and rationale see [ADR 001](../adrs/001-adopt-documentation-standard.md).
 
-## The five document types
+## The four document types
 
 | Type | What it captures | When you write it | Template |
 |------|------------------|-------------------|----------|
@@ -17,7 +15,6 @@ reference see [`SPEC-FRAMEWORK.md`](../SPEC-FRAMEWORK.md); for the decision and 
 | **Research** | An options / trade-off investigation | Only when the choice isn't obvious | `docs/research/TEMPLATE.md` |
 | **ADR** | A committed technical/architecture decision + why | When you make a decision worth remembering | `docs/adrs/TEMPLATE.md` |
 | **BDD** | Executable acceptance criteria (Gherkin) | Before implementing, to pin behaviour | `testing/bdd/features/TEMPLATE.feature` |
-| **Design-system** | A UI component's variants, rules, accessibility | When adding/changing a frontend component | `docs/design-system/components/TEMPLATE.md` |
 
 ## The flow
 
