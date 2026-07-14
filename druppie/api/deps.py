@@ -44,6 +44,7 @@ from druppie.repositories import (
     EvaluationRepository,
     DocumentationCacheRepository,
     JobRepository,
+    NotificationRepository,
 )
 from druppie.services import (
     SessionService,
@@ -106,6 +107,11 @@ def get_doc_cache_repository(db: Session = Depends(get_db)) -> DocumentationCach
 def get_job_repository(db: Session = Depends(get_db)) -> JobRepository:
     """Get JobRepository with DB session injected."""
     return JobRepository(db)
+
+
+def get_notification_repository(db: Session = Depends(get_db)) -> NotificationRepository:
+    """Get NotificationRepository with DB session injected."""
+    return NotificationRepository(db)
 
 
 def get_attachment_repository(db: Session = Depends(get_db)) -> "AttachmentRepository":

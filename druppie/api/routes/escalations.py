@@ -29,7 +29,7 @@ GET /api/sessions/{id} to track progress.
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, TYPE_CHECKING
 from uuid import UUID
 
 import structlog
@@ -45,6 +45,9 @@ from druppie.api.deps import (
 from druppie.core.background_tasks import create_tracked_task, run_session_task
 from druppie.domain import EscalationEventDetail, EscalationEventList
 from druppie.services import EscalationService
+
+if TYPE_CHECKING:
+    from druppie.execution import Orchestrator
 
 logger = structlog.get_logger()
 
@@ -142,7 +145,7 @@ async def ba_hitl(
     session_id: UUID,
     request: BaHitlRequest,
     escalation_service: EscalationService = Depends(get_escalation_service),
-    orchestrator=Depends(get_orchestrator),
+    orchestrator: Orchestrator = Depends(get_orchestrator),
     user: dict = Depends(get_current_user),
 ) -> EscalationDecisionResponse:
     """Submit a BA human-in-the-loop decision.
@@ -270,7 +273,7 @@ async def terminate(
     session_id: UUID,
     request: TerminateRequest,
     escalation_service: EscalationService = Depends(get_escalation_service),
-    orchestrator=Depends(get_orchestrator),
+    orchestrator: Orchestrator = Depends(get_orchestrator),
     user: dict = Depends(get_current_user),
 ) -> EscalationDecisionResponse:
     """Terminate a session.

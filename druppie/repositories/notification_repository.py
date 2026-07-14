@@ -3,6 +3,7 @@
 from uuid import UUID
 
 from ..db.models.notification import Notification
+from ..domain import NotificationDetail
 from .base import BaseRepository
 
 
@@ -32,11 +33,12 @@ class NotificationRepository(BaseRepository):
         self,
         user_id: UUID,
         unread_only: bool = False,
-    ) -> list[Notification]:
+    ) -> list[NotificationDetail]:
         query = self.db.query(Notification).filter(Notification.user_id == user_id)
         if unread_only:
             query = query.filter(Notification.is_read.is_(False))
-        return query.order_by(Notification.created_at.desc()).all()
+        notifications = query.order_by(Notification.created_at.desc()).all()
+        return [self._to_detail(n) for n in notifications]
 
     def mark_as_read(self, notification_id: UUID, user_id: UUID) -> bool:
         updated = (
@@ -47,4 +49,17 @@ class NotificationRepository(BaseRepository):
             )
             .update({"is_read": True}, synchronize_session="fetch")
         )
+        if updated:
+            self.db.commit()
         return updated > 0
+
+    def _to_detail(self, n: Notification) -> NotificationDetail:
+        return NotificationDetail(
+            id=n.id,
+            session_id=n.session_id,
+            kind=n.kind,
+            role=n.role,
+            message=n.message,
+            is_read=n.is_read,
+            created_at=n.created_at,
+        )
