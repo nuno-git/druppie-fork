@@ -221,6 +221,64 @@ The validator checks for:
 
 ---
 
+## FD Escalation Human-in-the-Loop
+
+The Business Analyst (BA) ↔ Architect design loop can spin indefinitely: the architect sends `DESIGN_FEEDBACK`, the automated BA revises, the architect rejects again. **FD escalation** breaks that loop by handing the revision work to a **human** once the automated loop fails to converge.
+
+### How it works
+
+1. Each time the architect sends `DESIGN_FEEDBACK`, a rejection is counted (`session.fd_rejection_count`).
+2. When the count reaches the **escalation threshold** (default **3**, set in `architect.yaml`), the session enters **BA HITL** (`paused_ba_hitl`): a human business analyst takes over the FD revision loop.
+3. The human BA can: **iterate** (revise the FD, return to human review), **ready** (hand the FD to the architect for review), **escalate** (step up to a human architect for final review), or **terminate** (hard end).
+4. The escalation is **sticky** (`session.fd_escalation_mode`): once active, every subsequent FD revision routes back to the human BA, never to the automated BA.
+5. The human BA may **escalate to a human architect** only after at least one post-HITL rejection (`fd_post_hitl_rejection_count >= 1`).
+6. The human architect can **approve** (design accepted) or **reject** — routing back to the BA HITL or terminating.
+7. **Terminated** (`terminated`) is a hard terminal state: pending runs are cancelled and the session cannot be resumed.
+
+The Planner is the primary trigger (it counts `DESIGN_FEEDBACK` and routes to the reserved pseudo-agent `ba_hitl`). The orchestrator runs an autonomous **backstop** that independently counts rejections and forces the HITL pause if the Planner mis-routes, so the loop is guaranteed to break even on LLM routing errors.
+
+### Session statuses
+
+| Status | Meaning |
+|--------|---------|
+| `paused_ba_hitl` | Waiting for a human business analyst to act on the FD |
+| `paused_architect_hitl` | Waiting for a human architect to approve or reject the FD |
+| `terminated` | Hard-terminated; not resumable |
+
+### Authorization
+
+| Decision | Who can act |
+|----------|-------------|
+| BA HITL (iterate / ready / escalate) | `business_analyst` role **or** the session owner |
+| BA HITL (terminate) | Session owner only |
+| Architect HITL (approve / reject) | `architect` role |
+| Terminate (standalone) | Session owner |
+| — (any of the above) | `admin` is always authorized regardless of role or ownership |
+
+### New session state fields
+
+| Field | Type | Purpose |
+|-------|------|---------|
+| `fd_rejection_count` | Integer | Number of architect `DESIGN_FEEDBACK` rejections for the current FD |
+| `fd_escalation_mode` | Boolean | Sticky latch — once True, all FD revisions route to the human BA |
+| `fd_post_hitl_rejection_count` | Integer | Rejections that occurred after escalation; gates the escalate-to-architect option |
+
+### Notifications
+
+When a session enters a HITL pause, role-targeted in-app notifications are created (best-effort): users with the `business_analyst` role are notified on a BA HITL pause; users with the `architect` role on an architect HITL pause. Notifications are currently poll-based only (see [BACKLOG.md](BACKLOG.md)).
+
+### UI
+
+The chat timeline renders dedicated review cards:
+
+- **BA review card** (`BAHitlCard`) — iterate / ready / escalate / terminate, with rejection context. The escalate button is disabled until a post-HITL rejection has occurred.
+- **Architect review card** (`ArchitectHitlCard`) — approve, or reject (choose route back to BA or terminate).
+- **Escalation history** (`EscalationHistoryList`) — read-only audit trail of every escalation event.
+
+A terminated session shows a termination banner and is not resumable.
+
+---
+
 ## Chat and Conversations
 
 The primary interface is a chat page where users submit natural language requests. Each request starts a session that progresses through a multi-agent pipeline.

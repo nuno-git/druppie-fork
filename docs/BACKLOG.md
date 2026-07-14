@@ -56,6 +56,11 @@ Last updated: 2026-06-11
 - ~~Document Formatter — Mermaid/ArchiMate Rendering Inside PDFs~~ ✅ DONE (Mermaid via @preview/mmdr:0.2.2; ArchiMate via Python SVG export)
 - Document Formatter — Database Persistence & Download API (render cache exists; full document domain model + REST endpoints still needed)
 - ~~Document Formatter — Replace Lato with Neusa Next Std (if licensed)~~ ✅ DONE (Neusa Next Pro fonts added alongside Lato)
+- FD Escalation — DB Column Widening Has No Migration (`sessions.status` widened to `varchar(30)`, dev DBs need `reset-db`)
+- FD Escalation — Notifications Are Poll-Based Only (no WebSocket/push; unread-badge/bell UI not wired beyond the cards)
+- FD Escalation — `fd_escalation_mode` Latch Never Reset (once escalated, always escalated)
+- FD Escalation — Planner Routing Relies on LLM Counting `DESIGN_FEEDBACK` (orchestrator backstop is the safety net)
+- ~~FD Escalation — Undocumented~~ ✅ DONE (FEATURES.md / TECHNICAL.md updated)
 
 ---
 
@@ -524,6 +529,44 @@ Branch `Archimate-end-to-end` delivers ArchiMate generation, rendering, and incr
 - **Current state (v1):** Write-MCP creates elements with inline properties using existing propertyDefinitions from the loaded file (or skips properties).
 - **Desired improvement:** Full `propertyDefinition` management — `create_property_definition`, `update_property_definition`, validation that properties on elements reference valid definitions.
 - **Priority:** Medium — needed once architects define organization-specific properties (e.g., "Compliance-status", "Owner-department").
+
+---
+
+## FD Escalation HITL — Tech Debt
+
+The FD-escalation HITL feature (branch `feature/fd-escalation-hitl`) ships on `colab-dev`. The following items are known debt and operational caveats. See `docs/FEATURES.md` "FD Escalation Human-in-the-Loop" and `docs/TECHNICAL.md` §13 for the as-built behavior.
+
+### FD Escalation — DB Column Widening Has No Migration
+
+- **Location:** `druppie/db/models/session.py:21`, `CLAUDE.md:247`
+- **Current state:** `sessions.status` was widened from `String(20)` to `String(30)` because `paused_architect_hitl` (21 chars) overflowed the old width. Per the repo's no-migrations policy (`CLAUDE.md:247`), this is a model-only change — there is no Alembic migration.
+- **Impact:** Existing dev databases still have `varchar(20)` and will raise `StringDataRightTruncation` on the first escalate→architect HITL transition.
+- **Operational guidance:** run `docker compose --profile reset-db run --rm reset-db` after pulling this branch so the live schema matches the model. Fresh installs are unaffected.
+
+### FD Escalation — Notifications Are Poll-Based Only
+
+- **Location:** `druppie/db/models/notification.py`, `druppie/api/routes/notifications.py`, `druppie/execution/orchestrator.py` (`_notify_role_of_pause`)
+- **Current state:** HITL-pause notifications are persisted as `Notification` rows and surfaced via `GET /api/notifications`. There is no WebSocket/push channel (the platform is polling-only — see "No WebSocket Support" above).
+- **Impact:** The unread-badge / bell UI is not wired beyond the review cards. Recipients must poll or watch the session. A 2026-06 auth bug where `get_current_user` never synced roles (so `get_by_role` returned no recipients) was fixed in the same branch, but the delivery is still best-effort poll-based.
+
+### FD Escalation — `fd_escalation_mode` Latch Never Reset
+
+- **Location:** `druppie/execution/orchestrator.py:1967-1972`, `druppie/db/models/session.py:35`
+- **Current state:** `fd_escalation_mode` is set to `True` when the rejection count crosses the threshold, but it is never set back to `False` — not even after a human architect approves the FD.
+- **Impact:** Behavior is "once escalated, always escalated" for the rest of the session's FD cycle. This is currently intended (sticky supervision), but it means a session cannot fall back to the automated BA after a successful human approval.
+- **Decision needed:** Confirm whether the latch should reset on architect approval, or remain permanent by design.
+
+### FD Escalation — Planner Routing Relies on LLM Counting `DESIGN_FEEDBACK`
+
+- **Location:** `druppie/agents/definitions/general/planner.yaml` (DESIGN_FEEDBACK handling), `druppie/execution/orchestrator.py:1916` (`_evaluate_escalation`)
+- **Current state:** Escalation routing depends on the Planner LLM accurately counting `DESIGN_FEEDBACK` lines in the accumulated summary and routing to `ba_hitl` at the threshold. This parallels the existing TDD-retry string-counting fragility (see "TDD Retry Counting in Python Runtime" above).
+- **Mitigation:** the orchestrator's backstop counter (`_evaluate_escalation`) independently counts rejections and forces `PAUSED_BA_HITL` at the threshold, so the loop is guaranteed to break even if the Planner mis-routes. The backstop is the safety net; the Planner routing is the fast path.
+- **Desired improvement:** treat the Planner routing as advisory only and let the orchestrator's deterministic counter be the single source of truth for escalation (reduces reliance on LLM counting).
+
+### ~~FD Escalation — Undocumented~~ (DONE)
+
+- **Resolved in:** `feature/fd-escalation-hitl` branch
+- The feature was previously undocumented. `docs/FEATURES.md` "FD Escalation Human-in-the-Loop" and `docs/TECHNICAL.md` §13 "FD Escalation State Machine" now describe the user-visible behavior, state machine, and architecture.
 
 ---
 

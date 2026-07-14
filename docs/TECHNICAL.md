@@ -1606,3 +1606,133 @@ Stored in `sessions.language` (VARCHAR(10), nullable). Set on the first user mes
 - Startup validation logs a warning when `DEEPINFRA_API_KEY` is not set.
 - Test framework pre-flight check: `runner.py` logs a warning before executing agent tests when `DEEPINFRA_API_KEY` is missing, and wraps `TranslationNotAvailableError` with a clear "set it in .env" message in test results.
 
+---
+
+## 13. FD Escalation State Machine
+
+The FD-escalation HITL feature breaks the infinite BA ↔ Architect design loop by escalating to a human business analyst (then optionally a human architect) after a configurable number of FD rejections. The orchestrator enforces the state machine autonomously; the Planner is the primary trigger and the orchestrator is the backstop. See [docs/FEATURES.md](FEATURES.md) "FD Escalation Human-in-the-Loop" for the user-facing description.
+
+### 13.1 Layered Data Flow
+
+```
+Frontend (BAHitlCard / ArchitectHitlCard / EscalationHistoryList)
+   │  POST /api/sessions/{id}/ba-hitl | architect-hitl | terminate
+   ▼
+API routes
+   escalations.py                              notifications.py
+   │                                              ▲
+   ├──► EscalationService ──► EscalationRepository ──► EscalationEvent
+   │      (authorize + audit)   SessionRepository      (escalation_events)
+   │
+   └──► Orchestrator ──► SessionRepository   (status transitions)
+          (execute / resume) ExecutionRepository (agent runs)
+                              NotificationRepository ──► Notification
+```
+
+Every human decision flows through two phases: **EscalationService** authorizes the actor and records an `EscalationEvent` (audit), then the **Orchestrator** performs the actual session state transition / resume (a separate phase, dispatched as a background task — the same pattern as the approvals route). EscalationService owns human-decision audit events; the orchestrator owns only automated state-machine events (`ba_hitl_entered`, sticky `ba_hitl_iterate`).
+
+### 13.2 Orchestrator Enforcement
+
+The orchestrator (`druppie/execution/orchestrator.py`) enforces the state machine in code — it does not trust the Planner to route correctly:
+
+- **Pseudo-agent interception** (`_intercept_reserved_agent`, `orchestrator.py:1818`): before any agent is loaded, reserved ids `ba_hitl` and `architect_hitl` are intercepted and mapped to `PAUSED_BA_HITL` / `PAUSED_ARCHITECT_HITL`.
+- **Backstop rejection counter** (`_evaluate_escalation` / `_handle_rejection_routing`, `orchestrator.py:1916`): when an `architect` or `planner` run completes and a pending `business_analyst` revision exists (and an architect has already run), `fd_rejection_count` increments. At the threshold the session is forced into `PAUSED_BA_HITL`. The `_has_completed_architect` guard avoids counting pure elicitation rounds.
+- **Sticky supervised BA loop**: when a `business_analyst` run completes while `fd_escalation_mode` is set, control returns to the human (`PAUSED_BA_HITL`) — it never auto-proceeds to the architect.
+- **Post-HITL rejection gate**: once escalated, a further rejection increments `fd_post_hitl_rejection_count` and returns to the human BA. Escalate-to-architect is gated on `fd_post_hitl_rejection_count >= 1`, enforced synchronously by `EscalationService` (returns 409) and re-checked by the orchestrator as defense in depth.
+- **Hard TERMINATED guard**: `terminate_session` cancels all pending runs and sets `terminated`; `_assert_not_terminated` guards both execute and resume paths.
+
+```python
+# orchestrator.py — reserved pseudo-agents and default threshold
+_BA_HITL_AGENT_ID = "ba_hitl"
+_ARCHITECT_HITL_AGENT_ID = "architect_hitl"
+_DEFAULT_ESCALATION_THRESHOLD = 3
+```
+
+### 13.3 New Components
+
+| Component | Location | Responsibility |
+|-----------|----------|----------------|
+| `EscalationService` | `druppie/services/escalation_service.py` | Authorize human decisions + record `EscalationEvent`s. Does NOT execute/resume. |
+| `EscalationEvent` (ORM) | `druppie/db/models/escalation_event.py` | Audit row per state-machine transition (normalized columns, no JSON) |
+| `EscalationRepository` | `druppie/repositories/escalation_repository.py` | `create` / `get_for_session` |
+| `Notification` (ORM) | `druppie/db/models/notification.py` | Per-user in-app notification on HITL pause |
+| `NotificationRepository` | `druppie/repositories/notification_repository.py` | `create` / `get_for_user` / `mark_as_read` (atomic, user-scoped) |
+| `UserRepository.get_by_role` | `druppie/repositories/user_repository.py` | Join `user_roles` to find notification recipients |
+| `UserRepository.sync_roles` | (same) | Reconcile Keycloak realm roles into `user_roles` on login (filtered by the `APP_ROLES` allowlist) |
+
+> **Authorization by decision (deliberate asymmetry):** the BA "terminate" decision routes through `EscalationService.terminate` (`escalation_service.py`), which enforces owner-only auth, because termination is the one irreversible transition in the state machine; the reversible revision decisions (iterate / ready / escalate) use the `ba_hitl` auth level, which accepts the `business_analyst` role OR the session owner. See `_check_authorization` in `escalation_service.py` and the route dispatch in `escalations.py:171`.
+
+### 13.4 New API Routes
+
+| Method | Route | Purpose |
+|--------|-------|---------|
+| POST | `/api/sessions/{id}/ba-hitl` | BA HITL decision (iterate / ready / escalate / terminate) |
+| POST | `/api/sessions/{id}/architect-hitl` | Architect HITL decision (approve / reject → ba_hitl \| terminate) |
+| POST | `/api/sessions/{id}/terminate` | Terminate the session |
+| GET | `/api/sessions/{id}/escalation-history` | Escalation event audit trail |
+| GET | `/api/notifications` | Current user's notifications |
+| POST | `/api/notifications/{id}/read` | Mark a notification read (404 if not owned) |
+
+Request bodies use `Literal` decision enums; service errors map to 403 (auth) / 404 (not found) / 409 (wrong state or gate not met) / 422 (schema, e.g. `reject` without `next_on_reject`). `ArchitectHitlRequest` carries a `model_validator` so `reject` requires `next_on_reject` at the schema boundary.
+
+### 13.5 Session Model Changes
+
+Three new columns on `sessions` (`druppie/db/models/session.py`), all normalized — no JSON/JSONB, per the project rule in `CLAUDE.md:248`; the JSON exception in `project-coding-standards/SKILL.md:192` does not apply here:
+
+```python
+# FD escalation state
+fd_rejection_count = Column(Integer, default=0)
+fd_escalation_mode = Column(Boolean, default=False)
+fd_post_hitl_rejection_count = Column(Integer, default=0)
+```
+
+`SessionStatus` (`druppie/domain/common.py`) gained three members, surfaced through the existing Summary/Detail pattern (`CLAUDE.md:107`):
+
+```python
+PAUSED_BA_HITL = "paused_ba_hitl"                # Waiting for BA human review after FD escalation
+PAUSED_ARCHITECT_HITL = "paused_architect_hitl"  # Waiting for architect human review
+TERMINATED = "terminated"                        # Hard-terminated, not resumable
+```
+
+The `status` column was widened from `String(20)` to `String(30)` because `paused_architect_hitl` (21 chars) overflowed the old width. Per the no-migrations policy (`CLAUDE.md:247`) this is a model-only change — existing dev DBs still have `varchar(20)` and need a `reset-db` before the architect HITL transition works (see BACKLOG.md).
+
+The `AgentDefinition` Pydantic schema — the contract that validates agent YAML — gained the threshold field (`druppie/domain/agent_definition.py:146-148`):
+
+```python
+# Number of FD rejections before escalating to human review (HITL).
+# When None, escalation is disabled for this agent.
+escalation_threshold: int | None = None
+```
+
+### 13.6 Agent Declarations
+
+The threshold is declared on the architect (the agent whose rejections are counted):
+
+```yaml
+# architect.yaml
+id: architect
+escalation_threshold: 3
+```
+
+The **Planner** (`planner.yaml`) counts `DESIGN_FEEDBACK` occurrences in the accumulated summary; below the threshold it routes back to `business_analyst`; at/above the threshold it routes to the reserved pseudo-agent `ba_hitl`. The routing is **sticky** — once escalation is active, all subsequent FD revisions route to `ba_hitl`, never back to the automated BA.
+
+The **Business Analyst** (`business_analyst.yaml`) declares a "Supervised BA HITL Mode" prompt note: when operating under human supervision, it revises the FD on the human's input and returns control to the human BA via `done()` rather than auto-proceeding to the architect, while still emitting its normal status signals so the Planner can track progress.
+
+Per `CLAUDE.md:251`, agent definitions live in YAML files — the database is not the source of truth for agent configuration. Agent YAML is validated against the `AgentDefinition` schema (`druppie/domain/agent_definition.py`), which is the authoritative contract.
+
+### 13.7 Escalation Event Types
+
+`EscalationEventType` (`druppie/domain/common.py`) enumerates every state transition; `EscalationService` maps decisions to these exhaustively (unknown inputs raise):
+
+| Event type | Triggered by |
+|------------|--------------|
+| `ba_hitl_entered` | Session first enters BA HITL (orchestrator) |
+| `ba_hitl_iterate` | Human BA iterates / sticky loop returns to human |
+| `ba_hitl_ready` | Human BA marks FD ready for architect |
+| `ba_hitl_escalate` | Human BA escalates to architect HITL |
+| `architect_hitl_entered` | Session enters architect HITL (orchestrator) |
+| `architect_hitl_approve` | Human architect approves |
+| `architect_hitl_reject_to_ba` | Human architect rejects → back to BA HITL |
+| `architect_hitl_reject_terminate` | Human architect rejects → terminate |
+| `session_terminated` | Session terminated (BA or architect decision) |
+
