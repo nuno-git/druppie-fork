@@ -240,6 +240,12 @@ devWorkspace:
     size: 20Gi
     storageClassName: longhorn-distributed
   nodeSelector: {}
+  # Traefik ingress controller's in-cluster ClusterIP (e.g. the rke2-traefik-lb
+  # service ClusterIP). When set, a hostAlias maps global.domain to it so the pod
+  # reaches Keycloak (OIDC discovery/token redeem) via the public hostname but on
+  # the internal IP — pods can't hairpin to the LoadBalancer external IP, and
+  # KC_HOSTNAME_STRICT rejects any other Host header.
+  ingressVIP: ""
   resources:
     requests:
       cpu: 500m

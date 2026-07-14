@@ -39,6 +39,14 @@ spec:
     spec:
       securityContext:
         fsGroup: 1000
+      {{- with .Values.devWorkspace.ingressVIP }}
+      # Resolve the public app domain to the in-cluster Traefik ClusterIP so
+      # oauth2-proxy can reach Keycloak without hairpinning to the LB external IP.
+      hostAliases:
+        - ip: {{ . | quote }}
+          hostnames:
+            - {{ $.Values.global.domain | quote }}
+      {{- end }}
       {{- if .Values.global.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml .Values.global.imagePullSecrets | nindent 8 }}
@@ -126,9 +134,19 @@ spec:
           image: quay.io/oauth2-proxy/oauth2-proxy:v7.7.1
           args:
             - --provider=oidc
-            # issuerUrl is the FULL OIDC issuer (…/realms/<realm>). Default to
-            # <keycloakExternalUrl>/realms/<realm> when not set explicitly.
-            - --oidc-issuer-url={{ .Values.devWorkspace.oauth.issuerUrl | default (printf "%s/realms/%s" (include "druppie.keycloakExternalUrl" .) .Values.frontend.vite.keycloakRealm) }}
+            # Pods can't reach the public domain (Traefik is on a private IP
+            # blocked by the namespace NetworkPolicy) and KC_HOSTNAME_STRICT
+            # rejects foreign Host headers, so we skip OIDC discovery and point
+            # the server-side endpoints (token/userinfo/jwks) at the in-cluster
+            # Keycloak service while the browser login URL stays on the public
+            # HTTPS host. issuerUrl must match the `iss` claim Keycloak mints on
+            # the internal redeem path (http://<domain>/realms/<realm>).
+            - --skip-oidc-discovery=true
+            - --oidc-issuer-url={{ .Values.devWorkspace.oauth.issuerUrl | default (printf "http://%s/realms/%s" .Values.global.domain .Values.frontend.vite.keycloakRealm) }}
+            - --login-url={{ printf "https://%s/realms/%s/protocol/openid-connect/auth" .Values.global.domain .Values.frontend.vite.keycloakRealm }}
+            - --redeem-url={{ printf "http://%s-keycloak:8080/realms/%s/protocol/openid-connect/token" (include "druppie.fullname" .) .Values.frontend.vite.keycloakRealm }}
+            - --validate-url={{ printf "http://%s-keycloak:8080/realms/%s/protocol/openid-connect/userinfo" (include "druppie.fullname" .) .Values.frontend.vite.keycloakRealm }}
+            - --oidc-jwks-url={{ printf "http://%s-keycloak:8080/realms/%s/protocol/openid-connect/certs" (include "druppie.fullname" .) .Values.frontend.vite.keycloakRealm }}
             - --client-id={{ .Values.devWorkspace.oauth.clientId }}
             - --redirect-url=https://{{ .Values.devWorkspace.codeServer.devHost }}/oauth2/callback
             - --upstream=http://127.0.0.1:8080

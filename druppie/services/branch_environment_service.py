@@ -96,17 +96,6 @@ _SECRETS_SOURCES = frozenset({SECRETS_SOURCE_COLAB_DEV, SECRETS_SOURCE_DEVELOPER
 DEVELOPER_SECRETS_PREFIX = "druppie/developers"
 _USERNAME_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,62}$")
 
-# Optional per-env dev workspace (code-server behind a Keycloak oauth2-proxy).
-WORKSPACE_IMAGE = os.getenv(
-    "BRANCH_ENV_WORKSPACE_IMAGE", "harbor.rijnland.dev/druppie/dev-workspace:latest"
-)
-OAUTH2_PROXY_IMAGE = os.getenv(
-    "BRANCH_ENV_OAUTH2_PROXY_IMAGE", "quay.io/oauth2-proxy/oauth2-proxy:v7.7.1"
-)
-WORKSPACE_STORAGE_CLASS = os.getenv(
-    "BRANCH_ENV_WORKSPACE_STORAGE_CLASS", "longhorn-distributed"
-)
-
 # Domain suffix: environments live at druppie-<slug>.<DOMAIN_SUFFIX>. Must stay a
 # single label under this suffix to match the *.rijnland.dev wildcard cert.
 DOMAIN_SUFFIX = os.getenv("BRANCH_ENV_DOMAIN_SUFFIX", "rijnland.dev")
@@ -269,6 +258,9 @@ def build_helmrelease_yaml(
     image_tag: str | None,
     updated_at: str,
     reconcile_epoch: str | None = None,
+    developer: str = "",
+    workspace_enabled: bool = True,
+    stack_mode: str = "real",
 ) -> str:
     namespace = f"druppie-{slug}"
     annotations = {
@@ -322,6 +314,22 @@ def build_helmrelease_yaml(
                 ),
             }
             for module in ALL_MODULES
+        },
+        # The branch namespace IS the hot-reload dev workspace: a single pod
+        # (code-server + uvicorn --reload + Vite HMR) replaces the baked
+        # backend/frontend Deployments. externalSecrets.managed=true lets ESO
+        # own <instance>-secrets; devWorkspace.developer syncs it from the
+        # deployer's own Vault map (druppie/developers/<developer>/* — seeded
+        # via scripts/seed-developer-env.py). The chart's oauth2-proxy reaches
+        # Keycloak over the in-cluster service (skip-oidc-discovery), so no
+        # issuerUrl override is needed (chart default = http://<host>/realms/…).
+        "externalSecrets": {"managed": True},
+        "devWorkspace": {
+            "enabled": workspace_enabled,
+            "stackMode": stack_mode,
+            "developer": developer,
+            "gitBranch": branch,
+            "codeServer": {"devHost": _workspace_host(host)},
         },
     }
     if image_tag is not None:
@@ -484,304 +492,7 @@ def _workspace_host(host: str) -> str:
     return f"{label}-dev.{rest}" if rest else f"{label}-dev"
 
 
-def build_workspace_yaml(slug: str, branch: str, host_env: str, created_at: str) -> str:
-    """Optional per-env dev workspace: code-server behind a Keycloak oauth2-proxy.
-
-    Committed as the single extra file ``workspace.yaml`` in the env directory;
-    deleting the file tears the workspace down (Flux prunes). The oauth2-proxy
-    sidecar authenticates against the environment's OWN Keycloak realm
-    ``druppie``. For branch envs ``global.subdomains.keycloak`` is empty, so
-    Keycloak is path-routed under the base env host — the OIDC issuer is
-    ``https://<env-host>/realms/druppie``. The workspace itself is exposed at the
-    env host with ``-dev`` inserted before the first label's dot.
-
-    The oauth2-proxy client secret and cookie secret come from the Secret
-    ``workspace-oauth`` in the namespace, delivered by the ExternalSecret below
-    from the ``vault-ai-team-k8s`` ClusterSecretStore (same mechanism as the
-    Harbor pull secret). The cluster-side Vault path ``branch-env/workspace-oauth``
-    (keys ``client-secret`` + ``cookie-secret``, plus optional ``git-token`` —
-    a read-only Gitea token so the workspace can fetch the private app repo)
-    is a documented one-time setup step (see docs/FEATURES.md) — this builder
-    never creates cluster-side state.
-    """
-    namespace = f"druppie-{slug}"
-    workspace_host = _workspace_host(host_env)
-    issuer_url = f"https://{host_env}/realms/druppie"
-    redirect_url = f"https://{workspace_host}/oauth2/callback"
-    labels = {f"{_ANN}/branch-env": slug, "app": "workspace"}
-
-    # oauth2-proxy client secret + cookie secret (mirrors the harbor-regcred
-    # ESO pattern; the Vault path is a documented cluster-side setup step).
-    external_secret = {
-        "apiVersion": "external-secrets.io/v1",
-        "kind": "ExternalSecret",
-        "metadata": {"name": "workspace-oauth", "namespace": namespace, "labels": labels},
-        "spec": {
-            "refreshInterval": "1h",
-            "secretStoreRef": {"name": "vault-ai-team-k8s", "kind": "ClusterSecretStore"},
-            "target": {"name": "workspace-oauth", "creationPolicy": "Owner"},
-            # dataFrom/extract mirrors ALL keys of the Vault secret, so the
-            # optional git-token key (private-repo fetch) syncs when present
-            # without a per-key sync error when it is absent.
-            "dataFrom": [{"extract": {"key": "branch-env/workspace-oauth"}}],
-        },
-    }
-
-    pvc = {
-        "apiVersion": "v1",
-        "kind": "PersistentVolumeClaim",
-        "metadata": {"name": "workspace", "namespace": namespace, "labels": labels},
-        "spec": {
-            "accessModes": ["ReadWriteOnce"],
-            "storageClassName": WORKSPACE_STORAGE_CLASS,
-            "resources": {"requests": {"storage": "20Gi"}},
-        },
-    }
-
-    deployment = {
-        "apiVersion": "apps/v1",
-        "kind": "Deployment",
-        "metadata": {
-            "name": "workspace",
-            "namespace": namespace,
-            "labels": labels,
-            "annotations": {f"{_ANN}/branch": branch, f"{_ANN}/created-at": created_at},
-        },
-        "spec": {
-            "replicas": 1,
-            # RWO PVC: the old pod must release the volume before the new one
-            # mounts it, so we cannot RollingUpdate.
-            "strategy": {"type": "Recreate"},
-            "selector": {"matchLabels": {"app": "workspace"}},
-            "template": {
-                "metadata": {"labels": labels},
-                "spec": {
-                    # Co-locate with the RWO workspace PVC (same pin as the env).
-                    "nodeSelector": {"kubernetes.io/hostname": BRANCH_ENV_NODE},
-                    # A fresh Longhorn volume mounts root-owned; the container
-                    # runs as uid 1000, so without fsGroup every write to
-                    # /workspace fails and the pod crash-loops on first boot.
-                    "securityContext": {"fsGroup": 1000},
-                    # Same ESO-synced Harbor credentials as the env's own pods;
-                    # without this the private registry rejects the pull.
-                    "imagePullSecrets": [{"name": BRANCH_ENV_PULL_SECRET}],
-                    "containers": [
-                        {
-                            "name": "workspace",
-                            "image": WORKSPACE_IMAGE,
-                            "imagePullPolicy": "Always",
-                            "env": [
-                                {"name": "DRUPPIE_GIT_BRANCH", "value": branch},
-                                {"name": "DRUPPIE_REPO_URL", "value": CHART_REPO_URL},
-                                # aigit serves a private-CA certificate the
-                                # image does not trust; without this the branch
-                                # fetch fails and the workspace silently serves
-                                # the baked colab-dev snapshot.
-                                {"name": "GIT_SSL_NO_VERIFY", "value": "1"},
-                                # Wire the workspace's own frontend/backend to
-                                # the ENV's Keycloak (same pattern as the chart
-                                # configmap: internal svc for JWKS, external
-                                # URL for the browser + issuer check). Without
-                                # these both default to http://localhost:8080,
-                                # which inside the pod is code-server — login
-                                # redirects to a dead URL and every API call
-                                # 401s.
-                                {
-                                    "name": "VITE_KEYCLOAK_URL",
-                                    "value": f"https://{host_env}",
-                                },
-                                {
-                                    "name": "KEYCLOAK_SERVER_URL",
-                                    "value": f"http://{namespace}-keycloak:8080",
-                                },
-                                {
-                                    "name": "KEYCLOAK_ISSUER_URL",
-                                    "value": f"https://{host_env}",
-                                },
-                                # The app repo is private: fetching the branch
-                                # needs a read-only Gitea token (Vault key
-                                # git-token, mirrored by the ExternalSecret
-                                # above). Optional: without it the workspace
-                                # still boots on the baked snapshot.
-                                {
-                                    "name": "DRUPPIE_GIT_TOKEN",
-                                    "valueFrom": {
-                                        "secretKeyRef": {
-                                            "name": "workspace-oauth",
-                                            "key": "git-token",
-                                            "optional": True,
-                                        }
-                                    },
-                                },
-                            ],
-                            # Same Vault-sourced env vars as the app pods (the
-                            # env's secrets_source: colab-dev shared map or the
-                            # deployer's own druppie/developers/<user> map), so
-                            # personal tool config — e.g. Claude Code's
-                            # ANTHROPIC_* keys — reaches the workspace without
-                            # manual copying. Optional: workspace boots fine
-                            # without the secret.
-                            "envFrom": [
-                                {
-                                    "secretRef": {
-                                        "name": BRANCH_ENV_APP_SECRET,
-                                        "optional": True,
-                                    }
-                                }
-                            ],
-                            "ports": [
-                                {"name": "code-server", "containerPort": 8080},
-                                {"name": "backend-dev", "containerPort": 8000},
-                                {"name": "frontend-dev", "containerPort": 5173},
-                            ],
-                            "volumeMounts": [
-                                {"name": "workspace", "mountPath": "/workspace"}
-                            ],
-                            "resources": {
-                                "requests": {"memory": "1Gi", "cpu": "500m"},
-                                "limits": {"memory": "6Gi", "cpu": "2"},
-                            },
-                        },
-                        {
-                            "name": "oauth2-proxy",
-                            "image": OAUTH2_PROXY_IMAGE,
-                            "args": [
-                                "--provider=oidc",
-                                f"--oidc-issuer-url={issuer_url}",
-                                "--client-id=workspace",
-                                f"--redirect-url={redirect_url}",
-                                "--upstream=http://127.0.0.1:8080",
-                                "--http-address=0.0.0.0:4180",
-                                "--email-domain=*",
-                                "--cookie-secure=true",
-                                "--skip-provider-button=true",
-                            ],
-                            "env": [
-                                {
-                                    "name": "OAUTH2_PROXY_CLIENT_SECRET",
-                                    "valueFrom": {
-                                        "secretKeyRef": {
-                                            "name": "workspace-oauth",
-                                            "key": "client-secret",
-                                        }
-                                    },
-                                },
-                                {
-                                    "name": "OAUTH2_PROXY_COOKIE_SECRET",
-                                    "valueFrom": {
-                                        "secretKeyRef": {
-                                            "name": "workspace-oauth",
-                                            "key": "cookie-secret",
-                                        }
-                                    },
-                                },
-                            ],
-                            "ports": [{"name": "proxy", "containerPort": 4180}],
-                            "resources": {
-                                "requests": {"memory": "64Mi", "cpu": "50m"},
-                                "limits": {"memory": "256Mi", "cpu": "500m"},
-                            },
-                        },
-                    ],
-                    "volumes": [
-                        {
-                            "name": "workspace",
-                            "persistentVolumeClaim": {"claimName": "workspace"},
-                        }
-                    ],
-                },
-            },
-        },
-    }
-
-    service = {
-        "apiVersion": "v1",
-        "kind": "Service",
-        "metadata": {"name": "workspace", "namespace": namespace, "labels": labels},
-        "spec": {
-            "type": "ClusterIP",
-            "selector": {"app": "workspace"},
-            "ports": [{"name": "http", "port": 80, "targetPort": 4180}],
-        },
-    }
-
-    ingress = {
-        "apiVersion": "networking.k8s.io/v1",
-        "kind": "Ingress",
-        "metadata": {
-            "name": "workspace",
-            "namespace": namespace,
-            "labels": labels,
-            # Same Traefik default-headers middleware as the chart's main ingress
-            # (note the deployed middleware's spelling "treafik").
-            "annotations": {
-                "traefik.ingress.kubernetes.io/router.middlewares": (
-                    "kube-system-treafik-default-headers@kubernetescrd"
-                )
-            },
-        },
-        "spec": {
-            "ingressClassName": "traefik",
-            "tls": [{"hosts": [workspace_host], "secretName": "druppie-tls"}],
-            "rules": [
-                {
-                    "host": workspace_host,
-                    "http": {
-                        "paths": [
-                            {
-                                "path": "/",
-                                "pathType": "Prefix",
-                                "backend": {
-                                    "service": {
-                                        "name": "workspace",
-                                        "port": {"number": 80},
-                                    }
-                                },
-                            }
-                        ]
-                    },
-                }
-            ],
-        },
-    }
-
-    # The chart's app-net NetworkPolicy restricts ingress on the env's pods to
-    # peers carrying the app labels (+ Traefik/kube-system). The workspace pod
-    # deliberately does NOT carry those labels (that would subject it to the
-    # app-net egress rules and break its git fetch to the corporate Gitea), so
-    # its backend cannot reach Keycloak for JWKS — every authenticated API call
-    # times out. This policy adds workspace -> keycloak:8080 to the allow set.
-    keycloak_netpol = {
-        "apiVersion": "networking.k8s.io/v1",
-        "kind": "NetworkPolicy",
-        "metadata": {
-            "name": "workspace-keycloak",
-            "namespace": namespace,
-            "labels": labels,
-        },
-        "spec": {
-            "podSelector": {
-                "matchLabels": {
-                    "app.kubernetes.io/component": "keycloak",
-                    "app.kubernetes.io/instance": "druppie",
-                    "app.kubernetes.io/name": namespace,
-                }
-            },
-            "policyTypes": ["Ingress"],
-            "ingress": [
-                {
-                    "from": [{"podSelector": {"matchLabels": {"app": "workspace"}}}],
-                    "ports": [{"port": 8080, "protocol": "TCP"}],
-                }
-            ],
-        },
-    }
-
-    return _dump(external_secret, pvc, deployment, service, ingress, keycloak_netpol)
-
-
 _ENV_FILES = ("namespace.yaml", "gitrepository.yaml", "helmrelease.yaml", "externalsecrets.yaml")
-_WORKSPACE_FILE = "workspace.yaml"
 
 
 # -----------------------------------------------------------------------------
@@ -1215,16 +926,16 @@ class BranchEnvironmentService:
             raise ValidationError(
                 f"invalid secrets_source: {secrets_source!r}", field="secrets_source"
             )
-        username = None
-        if secrets_source == SECRETS_SOURCE_DEVELOPER:
-            # The deployer's OWN map only (identity from the token, not a free
-            # choice) — sanitized because it becomes part of a Vault path.
-            username = (owner_username or "").lower()
-            if not _USERNAME_RE.match(username):
-                raise ValidationError(
-                    f"cannot derive a Vault map from username {owner_username!r}",
-                    field="secrets_source",
-                )
+        # The deployer's OWN Vault map only (identity from the token, not a free
+        # choice) — sanitized because it becomes a Vault path. Always required:
+        # the dev workspace's <instance>-secrets is synced from
+        # druppie/developers/<developer>/* via ESO (seed-developer-env.py).
+        developer = (owner_username or "").lower()
+        if not _USERNAME_RE.match(developer):
+            raise ValidationError(
+                f"cannot derive a developer map from username {owner_username!r}",
+                field="secrets_source",
+            )
         slug = _slugify(branch)
         namespace = f"druppie-{slug}"
         host = f"druppie-{slug}.{DOMAIN_SUFFIX}"
@@ -1236,6 +947,13 @@ class BranchEnvironmentService:
         if "." in host[: -(len(DOMAIN_SUFFIX) + 1)]:
             raise ValidationError(
                 f"host '{host}' is not a single label under {DOMAIN_SUFFIX}", field="branch"
+            )
+        # The dev workspace is enabled by default and renders a -dev ingress
+        # whose label (druppie-<slug>-dev) must also be a valid DNS-1123 label.
+        ws_label = _workspace_host(host).split(".", 1)[0]
+        if len(ws_label) > 63:
+            raise ValidationError(
+                f"workspace host label '{ws_label}' exceeds 63 chars", field="branch"
             )
         # SAFETY GUARD: never target the live instances (e.g. branch "colab-dev"
         # would map to namespace druppie-colab-dev).
@@ -1282,12 +1000,14 @@ class BranchEnvironmentService:
             {
                 "operation": "create",
                 "path": self._env_path(slug, "helmrelease.yaml"),
-                "content": build_helmrelease_yaml(slug, branch, host, image_tag, created_at),
+                "content": build_helmrelease_yaml(
+                    slug, branch, host, image_tag, created_at, developer=developer
+                ),
             },
             {
                 "operation": "create",
                 "path": self._env_path(slug, "externalsecrets.yaml"),
-                "content": build_externalsecrets_yaml(slug, secrets_source, username),
+                "content": build_externalsecrets_yaml(slug, secrets_source, developer),
             },
         ]
         await self.gitea.change_files(
@@ -1348,6 +1068,9 @@ class BranchEnvironmentService:
             image_tag,
             updated_at,
             reconcile_epoch=str(int(time.time())),
+            developer=env.get("developer", ""),
+            workspace_enabled=env.get("workspace_enabled", True),
+            stack_mode=env.get("stack_mode", "real"),
         )
         await self.gitea.change_files(
             f"branch-env: redeploy {env['namespace']} (tag {image_tag or 'unchanged'}, by {user_id})",
@@ -1412,9 +1135,9 @@ class BranchEnvironmentService:
         user_id: UUID,
         user_roles: list[str],
     ) -> BranchEnvironmentDetail:
-        """Commit ``workspace.yaml`` to enable the env's dev workspace (202).
-
-        Owner or admin only. Conflict if a workspace is already enabled.
+        """Enable the env's dev workspace by re-committing the HelmRelease with
+        ``devWorkspace.enabled=true`` (202). Owner or admin only. Conflict if a
+        workspace is already enabled.
         """
         slug = _validate_slug(env_id)
         env = await self._read_env(slug)
@@ -1436,16 +1159,26 @@ class BranchEnvironmentService:
         if env["workspace_enabled"]:
             raise ConflictError(f"workspace already enabled for '{slug}'")
 
-        created_at = _utcnow_iso()
+        updated_at = _utcnow_iso()
+        content = build_helmrelease_yaml(
+            slug,
+            env["branch"],
+            env["host"],
+            env["image_tag"],
+            updated_at,
+            reconcile_epoch=str(int(time.time())),
+            developer=env.get("developer", ""),
+            workspace_enabled=True,
+            stack_mode=env.get("stack_mode", "real"),
+        )
         await self.gitea.change_files(
             f"branch-env: enable workspace {env['namespace']} (by {user_id})",
             [
                 {
-                    "operation": "create",
-                    "path": self._env_path(slug, _WORKSPACE_FILE),
-                    "content": build_workspace_yaml(
-                        slug, env["branch"], env["host"], created_at
-                    ),
+                    "operation": "update",
+                    "path": self._env_path(slug, "helmrelease.yaml"),
+                    "content": content,
+                    "sha": env["helmrelease_sha"],
                 }
             ],
         )
@@ -1464,7 +1197,8 @@ class BranchEnvironmentService:
         user_id: UUID,
         user_roles: list[str],
     ) -> BranchEnvironmentDetail:
-        """Delete ``workspace.yaml`` to tear the workspace down; Flux prunes it."""
+        """Disable the dev workspace by re-committing the HelmRelease with
+        ``devWorkspace.enabled=false``; Flux prunes the workspace resources."""
         slug = _validate_slug(env_id)
         env = await self._read_env(slug)
         if env is None:
@@ -1476,13 +1210,26 @@ class BranchEnvironmentService:
         if not env["workspace_enabled"]:
             raise ConflictError(f"workspace is not enabled for '{slug}'")
 
+        updated_at = _utcnow_iso()
+        content = build_helmrelease_yaml(
+            slug,
+            env["branch"],
+            env["host"],
+            env["image_tag"],
+            updated_at,
+            reconcile_epoch=str(int(time.time())),
+            developer=env.get("developer", ""),
+            workspace_enabled=False,
+            stack_mode=env.get("stack_mode", "real"),
+        )
         await self.gitea.change_files(
             f"branch-env: disable workspace {env['namespace']} (by {user_id})",
             [
                 {
-                    "operation": "delete",
-                    "path": self._env_path(slug, _WORKSPACE_FILE),
-                    "sha": env["workspace_sha"],
+                    "operation": "update",
+                    "path": self._env_path(slug, "helmrelease.yaml"),
+                    "content": content,
+                    "sha": env["helmrelease_sha"],
                 }
             ],
         )
@@ -1659,10 +1406,9 @@ class BranchEnvironmentService:
 
     async def _read_env(self, slug: str) -> dict | None:
         """Read an env's metadata from its committed manifests. None if absent."""
-        ns_file, hr_file, ws_file = await asyncio.gather(
+        ns_file, hr_file = await asyncio.gather(
             self.gitea.get_file(self._env_path(slug, "namespace.yaml")),
             self.gitea.get_file(self._env_path(slug, "helmrelease.yaml")),
-            self.gitea.get_file(self._env_path(slug, _WORKSPACE_FILE)),
         )
         if ns_file is None:
             return None
@@ -1672,15 +1418,23 @@ class BranchEnvironmentService:
         image_tag = None
         updated_at = None
         helmrelease_sha = None
+        workspace_enabled = False
+        developer = ""
+        stack_mode = "real"
         if hr_file is not None:
             helmrelease_sha = hr_file[1]
             hr_manifest = yaml.safe_load(hr_file[0]) or {}
-            image_tag = (
-                hr_manifest.get("spec", {}).get("values", {}).get("global", {}).get("imageTag")
-            )
+            hr_values = hr_manifest.get("spec", {}).get("values", {}) or {}
+            image_tag = hr_values.get("global", {}).get("imageTag")
             updated_at = (
                 hr_manifest.get("metadata", {}).get("annotations", {}) or {}
             ).get(f"{_ANN}/updated-at")
+            # Workspace state lives in the HelmRelease values now (no separate
+            # workspace.yaml): devWorkspace.enabled/developer/stackMode.
+            dev_ws = hr_values.get("devWorkspace", {}) or {}
+            workspace_enabled = bool(dev_ws.get("enabled", False))
+            developer = dev_ws.get("developer", "") or ""
+            stack_mode = dev_ws.get("stackMode", "real") or "real"
 
         owner_raw = annotations.get(f"{_ANN}/owner-id")
         try:
@@ -1699,8 +1453,9 @@ class BranchEnvironmentService:
             "image_tag": image_tag,
             "helmrelease_sha": helmrelease_sha,
             "secrets_source": annotations.get(f"{_ANN}/secrets-source"),
-            "workspace_enabled": ws_file is not None,
-            "workspace_sha": ws_file[1] if ws_file else None,
+            "workspace_enabled": workspace_enabled,
+            "developer": developer,
+            "stack_mode": stack_mode,
         }
 
     async def _live_status(self, namespace: str) -> tuple[str, str | None]:
@@ -1717,7 +1472,9 @@ class BranchEnvironmentService:
         deploying = BranchEnvironmentStatus.DEPLOYING.value
         if not self.cluster.available:
             return deploying
-        dep = await self.cluster.get_deployment(namespace, "workspace")
+        # Chart-native workspace Deployment: <instance>-workspace (the chart's
+        # druppie.fullname + "-workspace"), not the old standalone "workspace".
+        dep = await self.cluster.get_deployment(namespace, f"{namespace}-workspace")
         if dep is None:
             return deploying
         ready = (dep.get("status", {}) or {}).get("readyReplicas", 0) or 0
