@@ -9,9 +9,12 @@ The special model name 'auto' is a catch-all: it resolves to the first served
 model not already claimed by an earlier entry, so a newly deployed local model
 is usable before it has been ranked in the profile.
 
-No caching: discovery only happens for profiles that contain llmkube entries,
-which is once per agent-LLM creation (for the PR reviewer: once per cron run),
-so a single short-timeout GET is cheap and keeps this module stateless.
+Discovery is cached for a short TTL (results AND failures). resolve_model()
+is synchronous and — via lazy agent-LLM creation — runs on the backend's
+event-loop thread, so the discovery GET blocks the loop for up to its timeout
+when the endpoint is slow or down. The cache bounds that to at most one stall
+per TTL window instead of one per resolution (e.g. model-management listing
+resolves every agent in a loop). Same precedent as resolver._profiles_cache.
 
 Failure semantics are deliberate: llmkube entries are never ALL dropped. If
 discovery fails or nothing listed is served, one llmkube entry survives (model
@@ -21,6 +24,8 @@ failed call plus fallback-approval request, not as silent external spend.
 """
 
 import os
+import threading
+import time
 
 import httpx
 import structlog
@@ -33,6 +38,19 @@ LOCAL_PROVIDER = "llmkube"
 AUTO_MODEL = "auto"
 
 _DISCOVERY_TIMEOUT = 3.0
+_DISCOVERY_CACHE_TTL = 60.0
+
+_cache_lock = threading.Lock()
+_cached_served: list[str] | None = None
+_cached_at: float | None = None
+
+
+def reset_discovery_cache() -> None:
+    """Forget the cached served-model list (tests / forced re-discovery)."""
+    global _cached_served, _cached_at
+    with _cache_lock:
+        _cached_served = None
+        _cached_at = None
 
 
 def _endpoint_base_url() -> str:
@@ -42,7 +60,24 @@ def _endpoint_base_url() -> str:
 
 
 def list_served_models() -> list[str] | None:
-    """Return model ids served by the LLMKube endpoint, or None when unknown."""
+    """Return model ids served by the LLMKube endpoint, or None when unknown.
+
+    Cached for _DISCOVERY_CACHE_TTL seconds, failures included — a down
+    endpoint costs one blocking GET per TTL window, not one per resolution
+    (see module docstring).
+    """
+    global _cached_served, _cached_at
+    with _cache_lock:
+        if _cached_at is not None and time.monotonic() - _cached_at < _DISCOVERY_CACHE_TTL:
+            return _cached_served
+    served = _fetch_served_models()
+    with _cache_lock:
+        _cached_served = served
+        _cached_at = time.monotonic()
+    return served
+
+
+def _fetch_served_models() -> list[str] | None:
     headers = {}
     api_key = os.getenv(PROVIDER_CONFIGS[LOCAL_PROVIDER]["api_key_env"], "")
     if api_key:

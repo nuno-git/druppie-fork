@@ -14,8 +14,15 @@ against the models the endpoint actually serves. Pinned guarantees:
 
 from unittest.mock import patch
 
+import pytest
+
 from druppie.llm import local_models
 from druppie.llm.local_models import apply_local_availability
+
+
+@pytest.fixture(autouse=True)
+def _fresh_discovery_cache():
+    local_models.reset_discovery_cache()
 
 QWEN = "Qwen/Qwen3.6-27B"
 NEW_MODEL = "some-org/Brand-New-70B"
@@ -124,3 +131,24 @@ def test_list_served_models_parses_openai_model_list():
 def test_list_served_models_returns_none_on_error():
     with patch.object(local_models.httpx, "get", side_effect=OSError("down")):
         assert local_models.list_served_models() is None
+
+
+def test_discovery_result_is_cached_within_ttl():
+    class _Resp:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"data": [{"id": QWEN}]}
+
+    with patch.object(local_models.httpx, "get", return_value=_Resp()) as get:
+        assert local_models.list_served_models() == [QWEN]
+        assert local_models.list_served_models() == [QWEN]
+    assert get.call_count == 1
+
+
+def test_discovery_failure_is_cached_too():
+    with patch.object(local_models.httpx, "get", side_effect=OSError("down")) as get:
+        assert local_models.list_served_models() is None
+        assert local_models.list_served_models() is None
+    assert get.call_count == 1

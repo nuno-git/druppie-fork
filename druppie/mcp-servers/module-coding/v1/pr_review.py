@@ -11,7 +11,10 @@ Review state is stored IN Gitea itself: each reviewed PR carries exactly one
 (``<!-- druppie-pr-review sha:<head_sha> verdict:<verdict> -->``). A PR needs
 review only when its head SHA differs from the marker SHA — the dedup decision
 is made here in code, not by the LLM, and reviews never stack: posting again
-edits the same comment.
+edits the same comment. Only marker comments authored by the token's own user
+count as sticky: a human quoting the review copies the marker into their
+reply, and trusting that copy would make dedup read the wrong SHA and
+post_pr_review try to edit a human's comment.
 
 TLS: verification is always on. For instances with a private CA, point
 PRREVIEW_SSL_CA_BUNDLE at the CA file — there is no insecure off-switch.
@@ -100,6 +103,10 @@ class GiteaPRClient:
             self._raise_for_status(resp)
             return resp.json()
 
+    async def get_authenticated_user(self) -> dict:
+        """Return the user the token belongs to (GET /user)."""
+        return await self._get("user")
+
     async def list_open_pulls(self, owner: str, repo: str, limit: int = 50) -> list[dict]:
         """List open pull requests for a repository."""
         return await self._get(
@@ -175,6 +182,7 @@ class PrReviewModule:
         self._max_diff_lines = int(os.getenv("PRREVIEW_MAX_DIFF_LINES", "3000"))
         ca_bundle = os.getenv("PRREVIEW_SSL_CA_BUNDLE", "").strip()
         self._client = GiteaPRClient(base_url, token, ca_bundle=ca_bundle or None)
+        self._bot_login: str | None = None
 
     @property
     def repos(self) -> list[str]:
@@ -189,12 +197,31 @@ class PrReviewModule:
         owner, name = repo.split("/", 1)
         return owner, name
 
+    async def _bot_user_login(self) -> str:
+        """Login of the token's own user, fetched once per instance."""
+        if self._bot_login is None:
+            user = await self._client.get_authenticated_user()
+            login = (user or {}).get("login")
+            if not login:
+                raise ValueError(
+                    "could not determine the review bot user (GET /user returned no login)"
+                )
+            self._bot_login = login
+        return self._bot_login
+
     async def _find_sticky_comment(
         self, owner: str, name: str, index: int
     ) -> tuple[dict | None, tuple[str, str] | None]:
-        """Return (comment, (sha, verdict)) for the newest marker comment, if any."""
+        """Return (comment, (sha, verdict)) for the newest marker comment BY THE BOT.
+
+        Comments by other users are never sticky, even when they contain the
+        marker (e.g. a human quote-replying the review) — see module docstring.
+        """
+        bot_login = await self._bot_user_login()
         comments = await self._client.list_issue_comments(owner, name, index)
         for comment in reversed(comments):
+            if (comment.get("user") or {}).get("login") != bot_login:
+                continue
             parsed = parse_marker(comment.get("body"))
             if parsed:
                 return comment, parsed

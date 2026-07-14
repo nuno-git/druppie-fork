@@ -36,6 +36,7 @@ _MOD_DIR = (
     / "module-coding"
 )
 _REPO = "ai/druppie"
+_BOT = "druppie-bot"
 
 PR_REVIEW_TOOLS = {
     "list_prs_needing_review",
@@ -134,6 +135,9 @@ class _FakeClient:
         self.edited: list[tuple[int, str]] = []
         self.diff = ""
 
+    async def get_authenticated_user(self):
+        return {"login": _BOT}
+
     async def list_open_pulls(self, owner, repo, limit=50):
         return self.pulls
 
@@ -165,7 +169,20 @@ def _pull(number, sha, draft=False):
 
 
 def _sticky(mod, sha, verdict="APPROVE", comment_id=77):
-    return {"id": comment_id, "body": mod.build_marker(sha, verdict) + "\n\nold review"}
+    return {
+        "id": comment_id,
+        "user": {"login": _BOT},
+        "body": mod.build_marker(sha, verdict) + "\n\nold review",
+    }
+
+
+def _human_quote(mod, sha, verdict="APPROVE", comment_id=88):
+    """A human reply quoting the bot review — contains the marker verbatim."""
+    return {
+        "id": comment_id,
+        "user": {"login": "some-human"},
+        "body": "> " + mod.build_marker(sha, verdict) + "\n\nreplying to the bot",
+    }
 
 
 @pytest.fixture()
@@ -326,6 +343,27 @@ def test_second_review_edits_the_same_comment(mod, module):
     comment_id, body = module._client.edited[0]
     assert comment_id == 77
     assert mod.parse_marker(body) == ("bbb2222", "REQUEST_CHANGES")
+
+
+def test_dedup_ignores_marker_quoted_by_a_human(mod, module):
+    module._client.pulls = [_pull(1, "aaa1111")]
+    module._client.comments = {1: [_human_quote(mod, "aaa1111")]}
+    result = asyncio.run(module.list_prs_needing_review())
+    assert [p["number"] for p in result["prs"]] == [1]
+    assert result["prs"][0]["previously_reviewed_sha"] is None
+
+
+def test_post_review_edits_bot_comment_not_a_newer_human_quote(mod, module):
+    module._client.comments = {
+        1: [
+            _sticky(mod, "aaa1111", comment_id=77),
+            _human_quote(mod, "aaa1111", comment_id=88),
+        ]
+    }
+    result = asyncio.run(module.post_pr_review(_REPO, 1, "bbb2222", "APPROVE", "ok"))
+    assert result["action"] == "updated"
+    assert module._client.edited[0][0] == 77
+    assert module._client.created == []
 
 
 def test_post_pr_review_validates_verdict_and_sha_and_body(mod, module):
