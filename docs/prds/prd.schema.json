@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://druppie/docs/prds/prd.schema.json",
+  "title": "PRD frontmatter",
+  "description": "Required YAML frontmatter for a Product Requirements Document. Definition only; enforcement is a later story.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "title", "status", "author", "date", "linked_adrs", "linked_research", "linked_bdd"],
+  "properties": {
+    "id": { "type": "string", "pattern": "^[0-9]{3}$" },
+    "title": { "type": "string", "minLength": 1 },
+    "status": { "enum": ["draft", "review", "approved", "implemented"] },
+    "author": { "type": "string", "minLength": 1 },
+    "date": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" },
+    "linked_adrs": { "type": "array", "items": { "type": "string" } },
+    "linked_research": { "type": "array", "items": { "type": "string" } },
+    "linked_bdd": { "type": "array", "items": { "type": "string" } }
+  }
+}

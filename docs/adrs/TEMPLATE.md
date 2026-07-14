@@ -2,20 +2,16 @@
 # ADR Frontmatter — every field is required.
 # Copy this template to NNN-short-kebab-title.md and fill in the values.
 
-id: NNN                           # 3-digit zero-padded number (e.g. 001, 012). Must match filename prefix.
+id: "001"                         # 3-digit zero-padded STRING (quote it!) — e.g. "001", "012". Must match filename prefix.
 title: Short imperative title     # Imperative mood, e.g. "Use layered architecture"
 status: proposed                  # One of: proposed | accepted | deprecated | superseded
 date: YYYY-MM-DD                  # Date the decision was made
 deciders:                         # Roles/people who made the decision
   - role_or_name
 
-# Supersession tracking — only relevant when status is "superseded"
-superseded_by: null               # ADR id string (e.g. "005") or null
-
-# How is this rule enforced in CI/runtime?
-enforcement:
-  lint_rules: []                  # Linter rule IDs that guard this decision (e.g. ["TYP001"])
-  ci_checks: []                   # CI job names or script paths that verify compliance
+# Supersession tracking — only relevant when a decision is replaced
+supersedes: null                  # ADR id string this replaces (e.g. "003") or null
+superseded_by: null               # ADR id string that replaces this (e.g. "005") or null
 
 # Traceability — link to product requirements or research that motivated this ADR
 linked_prd: null                  # Path or URL to a PRD section (e.g. "docs/FEATURES.md#section")
@@ -39,10 +35,6 @@ What is the change that we're proposing and/or doing? State the decision clearly
 
 What becomes easier or more difficult to do because of this change? Cover both positive and negative effects. Include impacts on performance, developer experience, testing, deployment, and future evolution.
 
-## Compliance
-
-How do we verify that the system still adheres to this decision? Describe manual or automated checks. Reference specific lint rules, CI jobs, or code review criteria. If this decision cannot be automatically enforced, state that explicitly and describe the manual review process.
-
-## Enforcement
-
-Concrete steps taken when a violation is detected. What happens in CI? What happens at runtime? What is the remediation path for a developer who accidentally violates this rule?
+<!-- LATER (Story #3 — afdwingen): hoe deze beslissing wordt afgedwongen (welke frontmatter-velden
+     en CI-/lint-checks daarvoor nodig zijn) wordt in Story #3 onderzocht en hier toegevoegd.
+     Bewust nog niet opgenomen zodat we het afdwing-mechanisme eerst goed uitzoeken. -->

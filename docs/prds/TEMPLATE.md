@@ -1,12 +1,12 @@
 ---
-id: 000                              # Sequential PRD number (e.g. 001, 002)
+id: "001"                            # Sequential PRD number as STRING (quote it!) — e.g. "001", "002"
 title: Feature name                   # Short, descriptive name
 status: draft                         # draft | review | approved | implemented
 author: role name                     # Who authored this PRD (e.g. "architect", "developer")
-date: 2026-06-09                      # Date of initial draft (YYYY-MM-DD)
+date: YYYY-MM-DD                      # Date of initial draft (YYYY-MM-DD)
 linked_adrs: []                       # List of ADR file paths, e.g. ["docs/adrs/001-choice-of-state-management.md"]
 linked_research: []                   # List of research doc paths, e.g. ["docs/research/001-auth-providers.md"]
-linked_bdd: []                        # List of .feature file paths, e.g. ["tests/features/approval-workflow.feature"]
+linked_bdd: []                        # List of .feature file paths, e.g. ["testing/bdd/features/approval-workflow.feature"]
 ---
 
 # PRD: {title}
@@ -93,17 +93,8 @@ _Definition of done with measurable criteria._
 
 ## Linked Documents
 
-<!-- Auto-populated from YAML frontmatter. Do not edit this section manually.
-     The links below are rendered from the frontmatter fields above. -->
+<!-- Keep this list in sync with the frontmatter above (manual for now). -->
 
-### ADRs
-<!-- Rendered from `linked_adrs` frontmatter -->
-<!-- {% for adr in linked_adrs %}- [{{ adr }}](/{{ adr }}){% endfor %} -->
-
-### Research
-<!-- Rendered from `linked_research` frontmatter -->
-<!-- {% for doc in linked_research %}- [{{ doc }}](/{{ doc }}){% endfor %} -->
-
-### BDD / Feature Files
-<!-- Rendered from `linked_bdd` frontmatter -->
-<!-- {% for bdd in linked_bdd %}- [{{ bdd }}](/{{ bdd }}){% endfor %} -->
+- **ADRs:** _list the items from `linked_adrs`_
+- **Research:** _list the items from `linked_research`_
+- **BDD / Feature files:** _list the items from `linked_bdd`_

@@ -1,9 +1,9 @@
 ---
-id: 000                              # Sequential research number (e.g. 001, 002)
+id: "001"                            # Sequential research number as STRING (quote it!) — e.g. "001", "002"
 title: Research topic                  # Short, descriptive name
 status: draft                         # draft | complete
 author: role name                     # Who conducted this research
-date: 2026-06-09                      # Date of research (YYYY-MM-DD)
+date: YYYY-MM-DD                      # Date of research (YYYY-MM-DD)
 outcome: null                         # "adr-NNN" if research led to an ADR, or null
 ---
 
@@ -111,7 +111,8 @@ _Recommended option and why._
 
 ## Resulting ADR
 
-<!-- Link to ADR if one was created from this research.
-     Auto-populated from the `outcome` frontmatter field. -->
+<!-- Link to ADR if one was created from this research. -->
 
-<!-- {% if outcome %}This research led to [ADR {{ outcome }}](../adrs/{{ outcome }}.md).{% else %}No ADR created yet.{% endif %} -->
+<!-- Once this research leads to an ADR, set `outcome: "adr-NNN"` in the frontmatter and link it here. -->
+
+_If this research resulted in a decision, link the ADR here (e.g. [ADR 004](../adrs/004-...md))._
