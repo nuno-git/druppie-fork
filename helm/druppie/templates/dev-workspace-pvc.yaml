@@ -1,0 +1,19 @@
+{{- if .Values.devWorkspace.enabled }}
+# Persistent source tree for the dev workspace (git checkout, venv,
+# node_modules, .claude, desktop state). Separate from the backend's
+# <instance>-workspace PVC (that one backs /app/workspace for module-coding).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "druppie.fullname" . }}-workspace-dev
+  labels:
+    {{- include "druppie.labels" . | nindent 4 }}
+    app.kubernetes.io/component: dev-workspace
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: {{ .Values.devWorkspace.workspace.storageClassName | default "longhorn-distributed" }}
+  resources:
+    requests:
+      storage: {{ .Values.devWorkspace.workspace.size }}
+{{- end }}

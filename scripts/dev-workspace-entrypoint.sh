@@ -23,7 +23,10 @@
 #   DRUPPIE_REPO_URL     git remote                     (default: https://aigit.waterschap.org/ai/druppie.git)
 #   DRUPPIE_GIT_TOKEN    optional token for git fetch   (default: unset)
 #   VITE_API_URL         backend URL for the frontend   (default: /proxy/8000)
-#   DATABASE_URL         backend DB URL                 (default: sqlite:////workspace/.data/druppie.db)
+#   DEV_STACK            real | degraded                (default: degraded)
+#                        real = use chart-provided DATABASE_URL/KEYCLOAK_*/MCP_*
+#                        degraded = force SQLite + mock (ignore inherited DATABASE_URL)
+#   DATABASE_URL         backend DB URL (real mode)     (default: sqlite:////workspace/.data/druppie.db)
 #   GIT_SSL_NO_VERIFY    set to "1" to skip TLS verify on fetch (default: unset)
 #   DRUPPIE_DESKTOP      set to "0" to skip the XFCE/noVNC desktop (default: 1)
 #   DRUPPIE_DESKTOP_GEOMETRY  initial Xvnc resolution   (default: 1600x900)
@@ -40,13 +43,29 @@ DEP_DIR="${WORKSPACE}/.dep-hashes"
 DRUPPIE_GIT_BRANCH="${DRUPPIE_GIT_BRANCH:-colab-dev}"
 DRUPPIE_REPO_URL="${DRUPPIE_REPO_URL:-https://aigit.waterschap.org/ai/druppie.git}"
 DRUPPIE_GIT_TOKEN="${DRUPPIE_GIT_TOKEN:-}"
+# DEV_STACK selects the backend's runtime dependencies:
+#   real      = consume the deployed stack: DATABASE_URL / KEYCLOAK_* / MCP_* /
+#               GITEA_* are provided by the chart (envFrom <instance>-config +
+#               <instance>-secrets). The backend runs against real Postgres +
+#               Keycloak, but still under `uvicorn --reload`.
+#   degraded  = isolated: force SQLite + mock, ignore any incoming DATABASE_URL.
+#               Fast, offline-friendly — the intended default when dev-env
+#               creation exposes the choice.
+DEV_STACK="${DEV_STACK:-degraded}"
 # Default is a RELATIVE path: the app preview is reached through code-server's
 # built-in port proxy (https://<workspace-host>/proxy/5173), so the browser
 # cannot reach localhost:8000 directly. /proxy/8000 routes API calls through
 # the same code-server proxy (and thus the oauth2-proxy session) to the
 # backend on this pod.
 VITE_API_URL="${VITE_API_URL:-/proxy/8000}"
-DATABASE_URL="${DATABASE_URL:-sqlite:////workspace/.data/druppie.db}"
+# In degraded mode always use the local SQLite DB (ignore any DATABASE_URL
+# inherited from the chart). In real mode honor the chart-provided DATABASE_URL
+# and only fall back to SQLite if it is somehow unset.
+if [ "${DEV_STACK}" = "real" ]; then
+    DATABASE_URL="${DATABASE_URL:-sqlite:////workspace/.data/druppie.db}"
+else
+    DATABASE_URL="sqlite:////workspace/.data/druppie.db"
+fi
 
 REQUIREMENTS_REL="druppie/requirements.txt"
 FRONTEND_LOCK_REL="frontend/package-lock.json"
@@ -169,7 +188,7 @@ ensure_backend_deps() {
 PIDS=""
 
 start_backend() {
-    log "starting backend (uvicorn --reload) on 0.0.0.0:8000"
+    log "starting backend (uvicorn --reload) on 0.0.0.0:8000 [DEV_STACK=${DEV_STACK}]"
     # SQLite URLs: sqlite:///relative or sqlite:////absolute. Stripping the
     # three-slash prefix leaves "/workspace/..." (absolute) or "./..." intact.
     case "${DATABASE_URL}" in
@@ -180,9 +199,13 @@ start_backend() {
     esac
     (
         cd "${WORKSPACE}" || exit 1
-        # Dev/degraded backend: SQLite (tables auto-created on import via
-        # api/deps.py init_db()), no Keycloak/Gitea/MCP wiring. GITHUB_APP_* is
-        # deliberately left UNSET so Settings.validate_startup() does not abort.
+        # DEV_STACK=real: DATABASE_URL/KEYCLOAK_*/MCP_*/GITEA_* are provided by
+        #   the chart (envFrom). The backend runs against the real deployed
+        #   stack, still under --reload.
+        # DEV_STACK=degraded: SQLite (tables auto-created on import via
+        #   api/deps.py init_db()), mock auth, no Keycloak/Gitea/MCP wiring.
+        #   GITHUB_APP_* is deliberately left UNSET so Settings.validate_startup()
+        #   does not abort.
         PYTHONPATH="${WORKSPACE}" \
         DATABASE_URL="${DATABASE_URL}" \
         ENVIRONMENT="development" \

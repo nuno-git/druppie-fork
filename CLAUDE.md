@@ -150,14 +150,10 @@ kubectl rollout restart -n druppie-colab-dev deploy/druppie-colab-dev-backend
 
 ## Local Development
 
-### Docker Compose (primary local workflow)
-```bash
-docker compose --profile dev --profile init up -d      # Start full dev environment
-docker compose --profile dev down                       # Stop everything
-docker compose logs -f druppie-backend-dev              # View logs
-docker compose --profile reset-db run --rm reset-db     # Reset DB
-docker compose --profile dev up -d --build              # Rebuild after code changes
-```
+There is **no docker-compose workflow anymore** — development happens in a
+Kubernetes dev workspace (a branch namespace that *is* the hot-reloading
+environment). See `dev-workspace-hotreload-plan.md` and
+`scripts/deploy-branch-env.sh`.
 
 ### Backend (Python/FastAPI)
 ```bash

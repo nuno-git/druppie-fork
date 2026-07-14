@@ -205,6 +205,58 @@ frontend:
   vite:
     keycloakRealm: druppie
     keycloakClientId: druppie-frontend
+# Dev workspace — when enabled, a single pod (code-server + hot-reload backend
+# via `uvicorn --reload` + Vite HMR frontend + optional desktop) REPLACES the
+# baked backend/frontend Deployments. The existing <instance>-backend and
+# <instance>-frontend Services are repointed at this pod, so the branch
+# namespace has exactly one backend and one frontend — and they hot-reload.
+#
+# stackMode:
+#   real      = backend consumes the deployed Keycloak/Postgres/MCP (prod-parity)
+#   degraded  = SQLite + mock auth (fast, offline-friendly). Default; intended as
+#               the future default selectable at dev-env creation time.
+#
+# Branch environments set enabled:true + stackMode:real. Prod/colab-dev leave
+# this disabled and keep the baked backend/frontend.
+devWorkspace:
+  enabled: false
+  stackMode: degraded
+  image: harbor.rijnland.dev/druppie/dev-workspace:latest
+  imagePullPolicy: Always
+  gitBranch: ""                       # DRUPPIE_GIT_BRANCH (set per branch)
+  repoUrl: https://aigit.waterschap.org/ai/druppie.git
+  gitSslNoVerify: true
+  # Optional K8s Secret (with key git-token) injected as DRUPPIE_GIT_TOKEN.
+  gitTokenSecret: {}                  # {name: ..., key: git-token}
+  desktop:
+    enabled: true
+  workspace:
+    size: 20Gi
+    storageClassName: longhorn-distributed
+  nodeSelector: {}
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: "2"
+      memory: 6Gi
+  # code-server IDE is exposed on its own -dev subdomain behind oauth2-proxy.
+  codeServer:
+    devHost: ""                       # e.g. druppie-<slug>-dev.rijnland.dev
+    tlsSecretName: druppie-tls
+  oauth:
+    clientId: workspace
+    issuerUrl: ""                     # e.g. https://druppie-<slug>.rijnland.dev/realms/druppie
+    # oauth2-proxy client/cookie secrets are sourced from Vault via ESO
+    # (keys: client-secret, cookie-secret) into this Secret.
+    externalSecret:
+      enabled: true
+      storeRef:
+        name: vault-ai-team-k8s
+        kind: ClusterSecretStore
+      vaultKey: branch-env/workspace-oauth
+      secretName: workspace-oauth
 modules:
   coding:
     enabled: true

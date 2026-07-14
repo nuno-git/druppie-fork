@@ -1,0 +1,31 @@
+{{- if and .Values.devWorkspace.enabled .Values.devWorkspace.codeServer.devHost }}
+# code-server IDE on its own -dev subdomain, fronted by the oauth2-proxy
+# sidecar in the workspace pod. The app itself is served on the main domain
+# via <instance>-frontend / <instance>-backend (see ingress.yaml).
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "druppie.fullname" . }}-workspace
+  labels:
+    {{- include "druppie.labels" . | nindent 4 }}
+    app.kubernetes.io/component: dev-workspace
+  annotations:
+    traefik.ingress.kubernetes.io/router.middlewares: kube-system-treafik-default-headers@kubernetescrd
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts:
+        - {{ .Values.devWorkspace.codeServer.devHost }}
+      secretName: {{ .Values.devWorkspace.codeServer.tlsSecretName }}
+  rules:
+    - host: {{ .Values.devWorkspace.codeServer.devHost }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "druppie.fullname" . }}-workspace
+                port:
+                  number: 80
+{{- end }}
