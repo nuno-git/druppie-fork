@@ -6,6 +6,7 @@ import mimetypes
 import os
 import re
 from pathlib import Path
+from uuid import UUID
 
 import httpx
 import structlog
@@ -20,6 +21,9 @@ DEEPINFRA_BASE_URL = "https://api.deepinfra.com/v1/openai"
 DEEPINFRA_OCR_MODEL = "google/gemma-4-31B-it"
 OCR_PAGE_TIMEOUT = 120
 OCR_MAX_PAGES = 50
+OCR_CONCURRENCY = 4
+OCR_MAX_RETRIES = 2
+OCR_RETRY_BACKOFF = 2.0
 
 _DEFAULT_ALLOWED_CONTENT_TYPES = {
     "text/plain",
@@ -170,7 +174,11 @@ def _render_pdf_pages_to_png(file_path: Path, max_pages: int) -> list[bytes]:
 
 
 async def _extract_pdf_text_ocr(file_path: Path) -> str | None:
-    """OCR fallback: render PDF pages to PNG, send to vision model."""
+    """OCR fallback: render PDF pages to PNG, send to vision model.
+
+    Pages are OCR'd concurrently (up to OCR_CONCURRENCY at a time) and each
+    page is retried up to OCR_MAX_RETRIES times for transient failures.
+    """
     api_key = os.getenv("DEEPINFRA_API_KEY", "")
     if not api_key:
         logger.info("deepinfra_ocr_skipped", reason="DEEPINFRA_API_KEY not set")
@@ -189,44 +197,73 @@ async def _extract_pdf_text_ocr(file_path: Path) -> str | None:
         logger.warning("pdf_ocr_no_pages", path=str(file_path))
         return None
 
-    text_parts = []
+    semaphore = asyncio.Semaphore(OCR_CONCURRENCY)
+
+    async def _ocr_one_page(
+        client: httpx.AsyncClient, page_index: int, png_bytes: bytes
+    ) -> str | None:
+        b64 = base64.b64encode(png_bytes).decode()
+        image_content = {
+            "type": "image_url",
+            "image_url": {"url": f"data:image/png;base64,{b64}"},
+        }
+        body = {
+            "model": DEEPINFRA_OCR_MODEL,
+            "max_tokens": 8192,
+            "temperature": 0.0,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        image_content,
+                        {"type": "text", "text": "Extract all text from this document page. Return only the extracted text, preserving the original structure and formatting. Do not add commentary."},
+                    ],
+                }
+            ],
+        }
+        last_exc: Exception | None = None
+        async with semaphore:
+            for attempt in range(OCR_MAX_RETRIES + 1):
+                try:
+                    resp = await client.post(
+                        f"{DEEPINFRA_BASE_URL}/chat/completions",
+                        headers={"Authorization": f"Bearer {api_key}"},
+                        timeout=OCR_PAGE_TIMEOUT,
+                        json=body,
+                    )
+                    resp.raise_for_status()
+                    data = resp.json()
+                    page_text = data["choices"][0]["message"]["content"]
+                    if page_text and page_text.strip():
+                        return page_text.strip()
+                    return None
+                except (
+                    httpx.TimeoutException,
+                    httpx.HTTPStatusError,
+                    httpx.NetworkError,
+                    KeyError,
+                    ValueError,
+                ) as e:
+                    last_exc = e
+                    if attempt < OCR_MAX_RETRIES:
+                        await asyncio.sleep(OCR_RETRY_BACKOFF)
+                        continue
+                    break
+        logger.warning(
+            "pdf_ocr_page_failed",
+            path=str(file_path),
+            page=page_index,
+            error_type=type(last_exc).__name__ if last_exc else "Unknown",
+            error=str(last_exc) if last_exc else "",
+        )
+        return None
+
     async with httpx.AsyncClient() as client:
-        for i, png_bytes in enumerate(png_pages):
-            b64 = base64.b64encode(png_bytes).decode()
-            image_content = {
-                "type": "image_url",
-                "image_url": {"url": f"data:image/png;base64,{b64}"},
-            }
+        page_results = await asyncio.gather(
+            *[_ocr_one_page(client, i, b) for i, b in enumerate(png_pages)]
+        )
 
-            try:
-                resp = await client.post(
-                    f"{DEEPINFRA_BASE_URL}/chat/completions",
-                    headers={"Authorization": f"Bearer {api_key}"},
-                    timeout=OCR_PAGE_TIMEOUT,
-                    json={
-                        "model": DEEPINFRA_OCR_MODEL,
-                        "max_tokens": 8192,
-                        "temperature": 0.0,
-                        "messages": [
-                            {
-                                "role": "user",
-                                "content": [
-                                    image_content,
-                                    {"type": "text", "text": "Extract all text from this document page. Return only the extracted text, preserving the original structure and formatting. Do not add commentary."},
-                                ],
-                            }
-                        ],
-                    },
-                )
-                resp.raise_for_status()
-                data = resp.json()
-                page_text = data["choices"][0]["message"]["content"]
-                if page_text and page_text.strip():
-                    text_parts.append(page_text.strip())
-            except (httpx.TimeoutException, httpx.HTTPStatusError, KeyError, ValueError) as e:
-                logger.warning("pdf_ocr_page_failed", path=str(file_path), page=i, error=str(e)[:200])
-                continue
-
+    text_parts = [t for t in page_results if t]
     full_text = "\n".join(text_parts)
     if full_text.strip():
         logger.info("pdf_ocr_success", path=str(file_path), chars=len(full_text), pages=len(text_parts))
@@ -253,3 +290,78 @@ def delete_file(storage_path: str) -> None:
                 parent.rmdir()
     except (OSError, ValueError) as e:
         logger.warning("file_delete_failed", path=storage_path, error=str(e))
+
+
+# In-process background extraction registry. Safe because the backend runs a
+# single uvicorn worker (dev --reload, prod single-worker enforced by commit),
+# so upload requests and the orchestrator background task share one event loop.
+_pending_extractions: dict[UUID, asyncio.Task] = {}
+
+
+async def await_extractions(att_ids: list[UUID]) -> None:
+    """Wait for any in-flight background extraction tasks to finish.
+
+    Called by the orchestrator before building attachment context, so a chat
+    message sent right after upload still sees the full OCR output. Never
+    raises — a failed extraction leaves extracted_text as None. Tolerates
+    unknown ids, empty lists, and already-done tasks.
+    """
+    if not att_ids:
+        return
+    pending: list[asyncio.Task] = []
+    for aid in att_ids:
+        task = _pending_extractions.get(aid)
+        if task is not None and not task.done():
+            pending.append(task)
+    if not pending:
+        return
+    for result in await asyncio.gather(*pending, return_exceptions=True):
+        if isinstance(result, Exception):
+            logger.warning("extraction_await_failed", error=str(result)[:200])
+
+
+def schedule_extraction(att_id: UUID, file_path: Path, content_type: str) -> None:
+    """Schedule background text extraction for an attachment. Never raises.
+
+    The upload route calls this after committing the attachment row, so the
+    HTTP response returns immediately while extraction (potentially minutes
+    for scanned PDFs) continues in the background. The task updates the
+    attachment row's extracted_text in a fresh DB session and removes itself
+    from _pending_extractions on completion.
+    """
+    if att_id in _pending_extractions:
+        # Already scheduled — avoid orphaning a running task.
+        return
+
+    async def _run_extraction() -> None:
+        try:
+            text = await extract_text(file_path, content_type)
+            from druppie.db.database import SessionLocal
+            from druppie.repositories.attachment_repository import AttachmentRepository
+
+            db = SessionLocal()
+            try:
+                repo = AttachmentRepository(db)
+                attachment = repo.get_by_id(att_id)
+                if attachment is not None:
+                    attachment.extracted_text = text
+                    db.commit()
+            finally:
+                db.close()
+            logger.info(
+                "extraction_completed",
+                attachment_id=str(att_id),
+                chars=len(text) if text else 0,
+            )
+        except Exception:
+            logger.error(
+                "extraction_background_failed",
+                attachment_id=str(att_id),
+                exc_info=True,
+            )
+        finally:
+            _pending_extractions.pop(att_id, None)
+
+    task = asyncio.create_task(_run_extraction())
+    _pending_extractions[att_id] = task
+    logger.info("extraction_scheduled", attachment_id=str(att_id))
