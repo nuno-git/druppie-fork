@@ -118,6 +118,7 @@ export const getAvatarUrl = async () => {
   try {
     const response = await fetch(`${API_URL}/api/users/me/avatar`, {
       headers: { 'Authorization': `Bearer ${token}` },
+      cache: 'no-store',
     })
     if (!response.ok) return null
     const blob = await response.blob()

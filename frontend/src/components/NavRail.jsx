@@ -84,16 +84,20 @@ const UserMenu = ({ user, authenticated }) => {
   const ref = useRef(null)
 
   useEffect(() => {
-    if (!authenticated) return
+    if (!authenticated) { setAvatarUrl(null); return }
     let revoke = null
+    let cancelled = false
     getAvatarUrl().then(url => {
+      if (cancelled) return
       if (url) {
         setAvatarUrl(url)
         revoke = url
+      } else {
+        setAvatarUrl(null)
       }
     })
-    return () => { if (revoke) URL.revokeObjectURL(revoke) }
-  }, [authenticated])
+    return () => { cancelled = true; setAvatarUrl(null); if (revoke) URL.revokeObjectURL(revoke) }
+  }, [authenticated, user?.id])
 
   useEffect(() => {
     if (!open) return

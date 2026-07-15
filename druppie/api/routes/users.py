@@ -1,6 +1,6 @@
 """User API routes — avatar and profile endpoints."""
 
-from fastapi import APIRouter, Depends, Header, Response
+from fastapi import APIRouter, Depends, Response
 from fastapi.responses import FileResponse
 import structlog
 
@@ -11,6 +11,11 @@ logger = structlog.get_logger()
 
 router = APIRouter()
 
+_AVATAR_HEADERS = {
+    "Cache-Control": "private, no-store",
+    "Vary": "Authorization",
+}
+
 
 @router.get("/users/me/avatar")
 async def get_my_avatar(
@@ -19,33 +24,31 @@ async def get_my_avatar(
 ):
     user_id = user.get("sub", "")
 
-    # Serve from cache if available
     result = get_cached_avatar(user_id)
     if result:
         path = _avatar_path(user_id)
         return FileResponse(
             path=str(path),
             media_type="image/jpeg",
-            headers={"Cache-Control": "private, max-age=3600"},
+            headers=_AVATAR_HEADERS,
         )
 
-    # Cache miss — try to fetch from Graph via KC broker
     from druppie.core.entra_token import get_entra_token, is_entra_configured
     if not is_entra_configured():
-        return Response(status_code=404)
+        return Response(status_code=404, headers=_AVATAR_HEADERS)
 
     token_result = await get_entra_token(bearer_token)
     graph_token = token_result.get("access_token")
     if not graph_token:
-        return Response(status_code=404)
+        return Response(status_code=404, headers=_AVATAR_HEADERS)
 
     ok = await fetch_and_cache_avatar(user_id, graph_token)
     if not ok:
-        return Response(status_code=404)
+        return Response(status_code=404, headers=_AVATAR_HEADERS)
 
     path = _avatar_path(user_id)
     return FileResponse(
         path=str(path),
         media_type="image/jpeg",
-        headers={"Cache-Control": "private, max-age=3600"},
+        headers=_AVATAR_HEADERS,
     )
