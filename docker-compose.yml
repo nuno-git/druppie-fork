@@ -248,8 +248,8 @@ services:
 
   module-docker:
     build:
-      context: ./druppie
-      dockerfile: mcp-servers/module-docker/Dockerfile
+      context: ./druppie/mcp-servers
+      dockerfile: module-docker/Dockerfile
     container_name: druppie-module-docker
     profiles: [infra, dev, prod]
     environment:
