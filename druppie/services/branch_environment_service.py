@@ -649,10 +649,10 @@ class ClusterStatusClient:
             )
         return resp.json()
 
-    async def get_helmrelease(self, namespace: str) -> dict | None:
+    async def get_helmrelease(self, namespace: str, name: str = HELMRELEASE_NAME) -> dict | None:
         return await self._get(
             f"/apis/helm.toolkit.fluxcd.io/v2/namespaces/{namespace}"
-            f"/helmreleases/{HELMRELEASE_NAME}"
+            f"/helmreleases/{name}"
         )
 
     async def get_namespace(self, namespace: str) -> dict | None:
@@ -971,7 +971,7 @@ class BranchEnvironmentService:
         if image_tag is not None:
             image_tag = _validate_image_tag(image_tag)
         elif self.cluster.available:
-            parent = await self.cluster.get_helmrelease(PARENT_NAMESPACE)
+            parent = await self.cluster.get_helmrelease(PARENT_NAMESPACE, name=PARENT_NAMESPACE)
             image_tag = (
                 (parent or {}).get("spec", {}).get("values", {})
                 .get("global", {}).get("imageTag")

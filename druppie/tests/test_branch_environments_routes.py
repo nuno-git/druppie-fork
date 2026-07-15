@@ -123,7 +123,7 @@ class FakeCluster:
         self.externalsecrets: dict[str, list[dict]] = {}  # keyed by namespace
         self.pods: dict[str, list[dict]] = {}  # keyed by namespace
 
-    async def get_helmrelease(self, namespace: str):
+    async def get_helmrelease(self, namespace: str, name: str = "druppie"):
         return self.helmreleases.get(namespace)
 
     async def get_namespace(self, namespace: str):
