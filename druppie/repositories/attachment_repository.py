@@ -18,7 +18,6 @@ class AttachmentRepository(BaseRepository):
         owner_user_id: UUID,
         session_id: UUID | None = None,
         extracted_text: str | None = None,
-        owner_user_id: UUID | None = None,
     ) -> MessageAttachment:
         attachment = MessageAttachment(
             owner_user_id=owner_user_id,
@@ -28,7 +27,6 @@ class AttachmentRepository(BaseRepository):
             file_size=file_size,
             storage_path=storage_path,
             extracted_text=extracted_text,
-            owner_user_id=owner_user_id,
         )
         self.db.add(attachment)
         self.db.flush()
