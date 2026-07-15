@@ -238,7 +238,9 @@ devWorkspace:
     enabled: true
   workspace:
     size: 20Gi
-    storageClassName: longhorn-distributed
+    # Empty → resolved by the template via the persistence.storageClass helper
+    # (same as all other PVCs). Set explicitly only to override.
+    storageClassName: ""
   nodeSelector: {}
   # Traefik ingress controller's in-cluster ClusterIP (e.g. the rke2-traefik-lb
   # service ClusterIP). When set, a hostAlias maps global.domain to it so the pod
