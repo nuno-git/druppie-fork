@@ -257,14 +257,19 @@ PROVIDER_CONFIGS = {
         ],
     },
     "llmkube": {
-        "prefix": "openai",  # LLMKube/vLLM serves an OpenAI-compatible API
-        "default_model": "Qwen/Qwen3.6-27B",
+        "prefix": "openai",  # Router/vLLM serves an OpenAI-compatible API
+        "default_model": "deepseek-v4-flash",
         "api_key_env": "LLMKUBE_API_KEY",
-        "api_key_optional": True,  # vLLM endpoint requires no auth
+        "api_key_optional": True,  # Router endpoint requires no auth
         "model_env": "LLMKUBE_MODEL",
         "base_url_env": "LLMKUBE_BASE_URL",
         # In-cluster default; local dev overrides via LLMKUBE_BASE_URL (ingress URL)
-        "default_base_url": "http://qwen.llm.svc.cluster.local:8000/v1",
+        "default_base_url": "http://model-server.llm.svc.cluster.local:8001/v1",
+        "known_models": [
+            "deepseek-v4-flash",
+            "qwen3.6-27b",
+            "qwen3.6-35b-a3b",
+        ],
     },
 }
 

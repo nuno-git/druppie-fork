@@ -63,3 +63,28 @@ class ModelManagementView(BaseModel):
     translation: TranslationModelInfo
     providers: list[ProviderStatus]
     overrides: list[ModelOverrideSummary]
+
+
+class LocalServiceStatus(BaseModel):
+    replicas: int
+    ready: bool
+
+
+class LocalModelStatus(BaseModel):
+    current_mode: str | None = None
+    switching: str | None = None
+    inflight: int = 0
+    active_services: list[str] = []
+    available_models: list[str] = []
+    services: dict[str, LocalServiceStatus] = {}
+
+
+class LocalServiceLogs(BaseModel):
+    pod: str | None = None
+    ready: bool = False
+    logs: list[str] = []
+    error: str | None = None
+
+
+class LocalModelLogs(BaseModel):
+    services: dict[str, LocalServiceLogs] = {}

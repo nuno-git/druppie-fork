@@ -46,7 +46,13 @@ profiles:
     - provider: ollama
       model: gemma3:27b
 
-  # In-cluster LLMKube/vLLM (OpenAI-compatible, no API key required).
+  # In-cluster LLMKube/vLLM via model router (OpenAI-compatible, no API key required).
+  # The router auto-switches between modes: DeepSeek (TP=2) or Qwen (27B+35B).
+  # DeepSeek is first (primary), Qwen 35B is fallback, Qwen 27B is last resort.
   llmkube:
     - provider: llmkube
-      model: Qwen/Qwen3.6-27B
+      model: deepseek-v4-flash
+    - provider: llmkube
+      model: qwen3.6-35b-a3b
+    - provider: llmkube
+      model: qwen3.6-27b

@@ -591,3 +591,5 @@ export const removeTranslationModelOverride = () =>
 export const getProviderStatuses = () => request('/api/admin/models/providers')
 export const validateProvider = (provider, model) =>
   request(`/api/admin/models/providers/${provider}/validate${model ? `?model=${encodeURIComponent(model)}` : ''}`, { method: 'POST' })
+export const getLocalModelStatus = () => request('/api/admin/models/local-status')
+export const getLocalModelLogs = (tail = 50) => request(`/api/admin/models/local-logs?tail=${tail}`)
