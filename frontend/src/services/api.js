@@ -5,11 +5,13 @@
  * Sessions replace Plans, and endpoints use the new API structure.
  */
 
-import { getToken } from './keycloak'
+import { getToken, ensureValidToken, redirectToLogin } from './keycloak'
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
 const request = async (endpoint, options = {}) => {
+  await ensureValidToken(30)
+
   const token = getToken()
 
   const isFormData = options.body instanceof FormData
@@ -34,6 +36,15 @@ const request = async (endpoint, options = {}) => {
       ...options,
       headers,
     })
+
+    if (response.status === 401 && !options.__retried) {
+      const refreshed = await ensureValidToken(60)
+      if (refreshed) {
+        return request(endpoint, { ...options, __retried: true })
+      }
+      redirectToLogin()
+      throw new Error('Session expired — please log in again')
+    }
 
     if (!response.ok) {
       const error = await response.json().catch(() => ({ detail: 'Unknown error' }))
