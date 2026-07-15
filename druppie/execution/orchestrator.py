@@ -1036,9 +1036,8 @@ class Orchestrator:
         except Exception as e:
             logger.error("entra_reinjection_failed", error=str(e))
 
-        timeout = 60.0
-        if waiting_tc.tool_name in tool_executor.__class__.__dict__.get("_long_running", set()):
-            timeout = 1200.0
+        from druppie.execution.tool_executor import SLOW_START_SERVERS, SLOW_START_TIMEOUT
+        timeout = SLOW_START_TIMEOUT if waiting_tc.mcp_server in SLOW_START_SERVERS else 60.0
 
         try:
             self.execution_repo.update_tool_call(

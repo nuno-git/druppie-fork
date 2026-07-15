@@ -214,38 +214,6 @@ class AzureSQLAdapter(BaseDataSourceAdapter):
             )
         return normalised
 
-    async def _fetch_user_obo_token(self, user_token: str) -> str:
-        """Exchange a user's Entra ID token for a resource-scoped token via OBO.
-
-        This is the true On-Behalf-Of flow: the user's identity is preserved
-        in the resulting token, so the database sees the actual user.
-        """
-        from httpx import AsyncClient
-
-        tenant_id = self.obo_config["tenant_id"]
-        client_id = self.obo_config["client_id"]
-        scope = self.obo_config["scope"]
-
-        token_url = f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token"
-
-        data = {
-            "grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer",
-            "client_id": client_id,
-            "client_secret": self.obo_config["client_secret"],
-            "assertion": user_token,
-            "scope": scope,
-            "requested_token_use": "on_behalf_of",
-        }
-
-        async with AsyncClient() as client:
-            response = await client.post(token_url, data=data, timeout=15)
-            if response.status_code != 200:
-                error_body = response.json() if response.headers.get("content-type", "").startswith("application/json") else {}
-                error_desc = error_body.get("error_description", response.text[:200])
-                logger.error("obo_token_exchange_failed status=%s error=%s", response.status_code, error_desc)
-                raise RuntimeError(f"OBO token exchange failed: {error_desc}")
-            return response.json()["access_token"]
-
     async def _fetch_service_token(self) -> str:
         """Fetch a service principal token via client_credentials."""
         from httpx import AsyncClient

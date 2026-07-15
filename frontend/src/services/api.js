@@ -108,7 +108,12 @@ export const downloadAttachment = async (attachmentId) => {
   if (!response.ok) throw new Error(`Failed to fetch attachment: ${response.status}`)
   const blob = await response.blob()
   const url = URL.createObjectURL(blob)
-  window.open(url, '_blank')
+  const a = document.createElement('a')
+  a.href = url
+  a.download = attachmentId
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
   setTimeout(() => URL.revokeObjectURL(url), 60000)
 }
 
