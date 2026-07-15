@@ -216,7 +216,16 @@ class KeycloakAdmin:
         if response.status_code == 409:
             print(f"  [UPDATE] IdP '{alias}' already exists, updating...")
             update_url = f"{self.base_url}/admin/realms/{realm}/identity-provider/instances/{alias}"
-            update_resp = requests.put(update_url, json=idp_config, headers=self._headers())
+            existing = requests.get(update_url, headers=self._headers())
+            if existing.status_code == 200:
+                merged = existing.json()
+                merged_config = merged.get("config", {})
+                merged_config.update(idp_config.get("config", {}))
+                merged.update(idp_config)
+                merged["config"] = merged_config
+            else:
+                merged = idp_config
+            update_resp = requests.put(update_url, json=merged, headers=self._headers())
             if update_resp.status_code in [200, 204]:
                 print(f"  [OK] Updated IdP '{alias}'")
             else:
