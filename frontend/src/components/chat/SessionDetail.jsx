@@ -388,6 +388,29 @@ const TimelineQuestion = ({ tc, agentId, sessionId, isOwner, isAdmin, userRoles,
         isAnswering={answerMut.isPending}
         answered={isAnswered || showAsReadOnly}
       />
+      {/* Show download chips for any attachments linked to this HITL question */}
+      {tc.attachments?.length > 0 && (
+        <div className="ml-8 mt-2 flex flex-wrap gap-1.5">
+          {tc.attachments.map((att) => {
+            const Icon = att.content_type === 'application/pdf' ? FileType : FileText
+            return (
+              <button
+                key={att.id}
+                type="button"
+                onClick={() => {
+                  if (window.confirm(`Download "${att.original_filename}"?`)) {
+                    window.open(getAttachmentUrl(att.id), '_blank')
+                  }
+                }}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-white border border-gray-200 rounded-lg text-xs text-gray-700 hover:bg-gray-50 transition-colors"
+              >
+                <Icon className={`w-3.5 h-3.5 ${att.content_type === 'application/pdf' ? 'text-red-400' : 'text-blue-400'}`} />
+                <span className="truncate max-w-[180px]">{att.original_filename}</span>
+              </button>
+            )
+          })}
+        </div>
+      )}
       {showAsReadOnly && (
         <div className="ml-8 mt-1 text-xs text-gray-500 italic">
           {isExpertTool
@@ -807,7 +830,7 @@ const AgentRunItem = ({ run, timelineIndex, sessionId, hasFollowingMessage, sess
             </div>
           )
         }
-      return null
+       return null
       })}
       {surfacedFiles.length > 0 && (
         <SurfacedFileCard files={surfacedFiles} />

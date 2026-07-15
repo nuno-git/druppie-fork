@@ -23,7 +23,7 @@ engine = create_engine(
     pool_pre_ping=True,
     **({} if _is_sqlite else {
         "pool_size": 5,
-        "max_overflow": 5,
+        "max_overflow": 15,
     }),
 )
 
