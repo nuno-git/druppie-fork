@@ -78,10 +78,15 @@ CHART_REPO_URL = os.getenv(
 CHART_REPO = urlparse(CHART_REPO_URL).path.strip("/").removesuffix(".git")
 # Base for app branches the deployer creates when they don't exist yet.
 APP_BASE_BRANCH = os.getenv("BRANCH_ENV_APP_BASE_BRANCH", "colab-dev")
+# The instance that creates branch-envs — its imageTag is the default for new
+# envs (callers can still override with an explicit image_tag).
+PARENT_NAMESPACE = os.getenv("BRANCH_ENV_PARENT_NAMESPACE", f"druppie-{APP_BASE_BRANCH}")
 
 BRANCH_ENV_NODE = os.getenv("BRANCH_ENV_NODE", "ka-k8s-ai-workers-skbh7-d4qwl")
 BRANCH_ENV_REGISTRY = os.getenv("BRANCH_ENV_REGISTRY", "harbor.rijnland.dev/druppie")
 BRANCH_ENV_PULL_SECRET = os.getenv("BRANCH_ENV_PULL_SECRET", "harbor-regcred")
+# Ephemeral StorageClass: 1 replica, strict-local, reclaimPolicy=Delete.
+BRANCH_ENV_STORAGE_CLASS = os.getenv("BRANCH_ENV_STORAGE_CLASS", "longhorn-branch-env")
 
 # Vault-sourced app secrets (LLM API keys etc.) per environment. The deployer
 # picks a source: "colab-dev" borrows the colab-dev instance's keys (works out
@@ -324,6 +329,11 @@ def build_helmrelease_yaml(
         # Keycloak over the in-cluster service (skip-oidc-discovery), so no
         # issuerUrl override is needed (chart default = http://<host>/realms/…).
         "externalSecrets": {"managed": True},
+        # Ephemeral storage: 1 replica + Delete reclaim policy. Branch-env
+        # data is disposable (DBs rebuilt by the init job, repos re-cloned
+        # from git); 3 replicas would triple the cost and Retain leaves
+        # orphaned volumes that clog the Longhorn scheduler after teardown.
+        "persistence": {"storageClass": BRANCH_ENV_STORAGE_CLASS},
         "devWorkspace": {
             "enabled": workspace_enabled,
             "stackMode": stack_mode,
@@ -960,6 +970,14 @@ class BranchEnvironmentService:
         _assert_safe_namespace(namespace, slug)
         if image_tag is not None:
             image_tag = _validate_image_tag(image_tag)
+        elif self.cluster.available:
+            parent = await self.cluster.get_helmrelease(PARENT_NAMESPACE)
+            image_tag = (
+                (parent or {}).get("spec", {}).get("values", {})
+                .get("global", {}).get("imageTag")
+            ) or None
+            if image_tag:
+                logger.info("branch_env_image_tag_resolved", tag=image_tag, source=PARENT_NAMESPACE)
 
         if await self.gitea.get_file(self._env_path(slug, "namespace.yaml")) is not None:
             raise ConflictError(f"branch environment already exists for branch '{branch}'")

@@ -264,6 +264,7 @@ def test_helmrelease_yaml_contains_branch_overrides():
     assert "helm/druppie/values-rijnland.yaml" in manifest["spec"]["chart"]["spec"]["valuesFiles"]
     # The branch namespace IS the hot-reload dev workspace.
     assert values["externalSecrets"]["managed"] is True
+    assert values["persistence"]["storageClass"] == "longhorn-branch-env"
     dw = values["devWorkspace"]
     assert dw["enabled"] is True
     assert dw["stackMode"] == "real"
@@ -550,6 +551,7 @@ def test_create_enables_workspace_by_default(client, as_owner, fake_gitea):
     _deploy(client)
     values = _hr_values(fake_gitea)
     assert values["externalSecrets"]["managed"] is True
+    assert values["persistence"]["storageClass"] == "longhorn-branch-env"
     dw = values["devWorkspace"]
     assert dw["enabled"] is True
     assert dw["developer"] == "robbe"

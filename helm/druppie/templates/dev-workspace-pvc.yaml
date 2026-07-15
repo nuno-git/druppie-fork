@@ -12,7 +12,7 @@ metadata:
 spec:
   accessModes:
     - ReadWriteOnce
-  storageClassName: {{ .Values.devWorkspace.workspace.storageClassName | default "longhorn-distributed" }}
+  storageClassName: {{ .Values.devWorkspace.workspace.storageClassName | default (include "druppie.persistence.storageClass" .) }}
   resources:
     requests:
       storage: {{ .Values.devWorkspace.workspace.size }}
