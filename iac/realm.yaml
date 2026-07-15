@@ -183,7 +183,7 @@ identityProviders:
     enabled: true
     storeToken: true
     trustEmail: false
-    firstBrokerLoginFlowAlias: first broker login
+    firstBrokerLoginFlowAlias: auto-link-broker
     config:
       clientId: ${ENTRA_CLIENT_ID}
       clientSecret: ${ENTRA_CLIENT_SECRET}
