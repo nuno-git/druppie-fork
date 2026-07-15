@@ -532,32 +532,39 @@ Deze items zijn out-of-scope voor de eerste Kubernetes migratie (Story 3) en wor
 
 Security review findings from the Entra ID broker implementation. These are known issues to address before production use.
 
-**Critical:**
-- **C1: `expected_user_id` verification is dead code** — `entra_token.py:195-200` extracts `oid`/`sub` from the JWT but never compares them to `expected_user_id`. If Keycloak's broker returns a stored token for the wrong user, the backend cannot detect the mismatch. Fix: compare `token_oid` against the user's known Entra identity.
+#### Fixed
+
+- ~~**C1: `expected_user_id` verification is dead code**~~ — Fixed: compares KC token email vs Entra token email on every exchange.
+- ~~**H3: JWT audience verification disabled**~~ — Fixed: `verify_aud: True` with `audience: "account"`.
+- ~~**M3: `directAccessGrantsEnabled: true` on frontend client**~~ — Fixed: set to `false` in realm.yaml.
+- ~~**M4: `redirectUri: window.location.href` includes query params**~~ — Fixed: uses `origin + pathname`.
+- ~~**N1: LLM-provided `user_token` not scrubbed on fallthrough**~~ — Fixed: `args.pop("user_token", None)` after fallthrough.
+- ~~**N4: Internal infrastructure leaked in error messages**~~ — Fixed: sanitized to generic message.
+- ~~**N6: Path traversal via `work_item_type`**~~ — Fixed: URL-encoded with `quote()`.
+- ~~**L2: Bracket injection in SQL `data_id`**~~ — Fixed: `]` escaped to `]]` in identifier quoting.
+- ~~**L3: Broker 400 error body fully logged**~~ — Fixed: logs status code only.
+
+#### Open — Critical
+
 - **C2: `storeToken: true` + `offline_access` = persistent credential store** — Keycloak stores long-lived Entra refresh tokens in its PostgreSQL database. These survive logout and can mint fresh Azure tokens indefinitely. Evaluate whether `storeToken` can be disabled or add a purge-on-logout hook.
 
-**High:**
+#### Open — High
+
 - **H1: KC tokens in localStorage** — All three Keycloak tokens (access, refresh, id) are stored in `localStorage`. XSS anywhere in the app exfiltrates all three. Migrate to `sessionStorage` or httpOnly cookies via BFF proxy.
 - **H2: Allowlist only gates Azure API calls, not Druppie login** — `ALLOWED_ENTRA_EMAILS` blocks token exchange but any Entra tenant user can still authenticate to Druppie and access non-Azure features. Add a Keycloak first-broker-login flow or use Entra group-based assignment.
-- **H3: JWT audience verification disabled** — `auth.py:118` has `verify_aud: False`. Any JWT signed by the Keycloak realm is accepted regardless of client. Set `verify_aud: True` and configure expected audience.
 - **H4: JWT allowlist relies on unverified claims** — `entra_token.py:41-58` decodes the JWT without signature verification. Token arrives from KC over unencrypted HTTP on the Docker bridge — a network attacker could inject a forged token with a whitelisted email. Fix: add signature verification or switch to KC introspection endpoint.
-- **N1: LLM-provided `user_token` not scrubbed on fallthrough** — `tool_executor.py:1271-1284`: when a non-Entra user triggers `EntraTokenMissing` and the handler returns `None`, the LLM's original unsanitized args (including any prompt-injected `user_token`) reach the MCP server. Fix: `args.pop("user_token", None)` after the fallthrough.
 - **N2: SQL injection filter bypassable** — `azure_sql.py:377`: `filter_expr` interpolated directly into `WHERE` clause. Blocklist doesn't cover `UNION`, `OPENROWSET`, subqueries, or `WAITFOR DELAY`. Schema exfiltration possible within db_datareader role. Fix: replace blocklist with parameterized approach.
 - **N3: TLS cert validation disabled on SQL connections** — `azure_sql.py:118-119`: `TrustServerCertificate=yes` disables server cert verification. MITM on the Docker bridge can intercept OBO tokens and query results despite `Encrypt=yes`. Fix: remove `TrustServerCertificate=yes`.
 
-**Medium:**
+#### Open — Medium
+
 - **M1: Dead ToolContext + fragile manual token injection** — `orchestrator.py` `resume_after_entra_auth` creates a `ToolContext` with the token, but `_apply_injection_rules` creates a separate one without it. The workaround manually forces the token. Fix: pass existing `ToolContext` into `_apply_injection_rules`.
-- **M3: `directAccessGrantsEnabled: true` on frontend client** — Enables ROPC on a public client. Deprecated by OAuth 2.1. Set to `false`.
-- **M4: `redirectUri: window.location.href` includes query params** — Use `window.location.origin + window.location.pathname` instead.
-- **N4: Internal infrastructure leaked in error messages** — `entra_token.py:161`: broker errors expose internal hostnames/ports (`http://keycloak:8080`) to API callers. Fix: sanitize error messages before returning.
 - **N5: Hardcoded token scope mapping** — `orchestrator.py:977-980`: adding a new Entra-scoped MCP server requires a code change. Omission defaults to MS Graph scope, potentially granting unintended access. Fix: move scope mapping to `mcp_config.yaml`.
 - **M5: KC bearer token captured in background task closure** — `sessions.py:346-355`: raw Keycloak bearer token held in memory in asyncio task. Exposed if process dumps core or task is long-running. Fix: minimize token lifetime in closure.
 
-**Low:**
+#### Open — Low
+
 - **L1: Access token in URL query parameter** — `api.js:99-102`: `getAttachmentUrl()` passes KC token as `?token=...`. Appears in browser history, server logs, Referer headers.
-- **L2: Bracket injection in SQL `data_id`** — `azure_sql.py:369`: `[{schema}].[{table_name}]` can be broken by `]` in the `data_id`. Mitigated by read-only DB user.
-- **L3: Broker 400 error body fully logged** — `entra_token.py:168`: could contain user-identifying info.
-- **N6: Path traversal via `work_item_type`** — `client.py:174`: interpolated into Azure DevOps URL path. Crafted value could alter request target. Limited by server-side routing. Fix: validate against allowed types.
 - **L4: No token expiry tracking** — `tool_context.py:101-103`: `set_entra_token` stores with no TTL. Agent runs >1 hour get opaque failures instead of re-auth prompt. Fix: add expiry tracking.
 
 ---
