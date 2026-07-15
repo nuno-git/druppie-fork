@@ -1,6 +1,6 @@
 """Authentication module for Druppie platform.
 
-Supports Keycloak JWT validation and development mode bypass.
+Supports Keycloak JWT validation.
 """
 
 import os
@@ -14,58 +14,24 @@ import structlog
 logger = structlog.get_logger()
 
 
-# Development mode user for bypassing Keycloak
-DEV_USER = {
-    "sub": "00000000-0000-0000-0000-000000000001",  # Valid UUID for dev mode
-    "preferred_username": "developer",
-    "email": "developer@localhost",
-    "given_name": "Dev",
-    "family_name": "User",
-    "realm_access": {"roles": ["admin", "developer", "architect", "devops"]},
-}
-
-
 class AuthService:
-    """Authentication service supporting Keycloak and dev mode."""
+    """Authentication service for Keycloak JWT validation."""
 
     def __init__(
         self,
         keycloak_url: str | None = None,
         keycloak_realm: str = "druppie",
-        dev_mode: bool = False,
     ):
         """Initialize auth service.
 
         Args:
             keycloak_url: Base URL for Keycloak server
             keycloak_realm: Keycloak realm name
-            dev_mode: If True, bypass authentication
         """
         self.keycloak_url = keycloak_url or os.getenv(
             "KEYCLOAK_SERVER_URL", "http://localhost:8080"
         )
         self.keycloak_realm = keycloak_realm or os.getenv("KEYCLOAK_REALM", "druppie")
-
-        # Dev mode security: refuse to enable in production environment
-        environment = os.getenv("ENVIRONMENT", "development")
-        dev_mode_requested = dev_mode or os.getenv("DEV_MODE", "false").lower() == "true"
-
-        if dev_mode_requested and environment.lower() in ("production", "prod"):
-            logger.warning(
-                "dev_mode_blocked_in_production",
-                message="DEV_MODE cannot be enabled in production environment",
-                environment=environment,
-            )
-            self.dev_mode = False
-        else:
-            self.dev_mode = dev_mode_requested
-
-        if self.dev_mode:
-            logger.warning(
-                "dev_mode_enabled",
-                message="SECURITY WARNING: Dev mode enabled - authentication is bypassed!",
-                environment=environment,
-            )
 
         self._jwk_client: PyJWKClient | None = None
 
@@ -138,18 +104,11 @@ class AuthService:
         Returns:
             User info dict or None if authentication failed
         """
-        # Try to decode real token first (even in dev mode)
-        # This ensures user isolation works properly
         if authorization and authorization.startswith("Bearer "):
             token = authorization[7:]
             user = self.decode_token(token)
             if user:
                 return user
-
-        # Dev mode fallback - only if no valid token
-        if self.dev_mode:
-            logger.debug("dev_mode_auth_bypass")
-            return DEV_USER
 
         return None
 

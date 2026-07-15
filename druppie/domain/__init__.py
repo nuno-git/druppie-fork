@@ -31,9 +31,11 @@ from .agent_definition import AgentDefinition, ApprovalOverride, SandboxConstrai
 from .agent_run import (
     AgentRunDetail,
     AgentRunSummary,
+    CompactionEventDetail,
     LLMCallDetail,
     LLMRetryDetail,
     NormalizationDetail,
+    ResumeContext,
     ToolCallDetail,
 )
 
@@ -53,6 +55,9 @@ from .evaluation import (
 
 # Documentation models
 from .documentation import DocumentationEntry
+
+# Document formatter models
+from .document_formatter import DocumentMetadata
 
 # Common models
 from .common import (
@@ -89,6 +94,16 @@ from .session import (
 
 from .job import JobDefinitionDetail, JobDefinitionList, JobDefinitionSummary, JobRunDetail, JobRunList, JobRunSummary
 
+# Model override models
+from .model_override import (
+    AgentModelInfo,
+    ModelManagementView,
+    ModelOverrideDetail,
+    ModelOverrideSummary,
+    ProviderStatus,
+    TranslationModelInfo,
+)
+
 # Skill models
 from .skill import SkillDetail, SkillSummary
 
@@ -124,9 +139,11 @@ __all__ = [
     # Agent run
     "AgentRunSummary",
     "AgentRunDetail",
+    "CompactionEventDetail",
     "LLMCallDetail",
     "LLMRetryDetail",
     "NormalizationDetail",
+    "ResumeContext",
     "ToolCallDetail",
     # Approval
     "ApprovalSummary",
@@ -146,6 +163,8 @@ __all__ = [
     "UserInfo",
     # Documentation
     "DocumentationEntry",
+    # Document formatter
+    "DocumentMetadata",
     # Agent definition
     "AgentDefinition",
     "ApprovalOverride",
@@ -172,6 +191,13 @@ __all__ = [
     "JobRunSummary",
     "JobRunDetail",
     "JobRunList",
+    # Model override
+    "ModelOverrideSummary",
+    "ModelOverrideDetail",
+    "ProviderStatus",
+    "AgentModelInfo",
+    "TranslationModelInfo",
+    "ModelManagementView",
 ]
 
 # Rebuild models to resolve forward references (circular imports between session/project)

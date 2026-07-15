@@ -172,12 +172,17 @@ class ChainStep(BaseModel):
     error_message: str | None = None
     mock: bool = False  # force mock even if not blocklisted
     mock_result: str | None = None
-    outcome: dict | None = None  # for execute_coding_task file creation
+    outcome: dict | None = None  # for sandbox file creation outcomes
     approval: ChainStepApproval | None = None  # how to handle approval gate
     assert_: ChainStepAssert | None = Field(default=None, alias="assert")
     # Set on the FIRST step of an agent run to store planned_prompt on the
     # AgentRun record.  Used by continue_run() when resuming paused sessions.
     planned_prompt: str | None = None
+    # Set on the FIRST step of a subagent run to identify the parent agent.
+    # When set, the replay executor creates a child agent run with
+    # parent_run_id pointing to the parent's agent run and
+    # spawning_tool_call_id pointing to the subagents tool call.
+    parent_agent: str | None = None
 
 
 class PendingAgent(BaseModel):

@@ -327,6 +327,28 @@ class KeycloakAdmin:
         else:
             print(f"  [WARN] Could not grant '{role_name}': {resp.text}")
 
+    def set_realm_frontend_url(self, realm: str, frontend_url: str):
+        if not frontend_url:
+            print("[SKIP] No frontend URL configured, skipping frontendUrl attribute")
+            return True
+
+        url = f"{self.base_url}/admin/realms/{realm}"
+        response = requests.get(url, headers=self._headers())
+        if response.status_code != 200:
+            print(f"[ERROR] Failed to get realm '{realm}': {response.text}")
+            return False
+
+        realm_data = response.json()
+        realm_data.setdefault("attributes", {})["frontendUrl"] = frontend_url
+
+        update = requests.put(url, json=realm_data, headers=self._headers())
+        if update.status_code == 204:
+            print(f"[OK] Set realm frontendUrl to '{frontend_url}'")
+            return True
+        else:
+            print(f"[ERROR] Failed to set frontendUrl: {update.text}")
+            return False
+
     def create_client(self, realm: str, client_config: dict):
         """Create or update an OAuth2 client."""
         url = f"{self.base_url}/admin/realms/{realm}/clients"
@@ -432,16 +454,37 @@ def main():
     frontend_port = os.getenv("FRONTEND_PORT", "5273")
     gitea_port = os.getenv("GITEA_PORT", "3100")
 
+    frontend_public_url = os.getenv(
+        "FRONTEND_PUBLIC_URL",
+        f"http://{external_host}:{frontend_port}",
+    )
+    backend_public_url = os.getenv(
+        "BACKEND_PUBLIC_URL",
+        f"http://{external_host}:{os.getenv('BACKEND_PORT', '8100')}",
+    )
+    keycloak_public_url = os.getenv(
+        "KEYCLOAK_PUBLIC_URL",
+        f"http://{external_host}:{os.getenv('KEYCLOAK_PORT', '8180')}",
+    )
+    gitea_public_url = os.getenv(
+        "GITEA_PUBLIC_URL",
+        f"http://{external_host}:{gitea_port}",
+    )
+
     ingress_enabled = os.getenv("INGRESS_ENABLED", "").lower() in ("true", "1", "yes")
     frontend_url = os.getenv("FRONTEND_URL", "")
     gitea_external_url = os.getenv("GITEA_EXTERNAL_URL", "")
 
     # Environment variable substitutions for dynamic port configuration
     env_substitutions = {
+        "${FRONTEND_PUBLIC_URL}": frontend_public_url,
+        "${BACKEND_PUBLIC_URL}": backend_public_url,
+        "${KEYCLOAK_PUBLIC_URL}": keycloak_public_url,
+        "${GITEA_PUBLIC_URL}": gitea_public_url,
         "${EXTERNAL_HOST}": external_host,
-        "${FRONTEND_PORT}": os.getenv("FRONTEND_PORT", "5273"),
+        "${FRONTEND_PORT}": frontend_port,
         "${KEYCLOAK_PORT}": os.getenv("KEYCLOAK_PORT", "8180"),
-        "${GITEA_PORT}": os.getenv("GITEA_PORT", "3100"),
+        "${GITEA_PORT}": gitea_port,
         "${GITEA_SSH_PORT}": os.getenv("GITEA_SSH_PORT", "2223"),
         "${BACKEND_PORT}": os.getenv("BACKEND_PORT", "8100"),
         "${ENTRA_TENANT_ID}": os.getenv("ENTRA_TENANT_ID", ""),
@@ -503,6 +546,10 @@ def main():
         )
     else:
         print("\n[SKIP] ENTRA_CLIENT_ID not set — skipping Entra ID identity provider")
+
+    # Set realm frontendUrl so tokens always have the correct HTTPS issuer
+    print("\n[STEP 8] Setting realm frontend URL...")
+    kc.set_realm_frontend_url(REALM_NAME, keycloak_public_url)
 
     print("\n" + "=" * 60)
     print("[DONE] Keycloak setup complete!")

@@ -87,19 +87,7 @@ tool-test:
           | (none)   |           |           |
 
     - agent: business_analyst
-      tool: coding:run_git
-      arguments:
-        command: "add docs/functional-design.md"
-
-    - agent: business_analyst
-      tool: coding:run_git
-      arguments:
-        command: "commit -m 'Functioneel ontwerp voor link-render-check'"
-
-    - agent: business_analyst
-      tool: coding:run_git
-      arguments:
-        command: "push"
+      tool: coding:push_changes
 
     - agent: business_analyst
       tool: builtin:done

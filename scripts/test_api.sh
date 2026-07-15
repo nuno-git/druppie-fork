@@ -265,11 +265,11 @@ echo "=============================================="
 log "Querying database tables..."
 
 # Query via docker exec
-docker exec druppie-new-db psql -U druppie -d druppie -c "\dt" 2>/dev/null || warn "Could not query tables"
+docker compose exec -T db psql -U druppie -d druppie -c "\dt" 2>/dev/null || warn "Could not query tables"
 
 echo ""
 log "Row counts per table:"
-docker exec druppie-new-db psql -U druppie -d druppie -c "
+docker compose exec -T db psql -U druppie -d druppie -c "
 SELECT
     schemaname,
     relname AS table_name,
@@ -280,16 +280,16 @@ ORDER BY relname;
 
 echo ""
 log "Users table content:"
-docker exec druppie-new-db psql -U druppie -d druppie -c "SELECT id, username, email FROM users LIMIT 5;" 2>/dev/null || warn "Could not query users"
+docker compose exec -T db psql -U druppie -d druppie -c "SELECT id, username, email FROM users LIMIT 5;" 2>/dev/null || warn "Could not query users"
 
 if [ -n "$SESSION_ID" ]; then
     echo ""
     log "Sessions table content:"
-    docker exec druppie-new-db psql -U druppie -d druppie -c "SELECT id, title, user_id, status, created_at FROM sessions LIMIT 5;" 2>/dev/null || warn "Could not query sessions"
+    docker compose exec -T db psql -U druppie -d druppie -c "SELECT id, title, user_id, status, created_at FROM sessions LIMIT 5;" 2>/dev/null || warn "Could not query sessions"
 
     echo ""
     log "Messages table content:"
-    docker exec druppie-new-db psql -U druppie -d druppie -c "SELECT id, session_id, role, content FROM messages LIMIT 5;" 2>/dev/null || warn "Could not query messages"
+    docker compose exec -T db psql -U druppie -d druppie -c "SELECT id, session_id, role, content FROM messages LIMIT 5;" 2>/dev/null || warn "Could not query messages"
 fi
 
 # =============================================================================

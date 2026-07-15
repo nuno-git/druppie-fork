@@ -38,20 +38,24 @@ class ToolContext:
         user_id = context.resolve("user.id")
     """
 
-    def __init__(self, db: "DBSession", session_id: UUID | str | None):
+    def __init__(self, db: "DBSession", session_id: UUID | str | None, agent_run_id: UUID | str | None = None):
         """Initialize context with database session and session ID.
 
         Args:
             db: Database session for queries
             session_id: Session ID to resolve context from
+            agent_run_id: Agent run ID for agent-level context resolution
         """
         self.db = db
         self._session_id = UUID(session_id) if isinstance(session_id, str) else session_id
+        self._agent_run_id = UUID(agent_run_id) if isinstance(agent_run_id, str) else agent_run_id
 
         # Cache for loaded objects
         self._session = None
         self._project = None
         self._user = None
+        self._agent_run = None
+        self._agent = None
         self._loaded: dict[str, bool] = {}
 
         # Entra ID token (set via authorize-entra endpoint, never persisted)
@@ -99,6 +103,32 @@ class ToolContext:
                     .first()
                 )
         return self._user
+
+    @property
+    def agent_run(self):
+        if "agent_run" not in self._loaded:
+            self._loaded["agent_run"] = True
+            if self._agent_run_id:
+                from druppie.db.models import AgentRun
+                self._agent_run = (
+                    self.db.query(AgentRun)
+                    .filter(AgentRun.id == self._agent_run_id)
+                    .first()
+                )
+        return self._agent_run
+
+    @property
+    def agent(self):
+        if "agent" not in self._loaded:
+            self._loaded["agent"] = True
+            if self.agent_run and self.agent_run.agent_id:
+                from druppie.agents.definition_loader import AgentDefinitionLoader
+                loader = AgentDefinitionLoader()
+                try:
+                    self._agent = loader.load(self.agent_run.agent_id)
+                except Exception:
+                    self._agent = None
+        return self._agent
 
     def set_entra_token(self, token: str) -> None:
         """Set the Entra ID access token (provided via /authorize-entra)."""
@@ -153,7 +183,26 @@ class ToolContext:
 
         obj_name, attr_name = parts
 
-        # Get the object
+        if obj_name == "agent" and attr_name == "git_scope":
+            agent = self.agent
+            if agent:
+                mcps = getattr(agent, 'mcps', {})
+                if isinstance(mcps, dict):
+                    for _server_name, config in mcps.items():
+                        if isinstance(config, dict) and "git" in config:
+                            return config["git"]
+            return None
+
+        if obj_name == "agent" and attr_name == "coding_networks":
+            agent = self.agent
+            if agent:
+                coding_config = getattr(agent, 'mcps', {}).get("coding")
+                if isinstance(coding_config, dict):
+                    networks = coding_config.get("networks", [])
+                    if networks:
+                        return networks
+            return None
+
         obj = None
         if obj_name == "session":
             obj = self.session
@@ -161,6 +210,10 @@ class ToolContext:
             obj = self.project
         elif obj_name == "user":
             obj = self.user
+        elif obj_name == "agent":
+            obj = self.agent
+        elif obj_name == "agent_run":
+            obj = self.agent_run
         else:
             logger.warning("unknown_context_object", object=obj_name, path=path)
             return None

@@ -25,19 +25,27 @@ mcps:
         hidden: true
         # Not injected into project discovery tools (list_projects, read_project_file, list_project_files)
         # — those use Gitea API directly, not workspaces
-        tools: [read_file, write_file, make_design, batch_write_files, list_dir, delete_file, run_git, run_tests, get_test_framework, get_coverage_report, create_pull_request, merge_pull_request, install_test_dependencies, validate_tdd, get_git_status]
+        tools: [read_file, write_file, edit_file, bash, grep, find, ls, list_dir, batch_write_files, delete_file, make_design, push_changes, create_pr, git_fetch, git_pull, run_tests, get_test_framework, get_coverage_report, install_test_dependencies, validate_tdd, get_git_status, get_file_info, search_files]
       project_id:
         from: project.id
         hidden: true
-        tools: [read_file, write_file, make_design, batch_write_files, list_dir, delete_file, run_git, run_tests, get_test_framework, get_coverage_report, create_pull_request, merge_pull_request, install_test_dependencies, validate_tdd, get_git_status]
+        tools: [read_file, write_file, edit_file, bash, grep, find, ls, list_dir, batch_write_files, delete_file, make_design, push_changes, create_pr, git_fetch, git_pull, run_tests, get_test_framework, get_coverage_report, install_test_dependencies, validate_tdd, get_git_status, get_file_info, search_files]
       repo_name:
         from: project.repo_name
         hidden: true
-        tools: [read_file, write_file, make_design, batch_write_files, list_dir, delete_file, run_git, create_pull_request, merge_pull_request]
+        tools: [read_file, write_file, edit_file, bash, grep, find, ls, list_dir, batch_write_files, delete_file, make_design, push_changes, create_pr, git_fetch, git_pull, get_file_info, search_files]
       repo_owner:
         from: project.repo_owner
         hidden: true
-        tools: [read_file, write_file, make_design, batch_write_files, list_dir, delete_file, run_git, create_pull_request, merge_pull_request]
+        tools: [read_file, write_file, edit_file, bash, grep, find, ls, list_dir, batch_write_files, delete_file, make_design, push_changes, create_pr, git_fetch, git_pull, get_file_info, search_files]
+      git_scope:
+        from: agent.git_scope
+        hidden: true
+        tools: [read_file, write_file, edit_file, bash, grep, find, ls, list_dir, batch_write_files, delete_file, make_design, push_changes, create_pr, git_fetch, git_pull, run_tests, get_test_framework, get_coverage_report, install_test_dependencies, validate_tdd, get_git_status, get_file_info, search_files]
+      sandbox_networks:
+        from: agent.coding_networks
+        hidden: true
+        tools: [read_file, write_file, edit_file, bash, grep, find, ls, list_dir, batch_write_files, delete_file, make_design, push_changes, create_pr, git_fetch, git_pull, run_tests, get_test_framework, get_coverage_report, install_test_dependencies, validate_tdd, get_git_status, get_file_info, search_files]
     tools:
       - name: read_file
         requires_approval: false
@@ -61,9 +69,6 @@ mcps:
       - name: delete_file
         requires_approval: false
 
-      - name: run_git
-        requires_approval: false
-
       - name: run_tests
         requires_approval: false
 
@@ -73,12 +78,14 @@ mcps:
       - name: get_coverage_report
         requires_approval: false
 
-      - name: create_pull_request
+      - name: push_changes, create_pr
         requires_approval: false
 
-      - name: merge_pull_request
-        requires_approval: true
-        required_role: developer
+      - name: git_fetch
+        requires_approval: false
+
+      - name: git_pull
+        requires_approval: false
 
       - name: install_test_dependencies
         requires_approval: false
@@ -87,6 +94,29 @@ mcps:
         requires_approval: false
 
       - name: get_git_status
+        requires_approval: false
+
+      - name: bash
+        # Shell command execution — agents can run commands directly
+        requires_approval: false
+
+      - name: edit_file
+        # Precise search-and-replace edits — lower risk than full write_file
+        requires_approval: false
+
+      - name: grep
+        requires_approval: false
+
+      - name: find
+        requires_approval: false
+
+      - name: ls
+        requires_approval: false
+
+      - name: get_file_info
+        requires_approval: false
+
+      - name: search_files
         requires_approval: false
 
       # Project discovery tools (cross-project read-only via Gitea API)
@@ -201,9 +231,6 @@ mcps:
         requires_approval: false
 
       - name: fetch_url
-        requires_approval: false
-
-      - name: search_web
         requires_approval: false
 
       - name: get_page_info

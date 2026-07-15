@@ -53,7 +53,7 @@ class ToolCall(Base):
     sandbox_waiting_at = Column(DateTime(timezone=True))
 
     # Relationships
-    agent_run = relationship("AgentRun", back_populates="tool_calls")
+    agent_run = relationship("AgentRun", back_populates="tool_calls", foreign_keys=[agent_run_id])
     llm_call = relationship("LlmCall", back_populates="tool_calls")
     normalizations = relationship("ToolCallNormalization", back_populates="tool_call")
 

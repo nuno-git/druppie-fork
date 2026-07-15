@@ -1,21 +1,12 @@
-"""Coding MCP Server - Business Logic Module.
+"""Coding MCP Server - Security Module.
 
-Contains all business logic for file operations, git operations,
-test execution, and workspace management.
+Contains the BLOCKED_COMMAND_PATTERNS used by the bash tool for command safety.
+The sandbox orchestrator architecture moved all workspace/container management
+directly into tools.py. This module retains the security patterns for reference
+and potential reuse.
 """
 
-import json
-import logging
 import re
-import shlex
-import subprocess
-import uuid
-from pathlib import Path
-from typing import Any
-
-import httpx
-
-logger = logging.getLogger("coding-mcp")
 
 # =============================================================================
 # SECURITY: COMMAND BLOCKLIST
@@ -163,7 +154,13 @@ class CodingModule:
             repo_name = f"project-{project_id[:8]}"
             branch = f"session-{session_id[:8]}"
 
-        workspace_path = self.workspace_root / user_id / project_id / session_id
+        from druppie.core.workspace import workspace_path_for
+
+        workspace_path = workspace_path_for(
+            user_id=user_id,
+            project_id=project_id,
+            session_id=session_id,
+        )
         workspace_path.mkdir(parents=True, exist_ok=True)
 
         if self.is_gitea_configured():

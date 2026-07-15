@@ -4,7 +4,9 @@ Contains all business logic for web browsing and file search.
 """
 
 import logging
+import re
 from pathlib import Path
+from urllib.parse import unquote
 
 import httpx
 
@@ -38,22 +40,6 @@ class WebModule:
                 "error": str(e),
                 "url": url,
             }
-
-    async def search_web(self, query: str, num_results: int = 5) -> dict:
-        """Search web for information."""
-        logger.info(f"Searching for: {query}")
-        return {
-            "success": True,
-            "query": query,
-            "results": [
-                {
-                    "title": f"Result {i + 1} for '{query}'",
-                    "url": f"https://example.com/result{i + 1}",
-                    "snippet": f"This is a placeholder search result for {query}",
-                }
-                for i in range(min(num_results, 5))
-            ],
-        }
 
     async def get_page_info(self, url: str) -> dict:
         """Get basic information about a web page."""

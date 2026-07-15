@@ -1,0 +1,8 @@
+pi_agent/dist/
+pi_agent/node_modules/
+pi_agent/sessions/
+*.pyc
+__pycache__/
+.env
+.git/
+frontend/node_modules/

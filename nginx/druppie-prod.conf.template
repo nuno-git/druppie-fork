@@ -1,0 +1,167 @@
+# Druppie Production - Nginx Reverse Proxy
+# ============================================================
+# GENERATED FILE — do not edit directly.
+# Use: nginx/generate-config.sh to regenerate.
+#
+# Install: sudo cp druppie-prod.conf /etc/nginx/sites-available/
+#           sudo ln -s /etc/nginx/sites-available/druppie-prod.conf /etc/nginx/sites-enabled/
+#           sudo nginx -t && sudo systemctl reload nginx
+#
+# Requires: __SSL_CERT_PATH__ (SSL certificate directory)
+# Requires: oauth2-proxy running on 127.0.0.1:__OAUTH2_PROXY_PORT__ (docker compose)
+
+# Frontend + Backend + Keycloak — all on __DRUPPIE_DOMAIN__
+server {
+    listen 80;
+    listen [::]:80;
+    server_name __DRUPPIE_DOMAIN__;
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name __DRUPPIE_DOMAIN__;
+
+    ssl_certificate __SSL_CERT_PATH__/fullchain.pem;
+    ssl_certificate_key __SSL_CERT_PATH__/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5;
+    ssl_prefer_server_ciphers on;
+
+    # Security headers
+    add_header X-Frame-Options SAMEORIGIN always;
+    add_header X-Content-Type-Options nosniff always;
+    add_header X-XSS-Protection "1; mode=block" always;
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+
+    # --- oauth2-proxy auth gate ---
+    location = /oauth2/auth {
+        internal;
+        proxy_pass http://127.0.0.1:__OAUTH2_PROXY_PORT__/oauth2/auth;
+        proxy_pass_request_body off;
+        proxy_set_header Content-Length "";
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location /oauth2/ {
+        proxy_pass http://127.0.0.1:__OAUTH2_PROXY_PORT__;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # --- Keycloak endpoints (NO auth_request — needed for login flow) ---
+    location ~ ^/(realms|resources|protocol|jk) {
+        proxy_pass http://127.0.0.1:__KEYCLOAK_PORT__;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Port 443;
+    }
+
+    # --- Protected services (require oauth2-proxy auth) ---
+
+    # Backend API + health + websocket
+    location /api/ {
+        auth_request /oauth2/auth;
+        error_page 401 = /oauth2/sign_in;
+        proxy_pass http://127.0.0.1:__BACKEND_PORT__;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        auth_request_set $user $upstream_http_x_auth_request_user;
+        proxy_set_header X-User $user;
+    }
+
+    location /health {
+        auth_request /oauth2/auth;
+        error_page 401 = /oauth2/sign_in;
+        proxy_pass http://127.0.0.1:__BACKEND_PORT__;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location /ws/ {
+        auth_request /oauth2/auth;
+        error_page 401 = /oauth2/sign_in;
+        proxy_pass http://127.0.0.1:__BACKEND_PORT__;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 86400;
+    }
+
+    # Frontend (catch-all)
+    location / {
+        auth_request /oauth2/auth;
+        error_page 401 = /oauth2/sign_in;
+        proxy_pass http://127.0.0.1:__FRONTEND_PORT__;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+
+# Gitea — separate subdomain
+server {
+    listen 80;
+    listen [::]:80;
+    server_name __GITEA_DOMAIN__;
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name __GITEA_DOMAIN__;
+
+    ssl_certificate __SSL_CERT_PATH__/fullchain.pem;
+    ssl_certificate_key __SSL_CERT_PATH__/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5;
+
+    # Security headers
+    add_header X-Frame-Options SAMEORIGIN always;
+    add_header X-Content-Type-Options nosniff always;
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+
+    # oauth2-proxy auth (internal subrequest)
+    location = /oauth2/auth {
+        internal;
+        proxy_pass http://127.0.0.1:__OAUTH2_PROXY_PORT__/oauth2/auth;
+        proxy_pass_request_body off;
+        proxy_set_header Content-Length "";
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location /oauth2/ {
+        proxy_pass http://127.0.0.1:__OAUTH2_PROXY_PORT__;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location / {
+        auth_request /oauth2/auth;
+        error_page 401 = https://__DRUPPIE_DOMAIN__/oauth2/sign_in?rd=$scheme://$host$request_uri;
+        proxy_pass http://127.0.0.1:__GITEA_PORT__;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}

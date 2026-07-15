@@ -15,16 +15,20 @@ class AttachmentRepository(BaseRepository):
         content_type: str,
         file_size: int,
         storage_path: str,
+        owner_user_id: UUID,
         session_id: UUID | None = None,
         extracted_text: str | None = None,
+        owner_user_id: UUID | None = None,
     ) -> MessageAttachment:
         attachment = MessageAttachment(
+            owner_user_id=owner_user_id,
             session_id=session_id,
             original_filename=original_filename,
             content_type=content_type,
             file_size=file_size,
             storage_path=storage_path,
             extracted_text=extracted_text,
+            owner_user_id=owner_user_id,
         )
         self.db.add(attachment)
         self.db.flush()
@@ -126,11 +130,18 @@ class AttachmentRepository(BaseRepository):
         self,
         attachment_ids: list[UUID],
         session_id: UUID,
+        owner_user_id: UUID | None = None,
     ) -> None:
-        """Verify attachments are unlinked or belong to the given session.
+        """Verify attachments belong to the given session or are linkable to it.
 
-        Raises ValueError if any attachment doesn't exist or belongs to a
-        different session.
+        An attachment is linkable to ``session_id`` only if:
+        - it is already linked to ``session_id`` (idempotent re-link), or
+        - it is unlinked (``session_id`` is None) AND the requesting user
+          (``owner_user_id``) is the attachment's owner.
+
+        Raises ValueError if any attachment doesn't exist, belongs to a
+        different session, or is an unlinked attachment not owned by the
+        requesting user (cross-session link injection protection).
         """
         if not attachment_ids:
             return
@@ -140,7 +151,13 @@ class AttachmentRepository(BaseRepository):
         if missing:
             raise ValueError(f"Attachment(s) not found: {', '.join(str(m) for m in missing)}")
         for a in attachments:
-            if a.session_id is not None and a.session_id != session_id:
+            if a.session_id is None:
+                # Unlinked attachment: only the owner may bind it to a session.
+                if owner_user_id is None or a.owner_user_id != owner_user_id:
+                    raise ValueError(
+                        f"Attachment {a.id} cannot be linked to this session"
+                    )
+            elif a.session_id != session_id:
                 raise ValueError(f"Attachment {a.id} belongs to a different session")
 
     def get_for_session(self, session_id: UUID) -> list[MessageAttachment]:

@@ -8,6 +8,8 @@
 | **Deciders** | Druppie architectuurteam |
 | **Referentie** | [KUBERNETES-STRATEGY.md](./KUBERNETES-STRATEGY.md) |
 
+> **Note (huidige staat):** Deze beslissingen reflecteren de live Hetzner K3s deployment. Het as-built systeem is gedocumenteerd in `docs/AS-BUILT-ARCHITECTURE.md`. Een migratie naar een gedeeld lokaal Rancher cluster is gepland. Beslissingen die hieronder gemarkeerd zijn als *superseded pending local-Rancher migratie* worden herzien voor lokale hardware.
+
 ---
 
 ## Beslissingsoverzicht
@@ -48,7 +50,7 @@ Het spike-onderzoek ([KUBERNETES-STRATEGY.md](./KUBERNETES-STRATEGY.md)) bevat d
 
 ## Beslissingen
 
-### 4.1 Hosting: Hetzner VMs + Ubuntu
+### 4.1 Hosting: Hetzner VMs + Ubuntu — ⚠️ superseded pending local-Rancher migration
 
 **Gekozen:** 3x Hetzner Cloud VM (CPX31: 4 vCPU, 8GB RAM, 160GB NVMe) met Ubuntu als OS.
 
@@ -411,7 +413,7 @@ affinity:
 
 Singleton achtergrondtaken (JobScheduler, sandbox watchdog) gebruiken PostgreSQL advisory locks (`pg_try_advisory_lock`) voor leader election. Alleen de replica die de lock verwerpt start de taak; andere replica's slaan hem over. De lock is verbindingsscoped — als de leader pod sterft, wordt de verbinding verbroken en komt de lock vrij, zodat een andere replica deze bij de volgende herstart kan opeisen. Geen extra infrastructuur nodig.
 
-### 4.12 Cluster Provisioning: hetzner-k3s
+### 4.12 Cluster Provisioning: hetzner-k3s — ⚠️ superseded pending local-Rancher migration
 
 **Gekozen:** `hetzner-k3s` CLI tool (vitobotta/hetzner-k3s, MIT licentie, 3.5k+ GitHub stars).
 
@@ -463,7 +465,7 @@ worker_node_pools:
 - Custom Terraform: meer werk, zelf alles configureren
 - Handmatige setup: niet reproduceerbaar, geen IaC
 
-### 4.13 Node Autoscaling: Cluster Autoscaler (Hetzner)
+### 4.13 Node Autoscaling: Cluster Autoscaler (Hetzner) — ⚠️ superseded pending local-Rancher migration
 
 **Gekozen:** Officiële Kubernetes Cluster Autoscaler met ingebouwde Hetzner Cloud provider (`--cloud-provider=hetzner`).
 

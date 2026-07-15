@@ -1,0 +1,997 @@
+## Setup: project with substantial codebase to test context compression
+##
+## Creates a Flask API project with multiple source files, tests, and large design docs.
+## The developer agent gets a complex task (add auth + RBAC) that requires reading
+## all existing files and making many changes — enough to trigger context compression
+## at >50% of max_context_tokens.
+
+tool-test:
+  name: setup-context-compression
+  description: "Setup project with large codebase for context compression testing"
+  tags: [setup, context-compression, agent-runtime]
+
+  chain:
+    # --- Router ---
+    - agent: router
+      tool: builtin:set_intent
+      arguments:
+        intent: create_project
+        project_name: task-api-compression-test
+        description: "A Flask REST API for task management — used to test agent context compression"
+
+    - agent: router
+      tool: builtin:done
+      arguments:
+        summary: "Agent router: Classified as create_project"
+
+    # --- Planner -> BA ---
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: business_analyst
+            prompt: "Create functional design for task management API"
+          - agent_id: planner
+            prompt: "Re-evaluate after BA"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: Planned business_analyst"
+
+    # --- Business Analyst (large FD) ---
+    - agent: business_analyst
+      tool: coding:make_design
+      approval:
+        status: approved
+      arguments:
+        path: docs/functional-design.md
+        content: |
+          # Functional Design: Task Management API
+
+          ## 1. Project Overview
+
+          A RESTful API for managing tasks, projects, and team assignments.
+          The system allows users to create projects, add tasks to projects,
+          assign tasks to team members, track status changes, add comments,
+          and generate reports.
+
+          ## 2. User Stories
+
+          ### 2.1 Project Management
+          - US-01: As a user, I can create a new project with a name and description
+          - US-02: As a user, I can list all projects I have access to
+          - US-03: As a user, I can update project details (name, description, status)
+          - US-04: As a user, I can archive a project (soft delete)
+          - US-05: As a user, I can view project statistics (task count, completion rate)
+
+          ### 2.2 Task Management
+          - US-10: As a user, I can create a task within a project
+          - US-11: As a user, I can assign a task to a team member
+          - US-12: As a user, I can change task status (todo, in_progress, review, done)
+          - US-13: As a user, I can set task priority (low, medium, high, critical)
+          - US-14: As a user, I can set a due date on a task
+          - US-15: As a user, I can add labels/tags to tasks
+          - US-16: As a user, I can filter tasks by status, priority, assignee, or label
+          - US-17: As a user, I can search tasks by title or description
+          - US-18: As a user, I can view task history (status changes, assignments)
+
+          ### 2.3 Comments
+          - US-20: As a user, I can add a comment to a task
+          - US-21: As a user, I can edit my own comments
+          - US-22: As a user, I can delete my own comments
+          - US-23: As a user, I can view all comments on a task in chronological order
+
+          ### 2.4 Reporting
+          - US-30: As a user, I can view a dashboard with project-level metrics
+          - US-31: As a user, I can export tasks as CSV
+          - US-32: As a user, I can view overdue tasks across all projects
+
+          ## 3. Data Model
+
+          ### Project
+          | Field | Type | Required | Description |
+          |-------|------|----------|-------------|
+          | id | UUID | auto | Primary key |
+          | name | string(100) | yes | Project name |
+          | description | text | no | Project description |
+          | status | enum | yes | active, archived |
+          | created_at | datetime | auto | Creation timestamp |
+          | updated_at | datetime | auto | Last update |
+
+          ### Task
+          | Field | Type | Required | Description |
+          |-------|------|----------|-------------|
+          | id | UUID | auto | Primary key |
+          | project_id | UUID | yes | FK to Project |
+          | title | string(200) | yes | Task title |
+          | description | text | no | Detailed description |
+          | status | enum | yes | todo, in_progress, review, done |
+          | priority | enum | yes | low, medium, high, critical |
+          | assignee_id | UUID | no | FK to User (future) |
+          | due_date | date | no | Deadline |
+          | labels | json | no | List of label strings |
+          | created_at | datetime | auto | Creation timestamp |
+          | updated_at | datetime | auto | Last update |
+
+          ### Comment
+          | Field | Type | Required | Description |
+          |-------|------|----------|-------------|
+          | id | UUID | auto | Primary key |
+          | task_id | UUID | yes | FK to Task |
+          | author | string | yes | Author name |
+          | content | text | yes | Comment body |
+          | created_at | datetime | auto | Creation timestamp |
+          | updated_at | datetime | auto | Last update |
+
+          ## 4. API Endpoints
+
+          ### Projects
+          - POST /api/projects — Create project
+          - GET /api/projects — List all projects
+          - GET /api/projects/:id — Get project details with stats
+          - PUT /api/projects/:id — Update project
+          - DELETE /api/projects/:id — Archive project
+
+          ### Tasks
+          - POST /api/projects/:id/tasks — Create task in project
+          - GET /api/projects/:id/tasks — List tasks (with filtering)
+          - GET /api/tasks/:id — Get task details
+          - PUT /api/tasks/:id — Update task
+          - DELETE /api/tasks/:id — Delete task
+          - GET /api/tasks/search?q= — Search tasks
+
+          ### Comments
+          - POST /api/tasks/:id/comments — Add comment
+          - GET /api/tasks/:id/comments — List comments
+          - PUT /api/comments/:id — Edit comment
+          - DELETE /api/comments/:id — Delete comment
+
+          ### Reports
+          - GET /api/dashboard — Dashboard metrics
+          - GET /api/projects/:id/export — Export tasks as CSV
+
+          ## 5. Validation Rules
+          - Project name: 1-100 characters, unique per user
+          - Task title: 1-200 characters
+          - Task status transitions: todo->in_progress->review->done (and back)
+          - Comment content: 1-5000 characters
+          - Due date: must be in the future when set
+          - Labels: max 10 per task, each max 50 characters
+
+          ## 6. Non-Functional Requirements
+          - NFR-01: API response time < 200ms for list operations
+          - NFR-02: Pagination on all list endpoints (default 20, max 100)
+          - NFR-03: Proper error responses with consistent format
+          - NFR-04: Input validation on all endpoints
+          - NFR-05: CORS support for frontend integration
+
+    - agent: business_analyst
+      tool: coding:push_changes
+
+    - agent: business_analyst
+      tool: builtin:done
+      arguments:
+        summary: "Agent business_analyst: DESIGN_APPROVED. Created comprehensive FD at docs/functional-design.md covering projects, tasks, comments, and reporting."
+
+    # --- Planner -> Architect ---
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: architect
+            prompt: "Create technical design based on the functional design"
+          - agent_id: planner
+            prompt: "Re-evaluate after architect"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: Planned architect"
+
+    # --- Architect (reads FD, creates large TD, pushes source files) ---
+    - agent: architect
+      tool: coding:read_file
+      arguments:
+        path: docs/functional-design.md
+
+    - agent: architect
+      tool: coding:make_design
+      approval:
+        status: approved
+        by: architect
+      arguments:
+        path: docs/technical-design.md
+        content: |
+          # Technical Design: Task Management API
+
+          ## 1. Technology Stack
+          - Language: Python 3.12
+          - Framework: Flask 3.x with Blueprints
+          - Database: SQLite (via SQLAlchemy ORM)
+          - Validation: marshmallow
+          - Testing: pytest + pytest-cov
+          - CORS: flask-cors
+
+          ## 2. Architecture
+
+          ```
+          src/
+            app.py          — Flask app factory, CORS, error handlers
+            config.py       — Configuration (DB path, pagination defaults)
+            models.py       — SQLAlchemy models (Project, Task, Comment)
+            schemas.py      — Marshmallow schemas for validation/serialization
+            routes/
+              projects.py   — Project CRUD endpoints
+              tasks.py      — Task CRUD + search + filtering
+              comments.py   — Comment CRUD endpoints
+              reports.py    — Dashboard + CSV export
+            utils.py        — Pagination helper, error formatter, UUID gen
+          tests/
+            conftest.py     — Fixtures (app, client, sample data)
+            test_projects.py
+            test_tasks.py
+            test_comments.py
+            test_reports.py
+          ```
+
+          ## 3. Database Schema
+
+          Using SQLAlchemy declarative models with SQLite backend.
+          Auto-migrate on startup (create_all).
+
+          ### Relationships
+          - Project 1:N Task (cascade delete)
+          - Task 1:N Comment (cascade delete)
+
+          ### Indexes
+          - Task.project_id (FK lookup)
+          - Task.status (filtering)
+          - Task.assignee_id (filtering)
+          - Task.due_date (overdue queries)
+          - Comment.task_id (FK lookup)
+
+          ## 4. API Design Patterns
+
+          ### Request/Response Format
+          All responses follow: {"data": ..., "meta": {"total": N, "page": N, "per_page": N}}
+          Errors follow: {"error": {"code": "...", "message": "...", "details": [...]}}
+
+          ### Pagination
+          Query params: ?page=1&per_page=20
+          Default per_page=20, max=100
+
+          ### Filtering (Tasks)
+          Query params: ?status=todo&priority=high&assignee_id=UUID&label=bug
+          Multiple values: ?status=todo,in_progress
+
+          ### Search
+          GET /api/tasks/search?q=keyword
+          Searches title and description with LIKE matching
+
+          ## 5. Error Handling
+          - 400: Validation errors (with field-level details)
+          - 404: Resource not found
+          - 409: Conflict (duplicate project name)
+          - 500: Internal error (logged, generic message to client)
+
+          ## 6. Testing Strategy
+          - Unit tests for each endpoint using pytest fixtures
+          - In-memory SQLite for test isolation
+          - Fixture-based sample data (projects, tasks, comments)
+          - Coverage target: 80%+
+
+    - agent: architect
+      tool: coding:push_changes
+
+    # Architect creates the source files via mocked write_file calls
+    - agent: architect
+      tool: coding:write_file
+      mock: true
+      mock_result: '{"success": true, "path": "src/app.py", "size": 2100}'
+      outcome:
+        files:
+          - path: src/app.py
+            content: |
+              """Flask application factory and configuration."""
+              from flask import Flask, jsonify
+              from flask_cors import CORS
+
+              from src.config import Config
+              from src.models import db
+
+
+              def create_app(config=None):
+                  app = Flask(__name__)
+                  app.config.from_object(Config)
+                  if config:
+                      app.config.update(config)
+
+                  CORS(app)
+                  db.init_app(app)
+
+                  with app.app_context():
+                      db.create_all()
+
+                  from src.routes.projects import projects_bp
+                  from src.routes.tasks import tasks_bp
+                  from src.routes.comments import comments_bp
+                  from src.routes.reports import reports_bp
+
+                  app.register_blueprint(projects_bp, url_prefix="/api")
+                  app.register_blueprint(tasks_bp, url_prefix="/api")
+                  app.register_blueprint(comments_bp, url_prefix="/api")
+                  app.register_blueprint(reports_bp, url_prefix="/api")
+
+                  @app.errorhandler(400)
+                  def bad_request(e):
+                      return jsonify({"error": {"code": "bad_request", "message": str(e)}}), 400
+
+                  @app.errorhandler(404)
+                  def not_found(e):
+                      return jsonify({"error": {"code": "not_found", "message": "Resource not found"}}), 404
+
+                  @app.errorhandler(500)
+                  def internal_error(e):
+                      return jsonify({"error": {"code": "internal_error", "message": "Internal server error"}}), 500
+
+                  return app
+
+
+              if __name__ == "__main__":
+                  app = create_app()
+                  app.run(debug=True, port=5000)
+
+    - agent: architect
+      tool: coding:write_file
+      mock: true
+      mock_result: '{"success": true, "path": "src/config.py", "size": 450}'
+      outcome:
+        files:
+          - path: src/config.py
+            content: |
+              """Application configuration."""
+              import os
+
+
+              class Config:
+                  SQLALCHEMY_DATABASE_URI = os.environ.get("DATABASE_URL", "sqlite:///tasks.db")
+                  SQLALCHEMY_TRACK_MODIFICATIONS = False
+                  DEFAULT_PER_PAGE = 20
+                  MAX_PER_PAGE = 100
+
+    - agent: architect
+      tool: coding:write_file
+      mock: true
+      mock_result: '{"success": true, "path": "src/models.py", "size": 2800}'
+      outcome:
+        files:
+          - path: src/models.py
+            content: |
+              """SQLAlchemy database models."""
+              import uuid
+              from datetime import datetime, timezone
+
+              from flask_sqlalchemy import SQLAlchemy
+
+              db = SQLAlchemy()
+
+
+              def gen_uuid():
+                  return str(uuid.uuid4())
+
+
+              class Project(db.Model):
+                  __tablename__ = "projects"
+
+                  id = db.Column(db.String(36), primary_key=True, default=gen_uuid)
+                  name = db.Column(db.String(100), nullable=False, unique=True)
+                  description = db.Column(db.Text, nullable=True)
+                  status = db.Column(db.String(20), nullable=False, default="active")
+                  created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+                  updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc),
+                                         onupdate=lambda: datetime.now(timezone.utc))
+
+                  tasks = db.relationship("Task", backref="project", cascade="all, delete-orphan")
+
+                  def to_dict(self):
+                      return {
+                          "id": self.id,
+                          "name": self.name,
+                          "description": self.description,
+                          "status": self.status,
+                          "created_at": self.created_at.isoformat(),
+                          "updated_at": self.updated_at.isoformat(),
+                          "task_count": len(self.tasks),
+                      }
+
+
+              class Task(db.Model):
+                  __tablename__ = "tasks"
+
+                  id = db.Column(db.String(36), primary_key=True, default=gen_uuid)
+                  project_id = db.Column(db.String(36), db.ForeignKey("projects.id"), nullable=False)
+                  title = db.Column(db.String(200), nullable=False)
+                  description = db.Column(db.Text, nullable=True)
+                  status = db.Column(db.String(20), nullable=False, default="todo")
+                  priority = db.Column(db.String(20), nullable=False, default="medium")
+                  assignee_id = db.Column(db.String(36), nullable=True)
+                  due_date = db.Column(db.Date, nullable=True)
+                  labels = db.Column(db.JSON, nullable=True, default=list)
+                  created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+                  updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc),
+                                         onupdate=lambda: datetime.now(timezone.utc))
+
+                  comments = db.relationship("Comment", backref="task", cascade="all, delete-orphan")
+
+                  def to_dict(self):
+                      return {
+                          "id": self.id,
+                          "project_id": self.project_id,
+                          "title": self.title,
+                          "description": self.description,
+                          "status": self.status,
+                          "priority": self.priority,
+                          "assignee_id": self.assignee_id,
+                          "due_date": self.due_date.isoformat() if self.due_date else None,
+                          "labels": self.labels or [],
+                          "created_at": self.created_at.isoformat(),
+                          "updated_at": self.updated_at.isoformat(),
+                          "comment_count": len(self.comments),
+                      }
+
+
+              class Comment(db.Model):
+                  __tablename__ = "comments"
+
+                  id = db.Column(db.String(36), primary_key=True, default=gen_uuid)
+                  task_id = db.Column(db.String(36), db.ForeignKey("tasks.id"), nullable=False)
+                  author = db.Column(db.String(100), nullable=False)
+                  content = db.Column(db.Text, nullable=False)
+                  created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+                  updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc),
+                                         onupdate=lambda: datetime.now(timezone.utc))
+
+                  def to_dict(self):
+                      return {
+                          "id": self.id,
+                          "task_id": self.task_id,
+                          "author": self.author,
+                          "content": self.content,
+                          "created_at": self.created_at.isoformat(),
+                          "updated_at": self.updated_at.isoformat(),
+                      }
+
+    - agent: architect
+      tool: coding:write_file
+      mock: true
+      mock_result: '{"success": true, "path": "src/schemas.py", "size": 2200}'
+      outcome:
+        files:
+          - path: src/schemas.py
+            content: |
+              """Marshmallow schemas for request validation and response serialization."""
+              from marshmallow import Schema, fields, validate, validates, ValidationError
+
+
+              class ProjectCreateSchema(Schema):
+                  name = fields.String(required=True, validate=validate.Length(min=1, max=100))
+                  description = fields.String(validate=validate.Length(max=2000))
+
+
+              class ProjectUpdateSchema(Schema):
+                  name = fields.String(validate=validate.Length(min=1, max=100))
+                  description = fields.String(validate=validate.Length(max=2000))
+                  status = fields.String(validate=validate.OneOf(["active", "archived"]))
+
+
+              class TaskCreateSchema(Schema):
+                  title = fields.String(required=True, validate=validate.Length(min=1, max=200))
+                  description = fields.String(validate=validate.Length(max=5000))
+                  priority = fields.String(validate=validate.OneOf(["low", "medium", "high", "critical"]))
+                  assignee_id = fields.String()
+                  due_date = fields.Date()
+                  labels = fields.List(fields.String(validate=validate.Length(max=50)), validate=validate.Length(max=10))
+
+
+              class TaskUpdateSchema(Schema):
+                  title = fields.String(validate=validate.Length(min=1, max=200))
+                  description = fields.String(validate=validate.Length(max=5000))
+                  status = fields.String(validate=validate.OneOf(["todo", "in_progress", "review", "done"]))
+                  priority = fields.String(validate=validate.OneOf(["low", "medium", "high", "critical"]))
+                  assignee_id = fields.String(allow_none=True)
+                  due_date = fields.Date(allow_none=True)
+                  labels = fields.List(fields.String(validate=validate.Length(max=50)), validate=validate.Length(max=10))
+
+
+              class CommentCreateSchema(Schema):
+                  author = fields.String(required=True, validate=validate.Length(min=1, max=100))
+                  content = fields.String(required=True, validate=validate.Length(min=1, max=5000))
+
+
+              class CommentUpdateSchema(Schema):
+                  content = fields.String(required=True, validate=validate.Length(min=1, max=5000))
+
+    - agent: architect
+      tool: coding:write_file
+      mock: true
+      mock_result: '{"success": true, "path": "src/utils.py", "size": 1400}'
+      outcome:
+        files:
+          - path: src/utils.py
+            content: |
+              """Shared utilities: pagination, error formatting."""
+              from flask import request, jsonify
+
+
+              def paginate_query(query, model):
+                  page = request.args.get("page", 1, type=int)
+                  per_page = min(request.args.get("per_page", 20, type=int), 100)
+                  pagination = query.paginate(page=page, per_page=per_page, error_out=False)
+                  items = [item.to_dict() for item in pagination.items]
+                  return jsonify({
+                      "data": items,
+                      "meta": {
+                          "total": pagination.total,
+                          "page": pagination.page,
+                          "per_page": pagination.per_page,
+                          "pages": pagination.pages,
+                      },
+                  })
+
+
+              def validation_error(errors):
+                  return jsonify({
+                      "error": {
+                          "code": "validation_error",
+                          "message": "Request validation failed",
+                          "details": errors,
+                      }
+                  }), 400
+
+    - agent: architect
+      tool: coding:write_file
+      mock: true
+      mock_result: '{"success": true, "path": "src/routes/projects.py", "size": 2500}'
+      outcome:
+        files:
+          - path: src/routes/projects.py
+            content: |
+              """Project CRUD endpoints."""
+              from flask import Blueprint, request, jsonify
+              from src.models import db, Project
+              from src.schemas import ProjectCreateSchema, ProjectUpdateSchema
+              from src.utils import paginate_query, validation_error
+
+              projects_bp = Blueprint("projects", __name__)
+
+
+              @projects_bp.route("/projects", methods=["POST"])
+              def create_project():
+                  schema = ProjectCreateSchema()
+                  errors = schema.validate(request.json or {})
+                  if errors:
+                      return validation_error(errors)
+
+                  data = schema.load(request.json)
+                  existing = Project.query.filter_by(name=data["name"]).first()
+                  if existing:
+                      return jsonify({"error": {"code": "conflict", "message": "Project name already exists"}}), 409
+
+                  project = Project(**data)
+                  db.session.add(project)
+                  db.session.commit()
+                  return jsonify({"data": project.to_dict()}), 201
+
+
+              @projects_bp.route("/projects", methods=["GET"])
+              def list_projects():
+                  query = Project.query.filter_by(status="active").order_by(Project.created_at.desc())
+                  return paginate_query(query, Project)
+
+
+              @projects_bp.route("/projects/<project_id>", methods=["GET"])
+              def get_project(project_id):
+                  project = Project.query.get_or_404(project_id)
+                  data = project.to_dict()
+                  total_tasks = len(project.tasks)
+                  done_tasks = sum(1 for t in project.tasks if t.status == "done")
+                  data["stats"] = {
+                      "total_tasks": total_tasks,
+                      "done_tasks": done_tasks,
+                      "completion_rate": round(done_tasks / total_tasks * 100, 1) if total_tasks else 0,
+                  }
+                  return jsonify({"data": data})
+
+
+              @projects_bp.route("/projects/<project_id>", methods=["PUT"])
+              def update_project(project_id):
+                  project = Project.query.get_or_404(project_id)
+                  schema = ProjectUpdateSchema()
+                  errors = schema.validate(request.json or {})
+                  if errors:
+                      return validation_error(errors)
+
+                  data = schema.load(request.json)
+                  for key, value in data.items():
+                      setattr(project, key, value)
+                  db.session.commit()
+                  return jsonify({"data": project.to_dict()})
+
+
+              @projects_bp.route("/projects/<project_id>", methods=["DELETE"])
+              def archive_project(project_id):
+                  project = Project.query.get_or_404(project_id)
+                  project.status = "archived"
+                  db.session.commit()
+                  return jsonify({"data": project.to_dict()})
+
+    - agent: architect
+      tool: coding:write_file
+      mock: true
+      mock_result: '{"success": true, "path": "src/routes/tasks.py", "size": 3200}'
+      outcome:
+        files:
+          - path: src/routes/tasks.py
+            content: |
+              """Task CRUD, filtering, and search endpoints."""
+              from flask import Blueprint, request, jsonify
+              from src.models import db, Task, Project
+              from src.schemas import TaskCreateSchema, TaskUpdateSchema
+              from src.utils import paginate_query, validation_error
+
+              tasks_bp = Blueprint("tasks", __name__)
+
+
+              @tasks_bp.route("/projects/<project_id>/tasks", methods=["POST"])
+              def create_task(project_id):
+                  Project.query.get_or_404(project_id)
+                  schema = TaskCreateSchema()
+                  errors = schema.validate(request.json or {})
+                  if errors:
+                      return validation_error(errors)
+
+                  data = schema.load(request.json)
+                  task = Task(project_id=project_id, **data)
+                  db.session.add(task)
+                  db.session.commit()
+                  return jsonify({"data": task.to_dict()}), 201
+
+
+              @tasks_bp.route("/projects/<project_id>/tasks", methods=["GET"])
+              def list_tasks(project_id):
+                  Project.query.get_or_404(project_id)
+                  query = Task.query.filter_by(project_id=project_id)
+
+                  status = request.args.get("status")
+                  if status:
+                      statuses = status.split(",")
+                      query = query.filter(Task.status.in_(statuses))
+
+                  priority = request.args.get("priority")
+                  if priority:
+                      query = query.filter_by(priority=priority)
+
+                  assignee = request.args.get("assignee_id")
+                  if assignee:
+                      query = query.filter_by(assignee_id=assignee)
+
+                  label = request.args.get("label")
+                  if label:
+                      query = query.filter(Task.labels.contains(label))
+
+                  query = query.order_by(Task.created_at.desc())
+                  return paginate_query(query, Task)
+
+
+              @tasks_bp.route("/tasks/<task_id>", methods=["GET"])
+              def get_task(task_id):
+                  task = Task.query.get_or_404(task_id)
+                  return jsonify({"data": task.to_dict()})
+
+
+              @tasks_bp.route("/tasks/<task_id>", methods=["PUT"])
+              def update_task(task_id):
+                  task = Task.query.get_or_404(task_id)
+                  schema = TaskUpdateSchema()
+                  errors = schema.validate(request.json or {})
+                  if errors:
+                      return validation_error(errors)
+
+                  data = schema.load(request.json)
+                  for key, value in data.items():
+                      setattr(task, key, value)
+                  db.session.commit()
+                  return jsonify({"data": task.to_dict()})
+
+
+              @tasks_bp.route("/tasks/<task_id>", methods=["DELETE"])
+              def delete_task(task_id):
+                  task = Task.query.get_or_404(task_id)
+                  db.session.delete(task)
+                  db.session.commit()
+                  return "", 204
+
+
+              @tasks_bp.route("/tasks/search", methods=["GET"])
+              def search_tasks():
+                  q = request.args.get("q", "")
+                  if not q:
+                      return jsonify({"data": [], "meta": {"total": 0, "page": 1, "per_page": 20}})
+
+                  query = Task.query.filter(
+                      db.or_(
+                          Task.title.ilike(f"%{q}%"),
+                          Task.description.ilike(f"%{q}%"),
+                      )
+                  ).order_by(Task.created_at.desc())
+                  return paginate_query(query, Task)
+
+    - agent: architect
+      tool: coding:write_file
+      mock: true
+      mock_result: '{"success": true, "path": "src/routes/comments.py", "size": 1800}'
+      outcome:
+        files:
+          - path: src/routes/comments.py
+            content: |
+              """Comment CRUD endpoints."""
+              from flask import Blueprint, request, jsonify
+              from src.models import db, Comment, Task
+              from src.schemas import CommentCreateSchema, CommentUpdateSchema
+              from src.utils import paginate_query, validation_error
+
+              comments_bp = Blueprint("comments", __name__)
+
+
+              @comments_bp.route("/tasks/<task_id>/comments", methods=["POST"])
+              def create_comment(task_id):
+                  Task.query.get_or_404(task_id)
+                  schema = CommentCreateSchema()
+                  errors = schema.validate(request.json or {})
+                  if errors:
+                      return validation_error(errors)
+
+                  data = schema.load(request.json)
+                  comment = Comment(task_id=task_id, **data)
+                  db.session.add(comment)
+                  db.session.commit()
+                  return jsonify({"data": comment.to_dict()}), 201
+
+
+              @comments_bp.route("/tasks/<task_id>/comments", methods=["GET"])
+              def list_comments(task_id):
+                  Task.query.get_or_404(task_id)
+                  query = Comment.query.filter_by(task_id=task_id).order_by(Comment.created_at.asc())
+                  return paginate_query(query, Comment)
+
+
+              @comments_bp.route("/comments/<comment_id>", methods=["PUT"])
+              def update_comment(comment_id):
+                  comment = Comment.query.get_or_404(comment_id)
+                  schema = CommentUpdateSchema()
+                  errors = schema.validate(request.json or {})
+                  if errors:
+                      return validation_error(errors)
+
+                  data = schema.load(request.json)
+                  comment.content = data["content"]
+                  db.session.commit()
+                  return jsonify({"data": comment.to_dict()})
+
+
+              @comments_bp.route("/comments/<comment_id>", methods=["DELETE"])
+              def delete_comment(comment_id):
+                  comment = Comment.query.get_or_404(comment_id)
+                  db.session.delete(comment)
+                  db.session.commit()
+                  return "", 204
+
+    - agent: architect
+      tool: coding:write_file
+      mock: true
+      mock_result: '{"success": true, "path": "src/routes/reports.py", "size": 1600}'
+      outcome:
+        files:
+          - path: src/routes/reports.py
+            content: |
+              """Reporting and dashboard endpoints."""
+              import csv
+              import io
+              from flask import Blueprint, jsonify, make_response
+              from src.models import db, Project, Task
+
+              reports_bp = Blueprint("reports", __name__)
+
+
+              @reports_bp.route("/dashboard", methods=["GET"])
+              def dashboard():
+                  projects = Project.query.filter_by(status="active").all()
+                  total_tasks = Task.query.count()
+                  done_tasks = Task.query.filter_by(status="done").count()
+                  overdue_tasks = Task.query.filter(
+                      Task.due_date < db.func.current_date(),
+                      Task.status != "done",
+                  ).count()
+
+                  return jsonify({
+                      "data": {
+                          "active_projects": len(projects),
+                          "total_tasks": total_tasks,
+                          "done_tasks": done_tasks,
+                          "overdue_tasks": overdue_tasks,
+                          "completion_rate": round(done_tasks / total_tasks * 100, 1) if total_tasks else 0,
+                      }
+                  })
+
+
+              @reports_bp.route("/projects/<project_id>/export", methods=["GET"])
+              def export_tasks(project_id):
+                  project = Project.query.get_or_404(project_id)
+                  tasks = Task.query.filter_by(project_id=project_id).all()
+
+                  output = io.StringIO()
+                  writer = csv.writer(output)
+                  writer.writerow(["ID", "Title", "Status", "Priority", "Assignee", "Due Date", "Labels"])
+                  for task in tasks:
+                      writer.writerow([
+                          task.id, task.title, task.status, task.priority,
+                          task.assignee_id or "", task.due_date or "",
+                          ",".join(task.labels or []),
+                      ])
+
+                  response = make_response(output.getvalue())
+                  response.headers["Content-Type"] = "text/csv"
+                  response.headers["Content-Disposition"] = f"attachment; filename={project.name}-tasks.csv"
+                  return response
+
+    - agent: architect
+      tool: coding:write_file
+      mock: true
+      mock_result: '{"success": true, "path": "tests/conftest.py", "size": 1500}'
+      outcome:
+        files:
+          - path: tests/conftest.py
+            content: |
+              """Pytest fixtures for the task management API."""
+              import pytest
+              from src.app import create_app
+              from src.models import db as _db
+
+
+              @pytest.fixture
+              def app():
+                  app = create_app({"SQLALCHEMY_DATABASE_URI": "sqlite:///:memory:", "TESTING": True})
+                  with app.app_context():
+                      _db.create_all()
+                      yield app
+                      _db.drop_all()
+
+
+              @pytest.fixture
+              def client(app):
+                  return app.test_client()
+
+
+              @pytest.fixture
+              def sample_project(client):
+                  resp = client.post("/api/projects", json={"name": "Test Project", "description": "A test project"})
+                  return resp.get_json()["data"]
+
+
+              @pytest.fixture
+              def sample_task(client, sample_project):
+                  resp = client.post(
+                      f"/api/projects/{sample_project['id']}/tasks",
+                      json={"title": "Test Task", "description": "A test task", "priority": "high"},
+                  )
+                  return resp.get_json()["data"]
+
+    - agent: architect
+      tool: coding:write_file
+      mock: true
+      mock_result: '{"success": true, "path": "tests/test_projects.py", "size": 1800}'
+      outcome:
+        files:
+          - path: tests/test_projects.py
+            content: |
+              """Tests for project endpoints."""
+
+
+              def test_create_project(client):
+                  resp = client.post("/api/projects", json={"name": "New Project", "description": "desc"})
+                  assert resp.status_code == 201
+                  data = resp.get_json()["data"]
+                  assert data["name"] == "New Project"
+                  assert data["status"] == "active"
+
+
+              def test_create_project_duplicate_name(client, sample_project):
+                  resp = client.post("/api/projects", json={"name": sample_project["name"]})
+                  assert resp.status_code == 409
+
+
+              def test_list_projects(client, sample_project):
+                  resp = client.get("/api/projects")
+                  assert resp.status_code == 200
+                  data = resp.get_json()
+                  assert data["meta"]["total"] >= 1
+
+
+              def test_get_project(client, sample_project):
+                  resp = client.get(f"/api/projects/{sample_project['id']}")
+                  assert resp.status_code == 200
+                  assert "stats" in resp.get_json()["data"]
+
+
+              def test_update_project(client, sample_project):
+                  resp = client.put(f"/api/projects/{sample_project['id']}", json={"name": "Updated"})
+                  assert resp.status_code == 200
+                  assert resp.get_json()["data"]["name"] == "Updated"
+
+
+              def test_archive_project(client, sample_project):
+                  resp = client.delete(f"/api/projects/{sample_project['id']}")
+                  assert resp.status_code == 200
+                  assert resp.get_json()["data"]["status"] == "archived"
+
+    - agent: architect
+      tool: coding:write_file
+      mock: true
+      mock_result: '{"success": true, "path": "requirements.txt", "size": 120}'
+      outcome:
+        files:
+          - path: requirements.txt
+            content: |
+              flask>=3.0
+              flask-cors>=4.0
+              flask-sqlalchemy>=3.1
+              marshmallow>=3.20
+              pytest>=8.0
+              pytest-cov>=4.0
+
+    - agent: architect
+      tool: coding:push_changes
+
+    - agent: architect
+      tool: builtin:done
+      arguments:
+        summary: "Agent architect: TECHNICAL_DESIGN_APPROVED. Created TD at docs/technical-design.md. Implemented full Flask API with models, schemas, routes (projects, tasks, comments, reports), utils, and tests."
+
+    # --- Planner -> Developer ---
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: developer
+            prompt: |
+              Add JWT authentication and role-based access control (RBAC) to the existing task management API.
+
+              Requirements:
+              1. Add a User model with fields: id, username, email, password_hash, role (admin/member/viewer)
+              2. Add JWT token endpoints: POST /api/auth/register, POST /api/auth/login, GET /api/auth/me
+              3. Add auth middleware that validates JWT tokens on all endpoints except auth
+              4. Add RBAC: admins can do everything, members can CRUD their own tasks/comments, viewers are read-only
+              5. Add user_id foreign key to Task and Comment models (track who created what)
+              6. Update ALL existing routes to check authentication and authorization
+              7. Update ALL existing tests to work with authentication
+              8. Add new tests for auth endpoints and RBAC rules
+
+              Read all existing source files first to understand the codebase before making changes.
+          - agent_id: planner
+            prompt: "Re-evaluate after developer"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: Planned developer for auth + RBAC implementation"
+
+  verify:
+    - gitea_repo_exists: true
+    - file_exists: docs/functional-design.md
+    - file_exists: docs/technical-design.md
+    - file_exists: src/app.py
+    - file_exists: src/models.py
+    - file_exists: src/routes/projects.py
+    - file_exists: src/routes/tasks.py
+    - file_exists: tests/conftest.py

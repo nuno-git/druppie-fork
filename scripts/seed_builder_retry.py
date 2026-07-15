@@ -89,8 +89,6 @@ def create_gitea_repo(client: httpx.Client, name: str) -> dict:
     return {
         "repo_name": repo_name,
         "repo_owner": "druppie_admin",
-        "repo_url": f"{GITEA_URL}/druppie_admin/{repo_name}",
-        "clone_url": data.get("clone_url", f"{GITEA_URL}/druppie_admin/{repo_name}.git"),
     }
 
 
@@ -401,12 +399,11 @@ def populate_db(repos: dict[int, dict]):
             if repo_info:
                 cur.execute(
                     """INSERT INTO projects
-                       (id, name, description, repo_name, repo_owner, repo_url, clone_url,
+                       (id, name, description, repo_name, repo_owner,
                         owner_id, status, created_at, updated_at)
-                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s)""",
                     (project_id, s["project_name"], f"Seeded: {s['title']}",
                      repo_info["repo_name"], repo_info["repo_owner"],
-                     repo_info["repo_url"], repo_info["clone_url"],
                      admin_id, "active", base_ts, base_ts),
                 )
 
@@ -657,7 +654,7 @@ def main():
     print(f"  Sessions created: {len(SESSIONS)}")
     print(f"  Builder-retry:   {session_url}")
     if PRIMARY_SESSION_NS in repos:
-        print(f"  Gitea repo:      {repos[PRIMARY_SESSION_NS]['repo_url']}")
+        print(f"  Gitea repo:      {GITEA_URL}/druppie_admin/{repos[PRIMARY_SESSION_NS]['repo_name']}")
     print()
     print("  Session states:")
     for s in SESSIONS:

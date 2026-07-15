@@ -5,11 +5,13 @@ from datetime import datetime, timezone
 
 from sqlalchemy import or_, and_
 
-from .base import BaseRepository
-from ..domain import ApprovalDetail, ApprovalSummary, ApprovalHistoryList, PendingApprovalList, ApprovalStatus
 from ..db.models import Approval
 from ..db.models.project import Project as ProjectModel
 from ..db.models.session import Session as SessionModel
+
+from ..domain import ApprovalDetail, ApprovalHistoryList, ApprovalStatus, ApprovalSummary, PendingApprovalList
+
+from .base import BaseRepository
 
 
 class ApprovalRepository(BaseRepository):
@@ -161,6 +163,8 @@ class ApprovalRepository(BaseRepository):
         # project_id for the frontend's link-rewriting in FD/TD previews
         # and for the ArchimateBlock embed render. One join does all three.
         session_user_id = None
+        repo_name = None
+        repo_owner = None
         repo_url = None
         project_id = None
         if approval.session_id:
@@ -179,6 +183,8 @@ class ApprovalRepository(BaseRepository):
             if row:
                 if approval.required_role == "session_owner":
                     session_user_id = row.user_id
+                repo_name = row.repo_name
+                repo_owner = row.repo_owner
                 from ..repositories.project_repository import _derive_repo_url
                 repo_url = _derive_repo_url(row.repo_url, row.repo_owner, row.repo_name)
                 project_id = row.id
@@ -201,6 +207,8 @@ class ApprovalRepository(BaseRepository):
             rejection_reason=approval.rejection_reason,
             created_at=approval.created_at,
             session_user_id=session_user_id,
+            repo_name=repo_name,
+            repo_owner=repo_owner,
             repo_url=repo_url,
             project_id=project_id,
         )

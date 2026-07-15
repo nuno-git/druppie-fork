@@ -41,6 +41,17 @@ class AgentDefinitionLoader:
         return os.path.join(os.path.dirname(__file__), "definitions")
 
     @classmethod
+    def _find_agent_yaml(cls, agent_id: str) -> str | None:
+        """Find agent YAML recursively in definitions directory."""
+        definitions_path = cls._get_definitions_path()
+        for root, dirs, files in os.walk(definitions_path):
+            dirs[:] = [d for d in dirs if d != "system_prompts"]
+            for f in files:
+                if f == f"{agent_id}.yaml":
+                    return os.path.join(root, f)
+        return None
+
+    @classmethod
     def load(cls, agent_id: str) -> AgentDefinition:
         """Load agent definition from YAML, with mtime-based cache.
 
@@ -55,10 +66,10 @@ class AgentDefinitionLoader:
         """
         from druppie.agents.runtime import AgentNotFoundError
 
-        path = os.path.join(cls._get_definitions_path(), f"{agent_id}.yaml")
+        path = cls._find_agent_yaml(agent_id)
 
-        if not os.path.exists(path):
-            raise AgentNotFoundError(f"Agent '{agent_id}' not found at {path}")
+        if not path:
+            raise AgentNotFoundError(f"Agent '{agent_id}' not found in definitions")
 
         mtime = os.path.getmtime(path)
 
@@ -115,11 +126,13 @@ class AgentDefinitionLoader:
     @classmethod
     def list_agents(cls) -> list[str]:
         """List available agent IDs from disk."""
-        path = cls._get_definitions_path()
-        if not os.path.exists(path):
+        definitions_path = cls._get_definitions_path()
+        if not os.path.exists(definitions_path):
             return []
-        return [
-            f.replace(".yaml", "").replace(".yml", "")
-            for f in os.listdir(path)
-            if f.endswith((".yaml", ".yml"))
-        ]
+        agent_ids = []
+        for root, dirs, files in os.walk(definitions_path):
+            dirs[:] = [d for d in dirs if d != "system_prompts"]
+            for f in sorted(files):
+                if f.endswith((".yaml", ".yml")) and f != "llm_profiles.yaml":
+                    agent_ids.append(f.replace(".yaml", "").replace(".yml", ""))
+        return agent_ids

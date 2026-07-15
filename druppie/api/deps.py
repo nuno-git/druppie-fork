@@ -24,7 +24,7 @@ import os
 from functools import wraps
 from typing import Callable, Generator
 
-from fastapi import Depends, HTTPException, Header
+from fastapi import Depends, HTTPException, Header, Request
 from sqlalchemy.orm import Session
 import structlog
 
@@ -55,6 +55,7 @@ from druppie.services import (
     EvaluationService,
     DocumentationService,
     JobService,
+    DocumentFormatterService,
 )
 
 # Initialize database tables on import
@@ -116,9 +117,15 @@ def get_attachment_repository(db: Session = Depends(get_db)) -> "AttachmentRepos
 
 def get_session_service(
     session_repo: SessionRepository = Depends(get_session_repository),
+    question_repo: QuestionRepository = Depends(get_question_repository),
 ) -> SessionService:
-    """Get SessionService with repositories injected."""
-    return SessionService(session_repo)
+    """Get SessionService with repositories injected.
+
+    QuestionRepository is needed so the service can grant read-only access
+    (and sidebar visibility) to non-owner users who were pulled into a
+    session as an expert via the ask_expert tool family.
+    """
+    return SessionService(session_repo, question_repo=question_repo)
 
 
 def get_approval_service(
@@ -200,6 +207,14 @@ def get_documentation_service(
     return DocumentationService(project_repo, cache_repo)
 
 
+def get_document_formatter_service() -> DocumentFormatterService:
+    """Get DocumentFormatterService.
+
+    Stateless service with no repository dependencies.
+    """
+    return DocumentFormatterService()
+
+
 def get_workflow_service(
     orchestrator: "Orchestrator" = Depends(get_orchestrator),
 ) -> WorkflowService:
@@ -217,6 +232,7 @@ def get_auth() -> AuthService:
 
 
 async def get_current_user(
+    request: Request,
     authorization: str | None = Header(None),
     auth: AuthService = Depends(get_auth),
 ) -> dict:

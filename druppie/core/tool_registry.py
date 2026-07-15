@@ -336,7 +336,15 @@ class ToolRegistry:
                         tools.append(tool)
         else:
             # Dict format - specific tools per server
-            for server, tool_names in agent_mcps.items():
+            for server, server_config in agent_mcps.items():
+                # Support both formats:
+                #   {"coding": ["read_file"]}  (old: list of tools)
+                #   {"coding": {"tools": ["read_file"], "git": "current_project"}}  (new: nested dict)
+                if isinstance(server_config, dict):
+                    tool_names = server_config.get("tools")
+                else:
+                    tool_names = server_config
+
                 for tool in self._tools.values():
                     if tool.tool_type == ToolType.MCP and tool.server == server:
                         if not tool_names or tool.name in tool_names:
@@ -356,7 +364,10 @@ class ToolRegistry:
         Returns:
             List of OpenAI function tool definitions
         """
-        return [tool.to_openai_format() for tool in tools]
+        return [
+            tool if isinstance(tool, dict) else tool.to_openai_format()
+            for tool in tools
+        ]
 
     # -------------------------------------------------------------------------
     # Validation

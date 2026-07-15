@@ -1,0 +1,39 @@
+## Agent test: Developer reads files in a loop until context compaction triggers
+##
+## Setup: tool test creates a Flask API project with ~12 source files,
+##   large FD + TD, and a pending developer agent.
+##
+## The developer is instructed to read every source file one by one,
+## write a detailed analysis after each read, then loop through all
+## files again — 5 full passes. This generates enough tool results
+## and assistant messages to trigger progressive context compression
+## (phase 1 >45% tokens, phase 2 >70%, phase 3 >85%).
+##
+## The test verifies the agent completes coherently despite compression
+## and does NOT auto-done from context overflow.
+
+agent-test:
+  name: developer-compaction-read-loop
+  description: "Developer reads files repeatedly until context compaction triggers and still completes"
+  tags: [compaction, agent-runtime, e2e, long-running]
+
+  setup:
+    - setup-context-compression
+
+  continue_session: true
+
+  message: |
+    Read as many files as possible in this project. Do not stop reading
+    files until you are automatically compacted. Read every file you can
+    find — read each one, then start over and read them all again.
+    Keep reading in a loop. Do not delegate to subagents. Do not call
+    done until you have been compacted at least once.
+
+  agents: [developer]
+
+  judge:
+    context: [developer]
+    checks:
+      - "The developer read source files repeatedly and made many tool calls (at least 20)."
+      - "Context compaction triggered at least once — the developer either continued working after compaction or mentioned being compacted."
+      - "The developer completed with done() or was auto-done from context limits — either is acceptable as long as it read files until compaction happened."

@@ -35,11 +35,6 @@ tool-test:
     # Architect — writes simple TD with OCR + LLM modules
     # =========================================================================
     - agent: architect
-      tool: coding:run_git
-      arguments:
-        command: "pull"
-
-    - agent: architect
       tool: coding:read_file
       arguments:
         path: docs/functional-design.md
@@ -226,6 +221,23 @@ tool-test:
           |---------|-----------|-----------|
           | (none) | | |
 
+          ### Druppie SDK Integration
+
+          The application uses the `druppie_sdk` Python package for AI capabilities — no hardcoded API keys.
+
+          ```python
+          from druppie_sdk import DruppieClient
+          druppie = DruppieClient()
+
+          # OCR — extract text from scanned permits
+          result = druppie.call("vision", "ocr", {"image_source": data_uri})
+
+          # LLM — classify permit type from extracted text
+          result = druppie.call("llm", "chat", {"prompt": text, "system": "Classify..."})
+          ```
+
+          Modules used: `vision/ocr` for document text extraction, `llm/chat` for permit classification and metadata extraction.
+
           ### Visualization
 
           **Application Architecture:**
@@ -400,19 +412,7 @@ tool-test:
             | get_case_status | Retrieves the current status of a case |
 
     - agent: architect
-      tool: coding:run_git
-      arguments:
-        command: "add docs/technical-design.md"
-
-    - agent: architect
-      tool: coding:run_git
-      arguments:
-        command: "commit -m 'Technisch ontwerp vergunningzoeker met Druppie SDK'"
-
-    - agent: architect
-      tool: coding:run_git
-      arguments:
-        command: "push"
+      tool: coding:push_changes
 
     - agent: architect
       tool: builtin:done
@@ -440,11 +440,6 @@ tool-test:
     # =========================================================================
     # Builder Planner
     # =========================================================================
-    - agent: builder_planner
-      tool: coding:run_git
-      arguments:
-        command: "pull"
-
     - agent: builder_planner
       tool: coding:read_file
       arguments:
@@ -493,19 +488,7 @@ tool-test:
           - frontend/src/App.tsx — upload + zoek UI
 
     - agent: builder_planner
-      tool: coding:run_git
-      arguments:
-        command: "add docs/builder-plan.md"
-
-    - agent: builder_planner
-      tool: coding:run_git
-      arguments:
-        command: "commit -m 'Add builder plan for vergunningzoeker'"
-
-    - agent: builder_planner
-      tool: coding:run_git
-      arguments:
-        command: "push"
+      tool: coding:push_changes
 
     - agent: builder_planner
       tool: builtin:done
@@ -532,11 +515,6 @@ tool-test:
     # =========================================================================
     # Test Builder
     # =========================================================================
-    - agent: test_builder
-      tool: coding:run_git
-      arguments:
-        command: "pull"
-
     - agent: test_builder
       tool: coding:read_file
       arguments:
@@ -602,19 +580,7 @@ tool-test:
               Base.metadata.drop_all(bind=engine)
 
     - agent: test_builder
-      tool: coding:run_git
-      arguments:
-        command: "add tests/"
-
-    - agent: test_builder
-      tool: coding:run_git
-      arguments:
-        command: "commit -m 'Add vergunningzoeker tests (Red phase)'"
-
-    - agent: test_builder
-      tool: coding:run_git
-      arguments:
-        command: "push"
+      tool: coding:push_changes
 
     - agent: test_builder
       tool: builtin:done
@@ -1021,7 +987,7 @@ tool-test:
               COPY app/ ./app/
               COPY --from=frontend /build/dist ./static/
               EXPOSE 8000
-              CMD ["gunicorn", "--bind", "0.0.0.0:8000", "--workers", "2", "--timeout", "300", "app:create_app()"]
+              CMD ["gunicorn", "--bind", "0.0.0.0:8000", "--workers", "1", "--timeout", "300", "app:create_app()"]
 
           - path: app/database.py
             content: |
