@@ -82,7 +82,6 @@ APP_BASE_BRANCH = os.getenv("BRANCH_ENV_APP_BASE_BRANCH", "colab-dev")
 # envs (callers can still override with an explicit image_tag).
 PARENT_NAMESPACE = os.getenv("BRANCH_ENV_PARENT_NAMESPACE", f"druppie-{APP_BASE_BRANCH}")
 
-BRANCH_ENV_NODE = os.getenv("BRANCH_ENV_NODE", "ka-k8s-ai-workers-skbh7-d4qwl")
 BRANCH_ENV_REGISTRY = os.getenv("BRANCH_ENV_REGISTRY", "harbor.rijnland.dev/druppie")
 BRANCH_ENV_PULL_SECRET = os.getenv("BRANCH_ENV_PULL_SECRET", "harbor-regcred")
 # Ephemeral StorageClass: 1 replica, strict-local, reclaimPolicy=Delete.
@@ -99,8 +98,6 @@ _USERNAME_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,62}$")
 # single label under this suffix to match the *.rijnland.dev wildcard cert.
 DOMAIN_SUFFIX = os.getenv("BRANCH_ENV_DOMAIN_SUFFIX", "rijnland.dev")
 
-# Modules that mount a shared RWO PVC and must co-locate with the backend.
-PINNED_MODULES = ["coding", "docker", "archimate", "data_access", "filesearch", "web"]
 # Every module the chart deploys (values.yaml modules.*).
 ALL_MODULES = [
     "coding",
@@ -283,7 +280,6 @@ def build_helmrelease_yaml(
         # so they don't grab cluster-global NodePorts held by the live instance.
         "backend": {
             "service": {"type": "ClusterIP"},
-            "nodeSelector": {"kubernetes.io/hostname": BRANCH_ENV_NODE},
             "resources": {"requests": {"cpu": _DEV_CPU["backend"]}},
         },
         "frontend": {
@@ -298,15 +294,9 @@ def build_helmrelease_yaml(
             "service": {"type": "ClusterIP"},
             "resources": {"requests": {"cpu": _DEV_CPU["component"]}},
         },
-        # Modules sharing the RWO workspace PVC must co-locate with the backend.
         "modules": {
             module: {
                 "resources": {"requests": {"cpu": _DEV_CPU["module"]}},
-                **(
-                    {"nodeSelector": {"kubernetes.io/hostname": BRANCH_ENV_NODE}}
-                    if module in PINNED_MODULES
-                    else {}
-                ),
             }
             for module in ALL_MODULES
         },
