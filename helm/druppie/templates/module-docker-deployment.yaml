@@ -84,7 +84,7 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- else }}
       nodeSelector:
-        pool: infra
+        node-role.kubernetes.io/worker: "true"
       {{- end }}
       volumes:
         - name: workspace
