@@ -331,7 +331,14 @@ class KeycloakAdmin:
             uuid = self._get_client_uuid(realm, client_id)
             if uuid:
                 update_url = f"{self.base_url}/admin/realms/{realm}/clients/{uuid}"
-                update_resp = requests.put(update_url, json=client_config, headers=self._headers())
+                existing = requests.get(update_url, headers=self._headers())
+                if existing.status_code == 200:
+                    merged = existing.json()
+                    merged.update(client_config)
+                else:
+                    merged = client_config
+                merged["id"] = uuid
+                update_resp = requests.put(update_url, json=merged, headers=self._headers())
                 if update_resp.status_code in [200, 204]:
                     print(f"  [OK] Updated client '{client_id}'")
                 else:
