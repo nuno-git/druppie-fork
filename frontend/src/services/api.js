@@ -112,6 +112,21 @@ export const downloadAttachment = async (attachmentId) => {
   setTimeout(() => URL.revokeObjectURL(url), 60000)
 }
 
+export const getAvatarUrl = async () => {
+  const token = getToken()
+  if (!token) return null
+  try {
+    const response = await fetch(`${API_URL}/api/users/me/avatar`, {
+      headers: { 'Authorization': `Bearer ${token}` },
+    })
+    if (!response.ok) return null
+    const blob = await response.blob()
+    return URL.createObjectURL(blob)
+  } catch {
+    return null
+  }
+}
+
 export const cancelChat = (sessionId) =>
   request(`/api/chat/${sessionId}/cancel`, { method: 'POST' })
 

@@ -412,6 +412,13 @@ async def authorize_entra(
             "message": token_result.get("error", "Please sign in with Microsoft again."),
         }
 
+    # Fetch user avatar from Graph API (fire-and-forget, non-blocking)
+    graph_token = token_result.get("access_token")
+    if graph_token:
+        import asyncio
+        from druppie.services.avatar_service import fetch_and_cache_avatar
+        asyncio.create_task(fetch_and_cache_avatar(str(user_id), graph_token))
+
     # Transition session to active
     try:
         service.lock_for_resume(session_id)
