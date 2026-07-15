@@ -63,17 +63,21 @@ def reconstruct_from_db(
             ],
         })
 
-        for j, tool_call_db in enumerate(last_call.tool_calls):
-            if tool_call_db.result or tool_call_db.error_message:
-                tool_call_id = f"call_last_{j}"
-                if j < len(last_call.response_tool_calls):
-                    tool_call_id = last_call.response_tool_calls[j].get("id", tool_call_id)
+        db_tool_calls = {tc.tool_call_index: tc for tc in last_call.tool_calls}
+        for j, tc in enumerate(last_call.response_tool_calls):
+            tool_call_id = tc.get("id", f"call_last_{j}")
+            tool_call_db = db_tool_calls.get(j)
 
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": tool_call_id,
-                    "content": tool_call_db.result or f"Error: {tool_call_db.error_message}",
-                })
+            if tool_call_db and (tool_call_db.result or tool_call_db.error_message):
+                content = tool_call_db.result or f"Error: {tool_call_db.error_message}"
+            else:
+                content = '{"success": false, "error": "Tool execution was interrupted."}'
+
+            messages.append({
+                "role": "tool",
+                "tool_call_id": tool_call_id,
+                "content": content,
+            })
 
     elif last_call.response_content:
         messages.append({

@@ -1154,7 +1154,7 @@ class ToolExecutor:
                     "Contact your administrator to set up Entra ID integration."
                 ),
             )
-            self.db.commit()
+            self._active_db.commit()
             return ToolCallStatus.FAILED
 
         if not user_id:
@@ -1163,7 +1163,7 @@ class ToolExecutor:
                 status=ToolCallStatus.FAILED,
                 error="Cannot determine session owner for Entra ID authentication.",
             )
-            self.db.commit()
+            self._active_db.commit()
             return ToolCallStatus.FAILED
 
         is_linked = await check_entra_linked(user_id)
@@ -1181,7 +1181,7 @@ class ToolExecutor:
             tool_call.id,
             status=ToolCallStatus.WAITING_ENTRA_AUTH,
         )
-        self.db.commit()
+        self._active_db.commit()
 
         logger.info(
             "entra_token_missing_waiting_auth",

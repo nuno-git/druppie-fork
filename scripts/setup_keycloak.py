@@ -327,83 +327,39 @@ class KeycloakAdmin:
         else:
             print(f"  [WARN] Could not grant '{role_name}': {resp.text}")
 
-    def create_auto_link_flow(self, realm: str) -> bool:
-        """Create a 'first broker login' flow that auto-links by email.
+    def create_idp_role_mapper(
+        self, realm: str, idp_alias: str, role_name: str,
+    ):
+        """Create a hardcoded role mapper on an identity provider.
 
-        Returns True if the flow was created (or already exists).
+        Ensures all users brokered through this IdP get the specified realm role.
         """
-        flow_alias = "auto-link-broker"
-        flows_url = f"{self.base_url}/admin/realms/{realm}/authentication/flows"
+        mapper_name = f"grant-{role_name}-role"
+        url = f"{self.base_url}/admin/realms/{realm}/identity-provider/instances/{idp_alias}/mappers"
 
-        # Check if flow already exists
-        resp = requests.get(flows_url, headers=self._headers())
-        if resp.status_code == 200:
-            for flow in resp.json():
-                if flow.get("alias") == flow_alias:
-                    print(f"  [OK] Flow '{flow_alias}' already exists")
-                    return True
+        existing = requests.get(url, headers=self._headers())
+        if existing.status_code == 200:
+            for m in existing.json():
+                if m.get("name") == mapper_name:
+                    print(f"  [OK] IdP mapper '{mapper_name}' already exists")
+                    return
 
-        # Create the top-level flow
-        flow_data = {
-            "alias": flow_alias,
-            "description": "Auto-link brokered users by email",
-            "providerId": "basic-flow",
-            "topLevel": True,
-            "builtIn": False,
+        mapper = {
+            "name": mapper_name,
+            "identityProviderAlias": idp_alias,
+            "identityProviderMapper": "oidc-hardcoded-role-idp-mapper",
+            "config": {
+                "syncMode": "INHERIT",
+                "role": role_name,
+            },
         }
-        resp = requests.post(flows_url, json=flow_data, headers=self._headers())
-        if resp.status_code not in [201, 409]:
-            print(f"  [ERROR] Failed to create flow: {resp.text}")
-            return False
-        print(f"  [OK] Created flow '{flow_alias}'")
-
-        # Add "Create User If Unique" execution
-        exec_url = f"{flows_url}/{flow_alias}/executions/execution"
-        resp = requests.post(
-            exec_url,
-            json={"provider": "idp-create-user-if-unique"},
-            headers=self._headers(),
-        )
-        if resp.status_code not in [201, 409]:
-            print(f"  [ERROR] Failed to add idp-create-user-if-unique: {resp.text}")
-            return False
-
-        # Add "Automatically Set Existing User" execution
-        resp = requests.post(
-            exec_url,
-            json={"provider": "idp-auto-link"},
-            headers=self._headers(),
-        )
-        if resp.status_code not in [201, 409]:
-            print(f"  [ERROR] Failed to add idp-auto-link: {resp.text}")
-            return False
-
-        # Set both executions to ALTERNATIVE
-        execs_url = f"{self.base_url}/admin/realms/{realm}/authentication/flows/{flow_alias}/executions"
-        resp = requests.get(execs_url, headers=self._headers())
-        if resp.status_code == 200:
-            for ex in resp.json():
-                if ex.get("requirement") != "ALTERNATIVE":
-                    ex["requirement"] = "ALTERNATIVE"
-                    requests.put(execs_url, json=ex, headers=self._headers())
-
-        print(f"  [OK] Configured auto-link executions")
-        return True
-
-    def update_idp_flow(self, realm: str, idp_alias: str, flow_alias: str):
-        """Update an identity provider's first broker login flow."""
-        url = f"{self.base_url}/admin/realms/{realm}/identity-provider/instances/{idp_alias}"
-        resp = requests.get(url, headers=self._headers())
-        if resp.status_code != 200:
-            print(f"  [WARN] Could not get IdP '{idp_alias}'")
-            return
-        idp = resp.json()
-        idp["firstBrokerLoginFlowAlias"] = flow_alias
-        resp = requests.put(url, json=idp, headers=self._headers())
-        if resp.status_code in [200, 204]:
-            print(f"  [OK] Set '{idp_alias}' first broker login flow to '{flow_alias}'")
+        resp = requests.post(url, json=mapper, headers=self._headers())
+        if resp.status_code in [200, 201]:
+            print(f"  [OK] Created IdP mapper '{mapper_name}' on '{idp_alias}'")
+        elif resp.status_code == 409:
+            print(f"  [OK] IdP mapper '{mapper_name}' already exists")
         else:
-            print(f"  [ERROR] Failed to update IdP flow: {resp.text}")
+            print(f"  [WARN] Could not create IdP mapper: {resp.text}")
 
     def set_realm_frontend_url(self, realm: str, frontend_url: str):
         if not frontend_url:
@@ -611,10 +567,9 @@ def main():
             idp_substituted = _deep_substitute(idp, substitute_env)
             kc.create_identity_provider(REALM_NAME, idp_substituted)
 
-        # Create auto-link flow and assign to IdP
-        print("\n  Creating auto-link broker flow...")
-        if kc.create_auto_link_flow(REALM_NAME):
-            kc.update_idp_flow(REALM_NAME, "entra-id", "auto-link-broker")
+        # Brokered users get developer role automatically
+        print("\n  Configuring Entra IdP role mapper...")
+        kc.create_idp_role_mapper(REALM_NAME, "entra-id", "developer")
 
         # Grant read-token to roles that need Azure access (H3: not all users)
         print("\n[STEP 6] Granting broker read-token role...")

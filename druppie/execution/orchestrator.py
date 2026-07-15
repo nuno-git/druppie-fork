@@ -1199,7 +1199,7 @@ class Orchestrator:
         from druppie.execution.mcp_http import MCPHttp
         from druppie.core.mcp_config import MCPConfig
         from druppie.core.entra_token import get_entra_token
-        from druppie.agents.runtime import Agent
+        from druppie.agents.runtime_v2 import AgentV2 as Agent
 
         logger.info("resume_after_entra_auth", session_id=str(session_id))
 
