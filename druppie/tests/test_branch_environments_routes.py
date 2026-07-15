@@ -346,32 +346,27 @@ def test_create_blocked_while_namespace_terminating(client, as_owner, fake_clust
 # ---------------------------------------------------------------------------
 
 
-def test_create_default_secrets_source_borrows_colab_dev_keys(client, as_owner, fake_gitea):
+def test_create_default_secrets_source_is_colab_dev(client, as_owner, fake_gitea):
     r = _deploy(client)
     assert r.status_code == 202, r.text
     assert r.json()["secrets_source"] == "colab-dev"
 
+    # externalsecrets.yaml should only contain druppie-tls + harbor-regcred
+    # (app secrets are synced by the chart's dev-workspace-secrets template).
     docs = list(yaml.safe_load_all(fake_gitea.files[f"{_env_dir('feature-foo')}/externalsecrets.yaml"]))
-    app_es = next(d for d in docs if d["metadata"]["name"] == "branch-env-secrets")
-    props = {d["remoteRef"]["key"] for d in app_es["spec"]["data"]}
-    assert props == {"druppie/colab-dev/app"}
-    keys = {d["secretKey"] for d in app_es["spec"]["data"]}
-    assert "ZAI_API_KEY" in keys and "OPENROUTER_API_KEY" in keys
+    names = {d["metadata"]["name"] for d in docs}
+    assert "branch-env-secrets" not in names
+    assert "druppie-tls" in names
+    assert "harbor-regcred" in names
 
     hr = yaml.safe_load(fake_gitea.files[f"{_env_dir('feature-foo')}/helmrelease.yaml"])
-    assert hr["spec"]["values"]["global"]["extraEnvFromSecret"] == "branch-env-secrets"
+    assert "extraEnvFromSecret" not in hr["spec"]["values"]["global"]
 
 
-def test_create_developer_secrets_source_uses_own_vault_map(client, as_owner, fake_gitea):
+def test_create_developer_secrets_source_annotation(client, as_owner, fake_gitea):
     r = _deploy(client, secrets_source="developer")
     assert r.status_code == 202, r.text
     assert r.json()["secrets_source"] == "developer"
-
-    docs = list(yaml.safe_load_all(fake_gitea.files[f"{_env_dir('feature-foo')}/externalsecrets.yaml"]))
-    app_es = next(d for d in docs if d["metadata"]["name"] == "branch-env-secrets")
-    # dataFrom extract on the deployer's OWN map (username from the token).
-    assert app_es["spec"]["dataFrom"] == [{"extract": {"key": "druppie/developers/robbe"}}]
-    assert "data" not in app_es["spec"]
 
     ns = yaml.safe_load(fake_gitea.files[f"{_env_dir('feature-foo')}/namespace.yaml"])
     assert ns["metadata"]["annotations"]["druppie.io/secrets-source"] == "developer"
@@ -656,8 +651,9 @@ def _make_cluster_all_ready(fake_cluster):
     fake_cluster.namespaces[_NS] = _branch_env_ns()
     fake_cluster.gitrepositories["feature-foo"] = _hr_ready()
     fake_cluster.externalsecrets[_NS] = [
-        {"metadata": {"name": "branch-env-secrets"}, **_hr_ready()},
+        {"metadata": {"name": "druppie-feature-foo-secrets"}, **_hr_ready()},
         {"metadata": {"name": "druppie-tls"}, **_hr_ready()},
+        {"metadata": {"name": "harbor-regcred"}, **_hr_ready()},
     ]
     fake_cluster.helmreleases[_NS] = _hr_ready()
     fake_cluster.deployments[(_NS, "druppie-backend")] = {
@@ -718,11 +714,11 @@ def test_pipeline_secrets_sync_failure(client, as_owner, fake_cluster):
     fake_cluster.namespaces[_NS] = _branch_env_ns()
     fake_cluster.externalsecrets[_NS] = [
         {
-            "metadata": {"name": "branch-env-secrets"},
+            "metadata": {"name": "druppie-tls"},
             **_hr_ready(
                 status="False",
                 reason="SecretSyncedError",
-                message="key not found: druppie/developers/robbe",
+                message="key not found: druppie-tls/tls.crt",
             ),
         }
     ]
@@ -730,7 +726,7 @@ def test_pipeline_secrets_sync_failure(client, as_owner, fake_cluster):
     s = _stages(body)
     assert body["status"] == "failed"
     assert s["secrets"]["status"] == "failed"
-    assert "branch-env-secrets" in s["secrets"]["message"]
+    assert "druppie-tls" in s["secrets"]["message"]
     assert "key not found" in s["secrets"]["message"]
     assert s["secrets"]["detail"] == "0/1 secrets synced"
 

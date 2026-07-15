@@ -88,17 +88,11 @@ BRANCH_ENV_PULL_SECRET = os.getenv("BRANCH_ENV_PULL_SECRET", "harbor-regcred")
 # Ephemeral StorageClass: 1 replica, strict-local, reclaimPolicy=Delete.
 BRANCH_ENV_STORAGE_CLASS = os.getenv("BRANCH_ENV_STORAGE_CLASS", "longhorn-branch-env")
 
-# Vault-sourced app secrets (LLM API keys etc.) per environment. The deployer
-# picks a source: "colab-dev" borrows the colab-dev instance's keys (works out
-# of the box), "developer" syncs the deployer's own self-service Vault map
-# druppie/developers/<username> (key names = env var names). Hard allowlist —
-# a free-form path would let a branch env sync arbitrary mount contents (e.g.
-# druppie/main/*) into its namespace.
-BRANCH_ENV_APP_SECRET = "branch-env-secrets"
+# Secrets source for branch envs: "developer" syncs the deployer's own
+# self-service Vault map druppie/developers/<username>.
 SECRETS_SOURCE_COLAB_DEV = "colab-dev"
 SECRETS_SOURCE_DEVELOPER = "developer"
 _SECRETS_SOURCES = frozenset({SECRETS_SOURCE_COLAB_DEV, SECRETS_SOURCE_DEVELOPER})
-DEVELOPER_SECRETS_PREFIX = "druppie/developers"
 _USERNAME_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,62}$")
 
 # Domain suffix: environments live at druppie-<slug>.<DOMAIN_SUFFIX>. Must stay a
@@ -284,10 +278,6 @@ def build_helmrelease_yaml(
             "domain": host,
             "imageRegistry": BRANCH_ENV_REGISTRY,
             "imagePullSecrets": [{"name": BRANCH_ENV_PULL_SECRET}],
-            # Vault-sourced overrides (see build_externalsecrets_yaml): appended
-            # after <instance>-secrets in envFrom so its keys win; optional, so
-            # the env still starts if the chosen Vault path is empty/missing.
-            "extraEnvFromSecret": BRANCH_ENV_APP_SECRET,
         },
         # Branch envs are reached via Traefik ingress, not NodePort — ClusterIP
         # so they don't grab cluster-global NodePorts held by the live instance.
@@ -388,51 +378,9 @@ def build_helmrelease_yaml(
     )
 
 
-def _app_secrets_externalsecret(namespace: str, secrets_source: str, username: str | None) -> dict:
-    """ExternalSecret feeding the env's Vault-sourced overrides (see
-    ``global.extraEnvFromSecret`` in the committed HelmRelease).
-
-    colab-dev  — borrow the LLM API keys the colab-dev instance already uses
-                 (explicit refs: every listed property exists, and ESO stalls
-                 the whole sync on a missing one).
-    developer  — the deployer's own self-service Vault map
-                 ``druppie/developers/<username>``; key names ARE the env var
-                 names (e.g. ZAI_API_KEY), synced wholesale via dataFrom so
-                 the developer can add any keys they want.
-    """
-    spec: dict = {
-        "refreshInterval": "1m",
-        "secretStoreRef": {"name": "vault-ai-team-k8s", "kind": "ClusterSecretStore"},
-        "target": {"name": BRANCH_ENV_APP_SECRET, "creationPolicy": "Owner"},
-    }
-    if secrets_source == SECRETS_SOURCE_DEVELOPER:
-        spec["dataFrom"] = [{"extract": {"key": f"{DEVELOPER_SECRETS_PREFIX}/{username}"}}]
-    else:
-        spec["data"] = [
-            {"secretKey": env_key, "remoteRef": {"key": "druppie/colab-dev/app", "property": prop}}
-            for env_key, prop in (
-                ("ZAI_API_KEY", "zai-api-key"),
-                ("DEEPSEEK_API_KEY", "deepseek-api-key"),
-                ("DEEPINFRA_API_KEY", "deepinfra-api-key"),
-                ("FOUNDRY_API_KEY", "foundry-api-key"),
-                ("OPENROUTER_API_KEY", "openrouter-api-key"),
-            )
-        ]
-    return {
-        "apiVersion": "external-secrets.io/v1",
-        "kind": "ExternalSecret",
-        "metadata": {"name": BRANCH_ENV_APP_SECRET, "namespace": namespace},
-        "spec": spec,
-    }
-
-
-def build_externalsecrets_yaml(
-    slug: str, secrets_source: str = SECRETS_SOURCE_COLAB_DEV, username: str | None = None
-) -> str:
+def build_externalsecrets_yaml(slug: str) -> str:
     namespace = f"druppie-{slug}"
     return _dump(
-        # App secrets (LLM API keys etc.) from the chosen Vault source.
-        _app_secrets_externalsecret(namespace, secrets_source, username),
         # Wildcard TLS cert, mirrored from ns druppie (not in Vault) via the
         # druppie-tls-mirror ClusterSecretStore (ESO kubernetes provider).
         {
@@ -1025,7 +973,7 @@ class BranchEnvironmentService:
             {
                 "operation": "create",
                 "path": self._env_path(slug, "externalsecrets.yaml"),
-                "content": build_externalsecrets_yaml(slug, secrets_source, developer),
+                "content": build_externalsecrets_yaml(slug),
             },
         ]
         await self.gitea.change_files(
