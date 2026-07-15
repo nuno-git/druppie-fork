@@ -106,6 +106,8 @@ druppie/
       mcps.py            # MCP server status
       mcp_bridge.py      # Direct MCP tool invocation
       sandbox.py         # Sandbox session registration, events proxy, completion webhook
+      datasources.py     # Connected services (data sources, DevOps, Entra status)
+      users.py           # User profile (avatar endpoint)
   services/
     session_service.py
     approval_service.py
@@ -114,6 +116,7 @@ druppie/
     workflow_service.py
     deployment_service.py
     revert_service.py
+    avatar_service.py    # Entra ID profile photo fetch + disk cache
   repositories/
     session_repository.py
     approval_repository.py
@@ -177,8 +180,9 @@ druppie/
   core/
     config.py            # Settings from env vars
     auth.py              # Keycloak JWT validation
+    entra_token.py       # Entra ID token exchange, claim validation, email allowlist
     gitea.py             # Gitea API client
-    mcp_config.yaml      # MCP server URLs, approval rules, injection — NOT tool schemas
+    mcp_config.yaml      # MCP server URLs, approval rules, injection, entra_scope
     mcp_config.py        # Loader for mcp_config.yaml
     tool_registry.py     # Discovers tools via tools/list at startup; MCPHttp consolidated here
   mcp-servers/

@@ -199,6 +199,21 @@ When MCP tools need access to Azure resources (Azure SQL, Azure DevOps), they ca
 - **`trustEmail: false`** — prevents account takeover via email matching between local and Entra accounts
 - **Sensitive values are redacted** in all log output
 
+### Profile Photo Avatars
+
+When a user logs in via Entra ID, their Microsoft profile photo is displayed in the NavRail user menu (bottom-left). The photo is fetched from Microsoft Graph API via the KC broker token and cached on disk with a 24-hour TTL. Users without an Entra identity or without a photo set in Microsoft 365 see their username initial as a fallback.
+
+- **Endpoint**: `GET /api/users/me/avatar` — serves cached photo or fetches on demand
+- **Security**: content-type validation (image/jpeg, image/png, image/gif, image/bmp), 1 MB size limit, filesystem path sanitization, `Cache-Control: private, no-store` and `Vary: Authorization` headers to prevent cross-user cache leakage
+
+### Connected Services
+
+The **Services** button in the chat session header shows a dropdown of all connected services and their status:
+
+- **Entra ID link status**: whether the current user has linked their Microsoft account
+- **Azure DevOps**: connection status (configured + Entra linked = accessible)
+- **Data Sources**: each configured data source with its auth type and accessibility
+
 ### Configuration
 
 Set these environment variables to enable Entra ID brokering (all optional — when unset, brokering is disabled):
@@ -207,9 +222,12 @@ Set these environment variables to enable Entra ID brokering (all optional — w
 ENTRA_TENANT_ID=<your-azure-tenant-id>
 ENTRA_CLIENT_ID=<app-registration-client-id>
 ENTRA_CLIENT_SECRET=<app-registration-secret>
+ENTRA_ALLOWED_EMAILS=user1@example.com,user2@example.com
 ```
 
 The App Registration must be a **separate** registration from any existing service principal, configured with **delegated** (not application) permissions.
+
+`ENTRA_ALLOWED_EMAILS` is a comma-separated list of email addresses authorized to use Druppie via Entra ID. When set, only users whose Entra email matches the allowlist can log in. When empty, all Entra-brokered logins are denied (fail-closed).
 
 ### Graceful Degradation
 
@@ -316,6 +334,7 @@ Users can **stop** any running session and **resume** it later -- all context is
 | `paused` | Stopped by user or recovered after reboot | Amber dot |
 | `paused_approval` | Waiting for tool approval | Amber dot |
 | `paused_hitl` | Waiting for user answer (HITL) | Amber dot |
+| `paused_entra_auth` | Waiting for Entra ID authorization | Amber dot |
 | `paused_sandbox` | Waiting for sandbox completion | Amber dot |
 | `completed` | All agents finished | Green dot |
 | `failed` | Error occurred | Red dot |

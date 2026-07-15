@@ -543,29 +543,23 @@ Security review findings from the Entra ID broker implementation. These are know
 - ~~**N6: Path traversal via `work_item_type`**~~ — Fixed: URL-encoded with `quote()`.
 - ~~**L2: Bracket injection in SQL `data_id`**~~ — Fixed: `]` escaped to `]]` in identifier quoting.
 - ~~**L3: Broker 400 error body fully logged**~~ — Fixed: logs status code only.
+- ~~**H1: KC tokens in localStorage**~~ — Fixed: migrated to `sessionStorage` (clears on tab close).
+- ~~**H2: Allowlist only gates Azure API calls, not Druppie login**~~ — Fixed: email allowlist (`ENTRA_ALLOWED_EMAILS` env var) now gates Druppie login for Entra-brokered users.
+- ~~**H4: JWT allowlist relies on unverified claims**~~ — Fixed: config-driven audience + issuer validation from `entra_scope` in mcp_config.yaml.
+- ~~**N2: SQL injection filter bypassable**~~ — Fixed: expanded `_FILTER_FORBIDDEN` regex to match `_QUERY_FORBIDDEN` coverage.
+- ~~**M1: Dead ToolContext + fragile manual token injection**~~ — Fixed: pass pre-built `ToolContext` to `_apply_injection_rules`.
+- ~~**M5: KC bearer token captured in background task closure**~~ — Fixed: drop KC token reference after exchange in orchestrator.
+- ~~**N5: Hardcoded token scope mapping**~~ — Fixed: moved to `entra_scope` in mcp_config.yaml.
+- ~~**L1: Access token in URL query parameter**~~ — Fixed: fetch attachments via `Authorization` header + blob URL.
+- ~~**L4: No token expiry tracking**~~ — Fixed: track expiry in `ToolContext`, reject expired tokens (60s margin).
 
 #### Deferred — Accepted Risk
 
 - **C2: `storeToken: true` + `offline_access` = persistent credential store** — Keycloak stores long-lived Entra refresh tokens in its PostgreSQL database. These survive logout and can mint fresh Azure tokens indefinitely. **Decision:** Keycloak is accepted as a trusted component. Deferred to a future refinement — planned mitigation is reducing Entra refresh token lifetime to 24h via Entra Conditional Access or Token Lifetime Policy.
 
-#### Open — High
+#### Open
 
-- **H1: KC tokens in localStorage** — All three Keycloak tokens (access, refresh, id) are stored in `localStorage`. XSS anywhere in the app exfiltrates all three. Migrate to `sessionStorage` or httpOnly cookies via BFF proxy.
-- **H2: Allowlist only gates Azure API calls, not Druppie login** — `ALLOWED_ENTRA_EMAILS` blocks token exchange but any Entra tenant user can still authenticate to Druppie and access non-Azure features. Add a Keycloak first-broker-login flow or use Entra group-based assignment.
-- **H4: JWT allowlist relies on unverified claims** — `entra_token.py:41-58` decodes the JWT without signature verification. Token arrives from KC over unencrypted HTTP on the Docker bridge — a network attacker could inject a forged token with a whitelisted email. Fix: add signature verification or switch to KC introspection endpoint.
-- **N2: SQL injection filter bypassable** — `azure_sql.py:377`: `filter_expr` interpolated directly into `WHERE` clause. Blocklist doesn't cover `UNION`, `OPENROWSET`, subqueries, or `WAITFOR DELAY`. Schema exfiltration possible within db_datareader role. Fix: replace blocklist with parameterized approach.
-- **N3: TLS cert validation disabled on SQL connections** — `azure_sql.py:118-119`: `TrustServerCertificate=yes` disables server cert verification. MITM on the Docker bridge can intercept OBO tokens and query results despite `Encrypt=yes`. Fix: remove `TrustServerCertificate=yes`.
-
-#### Open — Medium
-
-- **M1: Dead ToolContext + fragile manual token injection** — `orchestrator.py` `resume_after_entra_auth` creates a `ToolContext` with the token, but `_apply_injection_rules` creates a separate one without it. The workaround manually forces the token. Fix: pass existing `ToolContext` into `_apply_injection_rules`.
-- **N5: Hardcoded token scope mapping** — `orchestrator.py:977-980`: adding a new Entra-scoped MCP server requires a code change. Omission defaults to MS Graph scope, potentially granting unintended access. Fix: move scope mapping to `mcp_config.yaml`.
-- **M5: KC bearer token captured in background task closure** — `sessions.py:346-355`: raw Keycloak bearer token held in memory in asyncio task. Exposed if process dumps core or task is long-running. Fix: minimize token lifetime in closure.
-
-#### Open — Low
-
-- **L1: Access token in URL query parameter** — `api.js:99-102`: `getAttachmentUrl()` passes KC token as `?token=...`. Appears in browser history, server logs, Referer headers.
-- **L4: No token expiry tracking** — `tool_context.py:101-103`: `set_entra_token` stores with no TTL. Agent runs >1 hour get opaque failures instead of re-auth prompt. Fix: add expiry tracking.
+- **N3: TLS cert validation disabled on SQL connections** — `azure_sql.py:118-119`: `TrustServerCertificate=yes` disables server cert verification. MITM on the Docker bridge can intercept OBO tokens and query results despite `Encrypt=yes`. Fix: remove `TrustServerCertificate=yes`. Requires infrastructure-level cert provisioning.
 
 ---
 
