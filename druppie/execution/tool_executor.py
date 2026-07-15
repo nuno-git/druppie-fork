@@ -86,6 +86,10 @@ LONG_RUNNING_TOOLS = {
 }
 LONG_RUNNING_TIMEOUT = 1200.0  # 20 minutes
 
+# Servers where the first call can be slow (e.g. Synapse serverless cold start)
+SLOW_START_SERVERS = {"dataaccess"}
+SLOW_START_TIMEOUT = 120.0  # 2 minutes — covers SQL Login Timeout=90s + overhead
+
 
 class ToolExecutor:
     """Executes all tools (builtin and MCP).
@@ -1305,7 +1309,12 @@ class ToolExecutor:
             # generous 20-min client timeout. Server-side subprocess timeouts
             # (300s/180s) should fire first, but this prevents infinite hangs
             # if the MCP server crashes or the network drops.
-            timeout = LONG_RUNNING_TIMEOUT if tool_call.tool_name in LONG_RUNNING_TOOLS else 60.0
+            if tool_call.tool_name in LONG_RUNNING_TOOLS:
+                timeout = LONG_RUNNING_TIMEOUT
+            elif tool_call.mcp_server in SLOW_START_SERVERS:
+                timeout = SLOW_START_TIMEOUT
+            else:
+                timeout = 60.0
 
             result = await self.mcp_http.call(
                 tool_call.mcp_server,
