@@ -144,15 +144,14 @@ spec:
             {{- end }}
             {{- if .Values.devWorkspace.enabled }}
             # Dev workspace: create the 'workspace' Keycloak client (oauth2-proxy).
-            # optional:true so the init Job never blocks if ESO hasn't synced the
-            # workspace-oauth Secret yet — a later helm upgrade re-runs the hook
-            # (create_client is idempotent) and registers the client.
+            # optional:false blocks the main container until ESO has synced
+            # client-secret into <instance>-secrets — guarantees the init job
+            # creates the workspace client on first boot, not just on re-install.
             - name: WORKSPACE_CLIENT_SECRET
               valueFrom:
                 secretKeyRef:
                   name: {{ include "druppie.fullname" . }}-secrets
                   key: client-secret
-                  optional: true
             {{- if .Values.devWorkspace.codeServer.devHost }}
             - name: WORKSPACE_REDIRECT_URL
               value: {{ printf "https://%s/oauth2/callback" .Values.devWorkspace.codeServer.devHost | quote }}
