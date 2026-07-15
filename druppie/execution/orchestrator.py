@@ -969,15 +969,12 @@ class Orchestrator:
             return session_id
 
         # Step 2: Get Entra token via KC broker
-        # For dataaccess tools, exchange the broker refresh token for a
-        # database-scoped token directly.  The default broker token is a
-        # Microsoft Graph opaque token that cannot be used as an OBO
-        # assertion (AADSTS50013).
-        scope = None
-        if waiting_tc.mcp_server == "dataaccess":
-            scope = "https://database.windows.net/.default"
-        elif waiting_tc.mcp_server == "azuredevops":
-            scope = "499b84ac-1321-427f-aa17-267ca6975798/.default"
+        # Look up the required token scope from mcp_config.yaml.
+        # The default broker token is a Microsoft Graph opaque token that
+        # cannot be used as an OBO assertion (AADSTS50013), so most
+        # MCP servers need a resource-specific scope.
+        from druppie.core.mcp_config import get_mcp_config
+        scope = get_mcp_config().get_entra_scope(waiting_tc.mcp_server)
         token_result = await get_entra_token(user_kc_token, scope=scope)
         entra_token = token_result.get("access_token")
 
@@ -1015,6 +1012,9 @@ class Orchestrator:
                     await self.execute_pending_runs(session_id)
             return session_id
 
+        # M5: KC token no longer needed — drop reference
+        user_kc_token = None
+
         # Step 3: Re-execute the tool with Entra token injected
         from druppie.execution.tool_context import ToolContext
         context_obj = ToolContext(db, session_id)
@@ -1031,19 +1031,10 @@ class Orchestrator:
                 tool_name=waiting_tc.tool_name,
                 args=args,
                 session_id=session_id,
+                context=context_obj,
             )
         except Exception as e:
             logger.error("entra_reinjection_failed", error=str(e))
-
-        # Manually set the entra_token param if it was resolved during injection
-        # The ToolContext we created has the token, but _apply_injection_rules
-        # creates its own ToolContext. Override by checking if there's a matching rule.
-        from druppie.execution.tool_context import SENSITIVE_PATHS
-        rules = mcp_config.get_injection_rules(waiting_tc.mcp_server, waiting_tc.tool_name)
-        if rules:
-            for rule in rules:
-                if rule.from_path == "user.entra_token":
-                    args[rule.param] = entra_token
 
         timeout = 60.0
         if waiting_tc.tool_name in tool_executor.__class__.__dict__.get("_long_running", set()):

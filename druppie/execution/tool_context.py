@@ -11,6 +11,7 @@ Used by the declarative injection system to inject values from the database
 into tool arguments at execution time.
 """
 
+import time
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
@@ -55,6 +56,7 @@ class ToolContext:
 
         # Entra ID token (set via authorize-entra endpoint, never persisted)
         self._entra_token: str | None = None
+        self._entra_token_exp: float | None = None
 
     @property
     def session(self):
@@ -101,6 +103,16 @@ class ToolContext:
     def set_entra_token(self, token: str) -> None:
         """Set the Entra ID access token (provided via /authorize-entra)."""
         self._entra_token = token
+        try:
+            import base64, json
+            payload = token.split(".")[1]
+            padding = 4 - len(payload) % 4
+            if padding != 4:
+                payload += "=" * padding
+            claims = json.loads(base64.urlsafe_b64decode(payload))
+            self._entra_token_exp = claims.get("exp")
+        except Exception:
+            self._entra_token_exp = None
 
     def resolve(self, path: str) -> Any:
         """Resolve a dotted path to a value.
@@ -126,6 +138,10 @@ class ToolContext:
         """
         # Special case: user.entra_token is in-memory, not a DB attribute
         if path == "user.entra_token":
+            if self._entra_token and self._entra_token_exp:
+                if time.time() > self._entra_token_exp - 60:
+                    logger.warning("entra_token_expired_in_context", expires_at=self._entra_token_exp)
+                    return None
             log_value = "<redacted>" if self._entra_token else None
             logger.info("context_resolved", path=path, value=log_value)
             return self._entra_token

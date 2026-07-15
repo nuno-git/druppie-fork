@@ -30,6 +30,8 @@ import structlog
 
 logger = structlog.get_logger()
 
+_entra_linked_cache: dict[str, bool] = {}
+
 from druppie.core.auth import get_auth_service, AuthService
 from druppie.db.database import get_db, init_db, SessionLocal, engine
 from uuid import UUID
@@ -263,6 +265,22 @@ async def get_current_user(
             )
         finally:
             db.close()
+
+    # H2: gate Entra-brokered users against the email allowlist
+    from druppie.core.entra_token import is_entra_configured, ALLOWED_ENTRA_EMAILS
+    user_id_str = user.get("sub", "")
+    if is_entra_configured() and user_id_str and ALLOWED_ENTRA_EMAILS:
+        if user_id_str not in _entra_linked_cache:
+            from druppie.core.entra_token import check_entra_linked
+            _entra_linked_cache[user_id_str] = await check_entra_linked(user_id_str)
+        if _entra_linked_cache[user_id_str]:
+            email = (user.get("email") or user.get("preferred_username") or "").lower()
+            if email and email not in ALLOWED_ENTRA_EMAILS:
+                logger.warning("entra_user_not_in_allowlist", email=email, user_id=user_id_str)
+                raise HTTPException(
+                    status_code=403,
+                    detail="Your Entra ID account is not authorized for this application. Contact your administrator.",
+                )
 
     return user
 

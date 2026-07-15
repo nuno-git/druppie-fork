@@ -544,9 +544,9 @@ Security review findings from the Entra ID broker implementation. These are know
 - ~~**L2: Bracket injection in SQL `data_id`**~~ — Fixed: `]` escaped to `]]` in identifier quoting.
 - ~~**L3: Broker 400 error body fully logged**~~ — Fixed: logs status code only.
 
-#### Open — Critical
+#### Deferred — Accepted Risk
 
-- **C2: `storeToken: true` + `offline_access` = persistent credential store** — Keycloak stores long-lived Entra refresh tokens in its PostgreSQL database. These survive logout and can mint fresh Azure tokens indefinitely. Evaluate whether `storeToken` can be disabled or add a purge-on-logout hook.
+- **C2: `storeToken: true` + `offline_access` = persistent credential store** — Keycloak stores long-lived Entra refresh tokens in its PostgreSQL database. These survive logout and can mint fresh Azure tokens indefinitely. **Decision:** Keycloak is accepted as a trusted component. Deferred to a future refinement — planned mitigation is reducing Entra refresh token lifetime to 24h via Entra Conditional Access or Token Lifetime Policy.
 
 #### Open — High
 

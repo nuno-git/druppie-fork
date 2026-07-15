@@ -26,31 +26,65 @@ ENTRA_CLIENT_SECRET = os.getenv("ENTRA_CLIENT_SECRET", "")
 
 IDP_ALIAS = "entra-id"
 
-# Security: only these Entra ID accounts are allowed to authenticate.
-# All other accounts will be rejected even if they have valid Entra credentials.
-ALLOWED_ENTRA_EMAILS = {
-    "dataplatformtest@waterschap.org",
-    "tst_jbode@waterschap.org",
-}
+def _load_allowed_emails() -> set[str]:
+    raw = os.getenv("ENTRA_ALLOWED_EMAILS", "")
+    if not raw.strip():
+        return set()
+    return {e.strip().lower() for e in raw.split(",") if e.strip()}
+
+ALLOWED_ENTRA_EMAILS = _load_allowed_emails()
 
 
 def is_entra_configured() -> bool:
     return bool(ENTRA_CLIENT_ID and ENTRA_TENANT_ID)
 
 
-def _check_entra_email_allowed(access_token: str) -> str | None:
-    """Check if the Entra token's email is in the allowlist.
+def _validate_entra_token_claims(access_token: str) -> str | None:
+    """Validate Entra token issuer, audience, and email allowlist.
 
-    Returns None if allowed, or an error message if blocked.
+    Returns None if valid, or an error message if rejected.
     """
     claims = _decode_jwt_payload(access_token)
+
+    # H4: verify issuer matches our Entra tenant
+    issuer = claims.get("iss", "")
+    if ENTRA_TENANT_ID and issuer:
+        expected_issuers = (
+            f"https://login.microsoftonline.com/{ENTRA_TENANT_ID}/v2.0",
+            f"https://sts.windows.net/{ENTRA_TENANT_ID}/",
+        )
+        if issuer not in expected_issuers:
+            logger.warning("entra_token_issuer_mismatch", issuer=issuer)
+            return "Entra ID token issuer does not match expected tenant."
+
+    # H4: verify audience is a known resource — reject unexpected third-party audiences.
+    # Build the allow-set from our client ID, well-known Microsoft first-party
+    # resource IDs, and any entra_scope configured in mcp_config.yaml.
+    aud = claims.get("aud", "")
+    if aud:
+        known = {
+            ENTRA_CLIENT_ID,
+            "00000003-0000-0000-c000-000000000000",  # Microsoft Graph
+        }
+        try:
+            from druppie.core.mcp_config import get_mcp_config
+            for server in get_mcp_config().get_servers():
+                scope = get_mcp_config().get_entra_scope(server)
+                if scope:
+                    known.add(scope.removesuffix("/.default"))
+        except Exception:
+            pass
+        if aud not in known and not aud.startswith("https://"):
+            logger.warning("entra_token_audience_mismatch", aud=aud)
+            return "Entra ID token audience does not match expected application."
+
     email = (claims.get("email") or claims.get("preferred_username") or claims.get("upn") or "").lower()
 
     if not email:
         logger.warning("entra_email_check_failed", reason="no email claim in token")
         return "Entra ID token does not contain an email claim."
 
-    if email not in ALLOWED_ENTRA_EMAILS:
+    if ALLOWED_ENTRA_EMAILS and email not in ALLOWED_ENTRA_EMAILS:
         logger.warning("entra_email_blocked", email=email)
         return f"Entra ID account '{email}' is not authorized. Contact your administrator."
 
@@ -187,7 +221,7 @@ async def get_entra_token(
         return {"access_token": None, "error": "Broker returned no access token", "needs_reauth": True}
 
     # Security: reject tokens from accounts not in the allowlist
-    email_error = _check_entra_email_allowed(access_token)
+    email_error = _validate_entra_token_claims(access_token)
     if email_error:
         return {"access_token": None, "error": email_error, "needs_reauth": False}
 
@@ -217,7 +251,7 @@ async def get_entra_token(
     if scope and refresh_token:
         scoped_token = await _exchange_refresh_for_scope(refresh_token, scope)
         if scoped_token:
-            scoped_error = _check_entra_email_allowed(scoped_token)
+            scoped_error = _validate_entra_token_claims(scoped_token)
             if scoped_error:
                 return {"access_token": None, "error": scoped_error, "needs_reauth": False}
             return {"access_token": scoped_token, "error": None, "needs_reauth": False}
@@ -229,7 +263,7 @@ async def get_entra_token(
                 refresh_token, scope or "openid profile email User.Read"
             )
             if refreshed:
-                refreshed_error = _check_entra_email_allowed(refreshed)
+                refreshed_error = _validate_entra_token_claims(refreshed)
                 if refreshed_error:
                     return {"access_token": None, "error": refreshed_error, "needs_reauth": False}
                 return {"access_token": refreshed, "error": None, "needs_reauth": False}

@@ -366,6 +366,7 @@ mcps:
   dataaccess:
     url: ${MCP_DATA_ACCESS_URL:-http://module-data-access:9010}
     type: module
+    entra_scope: "https://database.windows.net/.default"
     inject:
       session_id:
         from: session.id
@@ -429,6 +430,7 @@ mcps:
   azuredevops:
     url: ${MCP_AZUREDEVOPS_URL:-http://module-azuredevops:9012}
     type: module
+    entra_scope: "499b84ac-1321-427f-aa17-267ca6975798/.default"
     inject:
       user_token:
         from: user.entra_token

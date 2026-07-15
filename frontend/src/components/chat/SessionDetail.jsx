@@ -8,7 +8,7 @@ import { Send, CheckCircle, XCircle, Shield, ShieldOff, Loader2, ExternalLink, M
 import { Link } from 'react-router-dom'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { getSession, sendChat, cancelChat, resumeSession, authorizeEntra, approveApproval, rejectApproval, answerQuestion, getSandboxEvents, getAttachmentUrl } from '../../services/api'
+import { getSession, sendChat, cancelChat, resumeSession, authorizeEntra, approveApproval, rejectApproval, answerQuestion, getSandboxEvents, downloadAttachment } from '../../services/api'
 import { getUserInfo, getKeycloak } from '../../services/keycloak'
 import { useAuth } from '../../App'
 import { getAgentConfig, getAgentMessageColors, formatToolName } from '../../utils/agentConfig'
@@ -170,7 +170,7 @@ const InlineApproval = ({ tc, sessionId, sessionUserId }) => {
                     type="button"
                     onClick={() => {
                       if (window.confirm(`Download "${att.original_filename}"?`)) {
-                        window.open(getAttachmentUrl(att.id), '_blank')
+                        downloadAttachment(att.id)
                       }
                     }}
                     className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-white/60 rounded-lg text-xs text-gray-600 hover:bg-white transition-colors cursor-pointer"
@@ -388,7 +388,7 @@ const TimelineQuestion = ({ tc, agentId, sessionId, attachments = [], onAttachme
                       type="button"
                       onClick={() => {
                         if (window.confirm(`Download "${att.original_filename}"?`)) {
-                          window.open(getAttachmentUrl(att.id), '_blank')
+                          downloadAttachment(att.id)
                         }
                       }}
                       className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-white/60 rounded-lg text-xs text-gray-600 hover:bg-white transition-colors cursor-pointer"
@@ -503,7 +503,7 @@ const MessageItem = ({ message, agentRun, sessionId }) => {
                     type="button"
                     onClick={() => {
                       if (window.confirm(`Download "${att.original_filename}"?`)) {
-                        window.open(getAttachmentUrl(att.id), '_blank')
+                        downloadAttachment(att.id)
                       }
                     }}
                     className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-white/60 rounded-lg text-xs text-gray-600 hover:bg-white transition-colors cursor-pointer"

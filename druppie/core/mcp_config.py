@@ -228,6 +228,11 @@ class MCPConfig:
 
         return (requires, required_role)
 
+    def get_entra_scope(self, server: str) -> str | None:
+        """Get Entra token scope for an MCP server, or None if not configured."""
+        mcp = self.config.get("mcps", {}).get(server, {})
+        return mcp.get("entra_scope")
+
     def get_server_type(self, server: str) -> str:
         """Get MCP server type (core, module, both).
 

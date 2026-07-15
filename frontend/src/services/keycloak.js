@@ -19,21 +19,21 @@ const REFRESH_TOKEN_KEY = 'kc_refresh_token'
 const ID_TOKEN_KEY = 'kc_id_token'
 
 const saveTokens = (token, refreshToken, idToken) => {
-  if (token) localStorage.setItem(TOKEN_KEY, token)
-  if (refreshToken) localStorage.setItem(REFRESH_TOKEN_KEY, refreshToken)
-  if (idToken) localStorage.setItem(ID_TOKEN_KEY, idToken)
+  if (token) sessionStorage.setItem(TOKEN_KEY, token)
+  if (refreshToken) sessionStorage.setItem(REFRESH_TOKEN_KEY, refreshToken)
+  if (idToken) sessionStorage.setItem(ID_TOKEN_KEY, idToken)
 }
 
 const loadTokens = () => ({
-  token: localStorage.getItem(TOKEN_KEY),
-  refreshToken: localStorage.getItem(REFRESH_TOKEN_KEY),
-  idToken: localStorage.getItem(ID_TOKEN_KEY),
+  token: sessionStorage.getItem(TOKEN_KEY),
+  refreshToken: sessionStorage.getItem(REFRESH_TOKEN_KEY),
+  idToken: sessionStorage.getItem(ID_TOKEN_KEY),
 })
 
 const clearTokens = () => {
-  localStorage.removeItem(TOKEN_KEY)
-  localStorage.removeItem(REFRESH_TOKEN_KEY)
-  localStorage.removeItem(ID_TOKEN_KEY)
+  sessionStorage.removeItem(TOKEN_KEY)
+  sessionStorage.removeItem(REFRESH_TOKEN_KEY)
+  sessionStorage.removeItem(ID_TOKEN_KEY)
 }
 
 /**

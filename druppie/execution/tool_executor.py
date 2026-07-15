@@ -153,6 +153,7 @@ class ToolExecutor:
         tool_name: str,
         args: dict,
         session_id: UUID | None,
+        context: "ToolContext | None" = None,
     ) -> dict:
         """Apply declarative injection rules from mcp_config.yaml.
 
@@ -168,6 +169,7 @@ class ToolExecutor:
             tool_name: Tool name
             args: Original tool arguments
             session_id: Session ID for context resolution
+            context: Optional pre-built ToolContext (e.g. with Entra token already set)
 
         Returns:
             Updated args dict with injected values
@@ -194,8 +196,9 @@ class ToolExecutor:
             original_args=list(args.keys()),
         )
 
-        # Create context for resolving paths
-        context = ToolContext(self.db, session_id)
+        # Use provided context or create a new one
+        if context is None:
+            context = ToolContext(self.db, session_id)
 
         # Apply each rule
         injected_args = dict(args)
