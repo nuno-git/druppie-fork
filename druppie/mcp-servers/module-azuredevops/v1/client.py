@@ -128,7 +128,7 @@ class AzureDevOpsClient:
     async def query_wiql(self, wiql: str, top: int, user_token: str | None = None) -> list[int]:
         """Run a WIQL query scoped to the configured project, return work-item ids."""
         result = await self._post(
-            f"{self._project}/_apis/wit/wiql",
+            f"{self._project}/_apis/wit/wiql?$top={top}",
             {"query": wiql},
             user_token=user_token,
         )

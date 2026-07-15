@@ -72,9 +72,10 @@ def _validate_entra_token_claims(access_token: str) -> str | None:
                 scope = get_mcp_config().get_entra_scope(server)
                 if scope:
                     known.add(scope.removesuffix("/.default"))
+                    known.add(scope)
         except Exception:
             pass
-        if aud not in known and not aud.startswith("https://"):
+        if aud not in known:
             logger.warning("entra_token_audience_mismatch", aud=aud)
             return "Entra ID token audience does not match expected application."
 
@@ -194,10 +195,6 @@ async def get_entra_token(
             return {"access_token": None, "error": "Broker request failed", "needs_reauth": False}
 
     if response.status_code == 400:
-        try:
-            body = response.json()
-        except Exception:
-            body = {"raw": response.text[:200]}
         logger.warning("entra_broker_400", status=400)
         return {
             "access_token": None,

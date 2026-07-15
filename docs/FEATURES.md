@@ -147,7 +147,7 @@ Authentication is handled by Keycloak via OAuth 2.0 / OIDC. Roles control what e
 |------|-------------|
 | admin | Full platform access; can act on any approval regardless of required role |
 | architect | Can approve architecture designs |
-| developer | Can approve Docker operations and pull request merges |
+| developer | Can approve Docker operations and pull request merges; includes `read-token` composite role for broker token access |
 | business_analyst | Can approve functional design writes |
 
 Users can hold multiple roles. For example, the `architect` test user has both `architect` and `developer` roles, so they can approve both architecture and Docker operations.
@@ -183,7 +183,7 @@ When MCP tools need access to Azure resources (Azure SQL, Azure DevOps), they ca
 
 ### How It Works
 
-1. **Login**: Users see a "Microsoft (Entra ID)" button on the Keycloak login page. Clicking it triggers an OIDC login with Azure AD. Keycloak stores the resulting Entra tokens (`storeToken: true`).
+1. **Login**: Users see a "Microsoft (Entra ID)" button on the Keycloak login page. Clicking it triggers an OIDC login with Azure AD. Microsoft-brokered users are created as **separate Keycloak accounts** from local users (Keycloak's default `first broker login` flow — no auto-linking). Keycloak stores the resulting Entra tokens (`storeToken: true`). An **IdP role mapper** (`oidc-hardcoded-role-idp-mapper`) on the Entra identity provider automatically grants the `developer` realm role to all Microsoft-brokered users, giving them access to developer-level approvals and the `read-token` composite role (required to retrieve stored broker tokens). The role mapper is created by `scripts/setup_keycloak.py` during initialization.
 
 2. **Token retrieval**: When an MCP tool needs a `user.entra_token` (configured via injection rules in `mcp_config.yaml`), the tool executor checks if the user has a linked Entra identity. If linked but the token isn't available, the agent pauses with `waiting_entra_auth` status.
 
@@ -196,7 +196,7 @@ When MCP tools need access to Azure resources (Azure SQL, Azure DevOps), they ca
 - **Tokens are never persisted in Druppie's database** — they exist only in-memory during tool execution
 - **Frontend never sees Entra tokens** — all broker calls happen server-side
 - **Session owner enforcement** — only the session owner can authorize Entra access (no admin override)
-- **`trustEmail: false`** — prevents account takeover via email matching between local and Entra accounts
+- **Separate accounts** — Microsoft-brokered users are distinct Keycloak accounts, not auto-linked to local users. `trustEmail: false` prevents account takeover via email matching
 - **Sensitive values are redacted** in all log output
 
 ### Profile Photo Avatars

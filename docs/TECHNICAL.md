@@ -161,7 +161,8 @@ druppie/
     tool_executor.py     # Routes tool calls to MCP or builtins
     mcp_http.py          # HTTP client for MCP servers
   agents/
-    runtime.py           # Agent facade (public API)
+    runtime.py           # Legacy agent facade (public API)
+    runtime_v2.py        # Current agent facade using agent_runtime library
     loop.py              # Core LLM ↔ tool-calling loop
     definition_loader.py # Loads YAML definitions, resolves placeholders
     message_history.py   # Reconstructs agent state from DB for resume
@@ -882,10 +883,11 @@ The agent runtime is split into focused modules:
 
 | Module | Class | Purpose |
 |--------|-------|---------|
-| `runtime.py` | `Agent` | Public facade — coordinates loader, prompt builder, and loop |
+| `runtime.py` | `Agent` | Legacy facade — coordinates loader, prompt builder, and loop |
+| `runtime_v2.py` | `AgentV2` | Current runtime facade — integrates with the `agent_runtime` library; maps pause reasons (including Entra auth) via `_infer_pause_reason()` |
 | `loop.py` | `AgentLoop` | Core LLM ↔ tool-calling loop, skill tool enrichment |
 | `definition_loader.py` | `AgentDefinitionLoader` | Loads YAML definitions and system prompts |
-| `message_history.py` | `reconstruct_from_db()` | Rebuilds agent message history from DB for resume |
+| `message_history.py` | `reconstruct_from_db()` | Rebuilds agent message history from DB for resume; handles orphaned `tool_use` blocks during Entra auth resume |
 | `prompt_builder.py` | `PromptBuilder` | Builds system/user prompts with context injection |
 
 The core loop (`AgentLoop.run()`):
@@ -1002,6 +1004,8 @@ The `ToolCall` database record is the source of truth. `Question` and `Approval`
 
 **Skill-based access control:** When a tool call comes from an agent with active skills, the executor also checks whether the tool is allowed by any of the agent's skills (via `_is_tool_allowed_via_skill()`). This extends the agent's tool access beyond its static YAML `mcps` configuration.
 
+**ContextVar DB sessions:** The tool executor uses a ContextVar-based DB session pattern (`self._active_db`) for database access during tool execution. Entra token retrieval and injection follow this pattern to ensure correct session scoping in async contexts.
+
 ### 8.7 Skills System
 
 Skills are reusable prompt/instruction packages stored as Markdown files in `druppie/skills/<skill-name>/SKILL.md`. Each skill has YAML frontmatter (`name`, `description`, `allowed-tools`) and a Markdown body with instructions.
@@ -1049,8 +1053,9 @@ Key resume methods:
 
 - `resume_after_approval()`: Executes the approved tool, then continues the paused agent.
 - `resume_after_answer()`: Saves the answer to the tool call result, then continues the paused agent.
+- `resume_after_entra_auth()`: Resumes an agent paused for Entra ID authorization. Uses `AgentV2` to continue the run after the frontend auto-submits the broker token exchange.
 
-Both methods reconstruct agent state from the database (LLM call history, tool call results) so the agent can continue where it left off.
+All methods reconstruct agent state from the database (LLM call history, tool call results) so the agent can continue where it left off.
 
 **Cooperative pause/cancellation:** The orchestrator checks the session status (via DB poll) before each agent run and after each agent completes. If the status is `paused` or `cancelled`, it stops executing further runs. The agent loop also checks the session status between LLM iterations. This means stopping is cooperative -- it happens at the next check point, not mid-LLM-call. See section 8.9 for the full stop and resume architecture.
 
@@ -1456,7 +1461,7 @@ Key responsibilities:
 
 #### Layer 9: `compat.py` — Backend Compatibility Bridge
 
-Bridges the storage-agnostic runtime to the existing Druppie backend without modifying either. Provides `adapt_llm()` (wraps the old `BaseLLM` as the runtime's async LLM callable), `DruppieToolProvider` (implements the `ToolProvider` protocol over the old `ToolExecutor`/builtin tools, persisting every call to the DB via short-lived sessions), `create_event_persister()` (an event callback that maps runtime `AgentEvent`s to DB writes for runs, LLM calls, tool calls, and compaction events), `SubagentsMCPConnection` (in-process MCP wrapper around `SubagentsMCP`), and `old_definition_to_new()` (converts the old Pydantic `AgentDefinition` to the new dataclass).
+Bridges the storage-agnostic runtime to the existing Druppie backend without modifying either. Provides `adapt_llm()` (wraps the old `BaseLLM` as the runtime's async LLM callable), `DruppieToolProvider` (implements the `ToolProvider` protocol over the old `ToolExecutor`/builtin tools, persisting every call to the DB via short-lived sessions), `create_event_persister()` (an event callback that maps runtime `AgentEvent`s to DB writes for runs, LLM calls, tool calls, and compaction events), `SubagentsMCPConnection` (in-process MCP wrapper around `SubagentsMCP`), and `old_definition_to_new()` (converts the old Pydantic `AgentDefinition` to the new dataclass). Also bridges the `waiting_entra_auth` pause status from the `ToolExecutor` to the new runtime's pause/resume mechanism.
 
 ### 11.4 Data Flow
 

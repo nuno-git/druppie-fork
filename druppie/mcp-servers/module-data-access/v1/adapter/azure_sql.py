@@ -48,8 +48,10 @@ _FILTER_FORBIDDEN = re.compile(
     r";|--|/\*|\*/|\bxp_|\bsp_|\bexec\b|\bexecute\b|\bgo\b|"
     r"\binsert\b|\bupdate\b|\bdelete\b|\bmerge\b|\bdrop\b|"
     r"\balter\b|\bcreate\b|\btruncate\b|\bgrant\b|\brevoke\b|"
-    r"\bunion\b|\binto\b|\bbulk\b|\bwaitfor\b|"
-    r"\bopenrowset\b|\bopendatasource\b|\bopenquery\b|\bopenxml\b",
+    r"\bunion\b|\binto\b|\bbulk\b|\bwaitfor\b|\bdeclare\b|"
+    r"\bopenrowset\b|\bopendatasource\b|\bopenquery\b|\bopenxml\b|"
+    r"\bchar\s*\(|\bconvert\s*\(|\bcast\s*\(|\bconcat\s*\(|\bstring_agg\s*\(|"
+    r"@@|0x[0-9a-fA-F]",
     re.IGNORECASE,
 )
 

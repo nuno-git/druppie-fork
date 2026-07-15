@@ -172,6 +172,8 @@ class ToolContext:
                 if time.time() > self._entra_token_exp - 60:
                     logger.warning("entra_token_expired_in_context", expires_at=self._entra_token_exp)
                     return None
+            elif self._entra_token and not self._entra_token_exp:
+                logger.warning("entra_token_missing_exp", note="token returned without expiry validation")
             log_value = "<redacted>" if self._entra_token else None
             logger.info("context_resolved", path=path, value=log_value)
             return self._entra_token
