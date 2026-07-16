@@ -11,6 +11,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-python@v5
         with:
@@ -19,10 +21,34 @@ jobs:
       - name: Install validator deps
         run: pip install -r scripts/requirements-docs.txt
 
-      # Check B — validity of the docs that exist. Warn-mode for now
-      # (continue-on-error): reports problems but does not block merges yet.
-      # Flip to blocking (remove continue-on-error + mark the check required)
-      # once the migration baseline is clean and the team agrees. (PBI 9744, fase 8)
+      # Check A — mandatory-docs gate (PR level). If code changed but no docs did,
+      # warn — unless the PR is exempt via the `docs-exempt` label OR a `docs-exempt`
+      # line in the PR description. Warn-mode for now (continue-on-error); flip to
+      # blocking in fase 8 (remove continue-on-error + mark the check required).
+      - name: Mandatory-docs gate (Check A)
+        continue-on-error: true
+        env:
+          LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          if echo "$LABELS" | tr ',' '\n' | grep -qx 'docs-exempt' \
+             || printf '%s' "$PR_BODY" | grep -qiE '(^|[^[:alnum:]-])docs-exempt'; then
+            echo "docs-exempt is set -> mandatory-docs gate skipped."
+            exit 0
+          fi
+          git fetch --no-tags origin "$BASE_REF"
+          changed=$(git diff --name-only "origin/$BASE_REF...HEAD")
+          echo "Changed files:"; echo "$changed"
+          code_changed=$(echo "$changed" | grep -E '^(druppie/|frontend/src/)' || true)
+          doc_changed=$(echo "$changed" | grep -E '^(docs/(adrs|prds|research|reference|guides)/|testing/specs/features/)' || true)
+          if [ -n "$code_changed" ] && [ -z "$doc_changed" ]; then
+            echo "::error::Code changed without documentation. Add a doc (docs/adrs|prds|research|...) or mark the PR docs-exempt (label or a 'docs-exempt' line in the PR description)."
+            exit 1
+          fi
+          echo "Mandatory-docs gate OK."
+
+      # Check B — validity of the docs that exist. Warn-mode for now.
       - name: Validate docs (Check B)
         continue-on-error: true
         run: python scripts/validate_docs.py
