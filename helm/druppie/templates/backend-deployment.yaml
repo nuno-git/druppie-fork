@@ -17,6 +17,9 @@ spec:
       labels:
         {{- include "druppie.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: backend
+        {{- if not .Values.persistence.rwx }}
+        druppie.io/shared-storage: "true"
+        {{- end }}
       annotations:
         reloader.stakater.com/auto: "true"
         cluster-autoscaler.kubernetes.io/safe-to-evict: "true"
@@ -29,18 +32,7 @@ spec:
         {{- toYaml .Values.global.imagePullSecrets | nindent 8 }}
       {{- end }}
       terminationGracePeriodSeconds: 60
-      {{- if .Values.highAvailability.antiAffinity.enabled }}
-      affinity:
-        podAntiAffinity:
-          preferredDuringSchedulingIgnoredDuringExecution:
-            - weight: 100
-              podAffinityTerm:
-                labelSelector:
-                  matchLabels:
-                    {{- include "druppie.selectorLabels" . | nindent 20 }}
-                    app.kubernetes.io/component: backend
-                topologyKey: kubernetes.io/hostname
-      {{- end }}
+      {{- include "druppie.sharedStorageAffinity" . | nindent 6 }}
       initContainers:
         - name: wait-for-druppie-db
           image: {{ .Values.postgresql.image }}

@@ -152,6 +152,25 @@ http://{{ .Values.global.domain }}:{{ .Values.frontend.nodePort }}
 {{- end -}}
 
 {{/*
+Shared-storage affinity block for pod spec.
+Renders nothing when persistence.rwx is true (RWX allows multi-node access).
+When RWO, co-locates all pods carrying the druppie.io/shared-storage label
+on the same node so they can share ReadWriteOnce PVCs (workspace, dataset).
+*/}}
+{{- define "druppie.sharedStorageAffinity" -}}
+{{- if not .Values.persistence.rwx }}
+affinity:
+  podAffinity:
+    requiredDuringSchedulingIgnoredDuringExecution:
+      - labelSelector:
+          matchLabels:
+            {{- include "druppie.selectorLabels" . | nindent 12 }}
+            druppie.io/shared-storage: "true"
+        topologyKey: kubernetes.io/hostname
+{{- end }}
+{{- end }}
+
+{{/*
 Persistence storageClass: resolves to NFS class when NFS is enabled,
 otherwise falls back to the configured persistence.storageClass.
 */}}

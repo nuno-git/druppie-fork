@@ -17,6 +17,9 @@ spec:
       labels:
         {{- include "druppie.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: module-archimate
+        {{- if not .Values.persistence.rwx }}
+        druppie.io/shared-storage: "true"
+        {{- end }}
       annotations:
         reloader.stakater.com/auto: "true"
     spec:
@@ -24,6 +27,7 @@ spec:
       imagePullSecrets:
         {{- toYaml .Values.global.imagePullSecrets | nindent 8 }}
       {{- end }}
+      {{- include "druppie.sharedStorageAffinity" . | nindent 6 }}
       containers:
         - name: module-archimate
           image: {{ include "druppie.image" (dict "Values" .Values "image" .Values.modules.archimate.image) }}
