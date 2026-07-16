@@ -10,21 +10,31 @@ jobs:
     name: Validate documentation
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
 
       - name: Install validator deps
         run: pip install -r scripts/requirements-docs.txt
 
+      # Regression tests for the validator/gate logic. This one MUST fail the
+      # build (no continue-on-error) — a broken validator would silently let
+      # bad docs through. pyyaml+jsonschema come from requirements-docs.txt above.
+      - name: Validator regression tests (blocking)
+        run: |
+          pip install pytest
+          python -m pytest scripts/tests -q
+
       # Check A — mandatory-docs gate (PR level). If code changed but no docs did,
       # warn — unless the PR is exempt via the `docs-exempt` label OR a `docs-exempt`
       # line in the PR description. Warn-mode for now (continue-on-error); flip to
       # blocking in fase 8 (remove continue-on-error + mark the check required).
+      # The gate/exempt logic lives in the testable scripts/check_mandatory_docs.py,
+      # which prints its own ::error:: with the guide link + the 3 exempt ways.
       - name: Mandatory-docs gate (Check A)
         continue-on-error: true
         env:
@@ -32,29 +42,14 @@ jobs:
           PR_BODY: ${{ github.event.pull_request.body }}
           BASE_REF: ${{ github.base_ref }}
         run: |
-          exempt=false
-          # (a) label
-          if echo "$LABELS" | tr ',' '\n' | grep -qx 'docs-exempt'; then exempt=true; fi
-          # (b) checked checkbox in the PR body: "- [x] ... docs-exempt"
-          if printf '%s' "$PR_BODY" | grep -qiE '^[[:space:]]*-[[:space:]]*\[[xX]\].*docs-exempt'; then exempt=true; fi
-          # (c) explicit directive line: "docs-exempt: <reason>"
-          if printf '%s' "$PR_BODY" | grep -qiE '^[[:space:]]*docs-exempt:[[:space:]]*[^[:space:]]'; then exempt=true; fi
-          if [ "$exempt" = true ]; then
-            echo "docs-exempt is set -> mandatory-docs gate skipped."
-            exit 0
-          fi
           git fetch --no-tags origin "$BASE_REF"
-          changed=$(git diff --name-only "origin/$BASE_REF...HEAD")
-          echo "Changed files:"; echo "$changed"
-          code_changed=$(echo "$changed" | grep -E '^(druppie/|frontend/src/)' || true)
-          doc_changed=$(echo "$changed" | grep -E '^(docs/(adrs|prds|research|reference|guides)/|testing/specs/features/)' || true)
-          if [ -n "$code_changed" ] && [ -z "$doc_changed" ]; then
-            echo "::error::Code changed without documentation. Add a doc (docs/adrs|prds|research|...) or mark the PR docs-exempt (label or a 'docs-exempt' line in the PR description)."
-            exit 1
-          fi
-          echo "Mandatory-docs gate OK."
+          git diff --name-only "origin/$BASE_REF...HEAD" | python scripts/check_mandatory_docs.py
 
       # Check B — validity of the docs that exist. Warn-mode for now.
       - name: Validate docs (Check B)
         continue-on-error: true
-        run: python scripts/validate_docs.py
+        run: |
+          python scripts/validate_docs.py || {
+            echo "::error::Documentation validation failed. See docs/guides/documentation-framework.md for the standard (frontmatter, ids, links, CAS)."
+            exit 1
+          }
