@@ -13,7 +13,7 @@ outcome: null
 > **Date**: 2026-02-24 (initial brainstorm) to 2026-03-11 (iterative design)
 > **Author**: Druppie team
 > **User Story**: Als Druppie-teamlid wil ik een gestandaardiseerd format/contract voor core-modules, zodat uitbreidingen op een uniforme manier worden toegevoegd ongeacht wie ze bouwt.
-> **Related**: `docs/guides/module-contract.md` (technical contract), `docs/plans/2026-03-11-auth-governance-design.md` (auth & governance design)
+> **Related**: `docs/adrs/019-module-system-architecture.md` (technical contract — ADR), `docs/plans/2026-03-11-auth-governance-design.md` (auth & governance design)
 
 This document captures the full design journey for Druppie's module convention: the original research exploring five architectural approaches, the comparative analysis and test cases that drove the recommendation, and all subsequent design decisions made during specification development. It is the "why" behind the decisions — the "what" lives in the specification.
 

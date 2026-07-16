@@ -248,7 +248,7 @@ Last updated: 2026-06-11
 
 ### ~~Language Matching~~ ✅ DONE
 
-- **Implemented:** Automated bilingual translation. The platform detects the user's language, translates user messages to English for agents, and translates all agent output (HITL questions, design documents, summaries) back to the user's language. Agents always work in English; the platform handles translation transparently via a configurable translation model (legacy default Gemma 3 27B). See [docs/guides/translation-wiring.md](guides/translation-wiring.md) for details.
+- **Implemented:** Automated bilingual translation. The platform detects the user's language, translates user messages to English for agents, and translates all agent output (HITL questions, design documents, summaries) back to the user's language. Agents always work in English; the platform handles translation transparently via a configurable translation model (legacy default Gemma 3 27B). See [ADR 006](adrs/006-translation-subsystem.md) for the decision and wiring detail.
 
 ### File Upload: Context Window Guardrails for Large Attachments
 
@@ -425,7 +425,7 @@ Last updated: 2026-06-11
   - Use DuckDB/Polars to run SQL-style aggregation directly over CSV/Parquet with column projection (no full in-memory materialization).
   - Cache the read/aggregation within a session so follow-up charts don't re-scan.
   - Chunked/streaming aggregation for files too large to hold in memory.
-- **Priority:** Medium — removes the in-memory ceiling flagged in `docs/guides/data-access-mcp-contract.md`.
+- **Priority:** Medium — removes the in-memory ceiling flagged in `docs/adrs/020-data-access-mcp.md`.
 
 ### Visualization — Smarter Graphing
 

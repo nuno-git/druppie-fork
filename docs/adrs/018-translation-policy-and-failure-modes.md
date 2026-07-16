@@ -13,8 +13,8 @@ linked_research: null
 ---
 
 > **Where this fits:** This ADR records the design decision behind Druppie's bilingual
-> (Dutch/English) support. The "how it is wired" reference lives in
-> [`docs/guides/translation-wiring.md`](../guides/translation-wiring.md); the testable behaviour lives in
+> (Dutch/English) support. The functional-service decision and wiring reference live in
+> [ADR 006](006-translation-subsystem.md); the testable behaviour lives in
 > [`docs/specs/018-translation-guards.feature`](../specs/018-translation-guards.feature).
 
 ## Context

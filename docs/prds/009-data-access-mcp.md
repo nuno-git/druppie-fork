@@ -6,7 +6,7 @@ author: nuno
 date: 2026-07-16
 supersedes: null
 superseded_by: null
-linked_adrs: []
+linked_adrs: ["docs/adrs/020-data-access-mcp.md"]
 linked_research: []
 linked_specs: ["docs/specs/021-data-access-mcp.feature"]
 ---
@@ -62,4 +62,4 @@ A single MCP server with an adapter-based architecture that provides a unified t
 ## Linked Documents
 
 - **Specs:** `docs/specs/021-data-access-mcp.feature` — Data Access MCP acceptance scenarios
-- **Technical reference:** `docs/guides/data-access-mcp-contract.md` — Full technical contract (tool catalog, config format, security boundaries, adapter details)
+- **Technical reference (ADR):** `docs/adrs/020-data-access-mcp.md` — Architectural decision and full technical contract (tool catalog, config format, adapter architecture, security boundaries)

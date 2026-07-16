@@ -20,3 +20,5 @@ Consolidated view of all **accepted** ADRs. Individual ADRs live in `docs/adrs/`
 | [013](013-cooperative-pause-resume-cancellation.md) | Cooperative Pause, Resume, and Cancellation |
 | [014](014-atomic-claim-cron-scheduling.md) | Atomic-Claim Cron Scheduling |
 | [016](016-context-window-management.md) | Auto-compression of agent conversation context via single-shot LLM summarization |
+| [019](019-module-system-architecture.md) | Adopt the Druppie Module System architecture (SDK + MCP hybrid with direct module access) |
+| [020](020-data-access-mcp.md) | Data Access MCP architecture |
