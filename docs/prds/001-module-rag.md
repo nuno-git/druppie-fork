@@ -7,6 +7,7 @@ date: 2026-06-01
 linked_adrs: []
 linked_research: ["docs/research/001-rag-patterns.md"]
 linked_specs: []
+linked_workitem: null
 supersedes: null
 superseded_by: null
 ---

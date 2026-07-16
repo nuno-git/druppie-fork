@@ -16,6 +16,7 @@
     "superseded_by": { "oneOf": [{ "type": "string", "pattern": "^[0-9]{3}$" }, { "type": "null" }] },
     "linked_adrs": { "type": "array", "items": { "type": "string" } },
     "linked_research": { "type": "array", "items": { "type": "string" } },
-    "linked_specs": { "type": "array", "items": { "type": "string" } }
+    "linked_specs": { "type": "array", "items": { "type": "string" } },
+    "linked_workitem": { "type": ["string", "null"] }
   }
 }

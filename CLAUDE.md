@@ -25,6 +25,10 @@ When making significant changes, use the formal documentation framework:
 - `testing/specs/features/` -Executable behavioral specs (Gherkin)
 - `docs/guides/` - Operational guides
 
+### Documentation standard (PBI 9742–9744)
+
+Decision/spec docs follow the standard in [`docs/guides/documentation-framework.md`](docs/guides/documentation-framework.md): Markdown + YAML-frontmatter templates for **ADR** (decision), **PRD** (feature), **Research** (optional investigation) and **Spec** (Gherkin acceptance criteria), in `docs/{adrs,prds,research}/` and `testing/specs/features/`. Flow: `PRD → Research? → ADR? → Spec` (Research and ADR are optional/conditional). A PR that changes feature code should include documentation, or be marked `docs-exempt`. Validate locally: `docker compose --profile docs-validator run --rm docs-validator`.
+
 ## Project Overview
 
 Druppie is a governance platform for AI agents with MCP (Model Context Protocol) tool permissions and approval workflows. Agents can only act through MCP tools - no direct file output.

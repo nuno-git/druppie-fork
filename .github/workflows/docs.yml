@@ -32,8 +32,14 @@ jobs:
           PR_BODY: ${{ github.event.pull_request.body }}
           BASE_REF: ${{ github.base_ref }}
         run: |
-          if echo "$LABELS" | tr ',' '\n' | grep -qx 'docs-exempt' \
-             || printf '%s' "$PR_BODY" | grep -qiE '(^|[^[:alnum:]-])docs-exempt'; then
+          exempt=false
+          # (a) label
+          if echo "$LABELS" | tr ',' '\n' | grep -qx 'docs-exempt'; then exempt=true; fi
+          # (b) checked checkbox in the PR body: "- [x] ... docs-exempt"
+          if printf '%s' "$PR_BODY" | grep -qiE '^[[:space:]]*-[[:space:]]*\[[xX]\].*docs-exempt'; then exempt=true; fi
+          # (c) explicit directive line: "docs-exempt: <reason>"
+          if printf '%s' "$PR_BODY" | grep -qiE '^[[:space:]]*docs-exempt:[[:space:]]*[^[:space:]]'; then exempt=true; fi
+          if [ "$exempt" = true ]; then
             echo "docs-exempt is set -> mandatory-docs gate skipped."
             exit 0
           fi
