@@ -1057,6 +1057,8 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
     },
     enabled: !!sessionId,
     placeholderData: keepPreviousData,
+    staleTime: 5000,
+    refetchOnMount: true,
   })
 
   // Merge incoming data.timeline with accumulated entries.
