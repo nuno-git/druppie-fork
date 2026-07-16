@@ -992,7 +992,6 @@ system_prompts:
   - done_tool_format
   - workspace_state
   - bash_timeout
-  - documentation_flow
 
 mcps:
   coding:

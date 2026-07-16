@@ -426,7 +426,6 @@ system_prompts:
   - tool_only_communication
   - done_tool_format
   - workspace_state
-  - documentation_flow
 
 extra_builtin_tools:
   - create_message
