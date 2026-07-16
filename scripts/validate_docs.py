@@ -196,6 +196,34 @@ def check_spec_files(root):
     return results
 
 
+def check_cas_freshness(root):
+    """B) Verify docs/adrs/CAS.md matches freshly generated content.
+
+    Shares its render logic with ``scripts/generate_cas.py`` (single source of
+    truth). Compares content, not mtime.
+    """
+    from generate_cas import render_cas
+
+    cas_path = root / "docs" / "adrs" / "CAS.md"
+    rel = cas_path.relative_to(root).as_posix()
+    expected = render_cas(root)
+
+    if not cas_path.exists():
+        return [(rel, [
+            "CAS.md is stale or missing — run `python scripts/generate_cas.py` "
+            "and commit the result"
+        ])]
+
+    actual = cas_path.read_text(encoding="utf-8")
+    if actual != expected:
+        return [(rel, [
+            "CAS.md is stale or missing — run `python scripts/generate_cas.py` "
+            "and commit the result"
+        ])]
+
+    return [(rel, [])]
+
+
 def check_stray_docs(root):
     """C) Flag markdown docs with an NNN id living outside a type folder."""
     results = []
@@ -250,6 +278,7 @@ def main():
 
     checked, results = check_templated_docs(root)
     results += check_spec_files(root)
+    results += check_cas_freshness(root)
     results += check_stray_docs(root)
 
     total_errors = 0
