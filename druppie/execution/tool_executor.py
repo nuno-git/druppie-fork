@@ -1250,6 +1250,7 @@ class ToolExecutor:
                 raw_ids = [aid for aid in attachment_ids if isinstance(aid, str) and aid]
                 if raw_ids:
                     att_ids = [UUID(aid) for aid in raw_ids]
+                    att_repo.validate_ownership(att_ids, tool_call.session_id)
                     att_repo.link_to_question(att_ids, question.id, tool_call.session_id)
                     logger.info(
                         "hitl_attachments_linked",
