@@ -228,6 +228,7 @@ system_prompts:
   - summary_relay
   - done_tool_format
   - workspace_state
+  - documentation_flow
 
 extra_builtin_tools: []
 excluded_builtin_tools: []
