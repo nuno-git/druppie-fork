@@ -8,3 +8,14 @@ Consolidated view of all **accepted** ADRs. Individual ADRs live in `docs/adrs/`
 |-----|-------|
 | [002](002-kubernetes-migration.md) | Kubernetes migratie architectuur |
 | [003](003-developer-agent-testing-page.md) | Add developer page for single-agent testing |
+| [004](004-agent-runtime.md) | Build native agent runtime with done() enforcement |
+| [005](005-dev-prod-infrastructure.md) | Adopt dual-layer dev/prod infrastructure |
+| [006](006-translation-subsystem.md) | Add backend translation service for bilingual support |
+| [007](007-strict-layered-architecture.md) | Enforce strict layered architecture in the backend |
+| [008](008-data-modeling-policy.md) | Data-modeling policy: typed columns preferred, JSON for raw LLM responses |
+| [009](009-llm-provider-strategy.md) | LLM provider strategy with LiteLLM and cross-provider fallback |
+| [010](010-layered-approval-model.md) | Layered approval model for agent tool calls |
+| [011](011-summary-relay-inter-agent-context.md) | Summary Relay as Sole Inter-Agent Context |
+| [012](012-tool-schema-discovery.md) | Discover Tool Schemas Dynamically via MCP tools/list |
+| [013](013-cooperative-pause-resume-cancellation.md) | Cooperative Pause, Resume, and Cancellation |
+| [014](014-atomic-claim-cron-scheduling.md) | Atomic-Claim Cron Scheduling |

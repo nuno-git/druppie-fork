@@ -1,3 +1,8 @@
+> **⚠️ SUPERSEDED** — This reference doc duplicated content now formalized in Research 001 and PRD 001.
+> - **Research 001** (`docs/research/001-rag-patterns.md`) — the research
+> - **PRD 001** (`docs/prds/001-module-rag.md`) — the product requirements
+> Kept for historical reference.
+
 # RAG op het Druppie-platform — eindstaat & keuzes
 
 Beknopt overzicht van de uiteindelijke RAG-architectuur en de gemaakte

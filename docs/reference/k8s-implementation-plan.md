@@ -10,6 +10,13 @@
 
 > **Status: Historisch — Phase 1 delivery record.** Huidige as-built staat: `docs/reference/as-built-architecture.md`.
 
+> **⚠️ SUPERSEDED** — This implementation plan is superseded by:
+> - **`docs/reference/as-built-architecture.md`** — the verified live-cluster state
+> - **ADR 002** (`docs/adrs/002-kubernetes-migration.md`) — the migration decision
+> - **ADR 005** (`docs/adrs/005-dev-prod-infrastructure.md`) — the infrastructure decision
+>
+> Phase 1 was fully delivered. This file is retained as a delivery record. Do not update.
+
 ---
 
 ## Acceptatiecriteria (Story 3)

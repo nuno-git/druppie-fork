@@ -1,5 +1,11 @@
 # Spec: Platform Standards Files
 
+> **⚠️ SUPERSEDED** — This specification is superseded by:
+> - **PRD 007** (`docs/prds/007-platform-standards-files.md`) — the product requirement
+> - **Spec** (`testing/specs/features/platform-standards-files.feature`) — the executable acceptance scenarios
+>
+> This file is retained for historical design detail. Do not update.
+
 **Status:** in review — PR [#158](https://github.com/nuno-git/druppie-fork/pull/158) (draft)
 **Author:** nuno
 **Date:** 2026-04-20

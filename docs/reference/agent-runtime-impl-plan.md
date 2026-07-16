@@ -5,6 +5,13 @@
 > Implements [agent-runtime-spec.md](./agent-runtime.md).
 > The new library lives in `druppie/agent_runtime/`, is storage-agnostic, and coexists with the old code without modifying it.
 
+> **⚠️ SUPERSEDED** — This specification is superseded by:
+> - **ADR 004** (`docs/adrs/004-agent-runtime.md`) — the architectural decision
+> - **Research 004** (`docs/research/004-agent-runtime.md`) — the design rationale  
+> - **TECHNICAL.md §11** (Agent Runtime Library) — the canonical as-built
+>
+> This file is retained for historical design detail. Do not update.
+
 ## 1. Module Structure
 
 ```

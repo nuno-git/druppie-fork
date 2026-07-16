@@ -1,5 +1,13 @@
 # Data Access MCP
 
+> **⚠️ SUPERSEDED (behavioral layer)** — The testable acceptance criteria for the
+> Data Access MCP now live in the executable Gherkin spec:
+> - **Spec** (`testing/specs/features/data-access-mcp.feature`) — acceptance Scenarios
+>
+> This reference is retained as the full technical contract (tool catalog, config
+> format, security boundaries, testing notes). Update the spec for behavior
+> changes; keep this file for technical detail.
+
 Unified, adapter-based MCP that lets agents read and download data from
 heterogeneous sources (Azure Data Lake, Azure SQL) through a single set of
 tools. Replaces the standalone `module-azure-datalake` MCP.

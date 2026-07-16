@@ -1,3 +1,8 @@
+# @status draft|active|superseded
+# @superseded_by <filename-or-empty>
+# @adr <ADR filename this spec implements>
+# @prd <PRD filename this spec implements>
+
 # Spec (executable Gherkin) TEMPLATE.
 # Copy this to testing/specs/features/<feature-name>.feature and fill it in.
 #

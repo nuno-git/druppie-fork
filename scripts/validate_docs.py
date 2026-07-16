@@ -36,6 +36,9 @@ LINK_FIELDS = ("linked_prd", "linked_adrs", "linked_research", "linked_specs")
 # NNN id inside a doc's frontmatter (for stray-doc detection).
 NNN_ID = re.compile(r"^[0-9]{3}$")
 
+# Valid lifecycle statuses for a Spec (.feature) @status tag.
+SPEC_STATUSES = ("draft", "active", "superseded")
+
 
 class _StrDateLoader(yaml.SafeLoader):
     """SafeLoader that keeps unquoted dates/timestamps as plain strings.
@@ -170,19 +173,33 @@ def check_templated_docs(root):
 
 
 def check_spec_files(root):
-    """B) Validate @prd/@adr tag references in feature files."""
-    results = []
+    """Validate @prd/@adr references and @status/@superseded_by tags in specs.
+
+    Returns (checked, results). The @prd/@adr tags are Gherkin tags (no leading
+    ``#``) whose referenced files must exist. The @status/@superseded_by tags are
+    comment lines (``# @status ...``) matching the ADR/PRD/Research lifecycle
+    pattern; they are validated only when present so specs predating the tags
+    still pass. TEMPLATE.feature is skipped.
+    """
+    results = []  # (relpath, errors)
+    checked = 0
     features_dir = root / "testing/specs/features"
     if not features_dir.is_dir():
-        return results
+        return checked, results
 
     tag_re = re.compile(r"^\s*@(prd|adr)\s+(\S+)")
+    status_re = re.compile(r"^\s*#\s*@status\s+(\S+)")
+    superseded_by_re = re.compile(r"^\s*#\s*@superseded_by\s*(.*)$")
     for path in sorted(features_dir.glob("*.feature")):
         if path.name == "TEMPLATE.feature":
             continue
+        checked += 1
         errors = []
         rel = path.relative_to(root).as_posix()
-        for line in path.read_text(encoding="utf-8").splitlines():
+        lines = path.read_text(encoding="utf-8").splitlines()
+
+        # @prd / @adr Gherkin tags — referenced files must exist.
+        for line in lines:
             m = tag_re.match(line)
             if not m:
                 continue
@@ -191,9 +208,39 @@ def check_spec_files(root):
                 continue
             if not (root / ref).exists():
                 errors.append(f"@{m.group(1)}: referenced file does not exist: {ref}")
+
+        # @status / @superseded_by lifecycle tags (validated only when present).
+        status = None
+        superseded_by = None
+        for line in lines:
+            m = status_re.match(line)
+            if m and status is None:
+                status = m.group(1).strip()
+                continue
+            m = superseded_by_re.match(line)
+            if m and superseded_by is None:
+                superseded_by = m.group(1).strip()
+
+        if status is not None:
+            if status not in SPEC_STATUSES:
+                errors.append(
+                    f"@status: invalid value {status!r} "
+                    f"(expected one of: {', '.join(SPEC_STATUSES)})"
+                )
+            elif status == "superseded":
+                if not superseded_by:
+                    errors.append(
+                        "@status is 'superseded' but @superseded_by is empty or absent"
+                    )
+            elif superseded_by:
+                errors.append(
+                    f"@status is {status!r} but @superseded_by is set "
+                    "(must be empty for draft/active)"
+                )
+
         results.append((rel, errors))
 
-    return results
+    return checked, results
 
 
 def check_cas_freshness(root):
@@ -277,7 +324,8 @@ def main():
     root = args.root.resolve()
 
     checked, results = check_templated_docs(root)
-    results += check_spec_files(root)
+    spec_checked, spec_results = check_spec_files(root)
+    results += spec_results
     results += check_cas_freshness(root)
     results += check_stray_docs(root)
 
@@ -292,7 +340,7 @@ def main():
             print(f"[OK]   {rel}")
 
     print()
-    print(f"{checked} docs checked, {total_errors} errors")
+    print(f"{checked} docs checked, {spec_checked} specs checked, {total_errors} errors")
 
     return 1 if total_errors else 0
 

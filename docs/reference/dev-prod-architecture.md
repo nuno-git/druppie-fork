@@ -7,6 +7,13 @@
 
 ---
 
+> **⚠️ SUPERSEDED** — This architecture doc is superseded by:
+> - **ADR 005** (`docs/adrs/005-dev-prod-infrastructure.md`) — the infrastructure decision
+> - **ADR 002** (`docs/adrs/002-kubernetes-migration.md`) — the Kubernetes migration decision
+> - **`docs/reference/as-built-architecture.md`** — the verified live-cluster state
+>
+> This file is retained for historical context. Do not update.
+
 ## Inhoud
 
 1. [Overzicht](#1-overzicht)

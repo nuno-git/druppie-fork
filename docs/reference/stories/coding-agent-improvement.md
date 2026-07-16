@@ -5,6 +5,14 @@
 
 ---
 
+> **⚠️ SUPERSEDED** — This epic vision doc is superseded by:
+> - **ADR 004** (`docs/adrs/004-agent-runtime.md`) — the architectural decision
+> - **PRD 004** (`docs/prds/004-agent-runtime.md`) — the product requirements
+> - **Research 004** (`docs/research/004-agent-runtime.md`) — the design rationale
+>
+> The work described is largely implemented. Remaining open items are tracked in BACKLOG.md.
+> This file is retained for historical context. Do not update.
+
 ## Background & Context
 
 We want coding agents that work. Not sometimes, not with luck, but reliably. Agents that can take a specification and build a working application without crashing, stopping mid-task, or requiring constant human babysitting.

@@ -1,3 +1,8 @@
+> **⚠️ SUPERSEDED** — This reference doc has been superseded by the formal translation subsystem ADR and PRD.
+> - **ADR 006** (`docs/adrs/006-translation-subsystem.md`) — the architectural decision
+> - **PRD 006** (`docs/prds/006-translation-subsystem.md`) — the product requirements
+> Kept for historical reference.
+
 # Translation (Bilingual Support)
 
 Druppie supports Dutch and English users while keeping every agent **monolingual English**

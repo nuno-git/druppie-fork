@@ -1,5 +1,13 @@
 # Druppie Kubernetes — As-Built Architecture (PR #237)
 
+> **⚠️ SUPERSEDED** — This reference is superseded as the canonical analysis by:
+> - **Research 007** (`docs/research/007-kubernetes-as-built-analysis.md`) — the formalized analysis (plan-vs-as-built discrepancies, tech debt)
+> - **ADR 005** (`docs/adrs/005-dev-prod-infrastructure.md`) — the current infrastructure decision
+> - **ADR 002** (`docs/adrs/002-kubernetes-migration.md`) — the original migration plan
+>
+> This file is retained for its detailed raw inventory (workload tables, CI/CD
+> pipeline dump, appendices). Do not update; edit Research 007 instead.
+
 > **Status:** As-built documentatie (geverifieerd tegen live cluster + code)
 > **Datum:** 2026-06-16
 > **Bron:** Branch `pr-222` (PR #237), live cluster state, helm chart, IaC manifests

@@ -18,10 +18,12 @@ git checkout -b feature/your-feature-name
 
 ## Documentation Reminder
 
-When making significant changes, remember to update the `/docs` folder:
-- `docs/FEATURES.md` - New features or feature changes
-- `docs/BACKLOG.md` - Bugs, technical debt, and improvement ideas
-- `docs/TECHNICAL.md` - Architecture or technical changes
+When making significant changes, use the formal documentation framework:
+- `docs/adrs/` - Architectural decisions (ADRs)
+- `docs/prds/` - Product requirements (PRDs)
+- `docs/research/` - Research and analysis
+- `testing/specs/features/` -Executable behavioral specs (Gherkin)
+- `docs/guides/` - Operational guides
 
 ## Project Overview
 
@@ -92,8 +94,6 @@ druppie/
 ├── agents/        # YAML agent definitions
 ├── core/          # MCP client, config loading
 └── mcp-servers/   # Coding (9001), Docker (9002) microservices
-
-background-agents/  # Sandbox infrastructure (from nuno120/background-agents, branch druppie)
 
 frontend/
 ├── src/pages/     # React pages

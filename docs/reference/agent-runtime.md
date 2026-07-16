@@ -5,6 +5,13 @@
 > This document contains the final architecture decisions for the Druppie agent runtime library.
 > For research context, alternatives considered, and rationale, see `docs/research/004-agent-runtime.md`.
 
+> **⚠️ SUPERSEDED** — This specification is superseded by:
+> - **ADR 004** (`docs/adrs/004-agent-runtime.md`) — the architectural decision
+> - **Research 004** (`docs/research/004-agent-runtime.md`) — the design rationale  
+> - **TECHNICAL.md §11** (Agent Runtime Library) — the canonical as-built
+>
+> This file is retained for historical design detail. Do not update.
+
 ## Overview
 
 The agent runtime is a Python library that replaces `loop.py` and the old sandbox-based execution prototype, providing a unified agent execution environment with `done()` enforcement, MCP tools, subagent spawning, and per-agent sandbox containers. The library is usable by both the Druppie backend and external applications.

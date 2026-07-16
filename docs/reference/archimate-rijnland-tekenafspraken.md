@@ -1,3 +1,7 @@
+> ⚠️ **MIGRATED**: This reference doc has been moved to the guides directory.
+> New location: `docs/guides/archimate-drawing-conventions.md`
+> This file is kept for historical reference only.
+
 # Analyse — Rijnland/HHR ArchiMate Tekenafspraken (13 sheets)
 
 Bron: `volledigetekenafspraken.zip` — ArchiMate-tekenafspraken van HHR (Hoogheemraadschap van Rijnland)

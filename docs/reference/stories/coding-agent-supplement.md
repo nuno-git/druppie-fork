@@ -2,6 +2,11 @@
 
 > Aanvulling op `docs/reference/stories/coding-agent-improvement.md`. Overkoepelend doel: de coding agent moet de vergunningzoeker applicatie end-to-end kunnen bouwen.
 
+> **📦 ARCHIVED** — This sprint-results snapshot is archived.
+> The as-built is maintained in **TECHNICAL.md §11** (Agent Runtime Library).
+> Open items have been migrated to **BACKLOG.md**.
+> This file is retained as a point-in-time record. Do not update.
+
 ---
 
 ## Wat er deze sprint is gebouwd

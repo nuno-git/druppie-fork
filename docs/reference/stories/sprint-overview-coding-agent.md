@@ -2,6 +2,11 @@
 
 > Dit is een apart document naast `docs/reference/stories/coding-agent-improvement.md`. Het documenteert wat er deze sprint is opgeleverd, met bewijs uit de code, en wat open staat voor de volgende sprint.
 
+> **📦 ARCHIVED** — This sprint overview is archived.
+> The as-built is maintained in **TECHNICAL.md §11** (Agent Runtime Library).
+> Open items have been migrated to **BACKLOG.md**.
+> This file is retained as a point-in-time record. Do not update.
+
 ---
 
 ## 1. Agent Runtime Library gebouwd (`druppie/agent_runtime/`)

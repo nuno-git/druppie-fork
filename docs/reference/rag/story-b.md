@@ -1,3 +1,7 @@
+> **⚠️ SUPERSEDED** — This handoff doc has been superseded by the formal PRD 001 (module-rag).
+> - **PRD 001** (`docs/prds/001-module-rag.md`) — the product requirements
+> Kept for historical reference.
+
 # Story B — `module-rag` orchestrator (handoff)
 
 > Audience: the engineer who picks this up. Self-contained — read this
