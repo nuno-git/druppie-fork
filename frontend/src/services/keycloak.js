@@ -146,6 +146,25 @@ export const getToken = () => {
   return keycloakInstance?.token
 }
 
+export const ensureValidToken = async (minValidity = 30) => {
+  if (!keycloakInstance || !keycloakInstance.authenticated) {
+    return false
+  }
+  try {
+    const refreshed = await keycloakInstance.updateToken(minValidity)
+    if (refreshed) {
+      saveTokens(keycloakInstance.token, keycloakInstance.refreshToken)
+    }
+    return true
+  } catch (error) {
+    return false
+  }
+}
+
+export const redirectToLogin = () => {
+  keycloakInstance?.login?.()
+}
+
 export const isAuthenticated = () => {
   return keycloakInstance?.authenticated || false
 }
