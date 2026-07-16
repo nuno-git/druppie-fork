@@ -78,14 +78,21 @@ class SessionEventManager:
                 async for message in ps.listen():
                     if message["type"] != "pmessage":
                         continue
-                    data = json.loads(message["data"])
-                    session_id = UUID(data["session_id"])
-                    event = data["event"]
-                    await self._broadcast_local(session_id, event)
+                    try:
+                        data = json.loads(message["data"])
+                        session_id = UUID(data["session_id"])
+                        event = data["event"]
+                        await self._broadcast_local(session_id, event)
+                    except (json.JSONDecodeError, KeyError, TypeError) as exc:
+                        logger.warning("redis_malformed_message", error=str(exc))
         except asyncio.CancelledError:
             raise
         except Exception as exc:
             logger.error("redis_subscriber_error", error=str(exc))
+        finally:
+            self._redis = None
+            self._pubsub = None
+            logger.info("redis_subscriber_stopped_cleared_state")
 
     async def shutdown(self) -> None:
         """Graceful shutdown: cancel subscriber task and close Redis."""
@@ -103,33 +110,46 @@ class SessionEventManager:
     async def _broadcast_local(
         self, session_id: UUID, event: dict[str, Any]
     ) -> None:
-        """Send event to locally-connected WebSocket clients only."""
+        """Send event to locally-connected WebSocket clients only.
+
+        Copies the connection list under the lock, then sends outside it
+        so one slow client can't stall delivery to other sessions.
+        """
         async with self._lock:
-            conns = self._connections.get(session_id)
-            if not conns:
-                return
+            conns = list(self._connections.get(session_id) or [])
 
-            message = json.dumps(event, default=str)
-            alive: list[WebSocket] = []
+        if not conns:
+            return
 
-            for ws in conns:
-                try:
-                    await ws.send_text(message)
-                    alive.append(ws)
-                except Exception:
-                    logger.debug(
-                        "ws_send_failed_removing",
-                        session_id=str(session_id),
-                    )
+        message = json.dumps(event, default=str)
+        alive_ids: set[int] = set()
 
-            if len(alive) != len(conns):
-                self._connections[session_id] = alive
-                if not alive:
+        for ws in conns:
+            try:
+                await ws.send_text(message)
+                alive_ids.add(id(ws))
+            except Exception:
+                logger.debug(
+                    "ws_send_failed_removing",
+                    session_id=str(session_id),
+                )
+
+        async with self._lock:
+            current = self._connections.get(session_id)
+            if current:
+                new_current = [ws for ws in current if id(ws) in alive_ids]
+                if new_current:
+                    self._connections[session_id] = new_current
+                else:
                     del self._connections[session_id]
                     logger.debug(
                         "ws_all_connections_dropped",
                         session_id=str(session_id),
                     )
+
+    def connection_count(self, session_id: UUID) -> int:
+        """Return the number of WebSocket connections for a session."""
+        return len(self._connections.get(session_id) or [])
 
     async def connect(self, session_id: UUID, websocket: WebSocket) -> None:
         """Register a WebSocket connection for a session."""

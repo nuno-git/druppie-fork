@@ -13,7 +13,11 @@ from starlette.websockets import WebSocketDisconnect
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from druppie.api.routes.session_events import router as events_router
+from druppie.api.routes.session_events import (
+    router as events_router,
+    MAX_CONNECTIONS_PER_SESSION,
+    KEEPALIVE_TIMEOUT_SECONDS,
+)
 from druppie.core.session_event_manager import get_event_manager, reset_event_manager
 
 
@@ -127,3 +131,62 @@ class TestWebSocketPing:
             msg = ws.receive_text()
             data = json.loads(msg)
             assert data["type"] == "pong"
+
+
+class TestWebSocketConnectionCap:
+    """Test per-session concurrent connection limit."""
+
+    def test_too_many_connections_gets_rejected(self, client, mock_auth_service):
+        session_id = str(uuid4())
+        mock_auth_service.validate_request = MagicMock(
+            return_value={"sub": str(uuid4()), "realm_access": {"roles": ["user"]}}
+        )
+
+        VALID = 2
+        sockets = []
+        for _ in range(VALID):
+            ws = client.websocket_connect(f"/sessions/{session_id}/events")
+            cm = ws.__enter__()
+            cm.send_text(json.dumps({"type": "auth", "token": "valid-token"}))
+            cm.receive_text()
+            sockets.append((ws, cm))
+
+        for _ in range(MAX_CONNECTIONS_PER_SESSION - VALID):
+            ws = client.websocket_connect(f"/sessions/{session_id}/events")
+            cm = ws.__enter__()
+            cm.send_text(json.dumps({"type": "auth", "token": "valid-token"}))
+            cm.receive_text()
+            sockets.append((ws, cm))
+
+        with pytest.raises(WebSocketDisconnect) as exc_info:
+            ws = client.websocket_connect(f"/sessions/{session_id}/events")
+            cm = ws.__enter__()
+            cm.send_text(json.dumps({"type": "auth", "token": "valid-token"}))
+            cm.receive_text()
+
+        assert exc_info.value.code == 1013
+
+        for ws, cm in sockets:
+            try:
+                cm.close()
+            except Exception:
+                pass
+            ws.__exit__(None, None, None)
+
+
+class TestWebSocketKeepalive:
+    """Test server-side keepalive timeout."""
+
+    def test_no_activity_closes_connection(self, client, mock_auth_service):
+        session_id = str(uuid4())
+        mock_auth_service.validate_request = MagicMock(
+            return_value={"sub": str(uuid4()), "realm_access": {"roles": ["user"]}}
+        )
+
+        with patch("druppie.api.routes.session_events.KEEPALIVE_TIMEOUT_SECONDS", 0.1):
+            with pytest.raises(WebSocketDisconnect) as exc_info:
+                with client.websocket_connect(f"/sessions/{session_id}/events") as ws:
+                    ws.send_text(json.dumps({"type": "auth", "token": "valid-token"}))
+                    ws.receive_text()
+                    ws.receive_text()
+            assert exc_info.value.code == 1001

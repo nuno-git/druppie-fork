@@ -43,6 +43,8 @@ router = APIRouter()
 
 # Seconds to wait for the client to send the auth message
 AUTH_TIMEOUT = 10
+MAX_CONNECTIONS_PER_SESSION = 10
+KEEPALIVE_TIMEOUT_SECONDS = 60
 
 
 @router.websocket("/sessions/{session_id}/events")
@@ -134,7 +136,16 @@ async def session_events_ws(
             db.close()
             db = None
 
-        # Step 5: Subscribe and confirm
+        # Step 5: Enforce per-session connection cap
+        event_manager = get_event_manager()
+        current_count = event_manager.connection_count(session_id)
+        if current_count >= MAX_CONNECTIONS_PER_SESSION:
+            await websocket.close(
+                code=1013,
+                reason=f"Too many connections for this session (max {MAX_CONNECTIONS_PER_SESSION})",
+            )
+            return
+
         await websocket.send_text(json.dumps({"type": "auth_success"}))
 
         logger.info(
@@ -147,9 +158,11 @@ async def session_events_ws(
         await event_manager.connect(session_id, websocket)
 
         try:
-            # Keep the connection alive until the client disconnects
             while True:
-                data = await websocket.receive_text()
+                data = await asyncio.wait_for(
+                    websocket.receive_text(),
+                    timeout=KEEPALIVE_TIMEOUT_SECONDS,
+                )
                 if data == "ping":
                     await websocket.send_text(json.dumps({"type": "pong"}))
                 elif data == "pong":
@@ -157,6 +170,13 @@ async def session_events_ws(
                 else:
                     # Ignore other client messages
                     pass
+        except asyncio.TimeoutError:
+            await websocket.close(code=1001, reason="Keepalive timeout")
+            logger.info(
+                "ws_session_events_timeout",
+                session_id=str(session_id),
+                user_id=str(user_id),
+            )
         except WebSocketDisconnect:
             logger.info(
                 "ws_session_events_disconnected",

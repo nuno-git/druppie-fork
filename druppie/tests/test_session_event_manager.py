@@ -175,3 +175,64 @@ class TestResetEventManager:
         await mgr2.connect(session_id, ws2)
         await mgr2.broadcast(session_id, {"type": "test2"})
         ws2.send_text.assert_awaited_once()
+
+
+class TestRedisReconnection:
+    """Subscriber restarts after failure."""
+
+    @pytest.mark.asyncio
+    async def test_subscriber_sets_redis_none_on_exit(self, event_manager):
+        with patch("druppie.core.session_event_manager.redis") as mock_redis_mod:
+            mock_redis = AsyncMock()
+            mock_redis_mod.from_url = MagicMock(return_value=mock_redis)
+            mock_pubsub = AsyncMock()
+            mock_redis.pubsub = MagicMock(return_value=mock_pubsub)
+
+            session_id = uuid4()
+            ws = MagicMock()
+            ws.send_text = AsyncMock()
+            await event_manager.connect(session_id, ws)
+
+            await event_manager.broadcast(session_id, {"type": "test"})
+            assert event_manager._redis is not None
+
+            event_manager._redis = None
+            event_manager._pubsub = None
+            event_manager._subscriber_task = None
+
+            mock_redis2 = AsyncMock()
+            mock_redis_mod.from_url = MagicMock(return_value=mock_redis2)
+            mock_pubsub2 = AsyncMock()
+            mock_redis2.pubsub = MagicMock(return_value=mock_pubsub2)
+
+            await event_manager.broadcast(session_id, {"type": "test2"})
+            mock_redis2.publish.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_subscriber_survives_malformed_message(self, event_manager):
+        with patch("druppie.core.session_event_manager.redis") as mock_redis_mod:
+            mock_redis = AsyncMock()
+            mock_redis_mod.from_url = MagicMock(return_value=mock_redis)
+            mock_pubsub = AsyncMock()
+            mock_redis.pubsub = MagicMock(return_value=mock_pubsub)
+
+            session_id = uuid4()
+            ws = MagicMock()
+            ws.send_text = AsyncMock()
+            await event_manager.connect(session_id, ws)
+
+            async def fake_listen():
+                yield {"type": "pmessage", "data": "not-json"}
+                yield {"type": "pmessage", "data": json.dumps({"session_id": str(session_id), "event": {"type": "test"}})}
+
+            mock_pubsub.__aenter__ = AsyncMock(return_value=mock_pubsub)
+            mock_pubsub.__aexit__ = AsyncMock(return_value=None)
+            mock_pubsub.psubscribe = AsyncMock()
+            mock_pubsub.listen = fake_listen
+
+            event_manager._pubsub = mock_pubsub
+            await event_manager._redis_subscriber_loop()
+
+            ws.send_text.assert_awaited_once()
+            sent = json.loads(ws.send_text.await_args[0][0])
+            assert sent["type"] == "test"
