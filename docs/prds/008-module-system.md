@@ -59,4 +59,5 @@ None: feature is implemented and in production.
 
 - **Research:** Research 003 (`docs/research/003-module-convention.md`) — Module Convention design rationale
 - **Specs:** `docs/specs/020-module-contract.feature` — Module contract acceptance scenarios
-- **Technical reference (ADR):** `docs/adrs/019-module-system-architecture.md` — Full technical contract (MODULE.yaml structure, version system, SDK, auth, usage tracking, RBAC, DB tables)
+- **Architectural decisions (ADR):** `docs/adrs/019-module-system-architecture.md` — key decisions only
+- **Technical contract (Research):** `docs/research/003-module-convention.md` Part III — MODULE.yaml structure, version system, SDK, auth, usage tracking, RBAC, DB tables

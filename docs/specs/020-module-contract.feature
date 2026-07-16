@@ -3,14 +3,14 @@
 # @adr docs/adrs/019-module-system-architecture.md
 # @prd docs/prds/008-module-system.md
 # Linked research: docs/research/003-module-convention.md (Module Convention — design rationale & approach selection)
-# Linked ADR: docs/adrs/019-module-system-architecture.md (full technical contract)
+# Linked ADR: docs/adrs/019-module-system-architecture.md (key decisions only)
 
 @prd docs/prds/008-module-system.md
 @adr docs/adrs/019-module-system-architecture.md
 Feature: Module contract
   # The Druppie Module contract: how a module is structured (MODULE.yaml),
   # versioned, called, authenticated, metered, and discovered. The "why" lives
-  # in the linked research 003; the full technical contract lives in
+  # in the linked research 003 Part III; the key decisions live in
   # docs/adrs/019-module-system-architecture.md. This spec holds only the
   # acceptance Scenarios below.
 
