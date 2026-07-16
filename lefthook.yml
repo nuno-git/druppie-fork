@@ -1,0 +1,15 @@
+# Lefthook git hooks — https://github.com/evilmartians/lefthook
+#
+# One-time setup (host): install the lefthook binary (see README), then run:
+#   lefthook install
+#
+# The documentation check runs INSIDE Docker (the `docs-validator` compose service),
+# so no host Python is needed. It only runs when documentation files change.
+#
+# Note: the pre-commit hook is a convenience and is bypassable (git commit --no-verify).
+# The binding gate is CI (.github/workflows/docs.yml).
+pre-commit:
+  commands:
+    docs-validator:
+      glob: "docs/**/*.md"
+      run: docker compose --profile docs-validator run --rm docs-validator

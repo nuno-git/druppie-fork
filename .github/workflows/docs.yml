@@ -1,0 +1,28 @@
+name: Docs check
+
+# No top-level `paths:` filter on purpose: a required check that is skipped by a
+# path filter stays "pending forever". The job always runs and always reports.
+on:
+  pull_request:
+
+jobs:
+  validate-docs:
+    name: Validate documentation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install validator deps
+        run: pip install -r scripts/requirements-docs.txt
+
+      # Check B — validity of the docs that exist. Warn-mode for now
+      # (continue-on-error): reports problems but does not block merges yet.
+      # Flip to blocking (remove continue-on-error + mark the check required)
+      # once the migration baseline is clean and the team agrees. (PBI 9744, fase 8)
+      - name: Validate docs (Check B)
+        continue-on-error: true
+        run: python scripts/validate_docs.py

@@ -235,6 +235,26 @@ GITEA_PORT=3101
 | [docs/SANDBOX.md](docs/SANDBOX.md) | Sandbox infrastructure: OpenCode integration, provider resilience, Kata Containers |
 | [docs/BACKLOG.md](docs/BACKLOG.md) | Bugs, technical debt, and improvement ideas |
 
+## Documentation checks
+
+Docs under `docs/adrs`, `docs/prds`, `docs/research` and `testing/specs/features` are validated against the documentation standard (PBI 9744).
+
+Run the check locally (no host Python needed — it runs in Docker):
+
+```bash
+docker compose --profile docs-validator run --rm docs-validator
+```
+
+Optional — run it automatically before each commit via [lefthook](https://github.com/evilmartians/lefthook):
+
+```bash
+# Install the lefthook binary once (Linux: download the release binary or
+# `go install github.com/evilmartians/lefthook@latest`; macOS: `brew install lefthook`), then:
+lefthook install
+```
+
+The binding gate is CI (`.github/workflows/docs.yml`); the pre-commit hook is a convenience and is bypassable with `git commit --no-verify`.
+
 ## Troubleshooting
 
 **Check logs:**
