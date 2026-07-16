@@ -29,7 +29,6 @@ import DeveloperPage from './pages/DeveloperPage'
 import CachedDependencies from './pages/CachedDependencies'
 import Documentation from './pages/Documentation'
 import Deployments from './pages/Deployments'
-import DevEnvironments from './pages/DevEnvironments'
 import BranchEnvironments from './pages/BranchEnvironments'
 import ModelManagement from './pages/ModelManagement'
 
@@ -257,14 +256,6 @@ function App() {
                             element={
                               <ProtectedRoute>
                                 <Deployments />
-                              </ProtectedRoute>
-                            }
-                          />
-                          <Route
-                            path="/dev-environments"
-                            element={
-                              <ProtectedRoute>
-                                <DevEnvironments />
                               </ProtectedRoute>
                             }
                           />

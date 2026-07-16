@@ -161,8 +161,6 @@ backend:
     #      matches Vault branch-env/workspace-oauth#client-secret.
     # Overridable via env on the backend: BRANCH_ENV_WORKSPACE_IMAGE,
     # BRANCH_ENV_OAUTH2_PROXY_IMAGE, BRANCH_ENV_WORKSPACE_STORAGE_CLASS.
-  guacamoleUrl: http://guacamole.remote-access.svc.cluster.local:8080
-  guacamolePublicUrl: http://localhost:30020
   llm:
     provider: zai
     forceProvider: ''
