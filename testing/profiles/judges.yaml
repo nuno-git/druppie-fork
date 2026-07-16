@@ -1,12 +1,12 @@
 profiles:
   default:
-    model: glm-5
-    provider: zai
+    model: openrouter/qwen/qwen3-235b-a22b
+    provider: openrouter
 
   strict:
-    model: glm-5
-    provider: zai
+    model: openrouter/qwen/qwen3-235b-a22b
+    provider: openrouter
 
   fast:
-    model: glm-5
-    provider: zai
+    model: openrouter/qwen/qwen3-235b-a22b
+    provider: openrouter

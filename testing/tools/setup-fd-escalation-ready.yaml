@@ -1,0 +1,238 @@
+## Setup: create a project with a complete, high-quality Functional Design (FD)
+##
+## Chain: router → planner → BA (FD + git) → done
+## Ends after BA completes — no trailing planner, so agent tests that
+## continue_session can control what runs next (architect review, revision loop).
+##
+## Used by:
+##   - agent tests (setup + continue_session): fd-escalation-architect-review,
+##     fd-escalation-revision-loop
+##
+## The FD is a realistic Dutch document with the full set of sections an
+## architect can meaningfully review: doel, stakeholders, functionele eisen,
+## user stories, gegevensmodel, API endpoints, UI/UX, mermaid diagram,
+## tech stack, niet-functionele eisen, acceptatiecriteria.
+
+tool-test:
+  name: setup-fd-escalation-ready
+  description: "Creates a project with a complete high-quality FD — BA completed, ready for architect review / revision loop"
+  tags: [setup, escalation, task-management, fd]
+
+  chain:
+    # --- Router ---
+    - agent: router
+      tool: builtin:set_intent
+      arguments:
+        intent: create_project
+        project_name: task-management-app
+        description: "A task management application where users can create projects, assign tasks, track progress, and collaborate with team members"
+      assert:
+        result:
+          - not_empty
+
+    - agent: router
+      tool: builtin:done
+      arguments:
+        summary: "Agent router: Classified as create_project for task-management-app"
+      assert:
+        completed: true
+
+    # --- Planner ---
+    - agent: planner
+      tool: builtin:make_plan
+      arguments:
+        steps:
+          - agent_id: business_analyst
+            prompt: "Gather requirements and create functional design"
+          - agent_id: planner
+            prompt: "Re-evaluate after business analyst completes"
+
+    - agent: planner
+      tool: builtin:done
+      arguments:
+        summary: "Agent planner: Planned business_analyst to gather requirements and create functional design"
+
+    # --- Business Analyst ---
+    - agent: business_analyst
+      tool: coding:make_design
+      approval:
+        status: approved
+      arguments:
+        path: docs/functional-design.md
+        content: |
+          # Functioneel Ontwerp: Task Management App
+
+          ## 1. Doel en Achtergrond
+
+          Dit functioneel ontwerp beschrijft de vereisten voor een
+          taakbeheer-applicatie waarmee gebruikers projecten kunnen
+          aanmaken, taken kunnen toewijzen, voortgang kunnen volgen en
+          kunnen samenwerken met teamleden.
+
+          De applicatie is bedoeld voor kleine tot middelgrote teams die
+          behoefte hebben aan een overzichtelijke manier om werk te
+          organiseren en de voortgang inzichtelijk te maken voor alle
+          betrokkenen.
+
+          ## 2. Stakeholders
+
+          - **Eindgebruikers (teamleden)**: maken taken aan, werken eraan
+            en volgen de voortgang van hun eigen en andermans werk.
+          - **Projectbeheerders**: creëren projecten, verdelen taken,
+            bewaken deadlines en stellen rapportages op.
+          - **Beheerder (admin)**: beheert gebruikersaccounts, rollen en
+            instellingen van de applicatie.
+
+          ## 3. Functionele Eisen
+
+          - FR-01: Een gebruiker kan een nieuw project aanmaken met een
+            naam, beschrijving en begindatum.
+          - FR-02: Een gebruiker kan een project bewerken of archiveren.
+          - FR-03: Binnen een project kan een gebruiker taken aanmaken met
+            een titel, beschrijving, deadline, prioriteit en status.
+          - FR-04: Een taak kan worden toegewezen aan één of meer
+            teamleden.
+          - FR-05: Gebruikers kunnen de status van een taak wijzigen
+            (bijv. "Te doen", "In behandeling", "Klaar").
+          - FR-06: Gebruikers kunnen commentaar toevoegen aan een taak om
+            samenwerking en discussie mogelijk te maken.
+          - FR-07: Gebruikers kunnen bestanden (bijlagen) uploaden bij een
+            taak.
+          - FR-08: Gebruikers kunnen taken filteren en sorteren op status,
+            toegewezen persoon, deadline en prioriteit.
+          - FR-09: Gebruikers kunnen een kanban-bord bekijken om de
+            taakstatussen visueel weer te geven.
+          - FR-10: Een projectbeheerder kan rollen en rechten beheren per
+            project.
+
+          ## 4. User Stories
+
+          - US-01: Als teamlid wil ik een project kunnen aanmaken, zodat ik
+            mijn werk georganiseerd kan houden.
+          - US-02: Als projectbeheerder wil ik taken kunnen toewijzen aan
+            teamleden, zodat duidelijk is wie waaraan werkt.
+          - US-03: Als teamlid wil ik de status van mijn taken kunnen
+            wijzigen, zodat mijn collega's weten hoe ver ik ben.
+          - US-04: Als teamlid wil ik commentaar kunnen plaatsen bij een
+            taak, zodat ik vragen kan stellen en informatie kan delen.
+          - US-05: Als projectbeheerder wil ik een overzicht van alle taken
+            en hun status kunnen bekijken, zodat ik de voortgang van het
+            project kan monitoren.
+          - US-06: Als teamlid wil ik taken kunnen filteren op deadline,
+            zodat ik weet welke taken urgent zijn.
+
+          ## 5. Gegevensmodel
+
+          De belangrijkste entiteiten zijn:
+
+          - **Project**: id, naam, beschrijving, begindatum, einddatum,
+            status, eigenaar (gebruiker).
+          - **Task**: id, project_id, titel, beschrijving, deadline,
+            prioriteit, status, aangemaakt_door, toegewezen_aan (gebruiker).
+          - **User**: id, naam, e-mailadres, rol, projectleden.
+          - **Comment**: id, task_id, user_id, tekst, aanmaakdatum.
+
+          Relaties:
+          - Een Project heeft vele Tasks.
+          - Een Task behoort tot één Project.
+          - Een Task kan aan meerdere Users zijn toegewezen (many-to-many).
+          - Een Task heeft vele Comments; een Comment behoort tot één Task
+            en één User.
+
+          ## 6. API Endpoints
+
+          De belangrijkste REST-endpoints:
+
+          - `GET /api/projects` — lijst van projecten
+          - `POST /api/projects` — nieuw project aanmaken
+          - `GET /api/projects/{id}` — projectdetails opvragen
+          - `PUT /api/projects/{id}` — project bewerken
+          - `DELETE /api/projects/{id}` — project verwijderen
+          - `GET /api/projects/{id}/tasks` — taken van een project
+          - `POST /api/projects/{id}/tasks` — taak aanmaken
+          - `GET /api/tasks/{id}` — taakdetails
+          - `PUT /api/tasks/{id}` — taak bijwerken (status, toewijzing)
+          - `POST /api/tasks/{id}/comments` — commentaar toevoegen
+          - `GET /api/users/me` — huidige gebruiker
+
+          ## 7. UI/UX Beschrijving
+
+          De applicatie bestaat uit de volgende hoofdschermen:
+
+          - **Dashboard**: overzicht van actieve projecten, aantal
+            openstaande taken en recente activiteit.
+          - **Projectdetail**: toont alle taken in een project, met filter-
+            en sorteermogelijkheden en een kanban-bordweergave.
+          - **Taakdetail**: volledige beschrijving van een taak,
+            toegewezen personen, deadline, status, commentaren en bijlagen.
+          - **Gebruikersprofiel**: persoonlijke gegevens, toegewezen taken
+            en activiteitsoverzicht.
+          - **Instellingen**: projectbeheer voor rollen, rechten en
+            configuratie.
+
+          Navigatie verloopt via een zijbalk met projecten en een bovenbalk
+          met zoeken en gebruikersmenu.
+
+          ## 8. Architectuur (Flow)
+
+          ```mermaid
+          flowchart LR
+              G[Gebruiker] --> D[Dashboard]
+              D --> P[Project]
+              P --> T[Taak]
+              T --> A[Assignees]
+              T --> Co[Comments]
+              P --> K[Kanban Bord]
+              T --> K
+          ```
+
+          ## 9. Tech Stack Overwegingen
+
+          - **Frontend**: React met TypeScript, Vite als build-tool.
+          - **Backend**: Python (FastAPI) met een RESTful API.
+          - **Database**: PostgreSQL voor relationele opslag van projecten,
+            taken en gebruikers.
+          - **Authenticatie**: OAuth2/OpenID Connect (bijv. Keycloak).
+          - **Hosting**: Docker-containers, schaalbaar via een orchestrator.
+
+          ## 10. Niet-Functionele Eisen
+
+          - **Prestaties**: De applicatie laadt binnen 2 seconden; API-calls
+            reageren binnen 500 ms onder normale belasting.
+          - **Schaalbaarheid**: Ondersteunt minimaal 200 gelijktijdige
+            gebruikers per instantie zonder merkbare prestatievermindering.
+          - **Beveiliging**: Alle communicatie verloopt over HTTPS;
+            wachtwoorden worden gehasht opgeslagen; autorisatie per project
+            en rol.
+          - **Bruikbaarheid**: De interface is responsive en werkt op desktop
+            en tablet; voldoet aan WCAG 2.1 niveau AA.
+          - **Beschikbaarheid**: Minimaal 99,5% uptime tijdens kantooruren.
+          - **Onderhoudbaarheid**: Code volgt consistente stijlrichtlijnen
+            en heeft geautomatiseerde tests.
+
+          ## 11. Acceptatiecriteria
+
+          - Een gebruiker kan inloggen en een nieuw project aanmaken binnen
+            drie stappen.
+          - Taken kunnen worden aangemaakt, bewerkt, toegewezen en van
+            status gewisseld.
+          - Commentaar verschijnt direct bij een taak voor alle teamleden.
+          - Het kanban-bord toont de juiste taakstatussen real-time.
+          - Alleen geautoriseerde gebruikers hebben toegang tot een project.
+
+      assert:
+        result:
+          - { contains: "functional-design.md" }
+
+    - agent: business_analyst
+      tool: coding:push_changes
+
+    - agent: business_analyst
+      tool: builtin:done
+      arguments:
+        summary: "Agent business_analyst: DESIGN_APPROVED. Gathered requirements and wrote docs/functional-design.md with 10 functional requirements, 6 user stories, a data model, API endpoints and non-functional requirements for the task management app."
+      assert:
+        completed: true
+
+  verify:
+    - gitea_repo_exists: true

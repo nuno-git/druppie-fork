@@ -111,28 +111,28 @@ class ProfileLoader:
                 logger.error("Failed to load %s: %s", judges_path.name, e)
 
     def get_hitl(self, name: str) -> HITLProfile:
+        if name in self._hitl:
+            return self._hitl[name]
         if name == "default":
             return HITLProfile(
-                model="glm-4.5-air",
-                provider="zai",
+                model="openrouter/qwen/qwen3-235b-a22b",
+                provider="openrouter",
                 prompt="You are a helpful user who gives clear, concise answers.",
             )
-        if name not in self._hitl:
-            raise KeyError(
-                f"Unknown HITL profile: {name}. "
-                f"Available: {sorted(self._hitl.keys())}"
-            )
-        return self._hitl[name]
+        raise KeyError(
+            f"Unknown HITL profile: {name}. "
+            f"Available: {sorted(self._hitl.keys())}"
+        )
 
     def get_judge(self, name: str) -> JudgeProfile:
+        if name in self._judges:
+            return self._judges[name]
         if name == "default":
-            return JudgeProfile(model="glm-4.5-air", provider="zai")
-        if name not in self._judges:
-            raise KeyError(
-                f"Unknown judge profile: {name}. "
-                f"Available: {sorted(self._judges.keys())}"
-            )
-        return self._judges[name]
+            return JudgeProfile(model="openrouter/qwen/qwen3-235b-a22b", provider="openrouter")
+        raise KeyError(
+            f"Unknown judge profile: {name}. "
+            f"Available: {sorted(self._judges.keys())}"
+        )
 
 
 # ---------------------------------------------------------------------------

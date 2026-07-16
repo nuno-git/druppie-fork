@@ -1,0 +1,38 @@
+## Agent test: real architect reviews a high-quality FD, then planner re-evaluates.
+##
+## Setup: tool test creates a project with a complete Dutch FD already written
+##   (router → planner → BA → FD written and pushed to Gitea).
+##
+## continue_session: true → continues the LAST setup session.
+##   The architect and planner run directly in that session (no router restart).
+##   The architect can read the FD from the workspace because it's the same session.
+##   The planner re-evaluates after the architect, receiving previous agent summaries.
+##
+## Tests the design-review loop that the fd-escalation feature builds upon: an
+## architect makes a clear approve/feedback decision, and the planner routes
+## accordingly. With a single review cycle this will NOT hit the escalation
+## threshold (3 rejections) — it exercises the prerequisite loop, not the trigger.
+##
+## Judge: evaluates the architect decision quality and the planner routing.
+
+agent-test:
+  name: fd-escalation-architect-review
+  description: "Architect reviews a high-quality FD — should approve and produce technical design, or give structured feedback. Tests the design-review loop that escalation builds upon."
+  tags: [escalation, architect, planner, design-review, judge]
+
+  setup:
+    - setup-fd-escalation-ready        # creates session with router → planner → BA → FD
+  continue_session: true               # architect + planner run in the SAME session
+
+  message: "Review the functional design for the task management app and create the technical design"
+  agents: [architect, planner]         # architect reviews, then planner re-evaluates
+  hitl: non-technical-pm
+
+  judge:
+    context: [architect, planner]
+    checks:
+      - "The architect must have reviewed the functional design (docs/functional-design.md). It should have read the FD content before producing its own design."
+      - "The architect must have ended with done() carrying either DESIGN_APPROVED (with a BUILD_PATH and next_agent) or DESIGN_FEEDBACK (with specific, actionable feedback points) in the summary. Any other outcome is a failure."
+      - "If the architect approved (DESIGN_APPROVED), it must have called coding:make_design to produce a technical design document. If the architect gave DESIGN_FEEDBACK instead, this check passes — no TD is expected yet."
+      - "If the architect gave DESIGN_FEEDBACK, the feedback must reference specific sections of the FD and explain what needs improvement. If the architect approved (DESIGN_APPROVED) instead, this check passes — no feedback is expected."
+      - "The planner must have received the architect's done summary as PREVIOUS AGENT SUMMARY context. The planner should call make_plan to schedule the next agent or call done."

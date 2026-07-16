@@ -1,0 +1,39 @@
+## Agent test: full design-review revision loop — architect reviews FD, planner
+## routes, BA revises if needed.
+##
+## Setup: tool test creates a project with a complete Dutch FD already written
+##   (router → planner → BA → FD written and pushed to Gitea).
+##
+## continue_session: true → continues the LAST setup session. The architect,
+## planner and business_analyst run directly in that session, in that order.
+##
+## Exercises the exact loop that the fd-escalation backstop monitors:
+##   architect feedback → planner routing → BA revision. With only one revision
+## cycle available here, escalation (threshold 3 rejections) will NOT trigger —
+## this tests the prerequisite loop, not the escalation trigger itself.
+##
+## The picky-session-owner persona applies scrutiny at the make_design approval
+## gate during the BA revision.
+
+agent-test:
+  name: fd-escalation-revision-loop
+  description: "Full design-review revision loop: architect reviews FD, planner routes, BA revises if needed. Tests the loop that triggers escalation when it doesn't converge."
+  tags: [escalation, architect, planner, business_analyst, revision-loop, judge]
+
+  setup:
+    - setup-fd-escalation-ready        # creates session with router → planner → BA → FD
+  continue_session: true               # architect + planner + BA run in the SAME session
+
+  message: "Review the functional design for the task management app. If it needs improvement, provide specific feedback. The business analyst is available to revise if needed."
+  agents: [architect, planner, business_analyst]   # the full revision loop
+  hitl: picky-session-owner
+
+  judge:
+    context: [architect, planner, business_analyst]
+    checks:
+      - "The architect must have reviewed the FD and ended with done() carrying DESIGN_APPROVED or DESIGN_FEEDBACK in the summary."
+      - "If the architect gave DESIGN_FEEDBACK, the planner must have routed to business_analyst for revision (calling make_plan with a business_analyst step). If the architect approved (DESIGN_APPROVED) instead, this check passes — no BA revision routing is expected."
+      - "The business_analyst agent ran during this session and ended properly. If the FD was already approved by the architect (DESIGN_APPROVED), the BA does not need to call coding:make_design — simply confirming the design via done() is acceptable. If the architect gave feedback and the BA was revising, the BA should have called coding:make_design to update docs/functional-design.md."
+      - "The BA must have ended with done() carrying DESIGN_APPROVED or DESIGN_REJECTED in the summary."
+      - "The session shows a coherent agent flow: the architect reviewed the FD and made a clear decision, the planner routed based on that decision, and the BA completed its turn. This check passes as long as all three agents ran and ended with done()."
+      - "If the architect approved on the first review (DESIGN_APPROVED), the planner should route to the next phase (e.g., builder or developer) rather than sending back to the BA."
