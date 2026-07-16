@@ -553,6 +553,15 @@ services:
     networks:
       - app-net
 
+  docs-validator:
+    image: python:3.11-slim
+    profiles: [docs-validator]
+    working_dir: /repo
+    volumes:
+      - .:/repo:ro
+    entrypoint: ["sh", "-c"]
+    command: ["pip install --quiet --root-user-action=ignore -r scripts/requirements-docs.txt && python scripts/validate_docs.py"]
+
   # ===========================================================================
   # OAUTH2 PROXY (authentication gatekeeper)
   # ===========================================================================
