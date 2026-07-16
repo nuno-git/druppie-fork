@@ -10,6 +10,7 @@ caches in memory and refreshes near expiry) and are NEVER written to disk.
 """
 
 import logging
+from urllib.parse import quote
 
 import httpx
 from azure.identity.aio import ClientSecretCredential
@@ -53,7 +54,9 @@ class AzureDevOpsClient:
     def org_url(self) -> str:
         return self._org_url
 
-    async def _auth_header(self) -> dict[str, str]:
+    async def _auth_header(self, user_token: str | None = None) -> dict[str, str]:
+        if user_token:
+            return {"Authorization": f"Bearer {user_token}"}
         token = await self._credential.get_token(AZURE_DEVOPS_SCOPE)
         return {"Authorization": f"Bearer {token.token}"}
 
@@ -68,8 +71,8 @@ class AzureDevOpsClient:
             response=resp,
         )
 
-    async def _post(self, path: str, json_body: dict, *, api_version: str = API_VERSION) -> dict:
-        headers = await self._auth_header()
+    async def _post(self, path: str, json_body: dict, *, api_version: str = API_VERSION, user_token: str | None = None) -> dict:
+        headers = await self._auth_header(user_token)
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.post(
                 f"{self._org_url}/{path}",
@@ -80,8 +83,8 @@ class AzureDevOpsClient:
             self._raise_for_status(resp)
             return resp.json()
 
-    async def _get(self, path: str, params: dict | None = None, *, api_version: str = API_VERSION) -> dict:
-        headers = await self._auth_header()
+    async def _get(self, path: str, params: dict | None = None, *, api_version: str = API_VERSION, user_token: str | None = None) -> dict:
+        headers = await self._auth_header(user_token)
         query = {"api-version": api_version, **(params or {})}
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.get(
@@ -92,10 +95,10 @@ class AzureDevOpsClient:
             self._raise_for_status(resp)
             return resp.json()
 
-    async def _patch(self, path: str, operations: list[dict]) -> dict:
+    async def _patch(self, path: str, operations: list[dict], user_token: str | None = None) -> dict:
         import json as _json
 
-        headers = await self._auth_header()
+        headers = await self._auth_header(user_token)
         headers["Content-Type"] = "application/json-patch+json"
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.patch(
@@ -107,10 +110,10 @@ class AzureDevOpsClient:
             self._raise_for_status(resp)
             return resp.json()
 
-    async def _post_patch(self, path: str, operations: list[dict]) -> dict:
+    async def _post_patch(self, path: str, operations: list[dict], user_token: str | None = None) -> dict:
         import json as _json
 
-        headers = await self._auth_header()
+        headers = await self._auth_header(user_token)
         headers["Content-Type"] = "application/json-patch+json"
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.post(
@@ -122,18 +125,18 @@ class AzureDevOpsClient:
             self._raise_for_status(resp)
             return resp.json()
 
-    async def query_wiql(self, wiql: str, top: int) -> list[int]:
+    async def query_wiql(self, wiql: str, top: int, user_token: str | None = None) -> list[int]:
         """Run a WIQL query scoped to the configured project, return work-item ids."""
-        # Project goes in the URL path so the query can only ever hit this project.
         result = await self._post(
-            f"{self._project}/_apis/wit/wiql",
+            f"{self._project}/_apis/wit/wiql?$top={top}",
             {"query": wiql},
+            user_token=user_token,
         )
         work_items = result.get("workItems", [])
         return [wi["id"] for wi in work_items[:top]]
 
     async def get_work_items(
-        self, ids: list[int], fields: list[str] | None = None
+        self, ids: list[int], fields: list[str] | None = None, user_token: str | None = None
     ) -> list[dict]:
         """Batch-fetch work items by id, scoped to the configured project."""
         if not ids:
@@ -144,45 +147,48 @@ class AzureDevOpsClient:
         result = await self._post(
             f"{self._project}/_apis/wit/workitemsbatch",
             body,
+            user_token=user_token,
         )
         return result.get("value", [])
 
-    async def get_work_item(self, item_id: int) -> dict:
+    async def get_work_item(self, item_id: int, user_token: str | None = None) -> dict:
         """Fetch a single work item by id, scoped to the configured project."""
-        # Routing through the project path means an id belonging to another
-        # project returns 404, never another project's data.
         return await self._get(
             f"{self._project}/_apis/wit/workitems/{item_id}",
             {"$expand": "all"},
+            user_token=user_token,
         )
 
-    async def get_team_iterations(self) -> list[dict]:
+    async def get_team_iterations(self, user_token: str | None = None) -> list[dict]:
         """Fetch all iterations (sprints) for the default team."""
         result = await self._get(
             f"{self._project}/_apis/work/teamsettings/iterations",
+            user_token=user_token,
         )
         return result.get("value", [])
 
     async def create_work_item(
-        self, work_item_type: str, operations: list[dict]
+        self, work_item_type: str, operations: list[dict], user_token: str | None = None
     ) -> dict:
         """Create a work item in the configured project."""
         return await self._post_patch(
-            f"{self._project}/_apis/wit/workitems/${work_item_type}",
+            f"{self._project}/_apis/wit/workitems/${quote(work_item_type, safe='')}",
             operations,
+            user_token=user_token,
         )
 
     async def update_work_item(
-        self, item_id: int, operations: list[dict]
+        self, item_id: int, operations: list[dict], user_token: str | None = None
     ) -> dict:
         """Update a work item in the configured project."""
         return await self._patch(
             f"{self._project}/_apis/wit/workitems/{item_id}",
             operations,
+            user_token=user_token,
         )
 
     async def get_work_item_comments(
-        self, item_id: int, top: int | None = None, order: str = "desc"
+        self, item_id: int, top: int | None = None, order: str = "desc", user_token: str | None = None
     ) -> dict:
         """Fetch comments for a work item, scoped to the configured project."""
         params: dict[str, str] = {"order": order}
@@ -192,14 +198,16 @@ class AzureDevOpsClient:
             f"{self._project}/_apis/wit/workItems/{item_id}/comments",
             params,
             api_version="7.0-preview.3",
+            user_token=user_token,
         )
 
-    async def add_work_item_comment(self, item_id: int, text: str) -> dict:
+    async def add_work_item_comment(self, item_id: int, text: str, user_token: str | None = None) -> dict:
         """Add a comment to a work item, scoped to the configured project."""
         return await self._post(
             f"{self._project}/_apis/wit/workItems/{item_id}/comments",
             {"text": text},
             api_version="7.0-preview.3",
+            user_token=user_token,
         )
 
     async def close(self) -> None:

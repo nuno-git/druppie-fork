@@ -463,6 +463,10 @@ services:
       DATA_SOURCE_1: ${DATA_SOURCE_1:-}
       DATA_SOURCE_2: ${DATA_SOURCE_2:-}
       DATA_SOURCE_3: ${DATA_SOURCE_3:-}
+      DATA_SOURCE_4: ${DATA_SOURCE_4:-}
+      ENTRA_TENANT_ID: ${ENTRA_TENANT_ID:-}
+      ENTRA_CLIENT_ID: ${ENTRA_CLIENT_ID:-}
+      ENTRA_CLIENT_SECRET: ${ENTRA_CLIENT_SECRET:-}
     volumes:
       - workspace:/workspaces
     ports:
@@ -644,6 +648,10 @@ services:
       KEYCLOAK_PUBLIC_URL: ${KEYCLOAK_PUBLIC_URL:-}
       # Container name derived from COMPOSE_PROJECT_NAME (Docker Compose naming: <project>-<service>-1)
       GITEA_CONTAINER: ${COMPOSE_PROJECT_NAME:-druppie}-gitea-1
+      # Entra ID identity broker (optional — skipped if ENTRA_CLIENT_ID is empty)
+      ENTRA_TENANT_ID: ${ENTRA_TENANT_ID:-}
+      ENTRA_CLIENT_ID: ${ENTRA_CLIENT_ID:-}
+      ENTRA_CLIENT_SECRET: ${ENTRA_CLIENT_SECRET:-}
       # Override .env path for setup_gitea.py token writing
       ENV_FILE: /project/.env
     volumes:
@@ -681,6 +689,11 @@ services:
       KEYCLOAK_ISSUER_URL: http://${EXTERNAL_HOST:-localhost}:${KEYCLOAK_PORT:-8080}
       KEYCLOAK_REALM: druppie
       KEYCLOAK_CLIENT_ID: druppie-backend
+      KEYCLOAK_CLIENT_SECRET: ${KEYCLOAK_CLIENT_SECRET:-}
+      ENTRA_TENANT_ID: ${ENTRA_TENANT_ID:-}
+      ENTRA_CLIENT_ID: ${ENTRA_CLIENT_ID:-}
+      ENTRA_CLIENT_SECRET: ${ENTRA_CLIENT_SECRET:-}
+      ENTRA_ALLOWED_EMAILS: ${ENTRA_ALLOWED_EMAILS:-}
       LLM_PROVIDER: ${LLM_PROVIDER:-zai}
       LLM_FORCE_PROVIDER: ${LLM_FORCE_PROVIDER:-}
       LLM_FORCE_MODEL: ${LLM_FORCE_MODEL:-}
@@ -778,6 +791,11 @@ services:
       KEYCLOAK_ISSUER_URL: ${KEYCLOAK_PUBLIC_URL:-http://${EXTERNAL_HOST:-localhost}:${KEYCLOAK_PORT:-8180}}
       KEYCLOAK_REALM: druppie
       KEYCLOAK_CLIENT_ID: druppie-backend
+      KEYCLOAK_CLIENT_SECRET: ${KEYCLOAK_CLIENT_SECRET:-}
+      ENTRA_TENANT_ID: ${ENTRA_TENANT_ID:-}
+      ENTRA_CLIENT_ID: ${ENTRA_CLIENT_ID:-}
+      ENTRA_CLIENT_SECRET: ${ENTRA_CLIENT_SECRET:-}
+      ENTRA_ALLOWED_EMAILS: ${ENTRA_ALLOWED_EMAILS:-}
       LLM_PROVIDER: ${LLM_PROVIDER:-zai}
       LLM_FORCE_PROVIDER: ${LLM_FORCE_PROVIDER:-}
       LLM_FORCE_MODEL: ${LLM_FORCE_MODEL:-}
