@@ -8,7 +8,7 @@ supersedes: null
 superseded_by: null
 linked_adrs: ["docs/adrs/006-translation-subsystem.md"]
 linked_research: []
-linked_specs: ["testing/specs/features/translation-subsystem.feature"]
+linked_specs: ["docs/specs/006-translation-subsystem.feature"]
 ---
 
 # PRD 006: Bilingual Translation Subsystem
@@ -50,4 +50,4 @@ None. The feature is implemented.
 ## Linked Documents
 
 - ADR 006: docs/adrs/006-translation-subsystem.md
-- Spec: testing/specs/features/translation-subsystem.feature
+- Spec: docs/specs/006-translation-subsystem.feature

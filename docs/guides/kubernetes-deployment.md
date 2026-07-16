@@ -1,8 +1,7 @@
 > **⚠️ STALE** — This guide describes the old kind-based local deployment.
 > The production deployment has migrated to Hetzner K3s.
 > - **`iac/README.md`** — current Hetzner K3s setup
-> - **`docs/research/008-kubernetes-as-built-analysis.md`** — as-built analysis (when it exists)
-> - **`docs/reference/as-built-architecture.md`** — as-built architecture reference
+> - **`docs/research/007-kubernetes-as-built-analysis.md`** — as-built analysis
 > See `iac/README.md` for current setup.
 
 # Kubernetes Deployment Guide

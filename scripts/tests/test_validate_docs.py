@@ -24,7 +24,7 @@ def mini_repo(tmp_path):
     for folder, schema_rel in validate_docs.DOC_TYPES.items():
         (tmp_path / folder).mkdir(parents=True)
         shutil.copy(REPO_ROOT / schema_rel, tmp_path / schema_rel)
-    (tmp_path / "testing/specs/features").mkdir(parents=True)
+    (tmp_path / "docs/specs").mkdir(parents=True)
     return tmp_path
 
 
@@ -246,27 +246,27 @@ def test_superseded_without_superseded_by_is_error(mini_repo):
 
 
 def test_spec_missing_reference_is_error(mini_repo):
-    feat = mini_repo / "testing/specs/features/thing.feature"
+    feat = mini_repo / "docs/specs/thing.feature"
     feat.write_text(
         "@prd docs/prds/404-missing.md\nFeature: x\n", encoding="utf-8"
     )
-    results = validate_docs.check_spec_files(mini_repo)
+    checked, results = validate_docs.check_spec_files(mini_repo)
     rel, errors = results[0]
     assert any("referenced file does not exist" in e for e in errors)
 
 
 def test_spec_placeholder_is_skipped(mini_repo):
-    feat = mini_repo / "testing/specs/features/thing.feature"
+    feat = mini_repo / "docs/specs/thing.feature"
     feat.write_text("@prd <feature-name>\nFeature: x\n", encoding="utf-8")
-    results = validate_docs.check_spec_files(mini_repo)
+    checked, results = validate_docs.check_spec_files(mini_repo)
     rel, errors = results[0]
     assert errors == []
 
 
 def test_spec_template_is_skipped(mini_repo):
-    tmpl = mini_repo / "testing/specs/features/TEMPLATE.feature"
+    tmpl = mini_repo / "docs/specs/TEMPLATE.feature"
     tmpl.write_text("@prd docs/prds/404-missing.md\n", encoding="utf-8")
-    results = validate_docs.check_spec_files(mini_repo)
+    checked, results = validate_docs.check_spec_files(mini_repo)
     assert results == []
 
 
@@ -274,9 +274,9 @@ def test_spec_valid_reference_no_error(mini_repo):
     (mini_repo / "docs/prds/001-product.md").write_text(
         VALID_PRD.format(id="001"), encoding="utf-8"
     )
-    feat = mini_repo / "testing/specs/features/thing.feature"
+    feat = mini_repo / "docs/specs/thing.feature"
     feat.write_text("@prd docs/prds/001-product.md\n", encoding="utf-8")
-    results = validate_docs.check_spec_files(mini_repo)
+    checked, results = validate_docs.check_spec_files(mini_repo)
     rel, errors = results[0]
     assert errors == []
 

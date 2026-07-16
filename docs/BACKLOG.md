@@ -248,7 +248,7 @@ Last updated: 2026-06-11
 
 ### ~~Language Matching~~ ✅ DONE
 
-- **Implemented:** Automated bilingual translation. The platform detects the user's language, translates user messages to English for agents, and translates all agent output (HITL questions, design documents, summaries) back to the user's language. Agents always work in English; the platform handles translation transparently via a configurable translation model (legacy default Gemma 3 27B). See [docs/reference/TRANSLATION.md](reference/TRANSLATION.md) for details.
+- **Implemented:** Automated bilingual translation. The platform detects the user's language, translates user messages to English for agents, and translates all agent output (HITL questions, design documents, summaries) back to the user's language. Agents always work in English; the platform handles translation transparently via a configurable translation model (legacy default Gemma 3 27B). See [docs/guides/translation-wiring.md](guides/translation-wiring.md) for details.
 
 ### File Upload: Context Window Guardrails for Large Attachments
 
@@ -425,7 +425,7 @@ Last updated: 2026-06-11
   - Use DuckDB/Polars to run SQL-style aggregation directly over CSV/Parquet with column projection (no full in-memory materialization).
   - Cache the read/aggregation within a session so follow-up charts don't re-scan.
   - Chunked/streaming aggregation for files too large to hold in memory.
-- **Priority:** Medium — removes the in-memory ceiling flagged in `docs/reference/mcp/data-access.md`.
+- **Priority:** Medium — removes the in-memory ceiling flagged in `docs/guides/data-access-mcp-contract.md`.
 
 ### Visualization — Smarter Graphing
 
@@ -582,7 +582,7 @@ Deze items zijn out-of-scope voor de eerste Kubernetes migratie (Story 3) en wor
 
 ## Coding Agent Quality (salvaged from sprint docs)
 
-> Salvaged from the archived `docs/reference/stories/coding-agent-supplement.md` and `docs/reference/stories/sprint-overview-coding-agent.md`. The as-built runtime is documented in `docs/TECHNICAL.md` §11.
+> Salvaged from the archived coding-agent stories (now removed; their content was fully superseded by the ADRs/PRDs above). The as-built runtime is documented in `docs/TECHNICAL.md` §11.
 
 | Item | Source | Description |
 |------|--------|-------------|

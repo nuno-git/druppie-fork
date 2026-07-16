@@ -22,8 +22,10 @@ linked_adrs:
 > [ADR 005](../adrs/005-dev-prod-infrastructure.md); this research is the
 > evidence base behind it.
 
-> **Source:** Formalized from `docs/reference/as-built-architecture.md`
-> (verified against live cluster state on 2026-06-16, branch `pr-222` / PR #237).
+> **Source:** Original raw data from the now-removed as-built-architecture
+> reference (formerly under the deleted `reference/` folder) has been fully
+> absorbed into this research (verified against live cluster state on 2026-06-16,
+> branch `pr-222` / PR #237).
 
 ## Question
 
@@ -65,8 +67,8 @@ anyone consuming the cluster for dev/prod parity work.
 - Cross-referenced each finding against the relevant section of
   [ADR 002](../adrs/002-kubernetes-migration.md) to classify it as *match*,
   *intentional divergence*, or *tech debt*.
-- Source of truth: `docs/reference/as-built-architecture.md` (as-built
-  documentation, verified 2026-06-16).
+- Source of truth: this research (originally formalized from the now-absorbed
+  as-built-architecture reference, verified 2026-06-16).
 
 ## Findings
 

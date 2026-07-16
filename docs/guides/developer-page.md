@@ -60,4 +60,4 @@ The current core agents are:
 
 - ADR: `docs/adrs/003-developer-agent-testing-page.md`
 - PRD: `docs/prds/003-developer-agent-testing-page.md`
-- Spec: `testing/specs/features/developer-agent-testing-page.feature`
+- Spec: `docs/specs/003-developer-agent-testing-page.feature`

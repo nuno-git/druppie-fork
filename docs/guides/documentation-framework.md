@@ -14,30 +14,29 @@ This is the practical guide to how we document decisions and specs in this repo.
 | **PRD** | The feature: the problem and goal from the user's side | Start of a non-trivial feature | `docs/prds/TEMPLATE.md` |
 | **Research** | *All* options considered + their trade-offs / weighing | Only when the choice isn't obvious | `docs/research/TEMPLATE.md` |
 | **ADR** | *Only* the decision that was made + its consequences, kept concise (Context / Decision / Consequences) — **no** weighing of alternatives | When you make a decision worth remembering | `docs/adrs/TEMPLATE.md` |
-| **Spec** | Executable acceptance criteria (Gherkin) | Before implementing, to pin behaviour | `testing/specs/features/TEMPLATE.feature` |
+| **Spec** | Executable acceptance criteria (Gherkin) | Before implementing, to pin behaviour | `docs/specs/TEMPLATE.feature` |
 
 > **ADR vs Research.** Keep them apart: the **comparison of alternatives and their trade-offs lives in the Research doc**, not in the ADR. The **ADR states only the decision that was taken and what follows from it** (Context / Decision / Consequences), briefly. If you catch yourself weighing options inside an ADR, that weighing belongs in a Research doc — link the ADR to it via `linked_research`.
 
 ## Orientation artefacts (no template, optional)
 
-Next to the four *templated* types above (PRD / Research / ADR / Spec) there are two lightweight, **optional** "orientation" categories. They have **no template and no schema**, and they are **not checked by the validator (Check B)**:
+Next to the four *templated* types above (PRD / Research / ADR / Spec) there is one lightweight, **optional** "orientation" category. It has **no template and no schema**, and it is **not checked by the validator (Check B)**:
 
 | Type | What it captures | Location |
 |------|------------------|----------|
 | **Guide** | How-to / explanation / conventions / runbooks — *"how do I do X"* | `docs/guides/` |
-| **Reference** | Naslag / subsystem- & architecture docs — *"what exists / how does it hang together"* | `docs/reference/` |
 
-- They carry **no mandatory frontmatter/template** and are **not schema-validated**, but they **do count as valid documentation for the mandatory-docs gate (Check A)**.
-- **Back-links:** a guide/reference **SHOULD** link back to the ADR/PRD/Spec that owns the underlying decision/requirement/behaviour. This is a recommendation, not a hard-enforced rule.
+- It carries **no mandatory frontmatter/template** and is **not schema-validated**, but it **does count as valid documentation for the mandatory-docs gate (Check A)**.
+- **Back-links:** a guide **SHOULD** link back to the ADR/PRD/Spec that owns the underlying decision/requirement/behaviour. This is a recommendation, not a hard-enforced rule.
 
 ### Decompose first: pick As-1 or As-2
 
 Before writing, decide which axis a doc sits on:
 
 - **As-1 — templated (ADR / PRD / Spec):** if the doc records a **decision, a requirement, or testable behaviour**, use a templated type. This holds **even when you are describing how something already works today** — current behaviour does **not** disqualify an ADR or Spec. Lens ≠ time: an **ADR** is about an *already-taken decision*, and a **Spec** describes exactly *current/required behaviour*.
-- **As-2 — orientation (guide / reference):** if the doc is **pure orientation or naslag**, use a guide or reference, **with a back-link** to the owning ADR/PRD/Spec.
+- **As-2 — orientation (guide):** if the doc is **pure orientation or naslag**, use a guide, **with a back-link** to the owning ADR/PRD/Spec.
 
-Reference is **not an escape hatch** to avoid writing ADRs or Specs: a decision or a testable behaviour still needs its templated home.
+A guide is **not an escape hatch** to avoid writing ADRs or Specs: a decision or a testable behaviour still needs its templated home.
 
 ## The flow
 
@@ -81,7 +80,7 @@ shape is the same — a `status` plus a `superseded_by`:
 | Spec (`.feature`) | comment tags at the top of the file | `# @status active`, `# @superseded_by <file>` |
 
 - **ADR statuses:** `proposed | accepted | deprecated | superseded` (see `docs/adrs/TEMPLATE.md`).
-- **Spec statuses:** `draft | active | superseded` (see `testing/specs/features/TEMPLATE.feature`).
+- **Spec statuses:** `draft | active | superseded` (see `docs/specs/TEMPLATE.feature`).
 - **PRD / Research** use the same frontmatter pattern — see their templates for the exact
   status values.
 - `scripts/validate_docs.py` enforces this in CI: a `superseded` doc **must** name its
@@ -97,7 +96,7 @@ shape is the same — a `status` plus a `superseded_by`:
   into `docs/prds/NNN-title.md`; connect it to its motivation via `linked_adrs` /
   `linked_research`.
 - **Behavioural / acceptance notes → Spec.** Rewrite the behaviour as Gherkin scenarios in
-  `testing/specs/features/NNN-name.feature`, starting from `TEMPLATE.feature`. Fill in the
+  `docs/specs/NNN-name.feature`, starting from `TEMPLATE.feature`. Fill in the
   `# @status` / `# @superseded_by` block and the `@prd` / `@adr` tags so the spec links
   back to its PRD and ADR.
 
@@ -133,7 +132,7 @@ replacement.
 
 ## Enforcement (checks)
 
-Docs in `docs/{adrs,prds,research}` and `testing/specs/features` are checked automatically (PBI 9744):
+Docs in `docs/{adrs,prds,research}` and `docs/specs` are checked automatically (PBI 9744):
 
 - **Locally (optional):** `docker compose --profile docs-validator run --rm docs-validator` — or opt in to [lefthook](https://github.com/evilmartians/lefthook) via `./scripts/setup-hooks.sh` (or `lefthook install`) to run it before each commit. The lefthook hook is optional/opt-in local convenience only; CI is the binding gate.
 - **CI (binding):** `.github/workflows/docs.yml` runs on every PR, with two checks:

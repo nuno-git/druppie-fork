@@ -68,7 +68,7 @@ _CODE_RE = re.compile(r"^(druppie/|frontend/src/)")
 
 # Doc paths that satisfy the requirement.
 _DOC_RE = re.compile(
-    r"^(docs/(adrs|prds|research|reference|guides)/|testing/specs/features/)"
+    r"^(docs/(adrs|prds|research|specs|guides)/)"
 )
 
 

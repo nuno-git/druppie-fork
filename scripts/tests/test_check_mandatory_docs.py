@@ -94,7 +94,7 @@ def test_frontend_non_src_does_not_trigger_gate():
 
 def test_spec_feature_counts_as_docs():
     ok, reason = cmd.mandatory_gate(
-        ["druppie/services/x.py", "testing/specs/features/foo.feature"]
+        ["druppie/services/x.py", "docs/specs/foo.feature"]
     )
     assert ok is True
 

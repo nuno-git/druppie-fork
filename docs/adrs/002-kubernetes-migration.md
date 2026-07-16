@@ -21,7 +21,7 @@ linked_research: docs/research/006-kubernetes-strategy.md
 | **Deciders** | Druppie architectuurteam |
 | **Referentie** | [KUBERNETES-STRATEGY.md](../research/006-kubernetes-strategy.md) |
 
-> **Note (huidige staat):** Deze beslissingen reflecteren de live Hetzner K3s deployment. Het as-built systeem is gedocumenteerd in `docs/reference/as-built-architecture.md`. Een migratie naar een gedeeld lokaal Rancher cluster is gepland. Beslissingen die hieronder gemarkeerd zijn als *superseded pending local-Rancher migratie* worden herzien voor lokale hardware.
+> **Note (huidige staat):** Deze beslissingen reflecteren de live Hetzner K3s deployment. Het as-built systeem is gedocumenteerd in `docs/research/007-kubernetes-as-built-analysis.md`. Een migratie naar een gedeeld lokaal Rancher cluster is gepland. Beslissingen die hieronder gemarkeerd zijn als *superseded pending local-Rancher migratie* worden herzien voor lokale hardware.
 
 ---
 

@@ -12,9 +12,9 @@ rationale or the detailed guard behaviour.
 - **Translation policy & failure modes (ADR 018, proposed):** [`docs/adrs/018-translation-policy-and-failure-modes.md`](../adrs/018-translation-policy-and-failure-modes.md)
   — why agents are monolingual English, why the platform (not agents) translates, why language is
   locked early, and the fail-loud policy (including the known gaps as consequences).
-- **Testable behaviour — happy path:** [`testing/specs/features/translation-subsystem.feature`](../../testing/specs/features/translation-subsystem.feature)
+- **Testable behaviour — happy path:** [`docs/specs/006-translation-subsystem.feature`](../specs/006-translation-subsystem.feature)
   — the core translation flow.
-- **Testable behaviour — failure guards:** [`testing/specs/features/translation-guards.feature`](../../testing/specs/features/translation-guards.feature)
+- **Testable behaviour — failure guards:** [`docs/specs/018-translation-guards.feature`](../specs/018-translation-guards.feature)
   — hallucination guard, label retry, `[NIET VERTAALD]` markers, fail-loud notices, ask-first
   fallback.
 
@@ -119,7 +119,7 @@ Tracked as negative consequences in [ADR 018](../adrs/018-translation-policy-and
 - Judge checks: `testing/checks/ba-fd-bilingual.yaml`, `ba-fd-english-only.yaml`,
   `ba-fd-in-english.yaml`, `architect-reads-english-fd.yaml`.
 - Unit: `druppie/tests/test_translation_validation.py`.
-- Behaviour spec: `testing/specs/features/translation-guards.feature`.
+- Behaviour spec: `docs/specs/018-translation-guards.feature`.
 
 ## History (evolution — why older docs are stale)
 

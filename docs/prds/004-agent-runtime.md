@@ -8,7 +8,7 @@ supersedes: null
 superseded_by: null
 linked_adrs: ["docs/adrs/004-agent-runtime.md"]
 linked_research: ["docs/research/004-agent-runtime.md"]
-linked_specs: ["testing/specs/features/agent-runtime.feature"]
+linked_specs: ["docs/specs/004-agent-runtime.feature"]
 ---
 
 # PRD 004: Native Agent Runtime

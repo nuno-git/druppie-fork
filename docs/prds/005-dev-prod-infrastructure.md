@@ -8,7 +8,7 @@ supersedes: null
 superseded_by: null
 linked_adrs: ["docs/adrs/005-dev-prod-infrastructure.md", "docs/adrs/002-kubernetes-migration.md"]
 linked_research: ["docs/research/006-kubernetes-strategy.md"]
-linked_specs: ["testing/specs/features/dev-prod-infrastructure.feature"]
+linked_specs: ["docs/specs/005-dev-prod-infrastructure.feature"]
 ---
 
 # PRD 005: Dev and Prod Infrastructure
@@ -67,4 +67,4 @@ sandbox behavior in both.
 - ADR 005: `docs/adrs/005-dev-prod-infrastructure.md`
 - ADR 002: `docs/adrs/002-kubernetes-migration.md`
 - Research 006: `docs/research/006-kubernetes-strategy.md`
-- Spec: `testing/specs/features/dev-prod-infrastructure.feature`
+- Spec: `docs/specs/005-dev-prod-infrastructure.feature`

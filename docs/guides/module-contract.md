@@ -1,14 +1,5 @@
 # Druppie Module Specification — Technical Contract
 
-> **⚠️ SUPERSEDED (behavioral layer)** — The testable acceptance criteria for the
-> Module contract now live in the executable Gherkin spec:
-> - **Spec** (`testing/specs/features/module-contract.feature`) — acceptance Scenarios
-> - **Research** (`docs/research/003-module-convention.md`) — design rationale & approach selection
->
-> This reference is retained as the full technical contract (MODULE.yaml structure,
-> version system, SDK, auth, usage tracking, RBAC, DB tables). Update the spec for
-> behavior changes; keep this file for technical detail.
-
 > **Status**: Specification (ready for team review)
 > **Date**: 2026-03-10 (versioning redesign), original 2026-02-24
 > **Prerequisite**: Read `docs/research/003-module-convention.md` for the design research and approach selection

@@ -183,7 +183,7 @@ def check_spec_files(root):
     """
     results = []  # (relpath, errors)
     checked = 0
-    features_dir = root / "testing/specs/features"
+    features_dir = root / "docs/specs"
     if not features_dir.is_dir():
         return checked, results
 

@@ -8,7 +8,7 @@ supersedes: null
 superseded_by: null
 linked_adrs: ["docs/adrs/003-developer-agent-testing-page.md"]
 linked_research: []
-linked_specs: ["testing/specs/features/developer-agent-testing-page.feature"]
+linked_specs: ["docs/specs/003-developer-agent-testing-page.feature"]
 ---
 
 ## Problem
@@ -57,5 +57,5 @@ No open questions remain. The feature is implemented and in active use.
 ## Linked Documents
 
 - ADRs: `docs/adrs/003-developer-agent-testing-page.md`
-- Specs: `testing/specs/features/developer-agent-testing-page.feature`
+- Specs: `docs/specs/003-developer-agent-testing-page.feature`
 - Guide: `docs/guides/developer-page.md`

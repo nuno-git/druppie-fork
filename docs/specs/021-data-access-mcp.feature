@@ -2,14 +2,14 @@
 # @superseded_by
 # @adr
 # @prd docs/prds/009-data-access-mcp.md
-# Source reference: docs/reference/mcp/data-access.md (full technical contract; behavioral layer superseded by this spec)
+# Source reference: docs/guides/data-access-mcp-contract.md (full technical contract; behavioral layer superseded by this spec)
 
 @prd docs/prds/009-data-access-mcp.md
 Feature: Data Access MCP
   # The Data Access MCP lets agents read and download data from heterogeneous
   # sources (Azure Data Lake, Azure SQL) through a single adapter-based tool set.
   # Full technical detail — tool catalog, config format, security boundaries —
-  # lives in docs/reference/mcp/data-access.md. This spec holds only the
+  # lives in docs/guides/data-access-mcp-contract.md. This spec holds only the
   # acceptance Scenarios below.
 
   Scenario: list_sources returns configured sources without exposing secrets

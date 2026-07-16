@@ -42,7 +42,7 @@ We adopt a spec-driven documentation standard:
   (`docs/{adrs,prds,research}/*.schema.json`) defines the required fields.
 - **Language:** English is the source of truth; frontmatter, ids and status are never translated.
 - **Templates** live at fixed locations: `docs/adrs/TEMPLATE.md`, `docs/prds/TEMPLATE.md`,
-  `docs/research/TEMPLATE.md`, `testing/specs/features/TEMPLATE.feature`.
+  `docs/research/TEMPLATE.md`, `docs/specs/TEMPLATE.feature`.
 
 ## Consequences
 

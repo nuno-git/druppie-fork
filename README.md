@@ -233,12 +233,12 @@ GITEA_PORT=3101
 | [docs/adrs/](docs/adrs/) | Architectural Decision Records (ADRs 001-017) |
 | [docs/prds/](docs/prds/) | Product Requirements Documents (PRDs 001-013) |
 | [docs/research/](docs/research/) | Research and analysis (001-007) |
-| [testing/specs/features/](testing/specs/features/) | Executable behavioral specs (Gherkin) |
+| [docs/specs/](docs/specs/) | Executable behavioral specs (Gherkin) |
 | [docs/guides/](docs/guides/) | Operational guides |
 
 ## Documentation checks
 
-Docs under `docs/adrs`, `docs/prds`, `docs/research` and `testing/specs/features` are validated against the documentation standard (PBI 9744).
+Docs under `docs/adrs`, `docs/prds`, `docs/research` and `docs/specs` are validated against the documentation standard (PBI 9744).
 
 Run the check locally (no host Python needed — it runs in Docker):
 

@@ -22,7 +22,7 @@ When making significant changes, use the formal documentation framework:
 - `docs/adrs/` - Architectural decisions (ADRs)
 - `docs/prds/` - Product requirements (PRDs)
 - `docs/research/` - Research and analysis
-- `testing/specs/features/` -Executable behavioral specs (Gherkin)
+- `docs/specs/` -Executable behavioral specs (Gherkin)
 - `docs/guides/` - Operational guides
 
 ### Documentation standard (PBI 9742–9744)

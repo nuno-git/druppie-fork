@@ -8,7 +8,7 @@ supersedes: null
 superseded_by: null
 linked_adrs: []
 linked_research: ["docs/research/003-module-convention.md"]
-linked_specs: ["testing/specs/features/module-contract.feature"]
+linked_specs: ["docs/specs/020-module-contract.feature"]
 ---
 
 # PRD 008: Module System
@@ -58,5 +58,5 @@ None: feature is implemented and in production.
 ## Linked Documents
 
 - **Research:** Research 003 (`docs/research/003-module-convention.md`) — Module Convention design rationale
-- **Specs:** `testing/specs/features/module-contract.feature` — Module contract acceptance scenarios
-- **Technical reference:** `docs/reference/module-specification.md` — Full technical contract (MODULE.yaml structure, version system, SDK, auth, usage tracking, RBAC, DB tables)
+- **Specs:** `docs/specs/020-module-contract.feature` — Module contract acceptance scenarios
+- **Technical reference:** `docs/guides/module-contract.md` — Full technical contract (MODULE.yaml structure, version system, SDK, auth, usage tracking, RBAC, DB tables)

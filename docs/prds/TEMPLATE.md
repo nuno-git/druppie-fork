@@ -9,7 +9,7 @@ supersedes: null                      # PRD id string this replaces (e.g. "003")
 superseded_by: null                   # PRD id string that replaces this (e.g. "005") or null
 linked_adrs: []                       # List of ADR file paths, e.g. ["docs/adrs/001-choice-of-state-management.md"]
 linked_research: []                   # List of research doc paths, e.g. ["docs/research/001-auth-providers.md"]
-linked_specs: []                      # List of .feature file paths, e.g. ["testing/specs/features/approval-workflow.feature"]
+linked_specs: []                      # List of .feature file paths, e.g. ["docs/specs/010-approval-workflow.feature"]
 linked_workitem: null                 # URL to the Azure DevOps user story / work item that motivates this PRD (or null)
 ---
 

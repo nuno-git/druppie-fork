@@ -3,7 +3,7 @@
 > - **ADRs 007-014** (`docs/adrs/`) — architectural decisions (layering, data modeling, LLM providers, approvals, summary relay, tool schema, pause/resume, cron)
 > - **PRDs 008-013** (`docs/prds/`) — product requirements (module system, data access, approvals, session lifecycle, LLM provider management, scheduled jobs)
 > - **Research 007** (`docs/research/007-kubernetes-as-built-analysis.md`) — K8s as-built analysis
-> - **Specs 007-014** (`testing/specs/features/`) — executable behavioral specifications
+> - **Specs 007-014** (`docs/specs/`) — executable behavioral specifications
 >
 > This file is retained as the canonical as-built reference. Do not add new
 > decisions here — create formal ADRs/PRDs/Specs instead.
@@ -614,7 +614,7 @@ standards.
 
 ### 6.9 Data Access Server (port 9010)
 
-Adapter-based access to heterogeneous data sources (Azure SQL, Azure Data Lake) plus inline chart generation. Full reference: [`docs/reference/mcp/data-access.md`](reference/mcp/data-access.md).
+Adapter-based access to heterogeneous data sources (Azure SQL, Azure Data Lake) plus inline chart generation. Full reference: [`docs/guides/data-access-mcp-contract.md`](guides/data-access-mcp-contract.md).
 
 | Tool | Approval | Description |
 |------|----------|-------------|

@@ -8,7 +8,7 @@ supersedes: null
 superseded_by: null
 linked_adrs: []
 linked_research: []
-linked_specs: ["testing/specs/features/platform-standards-files.feature"]
+linked_specs: ["docs/specs/019-platform-standards-files.feature"]
 ---
 
 # PRD: Platform Standards Files
@@ -119,5 +119,4 @@ as clickable Gitea URLs.
 
 - ADRs: _(none — this is a product requirement, not an architectural decision)_
 - Research: _(none)_
-- Specs: `testing/specs/features/platform-standards-files.feature`
-- Source reference: `docs/reference/platform-standards.md` (superseded by this PRD)
+- Specs: `docs/specs/019-platform-standards-files.feature`

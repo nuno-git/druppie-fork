@@ -8,7 +8,7 @@ supersedes: null
 superseded_by: null
 linked_adrs: []
 linked_research: []
-linked_specs: ["testing/specs/features/data-access-mcp.feature"]
+linked_specs: ["docs/specs/021-data-access-mcp.feature"]
 ---
 
 # PRD 009: Data Access MCP
@@ -61,5 +61,5 @@ A single MCP server with an adapter-based architecture that provides a unified t
 
 ## Linked Documents
 
-- **Specs:** `testing/specs/features/data-access-mcp.feature` — Data Access MCP acceptance scenarios
-- **Technical reference:** `docs/reference/mcp/data-access.md` — Full technical contract (tool catalog, config format, security boundaries, adapter details)
+- **Specs:** `docs/specs/021-data-access-mcp.feature` — Data Access MCP acceptance scenarios
+- **Technical reference:** `docs/guides/data-access-mcp-contract.md` — Full technical contract (tool catalog, config format, security boundaries, adapter details)

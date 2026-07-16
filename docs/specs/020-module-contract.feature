@@ -3,14 +3,14 @@
 # @adr
 # @prd docs/prds/008-module-system.md
 # Linked research: docs/research/003-module-convention.md (Module Convention — design rationale & approach selection)
-# Source reference: docs/reference/module-specification.md (full technical contract; behavioral layer superseded by this spec)
+# Source reference: docs/guides/module-contract.md (full technical contract; behavioral layer superseded by this spec)
 
 @prd docs/prds/008-module-system.md
 Feature: Module contract
   # The Druppie Module contract: how a module is structured (MODULE.yaml),
   # versioned, called, authenticated, metered, and discovered. The "why" lives in
   # the linked research 003; the full technical contract lives in
-  # docs/reference/module-specification.md. This spec holds only the acceptance
+  # docs/guides/module-contract.md. This spec holds only the acceptance
   # Scenarios below.
 
   Scenario: MODULE.yaml declares identity and active versions
