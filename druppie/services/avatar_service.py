@@ -1,35 +1,31 @@
 """Avatar service — fetches and caches user profile photos from Microsoft Graph."""
 
-import os
 import time
-from pathlib import Path
+from uuid import UUID
 
 import httpx
 import structlog
+from sqlalchemy.orm import Session
+
+from druppie.db.models.user import UserAvatar
 
 logger = structlog.get_logger()
 
-AVATAR_DIR = Path(os.getenv("WORKSPACE_PATH", "/app/workspace")) / "avatars"
 MAX_PHOTO_BYTES = 1_048_576  # 1 MB
 CACHE_TTL_SECONDS = 86400  # 24 hours
 ALLOWED_CONTENT_TYPES = {"image/jpeg", "image/png", "image/gif", "image/bmp"}
 
 
-def _avatar_path(user_id: str) -> Path:
-    safe_id = user_id.replace("/", "").replace("..", "").replace("\x00", "")
-    return AVATAR_DIR / f"{safe_id}.jpg"
-
-
-def get_cached_avatar(user_id: str) -> tuple[bytes, str] | None:
-    path = _avatar_path(user_id)
-    if not path.exists():
+def get_cached_avatar(db: Session, user_id: str) -> tuple[bytes, str] | None:
+    avatar = db.query(UserAvatar).filter(UserAvatar.user_id == UUID(user_id)).first()
+    if not avatar:
         return None
-    if time.time() - path.stat().st_mtime > CACHE_TTL_SECONDS:
+    if avatar.updated_at and (time.time() - avatar.updated_at.timestamp()) > CACHE_TTL_SECONDS:
         return None
-    return path.read_bytes(), "image/jpeg"
+    return avatar.image_data, avatar.content_type
 
 
-async def fetch_and_cache_avatar(user_id: str, graph_token: str) -> bool:
+async def fetch_and_cache_avatar(db: Session, user_id: str, graph_token: str) -> bool:
     url = "https://graph.microsoft.com/v1.0/me/photo/$value"
     try:
         async with httpx.AsyncClient() as client:
@@ -58,12 +54,18 @@ async def fetch_and_cache_avatar(user_id: str, graph_token: str) -> bool:
             logger.warning("avatar_too_small", user_id=user_id, size=len(data))
             return False
 
-        AVATAR_DIR.mkdir(parents=True, exist_ok=True)
-        path = _avatar_path(user_id)
-        path.write_bytes(data)
-        logger.info("avatar_cached", user_id=user_id, size=len(data))
+        uid = UUID(user_id)
+        existing = db.query(UserAvatar).filter(UserAvatar.user_id == uid).first()
+        if existing:
+            existing.image_data = data
+            existing.content_type = content_type
+        else:
+            db.add(UserAvatar(user_id=uid, image_data=data, content_type=content_type))
+        db.commit()
+        logger.info("avatar_cached_to_db", user_id=user_id, size=len(data))
         return True
 
     except Exception as e:
         logger.warning("avatar_fetch_error", user_id=user_id, error=str(e))
+        db.rollback()
         return False

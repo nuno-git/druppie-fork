@@ -383,6 +383,49 @@ class KeycloakAdmin:
             print(f"[ERROR] Failed to set frontendUrl: {update.text}")
             return False
 
+    def create_client_scope(self, realm: str, scope_config: dict):
+        """Create a client scope with its protocol mappers."""
+        url = f"{self.base_url}/admin/realms/{realm}/client-scopes"
+        name = scope_config.get("name", "unknown")
+
+        response = requests.post(url, json=scope_config, headers=self._headers())
+        if response.status_code == 409:
+            print(f"  [OK] Client scope '{name}' already exists")
+        elif response.status_code == 201:
+            print(f"  [OK] Created client scope '{name}'")
+        else:
+            print(f"  [ERROR] Failed to create client scope '{name}': {response.text}")
+
+    def _get_client_scope_id(self, realm: str, scope_name: str) -> str | None:
+        """Get internal UUID for a client scope by name."""
+        url = f"{self.base_url}/admin/realms/{realm}/client-scopes"
+        response = requests.get(url, headers=self._headers())
+        if response.status_code == 200:
+            for scope in response.json():
+                if scope.get("name") == scope_name:
+                    return scope["id"]
+        return None
+
+    def assign_default_client_scope(self, realm: str, client_id: str, scope_name: str):
+        """Add a client scope as a default scope on a client."""
+        client_uuid = self._get_client_uuid(realm, client_id)
+        if not client_uuid:
+            print(f"  [WARN] Client '{client_id}' not found for scope assignment")
+            return
+        scope_uuid = self._get_client_scope_id(realm, scope_name)
+        if not scope_uuid:
+            print(f"  [WARN] Client scope '{scope_name}' not found")
+            return
+        url = (
+            f"{self.base_url}/admin/realms/{realm}"
+            f"/clients/{client_uuid}/default-client-scopes/{scope_uuid}"
+        )
+        response = requests.put(url, headers=self._headers())
+        if response.status_code in [200, 204]:
+            print(f"  [OK] Assigned scope '{scope_name}' to client '{client_id}'")
+        else:
+            print(f"  [WARN] Could not assign scope '{scope_name}': {response.text}")
+
     def create_client(self, realm: str, client_config: dict):
         """Create or update an OAuth2 client."""
         url = f"{self.base_url}/admin/realms/{realm}/clients"
@@ -480,6 +523,12 @@ def main():
             roles=user.get("realmRoles", []),
         )
 
+    # Create client scopes (from realm.yaml)
+    print("\n[STEP 3b] Creating client scopes...")
+    client_scopes = realm_config.get("clientScopes", [])
+    for scope in client_scopes:
+        kc.create_client_scope(REALM_NAME, scope)
+
     # Create clients
     print("\n[STEP 4] Creating OAuth2 clients...")
     clients = users_config.get("clients", [])
@@ -557,6 +606,13 @@ def main():
                 client["rootUrl"] = substitute_env(client["rootUrl"])
 
         kc.create_client(REALM_NAME, client)
+
+    # Assign client scopes from realm.yaml to their target clients
+    realm_clients = realm_config.get("clients", [])
+    for rc in realm_clients:
+        rc_id = rc.get("clientId")
+        for scope_name in rc.get("defaultClientScopes", []):
+            kc.assign_default_client_scope(REALM_NAME, rc_id, scope_name)
 
     # Configure Entra ID identity provider (optional)
     entra_client_id = os.getenv("ENTRA_CLIENT_ID", "")

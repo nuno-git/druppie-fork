@@ -71,6 +71,7 @@ class BaseDataSourceAdapter(ABC):
         self,
         path: str = "",
         recursive: bool = False,
+        user_token: str | None = None,
     ) -> dict:
         """List available data items (tables, files, datasets).
 
@@ -84,7 +85,7 @@ class BaseDataSourceAdapter(ABC):
         pass
 
     @abstractmethod
-    async def get_schema(self, data_id: str) -> dict:
+    async def get_schema(self, data_id: str, user_token: str | None = None) -> dict:
         """Get schema/metadata for a specific data item.
 
         Args:
@@ -102,6 +103,7 @@ class BaseDataSourceAdapter(ABC):
         filter_expr: str | None = None,
         limit: int | None = None,
         offset: int | None = None,
+        user_token: str | None = None,
     ) -> dict:
         """Read data from a source.
 
@@ -124,6 +126,7 @@ class BaseDataSourceAdapter(ABC):
         self,
         data_id: str,
         destination_path: str,
+        user_token: str | None = None,
     ) -> dict:
         """Download data to a local destination.
 
@@ -140,6 +143,7 @@ class BaseDataSourceAdapter(ABC):
         self,
         query: str,
         limit: int | None = None,
+        user_token: str | None = None,
     ) -> dict:
         """Run a free-form read-only query.
 
@@ -155,7 +159,7 @@ class BaseDataSourceAdapter(ABC):
             ),
         }
 
-    async def test_connection(self) -> dict:
+    async def test_connection(self, user_token: str | None = None) -> dict:
         """Test connection to the data source.
 
         Returns:

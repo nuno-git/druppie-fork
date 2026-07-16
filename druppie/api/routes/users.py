@@ -1,11 +1,10 @@
 """User API routes — avatar and profile endpoints."""
 
 from fastapi import APIRouter, Depends, Response
-from fastapi.responses import FileResponse
 import structlog
 
-from druppie.api.deps import get_current_user, get_bearer_token
-from druppie.services.avatar_service import get_cached_avatar, fetch_and_cache_avatar, _avatar_path
+from druppie.api.deps import get_current_user, get_bearer_token, get_db
+from druppie.services.avatar_service import get_cached_avatar, fetch_and_cache_avatar
 
 logger = structlog.get_logger()
 
@@ -21,17 +20,14 @@ _AVATAR_HEADERS = {
 async def get_my_avatar(
     user: dict = Depends(get_current_user),
     bearer_token: str = Depends(get_bearer_token),
+    db=Depends(get_db),
 ):
     user_id = user.get("sub", "")
 
-    result = get_cached_avatar(user_id)
+    result = get_cached_avatar(db, user_id)
     if result:
-        path = _avatar_path(user_id)
-        return FileResponse(
-            path=str(path),
-            media_type="image/jpeg",
-            headers=_AVATAR_HEADERS,
-        )
+        data, content_type = result
+        return Response(content=data, media_type=content_type, headers=_AVATAR_HEADERS)
 
     from druppie.core.entra_token import get_entra_token, is_entra_configured
     if not is_entra_configured():
@@ -42,13 +38,13 @@ async def get_my_avatar(
     if not graph_token:
         return Response(status_code=404, headers=_AVATAR_HEADERS)
 
-    ok = await fetch_and_cache_avatar(user_id, graph_token)
+    ok = await fetch_and_cache_avatar(db, user_id, graph_token)
     if not ok:
         return Response(status_code=404, headers=_AVATAR_HEADERS)
 
-    path = _avatar_path(user_id)
-    return FileResponse(
-        path=str(path),
-        media_type="image/jpeg",
-        headers=_AVATAR_HEADERS,
-    )
+    result = get_cached_avatar(db, user_id)
+    if result:
+        data, content_type = result
+        return Response(content=data, media_type=content_type, headers=_AVATAR_HEADERS)
+
+    return Response(status_code=404, headers=_AVATAR_HEADERS)

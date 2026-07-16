@@ -30,9 +30,6 @@ import structlog
 
 logger = structlog.get_logger()
 
-_entra_linked_cache: dict[str, tuple[bool, float]] = {}
-_ENTRA_CACHE_TTL = 300  # 5 minutes
-
 from druppie.core.auth import get_auth_service, AuthService
 from druppie.db.database import get_db, init_db, SessionLocal, engine
 from uuid import UUID
@@ -108,6 +105,13 @@ def get_attachment_repository(db: Session = Depends(get_db)) -> "AttachmentRepos
     """Get AttachmentRepository with DB session injected."""
     from druppie.repositories import AttachmentRepository
     return AttachmentRepository(db)
+
+
+def get_mcp_http() -> "MCPHttp":
+    """Get MCPHttp client for MCP server communication."""
+    from druppie.execution.mcp_http import MCPHttp
+    from druppie.core.mcp_config import get_mcp_config
+    return MCPHttp(get_mcp_config())
 
 
 # =============================================================================
@@ -285,21 +289,15 @@ async def get_current_user(
 
     # H2: gate Entra-brokered users against the email allowlist
     from druppie.core.entra_token import is_entra_configured, ALLOWED_ENTRA_EMAILS
-    user_id_str = user.get("sub", "")
-    if is_entra_configured() and user_id_str and ALLOWED_ENTRA_EMAILS:
-        import time as _time
-        _cached = _entra_linked_cache.get(user_id_str)
-        if not _cached or (_time.time() - _cached[1]) > _ENTRA_CACHE_TTL:
-            from druppie.core.entra_token import check_entra_linked
-            _entra_linked_cache[user_id_str] = (await check_entra_linked(user_id_str), _time.time())
-        if _entra_linked_cache[user_id_str][0]:
-            email = (user.get("email") or user.get("preferred_username") or "").lower()
-            if email and email not in ALLOWED_ENTRA_EMAILS:
-                logger.warning("entra_user_not_in_allowlist", email=email, user_id=user_id_str)
-                raise HTTPException(
-                    status_code=403,
-                    detail="Your Entra ID account is not authorized for this application. Contact your administrator.",
-                )
+    idp = user.get("identity_provider")
+    if is_entra_configured() and ALLOWED_ENTRA_EMAILS and idp == "entra-id":
+        email = (user.get("email") or user.get("preferred_username") or "").lower()
+        if email and email not in ALLOWED_ENTRA_EMAILS:
+            logger.warning("entra_user_not_in_allowlist", email=email, user_id=user.get("sub", ""))
+            raise HTTPException(
+                status_code=403,
+                detail="Your Entra ID account is not authorized for this application. Contact your administrator.",
+            )
 
     return user
 

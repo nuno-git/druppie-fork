@@ -912,6 +912,62 @@ class Orchestrator:
 
         return "completed"
 
+    async def _resume_agent(
+        self,
+        session_id: UUID,
+        agent_run_id: UUID,
+        agent_id: str,
+        *,
+        walk_parent_chain: bool = True,
+    ) -> UUID:
+        """Common resume logic shared by all resume_after_* methods.
+
+        Sets agent run to RUNNING and session to ACTIVE, builds project
+        context, creates an AgentV2 instance, calls continue_run(), and
+        handles the result.  When *walk_parent_chain* is True and the
+        agent completes, walks up the parent chain before executing any
+        remaining pending runs.
+
+        Returns session_id so callers can ``return await self._resume_agent(...)``.
+        """
+        from druppie.agents.runtime_v2 import AgentV2 as Agent
+
+        self.execution_repo.update_status(agent_run_id, AgentRunStatus.RUNNING)
+        self.session_repo.update_status(session_id, SessionStatus.ACTIVE)
+        self.execution_repo.commit()
+
+        context = self.build_project_context(session_id)
+        db = self.execution_repo.db
+        agent = Agent(agent_id, db=db, session_id=str(session_id))
+
+        result = await agent.continue_run(
+            session_id=session_id,
+            agent_run_id=agent_run_id,
+            context=context,
+        )
+
+        status = self._handle_agent_resume_result(
+            session_id, agent_run_id, result, agent_id=agent_id,
+        )
+
+        if status == "completed":
+            if walk_parent_chain:
+                agent_run = self.execution_repo.get_by_id(agent_run_id)
+                chain_complete = await self._walk_parent_chain(
+                    session_id, agent_run, db,
+                )
+                if chain_complete:
+                    await self.execute_pending_runs(session_id)
+                else:
+                    logger.info(
+                        "parent_chain_incomplete",
+                        session_id=str(session_id),
+                    )
+            else:
+                await self.execute_pending_runs(session_id)
+
+        return session_id
+
     async def resume_after_approval(self, session_id: UUID, approval_id: UUID) -> UUID:
         """Resume execution after an approval is granted.
 
@@ -923,7 +979,6 @@ class Orchestrator:
         The agent's continue_run() method loads all LLM calls and tool results
         from the database, so the tool result is automatically included.
         """
-        from druppie.agents.runtime_v2 import AgentV2 as Agent
         from druppie.core.mcp_config import MCPConfig
         from druppie.execution.mcp_http import MCPHttp
         from druppie.execution.tool_executor import ToolCallStatus, ToolExecutor
@@ -987,36 +1042,7 @@ class Orchestrator:
             previous_status=agent_run.status.value if hasattr(agent_run.status, 'value') else agent_run.status,
         )
 
-        # Step 4: Set status back to running
-        self.execution_repo.update_status(agent_run.id, AgentRunStatus.RUNNING)
-        self.session_repo.update_status(session_id, SessionStatus.ACTIVE)
-        self.execution_repo.commit()
-
-        # Step 5: Build fresh context and continue the agent
-        context = self.build_project_context(session_id)
-        agent = Agent(agent_run.agent_id, db=db, session_id=str(session_id))
-        result = await agent.continue_run(
-            session_id=session_id,
-            agent_run_id=agent_run.id,
-            context=context,
-        )
-
-        # Step 6: Handle result (correctly handles user_paused, sandbox, etc.)
-        status = self._handle_agent_resume_result(session_id, agent_run.id, result, agent_id=agent_run.agent_id)
-
-        if status == "completed":
-            logger.info(
-                "agent_resumed_after_approval_completed",
-                agent_run_id=str(agent_run.id),
-                agent_id=agent_run.agent_id,
-            )
-            parent_chain_completed = await self._walk_parent_chain(
-                session_id, agent_run, db,
-            )
-            if parent_chain_completed:
-                await self.execute_pending_runs(session_id)
-
-        return session_id
+        return await self._resume_agent(session_id, agent_run.id, agent_run.agent_id)
 
     async def resume_after_answer(
         self,
@@ -1035,7 +1061,6 @@ class Orchestrator:
         The agent's continue_run() method loads all LLM calls and tool results
         from the database, so the answer is automatically included.
         """
-        from druppie.agents.runtime_v2 import AgentV2 as Agent
         from druppie.core.mcp_config import MCPConfig
         from druppie.execution.mcp_http import MCPHttp
         from druppie.execution.tool_executor import ToolCallStatus, ToolExecutor
@@ -1143,45 +1168,7 @@ class Orchestrator:
                 session_id, agent_run, question, answer, selected_choices, db,
             )
 
-        # Step 4: Set status back to running
-        self.execution_repo.update_status(agent_run.id, AgentRunStatus.RUNNING)
-        self.session_repo.update_status(session_id, SessionStatus.ACTIVE)
-        self.execution_repo.commit()
-
-        # Step 5: Build fresh context and continue the agent
-        context = self.build_project_context(session_id)
-        agent = Agent(agent_run.agent_id, db=db, session_id=str(session_id))
-        result = await agent.continue_run(
-            session_id=session_id,
-            agent_run_id=agent_run.id,
-            context=context,
-        )
-
-        # Step 6: Handle result (correctly handles user_paused, sandbox, etc.)
-        status = self._handle_agent_resume_result(session_id, agent_run.id, result, agent_id=agent_run.agent_id)
-
-        if status == "completed":
-            logger.info(
-                "agent_resumed_and_completed",
-                agent_run_id=str(agent_run.id),
-                agent_id=agent_run.agent_id,
-            )
-            parent_chain_completed = await self._walk_parent_chain(
-                session_id, agent_run, db,
-            )
-            if parent_chain_completed:
-                logger.info(
-                    "parent_chain_completed_running_pending",
-                    session_id=str(session_id),
-                )
-                await self.execute_pending_runs(session_id)
-            else:
-                logger.info(
-                    "parent_chain_incomplete_waiting_for_siblings",
-                    session_id=str(session_id),
-                )
-
-        return session_id
+        return await self._resume_agent(session_id, agent_run.id, agent_run.agent_id)
 
     async def resume_after_entra_auth(
         self,
@@ -1199,7 +1186,6 @@ class Orchestrator:
         from druppie.execution.mcp_http import MCPHttp
         from druppie.core.mcp_config import MCPConfig
         from druppie.core.entra_token import get_entra_token
-        from druppie.agents.runtime_v2 import AgentV2 as Agent
 
         logger.info("resume_after_entra_auth", session_id=str(session_id))
 
@@ -1244,21 +1230,10 @@ class Orchestrator:
             # Still resume the agent so it sees the error
             agent_run = self.execution_repo.get_by_id(waiting_tc.agent_run_id)
             if agent_run:
-                self.execution_repo.update_status(agent_run.id, AgentRunStatus.RUNNING)
-                self.session_repo.update_status(session_id, SessionStatus.ACTIVE)
-                db.commit()
-                context = self.build_project_context(session_id)
-                agent = Agent(agent_run.agent_id, db=db, session_id=str(session_id))
-                result = await agent.continue_run(
-                    session_id=session_id,
-                    agent_run_id=agent_run.id,
-                    context=context,
+                return await self._resume_agent(
+                    session_id, agent_run.id, agent_run.agent_id,
+                    walk_parent_chain=False,
                 )
-                status = self._handle_agent_resume_result(
-                    session_id, agent_run.id, result, agent_id=agent_run.agent_id,
-                )
-                if status == "completed":
-                    await self.execute_pending_runs(session_id)
             return session_id
 
         # M5: KC token no longer needed — drop reference
@@ -1322,25 +1297,10 @@ class Orchestrator:
             await self.execute_pending_runs(session_id)
             return session_id
 
-        self.execution_repo.update_status(agent_run.id, AgentRunStatus.RUNNING)
-        self.session_repo.update_status(session_id, SessionStatus.ACTIVE)
-        db.commit()
-
-        context = self.build_project_context(session_id)
-        agent = Agent(agent_run.agent_id, db=db, session_id=str(session_id))
-        result = await agent.continue_run(
-            session_id=session_id,
-            agent_run_id=agent_run.id,
-            context=context,
+        return await self._resume_agent(
+            session_id, agent_run.id, agent_run.agent_id,
+            walk_parent_chain=False,
         )
-
-        status = self._handle_agent_resume_result(
-            session_id, agent_run.id, result, agent_id=agent_run.agent_id,
-        )
-        if status == "completed":
-            await self.execute_pending_runs(session_id)
-
-        return session_id
 
     async def _handle_fallback_answer(
         self, session_id, agent_run, question, answer, selected_choices, db,
@@ -1817,8 +1777,6 @@ class Orchestrator:
         3. Continues the agent (it reconstructs state from DB)
         4. Executes any remaining pending runs
         """
-        from druppie.agents.runtime_v2 import AgentV2 as Agent
-
         # Find the tool call and its agent run
         tool_call = self.execution_repo.get_tool_call(tool_call_id)
         if not tool_call or not tool_call.agent_run_id:
@@ -1844,49 +1802,4 @@ class Orchestrator:
         # still has the old HEAD.
         self._sync_workspace(session_id)
 
-        # Set statuses back to running
-        self.execution_repo.update_status(agent_run.id, AgentRunStatus.RUNNING)
-        self.session_repo.update_status(session_id, SessionStatus.ACTIVE)
-        self.execution_repo.commit()
-
-        # Build fresh context and continue the agent
-        db = self.execution_repo.db
-        context = self.build_project_context(session_id)
-        agent = Agent(agent_run.agent_id, db=db, session_id=str(session_id))
-        try:
-            result = await agent.continue_run(
-                session_id=session_id,
-                agent_run_id=agent_run.id,
-                context=context,
-            )
-        except Exception as e:
-            error_msg = clean_llm_error(f"{type(e).__name__}: {e}")
-            self.execution_repo.update_status(
-                agent_run.id,
-                AgentRunStatus.FAILED,
-                error_message=error_msg,
-            )
-            self.execution_repo.commit()
-            raise
-
-        # Handle result — agent may pause again
-        status = self._handle_agent_resume_result(session_id, agent_run.id, result, agent_id=agent_run.agent_id)
-
-        if status == "completed":
-            logger.info(
-                "agent_resumed_after_sandbox_completed",
-                agent_run_id=str(agent_run.id),
-                agent_id=agent_run.agent_id,
-            )
-            parent_chain_completed = await self._walk_parent_chain(
-                session_id, agent_run, db,
-            )
-            if parent_chain_completed:
-                await self.execute_pending_runs(session_id)
-            else:
-                logger.info(
-                    "parent_chain_incomplete_waiting_for_siblings",
-                    session_id=str(session_id),
-                )
-
-        return session_id
+        return await self._resume_agent(session_id, agent_run.id, agent_run.agent_id)

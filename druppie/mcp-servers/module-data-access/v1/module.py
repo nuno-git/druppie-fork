@@ -144,9 +144,7 @@ class DataAccessModule:
         """Test connection to a data source."""
         try:
             adapter = self.get_adapter(source_id)
-            if isinstance(adapter, AzureSQLAdapter):
-                return await adapter.test_connection(user_token=user_token)
-            return await adapter.test_connection()
+            return await adapter.test_connection(user_token=user_token)
         except (ValueError, PermissionError) as e:
             return {"success": False, "error": str(e)}
 
@@ -160,9 +158,7 @@ class DataAccessModule:
         """List available data in a source."""
         try:
             adapter = self.get_adapter(source_id)
-            if isinstance(adapter, AzureSQLAdapter):
-                return await adapter.list_available_data(path, recursive, user_token=user_token)
-            return await adapter.list_available_data(path, recursive)
+            return await adapter.list_available_data(path, recursive, user_token=user_token)
         except (ValueError, PermissionError) as e:
             return {"success": False, "error": str(e)}
 
@@ -170,10 +166,7 @@ class DataAccessModule:
         """Get schema for a data item."""
         try:
             adapter = self.get_adapter(source_id)
-            if isinstance(adapter, AzureSQLAdapter):
-                result = await adapter.get_schema(data_id, user_token=user_token)
-            else:
-                result = await adapter.get_schema(data_id)
+            result = await adapter.get_schema(data_id, user_token=user_token)
             if result.get("success") and "schema" in result:
                 result["schema"] = {
                     "columns": result["schema"].columns,
@@ -195,9 +188,7 @@ class DataAccessModule:
         """Read data from a source."""
         try:
             adapter = self.get_adapter(source_id)
-            if isinstance(adapter, AzureSQLAdapter):
-                return await adapter.read_data(data_id, filter_expr, limit, offset, user_token=user_token)
-            return await adapter.read_data(data_id, filter_expr, limit, offset)
+            return await adapter.read_data(data_id, filter_expr, limit, offset, user_token=user_token)
         except (ValueError, PermissionError) as e:
             return {"success": False, "error": str(e)}
 
@@ -211,9 +202,7 @@ class DataAccessModule:
         """Run a free-form read-only query against a SQL source."""
         try:
             adapter = self.get_adapter(source_id)
-            if isinstance(adapter, AzureSQLAdapter):
-                return await adapter.execute_query(query, limit, user_token=user_token)
-            return await adapter.execute_query(query, limit)
+            return await adapter.execute_query(query, limit, user_token=user_token)
         except (ValueError, PermissionError) as e:
             return {"success": False, "error": str(e)}
 
@@ -227,8 +216,6 @@ class DataAccessModule:
         """Download data from a source."""
         try:
             adapter = self.get_adapter(source_id)
-            if isinstance(adapter, AzureSQLAdapter):
-                return await adapter.download_data(data_id, destination_path, user_token=user_token)
-            return await adapter.download_data(data_id, destination_path)
+            return await adapter.download_data(data_id, destination_path, user_token=user_token)
         except (ValueError, PermissionError) as e:
             return {"success": False, "error": str(e)}

@@ -654,7 +654,16 @@ async def authorize_entra(
     if graph_token:
         import asyncio
         from druppie.services.avatar_service import fetch_and_cache_avatar
-        asyncio.create_task(fetch_and_cache_avatar(str(user_id), graph_token))
+        from druppie.db.database import SessionLocal
+
+        async def _bg_avatar(uid, token):
+            db = SessionLocal()
+            try:
+                await fetch_and_cache_avatar(db, uid, token)
+            finally:
+                db.close()
+
+        asyncio.create_task(_bg_avatar(str(user_id), graph_token))
 
     # Transition session to active
     try:
