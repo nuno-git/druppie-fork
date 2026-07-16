@@ -1,3 +1,12 @@
+---
+id: "006"
+title: "Schaalbare Kubernetes Strategie voor Druppie"
+status: complete
+author: Druppie team
+date: 2026-06-02
+outcome: "adr-002"
+---
+
 # ADR: Schaalbare Kubernetes Strategie voor Druppie
 
 > **Status:** Voorstel  
@@ -7,7 +16,7 @@
 > **Story:** Story 2 — Spike: schaalbare Kubernetes strategie (3 SP)  
 > **Principe:** Alles open source, geen vendor lock-in
 
-> **Status: Historische spike (2026-06-02).** Vervangen door `docs/ADR-KUBERNETES.md` (beslissingen) en `docs/AS-BUILT-ARCHITECTURE.md` (huidige staat). De Hetzner-specifieke provisioning/kosten secties zijn behouden ter referentie maar reflecteren niet langer het geplande lokale-Rancher doel.
+> **Status: Historische spike (2026-06-02).** Vervangen door `docs/adrs/002-kubernetes-migration.md` (beslissingen) en `docs/reference/as-built-architecture.md` (huidige staat). De Hetzner-specifieke provisioning/kosten secties zijn behouden ter referentie maar reflecteren niet langer het geplande lokale-Rancher doel.
 
 ---
 
@@ -1330,5 +1339,5 @@ Opmerking: Sandbox workloads zijn bursty. Overweeg een aparte worker node die aa
 ### Bestaande Druppie resources
 
 - Helm chart: `helm/druppie/`
-- K8s setup guide: `docs/kubernetes.md`
+- K8s setup guide: `docs/guides/kubernetes-deployment.md`
 - Kind cluster config: `kind/cluster-dev.yaml`

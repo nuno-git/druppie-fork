@@ -3,7 +3,7 @@
 > **Status: Historical planning doc (technical spec).** As-built reference: `docs/TECHNICAL.md` §11. Retained for the detailed design.
 
 > This document contains the final architecture decisions for the Druppie agent runtime library.
-> For research context, alternatives considered, and rationale, see `docs/research-agent-runtime.md`.
+> For research context, alternatives considered, and rationale, see `docs/research/004-agent-runtime.md`.
 
 ## Overview
 
@@ -2607,4 +2607,4 @@ result = await agent_loop.run(
 
 ---
 
-For research context, alternatives considered, and detailed rationale for each decision, see `docs/research-agent-runtime.md`.
+For research context, alternatives considered, and detailed rationale for each decision, see `docs/research/004-agent-runtime.md`.

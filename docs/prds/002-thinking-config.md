@@ -1,3 +1,16 @@
+---
+id: "002"
+title: "Thinking/Reasoning Configuration"
+status: approved
+author: nuno
+date: 2026-05-20
+supersedes: null
+superseded_by: null
+linked_adrs: []
+linked_research: []
+linked_specs: []
+---
+
 # Thinking/Reasoning Configuration — Design Spec
 
 ## 1. Overview

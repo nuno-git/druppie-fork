@@ -1,6 +1,6 @@
 # Coding Agent Improvement — Sprint Resultaten & Open Punten
 
-> Aanvulling op `docs/stories/coding-agent-improvement.md`. Overkoepelend doel: de coding agent moet de vergunningzoeker applicatie end-to-end kunnen bouwen.
+> Aanvulling op `docs/reference/stories/coding-agent-improvement.md`. Overkoepelend doel: de coding agent moet de vergunningzoeker applicatie end-to-end kunnen bouwen.
 
 ---
 

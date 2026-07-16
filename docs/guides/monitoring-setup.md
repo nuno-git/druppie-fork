@@ -1,6 +1,6 @@
 # Monitoring Setup — kube-prometheus-stack
 
-> **Decision reference:** [ADR-001 §4.7](ADR-KUBERNETES.md#47-monitoring-kube-prometheus-stack) — kube-prometheus-stack chosen as the de-facto standard for Kubernetes monitoring.
+> **Decision reference:** [ADR-001 §4.7](../adrs/002-kubernetes-migration.md#47-monitoring-kube-prometheus-stack) — kube-prometheus-stack chosen as the de-facto standard for Kubernetes monitoring.
 
 ## Overview
 

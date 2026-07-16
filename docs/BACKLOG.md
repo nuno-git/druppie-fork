@@ -365,7 +365,7 @@ Last updated: 2026-06-11
 
 ### Kubernetes — Production Hardening (TLS, External Secrets, HPA)
 
-- **Current state:** The Helm chart is designed for local Kind clusters. Production requires TLS, external secret management, autoscaling, and a real container registry. See `docs/kubernetes.md` section 9 and `docs/KUBERNETES-STRATEGY.md` for the full production roadmap.
+- **Current state:** The Helm chart is designed for local Kind clusters. Production requires TLS, external secret management, autoscaling, and a real container registry. See `docs/guides/kubernetes-deployment.md` section 9 and `docs/research/006-kubernetes-strategy.md` for the full production roadmap.
 - **Desired improvement:**
   - cert-manager integration for automatic TLS certificates
   - External Secrets Operator or Sealed Secrets support

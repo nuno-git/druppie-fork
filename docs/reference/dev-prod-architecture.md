@@ -3,7 +3,7 @@
 > **Status:** Geaccepteerd
 > **Datum:** 2026-06-16
 > **Type:** Architecture Decision Record
-> **Referentie:** [ADR-KUBERNETES.md](./ADR-KUBERNETES.md), [KUBERNETES-STRATEGY.md](./KUBERNETES-STRATEGY.md)
+> **Referentie:** [ADR-KUBERNETES.md](../adrs/002-kubernetes-migration.md), [KUBERNETES-STRATEGY.md](../research/006-kubernetes-strategy.md)
 
 ---
 

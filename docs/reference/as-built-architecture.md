@@ -3,7 +3,7 @@
 > **Status:** As-built documentatie (geverifieerd tegen live cluster + code)
 > **Datum:** 2026-06-16
 > **Bron:** Branch `pr-222` (PR #237), live cluster state, helm chart, IaC manifests
-> **Referentie:** [ADR-KUBERNETES.md](./ADR-KUBERNETES.md) (origineel plan), [DEV-PROD-ARCHITECTURE.md](./DEV-PROD-ARCHITECTURE.md)
+> **Referentie:** [ADR-KUBERNETES.md](../adrs/002-kubernetes-migration.md) (origineel plan), [DEV-PROD-ARCHITECTURE.md](./dev-prod-architecture.md)
 
 ---
 

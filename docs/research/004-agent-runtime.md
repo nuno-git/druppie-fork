@@ -1,3 +1,12 @@
+---
+id: "004"
+title: "Agent Runtime Architecture"
+status: complete
+author: nuno
+date: 2026-05-19
+outcome: null
+---
+
 # Agent Runtime Research — Architecture Decisions
 
 > **Status: Historical planning doc (research / decision log).** The as-built agent runtime is documented in `docs/TECHNICAL.md` §11 (Agent Runtime Library). This doc is retained for the design rationale and decision history (D2–D46).

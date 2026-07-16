@@ -1,3 +1,12 @@
+---
+id: "005"
+title: "Sandbox Network Isolation v2 — Per-Agent Dynamic Enforcement"
+status: complete
+author: nuno
+date: 2026-05-27
+outcome: null
+---
+
 # Sandbox Network Isolation v2 — Per-Agent Dynamic Enforcement
 
 **Status:** draft

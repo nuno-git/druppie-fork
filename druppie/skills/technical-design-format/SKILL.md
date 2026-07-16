@@ -172,7 +172,7 @@ Detailed enough for builder_planner to plan implementation — framework, versio
 Only include this section when the design introduces a new Druppie MCP
 module — i.e. when BUILD_PATH=CORE_UPDATE with at least one NEW module
 (see Step 2b). Keep this concise — the update_core_builder reads the
-full module convention from docs/module-specification.md.
+full module convention from docs/reference/module-specification.md.
 
 - **Module ID:** <name>
 - **Type:** core | module | both

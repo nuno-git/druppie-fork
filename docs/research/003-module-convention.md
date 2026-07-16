@@ -1,10 +1,19 @@
+---
+id: "003"
+title: "Druppie Module Convention"
+status: complete
+author: Druppie team
+date: 2026-03-11
+outcome: null
+---
+
 # Druppie Module Convention — Research & Decision Records
 
 > **Status**: Reference / historical record
 > **Date**: 2026-02-24 (initial brainstorm) to 2026-03-11 (iterative design)
 > **Author**: Druppie team
 > **User Story**: Als Druppie-teamlid wil ik een gestandaardiseerd format/contract voor core-modules, zodat uitbreidingen op een uniforme manier worden toegevoegd ongeacht wie ze bouwt.
-> **Related**: `docs/module-specification.md` (technical contract), `docs/plans/2026-03-11-auth-governance-design.md` (auth & governance design)
+> **Related**: `docs/reference/module-specification.md` (technical contract), `docs/plans/2026-03-11-auth-governance-design.md` (auth & governance design)
 
 This document captures the full design journey for Druppie's module convention: the original research exploring five architectural approaches, the comparative analysis and test cases that drove the recommendation, and all subsequent design decisions made during specification development. It is the "why" behind the decisions — the "what" lives in the specification.
 

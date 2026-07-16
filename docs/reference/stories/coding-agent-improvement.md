@@ -135,7 +135,7 @@ When builders work on related files in parallel, they need to stay consistent. S
 ## References
 
 - `docs/TECHNICAL.md` §11 (Agent Runtime Library) — As-built runtime reference (canonical)
-- `docs/agent-runtime-spec.md` — Full runtime specification (historical design detail)
+- `docs/reference/agent-runtime.md` — Full runtime specification (historical design detail)
 - `background-agents/` — Original background-agents system (legacy reference)
 - `druppie/execution/agent_runtime/` — Runtime implementation
 - `druppie/agents/definitions/` — Agent YAML definitions

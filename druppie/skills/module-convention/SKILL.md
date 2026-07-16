@@ -5,7 +5,7 @@ description: Druppie module convention for creating new MCP modules — director
 # Druppie Module Convention
 
 This skill contains the complete convention and templates for creating new Druppie MCP modules.
-For the full specification see `docs/module-specification.md`.
+For the full specification see `docs/reference/module-specification.md`.
 
 ---
 

@@ -1,3 +1,16 @@
+---
+id: "002"
+title: "Kubernetes migratie architectuur"
+status: accepted
+date: 2026-06-09
+deciders:
+  - Druppie architectuurteam
+supersedes: null
+superseded_by: null
+linked_prd: null
+linked_research: docs/research/006-kubernetes-strategy.md
+---
+
 # ADR-001: Kubernetes Migratie Architectuur
 
 | Veld | Waarde |
@@ -6,9 +19,9 @@
 | **Datum** | 2026-06-09 (besluit), 2026-06-15 (implementatie status update) |
 | **Auteur** | Druppie Team |
 | **Deciders** | Druppie architectuurteam |
-| **Referentie** | [KUBERNETES-STRATEGY.md](./KUBERNETES-STRATEGY.md) |
+| **Referentie** | [KUBERNETES-STRATEGY.md](../research/006-kubernetes-strategy.md) |
 
-> **Note (huidige staat):** Deze beslissingen reflecteren de live Hetzner K3s deployment. Het as-built systeem is gedocumenteerd in `docs/AS-BUILT-ARCHITECTURE.md`. Een migratie naar een gedeeld lokaal Rancher cluster is gepland. Beslissingen die hieronder gemarkeerd zijn als *superseded pending local-Rancher migratie* worden herzien voor lokale hardware.
+> **Note (huidige staat):** Deze beslissingen reflecteren de live Hetzner K3s deployment. Het as-built systeem is gedocumenteerd in `docs/reference/as-built-architecture.md`. Een migratie naar een gedeeld lokaal Rancher cluster is gepland. Beslissingen die hieronder gemarkeerd zijn als *superseded pending local-Rancher migratie* worden herzien voor lokale hardware.
 
 ---
 
@@ -44,7 +57,7 @@ De migratie naar Kubernetes lost drie problemen op:
 
 Uitgangspunten: 100% open source, geen vendor lock-in, portable Helm chart.
 
-Het spike-onderzoek ([KUBERNETES-STRATEGY.md](./KUBERNETES-STRATEGY.md)) bevat de volledige vergelijkingsmatrixen en technische onderbouwing voor alle keuzes hieronder.
+Het spike-onderzoek ([KUBERNETES-STRATEGY.md](../research/006-kubernetes-strategy.md)) bevat de volledige vergelijkingsmatrixen en technische onderbouwing voor alle keuzes hieronder.
 
 ---
 

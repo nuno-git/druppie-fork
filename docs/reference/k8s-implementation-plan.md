@@ -4,11 +4,11 @@
 |------|--------|
 | **Status** | Geïmplementeerd (fase 1 + CNPG) |
 | **Datum** | 2026-06-15 (laatst bijgewerkt) |
-| **Gebaseerd op** | [ADR-KUBERNETES.md](./ADR-KUBERNETES.md) |
-| **Referentie** | [KUBERNETES-STRATEGY.md](./KUBERNETES-STRATEGY.md), [kubernetes.md](./kubernetes.md) |
+| **Gebaseerd op** | [ADR-KUBERNETES.md](../adrs/002-kubernetes-migration.md) |
+| **Referentie** | [KUBERNETES-STRATEGY.md](../research/006-kubernetes-strategy.md), [kubernetes.md](../guides/kubernetes-deployment.md) |
 | **Delivery** | 1 PR naar `colab-dev` |
 
-> **Status: Historisch — Phase 1 delivery record.** Huidige as-built staat: `docs/AS-BUILT-ARCHITECTURE.md`.
+> **Status: Historisch — Phase 1 delivery record.** Huidige as-built staat: `docs/reference/as-built-architecture.md`.
 
 ---
 
@@ -516,7 +516,7 @@ async def lifespan(app: FastAPI):
 - Grafana standaard dashboards
 
 ```
-Aanmaken: docs/monitoring-setup.md
+Aanmaken: docs/guides/monitoring-setup.md
   - helm install kube-prometheus-stack instructies
   - Port-forward commando's
   - CNPG PodMonitor integratie
@@ -545,7 +545,7 @@ Aanmaken: docs/monitoring-setup.md
 - Backlog item aanmaken voor "stateless maken backend" als Task 1 niet volledig af
 
 ```
-Wijzigen: docs/KUBERNETES-IMPLEMENTATION-PLAN.md
+Wijzigen: docs/reference/k8s-implementation-plan.md
   - Status: Geaccepteerd (na review)
   - Acceptatiecriteria afvinken
 
@@ -724,7 +724,7 @@ Task 1 (Stateless backend) ─── P0 ─── ✅ Voltooid
 | `helm/druppie/templates/hpa-frontend.yaml` | 7 | Frontend HPA | ✅ |
 | `helm/druppie/templates/pdb-backend.yaml` | 8 | Backend PDB | ✅ |
 | `helm/druppie/templates/pdb-frontend.yaml` | 8 | Frontend PDB | ✅ |
-| `docs/monitoring-setup.md` | 9 | Monitoring installatie | ✅ |
+| `docs/guides/monitoring-setup.md` | 9 | Monitoring installatie | ✅ |
 | `helm/druppie/templates/nfs-server.yaml` | 11 | NFS server Deployment + Service + PVC | ✅ |
 | `helm/druppie/templates/nfs-storage.yaml` | 11 | NFS StorageClass + PVs | ✅ |
 | `helm/druppie/templates/docker-installer-daemonset.yaml` | 12 | Docker installatie op app nodes | ✅ |
@@ -760,8 +760,8 @@ Task 1 (Stateless backend) ─── P0 ─── ✅ Voltooid
 | `helm/druppie/templates/init-job.yaml` | 6 | CNPG connection strings | ✅ |
 | `helm/druppie/templates/persistentvolumeclaims.yaml` | 3,11 | Configureerbare storageClass, NFS PVCs | ✅ |
 | `druppie/api/main.py` | 8 | SIGTERM handler, graceful shutdown | ✅ |
-| `docs/ADR-KUBERNETES.md` | 10 | ADR (doelarchitectuur, ongewijzigd) | ✅ |
-| `docs/KUBERNETES-IMPLEMENTATION-PLAN.md` | 10 | Dit document | ✅ |
+| `docs/adrs/002-kubernetes-migration.md` | 10 | ADR (doelarchitectuur, ongewijzigd) | ✅ |
+| `docs/reference/k8s-implementation-plan.md` | 10 | Dit document | ✅ |
 | `iac/cluster.yaml` | 2,11 | NFS packages, CA tuning | ✅ |
 | `iac/README.md` | 10 | Cluster setup documentatie | ⚠️ Deels verouderd |
 | `druppie/llm/__init__.py` | 7 | MockLLM provider registratie | ✅ |

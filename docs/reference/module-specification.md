@@ -2,7 +2,7 @@
 
 > **Status**: Specification (ready for team review)
 > **Date**: 2026-03-10 (versioning redesign), original 2026-02-24
-> **Prerequisite**: Read `docs/modules-research-and-decisions.md` for the design research and approach selection
+> **Prerequisite**: Read `docs/research/003-module-convention.md` for the design research and approach selection
 > **Approach**: SDK + MCP Hybrid with direct module access (Approach C from design doc, without shared DB or gateway proxy from E)
 
 ---
@@ -1537,7 +1537,7 @@ This separation ensures the BA focuses on *what* the user needs without making p
 0. ACCEPT      Module proposal evaluated against acceptance criteria
                 AR validates: reuse, genericity, no overlap, ownership
                 AR writes MODULE_SPEC.md (functional + technical reqs)
-                (See "Module Acceptance" in modules-research-and-decisions.md)
+                (See "Module Acceptance" in docs/research/003-module-convention.md)
 
 1. UPDATE CORE AR triggers update_core intent → creates branch + PR
                 on Druppie core repo (colab-dev)

@@ -841,7 +841,7 @@ All configuration is centralized in `values.yaml`:
 - `secrets.zaiApiKey` — LLM provider API key
 - Each MCP module can be individually enabled/disabled
 
-See `docs/kubernetes.md` for the full setup guide and troubleshooting.
+See `docs/guides/kubernetes-deployment.md` for the full setup guide and troubleshooting.
 
 ---
 
@@ -996,7 +996,7 @@ The page (`webclient/src/pages/tools/DeveloperPage.jsx`) uses a sidebar + timeli
 
 ## Agent Runtime Library (`druppie/agent_runtime/`)
 
-A **storage-agnostic Python library** that implements the agent runtime, documented as-built in `docs/TECHNICAL.md` §11 (Agent Runtime Library); the original design is preserved in the historical `docs/agent-runtime-spec.md`. It provides the core loop, event system, subagent orchestration, sandbox management, and tool infrastructure -- with zero imports from `druppie.db`, `druppie.domain`, or `druppie.repositories`.
+A **storage-agnostic Python library** that implements the agent runtime, documented as-built in `docs/TECHNICAL.md` §11 (Agent Runtime Library); the original design is preserved in the historical `docs/reference/agent-runtime.md`. It provides the core loop, event system, subagent orchestration, sandbox management, and tool infrastructure -- with zero imports from `druppie.db`, `druppie.domain`, or `druppie.repositories`.
 
 ### Why It Exists
 

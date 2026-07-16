@@ -4,4 +4,6 @@
 
 Consolidated view of all **accepted** ADRs. Individual ADRs live in `docs/adrs/`.
 
-_No accepted ADRs yet._
+| ADR | Title |
+|-----|-------|
+| [002](002-kubernetes-migration.md) | Kubernetes migratie architectuur |

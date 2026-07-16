@@ -1,6 +1,6 @@
 # Sprint Overzicht: Coding Agent Runtime
 
-> Dit is een apart document naast `docs/stories/coding-agent-improvement.md`. Het documenteert wat er deze sprint is opgeleverd, met bewijs uit de code, en wat open staat voor de volgende sprint.
+> Dit is een apart document naast `docs/reference/stories/coding-agent-improvement.md`. Het documenteert wat er deze sprint is opgeleverd, met bewijs uit de code, en wat open staat voor de volgende sprint.
 
 ---
 
@@ -201,7 +201,7 @@ Standalone agent testing buiten de standaard pipeline.
 |-----|------|
 | Frontend | `frontend/src/pages/DeveloperPage.jsx` (350 regels) |
 | Backend API | `druppie/api/routes/agent_test.py` |
-| Spec | `docs/DEVELOPER_PAGE.md` |
+| Spec | `docs/guides/developer-page.md` |
 
 Features: project selectie, agent selectie (primary/both roles), task prompt, execute button, polling, status badges, agent detail (role, git scope, MCPs, subagents).
 
