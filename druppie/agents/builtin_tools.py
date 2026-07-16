@@ -836,7 +836,7 @@ async def create_message(
     # Get next unique sequence number so message never collides with agent_run
     seq = execution_repo.get_next_sequence_number(session_id)
 
-    execution_repo.create_message(
+    message = execution_repo.create_message(
         session_id=session_id,
         role="assistant",
         content=display_content,
@@ -846,6 +846,10 @@ async def create_message(
         sequence_number=seq,
     )
     execution_repo.flush()
+
+    # Broadcast so the frontend receives the assistant message live
+    from druppie.core.session_event_manager import get_event_manager
+    await get_event_manager().broadcast_message_created(session_id, message)
 
     logger.info(
         "create_message",

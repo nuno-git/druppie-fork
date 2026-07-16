@@ -980,34 +980,42 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
   const { user } = useAuth()
   const canDebug = user?.roles?.some(r => r === 'developer' || r === 'admin')
   const isAdmin = !!user?.roles?.includes('admin')
-  // Persist highest sequence across remounts / reloads so delta fetch actually triggers.
-  const highestSeqStorageKey = sessionId ? `druppie_highest_seq_${sessionId}` : null
+  // Persist highest sequence across remounts / reloads so delta fetch works.
+  // We do NOT persist mergedTimelineRef — sessionStorage quota is ~5MB and
+  // timelines with many messages + attachments easily exceed it. When the buffer
+  // is lost after a navigation-back / reload, we detect that (highestSeq known
+  // but mergedTimeline empty) and do a full fetch once, then resume delta.
+  const storagePrefix = sessionId ? `druppie_session_${sessionId}` : null
   const highestSeqRef = useRef(
-    highestSeqStorageKey ? parseInt(sessionStorage.getItem(highestSeqStorageKey), 10) || undefined : undefined
+    storagePrefix ? parseInt(sessionStorage.getItem(`${storagePrefix}_highest_seq`), 10) || undefined : undefined
   )
   const prevSessionIdRef = useRef(sessionId)
   const viewModeRef = useRef(viewMode)
   viewModeRef.current = viewMode
 
   useEffect(() => {
-    if (highestSeqStorageKey && highestSeqRef.current !== undefined) {
-      sessionStorage.setItem(highestSeqStorageKey, String(highestSeqRef.current))
+    if (!storagePrefix) return
+    if (highestSeqRef.current !== undefined) {
+      sessionStorage.setItem(`${storagePrefix}_highest_seq`, String(highestSeqRef.current))
     }
   })
+
   const isWebSocketConnected = useRef(false)
+
+  const mergedTimelineRef = useRef([])
 
   const getExcludeForViewMode = (mode) => {
     if (mode === 'inspect') return []
-    return ['llm_raw', 'tool_results', 'subagent_runs', 'compaction_events', 'resume_contexts']
+    return ['llm_raw', 'tool_results', 'trace_events']
   }
-
-  const mergedTimelineRef = useRef([])
 
   const { data, isLoading, error } = useQuery({
     queryKey: ['session', sessionId],
     queryFn: () => {
       const isFirstLoad = highestSeqRef.current === undefined
-      if (isFirstLoad) {
+      const lostBuffer = highestSeqRef.current !== undefined && mergedTimelineRef.current.length === 0
+      
+      if (isFirstLoad || lostBuffer) {
         return getSession(sessionId)
       }
       
@@ -1097,7 +1105,10 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
     mergedTimelineRef.current = mergedTimeline
     const seqs = mergedTimeline.map(e => e.sequence_number).filter(Boolean)
     if (seqs.length > 0) {
-      highestSeqRef.current = Math.max(...seqs)
+      const newMax = Math.max(...seqs)
+      if (newMax !== highestSeqRef.current) {
+        highestSeqRef.current = newMax
+      }
     }
   }, [mergedTimeline])
 
@@ -1111,7 +1122,8 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
       mergedTimelineRef.current = []
       // Clear stale key for the session we are leaving
       if (oldSessionId) {
-        sessionStorage.removeItem(`druppie_highest_seq_${oldSessionId}`)
+        sessionStorage.removeItem(`druppie_session_${oldSessionId}_timeline`)
+        sessionStorage.removeItem(`druppie_session_${oldSessionId}_highest_seq`)
       }
     }
   }, [sessionId])
@@ -1685,7 +1697,7 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
             }
 
             const fallbackSeen = new Set()
-            return data.timeline?.map((entry, i) => {
+            return displayTimeline.map((entry, i) => {
               // Messages always render
               if (entry.type === 'message' && entry.message) {
                 return (
