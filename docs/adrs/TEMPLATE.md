@@ -20,8 +20,13 @@ linked_research: null             # Path or URL to research/spike document
 
 > **Where this fits:** ADRs come AFTER the PRD (we know what we want) and AFTER research
 > (if needed — we investigated the options). An ADR is a COMMITTED decision — it records
-> what was chosen, why, and how it's enforced. It does NOT contain the user journey (that's
-> the PRD) or the investigation (that's the research doc).
+> ONLY the final decision and its consequences (Context / Decision / Consequences). It does
+> NOT contain the user journey (that's the PRD) or the investigation (that's the research doc).
+>
+> **Keep it to the decision.** An ADR deliberately does NOT compare alternatives or lay out
+> trade-offs — do not add an "Alternatives Considered" section. Every option that was weighed,
+> every pro/con and trade-off, belongs in the linked Research document (`linked_research`).
+> The ADR captures the outcome; the Research captures how we got there.
 
 ## Context
 
@@ -29,7 +34,7 @@ What is the issue that we're seeing that is motivating this decision or change? 
 
 ## Decision
 
-What is the change that we're proposing and/or doing? State the decision clearly and unambiguously. Use imperative mood. Explain *what* was decided, not *why* (the why belongs in Context and Consequences).
+What is the change that we're proposing and/or doing? State the decision clearly and unambiguously. Use imperative mood. Explain *what* was decided, not *why* (the why belongs in Context and Consequences). State ONLY the option that was chosen — do not list or compare the alternatives that were rejected; that comparison lives in the linked Research document (`linked_research`).
 
 ## Consequences
 

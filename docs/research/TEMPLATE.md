@@ -13,6 +13,11 @@ outcome: null                         # "adr-NNN" if research led to an ADR, or 
 > the ADR (we haven't decided yet). Research is OPTIONAL — only needed when there are
 > genuinely multiple viable options. If the choice is obvious, skip research and go
 > straight to the ADR. Research = "we're figuring this out". ADR = "we've decided".
+>
+> **This is where the weighing happens.** Every option considered, along with its pros/cons
+> and trade-offs, belongs HERE — capture them in the "Option Comparison" and "Trade-off
+> Analysis" sections below, NOT in the ADR. The ADR records only the final decision; this
+> document holds the full comparison that justifies it.
 
 ## Question
 
