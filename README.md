@@ -245,7 +245,18 @@ Run the check locally (no host Python needed — it runs in Docker):
 docker compose --profile docs-validator run --rm docs-validator
 ```
 
-Optional — run it automatically before each commit via [lefthook](https://github.com/evilmartians/lefthook):
+Optional (opt-in) — get fast local feedback by running the check automatically
+before each commit via [lefthook](https://github.com/evilmartians/lefthook). This
+is purely a convenience; CI (`.github/workflows/docs.yml`) is the binding gate.
+
+Easiest way — one command (installs the hooks if the binary is present, otherwise
+prints install instructions):
+
+```bash
+./scripts/setup-hooks.sh
+```
+
+Or do it manually:
 
 ```bash
 # Install the lefthook binary once (Linux: download the release binary or
@@ -253,7 +264,9 @@ Optional — run it automatically before each commit via [lefthook](https://gith
 lefthook install
 ```
 
-The binding gate is CI (`.github/workflows/docs.yml`); the pre-commit hook is a convenience and is bypassable with `git commit --no-verify`.
+The pre-commit hook only affects commits made on a host where it is installed;
+it does not touch agent commits made inside sandbox containers. It is always
+bypassable with `git commit --no-verify`, and CI remains the binding gate.
 
 ## Troubleshooting
 

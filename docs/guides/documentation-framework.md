@@ -77,7 +77,7 @@ Not every change needs docs: a bugfix or chore usually needs none.
 
 Docs in `docs/{adrs,prds,research}` and `testing/specs/features` are checked automatically (PBI 9744):
 
-- **Locally (optional):** `docker compose --profile docs-validator run --rm docs-validator` — or install [lefthook](https://github.com/evilmartians/lefthook) (`lefthook install`) to run it before each commit.
+- **Locally (optional):** `docker compose --profile docs-validator run --rm docs-validator` — or opt in to [lefthook](https://github.com/evilmartians/lefthook) via `./scripts/setup-hooks.sh` (or `lefthook install`) to run it before each commit. The lefthook hook is optional/opt-in local convenience only; CI is the binding gate.
 - **CI (binding):** `.github/workflows/docs.yml` runs on every PR, with two checks:
   - **Validity** — docs that exist must have the required frontmatter/fields, a matching `id`, resolvable `linked_*` / `@prd` / `@adr`, and a fresh `CAS.md`.
   - **Mandatory-docs** — a PR that changes feature code must include documentation, unless it is marked `docs-exempt`.

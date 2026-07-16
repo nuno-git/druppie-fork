@@ -1,15 +1,35 @@
 # Lefthook git hooks — https://github.com/evilmartians/lefthook
 #
-# One-time setup (host): install the lefthook binary (see README), then run:
-#   lefthook install
+# This pre-commit hook is OPTIONAL / opt-in. It does NOTHING until you run
+# `lefthook install` on your host (see README / scripts/setup-hooks.sh).
 #
-# The documentation check runs INSIDE Docker (the `docs-validator` compose service),
-# so no host Python is needed. It only runs when documentation files change.
+# Scope: it only affects commits made on a host where the binary is installed.
+# It does NOT touch agent commits, which happen inside sandbox containers that
+# have neither the binary nor this hook. Today most commits go through those
+# agents (Claude Code / opencode), so the hook has near-zero effect right now —
+# it mainly becomes useful once we start committing/building from Druppie itself.
 #
-# Note: the pre-commit hook is a convenience and is bypassable (git commit --no-verify).
-# The binding gate is CI (.github/workflows/docs.yml).
+# The BINDING gate is CI (.github/workflows/docs.yml). This hook is only fast
+# local feedback and is always bypassable (git commit --no-verify).
+#
+# The documentation check runs INSIDE Docker (the `docs-validator` compose
+# service), so no host Python is needed. It only runs when documentation files
+# change. On hosts where the user is not in the `docker` group, docker may
+# require sudo — the run command below detects that and, if docker is not
+# usable at all, SKIPS with a warning rather than blocking a valid commit.
 pre-commit:
   commands:
     docs-validator:
       glob: "docs/**/*.md"
-      run: docker compose --profile docs-validator run --rm docs-validator
+      run: |
+        sh -c '
+          if docker info >/dev/null 2>&1; then
+            DOCKER="docker"
+          elif command -v sudo >/dev/null 2>&1 && sudo docker info >/dev/null 2>&1; then
+            DOCKER="sudo docker"
+          else
+            echo "lefthook: docker not usable (not installed or no permission) — SKIPPING docs-validator. CI (.github/workflows/docs.yml) remains the binding gate." >&2
+            exit 0
+          fi
+          $DOCKER compose --profile docs-validator run --rm docs-validator
+        '
