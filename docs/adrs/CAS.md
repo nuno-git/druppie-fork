@@ -19,3 +19,4 @@ Consolidated view of all **accepted** ADRs. Individual ADRs live in `docs/adrs/`
 | [012](012-tool-schema-discovery.md) | Discover Tool Schemas Dynamically via MCP tools/list |
 | [013](013-cooperative-pause-resume-cancellation.md) | Cooperative Pause, Resume, and Cancellation |
 | [014](014-atomic-claim-cron-scheduling.md) | Atomic-Claim Cron Scheduling |
+| [016](016-context-window-management.md) | Auto-compression of agent conversation context via single-shot LLM summarization |
