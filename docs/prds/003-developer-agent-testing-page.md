@@ -58,4 +58,3 @@ No open questions remain. The feature is implemented and in active use.
 
 - ADRs: `docs/adrs/003-developer-agent-testing-page.md`
 - Specs: `docs/specs/003-developer-agent-testing-page.feature`
-- Guide: `docs/guides/developer-page.md`
