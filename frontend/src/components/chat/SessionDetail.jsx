@@ -980,10 +980,20 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
   const { user } = useAuth()
   const canDebug = user?.roles?.some(r => r === 'developer' || r === 'admin')
   const isAdmin = !!user?.roles?.includes('admin')
-  const highestSeqRef = useRef(undefined)
+  // Persist highest sequence across remounts / reloads so delta fetch actually triggers.
+  const highestSeqStorageKey = sessionId ? `druppie_highest_seq_${sessionId}` : null
+  const highestSeqRef = useRef(
+    highestSeqStorageKey ? parseInt(sessionStorage.getItem(highestSeqStorageKey), 10) || undefined : undefined
+  )
   const prevSessionIdRef = useRef(sessionId)
   const viewModeRef = useRef(viewMode)
   viewModeRef.current = viewMode
+
+  useEffect(() => {
+    if (highestSeqStorageKey && highestSeqRef.current !== undefined) {
+      sessionStorage.setItem(highestSeqStorageKey, String(highestSeqRef.current))
+    }
+  })
   const isWebSocketConnected = useRef(false)
 
   const getExcludeForViewMode = (mode) => {
@@ -1095,9 +1105,14 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
 
   useEffect(() => {
     if (sessionId !== prevSessionIdRef.current) {
+      const oldSessionId = prevSessionIdRef.current
       prevSessionIdRef.current = sessionId
       highestSeqRef.current = undefined
       mergedTimelineRef.current = []
+      // Clear stale key for the session we are leaving
+      if (oldSessionId) {
+        sessionStorage.removeItem(`druppie_highest_seq_${oldSessionId}`)
+      }
     }
   }, [sessionId])
 
