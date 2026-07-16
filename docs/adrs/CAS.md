@@ -7,3 +7,4 @@ Consolidated view of all **accepted** ADRs. Individual ADRs live in `docs/adrs/`
 | ADR | Title |
 |-----|-------|
 | [002](002-kubernetes-migration.md) | Kubernetes migratie architectuur |
+| [003](003-developer-agent-testing-page.md) | Add developer page for single-agent testing |
