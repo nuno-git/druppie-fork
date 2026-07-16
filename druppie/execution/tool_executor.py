@@ -1241,24 +1241,37 @@ class ToolExecutor:
             choices_english=[{"text": c} for c in english_choices] if english_choices and is_translated else None,
         )
 
-        # Link attachments to the question if the agent provided attachment_ids
+        # Link attachments to the question if the agent provided attachment_ids.
         attachment_ids = args.get("attachment_ids")
         if attachment_ids:
-            try:
-                from druppie.repositories import AttachmentRepository
-                att_repo = AttachmentRepository(self._active_db)
-                raw_ids = [aid for aid in attachment_ids if isinstance(aid, str) and aid]
-                if raw_ids:
+            raw_ids = [aid for aid in attachment_ids if isinstance(aid, str) and aid]
+            if raw_ids:
+                try:
                     att_ids = [UUID(aid) for aid in raw_ids]
-                    att_repo.validate_ownership(att_ids, tool_call.session_id)
-                    att_repo.link_to_question(att_ids, question.id, tool_call.session_id)
-                    logger.info(
-                        "hitl_attachments_linked",
+                except ValueError as e:
+                    logger.warning(
+                        "hitl_attachment_invalid_uuid",
+                        error=str(e),
                         question_id=str(question.id),
-                        count=len(att_ids),
                     )
-            except Exception as e:
-                logger.warning("hitl_attachment_link_failed", error=str(e), question_id=str(question.id))
+                else:
+                    from druppie.repositories import AttachmentRepository
+                    att_repo = AttachmentRepository(self._active_db)
+                    att_repo.validate_ownership(att_ids, tool_call.session_id)
+                    try:
+                        att_repo.link_to_question(att_ids, question.id, tool_call.session_id)
+                    except Exception as e:
+                        logger.warning(
+                            "hitl_attachment_link_failed",
+                            error=str(e),
+                            question_id=str(question.id),
+                        )
+                    else:
+                        logger.info(
+                            "hitl_attachments_linked",
+                            question_id=str(question.id),
+                            count=len(att_ids),
+                        )
 
         # Update tool call status to waiting
         self.execution_repo.update_tool_call(

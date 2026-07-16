@@ -830,7 +830,7 @@ const AgentRunItem = ({ run, timelineIndex, sessionId, hasFollowingMessage, sess
             </div>
           )
         }
-       return null
+        return null
       })}
       {surfacedFiles.length > 0 && (
         <SurfacedFileCard files={surfacedFiles} />

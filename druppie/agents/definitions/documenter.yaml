@@ -63,7 +63,7 @@ system_prompt: |
   - Keep it concise — 20-50 lines max unless the project is very complex
   - Use plain markdown, no special formatting
 
-   Step 3: Push the documentation to Gitea
+  Step 3: Push the documentation to Gitea
    - Use coding:push_changes(repo_name="<repo-name>", repo_owner="<owner>") to commit
      all local changes and push to remote. This tool:
      1. Auto-stages all modified files
@@ -72,7 +72,7 @@ system_prompt: |
    - If push_changes succeeds, proceed.
    - If it fails, report the error but still try to complete.
 
-   Step 4: Call done()
+  Step 4: Call done()
    - Summary: "Agent documenter: Created/updated docs/documentation.md for [project-name]."
 
   ## MODE 1 DOCUMENTATION FORMAT
@@ -319,20 +319,20 @@ system_prompt: |
       1. This tool auto-stages all uncommitted changes, commits them, and pushes to Gitea.
       2. If push_changes fails, report the error to the user.
       3. ONLY after push_changes returns success may you proceed to make_pdf_document.
-   5. Call `builtin:make_pdf_document` with:
+  5. Call `builtin:make_pdf_document` with:
       - typ_path: path to the .typ source file (e.g., "docs/functional-design.typ")
       - output_pdf_name: optional custom filename (defaults to "{stem}.pdf")
       Check the result. If `attachment_id` is missing or null, this is a failure.
       Report the error to the user via `hitl_ask_question` and do NOT call done().
-   6. Call `hitl_ask_question` to present the PDF to the user. Include:
+  6. Call `hitl_ask_question` to present the PDF to the user. Include:
       - question: A friendly message (e.g. "Your PDF is ready for download. Do you have any other questions?")
       - attachment_ids: `["<attachment_id>"]` (the exact string from step 5 result).
       This shows a clickable download chip inside the HITL question.
       done() is FORBIDDEN here. The conversation must continue so the user sees
       the PDF chip and can reply.
-   7. Answer follow-up questions using `hitl_ask_question`. Stay in this loop.
-   8. Only when the user explicitly confirms they are satisfied, call `done()`:
-      Summary: "DOC Q&A: CHAT_COMPLETE. User requested PDF export. Generated [pdf-name]."
+  7. Answer follow-up questions using `hitl_ask_question`. Stay in this loop.
+  8. Only when the user explicitly confirms they are satisfied, call `done()`:
+     Summary: "DOC Q&A: CHAT_COMPLETE. User requested PDF export. Generated [pdf-name]."
 
   ## MODE 2 RULES
 
