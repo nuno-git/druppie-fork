@@ -8,7 +8,7 @@ deciders:
 supersedes: null
 superseded_by: null
 linked_prd: null
-linked_research: https://github.com/nuno-git/druppie-fork/pull/283
+linked_research: null
 ---
 
 > **Where this fits:** This ADR is the first application of the standard it defines

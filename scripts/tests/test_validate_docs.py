@@ -209,7 +209,7 @@ def test_broken_link_is_error(mini_repo):
     assert any("linked file does not exist" in e for e in errors)
 
 
-def test_http_link_is_skipped(mini_repo):
+def test_http_link_is_rejected(mini_repo):
     p = mini_repo / "docs/adrs/001-decision.md"
     p.write_text(
         VALID_ADR.format(
@@ -223,7 +223,40 @@ def test_http_link_is_skipped(mini_repo):
     errors = validate_docs.validate_frontmatter_file(
         p, _validator_for(mini_repo, "docs/adrs"), mini_repo
     )
-    assert errors == []
+    assert any("linked file does not exist" in e for e in errors)
+
+
+def test_comma_separated_linked_research(mini_repo):
+    (mini_repo / "docs/research/004-agent-runtime.md").write_text(
+        "---\nid: \"004\"\ntitle: Test\nstatus: complete\nauthor: nuno\ndate: 2026-01-01\noutcome: null\n---\n\n# Test\n",
+        encoding="utf-8",
+    )
+    (mini_repo / "docs/research/002-foo.md").write_text(
+        "---\nid: \"002\"\ntitle: Foo\nstatus: complete\nauthor: nuno\ndate: 2026-01-01\noutcome: null\n---\n\n# Foo\n",
+        encoding="utf-8",
+    )
+    content = """\
+---
+id: "001"
+title: Test comma-separated linked fields
+status: accepted
+date: 2026-07-17
+deciders:
+  - nuno
+supersedes: null
+superseded_by: null
+linked_prd: null
+linked_research: docs/research/004-agent-runtime.md, docs/research/002-foo.md
+---
+
+# Test
+"""
+    p = mini_repo / "docs/adrs/001-decision.md"
+    p.write_text(content, encoding="utf-8")
+    errors = validate_docs.validate_frontmatter_file(
+        p, _validator_for(mini_repo, "docs/adrs"), mini_repo
+    )
+    assert not any("linked file does not exist" in e for e in errors)
 
 
 def test_superseded_without_superseded_by_is_error(mini_repo):

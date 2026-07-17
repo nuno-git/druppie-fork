@@ -475,6 +475,7 @@ export const getAgentTestRun = (runId) =>
 
 // ============ Documentation ============
 export const getDocumentation = () => request("/api/documentation")
+export const getPlatformDocumentation = () => request("/api/documentation/platform")
 
 // ============ Jobs (Scheduled / Cron) ============
 export const getJobs = () => request('/api/jobs')

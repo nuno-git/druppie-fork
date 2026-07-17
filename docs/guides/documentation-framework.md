@@ -44,6 +44,16 @@ A guide is **not an escape hatch** to avoid writing ADRs or Specs: a decision or
 PRD  →  Research?  →  ADR?  →  Spec  →  build
 ```
 
+```mermaid
+graph LR
+    A[PRD] --> B{Research?}
+    B -- yes --> C[Research]
+    B -- no --> D
+    C --> D[ADR?]
+    D --> E[Spec]
+    E --> F[Build]
+```
+
 - **PRD first** — know what you're building and why.
 - **Research is optional** — skip it if the choice is obvious or an ADR already covers it.
 - **ADR is conditional** — only for a *new* decision; skip if an existing ADR applies.
@@ -56,7 +66,7 @@ Not every change needs docs: a bugfix or chore usually needs none.
 - **Format:** Markdown + YAML frontmatter.
 - **Ids:** 3-digit zero-padded **string** (`"001"`); filenames `NNN-kebab-title.md`.
 - **Status & lifecycle:** every doc carries a `status`, and a `superseded_by` once replaced. For ADR/PRD/Research these live in YAML frontmatter; for Specs they are `# @status` / `# @superseded_by` comment tags at the top of the file. Exact values differ per type — see each template.
-- **Links:** use the `linked_*` frontmatter fields (ADR/PRD/Research) or the `@prd` / `@adr` Gherkin tags (Specs) to connect documents.
+- **Links:** use the `linked_*` frontmatter fields (ADR/PRD/Research) or the `@prd` / `@adr` Gherkin tags (Specs) to connect documents. Linked values **must** be repo-root-relative paths to existing files (e.g. `docs/research/004-agent-runtime.md`). Absolute URLs are rejected by the validator — external references belong in the document body as inline links, not in frontmatter (frontmatter links drive in-app cross-navigation).
 - **DevOps link (PRD):** a PRD's frontmatter carries a `linked_workitem` field — a URL to the Azure DevOps user story / work item that motivates the PRD. It may be `null` when there is no work item.
 - **Language:** English is the source of truth; ids, status and frontmatter are never translated.
 - **Schemas:** `docs/{adrs,prds,research}/*.schema.json` define the required frontmatter fields; Spec `@prd` / `@adr` / `@status` / `@superseded_by` tags are checked by `scripts/validate_docs.py`.
@@ -120,12 +130,21 @@ When a typed document replaces an older one (or a living-doc section), do **both
 Never delete the old document. The validator guarantees a `superseded` doc always names its
 replacement.
 
-## Not done yet (later stories)
+## Done
 
-- **Enforcement** — pre-commit + CI that validate docs against the schemas → **PBI 9744**.
-- **Migrating existing docs** to this standard → **PBI 9743**.
-- **In-core documentation portal**, **decision-aware agents**, and **agent writer-skills** →
-  later epics (relevant once we build Druppie via Druppie itself).
+The PBI 9743 (existing doc migration) and PBI 9744 (validation + enforcement) are both
+complete:
+
+- **All existing docs** migrated to the formal ADR/PRD/Research/Spec structure.
+- **`docs/reference/` eliminated** — archived or relocated to `docs/guides/`.
+- **47 pytest tests** run in CI, covering frontmatter validation, lifecycle tags, link
+  resolution, CAS freshness, spec references, and the mandatory-docs gate.
+- **Link validation:** all `linked_*` fields must point to existing files — URLs are rejected.
+- **Enforcement:** the validator runs in CI (`docs.yml`), blocking on errors. Lefthook
+  pre-commit hook is available as opt-in local convenience.
+
+Future improvements (agent-writer skills, in-core documentation portal) are tracked as
+separate epics.
 
 > This guide is written in the standard it describes, so it can later be converted into a
 > writer-skill with minimal effort.
@@ -136,7 +155,7 @@ Docs in `docs/{adrs,prds,research}` and `docs/specs` are checked automatically (
 
 - **Locally (optional):** `docker compose --profile docs-validator run --rm docs-validator` — or opt in to [lefthook](https://github.com/evilmartians/lefthook) via `./scripts/setup-hooks.sh` (or `lefthook install`) to run it before each commit. The lefthook hook is optional/opt-in local convenience only; CI is the binding gate.
 - **CI (binding):** `.github/workflows/docs.yml` runs on every PR, with two checks:
-  - **Validity** — docs that exist must have the required frontmatter/fields, a matching `id`, resolvable `linked_*` / `@prd` / `@adr`, and a fresh `CAS.md`.
+  - **Validity** — docs that exist must have the required frontmatter/fields, a matching `id`, resolvable `linked_*` / `@prd` / `@adr` (must point to existing files; URLs are rejected), and a fresh `CAS.md`.
   - **Mandatory-docs** — a PR that changes feature code must include documentation, unless it is marked `docs-exempt`.
 - **Exempt** a change that genuinely needs no docs via the **`docs-exempt` label** or a **checked `docs-exempt` box** / a **`docs-exempt: <reason>` line** in the PR description.
 

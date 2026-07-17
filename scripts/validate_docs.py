@@ -79,11 +79,11 @@ def extract_frontmatter(text):
 
 
 def as_list(value):
-    """Normalize a link field: null->[], string->[string], list->list."""
+    """Normalize a link field: null->[], string->split by comma, list->list."""
     if value is None:
         return []
     if isinstance(value, str):
-        return [value]
+        return [v.strip() for v in value.split(",") if v.strip()]
     if isinstance(value, list):
         return value
     return [value]
@@ -128,8 +128,6 @@ def validate_frontmatter_file(path, schema_validator, root):
             continue
         for value in as_list(data[field]):
             if not isinstance(value, str) or not value:
-                continue
-            if value.startswith("http"):
                 continue
             target = root / value
             if not target.exists():

@@ -32,6 +32,10 @@ COPY druppie/ /app/druppie/
 # Copy test definitions (YAML files for evaluation framework)
 COPY testing/ /app/testing/
 
+# Copy platform docs (ADRs/PRDs/Specs/Research/Guides) — served by
+# GET /api/documentation/platform. Read-only at runtime.
+COPY docs/ /app/docs/
+
 # Set environment variables
 ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
