@@ -319,7 +319,7 @@ start_desktop() {
 
 start_code_server() {
     log "starting code-server on 0.0.0.0:8080 (auth handled by oauth2-proxy sidecar)"
-    code-server --bind-addr 0.0.0.0:8080 --auth none "${REPO_DIR}" \
+    code-server --bind-addr 0.0.0.0:8080 --auth none "${WORKSPACE}" \
         >"${LOGS}/code-server.log" 2>&1 &
     PIDS="${PIDS} $!"
 }
