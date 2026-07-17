@@ -465,22 +465,19 @@ const DeployBranchDialog = ({ onClose, onDeploy, isDeploying, deployError, usern
             <label className="block text-xs font-medium text-gray-700 mb-1">Branch</label>
             <div className="relative">
               <GitBranch className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-              <select
+              <input
+                list="branch-suggestions"
                 value={branch}
                 onChange={(e) => setBranch(e.target.value)}
                 required
-                disabled={branchesLoading}
-                className="w-full pl-9 pr-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/30 appearance-none bg-white"
-              >
-                <option value="">
-                  {branchesLoading ? 'Loading branches…' : 'Select a branch…'}
-                </option>
+                placeholder={branchesLoading ? 'Loading branches…' : 'Type or select a branch name…'}
+                className="w-full pl-9 pr-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/30 bg-white"
+              />
+              <datalist id="branch-suggestions">
                 {branches.map((b) => (
-                  <option key={b} value={b}>
-                    {b}
-                  </option>
+                  <option key={b} value={b} />
                 ))}
-              </select>
+              </datalist>
             </div>
             <p className="text-xs text-gray-400 mt-1">
               {previewUrl ? (
@@ -488,7 +485,7 @@ const DeployBranchDialog = ({ onClose, onDeploy, isDeploying, deployError, usern
                   URL preview: <span className="font-mono text-gray-500">{previewUrl}</span>
                 </>
               ) : (
-                'A DNS-safe slug is derived from the branch name.'
+                'Type a new branch name to create it from colab-dev, or select an existing one.'
               )}
             </p>
           </div>
