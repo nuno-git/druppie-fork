@@ -166,8 +166,38 @@ configure_git() {
 }
 
 # ---------------------------------------------------------------------------
-# 3. Conditional dependency install (only when a lockfile changed).
+# 2c. Clone supplementary repos (ai/k8s, systeembeheer/rancher-gitops).
 # ---------------------------------------------------------------------------
+clone_side_repos() {
+    local git_token="${DRUPPIE_GIT_TOKEN:-${EXTERNAL_GITEA_TOKEN:-}}"
+    if [ -z "${git_token}" ]; then
+        warn "no git token — skipping side repo clones"
+        return 0
+    fi
+
+    local side_repos=(
+        "ai/k8s"
+        "systeembeheer/rancher-gitops"
+    )
+
+    local git_opts=""
+    [ "${GIT_SSL_NO_VERIFY:-}" = "1" ] && git_opts="-c http.sslVerify=false"
+
+    for repo in "${side_repos[@]}"; do
+        local dir="${WORKSPACE}/${repo//\//-}"
+        if [ -d "${dir}/.git" ]; then
+            log "side repo ${repo} already cloned — pulling latest"
+            git -C "${dir}" ${git_opts} pull --ff-only origin main >>"${LOGS}/git.log" 2>&1 || \
+                warn "could not update ${repo} — stale checkout"
+        else
+            log "cloning side repo ${repo} → ${dir}"
+            git -C "${WORKSPACE}" ${git_opts} clone --depth=1 \
+                "https://oauth2:${git_token}@aigit.waterschap.org/${repo}.git" \
+                "${dir}" >>"${LOGS}/git.log" 2>&1 || \
+                warn "could not clone ${repo}"
+        fi
+    done
+}
 ensure_frontend_deps() {
     local cur stored
     cur=$(hash_of "${FRONTEND_LOCK_REL}")
@@ -329,6 +359,7 @@ printf '.seeded\n.logs/\n.dep-hashes/\n.venv/\n.data/\n.claude/\n' \
 
 checkout_branch
 configure_git
+clone_side_repos
 ensure_frontend_deps
 ensure_backend_deps
 
