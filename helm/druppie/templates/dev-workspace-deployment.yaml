@@ -83,6 +83,8 @@ spec:
           image: {{ .Values.devWorkspace.image }}
           imagePullPolicy: {{ .Values.devWorkspace.imagePullPolicy }}
           env:
+            - name: DATABASE_URL
+              value: "postgresql://{{ .Values.postgresql.druppie.username }}:$(DRUPPIE_DB_PASSWORD)@{{ include "druppie.fullname" . }}-druppie-db:5432/{{ .Values.postgresql.druppie.database }}"
             - name: DRUPPIE_GIT_BRANCH
               value: {{ .Values.devWorkspace.gitBranch | quote }}
             - name: DRUPPIE_REPO_URL
@@ -92,7 +94,7 @@ spec:
             - name: DEV_STACK
               value: {{ .Values.devWorkspace.stackMode | quote }}
             - name: DRUPPIE_DESKTOP
-              value: {{ .Values.devWorkspace.desktop.enabled | quote }}
+              value: "1"
             # The frontend preview is reached through code-server's port proxy
             # (/proxy/5173); its API calls go to /proxy/8000 on the same origin.
             - name: VITE_API_URL
