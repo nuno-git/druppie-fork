@@ -34,6 +34,7 @@
 set -u
 
 WORKSPACE="/workspace"
+REPO_DIR="${WORKSPACE}/druppie"
 SRC="/opt/druppie-src"
 BAKED_VENV="/opt/venv"
 VENV="${WORKSPACE}/.venv"
@@ -79,24 +80,25 @@ warn() { printf '[dev-workspace] WARN: %s\n' "$*" >&2; }
 seed_workspace() {
     # Consider the workspace unseeded if it has no baked marker. Ignore the
     # dot-dirs we create ourselves (.logs etc.) when deciding emptiness.
-    if [ -f "${WORKSPACE}/.seeded" ]; then
+    if [ -f "${REPO_DIR}/.seeded" ]; then
         log "workspace already seeded — reusing existing checkout"
         return 0
     fi
 
     log "seeding workspace from ${SRC} (first boot)"
+    mkdir -p "${REPO_DIR}"
     # -a preserves the developer-owned tree baked in the image. The trailing
-    # /. copies contents (including dotfiles) into the existing /workspace.
-    cp -a "${SRC}/." "${WORKSPACE}/"
+    # /. copies contents (including dotfiles) into ${REPO_DIR}.
+    cp -a "${SRC}/." "${REPO_DIR}/"
 
     # The baked snapshot has no .git (excluded by .dockerignore). Re-init so
     # code-server's git integration and the runtime checkout below work.
-    if [ ! -d "${WORKSPACE}/.git" ]; then
-        git -C "${WORKSPACE}" init -q
-        git -C "${WORKSPACE}" config user.name "druppie-dev" 2>/dev/null || true
-        git -C "${WORKSPACE}" config user.email "dev@druppie.local" 2>/dev/null || true
-        git -C "${WORKSPACE}" remote add origin "${DRUPPIE_REPO_URL}" 2>/dev/null || \
-            git -C "${WORKSPACE}" remote set-url origin "${DRUPPIE_REPO_URL}"
+    if [ ! -d "${REPO_DIR}/.git" ]; then
+        git -C "${REPO_DIR}" init -q
+        git -C "${REPO_DIR}" config user.name "druppie-dev" 2>/dev/null || true
+        git -C "${REPO_DIR}" config user.email "dev@druppie.local" 2>/dev/null || true
+        git -C "${REPO_DIR}" remote add origin "${DRUPPIE_REPO_URL}" 2>/dev/null || \
+            git -C "${REPO_DIR}" remote set-url origin "${DRUPPIE_REPO_URL}"
     fi
 
     # Seed the backend venv (relocated copy — see Dockerfile L5 note).
@@ -111,10 +113,10 @@ seed_workspace() {
     store_hash "${FRONTEND_LOCK_REL}" "${DEP_DIR}/frontend.sha"
     store_hash "${REQUIREMENTS_REL}"  "${DEP_DIR}/backend.sha"
 
-    touch "${WORKSPACE}/.seeded"
+    touch "${REPO_DIR}/.seeded"
 }
 
-hash_of()    { [ -f "${WORKSPACE}/$1" ] && sha256sum "${WORKSPACE}/$1" | awk '{print $1}' || printf ''; }
+hash_of()    { [ -f "${REPO_DIR}/$1" ] && sha256sum "${REPO_DIR}/$1" | awk '{print $1}' || printf ''; }
 store_hash() { hash_of "$1" > "$2"; }
 
 # ---------------------------------------------------------------------------
@@ -135,13 +137,13 @@ checkout_branch() {
 
     log "fetching branch '${branch}' from origin"
     # shellcheck disable=SC2086
-    if git -C "${WORKSPACE}" ${git_opts} fetch --depth=1 "${fetch_url}" "${branch}" 2>>"${LOGS}/git.log"; then
+    if git -C "${REPO_DIR}" ${git_opts} fetch --depth=1 "${fetch_url}" "${branch}" 2>>"${LOGS}/git.log"; then
         # reset --hard overwrites the seeded working tree to the branch content
         # without the "untracked file would be overwritten" errors that plague
         # `git checkout` when the dir was pre-populated by the seed step.
-        git -C "${WORKSPACE}" reset --hard FETCH_HEAD >>"${LOGS}/git.log" 2>&1
-        git -C "${WORKSPACE}" checkout -B "${branch}" >>"${LOGS}/git.log" 2>&1 || true
-        log "checked out '${branch}' at $(git -C "${WORKSPACE}" rev-parse --short HEAD 2>/dev/null || echo '?')"
+        git -C "${REPO_DIR}" reset --hard FETCH_HEAD >>"${LOGS}/git.log" 2>&1
+        git -C "${REPO_DIR}" checkout -B "${branch}" >>"${LOGS}/git.log" 2>&1 || true
+        log "checked out '${branch}' at $(git -C "${REPO_DIR}" rev-parse --short HEAD 2>/dev/null || echo '?')"
     else
         warn "git fetch failed (offline or auth/TLS issue) — continuing with the baked snapshot; see ${LOGS}/git.log"
     fi
@@ -206,9 +208,9 @@ ensure_frontend_deps() {
         warn "no ${FRONTEND_LOCK_REL} — skipping frontend install"
         return 0
     fi
-    if [ ! -d "${WORKSPACE}/frontend/node_modules" ] || [ "${cur}" != "${stored}" ]; then
+    if [ ! -d "${REPO_DIR}/frontend/node_modules" ] || [ "${cur}" != "${stored}" ]; then
         log "frontend deps changed (or missing) — running npm ci"
-        ( cd "${WORKSPACE}/frontend" && npm ci ) && printf '%s' "${cur}" > "${DEP_DIR}/frontend.sha"
+        ( cd "${REPO_DIR}/frontend" && npm ci ) && printf '%s' "${cur}" > "${DEP_DIR}/frontend.sha"
     else
         log "frontend deps unchanged — reusing node_modules"
     fi
@@ -224,7 +226,7 @@ ensure_backend_deps() {
     fi
     if [ ! -d "${VENV}" ] || [ "${cur}" != "${stored}" ]; then
         log "backend deps changed (or missing) — running pip install"
-        "${VENV}/bin/python" -m pip install --no-cache-dir -r "${WORKSPACE}/${REQUIREMENTS_REL}" \
+        "${VENV}/bin/python" -m pip install --no-cache-dir -r "${REPO_DIR}/${REQUIREMENTS_REL}" \
             && printf '%s' "${cur}" > "${DEP_DIR}/backend.sha"
     else
         log "backend deps unchanged — reusing venv"
@@ -247,20 +249,20 @@ start_backend() {
             ;;
     esac
     (
-        cd "${WORKSPACE}" || exit 1
+        cd "${REPO_DIR}" || exit 1
         # DEV_STACK=real: DATABASE_URL/KEYCLOAK_*/MCP_*/GITEA_* are provided by
         #   the chart (envFrom). The backend runs against the real deployed
         #   stack, still under --reload.
         # DEV_STACK=degraded: SQLite (tables auto-created on import via
-        #   api/deps.py init_db()), mock auth, no Keycloak/Gitea/MCP wiring.
+        # api/deps.py init_db()), mock auth, no Keycloak/Gitea/MCP wiring.
         #   GITHUB_APP_* is deliberately left UNSET so Settings.validate_startup()
         #   does not abort.
-        PYTHONPATH="${WORKSPACE}" \
+        PYTHONPATH="${REPO_DIR}" \
         DATABASE_URL="${DATABASE_URL}" \
         ENVIRONMENT="development" \
         "${VENV}/bin/python" -m uvicorn druppie.api.main:app \
             --host 0.0.0.0 --port 8000 \
-            --reload --reload-dir "${WORKSPACE}/druppie"
+            --reload --reload-dir "${REPO_DIR}/druppie"
     ) >"${LOGS}/backend.log" 2>&1 &
     PIDS="${PIDS} $!"
 }
@@ -268,7 +270,7 @@ start_backend() {
 start_frontend() {
     log "starting frontend (vite dev, HMR) on 0.0.0.0:5173"
     (
-        cd "${WORKSPACE}/frontend" || exit 1
+        cd "${REPO_DIR}/frontend" || exit 1
         # The frontend reads the backend URL from VITE_API_URL (src/services/
         # api.js). No Vite proxy is needed or added — env-based config matches
         # how docker-compose's druppie-frontend-dev service is wired.
@@ -317,7 +319,7 @@ start_desktop() {
 
 start_code_server() {
     log "starting code-server on 0.0.0.0:8080 (auth handled by oauth2-proxy sidecar)"
-    code-server --bind-addr 0.0.0.0:8080 --auth none "${WORKSPACE}" \
+    code-server --bind-addr 0.0.0.0:8080 --auth none "${REPO_DIR}" \
         >"${LOGS}/code-server.log" 2>&1 &
     PIDS="${PIDS} $!"
 }
@@ -342,7 +344,7 @@ log "workspace boot: branch=${DRUPPIE_GIT_BRANCH} repo=${DRUPPIE_REPO_URL}"
 
 # The PVC mount root stays root-owned (fsGroup only changes the group), so git
 # refuses the repo with "dubious ownership" unless it is marked safe.
-git config --global --add safe.directory "${WORKSPACE}"
+git config --global --add safe.directory "${REPO_DIR}"
 
 # Claude Code: keep login/config on the PVC so it survives pod restarts.
 export CLAUDE_CONFIG_DIR="${WORKSPACE}/.claude"
@@ -355,7 +357,7 @@ seed_workspace
 # so the repo's .gitignore stays untouched. After seed_workspace: that step
 # creates .git on first boot.
 printf '.seeded\n.logs/\n.dep-hashes/\n.venv/\n.data/\n.claude/\n' \
-    > "${WORKSPACE}/.git/info/exclude"
+    > "${REPO_DIR}/.git/info/exclude"
 
 checkout_branch
 configure_git

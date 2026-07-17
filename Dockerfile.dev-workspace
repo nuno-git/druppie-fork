@@ -84,7 +84,7 @@ RUN curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor
     && rm -rf /var/lib/apt/lists/*
 
 # OpenCode CLI
-RUN curl -fsSL https://raw.githubusercontent.com/opencode-ai/opencode/main/install.sh | bash -s -- -b /usr/local/bin
+RUN curl -fsSL https://opencode.ai/install | bash
 
 # Chromium's own sandbox needs user namespaces / SUID, which the pod's
 # restricted runtime does not grant; k8s also mounts a tiny /dev/shm.
@@ -177,9 +177,9 @@ RUN install -d -m 755 -o developer -g developer /home/developer/.config/code-ser
 RUN install -d -m 755 /usr/share/applications \
     && printf '[Desktop Entry]\nName=VS Code\nComment=Code Editing. Redefined.\nGenericName=Text Editor\nExec=/usr/share/code/code --no-sandbox --unity-launch %%F\nIcon=code\nType=Application\nStartupNotify=false\nStartupWMClass=Code\nCategories=TextEditor;Development;IDE;\nMimeType=text/plain;inode/directory;\nActions=new-empty-window;\nKeywords=vscode;\n\n[Desktop Action new-empty-window]\nName=New Empty Window\nExec=/usr/share/code/code --no-sandbox --new-window %%F\nIcon=code\n' > /usr/share/applications/code.desktop
 
-# XFCE desktop autostart: open xfce4-terminal in /workspace on session start
+# XFCE desktop autostart: open xfce4-terminal in /workspace/druppie on session start
 RUN install -d -m 755 -o developer -g developer /home/developer/.config/autostart \
-    && printf '[Desktop Entry]\nType=Application\nName=Workspace Terminal\nExec=xfce4-terminal --default-working-directory=/workspace\nX-GNOME-Autostart-enabled=true\n' > /home/developer/.config/autostart/workspace-terminal.desktop \
+    && printf '[Desktop Entry]\nType=Application\nName=Workspace Terminal\nExec=xfce4-terminal --default-working-directory=/workspace/druppie\nX-GNOME-Autostart-enabled=true\n' > /home/developer/.config/autostart/workspace-terminal.desktop \
     && chown -R developer:developer /home/developer/.config/autostart
 
 USER developer
