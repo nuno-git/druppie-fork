@@ -69,9 +69,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         novnc \
         websockify \
         xfce4-session xfwm4 xfce4-panel xfdesktop4 xfce4-terminal thunar \
+        mousepad \
         dbus-x11 x11-xserver-utils \
         fonts-dejavu \
         chromium \
+        nano \
     && rm -rf /var/lib/apt/lists/*
 
 # Chromium's own sandbox needs user namespaces / SUID, which the pod's
