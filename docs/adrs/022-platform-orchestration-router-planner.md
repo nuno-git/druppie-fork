@@ -159,8 +159,9 @@ offered — the agent cannot continue.
    architect TD approval, deploy to production). Everything else is autonomous.
 3. **Subagents for parallel speed.** Dev Orchestrator spawns explorer, planner, developer,
    tester, reviewer in rapid sequence. Context compaction prevents window overflow.
-4. **Agent-near-truth.** Agents run in the same sandbox where their code will eventually
-   run. They can test and verify, not assume.
+4. **Verify, don't assume.** Agents build, run, and test their code in real sandbox environments
+   before claiming completion. The sandbox is a credential-free execution tool — agents run
+   outside it, safe from credential leakage, but can still execute and verify their output.
 5. **Summary relay.** Each agent's summary feeds into the next via the summary relay
    mechanism (ADR 011). No context loss between agents. Planner re-evaluates based on
    real output, not assumptions.

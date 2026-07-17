@@ -19,9 +19,11 @@ Druppie needed an agent runtime that could enforce governance: approval gates, s
 
 ### Phase 1: OpenCode (TypeScript) — March-April 2026
 
-OpenCode was the first external coding-agent framework integrated into Druppie. It ran as a TypeScript control plane inside sandbox containers. Key commits: `4df3da35` (config), `e8c59a3e` (TDD flow), `f5aaeadf` (timeout fix).
+OpenCode was the first external coding-agent framework integrated into Druppie. It ran as a TypeScript control plane **inside** sandbox containers — the agent process itself lived within the sandbox. Key commits: `4df3da35` (config), `e8c59a3e` (TDD flow), `f5aaeadf` (timeout fix).
 
-**Why rejected:** OpenCode placed the sandbox as a tool with credentials inside it. Druppie needed the agent to run inside the sandbox, not the sandbox to be a tool the agent calls. This was a fundamental security model mismatch. Druppie's compliance model requires zero credentials in the sandbox, with the agent isolated inside it. OpenCode's architecture could not be adapted to this constraint without rewriting its core.
+**Why rejected:** Because OpenCode ran inside the sandbox, it needed a credential (LLM API key) to call external LLM providers. This credential lived inside the sandbox container and was therefore reachable by any command OpenCode executed — a critical security risk. An agent that can execute arbitrary shell commands inside a container that also holds API credentials is fundamentally unsafe. Druppie's compliance model (BIO, NIS2, zero-credentials-in-sandbox) could not accommodate this.
+
+The fix inverts the architecture: **the agent with LLM access runs outside the sandbox and uses the sandbox as a tool.** Git access from inside the sandbox is blocked; instead, code changes flow through a git bundle extraction mechanism operated by a tool running outside the sandbox. The sandbox has no network access and no credentials — it is a pure execution environment.
 
 Remaining artifacts: `druppie/opencode/config/` (config files survived the purge), `.git/opencode` (git directory leftover). OpenCode removal commit: `62c2f19a` (2026-05-21).
 
@@ -57,9 +59,11 @@ Research 005 (Sandbox Network Isolation) documented the sandbox security model t
 
 Two runtimes coexist during migration. The legacy Agent (`druppie/agents/runtime.py`) is still used in one orchestrator path and remains coupled to FastAPI and SQLAlchemy. AgentV2 (`druppie/agents/runtime_v2.py`) bridges the storage-agnostic `agent_runtime/` library to the Druppie backend.
 
-### Key Design Principle: Agent-Near-Truth
+### Key Design Principle: Verify, Don't Assume
 
-Agents moeten zo dicht mogelijk bij de truth en dev omgevingen geplaatst worden zodat ze dingen kunnen testen en verifieren in plaats van aannemen. Agents run in the same environment where their output lands. This is the principle of agent-near-truth.
+The OpenCode failure taught us a core principle: agents must verify their output, not assume it works. The sandbox provides a truthful execution environment (real OS, real dependencies, real runtime) where the agent can build, run, and test its code. But the agent itself stays **outside** the sandbox — it has LLM access and tool access, while the sandbox is a credential-free execution environment reached through MCP tool calls. Git access from inside the sandbox is blocked; code flows in and out through a bundle extraction mechanism controlled by tools running outside the sandbox.
+
+This avoids the credential-leakage risk that doomed OpenCode while still giving agents a real environment to verify their work in.
 
 ## Decision
 
@@ -69,6 +73,6 @@ Keep LiteLLM as the sole external integration for cross-provider LLM access. Ret
 
 ## Consequences
 
-**Positive.** Full control over the execution loop means we can implement governance rules (approval gates, sandbox isolation, tool scoping) at the runtime level instead of working around an external framework. HITL and approval integration is tight because the runtime owns the pause and resume lifecycle. The MCP-native tool model lets us scope tools per agent without framework workarounds. Storage-agnostic design makes the library testable in isolation without a database. The `done()` tool acts as a mechanical quality gate: agents cannot finish without declaring their output. The agent-near-truth deployment pattern keeps agents close to the environments where their output is verified.
+**Positive.** Full control over the execution loop means we can implement governance rules (approval gates, sandbox isolation, tool scoping) at the runtime level instead of working around an external framework. HITL and approval integration is tight because the runtime owns the pause and resume lifecycle. The MCP-native tool model lets us scope tools per agent without framework workarounds. Storage-agnostic design makes the library testable in isolation without a database. The `done()` tool acts as a mechanical quality gate: agents cannot finish without declaring their output. The inverted sandbox model — agent outside, sandbox as a credential-free tool — eliminates the credential-leakage risk that OpenCode suffered from while still giving agents a real execution environment to build, test, and verify in.
 
 **Negative.** We maintain our own runtime instead of building on external frameworks. There is no ecosystem leverage: every new runtime feature (context compaction, subagent orchestration, tool routing) is ours to build and maintain. The dual Agent and AgentV2 system persists during migration, with the legacy Agent still used in one orchestrator path. The `agent_runtime` library has no sandbox layer of its own; sandbox lifecycle is delegated to the module-coding MCP server, which was planned but descoped from the initial library. The `open-code-openagent` provider config dependency remains for backward compatibility.
