@@ -12,7 +12,7 @@
 > - ✅ Phase 1 — app template ships a Helm chart (`chart/`) + per-app CI (`.gitea/workflows/build.yaml`); `docker-compose.yaml` removed; template Dockerfile/SDK made buildable (`druppie-sdk` optional). `helm lint`+`template` green.
 > - ✅ Phase 2/3 — `module-docker/v1/k8s_deploy.py` rewritten: GitOps commit (namespace+gitrepository+helmrelease), CI dispatch+poll, Flux rollout wait, 300s ingress health-gate, teardown, read-only logs/list, stubs. `tools.py` dispatch rewired; `httpx` added.
 > - ✅ Phase 4 — socket mount + `docker-installer` forced off in K8s mode (AC7); module-docker GitOps env + read-only RBAC + egress CNP; `deployer.yaml` prompt rewritten for GitOps; backend `parse_container_to_deployment` handles the K8s shape (AC8 via existing UI); 13 unit tests pass.
-> - ⏳ **Not done:** live cluster validation (blocked — Longhorn down on `ka-k8s-ai`, see §8); the `*.apps.rijnland.dev` wildcard cert must be provisioned; ADR/BACKLOG status bump (on merge).
+> - ⏳ **Not done:** live cluster validation (blocked — Longhorn down on `ka-k8s-ai`, see §8); ADR/BACKLOG status bump (on merge). *(TLS needs no new cert — `<slug>-apps.rijnland.dev` is a single label, covered by the existing `*.rijnland.dev` wildcard.)*
 
 
 ---
@@ -38,7 +38,7 @@
 
 **Als** Druppie-gebruiker (developer rol)
 **wil ik** dat een door Druppie gegenereerde applicatie end-to-end bouwt en uitrolt op het RKE2-cluster via dezelfde CI + GitOps-pipeline als Druppie zelf,
-**zodat** er geen Docker daemon op het cluster nodig is, apps bereikbaar zijn op een stabiele `*.apps.rijnland.dev` URL, en elke deployment traceerbaar + drift-bestendig is in git.
+**zodat** er geen Docker daemon op het cluster nodig is, apps bereikbaar zijn op een stabiele `*-apps.rijnland.dev` URL, en elke deployment traceerbaar + drift-bestendig is in git.
 
 ### Refined Acceptance Criteria
 
@@ -48,10 +48,10 @@
 | AC2 | Build via de **per-app Gitea Actions CI** (gedeelde DinD runner) → image in Harbor project `druppie`; tag = `<branch>-<ts>-<sha>` | Gitea Actions run `success`; image in Harbor UI | ☐ |
 | AC3 | Deploy commit een `GitRepository`+`HelmRelease` naar `ai/k8s`; **Flux** trekt de chart uit het app-repo en rolt hem uit | `kubectl get hr -n <app>` → `Ready` | ☐ |
 | AC4 | De app draait met **peristente volumes** (Postgres-data overleeft pod-restart) via chart-PVC | `kubectl delete pod` → data nog aanwezig | ☐ |
-| AC5 | De app is bereikbaar op een **`<app>.apps.rijnland.dev` URL** (Ingress uit de chart) en wordt **healthy binnen 300s** | `curl https://<app>.apps.rijnland.dev/health` → `200` | ☐ |
+| AC5 | De app is bereikbaar op een **`<app>-apps.rijnland.dev` URL** (Ingress uit de chart) en wordt **healthy binnen 300s** | `curl https://<app>-apps.rijnland.dev/health` → `200` | ☐ |
 | AC6 | **Teardown** = subdir uit `ai/k8s` verwijderen → `prune:true` verwijdert de per-app namespace + alles erin | `kubectl get ns <app>` weg na reconcile | ☐ |
 | AC7 | `DRUPPIE_SANDBOX_MODE=k8s` vereist **geen** `/var/run/docker.sock` mount en geen `docker-installer` DaemonSet | `kubectl get ds` (geen docker-installer); geen socket-mount op prod waardes | ☐ |
-| AC8 | Frontend "Projects"/"Deployments" tonen K8s-apps (HelmRelease-gebaseerd) met status/URL/logs | UI toont `Ready` + `*.apps.rijnland.dev` URL | ☐ |
+| AC8 | Frontend "Projects"/"Deployments" tonen K8s-apps (HelmRelease-gebaseerd) met status/URL/logs | UI toont `Ready` + `*-apps.rijnland.dev` URL | ☐ |
 
 ### Out of Scope
 
@@ -95,10 +95,10 @@ symmetry with Druppie's own pipeline (`.gitea/workflows/build.yaml`).
                                                                    │
                                                     ② Flux reconciles:
                                                        pulls chart from ai/<app> ─► Helm install
-                                                       Ingress <app>.apps.rijnland.dev, PVC, ExternalSecret
+                                                       Ingress <app>-apps.rijnland.dev, PVC, ExternalSecret
                                                                    │
    module-docker (Druppie backend) ────────────────────────────────┘ ③ health-gate polls
-     • create_project: scaffold repo (incl. chart + workflow) +          https://<app>.apps.rijnland.dev/health (300s)
+     • create_project: scaffold repo (incl. chart + workflow) +          https://<app>-apps.rijnland.dev/health (300s)
        provision Harbor creds/Gitea API
      • deploy: commit the ai/k8s footprint, dispatch build, watch rollout
 ```
@@ -198,7 +198,7 @@ Partial code on `colab-dev`:
 | G1 Kaniko doesn't wait / stream logs | **GONE** — no Kaniko; build runs in the existing DinD runner via per-app CI (D2) |
 | G2 No Harbor push secret | **GONE** — CI uses Harbor creds from repo/org secrets (D3) |
 | G3 compose→K8s translator drops PVCs/depends_on | **GONE** — app ships a real chart; no translator |
-| G4 health-check one-shot | **Fix** — poll `<app>.apps.rijnland.dev/health` to 300s |
+| G4 health-check one-shot | **Fix** — poll `<app>-apps.rijnland.dev/health` to 300s |
 | G5 `inspect`/`exec`/`volumes` have no K8s equiv | **Reduce** — most become "read HelmRelease/pods" (read-only) |
 | G6 no Ingress/`*.rijnland.dev` | **GONE** — chart renders Ingress; host from HelmRelease values |
 | G7 deployer prompt Docker-worded | **Fix** — rewrite for GitOps/Helm/CI |
@@ -213,7 +213,7 @@ Partial code on `colab-dev`:
 - **D4 — Deploy = GitOps commit to `ai/k8s`.** `module-docker` commits `clusters/user-apps/<app-slug>/{gitrepository,helmrelease}.yaml` via the Gitea API (same code path `branch_environment_service.py:870` already uses). `HelmRelease.values` sets `imageTag`, ingress `host`, DB secret ref. Flux reconciles. **No `kubectl apply`.** *(AC3)*
 - **D5 — Per-app namespace + a `user-apps` Kustomization.** Each app gets its **own namespace** (clean teardown/isolation, matches branch-env precedent); a separate Flux Kustomization watches `./clusters/user-apps`, `prune:true`, machine-managed, isolated from prod. One-time infra commit. *(AC3, AC6)*
 - **D6 — PVC from the chart using `longhorn-branch-env` (Delete, 1 replica).** User-apps are ephemeral (teardown = namespace delete) → **same orphan-volume risk** as branch-envs. `Delete`-reclaim class is **mandatory** — `longhorn-distributed` (Retain) leaked ~135 orphaned volumes and exhausted scheduling (`docs/longhorn-storage-issue.md`). *(AC4)*
-- **D7 — Reachability via chart Ingress on `<app>.apps.rijnland.dev`** (dedicated `*.apps.rijnland.dev` wildcard — own cert/TLS, separate from prod `*.rijnland.dev`). *(AC5)*
+- **D7 — Reachability via chart Ingress on `<app>-apps.rijnland.dev`** — a single DNS label, so covered by the **existing `*.rijnland.dev` wildcard cert** (secret `druppie-tls`, mirrored into each app namespace via the cluster-wide `druppie-tls-mirror` store). No new cert. *(AC5)*
 - **D8 — Health gate** polls the Ingress URL to 300s (parity with the Docker path's helper). *(AC5)*
 - **D9 — Teardown = delete the `ai/k8s` subdir**; `prune:true` removes the per-app namespace + all resources (and `Delete`-reclaim PVCs auto-cleanup — no orphans). *(AC6)*
 - **D10 — Prod drops the Docker dependency; local dev keeps it.** `dockerSocket.enabled` + `docker-installer` DaemonSet emit only when `agentSandbox.enabled=false`. Local `DRUPPIE_SANDBOX_MODE=docker` still works. *(AC7)*
@@ -234,7 +234,7 @@ Druppie's own CI bumps `imageTag` by cloning `ai/k8s` with `CI_GIT_TOKEN` (`.git
 
 ### Decisions confirmed (were open questions)
 
-1. ✅ **Hostname** → `<app>.apps.rijnland.dev` (dedicated `*.apps.rijnland.dev` wildcard, own cert). *(D7)*
+1. ✅ **Hostname** → `<app>-apps.rijnland.dev` (single label — uses the existing `*.rijnland.dev` cert, no new cert). *(D7)*
 2. ✅ **Namespace** → per-app namespace (matches branch-env precedent). *(D5)*
 3. ✅ **Build** → per-app Gitea Actions CI/CD pipeline (build + push + bump imageTag), mirroring Druppie's own `.gitea/workflows/build.yaml`. *(D2)*
 4. ✅ **CI→GitOps write** → **Option A**: each app CI bumps its own HelmRelease with a scoped `CI_GIT_TOKEN` (with mandatory hardening, §5.1).
@@ -263,12 +263,12 @@ Druppie's own CI bumps `imageTag` by cloning `ai/k8s` with `CI_GIT_TOKEN` (`.git
 🛑 **Review checkpoint**
 
 ### Phase 3 — GitOps deploy path  *(AC3, AC4, AC5, AC6)*
-**ai/druppie** (`k8s_deploy.py`): `k8s_compose_up` → commit `gitrepository.yaml` + `helmrelease.yaml` to `ai/k8s` `clusters/user-apps/<app-slug>/` (per-app namespace) via Gitea API (reuse `branch_environment_service` helpers). `k8s_compose_down` → delete the subdir. 300s health-gate polling the Ingress URL. End-to-end: `create_project` → push → CI build → deploy → `https://<app>.apps.rijnland.dev/health` 200; DB survives pod delete.
-> 🔴 **Dependency:** full AC4/AC5 validation requires Longhorn + Traefik + the new `*.apps.rijnland.dev` cert healthy on `ka-k8s-ai`. GitOps-commit logic (AC3/AC6) is developable independently of the storage outage.
+**ai/druppie** (`k8s_deploy.py`): `k8s_compose_up` → commit `gitrepository.yaml` + `helmrelease.yaml` to `ai/k8s` `clusters/user-apps/<app-slug>/` (per-app namespace) via Gitea API (reuse `branch_environment_service` helpers). `k8s_compose_down` → delete the subdir. 300s health-gate polling the Ingress URL. End-to-end: `create_project` → push → CI build → deploy → `https://<app>-apps.rijnland.dev/health` 200; DB survives pod delete.
+> 🔴 **Dependency:** full AC4/AC5 validation requires Longhorn + Traefik healthy on `ka-k8s-ai` (the existing `*.rijnland.dev` cert is already present). GitOps-commit logic (AC3/AC6) is developable independently of the storage outage.
 🛑 **Review checkpoint**
 
 ### Phase 4 — Remaining tools, agent, frontend, prod gating  *(AC7, AC8)*
-**ai/druppie:** K8s `logs`/`list_containers`/`stop` read HelmRelease+pods; stub `inspect`/`exec`/`volumes` with clear errors. Rewrite `deployer.yaml` prompt (GitOps/Helm/CI/URL/health). Update frontend `Projects`/`Deployments` to show HelmRelease status + `*.apps.rijnland.dev` URL. Gate `dockerSocket` + `docker-installer` off when `agentSandbox.enabled`. Update ADR + dev-environment-architecture status; move BACKLOG item to done.
+**ai/druppie:** K8s `logs`/`list_containers`/`stop` read HelmRelease+pods; stub `inspect`/`exec`/`volumes` with clear errors. Rewrite `deployer.yaml` prompt (GitOps/Helm/CI/URL/health). Update frontend `Projects`/`Deployments` to show HelmRelease status + `*-apps.rijnland.dev` URL. Gate `dockerSocket` + `docker-installer` off when `agentSandbox.enabled`. Update ADR + dev-environment-architecture status; move BACKLOG item to done.
 🛑 **Final review → PR(s) to `colab-dev` (druppie) and `main` (ai/k8s)**
 
 ---
@@ -305,7 +305,6 @@ Druppie's own CI bumps `imageTag` by cloning `ai/k8s` with `CI_GIT_TOKEN` (`.git
 |------|-----------|------------|
 | **CI_GIT_TOKEN exfiltration** (untrusted AI code in app branches) | 🔴 High | §5.1-A hardening: scoped robot (ai/k8s-write only), Gitea environments tied to deploy branches, branch protection on workflow files; safety-valve → Option B |
 | **Longhorn currently down on `ka-k8s-ai`** (infra rebuild, 2026-07-16) | 🔴 External blocker | AC4 can't validate until infra re-registers Longhorn SCs/nodes. Dev-track on `colab-dev`; flag to Infra. SC choice (D6) is independent of this outage |
-| **`*.apps.rijnland.dev` wildcard cert not provisioned** | Medium | New cert needed (separate from prod `*.rijnland.dev`); provision via cert-manager/infra before AC5 |
 | **Orphan-volume accumulation** (ephemeral ns + Retain SC) | High | Mandatory `longhorn-branch-env` (Delete, 1 replica) for all user-app PVCs (D6) |
 | **ESO sync race** | Medium | Chart gates app start on ExternalSecret `Synced` (D11) |
 | DinD runner cold builds slow | Low | Runner has 50Gi layer-cache PVC (cached build ~30s); accept slower first build |
@@ -317,6 +316,7 @@ Druppie's own CI bumps `imageTag` by cloning `ai/k8s` with `CI_GIT_TOKEN` (`.git
 
 ### External dependencies / blockers
 - **Infra team (rancher-gitops):** Longhorn must be healthy (`longhorn-distributed`/`longhorn-local` SCs applied, nodes `Ready`, `longhorn-branch-env` present) before AC4/AC5 fully validate. Not in our control — track separately.
-- **Traefik + new wildcard cert:** must serve the new `*.apps.rijnland.dev` wildcard (own cert, separate from prod `*.rijnland.dev`) for AC5.
+- **TLS:** no new cert — `<slug>-apps.rijnland.dev` is covered by the existing `*.rijnland.dev` wildcard (`druppie-tls`, mirrored via the `druppie-tls-mirror` store).
+- **Traefik LB:** must be healthy (address pools configured) for AC5 reachability.
 - **`flux-git-auth` secret:** must authorize Flux to read the per-app Gitea repos, not just `ai/druppie`.
 - **Gitea DinD runner:** must be registered at org/instance scope so workflows in arbitrary `ai/<app>` repos are picked up.

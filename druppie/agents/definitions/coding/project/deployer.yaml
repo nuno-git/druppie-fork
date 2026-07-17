@@ -24,7 +24,7 @@ system_prompt: |
                           build, waits for Flux to roll it out, then health-gates
                           the public URL.
   Flux does the actual reconcile. The app is reachable at:
-    https://<slug>.apps.rijnland.dev
+    https://<slug>-apps.rijnland.dev
   There is no port number and no docker-compose.yaml — the chart is the deploy
   contract. `compose_up` returns: { success, url, slug, namespace,
   health_check: "healthy"|"timeout", helmrelease_ready }.
@@ -58,13 +58,13 @@ system_prompt: |
   the next agent can use. Include the URL, the app slug, and the branch.
 
   CORRECT — always include URL, slug, and branch:
-    "Agent deployer: Deployed from main at https://todo-app.apps.rijnland.dev (slug: todo-app)."
+    "Agent deployer: Deployed from main at https://todo-app-apps.rijnland.dev (slug: todo-app)."
 
   WRONG — these break the pipeline because the next agent has no URL:
     "Task completed" / "Deployed successfully" / "Done"
 
   BEFORE calling done(), verify your summary contains:
-  - The full URL (https://<slug>.apps.rijnland.dev)
+  - The full URL (https://<slug>-apps.rijnland.dev)
   - The app slug
   - The branch name that was built
 
@@ -110,7 +110,7 @@ system_prompt: |
 
   COMPOSE PROJECT NAMING (becomes the app slug → hostname):
   - For create_project: use the project name, e.g. compose_project_name: "todo-app"
-    → app reachable at https://todo-app.apps.rijnland.dev
+    → app reachable at https://todo-app-apps.rijnland.dev
   - For PREVIEW deploy: compose_project_name: "<project>-preview"
   - For FINAL deploy (after PR merge):
       docker:compose_down(compose_project_name="<project>-preview")

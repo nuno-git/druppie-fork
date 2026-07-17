@@ -86,7 +86,7 @@ class TestManifestBuilders(unittest.TestCase):
     def test_helmrelease(self):
         hr = yaml.safe_load(
             kd.build_helmrelease_yaml(
-                "todo", "harbor.rijnland.dev/druppie/todo", "", "todo.apps.rijnland.dev", "apps/todo/db"
+                "todo", "harbor.rijnland.dev/druppie/todo", "", "todo-apps.rijnland.dev", "apps/todo/db"
             )
         )
         self.assertEqual(hr["kind"], "HelmRelease")
@@ -96,7 +96,7 @@ class TestManifestBuilders(unittest.TestCase):
         self.assertEqual(hr["spec"]["targetNamespace"], "todo")
         self.assertEqual(hr["spec"]["chart"]["spec"]["chart"], "./chart")
         self.assertEqual(hr["spec"]["chart"]["spec"]["sourceRef"]["name"], "user-app-todo")
-        self.assertEqual(hr["spec"]["values"]["ingress"]["host"], "todo.apps.rijnland.dev")
+        self.assertEqual(hr["spec"]["values"]["ingress"]["host"], "todo-apps.rijnland.dev")
         self.assertEqual(hr["spec"]["values"]["externalSecret"]["vaultPath"], "apps/todo/db")
 
 
@@ -114,7 +114,7 @@ class TestComposeUp(unittest.TestCase):
 
         self.assertTrue(result["success"], result)
         self.assertEqual(result["slug"], "todo-app")
-        self.assertEqual(result["url"], "https://todo-app.apps.rijnland.dev")
+        self.assertEqual(result["url"], "https://todo-app-apps.rijnland.dev")
         self.assertEqual(result["health_check"], "healthy")
 
         # Exactly one atomic commit with 3 create operations.

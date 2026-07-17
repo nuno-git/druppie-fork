@@ -350,7 +350,7 @@ modules:
           name: druppie-branch-env-git
           key: token
         caConfigMap: ''
-      domain: apps.rijnland.dev
+      domain: rijnland.dev   # host scheme: <slug>-apps.<domain> (covered by *.<domain> cert)
       harbor:
         registry: harbor.rijnland.dev
         project: druppie

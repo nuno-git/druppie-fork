@@ -53,7 +53,10 @@ GITOPS_CA = os.getenv("USERAPPS_GITOPS_CA", os.getenv("BRANCH_ENV_GITOPS_CA", ""
 
 HARBOR_REGISTRY = os.getenv("HARBOR_REGISTRY", "harbor.rijnland.dev")
 HARBOR_PROJECT = os.getenv("HARBOR_PROJECT", "druppie")
-APPS_DOMAIN = os.getenv("USERAPPS_DOMAIN", "apps.rijnland.dev")
+# Hostname scheme: <slug>-apps.<domain> (e.g. counter-apps.rijnland.dev). The
+# "-apps" label is a single DNS label, so it is covered by the existing
+# *.<domain> wildcard cert (secret druppie-tls) — no separate cert needed.
+APPS_DOMAIN = os.getenv("USERAPPS_DOMAIN", "rijnland.dev")
 CHART_PATH = os.getenv("USERAPPS_CHART_PATH", "chart")
 APP_REPO_ORG = os.getenv("USERAPPS_APP_REPO_ORG", "ai")
 
@@ -457,7 +460,7 @@ async def k8s_compose_up(
     slug = _slugify(compose_project_name or repo_name)
     repo = repo_name
     app_repo = f"{GITOPS_URL.rstrip('/')}/{org}/{repo}.git"
-    host = f"{slug}.{APPS_DOMAIN}"
+    host = f"{slug}-apps.{APPS_DOMAIN}"
     image_repo = f"{HARBOR_REGISTRY}/{HARBOR_PROJECT}/{repo.lower()}"
     vault_path = f"apps/{slug}/db"
     g = _gitops_client()
@@ -598,7 +601,7 @@ async def k8s_list_containers(
             {
                 "name": slug,
                 "namespace": slug,
-                "url": f"https://{slug}.{APPS_DOMAIN}",
+                "url": f"https://{slug}-apps.{APPS_DOMAIN}",
                 "ready": ready,
                 "status_message": msg,
             }

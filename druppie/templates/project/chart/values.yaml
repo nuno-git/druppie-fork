@@ -55,15 +55,19 @@ externalSecret:
   vaultPath: ""                         # e.g. apps/<slug>/db — set per app on deploy
   passwordKey: password
 
-# Ingress — reachable at <slug>.apps.rijnland.dev (dedicated wildcard).
+# Ingress — reachable at <slug>-apps.rijnland.dev (covered by the existing
+# *.rijnland.dev cert; tls-mirror.yaml materializes it in this namespace).
 ingress:
   enabled: true
   className: traefik
-  host: ""                              # <slug>.apps.rijnland.dev — set per app
+  host: ""                              # <slug>-apps.rijnland.dev — set per app
   path: /
   tls:
     enabled: true
-    secretName: apps-rijnland-dev-tls   # the *.apps.rijnland.dev wildcard cert
+    # The existing *.rijnland.dev wildcard cert (secret druppie-tls in ns
+    # druppie). tls-mirror.yaml materializes it into this namespace via the
+    # cluster-wide druppie-tls-mirror ClusterSecretStore.
+    secretName: druppie-tls
 
 # Health probes (the app exposes GET /health — see app/__init__.py).
 probes:
