@@ -147,6 +147,23 @@ checkout_branch() {
 }
 
 # ---------------------------------------------------------------------------
+# 2b. Configure git for push from code-server terminal.
+# ---------------------------------------------------------------------------
+configure_git() {
+    git config --global user.name "Developer"
+    git config --global user.email "dev@druppie.local"
+    git config --global push.default current
+    if [ -n "${DRUPPIE_GIT_TOKEN}" ]; then
+        printf 'https://oauth2:%s@aigit.waterschap.org\n' "${DRUPPIE_GIT_TOKEN}" > "${HOME}/.git-credentials"
+        chmod 600 "${HOME}/.git-credentials"
+        git config --global credential.helper store
+        log "git configured with token-based auth for aigit.waterschap.org"
+    else
+        warn "DRUPPIE_GIT_TOKEN is empty — git push will fail without credentials"
+    fi
+}
+
+# ---------------------------------------------------------------------------
 # 3. Conditional dependency install (only when a lockfile changed).
 # ---------------------------------------------------------------------------
 ensure_frontend_deps() {
@@ -309,6 +326,7 @@ printf '.seeded\n.logs/\n.dep-hashes/\n.venv/\n.data/\n.claude/\n' \
     > "${WORKSPACE}/.git/info/exclude"
 
 checkout_branch
+configure_git
 ensure_frontend_deps
 ensure_backend_deps
 
