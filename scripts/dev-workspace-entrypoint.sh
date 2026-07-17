@@ -127,9 +127,10 @@ checkout_branch() {
 
     # Build an authenticated fetch URL without persisting the token in the
     # stored remote (origin keeps the clean URL for the code-server UI).
+    local git_token="${DRUPPIE_GIT_TOKEN:-${EXTERNAL_GITEA_TOKEN:-}}"
     local fetch_url="${DRUPPIE_REPO_URL}"
-    if [ -n "${DRUPPIE_GIT_TOKEN}" ]; then
-        fetch_url=$(printf '%s' "${DRUPPIE_REPO_URL}" | sed "s#https://#https://oauth2:${DRUPPIE_GIT_TOKEN}@#")
+    if [ -n "${git_token}" ]; then
+        fetch_url=$(printf '%s' "${DRUPPIE_REPO_URL}" | sed "s#https://#https://oauth2:${git_token}@#")
     fi
 
     log "fetching branch '${branch}' from origin"
@@ -153,13 +154,14 @@ configure_git() {
     git config --global user.name "Developer"
     git config --global user.email "dev@druppie.local"
     git config --global push.default current
-    if [ -n "${DRUPPIE_GIT_TOKEN}" ]; then
-        printf 'https://oauth2:%s@aigit.waterschap.org\n' "${DRUPPIE_GIT_TOKEN}" > "${HOME}/.git-credentials"
+    local git_token="${DRUPPIE_GIT_TOKEN:-${EXTERNAL_GITEA_TOKEN:-}}"
+    if [ -n "${git_token}" ]; then
+        printf 'https://oauth2:%s@aigit.waterschap.org\n' "${git_token}" > "${HOME}/.git-credentials"
         chmod 600 "${HOME}/.git-credentials"
         git config --global credential.helper store
         log "git configured with token-based auth for aigit.waterschap.org"
     else
-        warn "DRUPPIE_GIT_TOKEN is empty — git push will fail without credentials"
+        warn "no git token found (DRUPPIE_GIT_TOKEN or EXTERNAL_GITEA_TOKEN) — git push will fail without credentials"
     fi
 }
 
