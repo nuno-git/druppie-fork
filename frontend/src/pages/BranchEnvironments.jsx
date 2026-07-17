@@ -7,7 +7,7 @@
  * Polls every 5s while any env is in a transitional state (deploying / deleting).
  */
 
-import { useState, useEffect, useMemo, useCallback } from 'react'
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   GitBranch,
@@ -24,6 +24,8 @@ import {
   ChevronDown,
   ChevronUp,
   Ban,
+  Plus,
+  Search,
 } from 'lucide-react'
 
 import { branchEnvironmentsApi } from '../services/api'
@@ -97,7 +99,8 @@ const WorkspaceSection = ({
   isDisablingWorkspace,
 }) => {
   const status = env.workspace_status
-  const canOpenWorkspace = status === 'running' && env.workspace_url
+  const envRunning = env.status === 'running'
+  const canOpenWorkspace = status === 'running' && env.workspace_url && envRunning
 
   const handleDisable = () => {
     if (
@@ -123,7 +126,15 @@ const WorkspaceSection = ({
     <div className="mt-3 pt-3 border-t border-gray-100">
       {env.workspace_enabled ? (
         <div className="flex items-center gap-2">
-          {status === 'deploying' ? (
+          {!envRunning ? (
+            <>
+              <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-500">
+                <Loader2 className="w-3 h-3 mr-1.5 animate-spin" />
+                waiting for environment
+              </span>
+              <span className="text-xs text-gray-400">Workspace ready once the environment is up</span>
+            </>
+          ) : status === 'deploying' ? (
             <>
               <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-700">
                 <Loader2 className="w-3 h-3 mr-1.5 animate-spin" />
@@ -173,7 +184,7 @@ const WorkspaceSection = ({
               </a>
             </>
           )}
-          {status !== 'deploying' && (
+          {envRunning && status !== 'deploying' && (
             <button
               onClick={handleDisable}
               disabled={isDisablingWorkspace}
@@ -415,17 +426,39 @@ const DeployBranchDialog = ({ onClose, onDeploy, isDeploying, deployError, usern
   const [secretsSource, setSecretsSource] = useState('colab-dev')
   const [customSecretsSource, setCustomSecretsSource] = useState('')
   const [showAdvanced, setShowAdvanced] = useState(false)
+  const [showBranchPicker, setShowBranchPicker] = useState(false)
+  const branchInputRef = useRef(null)
+  const branchDropdownRef = useRef(null)
 
   const { data: branches = [], isLoading: branchesLoading } = useQuery({
     queryKey: ['branches'],
     queryFn: () => branchEnvironmentsApi.listBranches(),
   })
 
+  const filteredBranches = useMemo(() => {
+    if (!branch.trim()) return branches.slice(0, 30)
+    const q = branch.toLowerCase()
+    return branches.filter((b) => b.toLowerCase().includes(q)).slice(0, 30)
+  }, [branches, branch])
+
+  const isNewBranch = branch.trim() && !branches.some((b) => b === branch.trim())
+
   useEffect(() => {
     const onKey = (e) => e.key === 'Escape' && onClose()
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
+
+  useEffect(() => {
+    if (!showBranchPicker) return
+    const onClickOutside = (e) => {
+      if (branchDropdownRef.current && !branchDropdownRef.current.contains(e.target)) {
+        setShowBranchPicker(false)
+      }
+    }
+    document.addEventListener('mousedown', onClickOutside)
+    return () => document.removeEventListener('mousedown', onClickOutside)
+  }, [showBranchPicker])
 
   const slug = slugifyBranch(branch)
   const previewUrl = slug ? `druppie-${slug}.rijnland.dev` : ''
@@ -463,21 +496,76 @@ const DeployBranchDialog = ({ onClose, onDeploy, isDeploying, deployError, usern
         <form onSubmit={submit} className="space-y-4">
           <div>
             <label className="block text-xs font-medium text-gray-700 mb-1">Branch</label>
-            <div className="relative">
-              <GitBranch className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-              <input
-                list="branch-suggestions"
-                value={branch}
-                onChange={(e) => setBranch(e.target.value)}
-                required
-                placeholder={branchesLoading ? 'Loading branches…' : 'Type or select a branch name…'}
-                className="w-full pl-9 pr-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/30 bg-white"
-              />
-              <datalist id="branch-suggestions">
-                {branches.map((b) => (
-                  <option key={b} value={b} />
-                ))}
-              </datalist>
+            <div className="relative" ref={branchDropdownRef}>
+              <div className="relative">
+                <GitBranch className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 z-10" />
+                <input
+                  ref={branchInputRef}
+                  type="text"
+                  value={branch}
+                  onChange={(e) => { setBranch(e.target.value); setShowBranchPicker(true) }}
+                  onFocus={() => setShowBranchPicker(true)}
+                  required
+                  placeholder={branchesLoading ? 'Loading branches…' : 'Type or select a branch name…'}
+                  className="w-full pl-9 pr-9 py-2.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-400 bg-white"
+                />
+                <button
+                  type="button"
+                  onClick={() => { setShowBranchPicker(!showBranchPicker); branchInputRef.current?.focus() }}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                >
+                  <ChevronDown className={`w-4 h-4 transition-transform ${showBranchPicker ? 'rotate-180' : ''}`} />
+                </button>
+              </div>
+
+              {showBranchPicker && (
+                <div className="absolute z-50 left-0 right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-xl max-h-72 overflow-y-auto">
+                  {branch.trim() && (
+                    <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-gray-400 border-b border-gray-100">
+                      {isNewBranch ? 'Create new' : 'Exact match'}
+                    </div>
+                  )}
+                  {isNewBranch && (
+                    <button
+                      type="button"
+                      onClick={() => { setShowBranchPicker(false); branchInputRef.current?.blur() }}
+                      className="w-full flex items-center gap-2.5 px-3 py-2.5 text-left hover:bg-blue-50 border-b border-gray-100 transition-colors group"
+                    >
+                      <span className="flex-shrink-0 w-7 h-7 rounded-full bg-blue-100 flex items-center justify-center">
+                        <Plus className="w-4 h-4 text-blue-600" />
+                      </span>
+                      <span className="min-w-0">
+                        <span className="block text-sm font-medium text-gray-900 truncate">{branch.trim()}</span>
+                        <span className="block text-xs text-gray-400">New branch — created from colab-dev</span>
+                      </span>
+                    </button>
+                  )}
+                  {!branch.trim() && !branchesLoading && (
+                    <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-gray-400 border-b border-gray-100">
+                      {branches.length} branches available
+                    </div>
+                  )}
+                  {filteredBranches.map((b) => (
+                    <button
+                      key={b}
+                      type="button"
+                      onClick={() => { setBranch(b); setShowBranchPicker(false); branchInputRef.current?.blur() }}
+                      className={`w-full flex items-center gap-2.5 px-3 py-2.5 text-left hover:bg-blue-50 transition-colors ${b === branch ? 'bg-blue-50/50' : ''}`}
+                    >
+                      <GitBranch className="w-4 h-4 flex-shrink-0 text-gray-400" />
+                      <span className="text-sm text-gray-700 truncate">{b}</span>
+                    </button>
+                  ))}
+                  {branch.trim() && filteredBranches.length === 0 && !isNewBranch && (
+                    <div className="px-3 py-3 text-sm text-gray-400 text-center">No matching branches</div>
+                  )}
+                  {branchesLoading && (
+                    <div className="px-3 py-3 text-sm text-gray-400 text-center flex items-center justify-center gap-2">
+                      <Loader2 className="w-4 h-4 animate-spin" /> Loading branches…
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
             <p className="text-xs text-gray-400 mt-1">
               {previewUrl ? (
