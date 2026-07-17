@@ -151,7 +151,7 @@ spec:
             # HTTPS host. issuerUrl must match the `iss` claim Keycloak mints on
             # the internal redeem path (http://<domain>/realms/<realm>).
             - --skip-oidc-discovery=true
-            - --oidc-issuer-url={{ .Values.devWorkspace.oauth.issuerUrl | default (printf "http://%s/realms/%s" .Values.global.domain .Values.frontend.vite.keycloakRealm) }}
+            - --oidc-issuer-url={{ .Values.devWorkspace.oauth.issuerUrl | default (printf "https://%s/realms/%s" .Values.global.domain .Values.frontend.vite.keycloakRealm) }}
             - --login-url={{ printf "https://%s/realms/%s/protocol/openid-connect/auth" .Values.global.domain .Values.frontend.vite.keycloakRealm }}
             - --redeem-url={{ printf "http://%s-keycloak:8080/realms/%s/protocol/openid-connect/token" (include "druppie.fullname" .) .Values.frontend.vite.keycloakRealm }}
             - --validate-url={{ printf "http://%s-keycloak:8080/realms/%s/protocol/openid-connect/userinfo" (include "druppie.fullname" .) .Values.frontend.vite.keycloakRealm }}
