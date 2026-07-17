@@ -320,6 +320,7 @@ export const wipeProject = (projectId) =>
 // (deploying → running/failed, deleting → gone) happen server-side asynchronously.
 export const branchEnvironmentsApi = {
   list: () => request('/api/branch-environments'),
+  listBranches: () => request('/api/branches'),
   deploy: ({ branch, image_tag, secrets_source }) => {
     // Callers should always pass secrets_source; fall back to the shared
     // colab-dev keys so a deploy never silently uses an unintended source.

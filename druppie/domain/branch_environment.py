@@ -11,8 +11,9 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum
-from typing import Literal
 from uuid import UUID
+
+from pydantic import BaseModel
 
 from pydantic import BaseModel
 
@@ -99,9 +100,10 @@ class BranchEnvironmentCreate(BaseModel):
 
     branch: str
     image_tag: str | None = None
-    # "developer" syncs the deployer's own Vault map (druppie/developers/<user>,
-    # self-service via the Vault UI); default borrows the colab-dev LLM keys.
-    secrets_source: Literal["colab-dev", "developer"] = "colab-dev"
+    # Vault path prefix for env secrets. "colab-dev" → druppie/colab-dev/*,
+    # any other value maps to druppie/developers/<value>/* (e.g. "robbe" →
+    # druppie/developers/robbe/*). Default borrows the colab-dev LLM keys.
+    secrets_source: str = "colab-dev"
 
 
 class BranchEnvironmentListResponse(BaseModel):

@@ -413,7 +413,13 @@ const DeployBranchDialog = ({ onClose, onDeploy, isDeploying, deployError, usern
   const [branch, setBranch] = useState('')
   const [imageTag, setImageTag] = useState('')
   const [secretsSource, setSecretsSource] = useState('colab-dev')
+  const [customSecretsSource, setCustomSecretsSource] = useState('')
   const [showAdvanced, setShowAdvanced] = useState(false)
+
+  const { data: branches = [], isLoading: branchesLoading } = useQuery({
+    queryKey: ['branches'],
+    queryFn: () => branchEnvironmentsApi.listBranches(),
+  })
 
   useEffect(() => {
     const onKey = (e) => e.key === 'Escape' && onClose()
@@ -427,10 +433,12 @@ const DeployBranchDialog = ({ onClose, onDeploy, isDeploying, deployError, usern
   const submit = (e) => {
     e.preventDefault()
     if (!slug) return
+    const src = secretsSource === 'custom' ? customSecretsSource.trim() : secretsSource
+    if (secretsSource === 'custom' && !src) return
     onDeploy({
       branch: branch.trim(),
       image_tag: imageTag.trim() || undefined,
-      secrets_source: secretsSource,
+      secrets_source: src,
     })
   }
 
@@ -457,15 +465,22 @@ const DeployBranchDialog = ({ onClose, onDeploy, isDeploying, deployError, usern
             <label className="block text-xs font-medium text-gray-700 mb-1">Branch</label>
             <div className="relative">
               <GitBranch className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-              <input
-                type="text"
+              <select
                 value={branch}
                 onChange={(e) => setBranch(e.target.value)}
-                autoFocus
                 required
-                placeholder="feature/my-branch"
-                className="w-full pl-9 pr-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/30"
-              />
+                disabled={branchesLoading}
+                className="w-full pl-9 pr-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/30 appearance-none bg-white"
+              >
+                <option value="">
+                  {branchesLoading ? 'Loading branches…' : 'Select a branch…'}
+                </option>
+                {branches.map((b) => (
+                  <option key={b} value={b}>
+                    {b}
+                  </option>
+                ))}
+              </select>
             </div>
             <p className="text-xs text-gray-400 mt-1">
               {previewUrl ? (
@@ -479,7 +494,7 @@ const DeployBranchDialog = ({ onClose, onDeploy, isDeploying, deployError, usern
           </div>
 
           <div>
-            <label className="block text-xs font-medium text-gray-700 mb-1">Secrets</label>
+            <label className="block text-xs font-medium text-gray-700 mb-1">Secrets source</label>
             <div className="space-y-1.5">
               <label className="flex items-start gap-2 text-sm text-gray-700 cursor-pointer">
                 <input
@@ -493,30 +508,58 @@ const DeployBranchDialog = ({ onClose, onDeploy, isDeploying, deployError, usern
                 <span>
                   colab-dev defaults
                   <span className="block text-xs text-gray-400">
-                    Borrow the LLM API keys colab-dev uses — works out of the box.
+                    Borrow the LLM API keys from colab-dev — works out of the box.
                   </span>
                 </span>
               </label>
+              {['robbe', 'nuno'].map((name) => (
+                <label key={name} className="flex items-start gap-2 text-sm text-gray-700 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="secrets-source"
+                    value={name}
+                    checked={secretsSource === name}
+                    onChange={() => setSecretsSource(name)}
+                    className="mt-0.5"
+                  />
+                  <span>
+                    {name}
+                    <span className="block text-xs text-gray-400 font-mono">
+                      druppie/developers/{name}
+                    </span>
+                  </span>
+                </label>
+              ))}
               <label className="flex items-start gap-2 text-sm text-gray-700 cursor-pointer">
                 <input
                   type="radio"
                   name="secrets-source"
-                  value="developer"
-                  checked={secretsSource === 'developer'}
-                  onChange={() => setSecretsSource('developer')}
+                  value="custom"
+                  checked={secretsSource === 'custom'}
+                  onChange={() => setSecretsSource('custom')}
                   className="mt-0.5"
                 />
                 <span>
-                  My developer Vault map
-                  <span className="block text-xs text-gray-400 font-mono">
-                    druppie/developers/{(username || 'you').toLowerCase()}
-                  </span>
+                  Custom
                   <span className="block text-xs text-gray-400">
-                    Self-service in the Vault UI; key names are the env var names
-                    (e.g. ZAI_API_KEY). Missing keys fall back to chart defaults.
+                    Type a custom Vault path name (e.g. a new developer).
                   </span>
                 </span>
               </label>
+              {secretsSource === 'custom' && (
+                <div className="ml-6">
+                  <input
+                    type="text"
+                    value={customSecretsSource}
+                    onChange={(e) => setCustomSecretsSource(e.target.value)}
+                    placeholder="e.g. jeroen"
+                    className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+                  />
+                  <p className="text-xs text-gray-400 mt-1">
+                    Maps to druppie/developers/{customSecretsSource || 'your-name'} in Vault.
+                  </p>
+                </div>
+              )}
             </div>
           </div>
 

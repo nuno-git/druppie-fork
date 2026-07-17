@@ -87,12 +87,11 @@ BRANCH_ENV_PULL_SECRET = os.getenv("BRANCH_ENV_PULL_SECRET", "harbor-regcred")
 # Ephemeral StorageClass: 1 replica, strict-local, reclaimPolicy=Delete.
 BRANCH_ENV_STORAGE_CLASS = os.getenv("BRANCH_ENV_STORAGE_CLASS", "longhorn-branch-env")
 
-# Secrets source for branch envs: "developer" syncs the deployer's own
-# self-service Vault map druppie/developers/<username>.
+# Secrets source for branch envs: determines the Vault path prefix for env
+# secrets. "colab-dev" → druppie/colab-dev/*, any other value maps to
+# druppie/developers/<value>/*. Accept any non-empty string.
 SECRETS_SOURCE_COLAB_DEV = "colab-dev"
-SECRETS_SOURCE_DEVELOPER = "developer"
-_SECRETS_SOURCES = frozenset({SECRETS_SOURCE_COLAB_DEV, SECRETS_SOURCE_DEVELOPER})
-_USERNAME_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,62}$")
+_SECRETS_SOURCE_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,62}$")
 
 # Domain suffix: environments live at druppie-<slug>.<DOMAIN_SUFFIX>. Must stay a
 # single label under this suffix to match the *.rijnland.dev wildcard cert.
@@ -254,7 +253,7 @@ def build_helmrelease_yaml(
     image_tag: str | None,
     updated_at: str,
     reconcile_epoch: str | None = None,
-    developer: str = "",
+    secrets_source: str = SECRETS_SOURCE_COLAB_DEV,
     workspace_enabled: bool = True,
     stack_mode: str = "real",
 ) -> str:
@@ -303,11 +302,8 @@ def build_helmrelease_yaml(
         # The branch namespace IS the hot-reload dev workspace: a single pod
         # (code-server + uvicorn --reload + Vite HMR) replaces the baked
         # backend/frontend Deployments. externalSecrets.managed=true lets ESO
-        # own <instance>-secrets; devWorkspace.developer syncs it from the
-        # deployer's own Vault map (druppie/developers/<developer>/* — seeded
-        # via scripts/seed-developer-env.py). The chart's oauth2-proxy reaches
-        # Keycloak over the in-cluster service (skip-oidc-discovery), so no
-        # issuerUrl override is needed (chart default = http://<host>/realms/…).
+        # own <instance>-secrets; devWorkspace.secretsSource determines the
+        # Vault path prefix (druppie/colab-dev/* or druppie/developers/<name>/*).
         "externalSecrets": {"managed": True},
         # Ephemeral storage: 1 replica + Delete reclaim policy. Branch-env
         # data is disposable (DBs rebuilt by the init job, repos re-cloned
@@ -317,7 +313,7 @@ def build_helmrelease_yaml(
         "devWorkspace": {
             "enabled": workspace_enabled,
             "stackMode": stack_mode,
-            "developer": developer,
+            "secretsSource": secrets_source,
             "gitBranch": branch,
             "codeServer": {"devHost": _workspace_host(host)},
         },
@@ -514,6 +510,13 @@ class GiteaGitopsClient:
             return False
         self._raise_for(resp, f"checking branch '{branch}' in {repo}")
         return True
+
+    async def list_branches(self, repo: str) -> list[dict]:
+        """List all branches in a repo."""
+        async with self._client() as client:
+            resp = await client.get(f"{self._base}/api/v1/repos/{repo}/branches")
+        self._raise_for(resp, f"listing branches in {repo}")
+        return resp.json()
 
     async def create_branch(self, repo: str, branch: str, from_branch: str) -> None:
         """Create `branch` in `repo` from `from_branch`; existing branch is fine."""
@@ -858,6 +861,15 @@ class BranchEnvironmentService:
     # Public API
     # -------------------------------------------------------------------------
 
+    async def list_branches(self) -> list[str]:
+        """List all branches from the application repo (ai/druppie)."""
+        branches = await self.gitea.list_branches(CHART_REPO)
+        return [
+            b["name"]
+            for b in branches
+            if not b.get("protected", False)
+        ]
+
     async def create(
         self,
         owner_id: UUID,
@@ -870,19 +882,10 @@ class BranchEnvironmentService:
         """Commit the environment manifests; Flux does the deploy."""
         _ = user_roles  # role gating happens at the route layer
         _validate_branch(branch)
-        if secrets_source not in _SECRETS_SOURCES:
+        secrets_source = (secrets_source or SECRETS_SOURCE_COLAB_DEV).strip().lower()
+        if not secrets_source or not _SECRETS_SOURCE_RE.match(secrets_source):
             raise ValidationError(
                 f"invalid secrets_source: {secrets_source!r}", field="secrets_source"
-            )
-        # The deployer's OWN Vault map only (identity from the token, not a free
-        # choice) — sanitized because it becomes a Vault path. Always required:
-        # the dev workspace's <instance>-secrets is synced from
-        # druppie/developers/<developer>/* via ESO (seed-developer-env.py).
-        developer = (owner_username or "").lower()
-        if not _USERNAME_RE.match(developer):
-            raise ValidationError(
-                f"cannot derive a developer map from username {owner_username!r}",
-                field="secrets_source",
             )
         slug = _slugify(branch)
         namespace = f"druppie-{slug}"
@@ -957,7 +960,7 @@ class BranchEnvironmentService:
                 "operation": "create",
                 "path": self._env_path(slug, "helmrelease.yaml"),
                 "content": build_helmrelease_yaml(
-                    slug, branch, host, image_tag, created_at, developer=developer
+                    slug, branch, host, image_tag, created_at, secrets_source=secrets_source
                 ),
             },
             {
@@ -1024,7 +1027,7 @@ class BranchEnvironmentService:
             image_tag,
             updated_at,
             reconcile_epoch=str(int(time.time())),
-            developer=env.get("developer", ""),
+            secrets_source=env.get("secrets_source") or SECRETS_SOURCE_COLAB_DEV,
             workspace_enabled=env.get("workspace_enabled", True),
             stack_mode=env.get("stack_mode", "real"),
         )
@@ -1123,7 +1126,7 @@ class BranchEnvironmentService:
             env["image_tag"],
             updated_at,
             reconcile_epoch=str(int(time.time())),
-            developer=env.get("developer", ""),
+            secrets_source=env.get("secrets_source") or SECRETS_SOURCE_COLAB_DEV,
             workspace_enabled=True,
             stack_mode=env.get("stack_mode", "real"),
         )
@@ -1174,7 +1177,7 @@ class BranchEnvironmentService:
             env["image_tag"],
             updated_at,
             reconcile_epoch=str(int(time.time())),
-            developer=env.get("developer", ""),
+            secrets_source=env.get("secrets_source") or SECRETS_SOURCE_COLAB_DEV,
             workspace_enabled=False,
             stack_mode=env.get("stack_mode", "real"),
         )
