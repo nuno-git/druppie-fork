@@ -83,8 +83,11 @@ RUN curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor
     && apt-get update && apt-get install -y --no-install-recommends code \
     && rm -rf /var/lib/apt/lists/*
 
-# OpenCode CLI
-RUN curl -fsSL https://opencode.ai/install | bash
+# OpenCode CLI — install as root then symlink to /usr/local/bin so the
+# developer user can find it on PATH at runtime.
+RUN curl -fsSL https://opencode.ai/install | bash -s -- --no-modify-path \
+    && ln -sf /root/.opencode/bin/opencode /usr/local/bin/opencode \
+    && opencode --version
 
 # Chromium's own sandbox needs user namespaces / SUID, which the pod's
 # restricted runtime does not grant; k8s also mounts a tiny /dev/shm.

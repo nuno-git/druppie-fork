@@ -572,23 +572,66 @@ class ClusterStatusClient:
     def available(self) -> bool:
         return self._token_path.exists()
 
-    async def _get(self, path: str) -> dict | None:
+    async def _request(
+        self, method: str, path: str, json_body: dict | None = None
+    ) -> dict | None:
         if not self.available:
             return None
         token = self._token_path.read_text().strip()
         verify: bool | str = str(self._ca_path) if self._ca_path.exists() else True
+        headers: dict[str, str] = {"Authorization": f"Bearer {token}"}
+        if json_body is not None:
+            headers["Content-Type"] = "application/merge-patch+json"
         async with httpx.AsyncClient(
-            headers={"Authorization": f"Bearer {token}"}, verify=verify, timeout=_HTTP_TIMEOUT
+            headers=headers, verify=verify, timeout=_HTTP_TIMEOUT
         ) as client:
-            resp = await client.get(f"{self._api_url}{path}")
+            resp = await client.request(method, f"{self._api_url}{path}", json=json_body)
         if resp.status_code == 404:
             return None
         if resp.status_code >= 400:
+            verb = method.upper()
             raise ExternalServiceError(
                 service="kubernetes",
-                message=f"GET {path} failed: HTTP {resp.status_code} {resp.text[:300]}",
+                message=f"{verb} {path} failed: HTTP {resp.status_code} {resp.text[:300]}",
             )
-        return resp.json()
+        return resp.json() if resp.text else None
+
+    async def _get(self, path: str) -> dict | None:
+        return await self._request("GET", path)
+
+    async def _patch(self, path: str, body: dict) -> dict | None:
+        return await self._request("PATCH", path, body)
+
+    async def force_reconcile_flux(self) -> None:
+        """Force Flux to immediately reconcile the GitRepository that sources
+        the branch-envs manifests and the Kustomization that applies them.
+
+        Without this, Flux waits up to 5 minutes for the GitRepository poll
+        interval before it notices the backend's commit — this cuts the deploy
+        wait from minutes to seconds. Safe to call outside the cluster (no-op).
+        """
+        if not self.available:
+            return
+        epoch = str(int(time.time()))
+        annotation = {"metadata": {"annotations": {"fluxcd.io/request": epoch}}}
+        # GitRepository ai-k8s is in flux-custom (the bootstrap namespace).
+        try:
+            await self._patch(
+                "/apis/source.toolkit.fluxcd.io/v1/namespaces/flux-custom"
+                "/gitrepositories/ai-k8s",
+                annotation,
+            )
+        except Exception:
+            logger.warning("flux_reconcile_gitsrc_failed", exc_info=True)
+        # Kustomization branch-envs is in flux-system.
+        try:
+            await self._patch(
+                "/apis/kustomize.toolkit.fluxcd.io/v1/namespaces/flux-system"
+                "/kustomizations/branch-envs",
+                annotation,
+            )
+        except Exception:
+            logger.warning("flux_reconcile_kustomization_failed", exc_info=True)
 
     async def get_helmrelease(self, namespace: str, name: str = HELMRELEASE_NAME) -> dict | None:
         return await self._get(
@@ -994,6 +1037,7 @@ class BranchEnvironmentService:
         await self.gitea.change_files(
             f"branch-env: deploy {namespace} (branch {branch}, by {owner_id})", files
         )
+        await self.cluster.force_reconcile_flux()
         logger.info("branch_env_created", slug=slug, branch=branch, namespace=namespace)
 
         return BranchEnvironmentDetail(
@@ -1066,6 +1110,7 @@ class BranchEnvironmentService:
             ],
         )
         logger.info("branch_env_redeploy", slug=slug, image_tag=image_tag)
+        await self.cluster.force_reconcile_flux()
 
         detail = await self.get(slug)
         return detail.model_copy(
@@ -1127,6 +1172,7 @@ class BranchEnvironmentService:
             )
 
         logger.info("branch_env_teardown", slug=slug, namespace=env["namespace"])
+        await self.cluster.force_reconcile_flux()
 
         return self._detail_from_env(
             env,
@@ -1189,6 +1235,7 @@ class BranchEnvironmentService:
             ],
         )
         logger.info("branch_env_workspace_enabled", slug=slug, namespace=env["namespace"])
+        await self.cluster.force_reconcile_flux()
 
         env["workspace_enabled"] = True
         status, message = await self._live_status(env["namespace"])
@@ -1241,6 +1288,7 @@ class BranchEnvironmentService:
             ],
         )
         logger.info("branch_env_workspace_disabled", slug=slug, namespace=env["namespace"])
+        await self.cluster.force_reconcile_flux()
 
         env["workspace_enabled"] = False
         status, message = await self._live_status(env["namespace"])
