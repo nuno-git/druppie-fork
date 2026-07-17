@@ -870,6 +870,28 @@ class BranchEnvironmentService:
             if not b.get("protected", False)
         ]
 
+    async def _change_files_with_retry(
+        self,
+        slug: str,
+        message: str,
+        files: list[dict],
+        max_retries: int = 3,
+    ) -> None:
+        """Commit files with retry on 409/422 (stal SHA from concurrent CI writes)."""
+        for attempt in range(max_retries):
+            try:
+                await self.gitea.change_files(message, files)
+                return
+            except ConflictError:
+                if attempt == max_retries - 1:
+                    raise
+                logger.warning("change_files_conflict", slug=slug, attempt=attempt + 1)
+                await asyncio.sleep(1)
+        raise ExternalServiceError(
+            service="gitops-repo",
+            message=f"could not commit to git for {slug} after {max_retries} attempts",
+        )
+
     async def create(
         self,
         owner_id: UUID,
@@ -1031,7 +1053,8 @@ class BranchEnvironmentService:
             workspace_enabled=env.get("workspace_enabled", True),
             stack_mode=env.get("stack_mode", "real"),
         )
-        await self.gitea.change_files(
+        await self._change_files_with_retry(
+            slug,
             f"branch-env: redeploy {env['namespace']} (tag {image_tag or 'unchanged'}, by {user_id})",
             [
                 {
@@ -1059,27 +1082,50 @@ class BranchEnvironmentService:
         user_id: UUID,
         user_roles: list[str],
     ) -> BranchEnvironmentDetail:
-        """Delete the env directory from git; Flux prunes the namespace."""
+        """Delete the env directory from git; Flux prunes the namespace.
+
+        Retries up to 3 times on 409/422 conflict (e.g. CI updating the
+        HelmRelease at the same time), re-reading the directory for fresh SHAs.
+        """
         slug = _validate_slug(env_id)
         env = await self._read_env(slug)
         if env is None:
-            # Already gone from git (possibly still pruning in the cluster).
             raise NotFoundError("branch_environment", slug)
 
         _require_owner_or_admin(env["owner_id"], user_id, user_roles, "tear down")
         _assert_safe_namespace(env["namespace"], slug)
 
-        entries = await self.gitea.list_dir(self._env_path(slug)) or []
-        deletes = [
-            {"operation": "delete", "path": e["path"], "sha": e["sha"]}
-            for e in entries
-            if e.get("type") == "file"
-        ]
-        if not deletes:
-            raise NotFoundError("branch_environment", slug)
-        await self.gitea.change_files(
-            f"branch-env: teardown {env['namespace']} (by {user_id})", deletes
-        )
+        max_retries = 3
+        for attempt in range(max_retries):
+            entries = await self.gitea.list_dir(self._env_path(slug)) or []
+            deletes = [
+                {"operation": "delete", "path": e["path"], "sha": e["sha"]}
+                for e in entries
+                if e.get("type") == "file"
+            ]
+            if not deletes:
+                raise NotFoundError("branch_environment", slug)
+            try:
+                await self.gitea.change_files(
+                    f"branch-env: teardown {env['namespace']} (by {user_id})",
+                    deletes,
+                )
+                break
+            except ConflictError:
+                if attempt == max_retries - 1:
+                    raise
+                logger.warning(
+                    "branch_env_teardown_conflict",
+                    slug=slug,
+                    attempt=attempt + 1,
+                )
+                await asyncio.sleep(1)
+        else:
+            raise ExternalServiceError(
+                service="gitops-repo",
+                message=f"could not delete {slug} after {max_retries} attempts",
+            )
+
         logger.info("branch_env_teardown", slug=slug, namespace=env["namespace"])
 
         return self._detail_from_env(
@@ -1130,7 +1176,8 @@ class BranchEnvironmentService:
             workspace_enabled=True,
             stack_mode=env.get("stack_mode", "real"),
         )
-        await self.gitea.change_files(
+        await self._change_files_with_retry(
+            slug,
             f"branch-env: enable workspace {env['namespace']} (by {user_id})",
             [
                 {
@@ -1181,7 +1228,8 @@ class BranchEnvironmentService:
             workspace_enabled=False,
             stack_mode=env.get("stack_mode", "real"),
         )
-        await self.gitea.change_files(
+        await self._change_files_with_retry(
+            slug,
             f"branch-env: disable workspace {env['namespace']} (by {user_id})",
             [
                 {
