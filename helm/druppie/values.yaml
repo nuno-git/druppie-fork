@@ -229,7 +229,9 @@ devWorkspace:
   # skip ExternalSecrets (no secrets — the env won't start without them).
   secretsSource: ""
   developer: ""
-  image: harbor.rijnland.dev/druppie/dev-workspace:latest
+  image:
+    repository: dev-workspace
+    tag: latest
   imagePullPolicy: Always
   gitBranch: ""                       # DRUPPIE_GIT_BRANCH (set per branch)
   repoUrl: https://aigit.waterschap.org/ai/druppie.git

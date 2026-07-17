@@ -180,29 +180,30 @@ jobs:
           fi
 
       - name: Build and push dev-workspace image
-        # Branch environments check out their branch at runtime from the SAME
-        # shared image, so this only needs building on the two long-lived
-        # branches. Feature-branch pushes skip it (the workspace pod pulls
-        # dev-workspace:latest and `git checkout`s the feature branch itself).
+        # Built per-branch so feature branches can customize the workspace
+        # image (install tools, change entrypoint, etc.). :latest is only
+        # pushed from the long-lived branches for backwards compatibility.
         # Non-blocking: dev-workspace is auxiliary (branch-env pods); a flaky
-        # npm build here must not block the core app deploy. :latest from a
-        # prior green build keeps branch envs working if this fails.
-        if: github.ref_name == 'colab-dev' || github.ref_name == 'main'
+        # build here must not block the core app deploy.
         continue-on-error: true
         env:
           TAG: ${{ steps.tags.outputs.deploy_tag }}
           SHA: ${{ github.sha }}
+          BRANCH: ${{ github.ref_name }}
         run: |
           if [ ! -f Dockerfile.dev-workspace ]; then
-            echo "Dockerfile.dev-workspace not present on this branch — skipping (dev-workspace:latest is shared from colab-dev)"
+            echo "Dockerfile.dev-workspace not present on this branch — skipping"
             exit 0
           fi
           docker build --build-arg CACHEBUST="$SHA" \
             -t "$REGISTRY/druppie/dev-workspace:$TAG" \
-            -t "$REGISTRY/druppie/dev-workspace:latest" \
             -f Dockerfile.dev-workspace .
           docker push "$REGISTRY/druppie/dev-workspace:$TAG"
-          docker push "$REGISTRY/druppie/dev-workspace:latest"
+          # Push :latest only from long-lived branches
+          if [ "$BRANCH" = "colab-dev" ] || [ "$BRANCH" = "main" ]; then
+            docker tag "$REGISTRY/druppie/dev-workspace:$TAG" "$REGISTRY/druppie/dev-workspace:latest"
+            docker push "$REGISTRY/druppie/dev-workspace:latest"
+          fi
 
       - name: Summary
         env:

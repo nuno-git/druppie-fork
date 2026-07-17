@@ -80,7 +80,7 @@ spec:
             limits:   { memory: "64Mi", cpu: "100m" }
       containers:
         - name: workspace
-          image: {{ .Values.devWorkspace.image }}
+          image: {{ include "druppie.image" (dict "Values" .Values "image" .Values.devWorkspace.image) }}
           imagePullPolicy: {{ .Values.devWorkspace.imagePullPolicy }}
           env:
             - name: DATABASE_URL
