@@ -132,6 +132,13 @@ spec:
               mountPath: /workspace
           resources:
             {{- toYaml .Values.devWorkspace.resources | nindent 12 }}
+          readinessProbe:
+            tcpSocket:
+              port: 8000
+            initialDelaySeconds: 15
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 12
         - name: oauth2-proxy
           image: quay.io/oauth2-proxy/oauth2-proxy:v7.7.1
           args:
