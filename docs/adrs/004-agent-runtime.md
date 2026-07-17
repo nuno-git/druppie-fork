@@ -15,7 +15,7 @@ linked_research: docs/research/004-agent-runtime.md
 
 ## Context
 
-Druppie agents build applications through MCP tools with HITL approval and sandboxed execution. External coding-agent frameworks were tried first: OpenCode (Phase 1) and a TypeScript agent (Phase 2). Both failed to integrate with Druppie's governance model (approval gates, sandbox networking, per-agent tool scoping). The original Python runtime (druppie/agents/runtime.py) was tightly coupled to FastAPI and SQLAlchemy, making it untestable in isolation.
+Druppie agents build applications through MCP tools with HITL approval and sandboxed execution. External coding-agent frameworks were tried first (see ADRs 021, 032, 033) and all failed to integrate with Druppie's governance model (approval gates, sandbox networking, per-agent tool scoping). The original Python runtime (druppie/agents/runtime.py) was tightly coupled to FastAPI and SQLAlchemy, making it untestable in isolation.
 
 ## Decision
 
