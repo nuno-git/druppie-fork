@@ -139,6 +139,8 @@ spec:
               value: "{{ include "druppie.frontendExternalUrl" . }}"
             - name: KEYCLOAK_EXTERNAL_URL
               value: "{{ include "druppie.keycloakExternalUrl" . }}"
+            - name: KEYCLOAK_PUBLIC_URL
+              value: "{{ include "druppie.keycloakExternalUrl" . }}"
             - name: GITEA_EXTERNAL_URL
               value: "{{ include "druppie.giteaExternalUrl" . }}"
             {{- end }}
