@@ -167,7 +167,7 @@ spec:
               mountPath: /app/workspace
             - name: sandbox-bundles
               mountPath: /app/sandbox_bundles
-            {{- if .Values.backend.dockerSocket.enabled }}
+            {{- if and .Values.backend.dockerSocket.enabled (not .Values.agentSandbox.enabled) }}
             - name: docker-sock
               mountPath: /var/run/docker.sock
             {{- end }}
@@ -205,7 +205,7 @@ spec:
         - name: sandbox-bundles
           persistentVolumeClaim:
             claimName: {{ include "druppie.fullname" . }}-sandbox-bundles
-        {{- if .Values.backend.dockerSocket.enabled }}
+        {{- if and .Values.backend.dockerSocket.enabled (not .Values.agentSandbox.enabled) }}
         - name: docker-sock
           hostPath:
             path: /var/run/docker.sock

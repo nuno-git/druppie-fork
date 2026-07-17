@@ -331,6 +331,29 @@ modules:
       limits:
         memory: 2Gi
         cpu: 2000m
+    # User-application GitOps deployer (active in K8s mode, i.e. when
+    # agentSandbox.enabled → DRUPPIE_SANDBOX_MODE=k8s). module-docker deploys
+    # user apps by committing a Flux GitRepository+HelmRelease to the GitOps
+    # repo (clusters/user-apps/<slug>/); Flux reconciles. The module only needs
+    # a Gitea token (push to ai/k8s) + read-only cluster access for status.
+    # Env/RBAC/egress templates are gated on agentSandbox.enabled.
+    userApps:
+      gitops:
+        url: https://aigit.waterschap.org
+        repo: ai/k8s
+        branch: main
+        path: clusters/user-apps
+        appRepoOrg: ai
+        # Secret holding a Gitea token (key below) with push to the GitOps repo.
+        # Reuses the ci/gitea token (same as the branch-env deployer).
+        tokenSecret:
+          name: druppie-branch-env-git
+          key: token
+        caConfigMap: ''
+      domain: apps.rijnland.dev
+      harbor:
+        registry: harbor.rijnland.dev
+        project: druppie
   filesearch:
     enabled: true
     replicaCount: 1

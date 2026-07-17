@@ -1,0 +1,53 @@
+{{- if .Values.agentSandbox.enabled }}
+# READ-ONLY cluster RBAC for module-docker in K8s mode (user-app GitOps).
+#
+# module-docker deploys user apps by committing a Flux GitRepository+HelmRelease
+# to the GitOps repo (ai/k8s) via the Gitea API — Flux does the actual deploys.
+# The only cluster access it needs is reading live status: HelmRelease conditions
+# per app namespace, pods (for logs + status), and namespaces (to list apps).
+# Writes go through git (Flux), never through this ServiceAccount.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "druppie.fullname" . }}-module-docker
+  labels:
+    {{- include "druppie.labels" . | nindent 4 }}
+    app.kubernetes.io/component: module-docker
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "druppie.fullname" . }}-module-docker
+  labels:
+    {{- include "druppie.labels" . | nindent 4 }}
+    app.kubernetes.io/component: module-docker
+rules:
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["pods", "pods/log"]
+    verbs: ["get", "list"]
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "patch"]   # patch = scale-to-0 for k8s_stop
+  - apiGroups: ["helm.toolkit.fluxcd.io"]
+    resources: ["helmreleases"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "druppie.fullname" . }}-module-docker
+  labels:
+    {{- include "druppie.labels" . | nindent 4 }}
+    app.kubernetes.io/component: module-docker
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "druppie.fullname" . }}-module-docker
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "druppie.fullname" . }}-module-docker
+    namespace: {{ .Release.Namespace }}
+{{- end }}

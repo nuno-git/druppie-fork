@@ -138,7 +138,27 @@ class InspectResponse(BaseModel):
 
 
 def parse_container_to_deployment(container: dict) -> DeploymentSummary:
-    """Parse Docker container info to DeploymentSummary."""
+    """Parse container/app info to DeploymentSummary (Docker or K8s shape)."""
+    # K8s (GitOps) shape from module-docker k8s_list_containers:
+    #   {name, namespace, url, ready, status_message}
+    if "url" in container and "namespace" in container:
+        ready = bool(container.get("ready"))
+        return DeploymentSummary(
+            container_id=container.get("namespace", ""),
+            container_name=container.get("name", ""),
+            image="",
+            status=container.get("status_message") or ("ready" if ready else "deploying"),
+            state="running" if ready else "pending",
+            health="healthy" if ready else "none",
+            ports="",
+            project_id=None,
+            session_id=None,
+            user_id=None,
+            compose_project=container.get("name"),
+            app_url=container.get("url"),
+        )
+
+    # Docker shape (legacy / local-dev mode)
     labels = container.get("labels", {})
 
     # Extract port from ports string like "0.0.0.0:9100->3000/tcp"

@@ -4,7 +4,7 @@
 # Docker is installed before any workload that needs it.
 #
 # This is a Phase 1 workaround. Phase 2 will migrate sandboxes to K8s natively.
-{{- if .Values.backend.dockerSocket.enabled }}
+{{- if and .Values.backend.dockerSocket.enabled (not .Values.agentSandbox.enabled) }}
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:

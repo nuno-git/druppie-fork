@@ -459,12 +459,15 @@ async def build(
 
         if DEPLOY_MODE == "k8s":
             from .k8s_deploy import k8s_build
+            if not repo_name:
+                return {
+                    "success": False,
+                    "error": "repo_name is required in K8s mode (dispatches the app's own CI).",
+                }
             result = await k8s_build(
-                image_name=image_name,
-                git_url=url,
+                repo_name=repo_name,
+                repo_owner=repo_owner,
                 branch=branch,
-                dockerfile=dockerfile,
-                build_args=build_args,
                 session_id=session_id,
             )
             if result.get("success"):
@@ -703,36 +706,23 @@ async def compose_up(
 
         if DEPLOY_MODE == "k8s":
             from .k8s_deploy import k8s_compose_up
-            import tempfile
 
-            with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
-                clone_path_temp = BUILD_DIR / str(uuid.uuid4())[:8]
-                clone_path_temp.mkdir(parents=True, exist_ok=True)
-                clone_result = await asyncio.to_thread(
-                    subprocess.run,
-                    ["git", "clone", "--branch", branch, "--depth", "1", url, str(clone_path_temp)],
-                    capture_output=True, text=True, timeout=120,
-                )
-                if clone_result.returncode != 0:
-                    shutil.rmtree(clone_path_temp, ignore_errors=True)
-                    return {"success": False, "error": f"Git clone failed: {clone_result.stderr}"}
-
-                compose_file = clone_path_temp / "docker-compose.yaml"
-                if not compose_file.exists():
-                    compose_file = clone_path_temp / "docker-compose.yml"
-                if not compose_file.exists():
-                    shutil.rmtree(clone_path_temp, ignore_errors=True)
-                    return {"success": False, "error": "No docker-compose.yaml found"}
-
-                compose_yaml = compose_file.read_text()
-                shutil.rmtree(clone_path_temp, ignore_errors=True)
-
-            project_name_final = compose_project_name or project_id or f"{repo_name or 'app'}-{str(uuid.uuid4())[:8]}"
+            if not repo_name:
+                return {
+                    "success": False,
+                    "error": "repo_name is required in K8s mode (deploys via GitOps — no compose file).",
+                }
+            project_name_final = (
+                compose_project_name or project_id or repo_name
+            )
             return await k8s_compose_up(
-                compose_yaml=compose_yaml,
-                project_name=project_name_final,
-                session_id=session_id,
+                repo_name=repo_name,
+                repo_owner=repo_owner,
+                branch=branch,
+                compose_project_name=project_name_final,
                 project_id=project_id,
+                session_id=session_id,
+                user_id=user_id,
                 health_path=health_path,
                 health_timeout=health_timeout,
             )
@@ -1316,6 +1306,9 @@ async def inspect(container_name: str) -> dict:
         Dict with container details
     """
     try:
+        if DEPLOY_MODE == "k8s":
+            from .k8s_deploy import k8s_inspect
+            return await k8s_inspect(container_name)
         err = _validate_name(container_name, "container_name")
         if err:
             return {"success": False, "error": err}
@@ -1376,6 +1369,9 @@ async def exec_command(
         Dict with stdout, stderr, return_code
     """
     try:
+        if DEPLOY_MODE == "k8s":
+            from .k8s_deploy import k8s_exec_command
+            return await k8s_exec_command(container_name, command)
         err = _validate_name(container_name, "container_name")
         if err:
             return {"success": False, "error": err}
@@ -1488,6 +1484,9 @@ async def list_volumes(
         Dict with volumes list (name, driver, labels, size if available)
     """
     try:
+        if DEPLOY_MODE == "k8s":
+            from .k8s_deploy import k8s_list_volumes
+            return await k8s_list_volumes()
         cmd = ["docker", "volume", "ls", "--format",
                "{{.Name}}\t{{.Driver}}\t{{.Labels}}"]
         if project_id:
@@ -1546,6 +1545,9 @@ async def list_volumes(
 async def remove_volume(volume_name: str, force: bool = False) -> dict:
     """Remove a volume. Fails if the volume is in use unless force=True."""
     try:
+        if DEPLOY_MODE == "k8s":
+            from .k8s_deploy import k8s_list_volumes
+            return await k8s_list_volumes()
         err = _validate_name(volume_name, "volume_name")
         if err:
             return {"success": False, "error": err}

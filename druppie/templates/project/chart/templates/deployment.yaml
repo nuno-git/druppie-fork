@@ -1,0 +1,64 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "app.fullname" . }}
+  labels:
+    {{- include "app.labels" . | nindent 4 }}
+    app.kubernetes.io/component: app
+spec:
+  replicas: {{ .Values.app.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "app.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: app
+  template:
+    metadata:
+      labels:
+        {{- include "app.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: app
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: app
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.app.port }}
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: {{ include "app.fullname" . }}
+          env:
+            {{- if .Values.database.enabled }}
+            # POSTGRES_PASSWORD must precede DATABASE_URL so $(POSTGRES_PASSWORD)
+            # is resolvable by K8s env-var interpolation.
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  # Non-optional → the pod stays containerCreating until ESO has
+                  # synced this secret. That is the D11 ESO-sync gate.
+                  name: {{ include "app.fullname" . }}-db
+                  key: {{ .Values.externalSecret.passwordKey }}
+            - name: DATABASE_URL
+              value: "postgresql://{{ .Values.database.user }}:$(POSTGRES_PASSWORD)@{{ include "app.fullname" . }}-db:{{ .Values.database.port }}/{{ .Values.database.db }}"
+            {{- end }}
+            {{- if .Values.app.druppieModuleApiToken }}
+            - name: DRUPPIE_MODULE_API_TOKEN
+              value: {{ .Values.app.druppieModuleApiToken | quote }}
+            {{- end }}
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.probes.readiness.path }}
+              port: http
+            initialDelaySeconds: {{ .Values.probes.readiness.initialDelaySeconds }}
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.probes.liveness.path }}
+              port: http
+            initialDelaySeconds: {{ .Values.probes.liveness.initialDelaySeconds }}
+          resources:
+            {{- toYaml .Values.app.resources | nindent 12 }}

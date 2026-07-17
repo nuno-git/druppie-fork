@@ -1,0 +1,33 @@
+{{- if .Values.agentSandbox.enabled }}
+# CiliumNetworkPolicy: allow module-docker to reach the external GitOps Gitea
+# in K8s mode. module-docker commits user-app manifests to ai/k8s and dispatches
+# app CI workflows via the Gitea API on aigit.waterschap.org (10.23.0.101). The
+# app-net NetworkPolicy blocks egress to 10/8, so without this exception every
+# deploy times out. Mirrors cnp-backend-gitops.yaml.
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: {{ include "druppie.fullname" . }}-module-docker-gitops
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "druppie.labels" . | nindent 4 }}
+spec:
+  endpointSelector:
+    matchLabels:
+      {{- include "druppie.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: module-docker
+  egress:
+    - toFQDNs:
+        - matchPattern: "aigit.waterschap.org"
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+    - toCIDR:
+        - 10.23.0.101/32
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+{{- end }}
