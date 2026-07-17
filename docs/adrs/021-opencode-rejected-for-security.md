@@ -6,7 +6,7 @@ date: 2026-07-17
 deciders:
   - nuno
 supersedes: null
-superseded_by: docs/adrs/004-agent-runtime.md
+superseded_by: "004"
 linked_prd: null
 linked_research: docs/research/005-sandbox-network-isolation.md
 ---
