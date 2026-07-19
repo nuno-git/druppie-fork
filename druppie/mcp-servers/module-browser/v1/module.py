@@ -160,11 +160,13 @@ class BrowserModule:
         except (PWError, PWTimeout) as e:
             return {"success": False, "error": str(e), "selector": selector}
 
-    async def snapshot(self, interesting_only: bool = True) -> dict:
+    async def snapshot(self) -> dict:
         page = await self._ensure()
         try:
-            tree = await page.accessibility.snapshot(interesting_only=interesting_only)
-            return {"success": True, "snapshot": tree}
+            # aria_snapshot (Playwright >=1.44) returns a YAML string of the
+            # accessibility tree. Replaces the removed page.accessibility API.
+            tree_yaml = await page.locator("body").aria_snapshot()
+            return {"success": True, "snapshot": tree_yaml}
         except (PWError, PWTimeout) as e:
             return {"success": False, "error": str(e)}
 

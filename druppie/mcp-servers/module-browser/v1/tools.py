@@ -130,14 +130,14 @@ async def get_html(selector: str = "body") -> dict:
 @mcp.tool(
     name="snapshot",
     description=(
-        "Return the page's accessibility tree (role/name/value for "
+        "Return the page's accessibility tree as YAML (role/name/state for "
         "interactive elements). The best way to 'see' what's on the page "
         "without drowning in HTML. Use after navigate to plan interactions."
     ),
     meta={"module_id": MODULE_ID, "version": MODULE_VERSION},
 )
-async def snapshot(interesting_only: bool = True) -> dict:
-    return await module.snapshot(interesting_only=interesting_only)
+async def snapshot() -> dict:
+    return await module.snapshot()
 
 
 @mcp.tool(
