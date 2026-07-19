@@ -285,6 +285,26 @@ spec:
       port: {{ .Values.modules.searxng.port }}
       targetPort: http
 {{- end }}
+{{- if .Values.modules.browser.enabled }}
+---
+# Module Browser Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "druppie.fullname" . }}-module-browser
+  labels:
+    {{- include "druppie.labels" . | nindent 4 }}
+    app.kubernetes.io/component: module-browser
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "druppie.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: module-browser
+  ports:
+    - name: http
+      port: {{ .Values.modules.browser.port }}
+      targetPort: http
+{{- end }}
 {{- if .Values.modules.archimate.enabled }}
 ---
 # Module Archimate Service

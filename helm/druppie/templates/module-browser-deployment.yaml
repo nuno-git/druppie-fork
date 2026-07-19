@@ -1,0 +1,73 @@
+{{- if .Values.modules.browser.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "druppie.fullname" . }}-module-browser
+  labels:
+    {{- include "druppie.labels" . | nindent 4 }}
+    app.kubernetes.io/component: module-browser
+spec:
+  replicas: {{ .Values.modules.browser.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "druppie.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: module-browser
+  template:
+    metadata:
+      labels:
+        {{- include "druppie.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: module-browser
+      annotations:
+        reloader.stakater.com/auto: "true"
+    spec:
+      {{- if .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml .Values.global.imagePullSecrets | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: module-browser
+          image: {{ include "druppie.image" (dict "Values" .Values "image" .Values.modules.browser.image) }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          env:
+            - name: MCP_PORT
+              value: {{ .Values.modules.browser.port | quote }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "druppie.fullname" . }}-config
+            - secretRef:
+                name: {{ include "druppie.fullname" . }}-secrets
+            {{- if .Values.global.extraEnvFromSecret }}
+            - secretRef:
+                name: {{ .Values.global.extraEnvFromSecret }}
+                optional: true
+            {{- end }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.modules.browser.port }}
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.modules.browser.port }}
+            initialDelaySeconds: 15
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 5
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.modules.browser.port }}
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 5
+          # Chromium runs as root (image default) with --no-sandbox, passed in
+          # module.py LAUNCH_ARGS. The longer initialDelaySeconds covers the
+          # slower Python+Playwright import on cold start.
+          resources:
+            {{- toYaml .Values.modules.browser.resources | nindent 12 }}
+      {{- with .Values.modules.browser.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

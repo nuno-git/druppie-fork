@@ -154,7 +154,7 @@ jobs:
           for module in module-coding module-docker module-web module-vision \
                         module-archimate module-data-access module-registry \
                         module-filesearch module-kubernetes module-llm \
-                        module-azuredevops module-searxng; do
+                        module-azuredevops module-searxng module-browser; do
             DF="./druppie/mcp-servers/$module/Dockerfile"
             if [ -f "$DF" ]; then
               if grep -q "^COPY mcp-servers/" "$DF"; then

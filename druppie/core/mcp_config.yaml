@@ -249,6 +249,43 @@ mcps:
       - name: fetch
         requires_approval: false
 
+  # Headless Chromium automation (Playwright). Lets agents navigate and
+  # interact with JS-rendered pages (booking engines, SPAs, dashboards) that
+  # searxng_fetch cannot read (httpx runs no JS). Single shared browser
+  # session per module instance — see module.py.
+  browser:
+    url: ${MCP_BROWSER_URL:-http://module-browser:9015}
+    type: module
+    tools:
+      - name: navigate
+        requires_approval: false
+      - name: click
+        requires_approval: false
+      - name: type
+        requires_approval: false
+      - name: select_option
+        requires_approval: false
+      - name: press_key
+        requires_approval: false
+      - name: get_text
+        requires_approval: false
+      - name: get_html
+        requires_approval: false
+      - name: snapshot
+        requires_approval: false
+      - name: screenshot
+        requires_approval: false
+      - name: wait_for
+        requires_approval: false
+      - name: evaluate
+        requires_approval: false
+      - name: go_back
+        requires_approval: false
+      - name: get_url_title
+        requires_approval: false
+      - name: close
+        requires_approval: false
+
   archimate:
     url: ${MCP_ARCHIMATE_URL:-http://module-archimate:9006}
     type: core

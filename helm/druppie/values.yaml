@@ -349,6 +349,21 @@ modules:
       limits:
         memory: 512Mi
         cpu: 1000m
+  browser:
+    enabled: true
+    replicaCount: 1
+    nodeSelector: {}
+    image:
+      repository: druppie-module-browser
+      tag: latest
+    port: 9015
+    resources:
+      requests:
+        memory: 512Mi
+        cpu: 200m
+      limits:
+        memory: 1Gi
+        cpu: 1000m
   archimate:
     enabled: true
     replicaCount: 1
