@@ -231,7 +231,10 @@ devWorkspace:
   developer: ""
   image:
     repository: dev-workspace
-    tag: latest
+    # When empty, falls back to global.imageTag then "latest". CI sets this
+    # to the deploy tag only when Dockerfile.dev-workspace changes — so
+    # code-only pushes don't trigger a workspace restart.
+    tag: ""
   imagePullPolicy: Always
   gitBranch: ""                       # DRUPPIE_GIT_BRANCH (set per branch)
   repoUrl: https://aigit.waterschap.org/ai/druppie.git

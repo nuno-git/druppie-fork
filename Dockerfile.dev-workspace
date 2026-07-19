@@ -83,10 +83,13 @@ RUN curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor
     && apt-get update && apt-get install -y --no-install-recommends code \
     && rm -rf /var/lib/apt/lists/*
 
-# OpenCode CLI — install as root then symlink to /usr/local/bin so the
-# developer user can find it on PATH at runtime.
+# OpenCode CLI — installer puts the binary in /root/.opencode/bin/ which is
+# inaccessible to the non-root developer user at runtime (drwx------). Copy
+# the binary to /usr/local/bin so it is world-executable and on PATH.
 RUN curl -fsSL https://opencode.ai/install | bash -s -- --no-modify-path \
-    && ln -sf /root/.opencode/bin/opencode /usr/local/bin/opencode \
+    && cp /root/.opencode/bin/opencode /usr/local/bin/opencode \
+    && chmod +x /usr/local/bin/opencode \
+    && rm -rf /root/.opencode \
     && opencode --version
 
 # Chromium's own sandbox needs user namespaces / SUID, which the pod's

@@ -63,6 +63,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
 
       - name: Set image tags
         id: tags
@@ -179,22 +181,47 @@ jobs:
             docker push "$REGISTRY/druppie/druppie-sandbox-k8s:$TAG"
           fi
 
+      - name: Check workspace changes
+        # Detects whether workspace-related files changed in this push. The
+        # dev-workspace image is only rebuilt when they do — code-only pushes
+        # skip the ~1.5 min build and don't restart the workspace pod.
+        id: ws_changes
+        run: |
+          if [ ! -f Dockerfile.dev-workspace ]; then
+            echo "changed=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          # Long-lived branches always build (keeps :latest fresh).
+          BRANCH="${{ github.ref_name }}"
+          if [ "$BRANCH" = "colab-dev" ] || [ "$BRANCH" = "main" ]; then
+            echo "changed=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          # Feature branches: only if workspace files changed since last commit.
+          CHANGED=$(git diff --name-only HEAD~1 HEAD -- \
+            Dockerfile.dev-workspace \
+            scripts/dev-workspace-entrypoint.sh \
+            scripts/dev-workspace-desktop-index.html \
+            2>/dev/null | wc -l)
+          if [ "$CHANGED" -gt 0 ]; then
+            echo "changed=true" >> $GITHUB_OUTPUT
+          else
+            echo "changed=false" >> $GITHUB_OUTPUT
+            echo "No workspace file changes — skipping dev-workspace build"
+          fi
+
       - name: Build and push dev-workspace image
-        # Built per-branch so feature branches can customize the workspace
-        # image (install tools, change entrypoint, etc.). :latest is only
-        # pushed from the long-lived branches for backwards compatibility.
-        # Non-blocking: dev-workspace is auxiliary (branch-env pods); a flaky
-        # build here must not block the core app deploy.
+        # Only built when workspace files changed (or on long-lived branches).
+        # The workspace gets code from git fetch at runtime, so code-only pushes
+        # don't need an image rebuild. Non-blocking: a flaky build here must not
+        # block the core app deploy.
+        if: steps.ws_changes.outputs.changed == 'true'
         continue-on-error: true
         env:
           TAG: ${{ steps.tags.outputs.deploy_tag }}
           SHA: ${{ github.sha }}
           BRANCH: ${{ github.ref_name }}
         run: |
-          if [ ! -f Dockerfile.dev-workspace ]; then
-            echo "Dockerfile.dev-workspace not present on this branch — skipping"
-            exit 0
-          fi
           docker build --build-arg CACHEBUST="$SHA" \
             -t "$REGISTRY/druppie/dev-workspace:$TAG" \
             -f Dockerfile.dev-workspace .
@@ -261,10 +288,25 @@ jobs:
           # Patch imageTag with yq (robust against JSON/YAML quoting). Only touch
           # init.image.tag when that key already exists (don't create stray keys
           # on branch-env HelmReleases that have no init section).
+          #
+          # dev-workspace image tag logic (3 cases):
+          #   1. Workspace rebuilt (Dockerfile changed): set to new deploy tag
+          #   2. Workspace not built, tag empty (first push): latch to the OLD
+          #      global tag (it has a workspace image from the parent's CI)
+          #   3. Workspace not built, tag already set: leave it untouched
+          #              → workspace pod is NOT restarted on code-only pushes.
+          OLD_TAG=$(yq '.spec.values.global.imageTag // ""' "$HR_FILE")
+          CURRENT_WS_TAG=$(yq '.spec.values.devWorkspace.image.tag // ""' "$HR_FILE")
           export TAG
           yq -i '.spec.values.global.imageTag = strenv(TAG)' "$HR_FILE"
           if yq -e '.spec.values.init.image.tag' "$HR_FILE" >/dev/null 2>&1; then
             yq -i '.spec.values.init.image.tag = strenv(TAG)' "$HR_FILE"
+          fi
+          if [ "${{ steps.ws_changes.outputs.changed }}" = "true" ]; then
+            yq -i '.spec.values.devWorkspace.image.tag = strenv(TAG)' "$HR_FILE"
+          elif [ -z "$CURRENT_WS_TAG" ]; then
+            export OLD_TAG
+            yq -i '.spec.values.devWorkspace.image.tag = strenv(OLD_TAG)' "$HR_FILE"
           fi
 
           if git diff --quiet; then
