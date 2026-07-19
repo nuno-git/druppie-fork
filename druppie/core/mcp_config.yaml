@@ -236,6 +236,19 @@ mcps:
       - name: get_page_info
         requires_approval: false
 
+  # Privacy-friendly web search via a self-hosted SearXNG instance (engine
+  # deployed at ai/k8s clusters/ka-k8s-ai/infra/searxng). The module is a
+  # thin client over SearXNG's /search JSON API.
+  searxng:
+    url: ${MCP_SEARXNG_URL:-http://module-searxng:9014}
+    type: module
+    tools:
+      - name: search
+        requires_approval: false
+
+      - name: fetch
+        requires_approval: false
+
   archimate:
     url: ${MCP_ARCHIMATE_URL:-http://module-archimate:9006}
     type: core

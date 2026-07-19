@@ -1,0 +1,75 @@
+{{- if .Values.modules.searxng.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "druppie.fullname" . }}-module-searxng
+  labels:
+    {{- include "druppie.labels" . | nindent 4 }}
+    app.kubernetes.io/component: module-searxng
+spec:
+  replicas: {{ .Values.modules.searxng.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "druppie.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: module-searxng
+  template:
+    metadata:
+      labels:
+        {{- include "druppie.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: module-searxng
+      annotations:
+        reloader.stakater.com/auto: "true"
+    spec:
+      {{- if .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml .Values.global.imagePullSecrets | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: module-searxng
+          image: {{ include "druppie.image" (dict "Values" .Values "image" .Values.modules.searxng.image) }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          env:
+            - name: MCP_PORT
+              value: {{ .Values.modules.searxng.port | quote }}
+            # SearXNG engine service. Override per-env by setting MCP_SEARXNG_URL
+            # in the chart secrets / Vault (envFrom below), e.g. to point at a
+            # public SearXNG instance instead of the in-cluster engine.
+            - name: SEARXNG_URL
+              value: "http://searxng.searxng.svc.cluster.local:8080"
+          envFrom:
+            - configMapRef:
+                name: {{ include "druppie.fullname" . }}-config
+            - secretRef:
+                name: {{ include "druppie.fullname" . }}-secrets
+            {{- if .Values.global.extraEnvFromSecret }}
+            - secretRef:
+                name: {{ .Values.global.extraEnvFromSecret }}
+                optional: true
+            {{- end }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.modules.searxng.port }}
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.modules.searxng.port }}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 5
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.modules.searxng.port }}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 5
+          resources:
+            {{- toYaml .Values.modules.searxng.resources | nindent 12 }}
+      {{- with .Values.modules.searxng.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

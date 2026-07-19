@@ -334,6 +334,21 @@ modules:
       limits:
         memory: 512Mi
         cpu: 1000m
+  searxng:
+    enabled: true
+    replicaCount: 1
+    nodeSelector: {}
+    image:
+      repository: druppie-module-searxng
+      tag: latest
+    port: 9014
+    resources:
+      requests:
+        memory: 256Mi
+        cpu: 100m
+      limits:
+        memory: 512Mi
+        cpu: 1000m
   archimate:
     enabled: true
     replicaCount: 1

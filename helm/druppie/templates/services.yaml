@@ -265,6 +265,26 @@ spec:
       port: {{ .Values.modules.web.port }}
       targetPort: http
 {{- end }}
+{{- if .Values.modules.searxng.enabled }}
+---
+# Module SearXNG Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "druppie.fullname" . }}-module-searxng
+  labels:
+    {{- include "druppie.labels" . | nindent 4 }}
+    app.kubernetes.io/component: module-searxng
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "druppie.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: module-searxng
+  ports:
+    - name: http
+      port: {{ .Values.modules.searxng.port }}
+      targetPort: http
+{{- end }}
 {{- if .Values.modules.archimate.enabled }}
 ---
 # Module Archimate Service
